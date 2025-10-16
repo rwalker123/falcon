@@ -1,7 +1,7 @@
 # Shadow-Scale: Unified Game Design & Simulation Document (v1.0)
 
 ## Vision
-A modular grand-strategy simulation built on emergent physics, procedural discovery, and systemic logistics. Each world begins as a blank canvas of atoms, from which matter, technology, civilizations, and wars naturally evolve. There are no predefined factions, tech trees, or eras—only discovery, adaptation, and survival.
+A modular grand-strategy simulation built on emergent physics, procedural discovery, and systemic logistics. Each world begins as a blank canvas of atoms, from which matter, technology, civilizations,[...]
 
 ---
 
@@ -120,6 +120,31 @@ A strong logistics and energy base sustains population. Neglect or overexpansion
 
 ---
 
+## 7a. Population Demographics & Workforce Simulation
+
+Population is modeled as a dynamic set of age cohorts, each with distinct roles, needs, and impacts on civilization.
+
+### Age Demographics
+- **Infants/Children**: Dependent, education costs, future workforce.
+- **Working Age**: Drives economic output, technology research, and military recruitment.
+- **Older Generation**: Lower workforce participation, increased healthcare/social care costs, source of cultural continuity and expertise.
+
+### Workforce Modeling
+- **Labor Allocation**: Assignable to sectors (industry, agriculture, research, military, logistics).
+- **Retirement & Aging**: Workforce shrinks as cohorts age out; policy and healthcare impact longevity.
+- **Population Pyramid**: Shifts from expansion to contraction based on birth rates, longevity, and calamities.
+
+### Reproduction & Growth Rates
+- **Birth Rate**: Influenced by food security, social stability, cultural factors, and technology.
+- **Death Rate**: Driven by disasters, resource scarcity, warfare, and healthcare access.
+- **Generational Turnover**: Affects innovation speed, workforce renewal, and military recruitment pools.
+
+### Societal Impacts
+- **Aging Population**: Reduces available labor, increases dependency ratio; may trigger policy shifts (immigration, automation).
+- **Youth Bulge**: Increases labor supply, potential for unrest or rapid expansion.
+
+---
+
 ## 8. Trade & Diplomacy Systems
 Trade, cooperation, and espionage form the connective tissue of global interaction.
 
@@ -150,6 +175,39 @@ AI factions evolve through their own philosophies and resources.
 - **Isolationist:** Avoids trade, pursues purity of science.
 
 Each AI evolves asymmetrically—its choices create emergent diplomacy and tension.
+
+---
+
+## 9a. Military System Simulation
+
+Military forces in Shadow-Scale are emergent, shaped by demographics, resources, and policy.
+
+### Training & Structure
+- **Recruitment Sources**: 
+  - *Conscription*: Forced service during crises or by policy; higher turnover, morale impacts.
+  - *Volunteer*: Motivated, often better trained; lower turnover, higher cost.
+- **Training Levels**: Varies by investment in infrastructure, doctrine, and available technology.
+- **Active vs Reserve Forces**: 
+  - *Active*: Fully trained, ready for immediate deployment; higher ongoing costs.
+  - *Reserve*: Partial training, mobilized as needed; lower cost, slower response.
+
+### Cost Modeling
+- **Domestic Deployment**: Lower cost, easier logistics.
+- **International Deployment**: Higher cost (transport, supply chain, diplomatic risk).
+- **Training & Maintenance**: Continuous investment required for readiness and morale.
+
+### Turnover & Service Duration
+- **Turnover Rate**: Influenced by conscription/volunteer mix, duration of service, casualty rates, and economic opportunity.
+- **Service Duration**: Fixed terms for conscripts, variable for volunteers; affects experience level and military culture.
+- **Veteran Integration**: Retired soldiers impact civilian workforce, health costs, and societal stability.
+
+### Special Policies
+- **Forced Conscription**: Rapid military expansion, higher disruption, potential for civil unrest.
+- **Selective Service**: Targeted recruitment, maintains stability.
+- **Professionalization**: Long-term volunteers, elite units, higher cost, lower turnover.
+
+### Strategic Impact
+- Military composition and readiness influence diplomatic strength, internal stability, and response to global events.
 
 ---
 
@@ -187,5 +245,4 @@ Each world is unique. Its atoms define its destiny.
 ---
 
 ## Summary
-**Shadow-Scale** is not just a game—it’s a procedural model of civilization emergence. From atoms to empires, each simulation tells a new story of discovery, collapse, and evolution shaped entirely by the interplay of physics, energy, and ingenuity.
-
+**Shadow-Scale** is not just a game—it’s a procedural model of civilization emergence. From atoms to empires, each simulation tells a new story of discovery, collapse, and evolution shaped entirel[...]
