@@ -1,0 +1,78 @@
+// Shadow-Scale FlatBuffers schema for snapshot and delta envelopes.
+// This schema mirrors the serde structs in `sim_proto/src/lib.rs` and exists so
+// alternative frontends can generate strongly typed bindings without relying on
+// Rust. Numerical fields follow the fixed-point conventions used by core_sim
+// (`Scalar` is stored as 1e-6 scaled integers).
+
+namespace shadow_scale.sim;
+
+table TileState {
+  entity:ulong;
+  x:uint;
+  y:uint;
+  element:ubyte;
+  mass:long;
+  temperature:long;
+}
+
+table LogisticsLinkState {
+  entity:ulong;
+  from:ulong;
+  to:ulong;
+  capacity:long;
+  flow:long;
+}
+
+table PopulationCohortState {
+  entity:ulong;
+  home:ulong;
+  size:uint;
+  morale:long;
+}
+
+table PowerNodeState {
+  entity:ulong;
+  generation:long;
+  demand:long;
+  efficiency:long;
+}
+
+table SnapshotHeader {
+  tick:ulong;
+  tileCount:uint;
+  logisticsCount:uint;
+  populationCount:uint;
+  powerCount:uint;
+  hash:ulong;
+}
+
+table WorldSnapshot {
+  header:SnapshotHeader;
+  tiles:[TileState];
+  logistics:[LogisticsLinkState];
+  populations:[PopulationCohortState];
+  power:[PowerNodeState];
+}
+
+table WorldDelta {
+  header:SnapshotHeader;
+  tiles:[TileState];
+  removedTiles:[ulong];
+  logistics:[LogisticsLinkState];
+  removedLogistics:[ulong];
+  populations:[PopulationCohortState];
+  removedPopulations:[ulong];
+  power:[PowerNodeState];
+  removedPower:[ulong];
+}
+
+union SnapshotPayload {
+  snapshot:WorldSnapshot,
+  delta:WorldDelta
+}
+
+table Envelope {
+  payload:SnapshotPayload;
+}
+
+root_type Envelope;

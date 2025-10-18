@@ -13,6 +13,44 @@ This workspace scaffolds the **Prototype Plan (a)** headless simulation stack:
 cargo make setup
 ```
 
+## Run the Prototype
+
+Start the headless simulation server (provides snapshot + command sockets):
+
+```bash
+cargo run -p core_sim --bin server
+```
+
+In another terminal, launch the CLI inspector to view live telemetry and issue commands:
+
+```bash
+cargo run -p cli_inspector
+```
+
+Inspector shortcuts:
+- `space` advance one turn
+- `t` advance ten turns
+- `h` heat the most recent tile sample
+- `q` or `Ctrl+C` exit the inspector (the server keeps running)
+
+The inspector now renders logs in a dedicated pane (see `docs/metrics.md`); tracing output no longer scribbles over the tick table.
+
+Enable structured logs/metrics (uses `tracing` with `RUST_LOG`):
+
+```bash
+RUST_LOG=info cargo run -p core_sim --bin server
+RUST_LOG=info cargo run -p cli_inspector
+```
+
+See `docs/metrics.md` for event fields and subscriber options.
+
+Run performance benchmarks:
+
+```bash
+cargo bench -p core_sim --bench turn_bench
+```
+Results (including HTML reports) are written under `target/criterion/turn/`.
+
 ### Install Rust/Cargo
 
 #### macOS
@@ -61,9 +99,3 @@ echo 'alias make="gmake"' >> ~/.zshrc
      choco install make
      ```
    - Or install MSYS2 and include the `make` package.
-
-## Next Steps
-- Flesh out deterministic ECS systems in `core_sim`.
-- Implement snapshot/delta serialization using types in `sim_proto`.
-- Extend `cli_inspector` to display live stats and accept commands.
-- Add benchmarks and profiling tasks per the technology plan.

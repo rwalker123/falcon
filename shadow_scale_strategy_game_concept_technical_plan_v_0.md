@@ -10,6 +10,7 @@ A modular grand-strategy simulation built on emergent physics, procedural discov
 - **No Hardcoding**: Units, technologies, materials, and even laws of physics differ each game.
 - **Player as Discoverer**: Knowledge is earned through exploration and experimentation, not through pre-known trees.
 - **Interlinked Systems**: Science, logistics, economy, and society feed into one another dynamically.
+- **Turn-Based Resolution**: Simulation advances in discrete turns/epochs; time only progresses when players/AI commit orders, enabling deep planning and async tooling.
 - **Replayability Through Uncertainty**: Each world’s discoveries, energy sources, and civilizations follow unique, unpredictable paths.
 
 ---
