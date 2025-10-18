@@ -1,0 +1,42 @@
+[package]
+name = "core_sim"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "core_sim"
+path = "src/lib.rs"
+
+[features]
+default = ["headless"]
+headless = []
+
+[dependencies]
+bevy = { version = "0.13", default-features = false, features = [
+    "bevy_asset",
+    "bevy_audio",
+    "bevy_core_pipeline",
+    "bevy_gilrs",
+    "bevy_render",
+    "bevy_sprite",
+    "bevy_winit",
+    "x11",
+    "png",
+    "hdr"
+] }
+# TODO: narrow feature set for pure headless build
+rand = { version = "0.8", features = ["small_rng"] }
+rand_chacha = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+bevy_reflect = "0.13"
+bevy_ecs = "0.13"
+bevy_utils = "0.13"
+rayon = "1.8"
+
+[dev-dependencies]
+criterion = "0.5"
+insta = "1.36"

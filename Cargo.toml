@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "core_sim",
+    "sim_proto",
+    "cli_inspector",
+    "integration_tests"
+]
+
+resolver = "2"
