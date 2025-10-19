@@ -129,6 +129,8 @@ fn send_command(endpoint: &str, command: &ClientCommand) -> std::io::Result<()> 
     let line = match command {
         ClientCommand::Turn(amount) => format!("turn {}\n", amount),
         ClientCommand::Heat { entity, delta } => format!("heat {} {}\n", entity, delta),
+        ClientCommand::SubmitOrders { faction } => format!("order {} ready\n", faction),
+        ClientCommand::Rollback { tick } => format!("rollback {}\n", tick),
     };
     stream.write_all(line.as_bytes())?;
     Ok(())

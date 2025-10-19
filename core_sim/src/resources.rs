@@ -22,6 +22,7 @@ pub struct SimulationConfig {
     pub mass_flux_epsilon: Scalar,
     pub snapshot_bind: SocketAddr,
     pub command_bind: SocketAddr,
+    pub snapshot_history_limit: usize,
 }
 
 impl Default for SimulationConfig {
@@ -42,6 +43,7 @@ impl Default for SimulationConfig {
             mass_flux_epsilon: scalar_from_f32(0.001),
             snapshot_bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000),
             command_bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41001),
+            snapshot_history_limit: 256,
         }
     }
 }

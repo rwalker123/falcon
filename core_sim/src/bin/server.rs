@@ -7,8 +7,12 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use tracing::{info, warn};
 
 use core_sim::metrics::{collect_metrics, SimulationMetrics};
-use core_sim::network::{broadcast_latest, start_snapshot_server};
-use core_sim::{build_headless_app, run_turn, Scalar, SimulationConfig, SnapshotHistory, Tile};
+use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
+use core_sim::{
+    build_headless_app, restore_world_from_snapshot, run_turn, FactionId, FactionOrders, Scalar,
+    SimulationConfig, SimulationTick, SnapshotHistory, StoredSnapshot, SubmitError, SubmitOutcome,
+    Tile, TurnQueue,
+};
 
 fn main() {
     tracing_subscriber::fmt()
@@ -34,20 +38,19 @@ fn main() {
         match command {
             Command::Turn(turns) => {
                 for _ in 0..turns {
-                    run_turn(&mut app);
-                    let history = app.world.resource::<SnapshotHistory>();
-                    broadcast_latest(snapshot_server.as_ref(), &history);
-
-                    let metrics = app.world.resource::<SimulationMetrics>();
-                    info!(
-                        target: "shadow_scale::server",
-                        turn = metrics.turn,
-                        grid_width = metrics.grid_size.0,
-                        grid_height = metrics.grid_size.1,
-                        total_mass = metrics.total_mass,
-                        avg_temp = metrics.avg_temperature,
-                        "turn.completed"
-                    );
+                    {
+                        let mut queue = app.world.resource_mut::<TurnQueue>();
+                        let awaiting = queue.awaiting();
+                        for faction in &awaiting {
+                            info!(
+                                target: "shadow_scale::server",
+                                %faction,
+                                "orders.auto_generated=end_turn"
+                            );
+                        }
+                        queue.force_submit_all(|_| FactionOrders::end_turn());
+                    }
+                    resolve_ready_turn(&mut app, snapshot_server.as_ref());
                 }
             }
             Command::Heat { entity, delta } => {
@@ -59,6 +62,12 @@ fn main() {
                     "command.applied=heat"
                 );
             }
+            Command::Orders { faction, orders } => {
+                handle_order_submission(&mut app, faction, orders, snapshot_server.as_ref());
+            }
+            Command::Rollback { tick } => {
+                handle_rollback(&mut app, tick, snapshot_server.as_ref());
+            }
         }
     }
 }
@@ -66,7 +75,17 @@ fn main() {
 #[derive(Debug)]
 enum Command {
     Turn(u32),
-    Heat { entity: u64, delta: i64 },
+    Heat {
+        entity: u64,
+        delta: i64,
+    },
+    Orders {
+        faction: FactionId,
+        orders: FactionOrders,
+    },
+    Rollback {
+        tick: u64,
+    },
 }
 
 fn spawn_command_listener(bind_addr: std::net::SocketAddr) -> Receiver<Command> {
@@ -137,6 +156,24 @@ fn parse_command(input: &str) -> Option<Command> {
             let delta: i64 = parts.next().unwrap_or("100000").parse().ok()?;
             Some(Command::Heat { entity, delta })
         }
+        "order" => {
+            let faction: u32 = parts.next()?.parse().ok()?;
+            let directive = parts.next().unwrap_or("ready");
+            match directive {
+                "ready" | "end" | "commit" => Some(Command::Orders {
+                    faction: FactionId(faction),
+                    orders: FactionOrders::end_turn(),
+                }),
+                other => {
+                    warn!("Unsupported order directive: {}", other);
+                    None
+                }
+            }
+        }
+        "rollback" => {
+            let target: u64 = parts.next()?.parse().ok()?;
+            Some(Command::Rollback { tick: target })
+        }
         _ => None,
     }
 }
@@ -147,5 +184,135 @@ fn apply_heat(app: &mut bevy::prelude::App, entity_bits: u64, delta_raw: i64) {
         tile.temperature = tile.temperature + Scalar::from_raw(delta_raw);
     } else {
         warn!("Entity {} not found for heat command", entity_bits);
+    }
+}
+
+fn handle_order_submission(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    orders: FactionOrders,
+    snapshot_server: Option<&SnapshotServer>,
+) {
+    let order_count = orders.orders.len();
+    let result = {
+        let mut queue = app.world.resource_mut::<TurnQueue>();
+        queue.submit_orders(faction, orders)
+    };
+
+    match result {
+        Ok(SubmitOutcome::Accepted { remaining }) => info!(
+            target: "shadow_scale::server",
+            %faction,
+            order_count,
+            remaining,
+            "orders.accepted"
+        ),
+        Ok(SubmitOutcome::ReadyToResolve) => {
+            info!(
+                target: "shadow_scale::server",
+                %faction,
+                order_count,
+                "orders.ready_to_resolve"
+            );
+            resolve_ready_turn(app, snapshot_server);
+        }
+        Err(SubmitError::UnknownFaction(f)) => warn!(
+            target: "shadow_scale::server",
+            %f,
+            "orders.rejected=unknown_faction"
+        ),
+        Err(SubmitError::DuplicateSubmission(f)) => warn!(
+            target: "shadow_scale::server",
+            %f,
+            "orders.rejected=duplicate_submission"
+        ),
+    }
+}
+
+fn resolve_ready_turn(app: &mut bevy::prelude::App, snapshot_server: Option<&SnapshotServer>) {
+    let ready_orders = {
+        let mut queue = app.world.resource_mut::<TurnQueue>();
+        if !queue.is_ready() {
+            warn!(
+                target: "shadow_scale::server",
+                awaiting = ?queue.awaiting(),
+                "turn.resolve_skipped=awaiting_orders"
+            );
+            return;
+        }
+        queue.drain_ready_orders()
+    };
+
+    apply_orders(&ready_orders);
+    run_turn(app);
+
+    {
+        let mut queue = app.world.resource_mut::<TurnQueue>();
+        queue.advance_turn();
+    }
+
+    let history = app.world.resource::<SnapshotHistory>();
+    broadcast_latest(snapshot_server, history);
+
+    let metrics = app.world.resource::<SimulationMetrics>();
+    info!(
+        target: "shadow_scale::server",
+        turn = metrics.turn,
+        grid_width = metrics.grid_size.0,
+        grid_height = metrics.grid_size.1,
+        total_mass = metrics.total_mass,
+        avg_temp = metrics.avg_temperature,
+        "turn.completed"
+    );
+}
+
+fn apply_orders(submissions: &[(FactionId, FactionOrders)]) {
+    for (faction, orders) in submissions {
+        info!(
+            target: "shadow_scale::server",
+            %faction,
+            directives = orders.orders.len(),
+            "orders.applied"
+        );
+    }
+}
+
+fn handle_rollback(
+    app: &mut bevy::prelude::App,
+    tick: u64,
+    snapshot_server: Option<&SnapshotServer>,
+) {
+    let entry: Option<StoredSnapshot> = {
+        let history = app.world.resource::<SnapshotHistory>();
+        history.entry(tick)
+    };
+
+    let Some(entry) = entry else {
+        warn!(
+            target: "shadow_scale::server",
+            tick,
+            "rollback.failed=missing_snapshot"
+        );
+        return;
+    };
+
+    restore_world_from_snapshot(&mut app.world, entry.snapshot.as_ref());
+    {
+        let mut tick_res = app.world.resource_mut::<SimulationTick>();
+        tick_res.0 = tick;
+    }
+    {
+        let mut history = app.world.resource_mut::<SnapshotHistory>();
+        history.reset_to_entry(&entry);
+    }
+
+    warn!(
+        target: "shadow_scale::server",
+        tick,
+        "rollback.completed -- clients should reconnect to receive fresh state"
+    );
+
+    if let Some(server) = snapshot_server {
+        server.broadcast(entry.encoded_snapshot.as_ref());
     }
 }

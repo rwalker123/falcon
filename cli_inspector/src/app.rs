@@ -7,7 +7,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::prelude::*;
 use sim_proto::WorldDelta;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::ui::{draw_ui, UiState};
 
@@ -65,10 +65,13 @@ impl InspectorApp {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break,
                         KeyCode::Char(' ') => {
-                            if let Err(err) = self.command_sender.send(ClientCommand::Turn(1)) {
-                                error!("Failed to send turn command: {}", err);
+                            if let Err(err) = self
+                                .command_sender
+                                .send(ClientCommand::SubmitOrders { faction: 0 })
+                            {
+                                error!("Failed to submit orders: {}", err);
                             } else {
-                                info!("Requested turn +1");
+                                info!("Submitted orders for faction 0");
                             }
                         }
                         KeyCode::Char('t') => {
@@ -76,6 +79,23 @@ impl InspectorApp {
                                 error!("Failed to send turn command: {}", err);
                             } else {
                                 info!("Requested turn +10");
+                            }
+                        }
+                        KeyCode::Char('b') => {
+                            if let Some(current_tick) = self.ui_state.latest_tick() {
+                                if current_tick == 0 {
+                                    warn!("Cannot rollback before tick 0");
+                                } else if let Err(err) =
+                                    self.command_sender.send(ClientCommand::Rollback {
+                                        tick: current_tick.saturating_sub(1),
+                                    })
+                                {
+                                    error!("Failed to send rollback command: {}", err);
+                                } else {
+                                    info!("Requested rollback to tick {}", current_tick - 1);
+                                }
+                            } else {
+                                warn!("No snapshot history recorded yet");
                             }
                         }
                         KeyCode::Char('h') => {
@@ -111,4 +131,6 @@ pub fn channel() -> (UnboundedSender<WorldDelta>, UnboundedReceiver<WorldDelta>)
 pub enum ClientCommand {
     Turn(u32),
     Heat { entity: u64, delta: i64 },
+    SubmitOrders { faction: u32 },
+    Rollback { tick: u64 },
 }

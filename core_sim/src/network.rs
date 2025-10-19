@@ -69,8 +69,8 @@ pub fn start_snapshot_server(bind_addr: std::net::SocketAddr) -> Option<Snapshot
 }
 
 pub fn broadcast_latest(server: Option<&SnapshotServer>, history: &SnapshotHistory) {
-    if let (Some(server), Some(bytes)) = (server, history.encoded_delta.clone()) {
-        server.broadcast(&bytes);
+    if let (Some(server), Some(bytes)) = (server, history.encoded_delta.as_ref()) {
+        server.broadcast(bytes.as_ref());
     }
 }
 

@@ -285,6 +285,30 @@ Population is modeled as a dynamic set of age cohorts, each with distinct roles,
 
 ---
 
+## 7b. Population Sentiment Sphere
+
+Collective mood is modeled as a multi-axis vector rather than a single morale metric. Each axis represents a societal force, producing a “sentiment sphere” whose position determines which quadrant of civic behavior the population inhabits.
+
+### Core Axes
+- **Knowledge Access ↔ Information Scarcity**: Literacy, education policy, and media openness pull toward informed agency; censorship, propaganda, or infrastructure collapse drive ignorance.
+- **Trust in Institutions ↔ Suspicion**: Transparent governance, resilient welfare, and reliable logistics build confidence; corruption, broken promises, and espionage leaks push toward paranoia.
+- **Equity Perception ↔ Wealth Estrangement**: Fair distribution of resources, social mobility, and responsive policy generate cohesion; hoarding elites, captured markets, or failed reforms trigger resentment.
+- **Agency ↔ Fatalism**: Civic participation, successful collective action, and cultural narratives empower; repression, failed protests, or overwhelming calamities erode belief in change.
+
+### Quadrant Behaviors
+- **Empowered Cohesion** (knowledgeable + trusting): Enables rapid mobilization for mega-projects, scientific leaps, and volunteer defense.
+- **Informed Resistance** (knowledgeable + suspicious): Fuels reform movements, whistleblowers, or covert separatism; high espionage utility.
+- **Complacent Stability** (uninformed + trusting): Maintains order but risks stagnation; vulnerable to disruptive revelations or external meddling.
+- **Volatile Despair** (uninformed + suspicious): Breeds riots, desertion, radicalization, or collapse cascades.
+
+### System Integration
+- Sentiment drift occurs each tick via weighted inputs from policies, events, espionage ops, propaganda, wealth distribution, and infrastructure outages.
+- Threshold crossings unlock factional agendas, trigger civil events (strikes, celebrations, coups), or modify logistics efficiency and research throughput.
+- Espionage and diplomacy actions can nudge specific axes (smuggled information, false-flag leaks, cultural exchanges) enabling soft-power strategies.
+- Players can invest in “Sentiment Projects” (education reforms, media platforms, wealth redistribution) to stabilize or intentionally steer the sphere for strategic outcomes.
+
+---
+
 ## 8. Trade & Diplomacy Systems
 Trade, cooperation, and espionage form the connective tissue of global interaction.
 
@@ -864,7 +888,38 @@ Key next steps:
 - **Determinism**: Replace f32 with `glam::DVec` or fixed-point `rust_fixed::FixedI64` for critical calculations. Disable parallel unpredictability by ordering `SystemSet`s and using `run_if` guards. Seed RNG with reproducible `ChaCha20Rng` keyed by world seed + tick.
 - **Serialization**: Implement ECS snapshot using `bevy_reflect` + custom `FlatBuffers` schema (components per archetype) plus per-tick delta (component insert/update/remove). Provide `serde` fallback for early iteration. Store snapshots in ring buffer for rewind.
 - **Networking Stub**: Expose snapshot stream over local TCP/WebSocket (via `tokio`/`bevy_tungstenite`). For prototype, support CLI polling and future UI subscribers.
-- **CLI Inspector**: Build with `ratatui`/`crossterm`. Features: entity query browser (filters by component), resource dashboards (energy totals, population), command palette (pause/resume, step, modify component). Support scriptable macros via Lua/JS optional plugin.
+- **CLI Inspector**: Build with `ratatui`/`crossterm`. Features: entity query browser (filters by component), resource dashboards (energy totals, population), command palette (pause/resume, step, modify component). Add a Sentiment Sphere panel that renders the four-quadrant diagram as a heatmap, overlays current vector coordinates, and lists the top drivers nudging each axis (policies, events, wealth distribution). Couple the panel with demographic readouts (age cohorts, workforce allocation) so inspectors can correlate sentiment drift to population structure in real time. Support scriptable macros via Lua/JS optional plugin.
+- **Sentiment UI Mock**: Initial TUI wireframe to align engineering scope and UX expectations.
+
+```text
++------------------------------+---------------------------+
+| Sentiment Sphere             | Axis Drivers              |
+|                              | Knowledge Δ:   +0.12      |
+|          ^ Trust             | Wealth Δ:      -0.05      |
+|          |                   | Agency Δ:      +0.09      |
+|    Suspicion ●               | Information Δ: -0.02      |
+|          |                   |                           |
+|          v Fatalism          | Cohort Snapshot           |
+|  Quadrant Heatmap            | Youth:        28%         |
+|  (color = intensity)         | Workers:      42%         |
+|                              | Specialists:  15%         |
+|  Legend: Empowered,          | Seniors:      15%         |
+|  Resistance, Stability,      |                           |
+|  Despair                     |                           |
++------------------------------+---------------------------+
+| Events & Controls                                       |
+|  T+00542  Policy: Education Charter   Axis +Knowledge    |
+|  T+00545  Espionage Leak              Axis +Suspicion    |
+|                                                         |
+|  [P]ause  [>]Step  [R]ewind  [E]dit Axis Bias           |
++---------------------------------------------------------+
+```
+- **Sentiment UI Task Breakdown**:
+  1. Implement quadrant heatmap widget with vector overlay and color legend.
+  2. Surface axis driver diagnostics (top five contributors per tick, deltas, source tags).
+  3. Integrate demographic snapshot panel pulling from population cohorts and workforce allocation.
+  4. Extend event log to include sentiment-affecting actions with axis annotations.
+  5. Wire controls for axis bias editing and playback (pause/step/rewind) into existing command palette.
 - **Profiling & Metrics**: Integrate `bevy_mod_debugdump` for schedule graph, `tracing` crate + `tracing-subscriber` to emit tick duration, system timings. Provide CLI command to dump latest metrics.
 - **Testing Harness**: Determinism test comparing tick-by-tick hashes across two runs. Golden snapshot test verifying serialization matches schema. Benchmark harness measuring tick time at 10k/50k/100k entities.
 - **Toolchain**: Use `cargo make` tasks (`make run`, `make profile`, `make snapshot_test`). Continuous integration via GitHub Actions (linux, windows). Document setup in `README` and architecture notes.

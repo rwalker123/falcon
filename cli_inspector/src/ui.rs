@@ -54,6 +54,10 @@ impl UiState {
             .front()
             .and_then(|delta| delta.tiles.first().map(|tile| tile.entity))
     }
+
+    pub fn latest_tick(&self) -> Option<u64> {
+        self.recent_ticks.front().map(|delta| delta.header.tick)
+    }
 }
 
 pub fn draw_ui(frame: &mut Frame, state: &UiState) {
@@ -96,11 +100,15 @@ fn draw_commands(frame: &mut Frame, area: Rect) {
     let lines = vec![
         Line::from(vec![
             Span::styled("space", Style::default().fg(Color::Yellow)),
-            Span::raw("  advance 1 turn"),
+            Span::raw("  submit orders (faction 0)"),
         ]),
         Line::from(vec![
             Span::styled("t", Style::default().fg(Color::Yellow)),
-            Span::raw("      advance 10 turns"),
+            Span::raw("      auto-resolve 10 turns"),
+        ]),
+        Line::from(vec![
+            Span::styled("b", Style::default().fg(Color::Yellow)),
+            Span::raw("      rollback to previous tick"),
         ]),
         Line::from(vec![
             Span::styled("h", Style::default().fg(Color::Yellow)),

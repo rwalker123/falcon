@@ -82,6 +82,16 @@ impl ElementKind {
             _ => ElementKind::Lumina,
         }
     }
+
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(ElementKind::Ferrite),
+            1 => Some(ElementKind::Arborite),
+            2 => Some(ElementKind::Zephyrite),
+            3 => Some(ElementKind::Lumina),
+            _ => None,
+        }
+    }
 }
 
 impl From<ElementKind> for u8 {

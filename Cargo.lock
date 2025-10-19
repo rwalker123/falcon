@@ -1544,6 +1544,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sim_proto",
+ "thiserror",
  "tracing",
  "tracing-subscriber",
 ]

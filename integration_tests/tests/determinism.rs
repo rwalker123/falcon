@@ -9,7 +9,8 @@ fn run_simulation(ticks: usize) -> WorldSnapshot {
     app.world
         .resource::<SnapshotHistory>()
         .last_snapshot
-        .clone()
+        .as_ref()
+        .map(|snapshot| (**snapshot).clone())
         .expect("snapshot available")
 }
 

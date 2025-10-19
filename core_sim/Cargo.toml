@@ -40,6 +40,7 @@ sim_proto = { path = "../sim_proto" }
 crossbeam-channel = "0.5"
 log = "0.4"
 env_logger = "0.11"
+thiserror = "1.0"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
