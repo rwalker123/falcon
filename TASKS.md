@@ -22,6 +22,13 @@
 - [x] Extend event log to annotate sentiment-shifting actions with axis deltas (Owner: Omar, Estimate: 1d).
 - [x] Wire axis bias editing and playback controls into command palette (Owner: Jun, Estimate: 1.5d).
 
+### Influential Individuals System
+- [ ] Extend `sim_schema`/`sim_runtime` with `InfluentialIndividualState` and helper APIs (Owner: Mira, Estimate: 1.5d).
+- [ ] Implement `InfluentialRoster` resource and tick systems that spawn/grow influencers in `core_sim` (Owner: Ravi, Estimate: 2d).
+- [ ] Couple influencer outputs into sentiment axis deltas and other subsystems (Owner: Elena, Estimate: 2d).
+- [ ] Expose support/suppress commands and broadcast roster deltas via snapshot stream (Owner: Omar, Estimate: 1.5d).
+- [ ] Add CLI inspector panel summarizing active influencers and their impacts (Owner: Jun, Estimate: 1.5d).
+
 ## Tooling & Tests
 - [x] Add determinism regression test comparing dual runs.
 - [x] Introduce benchmark harness for 10k/50k/100k entities.

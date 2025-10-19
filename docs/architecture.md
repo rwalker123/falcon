@@ -20,6 +20,14 @@
   - Event generation: trigger uprisings, reforms, or global projects once influence thresholds are crossed.
   - Counter-play: espionage, propaganda, alliances to sway or neutralize a rising figure.
 
+#### Implementation Notes
+- **Data Model**: add `InfluentialIndividualState` to `sim_schema` capturing id, domains, influence magnitude, scope (generational/regional), notoriety, and growth rate. Runtime counterpart in `sim_runtime` provides helper methods for sentiment deltas.
+- **Simulation Integration**: introduce a `InfluentialRoster` resource in `core_sim` with systems that (a) spawn new influencers from world conditions, (b) update influence each tick, and (c) emit sentiment/production modifiers.
+- **Sentiment Coupling**: extend the sentiment pipeline to consume roster output—axis deltas aggregated per influencer, with clamps/decay for stability.
+- **Player Interaction**: extend command surface (`support <id>`, `suppress <id>` or via future protobuf API) and broadcast deltas when influence changes materially.
+- **Tooling**: `cli_inspector` panel listing influencers, domains, and projected impacts; event log entries when influence thresholds unlock actions or crises.
+- **Persistence**: snapshot history should track influencer roster state to keep rollbacks deterministic.
+
 ## Turn Loop
 ```text
 per-faction orders -> command server -> turn queue -> run_turn -> snapshot -> broadcaster -> clients
