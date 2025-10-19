@@ -5,7 +5,7 @@ use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::backend::CrosstermBackend;
 use ratatui::prelude::*;
-use sim_proto::WorldDelta;
+use sim_runtime::WorldDelta;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tracing::{error, info, trace, warn};
 

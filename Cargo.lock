@@ -1308,7 +1308,7 @@ dependencies = [
  "ratatui",
  "serde",
  "serde_json",
- "sim_proto",
+ "sim_runtime",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1543,7 +1543,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "sim_proto",
+ "sim_runtime",
  "thiserror",
  "tracing",
  "tracing-subscriber",
@@ -2339,7 +2339,7 @@ dependencies = [
  "core_sim",
  "serde",
  "serde_json",
- "sim_proto",
+ "sim_runtime",
 ]
 
 [[package]]
@@ -3487,14 +3487,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "sim_proto"
+name = "sim_runtime"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "rand",
+ "serde",
+ "serde_json",
+ "sim_schema",
+ "thiserror",
+]
+
+[[package]]
+name = "sim_schema"
 version = "0.1.0"
 dependencies = [
  "ahash",
  "bincode",
+ "rand",
  "serde",
  "serde_json",
- "thiserror",
 ]
 
 [[package]]

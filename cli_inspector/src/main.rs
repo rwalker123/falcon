@@ -5,7 +5,7 @@ use std::time::Duration;
 use bincode::deserialize;
 use clap::Parser;
 use color_eyre::Result;
-use sim_proto::WorldDelta;
+use sim_runtime::WorldDelta;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedSender;

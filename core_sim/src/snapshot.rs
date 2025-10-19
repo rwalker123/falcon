@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use bevy::prelude::*;
 use log::warn;
-use sim_proto::{
+use sim_runtime::{
     encode_delta, encode_snapshot, AxisBiasState, GenerationState, LogisticsLinkState,
     PopulationCohortState, PowerNodeState, SnapshotHeader, TileState, WorldDelta, WorldSnapshot,
 };

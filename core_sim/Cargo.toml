@@ -36,7 +36,7 @@ bevy_reflect = "0.13"
 bevy_ecs = "0.13"
 bevy_utils = "0.13"
 rayon = "1.8"
-sim_proto = { path = "../sim_proto" }
+sim_runtime = { path = "../sim_runtime" }
 crossbeam-channel = "0.5"
 log = "0.4"
 env_logger = "0.11"

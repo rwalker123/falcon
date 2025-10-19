@@ -3,9 +3,9 @@
 ## Core Simulation (`core_sim`)
 - [x] Flesh out deterministic ECS systems (materials, logistics, population).
 - [x] Replace placeholder system with staged schedules and fixed-point math.
-- [x] Add snapshot/delta serialization hooks feeding `sim_proto` schemas.
+- [x] Add snapshot/delta serialization hooks feeding `sim_schema` schemas.
 
-## Serialization & Protocol (`sim_proto`)
+## Data Contracts (`sim_schema` + `sim_runtime`)
 - [x] Define FlatBuffers schema for snapshots and deltas.
 - [x] Implement hash calculation for determinism validation.
 - [x] Provide serde-compatible adapters for early testing.

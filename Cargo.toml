@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "core_sim",
-    "sim_proto",
+    "sim_schema",
+    "sim_runtime",
     "cli_inspector",
     "integration_tests"
 ]

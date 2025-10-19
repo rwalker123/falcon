@@ -1,5 +1,5 @@
 use core_sim::{build_headless_app, SnapshotHistory};
-use sim_proto::WorldSnapshot;
+use sim_runtime::WorldSnapshot;
 
 fn run_simulation(ticks: usize) -> WorldSnapshot {
     let mut app = build_headless_app();

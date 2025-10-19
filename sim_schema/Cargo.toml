@@ -1,0 +1,15 @@
+[package]
+name = "sim_schema"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "sim_schema"
+path = "src/lib.rs"
+
+[dependencies]
+ahash = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+serde_json = "1.0"
+rand = { version = "0.8", features = ["small_rng"] }

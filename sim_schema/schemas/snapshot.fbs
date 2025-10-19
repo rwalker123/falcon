@@ -1,5 +1,5 @@
 // Shadow-Scale FlatBuffers schema for snapshot and delta envelopes.
-// This schema mirrors the serde structs in `sim_proto/src/lib.rs` and exists so
+// This schema mirrors the serde structs in `sim_schema/src/lib.rs` and exists so
 // alternative frontends can generate strongly typed bindings without relying on
 // Rust. Numerical fields follow the fixed-point conventions used by core_sim
 // (`Scalar` is stored as 1e-6 scaled integers).

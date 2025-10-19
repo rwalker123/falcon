@@ -3,7 +3,8 @@
 This workspace scaffolds the **Prototype Plan (a)** headless simulation stack:
 
 - `core_sim`: Bevy-based deterministic simulation core.
-- `sim_proto`: Shared serialization schemas.
+- `sim_schema`: Shared serialization schemas.
+- `sim_runtime`: Shared runtime helpers re-used by tools.
 - `cli_inspector`: Terminal-based inspector connecting to the headless sim.
 - `integration_tests`: Integration and determinism regression tests.
 
@@ -31,6 +32,11 @@ Inspector shortcuts:
 - `space` advance one turn
 - `t` advance ten turns
 - `h` heat the most recent tile sample
+- `.` step a single turn
+- `p` toggle auto-play
+- `1-4` select sentiment axis
+- `=` / `-` adjust selected axis bias
+- `0` reset axis biases
 - `q` or `Ctrl+C` exit the inspector (the server keeps running)
 
 The inspector now renders logs in a dedicated pane (see `docs/metrics.md`); tracing output no longer scribbles over the tick table.

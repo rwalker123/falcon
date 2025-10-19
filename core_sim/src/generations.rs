@@ -2,7 +2,7 @@ use bevy::prelude::Resource;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use crate::scalar::{scalar_from_f32, Scalar};
-use sim_proto::GenerationState;
+use sim_runtime::GenerationState;
 
 pub type GenerationId = u16;
 

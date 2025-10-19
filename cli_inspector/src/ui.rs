@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 
-use sim_proto::{
+use sim_runtime::{
     AxisBiasState, GenerationState, PopulationCohortState, PowerNodeState, TileState, WorldDelta,
 };
 

@@ -6,7 +6,7 @@ prototype to visualize state or issue turn commands.
 ## Ports & Protocols
 - **Snapshot Stream**: `tcp://127.0.0.1:41000` (configurable via `SimulationConfig::snapshot_bind`).
   - Frames are `[u32 length][payload bytes]` encoded with `bincode` using the
-    structures from `sim_proto::src/lib.rs`.
+    structures from `sim_schema::src/lib.rs`. Runtime helpers such as axis bias transforms live in `sim_runtime`.
   - Consumers should read 4-byte little-endian length, then deserialize into
     `WorldDelta` (Rust) or use the FlatBuffers schema.
 - **Command Port**: `tcp://127.0.0.1:41001` (configurable via `SimulationConfig::command_bind`).
@@ -14,11 +14,12 @@ prototype to visualize state or issue turn commands.
   - Supported commands:
     - `turn <n>` – advances `n` turns (default 1).
     - `heat <entity_bits> <delta>` – adjusts tile temperature by fixed-point delta.
+    - `bias <axis_index> <value>` – sets the authoritative sentiment axis bias (value clamped to [-1.0, 1.0]).
   - Future commands will follow the same `verb args` pattern; unrecognized
     commands return no response but are logged.
 
 ## Data Contract
-- See `sim_proto/schemas/snapshot.fbs` for FlatBuffers schema equivalent to the Rust structs.
+- See `sim_schema/schemas/snapshot.fbs` for FlatBuffers schema equivalent to the Rust structs.
 - Fixed-point values (`mass`, `temperature`, etc.) use a scale of 1e-6.
 - Entities are encoded as `u64` `Entity::to_bits()` values; clients must map them to meaningful identifiers if needed.
 

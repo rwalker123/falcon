@@ -307,6 +307,14 @@ Collective mood is modeled as a multi-axis vector rather than a single morale me
 - Espionage and diplomacy actions can nudge specific axes (smuggled information, false-flag leaks, cultural exchanges) enabling soft-power strategies.
 - Players can invest in “Sentiment Projects” (education reforms, media platforms, wealth redistribution) to stabilize or intentionally steer the sphere for strategic outcomes.
 
+### Influential Individuals (Emergent Narrative Hooks)
+- Track notable figures who can positively or negatively sway sentiment axes or quadrants.
+- Influence scope can be generational, regional, or global.
+- Domains impacted include revolutions, technological leaps, Great Discoveries, production breakthroughs, logistics reforms, and humanitarian efforts.
+- Influentials begin as localized “whispers” and grow over time; the player may support, co-opt, or suppress them as their influence escalates.
+- Actions taken toward an influential feed back into all affected systems—silencing a scientist might stall discoveries, backing a charismatic leader might incite revolution, etc.
+- Historical inspirations: revolutionary leaders (Castro, Stalin analogues), technologists (Gates, Jobs), scientists (Einstein), industrialists (railroad pioneers), humanitarian icons.
+
 ---
 
 ## 8. Trade & Diplomacy Systems
@@ -883,7 +891,7 @@ Key next steps:
 - Produce artifacts (code branch, docs) that can be shared with frontend and tools teams.
 
 **Technical Approach**
-- **Project Layout**: Cargo workspace with `core_sim` (Bevy App, ECS systems), `sim_proto` (component definitions, serialization schemas), `cli_inspector` (tui/CLI client), `integration_tests`.
+- **Project Layout**: Cargo workspace with `core_sim` (Bevy App, ECS systems), `sim_schema` (data contracts, serialization schemas), `sim_runtime` (shared runtime helpers), `cli_inspector` (tui/CLI client), `integration_tests`.
 - **ECS Setup**: Use Bevy 0.13 w/ `MinimalPlugins + ScheduleRunnerPlugin` for headless execution. Define core component sets: `Element`, `Tile`, `LogisticsLink`, `PopulationCohort`, `PowerNode`. Systems grouped into deterministic stages (Input → Simulation → Output). Enforce fixed timestep via `FixedMainSchedule`.
 - **Determinism**: Replace f32 with `glam::DVec` or fixed-point `rust_fixed::FixedI64` for critical calculations. Disable parallel unpredictability by ordering `SystemSet`s and using `run_if` guards. Seed RNG with reproducible `ChaCha20Rng` keyed by world seed + tick.
 - **Serialization**: Implement ECS snapshot using `bevy_reflect` + custom `FlatBuffers` schema (components per archetype) plus per-tick delta (component insert/update/remove). Provide `serde` fallback for early iteration. Store snapshots in ring buffer for rewind.

@@ -13,7 +13,7 @@ use core_sim::{
     SentimentAxisBias, SimulationConfig, SimulationTick, SnapshotHistory, StoredSnapshot,
     SubmitError, SubmitOutcome, Tile, TurnQueue,
 };
-use sim_proto::AxisBiasState;
+use sim_runtime::AxisBiasState;
 
 fn main() {
     tracing_subscriber::fmt()

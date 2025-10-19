@@ -2,10 +2,23 @@
 
 ## Overview
 - **Headless Core (`core_sim`)**: Bevy-based ECS that resolves a single turn via `run_turn`. Systems run in the order materials → logistics → population → power → tick increment → snapshot capture.
-- **Networking**: Thin TCP layer (`core_sim::network`) streams snapshot deltas and receives text commands (`turn N`, `heat entity delta`).
-- **Serialization**: Snapshots/deltas represented via Rust structs and `sim_proto::schemas/snapshot.fbs` for cross-language clients.
+- **Networking**: Thin TCP layer (`core_sim::network`) streams snapshot deltas and receives text commands (`turn N`, `heat entity delta`, `bias axis value`).
+- **Serialization**: Snapshots/deltas represented via Rust structs and `sim_schema::schemas/snapshot.fbs` for cross-language clients.
+- **Shared Runtime (`sim_runtime`)**: Lightweight helpers (command parsing, bias handling, validation) shared by tooling and the headless core.
 - **Inspector Client (`cli_inspector`)**: Ratatui TUI fed by snapshot stream; issues commands with keyboard shortcuts.
 - **Benchmark & Tests**: Criterion harness (`cargo bench -p core_sim --bench turn_bench`) and determinism tests ensure turn consistency.
+
+### Influential Individuals System (Concept Backlog)
+- Model a roster of emergent historical figures (“influentials”) whose personal influence modifies population sentiment axes/quadrants in addition to other systems (technology, logistics, production, diplomacy).
+- Influence can be scoped by **generation** (youth idol, elder statesperson), **region** (city, nation, world), and **domain** (political, scientific, industrial, humanitarian).
+- Influentials begin as small “whispers” with localized impact; over time their influence score can grow, unlocking events such as revolutions, technological breakthroughs, or societal reforms.
+- Player actions allow supporting, co‑opting, or suppressing an influential. These interventions feed back into the Population Sentiment Sphere and any systems the figure touches (e.g., silencing a physicist may stall Great Discoveries).
+- Examples: revolutionary leaders (Castro, Stalin analogues), visionary technologists (Jobs, Gates), scientific pioneers (Einstein), industrial magnates (railroad inventor), humanitarians.
+- System hooks:
+  - Sentiment: adjust axis deltas per tick based on influence magnitude/sign.
+  - Discovery/Production pipelines: boost or penalize progress when a figure champions (or obstructs) a domain.
+  - Event generation: trigger uprisings, reforms, or global projects once influence thresholds are crossed.
+  - Counter-play: espionage, propaganda, alliances to sway or neutralize a rising figure.
 
 ## Turn Loop
 ```text
