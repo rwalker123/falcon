@@ -10,9 +10,10 @@ use core_sim::metrics::{collect_metrics, SimulationMetrics};
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
     build_headless_app, restore_world_from_snapshot, run_turn, FactionId, FactionOrders, Scalar,
-    SimulationConfig, SimulationTick, SnapshotHistory, StoredSnapshot, SubmitError, SubmitOutcome,
-    Tile, TurnQueue,
+    SentimentAxisBias, SimulationConfig, SimulationTick, SnapshotHistory, StoredSnapshot,
+    SubmitError, SubmitOutcome, Tile, TurnQueue,
 };
+use sim_proto::AxisBiasState;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -68,6 +69,9 @@ fn main() {
             Command::Rollback { tick } => {
                 handle_rollback(&mut app, tick, snapshot_server.as_ref());
             }
+            Command::AxisBias { axis, value } => {
+                handle_axis_bias(&mut app, axis, value, snapshot_server.as_ref());
+            }
         }
     }
 }
@@ -85,6 +89,10 @@ enum Command {
     },
     Rollback {
         tick: u64,
+    },
+    AxisBias {
+        axis: usize,
+        value: f32,
     },
 }
 
@@ -174,6 +182,11 @@ fn parse_command(input: &str) -> Option<Command> {
             let target: u64 = parts.next()?.parse().ok()?;
             Some(Command::Rollback { tick: target })
         }
+        "bias" => {
+            let axis: usize = parts.next()?.parse().ok()?;
+            let value: f32 = parts.next()?.parse().ok()?;
+            Some(Command::AxisBias { axis, value })
+        }
         _ => None,
     }
 }
@@ -227,6 +240,54 @@ fn handle_order_submission(
             "orders.rejected=duplicate_submission"
         ),
     }
+}
+
+fn handle_axis_bias(
+    app: &mut bevy::prelude::App,
+    axis: usize,
+    value: f32,
+    snapshot_server: Option<&SnapshotServer>,
+) {
+    if axis >= 4 {
+        warn!(
+            target: "shadow_scale::server",
+            axis,
+            "axis_bias.rejected=invalid_axis"
+        );
+        return;
+    }
+
+    let clamped = value.clamp(-1.0, 1.0);
+    {
+        let mut bias_res = app.world.resource_mut::<SentimentAxisBias>();
+        bias_res.set_axis(axis, Scalar::from_f32(clamped));
+    }
+
+    let bias_state = {
+        let bias_res = app.world.resource::<SentimentAxisBias>();
+        AxisBiasState {
+            knowledge: bias_res.values[0].raw(),
+            trust: bias_res.values[1].raw(),
+            equity: bias_res.values[2].raw(),
+            agency: bias_res.values[3].raw(),
+        }
+    };
+
+    let broadcast_payload = {
+        let mut history = app.world.resource_mut::<SnapshotHistory>();
+        history.update_axis_bias(bias_state)
+    };
+
+    if let (Some(server), Some(payload)) = (snapshot_server, broadcast_payload) {
+        server.broadcast(payload.as_ref());
+    }
+
+    info!(
+        target: "shadow_scale::server",
+        axis,
+        value = clamped,
+        "axis_bias.updated"
+    );
 }
 
 fn resolve_ready_turn(app: &mut bevy::prelude::App, snapshot_server: Option<&SnapshotServer>) {

@@ -69,6 +69,7 @@ pub struct PopulationCohortState {
     pub home: u64,
     pub size: u32,
     pub morale: i64,
+    pub generation: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -79,6 +80,14 @@ pub struct PowerNodeState {
     pub efficiency: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AxisBiasState {
+    pub knowledge: i64,
+    pub trust: i64,
+    pub equity: i64,
+    pub agency: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorldSnapshot {
     pub header: SnapshotHeader,
@@ -86,6 +95,8 @@ pub struct WorldSnapshot {
     pub logistics: Vec<LogisticsLinkState>,
     pub populations: Vec<PopulationCohortState>,
     pub power: Vec<PowerNodeState>,
+    pub axis_bias: AxisBiasState,
+    pub generations: Vec<GenerationState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -99,6 +110,9 @@ pub struct WorldDelta {
     pub removed_populations: Vec<u64>,
     pub power: Vec<PowerNodeState>,
     pub removed_power: Vec<u64>,
+    pub axis_bias: Option<AxisBiasState>,
+    pub generations: Vec<GenerationState>,
+    pub removed_generations: Vec<u16>,
 }
 
 impl WorldSnapshot {
@@ -142,4 +156,14 @@ pub fn encode_delta_json(delta: &WorldDelta) -> serde_json::Result<String> {
 
 pub fn decode_delta_json(data: &str) -> serde_json::Result<WorldDelta> {
     serde_json::from_str(data)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GenerationState {
+    pub id: u16,
+    pub name: String,
+    pub bias_knowledge: i64,
+    pub bias_trust: i64,
+    pub bias_equity: i64,
+    pub bias_agency: i64,
 }

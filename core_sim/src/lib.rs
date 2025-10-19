@@ -4,6 +4,7 @@
 //! simulation when [`run_turn`] is invoked.
 
 mod components;
+mod generations;
 pub mod metrics;
 pub mod network;
 mod orders;
@@ -15,12 +16,13 @@ mod systems;
 use bevy::prelude::*;
 
 pub use components::{ElementKind, LogisticsLink, PopulationCohort, PowerNode, Tile};
+pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 
 pub use metrics::SimulationMetrics;
 pub use orders::{
     FactionId, FactionOrders, FactionRegistry, Order, SubmitError, SubmitOutcome, TurnQueue,
 };
-pub use resources::{SimulationConfig, SimulationTick, TileRegistry};
+pub use resources::{SentimentAxisBias, SimulationConfig, SimulationTick, TileRegistry};
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{restore_world_from_snapshot, SnapshotHistory, StoredSnapshot};
 
@@ -32,10 +34,13 @@ pub fn build_headless_app() -> App {
     let faction_registry = orders::FactionRegistry::default();
     let turn_queue = orders::TurnQueue::new(faction_registry.factions.clone());
     let snapshot_history = SnapshotHistory::with_capacity(config.snapshot_history_limit.max(1));
+    let generation_registry = GenerationRegistry::with_seed(0xC0FEBABE, 6);
 
     app.insert_resource(config)
         .insert_resource(SimulationTick::default())
+        .insert_resource(SentimentAxisBias::default())
         .insert_resource(snapshot_history)
+        .insert_resource(generation_registry)
         .insert_resource(faction_registry)
         .insert_resource(turn_queue)
         .add_plugins(MinimalPlugins)

@@ -1,6 +1,9 @@
 use bevy::{math::UVec2, prelude::*};
 
-use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
+use crate::{
+    generations::GenerationId,
+    scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar},
+};
 
 /// Represents a discrete tile in the simulation grid.
 #[derive(Component, Debug, Clone)]
@@ -115,6 +118,7 @@ pub struct PopulationCohort {
     pub home: Entity,
     pub size: u32,
     pub morale: Scalar,
+    pub generation: GenerationId,
 }
 
 /// Simple power node attached to a tile.

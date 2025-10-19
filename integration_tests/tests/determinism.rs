@@ -24,4 +24,6 @@ fn deterministic_snapshots_match() {
     assert_eq!(snapshot_a.logistics, snapshot_b.logistics);
     assert_eq!(snapshot_a.populations, snapshot_b.populations);
     assert_eq!(snapshot_a.power, snapshot_b.power);
+    assert_eq!(snapshot_a.axis_bias, snapshot_b.axis_bias);
+    assert_eq!(snapshot_a.generations, snapshot_b.generations);
 }

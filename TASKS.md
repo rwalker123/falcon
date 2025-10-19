@@ -16,11 +16,11 @@
 - [x] Add command palette to pause/step sim and mutate components.
 
 ### Sentiment Sphere Enhancements
-- [ ] Implement quadrant heatmap widget with vector overlay and legend (Owner: Mira, Estimate: 2d).
-- [ ] Surface axis driver diagnostics listing top contributors per tick (Owner: Ravi, Estimate: 1.5d).
-- [ ] Integrate demographic snapshot panel tied to population cohorts/workforce (Owner: Elena, Estimate: 2d).
-- [ ] Extend event log to annotate sentiment-shifting actions with axis deltas (Owner: Omar, Estimate: 1d).
-- [ ] Wire axis bias editing and playback controls into command palette (Owner: Jun, Estimate: 1.5d).
+- [x] Implement quadrant heatmap widget with vector overlay and legend (Owner: Mira, Estimate: 2d).
+- [x] Surface axis driver diagnostics listing top contributors per tick (Owner: Ravi, Estimate: 1.5d).
+- [x] Integrate demographic snapshot panel tied to population cohorts/workforce (Owner: Elena, Estimate: 2d).
+- [x] Extend event log to annotate sentiment-shifting actions with axis deltas (Owner: Omar, Estimate: 1d).
+- [x] Wire axis bias editing and playback controls into command palette (Owner: Jun, Estimate: 1.5d).
 
 ## Tooling & Tests
 - [x] Add determinism regression test comparing dual runs.

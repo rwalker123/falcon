@@ -1,16 +1,18 @@
 use std::collections::{HashMap, VecDeque};
+use std::hash::Hash;
 use std::sync::Arc;
 
 use bevy::prelude::*;
 use log::warn;
 use sim_proto::{
-    encode_delta, encode_snapshot, LogisticsLinkState, PopulationCohortState, PowerNodeState,
-    SnapshotHeader, TileState, WorldDelta, WorldSnapshot,
+    encode_delta, encode_snapshot, AxisBiasState, GenerationState, LogisticsLinkState,
+    PopulationCohortState, PowerNodeState, SnapshotHeader, TileState, WorldDelta, WorldSnapshot,
 };
 
 use crate::{
     components::{ElementKind, LogisticsLink, PopulationCohort, PowerNode, Tile},
-    resources::{SimulationConfig, SimulationTick, TileRegistry},
+    generations::{GenerationProfile, GenerationRegistry},
+    resources::{SentimentAxisBias, SimulationConfig, SimulationTick, TileRegistry},
     scalar::Scalar,
 };
 
@@ -50,6 +52,8 @@ pub struct SnapshotHistory {
     logistics: HashMap<u64, LogisticsLinkState>,
     populations: HashMap<u64, PopulationCohortState>,
     power: HashMap<u64, PowerNodeState>,
+    generations: HashMap<u16, GenerationState>,
+    axis_bias: AxisBiasState,
     history: VecDeque<StoredSnapshot>,
 }
 
@@ -71,6 +75,8 @@ impl SnapshotHistory {
             logistics: HashMap::new(),
             populations: HashMap::new(),
             power: HashMap::new(),
+            generations: HashMap::new(),
+            axis_bias: AxisBiasState::default(),
             history: VecDeque::new(),
         }
     }
@@ -120,6 +126,18 @@ impl SnapshotHistory {
             power_index.insert(state.entity, state.clone());
         }
 
+        let mut generations_index = HashMap::with_capacity(snapshot.generations.len());
+        for state in &snapshot.generations {
+            generations_index.insert(state.id, state.clone());
+        }
+
+        let axis_bias_state = snapshot.axis_bias.clone();
+        let axis_bias_delta = if self.axis_bias == axis_bias_state {
+            None
+        } else {
+            Some(axis_bias_state.clone())
+        };
+
         let delta = WorldDelta {
             header: snapshot.header.clone(),
             tiles: diff_new(&self.tiles, &tiles_index),
@@ -130,6 +148,9 @@ impl SnapshotHistory {
             removed_populations: diff_removed(&self.populations, &populations_index),
             power: diff_new(&self.power, &power_index),
             removed_power: diff_removed(&self.power, &power_index),
+            axis_bias: axis_bias_delta,
+            generations: diff_new(&self.generations, &generations_index),
+            removed_generations: diff_removed(&self.generations, &generations_index),
         };
 
         let snapshot_arc = Arc::new(snapshot);
@@ -140,6 +161,8 @@ impl SnapshotHistory {
         self.logistics = logistics_index;
         self.populations = populations_index;
         self.power = power_index;
+        self.generations = generations_index;
+        self.axis_bias = axis_bias_state;
         self.last_snapshot = Some(snapshot_arc);
         self.last_delta = Some(delta_arc);
         self.encoded_snapshot = Some(stored.encoded_snapshot.clone());
@@ -173,6 +196,13 @@ impl SnapshotHistory {
             .iter()
             .map(|state| (state.entity, state.clone()))
             .collect();
+        self.generations = entry
+            .snapshot
+            .generations
+            .iter()
+            .map(|state| (state.id, state.clone()))
+            .collect();
+        self.axis_bias = entry.snapshot.axis_bias.clone();
 
         self.last_snapshot = Some(entry.snapshot.clone());
         self.last_delta = Some(entry.delta.clone());
@@ -186,6 +216,64 @@ impl SnapshotHistory {
                 break;
             }
         }
+    }
+
+    pub fn update_axis_bias(&mut self, bias: AxisBiasState) -> Option<Arc<Vec<u8>>> {
+        if self.axis_bias == bias {
+            return None;
+        }
+
+        self.axis_bias = bias.clone();
+
+        let header = self
+            .last_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.header.clone())
+            .unwrap_or_default();
+
+        let delta = WorldDelta {
+            header,
+            tiles: Vec::new(),
+            removed_tiles: Vec::new(),
+            logistics: Vec::new(),
+            removed_logistics: Vec::new(),
+            populations: Vec::new(),
+            removed_populations: Vec::new(),
+            power: Vec::new(),
+            removed_power: Vec::new(),
+            axis_bias: Some(bias.clone()),
+            generations: Vec::new(),
+            removed_generations: Vec::new(),
+        };
+
+        let delta_arc = Arc::new(delta);
+        let encoded_delta =
+            Arc::new(encode_delta(delta_arc.as_ref()).expect("axis bias delta encoding failed"));
+        self.last_delta = Some(delta_arc.clone());
+        self.encoded_delta = Some(encoded_delta.clone());
+
+        if let Some(snapshot_arc) = self.last_snapshot.take() {
+            let mut snapshot = (*snapshot_arc).clone();
+            snapshot.axis_bias = bias.clone();
+            let encoded_snapshot =
+                Arc::new(encode_snapshot(&snapshot).expect("axis bias snapshot encoding failed"));
+            let snapshot_arc = Arc::new(snapshot);
+            self.last_snapshot = Some(snapshot_arc.clone());
+            self.encoded_snapshot = Some(encoded_snapshot);
+        }
+
+        if let Some(back) = self.history.back_mut() {
+            if let Some(snapshot_arc) = self.last_snapshot.as_ref() {
+                back.snapshot = snapshot_arc.clone();
+            }
+            back.delta = delta_arc.clone();
+            if let Some(encoded_snapshot) = self.encoded_snapshot.as_ref() {
+                back.encoded_snapshot = encoded_snapshot.clone();
+            }
+            back.encoded_delta = encoded_delta.clone();
+        }
+
+        Some(encoded_delta)
     }
 
     fn prune(&mut self) {
@@ -202,6 +290,8 @@ pub fn capture_snapshot(
     logistics_links: Query<(Entity, &LogisticsLink)>,
     populations: Query<(Entity, &PopulationCohort)>,
     power_nodes: Query<(Entity, &PowerNode)>,
+    registry: Res<GenerationRegistry>,
+    axis_bias: Res<SentimentAxisBias>,
     mut history: ResMut<SnapshotHistory>,
 ) {
     history.set_capacity(config.snapshot_history_limit.max(1));
@@ -230,6 +320,12 @@ pub fn capture_snapshot(
         .collect();
     power_states.sort_unstable_by_key(|state| state.entity);
 
+    let mut generation_states: Vec<GenerationState> =
+        registry.profiles().iter().map(generation_state).collect();
+    generation_states.sort_unstable_by_key(|state| state.id);
+
+    let axis_bias_state = axis_bias_state_from_resource(&axis_bias);
+
     let header = SnapshotHeader::new(
         tick.0,
         tile_states.len(),
@@ -244,6 +340,8 @@ pub fn capture_snapshot(
         logistics: logistics_states,
         populations: population_states,
         power: power_states,
+        axis_bias: axis_bias_state,
+        generations: generation_states,
     }
     .finalize();
 
@@ -349,6 +447,7 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             home: home_entity,
             size: cohort_state.size,
             morale: Scalar::from_raw(cohort_state.morale),
+            generation: cohort_state.generation,
         });
     }
 
@@ -375,10 +474,42 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             height: grid_size.y,
         });
     }
+
+    if let Some(mut generation_registry) = world.get_resource_mut::<GenerationRegistry>() {
+        generation_registry.update_from_states(&snapshot.generations);
+    } else {
+        world.insert_resource(GenerationRegistry::from_states(&snapshot.generations));
+    }
+
+    if let Some(mut bias_res) = world.get_resource_mut::<SentimentAxisBias>() {
+        apply_axis_bias_state_to_resource(&mut bias_res, &snapshot.axis_bias);
+    } else {
+        let mut bias_res = SentimentAxisBias::default();
+        apply_axis_bias_state_to_resource(&mut bias_res, &snapshot.axis_bias);
+        world.insert_resource(bias_res);
+    }
 }
 
-fn diff_new<T>(previous: &HashMap<u64, T>, current: &HashMap<u64, T>) -> Vec<T>
+fn axis_bias_state_from_resource(bias: &SentimentAxisBias) -> AxisBiasState {
+    let raw = bias.as_raw();
+    AxisBiasState {
+        knowledge: raw[0],
+        trust: raw[1],
+        equity: raw[2],
+        agency: raw[3],
+    }
+}
+
+fn apply_axis_bias_state_to_resource(resource: &mut SentimentAxisBias, state: &AxisBiasState) {
+    resource.values[0] = Scalar::from_raw(state.knowledge);
+    resource.values[1] = Scalar::from_raw(state.trust);
+    resource.values[2] = Scalar::from_raw(state.equity);
+    resource.values[3] = Scalar::from_raw(state.agency);
+}
+
+fn diff_new<K, T>(previous: &HashMap<K, T>, current: &HashMap<K, T>) -> Vec<T>
 where
+    K: Eq + Hash,
     T: Clone + PartialEq,
 {
     current
@@ -390,11 +521,14 @@ where
         .collect()
 }
 
-fn diff_removed<T>(previous: &HashMap<u64, T>, current: &HashMap<u64, T>) -> Vec<u64> {
+fn diff_removed<K, T>(previous: &HashMap<K, T>, current: &HashMap<K, T>) -> Vec<K>
+where
+    K: Eq + Hash + Copy,
+{
     previous
         .keys()
         .filter(|id| !current.contains_key(id))
-        .cloned()
+        .map(|id| *id)
         .collect()
 }
 
@@ -425,6 +559,7 @@ fn population_state(entity: Entity, cohort: &PopulationCohort) -> PopulationCoho
         home: cohort.home.to_bits(),
         size: cohort.size,
         morale: cohort.morale.raw(),
+        generation: cohort.generation,
     }
 }
 
@@ -434,5 +569,17 @@ fn power_state(entity: Entity, node: &PowerNode) -> PowerNodeState {
         generation: node.generation.raw(),
         demand: node.demand.raw(),
         efficiency: node.efficiency.raw(),
+    }
+}
+
+fn generation_state(profile: &GenerationProfile) -> GenerationState {
+    let [knowledge, trust, equity, agency] = profile.bias.to_scaled();
+    GenerationState {
+        id: profile.id,
+        name: profile.name.clone(),
+        bias_knowledge: knowledge,
+        bias_trust: trust,
+        bias_equity: equity,
+        bias_agency: agency,
     }
 }

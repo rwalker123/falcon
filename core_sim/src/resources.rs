@@ -52,6 +52,32 @@ impl Default for SimulationConfig {
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SimulationTick(pub u64);
 
+/// Authoritative sentiment axis bias values applied across factions.
+#[derive(Resource, Debug, Clone)]
+pub struct SentimentAxisBias {
+    pub values: [Scalar; 4],
+}
+
+impl Default for SentimentAxisBias {
+    fn default() -> Self {
+        Self {
+            values: [Scalar::zero(); 4],
+        }
+    }
+}
+
+impl SentimentAxisBias {
+    pub fn set_axis(&mut self, axis: usize, value: Scalar) {
+        if let Some(slot) = self.values.get_mut(axis) {
+            *slot = value;
+        }
+    }
+
+    pub fn as_raw(&self) -> [i64; 4] {
+        self.values.map(Scalar::raw)
+    }
+}
+
 /// Index of tile entities for reuse by other systems.
 #[derive(Resource, Debug, Clone)]
 pub struct TileRegistry {

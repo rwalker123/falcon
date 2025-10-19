@@ -4,12 +4,17 @@ use bevy::{math::UVec2, prelude::*};
 
 use crate::{
     components::{ElementKind, LogisticsLink, PopulationCohort, PowerNode, Tile},
+    generations::GenerationRegistry,
     resources::{SimulationConfig, SimulationTick, TileRegistry},
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero},
 };
 
 /// Spawn initial grid of tiles, logistics links, power nodes, and population cohorts.
-pub fn spawn_initial_world(mut commands: Commands, config: Res<SimulationConfig>) {
+pub fn spawn_initial_world(
+    mut commands: Commands,
+    config: Res<SimulationConfig>,
+    registry: Res<GenerationRegistry>,
+) {
     let width = config.grid_size.x as usize;
     let height = config.grid_size.y as usize;
     let mut tiles = Vec::with_capacity(width * height);
@@ -65,6 +70,7 @@ pub fn spawn_initial_world(mut commands: Commands, config: Res<SimulationConfig>
     }
 
     let stride = max(1, config.population_cluster_stride) as usize;
+    let mut cohort_index = 0usize;
     for y in (0..height).step_by(stride) {
         for x in (0..width).step_by(stride) {
             let tile_entity = tiles[y * width + x];
@@ -72,7 +78,9 @@ pub fn spawn_initial_world(mut commands: Commands, config: Res<SimulationConfig>
                 home: tile_entity,
                 size: 1_000,
                 morale: scalar_from_f32(0.6),
+                generation: registry.assign_for_index(cohort_index),
             });
+            cohort_index += 1;
         }
     }
 

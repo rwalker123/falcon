@@ -131,6 +131,9 @@ fn send_command(endpoint: &str, command: &ClientCommand) -> std::io::Result<()> 
         ClientCommand::Heat { entity, delta } => format!("heat {} {}\n", entity, delta),
         ClientCommand::SubmitOrders { faction } => format!("order {} ready\n", faction),
         ClientCommand::Rollback { tick } => format!("rollback {}\n", tick),
+        ClientCommand::SetAxisBias { axis, value } => {
+            format!("bias {} {:.6}\n", axis, value)
+        }
     };
     stream.write_all(line.as_bytes())?;
     Ok(())
