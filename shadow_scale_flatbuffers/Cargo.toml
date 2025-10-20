@@ -1,0 +1,10 @@
+[package]
+name = "shadow_scale_flatbuffers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+flatbuffers = "25"
+
+[build-dependencies]
+flatc-rust = "0.2"

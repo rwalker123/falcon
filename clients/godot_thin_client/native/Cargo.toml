@@ -1,0 +1,11 @@
+[package]
+name = "shadow_scale_godot"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+godot = { version = "0.4" }
+shadow_scale_flatbuffers = { path = "../../../shadow_scale_flatbuffers" }

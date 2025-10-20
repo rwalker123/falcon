@@ -11,6 +11,37 @@ use tracing::{error, info, trace, warn};
 
 use crate::ui::{draw_ui, UiState, AXIS_BIAS_STEP};
 
+const CLIENT_CHANNEL_KEYS: [&str; 4] = ["popular", "peer", "institutional", "humanitarian"];
+
+#[derive(Debug, Clone, Copy)]
+pub enum ClientSupportChannel {
+    Popular,
+    Peer,
+    Institutional,
+    Humanitarian,
+}
+
+impl ClientSupportChannel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ClientSupportChannel::Popular => CLIENT_CHANNEL_KEYS[0],
+            ClientSupportChannel::Peer => CLIENT_CHANNEL_KEYS[1],
+            ClientSupportChannel::Institutional => CLIENT_CHANNEL_KEYS[2],
+            ClientSupportChannel::Humanitarian => CLIENT_CHANNEL_KEYS[3],
+        }
+    }
+
+    fn from_key(value: &str) -> Option<Self> {
+        match value {
+            "popular" => Some(ClientSupportChannel::Popular),
+            "peer" => Some(ClientSupportChannel::Peer),
+            "institutional" => Some(ClientSupportChannel::Institutional),
+            "humanitarian" => Some(ClientSupportChannel::Humanitarian),
+            _ => None,
+        }
+    }
+}
+
 pub struct InspectorApp {
     terminal: Terminal<CrosstermBackend<std::io::Stdout>>,
     ui_state: UiState,
@@ -119,6 +150,33 @@ impl InspectorApp {
                                 warn!("No snapshot history recorded yet");
                             }
                         }
+                        KeyCode::Char('j') => {
+                            self.ui_state.select_next_influencer();
+                        }
+                        KeyCode::Char('k') => {
+                            self.ui_state.select_previous_influencer();
+                        }
+                        KeyCode::Char('s') => {
+                            self.send_influencer_command(ClientInfluencerAction::Support);
+                        }
+                        KeyCode::Char('x') => {
+                            self.send_influencer_command(ClientInfluencerAction::Suppress);
+                        }
+                        KeyCode::Char('c') => {
+                            self.send_channel_support(1.0);
+                        }
+                        KeyCode::Char('f') => {
+                            self.ui_state.cycle_influencer_filter();
+                        }
+                        KeyCode::Char('i') => {
+                            self.send_spawn_influencer(None, None);
+                        }
+                        KeyCode::Char('v') => {
+                            self.ui_state.cycle_corruption_target();
+                        }
+                        KeyCode::Char('g') => {
+                            self.send_corruption_injection();
+                        }
                         KeyCode::Char('h') => {
                             if let Some(entity) = self.ui_state.latest_tile_entity() {
                                 if let Err(err) = self.command_sender.send(ClientCommand::Heat {
@@ -205,6 +263,110 @@ impl InspectorApp {
             .push_log(format!("Auto-play interval set to {:.2}s", new_value));
     }
 
+    fn send_influencer_command(&mut self, action: ClientInfluencerAction) {
+        let Some(id) = self.ui_state.selected_influencer_id() else {
+            self.ui_state.push_log("No influencer selected");
+            return;
+        };
+        let name = self
+            .ui_state
+            .selected_influencer()
+            .map(|info| info.name.clone())
+            .unwrap_or_else(|| id.to_string());
+        let magnitude = 1.0f32;
+        let command = match action {
+            ClientInfluencerAction::Support => ClientCommand::SupportInfluencer { id, magnitude },
+            ClientInfluencerAction::Suppress => ClientCommand::SuppressInfluencer { id, magnitude },
+        };
+        if let Err(err) = self.command_sender.send(command) {
+            error!("Failed to send influencer command: {}", err);
+            self.ui_state
+                .push_log("Failed to dispatch influencer command");
+        } else {
+            match action {
+                ClientInfluencerAction::Support => self
+                    .ui_state
+                    .push_log(format!("Support sent to {} (+{:.1})", name, magnitude)),
+                ClientInfluencerAction::Suppress => self
+                    .ui_state
+                    .push_log(format!("Suppress sent to {} (-{:.1})", name, magnitude)),
+            }
+        }
+    }
+
+    fn send_spawn_influencer(&mut self, scope: Option<String>, generation: Option<u32>) {
+        if let Err(err) = self
+            .command_sender
+            .send(ClientCommand::SpawnInfluencer { scope, generation })
+        {
+            error!("Failed to send spawn influencer command: {}", err);
+            self.ui_state
+                .push_log("Failed to send spawn influencer command");
+        } else {
+            self.ui_state.push_log("Spawn influencer command sent");
+        }
+    }
+
+    fn send_channel_support(&mut self, magnitude: f32) {
+        let Some(id) = self.ui_state.selected_influencer_id() else {
+            self.ui_state
+                .push_log("Select an influencer before applying channel support");
+            return;
+        };
+        let Some(channel_key) = self.ui_state.dominant_channel_key() else {
+            self.ui_state
+                .push_log("No dominant channel identified for the current selection");
+            return;
+        };
+        let Some(channel) = ClientSupportChannel::from_key(channel_key) else {
+            self.ui_state
+                .push_log(format!("Unsupported channel '{}'", channel_key));
+            return;
+        };
+        let name = self
+            .ui_state
+            .selected_influencer()
+            .map(|info| info.name.clone())
+            .unwrap_or_else(|| id.to_string());
+        if let Err(err) = self.command_sender.send(ClientCommand::SupportChannel {
+            id,
+            channel,
+            magnitude,
+        }) {
+            error!("Failed to send channel support command: {}", err);
+            self.ui_state
+                .push_log("Failed to dispatch channel support command");
+        } else {
+            self.ui_state.push_log(format!(
+                "Channel boost ({}) sent to {} (+{:.1})",
+                channel.as_str(),
+                name,
+                magnitude
+            ));
+        }
+    }
+
+    fn send_corruption_injection(&mut self) {
+        let subsystem_key = self.ui_state.corruption_target_command_key().to_string();
+        let subsystem_label = self.ui_state.corruption_target_label();
+        let intensity = 0.25f32;
+        let exposure_timer = 3u16;
+        if let Err(err) = self.command_sender.send(ClientCommand::InjectCorruption {
+            subsystem: subsystem_key,
+            intensity,
+            exposure_timer,
+        }) {
+            error!("Failed to send corruption injection: {}", err);
+            self.ui_state
+                .push_log("Failed to inject corruption incident");
+        } else {
+            self.ui_state.push_log(format!(
+                "Injected {} corruption ({:+.2}, τ={})",
+                subsystem_label, intensity, exposure_timer
+            ));
+        }
+    }
+
     fn send_axis_bias(&self, axis: usize, value: f32) {
         if axis >= 4 {
             warn!(axis, "Axis bias command rejected: invalid axis index");
@@ -226,11 +388,49 @@ pub fn channel() -> (UnboundedSender<WorldDelta>, UnboundedReceiver<WorldDelta>)
     unbounded_channel()
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ClientInfluencerAction {
+    Support,
+    Suppress,
+}
+
 #[derive(Debug, Clone)]
 pub enum ClientCommand {
     Turn(u32),
-    Heat { entity: u64, delta: i64 },
-    SubmitOrders { faction: u32 },
-    Rollback { tick: u64 },
-    SetAxisBias { axis: u32, value: f32 },
+    Heat {
+        entity: u64,
+        delta: i64,
+    },
+    SubmitOrders {
+        faction: u32,
+    },
+    Rollback {
+        tick: u64,
+    },
+    SetAxisBias {
+        axis: u32,
+        value: f32,
+    },
+    SupportInfluencer {
+        id: u32,
+        magnitude: f32,
+    },
+    SuppressInfluencer {
+        id: u32,
+        magnitude: f32,
+    },
+    SupportChannel {
+        id: u32,
+        channel: ClientSupportChannel,
+        magnitude: f32,
+    },
+    SpawnInfluencer {
+        scope: Option<String>,
+        generation: Option<u32>,
+    },
+    InjectCorruption {
+        subsystem: String,
+        intensity: f32,
+        exposure_timer: u16,
+    },
 }

@@ -1,0 +1,11 @@
+[gd_project]
+config_version=5
+
+[application]
+config/name="ShadowScale Godot Thin Client"
+config/description="Spike client rendering tactical map overlays for Shadow-Scale"
+run/main_scene="res://src/Main.tscn"
+config/icon="res://assets/icon.svg"
+
+[rendering]
+quality/driver/driver_name="opengl3"

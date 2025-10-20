@@ -4,11 +4,14 @@ This guide describes how an external client can integrate with the Shadow-Scale
 prototype to visualize state or issue turn commands.
 
 ## Ports & Protocols
-- **Snapshot Stream**: `tcp://127.0.0.1:41000` (configurable via `SimulationConfig::snapshot_bind`).
+- **Snapshot Stream (bincode)**: `tcp://127.0.0.1:41000` (configurable via `SimulationConfig::snapshot_bind`).
   - Frames are `[u32 length][payload bytes]` encoded with `bincode` using the
     structures from `sim_schema::src/lib.rs`. Runtime helpers such as axis bias transforms live in `sim_runtime`.
   - Consumers should read 4-byte little-endian length, then deserialize into
-    `WorldDelta` (Rust) or use the FlatBuffers schema.
+    `WorldDelta` (Rust).
+- **Snapshot Stream (FlatBuffers)**: `tcp://127.0.0.1:41002` (configurable via `SimulationConfig::snapshot_flat_bind`).
+  - Frames share the same length prefix but payloads are FlatBuffers envelopes matching `sim_schema/schemas/snapshot.fbs`.
+  - Non-Rust clients should prefer this stream to avoid pulling in `bincode` and serde dependencies.
 - **Command Port**: `tcp://127.0.0.1:41001` (configurable via `SimulationConfig::command_bind`).
   - Plain-text commands terminated by `\n`.
   - Supported commands:
@@ -19,7 +22,7 @@ prototype to visualize state or issue turn commands.
     commands return no response but are logged.
 
 ## Data Contract
-- See `sim_schema/schemas/snapshot.fbs` for FlatBuffers schema equivalent to the Rust structs.
+- See `sim_schema/schemas/snapshot.fbs` for the FlatBuffers schema equivalent to the Rust structs.
 - Fixed-point values (`mass`, `temperature`, etc.) use a scale of 1e-6.
 - Entities are encoded as `u64` `Entity::to_bits()` values; clients must map them to meaningful identifiers if needed.
 
@@ -42,7 +45,7 @@ prototype to visualize state or issue turn commands.
   ```
 - Example using `nc` to inspect snapshots:
   ```bash
-  nc 127.0.0.1 41000 | hexdump -C
+  nc 127.0.0.1 41002 | hexdump -C
   ```
   (use your own parser for real clients.)
 

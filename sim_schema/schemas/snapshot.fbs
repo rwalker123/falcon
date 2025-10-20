@@ -6,6 +6,69 @@
 
 namespace shadow_scale.sim;
 
+enum InfluenceDomain : ubyte {
+  Sentiment,
+  Discovery,
+  Logistics,
+  Production,
+  Humanitarian
+}
+
+enum InfluenceScopeKind : ubyte {
+  Local,
+  Regional,
+  Global,
+  Generation
+}
+
+enum InfluenceLifecycle : ubyte {
+  Potential,
+  Active,
+  Dormant
+}
+
+table InfluentialIndividualState {
+  id:uint;
+  name:string;
+  influence:long;
+  growthRate:long;
+  baselineGrowth:long;
+  notoriety:long;
+  sentimentKnowledge:long;
+  sentimentTrust:long;
+  sentimentEquity:long;
+  sentimentAgency:long;
+  sentimentWeightKnowledge:long;
+  sentimentWeightTrust:long;
+  sentimentWeightEquity:long;
+  sentimentWeightAgency:long;
+  logisticsBonus:long;
+  moraleBonus:long;
+  powerBonus:long;
+  logisticsWeight:long;
+  moraleWeight:long;
+  powerWeight:long;
+  supportCharge:long;
+  suppressPressure:long;
+  domains:uint;
+  scope:InfluenceScopeKind;
+  generationScope:ushort;
+  supported:bool;
+  suppressed:bool;
+  lifecycle:InfluenceLifecycle;
+  coherence:long;
+  ticksInStatus:ushort;
+  audienceGenerations:[ushort];
+  supportPopular:long;
+  supportPeer:long;
+  supportInstitutional:long;
+  supportHumanitarian:long;
+  weightPopular:long;
+  weightPeer:long;
+  weightInstitutional:long;
+  weightHumanitarian:long;
+}
+
 table TileState {
   entity:ulong;
   x:uint;
@@ -37,12 +100,79 @@ table PowerNodeState {
   efficiency:long;
 }
 
+enum CorruptionSubsystem : ubyte {
+  Logistics,
+  Trade,
+  Military,
+  Governance
+}
+
+table CorruptionEntry {
+  subsystem:CorruptionSubsystem;
+  intensity:long;
+  incidentId:ulong;
+  exposureTimer:ushort;
+  restitutionWindow:ushort;
+  lastUpdateTick:ulong;
+}
+
+table CorruptionLedger {
+  entries:[CorruptionEntry];
+  reputationModifier:long;
+  auditCapacity:ushort;
+}
+
+table AxisBiasState {
+  knowledge:long;
+  trust:long;
+  equity:long;
+  agency:long;
+}
+
+enum SentimentDriverCategory : ubyte {
+  Policy,
+  Incident,
+  Influencer
+}
+
+table SentimentDriverState {
+  category:SentimentDriverCategory;
+  label:string;
+  value:long;
+  weight:long;
+}
+
+table SentimentAxisTelemetry {
+  policy:long;
+  incidents:long;
+  influencers:long;
+  total:long;
+  drivers:[SentimentDriverState];
+}
+
+table SentimentTelemetryState {
+  knowledge:SentimentAxisTelemetry;
+  trust:SentimentAxisTelemetry;
+  equity:SentimentAxisTelemetry;
+  agency:SentimentAxisTelemetry;
+}
+
+table GenerationState {
+  id:ushort;
+  name:string;
+  biasKnowledge:long;
+  biasTrust:long;
+  biasEquity:long;
+  biasAgency:long;
+}
+
 table SnapshotHeader {
   tick:ulong;
   tileCount:uint;
   logisticsCount:uint;
   populationCount:uint;
   powerCount:uint;
+  influencerCount:uint;
   hash:ulong;
 }
 
@@ -52,6 +182,11 @@ table WorldSnapshot {
   logistics:[LogisticsLinkState];
   populations:[PopulationCohortState];
   power:[PowerNodeState];
+  axisBias:AxisBiasState;
+  sentiment:SentimentTelemetryState;
+  generations:[GenerationState];
+  corruption:CorruptionLedger;
+  influencers:[InfluentialIndividualState];
 }
 
 table WorldDelta {
@@ -64,6 +199,13 @@ table WorldDelta {
   removedPopulations:[ulong];
   power:[PowerNodeState];
   removedPower:[ulong];
+  axisBias:AxisBiasState;
+  sentiment:SentimentTelemetryState;
+  generations:[GenerationState];
+  removedGenerations:[ushort];
+  corruption:CorruptionLedger;
+  influencers:[InfluentialIndividualState];
+  removedInfluencers:[uint];
 }
 
 union SnapshotPayload {

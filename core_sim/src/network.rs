@@ -68,8 +68,15 @@ pub fn start_snapshot_server(bind_addr: std::net::SocketAddr) -> Option<Snapshot
     Some(SnapshotServer { sender })
 }
 
-pub fn broadcast_latest(server: Option<&SnapshotServer>, history: &SnapshotHistory) {
-    if let (Some(server), Some(bytes)) = (server, history.encoded_delta.as_ref()) {
+pub fn broadcast_latest(
+    bincode_server: Option<&SnapshotServer>,
+    flat_server: Option<&SnapshotServer>,
+    history: &SnapshotHistory,
+) {
+    if let (Some(server), Some(bytes)) = (bincode_server, history.encoded_delta.as_ref()) {
+        server.broadcast(bytes.as_ref());
+    }
+    if let (Some(server), Some(bytes)) = (flat_server, history.encoded_snapshot_flat.as_ref()) {
         server.broadcast(bytes.as_ref());
     }
 }

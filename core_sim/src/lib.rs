@@ -5,6 +5,7 @@
 
 mod components;
 mod generations;
+mod influencers;
 pub mod metrics;
 pub mod network;
 mod orders;
@@ -17,12 +18,18 @@ use bevy::prelude::*;
 
 pub use components::{ElementKind, LogisticsLink, PopulationCohort, PowerNode, Tile};
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
+pub use influencers::{
+    tick_influencers, InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel,
+};
 
 pub use metrics::SimulationMetrics;
 pub use orders::{
     FactionId, FactionOrders, FactionRegistry, Order, SubmitError, SubmitOutcome, TurnQueue,
 };
-pub use resources::{SentimentAxisBias, SimulationConfig, SimulationTick, TileRegistry};
+pub use resources::{
+    CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, SentimentAxisBias, SimulationConfig,
+    SimulationTick, TileRegistry,
+};
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{restore_world_from_snapshot, SnapshotHistory, StoredSnapshot};
 
@@ -35,12 +42,18 @@ pub fn build_headless_app() -> App {
     let turn_queue = orders::TurnQueue::new(faction_registry.factions.clone());
     let snapshot_history = SnapshotHistory::with_capacity(config.snapshot_history_limit.max(1));
     let generation_registry = GenerationRegistry::with_seed(0xC0FEBABE, 6);
+    let influencer_roster = InfluentialRoster::with_seed(0xA51C_E55E, &generation_registry);
 
     app.insert_resource(config)
         .insert_resource(SimulationTick::default())
         .insert_resource(SentimentAxisBias::default())
+        .insert_resource(CorruptionLedgers::default())
+        .insert_resource(CorruptionTelemetry::default())
+        .insert_resource(DiplomacyLeverage::default())
         .insert_resource(snapshot_history)
         .insert_resource(generation_registry)
+        .insert_resource(influencer_roster)
+        .insert_resource(InfluencerImpacts::default())
         .insert_resource(faction_registry)
         .insert_resource(turn_queue)
         .add_plugins(MinimalPlugins)
@@ -48,10 +61,12 @@ pub fn build_headless_app() -> App {
         .add_systems(
             Update,
             (
+                tick_influencers,
                 systems::simulate_materials,
                 systems::simulate_logistics,
                 systems::simulate_population,
                 systems::simulate_power,
+                systems::process_corruption,
                 systems::advance_tick,
                 snapshot::capture_snapshot,
             )

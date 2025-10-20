@@ -239,6 +239,19 @@ Logistics drives civilization—supplies, fuel, and mobility determine victory.
 - **Infrastructure Quality:** Road grade, rail type, energy dependency.
 - **Throughput Simulation:** Flow determined by bottlenecks, maintenance, and weather.
 - **Resource Specialization:** Trade hubs form around scarce isotopes or alloys.
+- **Leakage & Kickbacks:** Corrupt officials skim materials, inflate maintenance invoices, or divert convoys; unchecked graft erodes throughput and accelerates infrastructure decay.
+
+### Corruption Pressure Points
+- **Ghost Shipments:** Logistics officials fabricate shipments to siphon resources; detection ties into audit tech and sentiment trust (see §7b).
+- **Bribed Routing:** Factions can bribe port authorities to prioritize their convoys, creating localized shortages elsewhere.
+- **Maintenance Fraud:** Contractors pocket repair budgets, increasing failure probability until audits or anti-corruption policies intervene.
+- See `docs/architecture.md` ("Corruption Simulation Backbone") for system hooks governing leak generation, detection, and restitution.
+
+#### Systems Requiring Corruption Support
+- **Logistics Chains:** Leak detection, bribe-driven rerouting, and maintenance fraud must feed corroded throughput modifiers and infrastructure wear (ref. `docs/architecture.md` → logistics corruption passes).
+- **Trade & Diplomacy:** Smuggling networks, tariff evasion, and embassy patronage interact with openness scores and diplomacy leverage (see §8 and architecture counterpart).
+- **Military Procurement:** Kickback-prone armories degrade readiness, morale, and equipment quality until tribunals or reforms intervene (cross-link to §9a).
+- **Governance & Population Policy:** Captured agencies and black markets alter sentiment trust, relief distribution, and migration incentives; anti-corruption edicts sit alongside social policies.
 
 ### Integration with Materials & Energy
 - New energy discoveries revolutionize logistics (e.g., hover-transport, tele-shipping).
@@ -254,9 +267,11 @@ Population represents the organic side of the simulation.
 - **Decline:** Triggered by scarcity, disasters, or energy collapse.
 - **Adaptation:** Genetic, cultural, or cybernetic evolution over time.
 - **Migration:** Driven by climate, resource, or political change.
+- **Corruption Exposure:** Patronage networks, black markets, and captured agencies undermine productivity and raise unrest risk when scandals emerge.
 
 ### Civilization Resilience
 A strong logistics and energy base sustains population. Neglect or overexpansion triggers collapse cascades.
+- Widespread corruption lowers effective resilience by misallocating relief, triggering scandal events, and amplifying disaster mortality.
 
 ---
 
@@ -306,6 +321,8 @@ Collective mood is modeled as a multi-axis vector rather than a single morale me
 - Threshold crossings unlock factional agendas, trigger civil events (strikes, celebrations, coups), or modify logistics efficiency and research throughput.
 - Espionage and diplomacy actions can nudge specific axes (smuggled information, false-flag leaks, cultural exchanges) enabling soft-power strategies.
 - Players can invest in “Sentiment Projects” (education reforms, media platforms, wealth redistribution) to stabilize or intentionally steer the sphere for strategic outcomes.
+- Corruption scandals spawn suspicion spikes, reduce trust in institutions, and open windows for rival influence; successful anti-corruption drives can restore trust but consume political capital.
+- **Example Event – “Defense Ministry Kickback Exposed”**: Military procurement graft surfaces, instantly pulling the Trust axis negative, applying a morale penalty to affected formations, and giving rival factions a temporary diplomacy leverage modifier (see `docs/architecture.md` "Incident Prototype Plan").
 
 ### Influential Individuals (Emergent Narrative Hooks)
 - Track notable figures who can positively or negatively sway sentiment axes or quadrants.
@@ -314,6 +331,15 @@ Collective mood is modeled as a multi-axis vector rather than a single morale me
 - Influentials begin as localized “whispers” and grow over time; the player may support, co-opt, or suppress them as their influence escalates.
 - Actions taken toward an influential feed back into all affected systems—silencing a scientist might stall discoveries, backing a charismatic leader might incite revolution, etc.
 - Historical inspirations: revolutionary leaders (Castro, Stalin analogues), technologists (Gates, Jobs), scientists (Einstein), industrialists (railroad pioneers), humanitarian icons.
+
+#### Prototype Implementation Notes
+- The simulation now maintains an **Influential Roster**: each figure begins as a Local potential, carries a domain mix (sentiment, discovery, logistics, production, humanitarian), and tracks coherence, notoriety, and multi-channel support. Graduating to Regional and Global scopes requires sustained success; Dormant figures linger until obscurity claims them.
+- Sentiment totals now decompose into three visible inputs: sustained **policy levers**, time-bounded **incident pulses**, and live **influencer channel output**. These contributions stream through the inspector telemetry so designers can validate how reforms or scandals steer each axis (see `docs/architecture.md` §"Sentiment Telemetry").
+- Each turn, influencers inject *procedural sentiment deltas* (axis nudges) and cross-system modifiers (logistics capacity, morale, power). Impact is scaled by lifecycle and scope so that local activists feel different from global icons.
+- Growth is multi-dimensional: **popular sentiment**, **peer prestige**, **institutional backing**, and **humanitarian capital** all contribute based on domain weighting. Players can exploit this via general-purpose support/suppress actions or targeted `support_channel` boosts.
+- Influencer state (lifecycle, scope tier, channel weights/support, audience generations) is serialized in snapshots, enabling deterministic rollbacks. The CLI inspector surfaces badges, filter controls, channel breakdowns, notoriety, and one-touch boosts for rapid experimentation.
+- Narrative positioning: influencers remain “living levers” inside the sentiment sphere. Their trajectories seed event hooks—local movements, academic breakthroughs, humanitarian crusades—that reverberate through trade, diplomacy, and conflict portfolios.
+- Narrative positioning: influencers surface as “living levers” inside the sentiment sphere. Their arcs should seed event hooks—summits, leaks, uprisings—derived from the domains they dominate and the external pressure players exert.
 
 ---
 
@@ -324,15 +350,25 @@ Trade, cooperation, and espionage form the connective tissue of global interacti
 - Dynamic supply-demand economies.
 - Transport network compatibility affects trade flow.
 - Prices shift as discoveries redefine resource value.
+- Open trade corridors passively normalize discovery gaps—mutual access raises the odds of breakthroughs propagating between factions instead of remaining proprietary.
+- Corruption mechanics layer in tariff evasion, smuggling rings, and embassy kickbacks; factions may tolerate graft to bypass embargoes at the cost of future diplomatic credibility.
+
+#### Knowledge Diffusion Through Exchange
+- Each sustained trade partnership accrues an **Openness** score that feeds into technology leak timers; the higher the openness, the shorter the timer until a discovery enters both tech trees.
+- Migration flows triggered by attractive trade hubs carry tacit knowledge—population cohorts resettling in a new faction seed partial progress toward known technologies and unlock related production recipes faster than espionage alone.
+- Closed economies can slow unwanted diffusion, but lose access to these migration-driven boosts; embargoes or purity doctrines must weigh innovation isolation against stagnant discovery rates.
+- See `docs/architecture.md` ("Trade-Fueled Knowledge Diffusion") for simulation hooks that govern how openness and migration probabilities are modeled.
 
 ### Diplomacy Drivers
 - Resource interdependence → alliances.
 - Technological asymmetry → conflict.
 - Espionage enables partial Great Discoveries.
+- Corruption exposes leverage: leaked bribe ledgers or procurement scandals can shatter alliances, while discreet patronage stabilizes fragile coalitions.
 
 ### Economic Warfare
 - Embargoes, energy blockades, or infrastructure sabotage.
 - Propaganda and scientific misinformation.
+- Sanctioned corruption: funding front companies or bribing customs officials to flood rivals with subpar goods, spreading inefficiency and public distrust.
 
 ---
 
@@ -362,16 +398,19 @@ Military forces in Shadow-Scale are emergent, shaped by demographics, resources,
 - **Active vs Reserve Forces**: 
   - *Active*: Fully trained, ready for immediate deployment; higher ongoing costs.
   - *Reserve*: Partial training, mobilized as needed; lower cost, slower response.
+- **Procurement Integrity**: Corruption skews equipment quality—kickbacks yield obsolete gear, while whistleblower protections and oversight corps keep arsenals combat ready.
 
 ### Cost Modeling
 - **Domestic Deployment**: Lower cost, easier logistics.
 - **International Deployment**: Higher cost (transport, supply chain, diplomatic risk).
 - **Training & Maintenance**: Continuous investment required for readiness and morale.
+- **Corruption Drag**: Embezzled budgets reduce readiness multipliers; anti-corruption operations temporarily spike costs but reclaim efficiency over time.
 
 ### Turnover & Service Duration
 - **Turnover Rate**: Influenced by conscription/volunteer mix, duration of service, casualty rates, and economic opportunity.
 - **Service Duration**: Fixed terms for conscripts, variable for volunteers; affects experience level and military culture.
 - **Veteran Integration**: Retired soldiers impact civilian workforce, health costs, and societal stability.
+- **Integrity Fallout**: Disgraced officers depress recruitment, while transparent tribunals restore morale and feed back into sentiment trust.
 
 ### Special Policies
 - **Forced Conscription**: Rapid military expansion, higher disruption, potential for civil unrest.
@@ -868,6 +907,14 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 2. Prototype scripting sandbox with capability tokens (subscriptions, UI component creation) and hot reload.
 3. Draft UI extension API schema and manifest format (permissions, dependencies, versioning).
 4. Decide distribution model (e.g., signed packages, Steam Workshop integration) and how host loads/unloads mods at runtime.
+
+#### Map-Centric Evaluation Plan
+- Prioritize a tactical map workload that exercises zooming, multi-layer overlays (logistics, sentiment heatmaps, fog of knowledge), unit selection, and command previews.
+- First execute a Godot 4 thin-client spike that consumes mock snapshot streams and replays scripted orders to validate rendering responsiveness, animation tooling, and latency to the headless core.
+- If Godot reveals blocking gaps (performance, tooling, pipeline), follow up with a Unity thin-client spike to compare capabilities and mitigate risk.
+- Capture metrics per spike (frame budget at targeted PC spec, draw-call cost for layered overlays, command round-trip) and document licensing/tooling implications so we can make an informed client stack decision.
+- Reuse the sandboxed scripting API design across both spikes—if we proceed to Unity—so first-party dashboards and modded panels share the same capability boundaries. Godot spike implementation lives under `clients/godot_thin_client` (notes: `docs/godot_thin_client_spike.md`).
+- Current Godot spike now renders live FlatBuffers snapshots; next increment must (a) publish the actual logistics/sentiment rasters from the sim instead of temperature stand-ins, (b) expand the overlay schema so UI can swap between logistics, sentiment, corruption, and fog-of-war layers, and (c) validate colour ramps/normalisation against inspector metrics so designers trust what the map is showing.
 
 
 ### Recommended Shortlist & Next Steps (Headless First)

@@ -10,7 +10,10 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 
 use sim_runtime::{
-    AxisBiasState, GenerationState, PopulationCohortState, PowerNodeState, TileState, WorldDelta,
+    influence_domains_from_mask, AxisBiasState, CorruptionEntry, CorruptionLedger,
+    CorruptionSubsystem, GenerationState, InfluenceDomain, InfluenceLifecycle, InfluenceScopeKind,
+    InfluentialIndividualState, PopulationCohortState, PowerNodeState, SentimentAxisTelemetry,
+    SentimentDriverCategory, SentimentTelemetryState, TileState, WorldDelta,
 };
 
 const HEATMAP_SIZE: usize = 21;
@@ -45,6 +48,14 @@ const WORKFORCE_LABELS: [&str; 5] = [
 ];
 const SENTIMENT_DELTA_LOG_THRESHOLD: f32 = 0.02;
 pub const AXIS_BIAS_STEP: f32 = 0.05;
+const CHANNEL_LABELS: [&str; 4] = ["Popular", "Peer", "Institutional", "Humanitarian"];
+const CHANNEL_KEYS: [&str; 4] = ["popular", "peer", "institutional", "humanitarian"];
+const MAX_CORRUPTION_EXPOSURES: usize = 6;
+const MAX_CORRUPTION_ENTRIES: usize = 6;
+
+fn scaled(value: i64) -> f32 {
+    value as f32 / SCALE_FACTOR
+}
 
 fn axis_bias_state_to_f32(state: &AxisBiasState) -> [f32; 4] {
     [
@@ -53,6 +64,44 @@ fn axis_bias_state_to_f32(state: &AxisBiasState) -> [f32; 4] {
         state.equity as f32 / SCALE_FACTOR,
         state.agency as f32 / SCALE_FACTOR,
     ]
+}
+
+fn build_heatmap_from_vector(vector: (f32, f32)) -> [[f32; HEATMAP_SIZE]; HEATMAP_SIZE] {
+    let mut heatmap = [[0.0f32; HEATMAP_SIZE]; HEATMAP_SIZE];
+    let center_x = ((vector.0.clamp(-1.0, 1.0) + 1.0) * 0.5 * (HEATMAP_SIZE as f32 - 1.0))
+        .round()
+        .clamp(0.0, HEATMAP_SIZE as f32 - 1.0) as isize;
+    let center_y = ((1.0 - (vector.1.clamp(-1.0, 1.0) + 1.0) * 0.5) * (HEATMAP_SIZE as f32 - 1.0))
+        .round()
+        .clamp(0.0, HEATMAP_SIZE as f32 - 1.0) as isize;
+    let offsets: [(isize, isize, f32); 9] = [
+        (0, 0, 1.0_f32),
+        (-1, 0, 0.6_f32),
+        (1, 0, 0.6_f32),
+        (0, -1, 0.6_f32),
+        (0, 1, 0.6_f32),
+        (-1, -1, 0.35_f32),
+        (-1, 1, 0.35_f32),
+        (1, -1, 0.35_f32),
+        (1, 1, 0.35_f32),
+    ];
+    for (dx, dy, weight) in offsets {
+        let nx = center_x + dx;
+        let ny = center_y + dy;
+        if nx >= 0 && nx < HEATMAP_SIZE as isize && ny >= 0 && ny < HEATMAP_SIZE as isize {
+            let cell = &mut heatmap[ny as usize][nx as usize];
+            *cell = cell.max(weight.clamp(0.0, 1.0));
+        }
+    }
+    heatmap
+}
+
+fn driver_category_tag(category: SentimentDriverCategory) -> &'static str {
+    match category {
+        SentimentDriverCategory::Policy => "Policy",
+        SentimentDriverCategory::Incident => "Incident",
+        SentimentDriverCategory::Influencer => "Influencer",
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -68,14 +117,21 @@ struct AxisDriver {
     label: String,
     value: f32,
     weight: f32,
+    category: SentimentDriverCategory,
 }
 
 impl AxisDriver {
-    fn new<L: Into<String>>(label: L, value: f32, weight: f32) -> Self {
+    fn new<L: Into<String>>(
+        label: L,
+        value: f32,
+        weight: f32,
+        category: SentimentDriverCategory,
+    ) -> Self {
         Self {
             label: label.into(),
             value,
             weight,
+            category,
         }
     }
 
@@ -106,6 +162,69 @@ impl Default for SentimentViewModel {
 }
 
 impl SentimentViewModel {
+    fn apply_telemetry(&mut self, telemetry: &SentimentTelemetryState) {
+        let to_axis = |axis: &SentimentAxisTelemetry| -> (f32, Vec<AxisDriver>) {
+            let value = (axis.total as f32) / SCALE_FACTOR;
+            let drivers = axis
+                .drivers
+                .iter()
+                .map(|driver| {
+                    AxisDriver::new(
+                        driver.label.clone(),
+                        (driver.value as f32) / SCALE_FACTOR,
+                        (driver.weight as f32) / SCALE_FACTOR,
+                        driver.category,
+                    )
+                })
+                .collect::<Vec<_>>();
+            (value.clamp(-2.0, 2.0), drivers)
+        };
+
+        let (knowledge, knowledge_drivers) = to_axis(&telemetry.knowledge);
+        let (trust, trust_drivers) = to_axis(&telemetry.trust);
+        let (equity, equity_drivers) = to_axis(&telemetry.equity);
+        let (agency, agency_drivers) = to_axis(&telemetry.agency);
+
+        self.axes = SentimentAxes {
+            knowledge,
+            trust,
+            equity,
+            agency,
+        };
+        self.vector = (knowledge.clamp(-1.0, 1.0), trust.clamp(-1.0, 1.0));
+
+        let total_weight = knowledge_drivers
+            .iter()
+            .chain(trust_drivers.iter())
+            .chain(equity_drivers.iter())
+            .chain(agency_drivers.iter())
+            .map(|driver| driver.weight.abs())
+            .sum::<f32>();
+        self.total_weight = if total_weight > 0.0 {
+            total_weight
+        } else {
+            1.0
+        };
+
+        self.heatmap = build_heatmap_from_vector(self.vector);
+        self.drivers = [
+            knowledge_drivers,
+            trust_drivers,
+            equity_drivers,
+            agency_drivers,
+        ];
+        for axis in self.drivers.iter_mut() {
+            axis.sort_by(|a, b| {
+                b.impact()
+                    .partial_cmp(&a.impact())
+                    .unwrap_or(Ordering::Equal)
+            });
+            if axis.len() > MAX_DRIVER_ENTRIES {
+                axis.truncate(MAX_DRIVER_ENTRIES);
+            }
+        }
+    }
+
     fn rebuild(
         &mut self,
         tiles: &HashMap<u64, TileState>,
@@ -113,7 +232,12 @@ impl SentimentViewModel {
         power: &HashMap<u64, PowerNodeState>,
         generations: &HashMap<u16, GenerationState>,
         axis_bias: &[f32; 4],
+        telemetry: Option<&SentimentTelemetryState>,
     ) {
+        if let Some(sentiment) = telemetry {
+            self.apply_telemetry(sentiment);
+            return;
+        }
         let mut heatmap = [[0.0f32; HEATMAP_SIZE]; HEATMAP_SIZE];
         let mut total_weight = 0.0f32;
         let mut sum_knowledge = 0.0f32;
@@ -215,10 +339,26 @@ impl SentimentViewModel {
                 tile_label.clone(),
                 knowledge,
                 cohort_weight,
+                SentimentDriverCategory::Policy,
             ));
-            drivers[1].push(AxisDriver::new(tile_label.clone(), trust, cohort_weight));
-            drivers[2].push(AxisDriver::new(tile_label.clone(), equity, cohort_weight));
-            drivers[3].push(AxisDriver::new(tile_label, agency, cohort_weight));
+            drivers[1].push(AxisDriver::new(
+                tile_label.clone(),
+                trust,
+                cohort_weight,
+                SentimentDriverCategory::Policy,
+            ));
+            drivers[2].push(AxisDriver::new(
+                tile_label.clone(),
+                equity,
+                cohort_weight,
+                SentimentDriverCategory::Policy,
+            ));
+            drivers[3].push(AxisDriver::new(
+                tile_label,
+                agency,
+                cohort_weight,
+                SentimentDriverCategory::Policy,
+            ));
         }
 
         for (generation_id, weight) in generation_totals.into_iter() {
@@ -238,6 +378,7 @@ impl SentimentViewModel {
                         format!("{label_base} · {}", AXIS_NAMES[axis_idx]),
                         *bias,
                         weight,
+                        SentimentDriverCategory::Policy,
                     ));
                 }
             }
@@ -248,7 +389,12 @@ impl SentimentViewModel {
                 if bias_value.abs() < 0.0001 {
                     continue;
                 }
-                drivers[idx].push(AxisDriver::new("Manual Bias", *bias_value, total_weight));
+                drivers[idx].push(AxisDriver::new(
+                    "Manual Bias",
+                    *bias_value,
+                    total_weight,
+                    SentimentDriverCategory::Policy,
+                ));
             }
         }
 
@@ -304,6 +450,70 @@ impl SentimentViewModel {
             }
         }
         self.drivers = drivers;
+    }
+}
+
+#[derive(Clone)]
+struct CorruptionEntryView {
+    id: u64,
+    subsystem: CorruptionSubsystem,
+    intensity: f32,
+    exposure_timer: u16,
+    restitution_window: u16,
+}
+
+impl CorruptionEntryView {
+    fn from_entry(entry: &CorruptionEntry) -> Self {
+        Self {
+            id: entry.incident_id,
+            subsystem: entry.subsystem,
+            intensity: scaled(entry.intensity),
+            exposure_timer: entry.exposure_timer,
+            restitution_window: entry.restitution_window,
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct CorruptionSummary {
+    active_incidents: usize,
+    total_intensity: f32,
+    reputation_modifier: f32,
+    audit_capacity: u16,
+}
+
+#[derive(Clone)]
+struct CorruptionExposureView {
+    tick: u64,
+    subsystem: CorruptionSubsystem,
+    intensity: f32,
+    incident_id: u64,
+}
+
+fn subsystem_label(subsystem: CorruptionSubsystem) -> &'static str {
+    match subsystem {
+        CorruptionSubsystem::Logistics => "Logistics",
+        CorruptionSubsystem::Trade => "Trade",
+        CorruptionSubsystem::Military => "Military",
+        CorruptionSubsystem::Governance => "Governance",
+    }
+}
+
+fn subsystem_command_key(subsystem: CorruptionSubsystem) -> &'static str {
+    match subsystem {
+        CorruptionSubsystem::Logistics => "logistics",
+        CorruptionSubsystem::Trade => "trade",
+        CorruptionSubsystem::Military => "military",
+        CorruptionSubsystem::Governance => "governance",
+    }
+}
+
+fn subsystem_color(subsystem: CorruptionSubsystem) -> Color {
+    match subsystem {
+        CorruptionSubsystem::Logistics => Color::Rgb(59, 130, 246),
+        CorruptionSubsystem::Trade => Color::Rgb(245, 158, 11),
+        CorruptionSubsystem::Military => Color::Rgb(239, 68, 68),
+        CorruptionSubsystem::Governance => Color::Rgb(147, 197, 253),
     }
 }
 
@@ -447,10 +657,20 @@ pub struct UiState {
     population_index: HashMap<u64, PopulationCohortState>,
     power_index: HashMap<u64, PowerNodeState>,
     generation_index: HashMap<u16, GenerationState>,
+    influencer_index: HashMap<u32, InfluentialIndividualState>,
+    influencer_order: Vec<u32>,
+    influencer_filter: Option<InfluenceLifecycle>,
     sentiment: SentimentViewModel,
     demographics: DemographicSnapshot,
     axis_bias: [f32; 4],
+    sentiment_telemetry: Option<SentimentTelemetryState>,
     selected_axis: Option<usize>,
+    selected_influencer: Option<u32>,
+    corruption_index: HashMap<u64, CorruptionEntry>,
+    corruption_entries: Vec<CorruptionEntryView>,
+    corruption_summary: CorruptionSummary,
+    corruption_exposures: VecDeque<CorruptionExposureView>,
+    corruption_target: CorruptionSubsystem,
 }
 
 impl Default for UiState {
@@ -464,10 +684,20 @@ impl Default for UiState {
             population_index: HashMap::new(),
             power_index: HashMap::new(),
             generation_index: HashMap::new(),
+            influencer_index: HashMap::new(),
+            influencer_order: Vec::new(),
+            influencer_filter: None,
             sentiment: SentimentViewModel::default(),
             demographics: DemographicSnapshot::default(),
             axis_bias: [0.0; 4],
+            sentiment_telemetry: None,
             selected_axis: None,
+            selected_influencer: None,
+            corruption_index: HashMap::new(),
+            corruption_entries: Vec::new(),
+            corruption_summary: CorruptionSummary::default(),
+            corruption_exposures: VecDeque::new(),
+            corruption_target: CorruptionSubsystem::Logistics,
         }
     }
 }
@@ -535,11 +765,193 @@ impl UiState {
             self.generation_index.remove(id);
         }
 
+        for influencer in &delta.influencers {
+            self.influencer_index
+                .insert(influencer.id, influencer.clone());
+        }
+        for id in &delta.removed_influencers {
+            self.influencer_index.remove(id);
+        }
+
         if let Some(bias) = delta.axis_bias.as_ref() {
             self.axis_bias = axis_bias_state_to_f32(bias);
         }
 
+        if let Some(sentiment) = delta.sentiment.as_ref() {
+            self.sentiment_telemetry = Some(sentiment.clone());
+        }
+
+        if let Some(ledger) = delta.corruption.as_ref() {
+            self.update_corruption(delta.header.tick, ledger);
+        }
+
+        self.rebuild_influencers();
         self.rebuild_views();
+    }
+
+    pub fn cycle_influencer_filter(&mut self) {
+        self.influencer_filter = match self.influencer_filter {
+            None => Some(InfluenceLifecycle::Active),
+            Some(InfluenceLifecycle::Active) => Some(InfluenceLifecycle::Potential),
+            Some(InfluenceLifecycle::Potential) => Some(InfluenceLifecycle::Dormant),
+            Some(InfluenceLifecycle::Dormant) => None,
+        };
+        let status = match self.influencer_filter {
+            None => "all",
+            Some(InfluenceLifecycle::Active) => "active",
+            Some(InfluenceLifecycle::Potential) => "potential",
+            Some(InfluenceLifecycle::Dormant) => "dormant",
+        };
+        self.push_log(format!("Influencer filter set to {}", status));
+        self.rebuild_influencers();
+        if self.influencer_order.is_empty() {
+            self.push_log("No influencers match current filter");
+        }
+    }
+
+    pub fn dominant_channel_key(&self) -> Option<&'static str> {
+        let state = self.selected_influencer()?;
+        let weights = [
+            scaled(state.weight_popular).clamp(0.0, 1.0),
+            scaled(state.weight_peer).clamp(0.0, 1.0),
+            scaled(state.weight_institutional).clamp(0.0, 1.0),
+            scaled(state.weight_humanitarian).clamp(0.0, 1.0),
+        ];
+        let support = [
+            scaled(state.support_popular).clamp(0.0, 1.0),
+            scaled(state.support_peer).clamp(0.0, 1.0),
+            scaled(state.support_institutional).clamp(0.0, 1.0),
+            scaled(state.support_humanitarian).clamp(0.0, 1.0),
+        ];
+        let mut best_idx = None;
+        let mut best_score = f32::MIN;
+        for idx in 0..CHANNEL_LABELS.len() {
+            let score = (weights[idx] * support[idx]).max(0.0);
+            if score > best_score {
+                best_score = score;
+                best_idx = Some(idx);
+            }
+        }
+        match best_idx {
+            Some(idx) if best_score > f32::EPSILON => Some(CHANNEL_KEYS[idx]),
+            _ => None,
+        }
+    }
+
+    fn rebuild_influencers(&mut self) {
+        let mut ids: Vec<u32> = self.influencer_index.keys().copied().collect();
+        if let Some(filter) = self.influencer_filter {
+            ids.retain(|id| {
+                self.influencer_index
+                    .get(id)
+                    .map(|state| state.lifecycle == filter)
+                    .unwrap_or(false)
+            });
+        }
+        ids.sort_by(|a, b| {
+            let a_state = self.influencer_index.get(a);
+            let b_state = self.influencer_index.get(b);
+            let a_priority = a_state
+                .map(|state| lifecycle_priority(state.lifecycle))
+                .unwrap_or(u8::MAX);
+            let b_priority = b_state
+                .map(|state| lifecycle_priority(state.lifecycle))
+                .unwrap_or(u8::MAX);
+            a_priority
+                .cmp(&b_priority)
+                .then_with(|| {
+                    let a_coherence = a_state.map(|s| scaled(s.coherence)).unwrap_or(0.0);
+                    let b_coherence = b_state.map(|s| scaled(s.coherence)).unwrap_or(0.0);
+                    b_coherence
+                        .partial_cmp(&a_coherence)
+                        .unwrap_or(Ordering::Equal)
+                })
+                .then_with(|| {
+                    let a_influence = a_state.map(|s| scaled(s.influence).abs()).unwrap_or(0.0);
+                    let b_influence = b_state.map(|s| scaled(s.influence).abs()).unwrap_or(0.0);
+                    b_influence
+                        .partial_cmp(&a_influence)
+                        .unwrap_or(Ordering::Equal)
+                })
+                .then_with(|| a.cmp(b))
+        });
+        self.influencer_order = ids;
+        if let Some(selected) = self.selected_influencer {
+            if !self.influencer_index.contains_key(&selected) {
+                self.selected_influencer = self.influencer_order.first().copied();
+            }
+        } else {
+            self.selected_influencer = self.influencer_order.first().copied();
+        }
+    }
+
+    pub fn selected_influencer_id(&self) -> Option<u32> {
+        self.selected_influencer
+    }
+
+    pub fn selected_influencer(&self) -> Option<&InfluentialIndividualState> {
+        self.selected_influencer
+            .and_then(|id| self.influencer_index.get(&id))
+    }
+
+    pub fn select_next_influencer(&mut self) {
+        if self.influencer_order.is_empty() {
+            self.push_log("No influencers tracked yet");
+            return;
+        }
+        let current_index = self
+            .selected_influencer
+            .and_then(|id| {
+                self.influencer_order
+                    .iter()
+                    .position(|candidate| *candidate == id)
+            })
+            .unwrap_or(usize::MAX);
+        let next_index = if current_index == usize::MAX {
+            0
+        } else {
+            (current_index + 1) % self.influencer_order.len()
+        };
+        self.selected_influencer = Some(self.influencer_order[next_index]);
+        if let Some(influencer) = self.selected_influencer() {
+            self.push_log(format!(
+                "Focused influencer: {} ({}) [{}]",
+                influencer.name,
+                scope_label(influencer.scope),
+                lifecycle_label(influencer.lifecycle)
+            ));
+        }
+    }
+
+    pub fn select_previous_influencer(&mut self) {
+        if self.influencer_order.is_empty() {
+            self.push_log("No influencers tracked yet");
+            return;
+        }
+        let current_index = self
+            .selected_influencer
+            .and_then(|id| {
+                self.influencer_order
+                    .iter()
+                    .position(|candidate| *candidate == id)
+            })
+            .unwrap_or(usize::MAX);
+        let prev_index = if current_index == usize::MAX {
+            self.influencer_order.len().saturating_sub(1)
+        } else if current_index == 0 {
+            self.influencer_order.len().saturating_sub(1)
+        } else {
+            current_index - 1
+        };
+        self.selected_influencer = self.influencer_order.get(prev_index).copied();
+        if let Some(influencer) = self.selected_influencer() {
+            self.push_log(format!(
+                "Focused influencer: {} ({}) [{}]",
+                influencer.name,
+                scope_label(influencer.scope),
+                lifecycle_label(influencer.lifecycle)
+            ));
+        }
     }
 
     fn log_sentiment_shift(&mut self, prev_axes: SentimentAxes, prev_weight: f32) {
@@ -591,6 +1003,7 @@ impl UiState {
             &self.power_index,
             &self.generation_index,
             &self.axis_bias,
+            self.sentiment_telemetry.as_ref(),
         );
         self.demographics = DemographicSnapshot::rebuild(
             &self.population_index,
@@ -658,6 +1071,86 @@ impl UiState {
         self.push_log("Axis biases reset to neutral");
         Some(changed_axes.into_iter().map(|idx| (idx, 0.0)).collect())
     }
+
+    pub fn cycle_corruption_target(&mut self) {
+        self.corruption_target = match self.corruption_target {
+            CorruptionSubsystem::Logistics => CorruptionSubsystem::Trade,
+            CorruptionSubsystem::Trade => CorruptionSubsystem::Military,
+            CorruptionSubsystem::Military => CorruptionSubsystem::Governance,
+            CorruptionSubsystem::Governance => CorruptionSubsystem::Logistics,
+        };
+        self.push_log(format!(
+            "Corruption target set to {}",
+            self.corruption_target_label()
+        ));
+    }
+
+    pub fn corruption_target_label(&self) -> &'static str {
+        subsystem_label(self.corruption_target)
+    }
+
+    pub fn corruption_target_command_key(&self) -> &'static str {
+        subsystem_command_key(self.corruption_target)
+    }
+
+    fn update_corruption(&mut self, tick: u64, ledger: &CorruptionLedger) {
+        let mut new_index: HashMap<u64, CorruptionEntry> =
+            HashMap::with_capacity(ledger.entries.len());
+        for entry in &ledger.entries {
+            new_index.insert(entry.incident_id, entry.clone());
+        }
+
+        let mut exposures: Vec<CorruptionExposureView> = Vec::new();
+        for (incident_id, previous) in &self.corruption_index {
+            if !new_index.contains_key(incident_id) {
+                exposures.push(CorruptionExposureView {
+                    tick,
+                    subsystem: previous.subsystem,
+                    intensity: scaled(previous.intensity),
+                    incident_id: *incident_id,
+                });
+            }
+        }
+
+        if !exposures.is_empty() {
+            for exposure in exposures.into_iter() {
+                if self.corruption_exposures.len() >= MAX_CORRUPTION_EXPOSURES {
+                    self.corruption_exposures.pop_back();
+                }
+                let label = subsystem_label(exposure.subsystem);
+                self.push_log(format!(
+                    "Corruption exposure in {} (id {}): {:+.2}",
+                    label, exposure.incident_id, exposure.intensity
+                ));
+                self.corruption_exposures.push_front(exposure);
+            }
+        }
+
+        self.corruption_index = new_index;
+        self.corruption_summary = CorruptionSummary {
+            active_incidents: ledger.entries.len(),
+            total_intensity: ledger
+                .entries
+                .iter()
+                .map(|entry| scaled(entry.intensity).abs())
+                .sum::<f32>(),
+            reputation_modifier: scaled(ledger.reputation_modifier),
+            audit_capacity: ledger.audit_capacity,
+        };
+
+        let mut views: Vec<CorruptionEntryView> = ledger
+            .entries
+            .iter()
+            .map(CorruptionEntryView::from_entry)
+            .collect();
+        views.sort_by(|a, b| {
+            b.intensity
+                .abs()
+                .partial_cmp(&a.intensity.abs())
+                .unwrap_or(Ordering::Equal)
+        });
+        self.corruption_entries = views;
+    }
 }
 
 pub fn draw_ui(frame: &mut Frame, state: &UiState) {
@@ -665,7 +1158,7 @@ pub fn draw_ui(frame: &mut Frame, state: &UiState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(5),
+            Constraint::Length(14),
             Constraint::Min(10),
         ])
         .split(frame.size());
@@ -683,11 +1176,18 @@ pub fn draw_ui(frame: &mut Frame, state: &UiState) {
 
     let sidebar = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(7), Constraint::Min(5)])
+        .constraints([
+            Constraint::Length(7),
+            Constraint::Length(9),
+            Constraint::Min(8),
+            Constraint::Length(7),
+        ])
         .split(main_split[1]);
 
     draw_logs(frame, sidebar[0], state);
-    draw_recent_ticks(frame, sidebar[1], state);
+    draw_corruption(frame, sidebar[1], state);
+    draw_influencers(frame, sidebar[2], state);
+    draw_recent_ticks(frame, sidebar[3], state);
 }
 
 fn draw_header(frame: &mut Frame, area: Rect) {
@@ -710,70 +1210,291 @@ fn draw_header(frame: &mut Frame, area: Rect) {
 }
 
 fn draw_commands(frame: &mut Frame, area: Rect) {
-    let lines = vec![
-        Line::from(vec![
-            Span::styled("space", Style::default().fg(Color::Yellow)),
-            Span::raw("  submit orders (faction 0)"),
-        ]),
-        Line::from(vec![
-            Span::styled("t", Style::default().fg(Color::Yellow)),
-            Span::raw("      auto-resolve 10 turns"),
-        ]),
-        Line::from(vec![
-            Span::styled("b", Style::default().fg(Color::Yellow)),
-            Span::raw("      rollback to previous tick"),
-        ]),
-        Line::from(vec![
-            Span::styled("h", Style::default().fg(Color::Yellow)),
-            Span::raw("      heat most recent tile"),
-        ]),
-        Line::from(vec![
-            Span::styled(".", Style::default().fg(Color::Yellow)),
-            Span::raw("      step single turn"),
-        ]),
-        Line::from(vec![
-            Span::styled("p", Style::default().fg(Color::Yellow)),
-            Span::raw("      toggle auto-play"),
-        ]),
-        Line::from(vec![
-            Span::styled("]", Style::default().fg(Color::Yellow)),
-            Span::raw("      faster auto-play"),
-        ]),
-        Line::from(vec![
-            Span::styled("[", Style::default().fg(Color::Yellow)),
-            Span::raw("      slower auto-play"),
-        ]),
-        Line::from(vec![
-            Span::styled("1-4", Style::default().fg(Color::Yellow)),
-            Span::raw("    select axis for bias edit"),
-        ]),
-        Line::from(vec![
-            Span::styled("=", Style::default().fg(Color::Yellow)),
-            Span::raw("      increase selected axis bias (+0.05)"),
-        ]),
-        Line::from(vec![
-            Span::styled("-", Style::default().fg(Color::Yellow)),
-            Span::raw("      decrease selected axis bias (-0.05)"),
-        ]),
-        Line::from(vec![
-            Span::styled("0", Style::default().fg(Color::Yellow)),
-            Span::raw("      reset axis biases"),
-        ]),
-        Line::from(vec![
-            Span::styled("q", Style::default().fg(Color::Yellow)),
-            Span::raw("      exit inspector"),
-        ]),
-    ];
-    let block = Block::default().borders(Borders::ALL).title("Commands");
-    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    let block = Block::default().borders(Borders::ALL).title("Hotkeys");
+    let inner = block.inner(area);
     frame.render_widget(block, area);
-    frame.render_widget(
-        paragraph,
-        area.inner(&Margin {
-            vertical: 1,
-            horizontal: 1,
-        }),
-    );
+    if inner.height < 4 {
+        return;
+    }
+
+    const COMMANDS: [(&str, &str); 22] = [
+        ("space", "submit orders (faction 0)"),
+        ("t", "+10 turns"),
+        (".", "step 1 turn"),
+        ("p", "toggle auto-play"),
+        ("[ / ]", "slower / faster auto-play"),
+        ("b", "rollback to previous tick"),
+        ("h", "heat latest tile"),
+        ("1-4", "select sentiment axis"),
+        ("+ / =", "raise selected axis bias"),
+        ("- / _", "lower selected axis bias"),
+        ("0", "reset all axis biases"),
+        ("j / k", "cycle influencers"),
+        ("s", "support focused influencer"),
+        ("x", "suppress focused influencer"),
+        ("c", "channel boost (dominant)"),
+        ("f", "cycle lifecycle filter"),
+        ("i", "spawn random potential influencer"),
+        ("v", "cycle corruption target"),
+        ("g", "inject corruption incident (debug)"),
+        (
+            "spawn_influencer",
+            "CLI: force-create influencer [scope] [gen]",
+        ),
+        ("q", "exit inspector"),
+        ("turn", "type in CLI to queue N turns"),
+    ];
+
+    let rows_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(2)])
+        .split(inner);
+
+    let column_count = ((COMMANDS.len() + 9) / 10).max(1);
+    let mut columns_lines: Vec<Vec<Line>> = Vec::with_capacity(column_count);
+    for chunk in COMMANDS.chunks(10) {
+        let mut lines: Vec<Line> = Vec::new();
+        for (key, desc) in chunk {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{:<8}", key),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(*desc),
+            ]));
+        }
+        columns_lines.push(lines);
+    }
+
+    let constraints: Vec<Constraint> = (0..columns_lines.len())
+        .map(|_| Constraint::Ratio(1, columns_lines.len() as u32))
+        .collect();
+    let column_areas = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(constraints)
+        .split(rows_layout[0]);
+
+    for (idx, lines) in columns_lines.into_iter().enumerate() {
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, column_areas[idx]);
+    }
+
+    let note = Paragraph::new(Line::from(vec![
+        Span::styled("Tip:", Style::default().fg(Color::LightCyan)),
+        Span::raw(" influencers emerge automatically as turns resolve (roughly every 8–18 ticks)."),
+    ]))
+    .wrap(Wrap { trim: true });
+    frame.render_widget(note, rows_layout[1]);
+}
+fn draw_influencers(frame: &mut Frame, area: Rect, state: &UiState) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Influential Individuals");
+    if area.height <= 3 {
+        frame.render_widget(block, area);
+        return;
+    }
+
+    let selected_id = state.selected_influencer_id();
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled(
+            "Legend",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(":  "),
+        Span::styled("★ Active", Style::default().fg(Color::LightGreen)),
+        Span::raw("  "),
+        Span::styled("△ Potential", Style::default().fg(Color::Yellow)),
+        Span::raw("  "),
+        Span::styled("◼ Dormant", Style::default().fg(Color::DarkGray)),
+    ]));
+    let filter_label = state
+        .influencer_filter
+        .map(lifecycle_label)
+        .unwrap_or("All");
+    lines.push(Line::from(vec![
+        Span::styled("Filter", Style::default().fg(Color::LightBlue)),
+        Span::raw(": "),
+        Span::raw(filter_label),
+        Span::raw("  (press 'f' to cycle)"),
+    ]));
+    lines.push(Line::from(""));
+
+    if let Some(selected) = state.selected_influencer() {
+        let coherence_pct = (scaled(selected.coherence) * 100.0).clamp(0.0, 100.0);
+        let badge = lifecycle_badge(selected.lifecycle);
+        let status_label = lifecycle_label(selected.lifecycle);
+        let audience_names: Vec<String> = selected
+            .audience_generations
+            .iter()
+            .filter_map(|gen| {
+                state
+                    .generation_index
+                    .get(gen)
+                    .map(|profile| profile.name.clone())
+            })
+            .collect();
+        let channel_weights = [
+            scaled(selected.weight_popular).clamp(0.0, 1.0),
+            scaled(selected.weight_peer).clamp(0.0, 1.0),
+            scaled(selected.weight_institutional).clamp(0.0, 1.0),
+            scaled(selected.weight_humanitarian).clamp(0.0, 1.0),
+        ];
+        let channel_support = [
+            scaled(selected.support_popular).clamp(0.0, 1.0),
+            scaled(selected.support_peer).clamp(0.0, 1.0),
+            scaled(selected.support_institutional).clamp(0.0, 1.0),
+            scaled(selected.support_humanitarian).clamp(0.0, 1.0),
+        ];
+        let top_idx = channel_weights
+            .iter()
+            .enumerate()
+            .max_by(|a, b| {
+                (a.1 * channel_support[a.0])
+                    .partial_cmp(&(b.1 * channel_support[b.0]))
+                    .unwrap_or(Ordering::Equal)
+            })
+            .map(|(idx, _)| idx)
+            .unwrap_or(0);
+
+        lines.push(Line::from(vec![Span::styled(
+            format!(
+                "{} {} ({})",
+                badge,
+                selected.name,
+                scope_label(selected.scope)
+            ),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]));
+        lines.push(Line::from(format!(
+            "  status {} | coherence {:>5.1}% | notoriety {:>5.2} | stage {} ticks",
+            status_label,
+            coherence_pct,
+            scaled(selected.notoriety).max(0.0),
+            selected.ticks_in_status
+        )));
+        if !audience_names.is_empty() {
+            lines.push(Line::from(format!(
+                "  audience {}",
+                audience_names.join(", ")
+            )));
+        }
+        lines.push(Line::from(format!(
+            "  channels: {} {:+.2}/{:>3}% | {} {:+.2}/{:>3}% | {} {:+.2}/{:>3}% | {} {:+.2}/{:>3}%",
+            CHANNEL_LABELS[0],
+            channel_support[0],
+            (channel_weights[0] * 100.0).round() as i32,
+            CHANNEL_LABELS[1],
+            channel_support[1],
+            (channel_weights[1] * 100.0).round() as i32,
+            CHANNEL_LABELS[2],
+            channel_support[2],
+            (channel_weights[2] * 100.0).round() as i32,
+            CHANNEL_LABELS[3],
+            channel_support[3],
+            (channel_weights[3] * 100.0).round() as i32,
+        )));
+        lines.push(Line::from(format!(
+            "  top channel: {}",
+            CHANNEL_LABELS[top_idx]
+        )));
+        lines.push(Line::from(format!(
+            "  ΔSentiment K {:+.2} T {:+.2} E {:+.2} A {:+.2}",
+            scaled(selected.sentiment_knowledge),
+            scaled(selected.sentiment_trust),
+            scaled(selected.sentiment_equity),
+            scaled(selected.sentiment_agency)
+        )));
+        lines.push(Line::from(format!(
+            "  Logistics {:+.2} | Morale {:+.2} | Power {:+.2}",
+            scaled(selected.logistics_bonus),
+            scaled(selected.morale_bonus),
+            scaled(selected.power_bonus)
+        )));
+        lines.push(Line::from(""));
+    } else if state.influencer_index.is_empty() {
+        lines.push(Line::from(vec![Span::styled(
+            "No influencers tracked yet",
+            Style::default().fg(Color::DarkGray),
+        )]));
+    }
+
+    let mut rendered_entries = 0usize;
+    for id in state.influencer_order.iter() {
+        if Some(*id) == selected_id {
+            continue;
+        }
+        if let Some(entry) = state.influencer_index.get(id) {
+            let badge = lifecycle_badge(entry.lifecycle);
+            let coherence_pct = (scaled(entry.coherence) * 100.0).clamp(0.0, 100.0);
+            let channel_weights = [
+                scaled(entry.weight_popular).clamp(0.0, 1.0),
+                scaled(entry.weight_peer).clamp(0.0, 1.0),
+                scaled(entry.weight_institutional).clamp(0.0, 1.0),
+                scaled(entry.weight_humanitarian).clamp(0.0, 1.0),
+            ];
+            let channel_support = [
+                scaled(entry.support_popular).clamp(0.0, 1.0),
+                scaled(entry.support_peer).clamp(0.0, 1.0),
+                scaled(entry.support_institutional).clamp(0.0, 1.0),
+                scaled(entry.support_humanitarian).clamp(0.0, 1.0),
+            ];
+            let top_idx = channel_weights
+                .iter()
+                .enumerate()
+                .max_by(|a, b| {
+                    (a.1 * channel_support[a.0])
+                        .partial_cmp(&(b.1 * channel_support[b.0]))
+                        .unwrap_or(Ordering::Equal)
+                })
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+
+            lines.push(Line::from(vec![Span::styled(
+                format!("  {} {} ({})", badge, entry.name, scope_label(entry.scope)),
+                Style::default().fg(Color::Gray),
+            )]));
+            lines.push(Line::from(format!(
+                "    status {} | coh {:>5.1}% | not {:>5.2} | growth {:+.2}",
+                lifecycle_label(entry.lifecycle),
+                coherence_pct,
+                scaled(entry.notoriety).max(0.0),
+                scaled(entry.growth_rate)
+            )));
+            lines.push(Line::from(format!(
+                "    top {} {:+.2} | domains {}",
+                CHANNEL_LABELS[top_idx],
+                channel_support[top_idx],
+                format_domains(entry.domains)
+            )));
+            lines.push(Line::from(""));
+            rendered_entries += 1;
+            if lines.len() + 1 >= area.height as usize {
+                break;
+            }
+        }
+    }
+    if rendered_entries == 0 && selected_id.is_none() && !state.influencer_index.is_empty() {
+        lines.push(Line::from(vec![Span::styled(
+            "No influencers match current filter",
+            Style::default().fg(Color::DarkGray),
+        )]));
+    }
+    if let Some(last) = lines.last() {
+        if last.spans.is_empty() {
+            lines.pop();
+        }
+    }
+
+    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, area);
 }
 
 fn draw_logs(frame: &mut Frame, area: Rect, state: &UiState) {
@@ -792,6 +1513,152 @@ fn draw_logs(frame: &mut Frame, area: Rect, state: &UiState) {
             horizontal: 1,
         }),
     );
+}
+
+fn draw_corruption(frame: &mut Frame, area: Rect, state: &UiState) {
+    let block = Block::default().borders(Borders::ALL).title("Corruption");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height < 3 {
+        return;
+    }
+
+    let summary = &state.corruption_summary;
+    let mut lines: Vec<Line> = Vec::new();
+    let mut remaining = inner.height as usize;
+
+    let headline = Line::from(vec![
+        Span::styled(
+            format!("Active {}", summary.active_incidents),
+            Style::default()
+                .fg(if summary.active_incidents > 0 {
+                    Color::LightRed
+                } else {
+                    Color::LightGreen
+                })
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!("Σ |intensity| {:.2}", summary.total_intensity),
+            Style::default().fg(Color::LightMagenta),
+        ),
+    ]);
+    lines.push(headline);
+    remaining = remaining.saturating_sub(1);
+
+    if remaining > 0 {
+        let reputation = Span::styled(
+            format!("Reputation {:+.2}", summary.reputation_modifier),
+            Style::default().fg(Color::LightBlue),
+        );
+        let audit = Span::styled(
+            format!("Audit cap {}", summary.audit_capacity),
+            Style::default().fg(Color::Yellow),
+        );
+        lines.push(Line::from(vec![reputation, Span::raw("  "), audit]));
+        remaining = remaining.saturating_sub(1);
+    }
+
+    if remaining > 0 {
+        lines.push(Line::from(vec![
+            Span::styled(
+                "Target",
+                Style::default()
+                    .fg(Color::LightBlue)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": "),
+            Span::styled(
+                state.corruption_target_label(),
+                Style::default().fg(Color::White),
+            ),
+            Span::raw("  (v to cycle, g to inject)"),
+        ]));
+        remaining = remaining.saturating_sub(1);
+    }
+
+    if remaining > 0 {
+        if summary.active_incidents == 0 {
+            lines.push(Line::from(Span::styled(
+                "No active incidents.",
+                Style::default().fg(Color::DarkGray),
+            )));
+            remaining = remaining.saturating_sub(1);
+        } else {
+            lines.push(Line::from(Span::styled(
+                "Active incidents",
+                Style::default()
+                    .fg(Color::LightYellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            remaining = remaining.saturating_sub(1);
+            let mut drawn = 0;
+            for entry in &state.corruption_entries {
+                if drawn >= remaining || drawn >= MAX_CORRUPTION_ENTRIES {
+                    break;
+                }
+                let color = subsystem_color(entry.subsystem);
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("#{} ", entry.id),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(subsystem_label(entry.subsystem), Style::default().fg(color)),
+                    Span::raw("  "),
+                    Span::styled(
+                        format!("{:+.2}", entry.intensity),
+                        Style::default().fg(Color::LightRed),
+                    ),
+                    Span::raw("  τ="),
+                    Span::raw(format!("{}", entry.exposure_timer)),
+                    Span::raw("  ρ="),
+                    Span::raw(format!("{}", entry.restitution_window)),
+                ]));
+                drawn += 1;
+            }
+            remaining = remaining.saturating_sub(drawn);
+        }
+    }
+
+    if remaining > 0 && !state.corruption_exposures.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "Recent exposures",
+            Style::default()
+                .fg(Color::LightGreen)
+                .add_modifier(Modifier::BOLD),
+        )));
+        remaining = remaining.saturating_sub(1);
+        let mut drawn = 0;
+        for exposure in &state.corruption_exposures {
+            if drawn >= remaining || drawn >= MAX_CORRUPTION_EXPOSURES {
+                break;
+            }
+            let color = subsystem_color(exposure.subsystem);
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("tick {:>4}", exposure.tick),
+                    Style::default().fg(Color::Gray),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    subsystem_label(exposure.subsystem),
+                    Style::default().fg(color),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    format!("{:+.2}", exposure.intensity),
+                    Style::default().fg(Color::LightRed),
+                ),
+                Span::raw("  id "),
+                Span::raw(exposure.incident_id.to_string()),
+            ]));
+            drawn += 1;
+        }
+    }
+
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, inner);
 }
 
 fn draw_recent_ticks(frame: &mut Frame, area: Rect, state: &UiState) {
@@ -830,6 +1697,60 @@ fn format_tick_line(delta: &WorldDelta) -> Line<'_> {
         Span::raw(" | power "),
         Span::raw(format!("{:>5}", delta.header.power_count)),
     ])
+}
+fn scope_label(scope: InfluenceScopeKind) -> &'static str {
+    match scope {
+        InfluenceScopeKind::Local => "Local",
+        InfluenceScopeKind::Regional => "Regional",
+        InfluenceScopeKind::Global => "Global",
+        InfluenceScopeKind::Generation => "Generational",
+    }
+}
+
+fn lifecycle_label(lifecycle: InfluenceLifecycle) -> &'static str {
+    match lifecycle {
+        InfluenceLifecycle::Potential => "Potential",
+        InfluenceLifecycle::Active => "Active",
+        InfluenceLifecycle::Dormant => "Dormant",
+    }
+}
+
+fn lifecycle_badge(lifecycle: InfluenceLifecycle) -> &'static str {
+    match lifecycle {
+        InfluenceLifecycle::Potential => "△",
+        InfluenceLifecycle::Active => "★",
+        InfluenceLifecycle::Dormant => "◼",
+    }
+}
+
+fn lifecycle_priority(lifecycle: InfluenceLifecycle) -> u8 {
+    match lifecycle {
+        InfluenceLifecycle::Active => 0,
+        InfluenceLifecycle::Potential => 1,
+        InfluenceLifecycle::Dormant => 2,
+    }
+}
+
+fn domain_label(domain: InfluenceDomain) -> &'static str {
+    match domain {
+        InfluenceDomain::Sentiment => "Sentiment",
+        InfluenceDomain::Discovery => "Discovery",
+        InfluenceDomain::Logistics => "Logistics",
+        InfluenceDomain::Production => "Production",
+        InfluenceDomain::Humanitarian => "Humanitarian",
+    }
+}
+
+fn format_domains(mask: u32) -> String {
+    let domains = influence_domains_from_mask(mask);
+    if domains.is_empty() {
+        return "—".to_string();
+    }
+    domains
+        .into_iter()
+        .map(domain_label)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn draw_sentiment(frame: &mut Frame, area: Rect, state: &UiState) {
@@ -985,8 +1906,9 @@ fn draw_axis_drivers(frame: &mut Frame, area: Rect, sentiment: &SentimentViewMod
         }
 
         for driver in entries {
+            let tag = driver_category_tag(driver.category);
             lines.push(Line::from(vec![Span::raw(format!(
-                "  {:+.2} · {:>5.0} · {}",
+                "  [{tag:^9}] {:+.2} × {:>5.2} · {}",
                 driver.value, driver.weight, driver.label
             ))]));
         }

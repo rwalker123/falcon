@@ -7,6 +7,7 @@ edition = "2021"
 name = "cli_inspector"
 path = "src/main.rs"
 
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.27"

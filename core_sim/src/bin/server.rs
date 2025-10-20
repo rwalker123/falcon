@@ -9,11 +9,12 @@ use tracing::{info, warn};
 use core_sim::metrics::{collect_metrics, SimulationMetrics};
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
-    build_headless_app, restore_world_from_snapshot, run_turn, FactionId, FactionOrders, Scalar,
+    build_headless_app, restore_world_from_snapshot, run_turn, CorruptionLedgers, FactionId,
+    FactionOrders, GenerationId, GenerationRegistry, InfluencerImpacts, InfluentialRoster, Scalar,
     SentimentAxisBias, SimulationConfig, SimulationTick, SnapshotHistory, StoredSnapshot,
-    SubmitError, SubmitOutcome, Tile, TurnQueue,
+    SubmitError, SubmitOutcome, SupportChannel, Tile, TurnQueue,
 };
-use sim_runtime::AxisBiasState;
+use sim_runtime::{AxisBiasState, CorruptionEntry, CorruptionSubsystem, InfluenceScopeKind};
 
 fn main() {
     tracing_subscriber::fmt()
@@ -27,15 +28,19 @@ fn main() {
     let config = app.world.resource::<SimulationConfig>().clone();
 
     let snapshot_server = start_snapshot_server(config.snapshot_bind);
+    let snapshot_flat_server = start_snapshot_server(config.snapshot_flat_bind);
     let command_rx = spawn_command_listener(config.command_bind);
 
     info!(
         command_bind = %config.command_bind,
         snapshot_bind = %config.snapshot_bind,
+        snapshot_flat_bind = %config.snapshot_flat_bind,
         "Shadow-Scale headless server ready"
     );
 
     while let Ok(command) = command_rx.recv() {
+        let bin_server = snapshot_server.as_ref();
+        let flat_server = snapshot_flat_server.as_ref();
         match command {
             Command::Turn(turns) => {
                 for _ in 0..turns {
@@ -51,7 +56,7 @@ fn main() {
                         }
                         queue.force_submit_all(|_| FactionOrders::end_turn());
                     }
-                    resolve_ready_turn(&mut app, snapshot_server.as_ref());
+                    resolve_ready_turn(&mut app, bin_server, flat_server);
                 }
             }
             Command::Heat { entity, delta } => {
@@ -64,13 +69,64 @@ fn main() {
                 );
             }
             Command::Orders { faction, orders } => {
-                handle_order_submission(&mut app, faction, orders, snapshot_server.as_ref());
+                handle_order_submission(&mut app, faction, orders, bin_server, flat_server);
             }
             Command::Rollback { tick } => {
-                handle_rollback(&mut app, tick, snapshot_server.as_ref());
+                handle_rollback(&mut app, tick, bin_server, flat_server);
             }
             Command::AxisBias { axis, value } => {
-                handle_axis_bias(&mut app, axis, value, snapshot_server.as_ref());
+                handle_axis_bias(&mut app, axis, value, bin_server, flat_server);
+            }
+            Command::SupportInfluencer { id, magnitude } => {
+                handle_influencer_command(
+                    &mut app,
+                    id,
+                    magnitude,
+                    InfluencerAction::Support,
+                    bin_server,
+                    flat_server,
+                );
+            }
+            Command::SuppressInfluencer { id, magnitude } => {
+                handle_influencer_command(
+                    &mut app,
+                    id,
+                    magnitude,
+                    InfluencerAction::Suppress,
+                    bin_server,
+                    flat_server,
+                );
+            }
+            Command::SupportInfluencerChannel {
+                id,
+                channel,
+                magnitude,
+            } => {
+                handle_influencer_channel_support(
+                    &mut app,
+                    id,
+                    channel,
+                    magnitude,
+                    bin_server,
+                    flat_server,
+                );
+            }
+            Command::SpawnInfluencer { scope, generation } => {
+                handle_influencer_spawn(&mut app, scope, generation, bin_server, flat_server);
+            }
+            Command::InjectCorruption {
+                subsystem,
+                intensity,
+                exposure_timer,
+            } => {
+                handle_inject_corruption(
+                    &mut app,
+                    subsystem,
+                    intensity,
+                    exposure_timer,
+                    bin_server,
+                    flat_server,
+                );
             }
         }
     }
@@ -94,6 +150,33 @@ enum Command {
         axis: usize,
         value: f32,
     },
+    SupportInfluencer {
+        id: u32,
+        magnitude: f32,
+    },
+    SuppressInfluencer {
+        id: u32,
+        magnitude: f32,
+    },
+    SupportInfluencerChannel {
+        id: u32,
+        channel: SupportChannel,
+        magnitude: f32,
+    },
+    SpawnInfluencer {
+        scope: Option<InfluenceScopeKind>,
+        generation: Option<GenerationId>,
+    },
+    InjectCorruption {
+        subsystem: CorruptionSubsystem,
+        intensity: f32,
+        exposure_timer: u16,
+    },
+}
+
+enum InfluencerAction {
+    Support,
+    Suppress,
 }
 
 fn spawn_command_listener(bind_addr: std::net::SocketAddr) -> Receiver<Command> {
@@ -187,7 +270,84 @@ fn parse_command(input: &str) -> Option<Command> {
             let value: f32 = parts.next()?.parse().ok()?;
             Some(Command::AxisBias { axis, value })
         }
+        "support" => {
+            let id: u32 = parts.next()?.parse().ok()?;
+            let magnitude: f32 = parts.next().unwrap_or("1.0").parse().ok()?;
+            Some(Command::SupportInfluencer { id, magnitude })
+        }
+        "suppress" => {
+            let id: u32 = parts.next()?.parse().ok()?;
+            let magnitude: f32 = parts.next().unwrap_or("1.0").parse().ok()?;
+            Some(Command::SuppressInfluencer { id, magnitude })
+        }
+        "support_channel" => {
+            let id: u32 = parts.next()?.parse().ok()?;
+            let channel_token = parts.next().unwrap_or("popular");
+            let channel = match SupportChannel::from_str(channel_token) {
+                Some(channel) => channel,
+                None => {
+                    warn!("Invalid support_channel target: {}", channel_token);
+                    return None;
+                }
+            };
+            let magnitude: f32 = parts.next().unwrap_or("1.0").parse().ok()?;
+            Some(Command::SupportInfluencerChannel {
+                id,
+                channel,
+                magnitude,
+            })
+        }
+        "spawn_influencer" => {
+            let mut scope: Option<InfluenceScopeKind> = None;
+            let mut generation_raw: Option<u16> = None;
+            if let Some(token) = parts.next() {
+                match token.to_ascii_lowercase().as_str() {
+                    "local" => scope = Some(InfluenceScopeKind::Local),
+                    "regional" => scope = Some(InfluenceScopeKind::Regional),
+                    "global" => scope = Some(InfluenceScopeKind::Global),
+                    "generation" | "gen" => {
+                        scope = Some(InfluenceScopeKind::Generation);
+                        generation_raw = parts.next().and_then(|v| v.parse::<u16>().ok());
+                    }
+                    other => {
+                        if let Ok(gen) = other.parse::<u16>() {
+                            scope = Some(InfluenceScopeKind::Generation);
+                            generation_raw = Some(gen);
+                        } else {
+                            warn!("Invalid spawn_influencer scope: {}", other);
+                            return None;
+                        }
+                    }
+                }
+            }
+            let generation = generation_raw.map(|value| value as GenerationId);
+            Some(Command::SpawnInfluencer { scope, generation })
+        }
+        "corruption" => {
+            let subsystem_token = parts.next().unwrap_or("logistics");
+            let subsystem = parse_corruption_subsystem(subsystem_token)?;
+            let intensity: f32 = parts.next().unwrap_or("0.25").parse().ok()?;
+            let exposure_timer: u16 = parts.next().unwrap_or("3").parse().ok()?;
+            Some(Command::InjectCorruption {
+                subsystem,
+                intensity,
+                exposure_timer,
+            })
+        }
         _ => None,
+    }
+}
+
+fn parse_corruption_subsystem(token: &str) -> Option<CorruptionSubsystem> {
+    match token.to_ascii_lowercase().as_str() {
+        "logistics" | "log" | "supply" => Some(CorruptionSubsystem::Logistics),
+        "trade" | "smuggling" | "commerce" => Some(CorruptionSubsystem::Trade),
+        "military" | "procurement" | "army" => Some(CorruptionSubsystem::Military),
+        "governance" | "bureaucracy" | "civic" => Some(CorruptionSubsystem::Governance),
+        _ => {
+            warn!("Invalid corruption subsystem: {}", token);
+            None
+        }
     }
 }
 
@@ -204,7 +364,8 @@ fn handle_order_submission(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     orders: FactionOrders,
-    snapshot_server: Option<&SnapshotServer>,
+    snapshot_server_bin: Option<&SnapshotServer>,
+    snapshot_server_flat: Option<&SnapshotServer>,
 ) {
     let order_count = orders.orders.len();
     let result = {
@@ -227,7 +388,7 @@ fn handle_order_submission(
                 order_count,
                 "orders.ready_to_resolve"
             );
-            resolve_ready_turn(app, snapshot_server);
+            resolve_ready_turn(app, snapshot_server_bin, snapshot_server_flat);
         }
         Err(SubmitError::UnknownFaction(f)) => warn!(
             target: "shadow_scale::server",
@@ -246,7 +407,8 @@ fn handle_axis_bias(
     app: &mut bevy::prelude::App,
     axis: usize,
     value: f32,
-    snapshot_server: Option<&SnapshotServer>,
+    snapshot_server_bin: Option<&SnapshotServer>,
+    snapshot_server_flat: Option<&SnapshotServer>,
 ) {
     if axis >= 4 {
         warn!(
@@ -260,16 +422,17 @@ fn handle_axis_bias(
     let clamped = value.clamp(-1.0, 1.0);
     {
         let mut bias_res = app.world.resource_mut::<SentimentAxisBias>();
-        bias_res.set_axis(axis, Scalar::from_f32(clamped));
+        bias_res.set_policy_axis(axis, Scalar::from_f32(clamped));
     }
 
     let bias_state = {
         let bias_res = app.world.resource::<SentimentAxisBias>();
+        let raw = bias_res.as_raw();
         AxisBiasState {
-            knowledge: bias_res.values[0].raw(),
-            trust: bias_res.values[1].raw(),
-            equity: bias_res.values[2].raw(),
-            agency: bias_res.values[3].raw(),
+            knowledge: raw[0],
+            trust: raw[1],
+            equity: raw[2],
+            agency: raw[3],
         }
     };
 
@@ -278,8 +441,20 @@ fn handle_axis_bias(
         history.update_axis_bias(bias_state)
     };
 
-    if let (Some(server), Some(payload)) = (snapshot_server, broadcast_payload) {
-        server.broadcast(payload.as_ref());
+    if let Some((binary, flat)) = broadcast_payload {
+        if let Some(server) = snapshot_server_bin {
+            server.broadcast(binary.as_ref());
+        }
+        if let Some(server) = snapshot_server_flat {
+            server.broadcast(flat.as_ref());
+        }
+    }
+
+    if let Some(server) = snapshot_server_flat {
+        let history = app.world.resource::<SnapshotHistory>();
+        if let Some(snapshot_bytes) = history.encoded_snapshot_flat.as_ref() {
+            server.broadcast(snapshot_bytes.as_ref());
+        }
     }
 
     info!(
@@ -290,7 +465,269 @@ fn handle_axis_bias(
     );
 }
 
-fn resolve_ready_turn(app: &mut bevy::prelude::App, snapshot_server: Option<&SnapshotServer>) {
+fn handle_influencer_channel_support(
+    app: &mut bevy::prelude::App,
+    id: u32,
+    channel: SupportChannel,
+    magnitude: f32,
+    snapshot_server_bin: Option<&SnapshotServer>,
+    snapshot_server_flat: Option<&SnapshotServer>,
+) {
+    let clamped = magnitude.clamp(0.1, 5.0);
+    let scalar_amount = Scalar::from_f32(clamped);
+    let applied = {
+        let mut roster = app.world.resource_mut::<InfluentialRoster>();
+        roster.apply_channel_support(id, channel, scalar_amount)
+    };
+
+    if !applied {
+        warn!(
+            target: "shadow_scale::server",
+            id,
+            channel = channel.as_str(),
+            magnitude = clamped,
+            "influencer.channel_support.rejected=unknown_id"
+        );
+        return;
+    }
+
+    broadcast_influencer_update(app, snapshot_server_bin, snapshot_server_flat);
+
+    info!(
+        target: "shadow_scale::server",
+        id,
+        channel = channel.as_str(),
+        magnitude = clamped,
+        "influencer.channel_support.applied"
+    );
+}
+
+fn handle_influencer_spawn(
+    app: &mut bevy::prelude::App,
+    scope: Option<InfluenceScopeKind>,
+    generation: Option<GenerationId>,
+    snapshot_server_bin: Option<&SnapshotServer>,
+    snapshot_server_flat: Option<&SnapshotServer>,
+) {
+    let registry_snapshot = app.world.resource::<GenerationRegistry>().clone();
+    let spawned = {
+        let mut roster = app.world.resource_mut::<InfluentialRoster>();
+        roster.force_spawn(scope, generation, &registry_snapshot)
+    };
+
+    let Some(new_id) = spawned else {
+        warn!(
+            target: "shadow_scale::server",
+            scope = ?scope,
+            generation = ?generation,
+            "influencer.spawn.rejected"
+        );
+        return;
+    };
+
+    broadcast_influencer_update(app, snapshot_server_bin, snapshot_server_flat);
+
+    let label = {
+        let roster = app.world.resource::<InfluentialRoster>();
+        roster
+            .states()
+            .into_iter()
+            .find(|state| state.id == new_id)
+            .map(|state| state.name)
+            .unwrap_or_else(|| "unknown".to_string())
+    };
+
+    info!(
+        target: "shadow_scale::server",
+        id = new_id,
+        scope = ?scope,
+        generation = ?generation,
+        name = label.as_str(),
+        "influencer.spawn.manual"
+    );
+}
+
+fn broadcast_influencer_update(
+    app: &mut bevy::prelude::App,
+    snapshot_server_bin: Option<&SnapshotServer>,
+    snapshot_server_flat: Option<&SnapshotServer>,
+) {
+    let (states, sentiment_totals, logistics_total, morale_total, power_total) = {
+        let roster = app.world.resource::<InfluentialRoster>();
+        (
+            roster.states(),
+            roster.sentiment_totals(),
+            roster.logistics_total(),
+            roster.morale_total(),
+            roster.power_total(),
+        )
+    };
+
+    {
+        let mut impacts = app.world.resource_mut::<InfluencerImpacts>();
+        impacts.set_from_totals(logistics_total, morale_total, power_total);
+    }
+
+    {
+        let mut bias_res = app.world.resource_mut::<SentimentAxisBias>();
+        bias_res.set_influencer(sentiment_totals);
+    }
+
+    let bias_state = {
+        let bias_res = app.world.resource::<SentimentAxisBias>();
+        let raw = bias_res.as_raw();
+        AxisBiasState {
+            knowledge: raw[0],
+            trust: raw[1],
+            equity: raw[2],
+            agency: raw[3],
+        }
+    };
+
+    let (influencer_delta, bias_delta) = {
+        let mut history = app.world.resource_mut::<SnapshotHistory>();
+        let influencer_delta = history.update_influencers(states);
+        let bias_delta = history.update_axis_bias(bias_state);
+        (influencer_delta, bias_delta)
+    };
+
+    if let Some((bin, flat)) = influencer_delta {
+        if let Some(server) = snapshot_server_bin {
+            server.broadcast(bin.as_ref());
+        }
+        if let Some(server) = snapshot_server_flat {
+            server.broadcast(flat.as_ref());
+        }
+    }
+    if let Some((bin, flat)) = bias_delta {
+        if let Some(server) = snapshot_server_bin {
+            server.broadcast(bin.as_ref());
+        }
+        if let Some(server) = snapshot_server_flat {
+            server.broadcast(flat.as_ref());
+        }
+    }
+
+    if let Some(server) = snapshot_server_flat {
+        let history = app.world.resource::<SnapshotHistory>();
+        if let Some(snapshot_bytes) = history.encoded_snapshot_flat.as_ref() {
+            server.broadcast(snapshot_bytes.as_ref());
+        }
+    }
+}
+
+fn handle_influencer_command(
+    app: &mut bevy::prelude::App,
+    id: u32,
+    magnitude: f32,
+    action: InfluencerAction,
+    snapshot_server_bin: Option<&SnapshotServer>,
+    snapshot_server_flat: Option<&SnapshotServer>,
+) {
+    let clamped = magnitude.clamp(0.1, 5.0);
+    let scalar_amount = Scalar::from_f32(clamped);
+
+    let applied = {
+        let mut roster = app.world.resource_mut::<InfluentialRoster>();
+        match action {
+            InfluencerAction::Support => roster.apply_support(id, scalar_amount),
+            InfluencerAction::Suppress => roster.apply_suppress(id, scalar_amount),
+        }
+    };
+
+    if !applied {
+        warn!(
+            target: "shadow_scale::server",
+            id,
+            magnitude = clamped,
+            "influencer.command.rejected=unknown_id"
+        );
+        return;
+    }
+
+    broadcast_influencer_update(app, snapshot_server_bin, snapshot_server_flat);
+
+    match action {
+        InfluencerAction::Support => info!(
+            target: "shadow_scale::server",
+            id,
+            magnitude = clamped,
+            "influencer.support.applied"
+        ),
+        InfluencerAction::Suppress => info!(
+            target: "shadow_scale::server",
+            id,
+            magnitude = clamped,
+            "influencer.suppress.applied"
+        ),
+    }
+}
+
+fn handle_inject_corruption(
+    app: &mut bevy::prelude::App,
+    subsystem: CorruptionSubsystem,
+    intensity: f32,
+    exposure_timer: u16,
+    snapshot_server_bin: Option<&SnapshotServer>,
+    snapshot_server_flat: Option<&SnapshotServer>,
+) {
+    let clamped_intensity = intensity.clamp(-5.0, 5.0);
+    let timer = exposure_timer.max(1);
+    let restitution = timer.saturating_add(4);
+    let tick = app.world.resource::<SimulationTick>().0;
+
+    let (ledger_clone, incident_id) = {
+        let mut ledgers = app.world.resource_mut::<CorruptionLedgers>();
+        let ledger = ledgers.ledger_mut();
+        let incident_id = ((tick as u64) << 32) | ((ledger.entry_count() as u64 + 1) & 0xFFFF_FFFF);
+        let entry = CorruptionEntry {
+            subsystem,
+            intensity: Scalar::from_f32(clamped_intensity).raw(),
+            incident_id,
+            exposure_timer: timer,
+            restitution_window: restitution,
+            last_update_tick: tick,
+        };
+        ledger.register_incident(entry);
+        (ledger.clone(), incident_id)
+    };
+
+    let delta_payload = {
+        let mut history = app.world.resource_mut::<SnapshotHistory>();
+        history.update_corruption(ledger_clone)
+    };
+
+    if let Some((binary, flat)) = delta_payload {
+        if let Some(server) = snapshot_server_bin {
+            server.broadcast(binary.as_ref());
+        }
+        if let Some(server) = snapshot_server_flat {
+            server.broadcast(flat.as_ref());
+        }
+    }
+
+    if let Some(server) = snapshot_server_flat {
+        let history = app.world.resource::<SnapshotHistory>();
+        if let Some(snapshot_bytes) = history.encoded_snapshot_flat.as_ref() {
+            server.broadcast(snapshot_bytes.as_ref());
+        }
+    }
+
+    info!(
+        target: "shadow_scale::server",
+        ?subsystem,
+        intensity = clamped_intensity,
+        exposure_timer = timer,
+        incident_id,
+        "corruption.injected"
+    );
+}
+
+fn resolve_ready_turn(
+    app: &mut bevy::prelude::App,
+    snapshot_server_bin: Option<&SnapshotServer>,
+    snapshot_server_flat: Option<&SnapshotServer>,
+) {
     let ready_orders = {
         let mut queue = app.world.resource_mut::<TurnQueue>();
         if !queue.is_ready() {
@@ -313,7 +750,7 @@ fn resolve_ready_turn(app: &mut bevy::prelude::App, snapshot_server: Option<&Sna
     }
 
     let history = app.world.resource::<SnapshotHistory>();
-    broadcast_latest(snapshot_server, history);
+    broadcast_latest(snapshot_server_bin, snapshot_server_flat, history);
 
     let metrics = app.world.resource::<SimulationMetrics>();
     info!(
@@ -341,7 +778,8 @@ fn apply_orders(submissions: &[(FactionId, FactionOrders)]) {
 fn handle_rollback(
     app: &mut bevy::prelude::App,
     tick: u64,
-    snapshot_server: Option<&SnapshotServer>,
+    snapshot_server_bin: Option<&SnapshotServer>,
+    snapshot_server_flat: Option<&SnapshotServer>,
 ) {
     let entry: Option<StoredSnapshot> = {
         let history = app.world.resource::<SnapshotHistory>();
@@ -373,7 +811,10 @@ fn handle_rollback(
         "rollback.completed -- clients should reconnect to receive fresh state"
     );
 
-    if let Some(server) = snapshot_server {
+    if let Some(server) = snapshot_server_bin {
         server.broadcast(entry.encoded_snapshot.as_ref());
+    }
+    if let Some(server) = snapshot_server_flat {
+        server.broadcast(entry.encoded_snapshot_flat.as_ref());
     }
 }

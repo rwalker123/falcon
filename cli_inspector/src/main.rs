@@ -131,9 +131,39 @@ fn send_command(endpoint: &str, command: &ClientCommand) -> std::io::Result<()> 
         ClientCommand::Heat { entity, delta } => format!("heat {} {}\n", entity, delta),
         ClientCommand::SubmitOrders { faction } => format!("order {} ready\n", faction),
         ClientCommand::Rollback { tick } => format!("rollback {}\n", tick),
-        ClientCommand::SetAxisBias { axis, value } => {
-            format!("bias {} {:.6}\n", axis, value)
+        ClientCommand::SetAxisBias { axis, value } => format!("bias {} {:.6}\n", axis, value),
+        ClientCommand::SupportInfluencer { id, magnitude } => {
+            format!("support {} {:.3}\n", id, magnitude)
         }
+        ClientCommand::SuppressInfluencer { id, magnitude } => {
+            format!("suppress {} {:.3}\n", id, magnitude)
+        }
+        ClientCommand::SupportChannel {
+            id,
+            channel,
+            magnitude,
+        } => {
+            format!(
+                "support_channel {} {} {:.3}\n",
+                id,
+                channel.as_str(),
+                magnitude
+            )
+        }
+        ClientCommand::SpawnInfluencer { scope, generation } => match (scope, generation) {
+            (Some(scope), Some(gen)) => format!("spawn_influencer {} {}\n", scope, gen),
+            (Some(scope), None) => format!("spawn_influencer {}\n", scope),
+            (None, Some(gen)) => format!("spawn_influencer {}\n", gen),
+            (None, None) => "spawn_influencer\n".to_string(),
+        },
+        ClientCommand::InjectCorruption {
+            subsystem,
+            intensity,
+            exposure_timer,
+        } => format!(
+            "corruption {} {:.3} {}\n",
+            subsystem, intensity, exposure_timer
+        ),
     };
     stream.write_all(line.as_bytes())?;
     Ok(())

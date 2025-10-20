@@ -1,0 +1,11 @@
+[configuration]
+entry_symbol = "godot_rs_shadow_scale_godot_init"
+compatibility_minimum = "4.2"
+
+[libraries]
+macos.debug = "res://native/bin/macos/libshadow_scale_godot.dylib"
+macos.release = "res://native/bin/macos/libshadow_scale_godot.dylib"
+linux.debug = "res://native/bin/linux/libshadow_scale_godot.so"
+linux.release = "res://native/bin/linux/libshadow_scale_godot.so"
+windows.debug.x86_64 = "res://native/bin/windows/shadow_scale_godot.dll"
+windows.release.x86_64 = "res://native/bin/windows/shadow_scale_godot.dll"
