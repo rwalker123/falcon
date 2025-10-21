@@ -13,7 +13,8 @@ use sim_runtime::{
     influence_domains_from_mask, AxisBiasState, CorruptionEntry, CorruptionLedger,
     CorruptionSubsystem, GenerationState, InfluenceDomain, InfluenceLifecycle, InfluenceScopeKind,
     InfluentialIndividualState, PopulationCohortState, PowerNodeState, SentimentAxisTelemetry,
-    SentimentDriverCategory, SentimentTelemetryState, TileState, WorldDelta,
+    SentimentDriverCategory, SentimentTelemetryState, TerrainOverlayState, TerrainTags,
+    TerrainType, TileState, WorldDelta,
 };
 
 const HEATMAP_SIZE: usize = 21;
@@ -52,6 +53,19 @@ const CHANNEL_LABELS: [&str; 4] = ["Popular", "Peer", "Institutional", "Humanita
 const CHANNEL_KEYS: [&str; 4] = ["popular", "peer", "institutional", "humanitarian"];
 const MAX_CORRUPTION_EXPOSURES: usize = 6;
 const MAX_CORRUPTION_ENTRIES: usize = 6;
+const TERRAIN_TAG_LABELS: &[(TerrainTags, &str); 11] = &[
+    (TerrainTags::WATER, "Water"),
+    (TerrainTags::FRESHWATER, "Freshwater"),
+    (TerrainTags::COASTAL, "Coastal"),
+    (TerrainTags::WETLAND, "Wetland"),
+    (TerrainTags::FERTILE, "Fertile"),
+    (TerrainTags::ARID, "Arid"),
+    (TerrainTags::POLAR, "Polar"),
+    (TerrainTags::HIGHLAND, "Highland"),
+    (TerrainTags::VOLCANIC, "Volcanic"),
+    (TerrainTags::HAZARDOUS, "Hazardous"),
+    (TerrainTags::SUBSURFACE, "Subsurface"),
+];
 
 fn scaled(value: i64) -> f32 {
     value as f32 / SCALE_FACTOR
@@ -101,6 +115,48 @@ fn driver_category_tag(category: SentimentDriverCategory) -> &'static str {
         SentimentDriverCategory::Policy => "Policy",
         SentimentDriverCategory::Incident => "Incident",
         SentimentDriverCategory::Influencer => "Influencer",
+    }
+}
+
+fn terrain_label(terrain: TerrainType) -> &'static str {
+    match terrain {
+        TerrainType::DeepOcean => "Deep Ocean",
+        TerrainType::ContinentalShelf => "Continental Shelf",
+        TerrainType::InlandSea => "Inland Sea",
+        TerrainType::CoralShelf => "Coral Shelf",
+        TerrainType::HydrothermalVentField => "Hydrothermal Vent Field",
+        TerrainType::TidalFlat => "Tidal Flat",
+        TerrainType::RiverDelta => "River Delta",
+        TerrainType::MangroveSwamp => "Mangrove Swamp",
+        TerrainType::FreshwaterMarsh => "Freshwater Marsh",
+        TerrainType::Floodplain => "Floodplain",
+        TerrainType::AlluvialPlain => "Alluvial Plain",
+        TerrainType::PrairieSteppe => "Prairie Steppe",
+        TerrainType::MixedWoodland => "Mixed Woodland",
+        TerrainType::BorealTaiga => "Boreal Taiga",
+        TerrainType::PeatHeath => "Peatland/Heath",
+        TerrainType::HotDesertErg => "Hot Desert Erg",
+        TerrainType::RockyReg => "Rocky Reg Desert",
+        TerrainType::SemiAridScrub => "Semi-Arid Scrub",
+        TerrainType::SaltFlat => "Salt Flat",
+        TerrainType::OasisBasin => "Oasis Basin",
+        TerrainType::Tundra => "Tundra",
+        TerrainType::PeriglacialSteppe => "Periglacial Steppe",
+        TerrainType::Glacier => "Glacier",
+        TerrainType::SeasonalSnowfield => "Seasonal Snowfield",
+        TerrainType::RollingHills => "Rolling Hills",
+        TerrainType::HighPlateau => "High Plateau",
+        TerrainType::AlpineMountain => "Alpine Mountain",
+        TerrainType::KarstHighland => "Karst Highland",
+        TerrainType::CanyonBadlands => "Canyon Badlands",
+        TerrainType::ActiveVolcanoSlope => "Active Volcano Slope",
+        TerrainType::BasalticLavaField => "Basaltic Lava Field",
+        TerrainType::AshPlain => "Ash Plain",
+        TerrainType::FumaroleBasin => "Fumarole Basin",
+        TerrainType::ImpactCraterField => "Impact Crater Field",
+        TerrainType::KarstCavernMouth => "Karst Cavern Mouth",
+        TerrainType::SinkholeField => "Sinkhole Field",
+        TerrainType::AquiferCeiling => "Aquifer Ceiling",
     }
 }
 
@@ -475,6 +531,87 @@ impl CorruptionEntryView {
 }
 
 #[derive(Clone, Default)]
+struct TerrainSummary {
+    width: u32,
+    height: u32,
+    total: usize,
+    type_counts: Vec<(TerrainType, usize)>,
+    tag_counts: Vec<(&'static str, usize)>,
+}
+
+impl TerrainSummary {
+    fn build(tile_index: &HashMap<u64, TileState>) -> Self {
+        if tile_index.is_empty() {
+            return Self::default();
+        }
+        let mut width = 0u32;
+        let mut height = 0u32;
+        let mut type_counts: HashMap<TerrainType, usize> = HashMap::new();
+        let mut tag_counts: HashMap<&'static str, usize> = HashMap::new();
+        for tile in tile_index.values() {
+            width = width.max(tile.x + 1);
+            height = height.max(tile.y + 1);
+            *type_counts.entry(tile.terrain).or_insert(0) += 1;
+            for (mask, label) in TERRAIN_TAG_LABELS.iter() {
+                if tile.terrain_tags.contains(*mask) {
+                    *tag_counts.entry(*label).or_insert(0) += 1;
+                }
+            }
+        }
+        let mut type_counts_vec: Vec<(TerrainType, usize)> = type_counts.into_iter().collect();
+        type_counts_vec.sort_by(|a, b| b.1.cmp(&a.1));
+        if type_counts_vec.len() > 6 {
+            type_counts_vec.truncate(6);
+        }
+        let mut tag_counts_vec: Vec<(&'static str, usize)> = tag_counts.into_iter().collect();
+        tag_counts_vec.sort_by(|a, b| b.1.cmp(&a.1));
+        if tag_counts_vec.len() > 6 {
+            tag_counts_vec.truncate(6);
+        }
+        Self {
+            width,
+            height,
+            total: tile_index.len(),
+            type_counts: type_counts_vec,
+            tag_counts: tag_counts_vec,
+        }
+    }
+
+    fn from_overlay(overlay: &TerrainOverlayState) -> Self {
+        if overlay.width == 0 || overlay.height == 0 || overlay.samples.is_empty() {
+            return Self::default();
+        }
+        let mut type_counts: HashMap<TerrainType, usize> = HashMap::new();
+        let mut tag_counts: HashMap<&'static str, usize> = HashMap::new();
+        for sample in &overlay.samples {
+            *type_counts.entry(sample.terrain).or_insert(0) += 1;
+            for (mask, label) in TERRAIN_TAG_LABELS.iter() {
+                if sample.tags.contains(*mask) {
+                    *tag_counts.entry(*label).or_insert(0) += 1;
+                }
+            }
+        }
+        let mut type_counts_vec: Vec<(TerrainType, usize)> = type_counts.into_iter().collect();
+        type_counts_vec.sort_by(|a, b| b.1.cmp(&a.1));
+        if type_counts_vec.len() > 6 {
+            type_counts_vec.truncate(6);
+        }
+        let mut tag_counts_vec: Vec<(&'static str, usize)> = tag_counts.into_iter().collect();
+        tag_counts_vec.sort_by(|a, b| b.1.cmp(&a.1));
+        if tag_counts_vec.len() > 6 {
+            tag_counts_vec.truncate(6);
+        }
+        Self {
+            width: overlay.width,
+            height: overlay.height,
+            total: overlay.samples.len(),
+            type_counts: type_counts_vec,
+            tag_counts: tag_counts_vec,
+        }
+    }
+}
+
+#[derive(Clone, Default)]
 struct CorruptionSummary {
     active_incidents: usize,
     total_intensity: f32,
@@ -671,6 +808,8 @@ pub struct UiState {
     corruption_summary: CorruptionSummary,
     corruption_exposures: VecDeque<CorruptionExposureView>,
     corruption_target: CorruptionSubsystem,
+    terrain_overlay: Option<TerrainOverlayState>,
+    terrain_summary: TerrainSummary,
 }
 
 impl Default for UiState {
@@ -698,6 +837,8 @@ impl Default for UiState {
             corruption_summary: CorruptionSummary::default(),
             corruption_exposures: VecDeque::new(),
             corruption_target: CorruptionSubsystem::Logistics,
+            terrain_overlay: None,
+            terrain_summary: TerrainSummary::default(),
         }
     }
 }
@@ -783,6 +924,11 @@ impl UiState {
 
         if let Some(ledger) = delta.corruption.as_ref() {
             self.update_corruption(delta.header.tick, ledger);
+        }
+
+        if let Some(terrain) = delta.terrain.as_ref() {
+            self.terrain_overlay = Some(terrain.clone());
+            self.terrain_summary = TerrainSummary::from_overlay(terrain);
         }
 
         self.rebuild_influencers();
@@ -1010,6 +1156,11 @@ impl UiState {
             &self.tile_index,
             &self.generation_index,
         );
+        if let Some(ref overlay) = self.terrain_overlay {
+            self.terrain_summary = TerrainSummary::from_overlay(overlay);
+        } else {
+            self.terrain_summary = TerrainSummary::build(&self.tile_index);
+        }
         self.log_sentiment_shift(prev_axes, prev_weight);
     }
 
@@ -1178,6 +1329,7 @@ pub fn draw_ui(frame: &mut Frame, state: &UiState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(7),
+            Constraint::Length(8),
             Constraint::Length(9),
             Constraint::Min(8),
             Constraint::Length(7),
@@ -1185,9 +1337,10 @@ pub fn draw_ui(frame: &mut Frame, state: &UiState) {
         .split(main_split[1]);
 
     draw_logs(frame, sidebar[0], state);
-    draw_corruption(frame, sidebar[1], state);
-    draw_influencers(frame, sidebar[2], state);
-    draw_recent_ticks(frame, sidebar[3], state);
+    draw_terrain(frame, sidebar[1], state);
+    draw_corruption(frame, sidebar[2], state);
+    draw_influencers(frame, sidebar[3], state);
+    draw_recent_ticks(frame, sidebar[4], state);
 }
 
 fn draw_header(frame: &mut Frame, area: Rect) {
@@ -1495,6 +1648,67 @@ fn draw_influencers(frame: &mut Frame, area: Rect, state: &UiState) {
 
     let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: true });
     frame.render_widget(paragraph, area);
+}
+
+fn draw_terrain(frame: &mut Frame, area: Rect, state: &UiState) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Terrain Summary");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height < 3 {
+        return;
+    }
+
+    let summary = &state.terrain_summary;
+    let mut lines: Vec<Line> = Vec::new();
+    if summary.total == 0 {
+        lines.push(Line::from(Span::styled(
+            "No terrain data",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        lines.push(Line::from(format!(
+            "Tiles {:>5} | Grid {}×{}",
+            summary.total, summary.width, summary.height
+        )));
+        if !summary.type_counts.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "Top Biomes:",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            for (terrain, count) in &summary.type_counts {
+                let pct = (*count as f32 / summary.total as f32) * 100.0;
+                lines.push(Line::from(format!(
+                    "  {:<24} {:>5} ({:>4.1}%)",
+                    terrain_label(*terrain),
+                    count,
+                    pct
+                )));
+            }
+        }
+        if !summary.tag_counts.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Tag Coverage:",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            for (label, count) in &summary.tag_counts {
+                let pct = (*count as f32 / summary.total as f32) * 100.0;
+                lines.push(Line::from(format!(
+                    "  {:<14} {:>5} ({:>4.1}%)",
+                    label, count, pct
+                )));
+            }
+        }
+    }
+
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, inner);
 }
 
 fn draw_logs(frame: &mut Frame, area: Rect, state: &UiState) {

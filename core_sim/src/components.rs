@@ -1,4 +1,5 @@
 use bevy::{math::UVec2, prelude::*};
+use sim_runtime::{TerrainTags, TerrainType};
 
 use crate::{
     generations::GenerationId,
@@ -12,6 +13,8 @@ pub struct Tile {
     pub element: ElementKind,
     pub mass: Scalar,
     pub temperature: Scalar,
+    pub terrain: TerrainType,
+    pub terrain_tags: TerrainTags,
 }
 
 /// Procedural element categories used to vary material behavior.
@@ -146,6 +149,8 @@ impl Default for Tile {
             element: ElementKind::Ferrite,
             mass: scalar_one(),
             temperature: scalar_zero(),
+            terrain: TerrainType::AlluvialPlain,
+            terrain_tags: TerrainTags::empty(),
         }
     }
 }

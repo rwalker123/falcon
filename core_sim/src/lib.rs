@@ -13,6 +13,7 @@ mod resources;
 mod scalar;
 mod snapshot;
 mod systems;
+mod terrain;
 
 use bevy::prelude::*;
 
@@ -32,6 +33,10 @@ pub use resources::{
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{restore_world_from_snapshot, SnapshotHistory, StoredSnapshot};
+pub use terrain::{
+    classify_terrain, terrain_definition, terrain_for_position, MovementProfile, TerrainDefinition,
+    TerrainResourceBias,
+};
 
 /// Construct a Bevy [`App`] configured with the Shadow-Scale turn pipeline.
 pub fn build_headless_app() -> App {

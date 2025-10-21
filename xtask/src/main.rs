@@ -36,9 +36,7 @@ fn godot_build() -> Result<(), Box<dyn Error>> {
 
     let (artifact_name, platform_dir) = platform_artifact();
 
-    let source = Path::new("target")
-        .join("release")
-        .join(artifact_name);
+    let source = Path::new("target").join("release").join(artifact_name);
 
     if !source.exists() {
         return Err(format!("expected build artifact at {}", source.display()).into());

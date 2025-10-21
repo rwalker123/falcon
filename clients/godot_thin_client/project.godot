@@ -1,11 +1,25 @@
-[gd_project]
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
 config_version=5
 
 [application]
+
 config/name="ShadowScale Godot Thin Client"
 config/description="Spike client rendering tactical map overlays for Shadow-Scale"
 run/main_scene="res://src/Main.tscn"
+config/features=PackedStringArray("4.5")
 config/icon="res://assets/icon.svg"
 
+[gd_project]
+
+config_version=5
+
 [rendering]
+
 quality/driver/driver_name="opengl3"

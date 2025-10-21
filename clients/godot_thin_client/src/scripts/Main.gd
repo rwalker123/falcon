@@ -87,6 +87,9 @@ func _unhandled_input(event: InputEvent) -> void:
         skip_to_next_turn()
     elif event.is_action_pressed("ui_left"):
         skip_to_previous_turn()
+    elif event.is_action_pressed("ui_accept"):
+        if map_view != null:
+            map_view.call("toggle_terrain_mode")
     elif event is InputEventMouseButton:
         var mouse_event: InputEventMouseButton = event as InputEventMouseButton
         if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP and mouse_event.pressed:

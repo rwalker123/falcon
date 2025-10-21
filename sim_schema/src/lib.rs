@@ -1,8 +1,11 @@
 use ahash::RandomState;
 use flatbuffers::{DefaultAllocator, FlatBufferBuilder, ForwardsUOffset, WIPOffset};
-use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 use serde::{Deserialize, Serialize};
-use std::hash::{BuildHasher, Hasher};
+use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+use std::{
+    hash::{BuildHasher, Hasher},
+    ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign},
+};
 
 type FbBuilder<'a> = FlatBufferBuilder<'a, DefaultAllocator>;
 
@@ -52,6 +55,193 @@ impl Default for SnapshotHeader {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[repr(u16)]
+pub enum TerrainType {
+    DeepOcean = 0,
+    ContinentalShelf = 1,
+    InlandSea = 2,
+    CoralShelf = 3,
+    HydrothermalVentField = 4,
+    TidalFlat = 5,
+    RiverDelta = 6,
+    MangroveSwamp = 7,
+    FreshwaterMarsh = 8,
+    Floodplain = 9,
+    AlluvialPlain = 10,
+    PrairieSteppe = 11,
+    MixedWoodland = 12,
+    BorealTaiga = 13,
+    PeatHeath = 14,
+    HotDesertErg = 15,
+    RockyReg = 16,
+    SemiAridScrub = 17,
+    SaltFlat = 18,
+    OasisBasin = 19,
+    Tundra = 20,
+    PeriglacialSteppe = 21,
+    Glacier = 22,
+    SeasonalSnowfield = 23,
+    RollingHills = 24,
+    HighPlateau = 25,
+    AlpineMountain = 26,
+    KarstHighland = 27,
+    CanyonBadlands = 28,
+    ActiveVolcanoSlope = 29,
+    BasalticLavaField = 30,
+    AshPlain = 31,
+    FumaroleBasin = 32,
+    ImpactCraterField = 33,
+    KarstCavernMouth = 34,
+    SinkholeField = 35,
+    AquiferCeiling = 36,
+}
+
+impl TerrainType {
+    pub const VALUES: [TerrainType; 37] = [
+        TerrainType::DeepOcean,
+        TerrainType::ContinentalShelf,
+        TerrainType::InlandSea,
+        TerrainType::CoralShelf,
+        TerrainType::HydrothermalVentField,
+        TerrainType::TidalFlat,
+        TerrainType::RiverDelta,
+        TerrainType::MangroveSwamp,
+        TerrainType::FreshwaterMarsh,
+        TerrainType::Floodplain,
+        TerrainType::AlluvialPlain,
+        TerrainType::PrairieSteppe,
+        TerrainType::MixedWoodland,
+        TerrainType::BorealTaiga,
+        TerrainType::PeatHeath,
+        TerrainType::HotDesertErg,
+        TerrainType::RockyReg,
+        TerrainType::SemiAridScrub,
+        TerrainType::SaltFlat,
+        TerrainType::OasisBasin,
+        TerrainType::Tundra,
+        TerrainType::PeriglacialSteppe,
+        TerrainType::Glacier,
+        TerrainType::SeasonalSnowfield,
+        TerrainType::RollingHills,
+        TerrainType::HighPlateau,
+        TerrainType::AlpineMountain,
+        TerrainType::KarstHighland,
+        TerrainType::CanyonBadlands,
+        TerrainType::ActiveVolcanoSlope,
+        TerrainType::BasalticLavaField,
+        TerrainType::AshPlain,
+        TerrainType::FumaroleBasin,
+        TerrainType::ImpactCraterField,
+        TerrainType::KarstCavernMouth,
+        TerrainType::SinkholeField,
+        TerrainType::AquiferCeiling,
+    ];
+}
+
+impl Default for TerrainType {
+    fn default() -> Self {
+        TerrainType::AlluvialPlain
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, Hash)]
+#[serde(transparent)]
+pub struct TerrainTags(pub u16);
+
+impl TerrainTags {
+    pub const fn new(bits: u16) -> Self {
+        Self(bits)
+    }
+
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    pub const fn bits(self) -> u16 {
+        self.0
+    }
+
+    pub const WATER: Self = Self(1 << 0);
+    pub const FRESHWATER: Self = Self(1 << 1);
+    pub const COASTAL: Self = Self(1 << 2);
+    pub const WETLAND: Self = Self(1 << 3);
+    pub const FERTILE: Self = Self(1 << 4);
+    pub const ARID: Self = Self(1 << 5);
+    pub const POLAR: Self = Self(1 << 6);
+    pub const HIGHLAND: Self = Self(1 << 7);
+    pub const VOLCANIC: Self = Self(1 << 8);
+    pub const HAZARDOUS: Self = Self(1 << 9);
+    pub const SUBSURFACE: Self = Self(1 << 10);
+    pub const HYDROTHERMAL: Self = Self(1 << 11);
+
+    pub fn contains(self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+}
+
+impl BitOr for TerrainTags {
+    type Output = TerrainTags;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        TerrainTags(self.bits() | rhs.bits())
+    }
+}
+
+impl BitOrAssign for TerrainTags {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.bits();
+    }
+}
+
+impl BitAnd for TerrainTags {
+    type Output = TerrainTags;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        TerrainTags(self.bits() & rhs.bits())
+    }
+}
+
+impl BitAndAssign for TerrainTags {
+    fn bitand_assign(&mut self, rhs: Self) {
+        self.0 &= rhs.bits();
+    }
+}
+
+impl From<u16> for TerrainTags {
+    fn from(value: u16) -> Self {
+        TerrainTags::new(value)
+    }
+}
+
+impl From<TerrainTags> for u16 {
+    fn from(value: TerrainTags) -> Self {
+        value.bits()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct TerrainSample {
+    pub terrain: TerrainType,
+    pub tags: TerrainTags,
+}
+
+impl Default for TerrainSample {
+    fn default() -> Self {
+        Self {
+            terrain: TerrainType::AlluvialPlain,
+            tags: TerrainTags::empty(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+pub struct TerrainOverlayState {
+    pub width: u32,
+    pub height: u32,
+    pub samples: Vec<TerrainSample>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TileState {
     pub entity: u64,
@@ -60,6 +250,8 @@ pub struct TileState {
     pub element: u8,
     pub mass: i64,
     pub temperature: i64,
+    pub terrain: TerrainType,
+    pub terrain_tags: TerrainTags,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -334,6 +526,7 @@ pub struct WorldSnapshot {
     pub logistics: Vec<LogisticsLinkState>,
     pub populations: Vec<PopulationCohortState>,
     pub power: Vec<PowerNodeState>,
+    pub terrain: TerrainOverlayState,
     pub axis_bias: AxisBiasState,
     pub sentiment: SentimentTelemetryState,
     pub generations: Vec<GenerationState>,
@@ -359,6 +552,7 @@ pub struct WorldDelta {
     pub corruption: Option<CorruptionLedger>,
     pub influencers: Vec<InfluentialIndividualState>,
     pub removed_influencers: Vec<u32>,
+    pub terrain: Option<TerrainOverlayState>,
 }
 
 impl WorldSnapshot {
@@ -439,6 +633,7 @@ fn build_snapshot_flatbuffer<'a>(
     let logistics_vec = create_logistics(builder, &snapshot.logistics);
     let populations_vec = create_populations(builder, &snapshot.populations);
     let power_vec = create_power(builder, &snapshot.power);
+    let terrain_overlay = create_terrain_overlay(builder, &snapshot.terrain);
     let axis_bias = fb::AxisBiasState::create(
         builder,
         &fb::AxisBiasStateArgs {
@@ -462,6 +657,7 @@ fn build_snapshot_flatbuffer<'a>(
             logistics: Some(logistics_vec),
             populations: Some(populations_vec),
             power: Some(power_vec),
+            terrainOverlay: Some(terrain_overlay),
             axisBias: Some(axis_bias),
             sentiment: Some(sentiment),
             generations: Some(generations_vec),
@@ -506,6 +702,10 @@ fn build_delta_flatbuffer<'a>(
     let removed_populations_vec = builder.create_vector(&delta.removed_populations);
     let power_vec = create_power(builder, &delta.power);
     let removed_power_vec = builder.create_vector(&delta.removed_power);
+    let terrain_overlay = delta
+        .terrain
+        .as_ref()
+        .map(|overlay| create_terrain_overlay(builder, overlay));
     let axis_bias = delta.axis_bias.as_ref().map(|axis| {
         fb::AxisBiasState::create(
             builder,
@@ -550,6 +750,7 @@ fn build_delta_flatbuffer<'a>(
             corruption,
             influencers: Some(influencers_vec),
             removedInfluencers: Some(removed_influencers_vec),
+            terrainOverlay: terrain_overlay,
             ..Default::default()
         },
     );
@@ -580,6 +781,8 @@ fn create_tiles<'a>(
                     element: tile.element,
                     mass: tile.mass,
                     temperature: tile.temperature,
+                    terrain: to_fb_terrain_type(tile.terrain),
+                    terrainTags: tile.terrain_tags.bits(),
                     ..Default::default()
                 },
             )
@@ -653,6 +856,36 @@ fn create_power<'a>(
         })
         .collect();
     builder.create_vector(&offsets)
+}
+
+fn create_terrain_overlay<'a>(
+    builder: &mut FbBuilder<'a>,
+    overlay: &TerrainOverlayState,
+) -> WIPOffset<fb::TerrainOverlay<'a>> {
+    let sample_offsets: Vec<_> = overlay
+        .samples
+        .iter()
+        .map(|sample| {
+            fb::TerrainSample::create(
+                builder,
+                &fb::TerrainSampleArgs {
+                    terrain: to_fb_terrain_type(sample.terrain),
+                    tags: sample.tags.bits(),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+    let samples = builder.create_vector(&sample_offsets);
+    fb::TerrainOverlay::create(
+        builder,
+        &fb::TerrainOverlayArgs {
+            width: overlay.width,
+            height: overlay.height,
+            samples: Some(samples),
+            ..Default::default()
+        },
+    )
 }
 
 fn create_sentiment<'a>(
@@ -833,6 +1066,48 @@ fn to_fb_driver_category(category: SentimentDriverCategory) -> fb::SentimentDriv
         SentimentDriverCategory::Policy => fb::SentimentDriverCategory::Policy,
         SentimentDriverCategory::Incident => fb::SentimentDriverCategory::Incident,
         SentimentDriverCategory::Influencer => fb::SentimentDriverCategory::Influencer,
+    }
+}
+
+fn to_fb_terrain_type(terrain: TerrainType) -> fb::TerrainType {
+    match terrain {
+        TerrainType::DeepOcean => fb::TerrainType::DeepOcean,
+        TerrainType::ContinentalShelf => fb::TerrainType::ContinentalShelf,
+        TerrainType::InlandSea => fb::TerrainType::InlandSea,
+        TerrainType::CoralShelf => fb::TerrainType::CoralShelf,
+        TerrainType::HydrothermalVentField => fb::TerrainType::HydrothermalVentField,
+        TerrainType::TidalFlat => fb::TerrainType::TidalFlat,
+        TerrainType::RiverDelta => fb::TerrainType::RiverDelta,
+        TerrainType::MangroveSwamp => fb::TerrainType::MangroveSwamp,
+        TerrainType::FreshwaterMarsh => fb::TerrainType::FreshwaterMarsh,
+        TerrainType::Floodplain => fb::TerrainType::Floodplain,
+        TerrainType::AlluvialPlain => fb::TerrainType::AlluvialPlain,
+        TerrainType::PrairieSteppe => fb::TerrainType::PrairieSteppe,
+        TerrainType::MixedWoodland => fb::TerrainType::MixedWoodland,
+        TerrainType::BorealTaiga => fb::TerrainType::BorealTaiga,
+        TerrainType::PeatHeath => fb::TerrainType::PeatHeath,
+        TerrainType::HotDesertErg => fb::TerrainType::HotDesertErg,
+        TerrainType::RockyReg => fb::TerrainType::RockyReg,
+        TerrainType::SemiAridScrub => fb::TerrainType::SemiAridScrub,
+        TerrainType::SaltFlat => fb::TerrainType::SaltFlat,
+        TerrainType::OasisBasin => fb::TerrainType::OasisBasin,
+        TerrainType::Tundra => fb::TerrainType::Tundra,
+        TerrainType::PeriglacialSteppe => fb::TerrainType::PeriglacialSteppe,
+        TerrainType::Glacier => fb::TerrainType::Glacier,
+        TerrainType::SeasonalSnowfield => fb::TerrainType::SeasonalSnowfield,
+        TerrainType::RollingHills => fb::TerrainType::RollingHills,
+        TerrainType::HighPlateau => fb::TerrainType::HighPlateau,
+        TerrainType::AlpineMountain => fb::TerrainType::AlpineMountain,
+        TerrainType::KarstHighland => fb::TerrainType::KarstHighland,
+        TerrainType::CanyonBadlands => fb::TerrainType::CanyonBadlands,
+        TerrainType::ActiveVolcanoSlope => fb::TerrainType::ActiveVolcanoSlope,
+        TerrainType::BasalticLavaField => fb::TerrainType::BasalticLavaField,
+        TerrainType::AshPlain => fb::TerrainType::AshPlain,
+        TerrainType::FumaroleBasin => fb::TerrainType::FumaroleBasin,
+        TerrainType::ImpactCraterField => fb::TerrainType::ImpactCraterField,
+        TerrainType::KarstCavernMouth => fb::TerrainType::KarstCavernMouth,
+        TerrainType::SinkholeField => fb::TerrainType::SinkholeField,
+        TerrainType::AquiferCeiling => fb::TerrainType::AquiferCeiling,
     }
 }
 

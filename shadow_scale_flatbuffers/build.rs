@@ -4,6 +4,7 @@ use std::path::Path;
 fn main() {
     let schema = Path::new("../sim_schema/schemas/snapshot.fbs");
     let out_dir = Path::new("src/generated");
+    println!("cargo:rerun-if-changed={}", schema.display());
     fs::create_dir_all(out_dir).expect("failed to create generated dir");
     flatc_rust::run(flatc_rust::Args {
         inputs: &[schema],

@@ -100,6 +100,109 @@ Gather → Process → Build → Power → Store → Move → Defend
 - Start profile influences biome/ore surfacing to prevent dead starts (e.g., clay near water; fluxes within travel range; at least one workable fuel).
 - Climate bands, hydrology, and atmospheric composition align with chemistry and the chosen early energy pathway.
 
+### 3b. Foundational Terrain Palette
+Raw terrain defines movement, habitability, and discovery potential before factions reshape the landscape. Each tile/hex samples one of these base classes; improvements, infrastructure, and disasters layer on afterwards. (Implementation hooks: see `docs/architecture.md` “Terrain Type Taxonomy”.)
+
+**Palette Swatches (Design Reference → Client)**
+- Colours listed below use RGB hex codes that the Godot thin client now consumes. CLI/Godot overlays should stay synchronized; if hues shift for readability, update this table first, then mirror changes in `docs/architecture.md`.
+
+| ID | Terrain Class | Hex |
+|----|---------------|-----|
+| 00 | Deep Ocean | `#0B1E3D` |
+| 01 | Continental Shelf | `#14405E` |
+| 02 | Inland Sea/Large Lake | `#1C5872` |
+| 03 | Coral/Reef Shelf Analogues | `#157A73` |
+| 04 | Hydrothermal Vent Fields | `#2F7F89` |
+| 05 | Tidal Flats | `#B8B08A` |
+| 06 | River Deltas/Estuaries | `#9BC37B` |
+| 07 | Mangrove/Brackish Swamps | `#4F7C38` |
+| 08 | Freshwater Marsh/Bog | `#5C8C63` |
+| 09 | Floodplains | `#88B65A` |
+| 10 | Alluvial Plains | `#C9B078` |
+| 11 | Prairie/Grassland Steppe | `#D3A54D` |
+| 12 | Mixed Woodland | `#5B7F43` |
+| 13 | Boreal Taiga | `#3B4F31` |
+| 14 | Peatland/Heath | `#64556A` |
+| 15 | Hot Desert Erg | `#E7C36A` |
+| 16 | Rocky Reg Desert | `#8A5F3C` |
+| 17 | Semi-Arid Scrub/Steppe | `#A48755` |
+| 18 | Salt Flats/Sabkha | `#E0DCD2` |
+| 19 | Oasis Basins | `#3AA2A2` |
+| 20 | Tundra | `#A6C7CF` |
+| 21 | Periglacial Steppe | `#7FB7A1` |
+| 22 | Glacier/Ice Sheet | `#D1E4EC` |
+| 23 | Seasonal Snowfields | `#C0CAD6` |
+| 24 | Rolling Hills | `#6F9B4B` |
+| 25 | High Plateau/Mesa | `#967E5C` |
+| 26 | Alpine Mountains | `#7A7F88` |
+| 27 | Karst Highlands | `#4A6A55` |
+| 28 | Canyon/Badlands | `#B66544` |
+| 29 | Active Volcano Slopes | `#8C342D` |
+| 30 | Basaltic Lava Fields | `#40333D` |
+| 31 | Ash Plains/Pumice Barrens | `#7A6E68` |
+| 32 | Fumarole/Geothermal Basins | `#4C8991` |
+| 33 | Impact Crater Fields | `#5B4639` |
+| 34 | Karst Cavern Entrances | `#2E4F5C` |
+| 35 | Sinkholes/Collapse Zones | `#4F4B33` |
+| 36 | Subterranean Aquifer Ceilings | `#2F8FB2` |
+
+- **Open Water & Shelf Biomes**
+  - **Deep Ocean**: abyssal plains/trenches with crushing pressure; logistics limited to specialized hulls and submersibles; harbors exotic vents/resources.
+  - **Continental Shelf**: shallow seas supporting fisheries and easy coastal trade; foundations for ports, tidal energy, and early submersible exploration.
+  - **Inland Sea/Large Lake**: enclosed freshwater/brackish bodies moderating climate; anchors ferry trade, evaporation risks, and water diplomacy.
+  - **Coral/Reef Shelf Analogues**: biologically dense shallows; hazardous navigation but rich in biomaterials and filtration chemistry.
+  - **Hydrothermal Vent Fields**: deepwater geothermal plumes; gateways to chemosynthetic ecosystems, rare isotopes, and thermal energy capture.
+
+- **Coastal & Wetland Zones**
+  - **Tidal Flats**: periodically exposed silt; supports salterns, aquaculture, and risky infrastructure with storm-surge exposure.
+  - **River Deltas/Estuaries**: nutrient-loaded fans with shifting channels; high agricultural output but flood management challenges.
+  - **Mangrove/Brackish Swamps**: tangled biofilters; boost biomass harvesting, resist erosion, complicate mechanized movement.
+  - **Freshwater Marsh/Bog**: peat-rich wetlands; store carbon, hide pathogens, and demand raised infrastructure.
+  - **Floodplains**: seasonally inundated silts; premier farmland when managed, catastrophic when neglected.
+
+- **Temperate & Fertile Lowlands**
+  - **Alluvial Plains**: deep soils with minimal relief; prime expansion terrain with low movement penalties.
+  - **Prairie/Grassland Steppe**: open, wind-swept ranges; favor pastoralism, mechanized warfare, and large-scale energy arrays.
+  - **Mixed Woodland**: temperate broadleaf/conifer blends; balanced biomass output and concealment.
+  - **Boreal Taiga**: conifer-dominated belts with acidic soil; timber-rich yet infrastructure-hungry due to freeze-thaw cycles.
+  - **Peatland/Heath**: nutrient-poor moorlands; carbon sinks, fire-prone, low agricultural yield without remediation.
+
+- **Arid & Semi-Arid Regions**
+  - **Hot Desert Erg**: dune seas shaped by wind; scarce water, high solar potential, shifting navigation hazards.
+  - **Rocky Reg Desert**: exposed bedrock/gravel; easier traversal than ergs, rich in mineral outcrops.
+  - **Semi-Arid Scrub/Steppe**: thorn scrub and hardy grasses; supports nomadic logistics and concentrated aquifer tapping.
+  - **Salt Flats/Sabkha**: evaporite pans with extreme reflectivity; hamper movement but enable chemical harvesting.
+  - **Oasis Basins**: localized springs within arid belts; life-support nodes with intense competition and carrying capacity limits.
+
+- **Cold & Polar Biomes**
+  - **Tundra**: permafrost with seasonal thaw; fragile surface, shallow rooting, susceptible to climate-driven collapse.
+  - **Periglacial Steppe**: cold grasslands tied to glacial melt; supports migratory megafauna and opportunistic agriculture.
+  - **Glacier/Ice Sheet**: thick ice masses; near-impenetrable without specialized tech, store paleoclimate archives.
+  - **Seasonal Snowfields**: recurrent accumulations impacting visibility, solar collection, and attrition.
+
+- **Highlands & Mountain Systems**
+  - **Rolling Hills**: moderate relief; accelerate wind energy, complicate mechanized logistics, conceal subterranean deposits.
+  - **High Plateau/Mesa**: elevated flatlands; thin atmosphere variants alter aerostat performance and energy capture.
+  - **Alpine Mountains**: rugged peaks with altitude stress, avalanches, and rare earth seams.
+  - **Karst Highlands**: limestone/dolomite riddled with sinkholes and caverns; underground aquifers and instability hazards.
+  - **Canyon/Badlands**: eroded escarpments exposing geologic strata; natural fortifications with limited arable land.
+
+- **Volcanic & Geothermal Terrains**
+  - **Active Volcano Slopes**: lava channels and ash; catastrophic risk balanced by geothermal energy and mineral vents.
+  - **Basaltic Lava Fields**: cooling flows creating porous stone; difficult traversal, high nickel/rare metal presence.
+  - **Ash Plains/Pumice Barrens**: nutrient-sterile surfaces that can transition to fertile soils post-remediation.
+  - **Fumarole/Geothermal Basins**: surface steam vents; constant energy tap with corrosive atmospheric effects.
+  - **Impact Crater Fields**: melt glass and breccia-rich bowls from past strikes; expose deep crust materials and latent anomaly sites.
+
+- **Subsurface & Transitional Features**
+  - **Karst Cavern Entrances**: gateways to extensive underground volumes; host hidden biospheres and tactical underways.
+  - **Sinkholes/Collapse Zones**: unstable ground from voided substrate; hazard for heavy infrastructure, opportunity for excavations.
+  - **Subterranean Aquifer Ceilings**: porous caprock above flowing water; potential for tapping artesian pressure or inducing surface collapse.
+
+Players read terrain primarily through logistics, viability, and anomaly cues: each class modulates movement cost, detection, resource yield, disaster likelihood, and the discovery tables pulled during exploration. Later systems (infrastructure, climate drift, terraforming) pivot these baselines rather than replacing them wholesale.
+
+Designers and clients can now tap a dedicated terrain overlay channel in snapshots; the inspector surfaces a biome/tag ledger while the Godot thin client renders the same palette, keeping visual validation tight as we iterate on colours and iconography.
+
 ### Pacing & Onboarding
 - Short, optional “First Fires” (or analog) tutorial chain introduces experiment UI, safety, and labeling.
 - Soft caps: without labs/instruments, precision knowledge is limited; folk-tech scales breadth, not depth.
@@ -340,6 +443,52 @@ Collective mood is modeled as a multi-axis vector rather than a single morale me
 - Influencer state (lifecycle, scope tier, channel weights/support, audience generations) is serialized in snapshots, enabling deterministic rollbacks. The CLI inspector surfaces badges, filter controls, channel breakdowns, notoriety, and one-touch boosts for rapid experimentation.
 - Narrative positioning: influencers remain “living levers” inside the sentiment sphere. Their trajectories seed event hooks—local movements, academic breakthroughs, humanitarian crusades—that reverberate through trade, diplomacy, and conflict portfolios.
 - Narrative positioning: influencers surface as “living levers” inside the sentiment sphere. Their arcs should seed event hooks—summits, leaks, uprisings—derived from the domains they dominate and the external pressure players exert.
+
+## 7c. Culture Trait Stack & Regional Divergence
+
+Cultures express the long arc of shared memory, norms, and ritual. They anchor the sentiment sphere, regulate policy compliance, and determine how knowledge survives when crises sever infrastructure. Rather than a monolith, each faction carries layered cultures:
+
+### Culture Layers
+- **Global Identity**: The banner myths, founding narratives, and codified doctrine shared by the faction. It defines diplomatic posture, canonical aesthetics, and the default trait mix for new settlements.
+- **Regional Traditions**: Provinces bend or remix the global baseline based on geography, historic conquests, or migration influx. Regional layers modify sentiment inputs (e.g., frontier belts drift more Expansionist) and gate region-specific events.
+- **Local Communities**: Cities, enclaves, or clans where cultural traits crystallize around economic specialty, religion, or influential figures. Local culture determines micro responses to policy toggles, unrest propagation, and black-market formation.
+
+Culture inheritance flows top-down—global identity seeds regional templates—but feedback loops allow local culture to erode or reshape the global mix when divergence hits thresholds. Persistent regional dissent can spawn splinter identities or civil conversion campaigns.
+
+### Trait Constellations
+Culture is modeled as orthogonal trait axes; each layer derives a weighted vector across the following set. Traits can coexist in tension (e.g., Open yet Traditionalist) with event scripts surfacing contradictions.
+
+- **Passive ↔ Aggressive**: Conflict appetite, retaliation thresholds, militia enthusiasm.
+- **Open ↔ Closed**: Migration gates, trade tariffs, espionage permeability, knowledge leak modifiers.
+- **Collectivist ↔ Individualist**: Policy compliance, volunteerism, R&D initiative versus entrepreneurial breakthroughs.
+- **Traditionalist ↔ Revisionist**: Reform resistance, law codification tempo, memorialization intensity.
+- **Hierarchical ↔ Egalitarian**: Acceptance of social stratification, ease of command chain mobilization, coup risk.
+- **Syncretic ↔ Purist**: Integration of foreign rituals, especially religious motifs; Purist spikes generate cultural purges, while Syncretic spikes unlock hybrid festivals and diplomatic bridges.
+- **Ascetic ↔ Indulgent**: Consumption norms, festival demand, luxury trade multipliers, corruption tolerance.
+- **Pragmatic ↔ Idealistic**: Willingness to cut losses, accept morally gray decisions, or pursue symbolic victories.
+- **Rationalist ↔ Mystical**: Investment in empirical institutions vs. ritual authority; mystical lean shapes prophecy events, pilgrimage economy, and “religion” expression without a standalone subsystem.
+- **Expansionist ↔ Insular**: Colonization drives, diaspora formation, frontier morale, response to territorial loss.
+- **Adaptive ↔ Stubborn**: Reaction speed to discoveries, disaster adaptation, policy repeal friction.
+- **Honor-Bound ↔ Opportunistic**: Treaty enforcement, espionage blowback, mercenary availability.
+- **Merit-Oriented ↔ Lineage-Oriented**: Staff promotion ladder, elite guard quality, influence of dynastic houses.
+- **Secular ↔ Devout**: Civic role of ritual authorities, faith festivals, stability impacts from shrine desecration (the “religion axis” lives here and modulates Mystical/Syncretic expression).
+- **Pluralistic ↔ Monocultural**: Internal minority autonomy, migration attraction, xenophobia events.
+
+Traits roll up into sentiment modifiers, opinion modifiers, and systemic multipliers. Example: Aggressive + Expansionist cultures drift toward Volatile Despair if wars drag on without gains, while Aggressive + Honor-Bound populations punish treaty-breaking leaders with sentiment whiplash.
+
+### Divergence & Conflict
+- **Layer Drift Meters** track deviation between global, regional, and local vectors. Crossing soft limits triggers tension—regional unrest, loyalty taxes, or conversion campaigns. Hard divergence can split a region into a new faction or enforce assimilation quests.
+- **Cultural Clash Events** fire when overlapping spheres disagree (e.g., Devout local enclave under Secular global policy). Outcomes include negotiated autonomy, crackdowns, or cultural syncretism mini-games.
+- **Influential Amplifiers**: Influencers align with trait poles; sponsoring them raises that axis locally, while suppression pushes in the opposite direction. See §7b for how these figures channel sentiment adjustments.
+- **Knowledge Retention**: Trait combinations impact Knowledge Half-Life (§5a). Closed + Purist cultures slow leak timers, whereas Open + Syncretic regions accelerate diffusion abroad but strengthen local cross-training.
+
+### Gameplay Hooks
+- **Policy Interfaces** allow per-layer cultural editing via reform trees: education mandates, festival calendars, media charters. Players can either homogenize traits or cultivate intentional mosaics.
+- **Event Surfacing** uses trait thresholds to gate story beats (pilgrimages, martial games, purges). Regional uniqueness makes replays feel distinct.
+- **Religion-as-Trait** emerges from Devout, Mystical, and Syncretic weighting. Sect-specific mechanics (pilgrimage routes, schism crises, miracle claims) are event packs keyed to high Devout scores; secular factions treat faith as a minor civic lobby instead of its own system.
+- **UI**: Cultural Inspector overlays the map with trait heatmaps, divergence meters, and forecasted clashes. Tooltips cross-link to `docs/architecture.md` §"Culture Simulation Spine" for engineering implementation.
+
+Cross-System Integration: Culture traits feed the Sentiment Sphere, Logistics (through compliance with quotas), Diplomacy (via trust/openness), and Military doctrine (training morale). Future updates should ensure tasks mirror these hooks in the architecture doc and `TASKS.md` entries.
 
 ---
 

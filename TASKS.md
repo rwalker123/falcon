@@ -5,10 +5,23 @@
 - [x] Replace placeholder system with staged schedules and fixed-point math.
 - [x] Add snapshot/delta serialization hooks feeding `sim_schema` schemas.
 
+### Terrain Foundations
+- [x] Implement `TerrainType` enum + tag metadata in worldgen and data contracts (Owner: TBD, Estimate: 2d; Deps: align with `docs/architecture.md` Terrain Type Taxonomy).
+- [x] Expose terrain IDs/tag bitsets through snapshots and FlatBuffers for client overlays (Owner: TBD, Estimate: 1.5d; Deps: terrain enum integration).
+- [x] Extend logistics/population systems to surface telemetry for terrain attrition effects (Owner: TBD, Estimate: 1d; Deps: terrain-aware simulation hooks).
+- [x] Add client overlays (CLI & Godot) that visualise terrain classes and tags using the exported channel (Owner: TBD, Estimate: 1.5d; Deps: terrain telemetry stream).
+- [ ] Document palette alignment across `shadow_scale_strategy_game_concept_technical_plan_v_0.md` and `docs/architecture.md` (Owner: TBD, Estimate: 0.5d; Deps: verified Godot palette mapping).
+- [ ] Add Godot/CLI terrain legend surfaced from shared palette data (Owner: TBD, Estimate: 1d; Deps: palette documentation).
+
 ### Trade Knowledge Diffusion
 - [ ] Introduce `TradeKnowledgeDiffusion` stage that consumes openness metrics to share discoveries between factions (Owner: Ravi, Estimate: 2d; Blocked by schema/runtime helpers).
 - [ ] Integrate migration-driven knowledge seeding into population movement systems (Owner: Elena, Estimate: 1.5d; Requires migration knowledge fragments in snapshots).
 - [ ] Implement corruption passes for logistics, trade, and military budgets (Owner: Ravi, Estimate: 3d; Requires `CorruptionLedger` resource from data contracts).
+
+### Culture Trait Stack
+- [ ] Implement multi-layer culture storage (`CultureLayer`, `CultureTraitVector`) and the reconcile routine propagating global → regional → local weights (Owner: Elena, Estimate: 3d; Deps: finalize trait list per game manual §7c).
+- [ ] Emit divergence telemetry (`CultureDivergence`, `CultureTensionEvent`, `CultureSchismEvent`) and wire into sentiment/diplomacy hooks (Owner: Ravi, Estimate: 2.5d; Deps: reconcile routine + event bus triggers).
+- [ ] Derive trait-driven system modifiers (`CultureEffectsCache`) and expose `CultureLayerState` snapshots/CLI overlays (Owner: Jun, Estimate: 2d; Deps: schema updates in `sim_schema`, inspector UI bandwidth).
 
 ## Data Contracts (`sim_schema` + `sim_runtime`)
 - [x] Define FlatBuffers schema for snapshots and deltas.
@@ -59,6 +72,7 @@
 - [x] Add determinism regression test comparing dual runs.
 - [x] Introduce benchmark harness for 10k/50k/100k entities.
 - [x] Integrate tracing/tracing-subscriber metrics dump accessible via CLI.
+- [ ] Add regression coverage ensuring `TerrainOverlayState` updates propagate on biome/tag changes (Owner: TBD, Estimate: 1d; Deps: finalized terrain legend work).
 
 ## Core Simulation Roadmap
 - [x] Implement per-faction order submission and turn resolution phases (Owner: Sam, Estimate: 4d).

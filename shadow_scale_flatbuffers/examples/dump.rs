@@ -28,8 +28,19 @@ fn main() {
             }
         }
         println!("tile temp range: {}..{}", min_temp, max_temp);
+        if let Some(overlay) = snapshot.terrainOverlay() {
+            println!(
+                "terrain overlay: {}x{} ({} samples)",
+                overlay.width(),
+                overlay.height(),
+                overlay.samples().map(|s| s.len()).unwrap_or_default()
+            );
+        }
     } else if let Some(delta) = envelope.payload_as_delta() {
-        println!("delta tick: {}", delta.header().map(|h| h.tick()).unwrap_or(0));
+        println!(
+            "delta tick: {}",
+            delta.header().map(|h| h.tick()).unwrap_or(0)
+        );
         let mut max_temp = i64::MIN;
         let mut min_temp = i64::MAX;
         if let Some(tiles) = delta.tiles() {
@@ -40,5 +51,13 @@ fn main() {
             }
         }
         println!("delta tile temp range: {}..{}", min_temp, max_temp);
+        if let Some(overlay) = delta.terrainOverlay() {
+            println!(
+                "delta terrain overlay: {}x{} ({} samples)",
+                overlay.width(),
+                overlay.height(),
+                overlay.samples().map(|s| s.len()).unwrap_or_default()
+            );
+        }
     }
 }

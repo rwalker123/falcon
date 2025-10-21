@@ -11,6 +11,7 @@ use crate::{
         SentimentAxisBias, SimulationConfig, SimulationTick, TileRegistry,
     },
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
+    terrain::{terrain_definition, terrain_for_position},
 };
 
 /// Spawn initial grid of tiles, logistics links, power nodes, and population cohorts.
@@ -27,6 +28,7 @@ pub fn spawn_initial_world(
         for x in 0..width {
             let position = UVec2::new(x as u32, y as u32);
             let element = ElementKind::from_grid(position);
+            let (terrain, terrain_tags) = terrain_for_position(position, config.grid_size);
             let (generation, demand, efficiency) = element.power_profile();
             let base_mass = scalar_from_f32(1.0 + ((x + y) % 5) as f32 * 0.35);
             let tile_entity = commands
@@ -36,6 +38,8 @@ pub fn spawn_initial_world(
                         element,
                         mass: base_mass,
                         temperature: config.ambient_temperature + element.thermal_bias(),
+                        terrain,
+                        terrain_tags,
                     },
                     PowerNode {
                         generation,
@@ -122,11 +126,22 @@ pub fn simulate_logistics(
             link.flow = scalar_zero();
             continue;
         };
+        let source_profile = terrain_definition(source.terrain);
+        let target_profile = terrain_definition(target.terrain);
+        let penalty_avg =
+            (source_profile.logistics_penalty + target_profile.logistics_penalty).max(0.05);
+        let attrition_avg =
+            (source_profile.attrition_rate + target_profile.attrition_rate).clamp(0.0, 0.95);
+        let penalty_scalar = Scalar::from_f32(penalty_avg.max(0.1));
+        let attrition_scalar = Scalar::from_f32(attrition_avg);
+        let effective_gain = (flow_gain / penalty_scalar).clamp(scalar_from_f32(0.005), flow_gain);
+        let capacity = (link.capacity / penalty_scalar).max(scalar_from_f32(0.05));
         let gradient = source.mass - target.mass;
-        let transfer = (gradient * flow_gain).clamp(-link.capacity, link.capacity);
-        source.mass -= transfer;
-        target.mass += transfer;
-        link.flow = transfer;
+        let transfer_raw = (gradient * effective_gain).clamp(-capacity, capacity);
+        let delivered = transfer_raw * (Scalar::one() - attrition_scalar);
+        source.mass -= transfer_raw;
+        target.mass += delivered;
+        link.flow = delivered;
     }
 }
 
@@ -143,14 +158,21 @@ pub fn simulate_population(
             cohort.morale = scalar_zero();
             continue;
         };
+        let terrain_profile = terrain_definition(tile.terrain);
         let temp_diff = (tile.temperature - config.ambient_temperature).abs();
+        let terrain_attrition_penalty = Scalar::from_f32(terrain_profile.attrition_rate * 0.2);
+        let terrain_hardness_penalty =
+            Scalar::from_f32((terrain_profile.logistics_penalty - 1.0).max(0.0) * 0.05);
         let morale_delta = config.population_growth_rate
             - temp_diff * config.temperature_morale_penalty
-            + impacts.morale_delta;
+            + impacts.morale_delta
+            - terrain_attrition_penalty
+            - terrain_hardness_penalty;
         cohort.morale = (cohort.morale + morale_delta).clamp(scalar_zero(), scalar_one());
 
         let growth_base = config.population_growth_rate - temp_diff * scalar_from_f32(0.0005)
-            + impacts.morale_delta * scalar_from_f32(0.4);
+            + impacts.morale_delta * scalar_from_f32(0.4)
+            - terrain_attrition_penalty * scalar_from_f32(0.5);
         let growth_factor = growth_base.clamp(scalar_from_f32(-0.06), scalar_from_f32(0.06));
         let current_size = scalar_from_u32(cohort.size);
         let new_size =

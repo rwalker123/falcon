@@ -6,10 +6,10 @@ use bevy::prelude::*;
 use log::warn;
 use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
-    AxisBiasState, CorruptionLedger, GenerationState, InfluentialIndividualState, LogisticsLinkState,
-    PopulationCohortState, PowerNodeState, SentimentAxisTelemetry, SentimentDriverCategory,
-    SentimentDriverState, SentimentTelemetryState, SnapshotHeader, TileState, WorldDelta,
-    WorldSnapshot,
+    AxisBiasState, CorruptionLedger, GenerationState, InfluentialIndividualState,
+    LogisticsLinkState, PopulationCohortState, PowerNodeState, SentimentAxisTelemetry,
+    SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState, SnapshotHeader,
+    TerrainOverlayState, TerrainSample, TileState, WorldDelta, WorldSnapshot,
 };
 
 use crate::{
@@ -74,6 +74,7 @@ pub struct SnapshotHistory {
     influencers: HashMap<u32, InfluentialIndividualState>,
     axis_bias: AxisBiasState,
     sentiment: SentimentTelemetryState,
+    terrain_overlay: TerrainOverlayState,
     corruption: CorruptionLedger,
     history: VecDeque<StoredSnapshot>,
 }
@@ -102,6 +103,7 @@ impl SnapshotHistory {
             influencers: HashMap::new(),
             axis_bias: AxisBiasState::default(),
             sentiment: SentimentTelemetryState::default(),
+            terrain_overlay: TerrainOverlayState::default(),
             corruption: CorruptionLedger::default(),
             history: VecDeque::new(),
         }
@@ -176,6 +178,13 @@ impl SnapshotHistory {
             Some(sentiment_state.clone())
         };
 
+        let terrain_state = snapshot.terrain.clone();
+        let terrain_delta = if self.terrain_overlay == terrain_state {
+            None
+        } else {
+            Some(terrain_state.clone())
+        };
+
         let corruption_state = snapshot.corruption.clone();
         let corruption_delta = if self.corruption == corruption_state {
             None
@@ -200,6 +209,7 @@ impl SnapshotHistory {
             corruption: corruption_delta.clone(),
             influencers: diff_new(&self.influencers, &influencers_index),
             removed_influencers: diff_removed(&self.influencers, &influencers_index),
+            terrain: terrain_delta.clone(),
         };
 
         let snapshot_arc = Arc::new(snapshot);
@@ -214,6 +224,7 @@ impl SnapshotHistory {
         self.influencers = influencers_index;
         self.axis_bias = axis_bias_state;
         self.sentiment = sentiment_state;
+        self.terrain_overlay = terrain_state;
         self.corruption = corruption_state;
         self.last_snapshot = Some(snapshot_arc);
         self.last_delta = Some(delta_arc);
@@ -282,7 +293,10 @@ impl SnapshotHistory {
         }
     }
 
-    pub fn update_axis_bias(&mut self, bias: AxisBiasState) -> Option<(Arc<Vec<u8>>, Arc<Vec<u8>>)> {
+    pub fn update_axis_bias(
+        &mut self,
+        bias: AxisBiasState,
+    ) -> Option<(Arc<Vec<u8>>, Arc<Vec<u8>>)> {
         if self.axis_bias == bias {
             return None;
         }
@@ -312,6 +326,7 @@ impl SnapshotHistory {
             corruption: None,
             influencers: Vec::new(),
             removed_influencers: Vec::new(),
+            terrain: None,
         };
 
         let delta_arc = Arc::new(delta);
@@ -388,6 +403,7 @@ impl SnapshotHistory {
             corruption: None,
             influencers: added.clone(),
             removed_influencers: removed.clone(),
+            terrain: None,
         };
 
         let delta_arc = Arc::new(delta);
@@ -461,6 +477,7 @@ impl SnapshotHistory {
             corruption: Some(ledger.clone()),
             influencers: Vec::new(),
             removed_influencers: Vec::new(),
+            terrain: None,
         };
 
         let delta_arc = Arc::new(delta);
@@ -551,6 +568,8 @@ pub fn capture_snapshot(
 
     let mut influencer_states: Vec<InfluentialIndividualState> = roster.states();
     influencer_states.sort_unstable_by_key(|state| state.id);
+
+    let terrain_overlay = terrain_overlay_from_tiles(&tile_states, config.grid_size);
 
     let policy_axes = axis_bias.policy_values();
     let incident_axes = axis_bias.incident_values();
@@ -682,6 +701,7 @@ pub fn capture_snapshot(
         logistics: logistics_states,
         populations: population_states,
         power: power_states,
+        terrain: terrain_overlay.clone(),
         axis_bias: axis_bias_state,
         sentiment: sentiment_state,
         generations: generation_states,
@@ -741,6 +761,8 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             element,
             mass: Scalar::from_raw(tile_state.mass),
             temperature: Scalar::from_raw(tile_state.temperature),
+            terrain: tile_state.terrain,
+            terrain_tags: tile_state.terrain_tags,
         });
 
         if let Some(power_state) = power_lookup.get(&tile_state.entity) {
@@ -984,6 +1006,36 @@ where
         .collect()
 }
 
+fn terrain_overlay_from_tiles(tiles: &[TileState], grid_size: UVec2) -> TerrainOverlayState {
+    let mut max_x = 0u32;
+    let mut max_y = 0u32;
+    for tile in tiles {
+        max_x = max_x.max(tile.x);
+        max_y = max_y.max(tile.y);
+    }
+    let width = grid_size.x.max(max_x.saturating_add(1)).max(1);
+    let height = grid_size.y.max(max_y.saturating_add(1)).max(1);
+    let total = (width as usize).saturating_mul(height as usize).max(1);
+    let mut samples = vec![TerrainSample::default(); total];
+    for tile in tiles {
+        if tile.x >= width || tile.y >= height {
+            continue;
+        }
+        let idx = (tile.y as usize) * (width as usize) + tile.x as usize;
+        if idx < samples.len() {
+            samples[idx] = TerrainSample {
+                terrain: tile.terrain,
+                tags: tile.terrain_tags,
+            };
+        }
+    }
+    TerrainOverlayState {
+        width,
+        height,
+        samples,
+    }
+}
+
 fn tile_state(entity: Entity, tile: &Tile) -> TileState {
     TileState {
         entity: entity.to_bits(),
@@ -992,6 +1044,8 @@ fn tile_state(entity: Entity, tile: &Tile) -> TileState {
         element: u8::from(tile.element),
         mass: tile.mass.raw(),
         temperature: tile.temperature.raw(),
+        terrain: tile.terrain,
+        terrain_tags: tile.terrain_tags,
     }
 }
 

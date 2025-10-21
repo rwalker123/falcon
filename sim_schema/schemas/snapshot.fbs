@@ -27,6 +27,57 @@ enum InfluenceLifecycle : ubyte {
   Dormant
 }
 
+enum TerrainType : ushort {
+  DeepOcean,
+  ContinentalShelf,
+  InlandSea,
+  CoralShelf,
+  HydrothermalVentField,
+  TidalFlat,
+  RiverDelta,
+  MangroveSwamp,
+  FreshwaterMarsh,
+  Floodplain,
+  AlluvialPlain,
+  PrairieSteppe,
+  MixedWoodland,
+  BorealTaiga,
+  PeatHeath,
+  HotDesertErg,
+  RockyReg,
+  SemiAridScrub,
+  SaltFlat,
+  OasisBasin,
+  Tundra,
+  PeriglacialSteppe,
+  Glacier,
+  SeasonalSnowfield,
+  RollingHills,
+  HighPlateau,
+  AlpineMountain,
+  KarstHighland,
+  CanyonBadlands,
+  ActiveVolcanoSlope,
+  BasalticLavaField,
+  AshPlain,
+  FumaroleBasin,
+  ImpactCraterField,
+  KarstCavernMouth,
+  SinkholeField,
+  AquiferCeiling
+}
+
+table TerrainSample {
+  terrain:TerrainType;
+  tags:ushort;
+}
+
+table TerrainOverlay {
+  width:uint;
+  height:uint;
+  samples:[TerrainSample];
+}
+
 table InfluentialIndividualState {
   id:uint;
   name:string;
@@ -76,6 +127,8 @@ table TileState {
   element:ubyte;
   mass:long;
   temperature:long;
+  terrain:TerrainType;
+  terrainTags:ushort;
 }
 
 table LogisticsLinkState {
@@ -182,6 +235,7 @@ table WorldSnapshot {
   logistics:[LogisticsLinkState];
   populations:[PopulationCohortState];
   power:[PowerNodeState];
+  terrainOverlay:TerrainOverlay;
   axisBias:AxisBiasState;
   sentiment:SentimentTelemetryState;
   generations:[GenerationState];
@@ -206,6 +260,7 @@ table WorldDelta {
   corruption:CorruptionLedger;
   influencers:[InfluentialIndividualState];
   removedInfluencers:[uint];
+  terrainOverlay:TerrainOverlay;
 }
 
 union SnapshotPayload {

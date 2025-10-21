@@ -12,8 +12,14 @@ var grid_width: int = 0
 var grid_height: int = 0
 var logistics_overlay: PackedFloat32Array = PackedFloat32Array()
 var sentiment_overlay: PackedFloat32Array = PackedFloat32Array()
+var terrain_overlay: PackedInt32Array = PackedInt32Array()
+var terrain_palette: Dictionary = {}
+var terrain_tags_overlay: PackedInt32Array = PackedInt32Array()
+var terrain_tag_labels: Dictionary = {}
 var units: Array = []
 var routes: Array = []
+
+var terrain_mode: bool = true
 
 var last_hex_radius: float = 48.0
 var last_origin: Vector2 = Vector2.ZERO
@@ -33,6 +39,10 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
     var overlays: Dictionary = snapshot.get("overlays", {})
     logistics_overlay = PackedFloat32Array(overlays.get("logistics", []))
     sentiment_overlay = PackedFloat32Array(overlays.get("contrast", []))
+    terrain_overlay = PackedInt32Array(overlays.get("terrain", []))
+    terrain_palette = overlays.get("terrain_palette", {})
+    terrain_tags_overlay = PackedInt32Array(overlays.get("terrain_tags", []))
+    terrain_tag_labels = overlays.get("terrain_tag_labels", {})
     units = Array(snapshot.get("units", []))
     routes = Array(snapshot.get("orders", []))
 
@@ -57,12 +67,7 @@ func _draw() -> void:
     for y in range(grid_height):
         for x in range(grid_width):
             var center: Vector2 = _hex_center(x, y, radius, origin)
-            var logistic_value: float = _value_at(logistics_overlay, x, y)
-            var sentiment_value: float = _value_at(sentiment_overlay, x, y)
-
-            var base_color: Color = GRID_COLOR
-            var with_logistics: Color = base_color.lerp(LOGISTICS_COLOR, logistic_value)
-            var final_color: Color = with_logistics.lerp(SENTIMENT_COLOR, sentiment_value)
+            var final_color: Color = _tile_color(x, y)
             var polygon_points := _hex_points(center, radius)
             draw_polygon(polygon_points, PackedColorArray([final_color, final_color, final_color, final_color, final_color, final_color]))
             draw_polyline(_hex_points(center, radius, true), GRID_LINE_COLOR, 2.0, true)
@@ -111,6 +116,112 @@ func _value_at(data: PackedFloat32Array, x: int, y: int) -> float:
     if index < 0 or index >= data.size():
         return 0.0
     return clamp(float(data[index]), 0.0, 1.0)
+
+func _terrain_id_at(x: int, y: int) -> int:
+    if terrain_overlay.is_empty() or grid_width == 0:
+        return -1
+    var index: int = y * grid_width + x
+    if index < 0 or index >= terrain_overlay.size():
+        return -1
+    return int(terrain_overlay[index])
+
+func _tile_color(x: int, y: int) -> Color:
+    if terrain_mode:
+        var terrain_id := _terrain_id_at(x, y)
+        if terrain_id >= 0:
+            return _terrain_color_for_id(terrain_id)
+    var logistic_value: float = _value_at(logistics_overlay, x, y)
+    var sentiment_value: float = _value_at(sentiment_overlay, x, y)
+    var base_color: Color = GRID_COLOR
+    var with_logistics: Color = base_color.lerp(LOGISTICS_COLOR, logistic_value)
+    return with_logistics.lerp(SENTIMENT_COLOR, sentiment_value)
+
+func _terrain_color_for_id(terrain_id: int) -> Color:
+    match terrain_id:
+        0:
+            return Color8(11, 30, 61)
+        1:
+            return Color8(20, 64, 94)
+        2:
+            return Color8(28, 88, 114)
+        3:
+            return Color8(21, 122, 115)
+        4:
+            return Color8(47, 127, 137)
+        5:
+            return Color8(184, 176, 138)
+        6:
+            return Color8(155, 195, 123)
+        7:
+            return Color8(79, 124, 56)
+        8:
+            return Color8(92, 140, 99)
+        9:
+            return Color8(136, 182, 90)
+        10:
+            return Color8(201, 176, 120)
+        11:
+            return Color8(211, 165, 77)
+        12:
+            return Color8(91, 127, 67)
+        13:
+            return Color8(59, 79, 49)
+        14:
+            return Color8(100, 85, 106)
+        15:
+            return Color8(231, 195, 106)
+        16:
+            return Color8(138, 95, 60)
+        17:
+            return Color8(164, 135, 85)
+        18:
+            return Color8(224, 220, 210)
+        19:
+            return Color8(58, 162, 162)
+        20:
+            return Color8(166, 199, 207)
+        21:
+            return Color8(127, 183, 161)
+        22:
+            return Color8(209, 228, 236)
+        23:
+            return Color8(192, 202, 214)
+        24:
+            return Color8(111, 155, 75)
+        25:
+            return Color8(150, 126, 92)
+        26:
+            return Color8(122, 127, 136)
+        27:
+            return Color8(74, 106, 85)
+        28:
+            return Color8(182, 101, 68)
+        29:
+            return Color8(140, 52, 45)
+        30:
+            return Color8(64, 51, 61)
+        31:
+            return Color8(122, 110, 104)
+        32:
+            return Color8(76, 137, 145)
+        33:
+            return Color8(91, 70, 57)
+        34:
+            return Color8(46, 79, 92)
+        35:
+            return Color8(79, 75, 51)
+        36:
+            return Color8(47, 143, 178)
+        _:
+            return Color(0.2, 0.2, 0.2, 1.0)
+
+func set_terrain_mode(enabled: bool) -> void:
+    terrain_mode = enabled
+    queue_redraw()
+
+func toggle_terrain_mode() -> void:
+    terrain_mode = not terrain_mode
+    queue_redraw()
 
 func _average(data: PackedFloat32Array) -> float:
     if data.is_empty():
