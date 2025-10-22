@@ -318,8 +318,8 @@ func _apply_theme_overrides() -> void:
 
     if root_panel != null:
         var panel_style = StyleBoxFlat.new()
-        panel_style.bg_color = Color(0.09, 0.09, 0.12, 0.97)
-        panel_style.border_color = Color(0.2, 0.22, 0.26, 1.0)
+        panel_style.bg_color = Color(0.09, 0.09, 0.12, 0.6)
+        panel_style.border_color = Color(0.2, 0.22, 0.26, 0.6)
         panel_style.border_width_top = 1
         panel_style.border_width_bottom = 1
         panel_style.border_width_left = 1
@@ -331,8 +331,8 @@ func _apply_theme_overrides() -> void:
         root_panel.add_theme_stylebox_override("panel", panel_style)
     if tab_container != null:
         var tab_style = StyleBoxFlat.new()
-        tab_style.bg_color = Color(0.13, 0.13, 0.17, 0.99)
-        tab_style.border_color = Color(0.22, 0.24, 0.28, 1.0)
+        tab_style.bg_color = Color(0.13, 0.13, 0.17, 0.6)
+        tab_style.border_color = Color(0.22, 0.24, 0.28, 0.6)
         tab_style.border_width_top = 1
         tab_style.border_width_bottom = 0
         tab_style.border_width_left = 1
