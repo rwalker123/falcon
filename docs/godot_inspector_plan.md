@@ -71,4 +71,5 @@ debug tooling into the Godot thin client.
 ## Progress Log
 
 - Terrain tab now supports interactive biome drill-down (tag breakdowns, representative tile sampling, hover/click tile telemetry) plus placeholder culture/military overlay tabs. Map clicks bubble through `MapView.hex_selected` so selecting a hex aligns the biome list and tile focus in the panel. The Logs tab consumes the tracing socket, surfaces structured log scrollback, and plots recent turn durations. Follow-ups: stream real culture/military overlays into those tabs, add biome filtering/search, and expand log filters/pinning. CLI inspector has been removed now that parity is confirmed.
+- Map navigation feels closer to RTS tooling: `MapView` now handles mouse-wheel zoom about the cursor, right/middle-drag panning, and keyboard navigation (`W/A/S/D` for pan, `Q/E` for zoom) so designers can reposition the camera without leaving the Godot client.
 - Commands tab implements axis bias tuning, influencer support/suppress/channel boosts, spawn, corruption injection, and heat debug so designers can retire the CLI command surface once backend parity is confirmed.

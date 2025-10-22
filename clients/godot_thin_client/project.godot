@@ -16,6 +16,81 @@ run/main_scene="res://src/Main.tscn"
 config/features=PackedStringArray("4.5")
 config/icon="res://assets/icon.svg"
 
+[input]
+
+map_pan_left={
+"deadzone": 0.5,
+"events": [{
+"type": "InputEventKey",
+"device": 0,
+"keycode": 65,
+"physical_keycode": 65,
+"unicode": 97,
+"echo": false,
+"pressed": false
+}]
+}
+map_pan_right={
+"deadzone": 0.5,
+"events": [{
+"type": "InputEventKey",
+"device": 0,
+"keycode": 68,
+"physical_keycode": 68,
+"unicode": 100,
+"echo": false,
+"pressed": false
+}]
+}
+map_pan_up={
+"deadzone": 0.5,
+"events": [{
+"type": "InputEventKey",
+"device": 0,
+"keycode": 87,
+"physical_keycode": 87,
+"unicode": 119,
+"echo": false,
+"pressed": false
+}]
+}
+map_pan_down={
+"deadzone": 0.5,
+"events": [{
+"type": "InputEventKey",
+"device": 0,
+"keycode": 83,
+"physical_keycode": 83,
+"unicode": 115,
+"echo": false,
+"pressed": false
+}]
+}
+map_zoom_in={
+"deadzone": 0.5,
+"events": [{
+"type": "InputEventKey",
+"device": 0,
+"keycode": 69,
+"physical_keycode": 69,
+"unicode": 101,
+"echo": false,
+"pressed": false
+}]
+}
+map_zoom_out={
+"deadzone": 0.5,
+"events": [{
+"type": "InputEventKey",
+"device": 0,
+"keycode": 81,
+"physical_keycode": 81,
+"unicode": 113,
+"echo": false,
+"pressed": false
+}]
+}
+
 [gd_project]
 
 config_version=5

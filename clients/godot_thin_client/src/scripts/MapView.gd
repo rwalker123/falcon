@@ -9,6 +9,11 @@ const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
 const GRID_LINE_COLOR := Color(0.1, 0.12, 0.18, 0.45)
 const SQRT3 := 1.7320508075688772
 const SIN_60 := 0.8660254037844386
+const MIN_ZOOM_FACTOR := 0.4
+const MAX_ZOOM_FACTOR := 4.0
+const MOUSE_ZOOM_STEP := 0.2
+const KEYBOARD_ZOOM_SPEED := 0.8
+const KEYBOARD_PAN_SPEED := 600.0
 
 const TERRAIN_COLORS := {
     0: Color8(11, 30, 61),
@@ -106,6 +111,14 @@ var terrain_mode: bool = true
 var last_hex_radius: float = 48.0
 var last_origin: Vector2 = Vector2.ZERO
 var last_map_size: Vector2 = Vector2.ZERO
+var last_base_origin: Vector2 = Vector2.ZERO
+var base_hex_radius: float = 1.0
+var zoom_factor: float = 1.0
+var pan_offset: Vector2 = Vector2.ZERO
+var base_bounds: Rect2 = Rect2(Vector2.ZERO, Vector2.ONE)
+var bounds_dirty: bool = true
+var mouse_pan_active: bool = false
+var mouse_pan_button: int = -1
 
 var faction_colors: Dictionary = {
     "Aurora": Color(0.55, 0.85, 1.0, 1.0),
@@ -115,11 +128,18 @@ var faction_colors: Dictionary = {
 
 func _ready() -> void:
     set_process_unhandled_input(true)
+    set_process(true)
+    _ensure_input_actions()
 
 func display_snapshot(snapshot: Dictionary) -> Dictionary:
+    var previous_width: int = grid_width
+    var previous_height: int = grid_height
     var grid: Dictionary = snapshot.get("grid", {})
-    grid_width = int(grid.get("width", 0))
-    grid_height = int(grid.get("height", 0))
+    var new_width: int = int(grid.get("width", 0))
+    var new_height: int = int(grid.get("height", 0))
+    var dimensions_changed: bool = previous_width != new_width or previous_height != new_height
+    grid_width = new_width
+    grid_height = new_height
 
     var overlays: Dictionary = snapshot.get("overlays", {})
     logistics_overlay = PackedFloat32Array(overlays.get("logistics", []))
@@ -132,6 +152,13 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
     terrain_tag_labels = tag_labels_raw if typeof(tag_labels_raw) == TYPE_DICTIONARY else {}
     units = Array(snapshot.get("units", []))
     routes = Array(snapshot.get("orders", []))
+
+    if dimensions_changed:
+        zoom_factor = 1.0
+        pan_offset = Vector2.ZERO
+        mouse_pan_active = false
+        mouse_pan_button = -1
+    bounds_dirty = dimensions_changed
 
     _update_layout_metrics()
     queue_redraw()
@@ -170,17 +197,50 @@ func _unhandled_input(event: InputEvent) -> void:
         return
     if event is InputEventMouseButton:
         var mouse_event: InputEventMouseButton = event
-        if mouse_event.button_index != MOUSE_BUTTON_LEFT or not mouse_event.pressed:
+        if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP and mouse_event.pressed:
+            _apply_zoom(MOUSE_ZOOM_STEP, get_local_mouse_position())
+            _mark_input_handled()
             return
-        var local_position: Vector2 = get_local_mouse_position()
-        _update_layout_metrics()
-        var offset := _point_to_offset(local_position)
-        var col: int = offset.x
-        var row: int = offset.y
-        if col < 0 or col >= grid_width or row < 0 or row >= grid_height:
+        elif mouse_event.button_index == MOUSE_BUTTON_WHEEL_DOWN and mouse_event.pressed:
+            _apply_zoom(-MOUSE_ZOOM_STEP, get_local_mouse_position())
+            _mark_input_handled()
             return
-        var terrain_id: int = _terrain_id_at(col, row)
-        emit_signal("hex_selected", col, row, terrain_id)
+        elif (mouse_event.button_index == MOUSE_BUTTON_MIDDLE or mouse_event.button_index == MOUSE_BUTTON_RIGHT):
+            if mouse_event.pressed:
+                _begin_mouse_pan(mouse_event.button_index)
+            else:
+                _end_mouse_pan(mouse_event.button_index)
+            _mark_input_handled()
+            return
+        elif mouse_event.button_index == MOUSE_BUTTON_LEFT and mouse_event.pressed:
+            var local_position: Vector2 = get_local_mouse_position()
+            _update_layout_metrics()
+            var offset := _point_to_offset(local_position)
+            var col: int = offset.x
+            var row: int = offset.y
+            if col < 0 or col >= grid_width or row < 0 or row >= grid_height:
+                return
+            var terrain_id: int = _terrain_id_at(col, row)
+            emit_signal("hex_selected", col, row, terrain_id)
+            _mark_input_handled()
+            return
+    elif event is InputEventMouseMotion:
+        var motion: InputEventMouseMotion = event
+        if mouse_pan_active:
+            _apply_pan(motion.relative)
+            _mark_input_handled()
+    elif event is InputEventPanGesture:
+        var gesture: InputEventPanGesture = event
+        if gesture.alt_pressed:
+            return
+        _apply_pan(-gesture.delta)
+        _mark_input_handled()
+    elif event is InputEventMagnifyGesture:
+        var magnify: InputEventMagnifyGesture = event
+        var amount: float = (magnify.factor - 1.0) * KEYBOARD_ZOOM_SPEED
+        if not is_zero_approx(amount):
+            _apply_zoom(amount, get_local_mouse_position())
+            _mark_input_handled()
 
 func _draw_unit(unit: Dictionary, radius: float, origin: Vector2) -> void:
     var position: Array = Array(unit.get("pos", [0, 0]))
@@ -318,15 +378,21 @@ func _update_layout_metrics() -> void:
     if grid_width <= 0 or grid_height <= 0:
         return
     var viewport_size: Vector2 = get_viewport_rect().size
-    var unit_bounds := _compute_bounds(1.0)
-    if unit_bounds.size.x <= 0.0 or unit_bounds.size.y <= 0.0:
+    if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
         return
-    var radius_from_width: float = viewport_size.x / unit_bounds.size.x
-    var radius_from_height: float = viewport_size.y / unit_bounds.size.y
-    last_hex_radius = min(radius_from_width, radius_from_height)
-    var scaled_bounds := _compute_bounds(last_hex_radius)
+    if bounds_dirty:
+        base_bounds = _compute_bounds(1.0)
+        bounds_dirty = false
+    if base_bounds.size.x <= 0.0 or base_bounds.size.y <= 0.0:
+        return
+    var radius_from_width: float = viewport_size.x / base_bounds.size.x
+    var radius_from_height: float = viewport_size.y / base_bounds.size.y
+    base_hex_radius = min(radius_from_width, radius_from_height)
+    last_hex_radius = clamp(base_hex_radius * zoom_factor, base_hex_radius * MIN_ZOOM_FACTOR, base_hex_radius * MAX_ZOOM_FACTOR)
+    var scaled_bounds := Rect2(base_bounds.position * last_hex_radius, base_bounds.size * last_hex_radius)
     last_map_size = scaled_bounds.size
-    last_origin = (viewport_size - last_map_size) * 0.5 - scaled_bounds.position
+    last_base_origin = (viewport_size - last_map_size) * 0.5 - scaled_bounds.position
+    last_origin = last_base_origin + pan_offset
 
 func get_world_center() -> Vector2:
     return last_origin + last_map_size * 0.5
@@ -379,3 +445,85 @@ func _cube_round(qf: float, rf: float) -> Vector2i:
         rs = -rq - rr
 
     return Vector2i(int(rq), int(rr))
+
+func _process(delta: float) -> void:
+    if grid_width == 0 or grid_height == 0:
+        return
+    if mouse_pan_active and mouse_pan_button != -1 and not Input.is_mouse_button_pressed(mouse_pan_button):
+        mouse_pan_active = false
+        mouse_pan_button = -1
+    var pan_input := Vector2(
+        Input.get_action_strength("map_pan_right") - Input.get_action_strength("map_pan_left"),
+        Input.get_action_strength("map_pan_down") - Input.get_action_strength("map_pan_up")
+    )
+    if pan_input != Vector2.ZERO:
+        if pan_input.length_squared() > 1.0:
+            pan_input = pan_input.normalized()
+        _apply_pan(pan_input * KEYBOARD_PAN_SPEED * delta)
+    var zoom_direction: float = Input.get_action_strength("map_zoom_in") - Input.get_action_strength("map_zoom_out")
+    if not is_zero_approx(zoom_direction):
+        var viewport_center: Vector2 = get_viewport_rect().size * 0.5
+        _apply_zoom(zoom_direction * KEYBOARD_ZOOM_SPEED * delta, viewport_center)
+
+func _apply_pan(delta: Vector2) -> void:
+    if delta == Vector2.ZERO:
+        return
+    pan_offset += delta
+    _update_layout_metrics()
+    queue_redraw()
+
+func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
+    if is_zero_approx(delta_zoom):
+        return
+    _update_layout_metrics()
+    var previous_zoom: float = zoom_factor
+    var previous_radius: float = max(last_hex_radius, 0.0001)
+    var previous_origin: Vector2 = last_origin
+    zoom_factor = clamp(zoom_factor + delta_zoom, MIN_ZOOM_FACTOR, MAX_ZOOM_FACTOR)
+    if is_equal_approx(zoom_factor, previous_zoom):
+        return
+    var unit_position: Vector2 = (pivot - previous_origin) / previous_radius
+    _update_layout_metrics()
+    var new_radius: float = last_hex_radius
+    var new_base_origin: Vector2 = last_base_origin
+    pan_offset = pivot - new_base_origin - unit_position * new_radius
+    _update_layout_metrics()
+    queue_redraw()
+
+func _begin_mouse_pan(button_index: int) -> void:
+    mouse_pan_active = true
+    mouse_pan_button = button_index
+
+func _end_mouse_pan(button_index: int) -> void:
+    if mouse_pan_active and mouse_pan_button == button_index:
+        mouse_pan_active = false
+        mouse_pan_button = -1
+
+func _mark_input_handled() -> void:
+    var viewport := get_viewport()
+    if viewport != null:
+        viewport.set_input_as_handled()
+
+func _ensure_input_actions() -> void:
+    var action_keys := {
+        "map_pan_left": KEY_A,
+        "map_pan_right": KEY_D,
+        "map_pan_up": KEY_W,
+        "map_pan_down": KEY_S,
+        "map_zoom_in": KEY_E,
+        "map_zoom_out": KEY_Q,
+    }
+    for action in action_keys.keys():
+        if not InputMap.has_action(action):
+            InputMap.add_action(action)
+        var keycode: int = action_keys[action]
+        var needs_event: bool = true
+        for existing_event in InputMap.action_get_events(action):
+            if existing_event is InputEventKey and existing_event.keycode == keycode:
+                needs_event = false
+                break
+        if needs_event:
+            var key_event := InputEventKey.new()
+            key_event.keycode = keycode
+            key_event.physical_keycode = keycode
+            InputMap.action_add_event(action, key_event)
