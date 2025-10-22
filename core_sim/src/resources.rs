@@ -3,7 +3,10 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use bevy::{math::UVec2, prelude::*};
 use sim_runtime::{CorruptionLedger, CorruptionSubsystem};
 
-use crate::scalar::{scalar_from_f32, Scalar};
+use crate::{
+    culture::CultureTensionRecord,
+    scalar::{scalar_from_f32, Scalar},
+};
 
 /// Global configuration parameters for the headless simulation prototype.
 #[derive(Resource, Debug, Clone)]
@@ -207,6 +210,7 @@ impl CorruptionTelemetry {
 pub struct DiplomacyLeverage {
     pub recent: Vec<CorruptionExposureRecord>,
     pub max_entries: usize,
+    pub culture_signals: Vec<CultureTensionRecord>,
 }
 
 impl DiplomacyLeverage {
@@ -218,6 +222,17 @@ impl DiplomacyLeverage {
         if self.recent.len() > self.max_entries {
             let overflow = self.recent.len() - self.max_entries;
             self.recent.drain(0..overflow);
+        }
+    }
+
+    pub fn push_culture_signal(&mut self, record: CultureTensionRecord) {
+        if self.max_entries == 0 {
+            self.max_entries = 16;
+        }
+        self.culture_signals.push(record);
+        if self.culture_signals.len() > self.max_entries {
+            let overflow = self.culture_signals.len() - self.max_entries;
+            self.culture_signals.drain(0..overflow);
         }
     }
 }

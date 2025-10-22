@@ -4,6 +4,10 @@ use bevy::{math::UVec2, prelude::*};
 
 use crate::{
     components::{ElementKind, LogisticsLink, PopulationCohort, PowerNode, Tile},
+    culture::{
+        CultureEffectsCache, CultureManager, CultureSchismEvent, CultureTensionEvent,
+        CultureTensionKind, CultureTensionRecord, CultureTraitAxis, CULTURE_TRAIT_AXES,
+    },
     generations::GenerationRegistry,
     influencers::InfluencerImpacts,
     resources::{
@@ -19,10 +23,22 @@ pub fn spawn_initial_world(
     mut commands: Commands,
     config: Res<SimulationConfig>,
     registry: Res<GenerationRegistry>,
+    tick: Res<SimulationTick>,
+    mut culture: ResMut<CultureManager>,
 ) {
     let width = config.grid_size.x as usize;
     let height = config.grid_size.y as usize;
     let mut tiles = Vec::with_capacity(width * height);
+
+    let _global_id = culture.ensure_global();
+    let regional_id = culture.upsert_regional(0);
+    if let Some(region_layer) = culture.regional_layer_mut_by_region(0) {
+        let modifiers = region_layer.traits.modifier_mut();
+        modifiers[CultureTraitAxis::OpenClosed.index()] = scalar_from_f32(0.12);
+        modifiers[CultureTraitAxis::TraditionalistRevisionist.index()] = scalar_from_f32(-0.08);
+        modifiers[CultureTraitAxis::ExpansionistInsular.index()] = scalar_from_f32(0.15);
+        modifiers[CultureTraitAxis::SecularDevout.index()] = scalar_from_f32(0.05);
+    }
 
     for y in 0..height {
         for x in 0..width {
@@ -49,6 +65,10 @@ pub fn spawn_initial_world(
                 ))
                 .id();
             tiles.push(tile_entity);
+
+            culture.attach_local(tile_entity, regional_id);
+            let modifiers = seeded_modifiers_for_position(position);
+            culture.apply_initial_modifiers(tile_entity, modifiers);
         }
     }
 
@@ -97,6 +117,20 @@ pub fn spawn_initial_world(
         width: config.grid_size.x,
         height: config.grid_size.y,
     });
+
+    culture.reconcile(&tick);
+    let _ = culture.take_tension_events();
+}
+
+fn seeded_modifiers_for_position(position: UVec2) -> [Scalar; CULTURE_TRAIT_AXES] {
+    let mut modifiers = [Scalar::zero(); CULTURE_TRAIT_AXES];
+    let seed = position.x as i32 * 31 + position.y as i32 * 17;
+    for (idx, slot) in modifiers.iter_mut().enumerate() {
+        let wave = (((seed + idx as i32 * 13) % 23) - 11) as f32;
+        let scaled = (wave / 23.0).clamp(-1.0, 1.0) * 0.2;
+        *slot = scalar_from_f32(scaled);
+    }
+    modifiers
 }
 
 /// Relax material temperatures and adjust masses using deterministic rules.
@@ -116,11 +150,13 @@ pub fn simulate_materials(config: Res<SimulationConfig>, mut tiles: Query<&mut T
 pub fn simulate_logistics(
     config: Res<SimulationConfig>,
     impacts: Res<InfluencerImpacts>,
+    effects: Res<CultureEffectsCache>,
     mut links: Query<&mut LogisticsLink>,
     mut tiles: Query<&mut Tile>,
 ) {
-    let flow_gain = (config.logistics_flow_gain * impacts.logistics_multiplier)
-        .clamp(scalar_from_f32(0.02), scalar_from_f32(0.5));
+    let flow_gain =
+        (config.logistics_flow_gain * impacts.logistics_multiplier * effects.logistics_multiplier)
+            .clamp(scalar_from_f32(0.02), scalar_from_f32(0.5));
     for mut link in links.iter_mut() {
         let Ok([mut source, mut target]) = tiles.get_many_mut([link.from, link.to]) else {
             link.flow = scalar_zero();
@@ -149,6 +185,7 @@ pub fn simulate_logistics(
 pub fn simulate_population(
     config: Res<SimulationConfig>,
     impacts: Res<InfluencerImpacts>,
+    effects: Res<CultureEffectsCache>,
     tiles: Query<&Tile>,
     mut cohorts: Query<&mut PopulationCohort>,
 ) {
@@ -166,12 +203,14 @@ pub fn simulate_population(
         let morale_delta = config.population_growth_rate
             - temp_diff * config.temperature_morale_penalty
             + impacts.morale_delta
+            + effects.morale_bias
             - terrain_attrition_penalty
             - terrain_hardness_penalty;
         cohort.morale = (cohort.morale + morale_delta).clamp(scalar_zero(), scalar_one());
 
         let growth_base = config.population_growth_rate - temp_diff * scalar_from_f32(0.0005)
             + impacts.morale_delta * scalar_from_f32(0.4)
+            + effects.morale_bias * scalar_from_f32(0.5)
             - terrain_attrition_penalty * scalar_from_f32(0.5);
         let growth_factor = growth_base.clamp(scalar_from_f32(-0.06), scalar_from_f32(0.06));
         let current_size = scalar_from_u32(cohort.size);
@@ -186,17 +225,56 @@ pub fn simulate_power(
     mut nodes: Query<(&Tile, &mut PowerNode)>,
     config: Res<SimulationConfig>,
     impacts: Res<InfluencerImpacts>,
+    effects: Res<CultureEffectsCache>,
 ) {
     for (tile, mut node) in nodes.iter_mut() {
         let efficiency_adjust =
             (config.ambient_temperature - tile.temperature) * config.power_adjust_rate;
         node.efficiency = (node.efficiency + efficiency_adjust * scalar_from_f32(0.01))
             .clamp(scalar_from_f32(0.5), scalar_from_f32(1.5));
-        let net = node.generation * node.efficiency - node.demand + impacts.power_bonus;
+        let net = node.generation * node.efficiency - node.demand
+            + impacts.power_bonus
+            + effects.power_bonus;
         node.generation = (node.generation + net * scalar_from_f32(0.05))
             .clamp(scalar_zero(), config.max_power_generation);
         node.demand = (node.demand + (-net) * scalar_from_f32(0.03))
             .clamp(scalar_zero(), config.max_power_generation);
+    }
+}
+
+/// React to culture tension events by nudging sentiment and diplomacy telemetry.
+pub fn process_culture_events(
+    mut sentiment: ResMut<SentimentAxisBias>,
+    mut diplomacy: ResMut<DiplomacyLeverage>,
+    mut tension_events: EventReader<CultureTensionEvent>,
+    mut schism_events: EventReader<CultureSchismEvent>,
+) {
+    const TRUST_AXIS: usize = 1;
+
+    for event in tension_events.read() {
+        let severity = event.magnitude.to_f32().abs().clamp(0.0, 3.0);
+        match event.kind {
+            CultureTensionKind::DriftWarning => {
+                let delta = scalar_from_f32((severity * 0.02).clamp(0.0, 0.08));
+                sentiment.apply_incident_delta(TRUST_AXIS, -delta);
+                diplomacy.push_culture_signal(CultureTensionRecord::from(event));
+            }
+            CultureTensionKind::AssimilationPush => {
+                let delta = scalar_from_f32((severity * 0.01).clamp(0.0, 0.05));
+                sentiment.apply_incident_delta(TRUST_AXIS, delta);
+                diplomacy.push_culture_signal(CultureTensionRecord::from(event));
+            }
+            CultureTensionKind::SchismRisk => {
+                // Handled in the dedicated schism pass below.
+            }
+        }
+    }
+
+    for event in schism_events.read() {
+        let severity = event.magnitude.to_f32().abs().clamp(0.5, 4.0);
+        let delta = scalar_from_f32((severity * 0.03).clamp(0.05, 0.15));
+        sentiment.apply_incident_delta(TRUST_AXIS, -delta);
+        diplomacy.push_culture_signal(CultureTensionRecord::from(event));
     }
 }
 

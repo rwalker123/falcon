@@ -11,10 +11,11 @@ use ratatui::Frame;
 
 use sim_runtime::{
     influence_domains_from_mask, AxisBiasState, CorruptionEntry, CorruptionLedger,
-    CorruptionSubsystem, GenerationState, InfluenceDomain, InfluenceLifecycle, InfluenceScopeKind,
-    InfluentialIndividualState, PopulationCohortState, PowerNodeState, SentimentAxisTelemetry,
-    SentimentDriverCategory, SentimentTelemetryState, TerrainOverlayState, TerrainTags,
-    TerrainType, TileState, WorldDelta,
+    CorruptionSubsystem, CultureLayerScope, CultureLayerState, CultureTensionKind,
+    CultureTensionState, CultureTraitAxis, GenerationState, InfluenceDomain, InfluenceLifecycle,
+    InfluenceScopeKind, InfluentialIndividualState, PopulationCohortState, PowerNodeState,
+    SentimentAxisTelemetry, SentimentDriverCategory, SentimentTelemetryState, TerrainOverlayState,
+    TerrainTags, TerrainType, TileState, WorldDelta,
 };
 
 const HEATMAP_SIZE: usize = 21;
@@ -157,6 +158,48 @@ fn terrain_label(terrain: TerrainType) -> &'static str {
         TerrainType::KarstCavernMouth => "Karst Cavern Mouth",
         TerrainType::SinkholeField => "Sinkhole Field",
         TerrainType::AquiferCeiling => "Aquifer Ceiling",
+    }
+}
+
+fn terrain_color(terrain: TerrainType) -> Color {
+    match terrain {
+        TerrainType::DeepOcean => Color::Rgb(11, 30, 61),
+        TerrainType::ContinentalShelf => Color::Rgb(20, 64, 94),
+        TerrainType::InlandSea => Color::Rgb(28, 88, 114),
+        TerrainType::CoralShelf => Color::Rgb(21, 122, 115),
+        TerrainType::HydrothermalVentField => Color::Rgb(47, 127, 137),
+        TerrainType::TidalFlat => Color::Rgb(184, 176, 138),
+        TerrainType::RiverDelta => Color::Rgb(155, 195, 123),
+        TerrainType::MangroveSwamp => Color::Rgb(79, 124, 56),
+        TerrainType::FreshwaterMarsh => Color::Rgb(92, 140, 99),
+        TerrainType::Floodplain => Color::Rgb(136, 182, 90),
+        TerrainType::AlluvialPlain => Color::Rgb(201, 176, 120),
+        TerrainType::PrairieSteppe => Color::Rgb(211, 165, 77),
+        TerrainType::MixedWoodland => Color::Rgb(91, 127, 67),
+        TerrainType::BorealTaiga => Color::Rgb(59, 79, 49),
+        TerrainType::PeatHeath => Color::Rgb(100, 85, 106),
+        TerrainType::HotDesertErg => Color::Rgb(231, 195, 106),
+        TerrainType::RockyReg => Color::Rgb(138, 95, 60),
+        TerrainType::SemiAridScrub => Color::Rgb(164, 135, 85),
+        TerrainType::SaltFlat => Color::Rgb(224, 220, 210),
+        TerrainType::OasisBasin => Color::Rgb(58, 162, 162),
+        TerrainType::Tundra => Color::Rgb(166, 199, 207),
+        TerrainType::PeriglacialSteppe => Color::Rgb(127, 183, 161),
+        TerrainType::Glacier => Color::Rgb(209, 228, 236),
+        TerrainType::SeasonalSnowfield => Color::Rgb(192, 202, 214),
+        TerrainType::RollingHills => Color::Rgb(111, 155, 75),
+        TerrainType::HighPlateau => Color::Rgb(150, 126, 92),
+        TerrainType::AlpineMountain => Color::Rgb(122, 127, 136),
+        TerrainType::KarstHighland => Color::Rgb(74, 106, 85),
+        TerrainType::CanyonBadlands => Color::Rgb(182, 101, 68),
+        TerrainType::ActiveVolcanoSlope => Color::Rgb(140, 52, 45),
+        TerrainType::BasalticLavaField => Color::Rgb(64, 51, 61),
+        TerrainType::AshPlain => Color::Rgb(122, 110, 104),
+        TerrainType::FumaroleBasin => Color::Rgb(76, 137, 145),
+        TerrainType::ImpactCraterField => Color::Rgb(91, 70, 57),
+        TerrainType::KarstCavernMouth => Color::Rgb(46, 79, 92),
+        TerrainType::SinkholeField => Color::Rgb(79, 75, 51),
+        TerrainType::AquiferCeiling => Color::Rgb(47, 143, 178),
     }
 }
 
@@ -654,6 +697,43 @@ fn subsystem_color(subsystem: CorruptionSubsystem) -> Color {
     }
 }
 
+fn culture_scope_label(scope: CultureLayerScope) -> &'static str {
+    match scope {
+        CultureLayerScope::Global => "Global",
+        CultureLayerScope::Regional => "Regional",
+        CultureLayerScope::Local => "Local",
+    }
+}
+
+fn culture_trait_label(axis: CultureTraitAxis) -> String {
+    match axis {
+        CultureTraitAxis::PassiveAggressive => "Passive ↔ Aggressive",
+        CultureTraitAxis::OpenClosed => "Open ↔ Closed",
+        CultureTraitAxis::CollectivistIndividualist => "Collectivist ↔ Individualist",
+        CultureTraitAxis::TraditionalistRevisionist => "Traditionalist ↔ Revisionist",
+        CultureTraitAxis::HierarchicalEgalitarian => "Hierarchical ↔ Egalitarian",
+        CultureTraitAxis::SyncreticPurist => "Syncretic ↔ Purist",
+        CultureTraitAxis::AsceticIndulgent => "Ascetic ↔ Indulgent",
+        CultureTraitAxis::PragmaticIdealistic => "Pragmatic ↔ Idealistic",
+        CultureTraitAxis::RationalistMystical => "Rationalist ↔ Mystical",
+        CultureTraitAxis::ExpansionistInsular => "Expansionist ↔ Insular",
+        CultureTraitAxis::AdaptiveStubborn => "Adaptive ↔ Stubborn",
+        CultureTraitAxis::HonorBoundOpportunistic => "Honor-Bound ↔ Opportunistic",
+        CultureTraitAxis::MeritOrientedLineageOriented => "Merit ↔ Lineage",
+        CultureTraitAxis::SecularDevout => "Secular ↔ Devout",
+        CultureTraitAxis::PluralisticMonocultural => "Pluralistic ↔ Monocultural",
+    }
+    .to_string()
+}
+
+fn culture_tension_label(kind: CultureTensionKind) -> &'static str {
+    match kind {
+        CultureTensionKind::DriftWarning => "Drift Warning",
+        CultureTensionKind::AssimilationPush => "Assimilation Push",
+        CultureTensionKind::SchismRisk => "Schism Risk",
+    }
+}
+
 #[derive(Clone)]
 struct GenerationStat {
     name: String,
@@ -785,6 +865,90 @@ impl DemographicSnapshot {
     }
 }
 
+#[derive(Clone)]
+struct CultureLayerOverview {
+    id: u32,
+    scope: CultureLayerScope,
+    magnitude: f32,
+}
+
+#[derive(Clone)]
+struct CultureTensionView {
+    layer_id: u32,
+    scope: CultureLayerScope,
+    kind: CultureTensionKind,
+    severity: f32,
+    timer: u16,
+}
+
+#[derive(Clone, Default)]
+struct CultureSummary {
+    global_traits: Vec<(String, f32)>,
+    divergences: Vec<CultureLayerOverview>,
+    tensions: Vec<CultureTensionView>,
+}
+
+impl CultureSummary {
+    fn rebuild(layers: &HashMap<u32, CultureLayerState>, tensions: &[CultureTensionState]) -> Self {
+        let mut summary = CultureSummary::default();
+        if layers.is_empty() {
+            return summary;
+        }
+
+        if let Some(global) = layers
+            .values()
+            .find(|layer| matches!(layer.scope, CultureLayerScope::Global))
+        {
+            let mut traits: Vec<(String, f32)> = global
+                .traits
+                .iter()
+                .map(|entry| (culture_trait_label(entry.axis), scaled(entry.value)))
+                .collect();
+            traits.sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap_or(Ordering::Equal));
+            traits.truncate(6);
+            summary.global_traits = traits;
+        }
+
+        let mut divergences: Vec<CultureLayerOverview> = layers
+            .values()
+            .filter(|layer| !matches!(layer.scope, CultureLayerScope::Global))
+            .map(|layer| CultureLayerOverview {
+                id: layer.id,
+                scope: layer.scope,
+                magnitude: scaled(layer.divergence),
+            })
+            .filter(|overview| overview.magnitude.abs() > 0.01)
+            .collect();
+        divergences.sort_by(|a, b| {
+            b.magnitude
+                .partial_cmp(&a.magnitude)
+                .unwrap_or(Ordering::Equal)
+        });
+        divergences.truncate(5);
+        summary.divergences = divergences;
+
+        let mut tension_views: Vec<CultureTensionView> = tensions
+            .iter()
+            .map(|state| CultureTensionView {
+                layer_id: state.layer_id,
+                scope: state.scope,
+                kind: state.kind,
+                severity: scaled(state.severity),
+                timer: state.timer,
+            })
+            .collect();
+        tension_views.sort_by(|a, b| {
+            b.severity
+                .partial_cmp(&a.severity)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| b.timer.cmp(&a.timer))
+        });
+        summary.tensions = tension_views;
+
+        summary
+    }
+}
+
 pub struct UiState {
     pub recent_ticks: VecDeque<WorldDelta>,
     pub max_history: usize,
@@ -808,6 +972,9 @@ pub struct UiState {
     corruption_summary: CorruptionSummary,
     corruption_exposures: VecDeque<CorruptionExposureView>,
     corruption_target: CorruptionSubsystem,
+    culture_layers: HashMap<u32, CultureLayerState>,
+    culture_tensions: Vec<CultureTensionState>,
+    culture_summary: CultureSummary,
     terrain_overlay: Option<TerrainOverlayState>,
     terrain_summary: TerrainSummary,
 }
@@ -837,6 +1004,9 @@ impl Default for UiState {
             corruption_summary: CorruptionSummary::default(),
             corruption_exposures: VecDeque::new(),
             corruption_target: CorruptionSubsystem::Logistics,
+            culture_layers: HashMap::new(),
+            culture_tensions: Vec::new(),
+            culture_summary: CultureSummary::default(),
             terrain_overlay: None,
             terrain_summary: TerrainSummary::default(),
         }
@@ -912,6 +1082,25 @@ impl UiState {
         }
         for id in &delta.removed_influencers {
             self.influencer_index.remove(id);
+        }
+
+        for layer in &delta.culture_layers {
+            self.culture_layers.insert(layer.id, layer.clone());
+        }
+        for id in &delta.removed_culture_layers {
+            self.culture_layers.remove(id);
+        }
+        if !delta.culture_tensions.is_empty() {
+            self.culture_tensions = delta.culture_tensions.clone();
+            for tension in &delta.culture_tensions {
+                self.push_log(format!(
+                    "Culture tension: {} layer #{:03} · severity {:+.2} (timer {}t)",
+                    culture_tension_label(tension.kind),
+                    tension.layer_id,
+                    scaled(tension.severity),
+                    tension.timer
+                ));
+            }
         }
 
         if let Some(bias) = delta.axis_bias.as_ref() {
@@ -1161,6 +1350,8 @@ impl UiState {
         } else {
             self.terrain_summary = TerrainSummary::build(&self.tile_index);
         }
+        self.culture_summary =
+            CultureSummary::rebuild(&self.culture_layers, &self.culture_tensions);
         self.log_sentiment_shift(prev_axes, prev_weight);
     }
 
@@ -1329,7 +1520,7 @@ pub fn draw_ui(frame: &mut Frame, state: &UiState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(7),
-            Constraint::Length(8),
+            Constraint::Min(12),
             Constraint::Length(9),
             Constraint::Min(8),
             Constraint::Length(7),
@@ -1705,6 +1896,33 @@ fn draw_terrain(frame: &mut Frame, area: Rect, state: &UiState) {
                 )));
             }
         }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Palette Legend:",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        let mut row: Vec<Span> = Vec::new();
+        for (idx, terrain) in TerrainType::VALUES.iter().enumerate() {
+            if idx % 3 == 0 {
+                if !row.is_empty() {
+                    lines.push(Line::from(row));
+                    row = Vec::new();
+                }
+            }
+            let color = terrain_color(*terrain);
+            row.push(Span::styled("  ", Style::default().bg(color)));
+            row.push(Span::raw(format!(
+                " {:02} {:<18}",
+                *terrain as usize,
+                terrain_label(*terrain)
+            )));
+        }
+        if !row.is_empty() {
+            lines.push(Line::from(row));
+        }
     }
 
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
@@ -2017,13 +2235,15 @@ fn draw_sentiment(frame: &mut Frame, area: Rect, state: &UiState) {
         .constraints([
             Constraint::Length(11),
             Constraint::Length(9),
+            Constraint::Length(10),
             Constraint::Min(4),
         ])
         .split(right);
 
     draw_sentiment_legend(frame, right_split[0], state);
     draw_axis_drivers(frame, right_split[1], &state.sentiment);
-    draw_demographics(frame, right_split[2], &state.demographics);
+    draw_culture_summary(frame, right_split[2], &state.culture_summary);
+    draw_demographics(frame, right_split[3], &state.demographics);
 }
 
 fn draw_sentiment_legend(frame: &mut Frame, area: Rect, state: &UiState) {
@@ -2127,6 +2347,87 @@ fn draw_axis_drivers(frame: &mut Frame, area: Rect, sentiment: &SentimentViewMod
             ))]));
         }
         lines.push(Line::from(""));
+    }
+
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, area);
+}
+
+fn draw_culture_summary(frame: &mut Frame, area: Rect, summary: &CultureSummary) {
+    let mut lines = Vec::new();
+    lines.push(Line::from(vec![Span::styled(
+        "Culture Snapshot",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )]));
+
+    if summary.global_traits.is_empty() && summary.divergences.is_empty() {
+        lines.push(Line::from(vec![Span::styled(
+            "No culture data captured yet",
+            Style::default().fg(Color::DarkGray),
+        )]));
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, area);
+        return;
+    }
+
+    if !summary.global_traits.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![Span::styled(
+            "Global Identity",
+            Style::default().fg(Color::Gray),
+        )]));
+        for (label, value) in &summary.global_traits {
+            lines.push(Line::from(vec![Span::raw(format!(
+                "  {:<28} {:+.2}",
+                label, value
+            ))]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled(
+        "Divergence Watch",
+        Style::default().fg(Color::Gray),
+    )]));
+    if summary.divergences.is_empty() {
+        lines.push(Line::from(vec![Span::styled(
+            "  (stable)",
+            Style::default().fg(Color::DarkGray),
+        )]));
+    } else {
+        for entry in &summary.divergences {
+            lines.push(Line::from(vec![Span::raw(format!(
+                "  #{:03} [{:>8}] Δ {:+.2}",
+                entry.id,
+                culture_scope_label(entry.scope),
+                entry.magnitude
+            ))]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled(
+        "Active Tensions",
+        Style::default().fg(Color::Gray),
+    )]));
+    if summary.tensions.is_empty() {
+        lines.push(Line::from(vec![Span::styled(
+            "  (none)",
+            Style::default().fg(Color::DarkGray),
+        )]));
+    } else {
+        for tension in &summary.tensions {
+            lines.push(Line::from(vec![Span::raw(format!(
+                "  {:<16} #{:03} [{:>8}] {:+.2} ({}t)",
+                culture_tension_label(tension.kind),
+                tension.layer_id,
+                culture_scope_label(tension.scope),
+                tension.severity,
+                tension.timer
+            ))]));
+        }
     }
 
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });

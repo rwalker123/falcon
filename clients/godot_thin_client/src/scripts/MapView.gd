@@ -8,6 +8,86 @@ const GRID_LINE_COLOR := Color(0.1, 0.12, 0.18, 0.45)
 const SQRT3 := 1.7320508075688772
 const SIN_60 := 0.8660254037844386
 
+const TERRAIN_COLORS := {
+    0: Color8(11, 30, 61),
+    1: Color8(20, 64, 94),
+    2: Color8(28, 88, 114),
+    3: Color8(21, 122, 115),
+    4: Color8(47, 127, 137),
+    5: Color8(184, 176, 138),
+    6: Color8(155, 195, 123),
+    7: Color8(79, 124, 56),
+    8: Color8(92, 140, 99),
+    9: Color8(136, 182, 90),
+    10: Color8(201, 176, 120),
+    11: Color8(211, 165, 77),
+    12: Color8(91, 127, 67),
+    13: Color8(59, 79, 49),
+    14: Color8(100, 85, 106),
+    15: Color8(231, 195, 106),
+    16: Color8(138, 95, 60),
+    17: Color8(164, 135, 85),
+    18: Color8(224, 220, 210),
+    19: Color8(58, 162, 162),
+    20: Color8(166, 199, 207),
+    21: Color8(127, 183, 161),
+    22: Color8(209, 228, 236),
+    23: Color8(192, 202, 214),
+    24: Color8(111, 155, 75),
+    25: Color8(150, 126, 92),
+    26: Color8(122, 127, 136),
+    27: Color8(74, 106, 85),
+    28: Color8(182, 101, 68),
+    29: Color8(140, 52, 45),
+    30: Color8(64, 51, 61),
+    31: Color8(122, 110, 104),
+    32: Color8(76, 137, 145),
+    33: Color8(91, 70, 57),
+    34: Color8(46, 79, 92),
+    35: Color8(79, 75, 51),
+    36: Color8(47, 143, 178),
+}
+
+const TERRAIN_LABELS := {
+    0: "Deep Ocean",
+    1: "Continental Shelf",
+    2: "Inland Sea",
+    3: "Coral Shelf",
+    4: "Hydrothermal Vent Field",
+    5: "Tidal Flat",
+    6: "River Delta",
+    7: "Mangrove Swamp",
+    8: "Freshwater Marsh",
+    9: "Floodplain",
+    10: "Alluvial Plain",
+    11: "Prairie Steppe",
+    12: "Mixed Woodland",
+    13: "Boreal Taiga",
+    14: "Peatland/Heath",
+    15: "Hot Desert Erg",
+    16: "Rocky Reg Desert",
+    17: "Semi-Arid Scrub",
+    18: "Salt Flat",
+    19: "Oasis Basin",
+    20: "Tundra",
+    21: "Periglacial Steppe",
+    22: "Glacier",
+    23: "Seasonal Snowfield",
+    24: "Rolling Hills",
+    25: "High Plateau",
+    26: "Alpine Mountain",
+    27: "Karst Highland",
+    28: "Canyon Badlands",
+    29: "Active Volcano Slope",
+    30: "Basaltic Lava Field",
+    31: "Ash Plain",
+    32: "Fumarole Basin",
+    33: "Impact Crater Field",
+    34: "Karst Cavern Mouth",
+    35: "Sinkhole Field",
+    36: "Aquifer Ceiling",
+}
+
 var grid_width: int = 0
 var grid_height: int = 0
 var logistics_overlay: PackedFloat32Array = PackedFloat32Array()
@@ -40,9 +120,11 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
     logistics_overlay = PackedFloat32Array(overlays.get("logistics", []))
     sentiment_overlay = PackedFloat32Array(overlays.get("contrast", []))
     terrain_overlay = PackedInt32Array(overlays.get("terrain", []))
-    terrain_palette = overlays.get("terrain_palette", {})
+    var palette_raw: Variant = overlays.get("terrain_palette", {})
+    terrain_palette = palette_raw if typeof(palette_raw) == TYPE_DICTIONARY else {}
     terrain_tags_overlay = PackedInt32Array(overlays.get("terrain_tags", []))
-    terrain_tag_labels = overlays.get("terrain_tag_labels", {})
+    var tag_labels_raw: Variant = overlays.get("terrain_tag_labels", {})
+    terrain_tag_labels = tag_labels_raw if typeof(tag_labels_raw) == TYPE_DICTIONARY else {}
     units = Array(snapshot.get("units", []))
     routes = Array(snapshot.get("orders", []))
 
@@ -137,83 +219,32 @@ func _tile_color(x: int, y: int) -> Color:
     return with_logistics.lerp(SENTIMENT_COLOR, sentiment_value)
 
 func _terrain_color_for_id(terrain_id: int) -> Color:
-    match terrain_id:
-        0:
-            return Color8(11, 30, 61)
-        1:
-            return Color8(20, 64, 94)
-        2:
-            return Color8(28, 88, 114)
-        3:
-            return Color8(21, 122, 115)
-        4:
-            return Color8(47, 127, 137)
-        5:
-            return Color8(184, 176, 138)
-        6:
-            return Color8(155, 195, 123)
-        7:
-            return Color8(79, 124, 56)
-        8:
-            return Color8(92, 140, 99)
-        9:
-            return Color8(136, 182, 90)
-        10:
-            return Color8(201, 176, 120)
-        11:
-            return Color8(211, 165, 77)
-        12:
-            return Color8(91, 127, 67)
-        13:
-            return Color8(59, 79, 49)
-        14:
-            return Color8(100, 85, 106)
-        15:
-            return Color8(231, 195, 106)
-        16:
-            return Color8(138, 95, 60)
-        17:
-            return Color8(164, 135, 85)
-        18:
-            return Color8(224, 220, 210)
-        19:
-            return Color8(58, 162, 162)
-        20:
-            return Color8(166, 199, 207)
-        21:
-            return Color8(127, 183, 161)
-        22:
-            return Color8(209, 228, 236)
-        23:
-            return Color8(192, 202, 214)
-        24:
-            return Color8(111, 155, 75)
-        25:
-            return Color8(150, 126, 92)
-        26:
-            return Color8(122, 127, 136)
-        27:
-            return Color8(74, 106, 85)
-        28:
-            return Color8(182, 101, 68)
-        29:
-            return Color8(140, 52, 45)
-        30:
-            return Color8(64, 51, 61)
-        31:
-            return Color8(122, 110, 104)
-        32:
-            return Color8(76, 137, 145)
-        33:
-            return Color8(91, 70, 57)
-        34:
-            return Color8(46, 79, 92)
-        35:
-            return Color8(79, 75, 51)
-        36:
-            return Color8(47, 143, 178)
-        _:
-            return Color(0.2, 0.2, 0.2, 1.0)
+    if TERRAIN_COLORS.has(terrain_id):
+        return TERRAIN_COLORS[terrain_id]
+    return Color(0.2, 0.2, 0.2, 1.0)
+
+func terrain_palette_entries() -> Array:
+    var ids: Array = []
+    if terrain_palette.size() > 0:
+        ids = Array(terrain_palette.keys())
+    else:
+        ids = Array(TERRAIN_COLORS.keys())
+    ids.sort()
+    var entries: Array = []
+    for raw_id in ids:
+        var id := int(raw_id)
+        var label := ""
+        if terrain_palette.has(id):
+            label = str(terrain_palette[id])
+        if label == "":
+            label = TERRAIN_LABELS.get(id, "Unknown")
+        var color := _terrain_color_for_id(id)
+        entries.append({
+            "id": id,
+            "label": label,
+            "color": color,
+        })
+    return entries
 
 func set_terrain_mode(enabled: bool) -> void:
     terrain_mode = enabled

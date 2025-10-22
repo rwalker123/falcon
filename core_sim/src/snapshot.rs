@@ -6,14 +6,20 @@ use bevy::prelude::*;
 use log::warn;
 use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
-    AxisBiasState, CorruptionLedger, GenerationState, InfluentialIndividualState,
-    LogisticsLinkState, PopulationCohortState, PowerNodeState, SentimentAxisTelemetry,
-    SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState, SnapshotHeader,
-    TerrainOverlayState, TerrainSample, TileState, WorldDelta, WorldSnapshot,
+    AxisBiasState, CorruptionLedger, CultureLayerState, CultureTensionState, CultureTraitEntry,
+    GenerationState, InfluentialIndividualState, LogisticsLinkState, PopulationCohortState,
+    PowerNodeState, SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState,
+    SentimentTelemetryState, SnapshotHeader, TerrainOverlayState, TerrainSample, TileState,
+    WorldDelta, WorldSnapshot,
 };
 
 use crate::{
     components::{ElementKind, LogisticsLink, PopulationCohort, PowerNode, Tile},
+    culture::{
+        CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
+        CultureManager, CultureTensionKind as SimCultureTensionKind, CultureTensionRecord,
+        CultureTraitAxis as SimCultureTraitAxis,
+    },
     generations::{GenerationProfile, GenerationRegistry},
     influencers::{InfluencerImpacts, InfluentialRoster},
     resources::{
@@ -72,6 +78,8 @@ pub struct SnapshotHistory {
     power: HashMap<u64, PowerNodeState>,
     generations: HashMap<u16, GenerationState>,
     influencers: HashMap<u32, InfluentialIndividualState>,
+    culture_layers: HashMap<u32, CultureLayerState>,
+    culture_tensions: Vec<CultureTensionState>,
     axis_bias: AxisBiasState,
     sentiment: SentimentTelemetryState,
     terrain_overlay: TerrainOverlayState,
@@ -101,6 +109,8 @@ impl SnapshotHistory {
             power: HashMap::new(),
             generations: HashMap::new(),
             influencers: HashMap::new(),
+            culture_layers: HashMap::new(),
+            culture_tensions: Vec::new(),
             axis_bias: AxisBiasState::default(),
             sentiment: SentimentTelemetryState::default(),
             terrain_overlay: TerrainOverlayState::default(),
@@ -164,6 +174,11 @@ impl SnapshotHistory {
             influencers_index.insert(state.id, state.clone());
         }
 
+        let mut culture_layers_index = HashMap::with_capacity(snapshot.culture_layers.len());
+        for state in &snapshot.culture_layers {
+            culture_layers_index.insert(state.id, state.clone());
+        }
+
         let axis_bias_state = snapshot.axis_bias.clone();
         let axis_bias_delta = if self.axis_bias == axis_bias_state {
             None
@@ -176,6 +191,13 @@ impl SnapshotHistory {
             None
         } else {
             Some(sentiment_state.clone())
+        };
+
+        let culture_tensions_state = snapshot.culture_tensions.clone();
+        let delta_culture_tensions = if self.culture_tensions == culture_tensions_state {
+            Vec::new()
+        } else {
+            culture_tensions_state.clone()
         };
 
         let terrain_state = snapshot.terrain.clone();
@@ -210,6 +232,9 @@ impl SnapshotHistory {
             influencers: diff_new(&self.influencers, &influencers_index),
             removed_influencers: diff_removed(&self.influencers, &influencers_index),
             terrain: terrain_delta.clone(),
+            culture_layers: diff_new(&self.culture_layers, &culture_layers_index),
+            removed_culture_layers: diff_removed(&self.culture_layers, &culture_layers_index),
+            culture_tensions: delta_culture_tensions.clone(),
         };
 
         let snapshot_arc = Arc::new(snapshot);
@@ -222,10 +247,12 @@ impl SnapshotHistory {
         self.power = power_index;
         self.generations = generations_index;
         self.influencers = influencers_index;
+        self.culture_layers = culture_layers_index;
         self.axis_bias = axis_bias_state;
         self.sentiment = sentiment_state;
         self.terrain_overlay = terrain_state;
         self.corruption = corruption_state;
+        self.culture_tensions = culture_tensions_state;
         self.last_snapshot = Some(snapshot_arc);
         self.last_delta = Some(delta_arc);
         self.encoded_snapshot = Some(stored.encoded_snapshot.clone());
@@ -273,9 +300,16 @@ impl SnapshotHistory {
             .iter()
             .map(|state| (state.id, state.clone()))
             .collect();
+        self.culture_layers = entry
+            .snapshot
+            .culture_layers
+            .iter()
+            .map(|state| (state.id, state.clone()))
+            .collect();
         self.corruption = entry.snapshot.corruption.clone();
         self.axis_bias = entry.snapshot.axis_bias.clone();
         self.sentiment = entry.snapshot.sentiment.clone();
+        self.culture_tensions = entry.snapshot.culture_tensions.clone();
 
         self.last_snapshot = Some(entry.snapshot.clone());
         self.last_delta = Some(entry.delta.clone());
@@ -327,6 +361,9 @@ impl SnapshotHistory {
             influencers: Vec::new(),
             removed_influencers: Vec::new(),
             terrain: None,
+            culture_layers: Vec::new(),
+            removed_culture_layers: Vec::new(),
+            culture_tensions: Vec::new(),
         };
 
         let delta_arc = Arc::new(delta);
@@ -404,6 +441,9 @@ impl SnapshotHistory {
             influencers: added.clone(),
             removed_influencers: removed.clone(),
             terrain: None,
+            culture_layers: Vec::new(),
+            removed_culture_layers: Vec::new(),
+            culture_tensions: Vec::new(),
         };
 
         let delta_arc = Arc::new(delta);
@@ -478,6 +518,9 @@ impl SnapshotHistory {
             influencers: Vec::new(),
             removed_influencers: Vec::new(),
             terrain: None,
+            culture_layers: Vec::new(),
+            removed_culture_layers: Vec::new(),
+            culture_tensions: Vec::new(),
         };
 
         let delta_arc = Arc::new(delta);
@@ -534,6 +577,7 @@ pub fn capture_snapshot(
     axis_bias: Res<SentimentAxisBias>,
     corruption_ledgers: Res<CorruptionLedgers>,
     corruption_telemetry: Res<CorruptionTelemetry>,
+    culture: Res<CultureManager>,
     mut history: ResMut<SnapshotHistory>,
 ) {
     history.set_capacity(config.snapshot_history_limit.max(1));
@@ -568,6 +612,27 @@ pub fn capture_snapshot(
 
     let mut influencer_states: Vec<InfluentialIndividualState> = roster.states();
     influencer_states.sort_unstable_by_key(|state| state.id);
+
+    let mut culture_layer_states: Vec<CultureLayerState> = Vec::new();
+    if let Some(global_layer) = culture.global_layer() {
+        culture_layer_states.push(culture_layer_state(global_layer));
+    }
+    for layer in culture.regional_layers() {
+        culture_layer_states.push(culture_layer_state(layer));
+    }
+    for layer in culture.local_layers() {
+        culture_layer_states.push(culture_layer_state(layer));
+    }
+    culture_layer_states.sort_unstable_by_key(|state| state.id);
+
+    let mut culture_tension_states: Vec<CultureTensionState> = culture
+        .active_tensions()
+        .into_iter()
+        .map(culture_tension_state)
+        .collect();
+    culture_tension_states.sort_unstable_by(|a, b| {
+        (a.layer_id, a.kind as u8, a.timer).cmp(&(b.layer_id, b.kind as u8, b.timer))
+    });
 
     let terrain_overlay = terrain_overlay_from_tiles(&tile_states, config.grid_size);
 
@@ -707,6 +772,8 @@ pub fn capture_snapshot(
         generations: generation_states,
         corruption: corruption_ledgers.ledger().clone(),
         influencers: influencer_states,
+        culture_layers: culture_layer_states,
+        culture_tensions: culture_tension_states,
     }
     .finalize();
 
@@ -886,6 +953,17 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         world.insert_resource(ledgers);
     }
 
+    if let Some(mut culture_manager) = world.get_resource_mut::<CultureManager>() {
+        culture_manager.restore_from_snapshot(&snapshot.culture_layers, &snapshot.culture_tensions);
+        let new_effects = culture_manager.compute_effects();
+        drop(culture_manager);
+        if let Some(mut effects_res) = world.get_resource_mut::<CultureEffectsCache>() {
+            *effects_res = new_effects;
+        } else {
+            world.insert_resource(new_effects);
+        }
+    }
+
     let policy_bias = [
         Scalar::from_raw(snapshot.sentiment.knowledge.policy),
         Scalar::from_raw(snapshot.sentiment.trust.policy),
@@ -1004,6 +1082,102 @@ where
         .filter(|id| !current.contains_key(id))
         .map(|id| *id)
         .collect()
+}
+
+fn culture_layer_state(layer: &CultureLayer) -> CultureLayerState {
+    let baseline = layer.traits.baseline();
+    let modifier = layer.traits.modifier();
+    let values = layer.traits.values();
+    let mut traits = Vec::with_capacity(SimCultureTraitAxis::ALL.len());
+    for axis in SimCultureTraitAxis::ALL {
+        let idx = axis.index();
+        traits.push(CultureTraitEntry {
+            axis: map_trait_axis(axis),
+            baseline: baseline[idx].raw(),
+            modifier: modifier[idx].raw(),
+            value: values[idx].raw(),
+        });
+    }
+    CultureLayerState {
+        id: layer.id,
+        owner: layer.owner.0,
+        parent: layer.parent.unwrap_or(0),
+        scope: map_layer_scope(layer.scope),
+        traits,
+        divergence: layer.divergence.magnitude.raw(),
+        soft_threshold: layer.divergence.soft_threshold.raw(),
+        hard_threshold: layer.divergence.hard_threshold.raw(),
+        ticks_above_soft: layer.divergence.ticks_above_soft,
+        ticks_above_hard: layer.divergence.ticks_above_hard,
+        last_updated_tick: layer.last_updated_tick,
+    }
+}
+
+fn culture_tension_state(record: CultureTensionRecord) -> CultureTensionState {
+    CultureTensionState {
+        layer_id: record.layer_id,
+        scope: map_layer_scope(record.scope),
+        owner: record.owner.0,
+        severity: record.magnitude.raw(),
+        timer: record.timer,
+        kind: map_tension_kind(record.kind),
+    }
+}
+
+fn map_layer_scope(scope: SimCultureLayerScope) -> sim_runtime::CultureLayerScope {
+    match scope {
+        SimCultureLayerScope::Global => sim_runtime::CultureLayerScope::Global,
+        SimCultureLayerScope::Regional => sim_runtime::CultureLayerScope::Regional,
+        SimCultureLayerScope::Local => sim_runtime::CultureLayerScope::Local,
+    }
+}
+
+fn map_trait_axis(axis: SimCultureTraitAxis) -> sim_runtime::CultureTraitAxis {
+    match axis {
+        SimCultureTraitAxis::PassiveAggressive => sim_runtime::CultureTraitAxis::PassiveAggressive,
+        SimCultureTraitAxis::OpenClosed => sim_runtime::CultureTraitAxis::OpenClosed,
+        SimCultureTraitAxis::CollectivistIndividualist => {
+            sim_runtime::CultureTraitAxis::CollectivistIndividualist
+        }
+        SimCultureTraitAxis::TraditionalistRevisionist => {
+            sim_runtime::CultureTraitAxis::TraditionalistRevisionist
+        }
+        SimCultureTraitAxis::HierarchicalEgalitarian => {
+            sim_runtime::CultureTraitAxis::HierarchicalEgalitarian
+        }
+        SimCultureTraitAxis::SyncreticPurist => sim_runtime::CultureTraitAxis::SyncreticPurist,
+        SimCultureTraitAxis::AsceticIndulgent => sim_runtime::CultureTraitAxis::AsceticIndulgent,
+        SimCultureTraitAxis::PragmaticIdealistic => {
+            sim_runtime::CultureTraitAxis::PragmaticIdealistic
+        }
+        SimCultureTraitAxis::RationalistMystical => {
+            sim_runtime::CultureTraitAxis::RationalistMystical
+        }
+        SimCultureTraitAxis::ExpansionistInsular => {
+            sim_runtime::CultureTraitAxis::ExpansionistInsular
+        }
+        SimCultureTraitAxis::AdaptiveStubborn => sim_runtime::CultureTraitAxis::AdaptiveStubborn,
+        SimCultureTraitAxis::HonorBoundOpportunistic => {
+            sim_runtime::CultureTraitAxis::HonorBoundOpportunistic
+        }
+        SimCultureTraitAxis::MeritOrientedLineageOriented => {
+            sim_runtime::CultureTraitAxis::MeritOrientedLineageOriented
+        }
+        SimCultureTraitAxis::SecularDevout => sim_runtime::CultureTraitAxis::SecularDevout,
+        SimCultureTraitAxis::PluralisticMonocultural => {
+            sim_runtime::CultureTraitAxis::PluralisticMonocultural
+        }
+    }
+}
+
+fn map_tension_kind(kind: SimCultureTensionKind) -> sim_runtime::CultureTensionKind {
+    match kind {
+        SimCultureTensionKind::DriftWarning => sim_runtime::CultureTensionKind::DriftWarning,
+        SimCultureTensionKind::AssimilationPush => {
+            sim_runtime::CultureTensionKind::AssimilationPush
+        }
+        SimCultureTensionKind::SchismRisk => sim_runtime::CultureTensionKind::SchismRisk,
+    }
 }
 
 fn terrain_overlay_from_tiles(tiles: &[TileState], grid_size: UVec2) -> TerrainOverlayState {

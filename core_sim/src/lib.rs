@@ -4,6 +4,7 @@
 //! simulation when [`run_turn`] is invoked.
 
 mod components;
+mod culture;
 mod generations;
 mod influencers;
 pub mod metrics;
@@ -18,6 +19,11 @@ mod terrain;
 use bevy::prelude::*;
 
 pub use components::{ElementKind, LogisticsLink, PopulationCohort, PowerNode, Tile};
+pub use culture::{
+    reconcile_culture_layers, CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope,
+    CultureManager, CultureOwner, CultureSchismEvent, CultureTensionEvent, CultureTensionKind,
+    CultureTensionRecord, CultureTraitAxis, CultureTraitVector, CULTURE_TRAIT_AXES,
+};
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use influencers::{
     tick_influencers, InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel,
@@ -48,6 +54,8 @@ pub fn build_headless_app() -> App {
     let snapshot_history = SnapshotHistory::with_capacity(config.snapshot_history_limit.max(1));
     let generation_registry = GenerationRegistry::with_seed(0xC0FEBABE, 6);
     let influencer_roster = InfluentialRoster::with_seed(0xA51C_E55E, &generation_registry);
+    let culture_manager = CultureManager::new();
+    let culture_effects = CultureEffectsCache::default();
 
     app.insert_resource(config)
         .insert_resource(SimulationTick::default())
@@ -59,13 +67,19 @@ pub fn build_headless_app() -> App {
         .insert_resource(generation_registry)
         .insert_resource(influencer_roster)
         .insert_resource(InfluencerImpacts::default())
+        .insert_resource(culture_manager)
+        .insert_resource(culture_effects)
         .insert_resource(faction_registry)
         .insert_resource(turn_queue)
+        .add_event::<CultureTensionEvent>()
+        .add_event::<CultureSchismEvent>()
         .add_plugins(MinimalPlugins)
         .add_systems(Startup, systems::spawn_initial_world)
         .add_systems(
             Update,
             (
+                reconcile_culture_layers,
+                systems::process_culture_events,
                 tick_influencers,
                 systems::simulate_materials,
                 systems::simulate_logistics,

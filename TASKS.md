@@ -10,8 +10,8 @@
 - [x] Expose terrain IDs/tag bitsets through snapshots and FlatBuffers for client overlays (Owner: TBD, Estimate: 1.5d; Deps: terrain enum integration).
 - [x] Extend logistics/population systems to surface telemetry for terrain attrition effects (Owner: TBD, Estimate: 1d; Deps: terrain-aware simulation hooks).
 - [x] Add client overlays (CLI & Godot) that visualise terrain classes and tags using the exported channel (Owner: TBD, Estimate: 1.5d; Deps: terrain telemetry stream).
-- [ ] Document palette alignment across `shadow_scale_strategy_game_concept_technical_plan_v_0.md` and `docs/architecture.md` (Owner: TBD, Estimate: 0.5d; Deps: verified Godot palette mapping).
-- [ ] Add Godot/CLI terrain legend surfaced from shared palette data (Owner: TBD, Estimate: 1d; Deps: palette documentation).
+- [x] Document palette alignment across `shadow_scale_strategy_game_concept_technical_plan_v_0.md` and `docs/architecture.md` (Owner: TBD, Estimate: 0.5d; Deps: verified Godot palette mapping).
+- [x] Add Godot/CLI terrain legend surfaced from shared palette data (Owner: TBD, Estimate: 1d; Deps: palette documentation).
 
 ### Trade Knowledge Diffusion
 - [ ] Introduce `TradeKnowledgeDiffusion` stage that consumes openness metrics to share discoveries between factions (Owner: Ravi, Estimate: 2d; Blocked by schema/runtime helpers).
@@ -19,9 +19,9 @@
 - [ ] Implement corruption passes for logistics, trade, and military budgets (Owner: Ravi, Estimate: 3d; Requires `CorruptionLedger` resource from data contracts).
 
 ### Culture Trait Stack
-- [ ] Implement multi-layer culture storage (`CultureLayer`, `CultureTraitVector`) and the reconcile routine propagating global → regional → local weights (Owner: Elena, Estimate: 3d; Deps: finalize trait list per game manual §7c).
-- [ ] Emit divergence telemetry (`CultureDivergence`, `CultureTensionEvent`, `CultureSchismEvent`) and wire into sentiment/diplomacy hooks (Owner: Ravi, Estimate: 2.5d; Deps: reconcile routine + event bus triggers).
-- [ ] Derive trait-driven system modifiers (`CultureEffectsCache`) and expose `CultureLayerState` snapshots/CLI overlays (Owner: Jun, Estimate: 2d; Deps: schema updates in `sim_schema`, inspector UI bandwidth).
+- [x] Implement multi-layer culture storage (`CultureLayer`, `CultureTraitVector`) and the reconcile routine propagating global → regional → local weights (Owner: Elena, Estimate: 3d; Deps: finalize trait list per game manual §7c).
+- [x] Emit divergence telemetry (`CultureDivergence`, `CultureTensionEvent`, `CultureSchismEvent`) and wire into sentiment/diplomacy hooks (Owner: Ravi, Estimate: 2.5d; Deps: reconcile routine + event bus triggers).
+- [x] Derive trait-driven system modifiers (`CultureEffectsCache`) and expose `CultureLayerState` snapshots/CLI overlays (Owner: Jun, Estimate: 2d; Deps: schema updates in `sim_schema`, inspector UI bandwidth).
 
 ## Data Contracts (`sim_schema` + `sim_runtime`)
 - [x] Define FlatBuffers schema for snapshots and deltas.
@@ -30,12 +30,13 @@
 - [ ] Extend trade link schema with openness/knowledge diffusion fields and migration knowledge summary payloads (Owner: Devi, Estimate: 1.5d; Deps: coordinate with `core_sim` turn pipeline + population serialization).
 - [x] Add `CorruptionLedger` structs and subsystem hooks to snapshots (Owner: Devi, Estimate: 2d; Deps: align with logistics/trade/military component schemas).
 
-## CLI Inspector (`cli_inspector`)
-- [x] Connect to headless sim via TCP/WebSocket stub.
-- [x] Render entity/resource dashboards using `ratatui`.
-- [x] Add command palette to pause/step sim and mutate components.
-- [ ] Visualize trade openness and pending diffusion events in inspector overlays (Owner: Jun, Estimate: 2d; Blocked by telemetry emission in `core_sim` + `sim_runtime` helpers).
-- [x] Surface corruption metrics dashboard (Owner: Jun, Estimate: 1.5d; Blocked by `corruption.incidents_active` telemetry).
+## Godot Inspector Pivot
+- [x] Extend Godot snapshot decoder to expose influencer, corruption, sentiment, and demographic data currently consumed by the CLI (Owner: TBD, Estimate: 1.5d; Deps: FlatBuffers topics stable).
+- [x] Implement Godot inspector shell (tabbed/collapsible panels) with Sentiment, Terrain, Influencers, Corruption, Logs, and Command Console sections (Owner: TBD, Estimate: 3d; Deps: decoder extensions).
+- [ ] Add Godot-side controls for turn stepping, autoplay, rollback, axis bias adjustments, influencer support/suppress/channel boost, spawn, corruption injection, and heat debug (Owner: TBD, Estimate: 2d; Deps: command bridge). _Status_: turn step ±1/±10, rollback, and autoplay toggles are live; remaining controls pending backend plumbing.
+- [ ] Pipe sim logs/tracing output into Godot inspector and surface recent tick sparkline/summary (Owner: TBD, Estimate: 1d; Deps: inspector shell). _Status_: interim delta summaries (tiles/populations/generations/influencers) render in the Logs tab; replace with streamed tracing feed + visuals.
+- [ ] Add terrain drill-down UI (per-biome detail view, tile inspection, future culture/military overlays) building on the new summary panel (Owner: TBD, Estimate: 2d; Deps: terrain tab groundwork).
+- [ ] Deprecate CLI inspector: document migration, update workflows, remove `cli_inspector` crate once parity achieved (Owner: TBD, Estimate: 0.5d; Deps: Godot inspector feature parity).
 
 ### Sentiment Sphere Enhancements
 - [x] Implement quadrant heatmap widget with vector overlay and legend (Owner: Mira, Estimate: 2d).

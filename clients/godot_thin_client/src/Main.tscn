@@ -3,6 +3,7 @@
 [ext_resource type="Script" path="res://src/scripts/Main.gd" id="1"]
 [ext_resource type="Script" path="res://src/scripts/MapView.gd" id="2"]
 [ext_resource type="Script" path="res://src/scripts/Hud.gd" id="3"]
+[ext_resource type="Script" path="res://src/scripts/Inspector.gd" id="4"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1")
@@ -28,3 +29,189 @@ offset_left = 16.0
 offset_top = 48.0
 theme_override_colors/font_color = Color(0.8, 0.95, 1, 1)
 text = "Units: 0"
+
+[node name="Inspector" type="CanvasLayer" parent="."]
+script = ExtResource("4")
+
+[node name="RootPanel" type="Panel" parent="Inspector"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -360.0
+offset_top = 16.0
+offset_right = -16.0
+offset_bottom = -16.0
+
+[node name="TabContainer" type="TabContainer" parent="Inspector/RootPanel"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = -8.0
+
+[node name="Sentiment" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="SentimentText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Sentiment"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+
+[node name="Terrain" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="TerrainText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Terrain"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+
+[node name="Influencers" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="InfluencersText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Influencers"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+
+[node name="Corruption" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="CorruptionText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Corruption"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+
+[node name="Logs" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="LogsText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Logs"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+
+[node name="Commands" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="StatusLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands"]
+size_flags_horizontal = 3
+text = "Commands: disconnected."
+
+[node name="ControlsRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
+size_flags_horizontal = 3
+size_flags_vertical = 1
+
+[node name="StepOneButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/ControlsRow"]
+text = "Step +1"
+
+[node name="StepTenButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/ControlsRow"]
+text = "Step +10"
+
+[node name="RollbackButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/ControlsRow"]
+text = "Rollback -1"
+
+[node name="AutoplayRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
+size_flags_horizontal = 3
+
+[node name="AutoplayToggle" type="CheckButton" parent="Inspector/RootPanel/TabContainer/Commands/AutoplayRow"]
+text = "Auto-play"
+
+[node name="AutoplayIntervalLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/AutoplayRow"]
+text = "Interval (s):"
+
+[node name="AutoplayIntervalSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/AutoplayRow"]
+min_value = 0.2
+max_value = 5.0
+step = 0.1
+value = 0.5
+alignment = 1
+
+[node name="LogPanel" type="Panel" parent="Inspector/RootPanel/TabContainer/Commands"]
+custom_minimum_size = Vector2(0, 160)
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="LogScroll" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer/Commands/LogPanel"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 6.0
+offset_top = 6.0
+offset_right = -6.0
+offset_bottom = -6.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="LogText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Commands/LogPanel/LogScroll"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = false
+fit_content = true
+autowrap_mode = 3
+[node name="TerrainLegendPanel" type="Panel" parent="HUD"]
+offset_left = 16.0
+offset_top = 92.0
+offset_right = 240.0
+offset_bottom = 420.0
+visible = false
+
+[node name="LegendTitle" type="Label" parent="HUD/TerrainLegendPanel"]
+anchor_right = 1.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+theme_override_colors/font_color = Color(0.9, 0.95, 1, 1)
+text = "Terrain Legend"
+
+[node name="LegendScroll" type="ScrollContainer" parent="HUD/TerrainLegendPanel"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = 32.0
+offset_right = -8.0
+offset_bottom = -8.0
+scroll_horizontal_enabled = false
+
+[node name="LegendList" type="VBoxContainer" parent="HUD/TerrainLegendPanel/LegendScroll"]
+anchor_right = 1.0
+offset_right = 0.0
+size_flags_horizontal = 3
+size_flags_vertical = 3

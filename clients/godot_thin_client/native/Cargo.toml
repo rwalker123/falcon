@@ -9,3 +9,4 @@ crate-type = ["cdylib"]
 [dependencies]
 godot = { version = "0.4" }
 shadow_scale_flatbuffers = { path = "../../../shadow_scale_flatbuffers" }
+flatbuffers = "25.9.23"

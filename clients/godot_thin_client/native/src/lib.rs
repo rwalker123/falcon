@@ -158,7 +158,57 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     if let Some(layer) = delta.terrainOverlay() {
         agg.apply_terrain_overlay(layer);
     }
-    Some(agg.into_dictionary())
+    let mut dict = agg.into_dictionary();
+
+    if let Some(axis_bias) = delta.axisBias() {
+        let _ = dict.insert("axis_bias", axis_bias_to_dict(axis_bias));
+    }
+
+    if let Some(sentiment) = delta.sentiment() {
+        let _ = dict.insert("sentiment", sentiment_to_dict(sentiment));
+    }
+
+    if let Some(influencers) = delta.influencers() {
+        let _ = dict.insert("influencer_updates", influencers_to_array(influencers));
+    }
+
+    let removed_influencers = u32_vector_to_packed_int32(delta.removedInfluencers());
+    if removed_influencers.len() > 0 {
+        let _ = dict.insert("influencer_removed", removed_influencers);
+    }
+
+    if let Some(ledger) = delta.corruption() {
+        let _ = dict.insert("corruption", corruption_to_dict(ledger));
+    }
+
+    if let Some(populations) = delta.populations() {
+        let _ = dict.insert("population_updates", populations_to_array(populations));
+    }
+
+    let removed_populations = u64_vector_to_packed_int64(delta.removedPopulations());
+    if removed_populations.len() > 0 {
+        let _ = dict.insert("population_removed", removed_populations);
+    }
+
+    if let Some(tiles) = delta.tiles() {
+        let _ = dict.insert("tile_updates", tiles_to_array(tiles));
+    }
+
+    let removed_tiles = u64_vector_to_packed_int64(delta.removedTiles());
+    if removed_tiles.len() > 0 {
+        let _ = dict.insert("tile_removed", removed_tiles);
+    }
+
+    if let Some(generations) = delta.generations() {
+        let _ = dict.insert("generation_updates", generations_to_array(generations));
+    }
+
+    let removed_generations = u16_vector_to_packed_int32(delta.removedGenerations());
+    if removed_generations.len() > 0 {
+        let _ = dict.insert("generation_removed", removed_generations);
+    }
+
+    Some(dict)
 }
 
 #[derive(Default)]
@@ -324,7 +374,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         }
     }
 
-    snapshot_dict(
+    let mut dict = snapshot_dict(
         header.tick(),
         final_width,
         final_height,
@@ -339,7 +389,37 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         } else {
             Some(tag_vec.as_slice())
         },
-    )
+    );
+
+    if let Some(axis_bias) = snapshot.axisBias() {
+        let _ = dict.insert("axis_bias", axis_bias_to_dict(axis_bias));
+    }
+
+    if let Some(sentiment) = snapshot.sentiment() {
+        let _ = dict.insert("sentiment", sentiment_to_dict(sentiment));
+    }
+
+    if let Some(influencers) = snapshot.influencers() {
+        let _ = dict.insert("influencers", influencers_to_array(influencers));
+    }
+
+    if let Some(ledger) = snapshot.corruption() {
+        let _ = dict.insert("corruption", corruption_to_dict(ledger));
+    }
+
+    if let Some(populations) = snapshot.populations() {
+        let _ = dict.insert("populations", populations_to_array(populations));
+    }
+
+    if let Some(tiles_fb) = snapshot.tiles() {
+        let _ = dict.insert("tiles", tiles_to_array(tiles_fb));
+    }
+
+    if let Some(generations) = snapshot.generations() {
+        let _ = dict.insert("generations", generations_to_array(generations));
+    }
+
+    dict
 }
 
 fn terrain_label_from_id(id: u16) -> &'static str {
@@ -389,6 +469,10 @@ fn fixed64_to_f32(value: i64) -> f32 {
     (value as f32) / 1_000_000.0
 }
 
+fn fixed64_to_f64(value: i64) -> f64 {
+    (value as f64) / 1_000_000.0
+}
+
 fn normalize_overlay(values: &mut [f32]) {
     if values.is_empty() {
         return;
@@ -418,6 +502,358 @@ fn normalize_overlay(values: &mut [f32]) {
             *v = 0.0;
         }
     }
+}
+
+fn axis_bias_to_dict(axis: fb::AxisBiasState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("knowledge", fixed64_to_f64(axis.knowledge()));
+    let _ = dict.insert("trust", fixed64_to_f64(axis.trust()));
+    let _ = dict.insert("equity", fixed64_to_f64(axis.equity()));
+    let _ = dict.insert("agency", fixed64_to_f64(axis.agency()));
+    dict
+}
+
+fn sentiment_driver_category_label(category: fb::SentimentDriverCategory) -> &'static str {
+    match category {
+        fb::SentimentDriverCategory::Policy => "Policy",
+        fb::SentimentDriverCategory::Incident => "Incident",
+        fb::SentimentDriverCategory::Influencer => "Influencer",
+        _ => "Unknown",
+    }
+}
+
+fn sentiment_axis_to_dict(axis: fb::SentimentAxisTelemetry<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("policy", fixed64_to_f64(axis.policy()));
+    let _ = dict.insert("incidents", fixed64_to_f64(axis.incidents()));
+    let _ = dict.insert("influencers", fixed64_to_f64(axis.influencers()));
+    let _ = dict.insert("total", fixed64_to_f64(axis.total()));
+
+    let mut drivers = VariantArray::new();
+    if let Some(list) = axis.drivers() {
+        for driver in list {
+            let mut driver_dict = Dictionary::new();
+            let _ = driver_dict.insert(
+                "category",
+                sentiment_driver_category_label(driver.category()),
+            );
+            let _ = driver_dict.insert("label", driver.label().unwrap_or_default());
+            let _ = driver_dict.insert("value", fixed64_to_f64(driver.value()));
+            let _ = driver_dict.insert("weight", fixed64_to_f64(driver.weight()));
+            let variant = driver_dict.to_variant();
+            drivers.push(&variant);
+        }
+    }
+    let _ = dict.insert("drivers", drivers);
+    dict
+}
+
+fn sentiment_to_dict(sentiment: fb::SentimentTelemetryState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    if let Some(axis) = sentiment.knowledge() {
+        let _ = dict.insert("knowledge", sentiment_axis_to_dict(axis));
+    }
+    if let Some(axis) = sentiment.trust() {
+        let _ = dict.insert("trust", sentiment_axis_to_dict(axis));
+    }
+    if let Some(axis) = sentiment.equity() {
+        let _ = dict.insert("equity", sentiment_axis_to_dict(axis));
+    }
+    if let Some(axis) = sentiment.agency() {
+        let _ = dict.insert("agency", sentiment_axis_to_dict(axis));
+    }
+    dict
+}
+
+fn influence_scope_label(scope: fb::InfluenceScopeKind) -> &'static str {
+    match scope {
+        fb::InfluenceScopeKind::Local => "Local",
+        fb::InfluenceScopeKind::Regional => "Regional",
+        fb::InfluenceScopeKind::Global => "Global",
+        fb::InfluenceScopeKind::Generation => "Generation",
+        _ => "Unknown",
+    }
+}
+
+fn influence_lifecycle_label(lifecycle: fb::InfluenceLifecycle) -> &'static str {
+    match lifecycle {
+        fb::InfluenceLifecycle::Potential => "Potential",
+        fb::InfluenceLifecycle::Active => "Active",
+        fb::InfluenceLifecycle::Dormant => "Dormant",
+        _ => "Unknown",
+    }
+}
+
+fn influence_domain_labels(mask: u32) -> PackedStringArray {
+    let mut labels = PackedStringArray::new();
+    for value in 0..=4 {
+        let bit = 1u32 << value;
+        if mask & bit == 0 {
+            continue;
+        }
+        let label = match value {
+            0 => "Sentiment",
+            1 => "Discovery",
+            2 => "Logistics",
+            3 => "Production",
+            4 => "Humanitarian",
+            _ => continue,
+        };
+        let gstring = GString::from(label);
+        labels.push(&gstring);
+    }
+    labels
+}
+
+fn audience_generations_to_array(
+    generations: Option<flatbuffers::Vector<'_, u16>>,
+) -> PackedInt32Array {
+    let mut array = PackedInt32Array::new();
+    if let Some(list) = generations {
+        array.resize(list.len());
+        let slice = array.as_mut_slice();
+        for (index, value) in list.iter().enumerate() {
+            slice[index] = value as i32;
+        }
+    }
+    array
+}
+
+fn influencer_to_dict(state: fb::InfluentialIndividualState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("id", state.id() as i64);
+    let _ = dict.insert("name", state.name().unwrap_or_default());
+    let _ = dict.insert("influence", fixed64_to_f64(state.influence()));
+    let _ = dict.insert("growth_rate", fixed64_to_f64(state.growthRate()));
+    let _ = dict.insert("baseline_growth", fixed64_to_f64(state.baselineGrowth()));
+    let _ = dict.insert("notoriety", fixed64_to_f64(state.notoriety()));
+    let _ = dict.insert(
+        "sentiment_knowledge",
+        fixed64_to_f64(state.sentimentKnowledge()),
+    );
+    let _ = dict.insert("sentiment_trust", fixed64_to_f64(state.sentimentTrust()));
+    let _ = dict.insert("sentiment_equity", fixed64_to_f64(state.sentimentEquity()));
+    let _ = dict.insert("sentiment_agency", fixed64_to_f64(state.sentimentAgency()));
+    let _ = dict.insert(
+        "sentiment_weight_knowledge",
+        fixed64_to_f64(state.sentimentWeightKnowledge()),
+    );
+    let _ = dict.insert(
+        "sentiment_weight_trust",
+        fixed64_to_f64(state.sentimentWeightTrust()),
+    );
+    let _ = dict.insert(
+        "sentiment_weight_equity",
+        fixed64_to_f64(state.sentimentWeightEquity()),
+    );
+    let _ = dict.insert(
+        "sentiment_weight_agency",
+        fixed64_to_f64(state.sentimentWeightAgency()),
+    );
+    let _ = dict.insert("logistics_bonus", fixed64_to_f64(state.logisticsBonus()));
+    let _ = dict.insert("morale_bonus", fixed64_to_f64(state.moraleBonus()));
+    let _ = dict.insert("power_bonus", fixed64_to_f64(state.powerBonus()));
+    let _ = dict.insert("logistics_weight", fixed64_to_f64(state.logisticsWeight()));
+    let _ = dict.insert("morale_weight", fixed64_to_f64(state.moraleWeight()));
+    let _ = dict.insert("power_weight", fixed64_to_f64(state.powerWeight()));
+    let _ = dict.insert("support_charge", fixed64_to_f64(state.supportCharge()));
+    let _ = dict.insert(
+        "suppress_pressure",
+        fixed64_to_f64(state.suppressPressure()),
+    );
+    let domains_mask = state.domains();
+    let _ = dict.insert("domains_mask", domains_mask as i64);
+    let _ = dict.insert("domains", influence_domain_labels(domains_mask));
+    let _ = dict.insert("scope", influence_scope_label(state.scope()));
+    let generation_scope = state.generationScope();
+    if generation_scope != u16::MAX {
+        let _ = dict.insert("generation_scope", generation_scope as i64);
+    }
+    let _ = dict.insert("supported", state.supported());
+    let _ = dict.insert("suppressed", state.suppressed());
+    let _ = dict.insert("lifecycle", influence_lifecycle_label(state.lifecycle()));
+    let _ = dict.insert("coherence", fixed64_to_f64(state.coherence()));
+    let _ = dict.insert("ticks_in_status", state.ticksInStatus() as i64);
+    let audience = audience_generations_to_array(state.audienceGenerations());
+    let _ = dict.insert("audience_generations", audience);
+    let _ = dict.insert("support_popular", fixed64_to_f64(state.supportPopular()));
+    let _ = dict.insert("support_peer", fixed64_to_f64(state.supportPeer()));
+    let _ = dict.insert(
+        "support_institutional",
+        fixed64_to_f64(state.supportInstitutional()),
+    );
+    let _ = dict.insert(
+        "support_humanitarian",
+        fixed64_to_f64(state.supportHumanitarian()),
+    );
+    let _ = dict.insert("weight_popular", fixed64_to_f64(state.weightPopular()));
+    let _ = dict.insert("weight_peer", fixed64_to_f64(state.weightPeer()));
+    let _ = dict.insert(
+        "weight_institutional",
+        fixed64_to_f64(state.weightInstitutional()),
+    );
+    let _ = dict.insert(
+        "weight_humanitarian",
+        fixed64_to_f64(state.weightHumanitarian()),
+    );
+    dict
+}
+
+fn influencers_to_array(
+    list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::InfluentialIndividualState<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for state in list {
+        let dict = influencer_to_dict(state);
+        let variant = dict.to_variant();
+        array.push(&variant);
+    }
+    array
+}
+
+fn corruption_subsystem_label(subsystem: fb::CorruptionSubsystem) -> &'static str {
+    match subsystem {
+        fb::CorruptionSubsystem::Logistics => "Logistics",
+        fb::CorruptionSubsystem::Trade => "Trade",
+        fb::CorruptionSubsystem::Military => "Military",
+        fb::CorruptionSubsystem::Governance => "Governance",
+        _ => "Unknown",
+    }
+}
+
+fn corruption_entry_to_dict(entry: fb::CorruptionEntry<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("subsystem", corruption_subsystem_label(entry.subsystem()));
+    let _ = dict.insert("intensity", fixed64_to_f64(entry.intensity()));
+    let _ = dict.insert("incident_id", entry.incidentId() as i64);
+    let _ = dict.insert("exposure_timer", entry.exposureTimer() as i64);
+    let _ = dict.insert("restitution_window", entry.restitutionWindow() as i64);
+    let _ = dict.insert("last_update_tick", entry.lastUpdateTick() as i64);
+    dict
+}
+
+fn corruption_to_dict(ledger: fb::CorruptionLedger<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let mut entries = VariantArray::new();
+    if let Some(list) = ledger.entries() {
+        for entry in list {
+            let dict = corruption_entry_to_dict(entry);
+            let variant = dict.to_variant();
+            entries.push(&variant);
+        }
+    }
+    let _ = dict.insert("entries", entries);
+    let _ = dict.insert(
+        "reputation_modifier",
+        fixed64_to_f64(ledger.reputationModifier()),
+    );
+    let _ = dict.insert("audit_capacity", ledger.auditCapacity() as i64);
+    dict
+}
+
+fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("entity", cohort.entity() as i64);
+    let _ = dict.insert("home", cohort.home() as i64);
+    let _ = dict.insert("size", cohort.size() as i64);
+    let _ = dict.insert("morale", fixed64_to_f64(cohort.morale()));
+    dict
+}
+
+fn populations_to_array(
+    list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::PopulationCohortState<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for cohort in list {
+        let dict = population_to_dict(cohort);
+        let variant = dict.to_variant();
+        array.push(&variant);
+    }
+    array
+}
+
+fn tile_to_dict(tile: fb::TileState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("entity", tile.entity() as i64);
+    let _ = dict.insert("x", tile.x() as i64);
+    let _ = dict.insert("y", tile.y() as i64);
+    let _ = dict.insert("element", tile.element() as i64);
+    let _ = dict.insert("mass", fixed64_to_f64(tile.mass()));
+    let _ = dict.insert("temperature", fixed64_to_f64(tile.temperature()));
+    let _ = dict.insert("terrain", tile.terrain().0 as i64);
+    let _ = dict.insert("terrain_tags", tile.terrainTags() as i64);
+    dict
+}
+
+fn tiles_to_array(
+    list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::TileState<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for tile in list {
+        let dict = tile_to_dict(tile);
+        let variant = dict.to_variant();
+        array.push(&variant);
+    }
+    array
+}
+
+fn generation_to_dict(state: fb::GenerationState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("id", state.id() as i64);
+    let _ = dict.insert("name", state.name().unwrap_or_default());
+    let _ = dict.insert("bias_knowledge", fixed64_to_f64(state.biasKnowledge()));
+    let _ = dict.insert("bias_trust", fixed64_to_f64(state.biasTrust()));
+    let _ = dict.insert("bias_equity", fixed64_to_f64(state.biasEquity()));
+    let _ = dict.insert("bias_agency", fixed64_to_f64(state.biasAgency()));
+    dict
+}
+
+fn generations_to_array(
+    list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::GenerationState<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for state in list {
+        let dict = generation_to_dict(state);
+        let variant = dict.to_variant();
+        array.push(&variant);
+    }
+    array
+}
+
+fn u32_vector_to_packed_int32(list: Option<flatbuffers::Vector<'_, u32>>) -> PackedInt32Array {
+    let mut array = PackedInt32Array::new();
+    if let Some(values) = list {
+        array.resize(values.len());
+        let slice = array.as_mut_slice();
+        for (index, value) in values.iter().enumerate() {
+            slice[index] = value as i32;
+        }
+    }
+    array
+}
+
+fn u16_vector_to_packed_int32(list: Option<flatbuffers::Vector<'_, u16>>) -> PackedInt32Array {
+    let mut array = PackedInt32Array::new();
+    if let Some(values) = list {
+        array.resize(values.len());
+        let slice = array.as_mut_slice();
+        for (index, value) in values.iter().enumerate() {
+            slice[index] = value as i32;
+        }
+    }
+    array
+}
+
+fn u64_vector_to_packed_int64(list: Option<flatbuffers::Vector<'_, u64>>) -> PackedInt64Array {
+    let mut array = PackedInt64Array::new();
+    if let Some(values) = list {
+        array.resize(values.len());
+        let slice = array.as_mut_slice();
+        for (index, value) in values.iter().enumerate() {
+            slice[index] = value as i64;
+        }
+    }
+    array
 }
 
 struct ShadowScaleExtension;

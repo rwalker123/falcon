@@ -1,15 +1,18 @@
 extends Node2D
 
 const SnapshotLoader = preload("res://src/scripts/SnapshotLoader.gd")
+const CommandClient = preload("res://src/scripts/CommandClient.gd")
 
 @onready var map_view: Node2D = $MapLayer
 @onready var hud: CanvasLayer = $HUD
 @onready var camera: Camera2D = $Camera2D
+@onready var inspector: CanvasLayer = $Inspector
 
 var snapshot_loader: SnapshotLoader
 var playback_timer: Timer
 var streaming_mode := false
 var stream_connection_timer := 0.0
+var command_client: CommandClient
 
 const MOCK_DATA_PATH := "res://src/data/mock_snapshots.json"
 const TURN_INTERVAL_SECONDS := 1.5
@@ -21,6 +24,8 @@ const CAMERA_PAN_SPEED := 220.0
 const CAMERA_ZOOM_STEP := 0.1
 const CAMERA_ZOOM_MIN := 0.5
 const CAMERA_ZOOM_MAX := 1.5
+const COMMAND_HOST := "127.0.0.1"
+const COMMAND_PORT := 41001
 
 func _ready() -> void:
     var ext := load("res://native/shadow_scale_godot.gdextension")
@@ -41,12 +46,22 @@ func _ready() -> void:
         set_process(true)
     else:
         _ensure_timer()
+    var command_host := _determine_command_host()
+    var command_port := _determine_command_port()
+    command_client = CommandClient.new()
+    var command_err := command_client.connect_to_host(command_host, command_port)
+    if command_err != OK:
+        push_warning("Godot client: unable to connect to command port (error %d)." % command_err)
+    if inspector != null and inspector.has_method("set_command_client"):
+        inspector.call("set_command_client", command_client, command_err == OK)
     var initial: Dictionary = {}
     if streaming_mode and not snapshot_loader.last_stream_snapshot.is_empty():
         initial = snapshot_loader.last_stream_snapshot
     else:
         initial = snapshot_loader.current()
     _apply_snapshot(initial)
+    if inspector != null and inspector.has_method("set_streaming_active"):
+        inspector.call("set_streaming_active", streaming_mode)
 
 func _ensure_timer() -> void:
     if is_instance_valid(playback_timer):
@@ -68,6 +83,18 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     var metrics_variant: Variant = map_view.call("display_snapshot", snapshot)
     var metrics: Dictionary = metrics_variant if metrics_variant is Dictionary else {}
     hud.call("update_overlay", snapshot.get("turn", 0), metrics)
+    if inspector != null:
+        if snapshot.has("influencer_updates") or snapshot.has("population_updates") or snapshot.has("tile_updates") or snapshot.has("generation_updates"):
+            if inspector.has_method("update_delta"):
+                inspector.call("update_delta", snapshot)
+        else:
+            if inspector.has_method("update_snapshot"):
+                inspector.call("update_snapshot", snapshot)
+        if inspector.has_method("set_streaming_active"):
+            inspector.call("set_streaming_active", streaming_mode)
+    var legend_variant: Variant = map_view.call("terrain_palette_entries")
+    if legend_variant is Array:
+        hud.call("update_terrain_legend", legend_variant)
     var center_variant: Variant = map_view.call("get_world_center")
     if center_variant is Vector2:
         camera.position = center_variant
@@ -101,17 +128,25 @@ func _process(delta: float) -> void:
     if streaming_mode:
         var streamed := snapshot_loader.poll_stream(delta)
         if not streamed.is_empty():
+            if inspector != null and inspector.has_method("set_streaming_active"):
+                inspector.call("set_streaming_active", true)
             _apply_snapshot(streamed)
             stream_connection_timer = 0.0
         else:
-            if not snapshot_loader.is_streaming():
-                stream_connection_timer += delta
-                if stream_connection_timer > STREAM_CONNECTION_TIMEOUT:
-                    push_warning("Godot client: snapshot stream unavailable; falling back to mock playback.")
-                    streaming_mode = false
-                    snapshot_loader.disable_stream()
-                    _ensure_timer()
+            var status := snapshot_loader.stream_status()
+            match status:
+                StreamPeerTCP.STATUS_CONNECTED, StreamPeerTCP.STATUS_CONNECTING:
                     stream_connection_timer = 0.0
+                _:
+                    stream_connection_timer += delta
+                    if stream_connection_timer > STREAM_CONNECTION_TIMEOUT:
+                        push_warning("Godot client: snapshot stream unavailable; falling back to mock playback.")
+                        streaming_mode = false
+                        snapshot_loader.disable_stream()
+                        _ensure_timer()
+                        stream_connection_timer = 0.0
+                        if inspector != null and inspector.has_method("set_streaming_active"):
+                            inspector.call("set_streaming_active", false)
     var pan_input: Vector2 = Vector2(
         Input.get_action_strength("ui_right") - Input.get_action_strength("ui_left"),
         Input.get_action_strength("ui_down") - Input.get_action_strength("ui_up")
@@ -142,3 +177,17 @@ func _determine_stream_port() -> int:
         if parsed > 0:
             return parsed
     return STREAM_PORT
+
+func _determine_command_host() -> String:
+    var env_host := OS.get_environment("COMMAND_HOST")
+    if env_host != "":
+        return env_host
+    return COMMAND_HOST
+
+func _determine_command_port() -> int:
+    var env_port := OS.get_environment("COMMAND_PORT")
+    if env_port != "":
+        var parsed := int(env_port)
+        if parsed > 0:
+            return parsed
+    return COMMAND_PORT

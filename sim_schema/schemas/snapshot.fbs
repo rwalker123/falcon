@@ -27,6 +27,36 @@ enum InfluenceLifecycle : ubyte {
   Dormant
 }
 
+enum CultureLayerScope : ubyte {
+  Global,
+  Regional,
+  Local
+}
+
+enum CultureTraitAxis : ubyte {
+  PassiveAggressive,
+  OpenClosed,
+  CollectivistIndividualist,
+  TraditionalistRevisionist,
+  HierarchicalEgalitarian,
+  SyncreticPurist,
+  AsceticIndulgent,
+  PragmaticIdealistic,
+  RationalistMystical,
+  ExpansionistInsular,
+  AdaptiveStubborn,
+  HonorBoundOpportunistic,
+  MeritOrientedLineageOriented,
+  SecularDevout,
+  PluralisticMonocultural
+}
+
+enum CultureTensionKind : ubyte {
+  DriftWarning,
+  AssimilationPush,
+  SchismRisk
+}
+
 enum TerrainType : ushort {
   DeepOcean,
   ContinentalShelf,
@@ -118,6 +148,36 @@ table InfluentialIndividualState {
   weightPeer:long;
   weightInstitutional:long;
   weightHumanitarian:long;
+}
+
+table CultureTraitEntry {
+  axis:CultureTraitAxis;
+  baseline:long;
+  modifier:long;
+  value:long;
+}
+
+table CultureLayerState {
+  id:uint;
+  owner:ulong;
+  parent:uint;
+  scope:CultureLayerScope;
+  traits:[CultureTraitEntry];
+  divergence:long;
+  softThreshold:long;
+  hardThreshold:long;
+  ticksAboveSoft:ushort;
+  ticksAboveHard:ushort;
+  lastUpdatedTick:ulong;
+}
+
+table CultureTensionState {
+  layerId:uint;
+  scope:CultureLayerScope;
+  owner:ulong;
+  severity:long;
+  timer:ushort;
+  kind:CultureTensionKind;
 }
 
 table TileState {
@@ -241,6 +301,8 @@ table WorldSnapshot {
   generations:[GenerationState];
   corruption:CorruptionLedger;
   influencers:[InfluentialIndividualState];
+  cultureLayers:[CultureLayerState];
+  cultureTensions:[CultureTensionState];
 }
 
 table WorldDelta {
@@ -261,6 +323,9 @@ table WorldDelta {
   influencers:[InfluentialIndividualState];
   removedInfluencers:[uint];
   terrainOverlay:TerrainOverlay;
+  cultureLayers:[CultureLayerState];
+  removedCultureLayers:[uint];
+  cultureTensions:[CultureTensionState];
 }
 
 union SnapshotPayload {

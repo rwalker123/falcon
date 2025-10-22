@@ -282,6 +282,101 @@ pub struct PowerNodeState {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[repr(u8)]
+pub enum CultureLayerScope {
+    Global = 0,
+    Regional = 1,
+    Local = 2,
+}
+
+impl Default for CultureLayerScope {
+    fn default() -> Self {
+        CultureLayerScope::Global
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CultureTraitAxis {
+    PassiveAggressive = 0,
+    OpenClosed = 1,
+    CollectivistIndividualist = 2,
+    TraditionalistRevisionist = 3,
+    HierarchicalEgalitarian = 4,
+    SyncreticPurist = 5,
+    AsceticIndulgent = 6,
+    PragmaticIdealistic = 7,
+    RationalistMystical = 8,
+    ExpansionistInsular = 9,
+    AdaptiveStubborn = 10,
+    HonorBoundOpportunistic = 11,
+    MeritOrientedLineageOriented = 12,
+    SecularDevout = 13,
+    PluralisticMonocultural = 14,
+}
+
+impl CultureTraitAxis {
+    pub const ALL: [CultureTraitAxis; 15] = [
+        CultureTraitAxis::PassiveAggressive,
+        CultureTraitAxis::OpenClosed,
+        CultureTraitAxis::CollectivistIndividualist,
+        CultureTraitAxis::TraditionalistRevisionist,
+        CultureTraitAxis::HierarchicalEgalitarian,
+        CultureTraitAxis::SyncreticPurist,
+        CultureTraitAxis::AsceticIndulgent,
+        CultureTraitAxis::PragmaticIdealistic,
+        CultureTraitAxis::RationalistMystical,
+        CultureTraitAxis::ExpansionistInsular,
+        CultureTraitAxis::AdaptiveStubborn,
+        CultureTraitAxis::HonorBoundOpportunistic,
+        CultureTraitAxis::MeritOrientedLineageOriented,
+        CultureTraitAxis::SecularDevout,
+        CultureTraitAxis::PluralisticMonocultural,
+    ];
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CultureTensionKind {
+    DriftWarning = 0,
+    AssimilationPush = 1,
+    SchismRisk = 2,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CultureTraitEntry {
+    pub axis: CultureTraitAxis,
+    pub baseline: i64,
+    pub modifier: i64,
+    pub value: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CultureLayerState {
+    pub id: u32,
+    pub owner: u64,
+    pub parent: u32,
+    pub scope: CultureLayerScope,
+    pub traits: Vec<CultureTraitEntry>,
+    pub divergence: i64,
+    pub soft_threshold: i64,
+    pub hard_threshold: i64,
+    pub ticks_above_soft: u16,
+    pub ticks_above_hard: u16,
+    pub last_updated_tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CultureTensionState {
+    pub layer_id: u32,
+    pub scope: CultureLayerScope,
+    pub owner: u64,
+    pub severity: i64,
+    pub timer: u16,
+    pub kind: CultureTensionKind,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[repr(u8)]
 pub enum CorruptionSubsystem {
     Logistics = 0,
     Trade = 1,
@@ -532,6 +627,8 @@ pub struct WorldSnapshot {
     pub generations: Vec<GenerationState>,
     pub corruption: CorruptionLedger,
     pub influencers: Vec<InfluentialIndividualState>,
+    pub culture_layers: Vec<CultureLayerState>,
+    pub culture_tensions: Vec<CultureTensionState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -553,6 +650,9 @@ pub struct WorldDelta {
     pub influencers: Vec<InfluentialIndividualState>,
     pub removed_influencers: Vec<u32>,
     pub terrain: Option<TerrainOverlayState>,
+    pub culture_layers: Vec<CultureLayerState>,
+    pub removed_culture_layers: Vec<u32>,
+    pub culture_tensions: Vec<CultureTensionState>,
 }
 
 impl WorldSnapshot {
@@ -648,6 +748,8 @@ fn build_snapshot_flatbuffer<'a>(
     let generations_vec = create_generations(builder, &snapshot.generations);
     let corruption = create_corruption(builder, &snapshot.corruption);
     let influencers_vec = create_influencers(builder, &snapshot.influencers);
+    let culture_layers_vec = create_culture_layers(builder, &snapshot.culture_layers);
+    let culture_tensions_vec = create_culture_tensions(builder, &snapshot.culture_tensions);
 
     let snapshot_table = fb::WorldSnapshot::create(
         builder,
@@ -663,6 +765,8 @@ fn build_snapshot_flatbuffer<'a>(
             generations: Some(generations_vec),
             corruption: Some(corruption),
             influencers: Some(influencers_vec),
+            cultureLayers: Some(culture_layers_vec),
+            cultureTensions: Some(culture_tensions_vec),
             ..Default::default()
         },
     );
@@ -730,6 +834,9 @@ fn build_delta_flatbuffer<'a>(
         .map(|c| create_corruption(builder, c));
     let influencers_vec = create_influencers(builder, &delta.influencers);
     let removed_influencers_vec = builder.create_vector(&delta.removed_influencers);
+    let culture_layers_vec = create_culture_layers(builder, &delta.culture_layers);
+    let removed_culture_layers_vec = builder.create_vector(&delta.removed_culture_layers);
+    let culture_tensions_vec = create_culture_tensions(builder, &delta.culture_tensions);
 
     let delta_table = fb::WorldDelta::create(
         builder,
@@ -751,6 +858,9 @@ fn build_delta_flatbuffer<'a>(
             influencers: Some(influencers_vec),
             removedInfluencers: Some(removed_influencers_vec),
             terrainOverlay: terrain_overlay,
+            cultureLayers: Some(culture_layers_vec),
+            removedCultureLayers: Some(removed_culture_layers_vec),
+            cultureTensions: Some(culture_tensions_vec),
             ..Default::default()
         },
     );
@@ -1061,6 +1171,82 @@ fn create_influencers<'a>(
     builder.create_vector(&offsets)
 }
 
+fn create_culture_traits<'a>(
+    builder: &mut FbBuilder<'a>,
+    entries: &[CultureTraitEntry],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::CultureTraitEntry<'a>>>> {
+    let offsets: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            fb::CultureTraitEntry::create(
+                builder,
+                &fb::CultureTraitEntryArgs {
+                    axis: to_fb_culture_trait_axis(entry.axis),
+                    baseline: entry.baseline,
+                    modifier: entry.modifier,
+                    value: entry.value,
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_culture_layers<'a>(
+    builder: &mut FbBuilder<'a>,
+    layers: &[CultureLayerState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::CultureLayerState<'a>>>> {
+    let offsets: Vec<_> = layers
+        .iter()
+        .map(|layer| {
+            let traits_vec = create_culture_traits(builder, &layer.traits);
+            fb::CultureLayerState::create(
+                builder,
+                &fb::CultureLayerStateArgs {
+                    id: layer.id,
+                    owner: layer.owner,
+                    parent: layer.parent,
+                    scope: to_fb_culture_layer_scope(layer.scope),
+                    traits: Some(traits_vec),
+                    divergence: layer.divergence,
+                    softThreshold: layer.soft_threshold,
+                    hardThreshold: layer.hard_threshold,
+                    ticksAboveSoft: layer.ticks_above_soft,
+                    ticksAboveHard: layer.ticks_above_hard,
+                    lastUpdatedTick: layer.last_updated_tick,
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_culture_tensions<'a>(
+    builder: &mut FbBuilder<'a>,
+    tensions: &[CultureTensionState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::CultureTensionState<'a>>>> {
+    let offsets: Vec<_> = tensions
+        .iter()
+        .map(|state| {
+            fb::CultureTensionState::create(
+                builder,
+                &fb::CultureTensionStateArgs {
+                    layerId: state.layer_id,
+                    scope: to_fb_culture_layer_scope(state.scope),
+                    owner: state.owner,
+                    severity: state.severity,
+                    timer: state.timer,
+                    kind: to_fb_culture_tension_kind(state.kind),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
 fn to_fb_driver_category(category: SentimentDriverCategory) -> fb::SentimentDriverCategory {
     match category {
         SentimentDriverCategory::Policy => fb::SentimentDriverCategory::Policy,
@@ -1134,6 +1320,48 @@ fn to_fb_influence_lifecycle(lifecycle: InfluenceLifecycle) -> fb::InfluenceLife
         InfluenceLifecycle::Potential => fb::InfluenceLifecycle::Potential,
         InfluenceLifecycle::Active => fb::InfluenceLifecycle::Active,
         InfluenceLifecycle::Dormant => fb::InfluenceLifecycle::Dormant,
+    }
+}
+
+fn to_fb_culture_layer_scope(scope: CultureLayerScope) -> fb::CultureLayerScope {
+    match scope {
+        CultureLayerScope::Global => fb::CultureLayerScope::Global,
+        CultureLayerScope::Regional => fb::CultureLayerScope::Regional,
+        CultureLayerScope::Local => fb::CultureLayerScope::Local,
+    }
+}
+
+fn to_fb_culture_trait_axis(axis: CultureTraitAxis) -> fb::CultureTraitAxis {
+    match axis {
+        CultureTraitAxis::PassiveAggressive => fb::CultureTraitAxis::PassiveAggressive,
+        CultureTraitAxis::OpenClosed => fb::CultureTraitAxis::OpenClosed,
+        CultureTraitAxis::CollectivistIndividualist => {
+            fb::CultureTraitAxis::CollectivistIndividualist
+        }
+        CultureTraitAxis::TraditionalistRevisionist => {
+            fb::CultureTraitAxis::TraditionalistRevisionist
+        }
+        CultureTraitAxis::HierarchicalEgalitarian => fb::CultureTraitAxis::HierarchicalEgalitarian,
+        CultureTraitAxis::SyncreticPurist => fb::CultureTraitAxis::SyncreticPurist,
+        CultureTraitAxis::AsceticIndulgent => fb::CultureTraitAxis::AsceticIndulgent,
+        CultureTraitAxis::PragmaticIdealistic => fb::CultureTraitAxis::PragmaticIdealistic,
+        CultureTraitAxis::RationalistMystical => fb::CultureTraitAxis::RationalistMystical,
+        CultureTraitAxis::ExpansionistInsular => fb::CultureTraitAxis::ExpansionistInsular,
+        CultureTraitAxis::AdaptiveStubborn => fb::CultureTraitAxis::AdaptiveStubborn,
+        CultureTraitAxis::HonorBoundOpportunistic => fb::CultureTraitAxis::HonorBoundOpportunistic,
+        CultureTraitAxis::MeritOrientedLineageOriented => {
+            fb::CultureTraitAxis::MeritOrientedLineageOriented
+        }
+        CultureTraitAxis::SecularDevout => fb::CultureTraitAxis::SecularDevout,
+        CultureTraitAxis::PluralisticMonocultural => fb::CultureTraitAxis::PluralisticMonocultural,
+    }
+}
+
+fn to_fb_culture_tension_kind(kind: CultureTensionKind) -> fb::CultureTensionKind {
+    match kind {
+        CultureTensionKind::DriftWarning => fb::CultureTensionKind::DriftWarning,
+        CultureTensionKind::AssimilationPush => fb::CultureTensionKind::AssimilationPush,
+        CultureTensionKind::SchismRisk => fb::CultureTensionKind::SchismRisk,
     }
 }
 

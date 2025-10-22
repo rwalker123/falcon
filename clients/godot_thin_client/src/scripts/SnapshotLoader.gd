@@ -10,6 +10,7 @@ var stream_enabled: bool = false
 var last_stream_snapshot: Dictionary = {}
 var connection_error: Error = OK
 var decoder: Object = null
+var _last_stream_status: int = StreamPeerTCP.STATUS_NONE
 
 func load_mock_data(path: String) -> void:
     var file: FileAccess = FileAccess.open(path, FileAccess.READ)
@@ -30,6 +31,7 @@ func load_mock_data(path: String) -> void:
     index = 0
 
 func enable_stream(host: String, port: int) -> Error:
+    print("SnapshotLoader: attempting stream connection to %s:%d" % [host, port])
     stream = SnapshotStream.new()
     var err_variant: Variant = stream.call("connect_to", host, port)
     var err: Error = err_variant if typeof(err_variant) == TYPE_INT else ERR_BUG
@@ -37,10 +39,12 @@ func enable_stream(host: String, port: int) -> Error:
         stream = null
         connection_error = err
         stream_enabled = false
+        push_warning("Snapshot stream connect failed (%s:%d): %s" % [host, port, error_string(err)])
         return err
     stream_enabled = true
     connection_error = OK
     last_stream_snapshot = {}
+    _last_stream_status = StreamPeerTCP.STATUS_NONE
     return OK
 
 func disable_stream() -> void:
@@ -52,16 +56,18 @@ func disable_stream() -> void:
 func is_streaming() -> bool:
     if not stream_enabled or stream == null:
         return false
-    var connected_variant: Variant = stream.call("stream_is_connected")
-    if typeof(connected_variant) == TYPE_BOOL:
-        return connected_variant
-    return false
+    var status: int = stream_status()
+    return status == StreamPeerTCP.STATUS_CONNECTED or status == StreamPeerTCP.STATUS_CONNECTING
 
 func stream_status() -> int:
     if stream == null:
         return StreamPeerTCP.STATUS_NONE
     var status_variant: Variant = stream.call("status")
     if typeof(status_variant) == TYPE_INT:
+        var status_int: int = status_variant
+        if status_int != _last_stream_status:
+            _last_stream_status = status_int
+            print("SnapshotLoader: stream status -> %d" % status_int)
         return status_variant
     return StreamPeerTCP.STATUS_NONE
 
@@ -71,6 +77,9 @@ func poll_stream(delta: float) -> Dictionary:
     var payloads: Variant = stream.call("poll", delta)
     if typeof(payloads) != TYPE_ARRAY:
         return {}
+    var status_now := stream_status()
+    if status_now == StreamPeerTCP.STATUS_ERROR:
+        push_warning("Snapshot stream error state detected; connection may be closed.")
     var updated := false
     for payload in payloads:
         if typeof(payload) != TYPE_PACKED_BYTE_ARRAY:

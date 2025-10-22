@@ -5,7 +5,7 @@
 - **Networking**: Thin TCP layer (`core_sim::network`) streams snapshot deltas and receives text commands (`turn N`, `heat entity delta`, `bias axis value`).
 - **Serialization**: Snapshots/deltas represented via Rust structs and `sim_schema::schemas/snapshot.fbs` for cross-language clients.
 - **Shared Runtime (`sim_runtime`)**: Lightweight helpers (command parsing, bias handling, validation) shared by tooling and the headless core.
-- **Inspector Client (`cli_inspector`)**: Ratatui TUI fed by snapshot stream; issues commands with keyboard shortcuts.
+- **Inspector Client (`clients/godot_thin_client`)**: Godot thin client that renders the map, streams snapshots, and exposes the tabbed inspector; legacy `cli_inspector` stays only as a fallback until parity.
 - **Benchmark & Tests**: Criterion harness (`cargo bench -p core_sim --bench turn_bench`) and determinism tests ensure turn consistency.
 
 ### Terrain Type Taxonomy
@@ -30,9 +30,12 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 
 - **Telemetry & Clients**
   - Snapshots expose `terrain_type` per tile and a dedicated `terrainOverlay` raster (width/height + packed samples of terrain ID & tags) so clients can stream biome layers without recomputing from component state.
-  - CLI inspector mirrors the overlay via a terrain summary panel (top biomes/tag coverage); the Godot thin client consumes the same channel (`overlays.terrain` + `terrain_palette`) to colorize tiles and validate palette/legend pairings.
-  - Colour mapping: Godot reads the palette table defined in `MapView.gd::_terrain_color_for_id`, which mirrors the hex values listed in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b. Any palette adjustments must update the manual first, then this implementation table, and finally the CLI/Godot legend widgets (see `TASKS.md`).
+  - Godot inspector consumes the same channel (`overlays.terrain`, `terrain_palette`, `terrain_tag_labels`) to colorize tiles and now aggregates top-biome coverage plus tag distribution inside the Terrain tab. Keep the narrative-and-implementation link tight by updating the manual (§3b) before tweaking palette data here.
+  - Colour mapping: `MapView.gd::_terrain_color_for_id` mirrors the hex values listed in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b. Adjust the manual first, then this lookup, then the HUD legend/inspector summaries (see `TASKS.md`).
+  - Logs tab currently derives summary entries (tile/population/generation/influencer counts) from delta metadata so designers can spot bursts without tailing the terminal; replace this with streamed tracing once the backend forwards log lines.
+  - Legacy CLI overlay can be left in place for verification comparisons until we delete the crate; avoid adding new features there.
   - Runtime controls: the thin client binds `ui_accept` to toggle between logistics/sentiment composites and terrain palette mode, aiding QA comparisons of colour accuracy against the documented swatches.
+  - Inspector migration: see `docs/godot_inspector_plan.md` for the roadmap and progress checkpoints; cross-link new UX notes into the manual when player-facing explanations change.
   - Planned logistics/sentiment raster exports (see `TASKS.md`) can stack on the same grid dimensions for consistent blending.
 
 ### Frontend Client Strategy
@@ -58,15 +61,15 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 - **Data Model**: Extend trade graph entities with a `TradeLinkKnowledge` component storing openness, last shared tech id, and decay timers. Population units gain an optional `KnownTechnologies` summary used during migration events.
 - **Simulation Systems**: Add a `TradeKnowledgeDiffusion` stage after logistics to decrement leak timers, instantiate tech share events, and trigger migration knowledge transfers. Hook outputs into existing tech progress and discovery notification pipelines.
 - **Balancing Hooks**: Expose tuning constants via `SimulationConfig` (e.g., openness-to-timer curve, migration knowledge fidelity) to iterate quickly during playtests.
-- **Telemetry**: Emit metrics (`trade.tech_diffusion_applied`, `trade.migration_knowledge_transfers`) so the CLI inspector can visualize how trade openness reshapes tech parity.
+- **Telemetry**: Emit metrics (`trade.tech_diffusion_applied`, `trade.migration_knowledge_transfers`) so the Godot inspector (and legacy CLI fallback) can visualize how trade openness reshapes tech parity.
 - **Future UI**: Plan inspector overlays showing heatmaps of openness and pending diffusion events, keeping the feature visible during iteration.
 - **Schema & Runtime Scope**: `sim_schema` gains `table TradeLinkKnowledge { openness: float32; leak_timer: uint32; last_discovery: DiscoveryId; decay: float32; }` referenced from `TradeLinkState`, plus an optional `KnownTechFragment` vector on migrating population records. `sim_runtime` exposes helpers to (a) compute openness deltas from treaties/infrastructure assets and (b) fold migrating cohorts’ knowledge fragments into the receiving faction’s research progress. Both crates depend on existing discovery ids and population serialization, so coordinate ordering changes with `core_sim` before bumping schema version.
 
-#### CLI Overlay Prototype Plan
-- Gate rendering behind the `trade.tech_diffusion_applied` metric; reuse existing telemetry subscription in `cli_inspector` to stream openness values per trade link.
+#### Inspector Overlay Prototype Plan
+- Gate rendering behind the `trade.tech_diffusion_applied` metric; reuse the Godot inspector snapshot stream to surface openness values per trade link (legacy CLI subscription stays available for verification).
 - Start with a map-overlay panel that colorizes trade edges by openness and displays countdowns for active leak timers; use the sentiment heatmap widget as a code reference for gradient rendering.
 - Add a secondary list widget showing migration-driven knowledge transfers (source faction, destination faction, tech fragment %, remaining turns) to give designers quick validation feedback.
-- Instrument keyboard toggle (`o`) to show/hide the overlay without disrupting existing layouts, allowing designers to compare baseline economic views versus diffusion-focused telemetry.
+- Instrument a dedicated Godot input action (e.g., `inspector_toggle_trade_overlay`) to show/hide the overlay without disrupting existing layouts, and keep the legacy CLI key binding for verification runs.
 
 ### Corruption Simulation Backbone (Concept Backlog)
 - Provide a shared corruption metric per faction and per subsystem (logistics, trade, military, governance) that influences efficiency, sentiment, and diplomatic leverage as laid out in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §§6–9a.
