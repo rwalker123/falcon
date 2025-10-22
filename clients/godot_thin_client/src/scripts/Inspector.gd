@@ -6,12 +6,15 @@ class_name InspectorLayer
 @onready var influencers_text: RichTextLabel = $RootPanel/TabContainer/Influencers/InfluencersText
 @onready var corruption_text: RichTextLabel = $RootPanel/TabContainer/Corruption/CorruptionText
 @onready var logs_text: RichTextLabel = $RootPanel/TabContainer/Logs/LogsText
+@onready var root_panel: Panel = $RootPanel
+@onready var tab_container: TabContainer = $RootPanel/TabContainer
 @onready var command_status_label: Label = $RootPanel/TabContainer/Commands/StatusLabel
 @onready var step_one_button: Button = $RootPanel/TabContainer/Commands/ControlsRow/StepOneButton
 @onready var step_ten_button: Button = $RootPanel/TabContainer/Commands/ControlsRow/StepTenButton
 @onready var rollback_button: Button = $RootPanel/TabContainer/Commands/ControlsRow/RollbackButton
 @onready var autoplay_toggle: CheckButton = $RootPanel/TabContainer/Commands/AutoplayRow/AutoplayToggle
 @onready var autoplay_spin: SpinBox = $RootPanel/TabContainer/Commands/AutoplayRow/AutoplayIntervalSpin
+@onready var autoplay_label: Label = $RootPanel/TabContainer/Commands/AutoplayRow/AutoplayIntervalLabel
 @onready var command_log_text: RichTextLabel = $RootPanel/TabContainer/Commands/LogPanel/LogScroll/LogText
 
 var _axis_bias: Dictionary = {}
@@ -35,8 +38,22 @@ const COMMAND_LOG_LIMIT := 40
 const TERRAIN_TOP_LIMIT := 5
 const TAG_TOP_LIMIT := 6
 const LOG_ENTRY_LIMIT := 60
+const DEFAULT_FONT_SIZE := 22
+const MIN_FONT_SIZE := 12
+const MAX_FONT_SIZE := 36
+const PANEL_MIN_WIDTH := 320.0
+const PANEL_MAX_WIDTH := 560.0
+const PANEL_WIDTH_RATIO := 0.28
+const PANEL_MARGIN := 16.0
+
+var _viewport: Viewport = null
 
 func _ready() -> void:
+    _viewport = get_viewport()
+    if _viewport != null:
+        _viewport.size_changed.connect(_on_viewport_resized)
+    _apply_theme_overrides()
+    _update_panel_layout()
     _render_static_sections()
     _setup_command_controls()
 
@@ -125,6 +142,56 @@ func _render_static_sections() -> void:
     _render_logs()
     command_status_label.text = "Commands: disconnected."
     command_log_text.text = ""
+
+func _apply_theme_overrides() -> void:
+    var font_size := DEFAULT_FONT_SIZE
+    var env_value := OS.get_environment("INSPECTOR_FONT_SIZE")
+    if env_value != "":
+        var parsed := int(env_value)
+        if parsed >= MIN_FONT_SIZE and parsed <= MAX_FONT_SIZE:
+            font_size = parsed
+    _apply_font_override(sentiment_text, font_size)
+    _apply_font_override(terrain_text, font_size)
+    _apply_font_override(influencers_text, font_size)
+    _apply_font_override(corruption_text, font_size)
+    _apply_font_override(logs_text, font_size)
+    _apply_font_override(command_status_label, font_size)
+    _apply_font_override(step_one_button, font_size)
+    _apply_font_override(step_ten_button, font_size)
+    _apply_font_override(rollback_button, font_size)
+    _apply_font_override(autoplay_toggle, font_size)
+    _apply_font_override(autoplay_label, font_size)
+    _apply_font_override(command_log_text, font_size)
+    _apply_font_override(tab_container, font_size)
+    _apply_font_override(autoplay_spin, font_size)
+
+    if root_panel != null:
+        var panel_style := StyleBoxFlat.new()
+        panel_style.bg_color = Color(0.09, 0.09, 0.12, 0.97)
+        panel_style.border_color = Color(0.2, 0.22, 0.26, 1.0)
+        panel_style.border_width_top = 1
+        panel_style.border_width_bottom = 1
+        panel_style.border_width_left = 1
+        panel_style.border_width_right = 1
+        panel_style.corner_radius_top_left = 6
+        panel_style.corner_radius_top_right = 6
+        panel_style.corner_radius_bottom_left = 6
+        panel_style.corner_radius_bottom_right = 6
+        root_panel.add_theme_stylebox_override("panel", panel_style)
+    if tab_container != null:
+        var tab_style := StyleBoxFlat.new()
+        tab_style.bg_color = Color(0.13, 0.13, 0.17, 0.99)
+        tab_style.border_color = Color(0.22, 0.24, 0.28, 1.0)
+        tab_style.border_width_top = 1
+        tab_style.border_width_bottom = 0
+        tab_style.border_width_left = 1
+        tab_style.border_width_right = 1
+        tab_style.corner_radius_top_left = 6
+        tab_style.corner_radius_top_right = 6
+        tab_style.corner_radius_bottom_left = 0
+        tab_style.corner_radius_bottom_right = 0
+        tab_container.add_theme_stylebox_override("panel", tab_style)
+        tab_container.tab_alignment = 0
 
 func _setup_command_controls() -> void:
     step_one_button.pressed.connect(_on_step_one_button_pressed)
@@ -482,6 +549,32 @@ func _render_logs() -> void:
     for entry in _log_messages:
         lines.append(entry)
     logs_text.text = "\n".join(lines)
+
+func _apply_font_override(control: Control, size: int) -> void:
+    if control == null:
+        return
+    if control is RichTextLabel:
+        var rich: RichTextLabel = control
+        rich.add_theme_font_size_override("normal_font_size", size)
+        rich.add_theme_font_size_override("bold_font_size", size)
+        rich.add_theme_font_size_override("italics_font_size", size)
+        rich.add_theme_font_size_override("mono_font_size", max(size - 1, MIN_FONT_SIZE))
+    else:
+        control.add_theme_font_size_override("font_size", size)
+
+func _update_panel_layout() -> void:
+    if root_panel == null:
+        return
+    var viewport_size: Vector2 = get_viewport().get_visible_rect().size
+    var desired_width: float = clamp(viewport_size.x * PANEL_WIDTH_RATIO, PANEL_MIN_WIDTH, PANEL_MAX_WIDTH)
+    root_panel.offset_left = PANEL_MARGIN
+    root_panel.offset_right = PANEL_MARGIN + desired_width
+    root_panel.offset_top = PANEL_MARGIN
+    root_panel.offset_bottom = -PANEL_MARGIN
+    root_panel.custom_minimum_size = Vector2(PANEL_MIN_WIDTH, 0)
+
+func _on_viewport_resized() -> void:
+    _update_panel_layout()
 
 func _join_strings(values: PackedStringArray) -> String:
     var parts: Array[String] = []

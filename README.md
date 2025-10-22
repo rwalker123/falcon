@@ -105,3 +105,7 @@ echo 'alias make="gmake"' >> ~/.zshrc
      choco install make
      ```
    - Or install MSYS2 and include the `make` package.
+
+#### Hex based board reference
+https://www.redblobgames.com/grids/hexagons/
+
