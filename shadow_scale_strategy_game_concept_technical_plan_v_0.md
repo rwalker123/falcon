@@ -104,7 +104,7 @@ Gather → Process → Build → Power → Store → Move → Defend
 Raw terrain defines movement, habitability, and discovery potential before factions reshape the landscape. Each tile/hex samples one of these base classes; improvements, infrastructure, and disasters layer on afterwards. (Implementation hooks: see `docs/architecture.md` “Terrain Type Taxonomy”.)
 
 **Palette Swatches (Design Reference → Client)**
-- Colours listed below use RGB hex codes that the Godot thin client now consumes. CLI/Godot overlays should stay synchronized; if hues shift for readability, update this table first, then mirror changes in `docs/architecture.md`.
+- Colours listed below use RGB hex codes that the Godot thin client now consumes. If hues shift for readability, update this table first, then mirror changes in `docs/architecture.md`.
 
 | ID | Terrain Class | Hex |
 |----|---------------|-----|
@@ -440,7 +440,7 @@ Collective mood is modeled as a multi-axis vector rather than a single morale me
 - Sentiment totals now decompose into three visible inputs: sustained **policy levers**, time-bounded **incident pulses**, and live **influencer channel output**. These contributions stream through the inspector telemetry so designers can validate how reforms or scandals steer each axis (see `docs/architecture.md` §"Sentiment Telemetry").
 - Each turn, influencers inject *procedural sentiment deltas* (axis nudges) and cross-system modifiers (logistics capacity, morale, power). Impact is scaled by lifecycle and scope so that local activists feel different from global icons.
 - Growth is multi-dimensional: **popular sentiment**, **peer prestige**, **institutional backing**, and **humanitarian capital** all contribute based on domain weighting. Players can exploit this via general-purpose support/suppress actions or targeted `support_channel` boosts.
-- Influencer state (lifecycle, scope tier, channel weights/support, audience generations) is serialized in snapshots, enabling deterministic rollbacks. The CLI inspector surfaces badges, filter controls, channel breakdowns, notoriety, and one-touch boosts for rapid experimentation.
+- Influencer state (lifecycle, scope tier, channel weights/support, audience generations) is serialized in snapshots, enabling deterministic rollbacks. The Godot inspector surfaces badges, filter controls, channel breakdowns, notoriety, and one-touch boosts for rapid experimentation.
 - Narrative positioning: influencers remain “living levers” inside the sentiment sphere. Their trajectories seed event hooks—local movements, academic breakthroughs, humanitarian crusades—that reverberate through trade, diplomacy, and conflict portfolios.
 - Narrative positioning: influencers surface as “living levers” inside the sentiment sphere. Their arcs should seed event hooks—summits, leaks, uprisings—derived from the domains they dominate and the external pressure players exert.
 
@@ -1055,7 +1055,7 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 #### Implementation Notes
 - **Data Transport**: shared protocol (Protobuf/FlatBuffers) from headless core to host. Scripts subscribe via host-managed event bus; they never touch raw sockets.
 - **Rendering**: whichever host we choose must expose GPU overlay primitives (maps, heatmaps). Provide high-level layer APIs to scripts and keep low-level rendering in host modules.
-- **Tooling**: ship SDK with CLI scaffolding, live reload, and inspector panel (component tree, event traces, permissions).
+- **Tooling**: ship SDK with inspector scaffolding (Godot-based), live reload hooks, and panel introspection (component tree, event traces, permissions).
 - **Testing**: unit tests for scripted panels; integration tests to ensure sandbox cannot starve main thread; CI to compile scripts against typed API definitions.
 
 #### Next Steps (Frontend)
@@ -1079,29 +1079,29 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 3. **Unity DOTS (Headless Build)** (Contingency): run determinism spike (Burst, fixed/fixed-point), confirm licensing mitigations, and map out custom server API to decoupled clients; keep as option if we need mature editor workflows quickly.
 
 Key next steps:
-- Build two tiny prototypes: (a) Rust/Bevy headless sim with CLI inspector, (b) Unity DOTS headless build streaming state to a web dashboard; compare ECS ergonomics, profiling, and determinism drift.
+- Build two tiny prototypes: (a) Rust/Bevy headless sim with the original CLI inspector (completed; now retired in favour of the Godot thin client), (b) Unity DOTS headless build streaming state to a web dashboard; compare ECS ergonomics, profiling, and determinism drift.
 - Draft licensing/business risk memo (Unity vs open-source headless stacks) including cost projections for server hosting under each model.
 - Define API schema (events, snapshots, command queue) that any client must implement; evaluate serialization options (FlatBuffers, Protobuf, bespoke binary).
 - Inventory tooling requirements (visual debuggers, timeline inspectors) and decide whether to build web-based tools or integrate with existing engine editors.
 
-#### Prototype Plan (a): Rust/Bevy Headless Sim with CLI Inspector
+#### Prototype Plan (a): Rust/Bevy Headless Sim with CLI Inspector (Legacy)
 
 **Objectives**
 - Validate Bevy’s suitability for a deterministic, headless-first simulation loop at 60 ticks/second with 100k entities (materials, logistics nodes, population units).
 - Exercise snapshot/delta serialization for client consumption and replay.
-- Provide an initial CLI inspector for real-time introspection and command injection without a graphical client.
+- Provide an initial CLI inspector for real-time introspection and command injection without a graphical client (delivered early in the project and later superseded by the Godot thin client).
 - Surface tooling gaps (profiling hooks, deterministic testing harness) before scaling.
 - Produce artifacts (code branch, docs) that can be shared with frontend and tools teams.
 
 **Technical Approach**
-- **Project Layout**: Cargo workspace with `core_sim` (Bevy App, ECS systems), `sim_schema` (data contracts, serialization schemas), `sim_runtime` (shared runtime helpers), `cli_inspector` (tui/CLI client), `integration_tests`.
+- **Project Layout**: Cargo workspace with `core_sim` (Bevy App, ECS systems), `sim_schema` (data contracts, serialization schemas), `sim_runtime` (shared runtime helpers), `clients/godot_thin_client` (Godot inspector client), `integration_tests`. The earlier `cli_inspector` crate served the initial prototype and has since been removed.
 - **ECS Setup**: Use Bevy 0.13 w/ `MinimalPlugins + ScheduleRunnerPlugin` for headless execution. Define core component sets: `Element`, `Tile`, `LogisticsLink`, `PopulationCohort`, `PowerNode`. Systems grouped into deterministic stages (Input → Simulation → Output). Enforce fixed timestep via `FixedMainSchedule`.
 - **Determinism**: Replace f32 with `glam::DVec` or fixed-point `rust_fixed::FixedI64` for critical calculations. Disable parallel unpredictability by ordering `SystemSet`s and using `run_if` guards. Seed RNG with reproducible `ChaCha20Rng` keyed by world seed + tick.
 - **Serialization**: Implement ECS snapshot using `bevy_reflect` + custom `FlatBuffers` schema (components per archetype) plus per-tick delta (component insert/update/remove). Provide `serde` fallback for early iteration. Store snapshots in ring buffer for rewind.
-- **Networking Stub**: Expose snapshot stream over local TCP/WebSocket (via `tokio`/`bevy_tungstenite`). For prototype, support CLI polling and future UI subscribers.
-- **Godot Inspector**: Godot 4 thin client layering the map playback with a tabbed inspector. Sentiment tab mirrors the sphere heatmap, axis drivers, and demographic snapshot from the CLI prototype. Terrain panel aggregates streamed tile data into top-biome coverage and tag distribution, tying directly to the palette in §3b. Influencers and Corruption tabs surface roster/ledger summaries, while the new Logs tab reports incoming delta batches (tiles, populations, generations, influencers) so designers can spot activity bursts without reading terminal output. Commands tab keeps turn stepping (±1/±10), rollback, and autoplay toggles as we migrate bias tuning and support/suppress controls. Implementation notes and outstanding work live in `docs/architecture.md` §"Inspector Tooling".
+- **Networking Stub**: Expose snapshot stream over local TCP/WebSocket (via `tokio`/`bevy_tungstenite`). The initial prototype supported the CLI client; the same channel now feeds the Godot inspector and any future subscribers.
+- **Godot Inspector**: Godot 4 thin client layering the map playback with a tabbed inspector. Sentiment tab mirrors the sphere heatmap, axis drivers, and demographic snapshot from the CLI prototype. Terrain panel now goes beyond top-biome coverage: designers can click any biome to see tag breakdowns, representative tiles, and per-tile telemetry (coords, tags, element, mass, temperature) by hovering or selecting entries. Stub “Culture” and “Military” tabs preview the forthcoming overlays fed by the same snapshot stream so narrative beats stay visible during tooling work. Influencers and Corruption tabs surface roster/ledger summaries, while the Logs tab reports incoming delta batches (tiles, populations, generations, influencers) so designers can spot activity bursts without reading terminal output. Commands tab keeps turn stepping (±1/±10), rollback, and autoplay toggles as we migrate bias tuning and support/suppress controls. Implementation details live in `docs/architecture.md` §"Inspector Tooling" alongside the migration roadmap in `docs/godot_inspector_plan.md`.
 - The Commands tab now mirrors the full debug surface: tweak axis bias values, send support/suppress bursts (including channel-specific boosts), spawn influencers by scope/generation, stage corruption injections, and poke tile heat deltas without leaving the client.
-- **CLI Inspector (legacy)**: Retained as a fallback until Godot reaches full command parity; freeze feature requests here and treat new inspection needs as Godot tasks.
+- **CLI Inspector (legacy)**: Served as the initial fallback until the Godot client reached full command parity; the crate has now been removed and new inspection needs route through the Godot tooling.
 - **Sentiment UI Mock**: Initial TUI wireframe to align engineering scope and UX expectations.
 
 ```text
@@ -1133,7 +1133,7 @@ Key next steps:
   3. Integrate demographic snapshot panel pulling from population cohorts and workforce allocation.
   4. Extend event log to include sentiment-affecting actions with axis annotations.
   5. Wire controls for axis bias editing and playback (pause/step/rewind) into existing command palette.
-- **Profiling & Metrics**: Integrate `bevy_mod_debugdump` for schedule graph, `tracing` crate + `tracing-subscriber` to emit tick duration, system timings. Provide CLI command to dump latest metrics.
+- **Profiling & Metrics**: Integrate `bevy_mod_debugdump` for schedule graph, `tracing` crate + `tracing-subscriber` to emit tick duration, system timings. Provide command-line tooling to dump the latest metrics snapshot.
 - **Testing Harness**: Determinism test comparing tick-by-tick hashes across two runs. Golden snapshot test verifying serialization matches schema. Benchmark harness measuring tick time at 10k/50k/100k entities.
 - **Toolchain**: Use `cargo make` tasks (`make run`, `make profile`, `make snapshot_test`). Continuous integration via GitHub Actions (linux, windows). Document setup in `README` and architecture notes.
 
@@ -1142,24 +1142,24 @@ Key next steps:
    - Stand up Bevy core with fixed-step schedule and deterministic RNG.
    - Implement minimal components/systems (10k entities) and determinism regression test.
    - Deliverable: repo scaffold, CI pipeline, architecture doc v0.1.
-2. **Week 2 – Serialization & CLI MVP**
+2. **Week 2 – Serialization & Inspector MVP (legacy CLI milestone)**
    - Add snapshot/delta serialization and ring-buffer replay.
-   - Build CLI inspector with entity query list + tick controls.
-   - Deliverable: demo script showing headless sim streaming to CLI; documentation of snapshot schema.
+   - Build the initial CLI inspector with entity query list + tick controls (delivered and later superseded by the Godot thin client).
+   - Deliverable: demo script showing headless sim streaming to the legacy CLI inspector; documentation of snapshot schema.
 3. **Week 3 – Scale & Metrics**
    - Scale to 100k entities, gather profiling data, optimize hot systems.
-   - Extend CLI dashboards (throughput, population, energy) and metrics export (JSON/CSV).
+   - Extend inspector dashboards (initially via the legacy CLI, carrying lessons into the Godot client) and metrics export (JSON/CSV).
    - Deliverable: benchmark report (tick latency distribution), updated docs, backlog of optimizations.
 4. **Week 4 – Integration Readiness**
    - Expose WebSocket/TCP stream for external clients; publish API spec draft.
-   - Finalize scripting hook for CLI macros; compile lessons learned for frontend & tools teams.
+   - Finalize command macro hooks (prototyped in the CLI, informing the Godot migration); compile lessons learned for frontend & tools teams.
    - Deliverable: prototype release tag, integration checklist, decision memo on Bevy viability.
 
 **Evaluation Metrics**
 - Tick time: ≤ 12 ms median at 100k entities on target hardware (desktop i7 equivalent).
 - Determinism: hash divergence rate 0 across 10k-tick paired runs.
 - Serialization throughput: ≥ 10 MB/s snapshot streaming without affecting tick budget (>5% overhead).
-- CLI responsiveness: command latency ≤ 50 ms, entity query refresh ≥ 10 Hz.
+- Inspector responsiveness: command latency ≤ 50 ms, entity query refresh ≥ 10 Hz (initially validated via the CLI prototype, now upheld in the Godot client).
 - Developer ergonomics: qualitative survey after Week 2 comparing ease-of-use vs Unity DOTS spike.
 
 ---

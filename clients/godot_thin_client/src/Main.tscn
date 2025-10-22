@@ -73,11 +73,163 @@ anchor_bottom = 1.0
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="TerrainText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Terrain"]
+[node name="TerrainVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Terrain"]
 anchor_right = 1.0
 anchor_bottom = 1.0
 size_flags_horizontal = 3
 size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="TerrainText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 1
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+
+[node name="BiomeSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="BiomeSectionLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection"]
+size_flags_horizontal = 3
+text = "Biome Drill-down"
+
+[node name="BiomeList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection"]
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 180)
+same_column_width = true
+allow_rmb_select = true
+
+[node name="BiomeDetailText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection"]
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+
+[node name="TileSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="TileSectionLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/TileSection"]
+size_flags_horizontal = 3
+text = "Tile Inspection"
+
+[node name="TileList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/TileSection"]
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 160)
+allow_rmb_select = true
+
+[node name="TileDetailText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/TileSection"]
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+
+[node name="OverlaySection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="OverlaySectionLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection"]
+size_flags_horizontal = 3
+text = "Future Overlays"
+
+[node name="OverlayTabs" type="TabContainer" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection"]
+size_flags_horizontal = 3
+size_flags_vertical = 1
+
+[node name="Culture" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlayTabs"]
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 4
+
+[node name="CulturePlaceholder" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlayTabs/Culture"]
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+text = "[i]Culture overlays coming soon.[/i] Connect inspector data to culture layer snapshots to activate this panel."
+
+[node name="Military" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlayTabs"]
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 4
+
+[node name="MilitaryPlaceholder" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlayTabs/Military"]
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+text = "[i]Military overlays coming soon.[/i] Hook into future garrison/fortification streams to populate readiness stats here."
+
+[node name="Culture" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="CultureVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Culture"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="CultureSummarySection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="CultureSummaryLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox/CultureSummarySection"]
+size_flags_horizontal = 3
+text = "Global Identity"
+
+[node name="CultureSummaryText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox/CultureSummarySection"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 1
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+
+[node name="CultureDivergenceSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="CultureDivergenceLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection"]
+size_flags_horizontal = 3
+text = "Regional & Local Divergence"
+
+[node name="CultureDivergenceList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection"]
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 180)
+same_column_width = true
+allow_rmb_select = true
+
+[node name="CultureDivergenceDetail" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 1
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+
+[node name="CultureTensionSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="CultureTensionLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox/CultureTensionSection"]
+size_flags_horizontal = 3
+text = "Active Tensions"
+
+[node name="CultureTensionText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox/CultureTensionSection"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 1
 bbcode_enabled = true
 fit_content = true
 autowrap_mode = 3

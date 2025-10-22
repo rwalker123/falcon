@@ -4,7 +4,21 @@ class_name InspectorLayer
 const LogStreamClientScript = preload("res://src/scripts/LogStreamClient.gd")
 
 @onready var sentiment_text: RichTextLabel = $RootPanel/TabContainer/Sentiment/SentimentText
-@onready var terrain_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainText
+@onready var terrain_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TerrainText
+@onready var terrain_biome_section_label: Label = $RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection/BiomeSectionLabel
+@onready var terrain_biome_list: ItemList = $RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection/BiomeList
+@onready var terrain_biome_detail_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection/BiomeDetailText
+@onready var terrain_tile_section_label: Label = $RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileSectionLabel
+@onready var terrain_tile_list: ItemList = $RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileList
+@onready var terrain_tile_detail_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileDetailText
+@onready var terrain_overlay_section_label: Label = $RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlaySectionLabel
+@onready var terrain_overlay_tabs: TabContainer = $RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlayTabs
+@onready var terrain_overlay_culture_placeholder: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlayTabs/Culture/CulturePlaceholder
+@onready var terrain_overlay_military_placeholder: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlayTabs/Military/MilitaryPlaceholder
+@onready var culture_summary_text: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureSummarySection/CultureSummaryText
+@onready var culture_divergence_list: ItemList = $RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection/CultureDivergenceList
+@onready var culture_divergence_detail: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection/CultureDivergenceDetail
+@onready var culture_tension_text: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureTensionSection/CultureTensionText
 @onready var influencers_text: RichTextLabel = $RootPanel/TabContainer/Influencers/InfluencersText
 @onready var corruption_text: RichTextLabel = $RootPanel/TabContainer/Corruption/CorruptionText
 @onready var logs_text: RichTextLabel = $RootPanel/TabContainer/Logs/LogScroll/LogsText
@@ -54,6 +68,17 @@ var _tile_records: Dictionary = {}
 var _terrain_counts: Dictionary = {}
 var _terrain_tag_counts: Dictionary = {}
 var _tile_total: int = 0
+var _biome_entries: Array[Dictionary] = []
+var _biome_tile_lookup: Dictionary = {}
+var _biome_index_lookup: Dictionary = {}
+var _selected_biome_id: int = -1
+var _selected_tile_entity: int = -1
+var _hovered_tile_entity: int = -1
+var _tile_coord_lookup: Dictionary = {}
+var _selected_culture_layer_id: int = -1
+var _culture_layers: Dictionary = {}
+var _culture_tensions: Array[Dictionary] = []
+var _culture_tension_tracker: Dictionary = {}
 var _log_messages: Array[String] = []
 var _log_client: RefCounted = null
 var _log_host: String = ""
@@ -72,6 +97,8 @@ var command_log: Array[String] = []
 const COMMAND_LOG_LIMIT = 40
 const TERRAIN_TOP_LIMIT = 5
 const TAG_TOP_LIMIT = 6
+const TERRAIN_TILE_DISPLAY_LIMIT = 24
+const TERRAIN_BIOME_SAMPLE_LIMIT = 6
 const LOG_ENTRY_LIMIT = 60
 const LOG_HOST_DEFAULT = "127.0.0.1"
 const LOG_PORT_DEFAULT = 41003
@@ -89,6 +116,8 @@ const PANEL_TOP_OFFSET = 96.0
 const PANEL_HANDLE_WIDTH = 12.0
 const AXIS_NAMES: Array[String] = ["Knowledge", "Trust", "Equity", "Agency"]
 const AXIS_KEYS: Array[String] = ["knowledge", "trust", "equity", "agency"]
+const CULTURE_TOP_TRAIT_LIMIT = 6
+const CULTURE_MAX_DIVERGENCES = 6
 const CHANNEL_OPTIONS = [
     {"label": "Popular", "key": "popular"},
     {"label": "Peer", "key": "peer"},
@@ -126,6 +155,8 @@ func _ready() -> void:
     _initialize_corruption_controls()
     _initialize_heat_controls()
     _apply_theme_overrides()
+    _connect_terrain_ui()
+    _connect_culture_ui()
     _update_panel_layout()
     _render_static_sections()
     _setup_command_controls()
@@ -180,6 +211,17 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
     if data.has("tile_removed"):
         _remove_tiles(data["tile_removed"])
 
+    if full_snapshot and data.has("culture_layers"):
+        _rebuild_culture_layers(data["culture_layers"])
+    elif data.has("culture_layer_updates"):
+        _apply_culture_layer_updates(data["culture_layer_updates"])
+
+    if data.has("culture_layer_removed"):
+        _remove_culture_layers(data["culture_layer_removed"])
+
+    if data.has("culture_tensions"):
+        _update_culture_tensions(data["culture_tensions"], full_snapshot)
+
 func _rebuild_influencers(array_data) -> void:
     _influencers.clear()
     for entry in array_data:
@@ -212,6 +254,7 @@ func _render_dynamic_sections() -> void:
     _render_influencers()
     _render_corruption()
     _render_terrain()
+    _render_culture()
     _render_logs()
 
 func _render_static_sections() -> void:
@@ -221,8 +264,14 @@ func _render_static_sections() -> void:
     _terrain_counts.clear()
     _terrain_tag_counts.clear()
     _tile_total = 0
+    _culture_layers.clear()
+    _culture_tensions.clear()
+    _culture_tension_tracker.clear()
+    _selected_culture_layer_id = -1
+    _clear_terrain_ui()
     _log_messages.clear()
     _render_terrain()
+    _render_culture()
     _render_logs()
     command_status_label.text = "Commands: disconnected."
     command_log_text.text = ""
@@ -252,6 +301,20 @@ func _apply_theme_overrides() -> void:
     _apply_font_override(command_log_text, font_size)
     _apply_font_override(tab_container, font_size)
     _apply_font_override(autoplay_spin, font_size)
+    _apply_font_override(terrain_biome_section_label, font_size)
+    _apply_font_override(terrain_biome_list, font_size)
+    _apply_font_override(terrain_biome_detail_text, font_size)
+    _apply_font_override(terrain_tile_section_label, font_size)
+    _apply_font_override(terrain_tile_list, font_size)
+    _apply_font_override(terrain_tile_detail_text, font_size)
+    _apply_font_override(terrain_overlay_section_label, font_size)
+    _apply_font_override(terrain_overlay_tabs, font_size)
+    _apply_font_override(terrain_overlay_culture_placeholder, font_size)
+    _apply_font_override(terrain_overlay_military_placeholder, font_size)
+    _apply_font_override(culture_summary_text, font_size)
+    _apply_font_override(culture_divergence_list, font_size)
+    _apply_font_override(culture_divergence_detail, font_size)
+    _apply_font_override(culture_tension_text, font_size)
 
     if root_panel != null:
         var panel_style = StyleBoxFlat.new()
@@ -280,6 +343,31 @@ func _apply_theme_overrides() -> void:
         tab_style.corner_radius_bottom_right = 0
         tab_container.add_theme_stylebox_override("panel", tab_style)
         tab_container.tab_alignment = 0
+
+func _connect_terrain_ui() -> void:
+    if terrain_biome_list != null:
+        var biome_selected_callable = Callable(self, "_on_terrain_biome_selected")
+        if not terrain_biome_list.is_connected("item_selected", biome_selected_callable):
+            terrain_biome_list.item_selected.connect(_on_terrain_biome_selected)
+        if not terrain_biome_list.is_connected("item_activated", biome_selected_callable):
+            terrain_biome_list.item_activated.connect(_on_terrain_biome_selected)
+    if terrain_tile_list != null:
+        var tile_selected_callable = Callable(self, "_on_terrain_tile_selected")
+        if not terrain_tile_list.is_connected("item_selected", tile_selected_callable):
+            terrain_tile_list.item_selected.connect(_on_terrain_tile_selected)
+        if not terrain_tile_list.is_connected("item_activated", tile_selected_callable):
+            terrain_tile_list.item_activated.connect(_on_terrain_tile_selected)
+        var tile_gui_callable = Callable(self, "_on_terrain_tile_gui_input")
+        if not terrain_tile_list.is_connected("gui_input", tile_gui_callable):
+            terrain_tile_list.gui_input.connect(_on_terrain_tile_gui_input)
+
+func _connect_culture_ui() -> void:
+    if culture_divergence_list != null:
+        var divergence_callable = Callable(self, "_on_culture_divergence_selected")
+        if not culture_divergence_list.is_connected("item_selected", divergence_callable):
+            culture_divergence_list.item_selected.connect(_on_culture_divergence_selected)
+        if not culture_divergence_list.is_connected("item_activated", divergence_callable):
+            culture_divergence_list.item_activated.connect(_on_culture_divergence_selected)
 
 func _setup_command_controls() -> void:
     step_one_button.pressed.connect(_on_step_one_button_pressed)
@@ -719,9 +807,13 @@ func _render_corruption() -> void:
     corruption_text.text = "\n".join(lines)
 
 func _render_terrain() -> void:
+    if terrain_text == null:
+        return
+
     if _tile_total <= 0:
         terrain_text.text = """[b]Terrain Overlay[/b]
 No terrain data received yet. Palette legend remains available on the HUD."""
+        _clear_terrain_ui()
         return
 
     var lines: Array[String] = []
@@ -776,6 +868,639 @@ No terrain data received yet. Palette legend remains available on the HUD."""
                 % [entry2.get("label", "Tag"), int(entry2.get("count", 0)), float(entry2.get("percent", 0.0))])
 
     terrain_text.text = "\n".join(lines)
+    _refresh_biome_section(terrain_entries)
+
+func _render_culture() -> void:
+    if culture_summary_text == null or culture_divergence_list == null or culture_tension_text == null:
+        return
+
+    if _culture_layers.is_empty():
+        culture_summary_text.text = "[b]Culture[/b]\n[i]No culture data received yet.[/i]"
+        culture_divergence_list.clear()
+        if culture_divergence_detail != null:
+            culture_divergence_detail.text = "[i]Awaiting regional or local layers.[/i]"
+        culture_tension_text.text = "[i]No active tensions.[/i]"
+        return
+
+    var global_layer := {}
+    for value in _culture_layers.values():
+        if not (value is Dictionary):
+            continue
+        var scope := str(value.get("scope", ""))
+        if scope == "Global":
+            global_layer = value
+            break
+    var summary_lines: Array[String] = []
+    summary_lines.append("[b]Global Identity[/b]")
+    if global_layer.is_empty():
+        summary_lines.append("[i]Global layer missing.[/i]")
+    else:
+        var traits: Array[Dictionary] = _extract_culture_traits(global_layer)
+        traits.sort_custom(Callable(self, "_compare_trait_strength"))
+        var limit: int = min(traits.size(), CULTURE_TOP_TRAIT_LIMIT)
+        if limit == 0:
+            summary_lines.append("[i]No trait telemetry available.[/i]")
+        else:
+            for idx in range(limit):
+                var atrait: Dictionary = Dictionary()
+                if idx < traits.size():
+                    var candidate_trait: Variant = traits[idx]
+                    if candidate_trait is Dictionary:
+                        atrait = candidate_trait as Dictionary
+                    else:
+                        continue
+                var label: String = str(atrait.get("label", atrait.get("axis", "Trait")))
+                var value: float = float(atrait.get("value", 0.0))
+                var modifier: float = float(atrait.get("modifier", 0.0))
+                summary_lines.append("%d. %s: %+.2f (modifier %+.2f)" % [idx + 1, label, value, modifier])
+    culture_summary_text.text = "\n".join(summary_lines)
+
+    var divergence_entries: Array[Dictionary] = []
+    for key in _culture_layers.keys():
+        var layer_variant: Variant = _culture_layers[key]
+        if not (layer_variant is Dictionary):
+            continue
+        var layer: Dictionary = layer_variant as Dictionary
+        var scope_str := str(layer.get("scope", ""))
+        if scope_str == "Global":
+            continue
+        var magnitude: float = float(layer.get("divergence", 0.0))
+        divergence_entries.append({
+            "layer": layer,
+            "magnitude": absf(magnitude),
+            "value": magnitude
+        })
+    divergence_entries.sort_custom(Callable(self, "_compare_culture_divergences"))
+
+    var previous_selection: int = _selected_culture_layer_id
+    culture_divergence_list.clear()
+    var selection_index: int = -1
+    var divergence_limit: int = min(divergence_entries.size(), CULTURE_MAX_DIVERGENCES)
+    for idx in range(divergence_limit):
+        var entry: Dictionary = divergence_entries[idx]
+        var layer_dict: Dictionary = {}
+        var layer_entry: Variant = entry.get("layer", {})
+        if layer_entry is Dictionary:
+            layer_dict = layer_entry as Dictionary
+        var divergence_label := _format_culture_divergence_entry(layer_dict, float(entry.get("value", 0.0)))
+        var item_index := culture_divergence_list.add_item(divergence_label)
+        culture_divergence_list.set_item_metadata(item_index, layer_dict)
+        if int(layer_dict.get("id", -1)) == previous_selection:
+            selection_index = item_index
+    if selection_index >= 0:
+        culture_divergence_list.select(selection_index)
+    elif culture_divergence_list.get_item_count() > 0:
+        culture_divergence_list.select(0)
+        var first_meta: Variant = culture_divergence_list.get_item_metadata(0)
+        if first_meta is Dictionary:
+            _selected_culture_layer_id = int((first_meta as Dictionary).get("id", -1))
+    else:
+        _selected_culture_layer_id = -1
+    _update_culture_divergence_detail()
+
+    var tension_lines: Array[String] = []
+    if _culture_tensions.is_empty():
+        tension_lines.append("[i]No active tensions.[/i]")
+    else:
+        for tension in _culture_tensions:
+            if not (tension is Dictionary):
+                continue
+            var info: Dictionary = tension as Dictionary
+            var kind_label: String = str(info.get("kind_label", info.get("kind", "Tension")))
+            var scope_label: String = str(info.get("scope_label", info.get("scope", "")))
+            var severity: float = float(info.get("severity", 0.0))
+            var timer_val: int = int(info.get("timer", 0))
+            var layer_id: int = int(info.get("layer_id", 0))
+            tension_lines.append("• %s — layer #%03d [%s] | Δ %.2f | timer %d" % [
+                kind_label,
+                layer_id,
+                scope_label,
+                severity,
+                timer_val
+            ])
+    culture_tension_text.text = "\n".join(tension_lines)
+
+func _update_culture_divergence_detail() -> void:
+    if culture_divergence_detail == null:
+        return
+    var selected_items := culture_divergence_list.get_selected_items()
+    if selected_items.is_empty():
+        culture_divergence_detail.text = "[i]Select a regional or local layer to inspect divergence.[/i]"
+        return
+    var index: int = selected_items[0]
+    var meta: Variant = culture_divergence_list.get_item_metadata(index)
+    if not (meta is Dictionary):
+        culture_divergence_detail.text = "[i]Select a regional or local layer to inspect divergence.[/i]"
+        return
+    var layer: Dictionary = meta as Dictionary
+    _selected_culture_layer_id = int(layer.get("id", -1))
+    var lines: Array[String] = []
+    var scope_label: String = str(layer.get("scope_label", layer.get("scope", "")))
+    var owner_variant: Variant = layer.get("owner")
+    if owner_variant == null:
+        owner_variant = layer.get("owner_value", 0)
+    var owner_display: String = _format_owner_display(owner_variant)
+    var parent_id: int = int(layer.get("parent", 0))
+    var divergence_val: float = float(layer.get("divergence", 0.0))
+    var soft_threshold: float = float(layer.get("soft_threshold", 0.0))
+    var hard_threshold: float = float(layer.get("hard_threshold", 0.0))
+    var ticks_soft: int = int(layer.get("ticks_above_soft", 0))
+    var ticks_hard: int = int(layer.get("ticks_above_hard", 0))
+    lines.append("[b]Layer #%03d · %s[/b]" % [int(layer.get("id", 0)), scope_label])
+    lines.append("Owner: %s | Parent: %d" % [owner_display, parent_id])
+    lines.append("Δ %+.2f | soft %.2f | hard %.2f" % [divergence_val, soft_threshold, hard_threshold])
+    lines.append("Ticks above soft: %d | hard: %d" % [ticks_soft, ticks_hard])
+    lines.append("")
+    lines.append("[b]Top Trait Drift[/b]")
+    var traits: Array[Dictionary] = _extract_culture_traits(layer)
+    traits.sort_custom(Callable(self, "_compare_trait_strength"))
+    var limit: int = min(traits.size(), CULTURE_TOP_TRAIT_LIMIT)
+    if limit == 0:
+        lines.append("(no trait telemetry)")
+    else:
+        for idx in range(limit):
+            var atrait: Dictionary = Dictionary()
+            if idx < traits.size():
+                var candidate_trait: Variant = traits[idx]
+                if candidate_trait is Dictionary:
+                    atrait = candidate_trait as Dictionary
+                else:
+                    continue
+            var label: String = str(atrait.get("label", atrait.get("axis", "Trait")))
+            var value: float = float(atrait.get("value", 0.0))
+            var baseline: float = float(atrait.get("baseline", 0.0))
+            var modifier: float = float(atrait.get("modifier", 0.0))
+            lines.append("%d. %s: value %+.2f | baseline %+.2f | modifier %+.2f" % [
+                idx + 1,
+                label,
+                value,
+                baseline,
+                modifier
+            ])
+    culture_divergence_detail.text = "\n".join(lines)
+
+func _extract_culture_traits(layer: Dictionary) -> Array[Dictionary]:
+    var result: Array[Dictionary] = []
+    var traits_variant = layer.get("traits", [])
+    if traits_variant is Array:
+        for trait_entry in traits_variant:
+            if not (trait_entry is Dictionary):
+                continue
+            result.append((trait_entry as Dictionary).duplicate(true))
+    return result
+
+func _format_culture_divergence_entry(layer: Dictionary, divergence: float) -> String:
+    var layer_id: int = int(layer.get("id", 0))
+    var scope_label: String = str(layer.get("scope_label", layer.get("scope", "")))
+    return "#%03d [%s] Δ %+.2f" % [layer_id, scope_label, divergence]
+
+func _compare_culture_divergences(a: Dictionary, b: Dictionary) -> bool:
+    var a_mag: float = float(a.get("magnitude", 0.0))
+    var b_mag: float = float(b.get("magnitude", 0.0))
+    if absf(a_mag - b_mag) > 0.0001:
+        return a_mag > b_mag
+    return float(a.get("value", 0.0)) > float(b.get("value", 0.0))
+
+func _compare_trait_strength(a: Dictionary, b: Dictionary) -> bool:
+    var a_val: float = absf(float(a.get("value", 0.0)))
+    var b_val: float = absf(float(b.get("value", 0.0)))
+    if absf(a_val - b_val) > 0.0001:
+        return a_val > b_val
+    return absf(float(a.get("modifier", 0.0))) > absf(float(b.get("modifier", 0.0)))
+
+func _format_owner_display(owner_variant: Variant) -> String:
+    match typeof(owner_variant):
+        TYPE_INT, TYPE_FLOAT:
+            var numeric: int = int(owner_variant)
+            return "0x%016x" % numeric
+        TYPE_STRING:
+            return String(owner_variant)
+        TYPE_NIL:
+            return "n/a"
+        _:
+            return str(owner_variant)
+
+func _on_culture_divergence_selected(index: int) -> void:
+    if culture_divergence_list == null:
+        return
+    var meta: Variant = culture_divergence_list.get_item_metadata(index)
+    if meta is Dictionary:
+        _selected_culture_layer_id = int((meta as Dictionary).get("id", -1))
+    else:
+        _selected_culture_layer_id = -1
+    _update_culture_divergence_detail()
+
+func _clear_terrain_ui() -> void:
+    _biome_entries.clear()
+    _biome_tile_lookup.clear()
+    _biome_index_lookup.clear()
+    _tile_coord_lookup.clear()
+    _selected_biome_id = -1
+    _selected_tile_entity = -1
+    _hovered_tile_entity = -1
+    if terrain_biome_list != null:
+        terrain_biome_list.clear()
+    if terrain_biome_detail_text != null:
+        terrain_biome_detail_text.text = """[b]Biome Drill-down[/b]
+Select a biome once terrain data is available."""
+    if terrain_tile_list != null:
+        terrain_tile_list.clear()
+    if terrain_tile_detail_text != null:
+        terrain_tile_detail_text.text = """[b]Tile Inspection[/b]
+Hover or select a tile to inspect biome tags and conditions."""
+
+func _refresh_biome_section(entries: Array[Dictionary]) -> void:
+    _biome_entries = entries.duplicate(true)
+    _build_biome_tile_lookup()
+    _biome_index_lookup.clear()
+    for idx in range(_biome_entries.size()):
+        var entry: Dictionary = _biome_entries[idx]
+        var biome_id: int = int(entry.get("id", -1))
+        _biome_index_lookup[biome_id] = idx
+    _update_biome_list()
+
+func _build_biome_tile_lookup() -> void:
+    var lookup: Dictionary = {}
+    for key in _tile_records.keys():
+        var entity_id: int = int(key)
+        var record_variant: Variant = _tile_records[key]
+        if not (record_variant is Dictionary):
+            continue
+        var record: Dictionary = record_variant
+        var terrain_id: int = int(record.get("terrain", -1))
+        if terrain_id < 0:
+            continue
+        var tile_list: Array = []
+        if lookup.has(terrain_id):
+            tile_list = lookup[terrain_id]
+        tile_list.append(entity_id)
+        lookup[terrain_id] = tile_list
+    _biome_tile_lookup = lookup
+
+func _format_biome_list_entry(entry: Dictionary) -> String:
+    var label: String = str(entry.get("label", "Biome"))
+    var count: int = int(entry.get("count", 0))
+    var percent: float = float(entry.get("percent", 0.0))
+    return "%s – %d tiles (%.1f%%)" % [label, count, percent]
+
+func _update_biome_list() -> void:
+    if terrain_biome_list == null:
+        return
+    var previous_biome: int = _selected_biome_id
+    terrain_biome_list.clear()
+    var selection_index: int = -1
+    for idx in range(_biome_entries.size()):
+        var entry: Dictionary = _biome_entries[idx]
+        terrain_biome_list.add_item(_format_biome_list_entry(entry))
+        terrain_biome_list.set_item_metadata(idx, entry)
+        if int(entry.get("id", -1)) == previous_biome:
+            selection_index = idx
+    var force_tile_reset: bool = false
+    if selection_index >= 0:
+        terrain_biome_list.select(selection_index)
+    elif _biome_entries.size() > 0:
+        selection_index = 0
+        terrain_biome_list.select(selection_index)
+        force_tile_reset = true
+    else:
+        _selected_biome_id = -1
+        _render_selected_biome(true)
+        return
+    var selected_entry: Dictionary = _biome_entries[selection_index]
+    var new_biome_id: int = int(selected_entry.get("id", -1))
+    var selection_changed: bool = previous_biome != new_biome_id
+    _selected_biome_id = new_biome_id
+    _render_selected_biome(force_tile_reset or selection_changed)
+
+func _render_selected_biome(reset_tile_selection: bool, pinned_tile_entity: int = -1) -> void:
+    if terrain_biome_list == null:
+        return
+    var selected_items: PackedInt32Array = terrain_biome_list.get_selected_items()
+    if selected_items.is_empty():
+        _selected_biome_id = -1
+        if terrain_biome_detail_text != null:
+            terrain_biome_detail_text.text = """[b]Biome Drill-down[/b]
+Select a biome to view tag breakdowns and representative tiles."""
+        _refresh_tile_list(true, pinned_tile_entity)
+        return
+    var index: int = selected_items[0]
+    var entry_variant: Variant = terrain_biome_list.get_item_metadata(index)
+    var entry: Dictionary = entry_variant if entry_variant is Dictionary else {}
+    if entry.is_empty() and index < _biome_entries.size():
+        entry = _biome_entries[index]
+    var biome_id: int = int(entry.get("id", -1))
+    var label: String = str(entry.get("label", "Biome"))
+    var count: int = int(entry.get("count", 0))
+    var percent: float = float(entry.get("percent", 0.0))
+    _selected_biome_id = biome_id
+
+    if terrain_biome_detail_text != null:
+        var lines: Array[String] = []
+        lines.append("[b]%s[/b]" % label)
+        lines.append("Tile coverage: %d (%.1f%% of tracked terrain)" % [count, percent])
+        var tile_list: Array = _get_biome_tiles(biome_id)
+        lines.append("Tracked tiles in biome: %d" % tile_list.size())
+        var tag_summary: Array[Dictionary] = _summarize_biome_tags(biome_id)
+        if tag_summary.is_empty():
+            lines.append("Tag breakdown: none")
+        else:
+            lines.append("Tag breakdown:")
+            var tag_limit: int = min(tag_summary.size(), TAG_TOP_LIMIT)
+            for tag_idx in range(tag_limit):
+                var tag_entry: Dictionary = tag_summary[tag_idx]
+                lines.append(" • %s: %d tiles (%.1f%%)" % [
+                    tag_entry.get("label", "Tag"),
+                    int(tag_entry.get("count", 0)),
+                    float(tag_entry.get("percent", 0.0))
+                ])
+        var sample_lines: Array[String] = _format_representative_tiles(biome_id)
+        lines.append("")
+        if sample_lines.is_empty():
+            lines.append("Representative tiles: none recorded.")
+        else:
+            lines.append("Representative tiles:")
+            for sample_line in sample_lines:
+                lines.append(sample_line)
+        terrain_biome_detail_text.text = "\n".join(lines)
+
+    _refresh_tile_list(reset_tile_selection, pinned_tile_entity)
+
+func _summarize_biome_tags(biome_id: int) -> Array[Dictionary]:
+    var tile_list: Array = _get_biome_tiles(biome_id)
+    if tile_list.is_empty():
+        return []
+    var counts: Dictionary = {}
+    for entity_id in tile_list:
+        var record_variant: Variant = _tile_records.get(entity_id, {})
+        if not (record_variant is Dictionary):
+            continue
+        var record: Dictionary = record_variant
+        var mask: int = int(record.get("tags", 0))
+        if mask == 0:
+            continue
+        for bit in range(0, 16):
+            var bit_value: int = 1 << bit
+            if (mask & bit_value) == 0:
+                continue
+            counts[bit_value] = int(counts.get(bit_value, 0)) + 1
+    var result: Array[Dictionary] = []
+    var total: float = float(max(tile_list.size(), 1))
+    for key in counts.keys():
+        var bit_mask: int = int(key)
+        var count: int = int(counts[key])
+        result.append({
+            "mask": bit_mask,
+            "count": count,
+            "percent": (float(count) / total) * 100.0,
+            "label": _label_for_tag(bit_mask)
+        })
+    result.sort_custom(Callable(self, "_compare_tag_entries"))
+    return result
+
+func _get_biome_tiles(biome_id: int) -> Array:
+    if biome_id < 0:
+        return []
+    if not _biome_tile_lookup.has(biome_id):
+        return []
+    var stored: Variant = _biome_tile_lookup[biome_id]
+    if stored is Array:
+        return (stored as Array).duplicate()
+    return []
+
+func _format_representative_tiles(biome_id: int) -> Array[String]:
+    var tile_list: Array = _get_biome_tiles(biome_id)
+    if tile_list.is_empty():
+        return []
+    tile_list.sort()
+    var sample_limit: int = min(tile_list.size(), TERRAIN_BIOME_SAMPLE_LIMIT)
+    var result: Array[String] = []
+    for idx in range(sample_limit):
+        var entity_id: int = int(tile_list[idx])
+        var record_variant: Variant = _tile_records.get(entity_id, {})
+        if not (record_variant is Dictionary):
+            continue
+        var record: Dictionary = record_variant
+        var coords_text: String = _format_tile_coords(record)
+        var tags: Array[String] = _tag_labels_from_mask(int(record.get("tags", 0)))
+        var tags_text: String = "none"
+        if not tags.is_empty():
+            tags_text = _join_strings_with_separator(tags, ", ")
+        var temperature: float = float(record.get("temperature", 0.0))
+        var mass: float = float(record.get("mass", 0.0))
+        result.append(" • %s | entity %d | tags: %s | temp %.1f | mass %.1f" % [
+            coords_text,
+            entity_id,
+            tags_text,
+            temperature,
+            mass
+        ])
+    return result
+
+func _refresh_tile_list(reset_tile_selection: bool, pinned_entity: int = -1) -> void:
+    if terrain_tile_list == null:
+        return
+    var previous_tile: int = _selected_tile_entity
+    terrain_tile_list.clear()
+    var tile_entities: Array = _get_biome_tiles(_selected_biome_id)
+    tile_entities.sort()
+    var display_limit: int = min(tile_entities.size(), TERRAIN_TILE_DISPLAY_LIMIT)
+    var display_entities: Array = []
+    for idx in range(display_limit):
+        display_entities.append(int(tile_entities[idx]))
+    if pinned_entity >= 0 and tile_entities.has(pinned_entity) and display_entities.find(pinned_entity) == -1:
+        display_entities.append(pinned_entity)
+
+    var selected_index: int = -1
+    for idx in range(display_entities.size()):
+        var entity_id: int = int(display_entities[idx])
+        var record_variant: Variant = _tile_records.get(entity_id, {})
+        if not (record_variant is Dictionary):
+            continue
+        var record: Dictionary = record_variant
+        terrain_tile_list.add_item(_format_tile_list_entry(entity_id, record))
+        var new_index: int = terrain_tile_list.get_item_count() - 1
+        terrain_tile_list.set_item_metadata(new_index, entity_id)
+        if entity_id == pinned_entity:
+            selected_index = new_index
+        elif entity_id == previous_tile and selected_index == -1:
+            selected_index = new_index
+
+    if terrain_tile_list.get_item_count() == 0:
+        _selected_tile_entity = -1
+        _render_tile_detail(-1)
+        return
+
+    var effective_previous: int = previous_tile
+    if pinned_entity >= 0:
+        effective_previous = pinned_entity
+
+    var should_reset_tile: bool = reset_tile_selection or effective_previous < 0 or tile_entities.find(effective_previous) == -1
+    var target_index: int = selected_index
+
+    if target_index < 0:
+        if not should_reset_tile:
+            for idx in range(terrain_tile_list.get_item_count()):
+                var entity_candidate: int = int(terrain_tile_list.get_item_metadata(idx))
+                if entity_candidate == effective_previous:
+                    target_index = idx
+                    break
+        if target_index < 0:
+            target_index = 0
+
+    var target_entity: int = int(terrain_tile_list.get_item_metadata(target_index))
+    _selected_tile_entity = target_entity
+    terrain_tile_list.select(target_index)
+    _hovered_tile_entity = -1
+    _render_tile_detail(target_entity)
+
+func _format_tile_list_entry(entity_id: int, record: Dictionary) -> String:
+    var coords_text: String = _format_tile_coords(record)
+    var tags: Array[String] = _tag_labels_from_mask(int(record.get("tags", 0)))
+    var preview_tags: Array[String] = []
+    var preview_limit: int = min(tags.size(), 2)
+    for idx in range(preview_limit):
+        preview_tags.append(tags[idx])
+    var parts: Array[String] = []
+    parts.append(coords_text)
+    parts.append("entity %d" % entity_id)
+    if not preview_tags.is_empty():
+        parts.append(_join_strings_with_separator(preview_tags, ", "))
+    return _join_strings_with_separator(parts, " • ")
+
+func _format_tile_coords(record: Dictionary) -> String:
+    var x: int = int(record.get("x", -1))
+    var y: int = int(record.get("y", -1))
+    return "@%d,%d" % [x, y]
+
+func _render_tile_detail(entity_id: int, preview: bool = false) -> void:
+    if terrain_tile_detail_text == null:
+        return
+    if entity_id < 0 or not _tile_records.has(entity_id):
+        terrain_tile_detail_text.text = """[b]Tile Inspection[/b]
+Hover or select a tile to inspect biome tags and conditions."""
+        return
+    var record_variant: Variant = _tile_records.get(entity_id, {})
+    if not (record_variant is Dictionary):
+        terrain_tile_detail_text.text = "No data for tile %d." % entity_id
+        return
+    var record: Dictionary = record_variant
+    var lines: Array[String] = []
+    lines.append("[b]Tile %d[/b]" % entity_id)
+    lines.append("Location: %s" % _format_tile_coords(record))
+    lines.append("Biome: %s" % _label_for_terrain(int(record.get("terrain", -1))))
+    var tags: Array[String] = _tag_labels_from_mask(int(record.get("tags", 0)))
+    var tags_text: String = "none"
+    if not tags.is_empty():
+            tags_text = _join_strings_with_separator(tags, ", ")
+    lines.append("Tags: %s" % tags_text)
+    lines.append("Temperature: %.1f" % float(record.get("temperature", 0.0)))
+    lines.append("Mass: %.1f" % float(record.get("mass", 0.0)))
+    lines.append("Element ID: %d" % int(record.get("element", -1)))
+    if preview:
+        lines.append("")
+        lines.append("[i]Hover preview[/i]")
+    terrain_tile_detail_text.text = "\n".join(lines)
+
+func _tag_labels_from_mask(mask: int) -> Array[String]:
+    var labels: Array[String] = []
+    if mask == 0:
+        return labels
+    for bit in range(0, 16):
+        var bit_value: int = 1 << bit
+        if (mask & bit_value) != 0:
+            labels.append(_label_for_tag(bit_value))
+    return labels
+
+func focus_tile_from_map(col: int, row: int, terrain_id: int) -> void:
+    if terrain_biome_list == null:
+        return
+    var coord := Vector2i(col, row)
+    var entity_id: int = -1
+    if _tile_coord_lookup.has(coord):
+        entity_id = int(_tile_coord_lookup[coord])
+    else:
+        for key in _tile_records.keys():
+            var record_variant: Variant = _tile_records[key]
+            if not (record_variant is Dictionary):
+                continue
+            var record: Dictionary = record_variant
+            if int(record.get("x", -1)) == col and int(record.get("y", -1)) == row:
+                entity_id = int(key)
+                _tile_coord_lookup[coord] = entity_id
+                break
+
+    if terrain_id >= 0 and _biome_entries.size() > 0:
+        var biome_index: int = int(_biome_index_lookup.get(terrain_id, -1))
+        if biome_index >= 0:
+            var previous_biome: int = _selected_biome_id
+            var reset_required: bool = previous_biome != terrain_id
+            terrain_biome_list.select(biome_index, false)
+            var selected_indices: PackedInt32Array = terrain_biome_list.get_selected_items()
+            if selected_indices.is_empty() or selected_indices[0] != biome_index:
+                terrain_biome_list.select(biome_index, false)
+            _selected_biome_id = terrain_id
+            _render_selected_biome(reset_required, entity_id)
+        else:
+            _render_selected_biome(false, entity_id)
+    else:
+        _render_selected_biome(false, entity_id)
+
+    if entity_id < 0 and _selected_tile_entity < 0 and terrain_tile_detail_text != null:
+        terrain_tile_detail_text.text = """[b]Tile Inspection[/b]
+No detailed data available for the selected tile (%d, %d).""" % [col, row]
+
+func _on_terrain_biome_selected(index: int) -> void:
+    if terrain_biome_list == null:
+        return
+    if index < 0 or index >= terrain_biome_list.get_item_count():
+        return
+    var metadata: Variant = terrain_biome_list.get_item_metadata(index)
+    var biome_id: int = -1
+    if metadata is Dictionary:
+        var entry: Dictionary = metadata
+        biome_id = int(entry.get("id", -1))
+    elif index < _biome_entries.size():
+        biome_id = int(_biome_entries[index].get("id", -1))
+    var reset_tiles: bool = biome_id != _selected_biome_id
+    _selected_biome_id = biome_id
+    _render_selected_biome(reset_tiles)
+
+func _on_terrain_tile_selected(index: int) -> void:
+    if terrain_tile_list == null:
+        return
+    if index < 0 or index >= terrain_tile_list.get_item_count():
+        return
+    var metadata: Variant = terrain_tile_list.get_item_metadata(index)
+    var entity_id: int = int(metadata)
+    _selected_tile_entity = entity_id
+    _hovered_tile_entity = -1
+    _render_tile_detail(entity_id)
+
+func _on_terrain_tile_gui_input(event: InputEvent) -> void:
+    if terrain_tile_list == null or event == null:
+        return
+    if event is InputEventMouseMotion:
+        var motion: InputEventMouseMotion = event
+        var hovered_index: int = terrain_tile_list.get_item_at_position(motion.position, true)
+        if hovered_index < 0:
+            if _hovered_tile_entity != -1:
+                _hovered_tile_entity = -1
+                if _selected_tile_entity >= 0:
+                    _render_tile_detail(_selected_tile_entity)
+            return
+        if hovered_index >= terrain_tile_list.get_item_count():
+            return
+        var metadata: Variant = terrain_tile_list.get_item_metadata(hovered_index)
+        var entity_id: int = int(metadata)
+        if entity_id == _selected_tile_entity:
+            if _hovered_tile_entity != -1:
+                _hovered_tile_entity = -1
+                _render_tile_detail(_selected_tile_entity)
+            return
+        if entity_id == _hovered_tile_entity:
+            return
+        _hovered_tile_entity = entity_id
+        _render_tile_detail(entity_id, true)
 
 func _initialize_log_channel() -> void:
     _log_client = LogStreamClientScript.new()
@@ -1062,6 +1787,14 @@ func _join_strings(values: PackedStringArray) -> String:
             result += ", "
     return result
 
+func _join_strings_with_separator(values: Array[String], separator: String) -> String:
+    var result: String = ""
+    for idx in range(values.size()):
+        result += String(values[idx])
+        if idx < values.size() - 1:
+            result += separator
+    return result
+
 func _compare_terrain_entries(a: Dictionary, b: Dictionary) -> bool:
     var a_count = int(a.get("count", 0))
     var b_count = int(b.get("count", 0))
@@ -1109,6 +1842,7 @@ func _rebuild_tiles(tile_entries) -> void:
     _tile_records.clear()
     _terrain_counts.clear()
     _terrain_tag_counts.clear()
+    _tile_coord_lookup.clear()
     _tile_total = 0
     if tile_entries is Array:
         for entry in tile_entries:
@@ -1142,6 +1876,90 @@ func _remove_tiles(ids) -> void:
             _forget_tile(int(idx))
     _tile_total = max(_tile_records.size(), 0)
 
+func _rebuild_culture_layers(array_data) -> void:
+    _culture_layers.clear()
+    if array_data is Array:
+        for entry in array_data:
+            var layer_dict: Dictionary = _normalize_culture_layer(entry)
+            if layer_dict.is_empty():
+                continue
+            var id = int(layer_dict.get("id", 0))
+            _culture_layers[id] = layer_dict
+    _selected_culture_layer_id = -1
+
+func _apply_culture_layer_updates(array_data) -> void:
+    if not (array_data is Array):
+        return
+    for entry in array_data:
+        var layer_dict: Dictionary = _normalize_culture_layer(entry)
+        if layer_dict.is_empty():
+            continue
+        var id = int(layer_dict.get("id", 0))
+        _culture_layers[id] = layer_dict
+
+func _remove_culture_layers(ids) -> void:
+    if ids is Array:
+        for value in ids:
+            _erase_culture_layer(int(value))
+    elif ids is PackedInt32Array:
+        var packed_ids: PackedInt32Array = ids
+        for value in packed_ids:
+            _erase_culture_layer(int(value))
+
+func _erase_culture_layer(id: int) -> void:
+    if _culture_layers.has(id):
+        _culture_layers.erase(id)
+    if _selected_culture_layer_id == id:
+        _selected_culture_layer_id = -1
+
+func _normalize_culture_layer(entry) -> Dictionary:
+    if not (entry is Dictionary):
+        return {}
+    var info: Dictionary = (entry as Dictionary).duplicate(true)
+    var traits_variant: Variant = info.get("traits", [])
+    if traits_variant is Array:
+        var cleaned: Array[Dictionary] = []
+        for trait_entry in traits_variant:
+            if trait_entry is Dictionary:
+                cleaned.append((trait_entry as Dictionary).duplicate(true))
+        info["traits"] = cleaned
+    return info
+
+func _update_culture_tensions(array_data, full_snapshot: bool) -> void:
+    var tensions: Array[Dictionary] = []
+    if array_data is Array:
+        for entry in array_data:
+            if not (entry is Dictionary):
+                continue
+            tensions.append((entry as Dictionary).duplicate(true))
+    if full_snapshot:
+        _culture_tension_tracker.clear()
+    else:
+        _log_new_culture_tensions(tensions)
+    _culture_tensions = tensions
+
+func _log_new_culture_tensions(tensions: Array[Dictionary]) -> void:
+    for tension in tensions:
+        var layer_id = int(tension.get("layer_id", 0))
+        var kind_key = str(tension.get("kind", ""))
+        var key = "%d:%s" % [layer_id, kind_key]
+        var timer_val: int = int(tension.get("timer", 0))
+        var previous: int = int(_culture_tension_tracker.get(key, -1))
+        if timer_val > previous:
+            var kind_label: String = str(tension.get("kind_label", kind_key.capitalize()))
+            var scope_label: String = str(tension.get("scope_label", tension.get("scope", "")))
+            var severity: float = float(tension.get("severity", 0.0))
+            _append_log_entry("[color=#ffd166]%s[/color] layer #%03d [%s] severity %.2f (timer %d)" % [
+                kind_label,
+                layer_id,
+                scope_label,
+                severity,
+                timer_val
+            ])
+            _culture_tension_tracker[key] = timer_val
+        else:
+            _culture_tension_tracker[key] = max(previous, timer_val)
+
 func _store_tile(entry) -> void:
     if not (entry is Dictionary):
         return
@@ -1153,9 +1971,17 @@ func _store_tile(entry) -> void:
     var tags_mask = int(info.get("terrain_tags", 0))
     var record = {
         "terrain": terrain_id,
-        "tags": tags_mask
+        "tags": tags_mask,
+        "x": int(info.get("x", -1)),
+        "y": int(info.get("y", -1)),
+        "element": int(info.get("element", -1)),
+        "temperature": float(info.get("temperature", 0.0)),
+        "mass": float(info.get("mass", 0.0))
     }
     _tile_records[entity] = record
+    var coord := Vector2i(int(record.get("x", -1)), int(record.get("y", -1)))
+    if coord.x >= 0 and coord.y >= 0:
+        _tile_coord_lookup[coord] = entity
     _tile_total = max(_tile_records.size(), _tile_total + 1)
     _bump_terrain_count(terrain_id, 1)
     _bump_tag_counts(tags_mask, 1)
@@ -1166,6 +1992,9 @@ func _forget_tile(entity_id: int) -> void:
     var record: Dictionary = _tile_records[entity_id]
     var terrain_id = int(record.get("terrain", -1))
     var tags_mask = int(record.get("tags", 0))
+    var coord := Vector2i(int(record.get("x", -1)), int(record.get("y", -1)))
+    if _tile_coord_lookup.has(coord):
+        _tile_coord_lookup.erase(coord)
     _bump_terrain_count(terrain_id, -1)
     _bump_tag_counts(tags_mask, -1)
     _tile_records.erase(entity_id)

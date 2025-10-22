@@ -208,6 +208,19 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
         let _ = dict.insert("generation_removed", removed_generations);
     }
 
+    if let Some(layers) = delta.cultureLayers() {
+        let _ = dict.insert("culture_layer_updates", culture_layers_to_array(layers));
+    }
+
+    let removed_layers = u32_vector_to_packed_int32(delta.removedCultureLayers());
+    if removed_layers.len() > 0 {
+        let _ = dict.insert("culture_layer_removed", removed_layers);
+    }
+
+    if let Some(tensions) = delta.cultureTensions() {
+        let _ = dict.insert("culture_tensions", culture_tensions_to_array(tensions));
+    }
+
     Some(dict)
 }
 
@@ -306,6 +319,45 @@ const TERRAIN_TAG_LABELS: &[(u16, &str)] = &[
     (1 << 10, "Subsurface"),
     (1 << 11, "Hydrothermal"),
 ];
+
+const CULTURE_AXIS_KEYS: [&str; 15] = [
+    "PassiveAggressive",
+    "OpenClosed",
+    "CollectivistIndividualist",
+    "TraditionalistRevisionist",
+    "HierarchicalEgalitarian",
+    "SyncreticPurist",
+    "AsceticIndulgent",
+    "PragmaticIdealistic",
+    "RationalistMystical",
+    "ExpansionistInsular",
+    "AdaptiveStubborn",
+    "HonorBoundOpportunistic",
+    "MeritOrientedLineageOriented",
+    "SecularDevout",
+    "PluralisticMonocultural",
+];
+
+const CULTURE_AXIS_LABELS: [&str; 15] = [
+    "Passive ↔ Aggressive",
+    "Open ↔ Closed",
+    "Collectivist ↔ Individualist",
+    "Traditionalist ↔ Revisionist",
+    "Hierarchical ↔ Egalitarian",
+    "Syncretic ↔ Purist",
+    "Ascetic ↔ Indulgent",
+    "Pragmatic ↔ Idealistic",
+    "Rationalist ↔ Mystical",
+    "Expansionist ↔ Insular",
+    "Adaptive ↔ Stubborn",
+    "Honor-Bound ↔ Opportunistic",
+    "Merit ↔ Lineage",
+    "Secular ↔ Devout",
+    "Pluralistic ↔ Monocultural",
+];
+
+const CULTURE_SCOPE_LABELS: [&str; 3] = ["Global", "Regional", "Local"];
+const CULTURE_TENSION_LABELS: [&str; 3] = ["Drift Warning", "Assimilation Push", "Schism Risk"];
 
 fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
     let header = snapshot.header().unwrap();
@@ -417,6 +469,14 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
 
     if let Some(generations) = snapshot.generations() {
         let _ = dict.insert("generations", generations_to_array(generations));
+    }
+
+    if let Some(layers) = snapshot.cultureLayers() {
+        let _ = dict.insert("culture_layers", culture_layers_to_array(layers));
+    }
+
+    if let Some(tensions) = snapshot.cultureTensions() {
+        let _ = dict.insert("culture_tensions", culture_tensions_to_array(tensions));
     }
 
     dict
@@ -808,6 +868,68 @@ fn generation_to_dict(state: fb::GenerationState<'_>) -> Dictionary {
     dict
 }
 
+fn culture_layer_to_dict(layer: fb::CultureLayerState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let id = layer.id();
+    let scope = layer.scope();
+    let scope_label = culture_scope_to_label(scope);
+    let owner = layer.owner();
+    let parent = layer.parent();
+    let baseline = layer.divergence();
+    let soft = layer.softThreshold();
+    let hard = layer.hardThreshold();
+    let _ = dict.insert("id", id as i64);
+    let _ = dict.insert("scope", culture_scope_to_key(scope));
+    let _ = dict.insert("scope_label", scope_label);
+    let _ = dict.insert("owner", format!("{owner:016X}"));
+    if owner <= i64::MAX as u64 {
+        let _ = dict.insert("owner_value", owner as i64);
+    }
+    let _ = dict.insert("parent", parent as i64);
+    let _ = dict.insert("divergence", fixed64_to_f64(baseline));
+    let _ = dict.insert("soft_threshold", fixed64_to_f64(soft));
+    let _ = dict.insert("hard_threshold", fixed64_to_f64(hard));
+    let _ = dict.insert("ticks_above_soft", layer.ticksAboveSoft() as i64);
+    let _ = dict.insert("ticks_above_hard", layer.ticksAboveHard() as i64);
+    let _ = dict.insert("last_updated_tick", layer.lastUpdatedTick() as i64);
+
+    let mut traits_array = VariantArray::new();
+    if let Some(traits) = layer.traits() {
+        for trait_entry in traits {
+            let trait_dict = culture_trait_to_dict(trait_entry);
+            traits_array.push(&trait_dict.to_variant());
+        }
+    }
+    let _ = dict.insert("traits", traits_array);
+
+    dict
+}
+
+fn culture_trait_to_dict(entry: fb::CultureTraitEntry<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let axis = entry.axis();
+    let _ = dict.insert("axis", culture_axis_to_key(axis));
+    let _ = dict.insert("label", culture_axis_to_label(axis));
+    let _ = dict.insert("baseline", fixed64_to_f64(entry.baseline()));
+    let _ = dict.insert("modifier", fixed64_to_f64(entry.modifier()));
+    let _ = dict.insert("value", fixed64_to_f64(entry.value()));
+    dict
+}
+
+fn culture_tension_to_dict(state: fb::CultureTensionState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let scope = state.scope();
+    let kind = state.kind();
+    let _ = dict.insert("layer_id", state.layerId() as i64);
+    let _ = dict.insert("scope", culture_scope_to_key(scope));
+    let _ = dict.insert("scope_label", culture_scope_to_label(scope));
+    let _ = dict.insert("kind", culture_tension_to_key(kind));
+    let _ = dict.insert("kind_label", culture_tension_to_label(kind));
+    let _ = dict.insert("severity", fixed64_to_f64(state.severity()));
+    let _ = dict.insert("timer", state.timer() as i64);
+    dict
+}
+
 fn generations_to_array(
     list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::GenerationState<'_>>>,
 ) -> VariantArray {
@@ -818,6 +940,76 @@ fn generations_to_array(
         array.push(&variant);
     }
     array
+}
+
+fn culture_layers_to_array(
+    list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::CultureLayerState<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for layer in list {
+        let dict = culture_layer_to_dict(layer);
+        let variant = dict.to_variant();
+        array.push(&variant);
+    }
+    array
+}
+
+fn culture_tensions_to_array(
+    list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::CultureTensionState<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for tension in list {
+        let dict = culture_tension_to_dict(tension);
+        let variant = dict.to_variant();
+        array.push(&variant);
+    }
+    array
+}
+
+fn culture_scope_to_key(scope: fb::CultureLayerScope) -> &'static str {
+    match scope {
+        fb::CultureLayerScope::Global => "Global",
+        fb::CultureLayerScope::Regional => "Regional",
+        fb::CultureLayerScope::Local => "Local",
+        _ => "Unknown",
+    }
+}
+
+fn culture_scope_to_label(scope: fb::CultureLayerScope) -> &'static str {
+    match scope {
+        fb::CultureLayerScope::Global => CULTURE_SCOPE_LABELS[0],
+        fb::CultureLayerScope::Regional => CULTURE_SCOPE_LABELS[1],
+        fb::CultureLayerScope::Local => CULTURE_SCOPE_LABELS[2],
+        _ => "Unknown",
+    }
+}
+
+fn culture_axis_to_key(axis: fb::CultureTraitAxis) -> &'static str {
+    let idx = axis.0 as usize;
+    CULTURE_AXIS_KEYS.get(idx).copied().unwrap_or("Trait")
+}
+
+fn culture_axis_to_label(axis: fb::CultureTraitAxis) -> &'static str {
+    let idx = axis.0 as usize;
+    CULTURE_AXIS_LABELS.get(idx).copied().unwrap_or("Trait")
+}
+
+fn culture_tension_to_key(kind: fb::CultureTensionKind) -> &'static str {
+    match kind {
+        fb::CultureTensionKind::DriftWarning => "DriftWarning",
+        fb::CultureTensionKind::AssimilationPush => "AssimilationPush",
+        fb::CultureTensionKind::SchismRisk => "SchismRisk",
+        _ => "Unknown",
+    }
+}
+
+fn culture_tension_to_label(kind: fb::CultureTensionKind) -> &'static str {
+    match kind {
+        fb::CultureTensionKind::DriftWarning => CULTURE_TENSION_LABELS[0],
+        fb::CultureTensionKind::AssimilationPush => CULTURE_TENSION_LABELS[1],
+        fb::CultureTensionKind::SchismRisk => CULTURE_TENSION_LABELS[2],
+        _ => "Unknown",
+    }
 }
 
 fn u32_vector_to_packed_int32(list: Option<flatbuffers::Vector<'_, u32>>) -> PackedInt32Array {

@@ -19,8 +19,8 @@ debug tooling into the Godot thin client.
 
 - **Terrain**
   - Top biomes summary, tag coverage, and the shared palette legend.
-  - Hooks for future drill-down (per-biome stats, tile inspection).
-  - _Status_: text summary for top biomes + tag coverage now live in the Godot inspector (see `clients/godot_thin_client/src/scripts/Inspector.gd`); drill-down UI still pending.
+  - Interactive drill-down: per-biome stats, tile inspection with hover/click tile detail, and scaffolded overlay tabs for culture/military layers.
+  - _Status_: terrain drill-down now live (biome selection reveals tag breakdowns + representative tiles, tile list hover shows coords/biome/tags/temp/mass). Culture/Military tabs are placeholders awaiting overlay streams; palette legend still mirrors the manual.
 
 - **Influential Individuals**
   - Roster table with lifecycle filters, support/suppress values, domain breakdown.
@@ -66,9 +66,9 @@ debug tooling into the Godot thin client.
 
 1. Implement all panels & controls in Godot and verify parity with the CLI inspector.
 2. Update documentation/workflows to point designers/devs at the Godot inspector.
-3. Remove the `cli_inspector` crate and associated tasks once parity is confirmed.
+3. Remove the `cli_inspector` crate and associated tasks once parity is confirmed. _(Completed: Godot thin client now owns the inspection surface.)_
 
 ## Progress Log
 
-- Terrain tab now renders top-biome coverage and tag distribution (text summary). The Logs tab consumes the tracing socket, surfaces structured log scrollback, and plots recent turn durations. Follow-ups: interactive terrain drill-down, sentiment/culture overlays, and richer drill-ins on log metadata (filters, pinning).
+- Terrain tab now supports interactive biome drill-down (tag breakdowns, representative tile sampling, hover/click tile telemetry) plus placeholder culture/military overlay tabs. Map clicks bubble through `MapView.hex_selected` so selecting a hex aligns the biome list and tile focus in the panel. The Logs tab consumes the tracing socket, surfaces structured log scrollback, and plots recent turn durations. Follow-ups: stream real culture/military overlays into those tabs, add biome filtering/search, and expand log filters/pinning. CLI inspector has been removed now that parity is confirmed.
 - Commands tab implements axis bias tuning, influencer support/suppress/channel boosts, spawn, corruption injection, and heat debug so designers can retire the CLI command surface once backend parity is confirmed.

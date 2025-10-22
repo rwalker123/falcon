@@ -63,6 +63,8 @@ func _ready() -> void:
     else:
         initial = snapshot_loader.current()
     _apply_snapshot(initial)
+    if map_view != null and inspector != null and map_view.has_signal("hex_selected") and inspector.has_method("focus_tile_from_map"):
+        map_view.connect("hex_selected", Callable(inspector, "focus_tile_from_map"))
     if inspector != null and inspector.has_method("set_streaming_active"):
         inspector.call("set_streaming_active", streaming_mode)
 

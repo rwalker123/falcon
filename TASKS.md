@@ -35,8 +35,8 @@
 - [x] Implement Godot inspector shell (tabbed/collapsible panels) with Sentiment, Terrain, Influencers, Corruption, Logs, and Command Console sections (Owner: TBD, Estimate: 3d; Deps: decoder extensions).
 - [x] Add Godot-side controls for turn stepping, autoplay, rollback, axis bias adjustments, influencer support/suppress/channel boost, spawn, corruption injection, and heat debug (Owner: TBD, Estimate: 2d; Deps: command bridge). _Status_: Commands tab now issues all debug actions through the Godot client.
 - [x] Pipe sim logs/tracing output into Godot inspector and surface recent tick sparkline/summary (Owner: TBD, Estimate: 1d; Deps: inspector shell). _Status_: tracing log stream now feeds the Logs tab (structured scrollback + command echoes) and plots recent turn durations via sparkline.
-- [ ] Add terrain drill-down UI (per-biome detail view, tile inspection, future culture/military overlays) building on the new summary panel (Owner: TBD, Estimate: 2d; Deps: terrain tab groundwork).
-- [ ] Deprecate CLI inspector: document migration, update workflows, remove `cli_inspector` crate once parity achieved (Owner: TBD, Estimate: 0.5d; Deps: Godot inspector feature parity).
+- [x] Add terrain drill-down UI (per-biome detail view, tile inspection, future culture/military overlays) building on the new summary panel (Owner: TBD, Estimate: 2d; Deps: terrain tab groundwork). _Status_: Godot Terrain tab now offers biome selection with tag breakdowns, hover/click tile telemetry, and placeholder culture/military overlay tabs ready for incoming streams.
+- [x] Deprecate CLI inspector: document migration, update workflows, remove `cli_inspector` crate once parity achieved (Owner: TBD, Estimate: 0.5d; Deps: Godot inspector feature parity). _Status_: CLI crate removed, docs/workflows now point exclusively to the Godot thin client.
 
 ### Sentiment Sphere Enhancements
 - [x] Implement quadrant heatmap widget with vector overlay and legend (Owner: Mira, Estimate: 2d).
@@ -50,10 +50,10 @@
 - [x] Implement `InfluentialRoster` resource and tick systems that spawn/grow influencers in `core_sim` (Owner: Ravi, Estimate: 2d).
 - [x] Couple influencer outputs into sentiment axis deltas and other subsystems (Owner: Elena, Estimate: 2d).
 - [x] Expose support/suppress commands and broadcast roster deltas via snapshot stream (Owner: Omar, Estimate: 1.5d).
-- [x] Add CLI inspector panel summarizing active influencers and their impacts (Owner: Jun, Estimate: 1.5d).
+- [x] Add legacy CLI inspector panel summarizing active influencers and their impacts (Owner: Jun, Estimate: 1.5d).
 - [x] Introduce scope-tiered influencer lifecycle (Local → Regional → Global) with staged promotion thresholds and persistent dormant state; include tooling hooks for deterministic testing (Owner: Ravi, Estimate: 3d).
 - [x] Add multi-channel support model (popular sentiment, peer prestige, institutional backing, humanitarian capital) and domain-weighted coherence/ notoriety gains (Owner: Elena, Estimate: 3d).
-- [x] Extend `support`/`suppress` command surface to manipulate both coherence and notoriety, plus scoped commands for channel-specific boosts; update CLI inspector with lifecycle badges, channel breakdown, notoriety display, and filter controls (Owner: Jun, Estimate: 2d).
+- [x] Extend `support`/`suppress` command surface to manipulate both coherence and notoriety, plus scoped commands for channel-specific boosts; update inspector tooling (legacy CLI at the time) with lifecycle badges, channel breakdown, notoriety display, and filter controls (Owner: Jun, Estimate: 2d).
 - [x] Update documentation: lifecycle & support changes in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` and implementation details + testing guidance in `docs/architecture.md` (Owner: Mira, Estimate: 1d).
 - [x] Replace sentiment sphere prototype drivers with real policy/event inputs: capture policy levers, incident deltas, and influencer channel outputs; expose telemetry hooks for testing (Owner: Elena, Estimate: 3d).
 

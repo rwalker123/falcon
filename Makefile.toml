@@ -10,12 +10,6 @@ command = "cargo"
 args = ["test", "--workspace"]
 workspace = false
 
-[tasks.cli]
-description = "Run the CLI inspector"
-command = "cargo"
-args = ["run", "-p", "cli_inspector"]
-workspace = false
-
 [tasks.fmt]
 command = "cargo"
 args = ["fmt"]

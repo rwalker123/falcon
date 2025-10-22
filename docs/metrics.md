@@ -22,11 +22,11 @@ runtime cost.
 > {"level":"INFO","target":"shadow_scale::server","fields":{"turn.completed":{"turn":12,"grid_width":32,"grid_height":32,"total_mass":123456789,"avg_temp":21.5}}}
 > ```
 
-## CLI Inspector
+## Godot Inspector
 
-* Defaults to `tracing_subscriber::fmt().compact()` with `RUST_LOG` support.
-* Each key command logs a structured `command.request` event before dispatching.
-* Snapshot receipt logs `snapshot.delta` with tick counts when `TRACE` is enabled.
+* The Godot thin client subscribes to the structured log socket exposed by the server.
+* The Logs tab renders the streamed entries alongside a recent-turn duration sparkline.
+* When server-side `RUST_LOG` filters are enabled, the inspector automatically reflects the richer event payloads.
 
 ## Custom Subscribers
 
@@ -38,7 +38,6 @@ after `collect_metrics`.
 
 ```bash
 RUST_LOG=info cargo run -p core_sim --bin server
-RUST_LOG=trace cargo run -p cli_inspector
 ```
 
 Use tools like `tokio-console` or `otlp` subscribers by composing a different

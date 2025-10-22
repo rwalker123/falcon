@@ -3,7 +3,6 @@ members = [
     "core_sim",
     "sim_schema",
     "sim_runtime",
-    "cli_inspector",
     "integration_tests",
     "shadow_scale_flatbuffers",
     "clients/godot_thin_client/native",

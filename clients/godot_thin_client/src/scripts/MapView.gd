@@ -1,6 +1,8 @@
 extends Node2D
 class_name MapView
 
+signal hex_selected(col: int, row: int, terrain_id: int)
+
 const LOGISTICS_COLOR := Color(0.15, 0.45, 1.0, 1.0)
 const SENTIMENT_COLOR := Color(1.0, 0.35, 0.25, 1.0)
 const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
@@ -111,6 +113,9 @@ var faction_colors: Dictionary = {
     "Verdant": Color(0.4, 0.9, 0.55, 1.0)
 }
 
+func _ready() -> void:
+    set_process_unhandled_input(true)
+
 func display_snapshot(snapshot: Dictionary) -> Dictionary:
     var grid: Dictionary = snapshot.get("grid", {})
     grid_width = int(grid.get("width", 0))
@@ -159,6 +164,23 @@ func _draw() -> void:
 
     for order in routes:
         _draw_route(order, radius, origin)
+
+func _unhandled_input(event: InputEvent) -> void:
+    if grid_width == 0 or grid_height == 0:
+        return
+    if event is InputEventMouseButton:
+        var mouse_event: InputEventMouseButton = event
+        if mouse_event.button_index != MOUSE_BUTTON_LEFT or not mouse_event.pressed:
+            return
+        var local_position: Vector2 = get_local_mouse_position()
+        _update_layout_metrics()
+        var offset := _point_to_offset(local_position)
+        var col: int = offset.x
+        var row: int = offset.y
+        if col < 0 or col >= grid_width or row < 0 or row >= grid_height:
+            return
+        var terrain_id: int = _terrain_id_at(col, row)
+        emit_signal("hex_selected", col, row, terrain_id)
 
 func _draw_unit(unit: Dictionary, radius: float, origin: Vector2) -> void:
     var position: Array = Array(unit.get("pos", [0, 0]))
@@ -279,6 +301,10 @@ func _offset_to_axial(col: int, row: int) -> Vector2i:
     var r := row
     return Vector2i(q, r)
 
+func _axial_to_offset(q: int, r: int) -> Vector2i:
+    var col: int = q + ((r - (r & 1)) >> 1)
+    return Vector2i(col, r)
+
 func _hex_points(center: Vector2, radius: float, closed: bool = false) -> PackedVector2Array:
     var points := PackedVector2Array()
     for i in range(6):
@@ -324,3 +350,32 @@ func _compute_bounds(radius: float) -> Rect2:
     if min_x == INF:
         return Rect2(Vector2.ZERO, Vector2.ONE)
     return Rect2(Vector2(min_x, min_y), Vector2(max_x - min_x, max_y - min_y))
+
+func _point_to_offset(point: Vector2) -> Vector2i:
+    if grid_width <= 0 or grid_height <= 0:
+        return Vector2i(-1, -1)
+    var radius: float = max(last_hex_radius, 0.0001)
+    var relative: Vector2 = (point - last_origin) / radius
+    var qf: float = (SQRT3 / 3.0) * relative.x - (1.0 / 3.0) * relative.y
+    var rf: float = (2.0 / 3.0) * relative.y
+    var axial: Vector2i = _cube_round(qf, rf)
+    return _axial_to_offset(axial.x, axial.y)
+
+func _cube_round(qf: float, rf: float) -> Vector2i:
+    var sf: float = -qf - rf
+    var rq: float = round(qf)
+    var rr: float = round(rf)
+    var rs: float = round(sf)
+
+    var q_diff: float = abs(rq - qf)
+    var r_diff: float = abs(rr - rf)
+    var s_diff: float = abs(rs - sf)
+
+    if q_diff > r_diff and q_diff > s_diff:
+        rq = -rr - rs
+    elif r_diff > s_diff:
+        rr = -rq - rs
+    else:
+        rs = -rq - rr
+
+    return Vector2i(int(rq), int(rr))

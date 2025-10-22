@@ -2,8 +2,9 @@
 
 Pure data contracts for the Shadow-Scale simulation stack. This crate defines
 snapshots, deltas, axis bias payloads, and generation metadata. It is consumed
-by both the runtime (`sim_runtime`, `core_sim`) and tooling (`cli_inspector`,
-external clients) and purposely avoids Bevy or other heavy dependencies.
+by both the runtime (`sim_runtime`, `core_sim`) and tooling (the Godot thin
+client plus external consumers) and purposely avoids Bevy or other heavy
+dependencies.
 
 ## Terrain Overlay Channel
 - `WorldSnapshot` now carries a `terrainOverlay` table (width, height, packed

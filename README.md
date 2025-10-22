@@ -5,7 +5,7 @@ This workspace scaffolds the **Prototype Plan (a)** headless simulation stack:
 - `core_sim`: Bevy-based deterministic simulation core.
 - `sim_schema`: Shared serialization schemas.
 - `sim_runtime`: Shared runtime helpers re-used by tools.
-- `cli_inspector`: Terminal-based inspector connecting to the headless sim.
+- `clients/godot_thin_client`: Godot-based inspector connecting to the headless sim.
 - `integration_tests`: Integration and determinism regression tests.
 
 ## Getting Started
@@ -22,33 +22,21 @@ Start the headless simulation server (provides snapshot + command sockets):
 cargo run -p core_sim --bin server
 ```
 
-In another terminal, launch the CLI inspector to view live telemetry and issue commands:
+Launch the Godot thin client inspector (requires Godot 4.2 or newer) to view live telemetry and issue commands:
 
 ```bash
-cargo run -p cli_inspector
+godot4 --path clients/godot_thin_client src/Main.tscn
 ```
 
-Inspector shortcuts:
-- `space` advance one turn
-- `t` advance ten turns
-- `h` heat the most recent tile sample
-- `.` step a single turn
-- `p` toggle auto-play
-- `1-4` select sentiment axis
-- `=` / `-` adjust selected axis bias
-- `0` reset axis biases
-- `q` or `Ctrl+C` exit the inspector (the server keeps running)
+The scene connects to the default localhost sockets exposed by `core_sim`. Override the connection targets by exporting `STREAM_HOST`, `STREAM_PORT`, `COMMAND_HOST`, or `COMMAND_PORT` before starting Godot. The Terrain, Sentiment, Influencers, Corruption, Logs, and Commands tabs mirror the full debug surface; see `docs/godot_inspector_plan.md` for a guided tour.
 
-The inspector now renders logs in a dedicated pane (see `docs/metrics.md`); tracing output no longer scribbles over the tick table.
-
-Enable structured logs/metrics (uses `tracing` with `RUST_LOG`):
+Enable structured logs/metrics on the server (uses `tracing` with `RUST_LOG`):
 
 ```bash
 RUST_LOG=info cargo run -p core_sim --bin server
-RUST_LOG=info cargo run -p cli_inspector
 ```
 
-See `docs/metrics.md` for event fields and subscriber options.
+The Godot inspector streams and renders the log feed automatically, including the recent-turn sparkline.
 
 Run performance benchmarks:
 
@@ -108,4 +96,3 @@ echo 'alias make="gmake"' >> ~/.zshrc
 
 #### Hex based board reference
 https://www.redblobgames.com/grids/hexagons/
-
