@@ -10,46 +10,49 @@ const CommandClient = preload("res://src/scripts/CommandClient.gd")
 
 var snapshot_loader: SnapshotLoader
 var playback_timer: Timer
-var streaming_mode := false
-var stream_connection_timer := 0.0
+var streaming_mode: bool = false
+var stream_connection_timer: float = 0.0
 var command_client: CommandClient
+var _warned_stream_fallback: bool = false
 
-const MOCK_DATA_PATH := "res://src/data/mock_snapshots.json"
-const TURN_INTERVAL_SECONDS := 1.5
-const STREAM_DEFAULT_ENABLED := false
-const STREAM_HOST := "127.0.0.1"
-const STREAM_PORT := 41002
-const STREAM_CONNECTION_TIMEOUT := 5.0
-const CAMERA_PAN_SPEED := 220.0
-const CAMERA_ZOOM_STEP := 0.1
-const CAMERA_ZOOM_MIN := 0.5
-const CAMERA_ZOOM_MAX := 1.5
-const COMMAND_HOST := "127.0.0.1"
-const COMMAND_PORT := 41001
+const MOCK_DATA_PATH = "res://src/data/mock_snapshots.json"
+const TURN_INTERVAL_SECONDS = 1.5
+const STREAM_DEFAULT_ENABLED = false
+const STREAM_HOST = "127.0.0.1"
+const STREAM_PORT = 41002
+const STREAM_CONNECTION_TIMEOUT = 5.0
+const CAMERA_PAN_SPEED = 220.0
+const CAMERA_ZOOM_STEP = 0.1
+const CAMERA_ZOOM_MIN = 0.5
+const CAMERA_ZOOM_MAX = 1.5
+const COMMAND_HOST = "127.0.0.1"
+const COMMAND_PORT = 41001
 
 func _ready() -> void:
-    var ext := load("res://native/shadow_scale_godot.gdextension")
+    var ext: Resource = load("res://native/shadow_scale_godot.gdextension")
     if ext == null:
         push_warning("ShadowScale Godot extension not found; streaming disabled.")
     snapshot_loader = SnapshotLoader.new()
     snapshot_loader.load_mock_data(MOCK_DATA_PATH)
-    var stream_enabled := _determine_stream_enabled()
-    var stream_host := _determine_stream_host()
-    var stream_port := _determine_stream_port()
+    var stream_enabled: bool = _determine_stream_enabled()
+    var stream_host: String = _determine_stream_host()
+    var stream_port: int = _determine_stream_port()
     if stream_enabled:
-        var err := snapshot_loader.enable_stream(stream_host, stream_port)
+        var err: Error = snapshot_loader.enable_stream(stream_host, stream_port)
         if err == OK:
             streaming_mode = true
+            _warned_stream_fallback = false
         else:
             push_warning("Godot client: unable to connect to snapshot stream (error %d). Using mock data." % err)
-    if streaming_mode:
-        set_process(true)
-    else:
+    set_process(true)
+    if not streaming_mode:
         _ensure_timer()
-    var command_host := _determine_command_host()
-    var command_port := _determine_command_port()
+    var command_host: String = _determine_command_host()
+    var command_port: int = _determine_command_port()
     command_client = CommandClient.new()
-    var command_err := command_client.connect_to_host(command_host, command_port)
+    var command_err: Error = command_client.connect_to_host(command_host, command_port)
+    if command_err == OK:
+        command_client.poll()  # poll to update status
     if command_err != OK:
         push_warning("Godot client: unable to connect to command port (error %d)." % command_err)
     if inspector != null and inspector.has_method("set_command_client"):
@@ -125,22 +128,28 @@ func _unhandled_input(event: InputEvent) -> void:
             _adjust_camera_zoom(CAMERA_ZOOM_STEP)
 
 func _process(delta: float) -> void:
+    if command_client != null:
+        command_client.poll()
+        command_client.ensure_connected()
     if streaming_mode:
-        var streamed := snapshot_loader.poll_stream(delta)
+        var streamed: Dictionary = snapshot_loader.poll_stream(delta)
         if not streamed.is_empty():
             if inspector != null and inspector.has_method("set_streaming_active"):
                 inspector.call("set_streaming_active", true)
             _apply_snapshot(streamed)
             stream_connection_timer = 0.0
+            _warned_stream_fallback = false
         else:
-            var status := snapshot_loader.stream_status()
+            var status: int = snapshot_loader.stream_status()
             match status:
                 StreamPeerTCP.STATUS_CONNECTED, StreamPeerTCP.STATUS_CONNECTING:
                     stream_connection_timer = 0.0
                 _:
                     stream_connection_timer += delta
                     if stream_connection_timer > STREAM_CONNECTION_TIMEOUT:
-                        push_warning("Godot client: snapshot stream unavailable; falling back to mock playback.")
+                        if not _warned_stream_fallback:
+                            push_warning("Godot client: snapshot stream unavailable; falling back to mock playback.")
+                            _warned_stream_fallback = true
                         streaming_mode = false
                         snapshot_loader.disable_stream()
                         _ensure_timer()
@@ -159,35 +168,35 @@ func _adjust_camera_zoom(delta_zoom: float) -> void:
     camera.zoom = Vector2(new_zoom, new_zoom)
 
 func _determine_stream_enabled() -> bool:
-    var env_flag := OS.get_environment("STREAM_ENABLED")
+    var env_flag: String = OS.get_environment("STREAM_ENABLED")
     if env_flag != "":
         return env_flag.to_lower() == "true"
     return STREAM_DEFAULT_ENABLED
 
 func _determine_stream_host() -> String:
-    var env_host := OS.get_environment("STREAM_HOST")
+    var env_host: String = OS.get_environment("STREAM_HOST")
     if env_host != "":
         return env_host
     return STREAM_HOST
 
 func _determine_stream_port() -> int:
-    var env_port := OS.get_environment("STREAM_PORT")
+    var env_port: String = OS.get_environment("STREAM_PORT")
     if env_port != "":
-        var parsed := int(env_port)
+        var parsed: int = int(env_port)
         if parsed > 0:
             return parsed
     return STREAM_PORT
 
 func _determine_command_host() -> String:
-    var env_host := OS.get_environment("COMMAND_HOST")
+    var env_host: String = OS.get_environment("COMMAND_HOST")
     if env_host != "":
         return env_host
     return COMMAND_HOST
 
 func _determine_command_port() -> int:
-    var env_port := OS.get_environment("COMMAND_PORT")
+    var env_port: String = OS.get_environment("COMMAND_PORT")
     if env_port != "":
-        var parsed := int(env_port)
+        var parsed: int = int(env_port)
         if parsed > 0:
             return parsed
     return COMMAND_PORT

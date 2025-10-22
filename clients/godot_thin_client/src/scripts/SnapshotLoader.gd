@@ -11,6 +11,8 @@ var last_stream_snapshot: Dictionary = {}
 var connection_error: Error = OK
 var decoder: Object = null
 var _last_stream_status: int = StreamPeerTCP.STATUS_NONE
+var _warned_stream_error: bool = false
+var _warned_decoder_missing: bool = false
 
 func load_mock_data(path: String) -> void:
     var file: FileAccess = FileAccess.open(path, FileAccess.READ)
@@ -45,6 +47,8 @@ func enable_stream(host: String, port: int) -> Error:
     connection_error = OK
     last_stream_snapshot = {}
     _last_stream_status = StreamPeerTCP.STATUS_NONE
+    _warned_stream_error = false
+    _warned_decoder_missing = false
     return OK
 
 func disable_stream() -> void:
@@ -52,6 +56,8 @@ func disable_stream() -> void:
     if stream != null:
         stream.call("close_connection")
     stream = null
+    _warned_stream_error = false
+    _warned_decoder_missing = false
 
 func is_streaming() -> bool:
     if not stream_enabled or stream == null:
@@ -79,7 +85,11 @@ func poll_stream(delta: float) -> Dictionary:
         return {}
     var status_now := stream_status()
     if status_now == StreamPeerTCP.STATUS_ERROR:
-        push_warning("Snapshot stream error state detected; connection may be closed.")
+        if not _warned_stream_error:
+            push_warning("Snapshot stream error state detected; connection may be closed.")
+            _warned_stream_error = true
+    elif status_now == StreamPeerTCP.STATUS_CONNECTED:
+        _warned_stream_error = false
     var updated := false
     for payload in payloads:
         if typeof(payload) != TYPE_PACKED_BYTE_ARRAY:
@@ -87,8 +97,11 @@ func poll_stream(delta: float) -> Dictionary:
         if decoder == null:
             if ClassDB.class_exists("SnapshotDecoder"):
                 decoder = ClassDB.instantiate("SnapshotDecoder")
+                _warned_decoder_missing = false
             else:
-                push_warning("SnapshotDecoder class missing; streaming disabled.")
+                if not _warned_decoder_missing:
+                    push_warning("SnapshotDecoder class missing; streaming disabled.")
+                    _warned_decoder_missing = true
                 return {}
         var snapshot_dict: Dictionary = decoder.decode_snapshot(payload)
         if snapshot_dict.is_empty():

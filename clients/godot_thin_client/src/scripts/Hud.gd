@@ -5,6 +5,9 @@ class_name HudLayer
 @onready var metrics_label: Label = $MetricsLabel
 @onready var terrain_legend_panel: Panel = $TerrainLegendPanel
 @onready var terrain_legend_list: VBoxContainer = $TerrainLegendPanel/LegendScroll/LegendList
+const LEGEND_FONT_SIZE := 18
+const LEGEND_ROW_HEIGHT := 22.0
+const LEGEND_SWATCH_SIZE := Vector2(18, 18)
 
 func update_overlay(turn: int, metrics: Dictionary) -> void:
     turn_label.text = "Turn %d" % turn
@@ -24,11 +27,11 @@ func update_terrain_legend(entries: Array) -> void:
         if typeof(entry) != TYPE_DICTIONARY:
             continue
         var row := HBoxContainer.new()
-        row.custom_minimum_size = Vector2(0, 18)
+        row.custom_minimum_size = Vector2(0, LEGEND_ROW_HEIGHT)
         row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
         var swatch := ColorRect.new()
-        swatch.custom_minimum_size = Vector2(16, 16)
+        swatch.custom_minimum_size = LEGEND_SWATCH_SIZE
         swatch.size_flags_vertical = Control.SIZE_SHRINK_CENTER
         swatch.color = entry.get("color", Color.WHITE)
         row.add_child(swatch)
@@ -36,6 +39,7 @@ func update_terrain_legend(entries: Array) -> void:
         var label := Label.new()
         label.text = "%02d %s" % [int(entry.get("id", 0)), str(entry.get("label", ""))]
         label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        label.add_theme_font_size_override("font_size", LEGEND_FONT_SIZE)
         row.add_child(label)
 
         terrain_legend_list.add_child(row)

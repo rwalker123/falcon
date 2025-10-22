@@ -33,12 +33,13 @@ debug tooling into the Godot thin client.
 - **Logs & Recent Activity**
   - Scrollable log panel fed from tracing output.
   - Recent tick summary (sparkline or compact list).
-  - _Status_: interim delta summaries (tiles/populations/generations/influencers) ship to the Logs tab; replace with streamed tracing feed once backend work lands.
+  - _Status_: tracing feed now streams directly into the Logs tab, replacing the delta-summary placeholder. The panel shows structured scrollback plus a per-turn duration sparkline driven by `turn.completed` metrics.
 
 - **Command Console**
   - Text entry for ad-hoc commands identical to CLI support (`turn`, `spawn_influencer`, etc.).
   - Playback controls: manual step, ±10 turns, autoplay toggle with adjustable cadence,
     rollback, heat debug.
+  - _Status_: Godot UI now issues axis bias edits, influencer support/suppress/channel boosts, spawn, corruption injection, and heat commands alongside existing turn controls.
 
 ## Data & Command Surface
 
@@ -69,4 +70,5 @@ debug tooling into the Godot thin client.
 
 ## Progress Log
 
-- Terrain tab now renders top-biome coverage and tag distribution (text summary) and the Logs tab aggregates snapshot delta activity; corresponding updates captured in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` and `docs/architecture.md`. Follow-ups: interactive terrain drill-down, sentiment/culture overlays, streamed tracing feed.
+- Terrain tab now renders top-biome coverage and tag distribution (text summary). The Logs tab consumes the tracing socket, surfaces structured log scrollback, and plots recent turn durations. Follow-ups: interactive terrain drill-down, sentiment/culture overlays, and richer drill-ins on log metadata (filters, pinning).
+- Commands tab implements axis bias tuning, influencer support/suppress/channel boosts, spawn, corruption injection, and heat debug so designers can retire the CLI command surface once backend parity is confirmed.

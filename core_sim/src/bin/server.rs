@@ -5,6 +5,9 @@ use std::thread;
 use bevy::app::Update;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use tracing::{info, warn};
+use tracing_subscriber::prelude::*;
+
+use core_sim::log_stream::start_log_stream_server;
 
 use core_sim::metrics::{collect_metrics, SimulationMetrics};
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
@@ -17,15 +20,33 @@ use core_sim::{
 use sim_runtime::{AxisBiasState, CorruptionEntry, CorruptionSubsystem, InfluenceScopeKind};
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-
     let mut app = build_headless_app();
     app.insert_resource(SimulationMetrics::default());
     app.add_systems(Update, collect_metrics);
 
     let config = app.world.resource::<SimulationConfig>().clone();
+
+    let log_stream = start_log_stream_server(config.log_bind);
+    let log_stream_enabled = log_stream.is_some();
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    if let Some(handle) = &log_stream {
+        tracing_subscriber::registry()
+            .with(env_filter.clone())
+            .with(tracing_subscriber::fmt::layer())
+            .with(handle.layer())
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+    }
+
+    if !log_stream_enabled {
+        warn!(target: "shadow_scale::server", "log_stream.start_failed");
+    }
 
     let snapshot_server = start_snapshot_server(config.snapshot_bind);
     let snapshot_flat_server = start_snapshot_server(config.snapshot_flat_bind);
@@ -35,6 +56,8 @@ fn main() {
         command_bind = %config.command_bind,
         snapshot_bind = %config.snapshot_bind,
         snapshot_flat_bind = %config.snapshot_flat_bind,
+        log_bind = %config.log_bind,
+        log_stream_enabled,
         "Shadow-Scale headless server ready"
     );
 
@@ -352,7 +375,14 @@ fn parse_corruption_subsystem(token: &str) -> Option<CorruptionSubsystem> {
 }
 
 fn apply_heat(app: &mut bevy::prelude::App, entity_bits: u64, delta_raw: i64) {
-    let entity = bevy::prelude::Entity::from_bits(entity_bits);
+    let entity_result = std::panic::catch_unwind(|| bevy::prelude::Entity::from_bits(entity_bits));
+    let entity = match entity_result {
+        Ok(entity) => entity,
+        Err(_) => {
+            warn!("Invalid entity bits for heat command: {}", entity_bits);
+            return;
+        }
+    };
     if let Some(mut tile) = app.world.get_mut::<Tile>(entity) {
         tile.temperature = tile.temperature + Scalar::from_raw(delta_raw);
     } else {
@@ -728,6 +758,7 @@ fn resolve_ready_turn(
     snapshot_server_bin: Option<&SnapshotServer>,
     snapshot_server_flat: Option<&SnapshotServer>,
 ) {
+    let turn_start = std::time::Instant::now();
     let ready_orders = {
         let mut queue = app.world.resource_mut::<TurnQueue>();
         if !queue.is_ready() {
@@ -753,6 +784,7 @@ fn resolve_ready_turn(
     broadcast_latest(snapshot_server_bin, snapshot_server_flat, history);
 
     let metrics = app.world.resource::<SimulationMetrics>();
+    let duration_ms = turn_start.elapsed().as_secs_f64() * 1000.0;
     info!(
         target: "shadow_scale::server",
         turn = metrics.turn,
@@ -760,6 +792,7 @@ fn resolve_ready_turn(
         grid_height = metrics.grid_size.1,
         total_mass = metrics.total_mass,
         avg_temp = metrics.avg_temperature,
+        duration_ms,
         "turn.completed"
     );
 }

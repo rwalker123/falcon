@@ -1004,6 +1004,12 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 - **Risks**: Increases integration complexity; must maintain network protocol; requires strong QA for sync; dual skill sets; latency between core and client must be tightly managed for responsive play.
 - **Fit**: Natural extension of the headless decision; ideal if we embrace service-style architecture and plan for external integrations.
 
+#### Option F: Bevy Inspector Client (Rust/wgpu)
+- **Why**: Reuse the Bevy ecosystem for a standalone inspector that shares language, ECS ergonomics, and asset tooling with the headless core while keeping the simulation binary headless.
+- **Strengths**: Single-language codebase lowers FFI/shim overhead; can share crates for snapshot decoding, palettes, and overlay math; wgpu renderer already proven for performant 2D/3D overlays; deterministic preview builds align well with automated UI regression tests; Rust-centric workflow appeals to engineers maintaining both layers.
+- **Risks**: UI/layout stack is still evolving (UI `bevy_ui`, `bevy_egui`); few off-the-shelf widgets for dense telemetry dashboards; designer iteration speed lags Godot’s scene editor; scripting/hotload story requires integrating Rhai/Lua plugins from scratch; tight version coupling with headless Bevy means client upgrades must coordinate with core.
+- **Fit**: Viable if we prioritize maximal code reuse and engineering-driven tooling, and we accept building bespoke UI foundations. Keep the inspector as a separate binary so determinism guarantees in `core_sim` remain untouched, and document any shared crates/interfaces in `docs/architecture.md` before sprinting on UI features.
+
 ### Frontend Architecture & Scripting Strategy
 
 #### Goals
@@ -1035,6 +1041,7 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 | **Avalonia UI + ClearScript** | C#/.NET | JavaScript/TypeScript (V8 via ClearScript) | Cross-platform native feel; strong MVVM tooling; easy integration with data binding; .NET talent pool. | Must embed WebGPU/WebGL via third-party; need sandbox boundaries for V8 isolates; bundle size moderate. |
 | **Qt/QML** | C++ | QML JavaScript (or embedded Lua/QuickJS) | Mature native toolkit; QML declarative UI supports scripting natively; high-performance rendering; extensive tooling. | Commercial licensing for closed-source; C++ build complexity; bridging to Rust core via gRPC/Qt bindings. |
 | **Rust + Slint/egui Shell** | Rust | JavaScript/TypeScript via Deno/QuickJS WASM | Single-language stack aligning with sim core; modern retained-mode UI; easy integration with Rust-based sandbox; lightweight binaries. | Slint/egui still maturing; must build many widgets; scripting runtime integration requires custom tooling. |
+| **Bevy Native Client** | Rust | Rust modules (plugins) with optional embedded Rhai/Lua | Shares language/runtime with headless core; reuse ECS data structures and rendering know-how; wgpu renderer handles map overlays; minimal FFI surface. | UI/layout tooling immature; need to author inspector widgets from scratch; scripting hot-reload story limited; designers must work through Rust workflow. |
 | **Unity Thin Client** | C# | Lua or JS via MoonSharp/Jurassic | Leverage existing UI/animation pipeline; easy to target multiple platforms; can reuse Unity tooling. | Larger footprint; Unity dependency just for client; need to enforce sandbox and keep scripting separate from core C# logic. |
 | **Electron/Tauri Shell** | TypeScript/JS | Same as host (JS) | Hot iteration, massive ecosystem; easy WebGPU integration. | Heavier memory footprint; user preference leans native; requires extra work for native polish. |
 
@@ -1093,6 +1100,7 @@ Key next steps:
 - **Serialization**: Implement ECS snapshot using `bevy_reflect` + custom `FlatBuffers` schema (components per archetype) plus per-tick delta (component insert/update/remove). Provide `serde` fallback for early iteration. Store snapshots in ring buffer for rewind.
 - **Networking Stub**: Expose snapshot stream over local TCP/WebSocket (via `tokio`/`bevy_tungstenite`). For prototype, support CLI polling and future UI subscribers.
 - **Godot Inspector**: Godot 4 thin client layering the map playback with a tabbed inspector. Sentiment tab mirrors the sphere heatmap, axis drivers, and demographic snapshot from the CLI prototype. Terrain panel aggregates streamed tile data into top-biome coverage and tag distribution, tying directly to the palette in §3b. Influencers and Corruption tabs surface roster/ledger summaries, while the new Logs tab reports incoming delta batches (tiles, populations, generations, influencers) so designers can spot activity bursts without reading terminal output. Commands tab keeps turn stepping (±1/±10), rollback, and autoplay toggles as we migrate bias tuning and support/suppress controls. Implementation notes and outstanding work live in `docs/architecture.md` §"Inspector Tooling".
+- The Commands tab now mirrors the full debug surface: tweak axis bias values, send support/suppress bursts (including channel-specific boosts), spawn influencers by scope/generation, stage corruption injections, and poke tile heat deltas without leaving the client.
 - **CLI Inspector (legacy)**: Retained as a fallback until Godot reaches full command parity; freeze feature requests here and treat new inspection needs as Godot tasks.
 - **Sentiment UI Mock**: Initial TUI wireframe to align engineering scope and UX expectations.
 

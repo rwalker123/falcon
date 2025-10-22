@@ -7,6 +7,7 @@ mod components;
 mod culture;
 mod generations;
 mod influencers;
+pub mod log_stream;
 pub mod metrics;
 pub mod network;
 mod orders;

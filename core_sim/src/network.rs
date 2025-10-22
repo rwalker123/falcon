@@ -47,7 +47,11 @@ pub fn start_snapshot_server(bind_addr: std::net::SocketAddr) -> Option<Snapshot
                     log::warn!("Failed to set TCP_NODELAY: {}", err);
                 }
                 if let Err(err) = stream.set_nonblocking(false) {
-                    log::warn!("Failed to set blocking mode for snapshot client {}: {}", addr, err);
+                    log::warn!(
+                        "Failed to set blocking mode for snapshot client {}: {}",
+                        addr,
+                        err
+                    );
                 }
                 accept_clients
                     .lock()

@@ -2,10 +2,10 @@
 
 ## Overview
 - **Headless Core (`core_sim`)**: Bevy-based ECS that resolves a single turn via `run_turn`. Systems run in the order materials → logistics → population → power → tick increment → snapshot capture.
-- **Networking**: Thin TCP layer (`core_sim::network`) streams snapshot deltas and receives text commands (`turn N`, `heat entity delta`, `bias axis value`).
+- **Networking**: Thin TCP layer (`core_sim::network`) streams snapshot deltas, emits structured tracing/log frames, and receives text commands (`turn N`, `heat entity delta`, `bias axis value`). Snapshot deltas broadcast on `SimulationConfig::snapshot_bind` / `snapshot_flat_bind`, log feed on `SimulationConfig::log_bind`, and commands on `SimulationConfig::command_bind`.
 - **Serialization**: Snapshots/deltas represented via Rust structs and `sim_schema::schemas/snapshot.fbs` for cross-language clients.
 - **Shared Runtime (`sim_runtime`)**: Lightweight helpers (command parsing, bias handling, validation) shared by tooling and the headless core.
-- **Inspector Client (`clients/godot_thin_client`)**: Godot thin client that renders the map, streams snapshots, and exposes the tabbed inspector; legacy `cli_inspector` stays only as a fallback until parity.
+- **Inspector Client (`clients/godot_thin_client`)**: Godot thin client that renders the map, streams snapshots, and exposes the tabbed inspector; the Logs tab now subscribes to the tracing feed and renders a per-turn duration sparkline alongside the scrollback. Legacy `cli_inspector` stays only as a fallback until parity. A Bevy-native inspector is under evaluation (see `shadow_scale_strategy_game_concept_technical_plan_v_0.md` Option F) but would live in a separate binary to keep the headless core deterministic.
 - **Benchmark & Tests**: Criterion harness (`cargo bench -p core_sim --bench turn_bench`) and determinism tests ensure turn consistency.
 
 ### Terrain Type Taxonomy
@@ -30,12 +30,13 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 
 - **Telemetry & Clients**
   - Snapshots expose `terrain_type` per tile and a dedicated `terrainOverlay` raster (width/height + packed samples of terrain ID & tags) so clients can stream biome layers without recomputing from component state.
-  - Godot inspector consumes the same channel (`overlays.terrain`, `terrain_palette`, `terrain_tag_labels`) to colorize tiles and now aggregates top-biome coverage plus tag distribution inside the Terrain tab. Keep the narrative-and-implementation link tight by updating the manual (§3b) before tweaking palette data here.
-  - Colour mapping: `MapView.gd::_terrain_color_for_id` mirrors the hex values listed in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b. Adjust the manual first, then this lookup, then the HUD legend/inspector summaries (see `TASKS.md`).
-  - Logs tab currently derives summary entries (tile/population/generation/influencer counts) from delta metadata so designers can spot bursts without tailing the terminal; replace this with streamed tracing once the backend forwards log lines.
-  - Legacy CLI overlay can be left in place for verification comparisons until we delete the crate; avoid adding new features there.
+- Godot inspector consumes the same channel (`overlays.terrain`, `terrain_palette`, `terrain_tag_labels`) to colorize tiles and now aggregates top-biome coverage plus tag distribution inside the Terrain tab. Keep the narrative-and-implementation link tight by updating the manual (§3b) before tweaking palette data here.
+- Colour mapping: `MapView.gd::_terrain_color_for_id` mirrors the hex values listed in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b. Adjust the manual first, then this lookup, then the HUD legend/inspector summaries (see `TASKS.md`).
+- Logs tab currently derives summary entries (tile/population/generation/influencer counts) from delta metadata so designers can spot bursts without tailing the terminal; replace this with streamed tracing once the backend forwards log lines.
+- Legacy CLI overlay can be left in place for verification comparisons until we delete the crate; avoid adding new features there.
+- Commands tab exposes the full command bridge: turn/rollback/autoplay controls plus axis bias adjustment, support/suppress and channel boosts for selected influencers, spawn utilities, corruption injection, and heat debug. Use it to sanity check backend hooks before retiring the CLI.
   - Runtime controls: the thin client binds `ui_accept` to toggle between logistics/sentiment composites and terrain palette mode, aiding QA comparisons of colour accuracy against the documented swatches.
-  - Inspector migration: see `docs/godot_inspector_plan.md` for the roadmap and progress checkpoints; cross-link new UX notes into the manual when player-facing explanations change.
+- Inspector migration: see `docs/godot_inspector_plan.md` for the roadmap and progress checkpoints; cross-link new UX notes into the manual when player-facing explanations change. If the Bevy inspector option graduates from evaluation (manual §13 Option F), capture the delta plan here and spin tasks into `TASKS.md`.
   - Planned logistics/sentiment raster exports (see `TASKS.md`) can stack on the same grid dimensions for consistent blending.
 
 ### Frontend Client Strategy
@@ -161,7 +162,8 @@ per-faction orders -> command server -> turn queue -> run_turn -> snapshot -> br
 ## Data Flow
 - **Snapshots**: Binary `bincode` frames prefixed with length for streaming.
 - **FlatBuffers**: Schema mirrors Rust structs for alternate clients.
-- **Metrics**: `SimulationMetrics` resource updated every turn; logged via `tracing`.
+- **Logs**: Length-prefixed JSON frames carrying `tracing` events published via the log stream socket (default `tcp://127.0.0.1:41003`).
+- **Metrics**: `SimulationMetrics` resource updated every turn; logged via `tracing` (`turn.completed` now emits `duration_ms` alongside grid metrics for client consumption).
 
 ## Extensibility
 - Add new systems by extending the `Update` chain in `build_headless_app`.

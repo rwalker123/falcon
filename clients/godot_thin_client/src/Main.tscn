@@ -1,9 +1,10 @@
-[gd_scene load_steps=4 format=3 uid="uid://godot-thin-client-main"]
+[gd_scene load_steps=5 format=3 uid="uid://godot-thin-client-main"]
 
 [ext_resource type="Script" path="res://src/scripts/Main.gd" id="1"]
 [ext_resource type="Script" path="res://src/scripts/MapView.gd" id="2"]
 [ext_resource type="Script" path="res://src/scripts/Hud.gd" id="3"]
 [ext_resource type="Script" path="res://src/scripts/Inspector.gd" id="4"]
+[ext_resource type="Script" path="res://src/scripts/TickSparkline.gd" id="5"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1")
@@ -17,6 +18,7 @@ script = ExtResource("2")
 
 [node name="HUD" type="CanvasLayer" parent="."]
 script = ExtResource("3")
+layer = 1
 
 [node name="TurnLabel" type="Label" parent="HUD"]
 offset_left = 16.0
@@ -37,7 +39,7 @@ script = ExtResource("4")
 anchor_right = 0.0
 anchor_bottom = 1.0
 offset_left = 16.0
-offset_top = 16.0
+offset_top = 96.0
 offset_right = 360.0
 offset_bottom = -16.0
 custom_minimum_size = Vector2(320, 0)
@@ -110,13 +112,45 @@ bbcode_enabled = true
 fit_content = true
 autowrap_mode = 3
 
-[node name="Logs" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+[node name="Logs" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 8
+
+[node name="SparklineContainer" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Logs"]
+size_flags_horizontal = 3
+size_flags_vertical = 1
+theme_override_constants/separation = 4
+
+[node name="SparklineLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Logs/SparklineContainer"]
+size_flags_horizontal = 3
+text = "Recent Turn Durations"
+
+[node name="SparklineStatusLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Logs/SparklineContainer"]
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.8, 0.86, 0.95, 1)
+text = "Connecting to log stream..."
+
+[node name="SparklineGraph" type="Control" parent="Inspector/RootPanel/TabContainer/Logs/SparklineContainer"]
+size_flags_horizontal = 3
+size_flags_vertical = 3
+custom_minimum_size = Vector2(0, 100)
+script = ExtResource("5")
+
+[node name="SparklineStatsLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Logs/SparklineContainer"]
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.85, 0.9, 1, 1)
+text = "Awaiting telemetry."
+
+[node name="LogScroll" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer/Logs"]
 anchor_right = 1.0
 anchor_bottom = 1.0
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="LogsText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Logs"]
+[node name="LogsText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Logs/LogScroll"]
 anchor_right = 1.0
 anchor_bottom = 1.0
 size_flags_horizontal = 3
@@ -164,6 +198,146 @@ step = 0.1
 value = 0.5
 alignment = 1
 
+[node name="AxisControls" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
+size_flags_horizontal = 3
+
+[node name="AxisLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/AxisControls"]
+text = "Axis Bias"
+
+[node name="AxisRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/AxisControls"]
+size_flags_horizontal = 3
+
+[node name="AxisDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Commands/AxisControls/AxisRow"]
+size_flags_horizontal = 1
+
+[node name="AxisValueSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/AxisControls/AxisRow"]
+size_flags_horizontal = 1
+min_value = -1.0
+max_value = 1.0
+step = 0.01
+allow_greater = true
+allow_lesser = true
+
+[node name="AxisApplyButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/AxisControls/AxisRow"]
+text = "Apply"
+
+[node name="AxisResetButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/AxisControls/AxisRow"]
+text = "Reset Axis"
+
+[node name="AxisResetAllButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/AxisControls"]
+text = "Reset All Axes"
+size_flags_horizontal = 3
+
+[node name="InfluencerControls" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
+size_flags_horizontal = 3
+
+[node name="InfluencerLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls"]
+text = "Influencer Commands"
+
+[node name="InfluencerRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls"]
+size_flags_horizontal = 3
+
+[node name="InfluencerDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow"]
+size_flags_horizontal = 1
+
+[node name="InfluencerMagnitudeSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow"]
+size_flags_horizontal = 1
+min_value = 0.0
+max_value = 5.0
+step = 0.1
+value = 1.0
+
+[node name="InfluencerSupportButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow"]
+text = "Support"
+
+[node name="InfluencerSuppressButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow"]
+text = "Suppress"
+
+[node name="ChannelRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls"]
+size_flags_horizontal = 3
+
+[node name="ChannelDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow"]
+size_flags_horizontal = 1
+
+[node name="ChannelMagnitudeSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow"]
+size_flags_horizontal = 1
+min_value = 0.0
+max_value = 5.0
+step = 0.1
+value = 1.0
+
+[node name="ChannelBoostButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow"]
+text = "Channel Boost"
+
+[node name="SpawnRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls"]
+size_flags_horizontal = 3
+
+[node name="SpawnScopeDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow"]
+size_flags_horizontal = 1
+
+[node name="SpawnGenerationSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow"]
+size_flags_horizontal = 1
+min_value = 0.0
+max_value = 65535.0
+step = 1.0
+
+[node name="SpawnButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow"]
+text = "Spawn"
+
+[node name="CorruptionControls" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
+size_flags_horizontal = 3
+
+[node name="CorruptionLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/CorruptionControls"]
+text = "Corruption Injection"
+
+[node name="CorruptionRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/CorruptionControls"]
+size_flags_horizontal = 3
+
+[node name="CorruptionSubsystemDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow"]
+size_flags_horizontal = 1
+
+[node name="CorruptionIntensitySpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow"]
+size_flags_horizontal = 1
+min_value = 0.0
+max_value = 2.0
+step = 0.05
+value = 0.25
+
+[node name="CorruptionExposureSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow"]
+size_flags_horizontal = 1
+min_value = 1.0
+max_value = 24.0
+step = 1.0
+value = 3.0
+
+[node name="CorruptionInjectButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow"]
+text = "Inject"
+
+[node name="HeatControls" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
+size_flags_horizontal = 3
+
+[node name="HeatLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/HeatControls"]
+text = "Heat Debug"
+
+[node name="HeatRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/HeatControls"]
+size_flags_horizontal = 3
+
+[node name="HeatEntitySpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
+size_flags_horizontal = 1
+min_value = 0.0
+max_value = 999999999.0
+step = 1.0
+
+[node name="HeatDeltaSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
+size_flags_horizontal = 1
+min_value = -1000000.0
+max_value = 1000000.0
+step = 1000.0
+value = 100000.0
+
+[node name="HeatApplyButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
+text = "Apply Heat"
+
 [node name="LogPanel" type="Panel" parent="Inspector/RootPanel/TabContainer/Commands"]
 custom_minimum_size = Vector2(0, 160)
 size_flags_horizontal = 3
@@ -188,9 +362,11 @@ bbcode_enabled = false
 fit_content = true
 autowrap_mode = 3
 [node name="TerrainLegendPanel" type="Panel" parent="HUD"]
-offset_left = 16.0
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -240.0
 offset_top = 92.0
-offset_right = 240.0
+offset_right = -16.0
 offset_bottom = 420.0
 visible = false
 

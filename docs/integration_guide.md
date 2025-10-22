@@ -20,6 +20,10 @@ prototype to visualize state or issue turn commands.
     - `bias <axis_index> <value>` – sets the authoritative sentiment axis bias (value clamped to [-1.0, 1.0]).
   - Future commands will follow the same `verb args` pattern; unrecognized
     commands return no response but are logged.
+- **Log Stream (tracing JSON)**: `tcp://127.0.0.1:41003` (configurable via `SimulationConfig::log_bind`).
+  - Frames follow the same 4-byte little-endian length prefix as snapshot streams.
+  - Payloads are JSON objects emitted from `tracing`, e.g. `{ "timestamp_ms": 1700000000000, "level": "INFO", "message": "turn.completed", "fields": { "turn": 42, "duration_ms": 11.8 } }`.
+  - Clients can surface these events directly or derive telemetry (recent turn durations, command audit trail) without polling the snapshot stream.
 
 ## Data Contract
 - See `sim_schema/schemas/snapshot.fbs` for the FlatBuffers schema equivalent to the Rust structs.
@@ -30,7 +34,7 @@ prototype to visualize state or issue turn commands.
 1. Open command connection, send desired turn count or control commands.
 2. Connect to snapshot stream, consume deltas. Apply to your local model.
 3. Optionally, resubscribe after dropped connections; server supports multiple snapshot clients.
-4. Use log metrics (see `docs/metrics.md`) to monitor progress.
+4. Subscribe to the log stream when you need structured tracing output (turn completion metrics, command acknowledgements) without parsing snapshots.
 
 ## Error Handling
 - Snapshot TCP stream may close if the server restarts; clients should auto-reconnect.
