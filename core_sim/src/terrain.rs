@@ -45,6 +45,7 @@ fn rb(ore: i8, organics: i8, energy: i8) -> TerrainResourceBias {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Terrain definitions require explicit parameterization
 fn def(
     terrain: TerrainType,
     tags: TerrainTags,
@@ -483,7 +484,7 @@ pub fn classify_terrain(position: UVec2, grid_size: UVec2) -> TerrainType {
         );
     }
 
-    if fy < 0.12 || fy > 0.88 {
+    if !(0.12..=0.88).contains(&fy) {
         return pick(
             noise,
             &[
@@ -602,8 +603,8 @@ pub fn terrain_for_position(position: UVec2, grid_size: UVec2) -> (TerrainType, 
 }
 
 fn tile_noise(position: UVec2) -> u32 {
-    let mut n = position.x as u32;
-    n = n.wrapping_mul(0x6C8E_9CF5) ^ (position.y as u32).wrapping_mul(0xB529_7A4D);
+    let mut n = position.x;
+    n = n.wrapping_mul(0x6C8E_9CF5) ^ position.y.wrapping_mul(0xB529_7A4D);
     n ^= n >> 13;
     n = n.wrapping_mul(0x68E3_1DA4);
     n ^= n >> 11;

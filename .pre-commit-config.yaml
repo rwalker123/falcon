@@ -1,0 +1,13 @@
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: scripts/pre-commit-rust.sh fmt
+        language: system
+        pass_filenames: false
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: scripts/pre-commit-rust.sh clippy
+        language: system
+        pass_filenames: false

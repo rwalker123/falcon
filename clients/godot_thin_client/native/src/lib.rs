@@ -111,12 +111,12 @@ pub struct SnapshotDecoder;
 impl SnapshotDecoder {
     #[func]
     pub fn decode_snapshot(&self, data: PackedByteArray) -> Dictionary {
-        decode_snapshot(&data).unwrap_or_else(Dictionary::new)
+        decode_snapshot(&data).unwrap_or_default()
     }
 
     #[func]
     pub fn decode_delta(&self, data: PackedByteArray) -> Dictionary {
-        decode_delta(&data).unwrap_or_else(Dictionary::new)
+        decode_delta(&data).unwrap_or_default()
     }
 }
 
@@ -173,7 +173,7 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     }
 
     let removed_influencers = u32_vector_to_packed_int32(delta.removedInfluencers());
-    if removed_influencers.len() > 0 {
+    if !removed_influencers.is_empty() {
         let _ = dict.insert("influencer_removed", removed_influencers);
     }
 
@@ -186,7 +186,7 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     }
 
     let removed_populations = u64_vector_to_packed_int64(delta.removedPopulations());
-    if removed_populations.len() > 0 {
+    if !removed_populations.is_empty() {
         let _ = dict.insert("population_removed", removed_populations);
     }
 
@@ -195,7 +195,7 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     }
 
     let removed_trade_links = u64_vector_to_packed_int64(delta.removedTradeLinks());
-    if removed_trade_links.len() > 0 {
+    if !removed_trade_links.is_empty() {
         let _ = dict.insert("trade_link_removed", removed_trade_links);
     }
 
@@ -204,7 +204,7 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     }
 
     let removed_tiles = u64_vector_to_packed_int64(delta.removedTiles());
-    if removed_tiles.len() > 0 {
+    if !removed_tiles.is_empty() {
         let _ = dict.insert("tile_removed", removed_tiles);
     }
 
@@ -213,7 +213,7 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     }
 
     let removed_generations = u16_vector_to_packed_int32(delta.removedGenerations());
-    if removed_generations.len() > 0 {
+    if !removed_generations.is_empty() {
         let _ = dict.insert("generation_removed", removed_generations);
     }
 
@@ -222,7 +222,7 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     }
 
     let removed_layers = u32_vector_to_packed_int32(delta.removedCultureLayers());
-    if removed_layers.len() > 0 {
+    if !removed_layers.is_empty() {
         let _ = dict.insert("culture_layer_removed", removed_layers);
     }
 
@@ -315,8 +315,8 @@ impl DeltaAggregator {
             final_width,
             final_height,
             &logistics,
-            terrain_ref.as_ref().map(|v| v.as_slice()),
-            tags_ref.as_ref().map(|v| v.as_slice()),
+            terrain_ref.as_deref(),
+            tags_ref.as_deref(),
         )
     }
 }

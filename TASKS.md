@@ -41,6 +41,8 @@
 - [x] Add terrain drill-down UI (per-biome detail view, tile inspection, future culture/military overlays) building on the new summary panel (Owner: TBD, Estimate: 2d; Deps: terrain tab groundwork). _Status_: Godot Terrain tab now offers biome selection with tag breakdowns, hover/click tile telemetry, and placeholder culture/military overlay tabs ready for incoming streams.
 - [x] Deprecate CLI inspector: document migration, update workflows, remove `cli_inspector` crate once parity achieved (Owner: TBD, Estimate: 0.5d; Deps: Godot inspector feature parity). _Status_: CLI crate removed, docs/workflows now point exclusively to the Godot thin client.
 - [x] Support map zooming/panning via both mouse and keyboard inputs in the Godot inspector (Owner: TBD, Estimate: 1d; Deps: confirm MapView input bindings).
+- [ ] Introduce a shared typography theme for the Godot inspector that resolves `INSPECTOR_FONT_SIZE`, defines derived scale constants, and applies the theme to all static and runtime-created controls (Owner: TBD, Estimate: 1.5d; Deps: docs/architecture.md Inspector Typography Refactor Plan).
+- [ ] Rework HUD/inspector layout math to consume the shared typography metrics so panel placement adapts to base font changes without manual offsets (Owner: TBD, Estimate: 1d; Deps: shared typography theme scaffolding).
 
 ### Sentiment Sphere Enhancements
 - [x] Implement quadrant heatmap widget with vector overlay and legend (Owner: Mira, Estimate: 2d).

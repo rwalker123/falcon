@@ -34,6 +34,8 @@ use crate::{
     scalar::Scalar,
 };
 
+type EncodedBuffers = (Arc<Vec<u8>>, Arc<Vec<u8>>);
+
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
 const CHANNEL_LABELS: [&str; 4] = ["Popular", "Peer", "Institutional", "Humanitarian"];
 
@@ -139,6 +141,10 @@ impl SnapshotHistory {
 
     pub fn len(&self) -> usize {
         self.history.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.history.is_empty()
     }
 
     pub fn latest_entry(&self) -> Option<StoredSnapshot> {
@@ -351,10 +357,7 @@ impl SnapshotHistory {
         }
     }
 
-    pub fn update_axis_bias(
-        &mut self,
-        bias: AxisBiasState,
-    ) -> Option<(Arc<Vec<u8>>, Arc<Vec<u8>>)> {
+    pub fn update_axis_bias(&mut self, bias: AxisBiasState) -> Option<EncodedBuffers> {
         if self.axis_bias == bias {
             return None;
         }
@@ -430,7 +433,7 @@ impl SnapshotHistory {
     pub fn update_influencers(
         &mut self,
         states: Vec<InfluentialIndividualState>,
-    ) -> Option<(Arc<Vec<u8>>, Arc<Vec<u8>>)> {
+    ) -> Option<EncodedBuffers> {
         let mut index = HashMap::with_capacity(states.len());
         for state in &states {
             index.insert(state.id, state.clone());
@@ -514,10 +517,7 @@ impl SnapshotHistory {
         Some((encoded_delta, encoded_delta_flat))
     }
 
-    pub fn update_corruption(
-        &mut self,
-        ledger: CorruptionLedger,
-    ) -> Option<(Arc<Vec<u8>>, Arc<Vec<u8>>)> {
+    pub fn update_corruption(&mut self, ledger: CorruptionLedger) -> Option<EncodedBuffers> {
         if self.corruption == ledger {
             return None;
         }
@@ -598,6 +598,7 @@ impl SnapshotHistory {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn capture_snapshot(
     config: Res<SimulationConfig>,
     tick: Res<SimulationTick>,
@@ -1014,10 +1015,15 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         world.insert_resource(ledgers);
     }
 
-    if let Some(mut culture_manager) = world.get_resource_mut::<CultureManager>() {
-        culture_manager.restore_from_snapshot(&snapshot.culture_layers, &snapshot.culture_tensions);
-        let new_effects = culture_manager.compute_effects();
-        drop(culture_manager);
+    if let Some(new_effects) =
+        world
+            .get_resource_mut::<CultureManager>()
+            .map(|mut culture_manager| {
+                culture_manager
+                    .restore_from_snapshot(&snapshot.culture_layers, &snapshot.culture_tensions);
+                culture_manager.compute_effects()
+            })
+    {
         if let Some(mut effects_res) = world.get_resource_mut::<CultureEffectsCache>() {
             *effects_res = new_effects;
         } else {
@@ -1141,7 +1147,7 @@ where
     previous
         .keys()
         .filter(|id| !current.contains_key(id))
-        .map(|id| *id)
+        .copied()
         .collect()
 }
 

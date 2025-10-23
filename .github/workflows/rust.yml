@@ -10,13 +10,122 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  pr-build:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libasound2-dev libudev-dev unzip
+    - name: Install flatc
+      run: |
+        FLATBUFFERS_VERSION=25.9.23
+        curl -sSL -o flatc.zip "https://github.com/google/flatbuffers/releases/download/v${FLATBUFFERS_VERSION}/Linux.flatc.binary.g++-13.zip"
+        unzip -o flatc.zip flatc
+        sudo mv flatc /usr/local/bin/flatc
+        sudo chmod +x /usr/local/bin/flatc
+        rm flatc.zip
+    - name: Cache cargo directories
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-stable-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-stable-cargo-
+          ${{ runner.os }}-cargo-
+    - name: Install stable toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+        components: rustfmt, clippy
+    - name: Generate FlatBuffers bindings
+      run: cargo build --locked --package shadow_scale_flatbuffers
+    - name: Format generated bindings
+      run: rustfmt shadow_scale_flatbuffers/src/generated/snapshot_generated.rs
+    - name: Ensure generated bindings exist
+      run: |
+        if [ ! -f shadow_scale_flatbuffers/src/generated/snapshot_generated.rs ]; then
+          echo "Missing generated FlatBuffer bindings; run 'cargo build -p shadow_scale_flatbuffers' locally." >&2
+          exit 1
+        fi
+    - name: cargo fmt --check
+      run: cargo fmt --all -- --check
+    - name: cargo clippy
+      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+    - name: Build
+      run: cargo build --workspace --all-targets --locked --verbose
+    - name: Run tests
+      run: cargo test --workspace --locked --verbose
+
+  push-build:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: [ stable, beta, nightly ]
+      fail-fast: false
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libasound2-dev libudev-dev unzip
+    - name: Install flatc
+      run: |
+        FLATBUFFERS_VERSION=25.9.23
+        curl -sSL -o flatc.zip "https://github.com/google/flatbuffers/releases/download/v${FLATBUFFERS_VERSION}/Linux.flatc.binary.g++-13.zip"
+        unzip -o flatc.zip flatc
+        sudo mv flatc /usr/local/bin/flatc
+        sudo chmod +x /usr/local/bin/flatc
+        rm flatc.zip
+    - name: Cache cargo directories
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.toolchain }}-cargo-
+          ${{ runner.os }}-cargo-
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.toolchain }}
+        profile: minimal
+        override: true
+        components: rustfmt, clippy
+    - name: Generate FlatBuffers bindings
+      if: matrix.toolchain == 'stable'
+      run: cargo build --locked --package shadow_scale_flatbuffers
+    - name: Format generated bindings
+      if: matrix.toolchain == 'stable'
+      run: rustfmt shadow_scale_flatbuffers/src/generated/snapshot_generated.rs
+    - name: Ensure generated bindings exist
+      if: matrix.toolchain == 'stable'
+      run: |
+        if [ ! -f shadow_scale_flatbuffers/src/generated/snapshot_generated.rs ]; then
+          echo "Missing generated FlatBuffer bindings; run 'cargo build -p shadow_scale_flatbuffers' locally." >&2
+          exit 1
+        fi
+    - name: cargo fmt --check
+      if: matrix.toolchain == 'stable'
+      run: cargo fmt --all -- --check
+    - name: cargo clippy
+      if: matrix.toolchain == 'stable'
+      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --workspace --all-targets --locked --verbose
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --workspace --locked --verbose

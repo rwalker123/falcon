@@ -45,6 +45,33 @@ cargo bench -p core_sim --bench turn_bench
 ```
 Results (including HTML reports) are written under `target/criterion/turn/`.
 
+## Developer Tooling
+
+### Pre-commit Hooks
+
+Install and enable the repo’s pre-commit hooks to lint and format code automatically:
+
+```bash
+pip install pre-commit  # or use your system package manager
+pre-commit install
+```
+
+The hooks run `cargo fmt` and `cargo clippy` before each commit. You can execute them manually with:
+
+```bash
+pre-commit run --all-files
+```
+
+### Regenerating FlatBuffers bindings
+
+Whenever the schema in `sim_schema/schemas/snapshot.fbs` changes, regenerate the Rust bindings with:
+
+```bash
+cargo xtask prepare-client
+```
+
+It regenerates the FlatBuffers bindings and refreshes the Godot GDExtension (`clients/godot_thin_client/native/bin/…`). No generated files are checked in, so commit any schema updates and rerun the command before pushing.
+
 ### Install Rust/Cargo
 
 #### macOS

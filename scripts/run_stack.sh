@@ -84,7 +84,7 @@ if [[ "$RUN_CLIENT" == true ]]; then
   STREAM_PORT=41002 \
   COMMAND_HOST=127.0.0.1 \
   COMMAND_PORT=41001 \
-  INSPECTOR_FONT_SIZE=96 \
+  INSPECTOR_FONT_SIZE=32 \
   godot --path clients/godot_thin_client
   CLIENT_EXIT_CODE=$?
   set -e

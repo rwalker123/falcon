@@ -6,4 +6,4 @@
 /.vscode
 /cargo.lock
 **/.godot
-
+shadow_scale_flatbuffers/src/generated/snapshot_generated.rs

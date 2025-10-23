@@ -2,6 +2,7 @@ extends CanvasLayer
 class_name InspectorLayer
 
 const LogStreamClientScript = preload("res://src/scripts/LogStreamClient.gd")
+const Typography = preload("res://src/scripts/Typography.gd")
 
 @onready var sentiment_text: RichTextLabel = $RootPanel/TabContainer/Sentiment/SentimentText
 @onready var terrain_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TerrainText
@@ -102,12 +103,14 @@ var _log_poll_timer: float = 0.0
 var _log_retry_timer: float = 0.0
 var _tick_samples: Array[Dictionary] = []
 var _log_status_message: String = "Log stream offline."
+var _resolved_font_size: int = Typography.DEFAULT_FONT_SIZE
 var _last_turn: int = 0
 var command_client: Object = null
 var command_connected: bool = false
 var stream_active: bool = false
 var autoplay_timer: Timer
 var command_log: Array[String] = []
+var _hud_layer: Object = null
 const COMMAND_LOG_LIMIT = 40
 const TERRAIN_TOP_LIMIT = 5
 const TAG_TOP_LIMIT = 6
@@ -119,14 +122,10 @@ const LOG_PORT_DEFAULT = 41003
 const LOG_POLL_INTERVAL = 0.1
 const LOG_RECONNECT_INTERVAL = 2.0
 const TICK_SAMPLE_LIMIT = 48
-const DEFAULT_FONT_SIZE = 22
-const MIN_FONT_SIZE = 12
-const MAX_FONT_SIZE = 36
 const PANEL_WIDTH_DEFAULT = 340.0
 const PANEL_WIDTH_MIN = 260.0
-const PANEL_WIDTH_MAX = 640.0
+const PANEL_MIN_TOP_OFFSET = 48.0
 const PANEL_MARGIN = 16.0
-const PANEL_TOP_OFFSET = 96.0
 const PANEL_HANDLE_WIDTH = 12.0
 const AXIS_NAMES: Array[String] = ["Knowledge", "Trust", "Equity", "Agency"]
 const AXIS_KEYS: Array[String] = ["knowledge", "trust", "equity", "agency"]
@@ -160,6 +159,8 @@ var _panel_width: float = PANEL_WIDTH_DEFAULT
 var _is_resizing = false
 
 func _ready() -> void:
+    Typography.initialize()
+    _resolved_font_size = Typography.base_font_size()
     set_process(true)
     _viewport = get_viewport()
     if _viewport != null:
@@ -171,7 +172,7 @@ func _ready() -> void:
     _initialize_influencer_controls()
     _initialize_corruption_controls()
     _initialize_heat_controls()
-    _apply_theme_overrides()
+    apply_typography()
     _connect_terrain_ui()
     _connect_culture_ui()
     if trade_overlay_toggle != null:
@@ -339,49 +340,11 @@ func _render_static_sections() -> void:
     if knowledge_events_text != null:
         knowledge_events_text.text = "[i]No knowledge transfers recorded.[/i]"
 
-func _apply_theme_overrides() -> void:
-    var font_size = DEFAULT_FONT_SIZE
-    var env_value = OS.get_environment("INSPECTOR_FONT_SIZE")
-    if env_value != "":
-        var parsed = int(env_value)
-        if parsed >= MIN_FONT_SIZE and parsed <= MAX_FONT_SIZE:
-            font_size = parsed
-    _apply_font_override(sentiment_text, font_size)
-    _apply_font_override(terrain_text, font_size)
-    _apply_font_override(influencers_text, font_size)
-    _apply_font_override(corruption_text, font_size)
-    _apply_font_override(logs_text, font_size)
-    _apply_font_override(command_status_label, font_size)
-    _apply_font_override(step_one_button, font_size)
-    _apply_font_override(step_ten_button, font_size)
-    _apply_font_override(rollback_button, font_size)
-    _apply_font_override(autoplay_toggle, font_size)
-    _apply_font_override(autoplay_label, font_size)
-    _apply_font_override(command_log_text, font_size)
-    _apply_font_override(tab_container, font_size)
-    _apply_font_override(autoplay_spin, font_size)
-    _apply_font_override(terrain_biome_section_label, font_size)
-    _apply_font_override(terrain_biome_list, font_size)
-    _apply_font_override(terrain_biome_detail_text, font_size)
-    _apply_font_override(terrain_tile_section_label, font_size)
-    _apply_font_override(terrain_tile_list, font_size)
-    _apply_font_override(terrain_tile_detail_text, font_size)
-    _apply_font_override(terrain_overlay_section_label, font_size)
-    _apply_font_override(terrain_overlay_tabs, font_size)
-    _apply_font_override(terrain_overlay_culture_placeholder, font_size)
-    _apply_font_override(terrain_overlay_military_placeholder, font_size)
-    _apply_font_override(culture_summary_text, font_size)
-    _apply_font_override(culture_divergence_list, font_size)
-    _apply_font_override(culture_divergence_detail, font_size)
-    _apply_font_override(culture_tension_text, font_size)
-    _apply_font_override(trade_summary_text, font_size)
-    _apply_font_override(trade_events_text, font_size)
-    _apply_font_override(trade_links_list, font_size)
-    _apply_font_override(knowledge_summary_text, font_size)
-    _apply_font_override(discovery_progress_list, font_size)
-    _apply_font_override(knowledge_events_text, font_size)
-
+func apply_typography() -> void:
+    Typography.initialize()
+    _resolved_font_size = Typography.base_font_size()
     if root_panel != null:
+        Typography.apply_theme(root_panel)
         var panel_style = StyleBoxFlat.new()
         panel_style.bg_color = Color(0.09, 0.09, 0.12, 0.6)
         panel_style.border_color = Color(0.2, 0.22, 0.26, 0.6)
@@ -395,6 +358,7 @@ func _apply_theme_overrides() -> void:
         panel_style.corner_radius_bottom_right = 6
         root_panel.add_theme_stylebox_override("panel", panel_style)
     if tab_container != null:
+        Typography.apply(tab_container, Typography.STYLE_CONTROL)
         var tab_style = StyleBoxFlat.new()
         tab_style.bg_color = Color(0.13, 0.13, 0.17, 0.6)
         tab_style.border_color = Color(0.22, 0.24, 0.28, 0.6)
@@ -408,6 +372,86 @@ func _apply_theme_overrides() -> void:
         tab_style.corner_radius_bottom_right = 0
         tab_container.add_theme_stylebox_override("panel", tab_style)
         tab_container.tab_alignment = 0
+
+    var body_rich_text: Array = [
+        sentiment_text,
+        terrain_text,
+        terrain_biome_detail_text,
+        terrain_tile_detail_text,
+        terrain_overlay_culture_placeholder,
+        terrain_overlay_military_placeholder,
+        culture_summary_text,
+        culture_divergence_detail,
+        culture_tension_text,
+        influencers_text,
+        corruption_text,
+        trade_summary_text,
+        trade_events_text,
+        knowledge_summary_text,
+        knowledge_events_text,
+        logs_text,
+        command_log_text
+    ]
+    _apply_typography_style(body_rich_text, Typography.STYLE_BODY)
+
+    var heading_labels: Array = [
+        terrain_biome_section_label,
+        terrain_tile_section_label,
+        terrain_overlay_section_label
+    ]
+    _apply_typography_style(heading_labels, Typography.STYLE_HEADING)
+
+    var caption_labels: Array = [
+        log_status_label,
+        sparkline_stats_label,
+        command_status_label,
+        autoplay_label
+    ]
+    _apply_typography_style(caption_labels, Typography.STYLE_CAPTION)
+
+    var list_controls: Array = [
+        terrain_biome_list,
+        terrain_tile_list,
+        culture_divergence_list,
+        trade_links_list,
+        discovery_progress_list
+    ]
+    _apply_typography_style(list_controls, Typography.STYLE_BODY)
+
+    var control_nodes: Array = [
+        trade_overlay_toggle,
+        step_one_button,
+        step_ten_button,
+        rollback_button,
+        autoplay_toggle,
+        autoplay_spin,
+        axis_dropdown,
+        axis_value_spin,
+        axis_apply_button,
+        axis_reset_button,
+        axis_reset_all_button,
+        influencer_dropdown,
+        influencer_magnitude_spin,
+        influencer_support_button,
+        influencer_suppress_button,
+        channel_dropdown,
+        channel_magnitude_spin,
+        channel_boost_button,
+        spawn_scope_dropdown,
+        spawn_generation_spin,
+        spawn_button,
+        corruption_dropdown,
+        corruption_intensity_spin,
+        corruption_exposure_spin,
+        corruption_inject_button,
+        heat_entity_spin,
+        heat_delta_spin,
+        heat_apply_button,
+        terrain_overlay_tabs
+    ]
+    _apply_typography_style(control_nodes, Typography.STYLE_CONTROL)
+
+    _update_panel_layout()
 
 func _connect_terrain_ui() -> void:
     if terrain_biome_list != null:
@@ -1325,6 +1369,10 @@ func attach_map_view(view: Node) -> void:
     _map_view = view
     _sync_map_trade_overlay()
 
+func set_hud_layer(layer: Object) -> void:
+    _hud_layer = layer
+    _update_panel_layout()
+
 func _sync_map_trade_overlay() -> void:
     if _map_view == null:
         return
@@ -2213,17 +2261,22 @@ func _render_logs() -> void:
     if logs_text.get_line_count() > 0:
         logs_text.scroll_to_line(logs_text.get_line_count() - 1)
 
-func _apply_font_override(control: Control, size: int) -> void:
-    if control == null:
-        return
-    if control is RichTextLabel:
-        var rich: RichTextLabel = control
-        rich.add_theme_font_size_override("normal_font_size", size)
-        rich.add_theme_font_size_override("bold_font_size", size)
-        rich.add_theme_font_size_override("italics_font_size", size)
-        rich.add_theme_font_size_override("mono_font_size", max(size - 1, MIN_FONT_SIZE))
-    else:
-        control.add_theme_font_size_override("font_size", size)
+func get_resolved_font_size() -> int:
+    return _resolved_font_size
+
+func _apply_typography_style(controls: Array, style: StringName) -> void:
+    for control in controls:
+        if control is Control:
+            Typography.apply(control, style)
+
+func _panel_top_offset() -> float:
+    var baseline := PANEL_MARGIN + Typography.line_height(Typography.STYLE_HEADING)
+    baseline = max(baseline, PANEL_MIN_TOP_OFFSET)
+    if _hud_layer != null and _hud_layer.has_method("get_upper_stack_height"):
+        var height_variant: Variant = _hud_layer.call("get_upper_stack_height")
+        if typeof(height_variant) in [TYPE_FLOAT, TYPE_INT]:
+            baseline = max(baseline, float(height_variant))
+    return baseline
 
 func _update_panel_layout() -> void:
     if root_panel == null:
@@ -2231,7 +2284,7 @@ func _update_panel_layout() -> void:
     _panel_width = clamp(_panel_width, PANEL_WIDTH_MIN, _max_panel_width())
     root_panel.offset_left = PANEL_MARGIN
     root_panel.offset_right = PANEL_MARGIN + _panel_width
-    root_panel.offset_top = PANEL_TOP_OFFSET
+    root_panel.offset_top = _panel_top_offset()
     root_panel.offset_bottom = -PANEL_MARGIN
     root_panel.custom_minimum_size = Vector2(PANEL_WIDTH_MIN, 0)
 
@@ -2240,8 +2293,8 @@ func _on_viewport_resized() -> void:
 
 func _max_panel_width() -> float:
     var viewport_size = get_viewport().get_visible_rect().size
-    var max_allowed = viewport_size.x - (PANEL_MARGIN * 2.0 + 120.0)
-    return clamp(max_allowed, PANEL_WIDTH_MIN, PANEL_WIDTH_MAX)
+    var max_allowed = viewport_size.x - (PANEL_MARGIN * 2.0)
+    return max(max_allowed, PANEL_WIDTH_MIN)
 
 func _is_in_resize_region(local_pos: Vector2) -> bool:
     return root_panel != null and local_pos.x >= (root_panel.size.x - PANEL_HANDLE_WIDTH)

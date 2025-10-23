@@ -2,6 +2,7 @@ extends Node2D
 
 const SnapshotLoader = preload("res://src/scripts/SnapshotLoader.gd")
 const CommandClient = preload("res://src/scripts/CommandClient.gd")
+const Typography = preload("res://src/scripts/Typography.gd")
 
 @onready var map_view: Node2D = $MapLayer
 @onready var hud: CanvasLayer = $HUD
@@ -30,6 +31,7 @@ const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
 
 func _ready() -> void:
+    Typography.initialize()
     var ext: Resource = load("res://native/shadow_scale_godot.gdextension")
     if ext == null:
         push_warning("ShadowScale Godot extension not found; streaming disabled.")
@@ -58,6 +60,12 @@ func _ready() -> void:
         push_warning("Godot client: unable to connect to command port (error %d)." % command_err)
     if inspector != null and inspector.has_method("set_command_client"):
         inspector.call("set_command_client", command_client, command_err == OK)
+    if inspector != null and inspector.has_method("set_hud_layer"):
+        inspector.call("set_hud_layer", hud)
+    if hud != null and hud.has_method("apply_typography"):
+        hud.call("apply_typography")
+    if inspector != null and inspector.has_method("apply_typography"):
+        inspector.call("apply_typography")
     var initial: Dictionary = {}
     if streaming_mode and not snapshot_loader.last_stream_snapshot.is_empty():
         initial = snapshot_loader.last_stream_snapshot
@@ -91,6 +99,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     var metrics_variant: Variant = map_view.call("display_snapshot", snapshot)
     var metrics: Dictionary = metrics_variant if metrics_variant is Dictionary else {}
     hud.call("update_overlay", snapshot.get("turn", 0), metrics)
+    if hud != null and inspector != null:
+        if inspector.has_method("get_resolved_font_size") and hud.has_method("set_inspector_font_size"):
+            var resolved_size_variant: Variant = inspector.call("get_resolved_font_size")
+            if typeof(resolved_size_variant) in [TYPE_INT, TYPE_FLOAT]:
+                hud.call("set_inspector_font_size", int(resolved_size_variant))
     if inspector != null:
         if snapshot.has("influencer_updates") or snapshot.has("population_updates") or snapshot.has("tile_updates") or snapshot.has("generation_updates"):
             if inspector.has_method("update_delta"):
