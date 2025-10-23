@@ -508,6 +508,13 @@ pub enum InfluenceLifecycle {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InfluencerCultureResonanceEntry {
+    pub axis: CultureTraitAxis,
+    pub weight: i64,
+    pub output: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InfluentialIndividualState {
     pub id: u32,
     pub name: String,
@@ -548,6 +555,7 @@ pub struct InfluentialIndividualState {
     pub weight_peer: i64,
     pub weight_institutional: i64,
     pub weight_humanitarian: i64,
+    pub culture_resonance: Vec<InfluencerCultureResonanceEntry>,
 }
 
 impl InfluentialIndividualState {
@@ -1121,6 +1129,8 @@ fn create_influencers<'a>(
         .map(|inf| {
             let name = builder.create_string(inf.name.as_str());
             let audience_vec = builder.create_vector(&inf.audience_generations);
+            let resonance_vec =
+                create_influencer_culture_resonance(builder, &inf.culture_resonance);
             fb::InfluentialIndividualState::create(
                 builder,
                 &fb::InfluentialIndividualStateArgs {
@@ -1163,7 +1173,28 @@ fn create_influencers<'a>(
                     weightPeer: inf.weight_peer,
                     weightInstitutional: inf.weight_institutional,
                     weightHumanitarian: inf.weight_humanitarian,
+                    cultureResonance: Some(resonance_vec),
                     ..Default::default()
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_influencer_culture_resonance<'a>(
+    builder: &mut FbBuilder<'a>,
+    entries: &[InfluencerCultureResonanceEntry],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::InfluencerCultureResonanceEntry<'a>>>> {
+    let offsets: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            fb::InfluencerCultureResonanceEntry::create(
+                builder,
+                &fb::InfluencerCultureResonanceEntryArgs {
+                    axis: to_fb_culture_trait_axis(entry.axis),
+                    weight: entry.weight,
+                    output: entry.output,
                 },
             )
         })

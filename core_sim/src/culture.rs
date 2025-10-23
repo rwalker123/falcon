@@ -7,6 +7,7 @@ use sim_runtime::{
 };
 
 use crate::{
+    influencers::{InfluencerCultureResonance, InfluencerImpacts},
     resources::SimulationTick,
     scalar::{scalar_from_f32, Scalar},
 };
@@ -318,11 +319,18 @@ impl CultureLayer {
         }
     }
 
-    fn resolve_against(&mut self, parent_values: &[Scalar; CULTURE_TRAIT_AXES]) {
+    fn resolve_against(
+        &mut self,
+        parent_values: &[Scalar; CULTURE_TRAIT_AXES],
+        resonance: Option<&[Scalar; CULTURE_TRAIT_AXES]>,
+    ) {
         let elasticity = self.elasticity;
         for (idx, parent_value) in parent_values.iter().enumerate() {
             self.traits.baseline[idx] = *parent_value;
-            let target = *parent_value + self.traits.modifier[idx];
+            let mut target = *parent_value + self.traits.modifier[idx];
+            if let Some(extra) = resonance {
+                target += extra[idx];
+            }
             let current = self.traits.value[idx];
             let delta = (target - current) * elasticity;
             self.traits.update_value(idx, current + delta);
@@ -463,34 +471,40 @@ impl CultureManager {
         }
     }
 
-    pub fn reconcile(&mut self, tick: &SimulationTick) {
-        if self.global.is_none() {
+    pub fn reconcile(&mut self, tick: &SimulationTick, resonance: &InfluencerCultureResonance) {
+        if self.global.is_none() && self.regional.is_empty() && self.locals.is_empty() {
             return;
         }
 
         self.tension_events.clear();
         let mut pending_events = Vec::new();
 
-        // Resolve global layer first (no parent).
+        let mut global_values = [Scalar::zero(); CULTURE_TRAIT_AXES];
         if let Some(global) = &mut self.global {
-            let values = *global.traits.values();
-            *global.traits.baseline_mut() = values;
+            let baseline_values = *global.traits.values();
+            *global.traits.baseline_mut() = baseline_values;
+            for idx in 0..CULTURE_TRAIT_AXES {
+                let target = (baseline_values[idx] + resonance.global[idx])
+                    .clamp(scalar_from_f32(-2.5), scalar_from_f32(2.5));
+                global.traits.update_value(idx, target);
+                global_values[idx] = target;
+            }
             global.divergence.magnitude = Scalar::zero();
             global.divergence.ticks_above_soft = 0;
             global.divergence.ticks_above_hard = 0;
             global.last_updated_tick = tick.0;
         }
 
-        let global_values = self
-            .global
-            .as_ref()
-            .map(|layer| *layer.traits.values())
-            .unwrap_or([Scalar::zero(); CULTURE_TRAIT_AXES]);
+        let regional_resonance = if !self.regional.is_empty() {
+            let factor = scalar_from_f32(1.0 / self.regional.len() as f32);
+            Some(resonance.regional.map(|value| value * factor))
+        } else {
+            None
+        };
 
-        // Resolve regional layers relative to global baseline.
         for layer in self.regional.values_mut() {
             *layer.traits.baseline_mut() = global_values;
-            layer.resolve_against(&global_values);
+            layer.resolve_against(&global_values, regional_resonance.as_ref());
             layer.evaluate_divergence(&global_values);
             let alert = layer.tick_thresholds();
             layer.last_updated_tick = tick.0;
@@ -499,14 +513,19 @@ impl CultureManager {
             }
         }
 
-        // Build map of regional values for local reconciliation.
         let mut regional_values: HashMap<CultureLayerId, [Scalar; CULTURE_TRAIT_AXES]> =
             HashMap::with_capacity(self.regional.len());
         for layer in self.regional.values() {
             regional_values.insert(layer.id, *layer.traits.values());
         }
 
-        // Resolve local layers relative to their parent region.
+        let local_resonance = if !self.locals.is_empty() {
+            let factor = scalar_from_f32(1.0 / self.locals.len() as f32);
+            Some(resonance.local.map(|value| value * factor))
+        } else {
+            None
+        };
+
         for layer in self.locals.values_mut() {
             let Some(parent_id) = layer.parent else {
                 continue;
@@ -514,7 +533,7 @@ impl CultureManager {
             let Some(parent_values) = regional_values.get(&parent_id) else {
                 continue;
             };
-            layer.resolve_against(parent_values);
+            layer.resolve_against(parent_values, local_resonance.as_ref());
             layer.evaluate_divergence(parent_values);
             let alert = layer.tick_thresholds();
             layer.last_updated_tick = tick.0;
@@ -717,8 +736,10 @@ pub fn reconcile_culture_layers(
     mut effects: ResMut<CultureEffectsCache>,
     mut tension_writer: EventWriter<CultureTensionEvent>,
     mut schism_writer: EventWriter<CultureSchismEvent>,
+    impacts: Res<InfluencerImpacts>,
 ) {
-    manager.reconcile(&tick);
+    let resonance = impacts.culture_resonance();
+    manager.reconcile(&tick, &resonance);
     *effects = manager.compute_effects();
 
     let records = manager.take_tension_events();

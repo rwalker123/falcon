@@ -148,6 +148,13 @@ table InfluentialIndividualState {
   weightPeer:long;
   weightInstitutional:long;
   weightHumanitarian:long;
+  cultureResonance:[InfluencerCultureResonanceEntry];
+}
+
+table InfluencerCultureResonanceEntry {
+  axis:CultureTraitAxis;
+  weight:long;
+  output:long;
 }
 
 table CultureTraitEntry {

@@ -6,12 +6,14 @@ use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use crate::{
     components::PopulationCohort,
+    culture::{CultureTraitAxis, CULTURE_TRAIT_AXES},
     generations::{GenerationId, GenerationRegistry},
     resources::SentimentAxisBias,
     scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar},
 };
 use sim_runtime::{
-    influence_domain_mask, InfluenceDomain, InfluenceLifecycle, InfluenceScopeKind,
+    influence_domain_mask, CultureTraitAxis as SchemaCultureTraitAxis, InfluenceDomain,
+    InfluenceLifecycle, InfluenceScopeKind, InfluencerCultureResonanceEntry,
     InfluentialIndividualState,
 };
 
@@ -48,11 +50,29 @@ const CHANNEL_COUNT: usize = 4;
 
 const CHANNEL_NAMES: [&str; CHANNEL_COUNT] = ["Popular", "Peer", "Institutional", "Humanitarian"];
 
+#[derive(Debug, Clone, Copy)]
+pub struct InfluencerCultureResonance {
+    pub global: [Scalar; CULTURE_TRAIT_AXES],
+    pub regional: [Scalar; CULTURE_TRAIT_AXES],
+    pub local: [Scalar; CULTURE_TRAIT_AXES],
+}
+
+impl Default for InfluencerCultureResonance {
+    fn default() -> Self {
+        Self {
+            global: [scalar_zero(); CULTURE_TRAIT_AXES],
+            regional: [scalar_zero(); CULTURE_TRAIT_AXES],
+            local: [scalar_zero(); CULTURE_TRAIT_AXES],
+        }
+    }
+}
+
 #[derive(Resource, Debug, Clone)]
 pub struct InfluencerImpacts {
     pub logistics_multiplier: Scalar,
     pub morale_delta: Scalar,
     pub power_bonus: Scalar,
+    pub culture_resonance: InfluencerCultureResonance,
 }
 
 impl Default for InfluencerImpacts {
@@ -61,6 +81,7 @@ impl Default for InfluencerImpacts {
             logistics_multiplier: scalar_one(),
             morale_delta: scalar_zero(),
             power_bonus: scalar_zero(),
+            culture_resonance: InfluencerCultureResonance::default(),
         }
     }
 }
@@ -72,6 +93,14 @@ impl InfluencerImpacts {
         self.logistics_multiplier = multiplier;
         self.morale_delta = morale.clamp(scalar_from_f32(-0.3), scalar_from_f32(0.4));
         self.power_bonus = power.clamp(scalar_from_f32(-0.25), scalar_from_f32(0.35));
+    }
+
+    pub fn set_culture_resonance(&mut self, resonance: InfluencerCultureResonance) {
+        self.culture_resonance = resonance;
+    }
+
+    pub fn culture_resonance(&self) -> InfluencerCultureResonance {
+        self.culture_resonance
     }
 }
 
@@ -137,6 +166,8 @@ struct InfluentialIndividual {
     channel_support: [Scalar; 4],
     channel_boosts: [Scalar; 4],
     sentiment_output: [Scalar; 4],
+    culture_weights: [Scalar; CULTURE_TRAIT_AXES],
+    culture_output: [Scalar; CULTURE_TRAIT_AXES],
     logistics_output: Scalar,
     morale_output: Scalar,
     power_output: Scalar,
@@ -213,6 +244,15 @@ fn next_scope(scope: InfluenceScopeKind) -> Option<InfluenceScopeKind> {
 
 impl InfluentialIndividual {
     fn from_state(state: &InfluentialIndividualState) -> Self {
+        let mut culture_weights = [scalar_zero(); CULTURE_TRAIT_AXES];
+        let mut culture_output = [scalar_zero(); CULTURE_TRAIT_AXES];
+        for entry in &state.culture_resonance {
+            let axis = schema_axis_to_local(entry.axis);
+            let idx = axis.index();
+            culture_weights[idx] = Scalar::from_raw(entry.weight);
+            culture_output[idx] = Scalar::from_raw(entry.output);
+        }
+
         Self {
             id: state.id,
             name: state.name.clone(),
@@ -270,10 +310,31 @@ impl InfluentialIndividual {
                 Scalar::from_raw(state.support_humanitarian),
             ],
             channel_boosts: [scalar_zero(); CHANNEL_COUNT],
+            culture_weights,
+            culture_output,
         }
     }
 
     fn to_state(&self) -> InfluentialIndividualState {
+        let culture_resonance = CultureTraitAxis::ALL
+            .iter()
+            .filter_map(|axis| {
+                let axis_value = *axis;
+                let idx = axis_value.index();
+                let weight = self.culture_weights[idx].raw();
+                let output = self.culture_output[idx].raw();
+                if weight == 0 && output == 0 {
+                    None
+                } else {
+                    Some(InfluencerCultureResonanceEntry {
+                        axis: local_axis_to_schema(axis_value),
+                        weight,
+                        output,
+                    })
+                }
+            })
+            .collect();
+
         InfluentialIndividualState {
             id: self.id,
             name: self.name.clone(),
@@ -318,6 +379,7 @@ impl InfluentialIndividual {
             weight_institutional: self.channel_weights[SupportChannel::Institutional as usize]
                 .raw(),
             weight_humanitarian: self.channel_weights[SupportChannel::Humanitarian as usize].raw(),
+            culture_resonance,
         }
     }
 
@@ -342,6 +404,7 @@ pub struct InfluentialRoster {
     last_logistics: Scalar,
     last_morale: Scalar,
     last_power: Scalar,
+    last_culture: InfluencerCultureResonance,
 }
 
 impl InfluentialRoster {
@@ -355,6 +418,7 @@ impl InfluentialRoster {
             last_logistics: scalar_zero(),
             last_morale: scalar_zero(),
             last_power: scalar_zero(),
+            last_culture: InfluencerCultureResonance::default(),
         };
         roster.bootstrap(registry);
         roster
@@ -686,6 +750,7 @@ impl InfluentialRoster {
         let channel_weights = resolve_channel_weights(domains_mask);
         let channel_support = channel_weights
             .map(|weight| (weight * scalar_from_f32(0.3)).clamp(scalar_zero(), scalar_one()));
+        let culture_weights = generate_culture_resonance_weights(&mut self.rng, &domains);
 
         let individual = InfluentialIndividual {
             id,
@@ -711,6 +776,8 @@ impl InfluentialRoster {
             channel_support,
             channel_boosts: [scalar_zero(); CHANNEL_COUNT],
             sentiment_output: [scalar_zero(); 4],
+            culture_weights,
+            culture_output: [scalar_zero(); CULTURE_TRAIT_AXES],
             logistics_output: scalar_zero(),
             morale_output: scalar_zero(),
             power_output: scalar_zero(),
@@ -828,6 +895,10 @@ impl InfluentialRoster {
         self.last_power
     }
 
+    pub fn culture_resonance(&self) -> InfluencerCultureResonance {
+        self.last_culture
+    }
+
     pub fn update_from_states(&mut self, states: &[InfluentialIndividualState]) {
         self.individuals = states
             .iter()
@@ -849,6 +920,9 @@ impl InfluentialRoster {
         let mut logistics = scalar_zero();
         let mut morale = scalar_zero();
         let mut power = scalar_zero();
+        let mut culture_global = [scalar_zero(); CULTURE_TRAIT_AXES];
+        let mut culture_regional = [scalar_zero(); CULTURE_TRAIT_AXES];
+        let mut culture_local = [scalar_zero(); CULTURE_TRAIT_AXES];
 
         for individual in &mut self.individuals {
             let factor = individual.coherence_factor();
@@ -857,6 +931,18 @@ impl InfluentialRoster {
                 individual.sentiment_output[axis] =
                     (base * factor).clamp(scalar_from_f32(-0.75), scalar_from_f32(0.75));
                 sentiment[axis] += individual.sentiment_output[axis];
+            }
+            for axis in 0..CULTURE_TRAIT_AXES {
+                let base = individual.culture_weights[axis] * individual.influence;
+                let output = (base * factor).clamp(scalar_from_f32(-0.6), scalar_from_f32(0.6));
+                individual.culture_output[axis] = output;
+                match individual.scope {
+                    InfluenceScopeKind::Local => culture_local[axis] += output,
+                    InfluenceScopeKind::Regional => culture_regional[axis] += output,
+                    InfluenceScopeKind::Global | InfluenceScopeKind::Generation => {
+                        culture_global[axis] += output
+                    }
+                }
             }
             individual.logistics_output =
                 (individual.logistics_weight * individual.influence * factor)
@@ -876,6 +962,13 @@ impl InfluentialRoster {
         self.last_logistics = logistics.clamp(scalar_from_f32(-0.5), scalar_from_f32(0.8));
         self.last_morale = morale.clamp(scalar_from_f32(-0.3), scalar_from_f32(0.5));
         self.last_power = power.clamp(scalar_from_f32(-0.3), scalar_from_f32(0.5));
+        let min_culture = scalar_from_f32(-1.0);
+        let max_culture = scalar_from_f32(1.0);
+        self.last_culture = InfluencerCultureResonance {
+            global: clamp_culture_array(culture_global, min_culture, max_culture),
+            regional: clamp_culture_array(culture_regional, min_culture, max_culture),
+            local: clamp_culture_array(culture_local, min_culture, max_culture),
+        };
     }
 }
 
@@ -893,6 +986,17 @@ fn damp_scalar(value: Scalar, factor: f32) -> Scalar {
     } else {
         result
     }
+}
+
+fn clamp_culture_array(
+    mut values: [Scalar; CULTURE_TRAIT_AXES],
+    min: Scalar,
+    max: Scalar,
+) -> [Scalar; CULTURE_TRAIT_AXES] {
+    for value in values.iter_mut() {
+        *value = (*value).clamp(min, max);
+    }
+    values
 }
 
 fn select_domains(rng: &mut SmallRng) -> Vec<InfluenceDomain> {
@@ -944,6 +1048,153 @@ fn generate_sentiment_weights(rng: &mut SmallRng, domains: &[InfluenceDomain]) -
             }
         };
     }
+    weights
+}
+
+fn push_culture_weight(
+    rng: &mut SmallRng,
+    weights: &mut [Scalar; CULTURE_TRAIT_AXES],
+    axis: CultureTraitAxis,
+    min: f32,
+    max: f32,
+) {
+    let magnitude = rng.gen_range(min..max);
+    let direction = if rng.gen_bool(0.55) { 1.0 } else { -1.0 };
+    let idx = axis.index();
+    weights[idx] += scalar_from_f32(direction * magnitude);
+}
+
+fn generate_culture_resonance_weights(
+    rng: &mut SmallRng,
+    domains: &[InfluenceDomain],
+) -> [Scalar; CULTURE_TRAIT_AXES] {
+    let mut weights = [scalar_zero(); CULTURE_TRAIT_AXES];
+    for domain in domains {
+        match domain {
+            InfluenceDomain::Sentiment => {
+                push_culture_weight(rng, &mut weights, CultureTraitAxis::OpenClosed, 0.12, 0.28);
+                push_culture_weight(
+                    rng,
+                    &mut weights,
+                    CultureTraitAxis::CollectivistIndividualist,
+                    0.08,
+                    0.22,
+                );
+                push_culture_weight(
+                    rng,
+                    &mut weights,
+                    CultureTraitAxis::PluralisticMonocultural,
+                    0.10,
+                    0.24,
+                );
+            }
+            InfluenceDomain::Discovery => {
+                push_culture_weight(
+                    rng,
+                    &mut weights,
+                    CultureTraitAxis::RationalistMystical,
+                    0.10,
+                    0.26,
+                );
+                push_culture_weight(
+                    rng,
+                    &mut weights,
+                    CultureTraitAxis::PragmaticIdealistic,
+                    0.08,
+                    0.20,
+                );
+                push_culture_weight(
+                    rng,
+                    &mut weights,
+                    CultureTraitAxis::AdaptiveStubborn,
+                    0.08,
+                    0.20,
+                );
+            }
+            InfluenceDomain::Logistics => {
+                push_culture_weight(
+                    rng,
+                    &mut weights,
+                    CultureTraitAxis::HierarchicalEgalitarian,
+                    0.10,
+                    0.22,
+                );
+                push_culture_weight(
+                    rng,
+                    &mut weights,
+                    CultureTraitAxis::PragmaticIdealistic,
+                    0.06,
+                    0.18,
+                );
+                push_culture_weight(
+                    rng,
+                    &mut weights,
+                    CultureTraitAxis::TraditionalistRevisionist,
+                    0.05,
+                    0.16,
+                );
+            }
+            InfluenceDomain::Production => {
+                push_culture_weight(
+                    rng,
+                    &mut weights,
+                    CultureTraitAxis::TraditionalistRevisionist,
+                    0.08,
+                    0.20,
+                );
+                push_culture_weight(
+                    rng,
+                    &mut weights,
+                    CultureTraitAxis::MeritOrientedLineageOriented,
+                    0.10,
+                    0.24,
+                );
+                push_culture_weight(
+                    rng,
+                    &mut weights,
+                    CultureTraitAxis::AsceticIndulgent,
+                    0.06,
+                    0.18,
+                );
+            }
+            InfluenceDomain::Humanitarian => {
+                push_culture_weight(
+                    rng,
+                    &mut weights,
+                    CultureTraitAxis::SecularDevout,
+                    0.10,
+                    0.24,
+                );
+                push_culture_weight(
+                    rng,
+                    &mut weights,
+                    CultureTraitAxis::SyncreticPurist,
+                    0.08,
+                    0.22,
+                );
+                push_culture_weight(
+                    rng,
+                    &mut weights,
+                    CultureTraitAxis::HonorBoundOpportunistic,
+                    0.06,
+                    0.18,
+                );
+            }
+        }
+    }
+
+    for _ in 0..2 {
+        let idx = rng.gen_range(0..CULTURE_TRAIT_AXES);
+        let jitter = rng.gen_range(-0.06..0.06);
+        weights[idx] += scalar_from_f32(jitter);
+    }
+
+    let min = scalar_from_f32(-0.6);
+    let max = scalar_from_f32(0.6);
+    for entry in weights.iter_mut() {
+        *entry = (*entry).clamp(min, max);
+    }
+
     weights
 }
 
@@ -1030,6 +1281,70 @@ fn resolve_channel_weights(domains_mask: u32) -> [Scalar; CHANNEL_COUNT] {
     }
 }
 
+fn schema_axis_to_local(axis: SchemaCultureTraitAxis) -> CultureTraitAxis {
+    match axis {
+        SchemaCultureTraitAxis::PassiveAggressive => CultureTraitAxis::PassiveAggressive,
+        SchemaCultureTraitAxis::OpenClosed => CultureTraitAxis::OpenClosed,
+        SchemaCultureTraitAxis::CollectivistIndividualist => {
+            CultureTraitAxis::CollectivistIndividualist
+        }
+        SchemaCultureTraitAxis::TraditionalistRevisionist => {
+            CultureTraitAxis::TraditionalistRevisionist
+        }
+        SchemaCultureTraitAxis::HierarchicalEgalitarian => {
+            CultureTraitAxis::HierarchicalEgalitarian
+        }
+        SchemaCultureTraitAxis::SyncreticPurist => CultureTraitAxis::SyncreticPurist,
+        SchemaCultureTraitAxis::AsceticIndulgent => CultureTraitAxis::AsceticIndulgent,
+        SchemaCultureTraitAxis::PragmaticIdealistic => CultureTraitAxis::PragmaticIdealistic,
+        SchemaCultureTraitAxis::RationalistMystical => CultureTraitAxis::RationalistMystical,
+        SchemaCultureTraitAxis::ExpansionistInsular => CultureTraitAxis::ExpansionistInsular,
+        SchemaCultureTraitAxis::AdaptiveStubborn => CultureTraitAxis::AdaptiveStubborn,
+        SchemaCultureTraitAxis::HonorBoundOpportunistic => {
+            CultureTraitAxis::HonorBoundOpportunistic
+        }
+        SchemaCultureTraitAxis::MeritOrientedLineageOriented => {
+            CultureTraitAxis::MeritOrientedLineageOriented
+        }
+        SchemaCultureTraitAxis::SecularDevout => CultureTraitAxis::SecularDevout,
+        SchemaCultureTraitAxis::PluralisticMonocultural => {
+            CultureTraitAxis::PluralisticMonocultural
+        }
+    }
+}
+
+fn local_axis_to_schema(axis: CultureTraitAxis) -> SchemaCultureTraitAxis {
+    match axis {
+        CultureTraitAxis::PassiveAggressive => SchemaCultureTraitAxis::PassiveAggressive,
+        CultureTraitAxis::OpenClosed => SchemaCultureTraitAxis::OpenClosed,
+        CultureTraitAxis::CollectivistIndividualist => {
+            SchemaCultureTraitAxis::CollectivistIndividualist
+        }
+        CultureTraitAxis::TraditionalistRevisionist => {
+            SchemaCultureTraitAxis::TraditionalistRevisionist
+        }
+        CultureTraitAxis::HierarchicalEgalitarian => {
+            SchemaCultureTraitAxis::HierarchicalEgalitarian
+        }
+        CultureTraitAxis::SyncreticPurist => SchemaCultureTraitAxis::SyncreticPurist,
+        CultureTraitAxis::AsceticIndulgent => SchemaCultureTraitAxis::AsceticIndulgent,
+        CultureTraitAxis::PragmaticIdealistic => SchemaCultureTraitAxis::PragmaticIdealistic,
+        CultureTraitAxis::RationalistMystical => SchemaCultureTraitAxis::RationalistMystical,
+        CultureTraitAxis::ExpansionistInsular => SchemaCultureTraitAxis::ExpansionistInsular,
+        CultureTraitAxis::AdaptiveStubborn => SchemaCultureTraitAxis::AdaptiveStubborn,
+        CultureTraitAxis::HonorBoundOpportunistic => {
+            SchemaCultureTraitAxis::HonorBoundOpportunistic
+        }
+        CultureTraitAxis::MeritOrientedLineageOriented => {
+            SchemaCultureTraitAxis::MeritOrientedLineageOriented
+        }
+        CultureTraitAxis::SecularDevout => SchemaCultureTraitAxis::SecularDevout,
+        CultureTraitAxis::PluralisticMonocultural => {
+            SchemaCultureTraitAxis::PluralisticMonocultural
+        }
+    }
+}
+
 pub fn tick_influencers(
     mut roster: ResMut<InfluentialRoster>,
     registry: Res<GenerationRegistry>,
@@ -1063,7 +1378,9 @@ pub fn tick_influencers(
     let logistics = roster.logistics_total();
     let morale = roster.morale_total();
     let power = roster.power_total();
+    let culture = roster.culture_resonance();
 
     axis_bias.set_influencer(sentiment);
     impacts.set_from_totals(logistics, morale, power);
+    impacts.set_culture_resonance(culture);
 }
