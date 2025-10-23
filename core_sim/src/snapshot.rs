@@ -7,14 +7,18 @@ use log::warn;
 use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
     AxisBiasState, CorruptionLedger, CultureLayerState, CultureTensionState, CultureTraitEntry,
-    GenerationState, InfluentialIndividualState, LogisticsLinkState, PopulationCohortState,
-    PowerNodeState, SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState,
-    SentimentTelemetryState, SnapshotHeader, TerrainOverlayState, TerrainSample, TileState,
-    WorldDelta, WorldSnapshot,
+    DiscoveryProgressEntry, GenerationState, InfluentialIndividualState, LogisticsLinkState,
+    PendingMigrationState, PopulationCohortState, PowerNodeState, SentimentAxisTelemetry,
+    SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState, SnapshotHeader,
+    TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState, WorldDelta,
+    WorldSnapshot,
 };
 
 use crate::{
-    components::{ElementKind, LogisticsLink, PopulationCohort, PowerNode, Tile},
+    components::{
+        fragments_from_contract, fragments_to_contract, ElementKind, LogisticsLink,
+        PendingMigration, PopulationCohort, PowerNode, Tile, TradeLink,
+    },
     culture::{
         CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
         CultureManager, CultureTensionKind as SimCultureTensionKind, CultureTensionRecord,
@@ -22,9 +26,10 @@ use crate::{
     },
     generations::{GenerationProfile, GenerationRegistry},
     influencers::{InfluencerImpacts, InfluentialRoster},
+    orders::FactionId,
     resources::{
-        CorruptionLedgers, CorruptionTelemetry, SentimentAxisBias, SimulationConfig,
-        SimulationTick, TileRegistry,
+        CorruptionLedgers, CorruptionTelemetry, DiscoveryProgressLedger, SentimentAxisBias,
+        SimulationConfig, SimulationTick, TileRegistry,
     },
     scalar::Scalar,
 };
@@ -74,12 +79,14 @@ pub struct SnapshotHistory {
     pub encoded_delta_flat: Option<Arc<Vec<u8>>>,
     tiles: HashMap<u64, TileState>,
     logistics: HashMap<u64, LogisticsLinkState>,
+    trade_links: HashMap<u64, TradeLinkState>,
     populations: HashMap<u64, PopulationCohortState>,
     power: HashMap<u64, PowerNodeState>,
     generations: HashMap<u16, GenerationState>,
     influencers: HashMap<u32, InfluentialIndividualState>,
     culture_layers: HashMap<u32, CultureLayerState>,
     culture_tensions: Vec<CultureTensionState>,
+    discovery_progress: HashMap<(u32, u32), DiscoveryProgressEntry>,
     axis_bias: AxisBiasState,
     sentiment: SentimentTelemetryState,
     terrain_overlay: TerrainOverlayState,
@@ -105,12 +112,14 @@ impl SnapshotHistory {
             encoded_delta_flat: None,
             tiles: HashMap::new(),
             logistics: HashMap::new(),
+            trade_links: HashMap::new(),
             populations: HashMap::new(),
             power: HashMap::new(),
             generations: HashMap::new(),
             influencers: HashMap::new(),
             culture_layers: HashMap::new(),
             culture_tensions: Vec::new(),
+            discovery_progress: HashMap::new(),
             axis_bias: AxisBiasState::default(),
             sentiment: SentimentTelemetryState::default(),
             terrain_overlay: TerrainOverlayState::default(),
@@ -154,6 +163,11 @@ impl SnapshotHistory {
             logistics_index.insert(state.entity, state.clone());
         }
 
+        let mut trade_index = HashMap::with_capacity(snapshot.trade_links.len());
+        for state in &snapshot.trade_links {
+            trade_index.insert(state.entity, state.clone());
+        }
+
         let mut populations_index = HashMap::with_capacity(snapshot.populations.len());
         for state in &snapshot.populations {
             populations_index.insert(state.entity, state.clone());
@@ -177,6 +191,11 @@ impl SnapshotHistory {
         let mut culture_layers_index = HashMap::with_capacity(snapshot.culture_layers.len());
         for state in &snapshot.culture_layers {
             culture_layers_index.insert(state.id, state.clone());
+        }
+
+        let mut discovery_index = HashMap::with_capacity(snapshot.discovery_progress.len());
+        for entry in &snapshot.discovery_progress {
+            discovery_index.insert((entry.faction, entry.discovery), entry.clone());
         }
 
         let axis_bias_state = snapshot.axis_bias.clone();
@@ -220,6 +239,8 @@ impl SnapshotHistory {
             removed_tiles: diff_removed(&self.tiles, &tiles_index),
             logistics: diff_new(&self.logistics, &logistics_index),
             removed_logistics: diff_removed(&self.logistics, &logistics_index),
+            trade_links: diff_new(&self.trade_links, &trade_index),
+            removed_trade_links: diff_removed(&self.trade_links, &trade_index),
             populations: diff_new(&self.populations, &populations_index),
             removed_populations: diff_removed(&self.populations, &populations_index),
             power: diff_new(&self.power, &power_index),
@@ -235,6 +256,7 @@ impl SnapshotHistory {
             culture_layers: diff_new(&self.culture_layers, &culture_layers_index),
             removed_culture_layers: diff_removed(&self.culture_layers, &culture_layers_index),
             culture_tensions: delta_culture_tensions.clone(),
+            discovery_progress: diff_new(&self.discovery_progress, &discovery_index),
         };
 
         let snapshot_arc = Arc::new(snapshot);
@@ -243,6 +265,7 @@ impl SnapshotHistory {
 
         self.tiles = tiles_index;
         self.logistics = logistics_index;
+        self.trade_links = trade_index;
         self.populations = populations_index;
         self.power = power_index;
         self.generations = generations_index;
@@ -253,6 +276,7 @@ impl SnapshotHistory {
         self.terrain_overlay = terrain_state;
         self.corruption = corruption_state;
         self.culture_tensions = culture_tensions_state;
+        self.discovery_progress = discovery_index;
         self.last_snapshot = Some(snapshot_arc);
         self.last_delta = Some(delta_arc);
         self.encoded_snapshot = Some(stored.encoded_snapshot.clone());
@@ -349,6 +373,8 @@ impl SnapshotHistory {
             removed_tiles: Vec::new(),
             logistics: Vec::new(),
             removed_logistics: Vec::new(),
+            trade_links: Vec::new(),
+            removed_trade_links: Vec::new(),
             populations: Vec::new(),
             removed_populations: Vec::new(),
             power: Vec::new(),
@@ -364,6 +390,7 @@ impl SnapshotHistory {
             culture_layers: Vec::new(),
             removed_culture_layers: Vec::new(),
             culture_tensions: Vec::new(),
+            discovery_progress: Vec::new(),
         };
 
         let delta_arc = Arc::new(delta);
@@ -429,6 +456,8 @@ impl SnapshotHistory {
             removed_tiles: Vec::new(),
             logistics: Vec::new(),
             removed_logistics: Vec::new(),
+            trade_links: Vec::new(),
+            removed_trade_links: Vec::new(),
             populations: Vec::new(),
             removed_populations: Vec::new(),
             power: Vec::new(),
@@ -444,6 +473,7 @@ impl SnapshotHistory {
             culture_layers: Vec::new(),
             removed_culture_layers: Vec::new(),
             culture_tensions: Vec::new(),
+            discovery_progress: Vec::new(),
         };
 
         let delta_arc = Arc::new(delta);
@@ -506,6 +536,8 @@ impl SnapshotHistory {
             removed_tiles: Vec::new(),
             logistics: Vec::new(),
             removed_logistics: Vec::new(),
+            trade_links: Vec::new(),
+            removed_trade_links: Vec::new(),
             populations: Vec::new(),
             removed_populations: Vec::new(),
             power: Vec::new(),
@@ -521,6 +553,7 @@ impl SnapshotHistory {
             culture_layers: Vec::new(),
             removed_culture_layers: Vec::new(),
             culture_tensions: Vec::new(),
+            discovery_progress: Vec::new(),
         };
 
         let delta_arc = Arc::new(delta);
@@ -569,7 +602,7 @@ pub fn capture_snapshot(
     config: Res<SimulationConfig>,
     tick: Res<SimulationTick>,
     tiles: Query<(Entity, &Tile)>,
-    logistics_links: Query<(Entity, &LogisticsLink)>,
+    logistics_links: Query<(Entity, &LogisticsLink, &TradeLink)>,
     populations: Query<(Entity, &PopulationCohort)>,
     power_nodes: Query<(Entity, &PowerNode)>,
     registry: Res<GenerationRegistry>,
@@ -577,6 +610,7 @@ pub fn capture_snapshot(
     axis_bias: Res<SentimentAxisBias>,
     corruption_ledgers: Res<CorruptionLedgers>,
     corruption_telemetry: Res<CorruptionTelemetry>,
+    discovery_progress: Res<DiscoveryProgressLedger>,
     culture: Res<CultureManager>,
     mut history: ResMut<SnapshotHistory>,
 ) {
@@ -588,11 +622,14 @@ pub fn capture_snapshot(
         .collect();
     tile_states.sort_unstable_by_key(|state| state.entity);
 
-    let mut logistics_states: Vec<LogisticsLinkState> = logistics_links
-        .iter()
-        .map(|(entity, link)| logistics_state(entity, link))
-        .collect();
+    let mut logistics_states: Vec<LogisticsLinkState> = Vec::new();
+    let mut trade_states: Vec<TradeLinkState> = Vec::new();
+    for (entity, link, trade) in logistics_links.iter() {
+        logistics_states.push(logistics_state(entity, link));
+        trade_states.push(trade_link_state(entity, link, trade));
+    }
     logistics_states.sort_unstable_by_key(|state| state.entity);
+    trade_states.sort_unstable_by_key(|state| state.entity);
 
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
@@ -633,6 +670,8 @@ pub fn capture_snapshot(
     culture_tension_states.sort_unstable_by(|a, b| {
         (a.layer_id, a.kind as u8, a.timer).cmp(&(b.layer_id, b.kind as u8, b.timer))
     });
+
+    let discovery_states = discovery_progress_entries(&discovery_progress);
 
     let terrain_overlay = terrain_overlay_from_tiles(&tile_states, config.grid_size);
 
@@ -755,6 +794,7 @@ pub fn capture_snapshot(
         tick.0,
         tile_states.len(),
         logistics_states.len(),
+        trade_states.len(),
         population_states.len(),
         power_states.len(),
         influencer_states.len(),
@@ -764,6 +804,7 @@ pub fn capture_snapshot(
         header,
         tiles: tile_states,
         logistics: logistics_states,
+        trade_links: trade_states,
         populations: population_states,
         power: power_states,
         terrain: terrain_overlay.clone(),
@@ -774,6 +815,7 @@ pub fn capture_snapshot(
         influencers: influencer_states,
         culture_layers: culture_layer_states,
         culture_tensions: culture_tension_states,
+        discovery_progress: discovery_states,
     }
     .finalize();
 
@@ -844,6 +886,12 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
     }
 
     // Rebuild logistics links.
+    let trade_lookup: HashMap<u64, &TradeLinkState> = snapshot
+        .trade_links
+        .iter()
+        .map(|state| (state.entity, state))
+        .collect();
+
     for link_state in &snapshot.logistics {
         let Some(&from_entity) = tile_entity_lookup.get(&link_state.from) else {
             warn!(
@@ -860,12 +908,18 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             continue;
         };
 
-        world.spawn(LogisticsLink {
+        let mut entity_mut = world.spawn_empty();
+        entity_mut.insert(LogisticsLink {
             from: from_entity,
             to: to_entity,
             capacity: Scalar::from_raw(link_state.capacity),
             flow: Scalar::from_raw(link_state.flow),
         });
+        if let Some(trade_state) = trade_lookup.get(&link_state.entity) {
+            entity_mut.insert(trade_link_from_state(trade_state));
+        } else {
+            entity_mut.insert(TradeLink::default());
+        }
     }
 
     // Rebuild population cohorts.
@@ -877,11 +931,18 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             );
             continue;
         };
+        let migration = cohort_state
+            .migration
+            .as_ref()
+            .map(pending_migration_from_state);
         world.spawn(PopulationCohort {
             home: home_entity,
             size: cohort_state.size,
             morale: Scalar::from_raw(cohort_state.morale),
             generation: cohort_state.generation,
+            faction: FactionId(cohort_state.faction),
+            knowledge: fragments_from_contract(&cohort_state.knowledge_fragments),
+            migration,
         });
     }
 
@@ -1233,13 +1294,89 @@ fn logistics_state(entity: Entity, link: &LogisticsLink) -> LogisticsLinkState {
     }
 }
 
+fn trade_link_state(entity: Entity, link: &LogisticsLink, trade: &TradeLink) -> TradeLinkState {
+    TradeLinkState {
+        entity: entity.to_bits(),
+        from_faction: trade.from_faction.0,
+        to_faction: trade.to_faction.0,
+        throughput: trade.throughput.raw(),
+        tariff: trade.tariff.raw(),
+        knowledge: TradeLinkKnowledge {
+            openness: trade.openness.raw(),
+            leak_timer: trade.leak_timer,
+            last_discovery: trade.last_discovery.unwrap_or_default(),
+            decay: trade.decay.raw(),
+        },
+        from_tile: link.from.to_bits(),
+        to_tile: link.to.to_bits(),
+        pending_fragments: fragments_to_contract(&trade.pending_fragments),
+    }
+}
+
+fn trade_link_from_state(state: &TradeLinkState) -> TradeLink {
+    TradeLink {
+        from_faction: FactionId(state.from_faction),
+        to_faction: FactionId(state.to_faction),
+        throughput: Scalar::from_raw(state.throughput),
+        tariff: Scalar::from_raw(state.tariff),
+        openness: Scalar::from_raw(state.knowledge.openness),
+        decay: Scalar::from_raw(state.knowledge.decay),
+        leak_timer: state.knowledge.leak_timer,
+        last_discovery: if state.knowledge.last_discovery == 0 {
+            None
+        } else {
+            Some(state.knowledge.last_discovery)
+        },
+        pending_fragments: fragments_from_contract(&state.pending_fragments),
+    }
+}
+
+fn pending_migration_to_state(migration: &PendingMigration) -> PendingMigrationState {
+    PendingMigrationState {
+        destination: migration.destination.0,
+        eta: migration.eta,
+        fragments: fragments_to_contract(&migration.fragments),
+    }
+}
+
+fn pending_migration_from_state(state: &PendingMigrationState) -> PendingMigration {
+    PendingMigration {
+        destination: FactionId(state.destination),
+        eta: state.eta,
+        fragments: fragments_from_contract(&state.fragments),
+    }
+}
+
+fn discovery_progress_entries(ledger: &DiscoveryProgressLedger) -> Vec<DiscoveryProgressEntry> {
+    let mut entries: Vec<DiscoveryProgressEntry> = Vec::new();
+    for (faction_id, discoveries) in ledger.progress.iter() {
+        for (discovery_id, progress) in discoveries.iter() {
+            let raw = progress.raw();
+            if raw <= 0 {
+                continue;
+            }
+            entries.push(DiscoveryProgressEntry {
+                faction: faction_id.0,
+                discovery: *discovery_id,
+                progress: raw,
+            });
+        }
+    }
+    entries.sort_unstable_by(|a, b| (a.faction, a.discovery).cmp(&(b.faction, b.discovery)));
+    entries
+}
+
 fn population_state(entity: Entity, cohort: &PopulationCohort) -> PopulationCohortState {
+    let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     PopulationCohortState {
         entity: entity.to_bits(),
         home: cohort.home.to_bits(),
         size: cohort.size,
         morale: cohort.morale.raw(),
         generation: cohort.generation,
+        faction: cohort.faction.0,
+        knowledge_fragments: fragments_to_contract(&cohort.knowledge),
+        migration,
     }
 }
 

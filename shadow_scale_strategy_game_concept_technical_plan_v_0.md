@@ -506,10 +506,10 @@ Trade, cooperation, and espionage form the connective tissue of global interacti
 - Corruption mechanics layer in tariff evasion, smuggling rings, and embassy kickbacks; factions may tolerate graft to bypass embargoes at the cost of future diplomatic credibility.
 
 #### Knowledge Diffusion Through Exchange
-- Each sustained trade partnership accrues an **Openness** score that feeds into technology leak timers; the higher the openness, the shorter the timer until a discovery enters both tech trees.
-- Migration flows triggered by attractive trade hubs carry tacit knowledge—population cohorts resettling in a new faction seed partial progress toward known technologies and unlock related production recipes faster than espionage alone.
-- Closed economies can slow unwanted diffusion, but lose access to these migration-driven boosts; embargoes or purity doctrines must weigh innovation isolation against stagnant discovery rates.
-- See `docs/architecture.md` ("Trade-Fueled Knowledge Diffusion") for simulation hooks that govern how openness and migration probabilities are modeled.
+- Each sustained trade partnership accrues an **Openness** score (0–1) that now feeds the implemented `TradeKnowledgeDiffusion` stage. Openness runs through a tunable leak curve (min/max tick window + exponent) to produce a countdown; when it expires the receiving faction gains linear research progress equal to the leaking fragment’s stored progress and the event is logged as `trade.tech_diffusion_applied`. See `docs/architecture.md#trade-fueled-knowledge-diffusion` for the exact constants.
+- Migration flows triggered by attractive trade hubs carry tacit knowledge—population cohorts resettling in a new faction emit scaled `KnownTechFragment` payloads (progress scaled by `migration_fragment_scaling`, fidelity floored by `migration_fidelity_floor`). When their `PendingMigration` timer elapses, the destination faction receives the same linear boost and telemetry increments `trade.migration_knowledge_transfers`.
+- Closed economies can still slow unwanted diffusion, but lose migration-driven boosts and see tariff throughput eroded when corruption incidents pile up; openness also decays deterministically each tick using the link’s `decay` rate so isolation demands constant policy upkeep.
+- Trade and migration telemetry now surface every turn, and the inspector will consume the `trade.tech_diffusion_applied` / `trade.migration_knowledge_transfers` counters to make balancing transparent.
 
 ### Diplomacy Drivers
 - Resource interdependence → alliances.
