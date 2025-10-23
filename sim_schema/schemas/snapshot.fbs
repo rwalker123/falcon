@@ -211,6 +211,9 @@ table PopulationCohortState {
   home:ulong;
   size:uint;
   morale:long;
+  generation:ushort;
+  faction:uint;
+  knowledgeFragments:[KnownTechFragment];
 }
 
 table PowerNodeState {
@@ -290,16 +293,48 @@ table SnapshotHeader {
   tick:ulong;
   tileCount:uint;
   logisticsCount:uint;
+  tradeLinkCount:uint;
   populationCount:uint;
   powerCount:uint;
   influencerCount:uint;
   hash:ulong;
 }
 
+table KnownTechFragment {
+  discoveryId:uint;
+  progress:long;
+  fidelity:long;
+}
+
+table TradeLinkKnowledge {
+  openness:long;
+  leakTimer:uint;
+  lastDiscovery:uint;
+  decay:long;
+}
+
+table TradeLinkState {
+  entity:ulong;
+  fromFaction:uint;
+  toFaction:uint;
+  throughput:long;
+  tariff:long;
+  knowledge:TradeLinkKnowledge;
+  fromTile:ulong;
+  toTile:ulong;
+}
+
+table DiscoveryProgressEntry {
+  faction:uint;
+  discovery:uint;
+  progress:long;
+}
+
 table WorldSnapshot {
   header:SnapshotHeader;
   tiles:[TileState];
   logistics:[LogisticsLinkState];
+  tradeLinks:[TradeLinkState];
   populations:[PopulationCohortState];
   power:[PowerNodeState];
   terrainOverlay:TerrainOverlay;
@@ -310,6 +345,7 @@ table WorldSnapshot {
   influencers:[InfluentialIndividualState];
   cultureLayers:[CultureLayerState];
   cultureTensions:[CultureTensionState];
+  discoveryProgress:[DiscoveryProgressEntry];
 }
 
 table WorldDelta {
@@ -318,6 +354,8 @@ table WorldDelta {
   removedTiles:[ulong];
   logistics:[LogisticsLinkState];
   removedLogistics:[ulong];
+  tradeLinks:[TradeLinkState];
+  removedTradeLinks:[ulong];
   populations:[PopulationCohortState];
   removedPopulations:[ulong];
   power:[PowerNodeState];
@@ -333,6 +371,7 @@ table WorldDelta {
   cultureLayers:[CultureLayerState];
   removedCultureLayers:[uint];
   cultureTensions:[CultureTensionState];
+  discoveryProgress:[DiscoveryProgressEntry];
 }
 
 union SnapshotPayload {

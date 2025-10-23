@@ -105,6 +105,10 @@ var terrain_tags_overlay: PackedInt32Array = PackedInt32Array()
 var terrain_tag_labels: Dictionary = {}
 var units: Array = []
 var routes: Array = []
+var tile_lookup: Dictionary = {}
+var trade_links_overlay: Array = []
+var trade_overlay_enabled: bool = false
+var selected_trade_entity: int = -1
 
 var terrain_mode: bool = true
 
@@ -153,6 +157,24 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
     units = Array(snapshot.get("units", []))
     routes = Array(snapshot.get("orders", []))
 
+    tile_lookup.clear()
+    var tile_entries_variant: Variant = snapshot.get("tiles", [])
+    if tile_entries_variant is Array:
+        for entry in tile_entries_variant:
+            if entry is Dictionary:
+                var tile_dict: Dictionary = entry
+                var entity_id: int = int(tile_dict.get("entity", -1))
+                if entity_id < 0:
+                    continue
+                var x: int = int(tile_dict.get("x", 0))
+                var y: int = int(tile_dict.get("y", 0))
+                tile_lookup[entity_id] = Vector2i(x, y)
+
+    if snapshot.has("trade_links"):
+        var trade_variant: Variant = snapshot.get("trade_links")
+        if trade_variant is Array:
+            update_trade_overlay(trade_variant, trade_overlay_enabled)
+
     if dimensions_changed:
         zoom_factor = 1.0
         pan_offset = Vector2.ZERO
@@ -166,7 +188,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
     return {
         "unit_count": units.size(),
         "avg_logistics": _average(logistics_overlay),
-        "avg_sentiment": _average(sentiment_overlay)
+        "avg_sentiment": _average(sentiment_overlay),
+        "dimensions_changed": dimensions_changed
     }
 
 func _draw() -> void:
@@ -186,11 +209,74 @@ func _draw() -> void:
             draw_polygon(polygon_points, PackedColorArray([final_color, final_color, final_color, final_color, final_color, final_color]))
             draw_polyline(_hex_points(center, radius, true), GRID_LINE_COLOR, 2.0, true)
 
+    _draw_trade_overlay(radius, origin)
+
     for unit in units:
         _draw_unit(unit, radius, origin)
 
     for order in routes:
         _draw_route(order, radius, origin)
+
+func update_trade_overlay(trade_links: Array, enabled: bool = trade_overlay_enabled) -> void:
+    trade_links_overlay = []
+    if trade_links is Array:
+        for entry in trade_links:
+            if entry is Dictionary:
+                trade_links_overlay.append((entry as Dictionary).duplicate(true))
+    trade_overlay_enabled = enabled
+    queue_redraw()
+
+func set_trade_overlay_enabled(enabled: bool) -> void:
+    trade_overlay_enabled = enabled
+    queue_redraw()
+
+func set_trade_overlay_selection(entity_id: int) -> void:
+    selected_trade_entity = entity_id
+    if trade_overlay_enabled:
+        queue_redraw()
+
+func _draw_trade_overlay(radius: float, origin: Vector2) -> void:
+    if not trade_overlay_enabled:
+        return
+    if trade_links_overlay.is_empty():
+        return
+    if tile_lookup.is_empty():
+        return
+
+    for entry in trade_links_overlay:
+        if not (entry is Dictionary):
+            continue
+        var link: Dictionary = entry
+        var from_tile: int = int(link.get("from_tile", -1))
+        var to_tile: int = int(link.get("to_tile", -1))
+        if not tile_lookup.has(from_tile) or not tile_lookup.has(to_tile):
+            continue
+        var from_pos: Vector2i = tile_lookup[from_tile]
+        var to_pos: Vector2i = tile_lookup[to_tile]
+        var start: Vector2 = _hex_center(from_pos.x, from_pos.y, radius, origin)
+        var end: Vector2 = _hex_center(to_pos.x, to_pos.y, radius, origin)
+        var knowledge_variant: Variant = link.get("knowledge", {})
+        var openness: float = 0.0
+        var leak_timer: int = 0
+        if knowledge_variant is Dictionary:
+            var knowledge_dict: Dictionary = knowledge_variant
+            openness = float(knowledge_dict.get("openness", 0.0))
+            leak_timer = int(knowledge_dict.get("leak_timer", 0))
+        var throughput: float = float(link.get("throughput", 0.0))
+        var intensity: float = clamp(abs(throughput) * 0.25, 0.0, 2.5)
+        var opacity: float = clamp(0.25 + openness * 0.6, 0.3, 0.95)
+        var base_color: Color = Color(0.95, 0.74, 0.22, opacity)
+        var width: float = 2.0 + intensity
+        var entity_id: int = int(link.get("entity", -1))
+        if entity_id == selected_trade_entity:
+            base_color = Color(0.3, 0.95, 0.7, 0.95)
+            width += 2.0
+
+        draw_line(start, end, base_color, width)
+
+        if leak_timer <= 1:
+            var midpoint: Vector2 = start.lerp(end, 0.5)
+            draw_circle(midpoint, 4.5, Color(1.0, 0.35, 0.28, 0.85))
 
 func _unhandled_input(event: InputEvent) -> void:
     if grid_width == 0 or grid_height == 0:

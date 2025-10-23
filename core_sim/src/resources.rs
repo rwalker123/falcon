@@ -1,10 +1,14 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+};
 
 use bevy::{math::UVec2, prelude::*};
 use sim_runtime::{CorruptionLedger, CorruptionSubsystem};
 
 use crate::{
     culture::CultureTensionRecord,
+    orders::FactionId,
     scalar::{scalar_from_f32, Scalar},
 };
 
@@ -24,6 +28,18 @@ pub struct SimulationConfig {
     pub power_adjust_rate: Scalar,
     pub max_power_generation: Scalar,
     pub mass_flux_epsilon: Scalar,
+    pub base_trade_tariff: Scalar,
+    pub base_trade_openness: Scalar,
+    pub trade_openness_decay: Scalar,
+    pub trade_leak_min_ticks: u32,
+    pub trade_leak_max_ticks: u32,
+    pub trade_leak_exponent: f32,
+    pub trade_leak_progress: Scalar,
+    pub migration_fragment_scaling: Scalar,
+    pub migration_fidelity_floor: Scalar,
+    pub corruption_logistics_penalty: Scalar,
+    pub corruption_trade_penalty: Scalar,
+    pub corruption_military_penalty: Scalar,
     pub snapshot_bind: SocketAddr,
     pub snapshot_flat_bind: SocketAddr,
     pub command_bind: SocketAddr,
@@ -47,6 +63,18 @@ impl Default for SimulationConfig {
             power_adjust_rate: scalar_from_f32(0.02),
             max_power_generation: scalar_from_f32(25.0),
             mass_flux_epsilon: scalar_from_f32(0.001),
+            base_trade_tariff: scalar_from_f32(0.08),
+            base_trade_openness: scalar_from_f32(0.35),
+            trade_openness_decay: scalar_from_f32(0.005),
+            trade_leak_min_ticks: 3,
+            trade_leak_max_ticks: 12,
+            trade_leak_exponent: 1.4,
+            trade_leak_progress: scalar_from_f32(0.12),
+            migration_fragment_scaling: scalar_from_f32(0.25),
+            migration_fidelity_floor: scalar_from_f32(0.35),
+            corruption_logistics_penalty: scalar_from_f32(0.35),
+            corruption_trade_penalty: scalar_from_f32(0.3),
+            corruption_military_penalty: scalar_from_f32(0.4),
             snapshot_bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000),
             snapshot_flat_bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41002),
             command_bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41001),
@@ -180,6 +208,15 @@ impl CorruptionLedgers {
     pub fn ledger_mut(&mut self) -> &mut CorruptionLedger {
         &mut self.ledger
     }
+
+    pub fn total_intensity(&self, subsystem: CorruptionSubsystem) -> i64 {
+        self.ledger
+            .entries
+            .iter()
+            .filter(|entry| entry.subsystem == subsystem)
+            .map(|entry| entry.intensity.max(0))
+            .sum()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -236,5 +273,58 @@ impl DiplomacyLeverage {
             let overflow = self.culture_signals.len() - self.max_entries;
             self.culture_signals.drain(0..overflow);
         }
+    }
+}
+
+#[derive(Resource, Debug, Clone, Default)]
+pub struct DiscoveryProgressLedger {
+    pub progress: HashMap<FactionId, HashMap<u32, Scalar>>,
+}
+
+impl DiscoveryProgressLedger {
+    pub fn add_progress(&mut self, faction: FactionId, discovery_id: u32, delta: Scalar) -> Scalar {
+        let faction_entry = self.progress.entry(faction).or_default();
+        let entry = faction_entry
+            .entry(discovery_id)
+            .or_insert_with(Scalar::zero);
+        *entry = (*entry + delta).clamp(Scalar::zero(), Scalar::one());
+        *entry
+    }
+
+    pub fn get_progress(&self, faction: FactionId, discovery_id: u32) -> Scalar {
+        self.progress
+            .get(&faction)
+            .and_then(|map| map.get(&discovery_id))
+            .copied()
+            .unwrap_or_else(Scalar::zero)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TradeDiffusionRecord {
+    pub tick: u64,
+    pub from: FactionId,
+    pub to: FactionId,
+    pub discovery_id: u32,
+    pub delta: Scalar,
+    pub via_migration: bool,
+}
+
+#[derive(Resource, Debug, Clone, Default)]
+pub struct TradeTelemetry {
+    pub tech_diffusion_applied: u32,
+    pub migration_transfers: u32,
+    pub records: Vec<TradeDiffusionRecord>,
+}
+
+impl TradeTelemetry {
+    pub fn reset_turn(&mut self) {
+        self.tech_diffusion_applied = 0;
+        self.migration_transfers = 0;
+        self.records.clear();
+    }
+
+    pub fn push_record(&mut self, record: TradeDiffusionRecord) {
+        self.records.push(record);
     }
 }

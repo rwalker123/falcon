@@ -14,6 +14,7 @@ pub struct SnapshotHeader {
     pub tick: u64,
     pub tile_count: u32,
     pub logistics_count: u32,
+    pub trade_link_count: u32,
     pub population_count: u32,
     pub power_count: u32,
     pub influencer_count: u32,
@@ -25,6 +26,7 @@ impl SnapshotHeader {
         tick: u64,
         tile_count: usize,
         logistics_count: usize,
+        trade_link_count: usize,
         population_count: usize,
         power_count: usize,
         influencer_count: usize,
@@ -33,6 +35,7 @@ impl SnapshotHeader {
             tick,
             tile_count: tile_count as u32,
             logistics_count: logistics_count as u32,
+            trade_link_count: trade_link_count as u32,
             population_count: population_count as u32,
             power_count: power_count as u32,
             influencer_count: influencer_count as u32,
@@ -47,6 +50,7 @@ impl Default for SnapshotHeader {
             tick: 0,
             tile_count: 0,
             logistics_count: 0,
+            trade_link_count: 0,
             population_count: 0,
             power_count: 0,
             influencer_count: 0,
@@ -263,13 +267,64 @@ pub struct LogisticsLinkState {
     pub flow: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TradeLinkKnowledge {
+    pub openness: i64,
+    pub leak_timer: u32,
+    pub last_discovery: u32,
+    pub decay: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TradeLinkState {
+    pub entity: u64,
+    pub from_faction: u32,
+    pub to_faction: u32,
+    pub throughput: i64,
+    pub tariff: i64,
+    pub knowledge: TradeLinkKnowledge,
+    pub from_tile: u64,
+    pub to_tile: u64,
+}
+
+impl Default for TradeLinkState {
+    fn default() -> Self {
+        Self {
+            entity: 0,
+            from_faction: 0,
+            to_faction: 0,
+            throughput: 0,
+            tariff: 0,
+            knowledge: TradeLinkKnowledge::default(),
+            from_tile: 0,
+            to_tile: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KnownTechFragment {
+    pub discovery_id: u32,
+    pub progress: i64,
+    pub fidelity: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct PopulationCohortState {
     pub entity: u64,
     pub home: u64,
     pub size: u32,
     pub morale: i64,
     pub generation: u16,
+    pub faction: u32,
+    pub knowledge_fragments: Vec<KnownTechFragment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct DiscoveryProgressEntry {
+    pub faction: u32,
+    pub discovery: u32,
+    pub progress: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -627,6 +682,7 @@ pub struct WorldSnapshot {
     pub header: SnapshotHeader,
     pub tiles: Vec<TileState>,
     pub logistics: Vec<LogisticsLinkState>,
+    pub trade_links: Vec<TradeLinkState>,
     pub populations: Vec<PopulationCohortState>,
     pub power: Vec<PowerNodeState>,
     pub terrain: TerrainOverlayState,
@@ -637,6 +693,7 @@ pub struct WorldSnapshot {
     pub influencers: Vec<InfluentialIndividualState>,
     pub culture_layers: Vec<CultureLayerState>,
     pub culture_tensions: Vec<CultureTensionState>,
+    pub discovery_progress: Vec<DiscoveryProgressEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -646,6 +703,8 @@ pub struct WorldDelta {
     pub removed_tiles: Vec<u64>,
     pub logistics: Vec<LogisticsLinkState>,
     pub removed_logistics: Vec<u64>,
+    pub trade_links: Vec<TradeLinkState>,
+    pub removed_trade_links: Vec<u64>,
     pub populations: Vec<PopulationCohortState>,
     pub removed_populations: Vec<u64>,
     pub power: Vec<PowerNodeState>,
@@ -661,6 +720,7 @@ pub struct WorldDelta {
     pub culture_layers: Vec<CultureLayerState>,
     pub removed_culture_layers: Vec<u32>,
     pub culture_tensions: Vec<CultureTensionState>,
+    pub discovery_progress: Vec<DiscoveryProgressEntry>,
 }
 
 impl WorldSnapshot {
@@ -730,6 +790,7 @@ fn build_snapshot_flatbuffer<'a>(
             tick: snapshot.header.tick,
             tileCount: snapshot.header.tile_count,
             logisticsCount: snapshot.header.logistics_count,
+            tradeLinkCount: snapshot.header.trade_link_count,
             populationCount: snapshot.header.population_count,
             powerCount: snapshot.header.power_count,
             influencerCount: snapshot.header.influencer_count,
@@ -739,6 +800,7 @@ fn build_snapshot_flatbuffer<'a>(
 
     let tiles_vec = create_tiles(builder, &snapshot.tiles);
     let logistics_vec = create_logistics(builder, &snapshot.logistics);
+    let trade_links_vec = create_trade_links(builder, &snapshot.trade_links);
     let populations_vec = create_populations(builder, &snapshot.populations);
     let power_vec = create_power(builder, &snapshot.power);
     let terrain_overlay = create_terrain_overlay(builder, &snapshot.terrain);
@@ -758,6 +820,7 @@ fn build_snapshot_flatbuffer<'a>(
     let influencers_vec = create_influencers(builder, &snapshot.influencers);
     let culture_layers_vec = create_culture_layers(builder, &snapshot.culture_layers);
     let culture_tensions_vec = create_culture_tensions(builder, &snapshot.culture_tensions);
+    let discovery_progress_vec = create_discovery_progress(builder, &snapshot.discovery_progress);
 
     let snapshot_table = fb::WorldSnapshot::create(
         builder,
@@ -765,6 +828,7 @@ fn build_snapshot_flatbuffer<'a>(
             header: Some(header),
             tiles: Some(tiles_vec),
             logistics: Some(logistics_vec),
+            tradeLinks: Some(trade_links_vec),
             populations: Some(populations_vec),
             power: Some(power_vec),
             terrainOverlay: Some(terrain_overlay),
@@ -775,6 +839,7 @@ fn build_snapshot_flatbuffer<'a>(
             influencers: Some(influencers_vec),
             cultureLayers: Some(culture_layers_vec),
             cultureTensions: Some(culture_tensions_vec),
+            discoveryProgress: Some(discovery_progress_vec),
             ..Default::default()
         },
     );
@@ -799,6 +864,7 @@ fn build_delta_flatbuffer<'a>(
             tick: delta.header.tick,
             tileCount: delta.header.tile_count,
             logisticsCount: delta.header.logistics_count,
+            tradeLinkCount: delta.header.trade_link_count,
             populationCount: delta.header.population_count,
             powerCount: delta.header.power_count,
             influencerCount: delta.header.influencer_count,
@@ -810,6 +876,8 @@ fn build_delta_flatbuffer<'a>(
     let removed_tiles_vec = builder.create_vector(&delta.removed_tiles);
     let logistics_vec = create_logistics(builder, &delta.logistics);
     let removed_logistics_vec = builder.create_vector(&delta.removed_logistics);
+    let trade_links_vec = create_trade_links(builder, &delta.trade_links);
+    let removed_trade_links_vec = builder.create_vector(&delta.removed_trade_links);
     let populations_vec = create_populations(builder, &delta.populations);
     let removed_populations_vec = builder.create_vector(&delta.removed_populations);
     let power_vec = create_power(builder, &delta.power);
@@ -845,6 +913,7 @@ fn build_delta_flatbuffer<'a>(
     let culture_layers_vec = create_culture_layers(builder, &delta.culture_layers);
     let removed_culture_layers_vec = builder.create_vector(&delta.removed_culture_layers);
     let culture_tensions_vec = create_culture_tensions(builder, &delta.culture_tensions);
+    let discovery_progress_vec = create_discovery_progress(builder, &delta.discovery_progress);
 
     let delta_table = fb::WorldDelta::create(
         builder,
@@ -854,6 +923,8 @@ fn build_delta_flatbuffer<'a>(
             removedTiles: Some(removed_tiles_vec),
             logistics: Some(logistics_vec),
             removedLogistics: Some(removed_logistics_vec),
+            tradeLinks: Some(trade_links_vec),
+            removedTradeLinks: Some(removed_trade_links_vec),
             populations: Some(populations_vec),
             removedPopulations: Some(removed_populations_vec),
             power: Some(power_vec),
@@ -869,6 +940,7 @@ fn build_delta_flatbuffer<'a>(
             cultureLayers: Some(culture_layers_vec),
             removedCultureLayers: Some(removed_culture_layers_vec),
             cultureTensions: Some(culture_tensions_vec),
+            discoveryProgress: Some(discovery_progress_vec),
             ..Default::default()
         },
     );
@@ -932,6 +1004,42 @@ fn create_logistics<'a>(
     builder.create_vector(&offsets)
 }
 
+fn create_trade_links<'a>(
+    builder: &mut FbBuilder<'a>,
+    links: &[TradeLinkState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::TradeLinkState<'a>>>> {
+    let offsets: Vec<_> = links
+        .iter()
+        .map(|link| {
+            let knowledge = fb::TradeLinkKnowledge::create(
+                builder,
+                &fb::TradeLinkKnowledgeArgs {
+                    openness: link.knowledge.openness,
+                    leakTimer: link.knowledge.leak_timer,
+                    lastDiscovery: link.knowledge.last_discovery,
+                    decay: link.knowledge.decay,
+                    ..Default::default()
+                },
+            );
+            fb::TradeLinkState::create(
+                builder,
+                &fb::TradeLinkStateArgs {
+                    entity: link.entity,
+                    fromFaction: link.from_faction,
+                    toFaction: link.to_faction,
+                    throughput: link.throughput,
+                    tariff: link.tariff,
+                    knowledge: Some(knowledge),
+                    fromTile: link.from_tile,
+                    toTile: link.to_tile,
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
 fn create_populations<'a>(
     builder: &mut FbBuilder<'a>,
     cohorts: &[PopulationCohortState],
@@ -939,6 +1047,11 @@ fn create_populations<'a>(
     let offsets: Vec<_> = cohorts
         .iter()
         .map(|cohort| {
+            let knowledge = if cohort.knowledge_fragments.is_empty() {
+                None
+            } else {
+                Some(create_known_fragments(builder, &cohort.knowledge_fragments))
+            };
             fb::PopulationCohortState::create(
                 builder,
                 &fb::PopulationCohortStateArgs {
@@ -946,6 +1059,51 @@ fn create_populations<'a>(
                     home: cohort.home,
                     size: cohort.size,
                     morale: cohort.morale,
+                    generation: cohort.generation,
+                    faction: cohort.faction,
+                    knowledgeFragments: knowledge,
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_known_fragments<'a>(
+    builder: &mut FbBuilder<'a>,
+    fragments: &[KnownTechFragment],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::KnownTechFragment<'a>>>> {
+    let offsets: Vec<_> = fragments
+        .iter()
+        .map(|fragment| {
+            fb::KnownTechFragment::create(
+                builder,
+                &fb::KnownTechFragmentArgs {
+                    discoveryId: fragment.discovery_id,
+                    progress: fragment.progress,
+                    fidelity: fragment.fidelity,
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_discovery_progress<'a>(
+    builder: &mut FbBuilder<'a>,
+    entries: &[DiscoveryProgressEntry],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::DiscoveryProgressEntry<'a>>>> {
+    let offsets: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            fb::DiscoveryProgressEntry::create(
+                builder,
+                &fb::DiscoveryProgressEntryArgs {
+                    faction: entry.faction,
+                    discovery: entry.discovery,
+                    progress: entry.progress,
                     ..Default::default()
                 },
             )

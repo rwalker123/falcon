@@ -264,6 +264,131 @@ bbcode_enabled = true
 fit_content = true
 autowrap_mode = 3
 
+[node name="Trade" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="TradeVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Trade"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="TradeSummarySection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="TradeSummaryLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection"]
+size_flags_horizontal = 3
+text = "Trade Diffusion"
+
+[node name="TradeSummaryText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 1
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+
+[node name="TradeControls" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="TradeOverlayToggle" type="CheckButton" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox/TradeControls"]
+text = "Show trade overlay"
+
+[node name="TradeLinksSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="TradeLinksLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection"]
+size_flags_horizontal = 3
+text = "Top Trade Links"
+
+[node name="TradeLinksList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection"]
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 200)
+same_column_width = true
+allow_rmb_select = true
+
+[node name="TradeEventsSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="TradeEventsLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection"]
+size_flags_horizontal = 3
+text = "Recent Trade Events"
+
+[node name="TradeEventsText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 1
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+
+[node name="Knowledge" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="KnowledgeVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Knowledge"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="KnowledgeSummaryLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+size_flags_horizontal = 3
+text = "Knowledge Diffusion"
+
+[node name="KnowledgeSummaryText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 1
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+
+[node name="DiscoveryProgressSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="DiscoveryProgressLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection"]
+size_flags_horizontal = 3
+text = "Discovery Progress"
+
+[node name="DiscoveryProgressList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection"]
+size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 200)
+same_column_width = true
+allow_rmb_select = true
+
+[node name="KnowledgeEventsSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="KnowledgeEventsLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection"]
+size_flags_horizontal = 3
+text = "Recent Knowledge Events"
+
+[node name="KnowledgeEventsText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 1
+bbcode_enabled = true
+fit_content = true
+autowrap_mode = 3
+
 [node name="Logs" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer"]
 anchor_right = 1.0
 anchor_bottom = 1.0

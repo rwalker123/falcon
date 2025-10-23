@@ -21,6 +21,13 @@ const LogStreamClientScript = preload("res://src/scripts/LogStreamClient.gd")
 @onready var culture_tension_text: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureTensionSection/CultureTensionText
 @onready var influencers_text: RichTextLabel = $RootPanel/TabContainer/Influencers/InfluencersText
 @onready var corruption_text: RichTextLabel = $RootPanel/TabContainer/Corruption/CorruptionText
+@onready var trade_summary_text: RichTextLabel = $RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection/TradeSummaryText
+@onready var trade_overlay_toggle: CheckButton = $RootPanel/TabContainer/Trade/TradeVBox/TradeControls/TradeOverlayToggle
+@onready var trade_links_list: ItemList = $RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection/TradeLinksList
+@onready var trade_events_text: RichTextLabel = $RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection/TradeEventsText
+@onready var knowledge_summary_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeSummaryText
+@onready var discovery_progress_list: ItemList = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection/DiscoveryProgressList
+@onready var knowledge_events_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection/KnowledgeEventsText
 @onready var logs_text: RichTextLabel = $RootPanel/TabContainer/Logs/LogScroll/LogsText
 @onready var log_status_label: Label = $RootPanel/TabContainer/Logs/SparklineContainer/SparklineStatusLabel
 @onready var sparkline_graph: Control = $RootPanel/TabContainer/Logs/SparklineContainer/SparklineGraph
@@ -79,6 +86,13 @@ var _selected_culture_layer_id: int = -1
 var _culture_layers: Dictionary = {}
 var _culture_tensions: Array[Dictionary] = []
 var _culture_tension_tracker: Dictionary = {}
+var _trade_links: Dictionary = {}
+var _trade_metrics: Dictionary = {}
+var _trade_history: Array[Dictionary] = []
+var _discovery_progress: Dictionary = {}
+var _knowledge_events: Array[Dictionary] = []
+var _map_view: Node = null
+var _selected_trade_entity: int = -1
 var _log_messages: Array[String] = []
 var _log_client: RefCounted = null
 var _log_host: String = ""
@@ -137,6 +151,9 @@ const CORRUPTION_OPTIONS = [
     {"label": "Military", "key": "military"},
     {"label": "Governance", "key": "governance"}
 ]
+const TRADE_TOP_LINK_LIMIT = 10
+const TRADE_EVENT_HISTORY_LIMIT = 24
+const KNOWLEDGE_EVENT_HISTORY_LIMIT = 24
 
 var _viewport: Viewport = null
 var _panel_width: float = PANEL_WIDTH_DEFAULT
@@ -157,6 +174,14 @@ func _ready() -> void:
     _apply_theme_overrides()
     _connect_terrain_ui()
     _connect_culture_ui()
+    if trade_overlay_toggle != null:
+        trade_overlay_toggle.toggled.connect(_on_trade_overlay_toggled)
+    if trade_links_list != null:
+        var trade_select_callable = Callable(self, "_on_trade_link_selected")
+        if not trade_links_list.is_connected("item_selected", trade_select_callable):
+            trade_links_list.item_selected.connect(_on_trade_link_selected)
+        if not trade_links_list.is_connected("item_activated", trade_select_callable):
+            trade_links_list.item_activated.connect(_on_trade_link_selected)
     _update_panel_layout()
     _render_static_sections()
     _setup_command_controls()
@@ -199,6 +224,19 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
     if data.has("corruption"):
         var ledger: Dictionary = data["corruption"]
         _corruption = ledger.duplicate(true)
+
+    if full_snapshot and data.has("trade_links"):
+        _rebuild_trade_links(data["trade_links"])
+    elif data.has("trade_link_updates"):
+        _merge_trade_links(data["trade_link_updates"])
+
+    if data.has("trade_link_removed"):
+        _remove_trade_links(data["trade_link_removed"])
+
+    if full_snapshot and data.has("discovery_progress"):
+        _rebuild_discovery_progress(data["discovery_progress"])
+    elif data.has("discovery_progress_updates"):
+        _merge_discovery_progress(data["discovery_progress_updates"])
 
     if data.has("overlays"):
         _ingest_overlays(data["overlays"])
@@ -253,6 +291,8 @@ func _render_dynamic_sections() -> void:
     _render_sentiment()
     _render_influencers()
     _render_corruption()
+    _render_trade()
+    _render_knowledge()
     _render_terrain()
     _render_culture()
     _render_logs()
@@ -268,6 +308,12 @@ func _render_static_sections() -> void:
     _culture_tensions.clear()
     _culture_tension_tracker.clear()
     _selected_culture_layer_id = -1
+    _trade_links.clear()
+    _trade_metrics.clear()
+    _trade_history.clear()
+    _discovery_progress.clear()
+    _knowledge_events.clear()
+    _selected_trade_entity = -1
     _clear_terrain_ui()
     _log_messages.clear()
     _render_terrain()
@@ -279,6 +325,19 @@ func _render_static_sections() -> void:
     _refresh_axis_controls()
     _refresh_influencer_dropdown()
     _update_command_controls_enabled()
+
+    if trade_summary_text != null:
+        trade_summary_text.text = "[b]Trade Diffusion[/b]\nAwaiting trade link telemetry."
+    if trade_links_list != null:
+        trade_links_list.clear()
+    if trade_events_text != null:
+        trade_events_text.text = "[i]No diffusion events recorded yet.[/i]"
+    if knowledge_summary_text != null:
+        knowledge_summary_text.text = "[b]Knowledge Ledger[/b]\nAwaiting discovery progress telemetry."
+    if discovery_progress_list != null:
+        discovery_progress_list.clear()
+    if knowledge_events_text != null:
+        knowledge_events_text.text = "[i]No knowledge transfers recorded.[/i]"
 
 func _apply_theme_overrides() -> void:
     var font_size = DEFAULT_FONT_SIZE
@@ -315,6 +374,12 @@ func _apply_theme_overrides() -> void:
     _apply_font_override(culture_divergence_list, font_size)
     _apply_font_override(culture_divergence_detail, font_size)
     _apply_font_override(culture_tension_text, font_size)
+    _apply_font_override(trade_summary_text, font_size)
+    _apply_font_override(trade_events_text, font_size)
+    _apply_font_override(trade_links_list, font_size)
+    _apply_font_override(knowledge_summary_text, font_size)
+    _apply_font_override(discovery_progress_list, font_size)
+    _apply_font_override(knowledge_events_text, font_size)
 
     if root_panel != null:
         var panel_style = StyleBoxFlat.new()
@@ -1032,6 +1097,330 @@ func _render_culture() -> void:
             ])
     culture_tension_text.text = "\n".join(tension_lines)
 
+func _rebuild_trade_links(array) -> void:
+    _trade_links.clear()
+    _merge_trade_links(array)
+    _selected_trade_entity = -1
+    if trade_links_list != null:
+        trade_links_list.clear()
+    _sync_map_trade_overlay()
+
+func _merge_trade_links(array) -> void:
+    if array is Array:
+        for entry in array:
+            if not (entry is Dictionary):
+                continue
+            var info: Dictionary = (entry as Dictionary).duplicate(true)
+            var id: int = int(info.get("entity", info.get("id", 0)))
+            _trade_links[id] = info
+    _render_trade()
+    _sync_map_trade_overlay()
+
+func _remove_trade_links(ids) -> void:
+    if ids is PackedInt64Array:
+        var packed: PackedInt64Array = ids
+        for value in packed:
+            _trade_links.erase(int(value))
+    elif ids is Array:
+        for value in ids:
+            _trade_links.erase(int(value))
+    if _trade_links.is_empty():
+        _selected_trade_entity = -1
+    _render_trade()
+    _sync_map_trade_overlay()
+
+func _rebuild_discovery_progress(array) -> void:
+    _discovery_progress.clear()
+    _merge_discovery_progress(array)
+
+func _merge_discovery_progress(array) -> void:
+    if array is Array:
+        for entry in array:
+            if not (entry is Dictionary):
+                continue
+            _apply_discovery_progress_entry(entry as Dictionary)
+    _render_knowledge()
+
+func _apply_discovery_progress_entry(entry: Dictionary) -> void:
+    var faction: int = int(entry.get("faction", -1))
+    var discovery: int = int(entry.get("discovery", -1))
+    if faction < 0 or discovery < 0:
+        return
+    var progress_value: float = float(entry.get("progress", entry.get("progress_raw", 0.0)))
+    if not _discovery_progress.has(faction):
+        _discovery_progress[faction] = {}
+    var faction_dict: Dictionary = _discovery_progress[faction]
+    faction_dict[discovery] = progress_value
+
+func _render_trade() -> void:
+    if trade_summary_text == null:
+        return
+
+    if _trade_links.is_empty():
+        trade_summary_text.text = "[b]Trade Diffusion[/b]\n[i]Awaiting trade link telemetry.[/i]"
+        if trade_links_list != null:
+            trade_links_list.clear()
+        if trade_events_text != null:
+            trade_events_text.text = "[i]No diffusion events recorded yet.[/i]"
+        return
+
+    var lines: Array[String] = []
+    lines.append("[b]Trade Diffusion[/b]")
+    lines.append("Tracked links: %d" % _trade_links.size())
+
+    if not _trade_metrics.is_empty():
+        var metric_tick: int = int(_trade_metrics.get("tick", _last_turn))
+        var diffusion_count: int = int(_trade_metrics.get("tech_diffusion_applied", 0))
+        var migration_count: int = int(_trade_metrics.get("migration_transfers", 0))
+        var truncated: int = int(_trade_metrics.get("records_truncated", 0))
+        lines.append("Last tick %d → leaks %d (migration %d, extra %d)"
+            % [metric_tick, diffusion_count, migration_count, truncated])
+
+    var total_open: float = 0.0
+    var total_flow: float = 0.0
+    for value in _trade_links.values():
+        if value is Dictionary:
+            total_open += _extract_trade_openness(value)
+            total_flow += abs(float((value as Dictionary).get("throughput", 0.0)))
+    var avg_open: float = total_open / max(1, _trade_links.size())
+    var avg_flow: float = total_flow / max(1, _trade_links.size())
+    lines.append("Avg openness %.2f | avg flow %.2f" % [avg_open, avg_flow])
+
+    trade_summary_text.text = "\n".join(lines)
+
+    if trade_links_list != null:
+        trade_links_list.clear()
+        var entries: Array = Array(_trade_links.values())
+        entries.sort_custom(Callable(self, "_compare_trade_links"))
+        var limit: int = min(entries.size(), TRADE_TOP_LINK_LIMIT)
+        for idx in range(limit):
+            var info_variant: Variant = entries[idx]
+            if not (info_variant is Dictionary):
+                continue
+            var info: Dictionary = info_variant
+            var entity_id: int = int(info.get("entity", info.get("id", 0)))
+            var openness: float = _extract_trade_openness(info)
+            var throughput: float = float(info.get("throughput", 0.0))
+            var knowledge_variant: Variant = info.get("knowledge", {})
+            var leak_timer: int = 0
+            if knowledge_variant is Dictionary:
+                leak_timer = int((knowledge_variant as Dictionary).get("leak_timer", 0))
+            var from_faction: int = int(info.get("from_faction", -1))
+            var to_faction: int = int(info.get("to_faction", -1))
+            var label: String = "ID %d :: F%d→F%d | open %.2f | τ %d | flow %.2f" % [
+                entity_id,
+                from_faction,
+                to_faction,
+                openness,
+                leak_timer,
+                throughput
+            ]
+            trade_links_list.add_item(label)
+            trade_links_list.set_item_metadata(trade_links_list.get_item_count() - 1, entity_id)
+            if entity_id == _selected_trade_entity:
+                trade_links_list.select(trade_links_list.get_item_count() - 1)
+
+    if trade_events_text != null:
+        if _trade_history.is_empty():
+            trade_events_text.text = "[i]No diffusion events recorded yet.[/i]"
+        else:
+            var event_lines: Array[String] = []
+            for record in _trade_history:
+                if record is Dictionary:
+                    event_lines.append(_format_trade_event_line(record))
+            trade_events_text.text = "\n".join(event_lines)
+
+func _render_knowledge() -> void:
+    if knowledge_summary_text == null:
+        return
+
+    if _discovery_progress.is_empty():
+        knowledge_summary_text.text = "[b]Knowledge Ledger[/b]\n[i]Awaiting discovery progress telemetry.[/i]"
+        if discovery_progress_list != null:
+            discovery_progress_list.clear()
+        if knowledge_events_text != null:
+            knowledge_events_text.text = "[i]No knowledge transfers recorded.[/i]"
+        return
+
+    var lines: Array[String] = []
+    lines.append("[b]Knowledge Ledger[/b]")
+    var faction_keys: Array = _discovery_progress.keys()
+    faction_keys.sort()
+    for key in faction_keys:
+        var faction: int = int(key)
+        var progress_variant: Variant = _discovery_progress[key]
+        if not (progress_variant is Dictionary):
+            continue
+        var progress_dict: Dictionary = progress_variant
+        var entries: Array[Dictionary] = []
+        for discovery_key in progress_dict.keys():
+            var entry_dict: Dictionary = {
+                "discovery": int(discovery_key),
+                "progress": float(progress_dict[discovery_key])
+            }
+            entries.append(entry_dict)
+        entries.sort_custom(Callable(self, "_compare_discovery_entries"))
+        var limit: int = min(entries.size(), 3)
+        var fragments: Array[String] = []
+        for idx in range(limit):
+            var entry = entries[idx]
+            var percent: float = entry.get("progress", 0.0) * 100.0
+            fragments.append("D%d %.1f%%" % [entry.get("discovery", -1), percent])
+        if fragments.is_empty():
+            fragments.append("No visible research")
+        lines.append("Faction %d: %s" % [faction, ", ".join(fragments)])
+
+    knowledge_summary_text.text = "\n".join(lines)
+
+    if discovery_progress_list != null:
+        discovery_progress_list.clear()
+        for faction_key in faction_keys:
+            var faction_int: int = int(faction_key)
+            var inner_variant: Variant = _discovery_progress[faction_key]
+            if not (inner_variant is Dictionary):
+                continue
+            var inner_dict: Dictionary = inner_variant
+            var discoveries: Array = inner_dict.keys()
+            discoveries.sort()
+            for discovery_key in discoveries:
+                var progress_val: float = float(inner_dict[discovery_key]) * 100.0
+                var row: String = "F%d :: Discovery %d — %.1f%%" % [
+                    faction_int,
+                    int(discovery_key),
+                    progress_val
+                ]
+                discovery_progress_list.add_item(row)
+
+    if knowledge_events_text != null:
+        if _knowledge_events.is_empty():
+            knowledge_events_text.text = "[i]No knowledge transfers recorded.[/i]"
+        else:
+            var lines_events: Array[String] = []
+            for record in _knowledge_events:
+                if record is Dictionary:
+                    lines_events.append(_format_knowledge_event_line(record))
+            knowledge_events_text.text = "\n".join(lines_events)
+
+func _compare_trade_links(a: Dictionary, b: Dictionary) -> bool:
+    var a_open: float = _extract_trade_openness(a)
+    var b_open: float = _extract_trade_openness(b)
+    if is_equal_approx(a_open, b_open):
+        var a_flow: float = abs(float(a.get("throughput", 0.0)))
+        var b_flow: float = abs(float(b.get("throughput", 0.0)))
+        return a_flow > b_flow
+    return a_open > b_open
+
+func _compare_discovery_entries(a: Dictionary, b: Dictionary) -> bool:
+    var a_progress: float = float(a.get("progress", 0.0))
+    var b_progress: float = float(b.get("progress", 0.0))
+    return a_progress > b_progress
+
+func _extract_trade_openness(info: Dictionary) -> float:
+    var knowledge_variant: Variant = info.get("knowledge", {})
+    if knowledge_variant is Dictionary:
+        return float((knowledge_variant as Dictionary).get("openness", 0.0))
+    return 0.0
+
+func attach_map_view(view: Node) -> void:
+    _map_view = view
+    _sync_map_trade_overlay()
+
+func _sync_map_trade_overlay() -> void:
+    if _map_view == null:
+        return
+    var links_array: Array = []
+    for value in _trade_links.values():
+        if value is Dictionary:
+            links_array.append((value as Dictionary).duplicate(true))
+    var enabled: bool = trade_overlay_toggle != null and trade_overlay_toggle.button_pressed
+    if _map_view.has_method("update_trade_overlay"):
+        _map_view.call("update_trade_overlay", links_array, enabled)
+    if _map_view.has_method("set_trade_overlay_enabled"):
+        _map_view.call("set_trade_overlay_enabled", enabled)
+    if _map_view.has_method("set_trade_overlay_selection"):
+        _map_view.call("set_trade_overlay_selection", _selected_trade_entity)
+
+func _on_trade_overlay_toggled(pressed: bool) -> void:
+    _sync_map_trade_overlay()
+
+func _on_trade_link_selected(index: int) -> void:
+    if trade_links_list == null:
+        return
+    if index < 0 or index >= trade_links_list.get_item_count():
+        _selected_trade_entity = -1
+        _sync_map_trade_overlay()
+        return
+    var meta = trade_links_list.get_item_metadata(index)
+    if typeof(meta) in [TYPE_INT, TYPE_FLOAT]:
+        _selected_trade_entity = int(meta)
+    else:
+        _selected_trade_entity = -1
+    _sync_map_trade_overlay()
+
+func _push_trade_record(record: Dictionary, tick: int) -> void:
+    var entry: Dictionary = record.duplicate(true)
+    entry["tick"] = tick
+    _trade_history.append(entry.duplicate(true))
+    while _trade_history.size() > TRADE_EVENT_HISTORY_LIMIT:
+        _trade_history.pop_front()
+    _knowledge_events.append(entry)
+    while _knowledge_events.size() > KNOWLEDGE_EVENT_HISTORY_LIMIT:
+        _knowledge_events.pop_front()
+
+func _format_trade_event_line(record: Dictionary) -> String:
+    var tick: int = int(record.get("tick", _last_turn))
+    var from_faction: int = int(record.get("from", -1))
+    var to_faction: int = int(record.get("to", -1))
+    var discovery: int = int(record.get("discovery", -1))
+    var delta_percent: float = float(record.get("delta", 0.0)) * 100.0
+    var via_migration: bool = bool(record.get("via_migration", false))
+    var tag: String = "migration" if via_migration else "trade"
+    return "[%03d] F%d→F%d discovery %d +%.2f%% (%s)" % [
+        tick,
+        from_faction,
+        to_faction,
+        discovery,
+        delta_percent,
+        tag
+    ]
+
+func _format_knowledge_event_line(record: Dictionary) -> String:
+    var tick: int = int(record.get("tick", _last_turn))
+    var from_faction: int = int(record.get("from", -1))
+    var to_faction: int = int(record.get("to", -1))
+    var discovery: int = int(record.get("discovery", -1))
+    var delta_percent: float = float(record.get("delta", 0.0)) * 100.0
+    var via_migration: bool = bool(record.get("via_migration", false))
+    var source_label: String = "migration" if via_migration else "trade"
+    return "[%03d] F%d ← F%d discovery %d +%.2f%% (%s)" % [
+        tick,
+        to_faction,
+        from_faction,
+        discovery,
+        delta_percent,
+        source_label
+    ]
+
+func _maybe_ingest_trade_telemetry(entry: Dictionary) -> bool:
+    var message: String = String(entry.get("message", ""))
+    if not message.begins_with("trade.telemetry "):
+        return false
+    var payload := message.substr("trade.telemetry ".length())
+    var parsed: Variant = JSON.parse_string(payload)
+    if typeof(parsed) != TYPE_DICTIONARY:
+        return false
+    var info: Dictionary = parsed
+    _trade_metrics = info.duplicate(true)
+    var tick_value: int = int(info.get("tick", _last_turn))
+    var records_variant: Variant = info.get("records", [])
+    if records_variant is Array:
+        for record_variant in records_variant:
+            if record_variant is Dictionary:
+                _push_trade_record(record_variant as Dictionary, tick_value)
+    _render_trade()
+    _render_knowledge()
+    return true
+
 func _update_culture_divergence_detail() -> void:
     if culture_divergence_detail == null:
         return
@@ -1706,6 +2095,7 @@ func _update_log_status(message: String) -> void:
 
 func _ingest_log_entry(entry: Dictionary) -> void:
     _record_tick_sample(entry)
+    _maybe_ingest_trade_telemetry(entry)
     var formatted: String = _format_log_entry(entry)
     if formatted != "":
         _append_log_entry(formatted)

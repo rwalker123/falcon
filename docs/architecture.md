@@ -51,74 +51,24 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
   - Enrich the Godot extension to surface multiple overlays (logistics intensity, sentiment pressure, corruption risk) and update `MapView.gd` to switch/toggle between them instead of hardcoding a single blend.
   - Add instrumentation hooks so overlays can be validated against CLI inspector metrics while we iterate on colour ramps/normalisation.
 
-### Trade-Fueled Knowledge Diffusion (Concept Backlog)
-- Model discovery diffusion through trade openness, matching the narrative beats in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §8.
-- Each bilateral trade edge tracks an **Openness** scalar (0–1) derived from treaties, tariffs, and infrastructure compatibility. Openness modulates the leak timer for discoveries shared between the two factions.
-- Migration subsystems consume trade attractiveness scores; when population cohorts relocate, they carry partial progress toward technologies they already know, seeding receiving factions with accelerated research ticks.
-- Closed or embargoed states extend leak timers and suppress migration-based boosts, but also lower trade throughput and sentiment toward openness-aligned factions.
+### Trade-Fueled Knowledge Diffusion
+- **Data model**: `TradeLinkState` serializes throughput, tariff, and a `TradeLinkKnowledge` payload (`openness`, `leak_timer`, `last_discovery`, `decay`). `PopulationCohortState` now exposes optional `knowledge_fragments:[KnownTechFragment]`, letting migrations ship tacit knowledge. These additions participate in snapshot/delta hashing.
+- **Runtime helpers**: `sim_runtime` ships `TradeLeakCurve`, `apply_openness_decay`, `scale_migration_fragments`, and `merge_fragment_payload`, mirroring the fixed-point arithmetic used inside `core_sim` so tooling can project leak cadence without embedding Bevy.
+- **Simulation stage**: `trade_knowledge_diffusion` runs after logistics, refreshes throughput/tariff (already reduced by corruption), decrements leak timers, emits `TradeDiffusionEvent`s when timers expire, applies linear research progress to `DiscoveryProgressLedger`, and resets timers via the configured leak curve. Telemetry increments `trade.tech_diffusion_applied` and archives the record for inspector use.
+- **Migration flow**: `simulate_population` manages optional `PendingMigration` payloads. When morale/openess align, cohorts snapshot scaled fragments (`migration_fragment_scaling`, `migration_fidelity_floor`) headed to a destination faction. On arrival the fragments merge into the destination ledger, the cohort flips ownership, and telemetry increments `trade.migration_knowledge_transfers` with `via_migration=true`.
+- **Configuration surface**: `SimulationConfig` exposes diffusion knobs (`trade_leak_min_ticks`, `trade_leak_max_ticks`, `trade_leak_exponent`, `trade_leak_progress`, `trade_openness_decay`) and migration knobs (`migration_fragment_scaling`, `migration_fidelity_floor`). Designers should cross-reference `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §8 while tuning these values.
+- **Telemetry & logging**: `TradeTelemetry` resets each tick, tracks diffusion/migration counts, stores per-event records, and emits `trade.telemetry` log lines after population resolution. Inspector overlays will subscribe directly to these counters.
 
-#### Implementation Notes
-- **Data Model**: Extend trade graph entities with a `TradeLinkKnowledge` component storing openness, last shared tech id, and decay timers. Population units gain an optional `KnownTechnologies` summary used during migration events.
-- **Simulation Systems**: Add a `TradeKnowledgeDiffusion` stage after logistics to decrement leak timers, instantiate tech share events, and trigger migration knowledge transfers. Hook outputs into existing tech progress and discovery notification pipelines.
-- **Balancing Hooks**: Expose tuning constants via `SimulationConfig` (e.g., openness-to-timer curve, migration knowledge fidelity) to iterate quickly during playtests.
-- **Telemetry**: Emit metrics (`trade.tech_diffusion_applied`, `trade.migration_knowledge_transfers`) so the Godot inspector (and legacy CLI fallback) can visualize how trade openness reshapes tech parity.
-- **Future UI**: Plan inspector overlays showing heatmaps of openness and pending diffusion events, keeping the feature visible during iteration.
-- **Schema & Runtime Scope**: `sim_schema` gains `table TradeLinkKnowledge { openness: float32; leak_timer: uint32; last_discovery: DiscoveryId; decay: float32; }` referenced from `TradeLinkState`, plus an optional `KnownTechFragment` vector on migrating population records. `sim_runtime` exposes helpers to (a) compute openness deltas from treaties/infrastructure assets and (b) fold migrating cohorts’ knowledge fragments into the receiving faction’s research progress. Both crates depend on existing discovery ids and population serialization, so coordinate ordering changes with `core_sim` before bumping schema version.
+### Corruption Simulation Backbone
+- **Subsystem multipliers**: `CorruptionLedgers::total_intensity` aggregates raw intensity by subsystem. `corruption_multiplier` converts that intensity into a clamped scalar applied by logistics (flow gain/capacity), trade (tariff yield), and military power (net generation), making corruption drag explicit.
+- **Config knobs**: `SimulationConfig` adds `corruption_logistics_penalty`, `corruption_trade_penalty`, and `corruption_military_penalty` so balance passes can tune how hard incidents bite. Integration tests confirm corrupted scenarios reduce throughput without breaking determinism.
+- **Telemetry coupling**: Exposures still feed sentiment/diplomacy via `CorruptionTelemetry` and `DiplomacyLeverage`; the new multipliers execute in the same tick, so designers see both scandal fallout and economic losses together.
 
 #### Inspector Overlay Prototype Plan
 - Gate rendering behind the `trade.tech_diffusion_applied` metric; reuse the Godot inspector snapshot stream to surface openness values per trade link (legacy CLI subscription stays available for verification).
 - Start with a map-overlay panel that colorizes trade edges by openness and displays countdowns for active leak timers; use the sentiment heatmap widget as a code reference for gradient rendering.
 - Add a secondary list widget showing migration-driven knowledge transfers (source faction, destination faction, tech fragment %, remaining turns) to give designers quick validation feedback.
 - Instrument a dedicated Godot input action (e.g., `inspector_toggle_trade_overlay`) to show/hide the overlay without disrupting existing layouts, and keep the legacy CLI key binding for verification runs.
-
-### Corruption Simulation Backbone (Concept Backlog)
-- Provide a shared corruption metric per faction and per subsystem (logistics, trade, military, governance) that influences efficiency, sentiment, and diplomatic leverage as laid out in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §§6–9a.
-- Corruption incidents originate from budget allocations (logistics maintenance, military procurement), trade routes (smuggling, tariff evasion), and population governance nodes (agency capture, black markets).
-- Detection pipelines feed into sentiment and diplomacy outputs: exposed scandals create trust shocks and diplomatic modifiers, successful reforms grant temporary efficiency buffs.
-- Integrate with calamity triggers by letting systemic corruption raise vulnerability multipliers (e.g., disaster relief misallocation).
-
-#### Implementation Notes
-- **Data Model**: Add `CorruptionLedger` resource tracking per-subsystem corruption intensity, active incidents, timers to exposure, and restitution potential. Extend relevant components (`LogisticsHubState`, `TradeLinkState`, `MilitaryUnitState`) with optional corruption hooks referencing ledger entries.
-- **Simulation Systems**: Insert corruption evaluation passes after resource/budget allocation phases—e.g., `ApplyLogisticsCorruption`, `ApplyMilitaryProcurementCorruption`, `TradeSmugglingResolver`. Systems adjust throughput, equipment quality, or trade tariffs before downstream calculations.
-- **Sentiment & Diplomacy Coupling**: Expose corruption-derived deltas to the sentiment sphere (Trust axis) and diplomacy engine via shared events (`CorruptionScandalEvent`, `PatronageStabilizerEvent`), keeping cross-system feedback explicit.
-- **Controls & Policies**: Parameterize anti-corruption efforts (audits, special courts) as policy actions that reduce ledger magnitude at resource or political cost; enable espionage missions to induce or reveal corruption.
-- **Telemetry**: Emit metrics (`corruption.incidents_active`, `corruption.resources_lost`, `corruption.trust_delta_applied`) for UI overlays and balancing.
-- **Tooling**: Plan CLI inspector panels summarizing current corruption scores, incident timers, and recent exposés, aligning with future sentiment and trade overlays.
-- **System Touchpoints**: Logistics throughput reducers (ghost shipments, maintenance fraud), trade smuggling/evasion modifiers, military procurement quality gates, and governance/population relief allocators must all consult the ledger. Each subsystem should expose hook points for both corruption inflow (register incidents) and mitigation (audits, reforms) so the ledger can orchestrate cross-system consequences.
-- **Debug Hooks**: The headless server exposes a `corruption <subsystem> <intensity> <timer>` command (reachable from the CLI inspector via `g` after selecting a subsystem with `v`) that registers a synthetic incident for testing.
-
-#### Schema Alignment Plan
-- FlatBuffers: introduce `table CorruptionEntry { subsystem: CorruptionSubsystem; intensity: float32; incident_id: ulong; exposure_timer: uint16; restitution_window: uint16; last_update_tick: uint64; }` and `table CorruptionLedger { entries: [CorruptionEntry]; reputation_modifier: float32; audit_capacity: uint16; }`. Extend `FactionSnapshot` with `corruption: CorruptionLedger` and reference `incident_id` from `LogisticsHubState`, `TradeLinkState`, and `MilitaryFormationState`.
-- Enum additions: `CorruptionSubsystem` extends existing subsystem enum; ensure values are appended to maintain backward compatibility. Version gate the schema by bumping `snapshot_schema_version` and providing upgrade notes in `sim_runtime`.
-- Serialization: `sim_runtime` offers helper fns `ledger_mut(faction_id)` and `register_corruption_incident` to keep ECS code from touching FlatBuffer internals. Provide conversions for deterministic hashing (include ledger in hash inputs).
-- Migration: author an interim adapter that treats missing ledger fields as empty (for save compatibility). Update determinism tests to account for ledger serialization order.
-- Dependency sequencing: land schema change PR ahead of `core_sim` corruption passes; coordinate with CLI inspector instrumentation so telemetry ids stay stable.
-
-#### Incident Prototype Plan
-- Event Types: define `CorruptionIncident` (hidden) and `CorruptionExposure` (public) structs carrying subsystem, magnitude, implicated entities, and suggested follow-up actions. Wire both into the global event bus so sentiment and diplomacy systems subscribe without tight coupling.
-- Generation Loop: after ledger updates, spawn incidents when intensity exceeds configurable thresholds; roll exposure each tick using audit capacity, external espionage pressure, or media freedom modifiers.
-- Sentiment Hook: upon exposure, push `SentimentDelta { axis: Trust, magnitude: -incident.magnitude * trust_multiplier }`; anti-corruption projects dispatch inverse deltas when successful.
-- Diplomacy Hook: publish diplomatic modifiers (`CorruptionLeverage` for rivals, `CorruptionSolidarity` for allies who cover up) with expiration timers mirrored to the incident restitution window.
-- Metrics & Inspector: log incidents to `corruption.incidents_active` and `corruption.exposures_this_turn`; inspector dashboard will list active incidents with countdowns, plus last three exposures for quick validation.
-- Validation Harness: craft scripted scenario in integration tests spawning deterministic corruption events, asserting sentiment/diplomacy metrics, and verifying ledger serialization via snapshot diff.
-### Influential Individuals System
-- **Data Contracts**: `InfluentialIndividualState` now captures scope tier (Local/Regional/Global/Generation), lifecycle, audience generations, notoriety, coherence, multi-channel support (popular, peer, institutional, humanitarian), channel weights, and cross-system bonuses in addition to id/domain/influence. Snapshots/deltas carry creation/removal diffs plus partial updates for lifecycle/coherence/channel changes to keep rollbacks deterministic.
-- **Core Resources**: `InfluentialRoster` (deterministic SmallRng spawn pipeline) advances potentials through scope tiers, evaluates multi-channel coherence each tick, accumulates notoriety, and re-computes logistics/morale/power modifiers. `InfluencerImpacts` continues to expose aggregate multipliers used by downstream systems.
-- **System Coupling**:
-  - `tick_influencers` precedes materials/logistics/population/power, writing sentiment deltas into `SentimentAxisBias` and scaling logistics/morale/power via `InfluencerImpacts`.
-  - Coherence is now a weighted blend of the four support channels. Popular sentiment draws from axis alignment and demographic share; peer prestige leans on Knowledge axes; institutional backing references Equity/Agency signals; humanitarian capital uses Trust + demographic morale. Channel boosts decay over time, ensuring propaganda spikes are temporary unless reinforced.
-  - Lifecycle logic is scope-aware: Local potentials have lighter promotion thresholds, Regional/Global tiers require steeper coherence *and* notoriety, and Dormant figures persist (zero impact) until extreme stagnation clears them.
-- **Commands & Networking**:
-  - `support <id> [magnitude]` / `suppress <id> [magnitude]` nudge momentum while adjusting notoriety. `support_channel <id> <popular|peer|institutional|humanitarian> [magnitude]` applies targeted propaganda. `spawn_influencer [scope] [generation]` remains for deterministic testing.
-  - Snapshot history retains influencer maps; deltas broadcast via `update_influencers` and `update_axis_bias` whenever lifecycle, channels, or manual biases change materially.
-- **CLI Inspector**:
-  - The roster panel displays lifecycle badges, scope tier, notoriety, channel breakdowns (scores + weights), and dominant support lanes. Hotkeys: `j/k` cycle selection, `s`/`x` issue support/suppress, `c` boosts the dominant channel, `f` cycles lifecycle filters, `i` spawns a fresh potential. Legend + filter metadata remain visible even when filters hide all entries.
-- **Restore Path**: `restore_world_from_snapshot` rebuilds roster, channel boosts, impacts, and manual bias state from snapshot payloads, recomputing filters so UI/client state stays consistent. (See §7b of the game manual for narrative framing and player-facing messaging.)
-
-### Sentiment Telemetry
-- `SentimentAxisBias` now tracks three sources of pressure per axis: long-lived **policy levers**, transient **incident shocks**, and emergent **influencer deltas**. Corruption exposures call `apply_incident_delta`, which preserves the sampled trust hit alongside the ledger metadata.
-- Snapshots emit a `SentimentTelemetryState` parallel to `AxisBiasState`. Each axis carries totals plus ranked `SentimentDriverState` entries tagged by category (Policy/Incident/Influencer). `SnapshotHistory` diffs that payload via `WorldDelta.sentiment`, so inspectors receive lightweight updates whenever contributions change.
-- The CLI inspector swaps the previous heuristics for this telemetry feed. Policy adjustments, exposed incidents, and dominant influencer channels now surface explicitly in the Sentiment panel and event log, keeping balancing conversations grounded in the same numbers designers tune. The narrative framing lives in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §7b.
 
 ### Culture Simulation Spine
 - **See Also**: `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §7c for player-facing framing of culture layers and trait axes.

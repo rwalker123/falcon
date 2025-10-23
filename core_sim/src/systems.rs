@@ -1,22 +1,67 @@
 use std::cmp::max;
 
 use bevy::{math::UVec2, prelude::*};
+use log::debug;
+use serde_json::json;
 
 use crate::{
-    components::{ElementKind, LogisticsLink, PopulationCohort, PowerNode, Tile},
+    components::{
+        fragments_from_contract, fragments_to_contract, ElementKind, KnowledgeFragment,
+        LogisticsLink, PendingMigration, PopulationCohort, PowerNode, Tile, TradeLink,
+    },
     culture::{
         CultureEffectsCache, CultureManager, CultureSchismEvent, CultureTensionEvent,
         CultureTensionKind, CultureTensionRecord, CultureTraitAxis, CULTURE_TRAIT_AXES,
     },
     generations::GenerationRegistry,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
+    orders::{FactionId, FactionRegistry},
     resources::{
         CorruptionExposureRecord, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
-        SentimentAxisBias, SimulationConfig, SimulationTick, TileRegistry,
+        DiscoveryProgressLedger, SentimentAxisBias, SimulationConfig, SimulationTick, TileRegistry,
+        TradeDiffusionRecord, TradeTelemetry,
     },
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
     terrain::{terrain_definition, terrain_for_position},
 };
+use sim_runtime::{
+    apply_openness_decay, merge_fragment_payload, scale_migration_fragments, CorruptionSubsystem,
+    TradeLeakCurve,
+};
+
+#[derive(Event, Debug, Clone)]
+pub struct TradeDiffusionEvent {
+    pub tick: u64,
+    pub from: FactionId,
+    pub to: FactionId,
+    pub discovery_id: u32,
+    pub delta: Scalar,
+    pub via_migration: bool,
+}
+
+#[derive(Event, Debug, Clone)]
+pub struct MigrationKnowledgeEvent {
+    pub tick: u64,
+    pub from: FactionId,
+    pub to: FactionId,
+    pub discovery_id: u32,
+    pub delta: Scalar,
+}
+
+fn corruption_multiplier(
+    ledgers: &CorruptionLedgers,
+    subsystem: CorruptionSubsystem,
+    penalty: Scalar,
+) -> Scalar {
+    let raw_intensity = ledgers.total_intensity(subsystem).max(0);
+    if raw_intensity == 0 {
+        return Scalar::one();
+    }
+    let intensity = Scalar::from_raw(raw_intensity).clamp(Scalar::zero(), Scalar::one());
+    let mut reduction = intensity * penalty;
+    reduction = reduction.clamp(Scalar::zero(), scalar_from_f32(0.9));
+    (Scalar::one() - reduction).clamp(scalar_from_f32(0.1), Scalar::one())
+}
 
 /// Spawn initial grid of tiles, logistics links, power nodes, and population cohorts.
 pub fn spawn_initial_world(
@@ -78,21 +123,45 @@ pub fn spawn_initial_world(
             let from_entity = tiles[idx];
             if x + 1 < width {
                 let to_entity = tiles[y * width + (x + 1)];
-                commands.spawn(LogisticsLink {
-                    from: from_entity,
-                    to: to_entity,
-                    capacity: config.base_link_capacity,
-                    flow: scalar_zero(),
-                });
+                commands
+                    .spawn(LogisticsLink {
+                        from: from_entity,
+                        to: to_entity,
+                        capacity: config.base_link_capacity,
+                        flow: scalar_zero(),
+                    })
+                    .insert(TradeLink {
+                        from_faction: FactionId(0),
+                        to_faction: FactionId(0),
+                        throughput: scalar_zero(),
+                        tariff: config.base_trade_tariff,
+                        openness: config.base_trade_openness,
+                        decay: config.trade_openness_decay,
+                        leak_timer: config.trade_leak_max_ticks,
+                        last_discovery: None,
+                        pending_fragments: Vec::new(),
+                    });
             }
             if y + 1 < height {
                 let to_entity = tiles[(y + 1) * width + x];
-                commands.spawn(LogisticsLink {
-                    from: from_entity,
-                    to: to_entity,
-                    capacity: config.base_link_capacity,
-                    flow: scalar_zero(),
-                });
+                commands
+                    .spawn(LogisticsLink {
+                        from: from_entity,
+                        to: to_entity,
+                        capacity: config.base_link_capacity,
+                        flow: scalar_zero(),
+                    })
+                    .insert(TradeLink {
+                        from_faction: FactionId(0),
+                        to_faction: FactionId(0),
+                        throughput: scalar_zero(),
+                        tariff: config.base_trade_tariff,
+                        openness: config.base_trade_openness,
+                        decay: config.trade_openness_decay,
+                        leak_timer: config.trade_leak_max_ticks,
+                        last_discovery: None,
+                        pending_fragments: Vec::new(),
+                    });
             }
         }
     }
@@ -107,6 +176,9 @@ pub fn spawn_initial_world(
                 size: 1_000,
                 morale: scalar_from_f32(0.6),
                 generation: registry.assign_for_index(cohort_index),
+                faction: FactionId(0),
+                knowledge: Vec::new(),
+                migration: None,
             });
             cohort_index += 1;
         }
@@ -151,12 +223,20 @@ pub fn simulate_logistics(
     config: Res<SimulationConfig>,
     impacts: Res<InfluencerImpacts>,
     effects: Res<CultureEffectsCache>,
+    ledgers: Res<CorruptionLedgers>,
     mut links: Query<&mut LogisticsLink>,
     mut tiles: Query<&mut Tile>,
 ) {
-    let flow_gain =
-        (config.logistics_flow_gain * impacts.logistics_multiplier * effects.logistics_multiplier)
-            .clamp(scalar_from_f32(0.02), scalar_from_f32(0.5));
+    let corruption_factor = corruption_multiplier(
+        &ledgers,
+        CorruptionSubsystem::Logistics,
+        config.corruption_logistics_penalty,
+    );
+    let flow_gain = (config.logistics_flow_gain
+        * impacts.logistics_multiplier
+        * effects.logistics_multiplier
+        * corruption_factor)
+        .clamp(scalar_from_f32(0.02), scalar_from_f32(0.5));
     for mut link in links.iter_mut() {
         let Ok([mut source, mut target]) = tiles.get_many_mut([link.from, link.to]) else {
             link.flow = scalar_zero();
@@ -171,7 +251,8 @@ pub fn simulate_logistics(
         let penalty_scalar = Scalar::from_f32(penalty_avg.max(0.1));
         let attrition_scalar = Scalar::from_f32(attrition_avg);
         let effective_gain = (flow_gain / penalty_scalar).clamp(scalar_from_f32(0.005), flow_gain);
-        let capacity = (link.capacity / penalty_scalar).max(scalar_from_f32(0.05));
+        let capacity =
+            ((link.capacity * corruption_factor) / penalty_scalar).max(scalar_from_f32(0.05));
         let gradient = source.mass - target.mass;
         let transfer_raw = (gradient * effective_gain).clamp(-capacity, capacity);
         let delivered = transfer_raw * (Scalar::one() - attrition_scalar);
@@ -181,13 +262,133 @@ pub fn simulate_logistics(
     }
 }
 
+/// Diffuse knowledge along trade links using openness-derived leak timers.
+pub fn trade_knowledge_diffusion(
+    config: Res<SimulationConfig>,
+    mut telemetry: ResMut<TradeTelemetry>,
+    mut discovery: ResMut<DiscoveryProgressLedger>,
+    ledgers: Res<CorruptionLedgers>,
+    tick: Res<SimulationTick>,
+    mut events: EventWriter<TradeDiffusionEvent>,
+    mut links: Query<(&LogisticsLink, &mut TradeLink)>,
+) {
+    telemetry.reset_turn();
+    let leak_curve = TradeLeakCurve::new(
+        config.trade_leak_min_ticks,
+        config.trade_leak_max_ticks,
+        config.trade_leak_exponent,
+    );
+    let trade_multiplier = corruption_multiplier(
+        &ledgers,
+        CorruptionSubsystem::Trade,
+        config.corruption_trade_penalty,
+    );
+    let tariff_base = config.base_trade_tariff;
+
+    for (logistics, mut trade) in links.iter_mut() {
+        trade.throughput = logistics.flow * trade_multiplier;
+        trade.tariff = (tariff_base * trade_multiplier).clamp(scalar_zero(), tariff_base);
+        trade.openness = trade.openness.clamp(scalar_zero(), scalar_one());
+        trade.openness = Scalar::from_raw(apply_openness_decay(
+            trade.openness.raw(),
+            trade.decay.raw(),
+        ));
+
+        if trade.leak_timer > 0 {
+            trade.leak_timer = trade.leak_timer.saturating_sub(1);
+        }
+
+        if trade.leak_timer == 0 {
+            let fragment = if !trade.pending_fragments.is_empty() {
+                trade.pending_fragments.remove(0)
+            } else {
+                let discovery_id = trade
+                    .last_discovery
+                    .unwrap_or((trade.from_faction.0 << 8) | trade.to_faction.0);
+                KnowledgeFragment::new(discovery_id, config.trade_leak_progress, Scalar::one())
+            };
+
+            let delta = fragment.progress;
+            if delta > scalar_zero() {
+                let discovery_id = fragment.discovery_id;
+                let _ = discovery.add_progress(trade.to_faction, discovery_id, delta);
+                telemetry.tech_diffusion_applied =
+                    telemetry.tech_diffusion_applied.saturating_add(1);
+                telemetry.push_record(TradeDiffusionRecord {
+                    tick: tick.0,
+                    from: trade.from_faction,
+                    to: trade.to_faction,
+                    discovery_id,
+                    delta,
+                    via_migration: false,
+                });
+                events.send(TradeDiffusionEvent {
+                    tick: tick.0,
+                    from: trade.from_faction,
+                    to: trade.to_faction,
+                    discovery_id,
+                    delta,
+                    via_migration: false,
+                });
+                trade.last_discovery = Some(discovery_id);
+            }
+
+            trade.leak_timer = leak_curve.ticks_for_openness(trade.openness.raw());
+            if trade.leak_timer == 0 {
+                trade.leak_timer = config.trade_leak_min_ticks.max(1);
+            }
+        }
+    }
+}
+
+/// Publish trade telemetry counters for downstream logging/metrics.
+pub fn publish_trade_telemetry(telemetry: Res<TradeTelemetry>, tick: Res<SimulationTick>) {
+    let snapshot = json!({
+        "tick": tick.0,
+        "tech_diffusion_applied": telemetry.tech_diffusion_applied,
+        "migration_transfers": telemetry.migration_transfers,
+        "records": telemetry
+            .records
+            .iter()
+            .take(24)
+            .map(|record| {
+                json!({
+                    "from": record.from.0,
+                    "to": record.to.0,
+                    "discovery": record.discovery_id,
+                    "delta": record.delta.to_f32(),
+                    "via_migration": record.via_migration,
+                })
+            })
+            .collect::<Vec<_>>(),
+        "records_truncated": telemetry.records.len().saturating_sub(24),
+    });
+
+    match serde_json::to_string(&snapshot) {
+        Ok(payload) => debug!("trade.telemetry {}", payload),
+        Err(_) => debug!(
+            "trade.telemetry tick={} trade.tech_diffusion_applied={} trade.migration_transfers={} records={}",
+            tick.0,
+            telemetry.tech_diffusion_applied,
+            telemetry.migration_transfers,
+            telemetry.records.len()
+        ),
+    }
+}
+
 /// Update population cohorts based on environmental conditions.
 pub fn simulate_population(
     config: Res<SimulationConfig>,
+    registry: Res<FactionRegistry>,
     impacts: Res<InfluencerImpacts>,
     effects: Res<CultureEffectsCache>,
     tiles: Query<&Tile>,
     mut cohorts: Query<&mut PopulationCohort>,
+    mut discovery: ResMut<DiscoveryProgressLedger>,
+    mut telemetry: ResMut<TradeTelemetry>,
+    mut trade_events: EventWriter<TradeDiffusionEvent>,
+    mut migration_events: EventWriter<MigrationKnowledgeEvent>,
+    tick: Res<SimulationTick>,
 ) {
     let max_cap_scalar = scalar_from_u32(config.population_cap);
     for mut cohort in cohorts.iter_mut() {
@@ -217,6 +418,86 @@ pub fn simulate_population(
         let new_size =
             (current_size * (scalar_one() + growth_factor)).clamp(scalar_zero(), max_cap_scalar);
         cohort.size = new_size.to_u32();
+
+        if cohort.migration.is_none()
+            && cohort.morale > scalar_from_f32(0.78)
+            && !cohort.knowledge.is_empty()
+        {
+            if let Some(&destination) = registry
+                .factions
+                .iter()
+                .find(|&&faction| faction != cohort.faction)
+            {
+                let source_contract = fragments_to_contract(&cohort.knowledge);
+                let scaled = scale_migration_fragments(
+                    &source_contract,
+                    config.migration_fragment_scaling.raw(),
+                    config.migration_fidelity_floor.raw(),
+                );
+                if !scaled.is_empty() {
+                    cohort.migration = Some(PendingMigration {
+                        destination,
+                        eta: 2,
+                        fragments: fragments_from_contract(&scaled),
+                    });
+                }
+            }
+        }
+
+        if let Some(mut migration) = cohort.migration.take() {
+            if migration.eta > 0 {
+                migration.eta -= 1;
+            }
+
+            if migration.eta == 0 {
+                let source_faction = cohort.faction;
+                for fragment in &migration.fragments {
+                    if fragment.progress <= scalar_zero() {
+                        continue;
+                    }
+                    let delta = fragment.progress;
+                    discovery.add_progress(migration.destination, fragment.discovery_id, delta);
+                    telemetry.tech_diffusion_applied =
+                        telemetry.tech_diffusion_applied.saturating_add(1);
+                    telemetry.migration_transfers = telemetry.migration_transfers.saturating_add(1);
+                    telemetry.push_record(TradeDiffusionRecord {
+                        tick: tick.0,
+                        from: source_faction,
+                        to: migration.destination,
+                        discovery_id: fragment.discovery_id,
+                        delta,
+                        via_migration: true,
+                    });
+                    trade_events.send(TradeDiffusionEvent {
+                        tick: tick.0,
+                        from: source_faction,
+                        to: migration.destination,
+                        discovery_id: fragment.discovery_id,
+                        delta,
+                        via_migration: true,
+                    });
+                    migration_events.send(MigrationKnowledgeEvent {
+                        tick: tick.0,
+                        from: source_faction,
+                        to: migration.destination,
+                        discovery_id: fragment.discovery_id,
+                        delta,
+                    });
+                }
+
+                let payload_contract = fragments_to_contract(&migration.fragments);
+                let mut knowledge_contract = fragments_to_contract(&cohort.knowledge);
+                merge_fragment_payload(
+                    &mut knowledge_contract,
+                    &payload_contract,
+                    Scalar::one().raw(),
+                );
+                cohort.knowledge = fragments_from_contract(&knowledge_contract);
+                cohort.faction = migration.destination;
+            } else {
+                cohort.migration = Some(migration);
+            }
+        }
     }
 }
 
@@ -226,7 +507,13 @@ pub fn simulate_power(
     config: Res<SimulationConfig>,
     impacts: Res<InfluencerImpacts>,
     effects: Res<CultureEffectsCache>,
+    ledgers: Res<CorruptionLedgers>,
 ) {
+    let corruption_factor = corruption_multiplier(
+        &ledgers,
+        CorruptionSubsystem::Military,
+        config.corruption_military_penalty,
+    );
     for (tile, mut node) in nodes.iter_mut() {
         let efficiency_adjust =
             (config.ambient_temperature - tile.temperature) * config.power_adjust_rate;
@@ -235,6 +522,7 @@ pub fn simulate_power(
         let net = node.generation * node.efficiency - node.demand
             + impacts.power_bonus
             + effects.power_bonus;
+        let net = net * corruption_factor;
         node.generation = (node.generation + net * scalar_from_f32(0.05))
             .clamp(scalar_zero(), config.max_power_generation);
         node.demand = (node.demand + (-net) * scalar_from_f32(0.03))

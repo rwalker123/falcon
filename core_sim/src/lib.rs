@@ -19,7 +19,10 @@ mod terrain;
 
 use bevy::prelude::*;
 
-pub use components::{ElementKind, LogisticsLink, PopulationCohort, PowerNode, Tile};
+pub use components::{
+    ElementKind, KnowledgeFragment, LogisticsLink, PendingMigration, PopulationCohort, PowerNode,
+    Tile, TradeLink,
+};
 pub use culture::{
     reconcile_culture_layers, CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope,
     CultureManager, CultureOwner, CultureSchismEvent, CultureTensionEvent, CultureTensionKind,
@@ -36,11 +39,13 @@ pub use orders::{
     FactionId, FactionOrders, FactionRegistry, Order, SubmitError, SubmitOutcome, TurnQueue,
 };
 pub use resources::{
-    CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, SentimentAxisBias, SimulationConfig,
-    SimulationTick, TileRegistry,
+    CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger,
+    SentimentAxisBias, SimulationConfig, SimulationTick, TileRegistry, TradeDiffusionRecord,
+    TradeTelemetry,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{restore_world_from_snapshot, SnapshotHistory, StoredSnapshot};
+pub use systems::{MigrationKnowledgeEvent, TradeDiffusionEvent};
 pub use terrain::{
     classify_terrain, terrain_definition, terrain_for_position, MovementProfile, TerrainDefinition,
     TerrainResourceBias,
@@ -71,10 +76,14 @@ pub fn build_headless_app() -> App {
         .insert_resource(InfluencerImpacts::default())
         .insert_resource(culture_manager)
         .insert_resource(culture_effects)
+        .insert_resource(DiscoveryProgressLedger::default())
+        .insert_resource(TradeTelemetry::default())
         .insert_resource(faction_registry)
         .insert_resource(turn_queue)
         .add_event::<CultureTensionEvent>()
         .add_event::<CultureSchismEvent>()
+        .add_event::<systems::TradeDiffusionEvent>()
+        .add_event::<systems::MigrationKnowledgeEvent>()
         .add_plugins(MinimalPlugins)
         .add_systems(Startup, systems::spawn_initial_world)
         .add_systems(
@@ -85,7 +94,9 @@ pub fn build_headless_app() -> App {
                 systems::process_culture_events,
                 systems::simulate_materials,
                 systems::simulate_logistics,
+                systems::trade_knowledge_diffusion,
                 systems::simulate_population,
+                systems::publish_trade_telemetry,
                 systems::simulate_power,
                 systems::process_corruption,
                 systems::advance_tick,

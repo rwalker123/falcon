@@ -14,6 +14,7 @@ var streaming_mode: bool = false
 var stream_connection_timer: float = 0.0
 var command_client: CommandClient
 var _warned_stream_fallback: bool = false
+var _camera_initialized: bool = false
 
 const MOCK_DATA_PATH = "res://src/data/mock_snapshots.json"
 const TURN_INTERVAL_SECONDS = 1.5
@@ -63,6 +64,8 @@ func _ready() -> void:
     else:
         initial = snapshot_loader.current()
     _apply_snapshot(initial)
+    if inspector != null and inspector.has_method("attach_map_view"):
+        inspector.call("attach_map_view", map_view)
     if map_view != null and inspector != null and map_view.has_signal("hex_selected") and inspector.has_method("focus_tile_from_map"):
         map_view.connect("hex_selected", Callable(inspector, "focus_tile_from_map"))
     if inspector != null and inspector.has_method("set_streaming_active"):
@@ -100,9 +103,13 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     var legend_variant: Variant = map_view.call("terrain_palette_entries")
     if legend_variant is Array:
         hud.call("update_terrain_legend", legend_variant)
+    var recenter: bool = false
+    if metrics.has("dimensions_changed"):
+        recenter = bool(metrics["dimensions_changed"])
     var center_variant: Variant = map_view.call("get_world_center")
-    if center_variant is Vector2:
+    if center_variant is Vector2 and (recenter or not _camera_initialized):
         camera.position = center_variant
+        _camera_initialized = true
 
 func skip_to_next_turn() -> void:
     if streaming_mode:

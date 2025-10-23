@@ -190,6 +190,15 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
         let _ = dict.insert("population_removed", removed_populations);
     }
 
+    if let Some(trade_links) = delta.tradeLinks() {
+        let _ = dict.insert("trade_link_updates", trade_links_to_array(trade_links));
+    }
+
+    let removed_trade_links = u64_vector_to_packed_int64(delta.removedTradeLinks());
+    if removed_trade_links.len() > 0 {
+        let _ = dict.insert("trade_link_removed", removed_trade_links);
+    }
+
     if let Some(tiles) = delta.tiles() {
         let _ = dict.insert("tile_updates", tiles_to_array(tiles));
     }
@@ -219,6 +228,10 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
 
     if let Some(tensions) = delta.cultureTensions() {
         let _ = dict.insert("culture_tensions", culture_tensions_to_array(tensions));
+    }
+
+    if let Some(progress) = delta.discoveryProgress() {
+        let _ = dict.insert("discovery_progress_updates", discovery_progress_to_array(progress));
     }
 
     Some(dict)
@@ -463,6 +476,10 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         let _ = dict.insert("populations", populations_to_array(populations));
     }
 
+    if let Some(trade_links) = snapshot.tradeLinks() {
+        let _ = dict.insert("trade_links", trade_links_to_array(trade_links));
+    }
+
     if let Some(tiles_fb) = snapshot.tiles() {
         let _ = dict.insert("tiles", tiles_to_array(tiles_fb));
     }
@@ -477,6 +494,10 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
 
     if let Some(tensions) = snapshot.cultureTensions() {
         let _ = dict.insert("culture_tensions", culture_tensions_to_array(tensions));
+    }
+
+    if let Some(progress) = snapshot.discoveryProgress() {
+        let _ = dict.insert("discovery_progress", discovery_progress_to_array(progress));
     }
 
     dict
@@ -845,6 +866,18 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> Dictionary {
     let _ = dict.insert("home", cohort.home() as i64);
     let _ = dict.insert("size", cohort.size() as i64);
     let _ = dict.insert("morale", fixed64_to_f64(cohort.morale()));
+    let _ = dict.insert("generation", cohort.generation() as i64);
+    let _ = dict.insert("faction", cohort.faction() as i64);
+
+    if let Some(fragments) = cohort.knowledgeFragments() {
+        let mut array = VariantArray::new();
+        for fragment in fragments {
+            let dict = fragment_to_dict(fragment);
+            array.push(&dict.to_variant());
+        }
+        let _ = dict.insert("knowledge_fragments", array);
+    }
+
     dict
 }
 
@@ -856,6 +889,35 @@ fn populations_to_array(
         let dict = population_to_dict(cohort);
         let variant = dict.to_variant();
         array.push(&variant);
+    }
+    array
+}
+
+fn fragment_to_dict(fragment: fb::KnownTechFragment<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("discovery", fragment.discoveryId() as i64);
+    let _ = dict.insert("progress", fixed64_to_f64(fragment.progress()));
+    let _ = dict.insert("progress_raw", fragment.progress());
+    let _ = dict.insert("fidelity", fixed64_to_f64(fragment.fidelity()));
+    dict
+}
+
+fn discovery_progress_entry_to_dict(entry: fb::DiscoveryProgressEntry<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("faction", entry.faction() as i64);
+    let _ = dict.insert("discovery", entry.discovery() as i64);
+    let _ = dict.insert("progress", fixed64_to_f64(entry.progress()));
+    let _ = dict.insert("progress_raw", entry.progress());
+    dict
+}
+
+fn discovery_progress_to_array(
+    list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::DiscoveryProgressEntry<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for entry in list {
+        let dict = discovery_progress_entry_to_dict(entry);
+        array.push(&dict.to_variant());
     }
     array
 }
@@ -881,6 +943,41 @@ fn tiles_to_array(
         let dict = tile_to_dict(tile);
         let variant = dict.to_variant();
         array.push(&variant);
+    }
+    array
+}
+
+fn trade_link_to_dict(link: fb::TradeLinkState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("entity", link.entity() as i64);
+    let _ = dict.insert("from_faction", link.fromFaction() as i64);
+    let _ = dict.insert("to_faction", link.toFaction() as i64);
+    let _ = dict.insert("throughput", fixed64_to_f64(link.throughput()));
+    let _ = dict.insert("tariff", fixed64_to_f64(link.tariff()));
+    let _ = dict.insert("from_tile", link.fromTile() as i64);
+    let _ = dict.insert("to_tile", link.toTile() as i64);
+
+    if let Some(knowledge) = link.knowledge() {
+        let mut knowledge_dict = Dictionary::new();
+        let _ = knowledge_dict.insert("openness", fixed64_to_f64(knowledge.openness()));
+        let _ = knowledge_dict.insert("openness_raw", knowledge.openness());
+        let _ = knowledge_dict.insert("leak_timer", knowledge.leakTimer() as i64);
+        let _ = knowledge_dict.insert("last_discovery", knowledge.lastDiscovery() as i64);
+        let _ = knowledge_dict.insert("decay", fixed64_to_f64(knowledge.decay()));
+        let _ = knowledge_dict.insert("decay_raw", knowledge.decay());
+        let _ = dict.insert("knowledge", knowledge_dict);
+    }
+
+    dict
+}
+
+fn trade_links_to_array(
+    list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::TradeLinkState<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for link in list {
+        let dict = trade_link_to_dict(link);
+        array.push(&dict.to_variant());
     }
     array
 }

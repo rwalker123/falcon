@@ -1,8 +1,9 @@
 use bevy::{math::UVec2, prelude::*};
-use sim_runtime::{TerrainTags, TerrainType};
+use sim_runtime::{KnownTechFragment as ContractKnowledgeFragment, TerrainTags, TerrainType};
 
 use crate::{
     generations::GenerationId,
+    orders::FactionId,
     scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar},
 };
 
@@ -122,6 +123,9 @@ pub struct PopulationCohort {
     pub size: u32,
     pub morale: Scalar,
     pub generation: GenerationId,
+    pub faction: FactionId,
+    pub knowledge: Vec<KnowledgeFragment>,
+    pub migration: Option<PendingMigration>,
 }
 
 /// Simple power node attached to a tile.
@@ -130,6 +134,92 @@ pub struct PowerNode {
     pub generation: Scalar,
     pub demand: Scalar,
     pub efficiency: Scalar,
+}
+
+/// Trade link metadata attached to logistics edges.
+#[derive(Component, Debug, Clone)]
+pub struct TradeLink {
+    pub from_faction: FactionId,
+    pub to_faction: FactionId,
+    pub throughput: Scalar,
+    pub tariff: Scalar,
+    pub openness: Scalar,
+    pub decay: Scalar,
+    pub leak_timer: u32,
+    pub last_discovery: Option<u32>,
+    pub pending_fragments: Vec<KnowledgeFragment>,
+}
+
+impl Default for TradeLink {
+    fn default() -> Self {
+        Self {
+            from_faction: FactionId(0),
+            to_faction: FactionId(0),
+            throughput: scalar_zero(),
+            tariff: scalar_zero(),
+            openness: scalar_from_f32(0.25),
+            decay: scalar_from_f32(0.01),
+            leak_timer: 0,
+            last_discovery: None,
+            pending_fragments: Vec::new(),
+        }
+    }
+}
+
+/// Knowledge fragment payload carried by trade leaks or migrations.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KnowledgeFragment {
+    pub discovery_id: u32,
+    pub progress: Scalar,
+    pub fidelity: Scalar,
+}
+
+impl KnowledgeFragment {
+    pub fn new(discovery_id: u32, progress: Scalar, fidelity: Scalar) -> Self {
+        Self {
+            discovery_id,
+            progress,
+            fidelity,
+        }
+    }
+
+    pub fn from_contract(fragment: &ContractKnowledgeFragment) -> Self {
+        Self {
+            discovery_id: fragment.discovery_id,
+            progress: Scalar::from_raw(fragment.progress),
+            fidelity: Scalar::from_raw(fragment.fidelity),
+        }
+    }
+
+    pub fn to_contract(&self) -> ContractKnowledgeFragment {
+        ContractKnowledgeFragment {
+            discovery_id: self.discovery_id,
+            progress: self.progress.raw(),
+            fidelity: self.fidelity.raw(),
+        }
+    }
+}
+
+pub fn fragments_to_contract(fragments: &[KnowledgeFragment]) -> Vec<ContractKnowledgeFragment> {
+    fragments
+        .iter()
+        .map(|fragment| fragment.to_contract())
+        .collect()
+}
+
+pub fn fragments_from_contract(fragments: &[ContractKnowledgeFragment]) -> Vec<KnowledgeFragment> {
+    fragments
+        .iter()
+        .map(KnowledgeFragment::from_contract)
+        .collect()
+}
+
+/// Pending migration payload queued on a population cohort.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingMigration {
+    pub destination: FactionId,
+    pub eta: u16,
+    pub fragments: Vec<KnowledgeFragment>,
 }
 
 impl Default for PowerNode {
