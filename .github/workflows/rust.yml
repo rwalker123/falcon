@@ -18,7 +18,7 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libasound2-dev unzip
+        sudo apt-get install -y libasound2-dev libudev-dev unzip
     - name: Install flatc
       run: |
         FLATBUFFERS_VERSION=25.9.23
@@ -78,7 +78,7 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libasound2-dev unzip
+        sudo apt-get install -y libasound2-dev libudev-dev unzip
     - name: Install flatc
       run: |
         FLATBUFFERS_VERSION=25.9.23
