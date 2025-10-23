@@ -102,9 +102,7 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     if hud != null and inspector != null:
         if inspector.has_method("get_resolved_font_size") and hud.has_method("set_inspector_font_size"):
             var resolved_size_variant: Variant = inspector.call("get_resolved_font_size")
-            if typeof(resolved_size_variant) == TYPE_INT:
-                hud.call("set_inspector_font_size", int(resolved_size_variant))
-            elif typeof(resolved_size_variant) == TYPE_FLOAT:
+            if typeof(resolved_size_variant) in [TYPE_INT, TYPE_FLOAT]:
                 hud.call("set_inspector_font_size", int(resolved_size_variant))
     if inspector != null:
         if snapshot.has("influencer_updates") or snapshot.has("population_updates") or snapshot.has("tile_updates") or snapshot.has("generation_updates"):
