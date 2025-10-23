@@ -19,14 +19,18 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libasound2-dev unzip
-    - name: Install flatc
+    - name: Install flatc (from Flatbuffers release)
       run: |
         FLATBUFFERS_VERSION=25.9.23
-        curl -sSL -o flatc.zip "https://github.com/google/flatbuffers/releases/download/v${FLATBUFFERS_VERSION}/flatc_linux_x64_${FLATBUFFERS_VERSION}.zip"
-        unzip -o flatc.zip flatc
-        sudo mv flatc /usr/local/bin/flatc
+        curl -sSL -o flatbuffers.tar.gz "https://github.com/google/flatbuffers/archive/refs/tags/v${FLATBUFFERS_VERSION}.tar.gz"
+        tar -xzf flatbuffers.tar.gz
+        pushd "flatbuffers-${FLATBUFFERS_VERSION}"
+        cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release
+        cmake --build . --target flatc --config Release
+        sudo cp flatc /usr/local/bin/flatc
         sudo chmod +x /usr/local/bin/flatc
-        rm flatc.zip
+        popd
+        rm -rf "flatbuffers-${FLATBUFFERS_VERSION}" flatbuffers.tar.gz
     - name: Cache cargo directories
       uses: actions/cache@v3
       with:
@@ -77,14 +81,18 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libasound2-dev unzip
-    - name: Install flatc
+    - name: Install flatc (from Flatbuffers release)
       run: |
         FLATBUFFERS_VERSION=25.9.23
-        curl -sSL -o flatc.zip "https://github.com/google/flatbuffers/releases/download/v${FLATBUFFERS_VERSION}/flatc_linux_x64_${FLATBUFFERS_VERSION}.zip"
-        unzip -o flatc.zip flatc
-        sudo mv flatc /usr/local/bin/flatc
+        curl -sSL -o flatbuffers.tar.gz "https://github.com/google/flatbuffers/archive/refs/tags/v${FLATBUFFERS_VERSION}.tar.gz"
+        tar -xzf flatbuffers.tar.gz
+        pushd "flatbuffers-${FLATBUFFERS_VERSION}"
+        cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release
+        cmake --build . --target flatc --config Release
+        sudo cp flatc /usr/local/bin/flatc
         sudo chmod +x /usr/local/bin/flatc
-        rm flatc.zip
+        popd
+        rm -rf "flatbuffers-${FLATBUFFERS_VERSION}" flatbuffers.tar.gz
     - name: Cache cargo directories
       uses: actions/cache@v3
       with:
