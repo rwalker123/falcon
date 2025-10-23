@@ -62,6 +62,16 @@ The hooks run `cargo fmt` and `cargo clippy` before each commit. You can execute
 pre-commit run --all-files
 ```
 
+### Regenerating FlatBuffers bindings
+
+Whenever the schema in `sim_schema/schemas/snapshot.fbs` changes, regenerate the Rust bindings with:
+
+```bash
+cargo build -p shadow_scale_flatbuffers
+```
+
+The build script will update `shadow_scale_flatbuffers/src/generated/snapshot_generated.rs`. Remember to include the regenerated file in your commit if the schema changes.
+
 ### Install Rust/Cargo
 
 #### macOS
