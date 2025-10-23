@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
+use std::str::FromStr;
 
 use bevy::prelude::*;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
@@ -186,15 +187,23 @@ impl SupportChannel {
         CHANNEL_NAMES[self as usize]
     }
 
-    pub fn from_str(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
+        SupportChannel::from_str(value).ok()
+    }
+}
+
+impl FromStr for SupportChannel {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.to_ascii_lowercase().as_str() {
-            "popular" | "pop" | "mass" => Some(SupportChannel::Popular),
-            "peer" | "prestige" | "research" => Some(SupportChannel::Peer),
+            "popular" | "pop" | "mass" => Ok(SupportChannel::Popular),
+            "peer" | "prestige" | "research" => Ok(SupportChannel::Peer),
             "institutional" | "institution" | "industrial" | "inst" => {
-                Some(SupportChannel::Institutional)
+                Ok(SupportChannel::Institutional)
             }
-            "humanitarian" | "hum" | "civic" => Some(SupportChannel::Humanitarian),
-            _ => None,
+            "humanitarian" | "hum" | "civic" => Ok(SupportChannel::Humanitarian),
+            _ => Err(()),
         }
     }
 }
@@ -265,11 +274,7 @@ impl InfluentialIndividual {
             } else {
                 Some(state.generation_scope)
             },
-            audience_generations: state
-                .audience_generations
-                .iter()
-                .copied()
-                .collect::<Vec<GenerationId>>(),
+            audience_generations: state.audience_generations.clone(),
             status: InfluencerStatus::from(state.lifecycle),
             coherence: Scalar::from_raw(state.coherence),
             ticks_in_status: state.ticks_in_status,
@@ -368,7 +373,7 @@ impl InfluentialIndividual {
             lifecycle: InfluenceLifecycle::from(self.status),
             coherence: self.coherence.raw(),
             ticks_in_status: self.ticks_in_status,
-            audience_generations: self.audience_generations.iter().copied().collect(),
+            audience_generations: self.audience_generations.clone(),
             support_popular: self.channel_support[SupportChannel::Popular as usize].raw(),
             support_peer: self.channel_support[SupportChannel::Peer as usize].raw(),
             support_institutional: self.channel_support[SupportChannel::Institutional as usize]
@@ -507,8 +512,8 @@ impl InfluentialRoster {
 
             let alignment = {
                 let mut total = 0.0f32;
-                for axis in 0..4 {
-                    let desired = manual[axis].clamp(-1.0, 1.0);
+                for (axis, desired_raw) in manual.iter().enumerate() {
+                    let desired = desired_raw.clamp(-1.0, 1.0);
                     let projected = (individual.sentiment_weights[axis] * individual.influence)
                         .to_f32()
                         .clamp(-1.0, 1.0);
@@ -743,7 +748,7 @@ impl InfluentialRoster {
                     let idx = self.rng.gen_range(0..profiles.len());
                     selected.insert(profiles[idx].id);
                 }
-                audience_generations.extend(selected.into_iter());
+                audience_generations.extend(selected);
             }
         }
 
@@ -926,16 +931,15 @@ impl InfluentialRoster {
 
         for individual in &mut self.individuals {
             let factor = individual.coherence_factor();
-            for axis in 0..4 {
+            for (axis, output) in individual.sentiment_output.iter_mut().enumerate() {
                 let base = individual.sentiment_weights[axis] * individual.influence;
-                individual.sentiment_output[axis] =
-                    (base * factor).clamp(scalar_from_f32(-0.75), scalar_from_f32(0.75));
-                sentiment[axis] += individual.sentiment_output[axis];
+                *output = (base * factor).clamp(scalar_from_f32(-0.75), scalar_from_f32(0.75));
+                sentiment[axis] += *output;
             }
-            for axis in 0..CULTURE_TRAIT_AXES {
+            for (axis, output_slot) in individual.culture_output.iter_mut().enumerate() {
                 let base = individual.culture_weights[axis] * individual.influence;
                 let output = (base * factor).clamp(scalar_from_f32(-0.6), scalar_from_f32(0.6));
-                individual.culture_output[axis] = output;
+                *output_slot = output;
                 match individual.scope {
                     InfluenceScopeKind::Local => culture_local[axis] += output,
                     InfluenceScopeKind::Regional => culture_regional[axis] += output,
@@ -1020,9 +1024,9 @@ fn select_domains(rng: &mut SmallRng) -> Vec<InfluenceDomain> {
 
 fn generate_sentiment_weights(rng: &mut SmallRng, domains: &[InfluenceDomain]) -> [Scalar; 4] {
     let mut weights = [scalar_zero(); 4];
-    for axis in 0..4 {
+    for weight in &mut weights {
         let base = rng.gen_range(-0.2..0.2);
-        weights[axis] = scalar_from_f32(base);
+        *weight = scalar_from_f32(base);
     }
     for domain in domains {
         match domain {
@@ -1205,7 +1209,7 @@ fn domain_weight(
     min: f32,
     max: f32,
 ) -> Scalar {
-    if domains.iter().any(|domain| *domain == target) {
+    if domains.contains(&target) {
         scalar_from_f32(rng.gen_range(min..max))
     } else {
         scalar_zero()

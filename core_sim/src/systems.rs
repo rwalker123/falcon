@@ -377,6 +377,7 @@ pub fn publish_trade_telemetry(telemetry: Res<TradeTelemetry>, tick: Res<Simulat
 }
 
 /// Update population cohorts based on environmental conditions.
+#[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn simulate_population(
     config: Res<SimulationConfig>,
     registry: Res<FactionRegistry>,

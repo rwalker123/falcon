@@ -9,7 +9,7 @@ use std::{
 
 type FbBuilder<'a> = FlatBufferBuilder<'a, DefaultAllocator>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SnapshotHeader {
     pub tick: u64,
     pub tile_count: u32,
@@ -44,22 +44,7 @@ impl SnapshotHeader {
     }
 }
 
-impl Default for SnapshotHeader {
-    fn default() -> Self {
-        Self {
-            tick: 0,
-            tile_count: 0,
-            logistics_count: 0,
-            trade_link_count: 0,
-            population_count: 0,
-            power_count: 0,
-            influencer_count: 0,
-            hash: 0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 #[repr(u16)]
 pub enum TerrainType {
     DeepOcean = 0,
@@ -72,6 +57,7 @@ pub enum TerrainType {
     MangroveSwamp = 7,
     FreshwaterMarsh = 8,
     Floodplain = 9,
+    #[default]
     AlluvialPlain = 10,
     PrairieSteppe = 11,
     MixedWoodland = 12,
@@ -141,12 +127,6 @@ impl TerrainType {
         TerrainType::SinkholeField,
         TerrainType::AquiferCeiling,
     ];
-}
-
-impl Default for TerrainType {
-    fn default() -> Self {
-        TerrainType::AlluvialPlain
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, Hash)]
@@ -275,7 +255,7 @@ pub struct TradeLinkKnowledge {
     pub decay: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct TradeLinkState {
     pub entity: u64,
     pub from_faction: u32,
@@ -287,22 +267,6 @@ pub struct TradeLinkState {
     pub to_tile: u64,
     #[serde(default)]
     pub pending_fragments: Vec<KnownTechFragment>,
-}
-
-impl Default for TradeLinkState {
-    fn default() -> Self {
-        Self {
-            entity: 0,
-            from_faction: 0,
-            to_faction: 0,
-            throughput: 0,
-            tariff: 0,
-            knowledge: TradeLinkKnowledge::default(),
-            from_tile: 0,
-            to_tile: 0,
-            pending_fragments: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -348,18 +312,13 @@ pub struct PowerNodeState {
     pub efficiency: i64,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum CultureLayerScope {
+    #[default]
     Global = 0,
     Regional = 1,
     Local = 2,
-}
-
-impl Default for CultureLayerScope {
-    fn default() -> Self {
-        CultureLayerScope::Global
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -443,22 +402,17 @@ pub struct CultureTensionState {
     pub kind: CultureTensionKind,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum CorruptionSubsystem {
+    #[default]
     Logistics = 0,
     Trade = 1,
     Military = 2,
     Governance = 3,
 }
 
-impl Default for CorruptionSubsystem {
-    fn default() -> Self {
-        CorruptionSubsystem::Logistics
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct CorruptionEntry {
     pub subsystem: CorruptionSubsystem,
     pub intensity: i64,
@@ -466,19 +420,6 @@ pub struct CorruptionEntry {
     pub exposure_timer: u16,
     pub restitution_window: u16,
     pub last_update_tick: u64,
-}
-
-impl Default for CorruptionEntry {
-    fn default() -> Self {
-        Self {
-            subsystem: CorruptionSubsystem::default(),
-            intensity: 0,
-            incident_id: 0,
-            exposure_timer: 0,
-            restitution_window: 0,
-            last_update_tick: 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -824,7 +765,6 @@ fn build_snapshot_flatbuffer<'a>(
             trust: snapshot.axis_bias.trust,
             equity: snapshot.axis_bias.equity,
             agency: snapshot.axis_bias.agency,
-            ..Default::default()
         },
     );
     let sentiment = create_sentiment(builder, &snapshot.sentiment);
@@ -853,7 +793,6 @@ fn build_snapshot_flatbuffer<'a>(
             cultureLayers: Some(culture_layers_vec),
             cultureTensions: Some(culture_tensions_vec),
             discoveryProgress: Some(discovery_progress_vec),
-            ..Default::default()
         },
     );
 
@@ -862,7 +801,6 @@ fn build_snapshot_flatbuffer<'a>(
         &fb::EnvelopeArgs {
             payload_type: fb::SnapshotPayload::snapshot,
             payload: Some(snapshot_table.as_union_value()),
-            ..Default::default()
         },
     )
 }
@@ -907,7 +845,6 @@ fn build_delta_flatbuffer<'a>(
                 trust: axis.trust,
                 equity: axis.equity,
                 agency: axis.agency,
-                ..Default::default()
             },
         )
     });
@@ -954,7 +891,6 @@ fn build_delta_flatbuffer<'a>(
             removedCultureLayers: Some(removed_culture_layers_vec),
             cultureTensions: Some(culture_tensions_vec),
             discoveryProgress: Some(discovery_progress_vec),
-            ..Default::default()
         },
     );
 
@@ -963,7 +899,6 @@ fn build_delta_flatbuffer<'a>(
         &fb::EnvelopeArgs {
             payload_type: fb::SnapshotPayload::delta,
             payload: Some(delta_table.as_union_value()),
-            ..Default::default()
         },
     )
 }
@@ -986,7 +921,6 @@ fn create_tiles<'a>(
                     temperature: tile.temperature,
                     terrain: to_fb_terrain_type(tile.terrain),
                     terrainTags: tile.terrain_tags.bits(),
-                    ..Default::default()
                 },
             )
         })
@@ -1009,7 +943,6 @@ fn create_logistics<'a>(
                     to: link.to,
                     capacity: link.capacity,
                     flow: link.flow,
-                    ..Default::default()
                 },
             )
         })
@@ -1031,7 +964,6 @@ fn create_trade_links<'a>(
                     leakTimer: link.knowledge.leak_timer,
                     lastDiscovery: link.knowledge.last_discovery,
                     decay: link.knowledge.decay,
-                    ..Default::default()
                 },
             );
             let pending_fragments = if link.pending_fragments.is_empty() {
@@ -1051,7 +983,6 @@ fn create_trade_links<'a>(
                     fromTile: link.from_tile,
                     toTile: link.to_tile,
                     pendingFragments: pending_fragments,
-                    ..Default::default()
                 },
             )
         })
@@ -1083,7 +1014,6 @@ fn create_populations<'a>(
                         destination: pending.destination,
                         eta: pending.eta,
                         fragments,
-                        ..Default::default()
                     },
                 )
             });
@@ -1098,7 +1028,6 @@ fn create_populations<'a>(
                     faction: cohort.faction,
                     knowledgeFragments: knowledge,
                     migration,
-                    ..Default::default()
                 },
             )
         })
@@ -1119,7 +1048,6 @@ fn create_known_fragments<'a>(
                     discoveryId: fragment.discovery_id,
                     progress: fragment.progress,
                     fidelity: fragment.fidelity,
-                    ..Default::default()
                 },
             )
         })
@@ -1140,7 +1068,6 @@ fn create_discovery_progress<'a>(
                     faction: entry.faction,
                     discovery: entry.discovery,
                     progress: entry.progress,
-                    ..Default::default()
                 },
             )
         })
@@ -1162,7 +1089,6 @@ fn create_power<'a>(
                     generation: node.generation,
                     demand: node.demand,
                     efficiency: node.efficiency,
-                    ..Default::default()
                 },
             )
         })
@@ -1183,7 +1109,6 @@ fn create_terrain_overlay<'a>(
                 &fb::TerrainSampleArgs {
                     terrain: to_fb_terrain_type(sample.terrain),
                     tags: sample.tags.bits(),
-                    ..Default::default()
                 },
             )
         })
@@ -1195,7 +1120,6 @@ fn create_terrain_overlay<'a>(
             width: overlay.width,
             height: overlay.height,
             samples: Some(samples),
-            ..Default::default()
         },
     )
 }
@@ -1215,7 +1139,6 @@ fn create_sentiment<'a>(
             trust: Some(trust),
             equity: Some(equity),
             agency: Some(agency),
-            ..Default::default()
         },
     )
 }
@@ -1236,7 +1159,6 @@ fn create_sentiment_axis<'a>(
                     label: Some(label),
                     value: driver.value,
                     weight: driver.weight,
-                    ..Default::default()
                 },
             )
         })
@@ -1250,7 +1172,6 @@ fn create_sentiment_axis<'a>(
             influencers: axis.influencers,
             total: axis.total,
             drivers: Some(drivers_vec),
-            ..Default::default()
         },
     )
 }
@@ -1272,7 +1193,6 @@ fn create_generations<'a>(
                     biasTrust: generation.bias_trust,
                     biasEquity: generation.bias_equity,
                     biasAgency: generation.bias_agency,
-                    ..Default::default()
                 },
             )
         })
@@ -1297,7 +1217,6 @@ fn create_corruption<'a>(
                     exposureTimer: entry.exposure_timer,
                     restitutionWindow: entry.restitution_window,
                     lastUpdateTick: entry.last_update_tick,
-                    ..Default::default()
                 },
             )
         })
@@ -1309,7 +1228,6 @@ fn create_corruption<'a>(
             entries: Some(entries_vec),
             reputationModifier: ledger.reputation_modifier,
             auditCapacity: ledger.audit_capacity,
-            ..Default::default()
         },
     )
 }
@@ -1368,7 +1286,6 @@ fn create_influencers<'a>(
                     weightInstitutional: inf.weight_institutional,
                     weightHumanitarian: inf.weight_humanitarian,
                     cultureResonance: Some(resonance_vec),
-                    ..Default::default()
                 },
             )
         })
@@ -1410,7 +1327,6 @@ fn create_culture_traits<'a>(
                     baseline: entry.baseline,
                     modifier: entry.modifier,
                     value: entry.value,
-                    ..Default::default()
                 },
             )
         })
@@ -1440,7 +1356,6 @@ fn create_culture_layers<'a>(
                     ticksAboveSoft: layer.ticks_above_soft,
                     ticksAboveHard: layer.ticks_above_hard,
                     lastUpdatedTick: layer.last_updated_tick,
-                    ..Default::default()
                 },
             )
         })
@@ -1464,7 +1379,6 @@ fn create_culture_tensions<'a>(
                     severity: state.severity,
                     timer: state.timer,
                     kind: to_fb_culture_tension_kind(state.kind),
-                    ..Default::default()
                 },
             )
         })

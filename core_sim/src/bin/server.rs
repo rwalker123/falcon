@@ -306,9 +306,9 @@ fn parse_command(input: &str) -> Option<Command> {
         "support_channel" => {
             let id: u32 = parts.next()?.parse().ok()?;
             let channel_token = parts.next().unwrap_or("popular");
-            let channel = match SupportChannel::from_str(channel_token) {
-                Some(channel) => channel,
-                None => {
+            let channel = match channel_token.parse::<SupportChannel>() {
+                Ok(channel) => channel,
+                Err(_) => {
                     warn!("Invalid support_channel target: {}", channel_token);
                     return None;
                 }
@@ -384,7 +384,7 @@ fn apply_heat(app: &mut bevy::prelude::App, entity_bits: u64, delta_raw: i64) {
         }
     };
     if let Some(mut tile) = app.world.get_mut::<Tile>(entity) {
-        tile.temperature = tile.temperature + Scalar::from_raw(delta_raw);
+        tile.temperature += Scalar::from_raw(delta_raw);
     } else {
         warn!("Entity {} not found for heat command", entity_bits);
     }
@@ -709,7 +709,7 @@ fn handle_inject_corruption(
     let (ledger_clone, incident_id) = {
         let mut ledgers = app.world.resource_mut::<CorruptionLedgers>();
         let ledger = ledgers.ledger_mut();
-        let incident_id = ((tick as u64) << 32) | ((ledger.entry_count() as u64 + 1) & 0xFFFF_FFFF);
+        let incident_id = (tick << 32) | (((ledger.entry_count() as u64) + 1) & 0xFFFF_FFFF);
         let entry = CorruptionEntry {
             subsystem,
             intensity: Scalar::from_f32(clamped_intensity).raw(),

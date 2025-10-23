@@ -466,7 +466,7 @@ impl CultureManager {
                 .traits
                 .modifier_mut()
                 .iter_mut()
-                .zip(modifiers.into_iter())
+                .zip(modifiers)
                 .for_each(|(slot, value)| *slot = value);
         }
     }
