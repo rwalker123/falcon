@@ -124,6 +124,7 @@ const LOG_RECONNECT_INTERVAL = 2.0
 const TICK_SAMPLE_LIMIT = 48
 const PANEL_WIDTH_DEFAULT = 340.0
 const PANEL_WIDTH_MIN = 260.0
+const PANEL_MIN_TOP_OFFSET = 48.0
 const PANEL_MARGIN = 16.0
 const PANEL_HANDLE_WIDTH = 12.0
 const AXIS_NAMES: Array[String] = ["Knowledge", "Trust", "Equity", "Agency"]
@@ -2270,7 +2271,7 @@ func _apply_typography_style(controls: Array, style: StringName) -> void:
 
 func _panel_top_offset() -> float:
     var baseline := PANEL_MARGIN + Typography.line_height(Typography.STYLE_HEADING)
-    baseline = max(baseline, 48.0)
+    baseline = max(baseline, PANEL_MIN_TOP_OFFSET)
     if _hud_layer != null and _hud_layer.has_method("get_upper_stack_height"):
         var height_variant: Variant = _hud_layer.call("get_upper_stack_height")
         if typeof(height_variant) in [TYPE_FLOAT, TYPE_INT]:

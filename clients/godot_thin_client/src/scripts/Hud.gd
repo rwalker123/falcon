@@ -13,6 +13,7 @@ const Typography = preload("res://src/scripts/Typography.gd")
 
 const LEGEND_SWATCH_FRACTION := 0.75
 const LEGEND_MIN_ROW_HEIGHT := 20.0
+const LEGEND_ROW_PADDING := 6.0
 const LEGEND_BASE_PADDING := 56.0
 const LEGEND_MAX_HEIGHT := 640.0
 const LEGEND_MIN_WIDTH := 320.0
@@ -92,7 +93,10 @@ func get_upper_stack_height() -> float:
     return max_bottom + STACK_ADDITIONAL_MARGIN
 
 func _legend_row_height() -> float:
-    return max(Typography.line_height(Typography.STYLE_LEGEND) + 6.0, LEGEND_MIN_ROW_HEIGHT)
+    return max(
+        Typography.line_height(Typography.STYLE_LEGEND) + LEGEND_ROW_PADDING,
+        LEGEND_MIN_ROW_HEIGHT
+    )
 
 func _legend_swatch_size(row_height: float) -> Vector2:
     var side: float = max(row_height * LEGEND_SWATCH_FRACTION, LEGEND_MIN_ROW_HEIGHT * 0.6)
