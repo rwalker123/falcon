@@ -214,6 +214,13 @@ table PopulationCohortState {
   generation:ushort;
   faction:uint;
   knowledgeFragments:[KnownTechFragment];
+  migration:PendingMigration;
+}
+
+table PendingMigration {
+  destination:uint;
+  eta:ushort;
+  fragments:[KnownTechFragment];
 }
 
 table PowerNodeState {
@@ -322,6 +329,7 @@ table TradeLinkState {
   knowledge:TradeLinkKnowledge;
   fromTile:ulong;
   toTile:ulong;
+  pendingFragments:[KnownTechFragment];
 }
 
 table DiscoveryProgressEntry {

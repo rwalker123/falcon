@@ -231,7 +231,10 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     }
 
     if let Some(progress) = delta.discoveryProgress() {
-        let _ = dict.insert("discovery_progress_updates", discovery_progress_to_array(progress));
+        let _ = dict.insert(
+            "discovery_progress_updates",
+            discovery_progress_to_array(progress),
+        );
     }
 
     Some(dict)
@@ -878,6 +881,23 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> Dictionary {
         let _ = dict.insert("knowledge_fragments", array);
     }
 
+    if let Some(migration) = cohort.migration() {
+        let mut migration_dict = Dictionary::new();
+        let _ = migration_dict.insert("destination", migration.destination() as i64);
+        let _ = migration_dict.insert("eta", migration.eta() as i64);
+        if let Some(fragments) = migration.fragments() {
+            let mut fragment_array = VariantArray::new();
+            for fragment in fragments {
+                let dict = fragment_to_dict(fragment);
+                fragment_array.push(&dict.to_variant());
+            }
+            let _ = migration_dict.insert("fragments", fragment_array);
+        } else {
+            let _ = migration_dict.insert("fragments", VariantArray::new());
+        }
+        let _ = dict.insert("migration", migration_dict);
+    }
+
     dict
 }
 
@@ -966,6 +986,17 @@ fn trade_link_to_dict(link: fb::TradeLinkState<'_>) -> Dictionary {
         let _ = knowledge_dict.insert("decay", fixed64_to_f64(knowledge.decay()));
         let _ = knowledge_dict.insert("decay_raw", knowledge.decay());
         let _ = dict.insert("knowledge", knowledge_dict);
+    }
+
+    if let Some(pending) = link.pendingFragments() {
+        let mut pending_array = VariantArray::new();
+        for fragment in pending {
+            let fragment_dict = fragment_to_dict(fragment);
+            pending_array.push(&fragment_dict.to_variant());
+        }
+        let _ = dict.insert("pending_fragments", pending_array);
+    } else {
+        let _ = dict.insert("pending_fragments", VariantArray::new());
     }
 
     dict

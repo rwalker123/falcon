@@ -8,15 +8,16 @@ use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
     AxisBiasState, CorruptionLedger, CultureLayerState, CultureTensionState, CultureTraitEntry,
     DiscoveryProgressEntry, GenerationState, InfluentialIndividualState, LogisticsLinkState,
-    PopulationCohortState, PowerNodeState, SentimentAxisTelemetry, SentimentDriverCategory,
-    SentimentDriverState, SentimentTelemetryState, SnapshotHeader, TerrainOverlayState,
-    TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState, WorldDelta, WorldSnapshot,
+    PendingMigrationState, PopulationCohortState, PowerNodeState, SentimentAxisTelemetry,
+    SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState, SnapshotHeader,
+    TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState, WorldDelta,
+    WorldSnapshot,
 };
 
 use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, LogisticsLink,
-        PopulationCohort, PowerNode, Tile, TradeLink,
+        PendingMigration, PopulationCohort, PowerNode, Tile, TradeLink,
     },
     culture::{
         CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
@@ -192,8 +193,7 @@ impl SnapshotHistory {
             culture_layers_index.insert(state.id, state.clone());
         }
 
-        let mut discovery_index =
-            HashMap::with_capacity(snapshot.discovery_progress.len());
+        let mut discovery_index = HashMap::with_capacity(snapshot.discovery_progress.len());
         for entry in &snapshot.discovery_progress {
             discovery_index.insert((entry.faction, entry.discovery), entry.clone());
         }
@@ -931,6 +931,10 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             );
             continue;
         };
+        let migration = cohort_state
+            .migration
+            .as_ref()
+            .map(pending_migration_from_state);
         world.spawn(PopulationCohort {
             home: home_entity,
             size: cohort_state.size,
@@ -938,7 +942,7 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             generation: cohort_state.generation,
             faction: FactionId(cohort_state.faction),
             knowledge: fragments_from_contract(&cohort_state.knowledge_fragments),
-            migration: None,
+            migration,
         });
     }
 
@@ -1305,6 +1309,7 @@ fn trade_link_state(entity: Entity, link: &LogisticsLink, trade: &TradeLink) -> 
         },
         from_tile: link.from.to_bits(),
         to_tile: link.to.to_bits(),
+        pending_fragments: fragments_to_contract(&trade.pending_fragments),
     }
 }
 
@@ -1322,7 +1327,23 @@ fn trade_link_from_state(state: &TradeLinkState) -> TradeLink {
         } else {
             Some(state.knowledge.last_discovery)
         },
-        pending_fragments: Vec::new(),
+        pending_fragments: fragments_from_contract(&state.pending_fragments),
+    }
+}
+
+fn pending_migration_to_state(migration: &PendingMigration) -> PendingMigrationState {
+    PendingMigrationState {
+        destination: migration.destination.0,
+        eta: migration.eta,
+        fragments: fragments_to_contract(&migration.fragments),
+    }
+}
+
+fn pending_migration_from_state(state: &PendingMigrationState) -> PendingMigration {
+    PendingMigration {
+        destination: FactionId(state.destination),
+        eta: state.eta,
+        fragments: fragments_from_contract(&state.fragments),
     }
 }
 
@@ -1341,13 +1362,12 @@ fn discovery_progress_entries(ledger: &DiscoveryProgressLedger) -> Vec<Discovery
             });
         }
     }
-    entries.sort_unstable_by(|a, b| {
-        (a.faction, a.discovery).cmp(&(b.faction, b.discovery))
-    });
+    entries.sort_unstable_by(|a, b| (a.faction, a.discovery).cmp(&(b.faction, b.discovery)));
     entries
 }
 
 fn population_state(entity: Entity, cohort: &PopulationCohort) -> PopulationCohortState {
+    let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     PopulationCohortState {
         entity: entity.to_bits(),
         home: cohort.home.to_bits(),
@@ -1356,6 +1376,7 @@ fn population_state(entity: Entity, cohort: &PopulationCohort) -> PopulationCoho
         generation: cohort.generation,
         faction: cohort.faction.0,
         knowledge_fragments: fragments_to_contract(&cohort.knowledge),
+        migration,
     }
 }
 

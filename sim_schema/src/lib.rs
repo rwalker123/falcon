@@ -285,6 +285,8 @@ pub struct TradeLinkState {
     pub knowledge: TradeLinkKnowledge,
     pub from_tile: u64,
     pub to_tile: u64,
+    #[serde(default)]
+    pub pending_fragments: Vec<KnownTechFragment>,
 }
 
 impl Default for TradeLinkState {
@@ -298,6 +300,7 @@ impl Default for TradeLinkState {
             knowledge: TradeLinkKnowledge::default(),
             from_tile: 0,
             to_tile: 0,
+            pending_fragments: Vec::new(),
         }
     }
 }
@@ -318,6 +321,16 @@ pub struct PopulationCohortState {
     pub generation: u16,
     pub faction: u32,
     pub knowledge_fragments: Vec<KnownTechFragment>,
+    #[serde(default)]
+    pub migration: Option<PendingMigrationState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PendingMigrationState {
+    pub destination: u32,
+    pub eta: u16,
+    #[serde(default)]
+    pub fragments: Vec<KnownTechFragment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -1021,6 +1034,11 @@ fn create_trade_links<'a>(
                     ..Default::default()
                 },
             );
+            let pending_fragments = if link.pending_fragments.is_empty() {
+                None
+            } else {
+                Some(create_known_fragments(builder, &link.pending_fragments))
+            };
             fb::TradeLinkState::create(
                 builder,
                 &fb::TradeLinkStateArgs {
@@ -1032,6 +1050,7 @@ fn create_trade_links<'a>(
                     knowledge: Some(knowledge),
                     fromTile: link.from_tile,
                     toTile: link.to_tile,
+                    pendingFragments: pending_fragments,
                     ..Default::default()
                 },
             )
@@ -1052,6 +1071,22 @@ fn create_populations<'a>(
             } else {
                 Some(create_known_fragments(builder, &cohort.knowledge_fragments))
             };
+            let migration = cohort.migration.as_ref().map(|pending| {
+                let fragments = if pending.fragments.is_empty() {
+                    None
+                } else {
+                    Some(create_known_fragments(builder, &pending.fragments))
+                };
+                fb::PendingMigration::create(
+                    builder,
+                    &fb::PendingMigrationArgs {
+                        destination: pending.destination,
+                        eta: pending.eta,
+                        fragments,
+                        ..Default::default()
+                    },
+                )
+            });
             fb::PopulationCohortState::create(
                 builder,
                 &fb::PopulationCohortStateArgs {
@@ -1062,6 +1097,7 @@ fn create_populations<'a>(
                     generation: cohort.generation,
                     faction: cohort.faction,
                     knowledgeFragments: knowledge,
+                    migration,
                     ..Default::default()
                 },
             )
