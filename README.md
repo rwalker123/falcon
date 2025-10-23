@@ -70,7 +70,7 @@ Whenever the schema in `sim_schema/schemas/snapshot.fbs` changes, regenerate the
 cargo xtask prepare-client
 ```
 
-This runs the FlatBuffers build script and rebundles the Godot GDExtension artifact under `clients/godot_thin_client/native/bin/`. Commit the updated files (including `shadow_scale_flatbuffers/src/generated/snapshot_generated.rs`) when the schema changes.
+It regenerates the FlatBuffers bindings and refreshes the Godot GDExtension (`clients/godot_thin_client/native/bin/…`). No generated files are checked in, so commit any schema updates and rerun the command before pushing.
 
 ### Install Rust/Cargo
 
