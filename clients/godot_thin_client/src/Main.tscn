@@ -32,6 +32,12 @@ offset_top = 48.0
 theme_override_colors/font_color = Color(0.8, 0.95, 1, 1)
 text = "Units: 0"
 
+[node name="InspectorFontLabel" type="Label" parent="HUD"]
+offset_left = 16.0
+offset_top = 80.0
+theme_override_colors/font_color = Color(0.95, 0.8, 0.4, 1)
+text = "Inspector font: --"
+
 [node name="Inspector" type="CanvasLayer" parent="."]
 script = ExtResource("4")
 
@@ -659,7 +665,7 @@ text = "Terrain Legend"
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 8.0
-offset_top = 32.0
+offset_top = 44.0
 offset_right = -8.0
 offset_bottom = -8.0
 scroll_horizontal_enabled = false
