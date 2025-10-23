@@ -27,7 +27,8 @@ pub use culture::{
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use influencers::{
-    tick_influencers, InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel,
+    tick_influencers, InfluencerCultureResonance, InfluencerImpacts, InfluentialId,
+    InfluentialRoster, SupportChannel,
 };
 
 pub use metrics::SimulationMetrics;
@@ -79,9 +80,9 @@ pub fn build_headless_app() -> App {
         .add_systems(
             Update,
             (
+                tick_influencers,
                 reconcile_culture_layers,
                 systems::process_culture_events,
-                tick_influencers,
                 systems::simulate_materials,
                 systems::simulate_logistics,
                 systems::simulate_population,

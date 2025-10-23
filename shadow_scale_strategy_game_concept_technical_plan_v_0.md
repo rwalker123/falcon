@@ -482,6 +482,7 @@ Traits roll up into sentiment modifiers, opinion modifiers, and systemic multipl
 - **Cultural Clash Events** fire when overlapping spheres disagree (e.g., Devout local enclave under Secular global policy). Outcomes include negotiated autonomy, crackdowns, or cultural syncretism mini-games.
 - **Influential Amplifiers**: Influencers align with trait poles; sponsoring them raises that axis locally, while suppression pushes in the opposite direction. See §7b for how these figures channel sentiment adjustments.
   - Culture impact is explicit: influencer briefs now expose “culture resonance” weights so players can draft personalities to reinforce openness, devotion, etc., without waiting for policy ticks.
+  - Resonance is tracked per scope (global/regional/local) and turns into live pushes during reconcile; the inspector highlights the strongest current nudges and names their originating figures for quick follow-up (see `docs/architecture.md` “Culture Simulation Spine”).
 - **Knowledge Retention**: Trait combinations impact Knowledge Half-Life (§5a). Closed + Purist cultures slow leak timers, whereas Open + Syncretic regions accelerate diffusion abroad but strengthen local cross-training.
 
 ### Gameplay Hooks

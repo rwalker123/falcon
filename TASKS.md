@@ -22,9 +22,9 @@
 - [x] Implement multi-layer culture storage (`CultureLayer`, `CultureTraitVector`) and the reconcile routine propagating global → regional → local weights (Owner: Elena, Estimate: 3d; Deps: finalize trait list per game manual §7c).
 - [x] Emit divergence telemetry (`CultureDivergence`, `CultureTensionEvent`, `CultureSchismEvent`) and wire into sentiment/diplomacy hooks (Owner: Ravi, Estimate: 2.5d; Deps: reconcile routine + event bus triggers).
 - [x] Derive trait-driven system modifiers (`CultureEffectsCache`) and expose `CultureLayerState` snapshots/CLI overlays (Owner: Jun, Estimate: 2d; Deps: schema updates in `sim_schema`, inspector UI bandwidth).
-- [ ] Introduce influencer culture resonance channels and serialize weights in snapshot payloads (Owner: Mira, Estimate: 2d; Deps: influencer roster refactor).
-- [ ] Apply influencer culture deltas during `reconcile_culture_layers`, blending with policy modifiers (Owner: Elena, Estimate: 1.5d; Deps: resonance channels).
-- [ ] Extend inspector UI to display per-influencer culture resonance and recent trait pushes (Owner: Jun, Estimate: 1d; Deps: snapshot serialization + Godot culture tab groundwork).
+- [x] Introduce influencer culture resonance channels and serialize weights in snapshot payloads (Owner: Mira, Estimate: 2d; Deps: influencer roster refactor).
+- [x] Apply influencer culture deltas during `reconcile_culture_layers`, blending with policy modifiers (Owner: Elena, Estimate: 1.5d; Deps: resonance channels).
+- [x] Extend inspector UI to display per-influencer culture resonance and recent trait pushes (Owner: Jun, Estimate: 1d; Deps: snapshot serialization + Godot culture tab groundwork).
 
 ## Data Contracts (`sim_schema` + `sim_runtime`)
 - [x] Define FlatBuffers schema for snapshots and deltas.

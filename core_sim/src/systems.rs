@@ -9,7 +9,7 @@ use crate::{
         CultureTensionKind, CultureTensionRecord, CultureTraitAxis, CULTURE_TRAIT_AXES,
     },
     generations::GenerationRegistry,
-    influencers::InfluencerImpacts,
+    influencers::{InfluencerCultureResonance, InfluencerImpacts},
     resources::{
         CorruptionExposureRecord, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
         SentimentAxisBias, SimulationConfig, SimulationTick, TileRegistry,
@@ -118,7 +118,7 @@ pub fn spawn_initial_world(
         height: config.grid_size.y,
     });
 
-    culture.reconcile(&tick);
+    culture.reconcile(&tick, &InfluencerCultureResonance::default());
     let _ = culture.take_tension_events();
 }
 

@@ -771,12 +771,41 @@ func _render_influencers() -> void:
             if domain_str != "":
                 lines.append("    domains: %s" % domain_str)
 
+        var resonance_variant: Variant = info.get("culture_resonance", null)
+        var resonance_entries: Array = []
+        if resonance_variant is Array:
+            resonance_entries = resonance_variant
+        if resonance_entries.size() > 0:
+            resonance_entries.sort_custom(Callable(self, "_compare_culture_resonance"))
+            var resonance_limit: int = min(resonance_entries.size(), 2)
+            var fragments: Array[String] = []
+            for ridx in range(resonance_limit):
+                var entry_variant: Variant = resonance_entries[ridx]
+                if not (entry_variant is Dictionary):
+                    continue
+                var entry: Dictionary = entry_variant as Dictionary
+                var axis_label: String = str(entry.get("label", entry.get("axis", "Axis")))
+                var weight_val: float = float(entry.get("weight", 0.0))
+                var output_val: float = float(entry.get("output", 0.0))
+                fragments.append("%s w%+.2f Δ%+.3f" % [axis_label, weight_val, output_val])
+            if fragments.size() > 0:
+                lines.append("    culture: %s" % ", ".join(fragments))
+
     influencers_text.text = "\n".join(lines)
 
 func _compare_influencers(a: Dictionary, b: Dictionary) -> bool:
     var a_score = float(a.get("influence", 0.0))
     var b_score = float(b.get("influence", 0.0))
     return a_score > b_score
+
+func _compare_culture_resonance(a: Dictionary, b: Dictionary) -> bool:
+    var a_out = abs(float(a.get("output", 0.0)))
+    var b_out = abs(float(b.get("output", 0.0)))
+    if is_equal_approx(a_out, b_out):
+        var a_weight = abs(float(a.get("weight", 0.0)))
+        var b_weight = abs(float(b.get("weight", 0.0)))
+        return a_weight > b_weight
+    return a_out > b_out
 
 func _render_corruption() -> void:
     if _corruption.is_empty():
@@ -913,6 +942,29 @@ func _render_culture() -> void:
                 var value: float = float(atrait.get("value", 0.0))
                 var modifier: float = float(atrait.get("modifier", 0.0))
                 summary_lines.append("%d. %s: %+.2f (modifier %+.2f)" % [idx + 1, label, value, modifier])
+    var resonance_summary := _aggregate_influencer_resonance()
+    var scope_sequence: Array[String] = ["Global", "Regional", "Local"]
+    for scope_key in scope_sequence:
+        if not resonance_summary.has(scope_key):
+            continue
+        var entries_variant: Variant = resonance_summary[scope_key]
+        if not (entries_variant is Array):
+            continue
+        var entries: Array = entries_variant as Array
+        if entries.is_empty():
+            continue
+        var limit_scope: int = min(entries.size(), 2)
+        var fragments: Array[String] = []
+        for idx in range(limit_scope):
+            var entry_variant: Variant = entries[idx]
+            if not (entry_variant is Dictionary):
+                continue
+            var entry: Dictionary = entry_variant as Dictionary
+            var axis_label: String = str(entry.get("label", entry.get("axis", "Axis")))
+            var output_val: float = float(entry.get("output", 0.0))
+            fragments.append("%s %+.3f" % [axis_label, output_val])
+        if fragments.size() > 0:
+            summary_lines.append("%s pushes: %s" % [scope_key, ", ".join(fragments)])
     culture_summary_text.text = "\n".join(summary_lines)
 
     var divergence_entries: Array[Dictionary] = []
@@ -1067,6 +1119,59 @@ func _compare_trait_strength(a: Dictionary, b: Dictionary) -> bool:
     if absf(a_val - b_val) > 0.0001:
         return a_val > b_val
     return absf(float(a.get("modifier", 0.0))) > absf(float(b.get("modifier", 0.0)))
+
+func _aggregate_influencer_resonance() -> Dictionary:
+    var totals := {
+        "Global": {},
+        "Regional": {},
+        "Local": {}
+    }
+    for value in _influencers.values():
+        if not (value is Dictionary):
+            continue
+        var info: Dictionary = value as Dictionary
+        var scope_text := str(info.get("scope", ""))
+        if scope_text == "Generation":
+            scope_text = "Global"
+        if not totals.has(scope_text):
+            totals[scope_text] = {}
+        var resonance_variant: Variant = info.get("culture_resonance", null)
+        var entries: Array = []
+        if resonance_variant is Array:
+            entries = resonance_variant
+        if entries.is_empty():
+            continue
+        var axis_map: Dictionary = totals[scope_text]
+        for entry_variant in entries:
+            if not (entry_variant is Dictionary):
+                continue
+            var entry: Dictionary = entry_variant as Dictionary
+            var axis_key: String = str(entry.get("axis", entry.get("label", "")))
+            if axis_key == "":
+                continue
+            var label: String = str(entry.get("label", axis_key))
+            var output_val: float = float(entry.get("output", 0.0))
+            if absf(output_val) < 0.0001:
+                continue
+            if not axis_map.has(axis_key):
+                axis_map[axis_key] = {
+                    "axis": axis_key,
+                    "label": label,
+                    "output": 0.0
+                }
+            axis_map[axis_key]["output"] += output_val
+    var result := {}
+    for scope_key in totals.keys():
+        var axis_map: Dictionary = totals[scope_key]
+        var entries: Array = axis_map.values()
+        entries.sort_custom(Callable(self, "_compare_resonance_total"))
+        result[scope_key] = entries
+    return result
+
+func _compare_resonance_total(a: Dictionary, b: Dictionary) -> bool:
+    var a_out: float = absf(float(a.get("output", 0.0)))
+    var b_out: float = absf(float(b.get("output", 0.0)))
+    return a_out > b_out
 
 func _format_owner_display(owner_variant: Variant) -> String:
     match typeof(owner_variant):

@@ -756,6 +756,10 @@ fn influencer_to_dict(state: fb::InfluentialIndividualState<'_>) -> Dictionary {
         "weight_humanitarian",
         fixed64_to_f64(state.weightHumanitarian()),
     );
+    if let Some(resonance) = state.cultureResonance() {
+        let array = culture_resonance_to_array(resonance);
+        let _ = dict.insert("culture_resonance", array);
+    }
     dict
 }
 
@@ -767,6 +771,30 @@ fn influencers_to_array(
         let dict = influencer_to_dict(state);
         let variant = dict.to_variant();
         array.push(&variant);
+    }
+    array
+}
+
+fn culture_resonance_entry_to_dict(entry: fb::InfluencerCultureResonanceEntry<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let axis = entry.axis();
+    let _ = dict.insert("axis", culture_axis_to_key(axis));
+    let _ = dict.insert("label", culture_axis_to_label(axis));
+    let _ = dict.insert("weight", fixed64_to_f64(entry.weight()));
+    let _ = dict.insert("output", fixed64_to_f64(entry.output()));
+    dict
+}
+
+fn culture_resonance_to_array(
+    list: flatbuffers::Vector<
+        '_,
+        flatbuffers::ForwardsUOffset<fb::InfluencerCultureResonanceEntry<'_>>,
+    >,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for entry in list {
+        let dict = culture_resonance_entry_to_dict(entry);
+        array.push(&dict.to_variant());
     }
     array
 }
