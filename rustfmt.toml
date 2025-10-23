@@ -1,1 +1,0 @@
-ignore = ["shadow_scale_flatbuffers/src/generated/snapshot_generated.rs"]

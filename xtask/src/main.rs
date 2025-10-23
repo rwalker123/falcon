@@ -29,6 +29,7 @@ fn print_usage() {
 
 fn prepare_client() -> Result<(), Box<dyn Error>> {
     regenerate_flatbuffers()?;
+    format_generated_bindings()?;
     godot_build()?;
     Ok(())
 }
@@ -51,6 +52,20 @@ fn regenerate_flatbuffers() -> Result<(), Box<dyn Error>> {
     }
 
     println!("Generated FlatBuffers bindings at {}", generated.display());
+    Ok(())
+}
+
+fn format_generated_bindings() -> Result<(), Box<dyn Error>> {
+    let generated = Path::new("shadow_scale_flatbuffers")
+        .join("src")
+        .join("generated")
+        .join("snapshot_generated.rs");
+    if generated.exists() {
+        let status = Command::new("rustfmt").arg(&generated).status()?;
+        if !status.success() {
+            return Err("rustfmt failed for generated bindings".into());
+        }
+    }
     Ok(())
 }
 
