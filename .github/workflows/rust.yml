@@ -38,6 +38,8 @@ jobs:
         profile: minimal
         override: true
         components: rustfmt, clippy
+    - name: Generate FlatBuffers bindings
+      run: cargo build --locked --package shadow_scale_flatbuffers
     - name: Ensure generated bindings exist
       run: |
         if [ ! -f shadow_scale_flatbuffers/src/generated/snapshot_generated.rs ]; then
@@ -86,6 +88,9 @@ jobs:
         profile: minimal
         override: true
         components: rustfmt, clippy
+    - name: Generate FlatBuffers bindings
+      if: matrix.toolchain == 'stable'
+      run: cargo build --locked --package shadow_scale_flatbuffers
     - name: Ensure generated bindings exist
       if: matrix.toolchain == 'stable'
       run: |

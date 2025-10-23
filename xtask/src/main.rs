@@ -7,6 +7,7 @@ use std::process::Command;
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
+        Some("prepare-client") => prepare_client(),
         Some("godot-build") => godot_build(),
         Some("help") | None => {
             print_usage();
@@ -21,8 +22,36 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn print_usage() {
-    eprintln!("Usage: cargo xtask godot-build");
+    eprintln!("Usage: cargo xtask prepare-client");
+    eprintln!("       cargo xtask godot-build");
     eprintln!("       cargo xtask help");
+}
+
+fn prepare_client() -> Result<(), Box<dyn Error>> {
+    regenerate_flatbuffers()?;
+    godot_build()?;
+    Ok(())
+}
+
+fn regenerate_flatbuffers() -> Result<(), Box<dyn Error>> {
+    let status = Command::new("cargo")
+        .args(["build", "--locked", "-p", "shadow_scale_flatbuffers"])
+        .status()?;
+
+    if !status.success() {
+        return Err("flatbuffers generation failed".into());
+    }
+
+    let generated = Path::new("shadow_scale_flatbuffers")
+        .join("src")
+        .join("generated")
+        .join("snapshot_generated.rs");
+    if !generated.exists() {
+        return Err(format!("expected generated file at {}", generated.display()).into());
+    }
+
+    println!("Generated FlatBuffers bindings at {}", generated.display());
+    Ok(())
 }
 
 fn godot_build() -> Result<(), Box<dyn Error>> {

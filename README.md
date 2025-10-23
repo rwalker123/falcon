@@ -67,10 +67,10 @@ pre-commit run --all-files
 Whenever the schema in `sim_schema/schemas/snapshot.fbs` changes, regenerate the Rust bindings with:
 
 ```bash
-cargo build -p shadow_scale_flatbuffers
+cargo xtask prepare-client
 ```
 
-The build script will update `shadow_scale_flatbuffers/src/generated/snapshot_generated.rs`. Remember to include the regenerated file in your commit if the schema changes.
+This runs the FlatBuffers build script and rebundles the Godot GDExtension artifact under `clients/godot_thin_client/native/bin/`. Commit the updated files (including `shadow_scale_flatbuffers/src/generated/snapshot_generated.rs`) when the schema changes.
 
 ### Install Rust/Cargo
 
