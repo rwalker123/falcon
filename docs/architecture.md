@@ -47,8 +47,9 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 - **Resources**: Godot spike scaffolding lives under `clients/godot_thin_client`; see `docs/godot_thin_client_spike.md` for usage and evaluation notes.
 - **Networking**: `clients/godot_thin_client/src/scripts/SnapshotStream.gd` consumes length-prefixed FlatBuffers snapshots from `SimulationConfig::snapshot_flat_bind` (`res/src/native` provides the Godot extension that decodes the schema generated from `sim_schema/schemas/snapshot.fbs`).
 - **Next Steps (UI plumbing)**:
-  - Logistics and sentiment rasters now stream directly from `core_sim`; `SnapshotHistory` caches the layers and the FlatBuffers schema exposes them for clients alongside terrain overlays.
-  - Enrich the Godot extension to surface multiple overlays (logistics intensity, sentiment pressure, corruption risk) and update `MapView.gd` to switch/toggle between them instead of hardcoding a single blend.
+  - Logistics, sentiment, corruption, and fog rasters now stream directly from `core_sim`; `SnapshotHistory` caches the layers and the FlatBuffers schema exposes them for clients alongside terrain overlays.
+  - The Godot decoder lifts these rasters into `overlays.channels` with stable keys (`logistics`, `sentiment`, `corruption`, `fog`). `MapView.gd` promotes those channels into a selectable overlay palette (defaulting to logistics blue, sentiment red, corruption amber, fog slate) and the inspector injects an option selector so designers can flip layers without touching code. Corruption and fog currently ship as zeroed placeholders—tagged in the UI as “stub” data—until we derive per-tile telemetry; see §Map-Centric Evaluation Plan in the manual for the player-facing legend.
+  - Follow-up: add corruption intensity sampling (e.g., average per-tile exposure across in-flight ledgers) and export knowledge/fog coverage from the discovery ledger so the placeholder rasters can be retired. Track those increments in `TASKS.md` once scoped.
   - Add instrumentation hooks so overlays can be validated against CLI inspector metrics while we iterate on colour ramps/normalisation.
 
 ### Shared Scripting Capability Model

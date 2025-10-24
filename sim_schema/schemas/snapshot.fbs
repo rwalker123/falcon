@@ -354,6 +354,8 @@ table WorldSnapshot {
   terrainOverlay:TerrainOverlay;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
+  corruptionRaster:ScalarRaster;
+  fogRaster:ScalarRaster;
   axisBias:AxisBiasState;
   sentiment:SentimentTelemetryState;
   generations:[GenerationState];
@@ -386,6 +388,8 @@ table WorldDelta {
   terrainOverlay:TerrainOverlay;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
+  corruptionRaster:ScalarRaster;
+  fogRaster:ScalarRaster;
   cultureLayers:[CultureLayerState];
   removedCultureLayers:[uint];
   cultureTensions:[CultureTensionState];

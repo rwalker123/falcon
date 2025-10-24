@@ -94,6 +94,8 @@ pub struct SnapshotHistory {
     terrain_overlay: TerrainOverlayState,
     logistics_raster: ScalarRasterState,
     sentiment_raster: ScalarRasterState,
+    corruption_raster: ScalarRasterState,
+    fog_raster: ScalarRasterState,
     corruption: CorruptionLedger,
     history: VecDeque<StoredSnapshot>,
 }
@@ -129,6 +131,8 @@ impl SnapshotHistory {
             terrain_overlay: TerrainOverlayState::default(),
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
+            corruption_raster: ScalarRasterState::default(),
+            fog_raster: ScalarRasterState::default(),
             corruption: CorruptionLedger::default(),
             history: VecDeque::new(),
         }
@@ -250,6 +254,20 @@ impl SnapshotHistory {
             Some(sentiment_raster_state.clone())
         };
 
+        let corruption_raster_state = snapshot.corruption_raster.clone();
+        let corruption_raster_delta = if self.corruption_raster == corruption_raster_state {
+            None
+        } else {
+            Some(corruption_raster_state.clone())
+        };
+
+        let fog_raster_state = snapshot.fog_raster.clone();
+        let fog_raster_delta = if self.fog_raster == fog_raster_state {
+            None
+        } else {
+            Some(fog_raster_state.clone())
+        };
+
         let corruption_state = snapshot.corruption.clone();
         let corruption_delta = if self.corruption == corruption_state {
             None
@@ -279,6 +297,8 @@ impl SnapshotHistory {
             terrain: terrain_delta.clone(),
             logistics_raster: logistics_raster_delta.clone(),
             sentiment_raster: sentiment_raster_delta.clone(),
+            corruption_raster: corruption_raster_delta.clone(),
+            fog_raster: fog_raster_delta.clone(),
             culture_layers: diff_new(&self.culture_layers, &culture_layers_index),
             removed_culture_layers: diff_removed(&self.culture_layers, &culture_layers_index),
             culture_tensions: delta_culture_tensions.clone(),
@@ -302,6 +322,8 @@ impl SnapshotHistory {
         self.terrain_overlay = terrain_state;
         self.logistics_raster = logistics_raster_state;
         self.sentiment_raster = sentiment_raster_state;
+        self.corruption_raster = corruption_raster_state;
+        self.fog_raster = fog_raster_state;
         self.corruption = corruption_state;
         self.culture_tensions = culture_tensions_state;
         self.discovery_progress = discovery_index;
@@ -364,6 +386,8 @@ impl SnapshotHistory {
         self.terrain_overlay = entry.snapshot.terrain.clone();
         self.logistics_raster = entry.snapshot.logistics_raster.clone();
         self.sentiment_raster = entry.snapshot.sentiment_raster.clone();
+        self.corruption_raster = entry.snapshot.corruption_raster.clone();
+        self.fog_raster = entry.snapshot.fog_raster.clone();
         self.culture_tensions = entry.snapshot.culture_tensions.clone();
 
         self.last_snapshot = Some(entry.snapshot.clone());
@@ -411,6 +435,8 @@ impl SnapshotHistory {
             sentiment: None,
             logistics_raster: None,
             sentiment_raster: None,
+            corruption_raster: None,
+            fog_raster: None,
             generations: Vec::new(),
             removed_generations: Vec::new(),
             corruption: None,
@@ -496,6 +522,8 @@ impl SnapshotHistory {
             sentiment: None,
             logistics_raster: None,
             sentiment_raster: None,
+            corruption_raster: None,
+            fog_raster: None,
             generations: Vec::new(),
             removed_generations: Vec::new(),
             corruption: None,
@@ -575,6 +603,8 @@ impl SnapshotHistory {
             sentiment: None,
             logistics_raster: None,
             sentiment_raster: None,
+            corruption_raster: None,
+            fog_raster: None,
             generations: Vec::new(),
             removed_generations: Vec::new(),
             corruption: Some(ledger.clone()),
@@ -710,6 +740,8 @@ pub fn capture_snapshot(
         logistics_raster_from_links(&tile_states, &logistics_states, config.grid_size);
     let sentiment_raster =
         sentiment_raster_from_populations(&tile_states, &population_states, config.grid_size);
+    let corruption_raster = corruption_raster_stub(&logistics_raster, config.grid_size);
+    let fog_raster = fog_of_war_stub(&logistics_raster, config.grid_size);
 
     let policy_axes = axis_bias.policy_values();
     let incident_axes = axis_bias.incident_values();
@@ -846,6 +878,8 @@ pub fn capture_snapshot(
         terrain: terrain_overlay.clone(),
         logistics_raster: logistics_raster.clone(),
         sentiment_raster: sentiment_raster.clone(),
+        corruption_raster: corruption_raster.clone(),
+        fog_raster: fog_raster.clone(),
         axis_bias: axis_bias_state,
         sentiment: sentiment_state,
         generations: generation_states,
@@ -1367,6 +1401,27 @@ fn logistics_raster_from_links(
         height,
         samples,
     }
+}
+
+fn zero_raster_like(reference: &ScalarRasterState, grid_size: UVec2) -> ScalarRasterState {
+    let width = reference.width.max(grid_size.x).max(1);
+    let height = reference.height.max(grid_size.y).max(1);
+    let total = (width as usize).saturating_mul(height as usize).max(1);
+    ScalarRasterState {
+        width,
+        height,
+        samples: vec![0i64; total],
+    }
+}
+
+fn corruption_raster_stub(reference: &ScalarRasterState, grid_size: UVec2) -> ScalarRasterState {
+    // TODO(falcon): Replace stubbed corruption raster with per-tile telemetry export.
+    zero_raster_like(reference, grid_size)
+}
+
+fn fog_of_war_stub(reference: &ScalarRasterState, grid_size: UVec2) -> ScalarRasterState {
+    // TODO(falcon): Replace stubbed fog raster with visibility/knowledge coverage export.
+    zero_raster_like(reference, grid_size)
 }
 
 fn sentiment_raster_from_populations(

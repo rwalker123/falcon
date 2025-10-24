@@ -161,6 +161,11 @@ var _viewport: Viewport = null
 var _panel_width: float = PANEL_WIDTH_DEFAULT
 var _is_resizing = false
 var _script_host: ScriptHostManager = null
+var _overlay_selector: OptionButton = null
+var _overlay_channel_labels: Dictionary = {}
+var _overlay_channel_order: Array = []
+var _overlay_placeholder_flags: Dictionary = {}
+var _selected_overlay_key: String = "logistics"
 
 func _ready() -> void:
     Typography.initialize()
@@ -176,6 +181,7 @@ func _ready() -> void:
     _initialize_influencer_controls()
     _initialize_corruption_controls()
     _initialize_heat_controls()
+    _ensure_overlay_selector()
     apply_typography()
     _connect_terrain_ui()
     _connect_culture_ui()
@@ -453,6 +459,8 @@ func apply_typography() -> void:
         heat_apply_button,
         terrain_overlay_tabs
     ]
+    if _overlay_selector != null:
+        control_nodes.append(_overlay_selector)
     _apply_typography_style(control_nodes, Typography.STYLE_CONTROL)
 
     _update_panel_layout()
@@ -481,6 +489,28 @@ func _connect_culture_ui() -> void:
             culture_divergence_list.item_selected.connect(_on_culture_divergence_selected)
         if not culture_divergence_list.is_connected("item_activated", divergence_callable):
             culture_divergence_list.item_activated.connect(_on_culture_divergence_selected)
+
+func _ensure_overlay_selector() -> void:
+    if _overlay_selector != null:
+        return
+    if terrain_overlay_section_label == null:
+        return
+    var container: Node = terrain_overlay_section_label.get_parent()
+    if container == null:
+        return
+    _overlay_selector = OptionButton.new()
+    _overlay_selector.name = "OverlaySelector"
+    _overlay_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _overlay_selector.focus_mode = Control.FOCUS_ALL
+    container.add_child(_overlay_selector)
+    if terrain_overlay_tabs != null:
+        var children: Array = container.get_children()
+        var target_index: int = children.find(terrain_overlay_tabs)
+        if target_index >= 0:
+            container.move_child(_overlay_selector, target_index)
+    if not _overlay_selector.is_connected("item_selected", Callable(self, "_on_overlay_channel_selected")):
+        _overlay_selector.item_selected.connect(_on_overlay_channel_selected)
+    _overlay_selector.visible = false
 
 func _setup_command_controls() -> void:
     step_one_button.pressed.connect(_on_step_one_button_pressed)
@@ -1388,6 +1418,7 @@ func _extract_trade_openness(info: Dictionary) -> float:
 func attach_map_view(view: Node) -> void:
     _map_view = view
     _sync_map_trade_overlay()
+    _apply_overlay_selection_to_map()
 
 func set_hud_layer(layer: Object) -> void:
     _hud_layer = layer
@@ -2405,6 +2436,125 @@ func _ingest_overlays(overlays: Variant) -> void:
         var tag_variant: Variant = overlay_dict["terrain_tag_labels"]
         if tag_variant is Dictionary:
             _terrain_tag_labels = (tag_variant as Dictionary).duplicate(true)
+    _update_overlay_channels(overlay_dict)
+
+func _update_overlay_channels(overlay_dict: Dictionary) -> void:
+    _ensure_overlay_selector()
+    _overlay_channel_labels.clear()
+    _overlay_channel_order.clear()
+    _overlay_placeholder_flags.clear()
+
+    if overlay_dict.has("channels"):
+        var channels_variant: Variant = overlay_dict["channels"]
+        if channels_variant is Dictionary:
+            var channels: Dictionary = channels_variant
+            for raw_key in channels.keys():
+                var key := String(raw_key)
+                var info_variant: Variant = channels[raw_key]
+                if not (info_variant is Dictionary):
+                    continue
+                var info: Dictionary = info_variant
+                _overlay_channel_labels[key] = String(info.get("label", key.capitalize()))
+                _overlay_placeholder_flags[key] = bool(info.get("placeholder", false))
+
+    var placeholder_variant: Variant = overlay_dict.get("placeholder_channels", PackedStringArray())
+    if placeholder_variant is PackedStringArray:
+        var placeholder_array: PackedStringArray = placeholder_variant
+        for i in placeholder_array.size():
+            var placeholder_key := String(placeholder_array[i])
+            _overlay_placeholder_flags[placeholder_key] = true
+
+    var order_variant: Variant = overlay_dict.get("channel_order", PackedStringArray())
+    _overlay_channel_order.clear()
+    if order_variant is PackedStringArray:
+        var order_array: PackedStringArray = order_variant
+        for i in order_array.size():
+            _overlay_channel_order.append(String(order_array[i]))
+    if _overlay_channel_order.is_empty():
+        var keys: Array = _overlay_channel_labels.keys()
+        keys.sort()
+        _overlay_channel_order = keys
+
+    if _overlay_channel_labels.is_empty():
+        _selected_overlay_key = "logistics"
+        _refresh_overlay_selector()
+        _update_overlay_section_text()
+        return
+
+    var default_variant: Variant = overlay_dict.get("default_channel", _selected_overlay_key)
+    var default_key: String = String(default_variant)
+    if not _overlay_channel_labels.has(_selected_overlay_key):
+        if _overlay_channel_labels.has(default_key):
+            _selected_overlay_key = default_key
+        elif _overlay_channel_order.size() > 0:
+            _selected_overlay_key = String(_overlay_channel_order[0])
+        else:
+            var keys_array: Array = _overlay_channel_labels.keys()
+            _selected_overlay_key = String(keys_array[0])
+
+    _refresh_overlay_selector()
+    _update_overlay_section_text()
+    _apply_overlay_selection_to_map()
+
+func _refresh_overlay_selector() -> void:
+    if _overlay_selector == null:
+        return
+    _overlay_selector.clear()
+    if _overlay_channel_labels.is_empty():
+        _overlay_selector.hide()
+        return
+    _overlay_selector.show()
+    var index := 0
+    var selected := false
+    for key in _overlay_channel_order:
+        if not _overlay_channel_labels.has(key):
+            continue
+        var label: String = _overlay_channel_labels[key]
+        if bool(_overlay_placeholder_flags.get(key, false)):
+            label += " (stub)"
+        _overlay_selector.add_item(label)
+        _overlay_selector.set_item_metadata(index, key)
+        if key == _selected_overlay_key:
+            _overlay_selector.select(index)
+            selected = true
+        index += 1
+    if index == 0:
+        _overlay_selector.hide()
+        return
+    if not selected:
+        _overlay_selector.select(0)
+        var metadata: Variant = _overlay_selector.get_item_metadata(0)
+        _selected_overlay_key = String(metadata)
+
+func _apply_overlay_selection_to_map() -> void:
+    if _map_view == null or _selected_overlay_key == "":
+        return
+    if _map_view.has_method("set_overlay_channel"):
+        _map_view.call("set_overlay_channel", _selected_overlay_key)
+
+func _update_overlay_section_text() -> void:
+    if terrain_overlay_section_label == null:
+        return
+    if _overlay_channel_labels.is_empty():
+        terrain_overlay_section_label.text = "Future Overlays"
+        return
+    var text := "Map Overlays"
+    if _overlay_channel_labels.has(_selected_overlay_key):
+        text += " — %s" % _overlay_channel_labels[_selected_overlay_key]
+        if bool(_overlay_placeholder_flags.get(_selected_overlay_key, false)):
+            text += " (stub data)"
+    terrain_overlay_section_label.text = text
+
+func _on_overlay_channel_selected(index: int) -> void:
+    if _overlay_selector == null:
+        return
+    var metadata: Variant = _overlay_selector.get_item_metadata(index)
+    var key := String(metadata)
+    if key == "" or key == _selected_overlay_key:
+        return
+    _selected_overlay_key = key
+    _update_overlay_section_text()
+    _apply_overlay_selection_to_map()
 
 func _rebuild_tiles(tile_entries) -> void:
     _tile_records.clear()

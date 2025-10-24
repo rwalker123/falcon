@@ -1075,12 +1075,12 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 4. Decide distribution model (e.g., signed packages, Steam Workshop integration) and how host loads/unloads mods at runtime.
 
 #### Map-Centric Evaluation Plan
-- Prioritize a tactical map workload that exercises zooming, multi-layer overlays (logistics, sentiment heatmaps, fog of knowledge), unit selection, and command previews.
+- Prioritize a tactical map workload that exercises zooming, unit selection, command previews, and fast overlay switching. The inspector should let designers flip between logistics throughput (cool blue), sentiment pressure (ember red), corruption risk (amber), and fog-of-knowledge coverage (slate) without leaving playback.
 - First execute a Godot 4 thin-client spike that consumes mock snapshot streams and replays scripted orders to validate rendering responsiveness, animation tooling, and latency to the headless core.
 - If Godot reveals blocking gaps (performance, tooling, pipeline), evaluate alternative hosts for visualisation, noting that any replacement must adopt the Godot-defined scripting contract rather than a bespoke Unity fallback.
 - Capture metrics per spike (frame budget at targeted PC spec, draw-call cost for layered overlays, command round-trip) and document licensing/tooling implications so we can make an informed client stack decision.
 - Reference implementations and manifest schemas live under `clients/godot_thin_client`; see `docs/godot_thin_client_spike.md` for applied notes on the sandboxed scripting API design.
-- Current Godot spike now renders live FlatBuffers snapshots; logistics and sentiment rasters stream directly from the sim, replacing the temperature stand-ins. Next increments must (a) expand the overlay schema so UI can swap between logistics, sentiment, corruption, and fog-of-war layers, and (b) validate colour ramps/normalisation against inspector metrics so designers trust what the map is showing.
+- Current Godot spike renders live FlatBuffers snapshots, and the new overlay selector exposes the logistics/sentiment/corruption/fog layers with consistent colour ramps. Corruption and fog currently display stubbed zero rasters—clearly tagged in the UI—until we derive per-tile corruption intensity and knowledge coverage from the simulation. Feeding those metrics forward is the next backend increment so designers can validate the overlays against inspector telemetry.
 
 
 ### Recommended Shortlist & Next Steps (Headless First)
