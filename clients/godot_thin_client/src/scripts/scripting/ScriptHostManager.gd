@@ -186,6 +186,39 @@ func _find_package_for_manifest(manifest_path: String, manifest_id: String) -> S
                 return key
     return ""
 
+func _variant_collection_to_array(collection) -> Array:
+    var result: Array = []
+    if collection == null:
+        return result
+    match typeof(collection):
+        TYPE_ARRAY:
+            for item in collection:
+                result.append(item)
+        TYPE_PACKED_STRING_ARRAY:
+            for item in collection:
+                result.append(item)
+        TYPE_OBJECT:
+            if collection is Array:
+                for item in collection:
+                    result.append(item)
+    return result
+
+func _ensure_array(value) -> Array:
+    if typeof(value) == TYPE_ARRAY:
+        return value.duplicate(true)
+    return _variant_collection_to_array(value)
+
+func _coerce_array(value) -> Array:
+    match typeof(value):
+        TYPE_ARRAY:
+            return value.duplicate(true)
+        TYPE_PACKED_STRING_ARRAY:
+            return Array(value)
+        TYPE_OBJECT:
+            if value is Array:
+                return value.duplicate(true)
+    return []
+
 func _initialize_host() -> void:
     if ClassDB.class_exists(HOST_CLASS_NAME):
         _host = ClassDB.instantiate(HOST_CLASS_NAME)

@@ -31,6 +31,14 @@ const CAMERA_ZOOM_MIN = 0.5
 const CAMERA_ZOOM_MAX = 1.5
 const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
+const SNAPSHOT_DELTA_FIELDS := [
+    "influencer_updates",
+    "population_updates",
+    "tile_updates",
+    "trade_link_updates",
+    "influencer_removed",
+    "population_removed"
+]
 
 func _ready() -> void:
     Typography.initialize()
@@ -199,7 +207,10 @@ func _process(delta: float) -> void:
         camera.position += pan_input * CAMERA_PAN_SPEED * delta
 
 func _snapshot_is_delta(snapshot: Dictionary) -> bool:
-    return snapshot.has("influencer_updates") or snapshot.has("population_updates") or snapshot.has("tile_updates") or snapshot.has("trade_link_updates") or snapshot.has("influencer_removed") or snapshot.has("population_removed")
+    for field in SNAPSHOT_DELTA_FIELDS:
+        if snapshot.has(field):
+            return true
+    return false
 
 func _adjust_camera_zoom(delta_zoom: float) -> void:
     var new_zoom: float = clamp(camera.zoom.x + delta_zoom, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
