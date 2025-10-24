@@ -3,6 +3,7 @@ extends Node2D
 const SnapshotLoader = preload("res://src/scripts/SnapshotLoader.gd")
 const CommandClient = preload("res://src/scripts/CommandClient.gd")
 const Typography = preload("res://src/scripts/Typography.gd")
+const ScriptHostManager = preload("res://src/scripts/scripting/ScriptHostManager.gd")
 
 @onready var map_view: Node2D = $MapLayer
 @onready var hud: CanvasLayer = $HUD
@@ -16,6 +17,7 @@ var stream_connection_timer: float = 0.0
 var command_client: CommandClient
 var _warned_stream_fallback: bool = false
 var _camera_initialized: bool = false
+var script_host_manager: ScriptHostManager = null
 
 const MOCK_DATA_PATH = "res://src/data/mock_snapshots.json"
 const TURN_INTERVAL_SECONDS = 1.5
@@ -29,6 +31,14 @@ const CAMERA_ZOOM_MIN = 0.5
 const CAMERA_ZOOM_MAX = 1.5
 const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
+const SNAPSHOT_DELTA_FIELDS := [
+    "influencer_updates",
+    "population_updates",
+    "tile_updates",
+    "trade_link_updates",
+    "influencer_removed",
+    "population_removed"
+]
 
 func _ready() -> void:
     Typography.initialize()
@@ -62,6 +72,11 @@ func _ready() -> void:
         inspector.call("set_command_client", command_client, command_err == OK)
     if inspector != null and inspector.has_method("set_hud_layer"):
         inspector.call("set_hud_layer", hud)
+    script_host_manager = ScriptHostManager.new()
+    add_child(script_host_manager)
+    script_host_manager.setup(command_client)
+    if inspector != null and inspector.has_method("attach_script_host"):
+        inspector.call("attach_script_host", script_host_manager)
     if hud != null and hud.has_method("apply_typography"):
         hud.call("apply_typography")
     if inspector != null and inspector.has_method("apply_typography"):
@@ -96,6 +111,7 @@ func _on_tick() -> void:
 func _apply_snapshot(snapshot: Dictionary) -> void:
     if snapshot.is_empty():
         return
+    var is_delta := _snapshot_is_delta(snapshot)
     var metrics_variant: Variant = map_view.call("display_snapshot", snapshot)
     var metrics: Dictionary = metrics_variant if metrics_variant is Dictionary else {}
     hud.call("update_overlay", snapshot.get("turn", 0), metrics)
@@ -105,7 +121,7 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
             if typeof(resolved_size_variant) in [TYPE_INT, TYPE_FLOAT]:
                 hud.call("set_inspector_font_size", int(resolved_size_variant))
     if inspector != null:
-        if snapshot.has("influencer_updates") or snapshot.has("population_updates") or snapshot.has("tile_updates") or snapshot.has("generation_updates"):
+        if is_delta:
             if inspector.has_method("update_delta"):
                 inspector.call("update_delta", snapshot)
         else:
@@ -123,6 +139,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     if center_variant is Vector2 and (recenter or not _camera_initialized):
         camera.position = center_variant
         _camera_initialized = true
+    if script_host_manager != null and script_host_manager.has_host():
+        if is_delta:
+            script_host_manager.handle_delta(snapshot)
+        else:
+            script_host_manager.handle_snapshot(snapshot)
 
 func skip_to_next_turn() -> void:
     if streaming_mode:
@@ -184,6 +205,12 @@ func _process(delta: float) -> void:
     )
     if pan_input != Vector2.ZERO:
         camera.position += pan_input * CAMERA_PAN_SPEED * delta
+
+func _snapshot_is_delta(snapshot: Dictionary) -> bool:
+    for field in SNAPSHOT_DELTA_FIELDS:
+        if snapshot.has(field):
+            return true
+    return false
 
 func _adjust_camera_zoom(delta_zoom: float) -> void:
     var new_zoom: float = clamp(camera.zoom.x + delta_zoom, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)

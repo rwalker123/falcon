@@ -40,16 +40,43 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 
 ### Frontend Client Strategy
 - **Goal**: Select a graphical client stack capable of rendering the live strategy map (zoom/pan, unit animation, layered overlays) while consuming headless snapshots and dogfooding the scripting API.
-- **Spikes**: Prioritize a Godot 4 proof-of-concept client that replays mock `WorldDelta` frames and command queues to benchmark frame pacing, overlay rendering cost, and command latency. If Godot exposes blocking gaps, schedule a Unity thin visualization shell spike as a contingency comparison.
+- **Spikes**: Prioritize a Godot 4 proof-of-concept client that replays mock `WorldDelta` frames and command queues to benchmark frame pacing, overlay rendering cost, and command latency. If Godot exposes blocking gaps, run a focused evaluation of alternative hosts (Avalonia, Qt/QML, Rust+Slint) for visualization only; avoid maintaining a parallel Unity scripting surface.
 - **Metrics**: Target ≤16 ms frame time at desktop spec, responsive input-to-command round-trip, and acceptable draw-call budget for layered heatmaps. Capture qualitative notes on tooling ergonomics, asset workflows, and licensing/operational implications. (See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` “Map-Centric Evaluation Plan”.)
-- **Scripting Surface**: Design a capability-scoped scripting layer once (JS/Lua sandbox managed by the host). Integrate the facade with the Godot spike and be ready to reuse it in the Unity contingency so dashboards/mod extensions remain portable across host choices.
-- **Decision Artifact**: Summarize results in an engineering decision memo that recommends the preferred client, contingency option, and follow-on work (e.g., WebGPU dashboard, Unity licensing mitigation) before committing to full UX build-out.
+- **Scripting Surface**: Design a capability-scoped scripting layer once (JS/Lua sandbox managed by the host). Integrate the facade with the Godot spike and publish an engine-agnostic contract so any future host adopts the same manifest; no Unity contingency needs to stay warm.
+- **Decision Artifact**: Summarize results in an engineering decision memo that recommends the preferred client, outlines alternative host risks, and queues follow-on work (e.g., WebGPU dashboard, licensing review) before committing to full UX build-out.
 - **Resources**: Godot spike scaffolding lives under `clients/godot_thin_client`; see `docs/godot_thin_client_spike.md` for usage and evaluation notes.
 - **Networking**: `clients/godot_thin_client/src/scripts/SnapshotStream.gd` consumes length-prefixed FlatBuffers snapshots from `SimulationConfig::snapshot_flat_bind` (`res/src/native` provides the Godot extension that decodes the schema generated from `sim_schema/schemas/snapshot.fbs`).
 - **Next Steps (UI plumbing)**:
   - Emit the real logistics/sentiment rasters directly from `core_sim` so the client is no longer visualising proxy temperature values. Extend `SnapshotHistory` to cache those layers and expose them through the FlatBuffers schema.
   - Enrich the Godot extension to surface multiple overlays (logistics intensity, sentiment pressure, corruption risk) and update `MapView.gd` to switch/toggle between them instead of hardcoding a single blend.
   - Add instrumentation hooks so overlays can be validated against CLI inspector metrics while we iterate on colour ramps/normalisation.
+
+### Shared Scripting Capability Model
+- **Runtime Host**: Embed QuickJS via a GDNative module inside the Godot thin client to execute sandboxed JavaScript. Script packs ship with `manifest.json` (id, version, entrypoint, declared capabilities, optional config schema). Development builds hot-reload files under `addons/shared_scripts/` while packaged builds look in `user://scripts`.
+- **Capability Families** (aligned with the manual’s player-facing description):
+  - `telemetry.subscribe`: host-managed subscriptions to snapshot feeds (`world.delta`, `overlays.*`, `ledger.discovery`, `log.events`). Tokens encode topic id, optional filters, and sampling rate; the host enforces read-only semantics and per-topic back-pressure (`max_messages_in_flight`).
+  - `ui.compose`: declarative widget graph expressed through JS builders that map to Godot controls (`Panel`, `VBox`, `Table`, `Chart2D`, `OverlayLayer`, `MapAnnotation`). Script diffs resolve against stable component ids and render on the main thread.
+  - `commands.issue`: vetted command endpoints (turn stepping, axis bias, influencer actions, debug hooks) routed through `sim_runtime::command_bus`. Tokens specify throttle windows (commands per turn) and whether debug-only verbs are available.
+  - `storage.session`: scoped key/value cache that persists for a simulation session and travels with save games via a `SimScriptState` blob. No raw disk writes; host exposes `storage.snapshot()` for explicit exports within quota.
+  - Optional `alerts.emit`: raise toast/banner notifications; host enforces rate caps and prefixes alerts with script ids for audit.
+- **Sandbox Enforcement**:
+  - QuickJS contexts are created per script on a worker thread with memory limits (default 16 MB) and an instruction watchdog that yields every 4 ms. Disallowed globals (File, Socket, Thread) are removed; only whitelisted helpers (`host`, `console`, math/time shims) remain.
+  - Capability tokens are signed blobs issued during manifest load; runtime APIs validate tokens each call to prevent escalation if scripts exchange references.
+  - Violations trigger suspension (`ScriptHost` moves the script to quarantine, unsubscribes telemetry, surfaces error toast) until the player re-enables it.
+- **Lifecycle & Tooling**:
+  - Manifest parsing occurs at client boot and when players toggle scripts via the forthcoming Script Manager. Errors include actionable hints (missing capability, schema mismatch, syntax failure).
+  - Hot reload path uses an esbuild-lite pass (in `tools/script_pipeline`) to bundle modules, then recreates the QuickJS context while preserving session storage when allowed.
+  - Logging funnels `console.*` through the Godot Logs tab with per-script channels and stack traces. Structured metrics publish to `log.events` so scripts can introspect their own health.
+- **Integration Touchpoints**:
+  - `clients/godot_thin_client/src/scripts/scripting/ScriptHost.gd` owns runtime initialisation, capability validation, and bridging to `SnapshotStream`/`CommandBridge`.
+  - `sim_runtime::scripting::capability_registry` enumerates capability specs (`telemetry.subscribe`, `commands.issue`, `storage.session`, `alerts.emit`, `ui.compose`) so manifests, hosts, and tooling share a single source of truth.
+  - `sim_runtime` exports `CapabilitySpec` definitions so manifests can be linted offline and Rust-side tests ensure topic/command ids stay in sync.
+- Save/load flows serialise active scripts (`ScriptManifestRef`) and session payloads via new `SimScriptState` struct so resumes restore contexts before the next snapshot.
+  - Godot’s `ScriptHostManager` exposes `capture_state()` / `restore_state()` which wrap `ScriptHostBridge.snapshot_active_scripts` and `apply_script_state`, persisting `SimScriptState` payloads alongside the save game.
+- **Verification Plan**:
+  - Headless harness (`tools/script_harness`) spins up QuickJS with mock feeds to exercise API contracts and fuzz capability enforcement.
+  - Integration tests replay recorded turns and assert scripts cannot exceed the 8 ms per-frame budget; watchdog faults are logged and scripts suspended.
+  - Security checklist tracks manifest review, capability coverage, and suspension/resume flows, keeping parity with guarantees in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` “Shared Scripting Capability Model (Player-Facing)”.
 
 ### Trade-Fueled Knowledge Diffusion
 - **Data model**: `TradeLinkState` serializes throughput, tariff, and a `TradeLinkKnowledge` payload (`openness`, `leak_timer`, `last_discovery`, `decay`). `PopulationCohortState` now exposes optional `knowledge_fragments:[KnownTechFragment]`, letting migrations ship tacit knowledge. These additions participate in snapshot/delta hashing.

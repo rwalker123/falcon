@@ -1,5 +1,7 @@
 extends CanvasLayer
 class_name InspectorLayer
+const ScriptManagerPanel := preload("res://src/scripts/scripting/ScriptManagerPanel.gd")
+const ScriptHostManager := preload("res://src/scripts/scripting/ScriptHostManager.gd")
 
 const LogStreamClientScript = preload("res://src/scripts/LogStreamClient.gd")
 const Typography = preload("res://src/scripts/Typography.gd")
@@ -43,6 +45,7 @@ const Typography = preload("res://src/scripts/Typography.gd")
 @onready var autoplay_spin: SpinBox = $RootPanel/TabContainer/Commands/AutoplayRow/AutoplayIntervalSpin
 @onready var autoplay_label: Label = $RootPanel/TabContainer/Commands/AutoplayRow/AutoplayIntervalLabel
 @onready var command_log_text: RichTextLabel = $RootPanel/TabContainer/Commands/LogPanel/LogScroll/LogText
+@onready var scripts_panel: ScriptManagerPanel = $RootPanel/TabContainer/Scripts
 @onready var axis_dropdown: OptionButton = $RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisDropdown
 @onready var axis_value_spin: SpinBox = $RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisValueSpin
 @onready var axis_apply_button: Button = $RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisApplyButton
@@ -157,6 +160,7 @@ const KNOWLEDGE_EVENT_HISTORY_LIMIT = 24
 var _viewport: Viewport = null
 var _panel_width: float = PANEL_WIDTH_DEFAULT
 var _is_resizing = false
+var _script_host: ScriptHostManager = null
 
 func _ready() -> void:
     Typography.initialize()
@@ -590,6 +594,22 @@ func _initialize_heat_controls() -> void:
     if heat_apply_button != null:
         heat_apply_button.pressed.connect(_on_heat_apply_button_pressed)
     _update_command_controls_enabled()
+
+func attach_script_host(manager: ScriptHostManager) -> void:
+    if _script_host != null:
+        if _script_host.is_connected("script_log", Callable(self, "_on_script_log_from_package")):
+            _script_host.disconnect("script_log", Callable(self, "_on_script_log_from_package"))
+        if _script_host.is_connected("script_alert", Callable(self, "_on_script_alert_from_package")):
+            _script_host.disconnect("script_alert", Callable(self, "_on_script_alert_from_package"))
+        if _script_host.is_connected("script_event", Callable(self, "_on_script_event_from_package")):
+            _script_host.disconnect("script_event", Callable(self, "_on_script_event_from_package"))
+    _script_host = manager
+    if scripts_panel != null:
+        scripts_panel.set_manager(manager)
+    if _script_host != null:
+        _script_host.script_log.connect(_on_script_log_from_package)
+        _script_host.script_alert.connect(_on_script_alert_from_package)
+        _script_host.script_event.connect(_on_script_event_from_package)
 
 func set_command_client(client: Object, connected: bool) -> void:
     command_client = client
@@ -2791,6 +2811,30 @@ func _on_heat_apply_button_pressed() -> void:
     var line: String = "heat %d %d" % [entity_id, delta]
     var message: String = "Heat delta %d applied to entity %d." % [delta, entity_id]
     _send_command(line, message)
+
+func _on_script_log_from_package(script_id: int, level: String, message: String) -> void:
+    var prefix: String = "[SCRIPT %d]" % script_id if script_id >= 0 else "[SCRIPT]"
+    var entry: String = "%s [%s] %s" % [prefix, String(level).to_upper(), message]
+    _append_log_entry(entry)
+
+func _on_script_alert_from_package(script_id: int, data: Dictionary) -> void:
+    var title: String = data.get("title", "Alert")
+    var level: String = data.get("level", "info")
+    var body: String = data.get("message", "")
+    var prefix: String = "[SCRIPT %d]" % script_id if script_id >= 0 else "[SCRIPT]"
+    _append_log_entry("%s alert (%s): %s" % [prefix, level, title])
+    if not body.is_empty():
+        _append_log_entry("  %s" % body)
+
+func _on_script_event_from_package(script_id: int, event_name: String, payload: Variant) -> void:
+    if event_name == "commands.issue.result" and typeof(payload) == TYPE_DICTIONARY:
+        var ok: bool = payload.get("ok", false)
+        var line: String = payload.get("line", "")
+        var prefix: String = "[SCRIPT %d]" % script_id if script_id >= 0 else "[SCRIPT]"
+        if ok:
+            _append_log_entry("%s command acknowledged: %s" % [prefix, line])
+        else:
+            _append_log_entry("%s command failed: %s" % [prefix, line])
 
 func _append_log_entry(entry: String) -> void:
     var trimmed: String = entry.strip_edges(true, true)
