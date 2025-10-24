@@ -348,25 +348,26 @@ func _handle_command_issue(script_id: int, payload: Variant) -> void:
         if script_id >= 0 and _host != null:
             _host.dispatch_event(script_id, "commands.issue.result", {"ok": true, "line": line})
 
-func _variant_collection_to_array(value) -> Array:
-    var result: Array = []
+# Consolidated array coercion utility
+func _to_array(value: Variant) -> Array:
     if value == null:
-        return result
-    for item in value:
-        result.append(item)
-    return result
-
-func _coerce_array(value: Variant) -> Array:
+        return []
     match typeof(value):
         TYPE_ARRAY:
             return value.duplicate(true)
-        TYPE_PACKED_STRING_ARRAY:
+        TYPE_PACKED_STRING_ARRAY, TYPE_PACKED_INT32_ARRAY, TYPE_PACKED_FLOAT32_ARRAY, TYPE_PACKED_BYTE_ARRAY, TYPE_PACKED_COLOR_ARRAY, TYPE_PACKED_VECTOR2_ARRAY, TYPE_PACKED_VECTOR3_ARRAY:
             return Array(value)
         TYPE_OBJECT:
-            return _variant_collection_to_array(value)
-    return []
-
-func _ensure_array(value) -> Array:
-    if typeof(value) == TYPE_ARRAY:
+            var result: Array = []
+            for item in value:
+                result.append(item)
+            return result
+    # Try to iterate if possible (for Dictionaries, etc.)
+    if value is Array:
         return value.duplicate(true)
-    return _variant_collection_to_array(value)
+    if value is Dictionary:
+        var result: Array = []
+        for k in value.keys():
+            result.append(value[k])
+        return result
+    return []
