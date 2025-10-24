@@ -69,8 +69,10 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
   - Logging funnels `console.*` through the Godot Logs tab with per-script channels and stack traces. Structured metrics publish to `log.events` so scripts can introspect their own health.
 - **Integration Touchpoints**:
   - `clients/godot_thin_client/src/scripts/scripting/ScriptHost.gd` owns runtime initialisation, capability validation, and bridging to `SnapshotStream`/`CommandBridge`.
+  - `sim_runtime::scripting::capability_registry` enumerates capability specs (`telemetry.subscribe`, `commands.issue`, `storage.session`, `alerts.emit`, `ui.compose`) so manifests, hosts, and tooling share a single source of truth.
   - `sim_runtime` exports `CapabilitySpec` definitions so manifests can be linted offline and Rust-side tests ensure topic/command ids stay in sync.
-  - Save/load flows serialise active scripts (`ScriptManifestRef`) and session payloads via new `SimScriptState` struct so resumes restore contexts before the next snapshot.
+- Save/load flows serialise active scripts (`ScriptManifestRef`) and session payloads via new `SimScriptState` struct so resumes restore contexts before the next snapshot.
+  - Godot’s `ScriptHostManager` exposes `capture_state()` / `restore_state()` which wrap `ScriptHostBridge.snapshot_active_scripts` and `apply_script_state`, persisting `SimScriptState` payloads alongside the save game.
 - **Verification Plan**:
   - Headless harness (`tools/script_harness`) spins up QuickJS with mock feeds to exercise API contracts and fuzz capability enforcement.
   - Integration tests replay recorded turns and assert scripts cannot exceed the 8 ms per-frame budget; watchdog faults are logged and scripts suspended.

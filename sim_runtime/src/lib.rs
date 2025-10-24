@@ -8,6 +8,12 @@ use std::cmp::{max, min};
 
 pub use sim_schema::*;
 
+pub mod scripting;
+pub use scripting::{
+    capability_registry, CapabilityRegistry, CapabilitySpec, ScriptManifestRef, SessionAccess,
+    SimScriptState,
+};
+
 /// Fixed-point scaling constant shared with `core_sim::Scalar`.
 pub const FIXED_POINT_SCALE: i64 = 1_000_000;
 

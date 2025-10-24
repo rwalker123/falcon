@@ -10,6 +10,10 @@ use std::thread;
 use std::time::Duration;
 use thiserror::Error;
 
+use sim_runtime::scripting::{
+    capability_registry, CapabilitySpec, ScriptManifestRef, SimScriptState,
+};
+
 #[derive(Debug, Error)]
 pub enum ScriptError {
     #[error("manifest error: {0}")]
@@ -34,6 +38,8 @@ pub struct Manifest {
     pub author: Option<String>,
     #[serde(default)]
     pub config: Option<JsonValue>,
+    #[serde(skip)]
+    pub manifest_path: Option<String>,
 }
 
 impl Manifest {
@@ -49,6 +55,7 @@ impl Manifest {
                 "manifest entry cannot be empty".into(),
             ));
         }
+        validate_manifest_capabilities(&manifest)?;
         Ok(manifest)
     }
 }
@@ -58,6 +65,172 @@ impl std::str::FromStr for Manifest {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Manifest::parse_str(s)
+    }
+}
+
+fn validate_manifest_capabilities(manifest: &Manifest) -> Result<(), ScriptError> {
+    let registry = capability_registry();
+    let mut errors = Vec::new();
+    let mut declared: HashSet<String> = HashSet::new();
+    let mut resolved_specs: Vec<&'static CapabilitySpec> = Vec::new();
+
+    for capability in &manifest.capabilities {
+        let entry = capability.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        if !declared.insert(entry.to_string()) {
+            errors.push(format!("duplicate capability '{entry}'"));
+            continue;
+        }
+        match registry.get(entry) {
+            Some(spec) => resolved_specs.push(spec),
+            None => errors.push(format!("unknown capability '{entry}'")),
+        }
+    }
+
+    for topic in &manifest.subscriptions {
+        if topic.trim().is_empty() {
+            continue;
+        }
+        if !resolved_specs
+            .iter()
+            .any(|spec| spec.allows_subscription(topic))
+        {
+            errors.push(format!(
+                "subscription '{topic}' not covered by declared capabilities"
+            ));
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(ScriptError::Manifest(errors.join("; ")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manifest_rejects_unknown_capability() {
+        let json = r#"{
+            "id": "demo",
+            "version": "0.1.0",
+            "entry": "./index.js",
+            "capabilities": ["not_a_cap"],
+            "subscriptions": []
+        }"#;
+        let err = Manifest::parse_str(json).expect_err("expected manifest parse to fail");
+        match err {
+            ScriptError::Manifest(message) => {
+                assert!(message.contains("unknown capability"));
+            }
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn manifest_rejects_uncovered_subscription() {
+        let json = r#"{
+            "id": "demo",
+            "version": "0.1.0",
+            "entry": "./index.js",
+            "capabilities": ["commands.issue"],
+            "subscriptions": ["world.snapshot"]
+        }"#;
+        let err = Manifest::parse_str(json).expect_err("expected manifest parse to fail");
+        match err {
+            ScriptError::Manifest(message) => {
+                assert!(message.contains("subscription 'world.snapshot'"));
+            }
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn manifest_accepts_valid_capabilities() {
+        let json = r#"{
+            "id": "demo",
+            "version": "0.1.0",
+            "entry": "./index.js",
+            "capabilities": ["telemetry.subscribe", "commands.issue"],
+            "subscriptions": ["world.snapshot"]
+        }"#;
+        let manifest = Manifest::parse_str(json).expect("manifest should be valid");
+        assert_eq!(manifest.capabilities.len(), 2);
+    }
+
+    #[test]
+    fn script_state_round_trip() {
+        use serde_json::json;
+        use std::time::Duration;
+
+        let manager = ScriptManager::new();
+        let manifest = Manifest {
+            id: "demo.logger".to_string(),
+            version: "0.1.0".to_string(),
+            entry: "./script.js".to_string(),
+            capabilities: vec![
+                "telemetry.subscribe".to_string(),
+                "storage.session".to_string(),
+            ],
+            subscriptions: vec!["world.snapshot".to_string()],
+            description: None,
+            author: None,
+            config: None,
+            manifest_path: Some(
+                "res://addons/shared_scripts/demo_logger/manifest.json".to_string(),
+            ),
+        };
+
+        let source = r#"
+            const registrations = {
+              onEvent: "onEvent",
+              subscriptions: ["world.snapshot"]
+            };
+            host.register(registrations);
+
+            function onEvent(topic, payload) {
+              if (host.sessionSet) {
+                host.sessionSet("last", payload ?? {});
+              }
+            }
+        "#
+        .to_string();
+
+        let script_id = manager
+            .spawn_script(manifest.clone(), source)
+            .expect("script should spawn");
+
+        std::thread::sleep(Duration::from_millis(20));
+        let states = manager.snapshot_states();
+        assert_eq!(states.len(), 1);
+        let state = &states[0];
+        assert_eq!(state.manifest.id, manifest.id);
+        assert_eq!(
+            state.manifest.manifest_path.as_deref(),
+            manifest.manifest_path.as_deref()
+        );
+        assert!(state
+            .subscriptions
+            .iter()
+            .any(|topic| topic == "world.snapshot"));
+
+        let mut updated_state = state.clone();
+        updated_state.session = json!({"turn": 42});
+        manager
+            .apply_state(script_id, &updated_state)
+            .expect("state should apply");
+        std::thread::sleep(Duration::from_millis(5));
+        let session = manager
+            .snapshot_session(script_id)
+            .expect("session snapshot");
+        assert_eq!(session, json!({"turn": 42}));
+
+        manager.shutdown(script_id);
     }
 }
 
@@ -219,16 +392,6 @@ impl ScriptManager {
         let (command_tx, command_rx) = mpsc::channel::<ScriptCommand>();
         let (responses_tx, responses_rx) = mpsc::channel::<ScriptResponse>();
         let capabilities: HashSet<String> = manifest.capabilities.iter().cloned().collect();
-        if !manifest.subscriptions.is_empty()
-            && !manifest
-                .capabilities
-                .iter()
-                .any(|cap| cap == "telemetry.subscribe")
-        {
-            return Err(ScriptError::Manifest(
-                "subscriptions declared without telemetry.subscribe capability".into(),
-            ));
-        }
 
         let shared = ScriptSharedState::new(id, capabilities, responses_tx.clone());
         {
@@ -377,6 +540,68 @@ impl ScriptManager {
             .command_tx
             .send(ScriptCommand::RestoreSession(value))
             .map_err(|err| ScriptError::Runtime(format!("failed to queue session restore: {err}")))
+    }
+
+    pub fn snapshot_states(&self) -> Vec<SimScriptState> {
+        let guard = self.inner.scripts.lock().unwrap();
+        guard
+            .values()
+            .map(|script| {
+                let manifest_ref = ScriptManifestRef {
+                    id: script.manifest.id.clone(),
+                    version: script.manifest.version.clone(),
+                    manifest_path: script.manifest.manifest_path.clone(),
+                };
+                let session = script.shared.session.lock().unwrap().clone();
+                let subscriptions = {
+                    let subs_guard = script.shared.subscriptions.lock().unwrap();
+                    subs_guard.iter().cloned().collect::<Vec<_>>()
+                };
+                SimScriptState {
+                    manifest: manifest_ref,
+                    capabilities: script.manifest.capabilities.clone(),
+                    subscriptions,
+                    session,
+                    enabled: true,
+                }
+            })
+            .collect()
+    }
+
+    pub fn apply_state(&self, id: i64, state: &SimScriptState) -> Result<(), ScriptError> {
+        if !state.enabled {
+            return Err(ScriptError::Runtime(
+                "script state is marked disabled; enable package before applying".into(),
+            ));
+        }
+        let responses_tx = {
+            let guard = self.inner.scripts.lock().unwrap();
+            let script = guard
+                .get(&id)
+                .ok_or_else(|| ScriptError::Runtime(format!("unknown script id {id}")))?;
+            if !state.capabilities.is_empty() && state.capabilities != script.manifest.capabilities
+            {
+                return Err(ScriptError::Manifest(format!(
+                    "capability mismatch for script {}",
+                    script.manifest.id
+                )));
+            }
+            {
+                let mut subs = script.shared.subscriptions.lock().unwrap();
+                subs.clear();
+                subs.extend(state.subscriptions.iter().cloned());
+            }
+            {
+                let mut session = script.shared.session.lock().unwrap();
+                *session = state.session.clone();
+            }
+            script.shared.responses_tx.clone()
+        };
+
+        let _ = responses_tx.send(ScriptResponse::Subscriptions {
+            topics: state.subscriptions.clone(),
+        });
+        self.restore_session(id, state.session.clone())
     }
 }
 

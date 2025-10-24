@@ -60,6 +60,7 @@ func enable_package(key: String) -> Dictionary:
         _emit_packages_changed()
         return {"ok": false, "error": pkg[PackageFields.LAST_ERROR]}
     var manifest: Dictionary = pkg.get(PackageFields.MANIFEST, {})
+    var manifest_path: String = pkg.get(PackageFields.MANIFEST_PATH, "")
     if pkg.get(PackageFields.SUBSCRIPTIONS, []).size() > 0:
         var capabilities: Array = _ensure_array(manifest.get("capabilities", []))
         if not capabilities.has("telemetry.subscribe"):
@@ -67,7 +68,7 @@ func enable_package(key: String) -> Dictionary:
             _packages[key] = pkg
             _emit_packages_changed()
             return {"ok": false, "error": pkg[PackageFields.LAST_ERROR]}
-    var spawn_result: Dictionary = _host.spawn_script(manifest.duplicate(true), source_text)
+    var spawn_result: Dictionary = _host.spawn_script(manifest.duplicate(true), manifest_path, source_text)
     if not spawn_result.get("ok", false):
         var err: String = spawn_result.get("error", "Failed to spawn script")
         pkg[PackageFields.LAST_ERROR] = err
@@ -128,6 +129,62 @@ func handle_delta(delta: Dictionary) -> void:
 
 func refresh() -> void:
     _scan_packages()
+
+func capture_state() -> Array:
+    if _host == null:
+        return []
+    var result: Array = []
+    var states: Array = _ensure_array(_host.snapshot_active_scripts())
+    for state_variant in states:
+        if typeof(state_variant) == TYPE_DICTIONARY:
+            result.append(state_variant.duplicate(true))
+    return result
+
+func restore_state(states: Array) -> void:
+    if _host == null:
+        return
+    _scan_packages()
+    var keys: Array = _packages.keys()
+    for key in keys:
+        if _packages[key].get(PackageFields.ENABLED, false):
+            disable_package(key)
+    for state in states:
+        if typeof(state) != TYPE_DICTIONARY:
+            continue
+        var manifest: Dictionary = state.get("manifest", {})
+        var manifest_path: String = manifest.get("manifest_path", "")
+        var manifest_id: String = manifest.get("id", "")
+        var package_key: String = _find_package_for_manifest(manifest_path, manifest_id)
+        if package_key == "":
+            push_warning("Script state missing manifest: %s" % manifest_path)
+            continue
+        var enable_result := enable_package(package_key)
+        if not enable_result.get("ok", false):
+            push_warning("Unable to enable script %s: %s" % [package_key, enable_result.get("error", "unknown")])
+            continue
+        var script_id: int = enable_result.get("script_id", -1)
+        if script_id < 0:
+            continue
+        var apply_result: Dictionary = _host.apply_script_state(script_id, state)
+        if not apply_result.get("ok", false):
+            push_warning("Failed to apply script state for %s: %s" % [package_key, apply_result.get("error", "unknown")])
+        else:
+            var pkg: Dictionary = _packages.get(package_key, {})
+            pkg[PackageFields.SUBSCRIPTIONS] = _ensure_array(state.get("subscriptions", []))
+            _packages[package_key] = pkg
+            _emit_packages_changed()
+
+func _find_package_for_manifest(manifest_path: String, manifest_id: String) -> String:
+    if not manifest_path.is_empty():
+        for key in _packages.keys():
+            if _packages[key].get(PackageFields.MANIFEST_PATH, "") == manifest_path:
+                return key
+    if not manifest_id.is_empty():
+        for key in _packages.keys():
+            var manifest: Dictionary = _packages[key].get(PackageFields.MANIFEST, {})
+            if manifest.get("id", "") == manifest_id:
+                return key
+    return ""
 
 func _initialize_host() -> void:
     if ClassDB.class_exists(HOST_CLASS_NAME):

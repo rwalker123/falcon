@@ -11,6 +11,7 @@ pub use runtime::{
 };
 use runtime::{manifest_to_json, responses_to_json, Manifest, ScriptError};
 use serde_json::{json, Map as JsonMap, Number as JsonNumber, Value as JsonValue};
+use sim_runtime::scripting::SimScriptState;
 
 fn resolve_entry_path(manifest_path: &str, entry: &str) -> String {
     if entry.starts_with("res://") || entry.starts_with("user://") {
@@ -195,8 +196,9 @@ impl ScriptHostBridge {
         let mut dict = Dictionary::new();
         let path_str = manifest_path.to_string();
         match Manifest::parse_str(manifest_json.to_string().as_str()) {
-            Ok(manifest) => {
+            Ok(mut manifest) => {
                 let entry_path = resolve_entry_path(&path_str, &manifest.entry);
+                manifest.manifest_path = Some(path_str.clone());
                 let manifest_variant = json_to_variant(&manifest_to_json(&manifest));
                 let _ = dict.insert("ok", true);
                 let _ = dict.insert("manifest", manifest_variant);
@@ -212,24 +214,39 @@ impl ScriptHostBridge {
     }
 
     #[func]
-    pub fn spawn_script(&self, manifest_dict: Dictionary, source: GString) -> Dictionary {
+    pub fn spawn_script(
+        &self,
+        manifest_dict: Dictionary,
+        manifest_path: GString,
+        source: GString,
+    ) -> Dictionary {
         let mut dict = Dictionary::new();
         let manifest_json = variant_to_json(&Variant::from(manifest_dict.clone()));
         match serde_json::from_value::<Manifest>(manifest_json) {
-            Ok(manifest) => match self
-                .manager
-                .spawn_script(manifest.clone(), source.to_string())
-            {
-                Ok(id) => {
-                    let _ = dict.insert("ok", true);
-                    let _ = dict.insert("script_id", id);
-                    let _ = dict.insert("manifest", json_to_variant(&manifest_to_json(&manifest)));
+            Ok(mut manifest) => {
+                let manifest_path_str = manifest_path.to_string();
+                let manifest_path_opt = if manifest_path_str.is_empty() {
+                    None
+                } else {
+                    Some(manifest_path_str)
+                };
+                manifest.manifest_path = manifest_path_opt.clone();
+                match self
+                    .manager
+                    .spawn_script(manifest.clone(), source.to_string())
+                {
+                    Ok(id) => {
+                        let _ = dict.insert("ok", true);
+                        let _ = dict.insert("script_id", id);
+                        let _ =
+                            dict.insert("manifest", json_to_variant(&manifest_to_json(&manifest)));
+                    }
+                    Err(err) => {
+                        let _ = dict.insert("ok", false);
+                        let _ = dict.insert("error", err.to_string());
+                    }
                 }
-                Err(err) => {
-                    let _ = dict.insert("ok", false);
-                    let _ = dict.insert("error", err.to_string());
-                }
-            },
+            }
             Err(err) => {
                 let _ = dict.insert("ok", false);
                 let _ = dict.insert("error", format!("invalid manifest: {err}"));
@@ -335,6 +352,37 @@ impl ScriptHostBridge {
     pub fn restore_session(&self, script_id: i64, data: Variant) -> bool {
         let json = variant_to_json(&data);
         self.manager.restore_session(script_id, json).is_ok()
+    }
+
+    #[func]
+    pub fn snapshot_active_scripts(&self) -> VariantArray {
+        let mut array = VariantArray::new();
+        for state in self.manager.snapshot_states() {
+            if let Ok(json) = serde_json::to_value(&state) {
+                let variant = json_to_variant(&json);
+                array.push(&variant);
+            }
+        }
+        array
+    }
+
+    #[func]
+    pub fn apply_script_state(&self, script_id: i64, state: Variant) -> Dictionary {
+        let mut dict = Dictionary::new();
+        let json = variant_to_json(&state);
+        match serde_json::from_value::<SimScriptState>(json) {
+            Ok(state_struct) => match self.manager.apply_state(script_id, &state_struct) {
+                Ok(_) => {
+                    let _ = dict.insert("ok", true);
+                }
+                Err(err) => return script_error_to_dict(err),
+            },
+            Err(err) => {
+                let _ = dict.insert("ok", false);
+                let _ = dict.insert("error", format!("invalid script state payload: {err}"));
+            }
+        }
+        dict
     }
 }
 
