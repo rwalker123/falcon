@@ -6,6 +6,7 @@ members = [
     "integration_tests",
     "shadow_scale_flatbuffers",
     "clients/godot_thin_client/native",
+    "tools/script_harness",
     "xtask"
 ]
 

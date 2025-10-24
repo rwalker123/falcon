@@ -5,6 +5,7 @@
 [ext_resource type="Script" path="res://src/scripts/Hud.gd" id="3"]
 [ext_resource type="Script" path="res://src/scripts/Inspector.gd" id="4"]
 [ext_resource type="Script" path="res://src/scripts/TickSparkline.gd" id="5"]
+[ext_resource type="Script" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="6"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1")
@@ -57,6 +58,65 @@ offset_left = 8.0
 offset_top = 8.0
 offset_right = -8.0
 offset_bottom = -8.0
+
+[node name="Scripts" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer"]
+unique_name_in_owner = true
+script = ExtResource("6")
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 6
+
+[node name="Header" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Scripts"]
+anchor_right = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 0
+theme_override_constants/separation = 8
+
+[node name="ScriptsLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Scripts/Header"]
+text = "Shared Scripts"
+
+[node name="RefreshButton" type="Button" parent="Inspector/RootPanel/TabContainer/Scripts/Header"]
+unique_name_in_owner = true
+text = "Refresh"
+size_flags_horizontal = 1
+
+[node name="PackageList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Scripts"]
+unique_name_in_owner = true
+anchor_right = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+custom_minimum_size = Vector2(0, 180)
+
+[node name="Controls" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Scripts"]
+anchor_right = 1.0
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="EnableButton" type="Button" parent="Inspector/RootPanel/TabContainer/Scripts/Controls"]
+unique_name_in_owner = true
+text = "Enable"
+size_flags_horizontal = 1
+
+[node name="DisableButton" type="Button" parent="Inspector/RootPanel/TabContainer/Scripts/Controls"]
+unique_name_in_owner = true
+text = "Disable"
+size_flags_horizontal = 1
+
+[node name="ReloadButton" type="Button" parent="Inspector/RootPanel/TabContainer/Scripts/Controls"]
+unique_name_in_owner = true
+text = "Reload"
+size_flags_horizontal = 1
+
+[node name="DetailsText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Scripts"]
+unique_name_in_owner = true
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+autowrap_mode = 3
 
 [node name="Sentiment" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
 anchor_right = 1.0

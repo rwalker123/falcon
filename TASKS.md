@@ -65,7 +65,7 @@
 
 ## Frontend Client Evaluation
 - [x] Run Godot 4 thin client spike focused on tactical map rendering, overlays, and command round-trip metrics (Owner: Mira, Estimate: 3d; Output: `clients/godot_thin_client`, notes in `docs/godot_thin_client_spike.md`).
-- [ ] Draft shared scripting capability model (API surface, sandbox permissions) to integrate with the Godot spike and keep Unity contingency-ready (Owner: Leo, Estimate: 2d; Deps: finalize snapshot topic catalog).
+- [x] Draft shared scripting capability model (API surface, sandbox permissions) aligned with the Godot thin client reference (Owner: Leo, Estimate: 2d; Deps: finalize snapshot topic catalog). _Status_: Documented in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` and `docs/architecture.md`.
 - [ ] Capture Godot spike findings in a client evaluation memo, including go/no-go recommendation and follow-up needs (Owner: Omar, Estimate: 1d; Deps: completion of Godot spike).
 - [ ] (Conditional) Run Unity thin client spike if Godot outcome signals gaps that require comparison (Owner: Jun, Estimate: 3d; Deps: decision from evaluation memo).
 - [x] Build lightweight snapshot proxy that converts binary `bincode` frames to JSON for tooling (Owner: Sam, Estimate: 1d; Deps: settle on schema exposure).
@@ -74,6 +74,14 @@
 - [ ] Export dedicated logistics/sentiment rasters from `core_sim` snapshots (Owner: Devi, Estimate: 2d; Deps: align `SnapshotHistory` ring buffer + schema update).
 - [ ] Extend `shadow_scale_flatbuffers`/Godot extension to surface multi-layer overlays (logistics, sentiment, corruption, fog) with toggleable channels (Owner: Mira, Estimate: 2d; Deps: raster export task).
 - [ ] Validate Godot overlay rendering against CLI inspector metrics (add debug telemetry + colour ramp checks) before enabling designers (Owner: Omar, Estimate: 1d; Deps: overlay channel support).
+
+## Shared Scripting Capability Model
+- [x] Implement QuickJS GDNative module and runtime bootstrap inside `clients/godot_thin_client` (`ScriptHost` worker threads, capability token plumbing, manifest loading) (Owner: Mira, Estimate: 3d; Deps: manifest schema in `docs/architecture.md`). _Status_: QuickJS runtime migrated to the new `quick-js` bindings, manifest/session plumbing verified, and threads spawn/tear down cleanly after `cargo check`.
+- [ ] Wire script capability enforcement to Godot bridges (telemetry subscriptions, `CommandBridge` dispatch, session storage serialization) and add per-frame watchdog handling (Owner: Leo, Estimate: 2.5d; Deps: QuickJS runtime integration). _Status_: Command dispatch and alert/log propagation are flowing through the bridge; telemetry subscription gating still pending end-to-end test in Godot.
+- [ ] Expose `CapabilitySpec` registry from `sim_runtime` and ship manifest lint/tests ensuring topic/command IDs stay in sync (Owner: Sam, Estimate: 1.5d; Deps: finalized capability list).
+- [x] Build Script Manager UI panel in Godot (list manifests, capability review, enable/disable, error surfaces) and integrate `console`/alert channels into the Logs tab (Owner: Jun, Estimate: 2d; Deps: runtime bootstrap + logging bridge). _Status_: Scripts tab loads packages from both roots, enable/disable wiring works, and log/alert signals flow into Inspector.
+- [x] Deliver `tools/script_harness` headless runner with mock feeds, fuzz hooks, and CI budget assertions for sandbox violations (Owner: Omar, Estimate: 2d; Deps: capability registry & host bindings). _Status_: Harness builds against the native runtime and exposes tick/event CLI hooks; next step is adding scripted smoke tests.
+- [ ] Implement save/load serialization for active scripts and `storage.session` payloads via new `SimScriptState` struct and add regression coverage (Owner: Devi, Estimate: 1.5d; Deps: `sim_runtime` capability registry).
 
 ## Tooling & Tests
 - [x] Add determinism regression test comparing dual runs.

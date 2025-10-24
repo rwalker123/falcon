@@ -1048,7 +1048,7 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 | **Unity Thin Client** | C# | Lua or JS via MoonSharp/Jurassic | Leverage existing UI/animation pipeline; easy to target multiple platforms; can reuse Unity tooling. | Larger footprint; Unity dependency just for client; need to enforce sandbox and keep scripting separate from core C# logic. |
 | **Electron/Tauri Shell** | TypeScript/JS | Same as host (JS) | Hot iteration, massive ecosystem; easy WebGPU integration. | Heavier memory footprint; user preference leans native; requires extra work for native polish. |
 
-> Evaluate Avalonia, Qt/QML, and Rust+Slint as native-first hosts while keeping Unity Thin Client as a fallback if we want quicker tooling. Electron/Tauri stays as an option for tooling/internal dashboards.
+> Evaluate Avalonia, Qt/QML, and Rust+Slint as native-first hosts. Unity thin client experiments remain part of broader engine evaluation, but the shared scripting runtime is anchored to the Godot thin client reference. Electron/Tauri stays as an option for tooling/internal dashboards.
 
 #### Scripting Strategy
 - Use a sandboxed JavaScript/TypeScript or Lua runtime embedded in the host (V8/QuickJS/Duktape) with capability-based APIs (subscriptions, UI components, commands).
@@ -1061,6 +1061,13 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 - **Tooling**: ship SDK with inspector scaffolding (Godot-based), live reload hooks, and panel introspection (component tree, event traces, permissions).
 - **Testing**: unit tests for scripted panels; integration tests to ensure sandbox cannot starve main thread; CI to compile scripts against typed API definitions.
 
+#### Shared Scripting Capability Model (Player-Facing)
+- Godot thin client hosts the reference sandbox: capability-scoped JavaScript runtime with manifests advertising requested powers. Players can review granted capabilities before enabling community panels.
+- Core capability families: `telemetry.subscribe` (read-only streams of snapshots, overlays, and ledgers), `ui.compose` (spawn declarative widgets, overlay layers, timeline charts), `commands.issue` (post turn orders, bias tweaks, debug hooks) and `storage.session` (bounded in-memory/session persistence; no arbitrary disk access).
+- Each script declares optional signals such as `alerts.emit` for notifications; the host surfaces rate limits and usage diagnostics so players can audit behaviour during play sessions.
+- Sandboxing rules prohibit direct network access, raw file IO, or thread spawning; the host exposes vetted helpers (e.g., colour ramps, map projections) and rejects calls outside the manifest. Suspension/quarantine flows give players a one-click way to disable misbehaving scripts mid-session.
+- Additional clients may implement the same manifest if we pursue them, but the Godot implementation is the authoritative behaviour model. Engineering details live in `docs/architecture.md` “Shared Scripting Capability Model,” which mirrors these guarantees for tooling teams.
+
 #### Next Steps (Frontend)
 1. Spike two host candidates (e.g., Avalonia + V8 sandbox, Qt/QML + QML JS) rendering the discovery ledger and crisis dashboard from mock data. Measure performance and developer ergonomics.
 2. Prototype scripting sandbox with capability tokens (subscriptions, UI component creation) and hot reload.
@@ -1070,9 +1077,9 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 #### Map-Centric Evaluation Plan
 - Prioritize a tactical map workload that exercises zooming, multi-layer overlays (logistics, sentiment heatmaps, fog of knowledge), unit selection, and command previews.
 - First execute a Godot 4 thin-client spike that consumes mock snapshot streams and replays scripted orders to validate rendering responsiveness, animation tooling, and latency to the headless core.
-- If Godot reveals blocking gaps (performance, tooling, pipeline), follow up with a Unity thin-client spike to compare capabilities and mitigate risk.
+- If Godot reveals blocking gaps (performance, tooling, pipeline), evaluate alternative hosts for visualisation, noting that any replacement must adopt the Godot-defined scripting contract rather than a bespoke Unity fallback.
 - Capture metrics per spike (frame budget at targeted PC spec, draw-call cost for layered overlays, command round-trip) and document licensing/tooling implications so we can make an informed client stack decision.
-- Reuse the sandboxed scripting API design across both spikes—if we proceed to Unity—so first-party dashboards and modded panels share the same capability boundaries. Godot spike implementation lives under `clients/godot_thin_client` (notes: `docs/godot_thin_client_spike.md`).
+- Reference implementations and manifest schemas live under `clients/godot_thin_client`; see `docs/godot_thin_client_spike.md` for applied notes on the sandboxed scripting API design.
 - Current Godot spike now renders live FlatBuffers snapshots; next increment must (a) publish the actual logistics/sentiment rasters from the sim instead of temperature stand-ins, (b) expand the overlay schema so UI can swap between logistics, sentiment, corruption, and fog-of-war layers, and (c) validate colour ramps/normalisation against inspector metrics so designers trust what the map is showing.
 
 

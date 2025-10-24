@@ -2,6 +2,342 @@ use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 use std::collections::{BTreeSet, HashMap};
 
+mod runtime;
+
+pub use runtime::{
+    manifest_to_json as script_manifest_to_json, responses_to_json as script_responses_to_json,
+    Manager as ScriptRuntimeManager, Manifest as ScriptManifest, ScriptError as ScriptHostError,
+    ScriptResponse as ScriptRuntimeResponse,
+};
+use runtime::{manifest_to_json, responses_to_json, Manifest, ScriptError};
+use serde_json::{json, Map as JsonMap, Number as JsonNumber, Value as JsonValue};
+
+fn resolve_entry_path(manifest_path: &str, entry: &str) -> String {
+    if entry.starts_with("res://") || entry.starts_with("user://") {
+        return entry.to_string();
+    }
+    let base = manifest_path
+        .rfind('/')
+        .map(|idx| &manifest_path[..=idx])
+        .unwrap_or("");
+    let trimmed = entry.strip_prefix("./").unwrap_or(entry);
+    if base.is_empty() {
+        trimmed.to_string()
+    } else {
+        format!("{base}{trimmed}")
+    }
+}
+
+fn variant_to_string(value: &Variant) -> String {
+    match value.get_type() {
+        VariantType::BOOL => {
+            let v: bool = value.to();
+            v.to_string()
+        }
+        VariantType::INT => {
+            let v: i64 = value.to();
+            v.to_string()
+        }
+        VariantType::FLOAT => {
+            let v: f64 = value.to();
+            v.to_string()
+        }
+        VariantType::STRING | VariantType::STRING_NAME => {
+            let v: GString = value.to();
+            v.to_string()
+        }
+        _ => format!("{value:?}"),
+    }
+}
+
+fn variant_to_json(value: &Variant) -> JsonValue {
+    match value.get_type() {
+        VariantType::NIL => JsonValue::Null,
+        VariantType::BOOL => JsonValue::Bool(value.to()),
+        VariantType::INT => {
+            let v: i64 = value.to();
+            JsonValue::Number(JsonNumber::from(v))
+        }
+        VariantType::FLOAT => {
+            let v: f64 = value.to();
+            JsonNumber::from_f64(v)
+                .map(JsonValue::Number)
+                .unwrap_or(JsonValue::Null)
+        }
+        VariantType::STRING | VariantType::STRING_NAME => {
+            let v: GString = value.to();
+            JsonValue::String(v.to_string())
+        }
+        VariantType::ARRAY => {
+            let array: VariantArray = value.to();
+            let mut result = Vec::with_capacity(array.len() as usize);
+            for item in array.iter_shared() {
+                result.push(variant_to_json(&item));
+            }
+            JsonValue::Array(result)
+        }
+        VariantType::DICTIONARY => {
+            let dict: Dictionary = value.to();
+            let mut map = JsonMap::new();
+            for (k, v) in dict.iter_shared() {
+                map.insert(variant_to_string(&k), variant_to_json(&v));
+            }
+            JsonValue::Object(map)
+        }
+        VariantType::PACKED_FLOAT32_ARRAY => {
+            let arr: PackedFloat32Array = value.to();
+            let mut result = Vec::with_capacity(arr.len() as usize);
+            let len = arr.len();
+            for idx in 0..len {
+                if let Some(item) = arr.get(idx) {
+                    let num =
+                        JsonNumber::from_f64(item as f64).unwrap_or_else(|| JsonNumber::from(0));
+                    result.push(JsonValue::Number(num));
+                }
+            }
+            JsonValue::Array(result)
+        }
+        VariantType::PACKED_INT32_ARRAY => {
+            let arr: PackedInt32Array = value.to();
+            let mut result = Vec::with_capacity(arr.len() as usize);
+            let len = arr.len();
+            for idx in 0..len {
+                if let Some(item) = arr.get(idx) {
+                    result.push(JsonValue::Number(JsonNumber::from(item)));
+                }
+            }
+            JsonValue::Array(result)
+        }
+        VariantType::PACKED_INT64_ARRAY => {
+            let arr: PackedInt64Array = value.to();
+            let mut result = Vec::with_capacity(arr.len() as usize);
+            let len = arr.len();
+            for idx in 0..len {
+                if let Some(item) = arr.get(idx) {
+                    result.push(JsonValue::Number(JsonNumber::from(item)));
+                }
+            }
+            JsonValue::Array(result)
+        }
+        VariantType::PACKED_STRING_ARRAY => {
+            let arr: PackedStringArray = value.to();
+            let mut result = Vec::with_capacity(arr.len() as usize);
+            let len = arr.len();
+            for idx in 0..len {
+                if let Some(item) = arr.get(idx) {
+                    result.push(JsonValue::String(item.to_string()));
+                }
+            }
+            JsonValue::Array(result)
+        }
+        _ => JsonValue::Null,
+    }
+}
+
+fn json_to_variant(value: &JsonValue) -> Variant {
+    match value {
+        JsonValue::Null => Variant::nil(),
+        JsonValue::Bool(b) => Variant::from(*b),
+        JsonValue::Number(num) => {
+            if let Some(i) = num.as_i64() {
+                Variant::from(i)
+            } else if let Some(u) = num.as_u64() {
+                Variant::from(u as i64)
+            } else if let Some(f) = num.as_f64() {
+                Variant::from(f)
+            } else {
+                Variant::nil()
+            }
+        }
+        JsonValue::String(s) => Variant::from(s.as_str()),
+        JsonValue::Array(arr) => {
+            let mut variant_array = VariantArray::new();
+            for item in arr {
+                let variant = json_to_variant(item);
+                variant_array.push(&variant);
+            }
+            Variant::from(variant_array)
+        }
+        JsonValue::Object(map) => {
+            let mut dict = Dictionary::new();
+            for (key, value) in map {
+                let _ = dict.insert(key.as_str(), json_to_variant(value));
+            }
+            Variant::from(dict)
+        }
+    }
+}
+
+fn json_to_variant_array(value: &JsonValue) -> VariantArray {
+    match json_to_variant(value).try_to::<VariantArray>() {
+        Ok(array) => array,
+        Err(_) => VariantArray::new(),
+    }
+}
+
+fn script_error_to_dict(err: ScriptError) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("ok", false);
+    let _ = dict.insert("error", err.to_string());
+    dict
+}
+
+#[derive(Default, GodotClass)]
+#[class(init, base=RefCounted)]
+pub struct ScriptHostBridge {
+    manager: ScriptRuntimeManager,
+}
+
+#[godot_api]
+impl ScriptHostBridge {
+    #[func]
+    pub fn parse_manifest(&self, manifest_path: GString, manifest_json: GString) -> Dictionary {
+        let mut dict = Dictionary::new();
+        let path_str = manifest_path.to_string();
+        match Manifest::parse_str(manifest_json.to_string().as_str()) {
+            Ok(manifest) => {
+                let entry_path = resolve_entry_path(&path_str, &manifest.entry);
+                let manifest_variant = json_to_variant(&manifest_to_json(&manifest));
+                let _ = dict.insert("ok", true);
+                let _ = dict.insert("manifest", manifest_variant);
+                let _ = dict.insert("manifest_path", path_str);
+                let _ = dict.insert("entry_path", entry_path);
+            }
+            Err(err) => {
+                let _ = dict.insert("ok", false);
+                let _ = dict.insert("error", err.to_string());
+            }
+        }
+        dict
+    }
+
+    #[func]
+    pub fn spawn_script(&self, manifest_dict: Dictionary, source: GString) -> Dictionary {
+        let mut dict = Dictionary::new();
+        let manifest_json = variant_to_json(&Variant::from(manifest_dict.clone()));
+        match serde_json::from_value::<Manifest>(manifest_json) {
+            Ok(manifest) => match self
+                .manager
+                .spawn_script(manifest.clone(), source.to_string())
+            {
+                Ok(id) => {
+                    let _ = dict.insert("ok", true);
+                    let _ = dict.insert("script_id", id);
+                    let _ = dict.insert("manifest", json_to_variant(&manifest_to_json(&manifest)));
+                }
+                Err(err) => {
+                    let _ = dict.insert("ok", false);
+                    let _ = dict.insert("error", err.to_string());
+                }
+            },
+            Err(err) => {
+                let _ = dict.insert("ok", false);
+                let _ = dict.insert("error", format!("invalid manifest: {err}"));
+            }
+        }
+        dict
+    }
+
+    #[func]
+    pub fn shutdown_script(&self, script_id: i64) {
+        self.manager.shutdown(script_id);
+    }
+
+    #[func]
+    pub fn dispatch_event(&self, script_id: i64, event: GString, payload: Variant) -> Dictionary {
+        let payload_json = variant_to_json(&payload);
+        match self
+            .manager
+            .dispatch_event(script_id, &event.to_string(), payload_json)
+        {
+            Ok(_) => {
+                let mut dict = Dictionary::new();
+                let _ = dict.insert("ok", true);
+                dict
+            }
+            Err(err) => script_error_to_dict(err),
+        }
+    }
+
+    #[func]
+    pub fn broadcast_event(&self, event: GString, payload: Variant) {
+        let payload_json = variant_to_json(&payload);
+        self.manager
+            .broadcast_event(&event.to_string(), payload_json);
+    }
+
+    #[func]
+    pub fn tick_script(&self, script_id: i64, delta: f64, budget_ms: f64) -> bool {
+        self.manager.tick(script_id, delta, budget_ms).is_ok()
+    }
+
+    #[func]
+    pub fn poll_responses(&self, script_id: i64) -> VariantArray {
+        match self.manager.poll_responses(script_id) {
+            Ok(responses) => json_to_variant_array(&responses_to_json(responses)),
+            Err(err) => {
+                let mut array = VariantArray::new();
+                let variant =
+                    json_to_variant(&json!({ "type": "error", "message": err.to_string() }));
+                array.push(&variant);
+                array
+            }
+        }
+    }
+
+    #[func]
+    pub fn poll_all(&self) -> Dictionary {
+        let mut dict = Dictionary::new();
+        let map = self.manager.poll_all();
+        for (id, responses) in map {
+            let _ = dict.insert(id, json_to_variant_array(&responses_to_json(responses)));
+        }
+        dict
+    }
+
+    #[func]
+    pub fn list_scripts(&self) -> VariantArray {
+        let mut array = VariantArray::new();
+        for (id, manifest) in self.manager.list_scripts() {
+            let mut entry = Dictionary::new();
+            let _ = entry.insert("script_id", id);
+            let _ = entry.insert("manifest", json_to_variant(&manifest_to_json(&manifest)));
+            let variant_entry = Variant::from(entry);
+            array.push(&variant_entry);
+        }
+        array
+    }
+
+    #[func]
+    pub fn subscriptions(&self, script_id: i64) -> VariantArray {
+        match self.manager.subscriptions(script_id) {
+            Ok(subs) => {
+                let mut array = VariantArray::new();
+                for sub in subs {
+                    let variant = Variant::from(sub.as_str());
+                    array.push(&variant);
+                }
+                array
+            }
+            Err(_) => VariantArray::new(),
+        }
+    }
+
+    #[func]
+    pub fn snapshot_session(&self, script_id: i64) -> Variant {
+        match self.manager.snapshot_session(script_id) {
+            Ok(value) => json_to_variant(&value),
+            Err(_) => Variant::nil(),
+        }
+    }
+
+    #[func]
+    pub fn restore_session(&self, script_id: i64, data: Variant) -> bool {
+        let json = variant_to_json(&data);
+        self.manager.restore_session(script_id, json).is_ok()
+    }
+}
+
 fn snapshot_dict(
     tick: u64,
     width: u32,

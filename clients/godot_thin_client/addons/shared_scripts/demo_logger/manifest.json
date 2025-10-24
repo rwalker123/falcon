@@ -1,0 +1,16 @@
+{
+  "id": "demo.logger",
+  "version": "0.1.0",
+  "entry": "./script.js",
+  "capabilities": [
+    "telemetry.subscribe",
+    "commands.issue",
+    "storage.session",
+    "alerts.emit"
+  ],
+  "subscriptions": [
+    "world.snapshot"
+  ],
+  "description": "Example script that logs snapshot turns, remembers last turn in session storage, and demonstrates host command/alert usage.",
+  "author": "Sample"
+}
