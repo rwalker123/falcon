@@ -390,7 +390,8 @@ fn snapshot_dict(
     tick: u64,
     width: u32,
     height: u32,
-    logistics_overlay: &[f32],
+    logistics_raw: &[f32],
+    sentiment_raw: &[f32],
     terrain: Option<&[u16]>,
     terrain_tags: Option<&[u16]>,
 ) -> Dictionary {
@@ -402,42 +403,76 @@ fn snapshot_dict(
     let _ = grid.insert("height", height as i64);
     let _ = dict.insert("grid", grid);
 
-    let mut logistics = PackedFloat32Array::new();
-    let size = (width as usize).saturating_mul(height as usize);
-    logistics.resize(size);
-    if size > 0 {
-        let slice = logistics.as_mut_slice();
-        let count = logistics_overlay.len().min(slice.len());
-        slice[..count].copy_from_slice(&logistics_overlay[..count]);
+    let size = (width as usize).saturating_mul(height as usize).max(1);
+
+    let mut logistics_base = vec![0.0f32; size];
+    let logistics_count = logistics_raw.len().min(size);
+    logistics_base[..logistics_count].copy_from_slice(&logistics_raw[..logistics_count]);
+
+    let mut logistics_normalized = logistics_base.clone();
+    normalize_overlay(&mut logistics_normalized);
+
+    let mut logistics_contrast_vec = logistics_normalized.clone();
+    for value in logistics_contrast_vec.iter_mut() {
+        *value = *value * (1.0 - *value);
     }
 
-    let mut contrast = PackedFloat32Array::new();
-    contrast.resize(size);
-    if size > 0 {
-        let slice = contrast.as_mut_slice();
-        let count = logistics_overlay.len().min(slice.len());
-        if count > 0 {
-            let mut min = f32::INFINITY;
-            let mut max = f32::NEG_INFINITY;
-            for &value in &logistics_overlay[..count] {
-                if value.is_finite() {
-                    min = min.min(value);
-                    max = max.max(value);
-                }
-            }
-            if min.is_finite() && max.is_finite() && (max - min).abs() > f32::EPSILON {
-                let range = max - min;
-                for i in 0..count {
-                    let normalized = (logistics_overlay[i] - min) / range;
-                    slice[i] = normalized * (1.0 - normalized);
-                }
-            }
-        }
+    let mut sentiment_base = vec![0.0f32; size];
+    let sentiment_count = sentiment_raw.len().min(size);
+    sentiment_base[..sentiment_count].copy_from_slice(&sentiment_raw[..sentiment_count]);
+
+    let mut sentiment_normalized = sentiment_base.clone();
+    normalize_overlay(&mut sentiment_normalized);
+
+    let mut sentiment_contrast_vec = sentiment_normalized.clone();
+    for value in sentiment_contrast_vec.iter_mut() {
+        *value = ((*value - 0.5).abs() * 2.0).clamp(0.0, 1.0);
     }
+
+    let mut logistics_array = PackedFloat32Array::new();
+    logistics_array.resize(size);
+    logistics_array
+        .as_mut_slice()
+        .copy_from_slice(&logistics_normalized);
+
+    let mut logistics_raw_array = PackedFloat32Array::new();
+    logistics_raw_array.resize(size);
+    logistics_raw_array
+        .as_mut_slice()
+        .copy_from_slice(&logistics_base);
+
+    let mut logistics_contrast = PackedFloat32Array::new();
+    logistics_contrast.resize(size);
+    logistics_contrast
+        .as_mut_slice()
+        .copy_from_slice(&logistics_contrast_vec);
+
+    let mut sentiment_array = PackedFloat32Array::new();
+    sentiment_array.resize(size);
+    sentiment_array
+        .as_mut_slice()
+        .copy_from_slice(&sentiment_normalized);
+
+    let mut sentiment_raw_array = PackedFloat32Array::new();
+    sentiment_raw_array.resize(size);
+    sentiment_raw_array
+        .as_mut_slice()
+        .copy_from_slice(&sentiment_base);
+
+    let mut sentiment_contrast = PackedFloat32Array::new();
+    sentiment_contrast.resize(size);
+    sentiment_contrast
+        .as_mut_slice()
+        .copy_from_slice(&sentiment_contrast_vec);
 
     let mut overlays = Dictionary::new();
-    let _ = overlays.insert("logistics", logistics);
-    let _ = overlays.insert("contrast", contrast);
+    let _ = overlays.insert("logistics", logistics_array);
+    let _ = overlays.insert("logistics_raw", logistics_raw_array);
+    let _ = overlays.insert("logistics_contrast", logistics_contrast.clone());
+    let _ = overlays.insert("contrast", logistics_contrast);
+    let _ = overlays.insert("sentiment", sentiment_array);
+    let _ = overlays.insert("sentiment_raw", sentiment_raw_array);
+    let _ = overlays.insert("sentiment_contrast", sentiment_contrast);
 
     if let Some(terrain_data) = terrain {
         let mut terrain_array = PackedInt32Array::new();
@@ -542,6 +577,12 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     if let Some(layer) = delta.terrainOverlay() {
         agg.apply_terrain_overlay(layer);
     }
+    if let Some(raster) = delta.logisticsRaster() {
+        agg.apply_logistics_raster(raster);
+    }
+    if let Some(raster) = delta.sentimentRaster() {
+        agg.apply_sentiment_raster(raster);
+    }
     let mut dict = agg.into_dictionary();
 
     if let Some(axis_bias) = delta.axisBias() {
@@ -634,6 +675,12 @@ struct DeltaAggregator {
     terrain_height: u32,
     terrain_types: Vec<u16>,
     terrain_tags: Vec<u16>,
+    logistics_width: u32,
+    logistics_height: u32,
+    logistics_samples: Vec<f32>,
+    sentiment_width: u32,
+    sentiment_height: u32,
+    sentiment_samples: Vec<f32>,
 }
 
 impl DeltaAggregator {
@@ -663,9 +710,66 @@ impl DeltaAggregator {
         }
     }
 
+    fn apply_logistics_raster(&mut self, raster: fb::ScalarRaster<'_>) {
+        self.logistics_width = raster.width();
+        self.logistics_height = raster.height();
+        let count = (self.logistics_width as usize)
+            .saturating_mul(self.logistics_height as usize)
+            .max(1);
+        self.logistics_samples.resize(count, 0.0);
+        if let Some(samples) = raster.samples() {
+            for (idx, value) in samples.iter().enumerate() {
+                if idx >= count {
+                    break;
+                }
+                self.logistics_samples[idx] = fixed64_to_f32(value);
+            }
+        }
+    }
+
+    fn apply_sentiment_raster(&mut self, raster: fb::ScalarRaster<'_>) {
+        self.sentiment_width = raster.width();
+        self.sentiment_height = raster.height();
+        let count = (self.sentiment_width as usize)
+            .saturating_mul(self.sentiment_height as usize)
+            .max(1);
+        self.sentiment_samples.resize(count, 0.0);
+        if let Some(samples) = raster.samples() {
+            for (idx, value) in samples.iter().enumerate() {
+                if idx >= count {
+                    break;
+                }
+                self.sentiment_samples[idx] = fixed64_to_f32(value);
+            }
+        }
+    }
+
     fn into_dictionary(self) -> Dictionary {
-        let mut final_width = self.terrain_width.max(self.width);
-        let mut final_height = self.terrain_height.max(self.height);
+        let DeltaAggregator {
+            tick,
+            width,
+            height,
+            tile_updates,
+            terrain_width,
+            terrain_height,
+            terrain_types,
+            terrain_tags,
+            logistics_width,
+            logistics_height,
+            logistics_samples,
+            sentiment_width,
+            sentiment_height,
+            sentiment_samples,
+        } = self;
+
+        let mut final_width = terrain_width
+            .max(width)
+            .max(logistics_width)
+            .max(sentiment_width);
+        let mut final_height = terrain_height
+            .max(height)
+            .max(logistics_height)
+            .max(sentiment_height);
         if final_width == 0 || final_height == 0 {
             final_width = final_width.max(1);
             final_height = final_height.max(1);
@@ -673,32 +777,66 @@ impl DeltaAggregator {
         let total = (final_width as usize)
             .saturating_mul(final_height as usize)
             .max(1);
-        let mut logistics = vec![0.0f32; total];
-        for ((x, y), value) in self.tile_updates {
-            if x >= final_width || y >= final_height {
-                continue;
-            }
-            let idx = (y as usize) * (final_width as usize) + x as usize;
-            logistics[idx] = value;
-        }
-        normalize_overlay(&mut logistics);
 
-        let terrain_ref = if !self.terrain_types.is_empty() {
-            Some(self.terrain_types)
+        let mut logistics = vec![0.0f32; total];
+        if logistics_width > 0 && logistics_height > 0 && !logistics_samples.is_empty() {
+            for y in 0..logistics_height {
+                for x in 0..logistics_width {
+                    let src_idx = (y as usize) * (logistics_width as usize) + x as usize;
+                    if src_idx >= logistics_samples.len() {
+                        break;
+                    }
+                    if x >= final_width || y >= final_height {
+                        continue;
+                    }
+                    let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                    logistics[dst_idx] = logistics_samples[src_idx];
+                }
+            }
         } else {
+            for ((x, y), value) in tile_updates {
+                if x >= final_width || y >= final_height {
+                    continue;
+                }
+                let idx = (y as usize) * (final_width as usize) + x as usize;
+                logistics[idx] = value;
+            }
+        }
+
+        let mut sentiment = vec![0.0f32; total];
+        if sentiment_width > 0 && sentiment_height > 0 && !sentiment_samples.is_empty() {
+            for y in 0..sentiment_height {
+                for x in 0..sentiment_width {
+                    let src_idx = (y as usize) * (sentiment_width as usize) + x as usize;
+                    if src_idx >= sentiment_samples.len() {
+                        break;
+                    }
+                    if x >= final_width || y >= final_height {
+                        continue;
+                    }
+                    let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                    sentiment[dst_idx] = sentiment_samples[src_idx];
+                }
+            }
+        }
+
+        let terrain_ref = if terrain_types.is_empty() {
             None
+        } else {
+            Some(terrain_types)
         };
-        let tags_ref = if !self.terrain_tags.is_empty() {
-            Some(self.terrain_tags)
-        } else {
+        let tags_ref = if terrain_tags.is_empty() {
             None
+        } else {
+            Some(terrain_tags)
         };
 
         snapshot_dict(
-            self.tick,
+            tick,
             final_width,
             final_height,
             &logistics,
+            &sentiment,
             terrain_ref.as_deref(),
             tags_ref.as_deref(),
         )
@@ -761,17 +899,52 @@ const CULTURE_TENSION_LABELS: [&str; 3] = ["Drift Warning", "Assimilation Push",
 
 fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
     let header = snapshot.header().unwrap();
-    let mut logistics = HashMap::new();
-    let mut width = 0u32;
-    let mut height = 0u32;
-    if let Some(tiles) = snapshot.tiles() {
-        for tile in tiles {
-            let x = tile.x();
-            let y = tile.y();
-            width = width.max(x + 1);
-            height = height.max(y + 1);
-            logistics.insert((x, y), fixed64_to_f32(tile.temperature()));
+
+    let mut logistics_grid: Vec<f32> = Vec::new();
+    let mut logistics_dims = (0u32, 0u32);
+    if let Some(raster) = snapshot.logisticsRaster() {
+        let width = raster.width();
+        let height = raster.height();
+        if width > 0 && height > 0 {
+            let total = (width as usize).saturating_mul(height as usize);
+            logistics_grid = vec![0.0f32; total];
+            if let Some(samples) = raster.samples() {
+                for (idx, value) in samples.iter().enumerate() {
+                    if idx >= total {
+                        break;
+                    }
+                    logistics_grid[idx] = fixed64_to_f32(value);
+                }
+            }
+            logistics_dims = (width, height);
         }
+    }
+
+    if logistics_grid.is_empty() {
+        let mut width = 0u32;
+        let mut height = 0u32;
+        let mut fallback: HashMap<(u32, u32), f32> = HashMap::new();
+        if let Some(tiles) = snapshot.tiles() {
+            for tile in tiles {
+                let x = tile.x();
+                let y = tile.y();
+                width = width.max(x + 1);
+                height = height.max(y + 1);
+                fallback.insert((x, y), fixed64_to_f32(tile.temperature()));
+            }
+        }
+        let width = width.max(1);
+        let height = height.max(1);
+        let total = (width as usize).saturating_mul(height as usize);
+        logistics_grid = vec![0.0f32; total];
+        for ((x, y), value) in fallback.into_iter() {
+            if x >= width || y >= height {
+                continue;
+            }
+            let idx = (y as usize) * (width as usize) + x as usize;
+            logistics_grid[idx] = value;
+        }
+        logistics_dims = (width, height);
     }
 
     let mut terrain_width = 0u32;
@@ -788,21 +961,95 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         }
     }
 
-    let final_width = width.max(terrain_width).max(1);
-    let final_height = height.max(terrain_height).max(1);
+    let mut sentiment_grid: Vec<f32> = Vec::new();
+    let mut sentiment_dims = (0u32, 0u32);
+    if let Some(raster) = snapshot.sentimentRaster() {
+        let width = raster.width();
+        let height = raster.height();
+        if width > 0 && height > 0 {
+            let total = (width as usize).saturating_mul(height as usize);
+            sentiment_grid = vec![0.0f32; total];
+            if let Some(samples) = raster.samples() {
+                for (idx, value) in samples.iter().enumerate() {
+                    if idx >= total {
+                        break;
+                    }
+                    sentiment_grid[idx] = fixed64_to_f32(value);
+                }
+            }
+            sentiment_dims = (width, height);
+        }
+    }
+
+    if sentiment_grid.is_empty() {
+        let fallback_width = if logistics_dims.0 > 0 {
+            logistics_dims.0
+        } else if terrain_width > 0 {
+            terrain_width
+        } else {
+            1
+        };
+        let fallback_height = if logistics_dims.1 > 0 {
+            logistics_dims.1
+        } else if terrain_height > 0 {
+            terrain_height
+        } else {
+            1
+        };
+        let total = (fallback_width as usize)
+            .saturating_mul(fallback_height as usize)
+            .max(1);
+        sentiment_grid = vec![0.0f32; total];
+        sentiment_dims = (fallback_width, fallback_height);
+    }
+
+    let final_width = logistics_dims
+        .0
+        .max(sentiment_dims.0)
+        .max(terrain_width)
+        .max(1);
+    let final_height = logistics_dims
+        .1
+        .max(sentiment_dims.1)
+        .max(terrain_height)
+        .max(1);
     let total = (final_width as usize)
         .saturating_mul(final_height as usize)
         .max(1);
 
-    let mut logistics_vec = vec![0.0f32; total];
-    for ((x, y), value) in logistics.into_iter() {
-        if x >= final_width || y >= final_height {
-            continue;
+    let mut logistics_resized = vec![0.0f32; total];
+    if logistics_dims.0 > 0 && logistics_dims.1 > 0 {
+        for y in 0..logistics_dims.1 {
+            for x in 0..logistics_dims.0 {
+                let src_idx = (y as usize) * (logistics_dims.0 as usize) + x as usize;
+                if src_idx >= logistics_grid.len() {
+                    break;
+                }
+                if x >= final_width || y >= final_height {
+                    continue;
+                }
+                let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                logistics_resized[dst_idx] = logistics_grid[src_idx];
+            }
         }
-        let idx = (y as usize) * (final_width as usize) + x as usize;
-        logistics_vec[idx] = value;
     }
-    normalize_overlay(&mut logistics_vec);
+
+    let mut sentiment_resized = vec![0.0f32; total];
+    if sentiment_dims.0 > 0 && sentiment_dims.1 > 0 {
+        for y in 0..sentiment_dims.1 {
+            for x in 0..sentiment_dims.0 {
+                let src_idx = (y as usize) * (sentiment_dims.0 as usize) + x as usize;
+                if src_idx >= sentiment_grid.len() {
+                    break;
+                }
+                if x >= final_width || y >= final_height {
+                    continue;
+                }
+                let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                sentiment_resized[dst_idx] = sentiment_grid[src_idx];
+            }
+        }
+    }
 
     let mut terrain_vec: Vec<u16> = Vec::new();
     let mut tag_vec: Vec<u16> = Vec::new();
@@ -830,7 +1077,8 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         header.tick(),
         final_width,
         final_height,
-        &logistics_vec,
+        &logistics_resized,
+        &sentiment_resized,
         if terrain_vec.is_empty() {
             None
         } else {

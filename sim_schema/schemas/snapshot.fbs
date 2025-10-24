@@ -108,6 +108,12 @@ table TerrainOverlay {
   samples:[TerrainSample];
 }
 
+table ScalarRaster {
+  width:uint;
+  height:uint;
+  samples:[long];
+}
+
 table InfluentialIndividualState {
   id:uint;
   name:string;
@@ -346,6 +352,8 @@ table WorldSnapshot {
   populations:[PopulationCohortState];
   power:[PowerNodeState];
   terrainOverlay:TerrainOverlay;
+  logisticsRaster:ScalarRaster;
+  sentimentRaster:ScalarRaster;
   axisBias:AxisBiasState;
   sentiment:SentimentTelemetryState;
   generations:[GenerationState];
@@ -376,6 +384,8 @@ table WorldDelta {
   influencers:[InfluentialIndividualState];
   removedInfluencers:[uint];
   terrainOverlay:TerrainOverlay;
+  logisticsRaster:ScalarRaster;
+  sentimentRaster:ScalarRaster;
   cultureLayers:[CultureLayerState];
   removedCultureLayers:[uint];
   cultureTensions:[CultureTensionState];

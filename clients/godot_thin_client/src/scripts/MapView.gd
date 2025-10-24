@@ -147,7 +147,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 
     var overlays: Dictionary = snapshot.get("overlays", {})
     logistics_overlay = PackedFloat32Array(overlays.get("logistics", []))
-    sentiment_overlay = PackedFloat32Array(overlays.get("contrast", []))
+    var sentiment_data: Variant = overlays.get("sentiment", overlays.get("contrast", []))
+    sentiment_overlay = PackedFloat32Array(sentiment_data)
     terrain_overlay = PackedInt32Array(overlays.get("terrain", []))
     var palette_raw: Variant = overlays.get("terrain_palette", {})
     terrain_palette = palette_raw if typeof(palette_raw) == TYPE_DICTIONARY else {}

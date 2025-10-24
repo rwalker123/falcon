@@ -226,6 +226,13 @@ pub struct TerrainOverlayState {
     pub samples: Vec<TerrainSample>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+pub struct ScalarRasterState {
+    pub width: u32,
+    pub height: u32,
+    pub samples: Vec<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TileState {
     pub entity: u64,
@@ -640,6 +647,8 @@ pub struct WorldSnapshot {
     pub populations: Vec<PopulationCohortState>,
     pub power: Vec<PowerNodeState>,
     pub terrain: TerrainOverlayState,
+    pub logistics_raster: ScalarRasterState,
+    pub sentiment_raster: ScalarRasterState,
     pub axis_bias: AxisBiasState,
     pub sentiment: SentimentTelemetryState,
     pub generations: Vec<GenerationState>,
@@ -665,6 +674,8 @@ pub struct WorldDelta {
     pub removed_power: Vec<u64>,
     pub axis_bias: Option<AxisBiasState>,
     pub sentiment: Option<SentimentTelemetryState>,
+    pub logistics_raster: Option<ScalarRasterState>,
+    pub sentiment_raster: Option<ScalarRasterState>,
     pub generations: Vec<GenerationState>,
     pub removed_generations: Vec<u16>,
     pub corruption: Option<CorruptionLedger>,
@@ -758,6 +769,8 @@ fn build_snapshot_flatbuffer<'a>(
     let populations_vec = create_populations(builder, &snapshot.populations);
     let power_vec = create_power(builder, &snapshot.power);
     let terrain_overlay = create_terrain_overlay(builder, &snapshot.terrain);
+    let logistics_raster = create_scalar_raster(builder, &snapshot.logistics_raster);
+    let sentiment_raster = create_scalar_raster(builder, &snapshot.sentiment_raster);
     let axis_bias = fb::AxisBiasState::create(
         builder,
         &fb::AxisBiasStateArgs {
@@ -785,6 +798,8 @@ fn build_snapshot_flatbuffer<'a>(
             populations: Some(populations_vec),
             power: Some(power_vec),
             terrainOverlay: Some(terrain_overlay),
+            logisticsRaster: Some(logistics_raster),
+            sentimentRaster: Some(sentiment_raster),
             axisBias: Some(axis_bias),
             sentiment: Some(sentiment),
             generations: Some(generations_vec),
@@ -837,6 +852,14 @@ fn build_delta_flatbuffer<'a>(
         .terrain
         .as_ref()
         .map(|overlay| create_terrain_overlay(builder, overlay));
+    let logistics_raster = delta
+        .logistics_raster
+        .as_ref()
+        .map(|raster| create_scalar_raster(builder, raster));
+    let sentiment_raster = delta
+        .sentiment_raster
+        .as_ref()
+        .map(|raster| create_scalar_raster(builder, raster));
     let axis_bias = delta.axis_bias.as_ref().map(|axis| {
         fb::AxisBiasState::create(
             builder,
@@ -887,6 +910,8 @@ fn build_delta_flatbuffer<'a>(
             influencers: Some(influencers_vec),
             removedInfluencers: Some(removed_influencers_vec),
             terrainOverlay: terrain_overlay,
+            logisticsRaster: logistics_raster,
+            sentimentRaster: sentiment_raster,
             cultureLayers: Some(culture_layers_vec),
             removedCultureLayers: Some(removed_culture_layers_vec),
             cultureTensions: Some(culture_tensions_vec),
@@ -1119,6 +1144,21 @@ fn create_terrain_overlay<'a>(
         &fb::TerrainOverlayArgs {
             width: overlay.width,
             height: overlay.height,
+            samples: Some(samples),
+        },
+    )
+}
+
+fn create_scalar_raster<'a>(
+    builder: &mut FbBuilder<'a>,
+    raster: &ScalarRasterState,
+) -> WIPOffset<fb::ScalarRaster<'a>> {
+    let samples = builder.create_vector(&raster.samples);
+    fb::ScalarRaster::create(
+        builder,
+        &fb::ScalarRasterArgs {
+            width: raster.width,
+            height: raster.height,
             samples: Some(samples),
         },
     )

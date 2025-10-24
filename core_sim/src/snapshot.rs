@@ -8,10 +8,10 @@ use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
     AxisBiasState, CorruptionLedger, CultureLayerState, CultureTensionState, CultureTraitEntry,
     DiscoveryProgressEntry, GenerationState, InfluentialIndividualState, LogisticsLinkState,
-    PendingMigrationState, PopulationCohortState, PowerNodeState, SentimentAxisTelemetry,
-    SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState, SnapshotHeader,
-    TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState, WorldDelta,
-    WorldSnapshot,
+    PendingMigrationState, PopulationCohortState, PowerNodeState, ScalarRasterState,
+    SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
+    SnapshotHeader, TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge,
+    TradeLinkState, WorldDelta, WorldSnapshot,
 };
 
 use crate::{
@@ -92,6 +92,8 @@ pub struct SnapshotHistory {
     axis_bias: AxisBiasState,
     sentiment: SentimentTelemetryState,
     terrain_overlay: TerrainOverlayState,
+    logistics_raster: ScalarRasterState,
+    sentiment_raster: ScalarRasterState,
     corruption: CorruptionLedger,
     history: VecDeque<StoredSnapshot>,
 }
@@ -125,6 +127,8 @@ impl SnapshotHistory {
             axis_bias: AxisBiasState::default(),
             sentiment: SentimentTelemetryState::default(),
             terrain_overlay: TerrainOverlayState::default(),
+            logistics_raster: ScalarRasterState::default(),
+            sentiment_raster: ScalarRasterState::default(),
             corruption: CorruptionLedger::default(),
             history: VecDeque::new(),
         }
@@ -232,6 +236,20 @@ impl SnapshotHistory {
             Some(terrain_state.clone())
         };
 
+        let logistics_raster_state = snapshot.logistics_raster.clone();
+        let logistics_raster_delta = if self.logistics_raster == logistics_raster_state {
+            None
+        } else {
+            Some(logistics_raster_state.clone())
+        };
+
+        let sentiment_raster_state = snapshot.sentiment_raster.clone();
+        let sentiment_raster_delta = if self.sentiment_raster == sentiment_raster_state {
+            None
+        } else {
+            Some(sentiment_raster_state.clone())
+        };
+
         let corruption_state = snapshot.corruption.clone();
         let corruption_delta = if self.corruption == corruption_state {
             None
@@ -259,6 +277,8 @@ impl SnapshotHistory {
             influencers: diff_new(&self.influencers, &influencers_index),
             removed_influencers: diff_removed(&self.influencers, &influencers_index),
             terrain: terrain_delta.clone(),
+            logistics_raster: logistics_raster_delta.clone(),
+            sentiment_raster: sentiment_raster_delta.clone(),
             culture_layers: diff_new(&self.culture_layers, &culture_layers_index),
             removed_culture_layers: diff_removed(&self.culture_layers, &culture_layers_index),
             culture_tensions: delta_culture_tensions.clone(),
@@ -280,6 +300,8 @@ impl SnapshotHistory {
         self.axis_bias = axis_bias_state;
         self.sentiment = sentiment_state;
         self.terrain_overlay = terrain_state;
+        self.logistics_raster = logistics_raster_state;
+        self.sentiment_raster = sentiment_raster_state;
         self.corruption = corruption_state;
         self.culture_tensions = culture_tensions_state;
         self.discovery_progress = discovery_index;
@@ -339,6 +361,9 @@ impl SnapshotHistory {
         self.corruption = entry.snapshot.corruption.clone();
         self.axis_bias = entry.snapshot.axis_bias.clone();
         self.sentiment = entry.snapshot.sentiment.clone();
+        self.terrain_overlay = entry.snapshot.terrain.clone();
+        self.logistics_raster = entry.snapshot.logistics_raster.clone();
+        self.sentiment_raster = entry.snapshot.sentiment_raster.clone();
         self.culture_tensions = entry.snapshot.culture_tensions.clone();
 
         self.last_snapshot = Some(entry.snapshot.clone());
@@ -384,6 +409,8 @@ impl SnapshotHistory {
             removed_power: Vec::new(),
             axis_bias: Some(bias.clone()),
             sentiment: None,
+            logistics_raster: None,
+            sentiment_raster: None,
             generations: Vec::new(),
             removed_generations: Vec::new(),
             corruption: None,
@@ -467,6 +494,8 @@ impl SnapshotHistory {
             removed_power: Vec::new(),
             axis_bias: None,
             sentiment: None,
+            logistics_raster: None,
+            sentiment_raster: None,
             generations: Vec::new(),
             removed_generations: Vec::new(),
             corruption: None,
@@ -544,6 +573,8 @@ impl SnapshotHistory {
             removed_power: Vec::new(),
             axis_bias: None,
             sentiment: None,
+            logistics_raster: None,
+            sentiment_raster: None,
             generations: Vec::new(),
             removed_generations: Vec::new(),
             corruption: Some(ledger.clone()),
@@ -675,6 +706,10 @@ pub fn capture_snapshot(
     let discovery_states = discovery_progress_entries(&discovery_progress);
 
     let terrain_overlay = terrain_overlay_from_tiles(&tile_states, config.grid_size);
+    let logistics_raster =
+        logistics_raster_from_links(&tile_states, &logistics_states, config.grid_size);
+    let sentiment_raster =
+        sentiment_raster_from_populations(&tile_states, &population_states, config.grid_size);
 
     let policy_axes = axis_bias.policy_values();
     let incident_axes = axis_bias.incident_values();
@@ -809,6 +844,8 @@ pub fn capture_snapshot(
         populations: population_states,
         power: power_states,
         terrain: terrain_overlay.clone(),
+        logistics_raster: logistics_raster.clone(),
+        sentiment_raster: sentiment_raster.clone(),
         axis_bias: axis_bias_state,
         sentiment: sentiment_state,
         generations: generation_states,
@@ -1271,6 +1308,110 @@ fn terrain_overlay_from_tiles(tiles: &[TileState], grid_size: UVec2) -> TerrainO
         }
     }
     TerrainOverlayState {
+        width,
+        height,
+        samples,
+    }
+}
+
+fn logistics_raster_from_links(
+    tiles: &[TileState],
+    logistics: &[LogisticsLinkState],
+    grid_size: UVec2,
+) -> ScalarRasterState {
+    let mut tile_positions = HashMap::with_capacity(tiles.len());
+    let mut max_x = 0u32;
+    let mut max_y = 0u32;
+    for tile in tiles {
+        tile_positions.insert(tile.entity, (tile.x, tile.y));
+        max_x = max_x.max(tile.x);
+        max_y = max_y.max(tile.y);
+    }
+
+    let width = grid_size.x.max(max_x.saturating_add(1)).max(1);
+    let height = grid_size.y.max(max_y.saturating_add(1)).max(1);
+    let total = (width as usize).saturating_mul(height as usize).max(1);
+    let mut samples = vec![0i64; total];
+    let mut counts = vec![0u32; total];
+
+    for link in logistics {
+        let flow = Scalar::from_raw(link.flow).abs().raw();
+        if flow == 0 {
+            continue;
+        }
+        if let Some(&(x, y)) = tile_positions.get(&link.from) {
+            let idx = (y as usize) * (width as usize) + x as usize;
+            if idx < samples.len() {
+                samples[idx] = samples[idx].saturating_add(flow);
+                counts[idx] = counts[idx].saturating_add(1);
+            }
+        }
+        if let Some(&(x, y)) = tile_positions.get(&link.to) {
+            let idx = (y as usize) * (width as usize) + x as usize;
+            if idx < samples.len() {
+                samples[idx] = samples[idx].saturating_add(flow);
+                counts[idx] = counts[idx].saturating_add(1);
+            }
+        }
+    }
+
+    for (value, count) in samples.iter_mut().zip(counts.iter()) {
+        if *count > 0 {
+            let divisor = i64::from(*count);
+            *value /= divisor;
+        }
+    }
+
+    ScalarRasterState {
+        width,
+        height,
+        samples,
+    }
+}
+
+fn sentiment_raster_from_populations(
+    tiles: &[TileState],
+    populations: &[PopulationCohortState],
+    grid_size: UVec2,
+) -> ScalarRasterState {
+    let mut tile_positions = HashMap::with_capacity(tiles.len());
+    let mut max_x = 0u32;
+    let mut max_y = 0u32;
+    for tile in tiles {
+        tile_positions.insert(tile.entity, (tile.x, tile.y));
+        max_x = max_x.max(tile.x);
+        max_y = max_y.max(tile.y);
+    }
+
+    let width = grid_size.x.max(max_x.saturating_add(1)).max(1);
+    let height = grid_size.y.max(max_y.saturating_add(1)).max(1);
+    let total = (width as usize).saturating_mul(height as usize).max(1);
+    let mut weighted = vec![0i128; total];
+    let mut weights = vec![0i128; total];
+
+    for cohort in populations {
+        let Some(&(x, y)) = tile_positions.get(&cohort.home) else {
+            continue;
+        };
+        let idx = (y as usize) * (width as usize) + x as usize;
+        if idx >= weighted.len() {
+            continue;
+        }
+        let morale = Scalar::from_raw(cohort.morale);
+        let size = i128::from(cohort.size);
+        weighted[idx] = weighted[idx].saturating_add(i128::from(morale.raw()) * size);
+        weights[idx] = weights[idx].saturating_add(size);
+    }
+
+    let mut samples = vec![0i64; total];
+    for (idx, sample) in samples.iter_mut().enumerate() {
+        let weight = weights[idx];
+        if weight > 0 {
+            *sample = (weighted[idx] / weight) as i64;
+        }
+    }
+
+    ScalarRasterState {
         width,
         height,
         samples,

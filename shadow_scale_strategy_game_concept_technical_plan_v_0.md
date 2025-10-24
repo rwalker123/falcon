@@ -1080,7 +1080,7 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 - If Godot reveals blocking gaps (performance, tooling, pipeline), evaluate alternative hosts for visualisation, noting that any replacement must adopt the Godot-defined scripting contract rather than a bespoke Unity fallback.
 - Capture metrics per spike (frame budget at targeted PC spec, draw-call cost for layered overlays, command round-trip) and document licensing/tooling implications so we can make an informed client stack decision.
 - Reference implementations and manifest schemas live under `clients/godot_thin_client`; see `docs/godot_thin_client_spike.md` for applied notes on the sandboxed scripting API design.
-- Current Godot spike now renders live FlatBuffers snapshots; next increment must (a) publish the actual logistics/sentiment rasters from the sim instead of temperature stand-ins, (b) expand the overlay schema so UI can swap between logistics, sentiment, corruption, and fog-of-war layers, and (c) validate colour ramps/normalisation against inspector metrics so designers trust what the map is showing.
+- Current Godot spike now renders live FlatBuffers snapshots; logistics and sentiment rasters stream directly from the sim, replacing the temperature stand-ins. Next increments must (a) expand the overlay schema so UI can swap between logistics, sentiment, corruption, and fog-of-war layers, and (b) validate colour ramps/normalisation against inspector metrics so designers trust what the map is showing.
 
 
 ### Recommended Shortlist & Next Steps (Headless First)

@@ -36,7 +36,7 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 - Commands tab exposes the full command bridge: turn/rollback/autoplay controls plus axis bias adjustment, support/suppress and channel boosts for selected influencers, spawn utilities, corruption injection, and heat debug. Use it to sanity check backend hooks before retiring the CLI.
   - Runtime controls: the thin client binds `ui_accept` to toggle between logistics/sentiment composites and terrain palette mode, aiding QA comparisons of colour accuracy against the documented swatches.
 - Inspector migration: see `docs/godot_inspector_plan.md` for the roadmap and progress checkpoints; cross-link new UX notes into the manual when player-facing explanations change. If the Bevy inspector option graduates from evaluation (manual §13 Option F), capture the delta plan here and spin tasks into `TASKS.md`.
-  - Planned logistics/sentiment raster exports (see `TASKS.md`) can stack on the same grid dimensions for consistent blending.
+  - Logistics/sentiment raster exports now share the terrain grid so overlays blend consistently across clients.
 
 ### Frontend Client Strategy
 - **Goal**: Select a graphical client stack capable of rendering the live strategy map (zoom/pan, unit animation, layered overlays) while consuming headless snapshots and dogfooding the scripting API.
@@ -47,7 +47,7 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 - **Resources**: Godot spike scaffolding lives under `clients/godot_thin_client`; see `docs/godot_thin_client_spike.md` for usage and evaluation notes.
 - **Networking**: `clients/godot_thin_client/src/scripts/SnapshotStream.gd` consumes length-prefixed FlatBuffers snapshots from `SimulationConfig::snapshot_flat_bind` (`res/src/native` provides the Godot extension that decodes the schema generated from `sim_schema/schemas/snapshot.fbs`).
 - **Next Steps (UI plumbing)**:
-  - Emit the real logistics/sentiment rasters directly from `core_sim` so the client is no longer visualising proxy temperature values. Extend `SnapshotHistory` to cache those layers and expose them through the FlatBuffers schema.
+  - Logistics and sentiment rasters now stream directly from `core_sim`; `SnapshotHistory` caches the layers and the FlatBuffers schema exposes them for clients alongside terrain overlays.
   - Enrich the Godot extension to surface multiple overlays (logistics intensity, sentiment pressure, corruption risk) and update `MapView.gd` to switch/toggle between them instead of hardcoding a single blend.
   - Add instrumentation hooks so overlays can be validated against CLI inspector metrics while we iterate on colour ramps/normalisation.
 
