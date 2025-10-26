@@ -386,60 +386,232 @@ impl ScriptHostBridge {
     }
 }
 
-fn snapshot_dict(
-    tick: u64,
+fn packed_from_slice(values: &[f32]) -> PackedFloat32Array {
+    if values.is_empty() {
+        return PackedFloat32Array::new();
+    }
+    let mut array = PackedFloat32Array::new();
+    array.resize(values.len());
+    array.as_mut_slice().copy_from_slice(values);
+    array
+}
+
+struct OverlayChannelParams<'a> {
+    key: &'a str,
+    label: &'a str,
+    description: Option<&'a str>,
+    normalized: &'a PackedFloat32Array,
+    raw: &'a PackedFloat32Array,
+    contrast: &'a PackedFloat32Array,
+    placeholder: bool,
+}
+
+fn insert_overlay_channel(
+    channels: &mut Dictionary,
+    order: &mut PackedStringArray,
+    params: OverlayChannelParams<'_>,
+) {
+    let mut channel = Dictionary::new();
+    let _ = channel.insert("label", params.label);
+    if let Some(description) = params.description {
+        let _ = channel.insert("description", description);
+    }
+    let _ = channel.insert("normalized", params.normalized.clone());
+    let _ = channel.insert("raw", params.raw.clone());
+    let _ = channel.insert("contrast", params.contrast.clone());
+    if params.placeholder {
+        let _ = channel.insert("placeholder", true);
+    }
+    let _ = channels.insert(params.key, channel);
+    let key_str = GString::from(params.key);
+    order.push(&key_str);
+}
+
+struct GridSize {
     width: u32,
     height: u32,
-    logistics_overlay: &[f32],
-    terrain: Option<&[u16]>,
-    terrain_tags: Option<&[u16]>,
+}
+
+struct OverlaySlices<'a> {
+    logistics: &'a [f32],
+    sentiment: &'a [f32],
+    corruption: &'a [f32],
+    fog: &'a [f32],
+}
+
+struct TerrainSlices<'a> {
+    terrain: Option<&'a [u16]>,
+    tags: Option<&'a [u16]>,
+}
+
+fn snapshot_dict(
+    tick: u64,
+    grid_size: GridSize,
+    overlays: OverlaySlices<'_>,
+    terrain: TerrainSlices<'_>,
 ) -> Dictionary {
     let mut dict = Dictionary::new();
     let _ = dict.insert("turn", tick as i64);
 
-    let mut grid = Dictionary::new();
-    let _ = grid.insert("width", width as i64);
-    let _ = grid.insert("height", height as i64);
-    let _ = dict.insert("grid", grid);
+    let mut grid_dict = Dictionary::new();
+    let _ = grid_dict.insert("width", grid_size.width as i64);
+    let _ = grid_dict.insert("height", grid_size.height as i64);
+    let _ = dict.insert("grid", grid_dict);
 
-    let mut logistics = PackedFloat32Array::new();
-    let size = (width as usize).saturating_mul(height as usize);
-    logistics.resize(size);
-    if size > 0 {
-        let slice = logistics.as_mut_slice();
-        let count = logistics_overlay.len().min(slice.len());
-        slice[..count].copy_from_slice(&logistics_overlay[..count]);
-    }
+    let size = (grid_size.width as usize)
+        .saturating_mul(grid_size.height as usize)
+        .max(1);
 
-    let mut contrast = PackedFloat32Array::new();
-    contrast.resize(size);
-    if size > 0 {
-        let slice = contrast.as_mut_slice();
-        let count = logistics_overlay.len().min(slice.len());
+    let copy_into = |source: &[f32]| -> Vec<f32> {
+        let mut dest = vec![0.0f32; size];
+        let count = source.len().min(size);
         if count > 0 {
-            let mut min = f32::INFINITY;
-            let mut max = f32::NEG_INFINITY;
-            for &value in &logistics_overlay[..count] {
-                if value.is_finite() {
-                    min = min.min(value);
-                    max = max.max(value);
-                }
-            }
-            if min.is_finite() && max.is_finite() && (max - min).abs() > f32::EPSILON {
-                let range = max - min;
-                for i in 0..count {
-                    let normalized = (logistics_overlay[i] - min) / range;
-                    slice[i] = normalized * (1.0 - normalized);
-                }
-            }
+            dest[..count].copy_from_slice(&source[..count]);
         }
+        dest
+    };
+
+    let logistics_base = copy_into(overlays.logistics);
+    let sentiment_base = copy_into(overlays.sentiment);
+    let corruption_base = copy_into(overlays.corruption);
+    let fog_base = copy_into(overlays.fog);
+
+    let mut logistics_normalized = logistics_base.clone();
+    normalize_overlay(&mut logistics_normalized);
+    let mut sentiment_normalized = sentiment_base.clone();
+    normalize_overlay(&mut sentiment_normalized);
+    let mut corruption_normalized = corruption_base.clone();
+    normalize_overlay(&mut corruption_normalized);
+    let mut fog_normalized = fog_base.clone();
+    normalize_overlay(&mut fog_normalized);
+
+    let mut logistics_contrast_vec = logistics_normalized.clone();
+    for value in logistics_contrast_vec.iter_mut() {
+        let v = *value;
+        *value = v * (1.0 - v);
     }
+
+    let mut sentiment_contrast_vec = sentiment_normalized.clone();
+    for value in sentiment_contrast_vec.iter_mut() {
+        *value = ((*value - 0.5).abs() * 2.0).clamp(0.0, 1.0);
+    }
+
+    let corruption_contrast_vec = corruption_normalized.clone();
+    let fog_contrast_vec = fog_normalized.clone();
+
+    let corruption_placeholder =
+        overlays.corruption.is_empty() || corruption_base.iter().all(|v| v.abs() < f32::EPSILON);
+    let fog_placeholder =
+        overlays.fog.is_empty() || fog_base.iter().all(|v| v.abs() < f32::EPSILON);
+
+    let logistics_array = packed_from_slice(&logistics_normalized);
+    let logistics_raw_array = packed_from_slice(&logistics_base);
+    let logistics_contrast_array = packed_from_slice(&logistics_contrast_vec);
+    let sentiment_array = packed_from_slice(&sentiment_normalized);
+    let sentiment_raw_array = packed_from_slice(&sentiment_base);
+    let sentiment_contrast_array = packed_from_slice(&sentiment_contrast_vec);
+    let corruption_array = packed_from_slice(&corruption_normalized);
+    let corruption_raw_array = packed_from_slice(&corruption_base);
+    let corruption_contrast_array = packed_from_slice(&corruption_contrast_vec);
+    let fog_array = packed_from_slice(&fog_normalized);
+    let fog_raw_array = packed_from_slice(&fog_base);
+    let fog_contrast_array = packed_from_slice(&fog_contrast_vec);
 
     let mut overlays = Dictionary::new();
-    let _ = overlays.insert("logistics", logistics);
-    let _ = overlays.insert("contrast", contrast);
+    let mut channels = Dictionary::new();
+    let mut channel_order = PackedStringArray::new();
 
-    if let Some(terrain_data) = terrain {
+    insert_overlay_channel(
+        &mut channels,
+        &mut channel_order,
+        OverlayChannelParams {
+            key: "logistics",
+            label: "Logistics Throughput",
+            description: Some(
+                "Sum of supply flow touching the tile after current corruption multipliers.",
+            ),
+            normalized: &logistics_array,
+            raw: &logistics_raw_array,
+            contrast: &logistics_contrast_array,
+            placeholder: false,
+        },
+    );
+    insert_overlay_channel(
+        &mut channels,
+        &mut channel_order,
+        OverlayChannelParams {
+            key: "sentiment",
+            label: "Sentiment Morale",
+            description: Some(
+                "Average morale of population cohorts anchored to the tile (fixed-point scale).",
+            ),
+            normalized: &sentiment_array,
+            raw: &sentiment_raw_array,
+            contrast: &sentiment_contrast_array,
+            placeholder: false,
+        },
+    );
+    insert_overlay_channel(
+        &mut channels,
+        &mut channel_order,
+        OverlayChannelParams {
+            key: "corruption",
+            label: "Corruption Pressure",
+            description: Some(
+                "Composite pressure mixing active incidents with logistics, trade, military, and governance risk at each tile.",
+            ),
+            normalized: &corruption_array,
+            raw: &corruption_raw_array,
+            contrast: &corruption_contrast_array,
+            placeholder: corruption_placeholder,
+        },
+    );
+    insert_overlay_channel(
+        &mut channels,
+        &mut channel_order,
+        OverlayChannelParams {
+            key: "fog",
+            label: "Fog of Knowledge",
+            description: Some(
+                "Knowledge gap for the controlling faction and local cohorts (1.0 = unknown, 0.0 = fully scouted).",
+            ),
+            normalized: &fog_array,
+            raw: &fog_raw_array,
+            contrast: &fog_contrast_array,
+            placeholder: fog_placeholder,
+        },
+    );
+
+    let _ = overlays.insert("channels", channels);
+    let _ = overlays.insert("channel_order", channel_order.clone());
+    let _ = overlays.insert("default_channel", "logistics");
+
+    if corruption_placeholder || fog_placeholder {
+        let mut placeholder_keys = PackedStringArray::new();
+        if corruption_placeholder {
+            placeholder_keys.push(&GString::from("corruption"));
+        }
+        if fog_placeholder {
+            placeholder_keys.push(&GString::from("fog"));
+        }
+        let _ = overlays.insert("placeholder_channels", placeholder_keys);
+    }
+
+    let _ = overlays.insert("logistics", logistics_array.clone());
+    let _ = overlays.insert("logistics_raw", logistics_raw_array.clone());
+    let _ = overlays.insert("logistics_contrast", logistics_contrast_array.clone());
+    let _ = overlays.insert("contrast", logistics_contrast_array.clone());
+    let _ = overlays.insert("sentiment", sentiment_array.clone());
+    let _ = overlays.insert("sentiment_raw", sentiment_raw_array.clone());
+    let _ = overlays.insert("sentiment_contrast", sentiment_contrast_array.clone());
+    let _ = overlays.insert("corruption", corruption_array.clone());
+    let _ = overlays.insert("corruption_raw", corruption_raw_array.clone());
+    let _ = overlays.insert("corruption_contrast", corruption_contrast_array.clone());
+    let _ = overlays.insert("fog", fog_array.clone());
+    let _ = overlays.insert("fog_raw", fog_raw_array.clone());
+    let _ = overlays.insert("fog_contrast", fog_contrast_array.clone());
+
+    if let Some(terrain_data) = terrain.terrain {
         let mut terrain_array = PackedInt32Array::new();
         terrain_array.resize(size);
         if size > 0 {
@@ -451,7 +623,7 @@ fn snapshot_dict(
         }
         let _ = overlays.insert("terrain", terrain_array);
 
-        if let Some(tag_data) = terrain_tags {
+        if let Some(tag_data) = terrain.tags {
             let mut tag_array = PackedInt32Array::new();
             tag_array.resize(size);
             if size > 0 {
@@ -541,6 +713,18 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     }
     if let Some(layer) = delta.terrainOverlay() {
         agg.apply_terrain_overlay(layer);
+    }
+    if let Some(raster) = delta.logisticsRaster() {
+        agg.apply_logistics_raster(raster);
+    }
+    if let Some(raster) = delta.sentimentRaster() {
+        agg.apply_sentiment_raster(raster);
+    }
+    if let Some(raster) = delta.corruptionRaster() {
+        agg.apply_corruption_raster(raster);
+    }
+    if let Some(raster) = delta.fogRaster() {
+        agg.apply_fog_raster(raster);
     }
     let mut dict = agg.into_dictionary();
 
@@ -634,6 +818,18 @@ struct DeltaAggregator {
     terrain_height: u32,
     terrain_types: Vec<u16>,
     terrain_tags: Vec<u16>,
+    logistics_width: u32,
+    logistics_height: u32,
+    logistics_samples: Vec<f32>,
+    sentiment_width: u32,
+    sentiment_height: u32,
+    sentiment_samples: Vec<f32>,
+    corruption_width: u32,
+    corruption_height: u32,
+    corruption_samples: Vec<f32>,
+    fog_width: u32,
+    fog_height: u32,
+    fog_samples: Vec<f32>,
 }
 
 impl DeltaAggregator {
@@ -663,9 +859,110 @@ impl DeltaAggregator {
         }
     }
 
+    fn apply_logistics_raster(&mut self, raster: fb::ScalarRaster<'_>) {
+        self.logistics_width = raster.width();
+        self.logistics_height = raster.height();
+        let count = (self.logistics_width as usize)
+            .saturating_mul(self.logistics_height as usize)
+            .max(1);
+        self.logistics_samples.resize(count, 0.0);
+        if let Some(samples) = raster.samples() {
+            for (idx, value) in samples.iter().enumerate() {
+                if idx >= count {
+                    break;
+                }
+                self.logistics_samples[idx] = fixed64_to_f32(value);
+            }
+        }
+    }
+
+    fn apply_sentiment_raster(&mut self, raster: fb::ScalarRaster<'_>) {
+        self.sentiment_width = raster.width();
+        self.sentiment_height = raster.height();
+        let count = (self.sentiment_width as usize)
+            .saturating_mul(self.sentiment_height as usize)
+            .max(1);
+        self.sentiment_samples.resize(count, 0.0);
+        if let Some(samples) = raster.samples() {
+            for (idx, value) in samples.iter().enumerate() {
+                if idx >= count {
+                    break;
+                }
+                self.sentiment_samples[idx] = fixed64_to_f32(value);
+            }
+        }
+    }
+
+    fn apply_corruption_raster(&mut self, raster: fb::ScalarRaster<'_>) {
+        self.corruption_width = raster.width();
+        self.corruption_height = raster.height();
+        let count = (self.corruption_width as usize)
+            .saturating_mul(self.corruption_height as usize)
+            .max(1);
+        self.corruption_samples.resize(count, 0.0);
+        if let Some(samples) = raster.samples() {
+            for (idx, value) in samples.iter().enumerate() {
+                if idx >= count {
+                    break;
+                }
+                self.corruption_samples[idx] = fixed64_to_f32(value);
+            }
+        }
+    }
+
+    fn apply_fog_raster(&mut self, raster: fb::ScalarRaster<'_>) {
+        self.fog_width = raster.width();
+        self.fog_height = raster.height();
+        let count = (self.fog_width as usize)
+            .saturating_mul(self.fog_height as usize)
+            .max(1);
+        self.fog_samples.resize(count, 0.0);
+        if let Some(samples) = raster.samples() {
+            for (idx, value) in samples.iter().enumerate() {
+                if idx >= count {
+                    break;
+                }
+                self.fog_samples[idx] = fixed64_to_f32(value);
+            }
+        }
+    }
+
     fn into_dictionary(self) -> Dictionary {
-        let mut final_width = self.terrain_width.max(self.width);
-        let mut final_height = self.terrain_height.max(self.height);
+        let DeltaAggregator {
+            tick,
+            width,
+            height,
+            tile_updates,
+            terrain_width,
+            terrain_height,
+            terrain_types,
+            terrain_tags,
+            logistics_width,
+            logistics_height,
+            logistics_samples,
+            sentiment_width,
+            sentiment_height,
+            sentiment_samples,
+            corruption_width,
+            corruption_height,
+            corruption_samples,
+            fog_width,
+            fog_height,
+            fog_samples,
+        } = self;
+
+        let mut final_width = terrain_width
+            .max(width)
+            .max(logistics_width)
+            .max(sentiment_width)
+            .max(corruption_width)
+            .max(fog_width);
+        let mut final_height = terrain_height
+            .max(height)
+            .max(logistics_height)
+            .max(sentiment_height)
+            .max(corruption_height)
+            .max(fog_height);
         if final_width == 0 || final_height == 0 {
             final_width = final_width.max(1);
             final_height = final_height.max(1);
@@ -673,34 +970,110 @@ impl DeltaAggregator {
         let total = (final_width as usize)
             .saturating_mul(final_height as usize)
             .max(1);
-        let mut logistics = vec![0.0f32; total];
-        for ((x, y), value) in self.tile_updates {
-            if x >= final_width || y >= final_height {
-                continue;
-            }
-            let idx = (y as usize) * (final_width as usize) + x as usize;
-            logistics[idx] = value;
-        }
-        normalize_overlay(&mut logistics);
 
-        let terrain_ref = if !self.terrain_types.is_empty() {
-            Some(self.terrain_types)
+        let mut logistics = vec![0.0f32; total];
+        if logistics_width > 0 && logistics_height > 0 && !logistics_samples.is_empty() {
+            for y in 0..logistics_height {
+                for x in 0..logistics_width {
+                    let src_idx = (y as usize) * (logistics_width as usize) + x as usize;
+                    if src_idx >= logistics_samples.len() {
+                        break;
+                    }
+                    if x >= final_width || y >= final_height {
+                        continue;
+                    }
+                    let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                    logistics[dst_idx] = logistics_samples[src_idx];
+                }
+            }
         } else {
+            for ((x, y), value) in tile_updates {
+                if x >= final_width || y >= final_height {
+                    continue;
+                }
+                let idx = (y as usize) * (final_width as usize) + x as usize;
+                logistics[idx] = value;
+            }
+        }
+
+        let mut sentiment = vec![0.0f32; total];
+        if sentiment_width > 0 && sentiment_height > 0 && !sentiment_samples.is_empty() {
+            for y in 0..sentiment_height {
+                for x in 0..sentiment_width {
+                    let src_idx = (y as usize) * (sentiment_width as usize) + x as usize;
+                    if src_idx >= sentiment_samples.len() {
+                        break;
+                    }
+                    if x >= final_width || y >= final_height {
+                        continue;
+                    }
+                    let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                    sentiment[dst_idx] = sentiment_samples[src_idx];
+                }
+            }
+        }
+
+        let mut corruption = vec![0.0f32; total];
+        if corruption_width > 0 && corruption_height > 0 && !corruption_samples.is_empty() {
+            for y in 0..corruption_height {
+                for x in 0..corruption_width {
+                    let src_idx = (y as usize) * (corruption_width as usize) + x as usize;
+                    if src_idx >= corruption_samples.len() {
+                        break;
+                    }
+                    if x >= final_width || y >= final_height {
+                        continue;
+                    }
+                    let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                    corruption[dst_idx] = corruption_samples[src_idx];
+                }
+            }
+        }
+
+        let mut fog = vec![0.0f32; total];
+        if fog_width > 0 && fog_height > 0 && !fog_samples.is_empty() {
+            for y in 0..fog_height {
+                for x in 0..fog_width {
+                    let src_idx = (y as usize) * (fog_width as usize) + x as usize;
+                    if src_idx >= fog_samples.len() {
+                        break;
+                    }
+                    if x >= final_width || y >= final_height {
+                        continue;
+                    }
+                    let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                    fog[dst_idx] = fog_samples[src_idx];
+                }
+            }
+        }
+
+        let terrain_ref = if terrain_types.is_empty() {
             None
+        } else {
+            Some(terrain_types)
         };
-        let tags_ref = if !self.terrain_tags.is_empty() {
-            Some(self.terrain_tags)
-        } else {
+        let tags_ref = if terrain_tags.is_empty() {
             None
+        } else {
+            Some(terrain_tags)
         };
 
         snapshot_dict(
-            self.tick,
-            final_width,
-            final_height,
-            &logistics,
-            terrain_ref.as_deref(),
-            tags_ref.as_deref(),
+            tick,
+            GridSize {
+                width: final_width,
+                height: final_height,
+            },
+            OverlaySlices {
+                logistics: &logistics,
+                sentiment: &sentiment,
+                corruption: &corruption,
+                fog: &fog,
+            },
+            TerrainSlices {
+                terrain: terrain_ref.as_deref(),
+                tags: tags_ref.as_deref(),
+            },
         )
     }
 }
@@ -761,17 +1134,56 @@ const CULTURE_TENSION_LABELS: [&str; 3] = ["Drift Warning", "Assimilation Push",
 
 fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
     let header = snapshot.header().unwrap();
-    let mut logistics = HashMap::new();
-    let mut width = 0u32;
-    let mut height = 0u32;
-    if let Some(tiles) = snapshot.tiles() {
-        for tile in tiles {
-            let x = tile.x();
-            let y = tile.y();
-            width = width.max(x + 1);
-            height = height.max(y + 1);
-            logistics.insert((x, y), fixed64_to_f32(tile.temperature()));
+
+    let mut logistics_grid: Vec<f32> = Vec::new();
+    let mut logistics_dims = (0u32, 0u32);
+    let mut corruption_grid: Vec<f32> = Vec::new();
+    let mut corruption_dims = (0u32, 0u32);
+    let mut fog_grid: Vec<f32> = Vec::new();
+    let mut fog_dims = (0u32, 0u32);
+    if let Some(raster) = snapshot.logisticsRaster() {
+        let width = raster.width();
+        let height = raster.height();
+        if width > 0 && height > 0 {
+            let total = (width as usize).saturating_mul(height as usize);
+            logistics_grid = vec![0.0f32; total];
+            if let Some(samples) = raster.samples() {
+                for (idx, value) in samples.iter().enumerate() {
+                    if idx >= total {
+                        break;
+                    }
+                    logistics_grid[idx] = fixed64_to_f32(value);
+                }
+            }
+            logistics_dims = (width, height);
         }
+    }
+
+    if logistics_grid.is_empty() {
+        let mut width = 0u32;
+        let mut height = 0u32;
+        let mut fallback: HashMap<(u32, u32), f32> = HashMap::new();
+        if let Some(tiles) = snapshot.tiles() {
+            for tile in tiles {
+                let x = tile.x();
+                let y = tile.y();
+                width = width.max(x + 1);
+                height = height.max(y + 1);
+                fallback.insert((x, y), fixed64_to_f32(tile.temperature()));
+            }
+        }
+        let width = width.max(1);
+        let height = height.max(1);
+        let total = (width as usize).saturating_mul(height as usize);
+        logistics_grid = vec![0.0f32; total];
+        for ((x, y), value) in fallback.into_iter() {
+            if x >= width || y >= height {
+                continue;
+            }
+            let idx = (y as usize) * (width as usize) + x as usize;
+            logistics_grid[idx] = value;
+        }
+        logistics_dims = (width, height);
     }
 
     let mut terrain_width = 0u32;
@@ -788,21 +1200,197 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         }
     }
 
-    let final_width = width.max(terrain_width).max(1);
-    let final_height = height.max(terrain_height).max(1);
+    if let Some(raster) = snapshot.corruptionRaster() {
+        let width = raster.width();
+        let height = raster.height();
+        if width > 0 && height > 0 {
+            let total = (width as usize).saturating_mul(height as usize);
+            corruption_grid = vec![0.0f32; total];
+            if let Some(samples) = raster.samples() {
+                for (idx, value) in samples.iter().enumerate() {
+                    if idx >= total {
+                        break;
+                    }
+                    corruption_grid[idx] = fixed64_to_f32(value);
+                }
+            }
+            corruption_dims = (width, height);
+        }
+    }
+
+    if corruption_grid.is_empty() {
+        let fallback_width = logistics_dims.0.max(terrain_width).max(1);
+        let fallback_height = logistics_dims.1.max(terrain_height).max(1);
+        let total = (fallback_width as usize)
+            .saturating_mul(fallback_height as usize)
+            .max(1);
+        corruption_grid = vec![0.0f32; total];
+        corruption_dims = (fallback_width, fallback_height);
+    }
+
+    let mut sentiment_grid: Vec<f32> = Vec::new();
+    let mut sentiment_dims = (0u32, 0u32);
+    if let Some(raster) = snapshot.sentimentRaster() {
+        let width = raster.width();
+        let height = raster.height();
+        if width > 0 && height > 0 {
+            let total = (width as usize).saturating_mul(height as usize);
+            sentiment_grid = vec![0.0f32; total];
+            if let Some(samples) = raster.samples() {
+                for (idx, value) in samples.iter().enumerate() {
+                    if idx >= total {
+                        break;
+                    }
+                    sentiment_grid[idx] = fixed64_to_f32(value);
+                }
+            }
+            sentiment_dims = (width, height);
+        }
+    }
+
+    if sentiment_grid.is_empty() {
+        let fallback_width = if logistics_dims.0 > 0 {
+            logistics_dims.0
+        } else if terrain_width > 0 {
+            terrain_width
+        } else {
+            1
+        };
+        let fallback_height = if logistics_dims.1 > 0 {
+            logistics_dims.1
+        } else if terrain_height > 0 {
+            terrain_height
+        } else {
+            1
+        };
+        let total = (fallback_width as usize)
+            .saturating_mul(fallback_height as usize)
+            .max(1);
+        sentiment_grid = vec![0.0f32; total];
+        sentiment_dims = (fallback_width, fallback_height);
+    }
+
+    if let Some(raster) = snapshot.fogRaster() {
+        let width = raster.width();
+        let height = raster.height();
+        if width > 0 && height > 0 {
+            let total = (width as usize).saturating_mul(height as usize);
+            fog_grid = vec![0.0f32; total];
+            if let Some(samples) = raster.samples() {
+                for (idx, value) in samples.iter().enumerate() {
+                    if idx >= total {
+                        break;
+                    }
+                    fog_grid[idx] = fixed64_to_f32(value);
+                }
+            }
+            fog_dims = (width, height);
+        }
+    }
+
+    if fog_grid.is_empty() {
+        let fallback_width = logistics_dims
+            .0
+            .max(corruption_dims.0)
+            .max(terrain_width)
+            .max(1);
+        let fallback_height = logistics_dims
+            .1
+            .max(corruption_dims.1)
+            .max(terrain_height)
+            .max(1);
+        let total = (fallback_width as usize)
+            .saturating_mul(fallback_height as usize)
+            .max(1);
+        fog_grid = vec![0.0f32; total];
+        fog_dims = (fallback_width, fallback_height);
+    }
+
+    let final_width = logistics_dims
+        .0
+        .max(sentiment_dims.0)
+        .max(terrain_width)
+        .max(corruption_dims.0)
+        .max(fog_dims.0)
+        .max(1);
+    let final_height = logistics_dims
+        .1
+        .max(sentiment_dims.1)
+        .max(terrain_height)
+        .max(corruption_dims.1)
+        .max(fog_dims.1)
+        .max(1);
     let total = (final_width as usize)
         .saturating_mul(final_height as usize)
         .max(1);
 
-    let mut logistics_vec = vec![0.0f32; total];
-    for ((x, y), value) in logistics.into_iter() {
-        if x >= final_width || y >= final_height {
-            continue;
+    let mut logistics_resized = vec![0.0f32; total];
+    if logistics_dims.0 > 0 && logistics_dims.1 > 0 {
+        for y in 0..logistics_dims.1 {
+            for x in 0..logistics_dims.0 {
+                let src_idx = (y as usize) * (logistics_dims.0 as usize) + x as usize;
+                if src_idx >= logistics_grid.len() {
+                    break;
+                }
+                if x >= final_width || y >= final_height {
+                    continue;
+                }
+                let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                logistics_resized[dst_idx] = logistics_grid[src_idx];
+            }
         }
-        let idx = (y as usize) * (final_width as usize) + x as usize;
-        logistics_vec[idx] = value;
     }
-    normalize_overlay(&mut logistics_vec);
+
+    let mut sentiment_resized = vec![0.0f32; total];
+    if sentiment_dims.0 > 0 && sentiment_dims.1 > 0 {
+        for y in 0..sentiment_dims.1 {
+            for x in 0..sentiment_dims.0 {
+                let src_idx = (y as usize) * (sentiment_dims.0 as usize) + x as usize;
+                if src_idx >= sentiment_grid.len() {
+                    break;
+                }
+                if x >= final_width || y >= final_height {
+                    continue;
+                }
+                let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                sentiment_resized[dst_idx] = sentiment_grid[src_idx];
+            }
+        }
+    }
+
+    let mut corruption_resized = vec![0.0f32; total];
+    if corruption_dims.0 > 0 && corruption_dims.1 > 0 {
+        for y in 0..corruption_dims.1 {
+            for x in 0..corruption_dims.0 {
+                let src_idx = (y as usize) * (corruption_dims.0 as usize) + x as usize;
+                if src_idx >= corruption_grid.len() {
+                    break;
+                }
+                if x >= final_width || y >= final_height {
+                    continue;
+                }
+                let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                corruption_resized[dst_idx] = corruption_grid[src_idx];
+            }
+        }
+    }
+
+    let mut fog_resized = vec![0.0f32; total];
+    if fog_dims.0 > 0 && fog_dims.1 > 0 {
+        for y in 0..fog_dims.1 {
+            for x in 0..fog_dims.0 {
+                let src_idx = (y as usize) * (fog_dims.0 as usize) + x as usize;
+                if src_idx >= fog_grid.len() {
+                    break;
+                }
+                if x >= final_width || y >= final_height {
+                    continue;
+                }
+                let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                fog_resized[dst_idx] = fog_grid[src_idx];
+            }
+        }
+    }
 
     let mut terrain_vec: Vec<u16> = Vec::new();
     let mut tag_vec: Vec<u16> = Vec::new();
@@ -826,20 +1414,32 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         }
     }
 
+    let terrain_slice = if terrain_vec.is_empty() {
+        None
+    } else {
+        Some(terrain_vec.as_slice())
+    };
+    let terrain_tag_slice = if tag_vec.is_empty() {
+        None
+    } else {
+        Some(tag_vec.as_slice())
+    };
+
     let mut dict = snapshot_dict(
         header.tick(),
-        final_width,
-        final_height,
-        &logistics_vec,
-        if terrain_vec.is_empty() {
-            None
-        } else {
-            Some(terrain_vec.as_slice())
+        GridSize {
+            width: final_width,
+            height: final_height,
         },
-        if tag_vec.is_empty() {
-            None
-        } else {
-            Some(tag_vec.as_slice())
+        OverlaySlices {
+            logistics: &logistics_resized,
+            sentiment: &sentiment_resized,
+            corruption: &corruption_resized,
+            fog: &fog_resized,
+        },
+        TerrainSlices {
+            terrain: terrain_slice,
+            tags: terrain_tag_slice,
         },
     );
 

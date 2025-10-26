@@ -1075,12 +1075,13 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 4. Decide distribution model (e.g., signed packages, Steam Workshop integration) and how host loads/unloads mods at runtime.
 
 #### Map-Centric Evaluation Plan
-- Prioritize a tactical map workload that exercises zooming, multi-layer overlays (logistics, sentiment heatmaps, fog of knowledge), unit selection, and command previews.
+- Prioritize a tactical map workload that exercises zooming, unit selection, command previews, and fast overlay switching. The inspector should let designers flip between logistics throughput (cool blue), sentiment pressure (ember red), corruption risk (amber), and fog-of-knowledge coverage (slate) without leaving playback.
 - First execute a Godot 4 thin-client spike that consumes mock snapshot streams and replays scripted orders to validate rendering responsiveness, animation tooling, and latency to the headless core.
 - If Godot reveals blocking gaps (performance, tooling, pipeline), evaluate alternative hosts for visualisation, noting that any replacement must adopt the Godot-defined scripting contract rather than a bespoke Unity fallback.
 - Capture metrics per spike (frame budget at targeted PC spec, draw-call cost for layered overlays, command round-trip) and document licensing/tooling implications so we can make an informed client stack decision.
 - Reference implementations and manifest schemas live under `clients/godot_thin_client`; see `docs/godot_thin_client_spike.md` for applied notes on the sandboxed scripting API design.
-- Current Godot spike now renders live FlatBuffers snapshots; next increment must (a) publish the actual logistics/sentiment rasters from the sim instead of temperature stand-ins, (b) expand the overlay schema so UI can swap between logistics, sentiment, corruption, and fog-of-war layers, and (c) validate colour ramps/normalisation against inspector metrics so designers trust what the map is showing.
+- Current Godot spike renders live FlatBuffers snapshots, and the overlay selector exposes the logistics/sentiment/corruption/fog layers with consistent colour ramps. Logistics still visualises per-link throughput and sentiment maps morale, but corruption now visualises active incident pressure blended with structural risk (supply flow, trade lanes, power demand, morale-weighted population) while fog paints the knowledge gap for the controlling faction and resident cohorts (`1.0` = opaque ignorance, `0.0` = fully known). Inspector tooltips mirror these legends so raw vs. normalised values stay interpretable; we spot-check tiles against the corruption ledger and discovery/migration telemetry whenever balance passes move the numbers.
+- The HUD legend now follows the active overlay—terrain palette, logistics throughput, corruption pressure, or fog-of-knowledge—and presents low/average/high values with the same descriptive copy as the selector, so map interpretation stays anchored even when the terrain layer is hidden.
 
 
 ### Recommended Shortlist & Next Steps (Headless First)

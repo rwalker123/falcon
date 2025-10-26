@@ -6,12 +6,12 @@ use bevy::prelude::*;
 use log::warn;
 use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
-    AxisBiasState, CorruptionLedger, CultureLayerState, CultureTensionState, CultureTraitEntry,
-    DiscoveryProgressEntry, GenerationState, InfluentialIndividualState, LogisticsLinkState,
-    PendingMigrationState, PopulationCohortState, PowerNodeState, SentimentAxisTelemetry,
-    SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState, SnapshotHeader,
-    TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState, WorldDelta,
-    WorldSnapshot,
+    AxisBiasState, CorruptionLedger, CorruptionSubsystem, CultureLayerState, CultureTensionState,
+    CultureTraitEntry, DiscoveryProgressEntry, GenerationState, InfluentialIndividualState,
+    LogisticsLinkState, PendingMigrationState, PopulationCohortState, PowerNodeState,
+    ScalarRasterState, SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState,
+    SentimentTelemetryState, SnapshotHeader, TerrainOverlayState, TerrainSample, TileState,
+    TradeLinkKnowledge, TradeLinkState, WorldDelta, WorldSnapshot,
 };
 
 use crate::{
@@ -92,6 +92,10 @@ pub struct SnapshotHistory {
     axis_bias: AxisBiasState,
     sentiment: SentimentTelemetryState,
     terrain_overlay: TerrainOverlayState,
+    logistics_raster: ScalarRasterState,
+    sentiment_raster: ScalarRasterState,
+    corruption_raster: ScalarRasterState,
+    fog_raster: ScalarRasterState,
     corruption: CorruptionLedger,
     history: VecDeque<StoredSnapshot>,
 }
@@ -125,6 +129,10 @@ impl SnapshotHistory {
             axis_bias: AxisBiasState::default(),
             sentiment: SentimentTelemetryState::default(),
             terrain_overlay: TerrainOverlayState::default(),
+            logistics_raster: ScalarRasterState::default(),
+            sentiment_raster: ScalarRasterState::default(),
+            corruption_raster: ScalarRasterState::default(),
+            fog_raster: ScalarRasterState::default(),
             corruption: CorruptionLedger::default(),
             history: VecDeque::new(),
         }
@@ -232,6 +240,34 @@ impl SnapshotHistory {
             Some(terrain_state.clone())
         };
 
+        let logistics_raster_state = snapshot.logistics_raster.clone();
+        let logistics_raster_delta = if self.logistics_raster == logistics_raster_state {
+            None
+        } else {
+            Some(logistics_raster_state.clone())
+        };
+
+        let sentiment_raster_state = snapshot.sentiment_raster.clone();
+        let sentiment_raster_delta = if self.sentiment_raster == sentiment_raster_state {
+            None
+        } else {
+            Some(sentiment_raster_state.clone())
+        };
+
+        let corruption_raster_state = snapshot.corruption_raster.clone();
+        let corruption_raster_delta = if self.corruption_raster == corruption_raster_state {
+            None
+        } else {
+            Some(corruption_raster_state.clone())
+        };
+
+        let fog_raster_state = snapshot.fog_raster.clone();
+        let fog_raster_delta = if self.fog_raster == fog_raster_state {
+            None
+        } else {
+            Some(fog_raster_state.clone())
+        };
+
         let corruption_state = snapshot.corruption.clone();
         let corruption_delta = if self.corruption == corruption_state {
             None
@@ -259,6 +295,10 @@ impl SnapshotHistory {
             influencers: diff_new(&self.influencers, &influencers_index),
             removed_influencers: diff_removed(&self.influencers, &influencers_index),
             terrain: terrain_delta.clone(),
+            logistics_raster: logistics_raster_delta.clone(),
+            sentiment_raster: sentiment_raster_delta.clone(),
+            corruption_raster: corruption_raster_delta.clone(),
+            fog_raster: fog_raster_delta.clone(),
             culture_layers: diff_new(&self.culture_layers, &culture_layers_index),
             removed_culture_layers: diff_removed(&self.culture_layers, &culture_layers_index),
             culture_tensions: delta_culture_tensions.clone(),
@@ -280,6 +320,10 @@ impl SnapshotHistory {
         self.axis_bias = axis_bias_state;
         self.sentiment = sentiment_state;
         self.terrain_overlay = terrain_state;
+        self.logistics_raster = logistics_raster_state;
+        self.sentiment_raster = sentiment_raster_state;
+        self.corruption_raster = corruption_raster_state;
+        self.fog_raster = fog_raster_state;
         self.corruption = corruption_state;
         self.culture_tensions = culture_tensions_state;
         self.discovery_progress = discovery_index;
@@ -339,6 +383,11 @@ impl SnapshotHistory {
         self.corruption = entry.snapshot.corruption.clone();
         self.axis_bias = entry.snapshot.axis_bias.clone();
         self.sentiment = entry.snapshot.sentiment.clone();
+        self.terrain_overlay = entry.snapshot.terrain.clone();
+        self.logistics_raster = entry.snapshot.logistics_raster.clone();
+        self.sentiment_raster = entry.snapshot.sentiment_raster.clone();
+        self.corruption_raster = entry.snapshot.corruption_raster.clone();
+        self.fog_raster = entry.snapshot.fog_raster.clone();
         self.culture_tensions = entry.snapshot.culture_tensions.clone();
 
         self.last_snapshot = Some(entry.snapshot.clone());
@@ -384,6 +433,10 @@ impl SnapshotHistory {
             removed_power: Vec::new(),
             axis_bias: Some(bias.clone()),
             sentiment: None,
+            logistics_raster: None,
+            sentiment_raster: None,
+            corruption_raster: None,
+            fog_raster: None,
             generations: Vec::new(),
             removed_generations: Vec::new(),
             corruption: None,
@@ -467,6 +520,10 @@ impl SnapshotHistory {
             removed_power: Vec::new(),
             axis_bias: None,
             sentiment: None,
+            logistics_raster: None,
+            sentiment_raster: None,
+            corruption_raster: None,
+            fog_raster: None,
             generations: Vec::new(),
             removed_generations: Vec::new(),
             corruption: None,
@@ -544,6 +601,10 @@ impl SnapshotHistory {
             removed_power: Vec::new(),
             axis_bias: None,
             sentiment: None,
+            logistics_raster: None,
+            sentiment_raster: None,
+            corruption_raster: None,
+            fog_raster: None,
             generations: Vec::new(),
             removed_generations: Vec::new(),
             corruption: Some(ledger.clone()),
@@ -675,6 +736,28 @@ pub fn capture_snapshot(
     let discovery_states = discovery_progress_entries(&discovery_progress);
 
     let terrain_overlay = terrain_overlay_from_tiles(&tile_states, config.grid_size);
+    let logistics_raster =
+        logistics_raster_from_links(&tile_states, &logistics_states, config.grid_size);
+    let sentiment_raster =
+        sentiment_raster_from_populations(&tile_states, &population_states, config.grid_size);
+    let corruption_raster = corruption_raster_from_simulation(
+        &tile_states,
+        &trade_states,
+        &population_states,
+        &power_states,
+        &logistics_raster,
+        CorruptionSignals {
+            ledger: corruption_ledgers.ledger(),
+            telemetry: &corruption_telemetry,
+        },
+        config.grid_size,
+    );
+    let fog_raster = fog_raster_from_discoveries(
+        &tile_states,
+        &population_states,
+        &discovery_progress,
+        config.grid_size,
+    );
 
     let policy_axes = axis_bias.policy_values();
     let incident_axes = axis_bias.incident_values();
@@ -809,6 +892,10 @@ pub fn capture_snapshot(
         populations: population_states,
         power: power_states,
         terrain: terrain_overlay.clone(),
+        logistics_raster: logistics_raster.clone(),
+        sentiment_raster: sentiment_raster.clone(),
+        corruption_raster: corruption_raster.clone(),
+        fog_raster: fog_raster.clone(),
         axis_bias: axis_bias_state,
         sentiment: sentiment_state,
         generations: generation_states,
@@ -1277,6 +1364,533 @@ fn terrain_overlay_from_tiles(tiles: &[TileState], grid_size: UVec2) -> TerrainO
     }
 }
 
+fn logistics_raster_from_links(
+    tiles: &[TileState],
+    logistics: &[LogisticsLinkState],
+    grid_size: UVec2,
+) -> ScalarRasterState {
+    let mut tile_positions = HashMap::with_capacity(tiles.len());
+    let mut max_x = 0u32;
+    let mut max_y = 0u32;
+    for tile in tiles {
+        tile_positions.insert(tile.entity, (tile.x, tile.y));
+        max_x = max_x.max(tile.x);
+        max_y = max_y.max(tile.y);
+    }
+
+    let width = grid_size.x.max(max_x.saturating_add(1)).max(1);
+    let height = grid_size.y.max(max_y.saturating_add(1)).max(1);
+    let total = (width as usize).saturating_mul(height as usize).max(1);
+    let mut samples = vec![0i64; total];
+    let mut counts = vec![0u32; total];
+
+    for link in logistics {
+        let flow = Scalar::from_raw(link.flow).abs().raw();
+        if flow == 0 {
+            continue;
+        }
+        if let Some(&(x, y)) = tile_positions.get(&link.from) {
+            let idx = (y as usize) * (width as usize) + x as usize;
+            if idx < samples.len() {
+                samples[idx] = samples[idx].saturating_add(flow);
+                counts[idx] = counts[idx].saturating_add(1);
+            }
+        }
+        if let Some(&(x, y)) = tile_positions.get(&link.to) {
+            let idx = (y as usize) * (width as usize) + x as usize;
+            if idx < samples.len() {
+                samples[idx] = samples[idx].saturating_add(flow);
+                counts[idx] = counts[idx].saturating_add(1);
+            }
+        }
+    }
+
+    for (value, count) in samples.iter_mut().zip(counts.iter()) {
+        if *count > 0 {
+            let divisor = i64::from(*count);
+            *value = value.checked_div(divisor).unwrap_or_default();
+        }
+    }
+
+    ScalarRasterState {
+        width,
+        height,
+        samples,
+    }
+}
+
+const CORRUPTION_SUBSYSTEM_COUNT: usize = 4;
+
+struct CorruptionSignals<'a> {
+    ledger: &'a CorruptionLedger,
+    telemetry: &'a CorruptionTelemetry,
+}
+
+fn corruption_raster_from_simulation(
+    tiles: &[TileState],
+    trade_links: &[TradeLinkState],
+    populations: &[PopulationCohortState],
+    power_nodes: &[PowerNodeState],
+    logistics_raster: &ScalarRasterState,
+    corruption_signals: CorruptionSignals<'_>,
+    grid_size: UVec2,
+) -> ScalarRasterState {
+    let CorruptionSignals { ledger, telemetry } = corruption_signals;
+    let mut width = logistics_raster.width.max(grid_size.x).max(1);
+    let mut height = logistics_raster.height.max(grid_size.y).max(1);
+
+    for tile in tiles {
+        width = width.max(tile.x.saturating_add(1));
+        height = height.max(tile.y.saturating_add(1));
+    }
+
+    let width_usize = width as usize;
+    let height_usize = height as usize;
+    let total = width_usize.saturating_mul(height_usize).max(1);
+
+    let mut samples = vec![0i64; total];
+
+    let mut tile_indices = HashMap::with_capacity(tiles.len());
+    for tile in tiles {
+        if tile.x < width && tile.y < height {
+            let idx = (tile.y as usize) * width_usize + tile.x as usize;
+            tile_indices.insert(tile.entity, idx);
+        }
+    }
+
+    let mut logistics_weights = vec![0i64; total];
+    if logistics_raster.width > 0
+        && logistics_raster.height > 0
+        && !logistics_raster.samples.is_empty()
+    {
+        let src_width = logistics_raster.width as usize;
+        let src_height = logistics_raster.height as usize;
+        let min_height = src_height.min(height_usize);
+        let min_width = src_width.min(width_usize);
+        for y in 0..min_height {
+            let src_row = y * src_width;
+            let dst_row = y * width_usize;
+            for x in 0..min_width {
+                let src_idx = src_row + x;
+                let dst_idx = dst_row + x;
+                if src_idx < logistics_raster.samples.len() && dst_idx < logistics_weights.len() {
+                    logistics_weights[dst_idx] = logistics_raster.samples[src_idx].abs();
+                }
+            }
+        }
+    }
+
+    let mut trade_weights = vec![0i64; total];
+    for link in trade_links {
+        let throughput = link.throughput.abs();
+        if throughput <= 0 {
+            continue;
+        }
+        for tile_id in [link.from_tile, link.to_tile] {
+            if let Some(&idx) = tile_indices.get(&tile_id) {
+                trade_weights[idx] = trade_weights[idx].saturating_add(throughput);
+            }
+        }
+    }
+
+    let mut military_weights = vec![0i64; total];
+    for node in power_nodes {
+        if let Some(&idx) = tile_indices.get(&node.entity) {
+            let generation = node.generation.abs();
+            let demand = node.demand.abs();
+            let weight = generation.saturating_add(demand);
+            if weight > 0 {
+                military_weights[idx] = military_weights[idx].saturating_add(weight);
+            }
+        }
+    }
+
+    let mut governance_weights = vec![0i64; total];
+    let scale_i128 = i128::from(Scalar::SCALE);
+    for cohort in populations {
+        if let Some(&idx) = tile_indices.get(&cohort.home) {
+            let size = i64::from(cohort.size);
+            if size <= 0 {
+                continue;
+            }
+            let morale = Scalar::from_raw(cohort.morale).clamp(Scalar::zero(), Scalar::one());
+            let morale_deficit = (Scalar::one() - morale).raw().max(0);
+            let mut weighted =
+                (i128::from(size) * (scale_i128 + i128::from(morale_deficit))) / scale_i128;
+            if weighted > i128::from(i64::MAX) {
+                weighted = i128::from(i64::MAX);
+            }
+            governance_weights[idx] = governance_weights[idx].saturating_add(weighted as i64);
+        }
+    }
+
+    let mut subsystem_totals = [0i64; CORRUPTION_SUBSYSTEM_COUNT];
+    for entry in &ledger.entries {
+        let idx = entry.subsystem as usize;
+        if idx >= subsystem_totals.len() {
+            continue;
+        }
+        if entry.intensity > 0 {
+            subsystem_totals[idx] = subsystem_totals[idx].saturating_add(entry.intensity);
+        }
+    }
+
+    let mut subsystem_spikes = [0i64; CORRUPTION_SUBSYSTEM_COUNT];
+    for record in telemetry.exposures_this_turn.iter() {
+        let idx = record.subsystem as usize;
+        if idx >= subsystem_spikes.len() {
+            continue;
+        }
+        if record.intensity > 0 {
+            subsystem_spikes[idx] = subsystem_spikes[idx].saturating_add(record.intensity);
+        }
+    }
+
+    let logistics_idx = CorruptionSubsystem::Logistics as usize;
+    let trade_idx = CorruptionSubsystem::Trade as usize;
+    let military_idx = CorruptionSubsystem::Military as usize;
+    let governance_idx = CorruptionSubsystem::Governance as usize;
+
+    let logistic_intensity = subsystem_totals[logistics_idx]
+        .saturating_add(subsystem_spikes[logistics_idx].saturating_mul(2));
+    distribute_intensity(&mut samples, &logistics_weights, logistic_intensity);
+
+    let trade_intensity =
+        subsystem_totals[trade_idx].saturating_add(subsystem_spikes[trade_idx].saturating_mul(2));
+    distribute_intensity(&mut samples, &trade_weights, trade_intensity);
+
+    let military_intensity =
+        subsystem_totals[military_idx].saturating_add(subsystem_spikes[military_idx]);
+    distribute_intensity(&mut samples, &military_weights, military_intensity);
+
+    let governance_intensity =
+        subsystem_totals[governance_idx].saturating_add(subsystem_spikes[governance_idx]);
+    distribute_intensity(&mut samples, &governance_weights, governance_intensity);
+
+    let logistic_norm = normalize_weights_to_scalar(&logistics_weights);
+    let trade_norm = normalize_weights_to_scalar(&trade_weights);
+    let military_norm = normalize_weights_to_scalar(&military_weights);
+    let governance_norm = normalize_weights_to_scalar(&governance_weights);
+
+    let logistic_weight = Scalar::from_f32(0.35);
+    let trade_weight = Scalar::from_f32(0.25);
+    let military_weight = Scalar::from_f32(0.2);
+    let governance_weight = Scalar::from_f32(0.2);
+
+    for (idx, sample) in samples.iter_mut().enumerate() {
+        let mut baseline = Scalar::zero();
+        baseline += logistic_norm.get(idx).copied().unwrap_or_else(Scalar::zero) * logistic_weight;
+        baseline += trade_norm.get(idx).copied().unwrap_or_else(Scalar::zero) * trade_weight;
+        baseline += military_norm.get(idx).copied().unwrap_or_else(Scalar::zero) * military_weight;
+        baseline += governance_norm
+            .get(idx)
+            .copied()
+            .unwrap_or_else(Scalar::zero)
+            * governance_weight;
+        if baseline.raw() != 0 {
+            *sample = sample.saturating_add(baseline.raw());
+        }
+    }
+
+    ScalarRasterState {
+        width,
+        height,
+        samples,
+    }
+}
+
+fn normalize_weights_to_scalar(weights: &[i64]) -> Vec<Scalar> {
+    if weights.is_empty() {
+        return Vec::new();
+    }
+    let max_weight = weights.iter().copied().max().unwrap_or(0);
+    if max_weight <= 0 {
+        return vec![Scalar::zero(); weights.len()];
+    }
+    let max_value = i128::from(max_weight);
+    weights
+        .iter()
+        .map(|&weight| {
+            if weight <= 0 {
+                Scalar::zero()
+            } else {
+                let mut ratio = (i128::from(weight) * i128::from(Scalar::SCALE)) / max_value;
+                if ratio > i128::from(Scalar::SCALE) {
+                    ratio = i128::from(Scalar::SCALE);
+                }
+                if ratio < 0 {
+                    ratio = 0;
+                }
+                Scalar::from_raw(ratio as i64)
+            }
+        })
+        .collect()
+}
+
+fn distribute_intensity(samples: &mut [i64], weights: &[i64], intensity_raw: i64) {
+    if intensity_raw <= 0 || samples.is_empty() || samples.len() != weights.len() {
+        return;
+    }
+
+    let total_weight: i128 = weights
+        .iter()
+        .map(|&w| i128::from(if w > 0 { w } else { 0 }))
+        .sum();
+
+    if total_weight == 0 {
+        let len = samples.len() as i64;
+        if len <= 0 {
+            return;
+        }
+        let base_share = intensity_raw / len;
+        for sample in samples.iter_mut() {
+            *sample = sample.saturating_add(base_share);
+        }
+        let remainder = intensity_raw - base_share.saturating_mul(len);
+        if remainder != 0 {
+            samples[0] = samples[0].saturating_add(remainder);
+        }
+        return;
+    }
+
+    let intensity = i128::from(intensity_raw);
+    let mut allocated = 0i128;
+
+    for (sample, &weight) in samples.iter_mut().zip(weights.iter()) {
+        if weight <= 0 {
+            continue;
+        }
+        let share = (intensity * i128::from(weight)) / total_weight;
+        if share == 0 {
+            continue;
+        }
+        allocated += share;
+        let share_i64 = if share > i128::from(i64::MAX) {
+            i64::MAX
+        } else if share < i128::from(i64::MIN) {
+            i64::MIN
+        } else {
+            share as i64
+        };
+        *sample = sample.saturating_add(share_i64);
+    }
+
+    let remainder = intensity - allocated;
+    if remainder != 0 {
+        if let Some((idx, _)) = weights.iter().enumerate().max_by_key(|(_, &w)| w) {
+            if let Some(sample) = samples.get_mut(idx) {
+                let remainder_i64 = if remainder > i128::from(i64::MAX) {
+                    i64::MAX
+                } else if remainder < i128::from(i64::MIN) {
+                    i64::MIN
+                } else {
+                    remainder as i64
+                };
+                *sample = sample.saturating_add(remainder_i64);
+            }
+        }
+    }
+}
+
+fn fog_raster_from_discoveries(
+    tiles: &[TileState],
+    populations: &[PopulationCohortState],
+    discovery: &DiscoveryProgressLedger,
+    grid_size: UVec2,
+) -> ScalarRasterState {
+    let mut max_x = 0u32;
+    let mut max_y = 0u32;
+    for tile in tiles {
+        max_x = max_x.max(tile.x);
+        max_y = max_y.max(tile.y);
+    }
+
+    let width = grid_size.x.max(max_x.saturating_add(1)).max(1);
+    let height = grid_size.y.max(max_y.saturating_add(1)).max(1);
+    let total = (width as usize).saturating_mul(height as usize).max(1);
+
+    let mut samples = vec![Scalar::one().raw(); total];
+    let mut tile_indices = HashMap::with_capacity(tiles.len());
+    for tile in tiles {
+        if tile.x < width && tile.y < height {
+            let idx = (tile.y as usize) * (width as usize) + tile.x as usize;
+            tile_indices.insert(tile.entity, idx);
+        }
+    }
+
+    let mut tile_faction_sizes: HashMap<u64, HashMap<u32, u64>> = HashMap::new();
+    let mut tile_local_weighted: HashMap<u64, (i128, i128)> = HashMap::new();
+
+    for cohort in populations {
+        let size = u64::from(cohort.size);
+        if size > 0 {
+            let faction_map = tile_faction_sizes.entry(cohort.home).or_default();
+            *faction_map.entry(cohort.faction).or_insert(0) += size;
+        }
+
+        if size == 0 {
+            continue;
+        }
+
+        let fragments = &cohort.knowledge_fragments;
+        let fragment_average_raw = if fragments.is_empty() {
+            0i64
+        } else {
+            let mut total = Scalar::zero();
+            for fragment in fragments {
+                total += Scalar::from_raw(fragment.progress).clamp(Scalar::zero(), Scalar::one());
+            }
+            let count = fragments.len() as u32;
+            (total / Scalar::from_u32(count))
+                .clamp(Scalar::zero(), Scalar::one())
+                .raw()
+        };
+
+        let weight = i128::from(size);
+        let entry = tile_local_weighted.entry(cohort.home).or_insert((0, 0));
+        entry.0 = entry
+            .0
+            .saturating_add(i128::from(fragment_average_raw) * weight);
+        entry.1 = entry.1.saturating_add(weight);
+    }
+
+    let mut tile_local_average: HashMap<u64, Scalar> = HashMap::new();
+    for (tile_entity, (weighted_sum, total_weight)) in tile_local_weighted {
+        if total_weight <= 0 {
+            continue;
+        }
+        let mut average = weighted_sum / total_weight;
+        if average < 0 {
+            average = 0;
+        }
+        let scale = i128::from(Scalar::SCALE);
+        if average > scale {
+            average = scale;
+        }
+        tile_local_average.insert(tile_entity, Scalar::from_raw(average as i64));
+    }
+
+    let mut tile_controllers: HashMap<u64, u32> = HashMap::new();
+    for (tile_entity, faction_map) in &tile_faction_sizes {
+        let mut best: Option<(u32, u64)> = None;
+        for (&faction, &count) in faction_map.iter() {
+            best = match best {
+                None => Some((faction, count)),
+                Some((best_faction, best_count)) => {
+                    if count > best_count || (count == best_count && faction < best_faction) {
+                        Some((faction, count))
+                    } else {
+                        Some((best_faction, best_count))
+                    }
+                }
+            };
+        }
+        if let Some((faction, _)) = best {
+            tile_controllers.insert(*tile_entity, faction);
+        }
+    }
+
+    let blend_half = Scalar::from_f32(0.5);
+
+    for tile in tiles {
+        let Some(&idx) = tile_indices.get(&tile.entity) else {
+            continue;
+        };
+
+        let global_cov = tile_controllers.get(&tile.entity).and_then(|&faction| {
+            discovery
+                .progress
+                .get(&FactionId(faction))
+                .and_then(|entries| {
+                    if entries.is_empty() {
+                        return None;
+                    }
+                    let mut total = Scalar::zero();
+                    let mut count = 0u32;
+                    for value in entries.values() {
+                        if value.raw() <= 0 {
+                            continue;
+                        }
+                        total += (*value).clamp(Scalar::zero(), Scalar::one());
+                        count = count.saturating_add(1);
+                    }
+                    if count == 0 {
+                        None
+                    } else {
+                        Some((total / Scalar::from_u32(count)).clamp(Scalar::zero(), Scalar::one()))
+                    }
+                })
+        });
+
+        let local_cov = tile_local_average.get(&tile.entity).copied();
+
+        let coverage = match (global_cov, local_cov) {
+            (Some(g), Some(l)) => ((g + l) * blend_half).clamp(Scalar::zero(), Scalar::one()),
+            (Some(g), None) => g,
+            (None, Some(l)) => l,
+            (None, None) => Scalar::zero(),
+        };
+
+        let fog = (Scalar::one() - coverage).clamp(Scalar::zero(), Scalar::one());
+        samples[idx] = fog.raw();
+    }
+
+    ScalarRasterState {
+        width,
+        height,
+        samples,
+    }
+}
+
+fn sentiment_raster_from_populations(
+    tiles: &[TileState],
+    populations: &[PopulationCohortState],
+    grid_size: UVec2,
+) -> ScalarRasterState {
+    let mut tile_positions = HashMap::with_capacity(tiles.len());
+    let mut max_x = 0u32;
+    let mut max_y = 0u32;
+    for tile in tiles {
+        tile_positions.insert(tile.entity, (tile.x, tile.y));
+        max_x = max_x.max(tile.x);
+        max_y = max_y.max(tile.y);
+    }
+
+    let width = grid_size.x.max(max_x.saturating_add(1)).max(1);
+    let height = grid_size.y.max(max_y.saturating_add(1)).max(1);
+    let total = (width as usize).saturating_mul(height as usize).max(1);
+    let mut weighted = vec![0i128; total];
+    let mut weights = vec![0i128; total];
+
+    for cohort in populations {
+        let Some(&(x, y)) = tile_positions.get(&cohort.home) else {
+            continue;
+        };
+        let idx = (y as usize) * (width as usize) + x as usize;
+        if idx >= weighted.len() {
+            continue;
+        }
+        let morale = Scalar::from_raw(cohort.morale);
+        let size = i128::from(cohort.size);
+        weighted[idx] = weighted[idx].saturating_add(i128::from(morale.raw()) * size);
+        weights[idx] = weights[idx].saturating_add(size);
+    }
+
+    let mut samples = vec![0i64; total];
+    for (idx, sample) in samples.iter_mut().enumerate() {
+        let weight = weights[idx];
+        if weight > 0 {
+            *sample = (weighted[idx] / weight) as i64;
+        }
+    }
+
+    ScalarRasterState {
+        width,
+        height,
+        samples,
+    }
+}
+
 fn tile_state(entity: Entity, tile: &Tile) -> TileState {
     TileState {
         entity: entity.to_bits(),
@@ -1404,5 +2018,171 @@ fn generation_state(profile: &GenerationProfile) -> GenerationState {
         bias_trust: trust,
         bias_equity: equity,
         bias_agency: agency,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        orders::FactionId,
+        resources::{CorruptionTelemetry, DiscoveryProgressLedger},
+        scalar::Scalar,
+    };
+    use bevy::math::UVec2;
+    use sim_runtime::{
+        CorruptionEntry, CorruptionSubsystem, KnownTechFragment, TerrainTags, TerrainType,
+        TradeLinkKnowledge,
+    };
+
+    fn tile(entity: u64, x: u32, y: u32) -> TileState {
+        TileState {
+            entity,
+            x,
+            y,
+            element: 0,
+            mass: 0,
+            temperature: 0,
+            terrain: TerrainType::AlluvialPlain,
+            terrain_tags: TerrainTags::empty(),
+        }
+    }
+
+    #[test]
+    fn corruption_raster_allocates_intensity_and_baseline() {
+        let tiles = vec![tile(1, 0, 0), tile(2, 1, 0)];
+
+        let logistics_raster = ScalarRasterState {
+            width: 2,
+            height: 1,
+            samples: vec![Scalar::from_f32(1.2).raw(), Scalar::from_f32(0.2).raw()],
+        };
+
+        let trade_links = vec![TradeLinkState {
+            entity: 10,
+            from_faction: 0,
+            to_faction: 1,
+            throughput: Scalar::from_f32(0.6).raw(),
+            tariff: 0,
+            knowledge: TradeLinkKnowledge::default(),
+            from_tile: 2,
+            to_tile: 2,
+            pending_fragments: Vec::new(),
+        }];
+
+        let populations = vec![
+            PopulationCohortState {
+                entity: 100,
+                home: 1,
+                size: 120,
+                morale: Scalar::from_f32(0.3).raw(),
+                generation: 0,
+                faction: 0,
+                knowledge_fragments: Vec::new(),
+                migration: None,
+            },
+            PopulationCohortState {
+                entity: 101,
+                home: 2,
+                size: 80,
+                morale: Scalar::from_f32(0.8).raw(),
+                generation: 0,
+                faction: 1,
+                knowledge_fragments: Vec::new(),
+                migration: None,
+            },
+        ];
+
+        let power_nodes = vec![
+            PowerNodeState {
+                entity: 1,
+                generation: Scalar::from_f32(0.9).raw(),
+                demand: Scalar::from_f32(0.4).raw(),
+                efficiency: Scalar::one().raw(),
+            },
+            PowerNodeState {
+                entity: 2,
+                generation: Scalar::from_f32(0.4).raw(),
+                demand: Scalar::from_f32(0.2).raw(),
+                efficiency: Scalar::one().raw(),
+            },
+        ];
+
+        let mut ledger = CorruptionLedger::default();
+        ledger.entries.push(CorruptionEntry {
+            subsystem: CorruptionSubsystem::Logistics,
+            intensity: Scalar::from_f32(0.6).raw(),
+            ..CorruptionEntry::default()
+        });
+        ledger.entries.push(CorruptionEntry {
+            subsystem: CorruptionSubsystem::Trade,
+            intensity: Scalar::from_f32(0.3).raw(),
+            ..CorruptionEntry::default()
+        });
+
+        let telemetry = CorruptionTelemetry::default();
+
+        let raster = corruption_raster_from_simulation(
+            &tiles,
+            &trade_links,
+            &populations,
+            &power_nodes,
+            &logistics_raster,
+            CorruptionSignals {
+                ledger: &ledger,
+                telemetry: &telemetry,
+            },
+            UVec2::new(2, 1),
+        );
+
+        assert_eq!(raster.width, 2);
+        assert_eq!(raster.height, 1);
+        assert_eq!(raster.samples.len(), 2);
+        assert!(raster.samples[0] > 0);
+        assert!(raster.samples[1] > 0);
+        assert!(raster.samples[0] > raster.samples[1]);
+    }
+
+    #[test]
+    fn fog_raster_reflects_discovery_progress() {
+        let tiles = vec![tile(1, 0, 0), tile(2, 1, 0)];
+
+        let populations = vec![
+            PopulationCohortState {
+                entity: 200,
+                home: 1,
+                size: 150,
+                morale: Scalar::from_f32(0.5).raw(),
+                generation: 0,
+                faction: 0,
+                knowledge_fragments: vec![KnownTechFragment {
+                    discovery_id: 1,
+                    progress: Scalar::from_f32(0.6).raw(),
+                    fidelity: Scalar::one().raw(),
+                }],
+                migration: None,
+            },
+            PopulationCohortState {
+                entity: 201,
+                home: 2,
+                size: 60,
+                morale: Scalar::from_f32(0.7).raw(),
+                generation: 0,
+                faction: 1,
+                knowledge_fragments: Vec::new(),
+                migration: None,
+            },
+        ];
+
+        let mut discovery = DiscoveryProgressLedger::default();
+        discovery.add_progress(FactionId(0), 1, Scalar::from_f32(0.8));
+        discovery.add_progress(FactionId(0), 2, Scalar::from_f32(0.4));
+
+        let fog = fog_raster_from_discoveries(&tiles, &populations, &discovery, UVec2::new(2, 1));
+
+        assert_eq!(fog.width, 2);
+        assert_eq!(fog.height, 1);
+        assert!(fog.samples[0] < Scalar::one().raw());
+        assert_eq!(fog.samples[1], Scalar::one().raw());
     }
 }

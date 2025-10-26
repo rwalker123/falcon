@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 
 RUN_SERVER=true
 RUN_CLIENT=true
+RUN_GODOT=false
 
 usage() {
   cat <<'EOF'
@@ -27,6 +28,11 @@ while [[ $# -gt 0 ]]; do
     --client-only)
       RUN_SERVER=false
       ;;
+    --godot-only)
+      RUN_SERVER=false
+      RUN_CLIENT=false
+      RUN_GODOT=true
+      ;;
     -h|--help)
       usage
       exit 0
@@ -40,13 +46,13 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-if [[ "$RUN_SERVER" == false && "$RUN_CLIENT" == false ]]; then
+if [[ "$RUN_SERVER" == false && "$RUN_CLIENT" == false && "$RUN_GODOT" != true ]]; then
   echo "[run_stack] Nothing to do: both server and client disabled." >&2
   usage >&2
   exit 1
 fi
 
-if [[ "$RUN_CLIENT" == true ]]; then
+if [[ "$RUN_CLIENT" == true || "$RUN_GODOT" == true ]]; then
   echo "[run_stack] Building Godot package..."
   cargo xtask godot-build
 fi
@@ -62,7 +68,7 @@ cleanup() {
   fi
 }
 
-if [[ "$RUN_SERVER" == true && "$RUN_CLIENT" == false ]]; then
+if [[ "$RUN_SERVER" == true && "$RUN_CLIENT" == false && "$RUN_GODOT" != true ]]; then
   echo "[run_stack] Starting core simulation server..."
   exec env RUST_LOG=shadow_scale::server=info,core_sim=info cargo run -p core_sim --bin server
 fi
@@ -76,16 +82,28 @@ fi
 
 CLIENT_EXIT_CODE=0
 
-if [[ "$RUN_CLIENT" == true ]]; then
+if [[ "$RUN_CLIENT" == true || "$RUN_GODOT" == true ]]; then
   echo "[run_stack] Launching thin client..."
   set +e
-  STREAM_ENABLED=true \
-  STREAM_HOST=127.0.0.1 \
-  STREAM_PORT=41002 \
-  COMMAND_HOST=127.0.0.1 \
-  COMMAND_PORT=41001 \
-  INSPECTOR_FONT_SIZE=32 \
-  godot --path clients/godot_thin_client
+  if [[ "$RUN_GODOT" == true ]]; then
+    env \
+      STREAM_ENABLED=true \
+      STREAM_HOST=127.0.0.1 \
+      STREAM_PORT=41002 \
+      COMMAND_HOST=127.0.0.1 \
+      COMMAND_PORT=41001 \
+      INSPECTOR_FONT_SIZE=32 \
+      godot
+  else
+    env \
+      STREAM_ENABLED=true \
+      STREAM_HOST=127.0.0.1 \
+      STREAM_PORT=41002 \
+      COMMAND_HOST=127.0.0.1 \
+      COMMAND_PORT=41001 \
+      INSPECTOR_FONT_SIZE=32 \
+      godot --path clients/godot_thin_client
+  fi
   CLIENT_EXIT_CODE=$?
   set -e
 fi

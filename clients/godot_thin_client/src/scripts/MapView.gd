@@ -2,9 +2,12 @@ extends Node2D
 class_name MapView
 
 signal hex_selected(col: int, row: int, terrain_id: int)
+signal overlay_legend_changed(legend: Dictionary)
 
 const LOGISTICS_COLOR := Color(0.15, 0.45, 1.0, 1.0)
 const SENTIMENT_COLOR := Color(1.0, 0.35, 0.25, 1.0)
+const CORRUPTION_COLOR := Color(0.92, 0.58, 0.18, 1.0)
+const FOG_COLOR := Color(0.6, 0.78, 0.95, 1.0)
 const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
 const GRID_LINE_COLOR := Color(0.1, 0.12, 0.18, 0.45)
 const SQRT3 := 1.7320508075688772
@@ -14,6 +17,13 @@ const MAX_ZOOM_FACTOR := 4.0
 const MOUSE_ZOOM_STEP := 0.2
 const KEYBOARD_ZOOM_SPEED := 0.8
 const KEYBOARD_PAN_SPEED := 600.0
+
+const OVERLAY_COLORS := {
+    "logistics": LOGISTICS_COLOR,
+    "sentiment": SENTIMENT_COLOR,
+    "corruption": CORRUPTION_COLOR,
+    "fog": FOG_COLOR
+}
 
 const TERRAIN_COLORS := {
     0: Color8(11, 30, 61),
@@ -97,8 +107,13 @@ const TERRAIN_LABELS := {
 
 var grid_width: int = 0
 var grid_height: int = 0
-var logistics_overlay: PackedFloat32Array = PackedFloat32Array()
-var sentiment_overlay: PackedFloat32Array = PackedFloat32Array()
+var overlay_channels: Dictionary = {}
+var overlay_raw_channels: Dictionary = {}
+var overlay_channel_labels: Dictionary = {}
+var overlay_channel_descriptions: Dictionary = {}
+var overlay_placeholder_flags: Dictionary = {}
+var overlay_channel_order: PackedStringArray = PackedStringArray()
+var active_overlay_key: String = "logistics"
 var terrain_overlay: PackedInt32Array = PackedInt32Array()
 var terrain_palette: Dictionary = {}
 var terrain_tags_overlay: PackedInt32Array = PackedInt32Array()
@@ -146,8 +161,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
     grid_height = new_height
 
     var overlays: Dictionary = snapshot.get("overlays", {})
-    logistics_overlay = PackedFloat32Array(overlays.get("logistics", []))
-    sentiment_overlay = PackedFloat32Array(overlays.get("contrast", []))
+    _ingest_overlay_channels(overlays)
     terrain_overlay = PackedInt32Array(overlays.get("terrain", []))
     var palette_raw: Variant = overlays.get("terrain_palette", {})
     terrain_palette = palette_raw if typeof(palette_raw) == TYPE_DICTIONARY else {}
@@ -184,14 +198,86 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 
     _update_layout_metrics()
     queue_redraw()
+    _emit_overlay_legend()
 
     return {
         "unit_count": units.size(),
-        "avg_logistics": _average(logistics_overlay),
-        "avg_sentiment": _average(sentiment_overlay),
-        "dimensions_changed": dimensions_changed
+        "avg_logistics": _average_overlay("logistics"),
+        "avg_sentiment": _average_overlay("sentiment"),
+        "avg_corruption": _average_overlay("corruption"),
+        "avg_fog": _average_overlay("fog"),
+        "dimensions_changed": dimensions_changed,
+        "active_overlay": active_overlay_key
     }
 
+func _ingest_overlay_channels(overlays: Variant) -> void:
+    overlay_channels.clear()
+    overlay_raw_channels.clear()
+    overlay_channel_labels.clear()
+    overlay_channel_descriptions.clear()
+    overlay_placeholder_flags.clear()
+    overlay_channel_order = PackedStringArray()
+
+    if not (overlays is Dictionary):
+        if overlay_channels.is_empty():
+            active_overlay_key = ""
+        return
+
+    var overlay_dict: Dictionary = overlays
+    if overlay_dict.has("channels"):
+        var channel_variant: Variant = overlay_dict["channels"]
+        if channel_variant is Dictionary:
+            var channel_dict: Dictionary = channel_variant
+            for raw_key in channel_dict.keys():
+                var key := String(raw_key)
+                var info_variant: Variant = channel_dict[raw_key]
+                if not (info_variant is Dictionary):
+                    continue
+                var channel_info: Dictionary = info_variant
+                overlay_channels[key] = PackedFloat32Array(channel_info.get("normalized", PackedFloat32Array()))
+                overlay_raw_channels[key] = PackedFloat32Array(channel_info.get("raw", PackedFloat32Array()))
+                overlay_channel_labels[key] = String(channel_info.get("label", key.capitalize()))
+                overlay_channel_descriptions[key] = String(channel_info.get("description", ""))
+                overlay_placeholder_flags[key] = bool(channel_info.get("placeholder", false))
+
+    var placeholder_variant: Variant = overlay_dict.get("placeholder_channels", PackedStringArray())
+    if placeholder_variant is PackedStringArray:
+        var placeholder_array: PackedStringArray = placeholder_variant
+        for raw_placeholder_key in placeholder_array:
+            var placeholder_key := String(raw_placeholder_key)
+            overlay_placeholder_flags[placeholder_key] = true
+
+    var order_variant: Variant = overlay_dict.get("channel_order", PackedStringArray())
+    overlay_channel_order = PackedStringArray()
+    if order_variant is PackedStringArray:
+        var order_array: PackedStringArray = order_variant
+        for raw_channel_key in order_array:
+            overlay_channel_order.append(String(raw_channel_key))
+    if overlay_channel_order.size() == 0:
+        var keys: Array = overlay_channels.keys()
+        keys.sort()
+        for key in keys:
+            overlay_channel_order.append(String(key))
+
+    if overlay_channels.is_empty():
+        active_overlay_key = ""
+        return
+
+    var default_variant: Variant = overlay_dict.get("default_channel", active_overlay_key)
+    var default_key: String = String(default_variant)
+    if overlay_channels.has(active_overlay_key):
+        return
+    if overlay_channels.has(default_key):
+        active_overlay_key = default_key
+        return
+    if overlay_channel_order.size() > 0:
+        active_overlay_key = String(overlay_channel_order[0])
+    else:
+        var keys_list: Array = overlay_channels.keys()
+        if keys_list.size() > 0:
+            active_overlay_key = String(keys_list[0])
+        else:
+            active_overlay_key = ""
 func _draw() -> void:
     if grid_width == 0 or grid_height == 0:
         return
@@ -234,6 +320,15 @@ func set_trade_overlay_selection(entity_id: int) -> void:
     selected_trade_entity = entity_id
     if trade_overlay_enabled:
         queue_redraw()
+
+func set_overlay_channel(key: String) -> void:
+    if not overlay_channels.has(key):
+        return
+    if active_overlay_key == key:
+        return
+    active_overlay_key = key
+    queue_redraw()
+    _emit_overlay_legend()
 
 func _draw_trade_overlay(radius: float, origin: Vector2) -> void:
     if not trade_overlay_enabled:
@@ -359,6 +454,24 @@ func _draw_route(order: Dictionary, radius: float, origin: Vector2) -> void:
     for i in range(points.size() - 1):
         draw_line(points[i], points[i + 1], color, 3.0)
 
+func _overlay_array(key: String) -> PackedFloat32Array:
+    var variant: Variant = overlay_channels.get(key, null)
+    if variant is PackedFloat32Array:
+        return variant
+    return PackedFloat32Array()
+
+func _overlay_raw_array(key: String) -> PackedFloat32Array:
+    var variant: Variant = overlay_raw_channels.get(key, null)
+    if variant is PackedFloat32Array:
+        return variant
+    return PackedFloat32Array()
+
+func _average_overlay(key: String) -> float:
+    return _average(_overlay_raw_array(key))
+
+func _value_at_overlay(key: String, x: int, y: int) -> float:
+    return _value_at(_overlay_array(key), x, y)
+
 func _value_at(data: PackedFloat32Array, x: int, y: int) -> float:
     if data.is_empty() or grid_width == 0:
         return 0.0
@@ -380,11 +493,11 @@ func _tile_color(x: int, y: int) -> Color:
         var terrain_id := _terrain_id_at(x, y)
         if terrain_id >= 0:
             return _terrain_color_for_id(terrain_id)
-    var logistic_value: float = _value_at(logistics_overlay, x, y)
-    var sentiment_value: float = _value_at(sentiment_overlay, x, y)
-    var base_color: Color = GRID_COLOR
-    var with_logistics: Color = base_color.lerp(LOGISTICS_COLOR, logistic_value)
-    return with_logistics.lerp(SENTIMENT_COLOR, sentiment_value)
+    if active_overlay_key == "":
+        return GRID_COLOR
+    var overlay_value: float = _value_at_overlay(active_overlay_key, x, y)
+    var overlay_color: Color = OVERLAY_COLORS.get(active_overlay_key, LOGISTICS_COLOR)
+    return GRID_COLOR.lerp(overlay_color, overlay_value)
 
 func _terrain_color_for_id(terrain_id: int) -> Color:
     if TERRAIN_COLORS.has(terrain_id):
@@ -414,13 +527,165 @@ func terrain_palette_entries() -> Array:
         })
     return entries
 
+func _emit_overlay_legend() -> void:
+    emit_signal("overlay_legend_changed", _legend_for_current_view())
+
+func refresh_overlay_legend() -> void:
+    _emit_overlay_legend()
+
+func _legend_for_current_view() -> Dictionary:
+    if terrain_mode:
+        return _build_terrain_legend()
+    if active_overlay_key == "" or not overlay_channels.has(active_overlay_key):
+        return {}
+    return _build_scalar_overlay_legend(active_overlay_key)
+
+func _build_terrain_legend() -> Dictionary:
+    var rows: Array = []
+    for entry in terrain_palette_entries():
+        if typeof(entry) != TYPE_DICTIONARY:
+            continue
+        rows.append({
+            "color": entry.get("color", Color.WHITE),
+            "label": str(entry.get("label", "")),
+            "value_text": "#%02d" % int(entry.get("id", 0)),
+        })
+    return {
+        "key": "terrain",
+        "title": "Terrain Types",
+        "description": "Biome palette applied directly to tiles.",
+        "rows": rows,
+        "stats": {},
+    }
+
+func _build_scalar_overlay_legend(key: String) -> Dictionary:
+    var normalized: PackedFloat32Array = _overlay_array(key)
+    var raw: PackedFloat32Array = _overlay_raw_array(key)
+    var stats: Dictionary = _overlay_stats(normalized, raw)
+    var overlay_color: Color = OVERLAY_COLORS.get(key, LOGISTICS_COLOR)
+    var label: String = String(overlay_channel_labels.get(key, key.capitalize()))
+    var description: String = String(overlay_channel_descriptions.get(key, ""))
+    var placeholder: bool = bool(overlay_placeholder_flags.get(key, false))
+    var rows: Array = []
+    var has_values: bool = bool(stats.get("has_values", false))
+    var raw_range: float = float(stats.get("raw_range", 0.0))
+
+    if placeholder and not has_values:
+        rows.append({
+            "color": GRID_COLOR,
+            "label": "No data",
+            "value_text": "Channel awaiting telemetry",
+        })
+    elif not has_values:
+        rows.append({
+            "color": GRID_COLOR.lerp(overlay_color, 0.2),
+            "label": "No variation",
+            "value_text": _format_legend_value(float(stats.get("raw_avg", 0.0))),
+        })
+    elif raw_range <= 0.0001:
+        var tint: float = clamp(float(stats.get("normalized_avg", 0.0)), 0.0, 1.0)
+        rows.append({
+            "color": GRID_COLOR.lerp(overlay_color, tint),
+            "label": "Uniform",
+            "value_text": _format_legend_value(float(stats.get("raw_avg", 0.0))),
+        })
+    else:
+        var low_t: float = clamp(float(stats.get("normalized_min", 0.0)), 0.0, 1.0)
+        var mid_t: float = clamp(float(stats.get("normalized_avg", 0.0)), 0.0, 1.0)
+        var high_t: float = clamp(float(stats.get("normalized_max", 0.0)), 0.0, 1.0)
+        rows.append({
+            "color": GRID_COLOR.lerp(overlay_color, low_t),
+            "label": "Low",
+            "value_text": _format_legend_value(float(stats.get("raw_min", 0.0))),
+        })
+        rows.append({
+            "color": GRID_COLOR.lerp(overlay_color, mid_t),
+            "label": "Average",
+            "value_text": _format_legend_value(float(stats.get("raw_avg", 0.0))),
+        })
+        rows.append({
+            "color": GRID_COLOR.lerp(overlay_color, high_t),
+            "label": "High",
+            "value_text": _format_legend_value(float(stats.get("raw_max", 0.0))),
+        })
+
+    return {
+        "key": key,
+        "title": label,
+        "description": description,
+        "rows": rows,
+        "stats": {
+            "min": stats.get("raw_min", 0.0),
+            "max": stats.get("raw_max", 0.0),
+            "avg": stats.get("raw_avg", 0.0),
+        },
+        "placeholder": placeholder,
+    }
+
+func _overlay_stats(normalized: PackedFloat32Array, raw: PackedFloat32Array) -> Dictionary:
+    var n_min: float = INF
+    var n_max: float = -INF
+    var n_sum: float = 0.0
+    var n_count: int = 0
+    for value in normalized:
+        var v: float = float(value)
+        if not is_finite(v):
+            continue
+        n_min = min(n_min, v)
+        n_max = max(n_max, v)
+        n_sum += v
+        n_count += 1
+    if n_count == 0:
+        n_min = 0.0
+        n_max = 0.0
+
+    var r_min: float = INF
+    var r_max: float = -INF
+    var r_sum: float = 0.0
+    var r_count: int = 0
+    for value in raw:
+        var rv: float = float(value)
+        if not is_finite(rv):
+            continue
+        r_min = min(r_min, rv)
+        r_max = max(r_max, rv)
+        r_sum += rv
+        r_count += 1
+    if r_count == 0:
+        r_min = 0.0
+        r_max = 0.0
+
+    var has_values: bool = n_count > 0 and r_count > 0
+    var raw_avg: float = 0.0
+    if r_count > 0:
+        raw_avg = r_sum / float(r_count)
+    var normalized_avg: float = 0.0
+    if n_count > 0:
+        normalized_avg = n_sum / float(n_count)
+
+    return {
+        "normalized_min": n_min,
+        "normalized_max": n_max,
+        "normalized_avg": normalized_avg,
+        "raw_min": r_min,
+        "raw_max": r_max,
+        "raw_avg": raw_avg,
+        "raw_range": r_max - r_min,
+        "has_values": has_values,
+    }
+
+func _format_legend_value(value: float) -> String:
+    return "%0.3f" % value
+
 func set_terrain_mode(enabled: bool) -> void:
     terrain_mode = enabled
     queue_redraw()
+    _emit_overlay_legend()
 
 func toggle_terrain_mode() -> void:
     terrain_mode = not terrain_mode
     queue_redraw()
+    _emit_overlay_legend()
 
 func _average(data: PackedFloat32Array) -> float:
     if data.is_empty():
