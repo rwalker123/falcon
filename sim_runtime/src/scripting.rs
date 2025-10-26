@@ -85,8 +85,10 @@ pub struct ScriptManifest {
     pub version: String,
     pub entry: String,
     #[serde(default)]
+    /// List of capability IDs required by this script. Capabilities must be declared here before they can be referenced by subscriptions.
     pub capabilities: Vec<String>,
     #[serde(default)]
+    /// List of telemetry topics to subscribe to. Each topic must be covered by at least one declared capability, as enforced by validation logic.
     pub subscriptions: Vec<String>,
     #[serde(default)]
     pub description: Option<String>,
