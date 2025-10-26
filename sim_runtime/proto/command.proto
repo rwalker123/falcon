@@ -37,6 +37,11 @@ message TurnCommand {
   uint32 steps = 1;
 }
 
+message ResetMapCommand {
+  uint32 width = 1;
+  uint32 height = 2;
+}
+
 message HeatCommand {
   uint64 entity_bits = 1;
   sint64 delta = 2;
@@ -88,6 +93,7 @@ message CommandEnvelope {
 
   oneof command {
     TurnCommand turn = 1;
+    ResetMapCommand reset_map = 11;
     HeatCommand heat = 2;
     OrdersCommand orders = 3;
     RollbackCommand rollback = 4;

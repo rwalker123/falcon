@@ -367,6 +367,16 @@ impl ScriptHostBridge {
     }
 
     #[func]
+    pub fn set_command_endpoint(&self, host: GString, proto_port: i64) {
+        if proto_port <= 0 || proto_port > u16::MAX as i64 {
+            self.manager.clear_command_endpoint();
+            return;
+        }
+        self.manager
+            .set_command_endpoint(host.to_string(), proto_port as u16);
+    }
+
+    #[func]
     pub fn apply_script_state(&self, script_id: i64, state: Variant) -> Dictionary {
         let mut dict = Dictionary::new();
         let json = variant_to_json(&state);

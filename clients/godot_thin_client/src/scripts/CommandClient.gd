@@ -3,6 +3,7 @@ class_name CommandClient
 
 var host: String = "127.0.0.1"
 var port: int = 41001
+var proto_port: int = 41004
 var tcp: StreamPeerTCP = null
 var _no_delay_configured: bool = false
 
@@ -65,6 +66,12 @@ func send_line(line: String) -> Error:
     var err: Error = tcp.put_data(payload)
     tcp.poll()
     return err
+
+func set_proto_port(value: int) -> void:
+    proto_port = value
+
+func get_proto_port() -> int:
+    return proto_port
 
 func _await_connection() -> Error:
     if tcp == null:

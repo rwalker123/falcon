@@ -25,6 +25,10 @@ pub enum CommandPayload {
     Turn {
         steps: u32,
     },
+    ResetMap {
+        width: u32,
+        height: u32,
+    },
     Heat {
         entity_bits: u64,
         delta: i64,
@@ -120,6 +124,12 @@ impl CommandEnvelope {
             CommandPayload::Turn { steps } => {
                 pb::command_envelope::Command::Turn(pb::TurnCommand { steps: *steps })
             }
+            CommandPayload::ResetMap { width, height } => {
+                pb::command_envelope::Command::ResetMap(pb::ResetMapCommand {
+                    width: *width,
+                    height: *height,
+                })
+            }
             CommandPayload::Heat { entity_bits, delta } => {
                 pb::command_envelope::Command::Heat(pb::HeatCommand {
                     entity_bits: *entity_bits,
@@ -192,6 +202,10 @@ impl CommandEnvelope {
     pub fn try_from_proto(proto: pb::CommandEnvelope) -> Result<Self, CommandDecodeError> {
         let payload = match proto.command.ok_or(CommandDecodeError::MissingPayload)? {
             pb::command_envelope::Command::Turn(cmd) => CommandPayload::Turn { steps: cmd.steps },
+            pb::command_envelope::Command::ResetMap(cmd) => CommandPayload::ResetMap {
+                width: cmd.width,
+                height: cmd.height,
+            },
             pb::command_envelope::Command::Heat(cmd) => CommandPayload::Heat {
                 entity_bits: cmd.entity_bits,
                 delta: cmd.delta,

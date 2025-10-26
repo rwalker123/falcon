@@ -14,6 +14,9 @@ pub use commands::{
     SupportChannel,
 };
 
+pub mod command_text;
+pub use command_text::{parse_command_line, CommandParseError};
+
 pub mod scripting;
 pub use scripting::{
     capability_registry, CapabilityRegistry, CapabilitySpec, ScriptManifestRef, SessionAccess,
