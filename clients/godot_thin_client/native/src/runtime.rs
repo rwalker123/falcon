@@ -12,9 +12,7 @@ use std::thread;
 use std::time::Duration;
 use thiserror::Error;
 
-use sim_runtime::scripting::{
-    capability_registry, CapabilitySpec, ScriptManifestRef, SimScriptState,
-};
+use sim_runtime::scripting::{ScriptManifest, ScriptManifestRef, SimScriptState};
 use sim_runtime::{parse_command_line, CommandEncodeError, CommandEnvelope, CommandPayload};
 
 #[derive(Debug, Error)]
@@ -31,154 +29,16 @@ struct CommandEndpoint {
     port: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Manifest {
-    pub id: String,
-    pub version: String,
-    #[serde(default)]
-    pub entry: String,
-    #[serde(default)]
-    pub capabilities: Vec<String>,
-    #[serde(default)]
-    pub subscriptions: Vec<String>,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub author: Option<String>,
-    #[serde(default)]
-    pub config: Option<JsonValue>,
-    #[serde(skip)]
-    pub manifest_path: Option<String>,
-}
-
-impl Manifest {
-    pub fn parse_str(contents: &str) -> Result<Self, ScriptError> {
-        let manifest: Manifest = serde_json::from_str(contents).map_err(|err| {
-            ScriptError::Manifest(format!("failed to parse manifest JSON: {err}"))
-        })?;
-        if manifest.id.trim().is_empty() {
-            return Err(ScriptError::Manifest("manifest id cannot be empty".into()));
-        }
-        if manifest.entry.trim().is_empty() {
-            return Err(ScriptError::Manifest(
-                "manifest entry cannot be empty".into(),
-            ));
-        }
-        validate_manifest_capabilities(&manifest)?;
-        Ok(manifest)
-    }
-}
-
-impl std::str::FromStr for Manifest {
-    type Err = ScriptError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Manifest::parse_str(s)
-    }
-}
-
-fn validate_manifest_capabilities(manifest: &Manifest) -> Result<(), ScriptError> {
-    let registry = capability_registry();
-    let mut errors = Vec::new();
-    let mut declared: HashSet<String> = HashSet::new();
-    let mut resolved_specs: Vec<&'static CapabilitySpec> = Vec::new();
-
-    for capability in &manifest.capabilities {
-        let entry = capability.trim();
-        if entry.is_empty() {
-            continue;
-        }
-        if !declared.insert(entry.to_string()) {
-            errors.push(format!("duplicate capability '{entry}'"));
-            continue;
-        }
-        match registry.get(entry) {
-            Some(spec) => resolved_specs.push(spec),
-            None => errors.push(format!("unknown capability '{entry}'")),
-        }
-    }
-
-    for topic in &manifest.subscriptions {
-        if topic.trim().is_empty() {
-            continue;
-        }
-        if !resolved_specs
-            .iter()
-            .any(|spec| spec.allows_subscription(topic))
-        {
-            errors.push(format!(
-                "subscription '{topic}' not covered by declared capabilities"
-            ));
-        }
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(ScriptError::Manifest(errors.join("; ")))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn manifest_rejects_unknown_capability() {
-        let json = r#"{
-            "id": "demo",
-            "version": "0.1.0",
-            "entry": "./index.js",
-            "capabilities": ["not_a_cap"],
-            "subscriptions": []
-        }"#;
-        let err = Manifest::parse_str(json).expect_err("expected manifest parse to fail");
-        match err {
-            ScriptError::Manifest(message) => {
-                assert!(message.contains("unknown capability"));
-            }
-            other => panic!("unexpected error variant: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn manifest_rejects_uncovered_subscription() {
-        let json = r#"{
-            "id": "demo",
-            "version": "0.1.0",
-            "entry": "./index.js",
-            "capabilities": ["commands.issue"],
-            "subscriptions": ["world.snapshot"]
-        }"#;
-        let err = Manifest::parse_str(json).expect_err("expected manifest parse to fail");
-        match err {
-            ScriptError::Manifest(message) => {
-                assert!(message.contains("subscription 'world.snapshot'"));
-            }
-            other => panic!("unexpected error variant: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn manifest_accepts_valid_capabilities() {
-        let json = r#"{
-            "id": "demo",
-            "version": "0.1.0",
-            "entry": "./index.js",
-            "capabilities": ["telemetry.subscribe", "commands.issue"],
-            "subscriptions": ["world.snapshot"]
-        }"#;
-        let manifest = Manifest::parse_str(json).expect("manifest should be valid");
-        assert_eq!(manifest.capabilities.len(), 2);
-    }
+    use serde_json::json;
+    use std::time::Duration;
 
     #[test]
     fn script_state_round_trip() {
-        use serde_json::json;
-        use std::time::Duration;
-
         let manager = ScriptManager::new();
-        let manifest = Manifest {
+        let manifest = ScriptManifest {
             id: "demo.logger".to_string(),
             version: "0.1.0".to_string(),
             entry: "./script.js".to_string(),
@@ -374,7 +234,7 @@ struct ScriptManagerInner {
 }
 
 struct ManagedScript {
-    manifest: Manifest,
+    manifest: ScriptManifest,
     shared: Arc<ScriptSharedState>,
     command_tx: Sender<ScriptCommand>,
     responses_rx: Receiver<ScriptResponse>,
@@ -401,7 +261,14 @@ impl ScriptManager {
         }
     }
 
-    pub fn spawn_script(&self, manifest: Manifest, source: String) -> Result<i64, ScriptError> {
+    pub fn spawn_script(
+        &self,
+        manifest: ScriptManifest,
+        source: String,
+    ) -> Result<i64, ScriptError> {
+        manifest
+            .validate()
+            .map_err(|err| ScriptError::Manifest(err.to_string()))?;
         let id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
         let (command_tx, command_rx) = mpsc::channel::<ScriptCommand>();
         let (responses_tx, responses_rx) = mpsc::channel::<ScriptResponse>();
@@ -515,12 +382,12 @@ impl ScriptManager {
         output
     }
 
-    pub fn get_manifest(&self, id: i64) -> Option<Manifest> {
+    pub fn get_manifest(&self, id: i64) -> Option<ScriptManifest> {
         let guard = self.inner.scripts.lock().unwrap();
         guard.get(&id).map(|script| script.manifest.clone())
     }
 
-    pub fn list_scripts(&self) -> Vec<(i64, Manifest)> {
+    pub fn list_scripts(&self) -> Vec<(i64, ScriptManifest)> {
         let guard = self.inner.scripts.lock().unwrap();
         guard
             .iter()
@@ -653,7 +520,7 @@ fn collect_responses(rx: &Receiver<ScriptResponse>) -> Vec<ScriptResponse> {
 }
 
 fn run_script_worker(
-    _manifest: Manifest,
+    _manifest: ScriptManifest,
     source: String,
     shared: Arc<ScriptSharedState>,
     command_rx: Receiver<ScriptCommand>,
@@ -1259,7 +1126,7 @@ pub fn responses_to_json(responses: Vec<ScriptResponse>) -> JsonValue {
     JsonValue::Array(list)
 }
 
-pub fn manifest_to_json(manifest: &Manifest) -> JsonValue {
+pub fn manifest_to_json(manifest: &ScriptManifest) -> JsonValue {
     json!({
         "id": manifest.id,
         "version": manifest.version,

@@ -1,3 +1,7 @@
+use glob::glob;
+use jsonschema::JSONSchema;
+use serde_json::Value;
+use sim_runtime::scripting::{manifest_schema, ScriptManifest};
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -9,6 +13,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     match args.next().as_deref() {
         Some("prepare-client") => prepare_client(),
         Some("godot-build") => godot_build(),
+        Some("manifest-schema") => generate_manifest_schema(),
+        Some("validate-manifests") => validate_manifests(),
         Some("help") | None => {
             print_usage();
             Ok(())
@@ -24,6 +30,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn print_usage() {
     eprintln!("Usage: cargo xtask prepare-client");
     eprintln!("       cargo xtask godot-build");
+    eprintln!("       cargo xtask manifest-schema");
+    eprintln!("       cargo xtask validate-manifests");
     eprintln!("       cargo xtask help");
 }
 
@@ -94,6 +102,56 @@ fn godot_build() -> Result<(), Box<dyn Error>> {
 
     println!("Copied {} -> {}", source.display(), dest.display());
 
+    Ok(())
+}
+
+fn generate_manifest_schema() -> Result<(), Box<dyn Error>> {
+    let schema = manifest_schema();
+    let json = serde_json::to_string_pretty(&schema)?;
+    let path = Path::new("docs").join("scripting_manifest.schema.json");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, json)?;
+    println!("Wrote manifest schema to {}", path.display());
+    Ok(())
+}
+
+fn validate_manifests() -> Result<(), Box<dyn Error>> {
+    let schema = manifest_schema();
+    let schema_value = serde_json::to_value(&schema)?;
+    let compiled = JSONSchema::compile(&schema_value).expect("schema compilation failed");
+    let mut had_errors = false;
+
+    for entry in glob("clients/**/manifest.json")? {
+        let path = entry?;
+        let data = fs::read_to_string(&path)?;
+        let json: Value = serde_json::from_str(&data)?;
+
+        if let Err(errors) = compiled.validate(&json) {
+            had_errors = true;
+            eprintln!("Schema validation failed for {}:", path.display());
+            for error in errors {
+                eprintln!("  - {}", error);
+            }
+        }
+
+        let manifest: ScriptManifest = serde_json::from_str(&data)?;
+        if let Err(err) = manifest.validate() {
+            had_errors = true;
+            eprintln!(
+                "Capability validation failed for {}: {}",
+                path.display(),
+                err
+            );
+        }
+    }
+
+    if had_errors {
+        return Err("manifest validation failed".into());
+    }
+
+    println!("All manifests validated successfully.");
     Ok(())
 }
 

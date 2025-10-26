@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+glob = "0.3"
+jsonschema = "0.17"
+serde_json = "1.0"
+sim_runtime = { path = "../sim_runtime" }

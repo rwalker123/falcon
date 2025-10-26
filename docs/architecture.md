@@ -57,6 +57,7 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 
 ### Shared Scripting Capability Model
 - **Runtime Host**: Embed QuickJS via a GDNative module inside the Godot thin client to execute sandboxed JavaScript. Script packs ship with `manifest.json` (id, version, entrypoint, declared capabilities, optional config schema). Development builds hot-reload files under `addons/shared_scripts/` while packaged builds look in `user://scripts`.
+- Manifest contract lives at `docs/scripting_manifest.schema.json` (regenerate with `cargo xtask manifest-schema`). Lint manifests locally via `cargo xtask validate-manifests`, which applies the schema and validates capability/subscription coverage against `sim_runtime::scripting::CapabilitySpec`.
 - **Capability Families** (aligned with the manual’s player-facing description):
   - `telemetry.subscribe`: host-managed subscriptions to snapshot feeds (`world.delta`, `overlays.*`, `ledger.discovery`, `log.events`). Tokens encode topic id, optional filters, and sampling rate; the host enforces read-only semantics and per-topic back-pressure (`max_messages_in_flight`).
   - `ui.compose`: declarative widget graph expressed through JS builders that map to Godot controls (`Panel`, `VBox`, `Table`, `Chart2D`, `OverlayLayer`, `MapAnnotation`). Script diffs resolve against stable component ids and render on the main thread.
