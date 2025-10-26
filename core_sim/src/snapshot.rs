@@ -1649,7 +1649,7 @@ fn distribute_intensity(samples: &mut [i64], weights: &[i64], intensity_raw: i64
         for sample in samples.iter_mut() {
             *sample = sample.saturating_add(base_share);
         }
-        let remainder = intensity_raw - base_share * len;
+        let remainder = intensity_raw - base_share.saturating_mul(len);
         if remainder != 0 {
             samples[0] = samples[0].saturating_add(remainder);
         }
