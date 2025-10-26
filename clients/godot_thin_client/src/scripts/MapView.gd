@@ -274,8 +274,10 @@ func _ingest_overlay_channels(overlays: Variant) -> void:
         active_overlay_key = String(overlay_channel_order[0])
     else:
         var keys_list: Array = overlay_channels.keys()
-        active_overlay_key = String(keys_list[0]) if keys_list.size() > 0 else ""
-
+        if keys_list.size() > 0:
+            active_overlay_key = String(keys_list[0])
+        else:
+            active_overlay_key = ""
 func _draw() -> void:
     if grid_width == 0 or grid_height == 0:
         return
