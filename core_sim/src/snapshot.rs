@@ -1408,7 +1408,10 @@ fn logistics_raster_from_links(
     for (value, count) in samples.iter_mut().zip(counts.iter()) {
         if *count > 0 {
             let divisor = i64::from(*count);
-            *value /= divisor;
+            *value = match value.checked_div(divisor) {
+                Some(v) => v,
+                None => 0,
+            };
         }
     }
 
