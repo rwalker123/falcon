@@ -138,7 +138,7 @@ func get_upper_stack_height() -> float:
     return max_bottom + STACK_ADDITIONAL_MARGIN
 
 func _legend_row_height() -> float:
-    return max(LEGEND_MIN_ROW_HEIGHT + LEGEND_ROW_PADDING, LEGEND_MIN_ROW_HEIGHT)
+    return LEGEND_MIN_ROW_HEIGHT + LEGEND_ROW_PADDING
 
 func _legend_swatch_size(row_height: float) -> Vector2:
     var side: float = max(row_height * LEGEND_SWATCH_FRACTION, LEGEND_MIN_ROW_HEIGHT * 0.6)
