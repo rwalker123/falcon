@@ -120,7 +120,8 @@ fn generate_manifest_schema() -> Result<(), Box<dyn Error>> {
 fn validate_manifests() -> Result<(), Box<dyn Error>> {
     let schema = manifest_schema();
     let schema_value = serde_json::to_value(&schema)?;
-    let compiled = JSONSchema::compile(&schema_value)?;
+    let compiled = JSONSchema::compile(&schema_value)
+        .map_err(|err| Box::<dyn Error>::from(err.to_string()))?;
     let mut had_errors = false;
 
     for entry in glob("clients/**/manifest.json")? {
