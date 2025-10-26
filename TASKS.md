@@ -87,7 +87,7 @@
 - [x] Add determinism regression test comparing dual runs.
 - [x] Introduce benchmark harness for 10k/50k/100k entities.
 - [x] Integrate tracing/tracing-subscriber metrics dump accessible via CLI.
-- [ ] Add regression coverage ensuring `TerrainOverlayState` updates propagate on biome/tag changes (Owner: TBD, Estimate: 1d; Deps: finalized terrain legend work).
+- [x] Add regression coverage ensuring `TerrainOverlayState` updates propagate on biome/tag changes (Owner: TBD, Estimate: 1d; Deps: finalized terrain legend work). _Status_: Exercised by `snapshot::tests::terrain_overlay_delta_updates_on_biome_change` covering biome/tag mutation delta emission.
 
 ## Core Simulation Roadmap
 - [x] Implement per-faction order submission and turn resolution phases (Owner: Sam, Estimate: 4d).

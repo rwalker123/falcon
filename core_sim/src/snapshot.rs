@@ -2048,6 +2048,102 @@ mod tests {
         }
     }
 
+    fn snapshot_with_overlay(
+        tick: u64,
+        tile: TileState,
+        overlay: TerrainOverlayState,
+    ) -> WorldSnapshot {
+        let tiles = vec![tile];
+        let header = SnapshotHeader::new(tick, tiles.len(), 0, 0, 0, 0, 0);
+        WorldSnapshot {
+            header,
+            tiles,
+            logistics: Vec::new(),
+            trade_links: Vec::new(),
+            populations: Vec::new(),
+            power: Vec::new(),
+            terrain: overlay,
+            logistics_raster: ScalarRasterState::default(),
+            sentiment_raster: ScalarRasterState::default(),
+            corruption_raster: ScalarRasterState::default(),
+            fog_raster: ScalarRasterState::default(),
+            axis_bias: AxisBiasState::default(),
+            sentiment: SentimentTelemetryState::default(),
+            generations: Vec::new(),
+            corruption: CorruptionLedger::default(),
+            influencers: Vec::new(),
+            culture_layers: Vec::new(),
+            culture_tensions: Vec::new(),
+            discovery_progress: Vec::new(),
+        }
+        .finalize()
+    }
+
+    #[test]
+    fn terrain_overlay_delta_updates_on_biome_change() {
+        let base_tile = TileState {
+            entity: 1,
+            x: 0,
+            y: 0,
+            element: 0,
+            mass: 0,
+            temperature: 0,
+            terrain: TerrainType::AlluvialPlain,
+            terrain_tags: TerrainTags::FERTILE,
+        };
+        let base_overlay = TerrainOverlayState {
+            width: 1,
+            height: 1,
+            samples: vec![TerrainSample {
+                terrain: base_tile.terrain,
+                tags: base_tile.terrain_tags,
+            }],
+        };
+        let base_snapshot = snapshot_with_overlay(1, base_tile.clone(), base_overlay);
+
+        let mut history = SnapshotHistory::default();
+        history.update(base_snapshot);
+
+        let updated_tile = TileState {
+            terrain: TerrainType::MangroveSwamp,
+            terrain_tags: TerrainTags::COASTAL | TerrainTags::WETLAND,
+            ..base_tile
+        };
+        let updated_overlay = TerrainOverlayState {
+            width: 1,
+            height: 1,
+            samples: vec![TerrainSample {
+                terrain: updated_tile.terrain,
+                tags: updated_tile.terrain_tags,
+            }],
+        };
+        let updated_snapshot =
+            snapshot_with_overlay(2, updated_tile.clone(), updated_overlay.clone());
+
+        history.update(updated_snapshot);
+
+        let delta = history
+            .last_delta
+            .as_ref()
+            .expect("delta captured after terrain change");
+        let terrain_delta = delta
+            .terrain
+            .as_ref()
+            .expect("terrain overlay delta emitted");
+
+        assert_eq!(terrain_delta, &updated_overlay);
+        assert_eq!(terrain_delta.samples.len(), 1);
+        let sample = &terrain_delta.samples[0];
+        assert_eq!(sample.terrain, updated_tile.terrain);
+        assert_eq!(sample.tags, updated_tile.terrain_tags);
+
+        let latest_snapshot = history
+            .last_snapshot
+            .as_ref()
+            .expect("latest snapshot retained");
+        assert_eq!(latest_snapshot.terrain, updated_overlay);
+    }
+
     #[test]
     fn corruption_raster_allocates_intensity_and_baseline() {
         let tiles = vec![tile(1, 0, 0), tile(2, 1, 0)];
