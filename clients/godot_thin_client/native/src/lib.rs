@@ -1,6 +1,11 @@
 use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 use std::collections::{BTreeSet, HashMap};
+use std::sync::{
+    mpsc::{self, Sender},
+    OnceLock,
+};
+use std::thread;
 
 mod runtime;
 
@@ -18,8 +23,28 @@ use sim_runtime::{parse_command_line, CommandEnvelope};
 #[class(base = RefCounted, init)]
 pub struct CommandBridge;
 
+static COMMAND_BRIDGE_SENDER: OnceLock<Sender<CommandRequest>> = OnceLock::new();
+
+struct CommandRequest {
+    host: String,
+    port: u16,
+    envelope: CommandEnvelope,
+    callback: Sender<CommandResult>,
+}
+
+struct CommandResult {
+    ok: bool,
+    error: Option<String>,
+}
+
 #[godot_api]
 impl CommandBridge {
+    #[allow(dead_code)]
+    fn init(_base: Base<RefCounted>) -> Self {
+        let _ = command_sender();
+        Self
+    }
+
     #[func]
     pub fn send_line(&self, host: GString, proto_port: i64, line: GString) -> Dictionary {
         let mut dict = Dictionary::new();
@@ -32,30 +57,77 @@ impl CommandBridge {
         let host_str = host.to_string();
         let line_str = line.to_string();
 
-        match parse_command_line(&line_str) {
-            Ok(payload) => {
-                let envelope = CommandEnvelope {
-                    payload,
-                    correlation_id: None,
-                };
-                match transmit_proto_command(&host_str, proto_port as u16, &envelope) {
-                    Ok(_) => {
-                        let _ = dict.insert("ok", true);
-                    }
-                    Err(err) => {
-                        let _ = dict.insert("ok", false);
-                        let _ = dict.insert("error", err);
-                    }
-                }
-            }
+        let envelope = match parse_command_line(&line_str) {
+            Ok(payload) => CommandEnvelope {
+                payload,
+                correlation_id: None,
+            },
             Err(err) => {
                 let _ = dict.insert("ok", false);
                 let _ = dict.insert("error", err.to_string());
+                return dict;
+            }
+        };
+
+        let sender = command_sender();
+
+        let (tx, rx) = mpsc::channel();
+        if let Err(err) = sender.send(CommandRequest {
+            host: host_str,
+            port: proto_port as u16,
+            envelope,
+            callback: tx,
+        }) {
+            let _ = dict.insert("ok", false);
+            let _ = dict.insert("error", format!("dispatch error: {err}"));
+            return dict;
+        }
+
+        match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+            Ok(result) => {
+                let _ = dict.insert("ok", result.ok);
+                if let Some(err) = result.error {
+                    let _ = dict.insert("error", err);
+                }
+            }
+            Err(_) => {
+                let _ = dict.insert("ok", false);
+                let _ = dict.insert("error", "command timed out");
             }
         }
 
         dict
     }
+}
+
+fn prototype_command_worker(receiver: mpsc::Receiver<CommandRequest>) {
+    for request in receiver {
+        let result = match transmit_proto_command(&request.host, request.port, &request.envelope) {
+            Ok(_) => CommandResult {
+                ok: true,
+                error: None,
+            },
+            Err(err) => CommandResult {
+                ok: false,
+                error: Some(err),
+            },
+        };
+
+        let _ = request.callback.send(result);
+    }
+}
+
+fn command_sender() -> Sender<CommandRequest> {
+    COMMAND_BRIDGE_SENDER
+        .get_or_init(|| {
+            let (sender, receiver) = mpsc::channel::<CommandRequest>();
+            thread::Builder::new()
+                .name("command-bridge-worker".into())
+                .spawn(move || prototype_command_worker(receiver))
+                .expect("failed to spawn command bridge worker thread");
+            sender
+        })
+        .clone()
 }
 
 fn resolve_entry_path(manifest_path: &str, entry: &str) -> String {
