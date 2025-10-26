@@ -73,7 +73,7 @@
 - [x] Integrate FlatBuffers stream into Godot client (Rust GDExtension or native parser) and retire JSON proxy once stable (Owner: Mira, Estimate: 4d; Deps: FlatBuffers schema stabilized).
 - [x] Export dedicated logistics/sentiment rasters from `core_sim` snapshots (Owner: Devi, Estimate: 2d; Deps: align `SnapshotHistory` ring buffer + schema update). _Status_: `core_sim` now emits logistics and sentiment rasters; `SnapshotHistory` persists them and FlatBuffers/Godot clients consume the new channels.
 - [x] Extend `shadow_scale_flatbuffers`/Godot extension to surface multi-layer overlays (logistics, sentiment, corruption, fog) with toggleable channels (Owner: Mira, Estimate: 2d; Deps: raster export task). _Status_: Tiles now carry real corruption pressure and fog-of-knowledge rasters with inspector tooltips describing the scale.
-- [ ] Validate Godot overlay rendering against CLI inspector metrics (add debug telemetry + colour ramp checks) before enabling designers (Owner: Omar, Estimate: 1d; Deps: overlay channel support).
+- [x] Validate Godot overlay rendering against CLI inspector metrics (add debug telemetry + colour ramp checks) before enabling designers (Owner: Omar, Estimate: 1d; Deps: overlay channel support). _Status_: Godot inspector now exposes normalized/raw overlay rasters with legend stats, replacing the retired CLI parity workflow.
 
 ## Shared Scripting Capability Model
 - [x] Implement QuickJS GDNative module and runtime bootstrap inside `clients/godot_thin_client` (`ScriptHost` worker threads, capability token plumbing, manifest loading) (Owner: Mira, Estimate: 3d; Deps: manifest schema in `docs/architecture.md`). _Status_: QuickJS runtime migrated to the new `quick-js` bindings, manifest/session plumbing verified, and threads spawn/tear down cleanly after `cargo check`.
@@ -87,7 +87,7 @@
 - [x] Add determinism regression test comparing dual runs.
 - [x] Introduce benchmark harness for 10k/50k/100k entities.
 - [x] Integrate tracing/tracing-subscriber metrics dump accessible via CLI.
-- [ ] Add regression coverage ensuring `TerrainOverlayState` updates propagate on biome/tag changes (Owner: TBD, Estimate: 1d; Deps: finalized terrain legend work).
+- [x] Add regression coverage ensuring `TerrainOverlayState` updates propagate on biome/tag changes (Owner: TBD, Estimate: 1d; Deps: finalized terrain legend work). _Status_: Exercised by `snapshot::tests::terrain_overlay_delta_updates_on_biome_change` covering biome/tag mutation delta emission.
 
 ## Core Simulation Roadmap
 - [x] Implement per-faction order submission and turn resolution phases (Owner: Sam, Estimate: 4d).
