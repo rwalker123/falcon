@@ -4,6 +4,8 @@ package shadow_scale.commands;
 
 option optimize_for = SPEED;
 
+// NOTE: *_UNSPECIFIED entries are reserved and will be rejected by the runtime
+// decode helpers. Clients must populate concrete values before sending envelopes.
 enum SupportChannel {
   SUPPORT_CHANNEL_UNSPECIFIED = 0;
   SUPPORT_CHANNEL_POPULAR = 1;

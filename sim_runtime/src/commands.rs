@@ -91,6 +91,10 @@ pub enum CommandEncodeError {
 }
 
 /// Error returned when decoding a command envelope fails.
+///
+/// The protobuf schema reserves `*_UNSPECIFIED` enum values (encoded as `0`).
+/// Decoding such a value yields [`CommandDecodeError::InvalidEnum`] so callers
+/// can reject malformed or legacy payloads early.
 #[derive(Debug, Error)]
 pub enum CommandDecodeError {
     #[error("decode failed: {0}")]
@@ -305,39 +309,6 @@ impl TryFrom<i32> for SupportChannel {
     }
 }
 
-// Macro to generate From and TryFrom implementations for enums with 1:1 variant mapping
-macro_rules! impl_enum_proto_conversion {
-    (
-        $rust_enum:ident, $proto_enum:path, $err_field:expr, [ $( $variant:ident ),* $(,)? ]
-    ) => {
-        impl From<$rust_enum> for $proto_enum {
-            fn from(value: $rust_enum) -> Self {
-                match value {
-                    $(
-                        $rust_enum::$variant => $proto_enum::$variant,
-                    )*
-                }
-            }
-        }
-
-        impl std::convert::TryFrom<i32> for $rust_enum {
-            type Error = CommandDecodeError;
-            fn try_from(value: i32) -> Result<Self, Self::Error> {
-                match $proto_enum::try_from(value) {
-                    $(
-                        Ok($proto_enum::$variant) => Ok($rust_enum::$variant),
-                    )*
-                    _ => Err(CommandDecodeError::InvalidEnum {
-                        field: $err_field,
-                        value,
-                    }),
-                }
-            }
-        }
-    };
-}
-
-// Implement conversions for enums
 impl From<OrdersDirective> for pb::OrdersDirective {
     fn from(value: OrdersDirective) -> Self {
         match value {
@@ -346,20 +317,59 @@ impl From<OrdersDirective> for pb::OrdersDirective {
     }
 }
 
-// SupportChannel
-impl_enum_proto_conversion!(
-    SupportChannel, pb::SupportChannel, "SupportChannel",
-    [Popular, Peer, Institutional, Humanitarian]
-);
+fn orders_directive_to_proto(value: OrdersDirective) -> pb::OrdersDirective {
+    value.into()
+}
 
-// InfluenceScopeKind
-impl_enum_proto_conversion!(
-    InfluenceScopeKind, pb::InfluenceScopeKind, "InfluenceScopeKind",
-    [Local, Regional, Global, Generation]
-);
+fn support_channel_to_proto(value: SupportChannel) -> pb::SupportChannel {
+    match value {
+        SupportChannel::Popular => pb::SupportChannel::Popular,
+        SupportChannel::Peer => pb::SupportChannel::Peer,
+        SupportChannel::Institutional => pb::SupportChannel::Institutional,
+        SupportChannel::Humanitarian => pb::SupportChannel::Humanitarian,
+    }
+}
 
-// CorruptionSubsystem
-impl_enum_proto_conversion!(
-    CorruptionSubsystem, pb::CorruptionSubsystem, "CorruptionSubsystem",
-    [Logistics, Trade, Military, Governance]
-);
+fn influence_scope_to_proto(value: InfluenceScopeKind) -> pb::InfluenceScopeKind {
+    match value {
+        InfluenceScopeKind::Local => pb::InfluenceScopeKind::Local,
+        InfluenceScopeKind::Regional => pb::InfluenceScopeKind::Regional,
+        InfluenceScopeKind::Global => pb::InfluenceScopeKind::Global,
+        InfluenceScopeKind::Generation => pb::InfluenceScopeKind::Generation,
+    }
+}
+
+fn influence_scope_from_proto(value: i32) -> Result<InfluenceScopeKind, CommandDecodeError> {
+    match pb::InfluenceScopeKind::try_from(value) {
+        Ok(pb::InfluenceScopeKind::Local) => Ok(InfluenceScopeKind::Local),
+        Ok(pb::InfluenceScopeKind::Regional) => Ok(InfluenceScopeKind::Regional),
+        Ok(pb::InfluenceScopeKind::Global) => Ok(InfluenceScopeKind::Global),
+        Ok(pb::InfluenceScopeKind::Generation) => Ok(InfluenceScopeKind::Generation),
+        _ => Err(CommandDecodeError::InvalidEnum {
+            field: "InfluenceScopeKind",
+            value,
+        }),
+    }
+}
+
+fn corruption_subsystem_to_proto(value: CorruptionSubsystem) -> pb::CorruptionSubsystem {
+    match value {
+        CorruptionSubsystem::Logistics => pb::CorruptionSubsystem::Logistics,
+        CorruptionSubsystem::Trade => pb::CorruptionSubsystem::Trade,
+        CorruptionSubsystem::Military => pb::CorruptionSubsystem::Military,
+        CorruptionSubsystem::Governance => pb::CorruptionSubsystem::Governance,
+    }
+}
+
+fn corruption_subsystem_from_proto(value: i32) -> Result<CorruptionSubsystem, CommandDecodeError> {
+    match pb::CorruptionSubsystem::try_from(value) {
+        Ok(pb::CorruptionSubsystem::Logistics) => Ok(CorruptionSubsystem::Logistics),
+        Ok(pb::CorruptionSubsystem::Trade) => Ok(CorruptionSubsystem::Trade),
+        Ok(pb::CorruptionSubsystem::Military) => Ok(CorruptionSubsystem::Military),
+        Ok(pb::CorruptionSubsystem::Governance) => Ok(CorruptionSubsystem::Governance),
+        _ => Err(CommandDecodeError::InvalidEnum {
+            field: "CorruptionSubsystem",
+            value,
+        }),
+    }
+}
