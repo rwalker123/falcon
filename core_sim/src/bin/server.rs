@@ -2,7 +2,7 @@ use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::thread;
 
-use bevy::app::Update;
+use bevy::{app::Update, math::UVec2};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use tracing::{info, warn};
 use tracing_subscriber::prelude::*;
@@ -82,6 +82,57 @@ fn main() {
                     resolve_ready_turn(&mut app, bin_server, flat_server);
                 }
             }
+            Command::ResetMap { width, height } => {
+                if width == 0 || height == 0 {
+                    warn!(
+                        target: "shadow_scale::server",
+                        width,
+                        height,
+                        "map.reset.rejected=invalid_dimensions"
+                    );
+                    continue;
+                }
+                let current_config = app.world.resource::<SimulationConfig>().clone();
+                if current_config.grid_size.x == width && current_config.grid_size.y == height {
+                    info!(
+                        target: "shadow_scale::server",
+                        width,
+                        height,
+                        "map.reset.skipped=dimensions_unchanged"
+                    );
+                    continue;
+                }
+                info!(
+                    target: "shadow_scale::server",
+                    width,
+                    height,
+                    "map.reset.begin"
+                );
+                let mut new_config = current_config.clone();
+                new_config.grid_size = UVec2::new(width, height);
+
+                let mut new_app = build_headless_app();
+                {
+                    let mut config_res = new_app.world.resource_mut::<SimulationConfig>();
+                    *config_res = new_config;
+                }
+                new_app.insert_resource(SimulationMetrics::default());
+                new_app.add_systems(Update, collect_metrics);
+                run_turn(&mut new_app);
+
+                {
+                    let history = new_app.world.resource::<SnapshotHistory>();
+                    broadcast_latest(bin_server, flat_server, history);
+                }
+
+                app = new_app;
+                info!(
+                    target: "shadow_scale::server",
+                    width,
+                    height,
+                    "map.reset.completed"
+                );
+            }
             Command::Heat { entity, delta } => {
                 apply_heat(&mut app, entity, delta);
                 info!(
@@ -158,6 +209,10 @@ fn main() {
 #[derive(Debug)]
 enum Command {
     Turn(u32),
+    ResetMap {
+        width: u32,
+        height: u32,
+    },
     Heat {
         entity: u64,
         delta: i64,
@@ -264,6 +319,11 @@ fn parse_command(input: &str) -> Option<Command> {
         "turn" => {
             let amount = parts.next().unwrap_or("1").parse().ok()?;
             Some(Command::Turn(amount))
+        }
+        "map_size" => {
+            let width: u32 = parts.next()?.parse().ok()?;
+            let height: u32 = parts.next()?.parse().ok()?;
+            Some(Command::ResetMap { width, height })
         }
         "heat" => {
             let entity: u64 = parts.next()?.parse().ok()?;

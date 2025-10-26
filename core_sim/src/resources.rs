@@ -50,7 +50,7 @@ pub struct SimulationConfig {
 impl Default for SimulationConfig {
     fn default() -> Self {
         Self {
-            grid_size: UVec2::new(32, 32),
+            grid_size: UVec2::new(80, 52),
             ambient_temperature: scalar_from_f32(18.0),
             temperature_lerp: scalar_from_f32(0.05),
             logistics_flow_gain: scalar_from_f32(0.1),
