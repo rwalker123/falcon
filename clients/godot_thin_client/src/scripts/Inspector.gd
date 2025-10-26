@@ -6,6 +6,16 @@ const ScriptHostManager := preload("res://src/scripts/scripting/ScriptHostManage
 const LogStreamClientScript = preload("res://src/scripts/LogStreamClient.gd")
 const Typography = preload("res://src/scripts/Typography.gd")
 
+const MAP_SIZE_OPTIONS := [
+	{"key": "tiny", "label": "Tiny", "width": 56, "height": 36},
+	{"key": "small", "label": "Small", "width": 66, "height": 42},
+	{"key": "standard", "label": "Standard", "width": 80, "height": 52},
+	{"key": "large", "label": "Large", "width": 104, "height": 64},
+	{"key": "huge", "label": "Huge", "width": 128, "height": 80}
+]
+const MAP_SIZE_DEFAULT_KEY := "standard"
+const MAP_SIZE_DEFAULT_DIMENSIONS := Vector2i(80, 52)
+
 @onready var sentiment_text: RichTextLabel = $RootPanel/TabContainer/Sentiment/SentimentText
 @onready var terrain_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TerrainText
 @onready var terrain_biome_section_label: Label = $RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection/BiomeSectionLabel
@@ -14,10 +24,13 @@ const Typography = preload("res://src/scripts/Typography.gd")
 @onready var terrain_tile_section_label: Label = $RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileSectionLabel
 @onready var terrain_tile_list: ItemList = $RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileList
 @onready var terrain_tile_detail_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileDetailText
-@onready var terrain_overlay_section_label: Label = $RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlaySectionLabel
-@onready var terrain_overlay_tabs: TabContainer = $RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlayTabs
-@onready var terrain_overlay_culture_placeholder: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlayTabs/Culture/CulturePlaceholder
-@onready var terrain_overlay_military_placeholder: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlayTabs/Military/MilitaryPlaceholder
+@onready var map_size_label: Label = $RootPanel/TabContainer/Map/MapVBox/MapSizeSection/MapSizeLabel
+@onready var map_size_dropdown: OptionButton = $RootPanel/TabContainer/Map/MapVBox/MapSizeSection/MapSizeDropdown
+@onready var map_terrain_hint_label: Label = $RootPanel/TabContainer/Map/MapVBox/MapTerrainHint
+@onready var terrain_overlay_section_label: Label = $RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlaySectionLabel
+@onready var terrain_overlay_tabs: TabContainer = $RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlayTabs
+@onready var terrain_overlay_culture_placeholder: RichTextLabel = $RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlayTabs/Culture/CulturePlaceholder
+@onready var terrain_overlay_military_placeholder: RichTextLabel = $RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlayTabs/Military/MilitaryPlaceholder
 @onready var culture_summary_text: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureSummarySection/CultureSummaryText
 @onready var culture_divergence_list: ItemList = $RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection/CultureDivergenceList
 @onready var culture_divergence_detail: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection/CultureDivergenceDetail
@@ -25,7 +38,7 @@ const Typography = preload("res://src/scripts/Typography.gd")
 @onready var influencers_text: RichTextLabel = $RootPanel/TabContainer/Influencers/InfluencersText
 @onready var corruption_text: RichTextLabel = $RootPanel/TabContainer/Corruption/CorruptionText
 @onready var trade_summary_text: RichTextLabel = $RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection/TradeSummaryText
-@onready var trade_overlay_toggle: CheckButton = $RootPanel/TabContainer/Trade/TradeVBox/TradeControls/TradeOverlayToggle
+@onready var trade_overlay_toggle: CheckButton = $RootPanel/TabContainer/Map/MapVBox/LogisticsSection/LogisticsOverlayToggle
 @onready var trade_links_list: ItemList = $RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection/TradeLinksList
 @onready var trade_events_text: RichTextLabel = $RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection/TradeEventsText
 @onready var knowledge_summary_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeSummaryText
@@ -96,6 +109,10 @@ var _trade_history: Array[Dictionary] = []
 var _discovery_progress: Dictionary = {}
 var _knowledge_events: Array[Dictionary] = []
 var _map_view: Node = null
+var _map_size_key: String = MAP_SIZE_DEFAULT_KEY
+var _map_dimensions: Vector2i = MAP_SIZE_DEFAULT_DIMENSIONS
+var _map_size_custom_index: int = -1
+var _suppress_map_size_signal: bool = false
 var _selected_trade_entity: int = -1
 var _log_messages: Array[String] = []
 var _log_client: RefCounted = null
@@ -183,6 +200,7 @@ func _ready() -> void:
 	_initialize_influencer_controls()
 	_initialize_corruption_controls()
 	_initialize_heat_controls()
+	_initialize_map_controls()
 	_ensure_overlay_selector()
 	apply_typography()
 	_connect_terrain_ui()
@@ -216,6 +234,15 @@ func update_delta(delta: Dictionary) -> void:
 func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 	if data.has("turn"):
 		_last_turn = int(data.get("turn", _last_turn))
+
+	if data.has("grid"):
+		var grid_variant: Variant = data["grid"]
+		if grid_variant is Dictionary:
+			var grid_dict: Dictionary = grid_variant
+			var width: int = int(grid_dict.get("width", _map_dimensions.x))
+			var height: int = int(grid_dict.get("height", _map_dimensions.y))
+			if width > 0 and height > 0:
+				_set_map_size_selection_from_dimensions(width, height)
 
 	if data.has("axis_bias"):
 		var axis_dict: Dictionary = data["axis_bias"]
@@ -407,6 +434,7 @@ func apply_typography() -> void:
 	_apply_typography_style(body_rich_text, Typography.STYLE_BODY)
 
 	var heading_labels: Array = [
+		map_size_label,
 		terrain_biome_section_label,
 		terrain_tile_section_label,
 		terrain_overlay_section_label
@@ -414,6 +442,7 @@ func apply_typography() -> void:
 	_apply_typography_style(heading_labels, Typography.STYLE_HEADING)
 
 	var caption_labels: Array = [
+		map_terrain_hint_label,
 		log_status_label,
 		sparkline_stats_label,
 		command_status_label,
@@ -431,6 +460,7 @@ func apply_typography() -> void:
 	_apply_typography_style(list_controls, Typography.STYLE_BODY)
 
 	var control_nodes: Array = [
+		map_size_dropdown,
 		trade_overlay_toggle,
 		step_one_button,
 		step_ten_button,
@@ -491,6 +521,111 @@ func _connect_culture_ui() -> void:
 			culture_divergence_list.item_selected.connect(_on_culture_divergence_selected)
 		if not culture_divergence_list.is_connected("item_activated", divergence_callable):
 			culture_divergence_list.item_activated.connect(_on_culture_divergence_selected)
+
+func _initialize_map_controls() -> void:
+	if map_size_dropdown != null:
+		_populate_map_size_dropdown()
+		var callable = Callable(self, "_on_map_size_selected")
+		if not map_size_dropdown.is_connected("item_selected", callable):
+			map_size_dropdown.item_selected.connect(_on_map_size_selected)
+		map_size_dropdown.focus_mode = Control.FOCUS_ALL
+
+func _custom_map_size_label(dimensions: Vector2i) -> String:
+	if dimensions.x <= 0 or dimensions.y <= 0:
+		return "Custom"
+	return "Custom (%dx%d)" % [dimensions.x, dimensions.y]
+
+func _populate_map_size_dropdown() -> void:
+	if map_size_dropdown == null:
+		return
+	var previous := _suppress_map_size_signal
+	_suppress_map_size_signal = true
+	map_size_dropdown.clear()
+	var index := 0
+	for option in MAP_SIZE_OPTIONS:
+		var label: String = "%s (%dx%d)" % [
+			String(option.get("label", "")),
+			int(option.get("width", 0)),
+			int(option.get("height", 0))
+		]
+		map_size_dropdown.add_item(label)
+		map_size_dropdown.set_item_metadata(index, option)
+		if String(option.get("key", "")) == _map_size_key:
+			map_size_dropdown.select(index)
+		index += 1
+	_map_size_custom_index = index
+	map_size_dropdown.add_item(_custom_map_size_label(_map_dimensions))
+	map_size_dropdown.set_item_metadata(_map_size_custom_index, {
+		"key": "custom",
+		"label": "Custom",
+		"width": _map_dimensions.x,
+		"height": _map_dimensions.y
+	})
+	if _map_size_key == "custom":
+		map_size_dropdown.select(_map_size_custom_index)
+	_suppress_map_size_signal = previous
+
+func _set_map_size_selection_from_dimensions(width: int, height: int) -> void:
+	if width <= 0 or height <= 0:
+		return
+	_map_dimensions = Vector2i(width, height)
+	var matched_key := ""
+	for option in MAP_SIZE_OPTIONS:
+		if int(option.get("width", 0)) == width and int(option.get("height", 0)) == height:
+			matched_key = String(option.get("key", ""))
+			break
+	if matched_key == "":
+		_map_size_key = "custom"
+		if map_size_dropdown != null:
+			if _map_size_custom_index < 0 or _map_size_custom_index >= map_size_dropdown.get_item_count():
+				_populate_map_size_dropdown()
+			var previous := _suppress_map_size_signal
+			_suppress_map_size_signal = true
+			map_size_dropdown.set_item_text(_map_size_custom_index, _custom_map_size_label(_map_dimensions))
+			map_size_dropdown.set_item_metadata(_map_size_custom_index, {
+				"key": "custom",
+				"label": "Custom",
+				"width": width,
+				"height": height
+			})
+			map_size_dropdown.select(_map_size_custom_index)
+			_suppress_map_size_signal = previous
+	else:
+		_map_size_key = matched_key
+		_populate_map_size_dropdown()
+
+func _on_map_size_selected(index: int) -> void:
+	if map_size_dropdown == null or _suppress_map_size_signal:
+		return
+	if index < 0 or index >= map_size_dropdown.get_item_count():
+		return
+	var metadata: Variant = map_size_dropdown.get_item_metadata(index)
+	if typeof(metadata) != TYPE_DICTIONARY:
+		return
+	var descriptor: Dictionary = metadata
+	var key: String = String(descriptor.get("key", ""))
+	if key == "" or key == "custom":
+		return
+	var width: int = int(descriptor.get("width", 0))
+	var height: int = int(descriptor.get("height", 0))
+	if width <= 0 or height <= 0:
+		return
+	if key == _map_size_key and _map_dimensions.x == width and _map_dimensions.y == height:
+		return
+	_map_size_key = key
+	_map_dimensions = Vector2i(width, height)
+	var label: String = String(descriptor.get("label", key.capitalize()))
+	if not _send_map_size_command(width, height, label):
+		_append_command_log("Failed to request map size change.")
+
+func _send_map_size_command(width: int, height: int, label: String) -> bool:
+	if width <= 0 or height <= 0:
+		return false
+	var descriptor: String = label if label.strip_edges() != "" else "%dx%d" % [width, height]
+	return _send_command(
+		"map_size %d %d" % [width, height],
+		"%s map (%dx%d) requested." % [descriptor, width, height]
+	)
 
 func _ensure_overlay_selector() -> void:
 	if _overlay_selector != null:
