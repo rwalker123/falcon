@@ -3,6 +3,8 @@ use quick_js::{Arguments, Context, JsValue};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Number as JsonNumber, Value as JsonValue};
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
+use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Condvar, Mutex};
@@ -13,6 +15,7 @@ use thiserror::Error;
 use sim_runtime::scripting::{
     capability_registry, CapabilitySpec, ScriptManifestRef, SimScriptState,
 };
+use sim_runtime::{parse_command_line, CommandEncodeError, CommandEnvelope, CommandPayload};
 
 #[derive(Debug, Error)]
 pub enum ScriptError {
@@ -20,6 +23,12 @@ pub enum ScriptError {
     Manifest(String),
     #[error("runtime error: {0}")]
     Runtime(String),
+}
+
+#[derive(Clone)]
+struct CommandEndpoint {
+    host: String,
+    port: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,6 +321,7 @@ struct ScriptSharedState {
     registered: AtomicBool,
     registration_cv: Condvar,
     request_counter: AtomicU64,
+    command_endpoint: Arc<Mutex<Option<CommandEndpoint>>>,
 }
 
 impl ScriptSharedState {
@@ -319,6 +329,7 @@ impl ScriptSharedState {
         id: i64,
         capabilities: HashSet<String>,
         responses_tx: Sender<ScriptResponse>,
+        command_endpoint: Arc<Mutex<Option<CommandEndpoint>>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             id,
@@ -331,6 +342,7 @@ impl ScriptSharedState {
             registered: AtomicBool::new(false),
             registration_cv: Condvar::new(),
             request_counter: AtomicU64::new(1),
+            command_endpoint,
         })
     }
 
@@ -358,6 +370,7 @@ pub struct ScriptManager {
 struct ScriptManagerInner {
     next_id: AtomicI64,
     scripts: Mutex<HashMap<i64, ManagedScript>>,
+    command_endpoint: Arc<Mutex<Option<CommandEndpoint>>>,
 }
 
 struct ManagedScript {
@@ -383,6 +396,7 @@ impl ScriptManager {
             inner: Arc::new(ScriptManagerInner {
                 next_id: AtomicI64::new(1),
                 scripts: Mutex::new(HashMap::new()),
+                command_endpoint: Arc::new(Mutex::new(None)),
             }),
         }
     }
@@ -393,7 +407,12 @@ impl ScriptManager {
         let (responses_tx, responses_rx) = mpsc::channel::<ScriptResponse>();
         let capabilities: HashSet<String> = manifest.capabilities.iter().cloned().collect();
 
-        let shared = ScriptSharedState::new(id, capabilities, responses_tx.clone());
+        let shared = ScriptSharedState::new(
+            id,
+            capabilities,
+            responses_tx.clone(),
+            Arc::clone(&self.inner.command_endpoint),
+        );
         {
             let mut subs = shared.subscriptions.lock().unwrap();
             for topic in &manifest.subscriptions {
@@ -507,6 +526,16 @@ impl ScriptManager {
             .iter()
             .map(|(id, script)| (*id, script.manifest.clone()))
             .collect()
+    }
+
+    pub fn set_command_endpoint(&self, host: String, port: u16) {
+        let mut guard = self.inner.command_endpoint.lock().unwrap();
+        *guard = Some(CommandEndpoint { host, port });
+    }
+
+    pub fn clear_command_endpoint(&self) {
+        let mut guard = self.inner.command_endpoint.lock().unwrap();
+        *guard = None;
     }
 
     pub fn subscriptions(&self, id: i64) -> Result<Vec<String>, ScriptError> {
@@ -915,7 +944,7 @@ fn invoke_callback(
 }
 
 fn handle_host_request(
-    shared: &ScriptSharedState,
+    shared: &Arc<ScriptSharedState>,
     op: &str,
     payload: &JsonValue,
 ) -> Result<(), ScriptError> {
@@ -972,14 +1001,21 @@ fn handle_host_request(
         }
         "commands.issue" => {
             shared.ensure_capability("commands.issue")?;
-            queue_host_request(shared, op, payload)
+            match issue_structured_command(shared, payload) {
+                Ok(true) => Ok(()),
+                Ok(false) => queue_host_request(shared, op, payload),
+                Err(err) => {
+                    send_command_event(shared, false, None, None, Some(err.to_string()));
+                    Ok(())
+                }
+            }
         }
         _ => queue_host_request(shared, op, payload),
     }
 }
 
 fn queue_host_request(
-    shared: &ScriptSharedState,
+    shared: &Arc<ScriptSharedState>,
     op: &str,
     payload: &JsonValue,
 ) -> Result<(), ScriptError> {
@@ -989,6 +1025,113 @@ fn queue_host_request(
         op: op.to_string(),
         payload: payload.clone(),
     });
+    Ok(())
+}
+
+fn issue_structured_command(
+    shared: &Arc<ScriptSharedState>,
+    payload: &JsonValue,
+) -> Result<bool, ScriptError> {
+    if let Some(line) = payload.get("line").and_then(|v| v.as_str()) {
+        let correlation_id = payload.get("correlation_id").and_then(|v| v.as_u64());
+        match parse_command_line(line) {
+            Ok(command_payload) => {
+                dispatch_proto_command(
+                    shared,
+                    command_payload,
+                    correlation_id,
+                    Some(line.to_string()),
+                );
+            }
+            Err(err) => {
+                send_command_event(
+                    shared,
+                    false,
+                    Some(line.to_string()),
+                    correlation_id,
+                    Some(err.to_string()),
+                );
+            }
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn dispatch_proto_command(
+    shared: &Arc<ScriptSharedState>,
+    command_payload: CommandPayload,
+    correlation_id: Option<u64>,
+    line: Option<String>,
+) {
+    let endpoint = {
+        let guard = shared.command_endpoint.lock().unwrap();
+        guard.clone()
+    };
+
+    if let Some(endpoint) = endpoint {
+        let envelope = CommandEnvelope {
+            payload: command_payload,
+            correlation_id,
+        };
+        match transmit_proto_command(&endpoint.host, endpoint.port, &envelope) {
+            Ok(_) => {
+                send_command_event(shared, true, line.clone(), correlation_id, None);
+            }
+            Err(err) => {
+                send_command_event(shared, false, line, correlation_id, Some(err));
+            }
+        }
+    } else {
+        send_command_event(
+            shared,
+            false,
+            line,
+            correlation_id,
+            Some("command endpoint unavailable".to_string()),
+        );
+    }
+}
+
+fn send_command_event(
+    shared: &Arc<ScriptSharedState>,
+    ok: bool,
+    line: Option<String>,
+    correlation_id: Option<u64>,
+    error: Option<String>,
+) {
+    let payload = json!({
+        "ok": ok,
+        "line": line.unwrap_or_default(),
+        "correlation_id": correlation_id,
+        "error": error,
+    });
+    let _ = shared.responses_tx.send(ScriptResponse::Event {
+        event: "commands.issue.result".to_string(),
+        payload,
+    });
+}
+
+pub(crate) fn transmit_proto_command(
+    host: &str,
+    port: u16,
+    envelope: &CommandEnvelope,
+) -> Result<(), String> {
+    let bytes = envelope
+        .encode_to_vec()
+        .map_err(|CommandEncodeError::Encode(err)| format!("encode error: {err}"))?;
+    let addr = format!("{}:{}", host, port);
+    let mut stream = TcpStream::connect(&addr).map_err(|err| format!("connect error: {err}"))?;
+    let _ = stream.set_nodelay(true);
+    stream
+        .write_all(&(bytes.len() as u32).to_le_bytes())
+        .map_err(|err| format!("length write error: {err}"))?;
+    stream
+        .write_all(&bytes)
+        .map_err(|err| format!("payload write error: {err}"))?;
+    stream
+        .flush()
+        .map_err(|err| format!("flush error: {err}"))?;
     Ok(())
 }
 

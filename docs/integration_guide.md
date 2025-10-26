@@ -13,13 +13,9 @@ prototype to visualize state or issue turn commands.
   - Frames share the same length prefix but payloads are FlatBuffers envelopes matching `sim_schema/schemas/snapshot.fbs`.
   - Non-Rust clients should prefer this stream to avoid pulling in `bincode` and serde dependencies.
 - **Command Port**: `tcp://127.0.0.1:41001` (configurable via `SimulationConfig::command_bind`).
-  - Plain-text commands terminated by `\n`.
-  - Supported commands:
-    - `turn <n>` – advances `n` turns (default 1).
-    - `heat <entity_bits> <delta>` – adjusts tile temperature by fixed-point delta.
-    - `bias <axis_index> <value>` – sets the authoritative sentiment axis bias (value clamped to [-1.0, 1.0]).
-  - Future commands will follow the same `verb args` pattern; unrecognized
-    commands return no response but are logged.
+  - Frames follow the same `[u32 length][payload bytes]` pattern, but the payload is a Protobuf `CommandEnvelope` (`sim_runtime/proto/command.proto`).
+  - Supported verbs map to the envelope's `oneof` cases (`turn`, `reset_map`, `heat`, `order`, `rollback`, `bias`, `support`, `suppress`, `support_channel`, `spawn_influencer`, `corruption`).
+  - Use the helpers in `sim_runtime::commands` (Rust) or the Godot `CommandBridge` GDExtension to build and send envelopes; clients that cannot link against those helpers should mirror the schema directly.
 - **Log Stream (tracing JSON)**: `tcp://127.0.0.1:41003` (configurable via `SimulationConfig::log_bind`).
   - Frames follow the same 4-byte little-endian length prefix as snapshot streams.
   - Payloads are JSON objects emitted from `tracing`, e.g. `{ "timestamp_ms": 1700000000000, "level": "INFO", "message": "turn.completed", "fields": { "turn": 42, "duration_ms": 11.8 } }`.
@@ -31,21 +27,34 @@ prototype to visualize state or issue turn commands.
 - Entities are encoded as `u64` `Entity::to_bits()` values; clients must map them to meaningful identifiers if needed.
 
 ## Client Workflow
-1. Open command connection, send desired turn count or control commands.
+1. Build a `CommandEnvelope`, open a command connection, and send the `[length][payload]` frame.
 2. Connect to snapshot stream, consume deltas. Apply to your local model.
 3. Optionally, resubscribe after dropped connections; server supports multiple snapshot clients.
 4. Subscribe to the log stream when you need structured tracing output (turn completion metrics, command acknowledgements) without parsing snapshots.
 
 ## Error Handling
 - Snapshot TCP stream may close if the server restarts; clients should auto-reconnect.
-- Command port is stateless; each command opens a new TCP connection in CLI and server expects short-lived sessions.
+- Command port is stateless; each command connection sends one framed envelope and then closes.
 - Invalid commands are ignored with a warning logged server-side.
 
 ## Testing
 - Run local server: `cargo run -p core_sim --bin server`.
-- Example using `netcat` to advance turns:
-  ```bash
-  printf "turn 5\n" | nc 127.0.0.1 41001
+- Example (Rust) issuing a `turn` command:
+  ```rust
+  use std::io::Write;
+  use sim_runtime::{CommandEnvelope, CommandPayload};
+
+  fn main() -> std::io::Result<()> {
+      let envelope = CommandEnvelope {
+          payload: CommandPayload::Turn { steps: 5 },
+          correlation_id: None,
+      };
+      let bytes = envelope.encode_to_vec().unwrap();
+      let mut stream = std::net::TcpStream::connect("127.0.0.1:41001")?;
+      stream.write_all(&(bytes.len() as u32).to_le_bytes())?;
+      stream.write_all(&bytes)?;
+      stream.flush()
+  }
   ```
 - Example using `nc` to inspect snapshots:
   ```bash
@@ -54,6 +63,6 @@ prototype to visualize state or issue turn commands.
   (use your own parser for real clients.)
 
 ## Next Steps
-- Formalize a binary command protocol (e.g., FlatBuffers/JSON-RPC).
+- Expose idiomatic client helpers for other runtimes (TypeScript, Python) atop the Protobuf command schema.
 - Add authentication/control for multi-user clients.
 - Provide pagination/resync endpoints for historical snapshots.

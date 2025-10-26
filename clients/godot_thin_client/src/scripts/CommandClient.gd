@@ -3,83 +3,65 @@ class_name CommandClient
 
 var host: String = "127.0.0.1"
 var port: int = 41001
-var tcp: StreamPeerTCP = null
-var _no_delay_configured: bool = false
+var proto_port: int = 41001
 
-const CONNECT_WAIT_MS = 1000
-const CONNECT_POLL_INTERVAL_MS = 20
+var _bridge: Object = null
+var _proto_port_override: bool = false
+
+func _init() -> void:
+    _try_init_bridge()
 
 func connect_to_host(hostname: String, port_number: int) -> Error:
     host = hostname
     port = port_number
-    tcp = StreamPeerTCP.new()
-    var err: Error = tcp.connect_to_host(host, port)
-    if err != OK:
-        tcp = null
-        return err
-    _no_delay_configured = false
-    return _await_connection()
+    if not _proto_port_override:
+        proto_port = port_number
+    _try_init_bridge()
+    if _bridge == null:
+        return ERR_CANT_ACQUIRE_RESOURCE
+    return OK
 
 func close() -> void:
-    if tcp != null:
-        tcp.disconnect_from_host()
-    tcp = null
-    _no_delay_configured = false
+    pass
 
 func status() -> int:
-    if tcp == null:
-        return StreamPeerTCP.STATUS_NONE
-    tcp.poll()
-    return tcp.get_status()
+    if _bridge == null:
+        return StreamPeerTCP.STATUS_ERROR
+    return StreamPeerTCP.STATUS_CONNECTED
 
 func is_connection_active() -> bool:
     return status() == StreamPeerTCP.STATUS_CONNECTED
 
 func poll() -> void:
-    if tcp != null:
-        tcp.poll()
+    pass
 
 func ensure_connected() -> Error:
-    if tcp == null:
-        return connect_to_host(host, port)
-    var current_status: int = status()
-    match current_status:
-        StreamPeerTCP.STATUS_CONNECTED:
-            if not _no_delay_configured:
-                if tcp != null:
-                    tcp.set_no_delay(true)
-                _no_delay_configured = true
-            return OK
-        StreamPeerTCP.STATUS_CONNECTING:
-            return _await_connection()
-        _:
-            close()
-            return connect_to_host(host, port)
+    return OK if _bridge != null else ERR_CANT_ACQUIRE_RESOURCE
 
 func send_line(line: String) -> Error:
-    var ensure_err: Error = ensure_connected()
-    if ensure_err != OK:
-        return ensure_err
-    var command_line: String = line.strip_edges(false, true) + "\n"
-    var payload: PackedByteArray = command_line.to_utf8_buffer()
-    var err: Error = tcp.put_data(payload)
-    tcp.poll()
-    return err
+    if _bridge == null:
+        return ERR_CANT_ACQUIRE_RESOURCE
+    var result = _bridge.call("send_line", host, proto_port, line)
+    if typeof(result) == TYPE_DICTIONARY:
+        if result.get("ok", false):
+            return OK
+        var err_msg: String = result.get("error", "unknown error")
+        push_warning("CommandBridge error: %s" % err_msg)
+        if result.has("error"):
+            return ERR_CANT_CONNECT
+    return ERR_CANT_ACQUIRE_RESOURCE
 
-func _await_connection() -> Error:
-    if tcp == null:
-        return ERR_CONNECTION_ERROR
-    var waited_ms: int = 0
-    while waited_ms < CONNECT_WAIT_MS:
-        tcp.poll()
-        var st: int = tcp.get_status()
-        match st:
-            StreamPeerTCP.STATUS_CONNECTED:
-                return OK
-            StreamPeerTCP.STATUS_ERROR:
-                tcp.disconnect_from_host()
-                tcp = null
-                return ERR_CONNECTION_ERROR
-        OS.delay_msec(CONNECT_POLL_INTERVAL_MS)
-        waited_ms += CONNECT_POLL_INTERVAL_MS
-    return ERR_BUSY
+func set_proto_port(value: int) -> void:
+    proto_port = value
+    _proto_port_override = true
+
+func get_proto_port() -> int:
+    return proto_port
+
+func _try_init_bridge() -> void:
+    if _bridge != null:
+        return
+    if ClassDB.class_exists("CommandBridge"):
+        _bridge = ClassDB.instantiate("CommandBridge")
+    else:
+        push_warning("CommandBridge class unavailable; commands disabled")

@@ -8,6 +8,15 @@ use std::cmp::{max, min};
 
 pub use sim_schema::*;
 
+pub mod commands;
+pub use commands::{
+    CommandDecodeError, CommandEncodeError, CommandEnvelope, CommandPayload, OrdersDirective,
+    SupportChannel,
+};
+
+pub mod command_text;
+pub use command_text::{parse_command_line, CommandParseError};
+
 pub mod scripting;
 pub use scripting::{
     capability_registry, CapabilityRegistry, CapabilitySpec, ScriptManifestRef, SessionAccess,

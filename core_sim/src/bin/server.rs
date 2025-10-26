@@ -1,5 +1,5 @@
-use std::io::{BufRead, BufReader};
-use std::net::TcpListener;
+use std::io::{self, BufReader, Read};
+use std::net::{TcpListener, TcpStream};
 use std::thread;
 
 use bevy::{app::Update, math::UVec2};
@@ -17,7 +17,11 @@ use core_sim::{
     SentimentAxisBias, SimulationConfig, SimulationTick, SnapshotHistory, StoredSnapshot,
     SubmitError, SubmitOutcome, SupportChannel, Tile, TurnQueue,
 };
-use sim_runtime::{AxisBiasState, CorruptionEntry, CorruptionSubsystem, InfluenceScopeKind};
+use sim_runtime::{
+    AxisBiasState, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
+    CorruptionEntry, CorruptionSubsystem, InfluenceScopeKind,
+    OrdersDirective as ProtoOrdersDirective, SupportChannel as ProtoSupportChannel,
+};
 
 fn main() {
     let mut app = build_headless_app();
@@ -257,11 +261,13 @@ enum InfluencerAction {
     Suppress,
 }
 
+const MAX_PROTO_FRAME: usize = 64 * 1024;
+
 fn spawn_command_listener(bind_addr: std::net::SocketAddr) -> Receiver<Command> {
     let listener = TcpListener::bind(bind_addr).expect("command listener bind failed");
-    listener
-        .set_nonblocking(true)
-        .expect("set_nonblocking failed");
+    if let Err(err) = listener.set_nonblocking(true) {
+        warn!("Failed to set nonblocking on command listener: {}", err);
+    }
 
     let (sender, receiver) = unbounded::<Command>();
     thread::spawn(move || loop {
@@ -269,9 +275,9 @@ fn spawn_command_listener(bind_addr: std::net::SocketAddr) -> Receiver<Command> 
             Ok((stream, addr)) => {
                 info!("Command client connected: {}", addr);
                 let sender = sender.clone();
-                thread::spawn(move || handle_client(stream, sender));
+                thread::spawn(move || handle_proto_client(stream, sender));
             }
-            Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(std::time::Duration::from_millis(50));
             }
             Err(err) => {
@@ -284,153 +290,128 @@ fn spawn_command_listener(bind_addr: std::net::SocketAddr) -> Receiver<Command> 
     receiver
 }
 
-fn handle_client(stream: std::net::TcpStream, sender: Sender<Command>) {
+fn handle_proto_client(stream: TcpStream, sender: Sender<Command>) {
     let mut reader = BufReader::new(stream);
-    let mut line = String::new();
     loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                match parse_command(trimmed) {
-                    Some(cmd) => {
-                        if sender.send(cmd).is_err() {
-                            break;
-                        }
-                    }
-                    None => warn!("Invalid command: {}", trimmed),
-                }
-            }
+        let mut len_buf = [0u8; 4];
+        match reader.read_exact(&mut len_buf) {
+            Ok(_) => {}
             Err(err) => {
-                warn!("Command read error: {}", err);
+                if err.kind() != io::ErrorKind::UnexpectedEof {
+                    warn!("Proto command length read error: {}", err);
+                }
                 break;
             }
         }
+        let frame_len = u32::from_le_bytes(len_buf) as usize;
+        if frame_len == 0 {
+            warn!("Proto command received empty frame");
+            continue;
+        }
+        if frame_len > MAX_PROTO_FRAME {
+            warn!(
+                "Proto command frame too large ({} bytes), dropping connection",
+                frame_len
+            );
+            break;
+        }
+        let mut payload = vec![0u8; frame_len];
+        if let Err(err) = reader.read_exact(&mut payload) {
+            if err.kind() != io::ErrorKind::UnexpectedEof {
+                warn!("Proto command payload read error: {}", err);
+            }
+            break;
+        }
+        match ProtoCommandEnvelope::decode(&payload) {
+            Ok(envelope) => {
+                if let Some(cmd) = command_from_payload(envelope.payload) {
+                    if sender.send(cmd).is_err() {
+                        break;
+                    }
+                }
+            }
+            Err(err) => {
+                warn!("Proto command decode error: {}", err);
+            }
+        }
     }
 }
 
-fn parse_command(input: &str) -> Option<Command> {
-    let mut parts = input.split_whitespace();
-    match parts.next()? {
-        "turn" => {
-            let amount = parts.next().unwrap_or("1").parse().ok()?;
-            Some(Command::Turn(amount))
-        }
-        "map_size" => {
-            let width: u32 = parts.next()?.parse().ok()?;
-            let height: u32 = parts.next()?.parse().ok()?;
+fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
+    match payload {
+        ProtoCommandPayload::Turn { steps } => Some(Command::Turn(steps)),
+        ProtoCommandPayload::ResetMap { width, height } => {
             Some(Command::ResetMap { width, height })
         }
-        "heat" => {
-            let entity: u64 = parts.next()?.parse().ok()?;
-            let delta: i64 = parts.next().unwrap_or("100000").parse().ok()?;
-            Some(Command::Heat { entity, delta })
-        }
-        "order" => {
-            let faction: u32 = parts.next()?.parse().ok()?;
-            let directive = parts.next().unwrap_or("ready");
-            match directive {
-                "ready" | "end" | "commit" => Some(Command::Orders {
-                    faction: FactionId(faction),
-                    orders: FactionOrders::end_turn(),
-                }),
-                other => {
-                    warn!("Unsupported order directive: {}", other);
-                    None
-                }
-            }
-        }
-        "rollback" => {
-            let target: u64 = parts.next()?.parse().ok()?;
-            Some(Command::Rollback { tick: target })
-        }
-        "bias" => {
-            let axis: usize = parts.next()?.parse().ok()?;
-            let value: f32 = parts.next()?.parse().ok()?;
-            Some(Command::AxisBias { axis, value })
-        }
-        "support" => {
-            let id: u32 = parts.next()?.parse().ok()?;
-            let magnitude: f32 = parts.next().unwrap_or("1.0").parse().ok()?;
+        ProtoCommandPayload::Heat { entity_bits, delta } => Some(Command::Heat {
+            entity: entity_bits,
+            delta,
+        }),
+        ProtoCommandPayload::Orders {
+            faction_id,
+            directive,
+        } => match directive {
+            ProtoOrdersDirective::Ready => Some(Command::Orders {
+                faction: FactionId(faction_id),
+                orders: FactionOrders::end_turn(),
+            }),
+        },
+        ProtoCommandPayload::Rollback { tick } => Some(Command::Rollback { tick }),
+        ProtoCommandPayload::AxisBias { axis, value } => Some(Command::AxisBias {
+            axis: axis as usize,
+            value,
+        }),
+        ProtoCommandPayload::SupportInfluencer { id, magnitude } => {
             Some(Command::SupportInfluencer { id, magnitude })
         }
-        "suppress" => {
-            let id: u32 = parts.next()?.parse().ok()?;
-            let magnitude: f32 = parts.next().unwrap_or("1.0").parse().ok()?;
+        ProtoCommandPayload::SuppressInfluencer { id, magnitude } => {
             Some(Command::SuppressInfluencer { id, magnitude })
         }
-        "support_channel" => {
-            let id: u32 = parts.next()?.parse().ok()?;
-            let channel_token = parts.next().unwrap_or("popular");
-            let channel = match channel_token.parse::<SupportChannel>() {
-                Ok(channel) => channel,
-                Err(_) => {
-                    warn!("Invalid support_channel target: {}", channel_token);
-                    return None;
-                }
-            };
-            let magnitude: f32 = parts.next().unwrap_or("1.0").parse().ok()?;
+        ProtoCommandPayload::SupportInfluencerChannel {
+            id,
+            channel,
+            magnitude,
+        } => {
+            let mapped = map_support_channel(channel)?;
             Some(Command::SupportInfluencerChannel {
                 id,
-                channel,
+                channel: mapped,
                 magnitude,
             })
         }
-        "spawn_influencer" => {
-            let mut scope: Option<InfluenceScopeKind> = None;
-            let mut generation_raw: Option<u16> = None;
-            if let Some(token) = parts.next() {
-                match token.to_ascii_lowercase().as_str() {
-                    "local" => scope = Some(InfluenceScopeKind::Local),
-                    "regional" => scope = Some(InfluenceScopeKind::Regional),
-                    "global" => scope = Some(InfluenceScopeKind::Global),
-                    "generation" | "gen" => {
-                        scope = Some(InfluenceScopeKind::Generation);
-                        generation_raw = parts.next().and_then(|v| v.parse::<u16>().ok());
-                    }
-                    other => {
-                        if let Ok(gen) = other.parse::<u16>() {
-                            scope = Some(InfluenceScopeKind::Generation);
-                            generation_raw = Some(gen);
-                        } else {
-                            warn!("Invalid spawn_influencer scope: {}", other);
-                            return None;
-                        }
-                    }
-                }
-            }
-            let generation = generation_raw.map(|value| value as GenerationId);
+        ProtoCommandPayload::SpawnInfluencer { scope, generation } => {
+            let generation = generation.map(|value| value as GenerationId);
             Some(Command::SpawnInfluencer { scope, generation })
         }
-        "corruption" => {
-            let subsystem_token = parts.next().unwrap_or("logistics");
-            let subsystem = parse_corruption_subsystem(subsystem_token)?;
-            let intensity: f32 = parts.next().unwrap_or("0.25").parse().ok()?;
-            let exposure_timer: u16 = parts.next().unwrap_or("3").parse().ok()?;
+        ProtoCommandPayload::InjectCorruption {
+            subsystem,
+            intensity,
+            exposure_timer,
+        } => {
+            let exposure = if exposure_timer > u16::MAX as u32 {
+                warn!(
+                    "Proto command exposure_timer {} exceeds u16::MAX; clamping",
+                    exposure_timer
+                );
+                u16::MAX
+            } else {
+                exposure_timer as u16
+            };
             Some(Command::InjectCorruption {
                 subsystem,
                 intensity,
-                exposure_timer,
+                exposure_timer: exposure,
             })
         }
-        _ => None,
     }
 }
 
-fn parse_corruption_subsystem(token: &str) -> Option<CorruptionSubsystem> {
-    match token.to_ascii_lowercase().as_str() {
-        "logistics" | "log" | "supply" => Some(CorruptionSubsystem::Logistics),
-        "trade" | "smuggling" | "commerce" => Some(CorruptionSubsystem::Trade),
-        "military" | "procurement" | "army" => Some(CorruptionSubsystem::Military),
-        "governance" | "bureaucracy" | "civic" => Some(CorruptionSubsystem::Governance),
-        _ => {
-            warn!("Invalid corruption subsystem: {}", token);
-            None
-        }
+fn map_support_channel(channel: ProtoSupportChannel) -> Option<SupportChannel> {
+    match channel {
+        ProtoSupportChannel::Popular => Some(SupportChannel::Popular),
+        ProtoSupportChannel::Peer => Some(SupportChannel::Peer),
+        ProtoSupportChannel::Institutional => Some(SupportChannel::Institutional),
+        ProtoSupportChannel::Humanitarian => Some(SupportChannel::Humanitarian),
     }
 }
 

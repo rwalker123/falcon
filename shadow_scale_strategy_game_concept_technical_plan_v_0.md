@@ -1092,7 +1092,7 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 Key next steps:
 - Build two tiny prototypes: (a) Rust/Bevy headless sim with the original CLI inspector (completed; now retired in favour of the Godot thin client), (b) Unity DOTS headless build streaming state to a web dashboard; compare ECS ergonomics, profiling, and determinism drift.
 - Draft licensing/business risk memo (Unity vs open-source headless stacks) including cost projections for server hosting under each model.
-- Define API schema (events, snapshots, command queue) that any client must implement; evaluate serialization options (FlatBuffers, Protobuf, bespoke binary).
+- Formalize the shared API schema (events, snapshots, command queue) around a Protobuf `CommandEnvelope` carried over the existing length-prefixed TCP channel. Host helpers (Rust + Godot/QuickJS wrappers) hide serialization details so tooling issues typed commands without touching raw bytes. See `docs/architecture.md` §"Networking" for implementation notes.
 - Inventory tooling requirements (visual debuggers, timeline inspectors) and decide whether to build web-based tools or integrate with existing engine editors.
 
 #### Prototype Plan (a): Rust/Bevy Headless Sim with CLI Inspector (Legacy)

@@ -31,6 +31,7 @@ const CAMERA_ZOOM_MIN = 0.5
 const CAMERA_ZOOM_MAX = 1.5
 const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
+const COMMAND_PROTO_PORT = 41001
 const UI_ZOOM_STEP = 0.1
 const UI_ZOOM_MIN = 0.5
 const UI_ZOOM_MAX = 2.0
@@ -64,7 +65,9 @@ func _ready() -> void:
         _ensure_timer()
     var command_host: String = _determine_command_host()
     var command_port: int = _determine_command_port()
+    var command_proto_port: int = _determine_command_proto_port()
     command_client = CommandClient.new()
+    command_client.set_proto_port(command_proto_port)
     var command_err: Error = command_client.connect_to_host(command_host, command_port)
     if command_err == OK:
         command_client.poll()  # poll to update status
@@ -311,3 +314,11 @@ func _determine_command_port() -> int:
         if parsed > 0:
             return parsed
     return COMMAND_PORT
+
+func _determine_command_proto_port() -> int:
+    var env_port: String = OS.get_environment("COMMAND_PROTO_PORT")
+    if env_port != "":
+        var parsed: int = int(env_port)
+        if parsed > 0:
+            return parsed
+    return COMMAND_PROTO_PORT

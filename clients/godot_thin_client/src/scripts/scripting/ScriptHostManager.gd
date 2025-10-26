@@ -22,6 +22,9 @@ var _active_scripts: Dictionary = {}
 func setup(command_client: CommandClient) -> void:
     _command_client = command_client
     _initialize_host()
+    if _host != null and _host.has_method("set_command_endpoint") and _command_client != null:
+        var proto_port: int = _command_client.get_proto_port()
+        _host.call("set_command_endpoint", _command_client.host, proto_port)
     _scan_packages()
     set_process(_host != null)
 
