@@ -487,7 +487,8 @@ fn snapshot_dict(
 
     let mut logistics_contrast_vec = logistics_normalized.clone();
     for value in logistics_contrast_vec.iter_mut() {
-        *value = *value * (1.0 - *value);
+        let v = *value;
+        *value = v * (1.0 - v);
     }
 
     let mut sentiment_contrast_vec = sentiment_normalized.clone();
