@@ -1744,13 +1744,9 @@ fn fog_raster_from_discoveries(
                 total += Scalar::from_raw(fragment.progress).clamp(Scalar::zero(), Scalar::one());
             }
             let count = fragments.len() as u32;
-            if count == 0 {
-                0
-            } else {
-                (total / Scalar::from_u32(count))
-                    .clamp(Scalar::zero(), Scalar::one())
-                    .raw()
-            }
+            (total / Scalar::from_u32(count))
+                .clamp(Scalar::zero(), Scalar::one())
+                .raw()
         };
 
         let weight = i128::from(size);
