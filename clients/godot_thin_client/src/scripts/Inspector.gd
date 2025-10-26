@@ -615,6 +615,7 @@ func _on_map_size_selected(index: int) -> void:
 	if width <= 0 or height <= 0:
 		return
 	if key == _map_size_key and _map_dimensions.x == width and _map_dimensions.y == height:
+		_append_command_log("Selected map size '%s' (%dx%d) is already active. No change made." % [key, width, height])
 		return
 	_map_size_key = key
 	_map_dimensions = Vector2i(width, height)
