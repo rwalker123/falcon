@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package shadow_scale.commands;
+
+option optimize_for = SPEED;
+
+enum SupportChannel {
+  SUPPORT_CHANNEL_UNSPECIFIED = 0;
+  SUPPORT_CHANNEL_POPULAR = 1;
+  SUPPORT_CHANNEL_PEER = 2;
+  SUPPORT_CHANNEL_INSTITUTIONAL = 3;
+  SUPPORT_CHANNEL_HUMANITARIAN = 4;
+}
+
+enum InfluenceScopeKind {
+  INFLUENCE_SCOPE_KIND_UNSPECIFIED = 0;
+  INFLUENCE_SCOPE_KIND_LOCAL = 1;
+  INFLUENCE_SCOPE_KIND_REGIONAL = 2;
+  INFLUENCE_SCOPE_KIND_GLOBAL = 3;
+  INFLUENCE_SCOPE_KIND_GENERATION = 4;
+}
+
+enum CorruptionSubsystem {
+  CORRUPTION_SUBSYSTEM_UNSPECIFIED = 0;
+  CORRUPTION_SUBSYSTEM_LOGISTICS = 1;
+  CORRUPTION_SUBSYSTEM_TRADE = 2;
+  CORRUPTION_SUBSYSTEM_MILITARY = 3;
+  CORRUPTION_SUBSYSTEM_GOVERNANCE = 4;
+}
+
+enum OrdersDirective {
+  ORDERS_DIRECTIVE_UNSPECIFIED = 0;
+  ORDERS_DIRECTIVE_READY = 1;
+}
+
+message TurnCommand {
+  uint32 steps = 1;
+}
+
+message HeatCommand {
+  uint64 entity_bits = 1;
+  sint64 delta = 2;
+}
+
+message OrdersCommand {
+  uint32 faction_id = 1;
+  OrdersDirective directive = 2;
+}
+
+message RollbackCommand {
+  uint64 tick = 1;
+}
+
+message AxisBiasCommand {
+  uint32 axis = 1;
+  float value = 2;
+}
+
+message SupportInfluencerCommand {
+  uint32 id = 1;
+  float magnitude = 2;
+}
+
+message SuppressInfluencerCommand {
+  uint32 id = 1;
+  float magnitude = 2;
+}
+
+message SupportInfluencerChannelCommand {
+  uint32 id = 1;
+  SupportChannel channel = 2;
+  float magnitude = 3;
+}
+
+message SpawnInfluencerCommand {
+  optional InfluenceScopeKind scope = 1;
+  optional uint32 generation = 2;
+}
+
+message InjectCorruptionCommand {
+  CorruptionSubsystem subsystem = 1;
+  float intensity = 2;
+  uint32 exposure_timer = 3;
+}
+
+message CommandEnvelope {
+  optional uint64 correlation_id = 15;
+
+  oneof command {
+    TurnCommand turn = 1;
+    HeatCommand heat = 2;
+    OrdersCommand orders = 3;
+    RollbackCommand rollback = 4;
+    AxisBiasCommand axis_bias = 5;
+    SupportInfluencerCommand support_influencer = 6;
+    SuppressInfluencerCommand suppress_influencer = 7;
+    SupportInfluencerChannelCommand support_channel = 8;
+    SpawnInfluencerCommand spawn_influencer = 9;
+    InjectCorruptionCommand inject_corruption = 10;
+  }
+}

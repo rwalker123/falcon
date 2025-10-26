@@ -2,7 +2,7 @@
 
 ## Overview
 - **Headless Core (`core_sim`)**: Bevy-based ECS that resolves a single turn via `run_turn`. Systems run in the order materials → logistics → population → power → tick increment → snapshot capture.
-- **Networking**: Thin TCP layer (`core_sim::network`) streams snapshot deltas, emits structured tracing/log frames, and receives text commands (`turn N`, `heat entity delta`, `bias axis value`). Snapshot deltas broadcast on `SimulationConfig::snapshot_bind` / `snapshot_flat_bind`, log feed on `SimulationConfig::log_bind`, and commands on `SimulationConfig::command_bind`.
+- **Networking**: Thin TCP layer (`core_sim::network`) streams snapshot deltas, emits structured tracing/log frames, and receives control commands. The command socket is migrating from ad-hoc newline-delimited strings to a length-prefixed Protobuf `CommandEnvelope`, with temporary dual support while clients transition. Snapshot deltas broadcast on `SimulationConfig::snapshot_bind` / `snapshot_flat_bind`, log feed on `SimulationConfig::log_bind`, and commands on `SimulationConfig::command_bind`.
 - **Serialization**: Snapshots/deltas represented via Rust structs and `sim_schema::schemas/snapshot.fbs` for cross-language clients.
 - **Shared Runtime (`sim_runtime`)**: Lightweight helpers (command parsing, bias handling, validation) shared by tooling and the headless core.
 - **Inspector Client (`clients/godot_thin_client`)**: Godot thin client that renders the map, streams snapshots, and exposes the tabbed inspector; the Logs tab now subscribes to the tracing feed and renders a per-turn duration sparkline alongside the scrollback. A Bevy-native inspector is under evaluation (see `shadow_scale_strategy_game_concept_technical_plan_v_0.md` Option F) but would live in a separate binary to keep the headless core deterministic.
@@ -153,6 +153,7 @@ per-faction orders -> command server -> turn queue -> run_turn -> snapshot -> br
 - **Snapshots**: Binary `bincode` frames prefixed with length for streaming.
 - **FlatBuffers**: Schema mirrors Rust structs for alternate clients.
 - **Logs**: Length-prefixed JSON frames carrying `tracing` events published via the log stream socket (default `tcp://127.0.0.1:41003`).
+- **Commands**: Length-prefixed Protobuf `CommandEnvelope` messages (mirrored by a temporary text parser) covering verbs such as turn stepping, axis bias, influencer directives, spawning, and corruption injection. `sim_runtime::command_bus` will expose builder/decoder helpers, and Godot/QuickJS hosts wrap them so scripts pass structured payloads instead of raw strings.
 - **Metrics**: `SimulationMetrics` resource updated every turn; logged via `tracing` (`turn.completed` now emits `duration_ms` alongside grid metrics for client consumption).
 
 ## Extensibility
@@ -163,4 +164,4 @@ per-faction orders -> command server -> turn queue -> run_turn -> snapshot -> br
 ## Next Steps
 - ~~Implement per-faction order submission and turn resolution phases.~~ (Handled via `TurnQueue` + per-faction `order` commands.)
 - ~~Persist snapshot history for replays and rollbacks.~~ (Ring-buffered `SnapshotHistory` with `rollback` command.)
-- Replace text commands with protocol buffers or JSON-RPC once control surface stabilizes.
+- Ship the Protobuf `CommandEnvelope` command channel with host helpers: define the schema, add dual-stack decode/encode on the server, update Godot client + QuickJS bridge to issue structured requests, then retire the text parser. Progress tracked under the Core Simulation roadmap items in `TASKS.md`.
