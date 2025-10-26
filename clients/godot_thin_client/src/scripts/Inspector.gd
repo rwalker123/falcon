@@ -604,7 +604,11 @@ func _on_map_size_selected(index: int) -> void:
 		return
 	var descriptor: Dictionary = metadata
 	var key: String = String(descriptor.get("key", ""))
+	# If the selected key is empty or "custom", do not process further.
+	# Custom map sizes are set programmatically and not directly selectable from the dropdown.
+	# Provide user feedback to avoid confusion.
 	if key == "" or key == "custom":
+		push_warning("Custom map sizes must be set via the map size controls, not directly from the dropdown.")
 		return
 	var width: int = int(descriptor.get("width", 0))
 	var height: int = int(descriptor.get("height", 0))
