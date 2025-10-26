@@ -2540,9 +2540,10 @@ func _refresh_overlay_selector() -> void:
 		_overlay_selector.hide()
 		return
 	if not selected:
-		_overlay_selector.select(0)
-		var metadata: Variant = _overlay_selector.get_item_metadata(0)
-		_selected_overlay_key = String(metadata)
+		if _overlay_selector.get_item_count() > 0:
+			_overlay_selector.select(0)
+			var metadata: Variant = _overlay_selector.get_item_metadata(0)
+			_selected_overlay_key = String(metadata)
 
 func _apply_overlay_selection_to_map() -> void:
 	if _map_view == null or _selected_overlay_key == "":
