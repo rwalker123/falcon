@@ -243,16 +243,16 @@ func _ingest_overlay_channels(overlays: Variant) -> void:
     var placeholder_variant: Variant = overlay_dict.get("placeholder_channels", PackedStringArray())
     if placeholder_variant is PackedStringArray:
         var placeholder_array: PackedStringArray = placeholder_variant
-        for i in placeholder_array.size():
-            var placeholder_key := String(placeholder_array[i])
+        for raw_placeholder_key in placeholder_array:
+            var placeholder_key := String(raw_placeholder_key)
             overlay_placeholder_flags[placeholder_key] = true
 
     var order_variant: Variant = overlay_dict.get("channel_order", PackedStringArray())
     overlay_channel_order = PackedStringArray()
     if order_variant is PackedStringArray:
         var order_array: PackedStringArray = order_variant
-        for i in order_array.size():
-            overlay_channel_order.append(String(order_array[i]))
+        for raw_channel_key in order_array:
+            overlay_channel_order.append(String(raw_channel_key))
     if overlay_channel_order.size() == 0:
         var keys: Array = overlay_channels.keys()
         keys.sort()

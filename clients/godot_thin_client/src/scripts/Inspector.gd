@@ -2474,16 +2474,16 @@ func _update_overlay_channels(overlay_dict: Dictionary) -> void:
 	var placeholder_variant: Variant = overlay_dict.get("placeholder_channels", PackedStringArray())
 	if placeholder_variant is PackedStringArray:
 		var placeholder_array: PackedStringArray = placeholder_variant
-		for i in placeholder_array.size():
-			var placeholder_key := String(placeholder_array[i])
+		for raw_placeholder_key in placeholder_array:
+			var placeholder_key := String(raw_placeholder_key)
 			_overlay_placeholder_flags[placeholder_key] = true
 
 	var order_variant: Variant = overlay_dict.get("channel_order", PackedStringArray())
 	_overlay_channel_order.clear()
 	if order_variant is PackedStringArray:
 		var order_array: PackedStringArray = order_variant
-		for i in order_array.size():
-			_overlay_channel_order.append(String(order_array[i]))
+		for raw_channel_key in order_array:
+			_overlay_channel_order.append(String(raw_channel_key))
 	if _overlay_channel_order.is_empty():
 		var keys: Array = _overlay_channel_labels.keys()
 		keys.sort()
