@@ -72,7 +72,7 @@
 - [x] Retire JSON snapshot proxy and stream FlatBuffers snapshots directly (Owner: Sam, Estimate: 1d; Deps: Godot decoding path).
 - [x] Integrate FlatBuffers stream into Godot client (Rust GDExtension or native parser) and retire JSON proxy once stable (Owner: Mira, Estimate: 4d; Deps: FlatBuffers schema stabilized).
 - [x] Export dedicated logistics/sentiment rasters from `core_sim` snapshots (Owner: Devi, Estimate: 2d; Deps: align `SnapshotHistory` ring buffer + schema update). _Status_: `core_sim` now emits logistics and sentiment rasters; `SnapshotHistory` persists them and FlatBuffers/Godot clients consume the new channels.
-- [ ] Extend `shadow_scale_flatbuffers`/Godot extension to surface multi-layer overlays (logistics, sentiment, corruption, fog) with toggleable channels (Owner: Mira, Estimate: 2d; Deps: raster export task).
+- [x] Extend `shadow_scale_flatbuffers`/Godot extension to surface multi-layer overlays (logistics, sentiment, corruption, fog) with toggleable channels (Owner: Mira, Estimate: 2d; Deps: raster export task). _Status_: Tiles now carry real corruption pressure and fog-of-knowledge rasters with inspector tooltips describing the scale.
 - [ ] Validate Godot overlay rendering against CLI inspector metrics (add debug telemetry + colour ramp checks) before enabling designers (Owner: Omar, Estimate: 1d; Deps: overlay channel support).
 
 ## Shared Scripting Capability Model

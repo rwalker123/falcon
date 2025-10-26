@@ -399,6 +399,7 @@ fn packed_from_slice(values: &[f32]) -> PackedFloat32Array {
 struct OverlayChannelParams<'a> {
     key: &'a str,
     label: &'a str,
+    description: Option<&'a str>,
     normalized: &'a PackedFloat32Array,
     raw: &'a PackedFloat32Array,
     contrast: &'a PackedFloat32Array,
@@ -412,6 +413,9 @@ fn insert_overlay_channel(
 ) {
     let mut channel = Dictionary::new();
     let _ = channel.insert("label", params.label);
+    if let Some(description) = params.description {
+        let _ = channel.insert("description", description);
+    }
     let _ = channel.insert("normalized", params.normalized.clone());
     let _ = channel.insert("raw", params.raw.clone());
     let _ = channel.insert("contrast", params.contrast.clone());
@@ -522,6 +526,9 @@ fn snapshot_dict(
         OverlayChannelParams {
             key: "logistics",
             label: "Logistics Throughput",
+            description: Some(
+                "Sum of supply flow touching the tile after current corruption multipliers.",
+            ),
             normalized: &logistics_array,
             raw: &logistics_raw_array,
             contrast: &logistics_contrast_array,
@@ -534,6 +541,9 @@ fn snapshot_dict(
         OverlayChannelParams {
             key: "sentiment",
             label: "Sentiment Morale",
+            description: Some(
+                "Average morale of population cohorts anchored to the tile (fixed-point scale).",
+            ),
             normalized: &sentiment_array,
             raw: &sentiment_raw_array,
             contrast: &sentiment_contrast_array,
@@ -546,6 +556,9 @@ fn snapshot_dict(
         OverlayChannelParams {
             key: "corruption",
             label: "Corruption Pressure",
+            description: Some(
+                "Composite pressure mixing active incidents with logistics, trade, military, and governance risk at each tile.",
+            ),
             normalized: &corruption_array,
             raw: &corruption_raw_array,
             contrast: &corruption_contrast_array,
@@ -558,6 +571,9 @@ fn snapshot_dict(
         OverlayChannelParams {
             key: "fog",
             label: "Fog of Knowledge",
+            description: Some(
+                "Knowledge gap for the controlling faction and local cohorts (1.0 = unknown, 0.0 = fully scouted).",
+            ),
             normalized: &fog_array,
             raw: &fog_raw_array,
             contrast: &fog_contrast_array,

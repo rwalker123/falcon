@@ -1,17 +1,16 @@
-[gd_scene load_steps=5 format=3 uid="uid://godot-thin-client-main"]
+[gd_scene load_steps=7 format=3 uid="uid://sgc4dtgnqkbv"]
 
-[ext_resource type="Script" path="res://src/scripts/Main.gd" id="1"]
-[ext_resource type="Script" path="res://src/scripts/MapView.gd" id="2"]
-[ext_resource type="Script" path="res://src/scripts/Hud.gd" id="3"]
-[ext_resource type="Script" path="res://src/scripts/Inspector.gd" id="4"]
-[ext_resource type="Script" path="res://src/scripts/TickSparkline.gd" id="5"]
-[ext_resource type="Script" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="6"]
+[ext_resource type="Script" uid="uid://boqelkrrb8mkn" path="res://src/scripts/Main.gd" id="1"]
+[ext_resource type="Script" uid="uid://xyeiriexdugg" path="res://src/scripts/MapView.gd" id="2"]
+[ext_resource type="Script" uid="uid://bsnqxvlash0d1" path="res://src/scripts/Hud.gd" id="3"]
+[ext_resource type="Script" uid="uid://dgjdlxbpsrrw6" path="res://src/scripts/Inspector.gd" id="4"]
+[ext_resource type="Script" uid="uid://cq8j33gird4si" path="res://src/scripts/TickSparkline.gd" id="5"]
+[ext_resource type="Script" uid="uid://dnhxgwd0jtak5" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="6"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1")
 
 [node name="Camera2D" type="Camera2D" parent="."]
-current = true
 zoom = Vector2(0.8, 0.8)
 
 [node name="MapLayer" type="Node2D" parent="."]
@@ -19,7 +18,6 @@ script = ExtResource("2")
 
 [node name="HUD" type="CanvasLayer" parent="."]
 script = ExtResource("3")
-layer = 1
 
 [node name="TurnLabel" type="Label" parent="HUD"]
 offset_left = 16.0
@@ -37,504 +35,587 @@ text = "Units: 0"
 offset_left = 16.0
 offset_top = 80.0
 theme_override_colors/font_color = Color(0.95, 0.8, 0.4, 1)
-text = "Inspector font: --"
+text = "UI zoom:"
 
-[node name="Inspector" type="CanvasLayer" parent="."]
-script = ExtResource("4")
+[node name="ZoomControls" type="HBoxContainer" parent="HUD"]
+offset_left = 91.0
+offset_top = 78.0
+offset_right = 185.0
+offset_bottom = 109.0
+theme_override_constants/separation = 4
 
-[node name="RootPanel" type="Panel" parent="Inspector"]
-anchor_right = 0.0
-anchor_bottom = 1.0
-offset_left = 16.0
-offset_top = 96.0
-offset_right = 360.0
-offset_bottom = -16.0
-custom_minimum_size = Vector2(320, 0)
+[node name="ZoomOutButton" type="Button" parent="HUD/ZoomControls"]
+layout_mode = 2
+text = "−"
 
-[node name="TabContainer" type="TabContainer" parent="Inspector/RootPanel"]
+[node name="ZoomResetButton" type="Button" parent="HUD/ZoomControls"]
+layout_mode = 2
+text = "100%"
+
+[node name="ZoomInButton" type="Button" parent="HUD/ZoomControls"]
+layout_mode = 2
+text = "+"
+
+[node name="TerrainLegendPanel" type="Panel" parent="HUD"]
+visible = false
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -240.0
+offset_top = 92.0
+offset_right = -16.0
+offset_bottom = 420.0
+
+[node name="LegendContainer" type="VBoxContainer" parent="HUD/TerrainLegendPanel"]
+layout_mode = 0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 8.0
 offset_top = 8.0
 offset_right = -8.0
 offset_bottom = -8.0
+theme_override_constants/separation = 6
+
+[node name="LegendTitle" type="Label" parent="HUD/TerrainLegendPanel/LegendContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.9, 0.95, 1, 1)
+text = "Terrain Types"
+
+[node name="LegendDescription" type="Label" parent="HUD/TerrainLegendPanel/LegendContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+autowrap_mode = 1
+
+[node name="LegendScroll" type="ScrollContainer" parent="HUD/TerrainLegendPanel/LegendContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="LegendList" type="VBoxContainer" parent="HUD/TerrainLegendPanel/LegendContainer/LegendScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="Inspector" type="CanvasLayer" parent="."]
+script = ExtResource("4")
+
+[node name="RootPanel" type="Panel" parent="Inspector"]
+custom_minimum_size = Vector2(320, 0)
+anchors_preset = 9
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = 121.0
+offset_right = 352.0
+offset_bottom = 9.0
+grow_vertical = 2
+
+[node name="TabContainer" type="TabContainer" parent="Inspector/RootPanel"]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = -8.0
+current_tab = 0
 
 [node name="Scripts" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer"]
 unique_name_in_owner = true
-script = ExtResource("6")
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 6
+script = ExtResource("6")
+metadata/_tab_index = 0
 
 [node name="Header" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Scripts"]
-anchor_right = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 0
 theme_override_constants/separation = 8
 
 [node name="ScriptsLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Scripts/Header"]
+layout_mode = 2
 text = "Shared Scripts"
 
 [node name="RefreshButton" type="Button" parent="Inspector/RootPanel/TabContainer/Scripts/Header"]
 unique_name_in_owner = true
+layout_mode = 2
 text = "Refresh"
-size_flags_horizontal = 1
 
 [node name="PackageList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Scripts"]
 unique_name_in_owner = true
-anchor_right = 1.0
+custom_minimum_size = Vector2(0, 180)
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-custom_minimum_size = Vector2(0, 180)
 
 [node name="Controls" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Scripts"]
-anchor_right = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 8
 
 [node name="EnableButton" type="Button" parent="Inspector/RootPanel/TabContainer/Scripts/Controls"]
 unique_name_in_owner = true
+layout_mode = 2
 text = "Enable"
-size_flags_horizontal = 1
 
 [node name="DisableButton" type="Button" parent="Inspector/RootPanel/TabContainer/Scripts/Controls"]
 unique_name_in_owner = true
+layout_mode = 2
 text = "Disable"
-size_flags_horizontal = 1
 
 [node name="ReloadButton" type="Button" parent="Inspector/RootPanel/TabContainer/Scripts/Controls"]
 unique_name_in_owner = true
+layout_mode = 2
 text = "Reload"
-size_flags_horizontal = 1
 
 [node name="DetailsText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Scripts"]
 unique_name_in_owner = true
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 bbcode_enabled = true
-autowrap_mode = 3
 
 [node name="Sentiment" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+visible = false
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+metadata/_tab_index = 1
 
 [node name="SentimentText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Sentiment"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 bbcode_enabled = true
 fit_content = true
-autowrap_mode = 3
 
 [node name="Terrain" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+visible = false
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+metadata/_tab_index = 2
 
 [node name="TerrainVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Terrain"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 12
 
 [node name="TerrainText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
-size_flags_vertical = 1
 bbcode_enabled = true
 fit_content = true
-autowrap_mode = 3
 
 [node name="BiomeSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox"]
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="BiomeSectionLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection"]
+layout_mode = 2
 size_flags_horizontal = 3
 text = "Biome Drill-down"
 
 [node name="BiomeList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection"]
-size_flags_horizontal = 3
 custom_minimum_size = Vector2(0, 180)
-same_column_width = true
+layout_mode = 2
+size_flags_horizontal = 3
 allow_rmb_select = true
+same_column_width = true
 
 [node name="BiomeDetailText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection"]
+layout_mode = 2
 size_flags_horizontal = 3
 bbcode_enabled = true
 fit_content = true
-autowrap_mode = 3
 
 [node name="TileSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox"]
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="TileSectionLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/TileSection"]
+layout_mode = 2
 size_flags_horizontal = 3
 text = "Tile Inspection"
 
 [node name="TileList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/TileSection"]
-size_flags_horizontal = 3
 custom_minimum_size = Vector2(0, 160)
+layout_mode = 2
+size_flags_horizontal = 3
 allow_rmb_select = true
 
 [node name="TileDetailText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/TileSection"]
+layout_mode = 2
 size_flags_horizontal = 3
 bbcode_enabled = true
 fit_content = true
-autowrap_mode = 3
 
 [node name="OverlaySection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox"]
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="OverlaySectionLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection"]
+layout_mode = 2
 size_flags_horizontal = 3
 text = "Future Overlays"
 
 [node name="OverlayTabs" type="TabContainer" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection"]
+layout_mode = 2
 size_flags_horizontal = 3
-size_flags_vertical = 1
+current_tab = 0
 
 [node name="Culture" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlayTabs"]
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 4
+metadata/_tab_index = 0
 
 [node name="CulturePlaceholder" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlayTabs/Culture"]
+layout_mode = 2
 size_flags_horizontal = 3
 bbcode_enabled = true
-fit_content = true
-autowrap_mode = 3
 text = "[i]Culture overlays coming soon.[/i] Connect inspector data to culture layer snapshots to activate this panel."
+fit_content = true
 
 [node name="Military" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlayTabs"]
+visible = false
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 4
+metadata/_tab_index = 1
 
 [node name="MilitaryPlaceholder" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/OverlaySection/OverlayTabs/Military"]
+layout_mode = 2
 size_flags_horizontal = 3
 bbcode_enabled = true
-fit_content = true
-autowrap_mode = 3
 text = "[i]Military overlays coming soon.[/i] Hook into future garrison/fortification streams to populate readiness stats here."
+fit_content = true
 
 [node name="Culture" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+visible = false
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+metadata/_tab_index = 3
 
 [node name="CultureVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Culture"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 12
 
 [node name="CultureSummarySection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox"]
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="CultureSummaryLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox/CultureSummarySection"]
+layout_mode = 2
 size_flags_horizontal = 3
 text = "Global Identity"
 
 [node name="CultureSummaryText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox/CultureSummarySection"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
-size_flags_vertical = 1
 bbcode_enabled = true
 fit_content = true
-autowrap_mode = 3
 
 [node name="CultureDivergenceSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox"]
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="CultureDivergenceLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection"]
+layout_mode = 2
 size_flags_horizontal = 3
 text = "Regional & Local Divergence"
 
 [node name="CultureDivergenceList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection"]
-size_flags_horizontal = 3
 custom_minimum_size = Vector2(0, 180)
-same_column_width = true
+layout_mode = 2
+size_flags_horizontal = 3
 allow_rmb_select = true
+same_column_width = true
 
 [node name="CultureDivergenceDetail" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
-size_flags_vertical = 1
 bbcode_enabled = true
 fit_content = true
-autowrap_mode = 3
 
 [node name="CultureTensionSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox"]
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="CultureTensionLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox/CultureTensionSection"]
+layout_mode = 2
 size_flags_horizontal = 3
 text = "Active Tensions"
 
 [node name="CultureTensionText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Culture/CultureVBox/CultureTensionSection"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
-size_flags_vertical = 1
 bbcode_enabled = true
 fit_content = true
-autowrap_mode = 3
 
 [node name="Influencers" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+visible = false
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+metadata/_tab_index = 4
 
 [node name="InfluencersText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Influencers"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 bbcode_enabled = true
 fit_content = true
-autowrap_mode = 3
 
 [node name="Corruption" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+visible = false
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+metadata/_tab_index = 5
 
 [node name="CorruptionText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Corruption"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 bbcode_enabled = true
 fit_content = true
-autowrap_mode = 3
 
 [node name="Trade" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+visible = false
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+metadata/_tab_index = 6
 
 [node name="TradeVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Trade"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 12
 
 [node name="TradeSummarySection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox"]
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="TradeSummaryLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection"]
+layout_mode = 2
 size_flags_horizontal = 3
 text = "Trade Diffusion"
 
 [node name="TradeSummaryText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
-size_flags_vertical = 1
 bbcode_enabled = true
 fit_content = true
-autowrap_mode = 3
 
 [node name="TradeControls" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox"]
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="TradeOverlayToggle" type="CheckButton" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox/TradeControls"]
+layout_mode = 2
 text = "Show trade overlay"
 
 [node name="TradeLinksSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox"]
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="TradeLinksLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection"]
+layout_mode = 2
 size_flags_horizontal = 3
 text = "Top Trade Links"
 
 [node name="TradeLinksList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection"]
-size_flags_horizontal = 3
 custom_minimum_size = Vector2(0, 200)
-same_column_width = true
+layout_mode = 2
+size_flags_horizontal = 3
 allow_rmb_select = true
+same_column_width = true
 
 [node name="TradeEventsSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox"]
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="TradeEventsLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection"]
+layout_mode = 2
 size_flags_horizontal = 3
 text = "Recent Trade Events"
 
 [node name="TradeEventsText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
-size_flags_vertical = 1
 bbcode_enabled = true
 fit_content = true
-autowrap_mode = 3
 
 [node name="Knowledge" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+visible = false
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+metadata/_tab_index = 7
 
 [node name="KnowledgeVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Knowledge"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 12
 
 [node name="KnowledgeSummaryLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
 size_flags_horizontal = 3
 text = "Knowledge Diffusion"
 
 [node name="KnowledgeSummaryText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
-size_flags_vertical = 1
 bbcode_enabled = true
 fit_content = true
-autowrap_mode = 3
 
 [node name="DiscoveryProgressSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="DiscoveryProgressLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection"]
+layout_mode = 2
 size_flags_horizontal = 3
 text = "Discovery Progress"
 
 [node name="DiscoveryProgressList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection"]
-size_flags_horizontal = 3
 custom_minimum_size = Vector2(0, 200)
-same_column_width = true
+layout_mode = 2
+size_flags_horizontal = 3
 allow_rmb_select = true
+same_column_width = true
 
 [node name="KnowledgeEventsSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="KnowledgeEventsLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection"]
+layout_mode = 2
 size_flags_horizontal = 3
 text = "Recent Knowledge Events"
 
 [node name="KnowledgeEventsText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
-size_flags_vertical = 1
 bbcode_enabled = true
 fit_content = true
-autowrap_mode = 3
 
 [node name="Logs" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+visible = false
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 8
+metadata/_tab_index = 8
 
 [node name="SparklineContainer" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Logs"]
+layout_mode = 2
 size_flags_horizontal = 3
-size_flags_vertical = 1
 theme_override_constants/separation = 4
 
 [node name="SparklineLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Logs/SparklineContainer"]
+layout_mode = 2
 size_flags_horizontal = 3
 text = "Recent Turn Durations"
 
 [node name="SparklineStatusLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Logs/SparklineContainer"]
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.8, 0.86, 0.95, 1)
 text = "Connecting to log stream..."
 
 [node name="SparklineGraph" type="Control" parent="Inspector/RootPanel/TabContainer/Logs/SparklineContainer"]
+custom_minimum_size = Vector2(0, 100)
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-custom_minimum_size = Vector2(0, 100)
 script = ExtResource("5")
 
 [node name="SparklineStatsLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Logs/SparklineContainer"]
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.85, 0.9, 1, 1)
 text = "Awaiting telemetry."
 
 [node name="LogScroll" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer/Logs"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
 [node name="LogsText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Logs/LogScroll"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 bbcode_enabled = true
 fit_content = true
-autowrap_mode = 3
 
 [node name="Commands" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+visible = false
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+metadata/_tab_index = 9
 
 [node name="StatusLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands"]
+layout_mode = 2
 size_flags_horizontal = 3
 text = "Commands: disconnected."
 
 [node name="ControlsRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
+layout_mode = 2
 size_flags_horizontal = 3
-size_flags_vertical = 1
 
 [node name="StepOneButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/ControlsRow"]
+layout_mode = 2
 text = "Step +1"
 
 [node name="StepTenButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/ControlsRow"]
+layout_mode = 2
 text = "Step +10"
 
 [node name="RollbackButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/ControlsRow"]
+layout_mode = 2
 text = "Rollback -1"
 
 [node name="AutoplayRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
+layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="AutoplayToggle" type="CheckButton" parent="Inspector/RootPanel/TabContainer/Commands/AutoplayRow"]
+layout_mode = 2
 text = "Auto-play"
 
 [node name="AutoplayIntervalLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/AutoplayRow"]
+layout_mode = 2
 text = "Interval (s):"
 
 [node name="AutoplayIntervalSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/AutoplayRow"]
+layout_mode = 2
 min_value = 0.2
 max_value = 5.0
 step = 0.1
@@ -542,19 +623,22 @@ value = 0.5
 alignment = 1
 
 [node name="AxisControls" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
+layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="AxisLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/AxisControls"]
+layout_mode = 2
 text = "Axis Bias"
 
 [node name="AxisRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/AxisControls"]
+layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="AxisDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Commands/AxisControls/AxisRow"]
-size_flags_horizontal = 1
+layout_mode = 2
 
 [node name="AxisValueSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/AxisControls/AxisRow"]
-size_flags_horizontal = 1
+layout_mode = 2
 min_value = -1.0
 max_value = 1.0
 step = 0.01
@@ -562,131 +646,145 @@ allow_greater = true
 allow_lesser = true
 
 [node name="AxisApplyButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/AxisControls/AxisRow"]
+layout_mode = 2
 text = "Apply"
 
 [node name="AxisResetButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/AxisControls/AxisRow"]
+layout_mode = 2
 text = "Reset Axis"
 
 [node name="AxisResetAllButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/AxisControls"]
-text = "Reset All Axes"
+layout_mode = 2
 size_flags_horizontal = 3
+text = "Reset All Axes"
 
 [node name="InfluencerControls" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
+layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="InfluencerLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls"]
+layout_mode = 2
 text = "Influencer Commands"
 
 [node name="InfluencerRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls"]
+layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="InfluencerDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow"]
-size_flags_horizontal = 1
+layout_mode = 2
 
 [node name="InfluencerMagnitudeSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow"]
-size_flags_horizontal = 1
-min_value = 0.0
+layout_mode = 2
 max_value = 5.0
 step = 0.1
 value = 1.0
 
 [node name="InfluencerSupportButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow"]
+layout_mode = 2
 text = "Support"
 
 [node name="InfluencerSuppressButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow"]
+layout_mode = 2
 text = "Suppress"
 
 [node name="ChannelRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls"]
+layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="ChannelDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow"]
-size_flags_horizontal = 1
+layout_mode = 2
 
 [node name="ChannelMagnitudeSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow"]
-size_flags_horizontal = 1
-min_value = 0.0
+layout_mode = 2
 max_value = 5.0
 step = 0.1
 value = 1.0
 
 [node name="ChannelBoostButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow"]
+layout_mode = 2
 text = "Channel Boost"
 
 [node name="SpawnRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls"]
+layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="SpawnScopeDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow"]
-size_flags_horizontal = 1
+layout_mode = 2
 
 [node name="SpawnGenerationSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow"]
-size_flags_horizontal = 1
-min_value = 0.0
+layout_mode = 2
 max_value = 65535.0
-step = 1.0
 
 [node name="SpawnButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow"]
+layout_mode = 2
 text = "Spawn"
 
 [node name="CorruptionControls" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
+layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="CorruptionLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/CorruptionControls"]
+layout_mode = 2
 text = "Corruption Injection"
 
 [node name="CorruptionRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/CorruptionControls"]
+layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="CorruptionSubsystemDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow"]
-size_flags_horizontal = 1
+layout_mode = 2
 
 [node name="CorruptionIntensitySpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow"]
-size_flags_horizontal = 1
-min_value = 0.0
+layout_mode = 2
 max_value = 2.0
 step = 0.05
 value = 0.25
 
 [node name="CorruptionExposureSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow"]
-size_flags_horizontal = 1
+layout_mode = 2
 min_value = 1.0
 max_value = 24.0
-step = 1.0
 value = 3.0
 
 [node name="CorruptionInjectButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow"]
+layout_mode = 2
 text = "Inject"
 
 [node name="HeatControls" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
+layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="HeatLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/HeatControls"]
+layout_mode = 2
 text = "Heat Debug"
 
 [node name="HeatRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/HeatControls"]
+layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="HeatEntitySpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
-size_flags_horizontal = 1
-min_value = 0.0
+layout_mode = 2
 max_value = 999999999.0
-step = 1.0
 
 [node name="HeatDeltaSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
-size_flags_horizontal = 1
+layout_mode = 2
 min_value = -1000000.0
 max_value = 1000000.0
 step = 1000.0
 value = 100000.0
 
 [node name="HeatApplyButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
+layout_mode = 2
 text = "Apply Heat"
 
 [node name="LogPanel" type="Panel" parent="Inspector/RootPanel/TabContainer/Commands"]
 custom_minimum_size = Vector2(0, 160)
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
 [node name="LogScroll" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer/Commands/LogPanel"]
+layout_mode = 0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 6.0
@@ -697,41 +795,7 @@ size_flags_horizontal = 3
 size_flags_vertical = 3
 
 [node name="LogText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Commands/LogPanel/LogScroll"]
-anchor_right = 1.0
-anchor_bottom = 1.0
+layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-bbcode_enabled = false
 fit_content = true
-autowrap_mode = 3
-[node name="TerrainLegendPanel" type="Panel" parent="HUD"]
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -240.0
-offset_top = 92.0
-offset_right = -16.0
-offset_bottom = 420.0
-visible = false
-
-[node name="LegendTitle" type="Label" parent="HUD/TerrainLegendPanel"]
-anchor_right = 1.0
-offset_left = 8.0
-offset_top = 8.0
-offset_right = -8.0
-theme_override_colors/font_color = Color(0.9, 0.95, 1, 1)
-text = "Terrain Legend"
-
-[node name="LegendScroll" type="ScrollContainer" parent="HUD/TerrainLegendPanel"]
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = 8.0
-offset_top = 44.0
-offset_right = -8.0
-offset_bottom = -8.0
-scroll_horizontal_enabled = false
-
-[node name="LegendList" type="VBoxContainer" parent="HUD/TerrainLegendPanel/LegendScroll"]
-anchor_right = 1.0
-offset_right = 0.0
-size_flags_horizontal = 3
-size_flags_vertical = 3

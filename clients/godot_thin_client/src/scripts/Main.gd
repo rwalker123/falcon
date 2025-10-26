@@ -2,7 +2,6 @@ extends Node2D
 
 const SnapshotLoader = preload("res://src/scripts/SnapshotLoader.gd")
 const CommandClient = preload("res://src/scripts/CommandClient.gd")
-const Typography = preload("res://src/scripts/Typography.gd")
 const ScriptHostManager = preload("res://src/scripts/scripting/ScriptHostManager.gd")
 
 @onready var map_view: Node2D = $MapLayer
@@ -18,6 +17,7 @@ var command_client: CommandClient
 var _warned_stream_fallback: bool = false
 var _camera_initialized: bool = false
 var script_host_manager: ScriptHostManager = null
+var ui_zoom: float = 1.0
 
 const MOCK_DATA_PATH = "res://src/data/mock_snapshots.json"
 const TURN_INTERVAL_SECONDS = 1.5
@@ -31,6 +31,9 @@ const CAMERA_ZOOM_MIN = 0.5
 const CAMERA_ZOOM_MAX = 1.5
 const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
+const UI_ZOOM_STEP = 0.1
+const UI_ZOOM_MIN = 0.5
+const UI_ZOOM_MAX = 2.0
 const SNAPSHOT_DELTA_FIELDS := [
     "influencer_updates",
     "population_updates",
@@ -41,7 +44,6 @@ const SNAPSHOT_DELTA_FIELDS := [
 ]
 
 func _ready() -> void:
-    Typography.initialize()
     var ext: Resource = load("res://native/shadow_scale_godot.gdextension")
     if ext == null:
         push_warning("ShadowScale Godot extension not found; streaming disabled.")
@@ -77,20 +79,27 @@ func _ready() -> void:
     script_host_manager.setup(command_client)
     if inspector != null and inspector.has_method("attach_script_host"):
         inspector.call("attach_script_host", script_host_manager)
-    if hud != null and hud.has_method("apply_typography"):
-        hud.call("apply_typography")
-    if inspector != null and inspector.has_method("apply_typography"):
-        inspector.call("apply_typography")
     var initial: Dictionary = {}
     if streaming_mode and not snapshot_loader.last_stream_snapshot.is_empty():
         initial = snapshot_loader.last_stream_snapshot
     else:
         initial = snapshot_loader.current()
     _apply_snapshot(initial)
+    _ensure_ui_zoom_actions()
+    ui_zoom = _resolve_ui_zoom()
+    _apply_ui_zoom()
+    if hud != null:
+        if not hud.is_connected("ui_zoom_delta", Callable(self, "_on_hud_zoom_delta")):
+            hud.connect("ui_zoom_delta", Callable(self, "_on_hud_zoom_delta"))
+        if not hud.is_connected("ui_zoom_reset", Callable(self, "_on_hud_zoom_reset")):
+            hud.connect("ui_zoom_reset", Callable(self, "_on_hud_zoom_reset"))
     if inspector != null and inspector.has_method("attach_map_view"):
         inspector.call("attach_map_view", map_view)
     if map_view != null and inspector != null and map_view.has_signal("hex_selected") and inspector.has_method("focus_tile_from_map"):
         map_view.connect("hex_selected", Callable(inspector, "focus_tile_from_map"))
+    if map_view != null and map_view.has_signal("overlay_legend_changed") and hud != null and hud.has_method("update_overlay_legend"):
+        map_view.connect("overlay_legend_changed", Callable(self, "_on_overlay_legend_changed"))
+        map_view.call_deferred("refresh_overlay_legend")
     if inspector != null and inspector.has_method("set_streaming_active"):
         inspector.call("set_streaming_active", streaming_mode)
 
@@ -115,11 +124,8 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     var metrics_variant: Variant = map_view.call("display_snapshot", snapshot)
     var metrics: Dictionary = metrics_variant if metrics_variant is Dictionary else {}
     hud.call("update_overlay", snapshot.get("turn", 0), metrics)
-    if hud != null and inspector != null:
-        if inspector.has_method("get_resolved_font_size") and hud.has_method("set_inspector_font_size"):
-            var resolved_size_variant: Variant = inspector.call("get_resolved_font_size")
-            if typeof(resolved_size_variant) in [TYPE_INT, TYPE_FLOAT]:
-                hud.call("set_inspector_font_size", int(resolved_size_variant))
+    if hud != null and hud.has_method("set_ui_zoom"):
+        hud.call("set_ui_zoom", ui_zoom)
     if inspector != null:
         if is_delta:
             if inspector.has_method("update_delta"):
@@ -129,9 +135,6 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
                 inspector.call("update_snapshot", snapshot)
         if inspector.has_method("set_streaming_active"):
             inspector.call("set_streaming_active", streaming_mode)
-    var legend_variant: Variant = map_view.call("terrain_palette_entries")
-    if legend_variant is Array:
-        hud.call("update_terrain_legend", legend_variant)
     var recenter: bool = false
     if metrics.has("dimensions_changed"):
         recenter = bool(metrics["dimensions_changed"])
@@ -163,6 +166,12 @@ func _unhandled_input(event: InputEvent) -> void:
     elif event.is_action_pressed("ui_accept"):
         if map_view != null:
             map_view.call("toggle_terrain_mode")
+    elif event.is_action_pressed("ui_zoom_in"):
+        _adjust_ui_zoom(UI_ZOOM_STEP)
+    elif event.is_action_pressed("ui_zoom_out"):
+        _adjust_ui_zoom(-UI_ZOOM_STEP)
+    elif event.is_action_pressed("ui_zoom_reset"):
+        set_ui_zoom(1.0)
     elif event is InputEventMouseButton:
         var mouse_event: InputEventMouseButton = event as InputEventMouseButton
         if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP and mouse_event.pressed:
@@ -206,6 +215,10 @@ func _process(delta: float) -> void:
     if pan_input != Vector2.ZERO:
         camera.position += pan_input * CAMERA_PAN_SPEED * delta
 
+func _on_overlay_legend_changed(legend: Dictionary) -> void:
+    if hud != null and hud.has_method("update_overlay_legend"):
+        hud.call("update_overlay_legend", legend)
+
 func _snapshot_is_delta(snapshot: Dictionary) -> bool:
     for field in SNAPSHOT_DELTA_FIELDS:
         if snapshot.has(field):
@@ -215,6 +228,55 @@ func _snapshot_is_delta(snapshot: Dictionary) -> bool:
 func _adjust_camera_zoom(delta_zoom: float) -> void:
     var new_zoom: float = clamp(camera.zoom.x + delta_zoom, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
     camera.zoom = Vector2(new_zoom, new_zoom)
+
+func _adjust_ui_zoom(delta: float) -> void:
+    set_ui_zoom(ui_zoom + delta)
+
+func set_ui_zoom(scale: float) -> void:
+    ui_zoom = clamp(scale, UI_ZOOM_MIN, UI_ZOOM_MAX)
+    _apply_ui_zoom()
+
+func _apply_ui_zoom() -> void:
+    var root := get_tree().root
+    if root != null:
+        root.content_scale_factor = ui_zoom
+    if hud != null and hud.has_method("set_ui_zoom"):
+        hud.call("set_ui_zoom", ui_zoom)
+
+func _on_hud_zoom_delta(step: float) -> void:
+    _adjust_ui_zoom(step * UI_ZOOM_STEP)
+
+func _on_hud_zoom_reset() -> void:
+    set_ui_zoom(1.0)
+
+func _resolve_ui_zoom() -> float:
+    var env_value: String = OS.get_environment("UI_ZOOM")
+    if env_value != "":
+        var parsed := env_value.to_float()
+        if parsed > 0.0:
+            return clamp(parsed, UI_ZOOM_MIN, UI_ZOOM_MAX)
+    return 1.0
+
+func _ensure_ui_zoom_actions() -> void:
+    var zoom_actions := {
+        "ui_zoom_in": KEY_EQUAL,
+        "ui_zoom_out": KEY_MINUS,
+        "ui_zoom_reset": KEY_0,
+    }
+    for action in zoom_actions.keys():
+        if not InputMap.has_action(action):
+            InputMap.add_action(action)
+        var keycode: int = zoom_actions[action]
+        var has_event := false
+        for existing_event in InputMap.action_get_events(action):
+            if existing_event is InputEventKey and existing_event.keycode == keycode:
+                has_event = true
+                break
+        if not has_event:
+            var key_event := InputEventKey.new()
+            key_event.keycode = keycode
+            key_event.physical_keycode = keycode
+            InputMap.action_add_event(action, key_event)
 
 func _determine_stream_enabled() -> bool:
     var env_flag: String = OS.get_environment("STREAM_ENABLED")
