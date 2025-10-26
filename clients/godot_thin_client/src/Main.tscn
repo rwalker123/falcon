@@ -107,7 +107,7 @@ anchors_preset = 9
 anchor_bottom = 1.0
 offset_left = 6.0
 offset_top = 135.0
-offset_right = 543.0
+offset_right = 627.0
 offset_bottom = 23.0
 grow_vertical = 2
 
@@ -119,10 +119,11 @@ offset_left = 8.0
 offset_top = 8.0
 offset_right = -8.0
 offset_bottom = -8.0
-current_tab = 0
+current_tab = 9
 
 [node name="Scripts" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer"]
 unique_name_in_owner = true
+visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -575,7 +576,6 @@ bbcode_enabled = true
 fit_content = true
 
 [node name="Commands" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer"]
-visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
