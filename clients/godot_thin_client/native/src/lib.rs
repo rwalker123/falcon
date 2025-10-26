@@ -4,14 +4,59 @@ use std::collections::{BTreeSet, HashMap};
 
 mod runtime;
 
+use runtime::{manifest_to_json, responses_to_json, transmit_proto_command, Manifest, ScriptError};
 pub use runtime::{
     manifest_to_json as script_manifest_to_json, responses_to_json as script_responses_to_json,
     Manager as ScriptRuntimeManager, Manifest as ScriptManifest, ScriptError as ScriptHostError,
     ScriptResponse as ScriptRuntimeResponse,
 };
-use runtime::{manifest_to_json, responses_to_json, Manifest, ScriptError};
 use serde_json::{json, Map as JsonMap, Number as JsonNumber, Value as JsonValue};
 use sim_runtime::scripting::SimScriptState;
+use sim_runtime::{parse_command_line, CommandEnvelope};
+
+#[derive(GodotClass)]
+#[class(base = RefCounted, init)]
+pub struct CommandBridge;
+
+#[godot_api]
+impl CommandBridge {
+    #[func]
+    pub fn send_line(&self, host: GString, proto_port: i64, line: GString) -> Dictionary {
+        let mut dict = Dictionary::new();
+        if proto_port <= 0 || proto_port > u16::MAX as i64 {
+            let _ = dict.insert("ok", false);
+            let _ = dict.insert("error", format!("invalid port {proto_port}"));
+            return dict;
+        }
+
+        let host_str = host.to_string();
+        let line_str = line.to_string();
+
+        match parse_command_line(&line_str) {
+            Ok(payload) => {
+                let envelope = CommandEnvelope {
+                    payload,
+                    correlation_id: None,
+                };
+                match transmit_proto_command(&host_str, proto_port as u16, &envelope) {
+                    Ok(_) => {
+                        let _ = dict.insert("ok", true);
+                    }
+                    Err(err) => {
+                        let _ = dict.insert("ok", false);
+                        let _ = dict.insert("error", err);
+                    }
+                }
+            }
+            Err(err) => {
+                let _ = dict.insert("ok", false);
+                let _ = dict.insert("error", err.to_string());
+            }
+        }
+
+        dict
+    }
+}
 
 fn resolve_entry_path(manifest_path: &str, entry: &str) -> String {
     if entry.starts_with("res://") || entry.starts_with("user://") {

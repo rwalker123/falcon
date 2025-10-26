@@ -43,7 +43,6 @@ pub struct SimulationConfig {
     pub snapshot_bind: SocketAddr,
     pub snapshot_flat_bind: SocketAddr,
     pub command_bind: SocketAddr,
-    pub command_proto_bind: SocketAddr,
     pub log_bind: SocketAddr,
     pub snapshot_history_limit: usize,
 }
@@ -79,7 +78,6 @@ impl Default for SimulationConfig {
             snapshot_bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000),
             snapshot_flat_bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41002),
             command_bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41001),
-            command_proto_bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41004),
             log_bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41003),
             snapshot_history_limit: 256,
         }

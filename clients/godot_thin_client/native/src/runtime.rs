@@ -1074,57 +1074,12 @@ fn dispatch_proto_command(
             payload: command_payload,
             correlation_id,
         };
-        match envelope.encode_to_vec() {
-            Ok(bytes) => {
-                let addr = format!("{}:{}", endpoint.host, endpoint.port);
-                match TcpStream::connect(&addr) {
-                    Ok(mut stream) => {
-                        let _ = stream.set_nodelay(true);
-                        let len = bytes.len() as u32;
-                        let result = stream
-                            .write_all(&len.to_le_bytes())
-                            .and_then(|_| stream.write_all(&bytes))
-                            .and_then(|_| stream.flush());
-                        match result {
-                            Ok(_) => {
-                                send_command_event(
-                                    shared,
-                                    true,
-                                    line.clone(),
-                                    correlation_id,
-                                    None,
-                                );
-                            }
-                            Err(err) => {
-                                send_command_event(
-                                    shared,
-                                    false,
-                                    line.clone(),
-                                    correlation_id,
-                                    Some(format!("io error: {err}")),
-                                );
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        send_command_event(
-                            shared,
-                            false,
-                            line.clone(),
-                            correlation_id,
-                            Some(format!("connect error: {err}")),
-                        );
-                    }
-                }
+        match transmit_proto_command(&endpoint.host, endpoint.port, &envelope) {
+            Ok(_) => {
+                send_command_event(shared, true, line.clone(), correlation_id, None);
             }
-            Err(CommandEncodeError::Encode(err)) => {
-                send_command_event(
-                    shared,
-                    false,
-                    line,
-                    correlation_id,
-                    Some(format!("encode error: {err}")),
-                );
+            Err(err) => {
+                send_command_event(shared, false, line, correlation_id, Some(err));
             }
         }
     } else {
@@ -1155,6 +1110,29 @@ fn send_command_event(
         event: "commands.issue.result".to_string(),
         payload,
     });
+}
+
+pub(crate) fn transmit_proto_command(
+    host: &str,
+    port: u16,
+    envelope: &CommandEnvelope,
+) -> Result<(), String> {
+    let bytes = envelope
+        .encode_to_vec()
+        .map_err(|CommandEncodeError::Encode(err)| format!("encode error: {err}"))?;
+    let addr = format!("{}:{}", host, port);
+    let mut stream = TcpStream::connect(&addr).map_err(|err| format!("connect error: {err}"))?;
+    let _ = stream.set_nodelay(true);
+    stream
+        .write_all(&(bytes.len() as u32).to_le_bytes())
+        .map_err(|err| format!("length write error: {err}"))?;
+    stream
+        .write_all(&bytes)
+        .map_err(|err| format!("payload write error: {err}"))?;
+    stream
+        .flush()
+        .map_err(|err| format!("flush error: {err}"))?;
+    Ok(())
 }
 
 fn register_descriptor(shared: &ScriptSharedState, descriptor: JsValue) -> Result<(), String> {

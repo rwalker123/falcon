@@ -94,7 +94,7 @@
 - [x] Persist snapshot history for replays and rollbacks (Owner: Devi, Estimate: 3d).
 - [x] Define `CommandEnvelope` protobuf schema and expose encode/decode helpers in `sim_runtime` (Owner: Leo, Estimate: 0.5d; Deps: docs updated for protobuf migration).
 - [x] Add dual-stack command server (Protobuf + legacy text) and update Godot/QuickJS host wrappers to issue structured commands (Owner: Leo, Estimate: 1.0d; Deps: `CommandEnvelope` helpers).
-- [ ] Retire legacy text parser, cut a migration guide for clients, and enable protobuf-only mode once tooling validates (Owner: Leo, Estimate: 0.5d; Deps: dual-stack validation).
+- [x] Retire legacy text parser, cut a migration guide for clients, and enable protobuf-only mode once tooling validates (Owner: Leo, Estimate: 0.5d; Deps: dual-stack validation).
 
 ## Documentation
 - [x] Document workflow and architecture decisions in `/docs`.

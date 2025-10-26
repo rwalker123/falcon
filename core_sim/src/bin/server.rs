@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, BufReader, Read};
+use std::io::{self, BufReader, Read};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 
@@ -18,10 +18,9 @@ use core_sim::{
     SubmitError, SubmitOutcome, SupportChannel, Tile, TurnQueue,
 };
 use sim_runtime::{
-    parse_command_line, AxisBiasState, CommandEnvelope as ProtoCommandEnvelope, CommandParseError,
-    CommandPayload as ProtoCommandPayload, CorruptionEntry, CorruptionSubsystem,
-    InfluenceScopeKind, OrdersDirective as ProtoOrdersDirective,
-    SupportChannel as ProtoSupportChannel,
+    AxisBiasState, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
+    CorruptionEntry, CorruptionSubsystem, InfluenceScopeKind,
+    OrdersDirective as ProtoOrdersDirective, SupportChannel as ProtoSupportChannel,
 };
 
 fn main() {
@@ -55,11 +54,10 @@ fn main() {
 
     let snapshot_server = start_snapshot_server(config.snapshot_bind);
     let snapshot_flat_server = start_snapshot_server(config.snapshot_flat_bind);
-    let command_rx = spawn_command_listener(config.command_bind, config.command_proto_bind);
+    let command_rx = spawn_command_listener(config.command_bind);
 
     info!(
         command_bind = %config.command_bind,
-        command_proto_bind = %config.command_proto_bind,
         snapshot_bind = %config.snapshot_bind,
         snapshot_flat_bind = %config.snapshot_flat_bind,
         log_bind = %config.log_bind,
@@ -265,74 +263,17 @@ enum InfluencerAction {
 
 const MAX_PROTO_FRAME: usize = 64 * 1024;
 
-fn spawn_command_listener(
-    text_bind: std::net::SocketAddr,
-    proto_bind: std::net::SocketAddr,
-) -> Receiver<Command> {
+fn spawn_command_listener(bind_addr: std::net::SocketAddr) -> Receiver<Command> {
+    let listener = TcpListener::bind(bind_addr).expect("command listener bind failed");
+    if let Err(err) = listener.set_nonblocking(true) {
+        warn!("Failed to set nonblocking on command listener: {}", err);
+    }
+
     let (sender, receiver) = unbounded::<Command>();
-    spawn_text_command_listener(text_bind, sender.clone());
-    spawn_proto_command_listener(proto_bind, sender);
-    receiver
-}
-
-fn spawn_text_command_listener(bind_addr: std::net::SocketAddr, sender: Sender<Command>) {
-    let listener = match TcpListener::bind(bind_addr) {
-        Ok(listener) => listener,
-        Err(err) => {
-            warn!(
-                "Text command listener bind failed at {}: {}",
-                bind_addr, err
-            );
-            return;
-        }
-    };
-    if let Err(err) = listener.set_nonblocking(true) {
-        warn!(
-            "Failed to set nonblocking on text command listener: {}",
-            err
-        );
-    }
-
     thread::spawn(move || loop {
         match listener.accept() {
             Ok((stream, addr)) => {
-                info!("Text command client connected: {}", addr);
-                let sender = sender.clone();
-                thread::spawn(move || handle_text_client(stream, sender));
-            }
-            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
-                thread::sleep(std::time::Duration::from_millis(50));
-            }
-            Err(err) => {
-                warn!("Error accepting text command client: {}", err);
-                thread::sleep(std::time::Duration::from_millis(200));
-            }
-        }
-    });
-}
-
-fn spawn_proto_command_listener(bind_addr: std::net::SocketAddr, sender: Sender<Command>) {
-    let listener = match TcpListener::bind(bind_addr) {
-        Ok(listener) => listener,
-        Err(err) => {
-            warn!(
-                "Proto command listener bind failed at {}: {}",
-                bind_addr, err
-            );
-            return;
-        }
-    };
-    if let Err(err) = listener.set_nonblocking(true) {
-        warn!(
-            "Failed to set nonblocking on proto command listener: {}",
-            err
-        );
-    }
-
-    thread::spawn(move || loop {
-        match listener.accept() {
-            Ok((stream, addr)) => {
-                info!("Proto command client connected: {}", addr);
+                info!("Command client connected: {}", addr);
                 let sender = sender.clone();
                 thread::spawn(move || handle_proto_client(stream, sender));
             }
@@ -340,44 +281,13 @@ fn spawn_proto_command_listener(bind_addr: std::net::SocketAddr, sender: Sender<
                 thread::sleep(std::time::Duration::from_millis(50));
             }
             Err(err) => {
-                warn!("Error accepting proto command client: {}", err);
+                warn!("Error accepting command client: {}", err);
                 thread::sleep(std::time::Duration::from_millis(200));
             }
         }
     });
-}
 
-fn handle_text_client(stream: TcpStream, sender: Sender<Command>) {
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                match parse_command_line(trimmed) {
-                    Ok(payload) => {
-                        if let Some(cmd) = command_from_payload(payload) {
-                            if sender.send(cmd).is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        log_parse_error(trimmed, &err);
-                    }
-                }
-            }
-            Err(err) => {
-                warn!("Text command read error: {}", err);
-                break;
-            }
-        }
-    }
+    receiver
 }
 
 fn handle_proto_client(stream: TcpStream, sender: Sender<Command>) {
@@ -503,10 +413,6 @@ fn map_support_channel(channel: ProtoSupportChannel) -> Option<SupportChannel> {
         ProtoSupportChannel::Institutional => Some(SupportChannel::Institutional),
         ProtoSupportChannel::Humanitarian => Some(SupportChannel::Humanitarian),
     }
-}
-
-fn log_parse_error(command: &str, error: &CommandParseError) {
-    warn!("Invalid command '{}': {}", command, error);
 }
 
 fn apply_heat(app: &mut bevy::prelude::App, entity_bits: u64, delta_raw: i64) {
