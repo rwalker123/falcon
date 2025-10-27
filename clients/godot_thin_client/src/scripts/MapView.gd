@@ -8,6 +8,8 @@ const LOGISTICS_COLOR := Color(0.15, 0.45, 1.0, 1.0)
 const SENTIMENT_COLOR := Color(1.0, 0.35, 0.25, 1.0)
 const CORRUPTION_COLOR := Color(0.92, 0.58, 0.18, 1.0)
 const FOG_COLOR := Color(0.6, 0.78, 0.95, 1.0)
+const CULTURE_COLOR := Color(0.72, 0.36, 0.88, 1.0)
+const MILITARY_COLOR := Color(0.36, 0.7, 0.43, 1.0)
 const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
 const GRID_LINE_COLOR := Color(0.1, 0.12, 0.18, 0.45)
 const SQRT3 := 1.7320508075688772
@@ -22,7 +24,9 @@ const OVERLAY_COLORS := {
     "logistics": LOGISTICS_COLOR,
     "sentiment": SENTIMENT_COLOR,
     "corruption": CORRUPTION_COLOR,
-    "fog": FOG_COLOR
+    "fog": FOG_COLOR,
+    "culture": CULTURE_COLOR,
+    "military": MILITARY_COLOR
 }
 
 const TERRAIN_COLORS := {
@@ -206,6 +210,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
         "avg_sentiment": _average_overlay("sentiment"),
         "avg_corruption": _average_overlay("corruption"),
         "avg_fog": _average_overlay("fog"),
+        "avg_culture": _average_overlay("culture"),
+        "avg_military": _average_overlay("military"),
         "dimensions_changed": dimensions_changed,
         "active_overlay": active_overlay_key
     }
@@ -532,6 +538,13 @@ func _emit_overlay_legend() -> void:
 
 func refresh_overlay_legend() -> void:
     _emit_overlay_legend()
+
+func overlay_stats_for_key(key: String) -> Dictionary:
+    if not overlay_channels.has(key):
+        return {}
+    var normalized: PackedFloat32Array = _overlay_array(key)
+    var raw: PackedFloat32Array = _overlay_raw_array(key)
+    return _overlay_stats(normalized, raw)
 
 func _legend_for_current_view() -> Dictionary:
     if terrain_mode:

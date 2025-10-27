@@ -570,6 +570,8 @@ struct OverlaySlices<'a> {
     sentiment: &'a [f32],
     corruption: &'a [f32],
     fog: &'a [f32],
+    culture: &'a [f32],
+    military: &'a [f32],
 }
 
 struct TerrainSlices<'a> {
@@ -608,6 +610,8 @@ fn snapshot_dict(
     let sentiment_base = copy_into(overlays.sentiment);
     let corruption_base = copy_into(overlays.corruption);
     let fog_base = copy_into(overlays.fog);
+    let culture_base = copy_into(overlays.culture);
+    let military_base = copy_into(overlays.military);
 
     let mut logistics_normalized = logistics_base.clone();
     normalize_overlay(&mut logistics_normalized);
@@ -617,6 +621,10 @@ fn snapshot_dict(
     normalize_overlay(&mut corruption_normalized);
     let mut fog_normalized = fog_base.clone();
     normalize_overlay(&mut fog_normalized);
+    let mut culture_normalized = culture_base.clone();
+    normalize_overlay(&mut culture_normalized);
+    let mut military_normalized = military_base.clone();
+    normalize_overlay(&mut military_normalized);
 
     let mut logistics_contrast_vec = logistics_normalized.clone();
     for value in logistics_contrast_vec.iter_mut() {
@@ -631,11 +639,20 @@ fn snapshot_dict(
 
     let corruption_contrast_vec = corruption_normalized.clone();
     let fog_contrast_vec = fog_normalized.clone();
+    let culture_contrast_vec = culture_normalized.clone();
+    let mut military_contrast_vec = military_normalized.clone();
+    for value in military_contrast_vec.iter_mut() {
+        *value = ((*value - 0.5).abs() * 2.0).clamp(0.0, 1.0);
+    }
 
     let corruption_placeholder =
         overlays.corruption.is_empty() || corruption_base.iter().all(|v| v.abs() < f32::EPSILON);
     let fog_placeholder =
         overlays.fog.is_empty() || fog_base.iter().all(|v| v.abs() < f32::EPSILON);
+    let culture_placeholder =
+        overlays.culture.is_empty() || culture_base.iter().all(|v| v.abs() < f32::EPSILON);
+    let military_placeholder =
+        overlays.military.is_empty() || military_base.iter().all(|v| v.abs() < f32::EPSILON);
 
     let logistics_array = packed_from_slice(&logistics_normalized);
     let logistics_raw_array = packed_from_slice(&logistics_base);
@@ -649,6 +666,12 @@ fn snapshot_dict(
     let fog_array = packed_from_slice(&fog_normalized);
     let fog_raw_array = packed_from_slice(&fog_base);
     let fog_contrast_array = packed_from_slice(&fog_contrast_vec);
+    let culture_array = packed_from_slice(&culture_normalized);
+    let culture_raw_array = packed_from_slice(&culture_base);
+    let culture_contrast_array = packed_from_slice(&culture_contrast_vec);
+    let military_array = packed_from_slice(&military_normalized);
+    let military_raw_array = packed_from_slice(&military_base);
+    let military_contrast_array = packed_from_slice(&military_contrast_vec);
 
     let mut overlays = Dictionary::new();
     let mut channels = Dictionary::new();
@@ -714,18 +737,52 @@ fn snapshot_dict(
             placeholder: fog_placeholder,
         },
     );
+    insert_overlay_channel(
+        &mut channels,
+        &mut channel_order,
+        OverlayChannelParams {
+            key: "culture",
+            label: "Culture Divergence",
+            description: Some(
+                "Local layer divergence relative to schism thresholds (1.0 = schism risk).",
+            ),
+            normalized: &culture_array,
+            raw: &culture_raw_array,
+            contrast: &culture_contrast_array,
+            placeholder: culture_placeholder,
+        },
+    );
+    insert_overlay_channel(
+        &mut channels,
+        &mut channel_order,
+        OverlayChannelParams {
+            key: "military",
+            label: "Force Readiness",
+            description: Some("Composite of garrison morale, manpower, and local supply margin."),
+            normalized: &military_array,
+            raw: &military_raw_array,
+            contrast: &military_contrast_array,
+            placeholder: military_placeholder,
+        },
+    );
 
     let _ = overlays.insert("channels", channels);
     let _ = overlays.insert("channel_order", channel_order.clone());
     let _ = overlays.insert("default_channel", "logistics");
 
-    if corruption_placeholder || fog_placeholder {
+    if corruption_placeholder || fog_placeholder || culture_placeholder || military_placeholder {
         let mut placeholder_keys = PackedStringArray::new();
         if corruption_placeholder {
             placeholder_keys.push(&GString::from("corruption"));
         }
         if fog_placeholder {
             placeholder_keys.push(&GString::from("fog"));
+        }
+        if culture_placeholder {
+            placeholder_keys.push(&GString::from("culture"));
+        }
+        if military_placeholder {
+            placeholder_keys.push(&GString::from("military"));
         }
         let _ = overlays.insert("placeholder_channels", placeholder_keys);
     }
@@ -743,6 +800,12 @@ fn snapshot_dict(
     let _ = overlays.insert("fog", fog_array.clone());
     let _ = overlays.insert("fog_raw", fog_raw_array.clone());
     let _ = overlays.insert("fog_contrast", fog_contrast_array.clone());
+    let _ = overlays.insert("culture", culture_array.clone());
+    let _ = overlays.insert("culture_raw", culture_raw_array.clone());
+    let _ = overlays.insert("culture_contrast", culture_contrast_array.clone());
+    let _ = overlays.insert("military", military_array.clone());
+    let _ = overlays.insert("military_raw", military_raw_array.clone());
+    let _ = overlays.insert("military_contrast", military_contrast_array.clone());
 
     if let Some(terrain_data) = terrain.terrain {
         let mut terrain_array = PackedInt32Array::new();
@@ -859,6 +922,12 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     if let Some(raster) = delta.fogRaster() {
         agg.apply_fog_raster(raster);
     }
+    if let Some(raster) = delta.cultureRaster() {
+        agg.apply_culture_raster(raster);
+    }
+    if let Some(raster) = delta.militaryRaster() {
+        agg.apply_military_raster(raster);
+    }
     let mut dict = agg.into_dictionary();
 
     if let Some(axis_bias) = delta.axisBias() {
@@ -963,6 +1032,12 @@ struct DeltaAggregator {
     fog_width: u32,
     fog_height: u32,
     fog_samples: Vec<f32>,
+    culture_width: u32,
+    culture_height: u32,
+    culture_samples: Vec<f32>,
+    military_width: u32,
+    military_height: u32,
+    military_samples: Vec<f32>,
 }
 
 impl DeltaAggregator {
@@ -1060,6 +1135,40 @@ impl DeltaAggregator {
         }
     }
 
+    fn apply_culture_raster(&mut self, raster: fb::ScalarRaster<'_>) {
+        self.culture_width = raster.width();
+        self.culture_height = raster.height();
+        let count = (self.culture_width as usize)
+            .saturating_mul(self.culture_height as usize)
+            .max(1);
+        self.culture_samples.resize(count, 0.0);
+        if let Some(samples) = raster.samples() {
+            for (idx, value) in samples.iter().enumerate() {
+                if idx >= count {
+                    break;
+                }
+                self.culture_samples[idx] = fixed64_to_f32(value);
+            }
+        }
+    }
+
+    fn apply_military_raster(&mut self, raster: fb::ScalarRaster<'_>) {
+        self.military_width = raster.width();
+        self.military_height = raster.height();
+        let count = (self.military_width as usize)
+            .saturating_mul(self.military_height as usize)
+            .max(1);
+        self.military_samples.resize(count, 0.0);
+        if let Some(samples) = raster.samples() {
+            for (idx, value) in samples.iter().enumerate() {
+                if idx >= count {
+                    break;
+                }
+                self.military_samples[idx] = fixed64_to_f32(value);
+            }
+        }
+    }
+
     fn into_dictionary(self) -> Dictionary {
         let DeltaAggregator {
             tick,
@@ -1082,6 +1191,12 @@ impl DeltaAggregator {
             fog_width,
             fog_height,
             fog_samples,
+            culture_width,
+            culture_height,
+            culture_samples,
+            military_width,
+            military_height,
+            military_samples,
         } = self;
 
         let mut final_width = terrain_width
@@ -1089,13 +1204,17 @@ impl DeltaAggregator {
             .max(logistics_width)
             .max(sentiment_width)
             .max(corruption_width)
-            .max(fog_width);
+            .max(fog_width)
+            .max(culture_width)
+            .max(military_width);
         let mut final_height = terrain_height
             .max(height)
             .max(logistics_height)
             .max(sentiment_height)
             .max(corruption_height)
-            .max(fog_height);
+            .max(fog_height)
+            .max(culture_height)
+            .max(military_height);
         if final_width == 0 || final_height == 0 {
             final_width = final_width.max(1);
             final_height = final_height.max(1);
@@ -1180,6 +1299,40 @@ impl DeltaAggregator {
             }
         }
 
+        let mut culture = vec![0.0f32; total];
+        if culture_width > 0 && culture_height > 0 && !culture_samples.is_empty() {
+            for y in 0..culture_height {
+                for x in 0..culture_width {
+                    let src_idx = (y as usize) * (culture_width as usize) + x as usize;
+                    if src_idx >= culture_samples.len() {
+                        break;
+                    }
+                    if x >= final_width || y >= final_height {
+                        continue;
+                    }
+                    let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                    culture[dst_idx] = culture_samples[src_idx];
+                }
+            }
+        }
+
+        let mut military = vec![0.0f32; total];
+        if military_width > 0 && military_height > 0 && !military_samples.is_empty() {
+            for y in 0..military_height {
+                for x in 0..military_width {
+                    let src_idx = (y as usize) * (military_width as usize) + x as usize;
+                    if src_idx >= military_samples.len() {
+                        break;
+                    }
+                    if x >= final_width || y >= final_height {
+                        continue;
+                    }
+                    let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                    military[dst_idx] = military_samples[src_idx];
+                }
+            }
+        }
+
         let terrain_ref = if terrain_types.is_empty() {
             None
         } else {
@@ -1202,6 +1355,8 @@ impl DeltaAggregator {
                 sentiment: &sentiment,
                 corruption: &corruption,
                 fog: &fog,
+                culture: &culture,
+                military: &military,
             },
             TerrainSlices {
                 terrain: terrain_ref.as_deref(),
@@ -1274,6 +1429,10 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
     let mut corruption_dims = (0u32, 0u32);
     let mut fog_grid: Vec<f32> = Vec::new();
     let mut fog_dims = (0u32, 0u32);
+    let mut culture_grid: Vec<f32> = Vec::new();
+    let mut culture_dims = (0u32, 0u32);
+    let mut military_grid: Vec<f32> = Vec::new();
+    let mut military_dims = (0u32, 0u32);
     if let Some(raster) = snapshot.logisticsRaster() {
         let width = raster.width();
         let height = raster.height();
@@ -1439,12 +1598,86 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         fog_dims = (fallback_width, fallback_height);
     }
 
+    if let Some(raster) = snapshot.cultureRaster() {
+        let width = raster.width();
+        let height = raster.height();
+        if width > 0 && height > 0 {
+            let total = (width as usize).saturating_mul(height as usize);
+            culture_grid = vec![0.0f32; total];
+            if let Some(samples) = raster.samples() {
+                for (idx, value) in samples.iter().enumerate() {
+                    if idx >= total {
+                        break;
+                    }
+                    culture_grid[idx] = fixed64_to_f32(value);
+                }
+            }
+            culture_dims = (width, height);
+        }
+    }
+
+    if culture_grid.is_empty() {
+        let fallback_width = logistics_dims
+            .0
+            .max(terrain_width)
+            .max(corruption_dims.0)
+            .max(1);
+        let fallback_height = logistics_dims
+            .1
+            .max(terrain_height)
+            .max(corruption_dims.1)
+            .max(1);
+        let total = (fallback_width as usize)
+            .saturating_mul(fallback_height as usize)
+            .max(1);
+        culture_grid = vec![0.0f32; total];
+        culture_dims = (fallback_width, fallback_height);
+    }
+
+    if let Some(raster) = snapshot.militaryRaster() {
+        let width = raster.width();
+        let height = raster.height();
+        if width > 0 && height > 0 {
+            let total = (width as usize).saturating_mul(height as usize);
+            military_grid = vec![0.0f32; total];
+            if let Some(samples) = raster.samples() {
+                for (idx, value) in samples.iter().enumerate() {
+                    if idx >= total {
+                        break;
+                    }
+                    military_grid[idx] = fixed64_to_f32(value);
+                }
+            }
+            military_dims = (width, height);
+        }
+    }
+
+    if military_grid.is_empty() {
+        let fallback_width = logistics_dims
+            .0
+            .max(culture_dims.0)
+            .max(terrain_width)
+            .max(1);
+        let fallback_height = logistics_dims
+            .1
+            .max(culture_dims.1)
+            .max(terrain_height)
+            .max(1);
+        let total = (fallback_width as usize)
+            .saturating_mul(fallback_height as usize)
+            .max(1);
+        military_grid = vec![0.0f32; total];
+        military_dims = (fallback_width, fallback_height);
+    }
+
     let final_width = logistics_dims
         .0
         .max(sentiment_dims.0)
         .max(terrain_width)
         .max(corruption_dims.0)
         .max(fog_dims.0)
+        .max(culture_dims.0)
+        .max(military_dims.0)
         .max(1);
     let final_height = logistics_dims
         .1
@@ -1452,6 +1685,8 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         .max(terrain_height)
         .max(corruption_dims.1)
         .max(fog_dims.1)
+        .max(culture_dims.1)
+        .max(military_dims.1)
         .max(1);
     let total = (final_width as usize)
         .saturating_mul(final_height as usize)
@@ -1525,6 +1760,40 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         }
     }
 
+    let mut culture_resized = vec![0.0f32; total];
+    if culture_dims.0 > 0 && culture_dims.1 > 0 {
+        for y in 0..culture_dims.1 {
+            for x in 0..culture_dims.0 {
+                let src_idx = (y as usize) * (culture_dims.0 as usize) + x as usize;
+                if src_idx >= culture_grid.len() {
+                    break;
+                }
+                if x >= final_width || y >= final_height {
+                    continue;
+                }
+                let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                culture_resized[dst_idx] = culture_grid[src_idx];
+            }
+        }
+    }
+
+    let mut military_resized = vec![0.0f32; total];
+    if military_dims.0 > 0 && military_dims.1 > 0 {
+        for y in 0..military_dims.1 {
+            for x in 0..military_dims.0 {
+                let src_idx = (y as usize) * (military_dims.0 as usize) + x as usize;
+                if src_idx >= military_grid.len() {
+                    break;
+                }
+                if x >= final_width || y >= final_height {
+                    continue;
+                }
+                let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                military_resized[dst_idx] = military_grid[src_idx];
+            }
+        }
+    }
+
     let mut terrain_vec: Vec<u16> = Vec::new();
     let mut tag_vec: Vec<u16> = Vec::new();
     if terrain_width > 0 && terrain_height > 0 && !terrain_samples.is_empty() {
@@ -1569,6 +1838,8 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
             sentiment: &sentiment_resized,
             corruption: &corruption_resized,
             fog: &fog_resized,
+            culture: &culture_resized,
+            military: &military_resized,
         },
         TerrainSlices {
             terrain: terrain_slice,

@@ -1561,6 +1561,7 @@ func attach_map_view(view: Node) -> void:
 	_map_view = view
 	_sync_map_trade_overlay()
 	_apply_overlay_selection_to_map()
+	_refresh_overlay_panels()
 
 func set_hud_layer(layer: Object) -> void:
 	_hud_layer = layer
@@ -2649,6 +2650,7 @@ func _update_overlay_channels(overlay_dict: Dictionary) -> void:
 	_refresh_overlay_selector()
 	_update_overlay_section_text()
 	_apply_overlay_selection_to_map()
+	_refresh_overlay_panels()
 
 func _refresh_overlay_selector() -> void:
 	if _overlay_selector == null:
@@ -2719,6 +2721,53 @@ func _on_overlay_channel_selected(index: int) -> void:
 	_selected_overlay_key = key
 	_update_overlay_section_text()
 	_apply_overlay_selection_to_map()
+
+func _overlay_stats_for_key(key: String) -> Dictionary:
+	if _map_view == null:
+		return {}
+	if not _map_view.has_method("overlay_stats_for_key"):
+		return {}
+	var result: Variant = _map_view.call("overlay_stats_for_key", key)
+	if result is Dictionary:
+		return result as Dictionary
+	return {}
+
+func _overlay_panel_text(key: String, title: String, description: String) -> String:
+	var lines: Array[String] = []
+	lines.append("[b]%s[/b]" % title)
+	if description != "":
+		lines.append(description)
+	if _map_view == null:
+		lines.append("[i]Overlay data unavailable.[/i]")
+		return "\n".join(lines)
+	if bool(_overlay_placeholder_flags.get(key, false)):
+		lines.append("[i]Channel awaiting telemetry.[/i]")
+		return "\n".join(lines)
+	var stats: Dictionary = _overlay_stats_for_key(key)
+	if stats.is_empty() or not bool(stats.get("has_values", false)):
+		lines.append("[i]No samples received yet.[/i]")
+		return "\n".join(lines)
+	var raw_min: float = float(stats.get("raw_min", 0.0))
+	var raw_avg: float = float(stats.get("raw_avg", 0.0))
+	var raw_max: float = float(stats.get("raw_max", 0.0))
+	var normalized_avg: float = clamp(float(stats.get("normalized_avg", 0.0)), 0.0, 1.0)
+	lines.append("Raw min %.3f · avg %.3f · max %.3f" % [raw_min, raw_avg, raw_max])
+	lines.append("Normalized avg %.1f%%" % (normalized_avg * 100.0))
+	return "\n".join(lines)
+
+func _refresh_overlay_panels() -> void:
+	if terrain_overlay_culture_placeholder != null:
+		terrain_overlay_culture_placeholder.text = _overlay_panel_text(
+			"culture",
+			"Culture Divergence",
+			"Highlights divergence pressure relative to schism thresholds.",
+		)
+	if terrain_overlay_military_placeholder != null:
+		terrain_overlay_military_placeholder.text = _overlay_panel_text(
+			"military",
+			"Force Readiness",
+			"Composite of garrison morale, manpower, and supply margin.",
+		)
 
 func _rebuild_tiles(tile_entries) -> void:
 	_tile_records.clear()

@@ -651,6 +651,8 @@ pub struct WorldSnapshot {
     pub sentiment_raster: ScalarRasterState,
     pub corruption_raster: ScalarRasterState,
     pub fog_raster: ScalarRasterState,
+    pub culture_raster: ScalarRasterState,
+    pub military_raster: ScalarRasterState,
     pub axis_bias: AxisBiasState,
     pub sentiment: SentimentTelemetryState,
     pub generations: Vec<GenerationState>,
@@ -680,6 +682,8 @@ pub struct WorldDelta {
     pub sentiment_raster: Option<ScalarRasterState>,
     pub corruption_raster: Option<ScalarRasterState>,
     pub fog_raster: Option<ScalarRasterState>,
+    pub culture_raster: Option<ScalarRasterState>,
+    pub military_raster: Option<ScalarRasterState>,
     pub generations: Vec<GenerationState>,
     pub removed_generations: Vec<u16>,
     pub corruption: Option<CorruptionLedger>,
@@ -777,6 +781,8 @@ fn build_snapshot_flatbuffer<'a>(
     let sentiment_raster = create_scalar_raster(builder, &snapshot.sentiment_raster);
     let corruption_raster = create_scalar_raster(builder, &snapshot.corruption_raster);
     let fog_raster = create_scalar_raster(builder, &snapshot.fog_raster);
+    let culture_raster = create_scalar_raster(builder, &snapshot.culture_raster);
+    let military_raster = create_scalar_raster(builder, &snapshot.military_raster);
     let axis_bias = fb::AxisBiasState::create(
         builder,
         &fb::AxisBiasStateArgs {
@@ -808,6 +814,8 @@ fn build_snapshot_flatbuffer<'a>(
             sentimentRaster: Some(sentiment_raster),
             corruptionRaster: Some(corruption_raster),
             fogRaster: Some(fog_raster),
+            cultureRaster: Some(culture_raster),
+            militaryRaster: Some(military_raster),
             axisBias: Some(axis_bias),
             sentiment: Some(sentiment),
             generations: Some(generations_vec),
@@ -876,6 +884,14 @@ fn build_delta_flatbuffer<'a>(
         .fog_raster
         .as_ref()
         .map(|raster| create_scalar_raster(builder, raster));
+    let culture_raster = delta
+        .culture_raster
+        .as_ref()
+        .map(|raster| create_scalar_raster(builder, raster));
+    let military_raster = delta
+        .military_raster
+        .as_ref()
+        .map(|raster| create_scalar_raster(builder, raster));
     let axis_bias = delta.axis_bias.as_ref().map(|axis| {
         fb::AxisBiasState::create(
             builder,
@@ -930,6 +946,8 @@ fn build_delta_flatbuffer<'a>(
             sentimentRaster: sentiment_raster,
             corruptionRaster: corruption_raster,
             fogRaster: fog_raster,
+            cultureRaster: culture_raster,
+            militaryRaster: military_raster,
             cultureLayers: Some(culture_layers_vec),
             removedCultureLayers: Some(removed_culture_layers_vec),
             cultureTensions: Some(culture_tensions_vec),

@@ -356,6 +356,8 @@ table WorldSnapshot {
   sentimentRaster:ScalarRaster;
   corruptionRaster:ScalarRaster;
   fogRaster:ScalarRaster;
+  cultureRaster:ScalarRaster;
+  militaryRaster:ScalarRaster;
   axisBias:AxisBiasState;
   sentiment:SentimentTelemetryState;
   generations:[GenerationState];
@@ -390,6 +392,8 @@ table WorldDelta {
   sentimentRaster:ScalarRaster;
   corruptionRaster:ScalarRaster;
   fogRaster:ScalarRaster;
+  cultureRaster:ScalarRaster;
+  militaryRaster:ScalarRaster;
   cultureLayers:[CultureLayerState];
   removedCultureLayers:[uint];
   cultureTensions:[CultureTensionState];

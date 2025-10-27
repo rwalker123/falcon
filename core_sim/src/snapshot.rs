@@ -21,8 +21,8 @@ use crate::{
     },
     culture::{
         CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
-        CultureManager, CultureTensionKind as SimCultureTensionKind, CultureTensionRecord,
-        CultureTraitAxis as SimCultureTraitAxis,
+        CultureManager, CultureOwner, CultureTensionKind as SimCultureTensionKind,
+        CultureTensionRecord, CultureTraitAxis as SimCultureTraitAxis,
     },
     generations::{GenerationProfile, GenerationRegistry},
     influencers::{InfluencerImpacts, InfluentialRoster},
@@ -96,6 +96,8 @@ pub struct SnapshotHistory {
     sentiment_raster: ScalarRasterState,
     corruption_raster: ScalarRasterState,
     fog_raster: ScalarRasterState,
+    culture_raster: ScalarRasterState,
+    military_raster: ScalarRasterState,
     corruption: CorruptionLedger,
     history: VecDeque<StoredSnapshot>,
 }
@@ -133,6 +135,8 @@ impl SnapshotHistory {
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
             fog_raster: ScalarRasterState::default(),
+            culture_raster: ScalarRasterState::default(),
+            military_raster: ScalarRasterState::default(),
             corruption: CorruptionLedger::default(),
             history: VecDeque::new(),
         }
@@ -268,6 +272,20 @@ impl SnapshotHistory {
             Some(fog_raster_state.clone())
         };
 
+        let culture_raster_state = snapshot.culture_raster.clone();
+        let culture_raster_delta = if self.culture_raster == culture_raster_state {
+            None
+        } else {
+            Some(culture_raster_state.clone())
+        };
+
+        let military_raster_state = snapshot.military_raster.clone();
+        let military_raster_delta = if self.military_raster == military_raster_state {
+            None
+        } else {
+            Some(military_raster_state.clone())
+        };
+
         let corruption_state = snapshot.corruption.clone();
         let corruption_delta = if self.corruption == corruption_state {
             None
@@ -299,6 +317,8 @@ impl SnapshotHistory {
             sentiment_raster: sentiment_raster_delta.clone(),
             corruption_raster: corruption_raster_delta.clone(),
             fog_raster: fog_raster_delta.clone(),
+            culture_raster: culture_raster_delta.clone(),
+            military_raster: military_raster_delta.clone(),
             culture_layers: diff_new(&self.culture_layers, &culture_layers_index),
             removed_culture_layers: diff_removed(&self.culture_layers, &culture_layers_index),
             culture_tensions: delta_culture_tensions.clone(),
@@ -324,6 +344,8 @@ impl SnapshotHistory {
         self.sentiment_raster = sentiment_raster_state;
         self.corruption_raster = corruption_raster_state;
         self.fog_raster = fog_raster_state;
+        self.culture_raster = culture_raster_state;
+        self.military_raster = military_raster_state;
         self.corruption = corruption_state;
         self.culture_tensions = culture_tensions_state;
         self.discovery_progress = discovery_index;
@@ -388,6 +410,8 @@ impl SnapshotHistory {
         self.sentiment_raster = entry.snapshot.sentiment_raster.clone();
         self.corruption_raster = entry.snapshot.corruption_raster.clone();
         self.fog_raster = entry.snapshot.fog_raster.clone();
+        self.culture_raster = entry.snapshot.culture_raster.clone();
+        self.military_raster = entry.snapshot.military_raster.clone();
         self.culture_tensions = entry.snapshot.culture_tensions.clone();
 
         self.last_snapshot = Some(entry.snapshot.clone());
@@ -437,6 +461,8 @@ impl SnapshotHistory {
             sentiment_raster: None,
             corruption_raster: None,
             fog_raster: None,
+            culture_raster: None,
+            military_raster: None,
             generations: Vec::new(),
             removed_generations: Vec::new(),
             corruption: None,
@@ -524,6 +550,8 @@ impl SnapshotHistory {
             sentiment_raster: None,
             corruption_raster: None,
             fog_raster: None,
+            culture_raster: None,
+            military_raster: None,
             generations: Vec::new(),
             removed_generations: Vec::new(),
             corruption: None,
@@ -605,6 +633,8 @@ impl SnapshotHistory {
             sentiment_raster: None,
             corruption_raster: None,
             fog_raster: None,
+            culture_raster: None,
+            military_raster: None,
             generations: Vec::new(),
             removed_generations: Vec::new(),
             corruption: Some(ledger.clone()),
@@ -758,6 +788,15 @@ pub fn capture_snapshot(
         &discovery_progress,
         config.grid_size,
     );
+    let culture_raster =
+        culture_raster_from_layers(&tile_states, culture.as_ref(), config.grid_size);
+    let military_raster = military_raster_from_state(
+        &tile_states,
+        &population_states,
+        &power_states,
+        &logistics_raster,
+        config.grid_size,
+    );
 
     let policy_axes = axis_bias.policy_values();
     let incident_axes = axis_bias.incident_values();
@@ -896,6 +935,8 @@ pub fn capture_snapshot(
         sentiment_raster: sentiment_raster.clone(),
         corruption_raster: corruption_raster.clone(),
         fog_raster: fog_raster.clone(),
+        culture_raster: culture_raster.clone(),
+        military_raster: military_raster.clone(),
         axis_bias: axis_bias_state,
         sentiment: sentiment_state,
         generations: generation_states,
@@ -1842,6 +1883,168 @@ fn fog_raster_from_discoveries(
     }
 }
 
+fn culture_raster_from_layers(
+    tiles: &[TileState],
+    culture: &CultureManager,
+    grid_size: UVec2,
+) -> ScalarRasterState {
+    let mut max_x = 0u32;
+    let mut max_y = 0u32;
+    for tile in tiles {
+        max_x = max_x.max(tile.x);
+        max_y = max_y.max(tile.y);
+    }
+
+    let width = grid_size.x.max(max_x.saturating_add(1)).max(1);
+    let height = grid_size.y.max(max_y.saturating_add(1)).max(1);
+    let total = (width as usize).saturating_mul(height as usize).max(1);
+    let mut samples = vec![0i64; total];
+
+    for tile in tiles {
+        if tile.x >= width || tile.y >= height {
+            continue;
+        }
+        let idx = (tile.y as usize) * (width as usize) + tile.x as usize;
+        if idx >= samples.len() {
+            continue;
+        }
+        let owner = CultureOwner(tile.entity);
+        let Some(layer) = culture.local_layer_by_owner(owner) else {
+            continue;
+        };
+        let magnitude = layer.divergence.magnitude.abs();
+        let hard_threshold = if layer.divergence.hard_threshold.raw() > 0 {
+            layer.divergence.hard_threshold
+        } else {
+            Scalar::one()
+        };
+        let mut ratio = (magnitude / hard_threshold).clamp(Scalar::zero(), Scalar::one());
+        if layer.divergence.ticks_above_hard > 0 {
+            let boost = Scalar::from_f32(layer.divergence.ticks_above_hard as f32 * 0.05)
+                .clamp(Scalar::zero(), Scalar::from_f32(0.5));
+            ratio = (ratio + boost).clamp(Scalar::zero(), Scalar::one());
+        } else if layer.divergence.ticks_above_soft > 0 {
+            let boost = Scalar::from_f32(layer.divergence.ticks_above_soft as f32 * 0.03)
+                .clamp(Scalar::zero(), Scalar::from_f32(0.3));
+            ratio = (ratio + boost).clamp(Scalar::zero(), Scalar::one());
+        }
+        samples[idx] = ratio.raw();
+    }
+
+    ScalarRasterState {
+        width,
+        height,
+        samples,
+    }
+}
+
+fn military_raster_from_state(
+    tiles: &[TileState],
+    populations: &[PopulationCohortState],
+    power_nodes: &[PowerNodeState],
+    logistics_raster: &ScalarRasterState,
+    grid_size: UVec2,
+) -> ScalarRasterState {
+    let mut tile_positions = HashMap::with_capacity(tiles.len());
+    let mut max_x = 0u32;
+    let mut max_y = 0u32;
+    for tile in tiles {
+        tile_positions.insert(tile.entity, (tile.x, tile.y));
+        max_x = max_x.max(tile.x);
+        max_y = max_y.max(tile.y);
+    }
+
+    let width = grid_size.x.max(max_x.saturating_add(1)).max(1);
+    let height = grid_size.y.max(max_y.saturating_add(1)).max(1);
+    let total = (width as usize).saturating_mul(height as usize).max(1);
+    let mut presence = vec![Scalar::zero(); total];
+    let mut support = vec![Scalar::zero(); total];
+
+    for cohort in populations {
+        let Some(&(x, y)) = tile_positions.get(&cohort.home) else {
+            continue;
+        };
+        if x >= width || y >= height {
+            continue;
+        }
+        let idx = (y as usize) * (width as usize) + x as usize;
+        if idx >= presence.len() {
+            continue;
+        }
+        let morale = Scalar::from_raw(cohort.morale).clamp(Scalar::zero(), Scalar::one());
+        if morale.raw() <= 0 {
+            continue;
+        }
+        let size_factor = Scalar::from_f32((cohort.size as f32) / 1500.0)
+            .clamp(Scalar::zero(), Scalar::from_f32(5.0));
+        let mut contribution = (size_factor * morale).clamp(Scalar::zero(), Scalar::from_f32(5.0));
+        if cohort.size > 2500 {
+            contribution =
+                (contribution + Scalar::from_f32(0.1)).clamp(Scalar::zero(), Scalar::from_f32(5.0));
+        }
+        presence[idx] += contribution;
+    }
+
+    if logistics_raster.width > 0
+        && logistics_raster.height > 0
+        && !logistics_raster.samples.is_empty()
+    {
+        let src_width = logistics_raster.width as usize;
+        let src_height = logistics_raster.height as usize;
+        let min_height = src_height.min(height as usize);
+        let min_width = src_width.min(width as usize);
+        for y in 0..min_height {
+            let src_row = y * src_width;
+            let dst_row = y * width as usize;
+            for x in 0..min_width {
+                let src_idx = src_row + x;
+                if src_idx >= logistics_raster.samples.len() {
+                    break;
+                }
+                let dst_idx = dst_row + x;
+                if dst_idx >= support.len() {
+                    break;
+                }
+                let value = Scalar::from_raw(logistics_raster.samples[src_idx]).abs();
+                let clamped = value.clamp(Scalar::zero(), Scalar::from_f32(5.0));
+                support[dst_idx] += clamped;
+            }
+        }
+    }
+
+    for node in power_nodes {
+        let Some(&(x, y)) = tile_positions.get(&node.entity) else {
+            continue;
+        };
+        if x >= width || y >= height {
+            continue;
+        }
+        let idx = (y as usize) * (width as usize) + x as usize;
+        if idx >= support.len() {
+            continue;
+        }
+        let generation = Scalar::from_raw(node.generation).abs();
+        let demand = Scalar::from_raw(node.demand).abs();
+        let margin = (generation - demand).clamp(Scalar::zero(), Scalar::from_f32(5.0));
+        support[idx] += margin;
+    }
+
+    let presence_weight = Scalar::from_f32(0.6);
+    let support_weight = Scalar::from_f32(0.4);
+    let mut samples = vec![0i64; total];
+    for (idx, sample) in samples.iter_mut().enumerate() {
+        let combined = (presence[idx] * presence_weight + support[idx] * support_weight)
+            .clamp(Scalar::zero(), Scalar::from_f32(5.0));
+        *sample = combined.raw();
+    }
+
+    ScalarRasterState {
+        width,
+        height,
+        samples,
+    }
+}
+
 fn sentiment_raster_from_populations(
     tiles: &[TileState],
     populations: &[PopulationCohortState],
@@ -2067,6 +2270,8 @@ mod tests {
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
             fog_raster: ScalarRasterState::default(),
+            culture_raster: ScalarRasterState::default(),
+            military_raster: ScalarRasterState::default(),
             axis_bias: AxisBiasState::default(),
             sentiment: SentimentTelemetryState::default(),
             generations: Vec::new(),
