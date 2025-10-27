@@ -48,6 +48,13 @@ const MAP_SIZE_DEFAULT_DIMENSIONS := Vector2i(80, 52)
 @onready var log_status_label: Label = $RootPanel/TabContainer/Logs/SparklineContainer/SparklineStatusLabel
 @onready var sparkline_graph: Control = $RootPanel/TabContainer/Logs/SparklineContainer/SparklineGraph
 @onready var sparkline_stats_label: Label = $RootPanel/TabContainer/Logs/SparklineContainer/SparklineStatsLabel
+@onready var log_level_label: Label = $RootPanel/TabContainer/Logs/FilterControls/LevelLabel
+@onready var log_level_dropdown: OptionButton = $RootPanel/TabContainer/Logs/FilterControls/LogLevelDropdown
+@onready var log_target_label: Label = $RootPanel/TabContainer/Logs/FilterControls/TargetLabel
+@onready var log_target_dropdown: OptionButton = $RootPanel/TabContainer/Logs/FilterControls/LogTargetDropdown
+@onready var log_filter_label: Label = $RootPanel/TabContainer/Logs/FilterControls/FilterLabel
+@onready var log_filter_line: LineEdit = $RootPanel/TabContainer/Logs/FilterControls/LogFilterLine
+@onready var log_clear_button: Button = $RootPanel/TabContainer/Logs/FilterControls/ClearButton
 @onready var root_panel: Panel = $RootPanel
 @onready var tab_container: TabContainer = $RootPanel/TabContainer
 @onready var command_status_label: Label = $RootPanel/TabContainer/Commands/StatusLabel
@@ -114,7 +121,16 @@ var _map_dimensions: Vector2i = MAP_SIZE_DEFAULT_DIMENSIONS
 var _map_size_custom_index: int = -1
 var _suppress_map_size_signal: bool = false
 var _selected_trade_entity: int = -1
-var _log_messages: Array[String] = []
+var _log_entries: Array = []
+var _log_filtered_records: Array = []
+var _log_render_dirty: bool = true
+var _log_targets_dirty: bool = true
+var _log_target_counts: Dictionary = {}
+var _log_target_list: Array[String] = []
+var _selected_log_target: String = ""
+var _log_level_threshold: int = 0
+var _log_search_query: String = ""
+var _log_search_query_lower: String = ""
 var _log_client: RefCounted = null
 var _log_host: String = ""
 var _log_port: int = 0
@@ -141,6 +157,24 @@ const LOG_HOST_DEFAULT = "127.0.0.1"
 const LOG_PORT_DEFAULT = 41003
 const LOG_POLL_INTERVAL = 0.1
 const LOG_RECONNECT_INTERVAL = 2.0
+const LOG_TARGET_FALLBACK = "(general)"
+const LOG_LEVEL_FILTER_OPTIONS = [
+	{"label": "All", "threshold": 0},
+	{"label": "Debug+", "threshold": 1},
+	{"label": "Info+", "threshold": 2},
+	{"label": "Warn+", "threshold": 3},
+	{"label": "Error", "threshold": 4}
+]
+const LOG_LEVEL_SEVERITY = {
+	"TRACE": 0,
+	"DEBUG": 1,
+	"INFO": 2,
+	"WARN": 3,
+	"WARNING": 3,
+	"ERROR": 4,
+	"COMMAND": 2,
+	"SCRIPT": 2
+}
 const TICK_SAMPLE_LIMIT = 48
 const PANEL_WIDTH_DEFAULT = 340.0
 const PANEL_WIDTH_MIN = 260.0
@@ -214,6 +248,7 @@ func _ready() -> void:
 		if not trade_links_list.is_connected("item_activated", trade_select_callable):
 			trade_links_list.item_activated.connect(_on_trade_link_selected)
 	_update_panel_layout()
+	_initialize_log_filters()
 	_render_static_sections()
 	_setup_command_controls()
 	_initialize_log_channel()
@@ -355,7 +390,7 @@ func _render_static_sections() -> void:
 	_knowledge_events.clear()
 	_selected_trade_entity = -1
 	_clear_terrain_ui()
-	_log_messages.clear()
+	_reset_log_state()
 	_render_terrain()
 	_render_culture()
 	_render_logs()
@@ -446,7 +481,10 @@ func apply_typography() -> void:
 		log_status_label,
 		sparkline_stats_label,
 		command_status_label,
-		autoplay_label
+		autoplay_label,
+		log_level_label,
+		log_target_label,
+		log_filter_label
 	]
 	_apply_typography_style(caption_labels, Typography.STYLE_CAPTION)
 
@@ -489,7 +527,11 @@ func apply_typography() -> void:
 		heat_entity_spin,
 		heat_delta_spin,
 		heat_apply_button,
-		terrain_overlay_tabs
+		terrain_overlay_tabs,
+		log_level_dropdown,
+		log_target_dropdown,
+		log_filter_line,
+		log_clear_button
 	]
 	if _overlay_selector != null:
 		control_nodes.append(_overlay_selector)
@@ -521,6 +563,44 @@ func _connect_culture_ui() -> void:
 			culture_divergence_list.item_selected.connect(_on_culture_divergence_selected)
 		if not culture_divergence_list.is_connected("item_activated", divergence_callable):
 			culture_divergence_list.item_activated.connect(_on_culture_divergence_selected)
+
+func _initialize_log_filters() -> void:
+	if log_level_dropdown != null:
+		log_level_dropdown.clear()
+		for idx in range(LOG_LEVEL_FILTER_OPTIONS.size()):
+			var option: Dictionary = LOG_LEVEL_FILTER_OPTIONS[idx]
+			log_level_dropdown.add_item(String(option.get("label", "All")))
+			log_level_dropdown.set_item_metadata(idx, int(option.get("threshold", 0)))
+		var default_index: int = 0
+		if log_level_dropdown.get_item_count() > 0:
+			default_index = min(2, log_level_dropdown.get_item_count() - 1)
+			log_level_dropdown.select(default_index)
+			var meta_variant: Variant = log_level_dropdown.get_item_metadata(default_index)
+			_log_level_threshold = int(meta_variant) if typeof(meta_variant) == TYPE_INT else 0
+		var level_callable = Callable(self, "_on_log_level_filter_changed")
+		if not log_level_dropdown.is_connected("item_selected", level_callable):
+			log_level_dropdown.item_selected.connect(_on_log_level_filter_changed)
+
+	if log_filter_line != null:
+		log_filter_line.text = ""
+		log_filter_line.placeholder_text = "Search text or fields"
+		var filter_callable = Callable(self, "_on_log_search_changed")
+		if not log_filter_line.is_connected("text_changed", filter_callable):
+			log_filter_line.text_changed.connect(_on_log_search_changed)
+
+	if log_target_dropdown != null:
+		log_target_dropdown.clear()
+		log_target_dropdown.add_item("All targets")
+		log_target_dropdown.set_item_metadata(0, "")
+		log_target_dropdown.select(0)
+		var target_callable = Callable(self, "_on_log_target_filter_changed")
+		if not log_target_dropdown.is_connected("item_selected", target_callable):
+			log_target_dropdown.item_selected.connect(_on_log_target_filter_changed)
+
+	if log_clear_button != null:
+		var clear_callable = Callable(self, "_on_log_clear_pressed")
+		if not log_clear_button.is_connected("pressed", clear_callable):
+			log_clear_button.pressed.connect(_on_log_clear_pressed)
 
 func _initialize_map_controls() -> void:
 	if map_size_dropdown != null:
@@ -874,7 +954,7 @@ func _append_command_log(entry: String) -> void:
 	command_log_text.text = "\n".join(command_log)
 	if command_log_text.get_line_count() > 0:
 		command_log_text.scroll_to_line(command_log_text.get_line_count() - 1)
-	_append_log_entry("[CMD] %s" % entry)
+	_append_log_entry("[CMD] %s" % entry, "COMMAND", "inspector.command")
 
 func _update_command_controls_enabled() -> void:
 	var connected = command_connected
@@ -2338,28 +2418,31 @@ func _update_log_status(message: String) -> void:
 func _ingest_log_entry(entry: Dictionary) -> void:
 	_record_tick_sample(entry)
 	_maybe_ingest_trade_telemetry(entry)
-	var formatted: String = _format_log_entry(entry)
-	if formatted != "":
-		_append_log_entry(formatted)
-
-func _format_log_entry(entry: Dictionary) -> String:
-	var level: String = String(entry.get("level", "INFO")).to_upper()
-	var message: String = String(entry.get("message", ""))
+	var level: String = _normalize_log_level(String(entry.get("level", "INFO")))
+	var raw_target: String = String(entry.get("target", ""))
 	var timestamp_ms: int = int(entry.get("timestamp_ms", 0))
-	var time_str: String = _format_timestamp(timestamp_ms)
-	var suffix: String = ""
+	var message: String = String(entry.get("message", ""))
 	var fields_variant: Variant = entry.get("fields", {})
+	var fields: Dictionary = {}
 	if typeof(fields_variant) == TYPE_DICTIONARY:
-		var field_map: Dictionary = fields_variant
-		var keys: Array = field_map.keys()
-		keys.sort()
-		var parts: Array[String] = []
-		for key in keys:
-			var key_str: String = String(key)
-			parts.append("%s=%s" % [key_str, _stringify_field(key_str, field_map[key])])
-		if not parts.is_empty():
-			suffix = " " + ", ".join(parts)
-	return "[%s] [%s] %s%s" % [time_str, level, message, suffix]
+		fields = (fields_variant as Dictionary).duplicate(true)
+	var formatted: String = _format_log_entry(timestamp_ms, level, raw_target, message, fields)
+	if formatted != "":
+		_record_log(formatted, level, raw_target, message, timestamp_ms, fields, false)
+
+func _format_log_entry(timestamp_ms: int, level: String, target: String, message: String, fields: Dictionary) -> String:
+	var time_str: String = _format_timestamp(timestamp_ms)
+	var level_label: String = _normalize_log_level(level)
+	var colored_level: String = "[%s]" % level_label
+	var level_color: String = _log_level_color(level_label)
+	if level_color != "":
+		colored_level = "[color=%s][%s][/color]" % [level_color, level_label]
+	var target_segment: String = ""
+	var trimmed_target: String = target.strip_edges()
+	if trimmed_target != "":
+		target_segment = " (%s)" % trimmed_target
+	var suffix: String = _format_field_suffix(fields)
+	return "[%s] %s%s %s%s" % [time_str, colored_level, target_segment, message, suffix]
 
 func _stringify_field(name: String, value) -> String:
 	match typeof(value):
@@ -2442,18 +2525,230 @@ func _update_tick_sparkline() -> void:
 func _render_logs() -> void:
 	if logs_text == null:
 		return
+	if _log_targets_dirty:
+		_refresh_log_target_dropdown()
 	var lines: Array[String] = []
 	lines.append("[b]Logs[/b]")
 	if _log_status_message != "":
 		lines.append("[color=#a4c6ff]%s[/color]" % _log_status_message)
-	if _log_messages.is_empty():
-		lines.append("No log entries yet.")
+	var filtered: Array = _filtered_log_records()
+	if filtered.is_empty():
+		if _log_entries.is_empty():
+			lines.append("No log entries yet.")
+		else:
+			lines.append("[i]No log entries match current filters.[/i]")
 	else:
-		for entry in _log_messages:
-			lines.append(entry)
+		for record_variant in filtered:
+			if not (record_variant is Dictionary):
+				continue
+			var record: Dictionary = record_variant
+			lines.append(String(record.get("formatted", "")))
 	logs_text.text = "\n".join(lines)
 	if logs_text.get_line_count() > 0:
 		logs_text.scroll_to_line(logs_text.get_line_count() - 1)
+
+func _filtered_log_records() -> Array:
+	if not _log_render_dirty:
+		return _log_filtered_records
+	var filtered: Array = []
+	for record_variant in _log_entries:
+		if not (record_variant is Dictionary):
+			continue
+		var record: Dictionary = record_variant
+		if _record_passes_filters(record):
+			filtered.append(record)
+	_log_filtered_records = filtered
+	_log_render_dirty = false
+	return _log_filtered_records
+
+func _record_passes_filters(record: Dictionary) -> bool:
+	var level: String = _normalize_log_level(String(record.get("level", "INFO")))
+	if _severity_for_level(level) < _log_level_threshold:
+		return false
+	if _selected_log_target != "":
+		var record_target: String = _normalize_log_target(String(record.get("target", "")))
+		if record_target != _selected_log_target:
+			return false
+	if _log_search_query_lower != "":
+		var haystack: String = String(record.get("formatted_lower", record.get("formatted", ""))).to_lower()
+		if not haystack.contains(_log_search_query_lower):
+			return false
+	return true
+
+func _severity_for_level(level: String) -> int:
+	var upper: String = level.to_upper()
+	if LOG_LEVEL_SEVERITY.has(upper):
+		return int(LOG_LEVEL_SEVERITY[upper])
+	return LOG_LEVEL_SEVERITY.get("INFO", 2)
+
+func _normalize_log_level(level: String) -> String:
+	var upper: String = level.to_upper()
+	match upper:
+		"WARNING":
+			return "WARN"
+		"ERR":
+			return "ERROR"
+		_:
+			return upper
+
+func _normalize_log_target(raw: String) -> String:
+	var trimmed := raw.strip_edges()
+	if trimmed == "":
+		return LOG_TARGET_FALLBACK
+	return trimmed
+
+func _register_log_target(target_key: String, delta: int) -> void:
+	var previous: int = int(_log_target_counts.get(target_key, 0))
+	var updated: int = previous + delta
+	if updated <= 0:
+		_log_target_counts.erase(target_key)
+		_log_target_list.erase(target_key)
+		if _selected_log_target == target_key:
+			_selected_log_target = ""
+	else:
+		_log_target_counts[target_key] = updated
+		if previous == 0 and delta > 0:
+			_log_target_list.append(target_key)
+	_log_targets_dirty = true
+
+func _refresh_log_target_dropdown() -> void:
+	if log_target_dropdown == null:
+		_log_targets_dirty = false
+		return
+	if _selected_log_target != "" and not _log_target_counts.has(_selected_log_target):
+		_selected_log_target = ""
+	log_target_dropdown.clear()
+	log_target_dropdown.add_item("All targets")
+	log_target_dropdown.set_item_metadata(0, "")
+	var sorted_targets: Array = _log_target_list.duplicate()
+	sorted_targets.sort()
+	var index: int = 1
+	var applied_selection: bool = false
+	for target_key in sorted_targets:
+		var count: int = int(_log_target_counts.get(target_key, 0))
+		if count <= 0:
+			continue
+		log_target_dropdown.add_item("%s (%d)" % [target_key, count])
+		log_target_dropdown.set_item_metadata(index, target_key)
+		if target_key == _selected_log_target:
+			log_target_dropdown.select(index)
+			applied_selection = true
+		index += 1
+	if not applied_selection:
+		log_target_dropdown.select(0)
+	_log_targets_dirty = false
+
+func _mark_logs_dirty() -> void:
+	_log_render_dirty = true
+
+func _reset_log_state() -> void:
+	_log_entries.clear()
+	_log_filtered_records.clear()
+	_log_render_dirty = true
+	_log_targets_dirty = true
+	_log_target_counts.clear()
+	_log_target_list.clear()
+	_selected_log_target = ""
+
+func _record_log(formatted: String, level: String, target: String, message: String, timestamp_ms: int, fields: Dictionary, synthetic: bool) -> void:
+	var target_key: String = _normalize_log_target(target)
+	var stored_fields: Dictionary = {}
+	if fields is Dictionary:
+		stored_fields = (fields as Dictionary).duplicate(true)
+	var record: Dictionary = {
+		"formatted": formatted,
+		"formatted_lower": formatted.to_lower(),
+		"level": level,
+		"target": target,
+		"target_key": target_key,
+		"message": message,
+		"timestamp_ms": timestamp_ms,
+		"fields": stored_fields,
+		"synthetic": synthetic
+	}
+	_log_entries.append(record)
+	_register_log_target(target_key, 1)
+	while _log_entries.size() > LOG_ENTRY_LIMIT:
+		var removed_variant: Variant = _log_entries.pop_front()
+		if removed_variant is Dictionary:
+			var removed: Dictionary = removed_variant
+			var removed_key: String = _normalize_log_target(String(removed.get("target", "")))
+			_register_log_target(removed_key, -1)
+	_mark_logs_dirty()
+	_render_logs()
+
+func _log_level_color(level: String) -> String:
+	match level:
+		"ERROR":
+			return "#ff6b6b"
+		"WARN":
+			return "#ffd166"
+		"INFO":
+			return "#a4c6ff"
+		"DEBUG":
+			return "#6ee7b7"
+		"TRACE":
+			return "#9aa5b1"
+		"COMMAND":
+			return "#d4bfff"
+		"SCRIPT":
+			return "#d4bfff"
+		_:
+			return ""
+
+func _format_field_suffix(fields: Dictionary) -> String:
+	if fields.is_empty():
+		return ""
+	var keys: Array = fields.keys()
+	keys.sort()
+	var parts: Array[String] = []
+	for key in keys:
+		var key_str: String = String(key)
+		parts.append("%s=%s" % [key_str, _stringify_field(key_str, fields[key])])
+	if parts.is_empty():
+		return ""
+	return " " + ", ".join(parts)
+
+func _on_log_level_filter_changed(index: int) -> void:
+	if log_level_dropdown == null:
+		return
+	var metadata: Variant = log_level_dropdown.get_item_metadata(index)
+	var threshold: int = 0
+	if typeof(metadata) == TYPE_INT:
+		threshold = int(metadata)
+	_log_level_threshold = threshold
+	_mark_logs_dirty()
+	_render_logs()
+
+func _on_log_target_filter_changed(index: int) -> void:
+	if log_target_dropdown == null:
+		return
+	var metadata: Variant = log_target_dropdown.get_item_metadata(index)
+	if metadata == null:
+		_selected_log_target = ""
+	else:
+		_selected_log_target = String(metadata)
+	if _selected_log_target != "" and not _log_target_counts.has(_selected_log_target):
+		_selected_log_target = ""
+	_mark_logs_dirty()
+	_render_logs()
+
+func _on_log_search_changed(new_text: String) -> void:
+	_log_search_query = new_text
+	_log_search_query_lower = new_text.to_lower()
+	_mark_logs_dirty()
+	_render_logs()
+
+func _on_log_clear_pressed() -> void:
+	_reset_log_state()
+	if log_target_dropdown != null:
+		log_target_dropdown.select(0)
+	if log_filter_line != null and log_filter_line.text != "":
+		log_filter_line.text = ""
+	_log_search_query = ""
+	_log_search_query_lower = ""
+	_mark_logs_dirty()
+	_render_logs()
 
 func get_resolved_font_size() -> int:
 	return _resolved_font_size
@@ -3177,33 +3472,40 @@ func _on_heat_apply_button_pressed() -> void:
 
 func _on_script_log_from_package(script_id: int, level: String, message: String) -> void:
 	var prefix: String = "[SCRIPT %d]" % script_id if script_id >= 0 else "[SCRIPT]"
-	var entry: String = "%s [%s] %s" % [prefix, String(level).to_upper(), message]
-	_append_log_entry(entry)
+	var normalized_level: String = _normalize_log_level(level)
+	var target: String = "script.%d" % script_id if script_id >= 0 else "script"
+	var entry: String = "%s %s" % [prefix, message]
+	_append_log_entry(entry, normalized_level, target)
 
 func _on_script_alert_from_package(script_id: int, data: Dictionary) -> void:
 	var title: String = data.get("title", "Alert")
 	var level: String = data.get("level", "info")
 	var body: String = data.get("message", "")
 	var prefix: String = "[SCRIPT %d]" % script_id if script_id >= 0 else "[SCRIPT]"
-	_append_log_entry("%s alert (%s): %s" % [prefix, level, title])
+	var normalized_level: String = _normalize_log_level(level)
+	var target: String = "script.%d" % script_id if script_id >= 0 else "script"
+	_append_log_entry("%s alert (%s): %s" % [prefix, normalized_level.to_lower(), title], normalized_level, target)
 	if not body.is_empty():
-		_append_log_entry("  %s" % body)
+		_append_log_entry("  %s" % body, normalized_level, target)
 
 func _on_script_event_from_package(script_id: int, event_name: String, payload: Variant) -> void:
 	if event_name == "commands.issue.result" and typeof(payload) == TYPE_DICTIONARY:
 		var ok: bool = payload.get("ok", false)
 		var line: String = payload.get("line", "")
 		var prefix: String = "[SCRIPT %d]" % script_id if script_id >= 0 else "[SCRIPT]"
+		var target: String = "script.%d" % script_id if script_id >= 0 else "script"
 		if ok:
-			_append_log_entry("%s command acknowledged: %s" % [prefix, line])
+			_append_log_entry("%s command acknowledged: %s" % [prefix, line], "INFO", target)
 		else:
-			_append_log_entry("%s command failed: %s" % [prefix, line])
+			_append_log_entry("%s command failed: %s" % [prefix, line], "WARN", target)
 
-func _append_log_entry(entry: String) -> void:
+func _append_log_entry(entry: String, level: String = "INFO", target: String = "inspector", timestamp_ms: int = -1) -> void:
 	var trimmed: String = entry.strip_edges(true, true)
 	if trimmed == "":
 		return
-	_log_messages.append(trimmed)
-	while _log_messages.size() > LOG_ENTRY_LIMIT:
-		_log_messages.pop_front()
-	_render_logs()
+	var resolved_timestamp: int = timestamp_ms
+	if resolved_timestamp < 0:
+		resolved_timestamp = Time.get_ticks_msec()
+	var normalized_level: String = _normalize_log_level(level)
+	var formatted: String = "[%s] %s" % [_format_timestamp(resolved_timestamp), trimmed]
+	_record_log(formatted, normalized_level, target, trimmed, resolved_timestamp, {}, true)
