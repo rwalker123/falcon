@@ -1066,6 +1066,7 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 - Core capability families: `telemetry.subscribe` (read-only streams of snapshots, overlays, and ledgers), `ui.compose` (spawn declarative widgets, overlay layers, timeline charts), `commands.issue` (post turn orders, bias tweaks, debug hooks) and `storage.session` (bounded in-memory/session persistence; no arbitrary disk access).
 - Each script declares optional signals such as `alerts.emit` for notifications; the host surfaces rate limits and usage diagnostics so players can audit behaviour during play sessions.
 - Sandboxing rules prohibit direct network access, raw file IO, or thread spawning; the host exposes vetted helpers (e.g., colour ramps, map projections) and rejects calls outside the manifest. Suspension/quarantine flows give players a one-click way to disable misbehaving scripts mid-session.
+- Authoring support: manifests must conform to the published JSON schema (`docs/scripting_manifest.schema.json`); run `cargo xtask validate-manifests` before sharing packages to catch schema or capability mismatches early.
 - Additional clients may implement the same manifest if we pursue them, but the Godot implementation is the authoritative behaviour model. Engineering details live in `docs/architecture.md` “Shared Scripting Capability Model,” which mirrors these guarantees for tooling teams.
 
 #### Next Steps (Frontend)

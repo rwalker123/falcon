@@ -9,13 +9,14 @@ use std::thread;
 
 mod runtime;
 
-use runtime::{manifest_to_json, responses_to_json, transmit_proto_command, Manifest, ScriptError};
+use runtime::{manifest_to_json, responses_to_json, transmit_proto_command, ScriptError};
 pub use runtime::{
     manifest_to_json as script_manifest_to_json, responses_to_json as script_responses_to_json,
-    Manager as ScriptRuntimeManager, Manifest as ScriptManifest, ScriptError as ScriptHostError,
+    Manager as ScriptRuntimeManager, ScriptError as ScriptHostError,
     ScriptResponse as ScriptRuntimeResponse,
 };
 use serde_json::{json, Map as JsonMap, Number as JsonNumber, Value as JsonValue};
+pub use sim_runtime::scripting::ScriptManifest;
 use sim_runtime::scripting::SimScriptState;
 use sim_runtime::{parse_command_line, CommandEnvelope};
 
@@ -312,7 +313,7 @@ impl ScriptHostBridge {
     pub fn parse_manifest(&self, manifest_path: GString, manifest_json: GString) -> Dictionary {
         let mut dict = Dictionary::new();
         let path_str = manifest_path.to_string();
-        match Manifest::parse_str(manifest_json.to_string().as_str()) {
+        match ScriptManifest::parse_str(manifest_json.to_string().as_str()) {
             Ok(mut manifest) => {
                 let entry_path = resolve_entry_path(&path_str, &manifest.entry);
                 manifest.manifest_path = Some(path_str.clone());
@@ -339,8 +340,13 @@ impl ScriptHostBridge {
     ) -> Dictionary {
         let mut dict = Dictionary::new();
         let manifest_json = variant_to_json(&Variant::from(manifest_dict.clone()));
-        match serde_json::from_value::<Manifest>(manifest_json) {
+        match serde_json::from_value::<ScriptManifest>(manifest_json) {
             Ok(mut manifest) => {
+                if let Err(err) = manifest.validate() {
+                    let _ = dict.insert("ok", false);
+                    let _ = dict.insert("error", err.to_string());
+                    return dict;
+                }
                 let manifest_path_str = manifest_path.to_string();
                 let manifest_path_opt = if manifest_path_str.is_empty() {
                     None

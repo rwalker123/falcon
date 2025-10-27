@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ScriptManifest",
+  "type": "object",
+  "required": [
+    "entry",
+    "id",
+    "version"
+  ],
+  "properties": {
+    "author": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "capabilities": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "config": {
+      "default": null
+    },
+    "description": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "entry": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "subscriptions": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "version": {
+      "type": "string"
+    }
+  }
+}

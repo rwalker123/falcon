@@ -19,8 +19,8 @@ pub use command_text::{parse_command_line, CommandParseError};
 
 pub mod scripting;
 pub use scripting::{
-    capability_registry, CapabilityRegistry, CapabilitySpec, ScriptManifestRef, SessionAccess,
-    SimScriptState,
+    capability_registry, manifest_schema, CapabilityRegistry, CapabilitySpec,
+    ManifestValidationError, ScriptManifest, ScriptManifestRef, SessionAccess, SimScriptState,
 };
 
 /// Fixed-point scaling constant shared with `core_sim::Scalar`.

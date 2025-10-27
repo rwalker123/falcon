@@ -1,7 +1,10 @@
 //! Scripting capability registry and helper utilities shared by host runtimes.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::collections::HashSet;
+use std::fmt;
 
 /// Describes a scripting capability exposed to user scripts.
 #[derive(Debug)]
@@ -75,6 +78,71 @@ pub struct SimScriptState {
     #[serde(default)]
     pub enabled: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct ScriptManifest {
+    pub id: String,
+    pub version: String,
+    pub entry: String,
+    #[serde(default)]
+    /// List of capability IDs required by this script. Capabilities must be declared here before they can be referenced by subscriptions.
+    pub capabilities: Vec<String>,
+    #[serde(default)]
+    /// List of telemetry topics to subscribe to. Each topic must be covered by at least one declared capability, as enforced by validation logic.
+    pub subscriptions: Vec<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub config: Option<JsonValue>,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub manifest_path: Option<String>,
+}
+
+impl ScriptManifest {
+    pub fn parse_str(contents: &str) -> Result<Self, ManifestValidationError> {
+        let manifest: ScriptManifest = serde_json::from_str(contents).map_err(|err| {
+            ManifestValidationError::single(format!("failed to parse manifest JSON: {err}"))
+        })?;
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
+    pub fn validate(&self) -> Result<(), ManifestValidationError> {
+        validate_manifest(self, capability_registry())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ManifestValidationError {
+    errors: Vec<String>,
+}
+
+impl ManifestValidationError {
+    pub fn new(errors: Vec<String>) -> Self {
+        Self { errors }
+    }
+
+    pub fn single(message: impl Into<String>) -> Self {
+        Self {
+            errors: vec![message.into()],
+        }
+    }
+
+    pub fn errors(&self) -> &[String] {
+        &self.errors
+    }
+}
+
+impl fmt::Display for ManifestValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.errors.join("; "))
+    }
+}
+
+impl std::error::Error for ManifestValidationError {}
 
 const CAPABILITY_SPECS: &[CapabilitySpec] = &[
     CapabilitySpec {
@@ -161,6 +229,68 @@ pub const fn capability_registry() -> &'static CapabilityRegistry {
     &REGISTRY
 }
 
+fn validate_manifest(
+    manifest: &ScriptManifest,
+    registry: &CapabilityRegistry,
+) -> Result<(), ManifestValidationError> {
+    let mut errors = Vec::new();
+
+    if manifest.id.trim().is_empty() {
+        errors.push("manifest id cannot be empty".to_string());
+    }
+    if manifest.version.trim().is_empty() {
+        errors.push("manifest version cannot be empty".to_string());
+    }
+    if manifest.entry.trim().is_empty() {
+        errors.push("manifest entry cannot be empty".to_string());
+    }
+
+    let mut declared = HashSet::new();
+    let mut resolved_specs: Vec<&'static CapabilitySpec> = Vec::new();
+
+    for capability in &manifest.capabilities {
+        let entry = capability.trim();
+        if entry.is_empty() {
+            errors.push("capability entries cannot be blank".to_string());
+            continue;
+        }
+        if !declared.insert(entry.to_string()) {
+            errors.push(format!("duplicate capability '{entry}'"));
+            continue;
+        }
+        match registry.get(entry) {
+            Some(spec) => resolved_specs.push(spec),
+            None => errors.push(format!("unknown capability '{entry}'")),
+        }
+    }
+
+    for topic in &manifest.subscriptions {
+        let trimmed = topic.trim();
+        if trimmed.is_empty() {
+            errors.push("subscription entries cannot be blank".to_string());
+            continue;
+        }
+        if !resolved_specs
+            .iter()
+            .any(|spec| spec.allows_subscription(trimmed))
+        {
+            errors.push(format!(
+                "subscription '{trimmed}' not covered by declared capabilities"
+            ));
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(ManifestValidationError::new(errors))
+    }
+}
+
+pub fn manifest_schema() -> schemars::schema::RootSchema {
+    schemars::schema_for!(ScriptManifest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,5 +319,46 @@ mod tests {
         };
         assert!(spec.allows_subscription("alerts.demo"));
         assert!(!spec.allows_subscription("alert"));
+    }
+
+    #[test]
+    fn manifest_rejects_unknown_capability() {
+        let json = r#"{
+            "id": "demo",
+            "version": "0.1.0",
+            "entry": "./index.js",
+            "capabilities": ["not_a_cap"],
+            "subscriptions": []
+        }"#;
+        let err = ScriptManifest::parse_str(json).expect_err("expected parse failure");
+        assert!(err.to_string().contains("unknown capability"));
+    }
+
+    #[test]
+    fn manifest_rejects_uncovered_subscription() {
+        let json = r#"{
+            "id": "demo",
+            "version": "0.1.0",
+            "entry": "./index.js",
+            "capabilities": ["commands.issue"],
+            "subscriptions": ["world.snapshot"]
+        }"#;
+        let err = ScriptManifest::parse_str(json).expect_err("expected parse failure");
+        assert!(err
+            .to_string()
+            .contains("subscription 'world.snapshot' not covered"));
+    }
+
+    #[test]
+    fn manifest_accepts_valid_capabilities() {
+        let json = r#"{
+            "id": "demo",
+            "version": "0.1.0",
+            "entry": "./index.js",
+            "capabilities": ["telemetry.subscribe", "commands.issue"],
+            "subscriptions": ["world.snapshot"]
+        }"#;
+        let manifest = ScriptManifest::parse_str(json).expect("manifest should be valid");
+        assert_eq!(manifest.capabilities.len(), 2);
     }
 }
