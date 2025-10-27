@@ -4,6 +4,7 @@ use sim_runtime::{KnownTechFragment as ContractKnowledgeFragment, TerrainTags, T
 use crate::{
     generations::GenerationId,
     orders::FactionId,
+    power::PowerNodeId,
     scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar},
 };
 
@@ -128,12 +129,40 @@ pub struct PopulationCohort {
     pub migration: Option<PendingMigration>,
 }
 
-/// Simple power node attached to a tile.
+/// Power node metadata bound to a tile entity.
 #[derive(Component, Debug, Clone)]
 pub struct PowerNode {
+    pub id: PowerNodeId,
+    pub base_generation: Scalar,
+    pub base_demand: Scalar,
     pub generation: Scalar,
     pub demand: Scalar,
     pub efficiency: Scalar,
+    pub storage_capacity: Scalar,
+    pub storage_level: Scalar,
+    pub stability: Scalar,
+    pub surplus: Scalar,
+    pub deficit: Scalar,
+    pub incident_count: u32,
+}
+
+impl Default for PowerNode {
+    fn default() -> Self {
+        Self {
+            id: PowerNodeId(0),
+            base_generation: scalar_zero(),
+            base_demand: scalar_zero(),
+            generation: scalar_zero(),
+            demand: scalar_zero(),
+            efficiency: Scalar::one(),
+            storage_capacity: scalar_zero(),
+            storage_level: scalar_zero(),
+            stability: Scalar::one(),
+            surplus: scalar_zero(),
+            deficit: scalar_zero(),
+            incident_count: 0,
+        }
+    }
 }
 
 /// Trade link metadata attached to logistics edges.
@@ -220,16 +249,6 @@ pub struct PendingMigration {
     pub destination: FactionId,
     pub eta: u16,
     pub fragments: Vec<KnowledgeFragment>,
-}
-
-impl Default for PowerNode {
-    fn default() -> Self {
-        Self {
-            generation: scalar_zero(),
-            demand: scalar_zero(),
-            efficiency: scalar_one(),
-        }
-    }
 }
 
 impl Default for Tile {

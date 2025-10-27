@@ -231,6 +231,23 @@ Energy emerges through experimentation, not predefined stages. Civilizations pro
 - Resource depletion → societal collapse.
 - Discovery of near-limitless energy → overpopulation and climate degradation.
 
+### Power Simulation Pillars
+- **Generation Lanes**: Civilizations experiment their way into combustive, resonant, fusion, or exotic reactors; each lane sets efficiency, fuel sourcing, and waste signatures that can be upgraded through Great Discoveries. (See `docs/architecture.md` §Power Systems Plan for the engineering scaffolding.)
+- **Transmission & Storage**: Distributed grids blend point-to-point lines, induction relays, and storage stacks (chemical, thermal, or lattice) that determine how much surplus can be buffered between turns.
+- **Demand Domains**: Logistics hubs, industry, population centers, and military formations each advertise required wattage; shortages cascade into attrition, production slowdowns, and morale shocks depending on the domain starved of power.
+
+### Operational Loop
+1. Experimentation unlocks or refines generation lanes and storage media.
+2. Players assign facilities to fuels/materials discovered in §3, balancing throughput with risk and upkeep.
+3. The grid resolves transmission losses, storage bleed, and demand fulfillment at turn resolution; surpluses raise stability, deficits drain buffers or trigger brownouts.
+4. Telemetry (grid stress, surplus margin, instability score) surfaces through the inspector to spotlight weak links and targets for investment.
+
+### Instability & Safety Dynamics
+- **Stability Bands**: Each grid tracks a normalized stability score derived from load ratio, maintenance investment, and reactor health; dropping below thresholds introduces escalating disaster checks (leaks, meltdowns, cascading outages).
+- **Incident Pathways**: High-risk reactors spawn localized crises that infect logistics (fuel reroutes), materials (contamination), and population systems (evacuation, health impact).
+- **Mitigation**: Players can allocate redundancy, harden transmission corridors, or spin up contingency microgrids; successful safeguards amortize Knowledge Debt incurred by secretive projects.
+- **Disclosure Pressure**: Deploying advanced power tech in the open accelerates Knowledge Diffusion (§5a), forcing a tradeoff between safety and secrecy.
+
 ---
 
 ## 5. Great Discovery System (GDS)

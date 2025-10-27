@@ -501,12 +501,64 @@ size_flags_horizontal = 3
 bbcode_enabled = true
 fit_content = true
 
-[node name="Knowledge" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+[node name="Power" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
 visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 metadata/_tab_index = 8
+
+[node name="PowerVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Power"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="PowerSummarySection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Power/PowerVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="PowerSummaryLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Power/PowerVBox/PowerSummarySection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Grid Metrics"
+
+[node name="PowerSummaryText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Power/PowerVBox/PowerSummarySection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="PowerNodeSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Power/PowerVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="PowerNodeLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Power/PowerVBox/PowerNodeSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Power Nodes"
+
+[node name="PowerNodeList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Power/PowerVBox/PowerNodeSection"]
+custom_minimum_size = Vector2(0, 220)
+layout_mode = 2
+size_flags_horizontal = 3
+allow_rmb_select = true
+same_column_width = true
+
+[node name="PowerNodeDetailText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Power/PowerVBox/PowerNodeSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="Knowledge" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 9
 
 [node name="KnowledgeVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Knowledge"]
 layout_mode = 2
@@ -564,7 +616,7 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 8
-metadata/_tab_index = 9
+metadata/_tab_index = 10
 
 [node name="SparklineContainer" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Logs"]
 layout_mode = 2
@@ -648,7 +700,7 @@ fit_content = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-metadata/_tab_index = 10
+metadata/_tab_index = 11
 
 [node name="StatusLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands"]
 layout_mode = 2

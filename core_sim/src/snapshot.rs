@@ -8,10 +8,11 @@ use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
     AxisBiasState, CorruptionLedger, CorruptionSubsystem, CultureLayerState, CultureTensionState,
     CultureTraitEntry, DiscoveryProgressEntry, GenerationState, InfluentialIndividualState,
-    LogisticsLinkState, PendingMigrationState, PopulationCohortState, PowerNodeState,
-    ScalarRasterState, SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState,
-    SentimentTelemetryState, SnapshotHeader, TerrainOverlayState, TerrainSample, TileState,
-    TradeLinkKnowledge, TradeLinkState, WorldDelta, WorldSnapshot,
+    LogisticsLinkState, PendingMigrationState, PopulationCohortState, PowerIncidentSeverity,
+    PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState,
+    SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
+    SnapshotHeader, TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge,
+    TradeLinkState, WorldDelta, WorldSnapshot,
 };
 
 use crate::{
@@ -27,6 +28,7 @@ use crate::{
     generations::{GenerationProfile, GenerationRegistry},
     influencers::{InfluencerImpacts, InfluentialRoster},
     orders::FactionId,
+    power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
     resources::{
         CorruptionLedgers, CorruptionTelemetry, DiscoveryProgressLedger, SentimentAxisBias,
         SimulationConfig, SimulationTick, TileRegistry,
@@ -84,6 +86,7 @@ pub struct SnapshotHistory {
     trade_links: HashMap<u64, TradeLinkState>,
     populations: HashMap<u64, PopulationCohortState>,
     power: HashMap<u64, PowerNodeState>,
+    power_metrics: PowerTelemetryState,
     generations: HashMap<u16, GenerationState>,
     influencers: HashMap<u32, InfluentialIndividualState>,
     culture_layers: HashMap<u32, CultureLayerState>,
@@ -123,6 +126,7 @@ impl SnapshotHistory {
             trade_links: HashMap::new(),
             populations: HashMap::new(),
             power: HashMap::new(),
+            power_metrics: PowerTelemetryState::default(),
             generations: HashMap::new(),
             influencers: HashMap::new(),
             culture_layers: HashMap::new(),
@@ -286,6 +290,13 @@ impl SnapshotHistory {
             Some(military_raster_state.clone())
         };
 
+        let power_metrics_state = snapshot.power_metrics.clone();
+        let power_metrics_delta = if self.power_metrics == power_metrics_state {
+            None
+        } else {
+            Some(power_metrics_state.clone())
+        };
+
         let corruption_state = snapshot.corruption.clone();
         let corruption_delta = if self.corruption == corruption_state {
             None
@@ -305,6 +316,7 @@ impl SnapshotHistory {
             removed_populations: diff_removed(&self.populations, &populations_index),
             power: diff_new(&self.power, &power_index),
             removed_power: diff_removed(&self.power, &power_index),
+            power_metrics: power_metrics_delta.clone(),
             axis_bias: axis_bias_delta,
             sentiment: sentiment_delta.clone(),
             generations: diff_new(&self.generations, &generations_index),
@@ -334,6 +346,7 @@ impl SnapshotHistory {
         self.trade_links = trade_index;
         self.populations = populations_index;
         self.power = power_index;
+        self.power_metrics = power_metrics_state;
         self.generations = generations_index;
         self.influencers = influencers_index;
         self.culture_layers = culture_layers_index;
@@ -455,6 +468,7 @@ impl SnapshotHistory {
             removed_populations: Vec::new(),
             power: Vec::new(),
             removed_power: Vec::new(),
+            power_metrics: None,
             axis_bias: Some(bias.clone()),
             sentiment: None,
             logistics_raster: None,
@@ -544,6 +558,7 @@ impl SnapshotHistory {
             removed_populations: Vec::new(),
             power: Vec::new(),
             removed_power: Vec::new(),
+            power_metrics: None,
             axis_bias: None,
             sentiment: None,
             logistics_raster: None,
@@ -627,6 +642,7 @@ impl SnapshotHistory {
             removed_populations: Vec::new(),
             power: Vec::new(),
             removed_power: Vec::new(),
+            power_metrics: None,
             axis_bias: None,
             sentiment: None,
             logistics_raster: None,
@@ -697,6 +713,7 @@ pub fn capture_snapshot(
     logistics_links: Query<(Entity, &LogisticsLink, &TradeLink)>,
     populations: Query<(Entity, &PopulationCohort)>,
     power_nodes: Query<(Entity, &PowerNode)>,
+    power_grid: Res<PowerGridState>,
     registry: Res<GenerationRegistry>,
     roster: Res<InfluentialRoster>,
     axis_bias: Res<SentimentAxisBias>,
@@ -734,6 +751,8 @@ pub fn capture_snapshot(
         .map(|(entity, node)| power_state(entity, node))
         .collect();
     power_states.sort_unstable_by_key(|state| state.entity);
+
+    let power_metrics = power_metrics_from_grid(&power_grid);
 
     let mut generation_states: Vec<GenerationState> =
         registry.profiles().iter().map(generation_state).collect();
@@ -930,6 +949,7 @@ pub fn capture_snapshot(
         trade_links: trade_states,
         populations: population_states,
         power: power_states,
+        power_metrics: power_metrics.clone(),
         terrain: terrain_overlay.clone(),
         logistics_raster: logistics_raster.clone(),
         sentiment_raster: sentiment_raster.clone(),
@@ -1004,10 +1024,21 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         });
 
         if let Some(power_state) = power_lookup.get(&tile_state.entity) {
+            let generation = Scalar::from_raw(power_state.generation);
+            let demand = Scalar::from_raw(power_state.demand);
             entity_mut.insert(PowerNode {
-                generation: Scalar::from_raw(power_state.generation),
-                demand: Scalar::from_raw(power_state.demand),
+                id: PowerNodeId(power_state.node_id),
+                base_generation: generation,
+                base_demand: demand,
+                generation,
+                demand,
                 efficiency: Scalar::from_raw(power_state.efficiency),
+                storage_capacity: Scalar::from_raw(power_state.storage_capacity),
+                storage_level: Scalar::from_raw(power_state.storage_level),
+                stability: Scalar::from_raw(power_state.stability),
+                surplus: Scalar::from_raw(power_state.surplus),
+                deficit: Scalar::from_raw(power_state.deficit),
+                incident_count: power_state.incident_count,
             });
         }
 
@@ -2225,9 +2256,42 @@ fn population_state(entity: Entity, cohort: &PopulationCohort) -> PopulationCoho
 fn power_state(entity: Entity, node: &PowerNode) -> PowerNodeState {
     PowerNodeState {
         entity: entity.to_bits(),
+        node_id: node.id.0,
         generation: node.generation.raw(),
         demand: node.demand.raw(),
         efficiency: node.efficiency.raw(),
+        storage_level: node.storage_level.raw(),
+        storage_capacity: node.storage_capacity.raw(),
+        stability: node.stability.raw(),
+        surplus: node.surplus.raw(),
+        deficit: node.deficit.raw(),
+        incident_count: node.incident_count,
+    }
+}
+
+fn power_metrics_from_grid(grid: &PowerGridState) -> PowerTelemetryState {
+    let incidents: Vec<PowerIncidentState> = grid
+        .incidents
+        .iter()
+        .map(|incident| PowerIncidentState {
+            node_id: incident.node_id.0,
+            severity: match incident.severity {
+                GridIncidentSeverity::Warning => PowerIncidentSeverity::Warning,
+                GridIncidentSeverity::Critical => PowerIncidentSeverity::Critical,
+            },
+            deficit: incident.deficit.raw(),
+        })
+        .collect();
+
+    PowerTelemetryState {
+        total_supply: grid.total_supply.raw(),
+        total_demand: grid.total_demand.raw(),
+        total_storage: grid.total_storage.raw(),
+        total_capacity: grid.total_capacity.raw(),
+        grid_stress_avg: grid.grid_stress_avg,
+        surplus_margin: grid.surplus_margin,
+        instability_alerts: grid.instability_alerts,
+        incidents,
     }
 }
 
@@ -2248,8 +2312,10 @@ mod tests {
     use super::*;
     use crate::{
         orders::FactionId,
+        power::PowerIncidentSeverity as GridIncidentSeverity,
         resources::{CorruptionTelemetry, DiscoveryProgressLedger},
         scalar::Scalar,
+        PowerIncident,
     };
     use bevy::math::UVec2;
     use sim_runtime::{
@@ -2284,6 +2350,7 @@ mod tests {
             trade_links: Vec::new(),
             populations: Vec::new(),
             power: Vec::new(),
+            power_metrics: PowerTelemetryState::default(),
             terrain: overlay,
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
@@ -2301,6 +2368,39 @@ mod tests {
             discovery_progress: Vec::new(),
         }
         .finalize()
+    }
+
+    #[test]
+    fn power_metrics_from_grid_tracks_totals() {
+        let mut grid = PowerGridState {
+            total_supply: Scalar::from_f32(12.5),
+            total_demand: Scalar::from_f32(10.0),
+            total_storage: Scalar::from_f32(4.5),
+            total_capacity: Scalar::from_f32(18.0),
+            grid_stress_avg: 0.35,
+            surplus_margin: 0.22,
+            instability_alerts: 3,
+            ..Default::default()
+        };
+        grid.incidents.push(PowerIncident {
+            node_id: PowerNodeId(42),
+            severity: GridIncidentSeverity::Critical,
+            deficit: Scalar::from_f32(1.2),
+        });
+
+        let telemetry = power_metrics_from_grid(&grid);
+        assert_eq!(telemetry.total_supply, Scalar::from_f32(12.5).raw());
+        assert_eq!(telemetry.total_demand, Scalar::from_f32(10.0).raw());
+        assert_eq!(telemetry.total_storage, Scalar::from_f32(4.5).raw());
+        assert_eq!(telemetry.total_capacity, Scalar::from_f32(18.0).raw());
+        assert!((telemetry.grid_stress_avg - 0.35).abs() < f32::EPSILON);
+        assert!((telemetry.surplus_margin - 0.22).abs() < f32::EPSILON);
+        assert_eq!(telemetry.instability_alerts, 3);
+        assert_eq!(telemetry.incidents.len(), 1);
+        let incident = &telemetry.incidents[0];
+        assert_eq!(incident.node_id, 42);
+        assert_eq!(incident.severity, PowerIncidentSeverity::Critical);
+        assert_eq!(incident.deficit, Scalar::from_f32(1.2).raw());
     }
 
     #[test]
@@ -2416,15 +2516,29 @@ mod tests {
         let power_nodes = vec![
             PowerNodeState {
                 entity: 1,
+                node_id: 1,
                 generation: Scalar::from_f32(0.9).raw(),
                 demand: Scalar::from_f32(0.4).raw(),
                 efficiency: Scalar::one().raw(),
+                storage_level: Scalar::zero().raw(),
+                storage_capacity: Scalar::zero().raw(),
+                stability: Scalar::one().raw(),
+                surplus: Scalar::zero().raw(),
+                deficit: Scalar::zero().raw(),
+                incident_count: 0,
             },
             PowerNodeState {
                 entity: 2,
+                node_id: 2,
                 generation: Scalar::from_f32(0.4).raw(),
                 demand: Scalar::from_f32(0.2).raw(),
                 efficiency: Scalar::one().raw(),
+                storage_level: Scalar::zero().raw(),
+                storage_capacity: Scalar::zero().raw(),
+                stability: Scalar::one().raw(),
+                surplus: Scalar::zero().raw(),
+                deficit: Scalar::zero().raw(),
+                incident_count: 0,
             },
         ];
 

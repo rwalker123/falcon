@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::{components::Tile, resources::SimulationConfig};
+use crate::{components::Tile, power::PowerGridState, resources::SimulationConfig};
 
 #[derive(Resource, Default, Debug, Clone)]
 pub struct SimulationMetrics {
@@ -8,12 +8,16 @@ pub struct SimulationMetrics {
     pub total_mass: i128,
     pub avg_temperature: f64,
     pub grid_size: (u32, u32),
+    pub grid_stress_avg: f32,
+    pub grid_surplus_margin: f32,
+    pub instability_alerts: u32,
 }
 
 pub fn collect_metrics(
     config: Res<SimulationConfig>,
     mut metrics: ResMut<SimulationMetrics>,
     tiles: Query<&Tile>,
+    power: Option<Res<PowerGridState>>,
 ) {
     metrics.turn += 1;
     let mut total_mass = 0i128;
@@ -33,4 +37,14 @@ pub fn collect_metrics(
         0.0
     };
     metrics.grid_size = (config.grid_size.x, config.grid_size.y);
+
+    if let Some(power_state) = power {
+        metrics.grid_stress_avg = power_state.grid_stress_avg;
+        metrics.grid_surplus_margin = power_state.surplus_margin;
+        metrics.instability_alerts = power_state.instability_alerts;
+    } else {
+        metrics.grid_stress_avg = 0.0;
+        metrics.grid_surplus_margin = 0.0;
+        metrics.instability_alerts = 0;
+    }
 }
