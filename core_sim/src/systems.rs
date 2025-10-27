@@ -742,7 +742,7 @@ pub fn simulate_power(
 
         if storage_levels[idx] > scalar_zero() && demand > scalar_zero() {
             let reserve_ratio = (storage_levels[idx] / demand).clamp(scalar_zero(), Scalar::one());
-            stability = (stability + reserve_ratio * scalar_from_f32(0.25))
+            stability = (stability + reserve_ratio * scalar_from_f32(config.power_storage_stability_bonus))
                 .clamp(scalar_zero(), Scalar::one());
         }
 
