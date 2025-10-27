@@ -571,6 +571,7 @@ pub fn simulate_power(
     );
 
     let mut node_calcs: Vec<NodeCalc> = Vec::with_capacity(nodes.iter().len());
+    let mut node_index: HashMap<PowerNodeId, usize> = HashMap::with_capacity(nodes.iter().len());
 
     for (entity, tile, mut node) in nodes.iter_mut() {
         let efficiency_adjust =
@@ -578,11 +579,10 @@ pub fn simulate_power(
         node.efficiency = (node.efficiency + efficiency_adjust * scalar_from_f32(0.01))
             .clamp(scalar_from_f32(0.5), config.max_power_efficiency);
 
-        let influence_bonus = (impacts.power_bonus + effects.power_bonus)
-            .clamp(
-                scalar_from_f32(config.min_power_influence),
-                scalar_from_f32(config.max_power_influence),
-            );
+        let influence_bonus = (impacts.power_bonus + effects.power_bonus).clamp(
+            scalar_from_f32(config.min_power_influence),
+            scalar_from_f32(config.max_power_influence),
+        );
 
         let effective_generation = (node.base_generation * node.efficiency + influence_bonus)
             .clamp(scalar_zero(), config.max_power_generation);
@@ -590,13 +590,15 @@ pub fn simulate_power(
             .clamp(scalar_zero(), config.max_power_generation);
         let net = (effective_generation - target_demand) * corruption_factor;
 
-        node.generation = (node.base_generation + net * scalar_from_f32(config.power_generation_adjust_rate))
-            .clamp(scalar_zero(), config.max_power_generation);
+        node.generation = (node.base_generation
+            + net * scalar_from_f32(config.power_generation_adjust_rate))
+        .clamp(scalar_zero(), config.max_power_generation);
         node.demand = (node.base_demand - net * scalar_from_f32(config.power_demand_adjust_rate))
             .clamp(scalar_zero(), config.max_power_generation);
 
         let net_supply = node.generation - node.demand;
 
+        let next_index = node_calcs.len();
         node_calcs.push(NodeCalc {
             entity,
             id: node.id,
@@ -607,6 +609,7 @@ pub fn simulate_power(
             net: net_supply,
             incident_count: node.incident_count,
         });
+        node_index.insert(node.id, next_index);
     }
 
     let node_count = node_calcs.len();
@@ -630,10 +633,9 @@ pub fn simulate_power(
                 continue;
             }
             for neighbour in topology.neighbours(node_calcs[idx].id) {
-                let n_idx = neighbour.index();
-                if n_idx >= node_count {
+                let Some(&n_idx) = node_index.get(neighbour) else {
                     continue;
-                }
+                };
                 if nets[n_idx] >= scalar_zero() {
                     continue;
                 }
@@ -742,8 +744,9 @@ pub fn simulate_power(
 
         if storage_levels[idx] > scalar_zero() && demand > scalar_zero() {
             let reserve_ratio = (storage_levels[idx] / demand).clamp(scalar_zero(), Scalar::one());
-            stability = (stability + reserve_ratio * scalar_from_f32(config.power_storage_stability_bonus))
-                .clamp(scalar_zero(), Scalar::one());
+            stability = (stability
+                + reserve_ratio * scalar_from_f32(config.power_storage_stability_bonus))
+            .clamp(scalar_zero(), Scalar::one());
         }
 
         let mut incident_count = node_calcs[idx].incident_count;
