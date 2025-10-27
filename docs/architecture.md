@@ -213,6 +213,45 @@ Power resolution sits fourth in the turn chain (materials → logistics → popu
 - Extend Godot inspector to visualise the new telemetry and expose relevant command toggles.
 - Author regression tests/benchmarks covering stability band transitions, cascade propagation, and serialization of power telemetry.
 
+## Great Discovery System Plan
+This section translates the player-facing intent in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §5 into engineering scaffolding. The goal is to capture how overlapping discoveries crystallise into a Great Discovery, how those events interact with Knowledge Diffusion (§5a), and how clients observe the leap through snapshots.
+
+### ECS Structure
+- **Identifiers & Registries**
+  - Reuse `DiscoveryId` (u32) for baseline discoveries and introduce `GreatDiscoveryId` (u16) for constellation-level leaps.
+  - `KnowledgeField` enum (`Physics`, `Chemistry`, `Biology`, `Data`, `Communication`, `Exotic`) mirrors the manual’s Knowledge Fields for aggregation and UI labelling.
+  - `GreatDiscoveryDefinition` records the canonical name, owning `KnowledgeField`, a list of `ConstellationRequirement` entries, observation prerequisites, and effect hooks (power unlock tags, crisis seeds, culture modifiers) so downstream systems can subscribe without hard-coding IDs.
+  - `GreatDiscoveryRegistry` resource owns all definitions plus index structures (by prerequisite discovery, by field) to keep runtime evaluation cheap.
+- **Per-Faction State Resources**
+  - `GreatDiscoveryReadiness` maps each faction to `ConstellationProgress` (per GreatDiscoveryId) including accumulated progress, gating timers, and leak sensitivity multipliers sourced from Knowledge Diffusion posture.
+  - `GreatDiscoveryLedger` tracks triggered events with timestamp, owning faction, downstream effect handles, and whether the discovery has been publicly deployed (feeds diffusion/leak heuristics).
+  - `ObservationLedger` records verified observation counts per field; Great Discovery eligibility is blocked until counts cross the threshold specified in the definition (captures manual note on minimum verified observations).
+- **Events & Components**
+  - `GreatDiscoveryCandidateEvent` emits when constellation progress passes the discovery threshold; `GreatDiscoveryResolvedEvent` confirms once validation succeeds and effect hooks run.
+  - `GreatDiscoveryFlag` component can be attached to faction-level proxy entities (if/when those exist) to expose active Great Discoveries to other ECS systems without consulting the ledger resource every frame.
+
+### Trigger Flow
+1. `collect_observation_signals` aggregates per-field observation data from exploration, experimentation, and espionage systems into `ObservationLedger` (backed by instrumentation metrics once Knowledge Diffusion hooks land).
+2. `update_constellation_progress` consumes `DiscoveryProgressLedger`, applies constellation weights, and writes per-faction `ConstellationProgress`. Partial progress persists between turns; definitions can specify minimum fidelity or freshness windows so stale research decays.
+3. `screen_great_discovery_candidates` checks observation gates, faction stability requirements, and cooldowns. Eligible constellations raise `GreatDiscoveryCandidateEvent` with the projected effects bundle.
+4. `resolve_great_discovery` validates side conditions (e.g., resource availability, political consent), stamps the ledger, applies cross-system hooks (unlock new power recipes, queue crisis seeds, flip diplomacy modifiers), and schedules leak timer adjustments in Knowledge Diffusion.
+5. `propagate_diffusion_impacts` hands the finalized event to Knowledge Diffusion: create high-fidelity `KnowledgeFragment`s for the owning faction, seed rival leak timers based on deployment posture, and inform Trade/Migration diffusion logic of the new top-tier target.
+6. `export_metrics` pushes aggregated counts (total leaps, active cascades, pending candidates) into `SimulationMetrics` so monitoring and telemetry can surface GDS activity.
+
+The turn schedule should place `update_constellation_progress` immediately after existing knowledge diffusion (`trade_knowledge_diffusion`) and before population/power so downstream systems react within the same turn. Event resolution can occur in the same schedule block to keep determinism tight.
+
+### Snapshot Payload Contracts
+- Extend `WorldSnapshot` with `great_discoveries: [GreatDiscoveryState]`, one entry per resolved discovery (fields: `id`, `faction`, `field`, `tick`, `publicly_deployed`, `effect_flags`). Clients render the Great Discovery ledger and drive narrative beats from this table.
+- Add `great_discovery_progress: [GreatDiscoveryProgressState]` capturing in-progress constellations (per faction id, `GreatDiscoveryId`, current progress 0–1, observation gate remaining, estimated turns). This powers UI cues like “breakthrough imminent” while respecting secrecy—entries flagged as covert only appear for the owning faction.
+- Surface a lightweight `GreatDiscoveryTelemetryState` in `SimulationMetrics` mirroring aggregate counts (total resolved, pending candidates, active constellations) to support dashboards and automated testing; snapshot/delta payloads expose the same struct for client consumption.
+- Update FlatBuffers (`sim_schema/schemas/snapshot.fbs`) with matching tables/enums; ensure JSON snapshot serialization mirrors the same shape for tooling.
+
+### Integration Points & Dependencies
+- **Knowledge Diffusion (§5a)**: Great Discovery resolution modifies leak timers, seeds espionage targets, and may force transparency (e.g., if publicly deployed). The diffusion task in `TASKS.md` depends on these contracts to know which payloads to inspect for UI and AI decisions.
+- **Power & Crisis Systems**: Effect hooks map Great Discoveries to unlockable reactors, infrastructure accelerants, or crisis seeds (manual §5 examples). Hook through the registry so new discoveries can register effect lambdas without editing the resolver.
+- **AI & Diplomacy**: AI evaluation of secrecy vs diffusion leverages `GreatDiscoveryProgressState` (own faction view) to decide investment and negotiation postures. Diplomacy systems subscribe to `GreatDiscoveryResolvedEvent` to trigger treaty renegotiations or sanction logic.
+- **Testing Harness**: Add deterministic unit tests that feed synthetic constellations into the resolver, assert ledger updates, and verify snapshot payloads. Benchmark the trigger loop with high discovery counts to guarantee turn budget stability.
+
 ## Extensibility
 - Add new systems by extending the `Update` chain in `build_headless_app`.
 - Insert additional exporters after `collect_metrics` to integrate Prometheus/OTLP.

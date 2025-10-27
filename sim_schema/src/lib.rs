@@ -198,6 +198,56 @@ impl From<u16> for TerrainTags {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum KnowledgeField {
+    #[default]
+    Physics = 0,
+    Chemistry = 1,
+    Biology = 2,
+    Data = 3,
+    Communication = 4,
+    Exotic = 5,
+}
+
+impl KnowledgeField {
+    pub const VALUES: [KnowledgeField; 6] = [
+        KnowledgeField::Physics,
+        KnowledgeField::Chemistry,
+        KnowledgeField::Biology,
+        KnowledgeField::Data,
+        KnowledgeField::Communication,
+        KnowledgeField::Exotic,
+    ];
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct GreatDiscoveryState {
+    pub id: u16,
+    pub faction: u32,
+    pub field: KnowledgeField,
+    pub tick: u64,
+    pub publicly_deployed: bool,
+    pub effect_flags: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct GreatDiscoveryProgressState {
+    pub faction: u32,
+    pub discovery: u16,
+    pub progress: i64,
+    pub observation_deficit: u32,
+    pub eta_ticks: u32,
+    pub covert: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct GreatDiscoveryTelemetryState {
+    pub total_resolved: u32,
+    pub pending_candidates: u32,
+    pub active_constellations: u32,
+}
+
 impl From<TerrainTags> for u16 {
     fn from(value: TerrainTags) -> Self {
         value.bits()
@@ -681,6 +731,9 @@ pub struct WorldSnapshot {
     pub populations: Vec<PopulationCohortState>,
     pub power: Vec<PowerNodeState>,
     pub power_metrics: PowerTelemetryState,
+    pub great_discoveries: Vec<GreatDiscoveryState>,
+    pub great_discovery_progress: Vec<GreatDiscoveryProgressState>,
+    pub great_discovery_telemetry: GreatDiscoveryTelemetryState,
     pub terrain: TerrainOverlayState,
     pub logistics_raster: ScalarRasterState,
     pub sentiment_raster: ScalarRasterState,
@@ -712,6 +765,9 @@ pub struct WorldDelta {
     pub power: Vec<PowerNodeState>,
     pub removed_power: Vec<u64>,
     pub power_metrics: Option<PowerTelemetryState>,
+    pub great_discoveries: Vec<GreatDiscoveryState>,
+    pub great_discovery_progress: Vec<GreatDiscoveryProgressState>,
+    pub great_discovery_telemetry: Option<GreatDiscoveryTelemetryState>,
     pub axis_bias: Option<AxisBiasState>,
     pub sentiment: Option<SentimentTelemetryState>,
     pub logistics_raster: Option<ScalarRasterState>,
@@ -813,6 +869,11 @@ fn build_snapshot_flatbuffer<'a>(
     let populations_vec = create_populations(builder, &snapshot.populations);
     let power_vec = create_power(builder, &snapshot.power);
     let power_metrics = create_power_metrics(builder, &snapshot.power_metrics);
+    let great_discoveries_vec = create_great_discoveries(builder, &snapshot.great_discoveries);
+    let great_discovery_progress_vec =
+        create_great_discovery_progress(builder, &snapshot.great_discovery_progress);
+    let great_discovery_telemetry =
+        create_great_discovery_telemetry(builder, &snapshot.great_discovery_telemetry);
     let terrain_overlay = create_terrain_overlay(builder, &snapshot.terrain);
     let logistics_raster = create_scalar_raster(builder, &snapshot.logistics_raster);
     let sentiment_raster = create_scalar_raster(builder, &snapshot.sentiment_raster);
@@ -847,6 +908,9 @@ fn build_snapshot_flatbuffer<'a>(
             populations: Some(populations_vec),
             power: Some(power_vec),
             powerMetrics: Some(power_metrics),
+            greatDiscoveries: Some(great_discoveries_vec),
+            greatDiscoveryProgress: Some(great_discovery_progress_vec),
+            greatDiscoveryTelemetry: Some(great_discovery_telemetry),
             terrainOverlay: Some(terrain_overlay),
             logisticsRaster: Some(logistics_raster),
             sentimentRaster: Some(sentiment_raster),
@@ -906,6 +970,13 @@ fn build_delta_flatbuffer<'a>(
         .power_metrics
         .as_ref()
         .map(|metrics| create_power_metrics(builder, metrics));
+    let great_discoveries_vec = create_great_discoveries(builder, &delta.great_discoveries);
+    let great_discovery_progress_vec =
+        create_great_discovery_progress(builder, &delta.great_discovery_progress);
+    let great_discovery_telemetry = delta
+        .great_discovery_telemetry
+        .as_ref()
+        .map(|telemetry| create_great_discovery_telemetry(builder, telemetry));
     let terrain_overlay = delta
         .terrain
         .as_ref()
@@ -977,6 +1048,9 @@ fn build_delta_flatbuffer<'a>(
             power: Some(power_vec),
             removedPower: Some(removed_power_vec),
             powerMetrics: power_metrics,
+            greatDiscoveries: Some(great_discoveries_vec),
+            greatDiscoveryProgress: Some(great_discovery_progress_vec),
+            greatDiscoveryTelemetry: great_discovery_telemetry,
             axisBias: axis_bias,
             sentiment,
             generations: Some(generations_vec),
@@ -1246,6 +1320,77 @@ fn create_power_metrics<'a>(
             surplusMargin: metrics.surplus_margin,
             instabilityAlerts: metrics.instability_alerts,
             incidents: Some(incidents),
+        },
+    )
+}
+
+fn to_fb_knowledge_field(field: KnowledgeField) -> fb::KnowledgeField {
+    match field {
+        KnowledgeField::Physics => fb::KnowledgeField::Physics,
+        KnowledgeField::Chemistry => fb::KnowledgeField::Chemistry,
+        KnowledgeField::Biology => fb::KnowledgeField::Biology,
+        KnowledgeField::Data => fb::KnowledgeField::Data,
+        KnowledgeField::Communication => fb::KnowledgeField::Communication,
+        KnowledgeField::Exotic => fb::KnowledgeField::Exotic,
+    }
+}
+
+fn create_great_discoveries<'a>(
+    builder: &mut FbBuilder<'a>,
+    entries: &[GreatDiscoveryState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::GreatDiscoveryState<'a>>>> {
+    let offsets: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            fb::GreatDiscoveryState::create(
+                builder,
+                &fb::GreatDiscoveryStateArgs {
+                    id: entry.id,
+                    faction: entry.faction,
+                    field: to_fb_knowledge_field(entry.field),
+                    tick: entry.tick,
+                    publiclyDeployed: entry.publicly_deployed,
+                    effectFlags: entry.effect_flags,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_great_discovery_progress<'a>(
+    builder: &mut FbBuilder<'a>,
+    entries: &[GreatDiscoveryProgressState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::GreatDiscoveryProgressState<'a>>>> {
+    let offsets: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            fb::GreatDiscoveryProgressState::create(
+                builder,
+                &fb::GreatDiscoveryProgressStateArgs {
+                    faction: entry.faction,
+                    discovery: entry.discovery,
+                    progress: entry.progress,
+                    observationDeficit: entry.observation_deficit,
+                    etaTicks: entry.eta_ticks,
+                    covert: entry.covert,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_great_discovery_telemetry<'a>(
+    builder: &mut FbBuilder<'a>,
+    telemetry: &GreatDiscoveryTelemetryState,
+) -> WIPOffset<fb::GreatDiscoveryTelemetryState<'a>> {
+    fb::GreatDiscoveryTelemetryState::create(
+        builder,
+        &fb::GreatDiscoveryTelemetryStateArgs {
+            totalResolved: telemetry.total_resolved,
+            pendingCandidates: telemetry.pending_candidates,
+            activeConstellations: telemetry.active_constellations,
         },
     )
 }

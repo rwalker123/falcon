@@ -6,6 +6,7 @@
 mod components;
 mod culture;
 mod generations;
+mod great_discovery;
 mod influencers;
 pub mod log_stream;
 pub mod metrics;
@@ -30,6 +31,12 @@ pub use culture::{
     CultureTensionRecord, CultureTraitAxis, CultureTraitVector, CULTURE_TRAIT_AXES,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
+pub use great_discovery::{
+    ConstellationRequirement, GreatDiscoveryCandidateEvent, GreatDiscoveryDefinition,
+    GreatDiscoveryEffectEvent, GreatDiscoveryEffectKind, GreatDiscoveryFlag, GreatDiscoveryId,
+    GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
+    GreatDiscoveryResolvedEvent, GreatDiscoveryTelemetry, ObservationLedger,
+};
 pub use influencers::{
     tick_influencers, InfluencerCultureResonance, InfluencerImpacts, InfluentialId,
     InfluentialRoster, SupportChannel,
@@ -40,13 +47,13 @@ pub use orders::{
     FactionId, FactionOrders, FactionRegistry, Order, SubmitError, SubmitOutcome, TurnQueue,
 };
 pub use power::{
-    PowerGridNodeTelemetry, PowerGridState, PowerIncident, PowerIncidentSeverity, PowerNodeId,
-    PowerTopology,
+    PowerDiscoveryEffects, PowerGridNodeTelemetry, PowerGridState, PowerIncident,
+    PowerIncidentSeverity, PowerNodeId, PowerTopology,
 };
 pub use resources::{
     CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger,
-    SentimentAxisBias, SimulationConfig, SimulationTick, TileRegistry, TradeDiffusionRecord,
-    TradeTelemetry,
+    PendingCrisisSeeds, SentimentAxisBias, SimulationConfig, SimulationTick, TileRegistry,
+    TradeDiffusionRecord, TradeTelemetry,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{restore_world_from_snapshot, SnapshotHistory, StoredSnapshot};
@@ -55,6 +62,16 @@ pub use terrain::{
     classify_terrain, terrain_definition, terrain_for_position, MovementProfile, TerrainDefinition,
     TerrainResourceBias,
 };
+
+#[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
+pub enum TurnStage {
+    Influence,
+    Logistics,
+    GreatDiscovery,
+    Population,
+    Finalize,
+    Snapshot,
+}
 
 /// Construct a Bevy [`App`] configured with the Shadow-Scale turn pipeline.
 pub fn build_headless_app() -> App {
@@ -85,13 +102,35 @@ pub fn build_headless_app() -> App {
         .insert_resource(culture_effects)
         .insert_resource(DiscoveryProgressLedger::default())
         .insert_resource(TradeTelemetry::default())
+        .insert_resource(GreatDiscoveryRegistry::default())
+        .insert_resource(GreatDiscoveryReadiness::default())
+        .insert_resource(ObservationLedger::default())
+        .insert_resource(GreatDiscoveryLedger::default())
+        .insert_resource(GreatDiscoveryTelemetry::default())
+        .insert_resource(PowerDiscoveryEffects::default())
+        .insert_resource(PendingCrisisSeeds::default())
         .insert_resource(faction_registry)
         .insert_resource(turn_queue)
         .add_event::<CultureTensionEvent>()
         .add_event::<CultureSchismEvent>()
         .add_event::<systems::TradeDiffusionEvent>()
         .add_event::<systems::MigrationKnowledgeEvent>()
+        .add_event::<GreatDiscoveryCandidateEvent>()
+        .add_event::<GreatDiscoveryResolvedEvent>()
+        .add_event::<great_discovery::GreatDiscoveryEffectEvent>()
         .add_plugins(MinimalPlugins)
+        .configure_sets(
+            Update,
+            (
+                TurnStage::Influence,
+                TurnStage::Logistics,
+                TurnStage::GreatDiscovery,
+                TurnStage::Population,
+                TurnStage::Finalize,
+                TurnStage::Snapshot,
+            )
+                .chain(),
+        )
         .add_systems(Startup, systems::spawn_initial_world)
         .add_systems(
             Update,
@@ -99,17 +138,53 @@ pub fn build_headless_app() -> App {
                 tick_influencers,
                 reconcile_culture_layers,
                 systems::process_culture_events,
+            )
+                .chain()
+                .in_set(TurnStage::Influence),
+        )
+        .add_systems(
+            Update,
+            (
                 systems::simulate_materials,
                 systems::simulate_logistics,
                 systems::trade_knowledge_diffusion,
+            )
+                .chain()
+                .in_set(TurnStage::Logistics),
+        )
+        .add_systems(
+            Update,
+            (
+                great_discovery::collect_observation_signals,
+                great_discovery::update_constellation_progress,
+                great_discovery::screen_great_discovery_candidates,
+                great_discovery::resolve_great_discovery,
+                great_discovery::propagate_diffusion_impacts,
+                great_discovery::export_great_discovery_metrics,
+            )
+                .chain()
+                .in_set(TurnStage::GreatDiscovery),
+        )
+        .add_systems(
+            Update,
+            (
                 systems::simulate_population,
                 systems::publish_trade_telemetry,
-                systems::simulate_power,
-                systems::process_corruption,
-                systems::advance_tick,
-                snapshot::capture_snapshot,
             )
-                .chain(),
+                .chain()
+                .in_set(TurnStage::Population),
+        )
+        .add_systems(
+            Update,
+            (systems::simulate_power, systems::process_corruption)
+                .chain()
+                .in_set(TurnStage::Finalize),
+        )
+        .add_systems(
+            Update,
+            (systems::advance_tick, snapshot::capture_snapshot)
+                .chain()
+                .in_set(TurnStage::Snapshot),
         );
 
     app
