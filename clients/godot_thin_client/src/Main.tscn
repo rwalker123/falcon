@@ -595,6 +595,43 @@ size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.85, 0.9, 1, 1)
 text = "Awaiting telemetry."
 
+[node name="FilterControls" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Logs"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="LevelLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+text = "Level"
+
+[node name="LogLevelDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+size_flags_horizontal = 1
+
+[node name="TargetLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+text = "Target"
+
+[node name="LogTargetDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+size_flags_horizontal = 1
+
+[node name="FilterLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+text = "Filter"
+
+[node name="LogFilterLine" type="LineEdit" parent="Inspector/RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="FilterSpacer" type="Control" parent="Inspector/RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ClearButton" type="Button" parent="Inspector/RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+text = "Clear"
+
 [node name="LogScroll" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer/Logs"]
 layout_mode = 2
 size_flags_horizontal = 3
