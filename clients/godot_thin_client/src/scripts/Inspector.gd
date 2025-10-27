@@ -2579,7 +2579,7 @@ func _severity_for_level(level: String) -> int:
 	var upper: String = level.to_upper()
 	if LOG_LEVEL_SEVERITY.has(upper):
 		return int(LOG_LEVEL_SEVERITY[upper])
-	return int(LOG_LEVEL_SEVERITY.get("INFO", 2))
+	return LOG_LEVEL_SEVERITY.get("INFO", 2)
 
 func _normalize_log_level(level: String) -> String:
 	var upper: String = level.to_upper()
