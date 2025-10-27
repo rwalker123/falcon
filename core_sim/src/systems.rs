@@ -579,7 +579,10 @@ pub fn simulate_power(
             .clamp(scalar_from_f32(0.5), config.max_power_efficiency);
 
         let influence_bonus = (impacts.power_bonus + effects.power_bonus)
-            .clamp(scalar_from_f32(-1.5), scalar_from_f32(1.5));
+            .clamp(
+                scalar_from_f32(config.min_power_influence),
+                scalar_from_f32(config.max_power_influence),
+            );
 
         let effective_generation = (node.base_generation * node.efficiency + influence_bonus)
             .clamp(scalar_zero(), config.max_power_generation);
