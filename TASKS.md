@@ -4,6 +4,10 @@
 - [x] Flesh out deterministic ECS systems (materials, logistics, population).
 - [x] Replace placeholder system with staged schedules and fixed-point math.
 - [x] Add snapshot/delta serialization hooks feeding `sim_schema` schemas.
+- [ ] Draft power phase architecture updates that align `run_turn`'s power stage with `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §4, enumerate required energy subsystems (generation forms, instability handling, grid state), and spill follow-on implementation tickets once documented (Owner: TBD, Estimate: 1.5d; Deps: review existing materials/logistics schedules).
+- [ ] Outline Great Discovery subsystem architecture mirroring manual §5 by defining data structures, trigger flow, and snapshot payload contracts in `docs/architecture.md`, then break the work into implementation tickets after approval (Owner: TBD, Estimate: 2d; Deps: coordination with Knowledge Diffusion hooks).
+- [ ] Capture knowledge ledger/leak mechanic design in `docs/architecture.md` per manual §5a—cover timers, espionage modifiers, UI data feeds—and produce downstream tasks for backend and Godot wiring (Owner: TBD, Estimate: 1.5d; Deps: Great Discovery architecture outline).
+- [ ] Scope crisis telemetry channels promised in manual §10 by inventorying required metrics, network payloads, and inspector overlays in `docs/architecture.md`, then derive execution tasks for simulation and client teams (Owner: TBD, Estimate: 1.5d; Deps: Godot inspector overlay bandwidth).
 
 ### Terrain Foundations
 - [x] Implement `TerrainType` enum + tag metadata in worldgen and data contracts (Owner: TBD, Estimate: 2d; Deps: align with `docs/architecture.md` Terrain Type Taxonomy).
