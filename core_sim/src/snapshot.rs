@@ -1900,6 +1900,11 @@ fn culture_raster_from_layers(
     let total = (width as usize).saturating_mul(height as usize).max(1);
     let mut samples = vec![0i64; total];
 
+    const HARD_TICK_BONUS_STEP: f32 = 0.05;
+    const HARD_TICK_BONUS_CAP: f32 = 0.5;
+    const SOFT_TICK_BONUS_STEP: f32 = 0.03;
+    const SOFT_TICK_BONUS_CAP: f32 = 0.3;
+
     for tile in tiles {
         if tile.x >= width || tile.y >= height {
             continue;
@@ -1920,12 +1925,14 @@ fn culture_raster_from_layers(
         };
         let mut ratio = (magnitude / hard_threshold).clamp(Scalar::zero(), Scalar::one());
         if layer.divergence.ticks_above_hard > 0 {
-            let boost = Scalar::from_f32(layer.divergence.ticks_above_hard as f32 * 0.05)
-                .clamp(Scalar::zero(), Scalar::from_f32(0.5));
+            let boost =
+                Scalar::from_f32(layer.divergence.ticks_above_hard as f32 * HARD_TICK_BONUS_STEP)
+                    .clamp(Scalar::zero(), Scalar::from_f32(HARD_TICK_BONUS_CAP));
             ratio = (ratio + boost).clamp(Scalar::zero(), Scalar::one());
         } else if layer.divergence.ticks_above_soft > 0 {
-            let boost = Scalar::from_f32(layer.divergence.ticks_above_soft as f32 * 0.03)
-                .clamp(Scalar::zero(), Scalar::from_f32(0.3));
+            let boost =
+                Scalar::from_f32(layer.divergence.ticks_above_soft as f32 * SOFT_TICK_BONUS_STEP)
+                    .clamp(Scalar::zero(), Scalar::from_f32(SOFT_TICK_BONUS_CAP));
             ratio = (ratio + boost).clamp(Scalar::zero(), Scalar::one());
         }
         samples[idx] = ratio.raw();
