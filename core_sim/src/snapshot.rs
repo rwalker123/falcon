@@ -1952,6 +1952,13 @@ fn military_raster_from_state(
     logistics_raster: &ScalarRasterState,
     grid_size: UVec2,
 ) -> ScalarRasterState {
+    const SIZE_FACTOR_DENOMINATOR: f32 = 1_500.0;
+    const PRESENCE_CLAMP_MAX: f32 = 5.0;
+    const HEAVY_SIZE_THRESHOLD: u32 = 2_500;
+    const HEAVY_SIZE_BONUS: f32 = 0.1;
+    const SUPPORT_CLAMP_MAX: f32 = 5.0;
+    const POWER_MARGIN_MAX: f32 = 5.0;
+
     let mut tile_positions = HashMap::with_capacity(tiles.len());
     let mut max_x = 0u32;
     let mut max_y = 0u32;
@@ -1982,12 +1989,13 @@ fn military_raster_from_state(
         if morale.raw() <= 0 {
             continue;
         }
-        let size_factor = Scalar::from_f32((cohort.size as f32) / 1500.0)
-            .clamp(Scalar::zero(), Scalar::from_f32(5.0));
-        let mut contribution = (size_factor * morale).clamp(Scalar::zero(), Scalar::from_f32(5.0));
-        if cohort.size > 2500 {
-            contribution =
-                (contribution + Scalar::from_f32(0.1)).clamp(Scalar::zero(), Scalar::from_f32(5.0));
+        let size_factor = Scalar::from_f32((cohort.size as f32) / SIZE_FACTOR_DENOMINATOR)
+            .clamp(Scalar::zero(), Scalar::from_f32(PRESENCE_CLAMP_MAX));
+        let mut contribution =
+            (size_factor * morale).clamp(Scalar::zero(), Scalar::from_f32(PRESENCE_CLAMP_MAX));
+        if cohort.size > HEAVY_SIZE_THRESHOLD {
+            contribution = (contribution + Scalar::from_f32(HEAVY_SIZE_BONUS))
+                .clamp(Scalar::zero(), Scalar::from_f32(PRESENCE_CLAMP_MAX));
         }
         presence[idx] += contribution;
     }
@@ -2013,7 +2021,7 @@ fn military_raster_from_state(
                     break;
                 }
                 let value = Scalar::from_raw(logistics_raster.samples[src_idx]).abs();
-                let clamped = value.clamp(Scalar::zero(), Scalar::from_f32(5.0));
+                let clamped = value.clamp(Scalar::zero(), Scalar::from_f32(SUPPORT_CLAMP_MAX));
                 support[dst_idx] += clamped;
             }
         }
@@ -2032,12 +2040,16 @@ fn military_raster_from_state(
         }
         let generation = Scalar::from_raw(node.generation).abs();
         let demand = Scalar::from_raw(node.demand).abs();
-        let margin = (generation - demand).clamp(Scalar::zero(), Scalar::from_f32(5.0));
+        let margin =
+            (generation - demand).clamp(Scalar::zero(), Scalar::from_f32(POWER_MARGIN_MAX));
         support[idx] += margin;
     }
 
-    let presence_weight = Scalar::from_f32(0.6);
-    let support_weight = Scalar::from_f32(0.4);
+    const PRESENCE_WEIGHT: f32 = 0.6;
+    const SUPPORT_WEIGHT: f32 = 0.4;
+
+    let presence_weight = Scalar::from_f32(PRESENCE_WEIGHT);
+    let support_weight = Scalar::from_f32(SUPPORT_WEIGHT);
     let mut samples = vec![0i64; total];
     for (idx, sample) in samples.iter_mut().enumerate() {
         let combined = (presence[idx] * presence_weight + support[idx] * support_weight)
