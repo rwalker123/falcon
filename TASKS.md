@@ -4,10 +4,16 @@
 - [x] Flesh out deterministic ECS systems (materials, logistics, population).
 - [x] Replace placeholder system with staged schedules and fixed-point math.
 - [x] Add snapshot/delta serialization hooks feeding `sim_schema` schemas.
-- [ ] Draft power phase architecture updates that align `run_turn`'s power stage with `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §4, enumerate required energy subsystems (generation forms, instability handling, grid state), and spill follow-on implementation tickets once documented (Owner: TBD, Estimate: 1.5d; Deps: review existing materials/logistics schedules).
+- [x] Draft power phase architecture updates that align `run_turn`'s power stage with `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §4, enumerate required energy subsystems (generation forms, instability handling, grid state), and spill follow-on implementation tickets once documented (Owner: TBD, Estimate: 1.5d; Deps: review existing materials/logistics schedules). _Status_: Plan captured in `docs/architecture.md` §Power Systems Plan and synced with manual §4 Power Simulation Pillars.
 - [ ] Outline Great Discovery subsystem architecture mirroring manual §5 by defining data structures, trigger flow, and snapshot payload contracts in `docs/architecture.md`, then break the work into implementation tickets after approval (Owner: TBD, Estimate: 2d; Deps: coordination with Knowledge Diffusion hooks).
 - [ ] Capture knowledge ledger/leak mechanic design in `docs/architecture.md` per manual §5a—cover timers, espionage modifiers, UI data feeds—and produce downstream tasks for backend and Godot wiring (Owner: TBD, Estimate: 1.5d; Deps: Great Discovery architecture outline).
 - [ ] Scope crisis telemetry channels promised in manual §10 by inventorying required metrics, network payloads, and inspector overlays in `docs/architecture.md`, then derive execution tasks for simulation and client teams (Owner: TBD, Estimate: 1.5d; Deps: Godot inspector overlay bandwidth).
+
+### Power Systems
+- [x] Implement `PowerGridState`, `PowerTopology`, and associated ECS systems (`collect_generation_orders` through `export_power_metrics`) inside `core_sim`, ensuring deterministic scheduling and integration with materials/logistics/population phases (Owner: TBD, Estimate: 4d; Deps: `docs/architecture.md` §Power Systems Plan). _Status_: Power phase now models generation, routing, storage, instability, and exports telemetry through `PowerGridState`.
+- [x] Extend `sim_schema`/`sim_runtime` with `PowerGridNode`, `PowerTelemetryState`, and headless diagnostics helpers consumed by automated tests (Owner: TBD, Estimate: 2d; Deps: core_sim ECS scaffolding). _Status_: Snapshot/delta payloads carry node telemetry plus aggregated metrics/incidents; tests cover telemetry conversion.
+- [x] Enhance Godot thin client with a Power tab, overlay toggles, and incident feed consuming the new telemetry (Owner: TBD, Estimate: 3d; Deps: schema updates + snapshot payloads). _Status_: Inspector Power tab surfaces grid metrics, sortable node list, and node detail panel tied to streamed updates.
+- [ ] Add regression tests and benchmarks covering stability band transitions, cascade propagation, and serialization/delta output for power telemetry (Owner: TBD, Estimate: 2d; Deps: core_sim implementation + schema updates).
 
 ### Terrain Foundations
 - [x] Implement `TerrainType` enum + tag metadata in worldgen and data contracts (Owner: TBD, Estimate: 2d; Deps: align with `docs/architecture.md` Terrain Type Taxonomy).

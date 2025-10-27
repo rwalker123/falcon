@@ -1,4 +1,4 @@
-use std::cmp::max;
+use std::{cmp::max, collections::HashMap};
 
 use bevy::{math::UVec2, prelude::*};
 use log::debug;
@@ -16,6 +16,10 @@ use crate::{
     generations::GenerationRegistry,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
     orders::{FactionId, FactionRegistry},
+    power::{
+        PowerGridNodeTelemetry, PowerGridState, PowerIncident, PowerIncidentSeverity, PowerNodeId,
+        PowerTopology,
+    },
     resources::{
         CorruptionExposureRecord, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
         DiscoveryProgressLedger, SentimentAxisBias, SimulationConfig, SimulationTick, TileRegistry,
@@ -92,6 +96,11 @@ pub fn spawn_initial_world(
             let (terrain, terrain_tags) = terrain_for_position(position, config.grid_size);
             let (generation, demand, efficiency) = element.power_profile();
             let base_mass = scalar_from_f32(1.0 + ((x + y) % 5) as f32 * 0.35);
+            let node_id = PowerNodeId(y as u32 * config.grid_size.x + x as u32);
+            let storage_capacity = (generation * scalar_from_f32(0.6) + scalar_from_f32(2.0))
+                .clamp(scalar_from_f32(1.0), scalar_from_f32(40.0));
+            let storage_level =
+                (storage_capacity * scalar_from_f32(0.5)).clamp(scalar_zero(), storage_capacity);
             let tile_entity = commands
                 .spawn((
                     Tile {
@@ -103,9 +112,18 @@ pub fn spawn_initial_world(
                         terrain_tags,
                     },
                     PowerNode {
+                        id: node_id,
+                        base_generation: generation,
+                        base_demand: demand,
                         generation,
                         demand,
                         efficiency,
+                        storage_capacity,
+                        storage_level,
+                        stability: scalar_from_f32(0.85),
+                        surplus: scalar_zero(),
+                        deficit: scalar_zero(),
+                        incident_count: 0,
                     },
                 ))
                 .id();
@@ -183,6 +201,14 @@ pub fn spawn_initial_world(
             cohort_index += 1;
         }
     }
+
+    let topology = PowerTopology::from_grid(
+        &tiles,
+        config.grid_size.x,
+        config.grid_size.y,
+        config.power_line_capacity,
+    );
+    commands.insert_resource(topology);
 
     commands.insert_resource(TileRegistry {
         tiles,
@@ -504,30 +530,312 @@ pub fn simulate_population(
 
 /// Adjust power nodes in response to tile state and demand.
 pub fn simulate_power(
-    mut nodes: Query<(&Tile, &mut PowerNode)>,
+    mut nodes: Query<(Entity, &Tile, &mut PowerNode)>,
     config: Res<SimulationConfig>,
+    topology: Res<PowerTopology>,
+    mut grid_state: ResMut<PowerGridState>,
     impacts: Res<InfluencerImpacts>,
     effects: Res<CultureEffectsCache>,
     ledgers: Res<CorruptionLedgers>,
 ) {
+    #[derive(Clone, Copy)]
+    struct NodeCalc {
+        entity: Entity,
+        id: PowerNodeId,
+        generation: Scalar,
+        demand: Scalar,
+        storage_capacity: Scalar,
+        storage_level: Scalar,
+        net: Scalar,
+        incident_count: u32,
+    }
+
+    #[derive(Clone, Copy)]
+    struct NodeResult {
+        entity: Entity,
+        id: PowerNodeId,
+        surplus: Scalar,
+        deficit: Scalar,
+        storage_level: Scalar,
+        storage_capacity: Scalar,
+        stability: Scalar,
+        incident_count: u32,
+        generation: Scalar,
+        demand: Scalar,
+    }
+
     let corruption_factor = corruption_multiplier(
         &ledgers,
         CorruptionSubsystem::Military,
         config.corruption_military_penalty,
     );
-    for (tile, mut node) in nodes.iter_mut() {
+
+    let mut node_calcs: Vec<NodeCalc> = Vec::with_capacity(nodes.iter().len());
+    let mut node_index: HashMap<PowerNodeId, usize> = HashMap::with_capacity(nodes.iter().len());
+
+    for (entity, tile, mut node) in nodes.iter_mut() {
         let efficiency_adjust =
             (config.ambient_temperature - tile.temperature) * config.power_adjust_rate;
         node.efficiency = (node.efficiency + efficiency_adjust * scalar_from_f32(0.01))
-            .clamp(scalar_from_f32(0.5), scalar_from_f32(1.5));
-        let net = node.generation * node.efficiency - node.demand
-            + impacts.power_bonus
-            + effects.power_bonus;
-        let net = net * corruption_factor;
-        node.generation = (node.generation + net * scalar_from_f32(0.05))
+            .clamp(scalar_from_f32(0.5), config.max_power_efficiency);
+
+        let influence_bonus = (impacts.power_bonus + effects.power_bonus).clamp(
+            scalar_from_f32(config.min_power_influence),
+            scalar_from_f32(config.max_power_influence),
+        );
+
+        let effective_generation = (node.base_generation * node.efficiency + influence_bonus)
             .clamp(scalar_zero(), config.max_power_generation);
-        node.demand = (node.demand + (-net) * scalar_from_f32(0.03))
+        let target_demand = (node.base_demand - influence_bonus * scalar_from_f32(0.25))
             .clamp(scalar_zero(), config.max_power_generation);
+        let net = (effective_generation - target_demand) * corruption_factor;
+
+        node.generation = (node.base_generation
+            + net * scalar_from_f32(config.power_generation_adjust_rate))
+        .clamp(scalar_zero(), config.max_power_generation);
+        node.demand = (node.base_demand - net * scalar_from_f32(config.power_demand_adjust_rate))
+            .clamp(scalar_zero(), config.max_power_generation);
+
+        let net_supply = node.generation - node.demand;
+
+        let next_index = node_calcs.len();
+        node_calcs.push(NodeCalc {
+            entity,
+            id: node.id,
+            generation: node.generation,
+            demand: node.demand,
+            storage_capacity: node.storage_capacity,
+            storage_level: node.storage_level,
+            net: net_supply,
+            incident_count: node.incident_count,
+        });
+        node_index.insert(node.id, next_index);
+    }
+
+    let node_count = node_calcs.len();
+    if node_count == 0 {
+        grid_state.reset();
+        return;
+    }
+
+    let mut nets: Vec<Scalar> = node_calcs.iter().map(|node| node.net).collect();
+    let mut storage_levels: Vec<Scalar> = node_calcs
+        .iter()
+        .map(|node| {
+            node.storage_level
+                .clamp(scalar_zero(), node.storage_capacity)
+        })
+        .collect();
+
+    if topology.node_count() == node_count {
+        for idx in 0..node_count {
+            if nets[idx] <= scalar_zero() {
+                continue;
+            }
+            for neighbour in topology.neighbours(node_calcs[idx].id) {
+                let Some(&n_idx) = node_index.get(neighbour) else {
+                    continue;
+                };
+                if nets[n_idx] >= scalar_zero() {
+                    continue;
+                }
+                let needed = (-nets[n_idx]).clamp(scalar_zero(), topology.default_capacity);
+                if needed <= scalar_zero() {
+                    continue;
+                }
+                let available = nets[idx].min(topology.default_capacity);
+                if available <= scalar_zero() {
+                    continue;
+                }
+                let transfer = if available < needed {
+                    available
+                } else {
+                    needed
+                };
+                if transfer > scalar_zero() {
+                    nets[idx] -= transfer;
+                    nets[n_idx] += transfer;
+                }
+            }
+        }
+    }
+
+    let storage_efficiency = config
+        .power_storage_efficiency
+        .clamp(scalar_from_f32(0.1), scalar_from_f32(1.0));
+    let storage_bleed = config
+        .power_storage_bleed
+        .clamp(scalar_zero(), scalar_from_f32(0.25));
+
+    for idx in 0..node_count {
+        if nets[idx] > scalar_zero() {
+            let capacity_left = (node_calcs[idx].storage_capacity - storage_levels[idx])
+                .clamp(scalar_zero(), node_calcs[idx].storage_capacity);
+            if capacity_left > scalar_zero() {
+                let mut charge = nets[idx].min(capacity_left);
+                charge *= storage_efficiency;
+                storage_levels[idx] = (storage_levels[idx] + charge)
+                    .clamp(scalar_zero(), node_calcs[idx].storage_capacity);
+                nets[idx] -= charge;
+            }
+        } else if nets[idx] < scalar_zero() && storage_levels[idx] > scalar_zero() {
+            let needed = (-nets[idx]).clamp(scalar_zero(), node_calcs[idx].storage_capacity);
+            let discharge = storage_levels[idx].min(needed);
+            let delivered = discharge * storage_efficiency;
+            storage_levels[idx] = (storage_levels[idx] - discharge)
+                .clamp(scalar_zero(), node_calcs[idx].storage_capacity);
+            nets[idx] += delivered;
+        }
+
+        if storage_levels[idx] > scalar_zero() && storage_bleed > scalar_zero() {
+            let bleed = storage_levels[idx] * storage_bleed;
+            storage_levels[idx] = (storage_levels[idx] - bleed)
+                .clamp(scalar_zero(), node_calcs[idx].storage_capacity);
+        }
+    }
+
+    let warn_threshold = config
+        .power_instability_warn
+        .clamp(scalar_zero(), Scalar::one());
+    let critical_threshold = config
+        .power_instability_critical
+        .clamp(scalar_zero(), Scalar::one());
+
+    let mut results: Vec<NodeResult> = Vec::with_capacity(node_count);
+    let mut incidents: Vec<PowerIncident> = Vec::new();
+    let mut stress_sum = 0.0f32;
+    let mut total_supply = scalar_zero();
+    let mut total_demand = scalar_zero();
+    let mut total_storage = scalar_zero();
+    let mut total_capacity = scalar_zero();
+    let mut alert_count: u32 = 0;
+
+    for idx in 0..node_count {
+        let demand = node_calcs[idx]
+            .demand
+            .clamp(scalar_zero(), config.max_power_generation);
+        let generation = node_calcs[idx]
+            .generation
+            .clamp(scalar_zero(), config.max_power_generation);
+
+        let surplus = if nets[idx] > scalar_zero() {
+            nets[idx]
+        } else {
+            scalar_zero()
+        };
+
+        let deficit = if nets[idx] < scalar_zero() {
+            -nets[idx]
+        } else {
+            scalar_zero()
+        };
+
+        let fulfilled = if deficit >= demand {
+            scalar_zero()
+        } else {
+            demand - deficit
+        };
+
+        let mut stability = if demand > scalar_zero() {
+            (fulfilled / demand).clamp(scalar_zero(), Scalar::one())
+        } else {
+            Scalar::one()
+        };
+
+        if storage_levels[idx] > scalar_zero() && demand > scalar_zero() {
+            let reserve_ratio = (storage_levels[idx] / demand).clamp(scalar_zero(), Scalar::one());
+            stability = (stability
+                + reserve_ratio * scalar_from_f32(config.power_storage_stability_bonus))
+            .clamp(scalar_zero(), Scalar::one());
+        }
+
+        let mut incident_count = node_calcs[idx].incident_count;
+        if stability < critical_threshold {
+            incidents.push(PowerIncident {
+                node_id: node_calcs[idx].id,
+                severity: PowerIncidentSeverity::Critical,
+                deficit,
+            });
+            incident_count = incident_count.saturating_add(1);
+            alert_count = alert_count.saturating_add(1);
+        } else if stability < warn_threshold {
+            incidents.push(PowerIncident {
+                node_id: node_calcs[idx].id,
+                severity: PowerIncidentSeverity::Warning,
+                deficit,
+            });
+            alert_count = alert_count.saturating_add(1);
+        }
+
+        stress_sum += if demand > scalar_zero() {
+            (deficit / demand).to_f32().clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
+        total_supply += generation;
+        total_demand += demand;
+        total_storage += storage_levels[idx];
+        total_capacity += node_calcs[idx].storage_capacity;
+
+        results.push(NodeResult {
+            entity: node_calcs[idx].entity,
+            id: node_calcs[idx].id,
+            surplus,
+            deficit,
+            storage_level: storage_levels[idx],
+            storage_capacity: node_calcs[idx].storage_capacity,
+            stability,
+            incident_count,
+            generation,
+            demand,
+        });
+    }
+
+    grid_state.reset();
+    grid_state.total_supply = total_supply;
+    grid_state.total_demand = total_demand;
+    grid_state.total_storage = total_storage;
+    grid_state.total_capacity = total_capacity;
+    grid_state.instability_alerts = alert_count;
+    grid_state.incidents = incidents;
+    grid_state.grid_stress_avg = (stress_sum / node_count as f32).clamp(0.0, 1.0);
+    let demand_f32 = total_demand.to_f32().max(1.0);
+    let surplus_margin = ((total_supply + total_storage).to_f32() / demand_f32) - 1.0;
+    grid_state.surplus_margin = surplus_margin;
+
+    for node in &results {
+        grid_state.nodes.insert(
+            node.id,
+            PowerGridNodeTelemetry {
+                entity: node.entity,
+                node_id: node.id,
+                supply: node.generation,
+                demand: node.demand,
+                storage_level: node.storage_level,
+                storage_capacity: node.storage_capacity,
+                stability: node.stability,
+                surplus: node.surplus,
+                deficit: node.deficit,
+                incident_count: node.incident_count,
+            },
+        );
+    }
+
+    let mut result_lookup: HashMap<Entity, NodeResult> = results
+        .into_iter()
+        .map(|node| (node.entity, node))
+        .collect();
+
+    for (entity, _tile, mut node) in nodes.iter_mut() {
+        if let Some(result) = result_lookup.remove(&entity) {
+            node.storage_level = result.storage_level;
+            node.storage_capacity = result.storage_capacity;
+            node.stability = result.stability;
+            node.surplus = result.surplus;
+            node.deficit = result.deficit;
+            node.incident_count = result.incident_count;
+        }
     }
 }
 

@@ -41,6 +41,9 @@ const MAP_SIZE_DEFAULT_DIMENSIONS := Vector2i(80, 52)
 @onready var trade_overlay_toggle: CheckButton = $RootPanel/TabContainer/Map/MapVBox/LogisticsSection/LogisticsOverlayToggle
 @onready var trade_links_list: ItemList = $RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection/TradeLinksList
 @onready var trade_events_text: RichTextLabel = $RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection/TradeEventsText
+@onready var power_summary_text: RichTextLabel = $RootPanel/TabContainer/Power/PowerVBox/PowerSummarySection/PowerSummaryText
+@onready var power_node_list: ItemList = $RootPanel/TabContainer/Power/PowerVBox/PowerNodeSection/PowerNodeList
+@onready var power_node_detail_text: RichTextLabel = $RootPanel/TabContainer/Power/PowerVBox/PowerNodeSection/PowerNodeDetailText
 @onready var knowledge_summary_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeSummaryText
 @onready var discovery_progress_list: ItemList = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection/DiscoveryProgressList
 @onready var knowledge_events_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection/KnowledgeEventsText
@@ -113,6 +116,9 @@ var _culture_tension_tracker: Dictionary = {}
 var _trade_links: Dictionary = {}
 var _trade_metrics: Dictionary = {}
 var _trade_history: Array[Dictionary] = []
+var _power_nodes: Dictionary = {}
+var _power_metrics: Dictionary = {}
+var _selected_power_node_id: int = -1
 var _discovery_progress: Dictionary = {}
 var _knowledge_events: Array[Dictionary] = []
 var _map_view: Node = null
@@ -208,6 +214,9 @@ const CORRUPTION_OPTIONS = [
 const TRADE_TOP_LINK_LIMIT = 10
 const TRADE_EVENT_HISTORY_LIMIT = 24
 const KNOWLEDGE_EVENT_HISTORY_LIMIT = 24
+const POWER_NODE_LIST_LIMIT = 16
+const POWER_STABILITY_WARN = 0.4
+const POWER_STABILITY_CRITICAL = 0.2
 
 var _viewport: Viewport = null
 var _panel_width: float = PANEL_WIDTH_DEFAULT
@@ -247,6 +256,12 @@ func _ready() -> void:
 			trade_links_list.item_selected.connect(_on_trade_link_selected)
 		if not trade_links_list.is_connected("item_activated", trade_select_callable):
 			trade_links_list.item_activated.connect(_on_trade_link_selected)
+	if power_node_list != null:
+		var power_select_callable = Callable(self, "_on_power_node_selected")
+		if not power_node_list.is_connected("item_selected", power_select_callable):
+			power_node_list.item_selected.connect(_on_power_node_selected)
+		if not power_node_list.is_connected("item_activated", power_select_callable):
+			power_node_list.item_activated.connect(_on_power_node_selected)
 	_update_panel_layout()
 	_initialize_log_filters()
 	_render_static_sections()
@@ -308,6 +323,19 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 	if data.has("trade_link_removed"):
 		_remove_trade_links(data["trade_link_removed"])
 
+	if full_snapshot and data.has("power_nodes"):
+		_rebuild_power_nodes(data["power_nodes"])
+	elif data.has("power_updates"):
+		_merge_power_nodes(data["power_updates"])
+
+	if data.has("power_removed"):
+		_remove_power_nodes(data["power_removed"])
+
+	if data.has("power_metrics"):
+		var metrics_variant: Variant = data["power_metrics"]
+		if metrics_variant is Dictionary:
+			_power_metrics = (metrics_variant as Dictionary).duplicate(true)
+
 	if full_snapshot and data.has("discovery_progress"):
 		_rebuild_discovery_progress(data["discovery_progress"])
 	elif data.has("discovery_progress_updates"):
@@ -367,6 +395,7 @@ func _render_dynamic_sections() -> void:
 	_render_influencers()
 	_render_corruption()
 	_render_trade()
+	_render_power()
 	_render_knowledge()
 	_render_terrain()
 	_render_culture()
@@ -386,6 +415,9 @@ func _render_static_sections() -> void:
 	_trade_links.clear()
 	_trade_metrics.clear()
 	_trade_history.clear()
+	_power_nodes.clear()
+	_power_metrics.clear()
+	_selected_power_node_id = -1
 	_discovery_progress.clear()
 	_knowledge_events.clear()
 	_selected_trade_entity = -1
@@ -393,6 +425,7 @@ func _render_static_sections() -> void:
 	_reset_log_state()
 	_render_terrain()
 	_render_culture()
+	_render_power()
 	_render_logs()
 	command_status_label.text = "Commands: disconnected."
 	command_log_text.text = ""
@@ -1444,6 +1477,160 @@ func _remove_trade_links(ids) -> void:
 		_selected_trade_entity = -1
 	_render_trade()
 	_sync_map_trade_overlay()
+
+func _rebuild_power_nodes(array) -> void:
+	_power_nodes.clear()
+	_merge_power_nodes(array)
+
+func _merge_power_nodes(array) -> void:
+	if array is Array:
+		for entry in array:
+			if not (entry is Dictionary):
+				continue
+			var info: Dictionary = (entry as Dictionary).duplicate(true)
+			var node_id: int = int(info.get("node_id", info.get("entity", 0)))
+			_power_nodes[node_id] = info
+	_render_power()
+
+func _remove_power_nodes(ids) -> void:
+	if ids is PackedInt64Array:
+		for value in (ids as PackedInt64Array):
+			_power_nodes.erase(int(value))
+	elif ids is Array:
+		for value in ids:
+			_power_nodes.erase(int(value))
+	if not _power_nodes.has(_selected_power_node_id):
+		_selected_power_node_id = -1
+	_render_power()
+
+func _render_power() -> void:
+	if power_summary_text != null:
+		if _power_metrics.is_empty():
+			power_summary_text.text = "[b]Power Grid[/b]\n[i]Awaiting telemetry.[/i]"
+		else:
+			var supply: float = float(_power_metrics.get("total_supply", _power_metrics.get("total_supply_raw", 0.0)))
+			var demand: float = float(_power_metrics.get("total_demand", _power_metrics.get("total_demand_raw", 0.0)))
+			var storage: float = float(_power_metrics.get("total_storage", _power_metrics.get("total_storage_raw", 0.0)))
+			var capacity: float = float(_power_metrics.get("total_capacity", _power_metrics.get("total_capacity_raw", 0.0)))
+			var stress: float = float(_power_metrics.get("grid_stress_avg", 0.0))
+			var margin: float = float(_power_metrics.get("surplus_margin", 0.0))
+			var alerts: int = int(_power_metrics.get("instability_alerts", 0))
+			var lines: Array[String] = []
+			lines.append("[b]Power Grid[/b]")
+			lines.append("Supply %.2f | Demand %.2f" % [supply, demand])
+			lines.append("Storage %.2f / %.2f" % [storage, capacity])
+			lines.append("Stress %.2f | Margin %.2f | Alerts %d" % [stress, margin, alerts])
+			var incidents_variant: Variant = _power_metrics.get("incidents", [])
+			if incidents_variant is Array and not (incidents_variant as Array).is_empty():
+				var warn_count := 0
+				var critical_count := 0
+				for entry in (incidents_variant as Array):
+					if not (entry is Dictionary):
+						continue
+					var severity := String((entry as Dictionary).get("severity", "warning"))
+					if severity == "critical":
+						critical_count += 1
+					else:
+						warn_count += 1
+				lines.append("Incidents: %d critical, %d warning" % [critical_count, warn_count])
+			power_summary_text.text = "\n".join(lines)
+
+	if power_node_list != null:
+		power_node_list.clear()
+		var entries: Array = Array(_power_nodes.values())
+		entries.sort_custom(Callable(self, "_compare_power_nodes"))
+		var selection_index: int = -1
+		var limit: int = min(entries.size(), POWER_NODE_LIST_LIMIT)
+		for idx in range(limit):
+			var info_variant: Variant = entries[idx]
+			if not (info_variant is Dictionary):
+				continue
+			var info: Dictionary = info_variant
+			var label := _format_power_node_entry(info)
+			var item_index := power_node_list.add_item(label)
+			power_node_list.set_item_metadata(item_index, info)
+			var node_id := int(info.get("node_id", info.get("entity", 0)))
+			if node_id == _selected_power_node_id:
+				selection_index = item_index
+		if selection_index >= 0:
+			power_node_list.select(selection_index)
+		elif power_node_list.get_item_count() > 0:
+			power_node_list.select(0)
+			var first_meta: Variant = power_node_list.get_item_metadata(0)
+			if first_meta is Dictionary:
+				_selected_power_node_id = int((first_meta as Dictionary).get("node_id", (first_meta as Dictionary).get("entity", -1)))
+	_update_power_node_detail()
+
+func _compare_power_nodes(a: Dictionary, b: Dictionary) -> bool:
+	var stability_a: float = float(a.get("stability", a.get("stability_raw", 0.0)))
+	var stability_b: float = float(b.get("stability", b.get("stability_raw", 0.0)))
+	if not is_equal_approx(stability_a, stability_b):
+		return stability_a < stability_b
+	var deficit_a: float = float(a.get("deficit", a.get("deficit_raw", 0.0)))
+	var deficit_b: float = float(b.get("deficit", b.get("deficit_raw", 0.0)))
+	return deficit_a > deficit_b
+
+func _format_power_node_entry(info: Dictionary) -> String:
+	var node_id: int = int(info.get("node_id", info.get("entity", 0)))
+	var stability: float = float(info.get("stability", info.get("stability_raw", 0.0)))
+	var generation: float = float(info.get("generation", info.get("generation_raw", 0.0)))
+	var demand: float = float(info.get("demand", info.get("demand_raw", 0.0)))
+	var deficit: float = float(info.get("deficit", info.get("deficit_raw", 0.0)))
+	var surplus: float = float(info.get("surplus", info.get("surplus_raw", 0.0)))
+	var incidents: int = int(info.get("incident_count", 0))
+	return "#%03d st %.2f | gen %.1f / dem %.1f | Δ-%.1f Δ+%.1f | incidents %d" % [
+		node_id,
+		stability,
+		generation,
+		demand,
+		deficit,
+		surplus,
+		incidents
+	]
+
+func _update_power_node_detail() -> void:
+	if power_node_detail_text == null:
+		return
+	if _selected_power_node_id < 0 or not _power_nodes.has(_selected_power_node_id):
+		power_node_detail_text.text = "[i]Select a node to inspect output, demand, and stability.[/i]"
+		return
+	var info: Dictionary = _power_nodes[_selected_power_node_id]
+	var lines: Array[String] = []
+	lines.append("[b]Node #%03d[/b]" % _selected_power_node_id)
+	var entity_id: int = int(info.get("entity", 0))
+	lines.append("Entity %016X" % entity_id)
+	var generation: float = float(info.get("generation", info.get("generation_raw", 0.0)))
+	var demand: float = float(info.get("demand", info.get("demand_raw", 0.0)))
+	var efficiency: float = float(info.get("efficiency", info.get("efficiency_raw", 0.0)))
+	var storage_level: float = float(info.get("storage_level", info.get("storage_level_raw", 0.0)))
+	var storage_capacity: float = float(info.get("storage_capacity", info.get("storage_capacity_raw", 0.0)))
+	var stability: float = float(info.get("stability", info.get("stability_raw", 0.0)))
+	var surplus: float = float(info.get("surplus", info.get("surplus_raw", 0.0)))
+	var deficit: float = float(info.get("deficit", info.get("deficit_raw", 0.0)))
+	var incidents: int = int(info.get("incident_count", 0))
+	var stability_label := "[color=green]stable[/color]"
+	if stability < POWER_STABILITY_CRITICAL:
+		stability_label = "[color=red]critical[/color]"
+	elif stability < POWER_STABILITY_WARN:
+		stability_label = "[color=yellow]warning[/color]"
+	lines.append("Generation %.2f -> Demand %.2f" % [generation, demand])
+	lines.append("Efficiency %.2f" % efficiency)
+	lines.append("Storage %.2f / %.2f" % [storage_level, storage_capacity])
+	lines.append("Stability %.2f %s" % [stability, stability_label])
+	lines.append("Surplus %.2f | Deficit %.2f" % [surplus, deficit])
+	lines.append("Incidents %d" % incidents)
+	power_node_detail_text.text = "\n".join(lines)
+
+func _on_power_node_selected(index: int) -> void:
+	if power_node_list == null:
+		return
+	var meta: Variant = power_node_list.get_item_metadata(index)
+	if meta is Dictionary:
+		var info: Dictionary = meta
+		_selected_power_node_id = int(info.get("node_id", info.get("entity", -1)))
+	else:
+		_selected_power_node_id = -1
+	_update_power_node_detail()
 
 func _rebuild_discovery_progress(array) -> void:
 	_discovery_progress.clear()

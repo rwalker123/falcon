@@ -159,6 +159,60 @@ per-faction orders -> command server -> turn queue -> run_turn -> snapshot -> br
 - **Commands**: Length-prefixed Protobuf `CommandEnvelope` messages covering verbs such as turn stepping, axis bias, influencer directives, spawning, and corruption injection. `sim_runtime::command_bus` exposes builder/decoder helpers, and the Godot tooling issues structured payloads via the native `CommandBridge` instead of raw strings.
 - **Metrics**: `SimulationMetrics` resource updated every turn; logged via `tracing` (`turn.completed` now emits `duration_ms` alongside grid metrics for client consumption).
 
+## Power Systems Plan
+Power resolution sits fourth in the turn chain (materials → logistics → population → **power** → tick increment → snapshot capture). This section translates the player-facing intent outlined in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §4 into engineering work.
+
+### ECS Structure
+- **Identifiers & Resources**
+  - `PowerNodeId` (u32) indexes generation sites, substations, storage pools, and demand clusters.
+  - `PowerGridState` resource captures the latest per-node supply, demand, transmission loss, storage charge, and stability score.
+  - `PowerTopology` holds adjacency lists with per-edge impedance and capacity, seeded during worldgen and mutable via infrastructure projects.
+- **Components**
+  - `PowerGeneration` (per entity) maps fuel/material inputs to potential output curves with efficiency bands and waste signatures.
+  - `PowerDemandProfile` annotates consumer entities (logistics hubs, factories, population blocks, military formations) with baseline draw, surge modifiers, and criticality weights.
+  - `PowerStorage` models buffer capacity, charge/discharge efficiency, and bleed rate.
+  - `PowerSafety` tracks reactor health, maintenance backlog, and mitigation investments driving instability calculations.
+- **Auxiliary Data**
+  - `FuelReserve` interfaces with materials/logistics data to ensure generation output honors available feedstock.
+  - `GridEventLedger` collects incidents (brownouts, overloads, catastrophic failures) for downstream crisis and knowledge systems.
+
+### Simulation Flow (Power Phase)
+1. `collect_generation_orders` resolves facility directives emitted during command processing (fuel assignments, output throttles, maintenance toggles).
+2. `resolve_generation` converts materials into produced energy, applying efficiency curves, temperature/terrain modifiers, and downtime for maintenance or damage.
+3. `route_energy` propagates supply across `PowerTopology`, accounting for capacity caps, impedance losses, and priority routing; outputs populate per-node surplus/deficit deltas.
+4. `apply_storage_buffers` charges or discharges `PowerStorage` entities against node deltas, honoring efficiency/bleed modifiers and spillover to contingency microgrids.
+5. `satisfy_demand` decrements consumer queues by delivered energy; unmet demand feeds attrition hooks in logistics, industry, population, and military systems on the following turn.
+6. `evaluate_instability` computes stability scores per node, triggers incidents, and records Knowledge Debt adjustments where secrecy constrains workforce familiarity.
+7. `export_power_metrics` gathers telemetry (grid stress, surplus margin, instability score, incident feed) into `SimulationMetrics`, snapshot payloads, and overlay rasters.
+
+### Instability Model
+- **Stability Bands**: Scores normalised 0–1 combine load ratio, maintenance backlog, reactor health, and redundancy. Thresholds at 0.4 (warn) and 0.2 (critical) drive event probabilities.
+- **Incident Types**
+  - Brownout/blackout events propagate attrition modifiers to dependent systems and raise unrest.
+  - Containment breach incidents inject contamination and heat events into materials/logistics subsystems and flag crisis hooks.
+  - Cascading failures traverse `PowerTopology` edges, escalating if redundancy is insufficient.
+- **Mitigation Hooks**: `PowerSafety` exposes investments (redundant lines, hardened reactors, microgrids) that increase effective stability; command verbs will toggle these investments and consume resources produced by earlier phases.
+- **Knowledge Exposure**: Public deployment of advanced reactors tick leak meters in the Knowledge Diffusion subsystem; incident logs tag technology tiers for reverse-engineering chances.
+
+### Telemetry & Clients
+- Extend snapshots with `PowerGridNode` payloads (node id, supply, demand, storage %, stability, active incidents) and `PowerTelemetryState` aggregates (totals, stress/margin, incident feed).
+- `SimulationMetrics` gains aggregate values (`grid_stress_avg`, `grid_surplus_margin`, `instability_alerts`) surfaced in the Crisis Dashboard gauges referenced in the manual.
+- Godot thin client receives a Power tab extension: grid metrics summary, sortable node list, and incident-aware detail synchronized with the streamed telemetry.
+- Headless diagnostics rely on existing script harnesses and tracing exports; add targeted test helpers instead of resurrecting CLI inspectors.
+
+### Integration Points & Dependencies
+- **Materials**: Reactor recipes depend on discovered elements/alloys; waste products feed back into materials for recycling/cleanup quests.
+- **Logistics**: Fuel routing leverages logistics queues; brownouts inject throughput penalties and additional maintenance cargo demands.
+- **Population**: Residential draw scales with prosperity and culture policies; outages influence morale and migration.
+- **Military**: High-demand formations reserve power; deficits throttle readiness and advanced weapon availability.
+- **Crisis Systems**: Power incidents create triggers for Crisis Framework archetypes (plague/replicator) by disabling containment infrastructure or sparking AI runoff events.
+
+### Follow-on Engineering Tasks
+- Finalise schema additions (`PowerGridNode`, power rasters, metrics) in `sim_schema` and `sim_runtime`.
+- Implement the ECS systems outlined above inside `core_sim`, ensuring deterministic ordering within the existing schedule.
+- Extend Godot inspector to visualise the new telemetry and expose relevant command toggles.
+- Author regression tests/benchmarks covering stability band transitions, cascade propagation, and serialization of power telemetry.
+
 ## Extensibility
 - Add new systems by extending the `Update` chain in `build_headless_app`.
 - Insert additional exporters after `collect_metrics` to integrate Prometheus/OTLP.

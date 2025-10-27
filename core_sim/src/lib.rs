@@ -11,6 +11,7 @@ pub mod log_stream;
 pub mod metrics;
 pub mod network;
 mod orders;
+mod power;
 mod resources;
 mod scalar;
 mod snapshot;
@@ -37,6 +38,10 @@ pub use influencers::{
 pub use metrics::SimulationMetrics;
 pub use orders::{
     FactionId, FactionOrders, FactionRegistry, Order, SubmitError, SubmitOutcome, TurnQueue,
+};
+pub use power::{
+    PowerGridNodeTelemetry, PowerGridState, PowerIncident, PowerIncidentSeverity, PowerNodeId,
+    PowerTopology,
 };
 pub use resources::{
     CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger,
@@ -65,6 +70,8 @@ pub fn build_headless_app() -> App {
     let culture_effects = CultureEffectsCache::default();
 
     app.insert_resource(config)
+        .insert_resource(PowerGridState::default())
+        .insert_resource(PowerTopology::default())
         .insert_resource(SimulationTick::default())
         .insert_resource(SentimentAxisBias::default())
         .insert_resource(CorruptionLedgers::default())

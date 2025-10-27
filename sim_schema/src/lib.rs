@@ -314,9 +314,43 @@ pub struct DiscoveryProgressEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PowerNodeState {
     pub entity: u64,
+    pub node_id: u32,
     pub generation: i64,
     pub demand: i64,
     pub efficiency: i64,
+    pub storage_level: i64,
+    pub storage_capacity: i64,
+    pub stability: i64,
+    pub surplus: i64,
+    pub deficit: i64,
+    pub incident_count: u32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum PowerIncidentSeverity {
+    #[default]
+    Warning = 0,
+    Critical = 1,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PowerIncidentState {
+    pub node_id: u32,
+    pub severity: PowerIncidentSeverity,
+    pub deficit: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PowerTelemetryState {
+    pub total_supply: i64,
+    pub total_demand: i64,
+    pub total_storage: i64,
+    pub total_capacity: i64,
+    pub grid_stress_avg: f32,
+    pub surplus_margin: f32,
+    pub instability_alerts: u32,
+    pub incidents: Vec<PowerIncidentState>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -646,6 +680,7 @@ pub struct WorldSnapshot {
     pub trade_links: Vec<TradeLinkState>,
     pub populations: Vec<PopulationCohortState>,
     pub power: Vec<PowerNodeState>,
+    pub power_metrics: PowerTelemetryState,
     pub terrain: TerrainOverlayState,
     pub logistics_raster: ScalarRasterState,
     pub sentiment_raster: ScalarRasterState,
@@ -676,6 +711,7 @@ pub struct WorldDelta {
     pub removed_populations: Vec<u64>,
     pub power: Vec<PowerNodeState>,
     pub removed_power: Vec<u64>,
+    pub power_metrics: Option<PowerTelemetryState>,
     pub axis_bias: Option<AxisBiasState>,
     pub sentiment: Option<SentimentTelemetryState>,
     pub logistics_raster: Option<ScalarRasterState>,
@@ -776,6 +812,7 @@ fn build_snapshot_flatbuffer<'a>(
     let trade_links_vec = create_trade_links(builder, &snapshot.trade_links);
     let populations_vec = create_populations(builder, &snapshot.populations);
     let power_vec = create_power(builder, &snapshot.power);
+    let power_metrics = create_power_metrics(builder, &snapshot.power_metrics);
     let terrain_overlay = create_terrain_overlay(builder, &snapshot.terrain);
     let logistics_raster = create_scalar_raster(builder, &snapshot.logistics_raster);
     let sentiment_raster = create_scalar_raster(builder, &snapshot.sentiment_raster);
@@ -809,6 +846,7 @@ fn build_snapshot_flatbuffer<'a>(
             tradeLinks: Some(trade_links_vec),
             populations: Some(populations_vec),
             power: Some(power_vec),
+            powerMetrics: Some(power_metrics),
             terrainOverlay: Some(terrain_overlay),
             logisticsRaster: Some(logistics_raster),
             sentimentRaster: Some(sentiment_raster),
@@ -864,6 +902,10 @@ fn build_delta_flatbuffer<'a>(
     let removed_populations_vec = builder.create_vector(&delta.removed_populations);
     let power_vec = create_power(builder, &delta.power);
     let removed_power_vec = builder.create_vector(&delta.removed_power);
+    let power_metrics = delta
+        .power_metrics
+        .as_ref()
+        .map(|metrics| create_power_metrics(builder, metrics));
     let terrain_overlay = delta
         .terrain
         .as_ref()
@@ -934,6 +976,7 @@ fn build_delta_flatbuffer<'a>(
             removedPopulations: Some(removed_populations_vec),
             power: Some(power_vec),
             removedPower: Some(removed_power_vec),
+            powerMetrics: power_metrics,
             axisBias: axis_bias,
             sentiment,
             generations: Some(generations_vec),
@@ -1147,14 +1190,64 @@ fn create_power<'a>(
                 builder,
                 &fb::PowerNodeStateArgs {
                     entity: node.entity,
+                    nodeId: node.node_id,
                     generation: node.generation,
                     demand: node.demand,
                     efficiency: node.efficiency,
+                    storageLevel: node.storage_level,
+                    storageCapacity: node.storage_capacity,
+                    stability: node.stability,
+                    surplus: node.surplus,
+                    deficit: node.deficit,
+                    incidentCount: node.incident_count,
                 },
             )
         })
         .collect();
     builder.create_vector(&offsets)
+}
+
+fn create_power_incidents<'a>(
+    builder: &mut FbBuilder<'a>,
+    incidents: &[PowerIncidentState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::PowerIncidentState<'a>>>> {
+    let offsets: Vec<_> = incidents
+        .iter()
+        .map(|incident| {
+            fb::PowerIncidentState::create(
+                builder,
+                &fb::PowerIncidentStateArgs {
+                    nodeId: incident.node_id,
+                    severity: match incident.severity {
+                        PowerIncidentSeverity::Warning => fb::PowerIncidentSeverity::Warning,
+                        PowerIncidentSeverity::Critical => fb::PowerIncidentSeverity::Critical,
+                    },
+                    deficit: incident.deficit,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_power_metrics<'a>(
+    builder: &mut FbBuilder<'a>,
+    metrics: &PowerTelemetryState,
+) -> WIPOffset<fb::PowerTelemetryState<'a>> {
+    let incidents = create_power_incidents(builder, &metrics.incidents);
+    fb::PowerTelemetryState::create(
+        builder,
+        &fb::PowerTelemetryStateArgs {
+            totalSupply: metrics.total_supply,
+            totalDemand: metrics.total_demand,
+            totalStorage: metrics.total_storage,
+            totalCapacity: metrics.total_capacity,
+            gridStressAvg: metrics.grid_stress_avg,
+            surplusMargin: metrics.surplus_margin,
+            instabilityAlerts: metrics.instability_alerts,
+            incidents: Some(incidents),
+        },
+    )
 }
 
 fn create_terrain_overlay<'a>(

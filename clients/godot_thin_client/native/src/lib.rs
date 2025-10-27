@@ -969,6 +969,19 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
         let _ = dict.insert("trade_link_removed", removed_trade_links);
     }
 
+    if let Some(power_nodes) = delta.power() {
+        let _ = dict.insert("power_updates", power_nodes_to_array(power_nodes));
+    }
+
+    let removed_power = u64_vector_to_packed_int64(delta.removedPower());
+    if !removed_power.is_empty() {
+        let _ = dict.insert("power_removed", removed_power);
+    }
+
+    if let Some(power_metrics) = delta.powerMetrics() {
+        let _ = dict.insert("power_metrics", power_metrics_to_dict(power_metrics));
+    }
+
     if let Some(tiles) = delta.tiles() {
         let _ = dict.insert("tile_updates", tiles_to_array(tiles));
     }
@@ -1867,6 +1880,14 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         let _ = dict.insert("populations", populations_to_array(populations));
     }
 
+    if let Some(power_nodes) = snapshot.power() {
+        let _ = dict.insert("power_nodes", power_nodes_to_array(power_nodes));
+    }
+
+    if let Some(power_metrics) = snapshot.powerMetrics() {
+        let _ = dict.insert("power_metrics", power_metrics_to_dict(power_metrics));
+    }
+
     if let Some(trade_links) = snapshot.tradeLinks() {
         let _ = dict.insert("trade_links", trade_links_to_array(trade_links));
     }
@@ -2399,6 +2420,96 @@ fn trade_links_to_array(
         array.push(&dict.to_variant());
     }
     array
+}
+
+fn power_node_to_dict(node: fb::PowerNodeState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("entity", node.entity() as i64);
+    let _ = dict.insert("node_id", node.nodeId() as i64);
+
+    let generation_raw = node.generation();
+    let demand_raw = node.demand();
+    let efficiency_raw = node.efficiency();
+    let storage_level_raw = node.storageLevel();
+    let storage_capacity_raw = node.storageCapacity();
+    let stability_raw = node.stability();
+    let surplus_raw = node.surplus();
+    let deficit_raw = node.deficit();
+
+    let _ = dict.insert("generation", fixed64_to_f64(generation_raw));
+    let _ = dict.insert("generation_raw", generation_raw);
+    let _ = dict.insert("demand", fixed64_to_f64(demand_raw));
+    let _ = dict.insert("demand_raw", demand_raw);
+    let _ = dict.insert("efficiency", fixed64_to_f64(efficiency_raw));
+    let _ = dict.insert("efficiency_raw", efficiency_raw);
+    let _ = dict.insert("storage_level", fixed64_to_f64(storage_level_raw));
+    let _ = dict.insert("storage_level_raw", storage_level_raw);
+    let _ = dict.insert("storage_capacity", fixed64_to_f64(storage_capacity_raw));
+    let _ = dict.insert("storage_capacity_raw", storage_capacity_raw);
+    let _ = dict.insert("stability", fixed64_to_f64(stability_raw));
+    let _ = dict.insert("stability_raw", stability_raw);
+    let _ = dict.insert("surplus", fixed64_to_f64(surplus_raw));
+    let _ = dict.insert("surplus_raw", surplus_raw);
+    let _ = dict.insert("deficit", fixed64_to_f64(deficit_raw));
+    let _ = dict.insert("deficit_raw", deficit_raw);
+    let _ = dict.insert("incident_count", node.incidentCount() as i64);
+
+    dict
+}
+
+fn power_nodes_to_array(
+    list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::PowerNodeState<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for node in list {
+        let dict = power_node_to_dict(node);
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn power_incident_to_dict(incident: fb::PowerIncidentState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("node_id", incident.nodeId() as i64);
+    let severity = match incident.severity() {
+        fb::PowerIncidentSeverity::Critical => "critical",
+        _ => "warning",
+    };
+    let _ = dict.insert("severity", severity);
+    let deficit_raw = incident.deficit();
+    let _ = dict.insert("deficit", fixed64_to_f64(deficit_raw));
+    let _ = dict.insert("deficit_raw", deficit_raw);
+    dict
+}
+
+fn power_metrics_to_dict(metrics: fb::PowerTelemetryState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let total_supply_raw = metrics.totalSupply();
+    let total_demand_raw = metrics.totalDemand();
+    let total_storage_raw = metrics.totalStorage();
+    let total_capacity_raw = metrics.totalCapacity();
+    let _ = dict.insert("total_supply", fixed64_to_f64(total_supply_raw));
+    let _ = dict.insert("total_supply_raw", total_supply_raw);
+    let _ = dict.insert("total_demand", fixed64_to_f64(total_demand_raw));
+    let _ = dict.insert("total_demand_raw", total_demand_raw);
+    let _ = dict.insert("total_storage", fixed64_to_f64(total_storage_raw));
+    let _ = dict.insert("total_storage_raw", total_storage_raw);
+    let _ = dict.insert("total_capacity", fixed64_to_f64(total_capacity_raw));
+    let _ = dict.insert("total_capacity_raw", total_capacity_raw);
+    let _ = dict.insert("grid_stress_avg", metrics.gridStressAvg() as f64);
+    let _ = dict.insert("surplus_margin", metrics.surplusMargin() as f64);
+    let _ = dict.insert("instability_alerts", metrics.instabilityAlerts() as i64);
+
+    let mut incidents_array = VariantArray::new();
+    if let Some(incidents) = metrics.incidents() {
+        for incident in incidents {
+            let dict = power_incident_to_dict(incident);
+            incidents_array.push(&dict.to_variant());
+        }
+    }
+    let _ = dict.insert("incidents", incidents_array);
+
+    dict
 }
 
 fn generation_to_dict(state: fb::GenerationState<'_>) -> Dictionary {

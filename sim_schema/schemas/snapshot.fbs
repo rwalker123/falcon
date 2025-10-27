@@ -231,9 +231,38 @@ table PendingMigration {
 
 table PowerNodeState {
   entity:ulong;
+  nodeId:uint;
   generation:long;
   demand:long;
   efficiency:long;
+  storageLevel:long;
+  storageCapacity:long;
+  stability:long;
+  surplus:long;
+  deficit:long;
+  incidentCount:uint;
+}
+
+enum PowerIncidentSeverity : ubyte {
+  Warning,
+  Critical
+}
+
+table PowerIncidentState {
+  nodeId:uint;
+  severity:PowerIncidentSeverity;
+  deficit:long;
+}
+
+table PowerTelemetryState {
+  totalSupply:long;
+  totalDemand:long;
+  totalStorage:long;
+  totalCapacity:long;
+  gridStressAvg:float;
+  surplusMargin:float;
+  instabilityAlerts:uint;
+  incidents:[PowerIncidentState];
 }
 
 enum CorruptionSubsystem : ubyte {
@@ -351,6 +380,7 @@ table WorldSnapshot {
   tradeLinks:[TradeLinkState];
   populations:[PopulationCohortState];
   power:[PowerNodeState];
+  powerMetrics:PowerTelemetryState;
   terrainOverlay:TerrainOverlay;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
@@ -380,6 +410,7 @@ table WorldDelta {
   removedPopulations:[ulong];
   power:[PowerNodeState];
   removedPower:[ulong];
+  powerMetrics:PowerTelemetryState;
   axisBias:AxisBiasState;
   sentiment:SentimentTelemetryState;
   generations:[GenerationState];
