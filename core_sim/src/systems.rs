@@ -590,7 +590,7 @@ pub fn simulate_power(
             .clamp(scalar_zero(), config.max_power_generation);
         let net = (effective_generation - target_demand) * corruption_factor;
 
-        node.generation = (node.base_generation + net * scalar_from_f32(0.4))
+        node.generation = (node.base_generation + net * scalar_from_f32(config.power_generation_adjust_rate))
             .clamp(scalar_zero(), config.max_power_generation);
         node.demand = (node.base_demand - net * scalar_from_f32(0.25))
             .clamp(scalar_zero(), config.max_power_generation);
