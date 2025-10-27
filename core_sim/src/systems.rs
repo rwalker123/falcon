@@ -576,7 +576,7 @@ pub fn simulate_power(
         let efficiency_adjust =
             (config.ambient_temperature - tile.temperature) * config.power_adjust_rate;
         node.efficiency = (node.efficiency + efficiency_adjust * scalar_from_f32(0.01))
-            .clamp(scalar_from_f32(0.5), scalar_from_f32(1.75));
+            .clamp(scalar_from_f32(0.5), config.max_power_efficiency);
 
         let influence_bonus = (impacts.power_bonus + effects.power_bonus)
             .clamp(scalar_from_f32(-1.5), scalar_from_f32(1.5));
