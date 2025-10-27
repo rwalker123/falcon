@@ -720,6 +720,10 @@ impl CultureManager {
         self.locals.get_mut(&owner.0)
     }
 
+    pub fn local_layer_by_owner(&self, owner: CultureOwner) -> Option<&CultureLayer> {
+        self.locals.get(&owner.0)
+    }
+
     pub fn global_layer(&self) -> Option<&CultureLayer> {
         self.global.as_ref()
     }
