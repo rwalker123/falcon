@@ -43,8 +43,8 @@ pub use influencers::{
     InfluentialRoster, SupportChannel,
 };
 pub use knowledge_ledger::{
-    KnowledgeCountermeasure, KnowledgeLedger, KnowledgeLedgerEntry, KnowledgeModifier,
-    KnowledgeTimelineEvent,
+    CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
+    KnowledgeLedgerEntry, KnowledgeModifier, KnowledgeTimelineEvent,
 };
 
 pub use metrics::SimulationMetrics;
@@ -123,6 +123,8 @@ pub fn build_headless_app() -> App {
         .add_event::<CultureSchismEvent>()
         .add_event::<systems::TradeDiffusionEvent>()
         .add_event::<systems::MigrationKnowledgeEvent>()
+        .add_event::<EspionageProbeEvent>()
+        .add_event::<CounterIntelSweepEvent>()
         .add_event::<GreatDiscoveryCandidateEvent>()
         .add_event::<GreatDiscoveryResolvedEvent>()
         .add_event::<great_discovery::GreatDiscoveryEffectEvent>()
@@ -163,7 +165,12 @@ pub fn build_headless_app() -> App {
         )
         .add_systems(
             Update,
-            knowledge_ledger::knowledge_ledger_tick.in_set(TurnStage::Knowledge),
+            (
+                knowledge_ledger::process_espionage_events,
+                knowledge_ledger::knowledge_ledger_tick,
+            )
+                .chain()
+                .in_set(TurnStage::Knowledge),
         )
         .add_systems(
             Update,
