@@ -1327,13 +1327,22 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
     }
     world.insert_resource(discovery_ledger_res);
 
+    if !snapshot.great_discovery_definitions.is_empty() {
+        if let Some(mut registry) = world.get_resource_mut::<GreatDiscoveryRegistry>() {
+            registry.restore_from_states(&snapshot.great_discovery_definitions);
+        } else {
+            let mut registry = GreatDiscoveryRegistry::default();
+            registry.restore_from_states(&snapshot.great_discovery_definitions);
+            world.insert_resource(registry);
+        }
+    } else if world.get_resource::<GreatDiscoveryRegistry>().is_none() {
+        world.insert_resource(GreatDiscoveryRegistry::default());
+    }
+
     let registry_clone = world
         .get_resource::<GreatDiscoveryRegistry>()
         .cloned()
         .unwrap_or_default();
-    if world.get_resource::<GreatDiscoveryRegistry>().is_none() {
-        world.insert_resource(registry_clone.clone());
-    }
 
     if let Some(mut ledger) = world.get_resource_mut::<GreatDiscoveryLedger>() {
         ledger.replace_with_states(&snapshot.great_discoveries);

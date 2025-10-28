@@ -345,6 +345,67 @@ impl GreatDiscoveryRegistry {
     pub fn metadata_entries(&self) -> impl Iterator<Item = &GreatDiscoveryDefinitionMetadata> {
         self.metadata.values()
     }
+
+    pub fn restore_from_states(&mut self, states: &[GreatDiscoveryDefinitionState]) {
+        self.definitions.clear();
+        self.metadata.clear();
+
+        for state in states {
+            let mut requirement_defs = Vec::with_capacity(state.requirements.len());
+            let mut requirement_meta = Vec::with_capacity(state.requirements.len());
+
+            for req in &state.requirements {
+                let weight = if req.weight <= 0.0 { 1.0 } else { req.weight };
+                let minimum = req.minimum_progress.clamp(0.0, 1.0);
+                requirement_defs.push(ConstellationRequirement::new(
+                    req.discovery,
+                    Scalar::from_f32(weight),
+                    Scalar::from_f32(minimum),
+                ));
+                requirement_meta.push(GreatDiscoveryRequirementMetadata {
+                    discovery_id: req.discovery,
+                    name: req.name.clone(),
+                    summary: req.summary.clone(),
+                    weight,
+                    minimum_progress: minimum,
+                });
+            }
+
+            let id = GreatDiscoveryId(state.id);
+            let definition = GreatDiscoveryDefinition::new(
+                id,
+                state.name.clone(),
+                state.field,
+                requirement_defs,
+                state.observation_threshold,
+                state.cooldown_ticks,
+                state.freshness_window,
+                state.effect_flags,
+                state.covert_until_public,
+            );
+
+            let metadata = GreatDiscoveryDefinitionMetadata {
+                id,
+                name: state.name.clone(),
+                field: state.field,
+                tier: state.tier.clone(),
+                summary: state.summary.clone(),
+                tags: state.tags.clone(),
+                observation_threshold: state.observation_threshold,
+                cooldown_ticks: state.cooldown_ticks,
+                freshness_window: state.freshness_window,
+                effect_flags: state.effect_flags,
+                covert_until_public: state.covert_until_public,
+                effects_summary: state.effects_summary.clone(),
+                observation_notes: state.observation_notes.clone(),
+                leak_profile: state.leak_profile.clone(),
+                requirements: requirement_meta,
+            };
+
+            self.definitions.insert(id, definition);
+            self.metadata.insert(id, metadata);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1007,6 +1068,22 @@ mod tests {
         assert_eq!(state.requirements[0].discovery, 101);
         assert!((state.requirements[0].weight - 1.0).abs() < f32::EPSILON);
         assert!((state.requirements[0].minimum_progress - 0.5).abs() < f32::EPSILON);
+
+        let mut restored = GreatDiscoveryRegistry::default();
+        restored.restore_from_states(&definition_states);
+
+        let restored_definition = restored
+            .definition(&GreatDiscoveryId(4096))
+            .expect("definition restored from snapshot state");
+        assert_eq!(restored_definition.name, "Catalog Test");
+        assert_eq!(restored_definition.observation_threshold, 3);
+
+        let restored_metadata = restored
+            .metadata(&GreatDiscoveryId(4096))
+            .expect("metadata restored from snapshot state");
+        assert_eq!(restored_metadata.observation_threshold, 3);
+        assert_eq!(restored_metadata.requirements.len(), 1);
+        assert_eq!(restored_metadata.requirements[0].discovery_id, 101);
     }
 
     #[test]
