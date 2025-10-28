@@ -65,6 +65,34 @@ impl KnowledgeLedgerEntry {
     }
 }
 
+impl KnowledgeLedgerEntry {
+    pub fn register_countermeasure(&mut self, countermeasure: KnowledgeCountermeasure) {
+        self.countermeasures.push(countermeasure);
+    }
+
+    pub fn register_infiltration(&mut self, mut probe: InfiltrationRecord) {
+        let max_suspicion = Scalar::from_f32(5.0);
+        if let Some(existing) = self
+            .infiltrations
+            .iter_mut()
+            .find(|inf| inf.faction == probe.faction)
+        {
+            existing.blueprint_fidelity = (existing.blueprint_fidelity + probe.blueprint_fidelity)
+                .clamp(Scalar::zero(), Scalar::one());
+            existing.suspicion =
+                (existing.suspicion + probe.suspicion).clamp(Scalar::zero(), max_suspicion);
+            existing.cells = existing.cells.saturating_add(probe.cells);
+            existing.last_activity_tick = probe.last_activity_tick;
+        } else {
+            probe.blueprint_fidelity = probe
+                .blueprint_fidelity
+                .clamp(Scalar::zero(), Scalar::one());
+            probe.suspicion = probe.suspicion.clamp(Scalar::zero(), max_suspicion);
+            self.infiltrations.push(probe);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct KnowledgeTimelineEvent {
     pub tick: u64,
@@ -95,9 +123,79 @@ impl Default for KnowledgeLedger {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct EspionageProbeEvent {
+    pub infiltrator: FactionId,
+    pub fidelity_gain: Scalar,
+    pub suspicion_gain: Scalar,
+    pub cells: u8,
+    pub tick: u64,
+    pub note: Option<String>,
+}
+
 impl KnowledgeLedger {
     pub fn upsert_entry(&mut self, entry: KnowledgeLedgerEntry) {
         self.entries.insert(entry.key(), entry);
+    }
+
+    pub fn apply_countermeasure(
+        &mut self,
+        owner: FactionId,
+        discovery_id: u32,
+        countermeasure: KnowledgeCountermeasure,
+        tick: u64,
+        note: Option<String>,
+    ) -> bool {
+        if let Some(entry) = self.entries.get_mut(&(owner, discovery_id)) {
+            entry.register_countermeasure(countermeasure.clone());
+            self.push_timeline_event(KnowledgeTimelineEvent {
+                tick,
+                kind: KnowledgeTimelineEventKind::CounterIntel,
+                source_faction: Some(owner),
+                delta_percent: None,
+                note: note.or_else(|| Some("Countermeasure deployed".into())),
+            });
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn record_espionage_probe(
+        &mut self,
+        owner: FactionId,
+        discovery_id: u32,
+        probe: EspionageProbeEvent,
+    ) -> bool {
+        let EspionageProbeEvent {
+            infiltrator,
+            fidelity_gain,
+            suspicion_gain,
+            cells,
+            tick,
+            note,
+        } = probe;
+
+        if let Some(entry) = self.entries.get_mut(&(owner, discovery_id)) {
+            let probe = InfiltrationRecord {
+                faction: infiltrator,
+                blueprint_fidelity: fidelity_gain,
+                suspicion: suspicion_gain,
+                cells,
+                last_activity_tick: tick,
+            };
+            entry.register_infiltration(probe);
+            self.push_timeline_event(KnowledgeTimelineEvent {
+                tick,
+                kind: KnowledgeTimelineEventKind::SpyProbe,
+                source_faction: Some(infiltrator),
+                delta_percent: None,
+                note: note.or_else(|| Some(format!("Probe on discovery {}", discovery_id))),
+            });
+            true
+        } else {
+            false
+        }
     }
 
     pub fn remove_entry(
@@ -373,6 +471,7 @@ pub fn knowledge_ledger_tick(
     mut metrics: ResMut<SimulationMetrics>,
 ) {
     let mut pending_events: Vec<KnowledgeTimelineEvent> = Vec::new();
+    let mut expired_infiltrations: Vec<(FactionId, u32, FactionId)> = Vec::new();
 
     for entry in ledger.entries.values_mut() {
         let base_half_life = entry.half_life_ticks.max(2) as i32;
@@ -476,6 +575,21 @@ pub fn knowledge_ledger_tick(
             });
         }
 
+        let suspicion_decay = Scalar::from_f32(0.05);
+        entry.infiltrations.retain_mut(|inf| {
+            inf.suspicion = if inf.suspicion > suspicion_decay {
+                inf.suspicion - suspicion_decay
+            } else {
+                Scalar::zero()
+            };
+            let should_keep = inf.suspicion > Scalar::from_f32(0.05)
+                || inf.blueprint_fidelity > Scalar::from_f32(0.05);
+            if !should_keep {
+                expired_infiltrations.push((entry.owner_faction, entry.discovery_id, inf.faction));
+            }
+            should_keep
+        });
+
         if !emitted_progress_event && progress_delta == 0 {
             entry.time_to_cascade = entry.time_to_cascade.saturating_add(1);
         }
@@ -483,6 +597,19 @@ pub fn knowledge_ledger_tick(
 
     for event in pending_events {
         ledger.push_timeline_event(event);
+    }
+
+    for (owner, _discovery, infiltrator) in expired_infiltrations {
+        ledger.push_timeline_event(KnowledgeTimelineEvent {
+            tick: tick.0,
+            kind: KnowledgeTimelineEventKind::CounterIntel,
+            source_faction: Some(owner),
+            delta_percent: None,
+            note: Some(format!(
+                "Infiltration cell from faction {} dismantled",
+                infiltrator.0
+            )),
+        });
     }
 
     let summary = ledger.metrics();
