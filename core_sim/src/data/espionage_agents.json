@@ -1,0 +1,48 @@
+{
+  "agents": [
+    {
+      "id": "veil_runner",
+      "name": "Veil Runner Cell",
+      "stealth": 0.78,
+      "recon": 0.52,
+      "counter_intel": 0.24,
+      "tags": ["stealth", "infiltration"],
+      "note": "Prototype infiltration cell specialising in lab exfiltration and transport interception."
+    },
+    {
+      "id": "signal_threader",
+      "name": "Signal Threader Relay",
+      "stealth": 0.48,
+      "recon": 0.74,
+      "counter_intel": 0.32,
+      "tags": ["analysis", "signal"],
+      "note": "Telemetry analysts who blend into academic exchanges to siphon blueprint fragments."
+    },
+    {
+      "id": "wardens_shield",
+      "name": "Warden's Shield Taskforce",
+      "stealth": 0.34,
+      "recon": 0.42,
+      "counter_intel": 0.81,
+      "tags": ["counter_intel", "security"],
+      "note": "Dedicated counter-intelligence cadre trained for rapid sweeps and misinformation audits."
+    },
+    {
+      "id": "adaptive_sleeper_template",
+      "name": "Adaptive Sleeper Cell",
+      "tags": ["stealth", "dynamic"],
+      "note": "Balance anchor for procedurally generated cells; tweak the generator block to adjust campaign variety.",
+      "generator": {
+        "enabled": true,
+        "per_faction": 2,
+        "stealth": { "min": 0.45, "max": 0.85 },
+        "recon": { "min": 0.35, "max": 0.75 },
+        "counter_intel": { "min": 0.25, "max": 0.55 },
+        "tags": ["stealth", "dynamic"],
+        "name_pool": ["Echo Weave", "Obsidian Thread", "Lattice Shade"],
+        "note": "Auto-generated infiltrator tuned for long campaigns.",
+        "seed_offset": 1337
+      }
+    }
+  ]
+}
