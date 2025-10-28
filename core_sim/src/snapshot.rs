@@ -9,7 +9,8 @@ use sim_runtime::{
     AxisBiasState, CorruptionLedger, CorruptionSubsystem, CultureLayerState, CultureTensionState,
     CultureTraitEntry, DiscoveryProgressEntry, GenerationState, GreatDiscoveryDefinitionState,
     GreatDiscoveryProgressState, GreatDiscoveryState, GreatDiscoveryTelemetryState,
-    InfluentialIndividualState, LogisticsLinkState, PendingMigrationState, PopulationCohortState,
+    InfluentialIndividualState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
+    KnowledgeTimelineEventState, LogisticsLinkState, PendingMigrationState, PopulationCohortState,
     PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState,
     ScalarRasterState, SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState,
     SentimentTelemetryState, SnapshotHeader, TerrainOverlayState, TerrainSample, TileState,
@@ -33,6 +34,8 @@ use crate::{
         GreatDiscoveryTelemetry,
     },
     influencers::{InfluencerImpacts, InfluentialRoster},
+    knowledge_ledger::{encode_ledger_key, KnowledgeLedger, KnowledgeSnapshotPayload},
+    metrics::SimulationMetrics,
     orders::FactionId,
     power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
     resources::{
@@ -52,6 +55,13 @@ pub(crate) struct GreatDiscoverySnapshotParam<'w, 's> {
     registry: Res<'w, GreatDiscoveryRegistry>,
     #[system_param(ignore)]
     _marker: std::marker::PhantomData<&'s ()>,
+}
+
+#[derive(SystemParam)]
+pub struct SnapshotContext<'w> {
+    pub config: Res<'w, SimulationConfig>,
+    pub tick: Res<'w, SimulationTick>,
+    pub metrics: Res<'w, SimulationMetrics>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -112,6 +122,9 @@ pub struct SnapshotHistory {
     great_discovery_definitions: HashMap<u16, GreatDiscoveryDefinitionState>,
     great_discovery_progress: HashMap<(u32, u16), GreatDiscoveryProgressState>,
     great_discovery_telemetry: GreatDiscoveryTelemetryState,
+    knowledge_ledger: HashMap<u64, KnowledgeLedgerEntryState>,
+    knowledge_metrics: KnowledgeMetricsState,
+    knowledge_timeline: Vec<KnowledgeTimelineEventState>,
     axis_bias: AxisBiasState,
     sentiment: SentimentTelemetryState,
     terrain_overlay: TerrainOverlayState,
@@ -156,6 +169,9 @@ impl SnapshotHistory {
             great_discovery_definitions: HashMap::new(),
             great_discovery_progress: HashMap::new(),
             great_discovery_telemetry: GreatDiscoveryTelemetryState::default(),
+            knowledge_ledger: HashMap::new(),
+            knowledge_metrics: KnowledgeMetricsState::default(),
+            knowledge_timeline: Vec::new(),
             axis_bias: AxisBiasState::default(),
             sentiment: SentimentTelemetryState::default(),
             terrain_overlay: TerrainOverlayState::default(),
@@ -359,6 +375,27 @@ impl SnapshotHistory {
             Some(corruption_state.clone())
         };
 
+        let mut knowledge_ledger_index = HashMap::with_capacity(snapshot.knowledge_ledger.len());
+        for entry in &snapshot.knowledge_ledger {
+            knowledge_ledger_index.insert(
+                encode_ledger_key(FactionId(entry.owner_faction), entry.discovery_id),
+                entry.clone(),
+            );
+        }
+
+        let knowledge_metrics_state = snapshot.knowledge_metrics.clone();
+        let knowledge_metrics_delta = if self.knowledge_metrics == knowledge_metrics_state {
+            None
+        } else {
+            Some(knowledge_metrics_state.clone())
+        };
+
+        let knowledge_timeline_delta = if self.knowledge_timeline == snapshot.knowledge_timeline {
+            Vec::new()
+        } else {
+            snapshot.knowledge_timeline.clone()
+        };
+
         let delta = WorldDelta {
             header: snapshot.header.clone(),
             tiles: diff_new(&self.tiles, &tiles_index),
@@ -379,6 +416,10 @@ impl SnapshotHistory {
                 &great_discovery_progress_index,
             ),
             great_discovery_telemetry: great_discovery_telemetry_delta.clone(),
+            knowledge_ledger: diff_new(&self.knowledge_ledger, &knowledge_ledger_index),
+            removed_knowledge_ledger: diff_removed(&self.knowledge_ledger, &knowledge_ledger_index),
+            knowledge_metrics: knowledge_metrics_delta.clone(),
+            knowledge_timeline: knowledge_timeline_delta.clone(),
             axis_bias: axis_bias_delta,
             sentiment: sentiment_delta.clone(),
             generations: diff_new(&self.generations, &generations_index),
@@ -413,6 +454,9 @@ impl SnapshotHistory {
         self.great_discoveries = great_discoveries_index;
         self.great_discovery_progress = great_discovery_progress_index;
         self.great_discovery_telemetry = great_discovery_telemetry_state;
+        self.knowledge_ledger = knowledge_ledger_index;
+        self.knowledge_metrics = knowledge_metrics_state;
+        self.knowledge_timeline = snapshot_arc.knowledge_timeline.clone();
         self.generations = generations_index;
         self.influencers = influencers_index;
         self.culture_layers = culture_layers_index;
@@ -511,6 +555,19 @@ impl SnapshotHistory {
             .map(|state| ((state.faction, state.discovery), state.clone()))
             .collect();
         self.great_discovery_telemetry = entry.snapshot.great_discovery_telemetry.clone();
+        self.knowledge_ledger = entry
+            .snapshot
+            .knowledge_ledger
+            .iter()
+            .map(|state| {
+                (
+                    encode_ledger_key(FactionId(state.owner_faction), state.discovery_id),
+                    state.clone(),
+                )
+            })
+            .collect();
+        self.knowledge_metrics = entry.snapshot.knowledge_metrics.clone();
+        self.knowledge_timeline = entry.snapshot.knowledge_timeline.clone();
 
         self.last_snapshot = Some(entry.snapshot.clone());
         self.last_delta = Some(entry.delta.clone());
@@ -558,6 +615,10 @@ impl SnapshotHistory {
             great_discoveries: Vec::new(),
             great_discovery_progress: Vec::new(),
             great_discovery_telemetry: None,
+            knowledge_ledger: Vec::new(),
+            removed_knowledge_ledger: Vec::new(),
+            knowledge_metrics: None,
+            knowledge_timeline: Vec::new(),
             axis_bias: Some(bias.clone()),
             sentiment: None,
             logistics_raster: None,
@@ -652,6 +713,10 @@ impl SnapshotHistory {
             great_discoveries: Vec::new(),
             great_discovery_progress: Vec::new(),
             great_discovery_telemetry: None,
+            knowledge_ledger: Vec::new(),
+            removed_knowledge_ledger: Vec::new(),
+            knowledge_metrics: None,
+            knowledge_timeline: Vec::new(),
             axis_bias: None,
             sentiment: None,
             logistics_raster: None,
@@ -740,6 +805,10 @@ impl SnapshotHistory {
             great_discoveries: Vec::new(),
             great_discovery_progress: Vec::new(),
             great_discovery_telemetry: None,
+            knowledge_ledger: Vec::new(),
+            removed_knowledge_ledger: Vec::new(),
+            knowledge_metrics: None,
+            knowledge_timeline: Vec::new(),
             axis_bias: None,
             sentiment: None,
             logistics_raster: None,
@@ -804,13 +873,13 @@ impl SnapshotHistory {
 
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn capture_snapshot(
-    config: Res<SimulationConfig>,
-    tick: Res<SimulationTick>,
+    ctx: SnapshotContext,
     tiles: Query<(Entity, &Tile)>,
     logistics_links: Query<(Entity, &LogisticsLink, &TradeLink)>,
     populations: Query<(Entity, &PopulationCohort)>,
     power_nodes: Query<(Entity, &PowerNode)>,
     power_grid: Res<PowerGridState>,
+    knowledge_ledger: Res<KnowledgeLedger>,
     registry: Res<GenerationRegistry>,
     roster: Res<InfluentialRoster>,
     axis_bias: Res<SentimentAxisBias>,
@@ -821,6 +890,11 @@ pub fn capture_snapshot(
     culture: Res<CultureManager>,
     mut history: ResMut<SnapshotHistory>,
 ) {
+    let SnapshotContext {
+        config,
+        tick,
+        metrics: _metrics,
+    } = ctx;
     history.set_capacity(config.snapshot_history_limit.max(1));
 
     let mut tile_states: Vec<TileState> = tiles
@@ -851,6 +925,11 @@ pub fn capture_snapshot(
     power_states.sort_unstable_by_key(|state| state.entity);
 
     let power_metrics = power_metrics_from_grid(&power_grid);
+    let KnowledgeSnapshotPayload {
+        entries: knowledge_ledger_states,
+        timeline: knowledge_timeline_states,
+        metrics: knowledge_metrics_state,
+    } = knowledge_ledger.snapshot_payload();
 
     let mut generation_states: Vec<GenerationState> =
         registry.profiles().iter().map(generation_state).collect();
@@ -1071,6 +1150,9 @@ pub fn capture_snapshot(
         great_discoveries: great_discovery_states,
         great_discovery_progress: great_discovery_progress_states,
         great_discovery_telemetry: great_discovery_telemetry_state,
+        knowledge_ledger: knowledge_ledger_states,
+        knowledge_timeline: knowledge_timeline_states,
+        knowledge_metrics: knowledge_metrics_state,
     }
     .finalize();
 
@@ -1078,6 +1160,10 @@ pub fn capture_snapshot(
 }
 
 pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) {
+    if let Some(mut ledger) = world.get_resource_mut::<KnowledgeLedger>() {
+        ledger.sync_from_snapshot(snapshot);
+    }
+
     // Despawn existing entities.
     let existing_tiles: Vec<Entity> = {
         let mut query = world.query_filtered::<Entity, With<Tile>>();
@@ -2517,6 +2603,9 @@ mod tests {
             great_discoveries: Vec::new(),
             great_discovery_progress: Vec::new(),
             great_discovery_telemetry: GreatDiscoveryTelemetryState::default(),
+            knowledge_ledger: Vec::new(),
+            knowledge_timeline: Vec::new(),
+            knowledge_metrics: KnowledgeMetricsState::default(),
             terrain: overlay,
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
@@ -2555,6 +2644,9 @@ mod tests {
             great_discoveries,
             great_discovery_progress,
             great_discovery_telemetry,
+            knowledge_ledger: Vec::new(),
+            knowledge_timeline: Vec::new(),
+            knowledge_metrics: KnowledgeMetricsState::default(),
             terrain: TerrainOverlayState::default(),
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
