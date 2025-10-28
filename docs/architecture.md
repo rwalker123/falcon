@@ -118,6 +118,27 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
   - Trade diffusion (`trade_knowledge_diffusion`) and migration updates call `KnowledgeLedger::record_partial_progress` so implicit sharing feeds the same ledger math; ledger cascades in turn emit `TradeDiffusionEvent`s when appropriate.
   - Diplomacy and crisis systems consume `KnowledgeLeakEvent`s to trigger treaty renegotiations or crisis seeds when secrecy collapses. Manual references (e.g., Disclosure Pressure) stay aligned via explicit cross-links in both documents.
   - Espionage flows deliver `EspionageProbeEvent` / `CounterIntelSweepEvent` into the ledger module, which materialises infiltrations, countermeasures, and timeline notes before the per-turn tick recomputes leak progression.
+
+### Espionage Mission Outline
+- **Agents & Capabilities**: Each faction maintains an espionage roster with stealth, recon, sabotage, and counter-intel proficiencies. Traits, tech, and policies modulate mission odds and detection.
+- Author agent archetypes and mission templates in data (e.g., `core_sim/src/data/espionage_agents.json`, `.../espionage_missions.json`) so designers can iterate without code changes; load via the same pattern as `great_discovery_definitions.json`.
+- **Mission Lifecycle**:
+  - *Planning*: Strategic phase assigns agents to mission templates (lab infiltration, trade interception, battlefield salvage) targeting `KnowledgeLedgerEntry`s. Prep consumes budget, time, and optionally grants modifiers.
+  - *Execution*: During turn resolution a mission rolls stealth vs. target defences (security posture, active countermeasures, suspicion). Outcomes include success, partial success, failure, or catastrophic failure.
+  - *Resolution Hooks*: Success/partial success emit `EspionageProbeEvent`s with fidelity/suspicion deltas; detected failures raise suspicion, trigger `CounterIntelSweepEvent`s, and can retire agents.
+- **Counter-Intelligence**:
+  - Defensive missions mirror offensive flow, focused on high-risk discoveries (progress >= 70% or open infiltrations).
+  - Security posture budget keeps baseline countermeasures active; successful sweeps emit `CounterIntelSweepEvent`s draining infiltrations and refreshing ledger countermeasure timers.
+  - Incident fallout adjusts diplomacy and security budgets.
+- **Progression & Feedback**:
+  - Agents gain experience or accumulate suspicion (increasing failure odds, eventual exposure).
+  - Mission logs feed the timeline/telemetry channel consumed by the Godot Knowledge panel.
+  - UI surfaces mission queue, success odds, agent availability, and ledger linkage (e.g., infiltrations per discovery).
+- **Configuration & Balancing**: Expose tuning knobs for mission difficulty, suspicion decay, countermeasure potency, mission prep costs, and agent progression.
+- **Implementation Notes**:
+  - Stage 1: define agent resources/components and mission queue from data-driven definitions; integrate scheduling commands.
+  - Stage 2: mission resolution system producing ledger events; defensive sweeps; hooks into `knowledge_ledger_tick`.
+  - Stage 3: UI/telemetry, balancing passes, designer controls.
 - **Schema & runtime surface**:
   - `sim_schema/schemas/snapshot.fbs` gains `table KnowledgeLedgerState { discoveryId: uint; ownerFaction: uint; tier: ubyte; progressPercent: ushort; halfLifeTicks: ushort; timeToCascade: ushort; securityPosture: ubyte; activeCountermeasures: [KnowledgeCountermeasureState]; suspectedInfiltrations: [KnowledgeInfiltrationState]; modifiers: [KnowledgeModifierBreakdownState]; flags: uint; }` plus supporting enums (`KnowledgeLeakFlag`, `KnowledgeCountermeasureKind`, `KnowledgeModifierSource`) and child tables for countermeasures, infiltrations, and modifier contributions. A complementary `KnowledgeEspionageTimelineState` table captures timeline events (`tick`, `eventKind`, `deltaPercent`, `sourceFaction`, `noteHandle`).
   - `sim_runtime` exposes strongly typed views (`KnowledgeLedgerSnapshot`, `KnowledgeModifierBreakdownView`) that map the FlatBuffer payloads to ergonomic Rust structs, alongside helper conversions for fixed-point leak math and modifier aggregation. Add serialization helpers in `core_sim::snapshot` that translate ECS resources into the FlatBuffer builders.
