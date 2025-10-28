@@ -221,6 +221,184 @@ impl KnowledgeField {
     ];
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum KnowledgeSecurityPosture {
+    #[default]
+    Minimal = 0,
+    Standard = 1,
+    Hardened = 2,
+    BlackVault = 3,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum KnowledgeCountermeasureKind {
+    #[default]
+    SecurityInvestment = 0,
+    CounterIntelSweep = 1,
+    Misinformation = 2,
+    KnowledgeDebtRelief = 3,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum KnowledgeModifierSource {
+    #[default]
+    Visibility = 0,
+    Security = 1,
+    Spycraft = 2,
+    Culture = 3,
+    Exposure = 4,
+    Debt = 5,
+    Treaty = 6,
+    Event = 7,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum KnowledgeTimelineEventKind {
+    #[default]
+    LeakProgress = 0,
+    SpyProbe = 1,
+    CounterIntel = 2,
+    Exposure = 3,
+    Treaty = 4,
+    Cascade = 5,
+    Digest = 6,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(transparent)]
+pub struct KnowledgeLeakFlags(pub u32);
+
+impl KnowledgeLeakFlags {
+    pub const fn new(bits: u32) -> Self {
+        Self(bits)
+    }
+
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    pub const COMMON_KNOWLEDGE: Self = Self(1 << 0);
+    pub const FORCED_PUBLICATION: Self = Self(1 << 1);
+    pub const CASCADE_PENDING: Self = Self(1 << 2);
+
+    pub fn contains(self, rhs: Self) -> bool {
+        (self.0 & rhs.0) == rhs.0
+    }
+
+    pub fn insert(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+
+    pub fn remove(&mut self, rhs: Self) {
+        self.0 &= !rhs.0;
+    }
+
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+}
+
+impl BitOr for KnowledgeLeakFlags {
+    type Output = KnowledgeLeakFlags;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        KnowledgeLeakFlags(self.bits() | rhs.bits())
+    }
+}
+
+impl BitOrAssign for KnowledgeLeakFlags {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.bits();
+    }
+}
+
+impl BitAnd for KnowledgeLeakFlags {
+    type Output = KnowledgeLeakFlags;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        KnowledgeLeakFlags(self.bits() & rhs.bits())
+    }
+}
+
+impl BitAndAssign for KnowledgeLeakFlags {
+    fn bitand_assign(&mut self, rhs: Self) {
+        self.0 &= rhs.bits();
+    }
+}
+
+impl From<u32> for KnowledgeLeakFlags {
+    fn from(value: u32) -> Self {
+        KnowledgeLeakFlags::new(value)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct KnowledgeCountermeasureState {
+    pub kind: KnowledgeCountermeasureKind,
+    pub potency: i64,
+    pub upkeep: i64,
+    pub remaining_ticks: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct KnowledgeInfiltrationState {
+    pub faction: u32,
+    pub blueprint_fidelity: i64,
+    pub suspicion: i64,
+    pub cells: u8,
+    pub last_activity_tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct KnowledgeModifierBreakdownState {
+    pub source: KnowledgeModifierSource,
+    pub delta_half_life: i16,
+    pub delta_progress: i16,
+    pub note_handle: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct KnowledgeLedgerEntryState {
+    pub discovery_id: u32,
+    pub owner_faction: u32,
+    pub tier: u8,
+    pub progress_percent: u16,
+    pub half_life_ticks: u16,
+    pub time_to_cascade: u16,
+    pub security_posture: KnowledgeSecurityPosture,
+    pub countermeasures: Vec<KnowledgeCountermeasureState>,
+    pub infiltrations: Vec<KnowledgeInfiltrationState>,
+    pub modifiers: Vec<KnowledgeModifierBreakdownState>,
+    pub flags: KnowledgeLeakFlags,
+}
+
+impl KnowledgeLedgerEntryState {
+    pub fn has_flag(&self, flag: KnowledgeLeakFlags) -> bool {
+        self.flags.contains(flag)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct KnowledgeMetricsState {
+    pub leak_warnings: u32,
+    pub leak_criticals: u32,
+    pub countermeasures_active: u32,
+    pub common_knowledge_total: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct KnowledgeTimelineEventState {
+    pub tick: u64,
+    pub kind: KnowledgeTimelineEventKind,
+    pub source_faction: u32,
+    pub delta_percent: i16,
+    pub note_handle: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct GreatDiscoveryState {
     pub id: u16,
@@ -763,6 +941,9 @@ pub struct WorldSnapshot {
     pub great_discoveries: Vec<GreatDiscoveryState>,
     pub great_discovery_progress: Vec<GreatDiscoveryProgressState>,
     pub great_discovery_telemetry: GreatDiscoveryTelemetryState,
+    pub knowledge_ledger: Vec<KnowledgeLedgerEntryState>,
+    pub knowledge_timeline: Vec<KnowledgeTimelineEventState>,
+    pub knowledge_metrics: KnowledgeMetricsState,
     pub terrain: TerrainOverlayState,
     pub logistics_raster: ScalarRasterState,
     pub sentiment_raster: ScalarRasterState,
@@ -798,6 +979,10 @@ pub struct WorldDelta {
     pub great_discoveries: Vec<GreatDiscoveryState>,
     pub great_discovery_progress: Vec<GreatDiscoveryProgressState>,
     pub great_discovery_telemetry: Option<GreatDiscoveryTelemetryState>,
+    pub knowledge_ledger: Vec<KnowledgeLedgerEntryState>,
+    pub removed_knowledge_ledger: Vec<u64>,
+    pub knowledge_metrics: Option<KnowledgeMetricsState>,
+    pub knowledge_timeline: Vec<KnowledgeTimelineEventState>,
     pub axis_bias: Option<AxisBiasState>,
     pub sentiment: Option<SentimentTelemetryState>,
     pub logistics_raster: Option<ScalarRasterState>,
@@ -906,6 +1091,9 @@ fn build_snapshot_flatbuffer<'a>(
         create_great_discovery_progress(builder, &snapshot.great_discovery_progress);
     let great_discovery_telemetry =
         create_great_discovery_telemetry(builder, &snapshot.great_discovery_telemetry);
+    let knowledge_ledger_vec = create_knowledge_ledger(builder, &snapshot.knowledge_ledger);
+    let knowledge_timeline_vec = create_knowledge_timeline(builder, &snapshot.knowledge_timeline);
+    let knowledge_metrics = create_knowledge_metrics(builder, &snapshot.knowledge_metrics);
     let terrain_overlay = create_terrain_overlay(builder, &snapshot.terrain);
     let logistics_raster = create_scalar_raster(builder, &snapshot.logistics_raster);
     let sentiment_raster = create_scalar_raster(builder, &snapshot.sentiment_raster);
@@ -944,6 +1132,9 @@ fn build_snapshot_flatbuffer<'a>(
             greatDiscoveries: Some(great_discoveries_vec),
             greatDiscoveryProgress: Some(great_discovery_progress_vec),
             greatDiscoveryTelemetry: Some(great_discovery_telemetry),
+            knowledgeLedger: Some(knowledge_ledger_vec),
+            knowledgeTimeline: Some(knowledge_timeline_vec),
+            knowledgeMetrics: Some(knowledge_metrics),
             terrainOverlay: Some(terrain_overlay),
             logisticsRaster: Some(logistics_raster),
             sentimentRaster: Some(sentiment_raster),
@@ -1014,6 +1205,13 @@ fn build_delta_flatbuffer<'a>(
         .great_discovery_telemetry
         .as_ref()
         .map(|telemetry| create_great_discovery_telemetry(builder, telemetry));
+    let knowledge_ledger_vec = create_knowledge_ledger(builder, &delta.knowledge_ledger);
+    let removed_knowledge_vec = builder.create_vector(&delta.removed_knowledge_ledger);
+    let knowledge_timeline_vec = create_knowledge_timeline(builder, &delta.knowledge_timeline);
+    let knowledge_metrics = delta
+        .knowledge_metrics
+        .as_ref()
+        .map(|metrics| create_knowledge_metrics(builder, metrics));
     let terrain_overlay = delta
         .terrain
         .as_ref()
@@ -1089,6 +1287,10 @@ fn build_delta_flatbuffer<'a>(
             greatDiscoveries: Some(great_discoveries_vec),
             greatDiscoveryProgress: Some(great_discovery_progress_vec),
             greatDiscoveryTelemetry: great_discovery_telemetry,
+            knowledgeLedger: Some(knowledge_ledger_vec),
+            removedKnowledgeLedger: Some(removed_knowledge_vec),
+            knowledgeTimeline: Some(knowledge_timeline_vec),
+            knowledgeMetrics: knowledge_metrics,
             axisBias: axis_bias,
             sentiment,
             generations: Some(generations_vec),
@@ -1535,6 +1737,146 @@ fn create_great_discovery_telemetry<'a>(
     )
 }
 
+fn create_knowledge_ledger<'a>(
+    builder: &mut FbBuilder<'a>,
+    entries: &[KnowledgeLedgerEntryState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::KnowledgeLedgerState<'a>>>> {
+    let offsets: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            let countermeasures = create_knowledge_countermeasures(builder, &entry.countermeasures);
+            let infiltrations = create_knowledge_infiltrations(builder, &entry.infiltrations);
+            let modifiers = create_knowledge_modifiers(builder, &entry.modifiers);
+            fb::KnowledgeLedgerState::create(
+                builder,
+                &fb::KnowledgeLedgerStateArgs {
+                    discoveryId: entry.discovery_id,
+                    ownerFaction: entry.owner_faction,
+                    tier: entry.tier,
+                    progressPercent: entry.progress_percent,
+                    halfLifeTicks: entry.half_life_ticks,
+                    timeToCascade: entry.time_to_cascade,
+                    securityPosture: to_fb_knowledge_security_posture(entry.security_posture),
+                    countermeasures: Some(countermeasures),
+                    infiltrations: Some(infiltrations),
+                    modifiers: Some(modifiers),
+                    flags: entry.flags.bits(),
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_knowledge_countermeasures<'a>(
+    builder: &mut FbBuilder<'a>,
+    entries: &[KnowledgeCountermeasureState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::KnowledgeCountermeasureState<'a>>>> {
+    let offsets: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            fb::KnowledgeCountermeasureState::create(
+                builder,
+                &fb::KnowledgeCountermeasureStateArgs {
+                    kind: to_fb_knowledge_countermeasure(entry.kind),
+                    potency: entry.potency,
+                    upkeep: entry.upkeep,
+                    remainingTicks: entry.remaining_ticks,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_knowledge_infiltrations<'a>(
+    builder: &mut FbBuilder<'a>,
+    entries: &[KnowledgeInfiltrationState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::KnowledgeInfiltrationState<'a>>>> {
+    let offsets: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            fb::KnowledgeInfiltrationState::create(
+                builder,
+                &fb::KnowledgeInfiltrationStateArgs {
+                    faction: entry.faction,
+                    blueprintFidelity: entry.blueprint_fidelity,
+                    suspicion: entry.suspicion,
+                    cells: entry.cells,
+                    lastActivityTick: entry.last_activity_tick,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_knowledge_modifiers<'a>(
+    builder: &mut FbBuilder<'a>,
+    entries: &[KnowledgeModifierBreakdownState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::KnowledgeModifierBreakdownState<'a>>>> {
+    let offsets: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            let note = entry
+                .note_handle
+                .as_ref()
+                .map(|note| builder.create_string(note.as_str()));
+            fb::KnowledgeModifierBreakdownState::create(
+                builder,
+                &fb::KnowledgeModifierBreakdownStateArgs {
+                    source: to_fb_knowledge_modifier_source(entry.source),
+                    deltaHalfLife: entry.delta_half_life,
+                    deltaProgress: entry.delta_progress,
+                    noteHandle: note,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_knowledge_timeline<'a>(
+    builder: &mut FbBuilder<'a>,
+    events: &[KnowledgeTimelineEventState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::KnowledgeTimelineEventState<'a>>>> {
+    let offsets: Vec<_> = events
+        .iter()
+        .map(|event| {
+            let note = event
+                .note_handle
+                .as_ref()
+                .map(|note| builder.create_string(note.as_str()));
+            fb::KnowledgeTimelineEventState::create(
+                builder,
+                &fb::KnowledgeTimelineEventStateArgs {
+                    tick: event.tick,
+                    kind: to_fb_knowledge_timeline_kind(event.kind),
+                    sourceFaction: event.source_faction,
+                    deltaPercent: event.delta_percent,
+                    noteHandle: note,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_knowledge_metrics<'a>(
+    builder: &mut FbBuilder<'a>,
+    metrics: &KnowledgeMetricsState,
+) -> WIPOffset<fb::KnowledgeMetricsState<'a>> {
+    fb::KnowledgeMetricsState::create(
+        builder,
+        &fb::KnowledgeMetricsStateArgs {
+            leakWarnings: metrics.leak_warnings,
+            leakCriticals: metrics.leak_criticals,
+            countermeasuresActive: metrics.countermeasures_active,
+            commonKnowledgeTotal: metrics.common_knowledge_total,
+        },
+    )
+}
+
 fn create_terrain_overlay<'a>(
     builder: &mut FbBuilder<'a>,
     overlay: &TerrainOverlayState,
@@ -1955,6 +2297,63 @@ fn to_fb_culture_tension_kind(kind: CultureTensionKind) -> fb::CultureTensionKin
         CultureTensionKind::DriftWarning => fb::CultureTensionKind::DriftWarning,
         CultureTensionKind::AssimilationPush => fb::CultureTensionKind::AssimilationPush,
         CultureTensionKind::SchismRisk => fb::CultureTensionKind::SchismRisk,
+    }
+}
+
+fn to_fb_knowledge_security_posture(
+    posture: KnowledgeSecurityPosture,
+) -> fb::KnowledgeSecurityPosture {
+    match posture {
+        KnowledgeSecurityPosture::Minimal => fb::KnowledgeSecurityPosture::Minimal,
+        KnowledgeSecurityPosture::Standard => fb::KnowledgeSecurityPosture::Standard,
+        KnowledgeSecurityPosture::Hardened => fb::KnowledgeSecurityPosture::Hardened,
+        KnowledgeSecurityPosture::BlackVault => fb::KnowledgeSecurityPosture::BlackVault,
+    }
+}
+
+fn to_fb_knowledge_countermeasure(
+    kind: KnowledgeCountermeasureKind,
+) -> fb::KnowledgeCountermeasureKind {
+    match kind {
+        KnowledgeCountermeasureKind::SecurityInvestment => {
+            fb::KnowledgeCountermeasureKind::SecurityInvestment
+        }
+        KnowledgeCountermeasureKind::CounterIntelSweep => {
+            fb::KnowledgeCountermeasureKind::CounterIntelSweep
+        }
+        KnowledgeCountermeasureKind::Misinformation => {
+            fb::KnowledgeCountermeasureKind::Misinformation
+        }
+        KnowledgeCountermeasureKind::KnowledgeDebtRelief => {
+            fb::KnowledgeCountermeasureKind::KnowledgeDebtRelief
+        }
+    }
+}
+
+fn to_fb_knowledge_modifier_source(source: KnowledgeModifierSource) -> fb::KnowledgeModifierSource {
+    match source {
+        KnowledgeModifierSource::Visibility => fb::KnowledgeModifierSource::Visibility,
+        KnowledgeModifierSource::Security => fb::KnowledgeModifierSource::Security,
+        KnowledgeModifierSource::Spycraft => fb::KnowledgeModifierSource::Spycraft,
+        KnowledgeModifierSource::Culture => fb::KnowledgeModifierSource::Culture,
+        KnowledgeModifierSource::Exposure => fb::KnowledgeModifierSource::Exposure,
+        KnowledgeModifierSource::Debt => fb::KnowledgeModifierSource::Debt,
+        KnowledgeModifierSource::Treaty => fb::KnowledgeModifierSource::Treaty,
+        KnowledgeModifierSource::Event => fb::KnowledgeModifierSource::Event,
+    }
+}
+
+fn to_fb_knowledge_timeline_kind(
+    kind: KnowledgeTimelineEventKind,
+) -> fb::KnowledgeTimelineEventKind {
+    match kind {
+        KnowledgeTimelineEventKind::LeakProgress => fb::KnowledgeTimelineEventKind::LeakProgress,
+        KnowledgeTimelineEventKind::SpyProbe => fb::KnowledgeTimelineEventKind::SpyProbe,
+        KnowledgeTimelineEventKind::CounterIntel => fb::KnowledgeTimelineEventKind::CounterIntel,
+        KnowledgeTimelineEventKind::Exposure => fb::KnowledgeTimelineEventKind::Exposure,
+        KnowledgeTimelineEventKind::Treaty => fb::KnowledgeTimelineEventKind::Treaty,
+        KnowledgeTimelineEventKind::Cascade => fb::KnowledgeTimelineEventKind::Cascade,
+        KnowledgeTimelineEventKind::Digest => fb::KnowledgeTimelineEventKind::Digest,
     }
 }
 

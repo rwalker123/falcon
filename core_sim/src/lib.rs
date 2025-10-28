@@ -8,6 +8,7 @@ mod culture;
 mod generations;
 mod great_discovery;
 mod influencers;
+mod knowledge_ledger;
 pub mod log_stream;
 pub mod metrics;
 pub mod network;
@@ -41,6 +42,10 @@ pub use influencers::{
     tick_influencers, InfluencerCultureResonance, InfluencerImpacts, InfluentialId,
     InfluentialRoster, SupportChannel,
 };
+pub use knowledge_ledger::{
+    CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
+    KnowledgeLedgerEntry, KnowledgeModifier, KnowledgeTimelineEvent,
+};
 
 pub use metrics::SimulationMetrics;
 pub use orders::{
@@ -67,6 +72,7 @@ pub use terrain::{
 pub enum TurnStage {
     Influence,
     Logistics,
+    Knowledge,
     GreatDiscovery,
     Population,
     Finalize,
@@ -90,7 +96,9 @@ pub fn build_headless_app() -> App {
         .insert_resource(PowerGridState::default())
         .insert_resource(PowerTopology::default())
         .insert_resource(SimulationTick::default())
+        .insert_resource(SimulationMetrics::default())
         .insert_resource(SentimentAxisBias::default())
+        .insert_resource(KnowledgeLedger::default())
         .insert_resource(CorruptionLedgers::default())
         .insert_resource(CorruptionTelemetry::default())
         .insert_resource(DiplomacyLeverage::default())
@@ -115,6 +123,8 @@ pub fn build_headless_app() -> App {
         .add_event::<CultureSchismEvent>()
         .add_event::<systems::TradeDiffusionEvent>()
         .add_event::<systems::MigrationKnowledgeEvent>()
+        .add_event::<EspionageProbeEvent>()
+        .add_event::<CounterIntelSweepEvent>()
         .add_event::<GreatDiscoveryCandidateEvent>()
         .add_event::<GreatDiscoveryResolvedEvent>()
         .add_event::<great_discovery::GreatDiscoveryEffectEvent>()
@@ -124,6 +134,7 @@ pub fn build_headless_app() -> App {
             (
                 TurnStage::Influence,
                 TurnStage::Logistics,
+                TurnStage::Knowledge,
                 TurnStage::GreatDiscovery,
                 TurnStage::Population,
                 TurnStage::Finalize,
@@ -151,6 +162,15 @@ pub fn build_headless_app() -> App {
             )
                 .chain()
                 .in_set(TurnStage::Logistics),
+        )
+        .add_systems(
+            Update,
+            (
+                knowledge_ledger::process_espionage_events,
+                knowledge_ledger::knowledge_ledger_tick,
+            )
+                .chain()
+                .in_set(TurnStage::Knowledge),
         )
         .add_systems(
             Update,

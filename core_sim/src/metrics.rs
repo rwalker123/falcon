@@ -14,6 +14,10 @@ pub struct SimulationMetrics {
     pub great_discoveries_total: u32,
     pub great_discovery_candidates: u32,
     pub great_discovery_active: u32,
+    pub knowledge_leak_warnings: u32,
+    pub knowledge_leak_criticals: u32,
+    pub knowledge_countermeasures_active: u32,
+    pub knowledge_common_knowledge_total: u32,
 }
 
 pub fn collect_metrics(

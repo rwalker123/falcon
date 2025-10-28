@@ -93,6 +93,58 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 - **Configuration surface**: `SimulationConfig` exposes diffusion knobs (`trade_leak_min_ticks`, `trade_leak_max_ticks`, `trade_leak_exponent`, `trade_leak_progress`, `trade_openness_decay`) and migration knobs (`migration_fragment_scaling`, `migration_fidelity_floor`). Designers should cross-reference `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §8 while tuning these values.
 - **Telemetry & logging**: `TradeTelemetry` resets each tick, tracks diffusion/migration counts, stores per-event records, and emits `trade.telemetry` log lines after population resolution. Inspector overlays will subscribe directly to these counters.
 
+### Knowledge Ledger & Leak Mechanics
+- **Scope**: Centralise the secrecy modelling promised in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §5a (Knowledge Diffusion & Leakage). The ledger tracks every discovery’s secrecy posture, leak cadence, espionage pressure, and public deployment state so other systems (Great Discoveries, diplomacy, crisis triggers) consume a single source of truth.
+- **Data model**:
+  - `KnowledgeLedger` resource stores `KnowledgeLedgerEntry` rows keyed by (`DiscoveryId`, `FactionId`). Each entry caches tier, last public deployment tick, owning `KnowledgeField`, active `LeakTimerState`, and a breakdown of modifier contributors (visibility, cultural openness, security posture, espionage pressure, forced-publication flags).
+  - `LeakTimerState` carries `half_life_ticks`, `progress_percent`, `decay_velocity`, and a `cascade_ready` bool. Base half-life values map directly to the manual’s table (Proto → Exotic) and live in `KnowledgeLeakTemplate` data shipped via `sim_runtime`.
+  - `KnowledgeSecurityProfile` enumerates the manual’s posture bands (Minimal/Standard/Hardened/BlackVault) with maintenance costs, Knowledge Debt penalties, and max leak extension; profiles live on the owning faction and are referenced by the ledger for modifier calculations.
+  - `InfiltrationRecord` tracks active spy cells, suspected origin (`FactionId`), and accumulated blueprint fidelity; it doubles as a queue for counter-intel sweeps and leak alerts.
+- **Timer resolution**:
+  - Schedule a dedicated `knowledge_ledger_tick` stage immediately after `trade_knowledge_diffusion` and before Great Discovery progress updates so diffusion signals and secrecy posture adjust in the same turn. The stage iterates ledger entries, recomputes `half_life_ticks` = `base_half_life` + `visibility_bonus` + `security_bonus` − (`spy_pressure` + `cultural_pressure` + `exposure_penalties`), clamps to ≥2, then increments `progress_percent` using fixed-point math.
+  - Espionage events (`EspionageProbeResolved`, `CounterIntelSweep`) append transient modifiers (e.g., `spy_pressure = spy_cells * tier_multiplier`, `counter_intel_relief = sweep_strength`) that decay each tick. Battlefield exposures and treaty leaks feed via `KnowledgeExposureEvent` with explicit deltas matching the manual’s leak acceleration values.
+  - When `progress_percent` crosses 100 the stage emits `KnowledgeLeakEvent`, seeds rival `KnowledgeFragment`s (re-using trade diffusion helpers for merge logic), and optionally marks discoveries as `common_knowledge` when multiple factions cross the 60% cascade threshold referenced in the manual.
+- **Spycraft & counter-intel hooks**:
+  - Espionage missions inject `EspionageProbe` components with target discovery/tier, desired fidelity, and stealth score; successful probes raise `InfiltrationRecord.blueprint_fidelity` and shorten the leak timer. Failed probes increase suspicion, lowering future stealth chances and triggering UI alerts.
+  - Counter-intelligence commands manipulate `KnowledgeSecurityProfile` (raising maintenance costs) or launch sweeps that consume `CounterIntelBudget`, roll against active probes, and, on success, erase infiltration records while applying short-term leak relief.
+  - Knowledge Debt integrates with existing power/culture systems: high security posture writes penalties into `KnowledgeDebtLedger` consumed by power instability (`Power Systems Plan`) and workforce efficiency models.
+- **Telemetry & UI feeds**:
+  - Extend `WorldSnapshot` with `knowledge_ledger:[KnowledgeLedgerState]` entries carrying `discovery_id`, `owner_faction`, tier, current progress %, time-to-cascade estimate, active countermeasures, and suspected infiltrations. Include a child array `KnowledgeModifierBreakdownState` so the Godot inspector can show the modifier tooltips described in the manual’s Knowledge Ledger UI sketch.
+  - Publish `KnowledgeEspionageTimeline` frames (ring buffer of the last N leak-affecting events) to snapshots and the `knowledge.telemetry` log channel, aligning with the UI timeline graph.
+  - `SimulationMetrics` gains `knowledge_leak_warnings`, `knowledge_leak_criticals`, `knowledge_countermeasures_active`, and `knowledge_common_knowledge_total` so monitoring and dashboards can raise alerts without replaying snapshots.
+  - Godot thin client receives a new `KnowledgeLedgerPanel`: subscribe to `knowledge_ledger` stream, render the overview grid (filters, tooltips) and detail drawer (timeline graph, countermeasure toggles, rival comprehension bars). The panel reuses command plumbing to issue counter-intel/security posture adjustments and exports `knowledge_digest` notifications for optional weekly summaries.
+- **Integration & dependencies**:
+  - Great Discovery resolution (`Great Discovery System Plan`) calls into `KnowledgeLedger::register_discovery` to initialise entries at the correct tier and leak sensitivity. Forced-publication hooks mark entries as visible immediately.
+  - Trade diffusion (`trade_knowledge_diffusion`) and migration updates call `KnowledgeLedger::record_partial_progress` so implicit sharing feeds the same ledger math; ledger cascades in turn emit `TradeDiffusionEvent`s when appropriate.
+  - Diplomacy and crisis systems consume `KnowledgeLeakEvent`s to trigger treaty renegotiations or crisis seeds when secrecy collapses. Manual references (e.g., Disclosure Pressure) stay aligned via explicit cross-links in both documents.
+  - Espionage flows deliver `EspionageProbeEvent` / `CounterIntelSweepEvent` into the ledger module, which materialises infiltrations, countermeasures, and timeline notes before the per-turn tick recomputes leak progression.
+
+### Espionage Mission Outline
+- **Agents & Capabilities**: Each faction maintains an espionage roster with stealth, recon, sabotage, and counter-intel proficiencies. Traits, tech, and policies modulate mission odds and detection.
+- Author agent archetypes and mission templates in data (e.g., `core_sim/src/data/espionage_agents.json`, `.../espionage_missions.json`) so designers can iterate without code changes; load via the same pattern as `great_discovery_definitions.json`.
+- **Mission Lifecycle**:
+  - *Planning*: Strategic phase assigns agents to mission templates (lab infiltration, trade interception, battlefield salvage) targeting `KnowledgeLedgerEntry`s. Prep consumes budget, time, and optionally grants modifiers.
+  - *Execution*: During turn resolution a mission rolls stealth vs. target defences (security posture, active countermeasures, suspicion). Outcomes include success, partial success, failure, or catastrophic failure.
+  - *Resolution Hooks*: Success/partial success emit `EspionageProbeEvent`s with fidelity/suspicion deltas; detected failures raise suspicion, trigger `CounterIntelSweepEvent`s, and can retire agents.
+- **Counter-Intelligence**:
+  - Defensive missions mirror offensive flow, focused on high-risk discoveries (progress >= 70% or open infiltrations).
+  - Security posture budget keeps baseline countermeasures active; successful sweeps emit `CounterIntelSweepEvent`s draining infiltrations and refreshing ledger countermeasure timers.
+  - Incident fallout adjusts diplomacy and security budgets.
+- **Progression & Feedback**:
+  - Agents gain experience or accumulate suspicion (increasing failure odds, eventual exposure).
+  - Mission logs feed the timeline/telemetry channel consumed by the Godot Knowledge panel.
+  - UI surfaces mission queue, success odds, agent availability, and ledger linkage (e.g., infiltrations per discovery).
+- **Configuration & Balancing**: Expose tuning knobs for mission difficulty, suspicion decay, countermeasure potency, mission prep costs, and agent progression.
+- **Implementation Notes**:
+  - Stage 1: define agent resources/components and mission queue from data-driven definitions; integrate scheduling commands.
+  - Stage 2: mission resolution system producing ledger events; defensive sweeps; hooks into `knowledge_ledger_tick`.
+  - Stage 3: UI/telemetry, balancing passes, designer controls.
+- **Schema & runtime surface**:
+  - `sim_schema/schemas/snapshot.fbs` gains `table KnowledgeLedgerState { discoveryId: uint; ownerFaction: uint; tier: ubyte; progressPercent: ushort; halfLifeTicks: ushort; timeToCascade: ushort; securityPosture: ubyte; activeCountermeasures: [KnowledgeCountermeasureState]; suspectedInfiltrations: [KnowledgeInfiltrationState]; modifiers: [KnowledgeModifierBreakdownState]; flags: uint; }` plus supporting enums (`KnowledgeLeakFlag`, `KnowledgeCountermeasureKind`, `KnowledgeModifierSource`) and child tables for countermeasures, infiltrations, and modifier contributions. A complementary `KnowledgeEspionageTimelineState` table captures timeline events (`tick`, `eventKind`, `deltaPercent`, `sourceFaction`, `noteHandle`).
+  - `sim_runtime` exposes strongly typed views (`KnowledgeLedgerSnapshot`, `KnowledgeModifierBreakdownView`) that map the FlatBuffer payloads to ergonomic Rust structs, alongside helper conversions for fixed-point leak math and modifier aggregation. Add serialization helpers in `core_sim::snapshot` that translate ECS resources into the FlatBuffer builders.
+  - Extend `SimulationMetrics` with integer counters (`knowledge_leak_warnings`, `knowledge_leak_criticals`, `knowledge_countermeasures_active`, `knowledge_common_knowledge_total`) and register a `knowledge.telemetry` log channel in `sim_runtime` mirroring the ring buffer timeline emitted in snapshots.
+  - Update Godot’s generated bindings (`clients/godot_thin_client/autogen/snapshot_bindings.gd`) after regenerating FlatBuffers so the new tables surface in GDScript. Ensure command bindings include verbs for adjusting security posture and launching counter-intel sweeps with validation of capability tokens.
+
 ### Corruption Simulation Backbone
 - **Subsystem multipliers**: `CorruptionLedgers::total_intensity` aggregates raw intensity by subsystem. `corruption_multiplier` converts that intensity into a clamped scalar applied by logistics (flow gain/capacity), trade (tariff yield), and military power (net generation), making corruption drag explicit.
 - **Config knobs**: `SimulationConfig` adds `corruption_logistics_penalty`, `corruption_trade_penalty`, and `corruption_military_penalty` so balance passes can tune how hard incidents bite. Integration tests confirm corrupted scenarios reduce throughput without breaking determinism.
