@@ -174,7 +174,7 @@ pub mod knowledge {
     pub const KNOWLEDGE_TELEMETRY_TOPIC: &str = "knowledge.telemetry";
 
     /// Serialised form of a knowledge telemetry frame (`knowledge.telemetry {json}`).
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
     pub struct KnowledgeTelemetryFrame {
         pub tick: u64,
         #[serde(default)]
@@ -187,6 +187,8 @@ pub mod knowledge {
         pub common_knowledge_total: u32,
         #[serde(default)]
         pub events: Vec<KnowledgeTelemetryEvent>,
+        #[serde(default)]
+        pub missions: Vec<KnowledgeTelemetryMission>,
     }
 
     /// Describes a single knowledge telemetry event (usually mirrored from the timeline payload).
@@ -199,6 +201,30 @@ pub mod knowledge {
         pub source_faction: Option<u32>,
         #[serde(default)]
         pub delta_percent: Option<i16>,
+        #[serde(default)]
+        pub note: Option<String>,
+    }
+
+    /// Describes a mission template exposed alongside knowledge telemetry frames.
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+    pub struct KnowledgeTelemetryMission {
+        pub id: String,
+        pub name: String,
+        #[serde(default)]
+        pub generated: bool,
+        #[serde(default)]
+        pub kind: String,
+        pub resolution_ticks: u16,
+        pub base_success: f32,
+        pub success_threshold: f32,
+        pub fidelity_gain: f32,
+        pub suspicion_on_success: f32,
+        pub suspicion_on_failure: f32,
+        pub cell_gain_on_success: u8,
+        #[serde(default)]
+        pub suspicion_relief: f32,
+        #[serde(default)]
+        pub fidelity_suppression: f32,
         #[serde(default)]
         pub note: Option<String>,
     }
@@ -510,6 +536,7 @@ pub mod knowledge {
                     delta_percent: Some(-5),
                     note: Some("counter-intel sweep".into()),
                 }],
+                missions: Vec::new(),
             };
             let payload = serde_json::to_string(&frame).expect("serialize frame");
             let parsed = parse_knowledge_telemetry(&payload).expect("parse frame");

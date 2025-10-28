@@ -1,0 +1,103 @@
+{
+  "missions": [
+    {
+      "id": "lab_infiltration",
+      "name": "Laboratory Infiltration",
+      "kind": "probe",
+      "resolution_ticks": 2,
+      "base_success": 0.52,
+      "success_threshold": 0.55,
+      "stealth_weight": 0.45,
+      "recon_weight": 0.35,
+      "counter_intel_weight": 0.0,
+      "fidelity_gain": 0.22,
+      "suspicion_on_success": 0.18,
+      "suspicion_on_failure": 0.36,
+      "cell_gain_on_success": 1,
+      "note": "Embed technicians inside the target's prototype lab network.",
+      "target_tier_min": 1,
+      "target_tier_max": 3
+    },
+    {
+      "id": "trade_intercept",
+      "name": "Trade Manifest Intercept",
+      "kind": "probe",
+      "resolution_ticks": 1,
+      "base_success": 0.48,
+      "success_threshold": 0.5,
+      "stealth_weight": 0.4,
+      "recon_weight": 0.4,
+      "counter_intel_weight": 0.0,
+      "fidelity_gain": 0.18,
+      "suspicion_on_success": 0.14,
+      "suspicion_on_failure": 0.32,
+      "cell_gain_on_success": 1,
+      "note": "Co-opt freight handlers and customs intermediaries to copy shipments.",
+      "target_tier_min": 0,
+      "target_tier_max": 2
+    },
+    {
+      "id": "auto_probe_template",
+      "name": "Adaptive Espionage Probe",
+      "kind": "probe",
+      "resolution_ticks": 1,
+      "base_success": 0.55,
+      "success_threshold": 0.6,
+      "stealth_weight": 0.4,
+      "recon_weight": 0.4,
+      "counter_intel_weight": 0.0,
+      "fidelity_gain": 0.22,
+      "suspicion_on_success": 0.15,
+      "suspicion_on_failure": 0.35,
+      "cell_gain_on_success": 1,
+      "suspicion_relief": 0.25,
+      "fidelity_suppression": 0.12,
+      "note": "Template mission used to spawn procedural probe variants.",
+      "generator": {
+        "enabled": true,
+        "variant_count": 3,
+        "id_pattern": "{base}_v{index}",
+        "name_pool": ["Sable Finch", "Glass Ember", "Night Relay"],
+        "note_pool": [
+          "Autonomously tuned infiltration pattern from adaptive probe template.",
+          "Variant routed through encrypted comms scrubbers.",
+          "Sleeper sweep tuned for frontier logistics nodes."
+        ],
+        "resolution_ticks": { "min": 1, "max": 2 },
+        "base_success": { "min": 0.45, "max": 0.65 },
+        "success_threshold": { "min": 0.5, "max": 0.75 },
+        "fidelity_gain": { "min": 0.18, "max": 0.3 },
+        "suspicion_on_success": { "min": 0.1, "max": 0.2 },
+        "suspicion_on_failure": { "min": 0.3, "max": 0.4 },
+        "cell_gain_on_success": { "min": 1, "max": 2 },
+        "suspicion_relief": { "min": 0.2, "max": 0.35 },
+        "fidelity_suppression": { "min": 0.08, "max": 0.16 },
+        "seed_offset": 7331
+      }
+    },
+    {
+      "id": "rapid_response_sweep",
+      "name": "Rapid Response Sweep",
+      "kind": "counter_intel",
+      "resolution_ticks": 1,
+      "base_success": 0.56,
+      "success_threshold": 0.5,
+      "stealth_weight": 0.0,
+      "recon_weight": 0.2,
+      "counter_intel_weight": 0.7,
+      "fidelity_gain": 0.0,
+      "suspicion_on_success": 0.12,
+      "suspicion_on_failure": 0.28,
+      "cell_gain_on_success": 0,
+      "countermeasure": {
+        "kind": "counter_intel_sweep",
+        "potency": 0.42,
+        "upkeep": 0.06,
+        "duration_ticks": 3
+      },
+      "suspicion_relief": 0.35,
+      "fidelity_suppression": 0.15,
+      "note": "Deploy hunter teams and network audits to flush active cells."
+    }
+  ]
+}

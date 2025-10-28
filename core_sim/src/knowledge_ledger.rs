@@ -3,7 +3,8 @@ use std::collections::{HashMap, VecDeque};
 use bevy::prelude::*;
 use log::debug;
 use sim_runtime::knowledge::{
-    KnowledgeTelemetryEvent, KnowledgeTelemetryFrame, KNOWLEDGE_TELEMETRY_TOPIC,
+    KnowledgeTelemetryEvent, KnowledgeTelemetryFrame, KnowledgeTelemetryMission,
+    KNOWLEDGE_TELEMETRY_TOPIC,
 };
 use sim_runtime::{
     encode_knowledge_ledger_key, KnowledgeCountermeasureKind, KnowledgeCountermeasureState,
@@ -14,7 +15,11 @@ use sim_runtime::{
 };
 
 use crate::{
-    metrics::SimulationMetrics, orders::FactionId, resources::SimulationTick, scalar::Scalar,
+    espionage::{EspionageCatalog, EspionageMissionKind, EspionageMissionTemplate},
+    metrics::SimulationMetrics,
+    orders::FactionId,
+    resources::SimulationTick,
+    scalar::Scalar,
 };
 
 const DEFAULT_TIMELINE_CAPACITY: usize = 64;
@@ -156,6 +161,8 @@ pub struct CounterIntelSweepEvent {
     pub countermeasure: KnowledgeCountermeasure,
     pub tick: u64,
     pub note: Option<String>,
+    pub cleared_faction: Option<FactionId>,
+    pub suspicion_relief: Scalar,
 }
 
 impl KnowledgeLedger {
@@ -187,6 +194,48 @@ impl KnowledgeLedger {
             note: Some(note.unwrap_or_else(|| "Countermeasure deployed".into())),
         });
         true
+    }
+
+    pub fn apply_counterintel_sweep(&mut self, event: CounterIntelSweepEvent) {
+        let CounterIntelSweepEvent {
+            owner,
+            discovery_id,
+            countermeasure,
+            tick,
+            note,
+            cleared_faction,
+            suspicion_relief,
+        } = event;
+
+        self.apply_countermeasure(owner, discovery_id, countermeasure, tick, note);
+
+        if cleared_faction.is_some() || suspicion_relief > Scalar::zero() {
+            self.apply_infiltration_relief(owner, discovery_id, cleared_faction, suspicion_relief);
+        }
+    }
+
+    fn apply_infiltration_relief(
+        &mut self,
+        owner: FactionId,
+        discovery_id: u32,
+        cleared_faction: Option<FactionId>,
+        suspicion_relief: Scalar,
+    ) {
+        if let Some(entry) = self.entries.get_mut(&(owner, discovery_id)) {
+            if let Some(target) = cleared_faction {
+                entry.infiltrations.retain(|inf| inf.faction != target);
+            }
+
+            if suspicion_relief > Scalar::zero() {
+                for infiltration in &mut entry.infiltrations {
+                    if infiltration.suspicion > suspicion_relief {
+                        infiltration.suspicion -= suspicion_relief;
+                    } else {
+                        infiltration.suspicion = Scalar::zero();
+                    }
+                }
+            }
+        }
     }
 
     pub fn record_espionage_probe(&mut self, probe: EspionageProbeEvent) -> bool {
@@ -391,6 +440,37 @@ fn to_telemetry_event(event: &KnowledgeTimelineEvent) -> KnowledgeTelemetryEvent
     }
 }
 
+fn mission_telemetry(catalog: &EspionageCatalog) -> Vec<KnowledgeTelemetryMission> {
+    catalog.missions().map(to_telemetry_mission).collect()
+}
+
+fn to_telemetry_mission(template: &EspionageMissionTemplate) -> KnowledgeTelemetryMission {
+    KnowledgeTelemetryMission {
+        id: template.id.0.clone(),
+        name: template.name.clone(),
+        generated: template.generated,
+        kind: mission_kind_label(template.kind),
+        resolution_ticks: template.resolution_ticks,
+        base_success: template.base_success.to_f32(),
+        success_threshold: template.success_threshold.to_f32(),
+        fidelity_gain: template.fidelity_gain.to_f32(),
+        suspicion_on_success: template.suspicion_on_success.to_f32(),
+        suspicion_on_failure: template.suspicion_on_failure.to_f32(),
+        cell_gain_on_success: template.cell_gain_on_success,
+        suspicion_relief: template.suspicion_relief.to_f32(),
+        fidelity_suppression: template.fidelity_suppression.to_f32(),
+        note: template.note.clone(),
+    }
+}
+
+fn mission_kind_label(kind: EspionageMissionKind) -> String {
+    match kind {
+        EspionageMissionKind::Probe => "probe",
+        EspionageMissionKind::CounterIntel => "counter_intel",
+    }
+    .to_string()
+}
+
 impl From<&KnowledgeCountermeasureState> for KnowledgeCountermeasure {
     fn from(state: &KnowledgeCountermeasureState) -> Self {
         Self {
@@ -494,6 +574,7 @@ pub fn knowledge_ledger_tick(
     tick: Res<SimulationTick>,
     mut ledger: ResMut<KnowledgeLedger>,
     mut metrics: ResMut<SimulationMetrics>,
+    catalog: Res<EspionageCatalog>,
 ) {
     let mut pending_events: Vec<KnowledgeTimelineEvent> = Vec::new();
     let mut expired_infiltrations: Vec<(FactionId, u32, FactionId)> = Vec::new();
@@ -648,7 +729,9 @@ pub fn knowledge_ledger_tick(
     }
 
     let events = ledger.telemetry_events_for_tick(tick.0);
+    let missions = mission_telemetry(&catalog);
     if events.is_empty()
+        && missions.is_empty()
         && summary.leak_warnings == 0
         && summary.leak_criticals == 0
         && summary.countermeasures_active == 0
@@ -665,6 +748,7 @@ pub fn knowledge_ledger_tick(
         countermeasures_active: summary.countermeasures_active,
         common_knowledge_total: summary.common_knowledge_total,
         events,
+        missions,
     };
 
     if let Ok(payload) = serde_json::to_string(&frame) {
@@ -684,14 +768,7 @@ pub fn process_espionage_events(
     }
 
     for event in counter_events.read() {
-        let CounterIntelSweepEvent {
-            owner,
-            discovery_id,
-            countermeasure,
-            tick,
-            note,
-        } = event.clone();
-        ledger.apply_countermeasure(owner, discovery_id, countermeasure, tick, note);
+        ledger.apply_counterintel_sweep(event.clone());
     }
 }
 

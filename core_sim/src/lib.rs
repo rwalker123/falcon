@@ -5,6 +5,7 @@
 
 mod components;
 mod culture;
+mod espionage;
 mod generations;
 mod great_discovery;
 mod influencers;
@@ -30,6 +31,11 @@ pub use culture::{
     reconcile_culture_layers, CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope,
     CultureManager, CultureOwner, CultureSchismEvent, CultureTensionEvent, CultureTensionKind,
     CultureTensionRecord, CultureTraitAxis, CultureTraitVector, CULTURE_TRAIT_AXES,
+};
+pub use espionage::{
+    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionInstanceId,
+    EspionageMissionKind, EspionageMissionState, EspionageRoster, QueueMissionError,
+    QueueMissionParams,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use great_discovery::{
@@ -91,6 +97,10 @@ pub fn build_headless_app() -> App {
     let influencer_roster = InfluentialRoster::with_seed(0xA51C_E55E, &generation_registry);
     let culture_manager = CultureManager::new();
     let culture_effects = CultureEffectsCache::default();
+    let espionage_catalog =
+        espionage::EspionageCatalog::load_builtin().expect("espionage catalog should parse");
+    let mut espionage_roster = espionage::EspionageRoster::default();
+    espionage_roster.seed_from_catalog(&faction_registry.factions, &espionage_catalog);
 
     app.insert_resource(config)
         .insert_resource(PowerGridState::default())
@@ -104,6 +114,9 @@ pub fn build_headless_app() -> App {
         .insert_resource(DiplomacyLeverage::default())
         .insert_resource(snapshot_history)
         .insert_resource(generation_registry)
+        .insert_resource(espionage_catalog)
+        .insert_resource(espionage_roster)
+        .insert_resource(espionage::EspionageMissionState::default())
         .insert_resource(influencer_roster)
         .insert_resource(InfluencerImpacts::default())
         .insert_resource(culture_manager)
@@ -142,7 +155,13 @@ pub fn build_headless_app() -> App {
             )
                 .chain(),
         )
-        .add_systems(Startup, systems::spawn_initial_world)
+        .add_systems(
+            Startup,
+            (
+                systems::spawn_initial_world,
+                espionage::initialise_espionage_roster,
+            ),
+        )
         .add_systems(
             Update,
             (
@@ -166,6 +185,7 @@ pub fn build_headless_app() -> App {
         .add_systems(
             Update,
             (
+                espionage::resolve_espionage_missions,
                 knowledge_ledger::process_espionage_events,
                 knowledge_ledger::knowledge_ledger_tick,
             )

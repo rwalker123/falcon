@@ -295,6 +295,18 @@ Groundbreaking discoveries rarely remain siloed. Once ideas interact with trade,
 - **Knowledge Debt**: Over-securing discoveries limits workforce familiarity, reducing efficiency and increasing failure risk when rapidly deployed.
 - **False Flag & Honey Pot**: Players can seed fake data; rivals risk adopting flawed techs, creating setbacks or disasters if not validated.
 
+**Prototype Hooks (v0.1)**  
+- Each faction now fields a data-driven agent roster (Veil Runner, Signal Threader, Warden’s Shield) with stealth and counter-intel proficiencies. These map one-to-one with the mission planners surfaced in `docs/architecture.md` §Espionage Mission Outline.  
+- Mission scheduling currently exposes three archetypes: Laboratory Infiltration, Trade Manifest Intercept, and Rapid Response Sweep. Missions resolve deterministically every turn (minimal RNG) and feed the Knowledge Ledger via `EspionageProbeEvent` / `CounterIntelSweepEvent`, so leak meters and infiltration notes update in lockstep.  
+- Designers can iterate on mission/agent balance by editing `core_sim/src/data/espionage_agents.json` and `core_sim/src/data/espionage_missions.json`; updates hot-load at startup without code changes.  
+- Counter-intel missions seed timeline notes and countermeasure timers, giving players immediate defensive levers while we wire up advanced deception outcomes.
+- The agent catalog now supports procedural generation via `generator` entries (e.g., `adaptive_sleeper_template`) that define min/max stat bands, tag pools, and per-faction counts. Toggling `enabled` or adjusting the ranges rebalances random rosters without code changes.
+- Mission templates can also declare generator blocks (see `auto_probe_template`) that spawn variant probe jobs with deterministic success/suspicion bands—useful for scaling campaign difficulty without bloating hand-authored JSON.
+- Global espionage tuning constants (security posture penalties, suspicion floors, counter-intel baselines, generator fallback bands) now live in `core_sim/src/data/espionage_config.json`, so designers can tweak systemic behavior without touching Rust.
+- Ops can issue the new `update_espionage_generators` command to enable/disable generator templates or adjust per-faction spawn counts mid-campaign; the roster reseeds immediately so telemetry/UI stay in sync.
+- Remote tooling can queue missions in real time via the `queue_espionage_mission` command, which forwards directly into the simulation’s scheduling system, and can adjust default scheduling knobs through `update_espionage_queue_defaults` (e.g., lead time, target tier).
+- Probe missions now resolve with multiple bands (full, partial, detected misinformation); partial successes yield smaller blueprint gains, while failures can feed decoy data that reverses infiltration progress. Counter-intel sweeps actively clear infiltration cells and bleed suspicion when successful.
+
 ### Reverse Engineering & Catch-Up
 - **Exposure Thresholds**: Once rivals gather enough observation points (from trade goods, debris, captured units), they unlock reverse engineering projects.
 - **Catch-Up Curve**: Recreated tech starts at reduced efficiency and reliability; gains converge over time as infrastructure and expertise grow.

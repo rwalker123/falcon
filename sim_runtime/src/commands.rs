@@ -66,6 +66,29 @@ pub enum CommandPayload {
         intensity: f32,
         exposure_timer: u32,
     },
+    UpdateEspionageGenerators {
+        updates: Vec<EspionageGeneratorUpdate>,
+    },
+    QueueEspionageMission {
+        mission_id: String,
+        owner_faction: u32,
+        target_owner_faction: u32,
+        discovery_id: u32,
+        agent_handle: u32,
+        target_tier: Option<u8>,
+        scheduled_tick: Option<u64>,
+    },
+    UpdateEspionageQueueDefaults {
+        scheduled_tick_offset: Option<u32>,
+        target_tier: Option<u8>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EspionageGeneratorUpdate {
+    pub template_id: String,
+    pub enabled: Option<bool>,
+    pub per_faction: Option<u8>,
 }
 
 /// Directive for faction orders.
@@ -194,6 +217,48 @@ impl CommandEnvelope {
                 intensity: *intensity,
                 exposure_timer: *exposure_timer,
             }),
+            CommandPayload::UpdateEspionageGenerators { updates } => {
+                pb::command_envelope::Command::UpdateEspionageGenerators(
+                    pb::UpdateEspionageGeneratorsCommand {
+                        updates: updates
+                            .iter()
+                            .map(|update| pb::EspionageGeneratorUpdate {
+                                template_id: update.template_id.clone(),
+                                enabled: update.enabled,
+                                per_faction: update.per_faction.map(|value| value as u32),
+                            })
+                            .collect(),
+                    },
+                )
+            }
+            CommandPayload::QueueEspionageMission {
+                mission_id,
+                owner_faction,
+                target_owner_faction,
+                discovery_id,
+                agent_handle,
+                target_tier,
+                scheduled_tick,
+            } => pb::command_envelope::Command::QueueEspionageMission(
+                pb::QueueEspionageMissionCommand {
+                    mission_id: mission_id.clone(),
+                    owner_faction: *owner_faction,
+                    target_owner_faction: *target_owner_faction,
+                    discovery_id: *discovery_id,
+                    agent_handle: *agent_handle,
+                    target_tier: target_tier.map(|value| value as u32),
+                    scheduled_tick: *scheduled_tick,
+                },
+            ),
+            CommandPayload::UpdateEspionageQueueDefaults {
+                scheduled_tick_offset,
+                target_tier,
+            } => pb::command_envelope::Command::UpdateEspionageQueueDefaults(
+                pb::UpdateEspionageQueueDefaultsCommand {
+                    scheduled_tick_offset: *scheduled_tick_offset,
+                    target_tier: target_tier.map(|value| value as u32),
+                },
+            ),
         });
 
         pb::CommandEnvelope {
@@ -267,6 +332,64 @@ impl CommandEnvelope {
                     subsystem,
                     intensity: cmd.intensity,
                     exposure_timer: cmd.exposure_timer,
+                }
+            }
+            pb::command_envelope::Command::UpdateEspionageGenerators(cmd) => {
+                let mut updates = Vec::with_capacity(cmd.updates.len());
+                for update in cmd.updates {
+                    let per_faction = match update.per_faction {
+                        Some(value) if value <= u8::MAX as u32 => Some(value as u8),
+                        Some(value) => {
+                            return Err(CommandDecodeError::InvalidEnum {
+                                field: "EspionageGeneratorUpdate.per_faction",
+                                value: value as i32,
+                            })
+                        }
+                        None => None,
+                    };
+                    updates.push(EspionageGeneratorUpdate {
+                        template_id: update.template_id,
+                        enabled: update.enabled,
+                        per_faction,
+                    });
+                }
+                CommandPayload::UpdateEspionageGenerators { updates }
+            }
+            pb::command_envelope::Command::QueueEspionageMission(cmd) => {
+                let target_tier = match cmd.target_tier {
+                    Some(value) if value <= u8::MAX as u32 => Some(value as u8),
+                    Some(value) => {
+                        return Err(CommandDecodeError::InvalidEnum {
+                            field: "QueueEspionageMissionCommand.target_tier",
+                            value: value as i32,
+                        })
+                    }
+                    None => None,
+                };
+                CommandPayload::QueueEspionageMission {
+                    mission_id: cmd.mission_id,
+                    owner_faction: cmd.owner_faction,
+                    target_owner_faction: cmd.target_owner_faction,
+                    discovery_id: cmd.discovery_id,
+                    agent_handle: cmd.agent_handle,
+                    target_tier,
+                    scheduled_tick: cmd.scheduled_tick,
+                }
+            }
+            pb::command_envelope::Command::UpdateEspionageQueueDefaults(cmd) => {
+                let target_tier = match cmd.target_tier {
+                    Some(value) if value <= u8::MAX as u32 => Some(value as u8),
+                    Some(value) => {
+                        return Err(CommandDecodeError::InvalidEnum {
+                            field: "UpdateEspionageQueueDefaultsCommand.target_tier",
+                            value: value as i32,
+                        })
+                    }
+                    None => None,
+                };
+                CommandPayload::UpdateEspionageQueueDefaults {
+                    scheduled_tick_offset: cmd.scheduled_tick_offset,
+                    target_tier,
                 }
             }
         };
