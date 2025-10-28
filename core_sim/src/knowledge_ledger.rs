@@ -372,6 +372,119 @@ pub fn knowledge_ledger_tick(
     mut ledger: ResMut<KnowledgeLedger>,
     mut metrics: ResMut<SimulationMetrics>,
 ) {
+    let mut pending_events: Vec<KnowledgeTimelineEvent> = Vec::new();
+
+    for entry in ledger.entries.values_mut() {
+        let base_half_life = entry.half_life_ticks.max(2) as i32;
+        let modifier_half_life: i32 = entry
+            .modifiers
+            .iter()
+            .map(|modifier| modifier.delta_half_life as i32)
+            .sum();
+        let countermeasure_bonus_ticks: i32 = entry
+            .countermeasures
+            .iter()
+            .map(|cm| (cm.potency.to_f32() * 4.0).round() as i32)
+            .sum();
+        let infiltration_penalty_ticks: i32 = entry
+            .infiltrations
+            .iter()
+            .map(|inf| inf.cells as i32 + (inf.blueprint_fidelity.to_f32() * 2.0).round() as i32)
+            .sum();
+
+        let mut effective_half_life =
+            base_half_life + modifier_half_life + countermeasure_bonus_ticks
+                - infiltration_penalty_ticks;
+        if effective_half_life < 2 {
+            effective_half_life = 2;
+        }
+
+        let mut progress_delta = (100.0 / effective_half_life as f32).ceil() as i32;
+        let modifier_progress: i32 = entry
+            .modifiers
+            .iter()
+            .map(|modifier| modifier.delta_progress as i32)
+            .sum();
+        progress_delta += modifier_progress;
+        progress_delta += infiltration_penalty_ticks.max(0);
+        progress_delta -= (countermeasure_bonus_ticks / 2).max(0);
+        progress_delta = progress_delta.clamp(0, 25);
+
+        let mut emitted_progress_event = false;
+        if progress_delta > 0 {
+            let previous_progress = entry.progress_percent;
+            let new_progress = (previous_progress as i32 + progress_delta).min(100) as u16;
+            entry.progress_percent = new_progress;
+
+            if new_progress >= 100 {
+                entry.flags.insert(KnowledgeLeakFlags::COMMON_KNOWLEDGE);
+                entry.flags.remove(KnowledgeLeakFlags::CASCADE_PENDING);
+                entry.time_to_cascade = 0;
+                pending_events.push(KnowledgeTimelineEvent {
+                    tick: tick.0,
+                    kind: KnowledgeTimelineEventKind::Cascade,
+                    source_faction: Some(entry.owner_faction),
+                    delta_percent: Some(progress_delta as i16),
+                    note: Some("Knowledge cascade reached 100%".into()),
+                });
+            } else {
+                entry.time_to_cascade = if progress_delta > 0 {
+                    let remaining = (100 - new_progress as i32).max(0);
+                    ((remaining + progress_delta - 1) / progress_delta) as u16
+                } else {
+                    entry.time_to_cascade
+                };
+                if new_progress >= 90 {
+                    entry.flags.insert(KnowledgeLeakFlags::CASCADE_PENDING);
+                } else {
+                    entry.flags.remove(KnowledgeLeakFlags::CASCADE_PENDING);
+                }
+
+                pending_events.push(KnowledgeTimelineEvent {
+                    tick: tick.0,
+                    kind: KnowledgeTimelineEventKind::LeakProgress,
+                    source_faction: Some(entry.owner_faction),
+                    delta_percent: Some((new_progress - previous_progress) as i16),
+                    note: Some(format!(
+                        "Half-life {}→{}",
+                        base_half_life, effective_half_life
+                    )),
+                });
+                emitted_progress_event = true;
+            }
+        }
+
+        let mut countermeasures_expired = false;
+        entry.countermeasures.retain_mut(|cm| {
+            if cm.remaining_ticks > 0 {
+                cm.remaining_ticks -= 1;
+            }
+            if cm.remaining_ticks == 0 {
+                countermeasures_expired = true;
+                false
+            } else {
+                true
+            }
+        });
+        if countermeasures_expired {
+            pending_events.push(KnowledgeTimelineEvent {
+                tick: tick.0,
+                kind: KnowledgeTimelineEventKind::CounterIntel,
+                source_faction: Some(entry.owner_faction),
+                delta_percent: None,
+                note: Some("Countermeasure expired".into()),
+            });
+        }
+
+        if !emitted_progress_event && progress_delta == 0 {
+            entry.time_to_cascade = entry.time_to_cascade.saturating_add(1);
+        }
+    }
+
+    for event in pending_events {
+        ledger.push_timeline_event(event);
+    }
+
     let summary = ledger.metrics();
     metrics.knowledge_leak_warnings = summary.leak_warnings;
     metrics.knowledge_leak_criticals = summary.leak_criticals;
