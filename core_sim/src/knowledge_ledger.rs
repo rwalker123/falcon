@@ -184,7 +184,7 @@ impl KnowledgeLedger {
             kind: KnowledgeTimelineEventKind::CounterIntel,
             source_faction: Some(owner),
             delta_percent: None,
-            note: note.or_else(|| Some("Countermeasure deployed".into())),
+            note: Some(note.unwrap_or_else(|| "Countermeasure deployed".into())),
         });
         true
     }
@@ -218,7 +218,7 @@ impl KnowledgeLedger {
             kind: KnowledgeTimelineEventKind::SpyProbe,
             source_faction: Some(infiltrator),
             delta_percent: None,
-            note: note.or_else(|| Some(format!("Probe on discovery {}", discovery_id))),
+            note: Some(note.unwrap_or_else(|| format!("Probe on discovery {}", discovery_id))),
         });
         true
     }
@@ -540,7 +540,7 @@ pub fn knowledge_ledger_tick(
             let new_progress = (previous_progress as i32 + progress_delta).min(100) as u16;
             entry.progress_percent = new_progress;
 
-            if new_progress >= 100 {
+            if new_progress >= 100 && !entry.flags.contains(KnowledgeLeakFlags::COMMON_KNOWLEDGE) {
                 entry.flags.insert(KnowledgeLeakFlags::COMMON_KNOWLEDGE);
                 entry.flags.remove(KnowledgeLeakFlags::CASCADE_PENDING);
                 entry.time_to_cascade = 0;

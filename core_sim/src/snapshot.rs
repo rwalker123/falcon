@@ -35,7 +35,6 @@ use crate::{
     },
     influencers::{InfluencerImpacts, InfluentialRoster},
     knowledge_ledger::{encode_ledger_key, KnowledgeLedger, KnowledgeSnapshotPayload},
-    metrics::SimulationMetrics,
     orders::FactionId,
     power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
     resources::{
@@ -61,7 +60,6 @@ pub(crate) struct GreatDiscoverySnapshotParam<'w, 's> {
 pub struct SnapshotContext<'w> {
     pub config: Res<'w, SimulationConfig>,
     pub tick: Res<'w, SimulationTick>,
-    pub metrics: Res<'w, SimulationMetrics>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -890,11 +888,7 @@ pub fn capture_snapshot(
     culture: Res<CultureManager>,
     mut history: ResMut<SnapshotHistory>,
 ) {
-    let SnapshotContext {
-        config,
-        tick,
-        metrics: _metrics,
-    } = ctx;
+    let SnapshotContext { config, tick } = ctx;
     history.set_capacity(config.snapshot_history_limit.max(1));
 
     let mut tile_states: Vec<TileState> = tiles
