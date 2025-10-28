@@ -302,6 +302,7 @@ Groundbreaking discoveries rarely remain siloed. Once ideas interact with trade,
 - Counter-intel missions seed timeline notes and countermeasure timers, giving players immediate defensive levers while we wire up advanced deception outcomes.
 - The agent catalog now supports procedural generation via `generator` entries (e.g., `adaptive_sleeper_template`) that define min/max stat bands, tag pools, and per-faction counts. Toggling `enabled` or adjusting the ranges rebalances random rosters without code changes.
 - Mission templates can also declare generator blocks (see `auto_probe_template`) that spawn variant probe jobs with deterministic success/suspicion bands—useful for scaling campaign difficulty without bloating hand-authored JSON.
+- Global espionage tuning constants (security posture penalties, suspicion floors, counter-intel baselines, generator fallback bands) now live in `core_sim/src/data/espionage_config.json`, so designers can tweak systemic behavior without touching Rust.
 
 ### Reverse Engineering & Catch-Up
 - **Exposure Thresholds**: Once rivals gather enough observation points (from trade goods, debris, captured units), they unlock reverse engineering projects.

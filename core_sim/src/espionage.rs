@@ -1,6 +1,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -19,6 +20,7 @@ use rand::{Rng, SeedableRng};
 
 pub const BUILTIN_ESPIONAGE_AGENT_CATALOG: &str = include_str!("data/espionage_agents.json");
 pub const BUILTIN_ESPIONAGE_MISSION_CATALOG: &str = include_str!("data/espionage_missions.json");
+pub const BUILTIN_ESPIONAGE_CONFIG: &str = include_str!("data/espionage_config.json");
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EspionageAgentId(pub String);
@@ -124,14 +126,276 @@ pub enum EspionageCatalogError {
     DuplicateMission(String),
     #[error("unknown countermeasure kind '{kind}' for mission '{mission}'")]
     UnknownCountermeasureKind { mission: String, kind: String },
+    #[error("failed to parse espionage balance config: {0}")]
+    ParseConfig(serde_json::Error),
 }
 
-#[derive(Resource, Debug, Default)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct EspionageBalanceConfig {
+    #[serde(default)]
+    security_posture_penalties: SecurityPosturePenalties,
+    #[serde(default)]
+    probe_resolution: ProbeResolutionTuning,
+    #[serde(default)]
+    counter_intel_resolution: CounterIntelResolutionTuning,
+    #[serde(default)]
+    agent_generator_defaults: AgentGeneratorDefaults,
+    #[serde(default)]
+    mission_generator_defaults: MissionGeneratorDefaults,
+}
+
+impl EspionageBalanceConfig {
+    pub fn security_penalty(&self, posture: sim_runtime::KnowledgeSecurityPosture) -> Scalar {
+        self.security_posture_penalties.penalty(posture)
+    }
+
+    pub fn probe_resolution(&self) -> &ProbeResolutionTuning {
+        &self.probe_resolution
+    }
+
+    pub fn counter_intel_resolution(&self) -> &CounterIntelResolutionTuning {
+        &self.counter_intel_resolution
+    }
+
+    pub fn agent_defaults(&self) -> &AgentGeneratorDefaults {
+        &self.agent_generator_defaults
+    }
+
+    pub fn mission_defaults(&self) -> &MissionGeneratorDefaults {
+        &self.mission_generator_defaults
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct SecurityPosturePenalties {
+    minimal: f32,
+    standard: f32,
+    hardened: f32,
+    black_vault: f32,
+}
+
+impl Default for SecurityPosturePenalties {
+    fn default() -> Self {
+        Self {
+            minimal: 0.0,
+            standard: 0.15,
+            hardened: 0.3,
+            black_vault: 0.45,
+        }
+    }
+}
+
+impl SecurityPosturePenalties {
+    fn penalty(&self, posture: sim_runtime::KnowledgeSecurityPosture) -> Scalar {
+        let value = match posture {
+            sim_runtime::KnowledgeSecurityPosture::Minimal => self.minimal,
+            sim_runtime::KnowledgeSecurityPosture::Standard => self.standard,
+            sim_runtime::KnowledgeSecurityPosture::Hardened => self.hardened,
+            sim_runtime::KnowledgeSecurityPosture::BlackVault => self.black_vault,
+        };
+        Scalar::from_f32(value)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ProbeResolutionTuning {
+    recon_fidelity_bonus: f32,
+    suspicion_floor: f32,
+    failure_extra_suspicion: f32,
+}
+
+impl Default for ProbeResolutionTuning {
+    fn default() -> Self {
+        Self {
+            recon_fidelity_bonus: 0.1,
+            suspicion_floor: 0.05,
+            failure_extra_suspicion: 0.05,
+        }
+    }
+}
+
+impl ProbeResolutionTuning {
+    fn recon_fidelity_bonus(&self) -> Scalar {
+        Scalar::from_f32(self.recon_fidelity_bonus)
+    }
+
+    fn suspicion_floor(&self) -> Scalar {
+        Scalar::from_f32(self.suspicion_floor)
+    }
+
+    fn failure_extra_suspicion(&self) -> Scalar {
+        Scalar::from_f32(self.failure_extra_suspicion)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CounterIntelResolutionTuning {
+    security_penalty_factor: f32,
+    default_sweep_potency: f32,
+    default_sweep_upkeep: f32,
+    default_sweep_duration: u16,
+}
+
+impl Default for CounterIntelResolutionTuning {
+    fn default() -> Self {
+        Self {
+            security_penalty_factor: 0.5,
+            default_sweep_potency: 0.3,
+            default_sweep_upkeep: 0.05,
+            default_sweep_duration: 2,
+        }
+    }
+}
+
+impl CounterIntelResolutionTuning {
+    fn security_penalty_factor(&self) -> Scalar {
+        Scalar::from_f32(self.security_penalty_factor)
+    }
+
+    fn default_countermeasure(&self) -> EspionageMissionCountermeasure {
+        EspionageMissionCountermeasure {
+            kind: sim_runtime::KnowledgeCountermeasureKind::CounterIntelSweep,
+            potency: Scalar::from_f32(self.default_sweep_potency),
+            upkeep: Scalar::from_f32(self.default_sweep_upkeep),
+            duration_ticks: self.default_sweep_duration,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct AgentGeneratorDefaults {
+    stealth_min: f32,
+    stealth_max: f32,
+    recon_min: f32,
+    recon_max: f32,
+    counter_intel_min: f32,
+    counter_intel_max: f32,
+}
+
+impl Default for AgentGeneratorDefaults {
+    fn default() -> Self {
+        Self {
+            stealth_min: 0.3,
+            stealth_max: 0.8,
+            recon_min: 0.3,
+            recon_max: 0.8,
+            counter_intel_min: 0.2,
+            counter_intel_max: 0.6,
+        }
+    }
+}
+
+impl AgentGeneratorDefaults {
+    fn stealth_range(&self) -> (f32, f32) {
+        (self.stealth_min, self.stealth_max)
+    }
+
+    fn recon_range(&self) -> (f32, f32) {
+        (self.recon_min, self.recon_max)
+    }
+
+    fn counter_intel_range(&self) -> (f32, f32) {
+        (self.counter_intel_min, self.counter_intel_max)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MissionGeneratorDefaults {
+    resolution_ticks_min: u16,
+    resolution_ticks_max: u16,
+    base_success_min: f32,
+    base_success_max: f32,
+    success_threshold_min: f32,
+    success_threshold_max: f32,
+    fidelity_gain_min: f32,
+    fidelity_gain_max: f32,
+    suspicion_on_success_min: f32,
+    suspicion_on_success_max: f32,
+    suspicion_on_failure_min: f32,
+    suspicion_on_failure_max: f32,
+    cell_gain_on_success_min: u8,
+    cell_gain_on_success_max: u8,
+    suspicion_relief_min: f32,
+    suspicion_relief_max: f32,
+    fidelity_suppression_min: f32,
+    fidelity_suppression_max: f32,
+}
+
+impl Default for MissionGeneratorDefaults {
+    fn default() -> Self {
+        Self {
+            resolution_ticks_min: 1,
+            resolution_ticks_max: 2,
+            base_success_min: 0.45,
+            base_success_max: 0.65,
+            success_threshold_min: 0.5,
+            success_threshold_max: 0.75,
+            fidelity_gain_min: 0.18,
+            fidelity_gain_max: 0.3,
+            suspicion_on_success_min: 0.1,
+            suspicion_on_success_max: 0.2,
+            suspicion_on_failure_min: 0.3,
+            suspicion_on_failure_max: 0.4,
+            cell_gain_on_success_min: 1,
+            cell_gain_on_success_max: 2,
+            suspicion_relief_min: 0.2,
+            suspicion_relief_max: 0.35,
+            fidelity_suppression_min: 0.08,
+            fidelity_suppression_max: 0.16,
+        }
+    }
+}
+
+impl MissionGeneratorDefaults {
+    fn resolution_ticks(&self) -> (u16, u16) {
+        (self.resolution_ticks_min, self.resolution_ticks_max)
+    }
+
+    fn base_success(&self) -> (f32, f32) {
+        (self.base_success_min, self.base_success_max)
+    }
+
+    fn success_threshold(&self) -> (f32, f32) {
+        (self.success_threshold_min, self.success_threshold_max)
+    }
+
+    fn fidelity_gain(&self) -> (f32, f32) {
+        (self.fidelity_gain_min, self.fidelity_gain_max)
+    }
+
+    fn suspicion_on_success(&self) -> (f32, f32) {
+        (self.suspicion_on_success_min, self.suspicion_on_success_max)
+    }
+
+    fn suspicion_on_failure(&self) -> (f32, f32) {
+        (self.suspicion_on_failure_min, self.suspicion_on_failure_max)
+    }
+
+    fn cell_gain_on_success(&self) -> (u8, u8) {
+        (self.cell_gain_on_success_min, self.cell_gain_on_success_max)
+    }
+
+    fn suspicion_relief(&self) -> (f32, f32) {
+        (self.suspicion_relief_min, self.suspicion_relief_max)
+    }
+
+    fn fidelity_suppression(&self) -> (f32, f32) {
+        (self.fidelity_suppression_min, self.fidelity_suppression_max)
+    }
+}
+
+#[derive(Resource, Debug)]
 pub struct EspionageCatalog {
     agents: HashMap<EspionageAgentId, EspionageAgentTemplate>,
     agent_order: Vec<EspionageAgentId>,
     missions: HashMap<EspionageMissionId, EspionageMissionTemplate>,
     generators: Vec<EspionageAgentGenerator>,
+    config: Arc<EspionageBalanceConfig>,
 }
 
 impl EspionageCatalog {
@@ -139,17 +403,22 @@ impl EspionageCatalog {
         Self::load_from_str(
             BUILTIN_ESPIONAGE_AGENT_CATALOG,
             BUILTIN_ESPIONAGE_MISSION_CATALOG,
+            BUILTIN_ESPIONAGE_CONFIG,
         )
     }
 
     pub fn load_from_str(
         agent_json: &str,
         mission_json: &str,
+        config_json: &str,
     ) -> Result<Self, EspionageCatalogError> {
         let agent_catalog: EspionageAgentCatalog =
             serde_json::from_str(agent_json).map_err(EspionageCatalogError::ParseAgents)?;
         let mission_catalog: EspionageMissionCatalog =
             serde_json::from_str(mission_json).map_err(EspionageCatalogError::ParseMissions)?;
+        let config: Arc<EspionageBalanceConfig> = Arc::new(
+            serde_json::from_str(config_json).map_err(EspionageCatalogError::ParseConfig)?,
+        );
 
         let mut agents = HashMap::new();
         let mut agent_order = Vec::new();
@@ -176,6 +445,7 @@ impl EspionageCatalog {
                 generators.push(EspionageAgentGenerator::from_catalog_entry(
                     &template,
                     generator_entry,
+                    config.agent_defaults(),
                 ));
             }
 
@@ -248,6 +518,7 @@ impl EspionageCatalog {
                     let generator = EspionageMissionGenerator::from_catalog_entry(
                         &base_template,
                         generator_entry,
+                        config.mission_defaults(),
                     );
                     for variant in generator.generate_variants(&base_template) {
                         if missions.contains_key(&variant.id) {
@@ -268,6 +539,7 @@ impl EspionageCatalog {
             agent_order,
             missions,
             generators,
+            config,
         })
     }
 
@@ -289,6 +561,10 @@ impl EspionageCatalog {
 
     pub fn generators(&self) -> impl Iterator<Item = &EspionageAgentGenerator> {
         self.generators.iter()
+    }
+
+    pub fn config(&self) -> &EspionageBalanceConfig {
+        self.config.as_ref()
     }
 }
 
@@ -590,16 +866,17 @@ impl EspionageAgentGenerator {
     fn from_catalog_entry(
         template: &EspionageAgentTemplate,
         generator: EspionageAgentGeneratorEntry,
+        defaults: &AgentGeneratorDefaults,
     ) -> Self {
         let stealth_range = resolve_stat_range(
             generator.stealth,
             Some((template.stealth.to_f32(), template.stealth.to_f32())),
-            (0.3, 0.8),
+            defaults.stealth_range(),
         );
         let recon_range = resolve_stat_range(
             generator.recon,
             Some((template.recon.to_f32(), template.recon.to_f32())),
-            (0.3, 0.8),
+            defaults.recon_range(),
         );
         let counter_intel_range = resolve_stat_range(
             generator.counter_intel,
@@ -607,7 +884,7 @@ impl EspionageAgentGenerator {
                 template.counter_intel.to_f32(),
                 template.counter_intel.to_f32(),
             )),
-            (0.2, 0.6),
+            defaults.counter_intel_range(),
         );
 
         let mut tags = generator.tags.unwrap_or_else(|| template.tags.clone());
@@ -706,16 +983,17 @@ impl EspionageMissionGenerator {
     fn from_catalog_entry(
         base: &EspionageMissionTemplate,
         generator: EspionageMissionGeneratorEntry,
+        defaults: &MissionGeneratorDefaults,
     ) -> Self {
         let resolution_ticks = resolve_u16_range(
             generator.resolution_ticks,
             Some((base.resolution_ticks, base.resolution_ticks)),
-            (base.resolution_ticks, base.resolution_ticks),
+            defaults.resolution_ticks(),
         );
         let base_success = resolve_stat_range(
             generator.base_success,
             Some((base.base_success.to_f32(), base.base_success.to_f32())),
-            (0.3, 0.75),
+            defaults.base_success(),
         );
         let success_threshold = resolve_stat_range(
             generator.success_threshold,
@@ -723,12 +1001,12 @@ impl EspionageMissionGenerator {
                 base.success_threshold.to_f32(),
                 base.success_threshold.to_f32(),
             )),
-            (0.4, 0.9),
+            defaults.success_threshold(),
         );
         let fidelity_gain = resolve_stat_range(
             generator.fidelity_gain,
             Some((base.fidelity_gain.to_f32(), base.fidelity_gain.to_f32())),
-            (0.1, 0.35),
+            defaults.fidelity_gain(),
         );
         let suspicion_on_success = resolve_stat_range(
             generator.suspicion_on_success,
@@ -736,7 +1014,7 @@ impl EspionageMissionGenerator {
                 base.suspicion_on_success.to_f32(),
                 base.suspicion_on_success.to_f32(),
             )),
-            (0.05, 0.25),
+            defaults.suspicion_on_success(),
         );
         let suspicion_on_failure = resolve_stat_range(
             generator.suspicion_on_failure,
@@ -744,12 +1022,12 @@ impl EspionageMissionGenerator {
                 base.suspicion_on_failure.to_f32(),
                 base.suspicion_on_failure.to_f32(),
             )),
-            (0.2, 0.45),
+            defaults.suspicion_on_failure(),
         );
         let cell_gain_on_success = resolve_u8_range(
             generator.cell_gain_on_success,
             Some((base.cell_gain_on_success, base.cell_gain_on_success)),
-            (base.cell_gain_on_success, base.cell_gain_on_success.max(2)),
+            defaults.cell_gain_on_success(),
         );
         let suspicion_relief = resolve_stat_range(
             generator.suspicion_relief,
@@ -757,7 +1035,7 @@ impl EspionageMissionGenerator {
                 base.suspicion_relief.to_f32(),
                 base.suspicion_relief.to_f32(),
             )),
-            (0.1, 0.4),
+            defaults.suspicion_relief(),
         );
         let fidelity_suppression = resolve_stat_range(
             generator.fidelity_suppression,
@@ -765,7 +1043,7 @@ impl EspionageMissionGenerator {
                 base.fidelity_suppression.to_f32(),
                 base.fidelity_suppression.to_f32(),
             )),
-            (0.05, 0.2),
+            defaults.fidelity_suppression(),
         );
 
         let seed_offset = generator
@@ -1040,18 +1318,16 @@ fn determine_mission_outcome(
     let template = catalog
         .mission(&mission.mission_id)
         .expect("mission definition should exist");
+    let config = catalog.config();
+    let probe_tuning = config.probe_resolution();
+    let counter_tuning = config.counter_intel_resolution();
 
     let security_posture = ledger
         .entry(mission.target_owner, mission.discovery_id)
         .map(|entry| entry.security_posture)
         .unwrap_or(sim_runtime::KnowledgeSecurityPosture::Standard);
 
-    let security_penalty = match security_posture {
-        sim_runtime::KnowledgeSecurityPosture::Minimal => scalar_zero(),
-        sim_runtime::KnowledgeSecurityPosture::Standard => scalar_from_f32(0.15),
-        sim_runtime::KnowledgeSecurityPosture::Hardened => scalar_from_f32(0.3),
-        sim_runtime::KnowledgeSecurityPosture::BlackVault => scalar_from_f32(0.45),
-    };
+    let security_penalty = config.security_penalty(security_posture);
 
     match template.kind {
         EspionageMissionKind::Probe => {
@@ -1074,7 +1350,7 @@ fn determine_mission_outcome(
 
             if success_score >= template.success_threshold {
                 let suspicion_base = template.suspicion_on_success - agent.stealth;
-                let suspicion_floor = scalar_from_f32(0.05);
+                let suspicion_floor = probe_tuning.suspicion_floor();
                 let suspicion_gain = if suspicion_base < suspicion_floor {
                     suspicion_floor
                 } else {
@@ -1085,7 +1361,8 @@ fn determine_mission_outcome(
                     owner: mission.target_owner,
                     discovery_id: mission.discovery_id,
                     infiltrator: mission.owner,
-                    fidelity_gain: template.fidelity_gain + agent.recon * scalar_from_f32(0.1),
+                    fidelity_gain: template.fidelity_gain
+                        + agent.recon * probe_tuning.recon_fidelity_bonus(),
                     suspicion_gain,
                     cells: template.cell_gain_on_success,
                     tick,
@@ -1102,7 +1379,7 @@ fn determine_mission_outcome(
                     fidelity_gain: scalar_zero(),
                     suspicion_gain: template.suspicion_on_failure
                         + security_penalty
-                        + scalar_from_f32(0.05),
+                        + probe_tuning.failure_extra_suspicion(),
                     cells: 0,
                     tick,
                     note: mission
@@ -1115,19 +1392,13 @@ fn determine_mission_outcome(
         EspionageMissionKind::CounterIntel => {
             let success_score = template.base_success
                 + agent.counter_intel * template.counter_intel_weight
-                - security_penalty * scalar_from_f32(0.5);
+                - security_penalty * counter_tuning.security_penalty_factor();
 
             if success_score >= template.success_threshold {
-                let countermeasure =
-                    template
-                        .countermeasure
-                        .clone()
-                        .unwrap_or(EspionageMissionCountermeasure {
-                            kind: sim_runtime::KnowledgeCountermeasureKind::CounterIntelSweep,
-                            potency: scalar_from_f32(0.3),
-                            upkeep: scalar_from_f32(0.05),
-                            duration_ticks: 2,
-                        });
+                let countermeasure = template
+                    .countermeasure
+                    .clone()
+                    .unwrap_or_else(|| counter_tuning.default_countermeasure());
 
                 outcome.sweep_event = Some(CounterIntelSweepEvent {
                     owner: mission.owner,
@@ -1374,6 +1645,21 @@ mod tests {
     fn generated_agents_respect_configured_bands() {
         let faction = FactionId(2);
         let app = setup_app_with_catalog(&[faction]);
+        let (stealth_min, stealth_max, recon_min, recon_max, counter_min, counter_max) = {
+            let catalog = app.world.resource::<EspionageCatalog>();
+            let defaults = catalog.config().agent_defaults();
+            let (stealth_min, stealth_max) = defaults.stealth_range();
+            let (recon_min, recon_max) = defaults.recon_range();
+            let (counter_min, counter_max) = defaults.counter_intel_range();
+            (
+                stealth_min,
+                stealth_max,
+                recon_min,
+                recon_max,
+                counter_min,
+                counter_max,
+            )
+        };
         let roster = app.world.resource::<EspionageRoster>();
         let agents = roster.agents_for(faction);
         let generated: Vec<_> = agents.iter().filter(|agent| agent.generated).collect();
@@ -1386,17 +1672,17 @@ mod tests {
             let recon = agent.recon.to_f32();
             let counter_intel = agent.counter_intel.to_f32();
             assert!(
-                (0.45 - 0.001..=0.85 + 0.001).contains(&stealth),
+                stealth >= stealth_min - 0.001 && stealth <= stealth_max + 0.001,
                 "stealth {:.3} out of configured band",
                 stealth
             );
             assert!(
-                (0.35 - 0.001..=0.75 + 0.001).contains(&recon),
+                recon >= recon_min - 0.001 && recon <= recon_max + 0.001,
                 "recon {:.3} out of configured band",
                 recon
             );
             assert!(
-                (0.25 - 0.001..=0.55 + 0.001).contains(&counter_intel),
+                counter_intel >= counter_min - 0.001 && counter_intel <= counter_max + 0.001,
                 "counter-intel {:.3} out of configured band",
                 counter_intel
             );
@@ -1410,6 +1696,19 @@ mod tests {
     #[test]
     fn generated_missions_respect_configured_bands() {
         let catalog = EspionageCatalog::load_builtin().expect("catalog parses");
+        let mission_defaults = catalog.config().mission_defaults().clone();
+        let (base_success_min, base_success_max) = mission_defaults.base_success();
+        let (success_threshold_min, success_threshold_max) = mission_defaults.success_threshold();
+        let (fidelity_gain_min, fidelity_gain_max) = mission_defaults.fidelity_gain();
+        let (suspicion_success_min, suspicion_success_max) =
+            mission_defaults.suspicion_on_success();
+        let (suspicion_failure_min, suspicion_failure_max) =
+            mission_defaults.suspicion_on_failure();
+        let (cell_gain_min, cell_gain_max) = mission_defaults.cell_gain_on_success();
+        let (suspicion_relief_min, suspicion_relief_max) = mission_defaults.suspicion_relief();
+        let (fidelity_suppression_min, fidelity_suppression_max) =
+            mission_defaults.fidelity_suppression();
+        let (resolution_min, resolution_max) = mission_defaults.resolution_ticks();
         let generated: Vec<&EspionageMissionTemplate> = catalog
             .missions()
             .filter(|mission| mission.generated)
@@ -1429,47 +1728,56 @@ mod tests {
             let fidelity_suppression = mission.fidelity_suppression.to_f32();
 
             assert!(
-                (0.45..=0.65).contains(&base_success),
+                base_success >= base_success_min - 0.001
+                    && base_success <= base_success_max + 0.001,
                 "base_success {:.3} out of band",
                 base_success
             );
             assert!(
-                (0.5..=0.75).contains(&success_threshold),
+                success_threshold >= success_threshold_min - 0.001
+                    && success_threshold <= success_threshold_max + 0.001,
                 "success_threshold {:.3} out of band",
                 success_threshold
             );
             assert!(
-                (0.18..=0.3).contains(&fidelity_gain),
+                fidelity_gain >= fidelity_gain_min - 0.001
+                    && fidelity_gain <= fidelity_gain_max + 0.001,
                 "fidelity_gain {:.3} out of band",
                 fidelity_gain
             );
             assert!(
-                (0.1..=0.2).contains(&suspicion_success),
+                suspicion_success >= suspicion_success_min - 0.001
+                    && suspicion_success <= suspicion_success_max + 0.001,
                 "suspicion_on_success {:.3} out of band",
                 suspicion_success
             );
             assert!(
-                (0.3..=0.4).contains(&suspicion_failure),
+                suspicion_failure >= suspicion_failure_min - 0.001
+                    && suspicion_failure <= suspicion_failure_max + 0.001,
                 "suspicion_on_failure {:.3} out of band",
                 suspicion_failure
             );
             assert!(
-                (0.2..=0.35).contains(&suspicion_relief),
+                suspicion_relief >= suspicion_relief_min - 0.001
+                    && suspicion_relief <= suspicion_relief_max + 0.001,
                 "suspicion_relief {:.3} out of band",
                 suspicion_relief
             );
             assert!(
-                (0.08..=0.16).contains(&fidelity_suppression),
+                fidelity_suppression >= fidelity_suppression_min - 0.001
+                    && fidelity_suppression <= fidelity_suppression_max + 0.001,
                 "fidelity_suppression {:.3} out of band",
                 fidelity_suppression
             );
             assert!(
-                mission.cell_gain_on_success >= 1 && mission.cell_gain_on_success <= 2,
+                mission.cell_gain_on_success >= cell_gain_min
+                    && mission.cell_gain_on_success <= cell_gain_max,
                 "cell_gain_on_success {} out of band",
                 mission.cell_gain_on_success
             );
             assert!(
-                mission.resolution_ticks >= 1 && mission.resolution_ticks <= 2,
+                mission.resolution_ticks >= resolution_min
+                    && mission.resolution_ticks <= resolution_max,
                 "resolution_ticks {} out of band",
                 mission.resolution_ticks
             );

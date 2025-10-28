@@ -1,0 +1,47 @@
+{
+  "security_posture_penalties": {
+    "minimal": 0.0,
+    "standard": 0.15,
+    "hardened": 0.3,
+    "black_vault": 0.45
+  },
+  "probe_resolution": {
+    "recon_fidelity_bonus": 0.1,
+    "suspicion_floor": 0.05,
+    "failure_extra_suspicion": 0.05
+  },
+  "counter_intel_resolution": {
+    "security_penalty_factor": 0.5,
+    "default_sweep_potency": 0.3,
+    "default_sweep_upkeep": 0.05,
+    "default_sweep_duration": 2
+  },
+  "agent_generator_defaults": {
+    "stealth_min": 0.3,
+    "stealth_max": 0.8,
+    "recon_min": 0.3,
+    "recon_max": 0.8,
+    "counter_intel_min": 0.2,
+    "counter_intel_max": 0.6
+  },
+  "mission_generator_defaults": {
+    "resolution_ticks_min": 1,
+    "resolution_ticks_max": 2,
+    "base_success_min": 0.45,
+    "base_success_max": 0.65,
+    "success_threshold_min": 0.5,
+    "success_threshold_max": 0.75,
+    "fidelity_gain_min": 0.18,
+    "fidelity_gain_max": 0.3,
+    "suspicion_on_success_min": 0.1,
+    "suspicion_on_success_max": 0.2,
+    "suspicion_on_failure_min": 0.3,
+    "suspicion_on_failure_max": 0.4,
+    "cell_gain_on_success_min": 1,
+    "cell_gain_on_success_max": 2,
+    "suspicion_relief_min": 0.2,
+    "suspicion_relief_max": 0.35,
+    "fidelity_suppression_min": 0.08,
+    "fidelity_suppression_max": 0.16
+  }
+}
