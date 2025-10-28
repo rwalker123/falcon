@@ -12,11 +12,12 @@ use core_sim::log_stream::start_log_stream_server;
 use core_sim::metrics::{collect_metrics, SimulationMetrics};
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
-    build_headless_app, restore_world_from_snapshot, run_turn, CorruptionLedgers, EspionageCatalog,
+    build_headless_app, restore_world_from_snapshot, run_turn, CorruptionLedgers,
+    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionState,
     EspionageRoster, FactionId, FactionOrders, FactionRegistry, GenerationId, GenerationRegistry,
-    InfluencerImpacts, InfluentialRoster, Scalar, SentimentAxisBias, SimulationConfig,
-    SimulationTick, SnapshotHistory, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel,
-    Tile, TurnQueue,
+    InfluencerImpacts, InfluentialRoster, QueueMissionParams, Scalar, SentimentAxisBias,
+    SimulationConfig, SimulationTick, SnapshotHistory, StoredSnapshot, SubmitError, SubmitOutcome,
+    SupportChannel, Tile, TurnQueue,
 };
 use sim_runtime::{
     commands::EspionageGeneratorUpdate as CommandGeneratorUpdate, AxisBiasState,
@@ -211,6 +212,9 @@ fn main() {
             Command::UpdateEspionageGenerators { updates } => {
                 handle_update_espionage_generators(&mut app, updates);
             }
+            Command::QueueEspionageMission { params } => {
+                handle_queue_espionage_mission(&mut app, params);
+            }
         }
     }
 }
@@ -261,6 +265,9 @@ enum Command {
     },
     UpdateEspionageGenerators {
         updates: Vec<CommandGeneratorUpdate>,
+    },
+    QueueEspionageMission {
+        params: QueueMissionParams,
     },
 }
 
@@ -413,6 +420,26 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
         }
         ProtoCommandPayload::UpdateEspionageGenerators { updates } => {
             Some(Command::UpdateEspionageGenerators { updates })
+        }
+        ProtoCommandPayload::QueueEspionageMission {
+            mission_id,
+            owner_faction,
+            target_owner_faction,
+            discovery_id,
+            agent_handle,
+            target_tier,
+            scheduled_tick,
+        } => {
+            let params = QueueMissionParams {
+                mission_id: EspionageMissionId::new(mission_id),
+                owner: FactionId(owner_faction),
+                target_owner: FactionId(target_owner_faction),
+                discovery_id,
+                agent: EspionageAgentHandle(agent_handle),
+                target_tier,
+                scheduled_tick: scheduled_tick.unwrap_or(0),
+            };
+            Some(Command::QueueEspionageMission { params })
         }
     }
 }
@@ -862,6 +889,58 @@ fn handle_update_espionage_generators(
         factions = factions.len(),
         "espionage.generators.reseeded"
     );
+}
+
+fn handle_queue_espionage_mission(app: &mut bevy::prelude::App, mut params: QueueMissionParams) {
+    if params.scheduled_tick == 0 {
+        params.scheduled_tick = app.world.resource::<SimulationTick>().0;
+    }
+
+    let mission_id = params.mission_id.0.clone();
+    let owner = params.owner.0;
+    let target_owner = params.target_owner.0;
+    let agent_handle = params.agent.0;
+
+    let queue_result = app.world.resource_scope(
+        |world, mut missions: bevy::prelude::Mut<EspionageMissionState>| {
+            let queued_params = params.clone();
+            world.resource_scope(|world, mut roster: bevy::prelude::Mut<EspionageRoster>| {
+                let catalog = world.resource::<EspionageCatalog>();
+                missions.queue_mission(catalog, &mut roster, queued_params)
+            })
+        },
+    );
+
+    match queue_result {
+        Ok(instance_id) => {
+            info!(
+                target: "shadow_scale::espionage",
+                mission_id,
+                owner_faction = owner,
+                target_owner,
+                discovery_id = params.discovery_id,
+                agent_handle,
+                target_tier = ?params.target_tier,
+                scheduled_tick = params.scheduled_tick,
+                instance = instance_id.0,
+                "espionage.mission.queued"
+            );
+        }
+        Err(error) => {
+            warn!(
+                target: "shadow_scale::espionage",
+                mission_id,
+                owner_faction = owner,
+                target_owner,
+                discovery_id = params.discovery_id,
+                agent_handle,
+                target_tier = ?params.target_tier,
+                scheduled_tick = params.scheduled_tick,
+                %error,
+                "espionage.mission.queue_failed"
+            );
+        }
+    }
 }
 
 fn resolve_ready_turn(

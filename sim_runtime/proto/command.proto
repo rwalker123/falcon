@@ -100,6 +100,16 @@ message UpdateEspionageGeneratorsCommand {
   repeated EspionageGeneratorUpdate updates = 1;
 }
 
+message QueueEspionageMissionCommand {
+  string mission_id = 1;
+  uint32 owner_faction = 2;
+  uint32 target_owner_faction = 3;
+  uint32 discovery_id = 4;
+  uint32 agent_handle = 5;
+  optional uint32 target_tier = 6;
+  optional uint64 scheduled_tick = 7;
+}
+
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
@@ -116,5 +126,6 @@ message CommandEnvelope {
     SpawnInfluencerCommand spawn_influencer = 9;
     InjectCorruptionCommand inject_corruption = 10;
     UpdateEspionageGeneratorsCommand update_espionage_generators = 12;
+    QueueEspionageMissionCommand queue_espionage_mission = 13;
   }
 }

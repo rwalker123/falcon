@@ -69,6 +69,15 @@ pub enum CommandPayload {
     UpdateEspionageGenerators {
         updates: Vec<EspionageGeneratorUpdate>,
     },
+    QueueEspionageMission {
+        mission_id: String,
+        owner_faction: u32,
+        target_owner_faction: u32,
+        discovery_id: u32,
+        agent_handle: u32,
+        target_tier: Option<u8>,
+        scheduled_tick: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -218,6 +227,25 @@ impl CommandEnvelope {
                     },
                 )
             }
+            CommandPayload::QueueEspionageMission {
+                mission_id,
+                owner_faction,
+                target_owner_faction,
+                discovery_id,
+                agent_handle,
+                target_tier,
+                scheduled_tick,
+            } => pb::command_envelope::Command::QueueEspionageMission(
+                pb::QueueEspionageMissionCommand {
+                    mission_id: mission_id.clone(),
+                    owner_faction: *owner_faction,
+                    target_owner_faction: *target_owner_faction,
+                    discovery_id: *discovery_id,
+                    agent_handle: *agent_handle,
+                    target_tier: target_tier.map(|value| value as u32),
+                    scheduled_tick: *scheduled_tick,
+                },
+            ),
         });
 
         pb::CommandEnvelope {
@@ -313,6 +341,27 @@ impl CommandEnvelope {
                     });
                 }
                 CommandPayload::UpdateEspionageGenerators { updates }
+            }
+            pb::command_envelope::Command::QueueEspionageMission(cmd) => {
+                let target_tier = match cmd.target_tier {
+                    Some(value) if value <= u8::MAX as u32 => Some(value as u8),
+                    Some(value) => {
+                        return Err(CommandDecodeError::InvalidEnum {
+                            field: "QueueEspionageMissionCommand.target_tier",
+                            value: value as i32,
+                        })
+                    }
+                    None => None,
+                };
+                CommandPayload::QueueEspionageMission {
+                    mission_id: cmd.mission_id,
+                    owner_faction: cmd.owner_faction,
+                    target_owner_faction: cmd.target_owner_faction,
+                    discovery_id: cmd.discovery_id,
+                    agent_handle: cmd.agent_handle,
+                    target_tier,
+                    scheduled_tick: cmd.scheduled_tick,
+                }
             }
         };
 

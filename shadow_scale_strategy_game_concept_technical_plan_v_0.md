@@ -304,6 +304,7 @@ Groundbreaking discoveries rarely remain siloed. Once ideas interact with trade,
 - Mission templates can also declare generator blocks (see `auto_probe_template`) that spawn variant probe jobs with deterministic success/suspicion bands—useful for scaling campaign difficulty without bloating hand-authored JSON.
 - Global espionage tuning constants (security posture penalties, suspicion floors, counter-intel baselines, generator fallback bands) now live in `core_sim/src/data/espionage_config.json`, so designers can tweak systemic behavior without touching Rust.
 - Ops can issue the new `update_espionage_generators` command to enable/disable generator templates or adjust per-faction spawn counts mid-campaign; the roster reseeds immediately so telemetry/UI stay in sync.
+- Remote tooling can queue missions in real time via the `queue_espionage_mission` command, which forwards directly into the simulation’s scheduling system.
 
 ### Reverse Engineering & Catch-Up
 - **Exposure Thresholds**: Once rivals gather enough observation points (from trade goods, debris, captured units), they unlock reverse engineering projects.

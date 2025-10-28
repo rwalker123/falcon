@@ -35,6 +35,7 @@ pub use culture::{
 pub use espionage::{
     EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionInstanceId,
     EspionageMissionKind, EspionageMissionState, EspionageRoster, QueueMissionError,
+    QueueMissionParams,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use great_discovery::{
