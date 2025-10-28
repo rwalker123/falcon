@@ -566,6 +566,29 @@ impl EspionageCatalog {
     pub fn config(&self) -> &EspionageBalanceConfig {
         self.config.as_ref()
     }
+
+    pub fn update_agent_generator(
+        &mut self,
+        template_id: &str,
+        enabled: Option<bool>,
+        per_faction: Option<u8>,
+    ) -> bool {
+        if let Some(generator) = self
+            .generators
+            .iter_mut()
+            .find(|generator| generator.id.0 == template_id)
+        {
+            if let Some(value) = enabled {
+                generator.enabled = value;
+            }
+            if let Some(value) = per_faction {
+                generator.per_faction = value;
+            }
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -670,6 +693,31 @@ impl EspionageRoster {
         self.agents
             .get(&faction)
             .and_then(|agents| agents.iter().find(|agent| agent.handle == handle))
+    }
+
+    pub fn refresh_generated_agents(&mut self, catalog: &EspionageCatalog, factions: &[FactionId]) {
+        for faction in factions {
+            let mut additions: Vec<EspionageAgent> = Vec::new();
+            for generator in catalog.generators() {
+                if !generator.is_enabled() {
+                    continue;
+                }
+                let mut rng = generator.rng_for_faction(*faction);
+                for variant_index in 0..generator.per_faction {
+                    let handle = self.allocate_handle();
+                    additions.push(generator.generate_agent(
+                        handle,
+                        *faction,
+                        variant_index,
+                        &mut rng,
+                    ));
+                }
+            }
+
+            let roster_entry = self.agents.entry(*faction).or_default();
+            roster_entry.retain(|agent| !agent.generated);
+            roster_entry.extend(additions);
+        }
     }
 }
 

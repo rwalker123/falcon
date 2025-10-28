@@ -12,13 +12,15 @@ use core_sim::log_stream::start_log_stream_server;
 use core_sim::metrics::{collect_metrics, SimulationMetrics};
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
-    build_headless_app, restore_world_from_snapshot, run_turn, CorruptionLedgers, FactionId,
-    FactionOrders, GenerationId, GenerationRegistry, InfluencerImpacts, InfluentialRoster, Scalar,
-    SentimentAxisBias, SimulationConfig, SimulationTick, SnapshotHistory, StoredSnapshot,
-    SubmitError, SubmitOutcome, SupportChannel, Tile, TurnQueue,
+    build_headless_app, restore_world_from_snapshot, run_turn, CorruptionLedgers, EspionageCatalog,
+    EspionageRoster, FactionId, FactionOrders, FactionRegistry, GenerationId, GenerationRegistry,
+    InfluencerImpacts, InfluentialRoster, Scalar, SentimentAxisBias, SimulationConfig,
+    SimulationTick, SnapshotHistory, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel,
+    Tile, TurnQueue,
 };
 use sim_runtime::{
-    AxisBiasState, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
+    commands::EspionageGeneratorUpdate as CommandGeneratorUpdate, AxisBiasState,
+    CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
     CorruptionEntry, CorruptionSubsystem, InfluenceScopeKind,
     OrdersDirective as ProtoOrdersDirective, SupportChannel as ProtoSupportChannel,
 };
@@ -206,6 +208,9 @@ fn main() {
                     flat_server,
                 );
             }
+            Command::UpdateEspionageGenerators { updates } => {
+                handle_update_espionage_generators(&mut app, updates);
+            }
         }
     }
 }
@@ -253,6 +258,9 @@ enum Command {
         subsystem: CorruptionSubsystem,
         intensity: f32,
         exposure_timer: u16,
+    },
+    UpdateEspionageGenerators {
+        updates: Vec<CommandGeneratorUpdate>,
     },
 }
 
@@ -402,6 +410,9 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
                 intensity,
                 exposure_timer: exposure,
             })
+        }
+        ProtoCommandPayload::UpdateEspionageGenerators { updates } => {
+            Some(Command::UpdateEspionageGenerators { updates })
         }
     }
 }
@@ -791,6 +802,65 @@ fn handle_inject_corruption(
         exposure_timer = timer,
         incident_id,
         "corruption.injected"
+    );
+}
+
+fn handle_update_espionage_generators(
+    app: &mut bevy::prelude::App,
+    updates: Vec<CommandGeneratorUpdate>,
+) {
+    if updates.is_empty() {
+        info!(
+            target: "shadow_scale::espionage",
+            "espionage.generator.update_skipped=no_updates"
+        );
+        return;
+    }
+
+    let factions: Vec<FactionId> = {
+        let registry = app.world.resource::<FactionRegistry>();
+        registry.factions.clone()
+    };
+
+    let mut catalog = app.world.resource_mut::<EspionageCatalog>();
+    let mut changed = false;
+
+    for update in updates {
+        let template_id = update.template_id;
+        let enabled = update.enabled;
+        let per_faction = update.per_faction;
+        let applied = catalog.update_agent_generator(template_id.as_str(), enabled, per_faction);
+        if applied {
+            changed = true;
+            info!(
+                target: "shadow_scale::espionage",
+                template_id,
+                enabled = ?enabled,
+                per_faction = ?per_faction,
+                "espionage.generator.updated"
+            );
+        } else {
+            warn!(
+                target: "shadow_scale::espionage",
+                template_id,
+                "espionage.generator.update_failed=unknown_template"
+            );
+        }
+    }
+    if !changed {
+        return;
+    }
+
+    app.world
+        .resource_scope(|world, mut roster: bevy::prelude::Mut<EspionageRoster>| {
+            let catalog = world.resource::<EspionageCatalog>();
+            roster.refresh_generated_agents(catalog, &factions);
+        });
+
+    info!(
+        target: "shadow_scale::espionage",
+        factions = factions.len(),
+        "espionage.generators.reseeded"
     );
 }
 

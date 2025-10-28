@@ -66,6 +66,16 @@ pub enum CommandPayload {
         intensity: f32,
         exposure_timer: u32,
     },
+    UpdateEspionageGenerators {
+        updates: Vec<EspionageGeneratorUpdate>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EspionageGeneratorUpdate {
+    pub template_id: String,
+    pub enabled: Option<bool>,
+    pub per_faction: Option<u8>,
 }
 
 /// Directive for faction orders.
@@ -194,6 +204,20 @@ impl CommandEnvelope {
                 intensity: *intensity,
                 exposure_timer: *exposure_timer,
             }),
+            CommandPayload::UpdateEspionageGenerators { updates } => {
+                pb::command_envelope::Command::UpdateEspionageGenerators(
+                    pb::UpdateEspionageGeneratorsCommand {
+                        updates: updates
+                            .iter()
+                            .map(|update| pb::EspionageGeneratorUpdate {
+                                template_id: update.template_id.clone(),
+                                enabled: update.enabled,
+                                per_faction: update.per_faction.map(|value| value as u32),
+                            })
+                            .collect(),
+                    },
+                )
+            }
         });
 
         pb::CommandEnvelope {
@@ -268,6 +292,27 @@ impl CommandEnvelope {
                     intensity: cmd.intensity,
                     exposure_timer: cmd.exposure_timer,
                 }
+            }
+            pb::command_envelope::Command::UpdateEspionageGenerators(cmd) => {
+                let mut updates = Vec::with_capacity(cmd.updates.len());
+                for update in cmd.updates {
+                    let per_faction = match update.per_faction {
+                        Some(value) if value <= u8::MAX as u32 => Some(value as u8),
+                        Some(value) => {
+                            return Err(CommandDecodeError::InvalidEnum {
+                                field: "EspionageGeneratorUpdate.per_faction",
+                                value: value as i32,
+                            })
+                        }
+                        None => None,
+                    };
+                    updates.push(EspionageGeneratorUpdate {
+                        template_id: update.template_id,
+                        enabled: update.enabled,
+                        per_faction,
+                    });
+                }
+                CommandPayload::UpdateEspionageGenerators { updates }
             }
         };
 
