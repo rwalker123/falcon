@@ -930,12 +930,40 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     }
     let mut dict = agg.into_dictionary();
 
+    if let Some(definitions) = delta.greatDiscoveryDefinitions() {
+        let _ = dict.insert(
+            "great_discovery_definitions",
+            great_discovery_definitions_to_array(definitions),
+        );
+    }
+
     if let Some(axis_bias) = delta.axisBias() {
         let _ = dict.insert("axis_bias", axis_bias_to_dict(axis_bias));
     }
 
     if let Some(sentiment) = delta.sentiment() {
         let _ = dict.insert("sentiment", sentiment_to_dict(sentiment));
+    }
+
+    if let Some(great_discoveries) = delta.greatDiscoveries() {
+        let updates = great_discovery_states_to_array(great_discoveries);
+        if !updates.is_empty() {
+            let _ = dict.insert("great_discovery_updates", updates);
+        }
+    }
+
+    if let Some(great_progress) = delta.greatDiscoveryProgress() {
+        let updates = great_discovery_progress_states_to_array(great_progress);
+        if !updates.is_empty() {
+            let _ = dict.insert("great_discovery_progress_updates", updates);
+        }
+    }
+
+    if let Some(gd_telemetry) = delta.greatDiscoveryTelemetry() {
+        let _ = dict.insert(
+            "great_discovery_telemetry",
+            great_discovery_telemetry_to_dict(gd_telemetry),
+        );
     }
 
     if let Some(influencers) = delta.influencers() {
@@ -1892,6 +1920,34 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         let _ = dict.insert("trade_links", trade_links_to_array(trade_links));
     }
 
+    if let Some(definitions) = snapshot.greatDiscoveryDefinitions() {
+        let _ = dict.insert(
+            "great_discovery_definitions",
+            great_discovery_definitions_to_array(definitions),
+        );
+    }
+
+    if let Some(great_discoveries) = snapshot.greatDiscoveries() {
+        let _ = dict.insert(
+            "great_discoveries",
+            great_discovery_states_to_array(great_discoveries),
+        );
+    }
+
+    if let Some(great_progress) = snapshot.greatDiscoveryProgress() {
+        let _ = dict.insert(
+            "great_discovery_progress",
+            great_discovery_progress_states_to_array(great_progress),
+        );
+    }
+
+    if let Some(gd_telemetry) = snapshot.greatDiscoveryTelemetry() {
+        let _ = dict.insert(
+            "great_discovery_telemetry",
+            great_discovery_telemetry_to_dict(gd_telemetry),
+        );
+    }
+
     if let Some(tiles_fb) = snapshot.tiles() {
         let _ = dict.insert("tiles", tiles_to_array(tiles_fb));
     }
@@ -1995,6 +2051,35 @@ fn normalize_overlay(values: &mut [f32]) {
             *v = 0.0;
         }
     }
+}
+
+fn knowledge_field_label(field: fb::KnowledgeField) -> &'static str {
+    match field {
+        fb::KnowledgeField::Physics => "Physics",
+        fb::KnowledgeField::Chemistry => "Chemistry",
+        fb::KnowledgeField::Biology => "Biology",
+        fb::KnowledgeField::Data => "Data",
+        fb::KnowledgeField::Communication => "Communication",
+        fb::KnowledgeField::Exotic => "Exotic",
+        _ => "Unknown",
+    }
+}
+
+fn great_discovery_effect_labels(mask: u32) -> PackedStringArray {
+    let mut labels = PackedStringArray::new();
+    if mask & (1 << 0) != 0 {
+        labels.push(&GString::from("Power"));
+    }
+    if mask & (1 << 1) != 0 {
+        labels.push(&GString::from("Crisis"));
+    }
+    if mask & (1 << 2) != 0 {
+        labels.push(&GString::from("Diplomacy"));
+    }
+    if mask & (1 << 3) != 0 {
+        labels.push(&GString::from("Forced Publication"));
+    }
+    labels
 }
 
 fn axis_bias_to_dict(axis: fb::AxisBiasState<'_>) -> Dictionary {
@@ -2349,6 +2434,169 @@ fn discovery_progress_to_array(
         array.push(&dict.to_variant());
     }
     array
+}
+
+fn great_discovery_state_to_dict(state: fb::GreatDiscoveryState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("id", state.id() as i64);
+    let _ = dict.insert("faction", state.faction() as i64);
+    let _ = dict.insert("field_label", knowledge_field_label(state.field()));
+    let _ = dict.insert("tick", state.tick() as i64);
+    let _ = dict.insert("publicly_deployed", state.publiclyDeployed());
+    let effect_flags = state.effectFlags();
+    let _ = dict.insert("effect_flags", effect_flags as i64);
+    let _ = dict.insert("effects", great_discovery_effect_labels(effect_flags));
+    dict
+}
+
+fn great_discovery_states_to_array(
+    list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::GreatDiscoveryState<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for state in list {
+        let dict = great_discovery_state_to_dict(state);
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn great_discovery_requirement_definition_to_dict(
+    req: fb::GreatDiscoveryRequirementDefinition<'_>,
+) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("discovery_id", req.discoveryId() as i64);
+    let _ = dict.insert("weight", f64::from(req.weight()));
+    let _ = dict.insert("minimum_progress", f64::from(req.minimumProgress()));
+    if let Some(name) = req.name() {
+        let _ = dict.insert("name", GString::from(name));
+    }
+    if let Some(summary) = req.summary() {
+        let _ = dict.insert("summary", GString::from(summary));
+    }
+    dict
+}
+
+fn great_discovery_requirements_to_array(
+    list: flatbuffers::Vector<
+        '_,
+        flatbuffers::ForwardsUOffset<fb::GreatDiscoveryRequirementDefinition<'_>>,
+    >,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for req in list {
+        let dict = great_discovery_requirement_definition_to_dict(req);
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn string_vector_to_packed(
+    strings: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<&str>>,
+) -> PackedStringArray {
+    let mut array = PackedStringArray::new();
+    for value in strings {
+        array.push(&GString::from(value));
+    }
+    array
+}
+
+fn great_discovery_definition_to_dict(definition: fb::GreatDiscoveryDefinition<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("id", definition.id() as i64);
+    if let Some(name) = definition.name() {
+        let _ = dict.insert("name", GString::from(name));
+    }
+    let field = definition.field();
+    let _ = dict.insert("field", GString::from(knowledge_field_label(field)));
+    let _ = dict.insert(
+        "observation_threshold",
+        definition.observationThreshold() as i64,
+    );
+    let _ = dict.insert("cooldown_ticks", definition.cooldownTicks() as i64);
+    if definition.hasFreshnessWindow() {
+        let _ = dict.insert("freshness_window", definition.freshnessWindow() as i64);
+    }
+    let _ = dict.insert("effect_flags", definition.effectFlags() as i64);
+    let _ = dict.insert("covert_until_public", definition.covertUntilPublic());
+    if let Some(tier) = definition.tier() {
+        let _ = dict.insert("tier", GString::from(tier));
+    }
+    if let Some(summary) = definition.summary() {
+        let _ = dict.insert("summary", GString::from(summary));
+    }
+    if let Some(tags) = definition.tags() {
+        let packed = string_vector_to_packed(tags);
+        let _ = dict.insert("tags", packed);
+    } else {
+        let _ = dict.insert("tags", PackedStringArray::new());
+    }
+    if let Some(effects) = definition.effectsSummary() {
+        let packed = string_vector_to_packed(effects);
+        let _ = dict.insert("effects_summary", packed);
+    } else {
+        let _ = dict.insert("effects_summary", PackedStringArray::new());
+    }
+    if let Some(notes) = definition.observationNotes() {
+        let _ = dict.insert("observation_notes", GString::from(notes));
+    }
+    if let Some(profile) = definition.leakProfile() {
+        let _ = dict.insert("leak_profile", GString::from(profile));
+    }
+    if let Some(requirements) = definition.requirements() {
+        let array = great_discovery_requirements_to_array(requirements);
+        let _ = dict.insert("requirements", array);
+    } else {
+        let _ = dict.insert("requirements", VariantArray::new());
+    }
+    dict
+}
+
+fn great_discovery_definitions_to_array(
+    list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::GreatDiscoveryDefinition<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for definition in list {
+        let dict = great_discovery_definition_to_dict(definition);
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn great_discovery_progress_state_to_dict(
+    state: fb::GreatDiscoveryProgressState<'_>,
+) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let progress_raw = state.progress();
+    let _ = dict.insert("faction", state.faction() as i64);
+    let _ = dict.insert("discovery", state.discovery() as i64);
+    let _ = dict.insert("progress_raw", progress_raw);
+    let _ = dict.insert("progress", fixed64_to_f64(progress_raw));
+    let _ = dict.insert("observation_deficit", state.observationDeficit() as i64);
+    let _ = dict.insert("eta_ticks", state.etaTicks() as i64);
+    let _ = dict.insert("covert", state.covert());
+    dict
+}
+
+fn great_discovery_progress_states_to_array(
+    list: flatbuffers::Vector<
+        '_,
+        flatbuffers::ForwardsUOffset<fb::GreatDiscoveryProgressState<'_>>,
+    >,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for state in list {
+        let dict = great_discovery_progress_state_to_dict(state);
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn great_discovery_telemetry_to_dict(state: fb::GreatDiscoveryTelemetryState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let _ = dict.insert("total_resolved", state.totalResolved() as i64);
+    let _ = dict.insert("pending_candidates", state.pendingCandidates() as i64);
+    let _ = dict.insert("active_constellations", state.activeConstellations() as i64);
+    dict
 }
 
 fn tile_to_dict(tile: fb::TileState<'_>) -> Dictionary {

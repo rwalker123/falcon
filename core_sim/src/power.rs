@@ -1,8 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 
-use crate::scalar::{scalar_zero, Scalar};
+use crate::{
+    great_discovery::GreatDiscoveryId,
+    scalar::{scalar_zero, Scalar},
+};
 
 /// Identifier assigned to each power node in the grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -58,6 +61,21 @@ pub struct PowerIncident {
     pub node_id: PowerNodeId,
     pub severity: PowerIncidentSeverity,
     pub deficit: Scalar,
+}
+
+#[derive(Resource, Debug, Default, Clone)]
+pub struct PowerDiscoveryEffects {
+    unlocked: HashSet<GreatDiscoveryId>,
+}
+
+impl PowerDiscoveryEffects {
+    pub fn register(&mut self, id: GreatDiscoveryId) -> bool {
+        self.unlocked.insert(id)
+    }
+
+    pub fn contains(&self, id: GreatDiscoveryId) -> bool {
+        self.unlocked.contains(&id)
+    }
 }
 
 /// Aggregated power grid state exported to telemetry and snapshot layers.

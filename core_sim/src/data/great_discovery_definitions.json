@@ -1,0 +1,172 @@
+[
+  {
+    "id": 101,
+    "name": "Fusion Power",
+    "field": "Physics",
+    "tier": "Tier 3 Energy",
+    "summary": "Controlled stellar reactors deliver grid-scale surplus and rewire geopolitical leverage.",
+    "tags": ["energy", "strategic", "infrastructure"],
+    "observation_threshold": 6,
+    "cooldown_ticks": 8,
+    "freshness_window": 10,
+    "effect_flags": ["power", "diplomacy"],
+    "covert_until_public": false,
+    "effects_summary": [
+      "Unlocks fusion plant blueprints with massive baseline output and low waste.",
+      "Diplomatic partners seek exclusive fuel treaties, increasing leverage for the owning faction."
+    ],
+    "observation_notes": "Prototype reactors must operate long enough for global sensors to confirm stability.",
+    "leak_profile": "Facility scale and fuel logistics make secrecy difficult—expect rapid observation once deployed.",
+    "requirements": [
+      {
+        "discovery_id": 5001,
+        "name": "Atomic Resonance Stabilizers",
+        "weight": 1.0,
+        "minimum_progress": 0.65,
+        "summary": "Precision isotope refinement enabling sustained reaction fuel blends."
+      },
+      {
+        "discovery_id": 5002,
+        "name": "Containment Lattice Fabrics",
+        "weight": 0.8,
+        "minimum_progress": 0.60,
+        "summary": "Adaptive magnetic scaffolds that keep plasma confined under extreme flux."
+      },
+      {
+        "discovery_id": 5003,
+        "name": "Tritium Harvest Networks",
+        "weight": 0.6,
+        "minimum_progress": 0.55,
+        "summary": "Distributed breeder arrays sustaining reactor-grade fuel throughput."
+      }
+    ]
+  },
+  {
+    "id": 102,
+    "name": "Synthetic Sentience",
+    "field": "Data",
+    "tier": "Tier 3 Cognition",
+    "summary": "Self-directed machine minds emerge from quantum learning loops, challenging governance norms.",
+    "tags": ["automation", "espionage", "risk"],
+    "observation_threshold": 5,
+    "cooldown_ticks": 9,
+    "freshness_window": 6,
+    "effect_flags": ["power", "diplomacy", "crisis"],
+    "covert_until_public": true,
+    "effects_summary": [
+      "Enables sentient automation cores that optimize industry, research, and logistics without supervision.",
+      "Triggers global ethics summits and espionage races, reshaping diplomatic alignments.",
+      "Seeds AI Sovereign crisis tracks when rivals detect runaway autonomy."
+    ],
+    "observation_notes": "Field telemetry, cultural leaks, and cyber incursions all accelerate outside detection once deployed.",
+    "leak_profile": "Covert deployments can mask intent briefly, but public-facing usage cascades into global awareness within a handful of turns.",
+    "requirements": [
+      {
+        "discovery_id": 5201,
+        "name": "Neural Pattern Analysis",
+        "weight": 1.0,
+        "minimum_progress": 0.60,
+        "summary": "Recursive cognition models derived from cultural telemetry and espionage logs."
+      },
+      {
+        "discovery_id": 5202,
+        "name": "Quantum Storage Matrices",
+        "weight": 1.2,
+        "minimum_progress": 0.55,
+        "summary": "Entangled memory cores that preserve evolving consciousness states."
+      },
+      {
+        "discovery_id": 5203,
+        "name": "Synthetic Ethics Frameworks",
+        "weight": 0.7,
+        "minimum_progress": 0.52,
+        "summary": "Value-binding governance scaffolds that stabilize autonomous decision loops."
+      }
+    ]
+  },
+  {
+    "id": 103,
+    "name": "Antigravitic Flow Systems",
+    "field": "Exotic",
+    "tier": "Exotic Mobility",
+    "summary": "Gravitic shear harnessed for logistics and defense, dissolving traditional terrain constraints.",
+    "tags": ["mobility", "power_projection", "visibility"],
+    "observation_threshold": 7,
+    "cooldown_ticks": 12,
+    "freshness_window": 8,
+    "effect_flags": ["power", "crisis", "forced_publication"],
+    "covert_until_public": true,
+    "effects_summary": [
+      "Unlocks antigravitic carriers and freight spines that bypass terrain attrition.",
+      "Manipulating localized gravity wells invites catastrophic backlash when mismanaged.",
+      "Public deployment turns the sky into a billboard—every rival accelerates catch-up research."
+    ],
+    "observation_notes": "Flight corridors leave unmistakable telemetry; covert staging is viable only before first launch.",
+    "leak_profile": "Once airborne use begins, global observation saturates and diffusion becomes inevitable.",
+    "requirements": [
+      {
+        "discovery_id": 5301,
+        "name": "Subterranean Pressure Mapping",
+        "weight": 0.8,
+        "minimum_progress": 0.50,
+        "summary": "High-resolution geologic scans that reveal latent gravitic fault lines."
+      },
+      {
+        "discovery_id": 5302,
+        "name": "Field Harmonic Inverters",
+        "weight": 1.2,
+        "minimum_progress": 0.65,
+        "summary": "Exotic field modulators capable of sustaining asymmetric gravitic gradients."
+      },
+      {
+        "discovery_id": 5303,
+        "name": "Inertial Waveguides",
+        "weight": 0.6,
+        "minimum_progress": 0.40,
+        "summary": "Channel architectures that prevent feedback collapse in gravitational conduits."
+      }
+    ]
+  },
+  {
+    "id": 104,
+    "name": "Bio-Fabricated Organ Networks",
+    "field": "Biology",
+    "tier": "Advanced Biotech",
+    "summary": "Living supply chains produce custom organs on demand, transforming healthcare and diplomacy.",
+    "tags": ["health", "culture", "diplomacy"],
+    "observation_threshold": 4,
+    "cooldown_ticks": 6,
+    "freshness_window": 5,
+    "effect_flags": ["diplomacy"],
+    "covert_until_public": false,
+    "effects_summary": [
+      "Diplomatic aid packages gain powerful leverage by exporting life-saving grafts.",
+      "Migration pressure realigns as populations seek access to regenerative care."
+    ],
+    "observation_notes": "Clinical trials can remain private briefly, but global humanitarian demand soon exposes the discovery.",
+    "leak_profile": "Visible humanitarian deployments accelerate diffusion yet bolster goodwill.",
+    "requirements": [
+      {
+        "discovery_id": 5401,
+        "name": "Adaptive Genome Foundries",
+        "weight": 1.0,
+        "minimum_progress": 0.60,
+        "summary": "Rapid blueprint generation aligning organ tissue with patient genomes."
+      },
+      {
+        "discovery_id": 5402,
+        "name": "Synthetic Tissue Scaffolds",
+        "weight": 0.8,
+        "minimum_progress": 0.50,
+        "summary": "Bioreactive matrices that support complex organ growth outside the body."
+      },
+      {
+        "discovery_id": 5403,
+        "name": "Immune Compatibility Atlas",
+        "weight": 0.5,
+        "minimum_progress": 0.50,
+        "summary": "Predictive immunology database minimizing rejection cascades."
+      }
+    ]
+  }
+]

@@ -272,6 +272,7 @@ pub struct DiplomacyLeverage {
     pub recent: Vec<CorruptionExposureRecord>,
     pub max_entries: usize,
     pub culture_signals: Vec<CultureTensionRecord>,
+    pub great_discoveries: Vec<(FactionId, u16)>,
 }
 
 impl DiplomacyLeverage {
@@ -295,6 +296,32 @@ impl DiplomacyLeverage {
             let overflow = self.culture_signals.len() - self.max_entries;
             self.culture_signals.drain(0..overflow);
         }
+    }
+
+    pub fn push_great_discovery(&mut self, faction: FactionId, discovery_id: u16) {
+        if self.max_entries == 0 {
+            self.max_entries = 16;
+        }
+        self.great_discoveries.push((faction, discovery_id));
+        if self.great_discoveries.len() > self.max_entries {
+            let overflow = self.great_discoveries.len() - self.max_entries;
+            self.great_discoveries.drain(0..overflow);
+        }
+    }
+}
+
+#[derive(Resource, Debug, Clone, Default)]
+pub struct PendingCrisisSeeds {
+    pub seeds: Vec<(FactionId, u16)>,
+}
+
+impl PendingCrisisSeeds {
+    pub fn push(&mut self, faction: FactionId, discovery_id: u16) {
+        self.seeds.push((faction, discovery_id));
+    }
+
+    pub fn drain(&mut self) -> Vec<(FactionId, u16)> {
+        std::mem::take(&mut self.seeds)
     }
 }
 

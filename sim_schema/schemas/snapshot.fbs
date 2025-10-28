@@ -97,6 +97,15 @@ enum TerrainType : ushort {
   AquiferCeiling
 }
 
+enum KnowledgeField : ubyte {
+  Physics,
+  Chemistry,
+  Biology,
+  Data,
+  Communication,
+  Exotic
+}
+
 table TerrainSample {
   terrain:TerrainType;
   tags:ushort;
@@ -191,6 +200,30 @@ table CultureTensionState {
   severity:long;
   timer:ushort;
   kind:CultureTensionKind;
+}
+
+table GreatDiscoveryState {
+  id:ushort;
+  faction:uint;
+  field:KnowledgeField;
+  tick:ulong;
+  publiclyDeployed:bool;
+  effectFlags:uint;
+}
+
+table GreatDiscoveryProgressState {
+  faction:uint;
+  discovery:ushort;
+  progress:long;
+  observationDeficit:uint;
+  etaTicks:uint;
+  covert:bool;
+}
+
+table GreatDiscoveryTelemetryState {
+  totalResolved:uint;
+  pendingCandidates:uint;
+  activeConstellations:uint;
 }
 
 table TileState {
@@ -373,6 +406,33 @@ table DiscoveryProgressEntry {
   progress:long;
 }
 
+table GreatDiscoveryRequirementDefinition {
+  discoveryId:uint;
+  weight:float;
+  minimumProgress:float;
+  name:string;
+  summary:string;
+}
+
+table GreatDiscoveryDefinition {
+  id:ushort;
+  name:string;
+  field:KnowledgeField;
+  observationThreshold:uint;
+  cooldownTicks:ushort;
+  freshnessWindow:ushort;
+  hasFreshnessWindow:bool;
+  effectFlags:uint;
+  covertUntilPublic:bool;
+  tier:string;
+  summary:string;
+  tags:[string];
+  effectsSummary:[string];
+  observationNotes:string;
+  leakProfile:string;
+  requirements:[GreatDiscoveryRequirementDefinition];
+}
+
 table WorldSnapshot {
   header:SnapshotHeader;
   tiles:[TileState];
@@ -381,6 +441,10 @@ table WorldSnapshot {
   populations:[PopulationCohortState];
   power:[PowerNodeState];
   powerMetrics:PowerTelemetryState;
+  greatDiscoveryDefinitions:[GreatDiscoveryDefinition];
+  greatDiscoveries:[GreatDiscoveryState];
+  greatDiscoveryProgress:[GreatDiscoveryProgressState];
+  greatDiscoveryTelemetry:GreatDiscoveryTelemetryState;
   terrainOverlay:TerrainOverlay;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
@@ -411,6 +475,10 @@ table WorldDelta {
   power:[PowerNodeState];
   removedPower:[ulong];
   powerMetrics:PowerTelemetryState;
+  greatDiscoveryDefinitions:[GreatDiscoveryDefinition];
+  greatDiscoveries:[GreatDiscoveryState];
+  greatDiscoveryProgress:[GreatDiscoveryProgressState];
+  greatDiscoveryTelemetry:GreatDiscoveryTelemetryState;
   axisBias:AxisBiasState;
   sentiment:SentimentTelemetryState;
   generations:[GenerationState];

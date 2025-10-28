@@ -11,6 +11,9 @@ pub struct SimulationMetrics {
     pub grid_stress_avg: f32,
     pub grid_surplus_margin: f32,
     pub instability_alerts: u32,
+    pub great_discoveries_total: u32,
+    pub great_discovery_candidates: u32,
+    pub great_discovery_active: u32,
 }
 
 pub fn collect_metrics(

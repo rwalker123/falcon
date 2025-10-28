@@ -264,6 +264,14 @@ Civilizations don’t evolve in eras—they leap. The **Great Discovery System**
 - **Neural Pattern Analysis** + **Quantum Storage** → **Synthetic Sentience**.
 - **Subterranean Pressure Mapping** → **Antigravitic Flow Systems**.
 
+### First-Wave Constellations
+- **Fusion Power (D101)** — Physics field breakthrough seeded from Atomic Resonance Stabilizers, Containment Lattice Fabrics, and Tritium Harvest Networks. Requires 6 verified reactor observations, then imposes an 8-turn cooldown while breeder networks spin up. Unlocks grid-scale fusion plants and fresh diplomatic leverage for exclusive fuel treaties. (Technical ingestion: `docs/architecture.md` §Great Discovery Catalog).
+- **Synthetic Sentience (D102)** — Data field leap combining Neural Pattern Analysis, Quantum Storage Matrices, and Synthetic Ethics Frameworks. Observation gate 5, cooldown 9 turns, freshness window 6 turns; remains covert until publicly deployed. Grants autonomous industry optimizers, strains alliance trust, and seeds the AI Sovereign crisis trigger.
+- **Antigravitic Flow Systems (D103)** — Exotic mobility derived from Subterranean Pressure Mapping, Field Harmonic Inverters, and Inertial Waveguides. Observation gate 7 with a 12-turn cooldown and 8-turn freshness window; covert until launch and flagged for forced publication once airborne. Enables antigravitic logistics corridors while pushing rival crisis posture.
+- **Bio-Fabricated Organ Networks (D104)** — Biology field advance requiring Adaptive Genome Foundries, Synthetic Tissue Scaffolds, and an Immune Compatibility Atlas. Observation gate 4, 6-turn cooldown, 5-turn freshness window. Delivers humanitarian leverage through regenerative care exports and reshapes migration incentives.
+
+Great Discovery definitions now flow from the simulation server to the inspector with each snapshot, keeping player-facing metadata in lockstep with the authoritative catalog.
+
 ### Leap Consequences
 - Civilizations gain new industrial and military capabilities.
 - Global power realignment; new hegemonies form.
