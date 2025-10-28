@@ -1369,6 +1369,9 @@ pub fn resolve_espionage_missions(
     let mut resolved_instances: Vec<EspionageMissionInstanceId> = Vec::new();
 
     for mission in missions.active.iter_mut() {
+        if tick.0 < mission.scheduled_tick {
+            continue;
+        }
         if mission.ticks_remaining > 0 {
             mission.ticks_remaining -= 1;
         }
@@ -1483,7 +1486,10 @@ fn determine_mission_outcome(
                     partial_suspicion_gain = suspicion_floor;
                 }
                 let partial_fidelity_gain = base_fidelity_gain * fidelity_scalar;
-                let partial_cells = (template.cell_gain_on_success as u16).div_ceil(2).max(1) as u8;
+                let partial_cells = (template.cell_gain_on_success as u16)
+                    .div_ceil(2)
+                    .max(1)
+                    .min(u8::MAX as u16) as u8;
 
                 outcome.probe_event = Some(EspionageProbeEvent {
                     owner: mission.target_owner,
