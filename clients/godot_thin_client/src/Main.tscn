@@ -610,13 +610,100 @@ size_flags_horizontal = 3
 bbcode_enabled = true
 fit_content = true
 
+[node name="GreatDiscoveries" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 10
+
+[node name="GreatDiscoveryVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/GreatDiscoveries"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="GreatDiscoverySummaryLabel" type="Label" parent="Inspector/RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Great Discoveries"
+
+[node name="GreatDiscoverySummaryText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="GreatDiscoveryDefinitionsSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="GreatDiscoveryDefinitionsLabel" type="Label" parent="Inspector/RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryDefinitionsSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Definition Library"
+
+[node name="GreatDiscoveryDefinitionsList" type="ItemList" parent="Inspector/RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryDefinitionsSection"]
+custom_minimum_size = Vector2(0, 160)
+layout_mode = 2
+size_flags_horizontal = 3
+allow_rmb_select = true
+same_column_width = true
+
+[node name="GreatDiscoveryLedgerSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="GreatDiscoveryLedgerLabel" type="Label" parent="Inspector/RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Resolved Ledger"
+
+[node name="GreatDiscoveryLedgerList" type="ItemList" parent="Inspector/RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection"]
+custom_minimum_size = Vector2(0, 200)
+layout_mode = 2
+size_flags_horizontal = 3
+allow_rmb_select = true
+same_column_width = true
+
+[node name="GreatDiscoveryLedgerDetail" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="GreatDiscoveryProgressSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="GreatDiscoveryProgressLabel" type="Label" parent="Inspector/RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Active Constellations"
+
+[node name="GreatDiscoveryProgressList" type="ItemList" parent="Inspector/RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection"]
+custom_minimum_size = Vector2(0, 200)
+layout_mode = 2
+size_flags_horizontal = 3
+allow_rmb_select = true
+same_column_width = true
+
+[node name="GreatDiscoveryProgressDetail" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
 [node name="Logs" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer"]
 visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 8
-metadata/_tab_index = 10
+metadata/_tab_index = 11
 
 [node name="SparklineContainer" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Logs"]
 layout_mode = 2
@@ -700,7 +787,7 @@ fit_content = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-metadata/_tab_index = 11
+metadata/_tab_index = 12
 
 [node name="StatusLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands"]
 layout_mode = 2

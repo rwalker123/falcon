@@ -406,6 +406,33 @@ table DiscoveryProgressEntry {
   progress:long;
 }
 
+table GreatDiscoveryRequirementDefinition {
+  discoveryId:uint;
+  weight:float;
+  minimumProgress:float;
+  name:string;
+  summary:string;
+}
+
+table GreatDiscoveryDefinition {
+  id:ushort;
+  name:string;
+  field:KnowledgeField;
+  observationThreshold:uint;
+  cooldownTicks:ushort;
+  freshnessWindow:ushort;
+  hasFreshnessWindow:bool;
+  effectFlags:uint;
+  covertUntilPublic:bool;
+  tier:string;
+  summary:string;
+  tags:[string];
+  effectsSummary:[string];
+  observationNotes:string;
+  leakProfile:string;
+  requirements:[GreatDiscoveryRequirementDefinition];
+}
+
 table WorldSnapshot {
   header:SnapshotHeader;
   tiles:[TileState];
@@ -414,6 +441,7 @@ table WorldSnapshot {
   populations:[PopulationCohortState];
   power:[PowerNodeState];
   powerMetrics:PowerTelemetryState;
+  greatDiscoveryDefinitions:[GreatDiscoveryDefinition];
   greatDiscoveries:[GreatDiscoveryState];
   greatDiscoveryProgress:[GreatDiscoveryProgressState];
   greatDiscoveryTelemetry:GreatDiscoveryTelemetryState;
@@ -447,6 +475,7 @@ table WorldDelta {
   power:[PowerNodeState];
   removedPower:[ulong];
   powerMetrics:PowerTelemetryState;
+  greatDiscoveryDefinitions:[GreatDiscoveryDefinition];
   greatDiscoveries:[GreatDiscoveryState];
   greatDiscoveryProgress:[GreatDiscoveryProgressState];
   greatDiscoveryTelemetry:GreatDiscoveryTelemetryState;

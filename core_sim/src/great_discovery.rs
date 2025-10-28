@@ -10,15 +10,81 @@ use crate::{
     scalar::{scalar_one, scalar_zero, Scalar},
 };
 
+use serde::Deserialize;
 use sim_runtime::{
-    GreatDiscoveryProgressState, GreatDiscoveryState, GreatDiscoveryTelemetryState, KnowledgeField,
+    GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryRequirementState,
+    GreatDiscoveryState, GreatDiscoveryTelemetryState, KnowledgeField,
 };
+use thiserror::Error;
 
 pub mod effect_flags {
     pub const POWER: u32 = 1 << 0;
     pub const CRISIS: u32 = 1 << 1;
     pub const DIPLOMACY: u32 = 1 << 2;
     pub const FORCED_PUBLICATION: u32 = 1 << 3;
+}
+
+pub const BUILTIN_GREAT_DISCOVERY_CATALOG: &str =
+    include_str!("data/great_discovery_definitions.json");
+
+#[derive(Debug, Error)]
+pub enum GreatDiscoveryCatalogError {
+    #[error("failed to parse Great Discovery catalog: {0}")]
+    Parse(#[from] serde_json::Error),
+    #[error("duplicate Great Discovery definition id {id}")]
+    DuplicateDefinition { id: u16 },
+    #[error("unknown Great Discovery effect flag '{flag}' in definition {id}")]
+    UnknownEffectFlag { id: u16, flag: String },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GreatDiscoveryCatalogEntry {
+    id: u16,
+    name: String,
+    field: KnowledgeField,
+    #[serde(default)]
+    requirements: Vec<GreatDiscoveryCatalogRequirement>,
+    #[serde(default)]
+    observation_threshold: u32,
+    #[serde(default)]
+    cooldown_ticks: u16,
+    #[serde(default)]
+    freshness_window: Option<u16>,
+    #[serde(default)]
+    effect_flags: Vec<String>,
+    #[serde(default)]
+    effect_flag_bits: Option<u32>,
+    #[serde(default)]
+    covert_until_public: bool,
+    #[serde(default)]
+    tier: Option<String>,
+    #[serde(default)]
+    summary: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    effects_summary: Vec<String>,
+    #[serde(default)]
+    observation_notes: Option<String>,
+    #[serde(default)]
+    leak_profile: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GreatDiscoveryCatalogRequirement {
+    discovery_id: u32,
+    #[serde(default = "default_requirement_weight")]
+    weight: f32,
+    #[serde(default)]
+    minimum_progress: f32,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    summary: Option<String>,
+}
+
+const fn default_requirement_weight() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -108,12 +174,158 @@ impl GreatDiscoveryDefinition {
     }
 }
 
+fn definition_from_catalog_entry(
+    entry: &GreatDiscoveryCatalogEntry,
+) -> Result<GreatDiscoveryDefinition, GreatDiscoveryCatalogError> {
+    let id = GreatDiscoveryId(entry.id);
+    let requirements = requirements_from_catalog(&entry.requirements);
+    let effect_flags = collect_effect_flags(entry.id, &entry.effect_flags, entry.effect_flag_bits)?;
+    Ok(GreatDiscoveryDefinition::new(
+        id,
+        entry.name.clone(),
+        entry.field,
+        requirements,
+        entry.observation_threshold,
+        entry.cooldown_ticks,
+        entry.freshness_window,
+        effect_flags,
+        entry.covert_until_public,
+    ))
+}
+
+fn requirements_from_catalog(
+    requirements: &[GreatDiscoveryCatalogRequirement],
+) -> Vec<ConstellationRequirement> {
+    requirements
+        .iter()
+        .map(|req| {
+            let weight = if req.weight <= 0.0 { 1.0 } else { req.weight };
+            let minimum = req.minimum_progress.clamp(0.0, 1.0);
+            ConstellationRequirement::new(
+                req.discovery_id,
+                Scalar::from_f32(weight),
+                Scalar::from_f32(minimum),
+            )
+        })
+        .collect()
+}
+
+fn collect_effect_flags(
+    id: u16,
+    names: &[String],
+    bits: Option<u32>,
+) -> Result<u32, GreatDiscoveryCatalogError> {
+    let mut value = bits.unwrap_or(0);
+    for name in names {
+        value |= parse_effect_flag(id, name)?;
+    }
+    Ok(value)
+}
+
+fn parse_effect_flag(id: u16, flag: &str) -> Result<u32, GreatDiscoveryCatalogError> {
+    let normalized = flag.trim().to_ascii_uppercase().replace(['-', ' '], "_");
+    match normalized.as_str() {
+        "POWER" => Ok(effect_flags::POWER),
+        "CRISIS" => Ok(effect_flags::CRISIS),
+        "DIPLOMACY" => Ok(effect_flags::DIPLOMACY),
+        "FORCED_PUBLICATION" | "FORCEDPUBLICATION" => Ok(effect_flags::FORCED_PUBLICATION),
+        other => Err(GreatDiscoveryCatalogError::UnknownEffectFlag {
+            id,
+            flag: other.to_owned(),
+        }),
+    }
+}
+
+fn metadata_from_catalog_entry(
+    entry: &GreatDiscoveryCatalogEntry,
+) -> Result<GreatDiscoveryDefinitionMetadata, GreatDiscoveryCatalogError> {
+    let effect_flags = collect_effect_flags(entry.id, &entry.effect_flags, entry.effect_flag_bits)?;
+    let requirements = entry
+        .requirements
+        .iter()
+        .map(|req| GreatDiscoveryRequirementMetadata {
+            discovery_id: req.discovery_id,
+            name: req.name.clone(),
+            summary: req.summary.clone(),
+            weight: if req.weight <= 0.0 { 1.0 } else { req.weight },
+            minimum_progress: req.minimum_progress.clamp(0.0, 1.0),
+        })
+        .collect();
+
+    Ok(GreatDiscoveryDefinitionMetadata {
+        id: GreatDiscoveryId(entry.id),
+        name: entry.name.clone(),
+        field: entry.field,
+        tier: entry.tier.clone(),
+        summary: entry.summary.clone(),
+        tags: entry.tags.clone(),
+        observation_threshold: entry.observation_threshold,
+        cooldown_ticks: entry.cooldown_ticks,
+        freshness_window: entry.freshness_window,
+        effect_flags,
+        covert_until_public: entry.covert_until_public,
+        effects_summary: entry.effects_summary.clone(),
+        observation_notes: entry.observation_notes.clone(),
+        leak_profile: entry.leak_profile.clone(),
+        requirements,
+    })
+}
+
+#[derive(Debug, Clone)]
+pub struct GreatDiscoveryRequirementMetadata {
+    pub discovery_id: u32,
+    pub name: Option<String>,
+    pub summary: Option<String>,
+    pub weight: f32,
+    pub minimum_progress: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct GreatDiscoveryDefinitionMetadata {
+    pub id: GreatDiscoveryId,
+    pub name: String,
+    pub field: KnowledgeField,
+    pub tier: Option<String>,
+    pub summary: Option<String>,
+    pub tags: Vec<String>,
+    pub observation_threshold: u32,
+    pub cooldown_ticks: u16,
+    pub freshness_window: Option<u16>,
+    pub effect_flags: u32,
+    pub covert_until_public: bool,
+    pub effects_summary: Vec<String>,
+    pub observation_notes: Option<String>,
+    pub leak_profile: Option<String>,
+    pub requirements: Vec<GreatDiscoveryRequirementMetadata>,
+}
+
 #[derive(Resource, Debug, Clone, Default)]
 pub struct GreatDiscoveryRegistry {
     definitions: HashMap<GreatDiscoveryId, GreatDiscoveryDefinition>,
+    metadata: HashMap<GreatDiscoveryId, GreatDiscoveryDefinitionMetadata>,
 }
 
 impl GreatDiscoveryRegistry {
+    pub fn load_catalog_from_str(
+        &mut self,
+        catalog: &str,
+    ) -> Result<usize, GreatDiscoveryCatalogError> {
+        let entries: Vec<GreatDiscoveryCatalogEntry> = serde_json::from_str(catalog)?;
+        let mut added = 0;
+        for entry in entries {
+            let id = GreatDiscoveryId(entry.id);
+            if self.definitions.contains_key(&id) {
+                return Err(GreatDiscoveryCatalogError::DuplicateDefinition { id: entry.id });
+            }
+            let definition = definition_from_catalog_entry(&entry)?;
+            let metadata = metadata_from_catalog_entry(&entry)?;
+            self.register(definition);
+            self.metadata.insert(id, metadata);
+            added += 1;
+        }
+        Ok(added)
+    }
+
     pub fn register(&mut self, definition: GreatDiscoveryDefinition) {
         self.definitions.insert(definition.id, definition);
     }
@@ -124,6 +336,14 @@ impl GreatDiscoveryRegistry {
 
     pub fn definitions(&self) -> impl Iterator<Item = &GreatDiscoveryDefinition> {
         self.definitions.values()
+    }
+
+    pub fn metadata(&self, id: &GreatDiscoveryId) -> Option<&GreatDiscoveryDefinitionMetadata> {
+        self.metadata.get(id)
+    }
+
+    pub fn metadata_entries(&self) -> impl Iterator<Item = &GreatDiscoveryDefinitionMetadata> {
+        self.metadata.values()
     }
 }
 
@@ -627,6 +847,46 @@ pub fn snapshot_progress(readiness: &GreatDiscoveryReadiness) -> Vec<GreatDiscov
     states
 }
 
+pub fn snapshot_definitions(
+    registry: &GreatDiscoveryRegistry,
+) -> Vec<GreatDiscoveryDefinitionState> {
+    let mut states: Vec<GreatDiscoveryDefinitionState> = registry
+        .metadata_entries()
+        .map(|meta| {
+            let requirements: Vec<GreatDiscoveryRequirementState> = meta
+                .requirements
+                .iter()
+                .map(|req| GreatDiscoveryRequirementState {
+                    discovery: req.discovery_id,
+                    weight: req.weight,
+                    minimum_progress: req.minimum_progress,
+                    name: req.name.clone(),
+                    summary: req.summary.clone(),
+                })
+                .collect();
+            GreatDiscoveryDefinitionState {
+                id: meta.id.0,
+                name: meta.name.clone(),
+                field: meta.field,
+                tier: meta.tier.clone(),
+                summary: meta.summary.clone(),
+                tags: meta.tags.clone(),
+                observation_threshold: meta.observation_threshold,
+                cooldown_ticks: meta.cooldown_ticks,
+                freshness_window: meta.freshness_window,
+                effect_flags: meta.effect_flags,
+                covert_until_public: meta.covert_until_public,
+                effects_summary: meta.effects_summary.clone(),
+                observation_notes: meta.observation_notes.clone(),
+                leak_profile: meta.leak_profile.clone(),
+                requirements,
+            }
+        })
+        .collect();
+    states.sort_unstable_by_key(|state| state.id);
+    states
+}
+
 pub fn snapshot_telemetry(
     ledger: &GreatDiscoveryLedger,
     telemetry: &GreatDiscoveryTelemetry,
@@ -682,6 +942,71 @@ mod tests {
 
     fn scalar(val: f32) -> Scalar {
         Scalar::from_f32(val)
+    }
+
+    #[test]
+    fn load_catalog_populates_registry() {
+        let json = r#"[{
+            "id": 4096,
+            "name": "Catalog Test",
+            "field": "Physics",
+            "requirements": [
+                {"discovery_id": 101, "weight": 1.0, "minimum_progress": 0.5}
+            ],
+            "observation_threshold": 3,
+            "cooldown_ticks": 5,
+            "freshness_window": 7,
+            "effect_flags": ["power", "diplomacy"],
+            "covert_until_public": true
+        }]"#;
+
+        let mut registry = GreatDiscoveryRegistry::default();
+        let loaded = registry
+            .load_catalog_from_str(json)
+            .expect("catalog should parse");
+        assert_eq!(loaded, 1);
+
+        let definition = registry
+            .definition(&GreatDiscoveryId(4096))
+            .expect("definition should be present");
+        assert_eq!(definition.name, "Catalog Test");
+        assert_eq!(definition.field, KnowledgeField::Physics);
+        assert_eq!(definition.requirements.len(), 1);
+        assert_eq!(definition.observation_threshold, 3);
+        assert_eq!(definition.cooldown_ticks, 5);
+        assert_eq!(definition.freshness_window, Some(7));
+        assert!(definition.covert_until_public);
+        assert_eq!(
+            definition.effect_flags & effect_flags::POWER,
+            effect_flags::POWER
+        );
+        assert_eq!(
+            definition.effect_flags & effect_flags::DIPLOMACY,
+            effect_flags::DIPLOMACY
+        );
+
+        let metadata = registry
+            .metadata(&GreatDiscoveryId(4096))
+            .expect("metadata should be stored");
+        assert_eq!(metadata.name, "Catalog Test");
+        assert_eq!(metadata.observation_threshold, 3);
+        assert!(metadata.covert_until_public);
+        assert_eq!(metadata.requirements.len(), 1);
+        assert_eq!(metadata.requirements[0].discovery_id, 101);
+
+        let definition_states = snapshot_definitions(&registry);
+        assert_eq!(definition_states.len(), 1);
+        let state = &definition_states[0];
+        assert_eq!(state.id, 4096);
+        assert_eq!(state.field, KnowledgeField::Physics);
+        assert_eq!(state.observation_threshold, 3);
+        assert_eq!(state.cooldown_ticks, 5);
+        assert_eq!(state.freshness_window, Some(7));
+        assert!(state.covert_until_public);
+        assert_eq!(state.requirements.len(), 1);
+        assert_eq!(state.requirements[0].discovery, 101);
+        assert!((state.requirements[0].weight - 1.0).abs() < f32::EPSILON);
+        assert!((state.requirements[0].minimum_progress - 0.5).abs() < f32::EPSILON);
     }
 
     #[test]

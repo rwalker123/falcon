@@ -187,6 +187,18 @@ pub fn build_headless_app() -> App {
                 .in_set(TurnStage::Snapshot),
         );
 
+    {
+        let mut registry = app.world.resource_mut::<GreatDiscoveryRegistry>();
+        let loaded = registry
+            .load_catalog_from_str(great_discovery::BUILTIN_GREAT_DISCOVERY_CATALOG)
+            .expect("Great Discovery catalog should parse");
+        tracing::info!(
+            target: "shadow_scale::great_discovery",
+            loaded_definitions = loaded,
+            "great_discovery.catalog.loaded"
+        );
+    }
+
     app
 }
 

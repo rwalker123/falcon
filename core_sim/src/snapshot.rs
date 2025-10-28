@@ -7,13 +7,13 @@ use log::warn;
 use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
     AxisBiasState, CorruptionLedger, CorruptionSubsystem, CultureLayerState, CultureTensionState,
-    CultureTraitEntry, DiscoveryProgressEntry, GenerationState, GreatDiscoveryProgressState,
-    GreatDiscoveryState, GreatDiscoveryTelemetryState, InfluentialIndividualState,
-    LogisticsLinkState, PendingMigrationState, PopulationCohortState, PowerIncidentSeverity,
-    PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState,
-    SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
-    SnapshotHeader, TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge,
-    TradeLinkState, WorldDelta, WorldSnapshot,
+    CultureTraitEntry, DiscoveryProgressEntry, GenerationState, GreatDiscoveryDefinitionState,
+    GreatDiscoveryProgressState, GreatDiscoveryState, GreatDiscoveryTelemetryState,
+    InfluentialIndividualState, LogisticsLinkState, PendingMigrationState, PopulationCohortState,
+    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState,
+    ScalarRasterState, SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState,
+    SentimentTelemetryState, SnapshotHeader, TerrainOverlayState, TerrainSample, TileState,
+    TradeLinkKnowledge, TradeLinkState, WorldDelta, WorldSnapshot,
 };
 
 use crate::{
@@ -28,8 +28,8 @@ use crate::{
     },
     generations::{GenerationProfile, GenerationRegistry},
     great_discovery::{
-        snapshot_discoveries, snapshot_progress, snapshot_telemetry, GreatDiscoveryId,
-        GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
+        snapshot_definitions, snapshot_discoveries, snapshot_progress, snapshot_telemetry,
+        GreatDiscoveryId, GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
         GreatDiscoveryTelemetry,
     },
     influencers::{InfluencerImpacts, InfluentialRoster},
@@ -49,6 +49,7 @@ pub(crate) struct GreatDiscoverySnapshotParam<'w, 's> {
     ledger: Res<'w, GreatDiscoveryLedger>,
     readiness: Res<'w, GreatDiscoveryReadiness>,
     telemetry: Res<'w, GreatDiscoveryTelemetry>,
+    registry: Res<'w, GreatDiscoveryRegistry>,
     #[system_param(ignore)]
     _marker: std::marker::PhantomData<&'s ()>,
 }
@@ -108,6 +109,7 @@ pub struct SnapshotHistory {
     culture_tensions: Vec<CultureTensionState>,
     discovery_progress: HashMap<(u32, u32), DiscoveryProgressEntry>,
     great_discoveries: HashMap<(u32, u16), GreatDiscoveryState>,
+    great_discovery_definitions: HashMap<u16, GreatDiscoveryDefinitionState>,
     great_discovery_progress: HashMap<(u32, u16), GreatDiscoveryProgressState>,
     great_discovery_telemetry: GreatDiscoveryTelemetryState,
     axis_bias: AxisBiasState,
@@ -151,6 +153,7 @@ impl SnapshotHistory {
             culture_tensions: Vec::new(),
             discovery_progress: HashMap::new(),
             great_discoveries: HashMap::new(),
+            great_discovery_definitions: HashMap::new(),
             great_discovery_progress: HashMap::new(),
             great_discovery_telemetry: GreatDiscoveryTelemetryState::default(),
             axis_bias: AxisBiasState::default(),
@@ -311,6 +314,18 @@ impl SnapshotHistory {
             Some(military_raster_state.clone())
         };
 
+        let mut great_discovery_definitions_index =
+            HashMap::with_capacity(snapshot.great_discovery_definitions.len());
+        for state in &snapshot.great_discovery_definitions {
+            great_discovery_definitions_index.insert(state.id, state.clone());
+        }
+        let great_discovery_definitions_delta =
+            if self.great_discovery_definitions == great_discovery_definitions_index {
+                None
+            } else {
+                Some(snapshot.great_discovery_definitions.clone())
+            };
+
         let mut great_discoveries_index = HashMap::with_capacity(snapshot.great_discoveries.len());
         for state in &snapshot.great_discoveries {
             great_discoveries_index.insert((state.faction, state.id), state.clone());
@@ -357,6 +372,7 @@ impl SnapshotHistory {
             power: diff_new(&self.power, &power_index),
             removed_power: diff_removed(&self.power, &power_index),
             power_metrics: power_metrics_delta.clone(),
+            great_discovery_definitions: great_discovery_definitions_delta.clone(),
             great_discoveries: diff_new(&self.great_discoveries, &great_discoveries_index),
             great_discovery_progress: diff_new(
                 &self.great_discovery_progress,
@@ -393,6 +409,7 @@ impl SnapshotHistory {
         self.populations = populations_index;
         self.power = power_index;
         self.power_metrics = power_metrics_state;
+        self.great_discovery_definitions = great_discovery_definitions_index;
         self.great_discoveries = great_discoveries_index;
         self.great_discovery_progress = great_discovery_progress_index;
         self.great_discovery_telemetry = great_discovery_telemetry_state;
@@ -537,6 +554,7 @@ impl SnapshotHistory {
             power: Vec::new(),
             removed_power: Vec::new(),
             power_metrics: None,
+            great_discovery_definitions: None,
             great_discoveries: Vec::new(),
             great_discovery_progress: Vec::new(),
             great_discovery_telemetry: None,
@@ -630,6 +648,7 @@ impl SnapshotHistory {
             power: Vec::new(),
             removed_power: Vec::new(),
             power_metrics: None,
+            great_discovery_definitions: None,
             great_discoveries: Vec::new(),
             great_discovery_progress: Vec::new(),
             great_discovery_telemetry: None,
@@ -717,6 +736,7 @@ impl SnapshotHistory {
             power: Vec::new(),
             removed_power: Vec::new(),
             power_metrics: None,
+            great_discovery_definitions: None,
             great_discoveries: Vec::new(),
             great_discovery_progress: Vec::new(),
             great_discovery_telemetry: None,
@@ -861,6 +881,7 @@ pub fn capture_snapshot(
     });
 
     let discovery_states = discovery_progress_entries(&discovery_progress);
+    let great_discovery_definition_states = snapshot_definitions(&gds.registry);
     let great_discovery_states = snapshot_discoveries(&gds.ledger);
     let great_discovery_progress_states = snapshot_progress(&gds.readiness);
     let great_discovery_telemetry_state = snapshot_telemetry(&gds.ledger, &gds.telemetry);
@@ -1046,6 +1067,7 @@ pub fn capture_snapshot(
         culture_layers: culture_layer_states,
         culture_tensions: culture_tension_states,
         discovery_progress: discovery_states,
+        great_discovery_definitions: great_discovery_definition_states.clone(),
         great_discoveries: great_discovery_states,
         great_discovery_progress: great_discovery_progress_states,
         great_discovery_telemetry: great_discovery_telemetry_state,
@@ -2482,6 +2504,7 @@ mod tests {
             populations: Vec::new(),
             power: Vec::new(),
             power_metrics: PowerTelemetryState::default(),
+            great_discovery_definitions: Vec::new(),
             great_discoveries: Vec::new(),
             great_discovery_progress: Vec::new(),
             great_discovery_telemetry: GreatDiscoveryTelemetryState::default(),
@@ -2519,6 +2542,7 @@ mod tests {
             populations: Vec::new(),
             power: Vec::new(),
             power_metrics: PowerTelemetryState::default(),
+            great_discovery_definitions: Vec::new(),
             great_discoveries,
             great_discovery_progress,
             great_discovery_telemetry,

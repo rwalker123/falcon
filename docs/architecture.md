@@ -240,6 +240,12 @@ This section translates the player-facing intent in `shadow_scale_strategy_game_
 
 The turn schedule should place `update_constellation_progress` immediately after existing knowledge diffusion (`trade_knowledge_diffusion`) and before population/power so downstream systems react within the same turn. Event resolution can occur in the same schedule block to keep determinism tight.
 
+### Great Discovery Catalog
+- **Source of truth**: The shared catalog lives in `core_sim/src/data/great_discovery_definitions.json`, mirroring the player-facing roster in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §5 *First-Wave Constellations*. Each entry supplies the simulation-critical fields (`id`, `field`, `requirements` with weights/minimum progress, observation gate, cooldown, freshness window, effect flags) plus inspector metadata (summary, tags, leak profile).
+- **Loader**: `GreatDiscoveryRegistry::load_catalog_from_str` ingests the JSON during `build_headless_app` startup via the `BUILTIN_GREAT_DISCOVERY_CATALOG` constant. The loader normalises effect-flag strings (`power`, `diplomacy`, `crisis`, `forced_publication`), clamps requirement values, and rejects duplicate IDs before registering.
+- **Inspector alignment**: `WorldSnapshot` now exports `great_discovery_definitions`; the Godot inspector consumes this payload and renders the richer metadata (summary, cadence, requirements) alongside resolved ledger and readiness panels. Tooling stays in sync with the server without duplicating data sources.
+- **Distribution**: The JSON file remains the authoring/build-time artifact referenced by the server via `include_str!`, while runtime clients rely solely on the streamed catalog.
+
 ### Snapshot Payload Contracts
 - Extend `WorldSnapshot` with `great_discoveries: [GreatDiscoveryState]`, one entry per resolved discovery (fields: `id`, `faction`, `field`, `tick`, `publicly_deployed`, `effect_flags`). Clients render the Great Discovery ledger and drive narrative beats from this table.
 - Add `great_discovery_progress: [GreatDiscoveryProgressState]` capturing in-progress constellations (per faction id, `GreatDiscoveryId`, current progress 0–1, observation gate remaining, estimated turns). This powers UI cues like “breakthrough imminent” while respecting secrecy—entries flagged as covert only appear for the owning faction.

@@ -47,6 +47,15 @@ const MAP_SIZE_DEFAULT_DIMENSIONS := Vector2i(80, 52)
 @onready var knowledge_summary_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeSummaryText
 @onready var discovery_progress_list: ItemList = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection/DiscoveryProgressList
 @onready var knowledge_events_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection/KnowledgeEventsText
+@onready var great_discovery_summary_label: Label = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoverySummaryLabel
+@onready var great_discovery_summary_text: RichTextLabel = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoverySummaryText
+@onready var great_discovery_definitions_list: ItemList = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryDefinitionsSection/GreatDiscoveryDefinitionsList
+@onready var great_discovery_ledger_label: Label = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection/GreatDiscoveryLedgerLabel
+@onready var great_discovery_ledger_list: ItemList = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection/GreatDiscoveryLedgerList
+@onready var great_discovery_ledger_detail: RichTextLabel = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection/GreatDiscoveryLedgerDetail
+@onready var great_discovery_progress_label: Label = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection/GreatDiscoveryProgressLabel
+@onready var great_discovery_progress_list: ItemList = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection/GreatDiscoveryProgressList
+@onready var great_discovery_progress_detail: RichTextLabel = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection/GreatDiscoveryProgressDetail
 @onready var logs_text: RichTextLabel = $RootPanel/TabContainer/Logs/LogScroll/LogsText
 @onready var log_status_label: Label = $RootPanel/TabContainer/Logs/SparklineContainer/SparklineStatusLabel
 @onready var sparkline_graph: Control = $RootPanel/TabContainer/Logs/SparklineContainer/SparklineGraph
@@ -121,6 +130,15 @@ var _power_metrics: Dictionary = {}
 var _selected_power_node_id: int = -1
 var _discovery_progress: Dictionary = {}
 var _knowledge_events: Array[Dictionary] = []
+var _great_discovery_records: Dictionary = {}
+var _great_discovery_progress_map: Dictionary = {}
+var _great_discovery_telemetry: Dictionary = {}
+var _selected_great_discovery_key: String = ""
+var _selected_great_discovery_progress_key: String = ""
+var _great_discovery_definitions: Dictionary = {}
+var _selected_great_discovery_definition_id: int = -1
+var _suppress_definition_selection_signal: bool = false
+var _great_discovery_definitions_warned: bool = false
 var _map_view: Node = null
 var _map_size_key: String = MAP_SIZE_DEFAULT_KEY
 var _map_dimensions: Vector2i = MAP_SIZE_DEFAULT_DIMENSIONS
@@ -217,7 +235,6 @@ const KNOWLEDGE_EVENT_HISTORY_LIMIT = 24
 const POWER_NODE_LIST_LIMIT = 16
 const POWER_STABILITY_WARN = 0.4
 const POWER_STABILITY_CRITICAL = 0.2
-
 var _viewport: Viewport = null
 var _panel_width: float = PANEL_WIDTH_DEFAULT
 var _is_resizing = false
@@ -262,9 +279,28 @@ func _ready() -> void:
 			power_node_list.item_selected.connect(_on_power_node_selected)
 		if not power_node_list.is_connected("item_activated", power_select_callable):
 			power_node_list.item_activated.connect(_on_power_node_selected)
+	if great_discovery_ledger_list != null:
+		var ledger_select_callable = Callable(self, "_on_great_discovery_ledger_selected")
+		if not great_discovery_ledger_list.is_connected("item_selected", ledger_select_callable):
+			great_discovery_ledger_list.item_selected.connect(_on_great_discovery_ledger_selected)
+		if not great_discovery_ledger_list.is_connected("item_activated", ledger_select_callable):
+			great_discovery_ledger_list.item_activated.connect(_on_great_discovery_ledger_selected)
+	if great_discovery_progress_list != null:
+		var progress_select_callable = Callable(self, "_on_great_discovery_progress_selected")
+		if not great_discovery_progress_list.is_connected("item_selected", progress_select_callable):
+			great_discovery_progress_list.item_selected.connect(_on_great_discovery_progress_selected)
+		if not great_discovery_progress_list.is_connected("item_activated", progress_select_callable):
+			great_discovery_progress_list.item_activated.connect(_on_great_discovery_progress_selected)
+	if great_discovery_definitions_list != null:
+		var definition_select_callable = Callable(self, "_on_great_discovery_definition_selected")
+		if not great_discovery_definitions_list.is_connected("item_selected", definition_select_callable):
+			great_discovery_definitions_list.item_selected.connect(_on_great_discovery_definition_selected)
+		if not great_discovery_definitions_list.is_connected("item_activated", definition_select_callable):
+			great_discovery_definitions_list.item_activated.connect(_on_great_discovery_definition_selected)
 	_update_panel_layout()
 	_initialize_log_filters()
 	_render_static_sections()
+	_render_great_discoveries()
 	_setup_command_controls()
 	_initialize_log_channel()
 	_render_logs()
@@ -336,6 +372,22 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 		if metrics_variant is Dictionary:
 			_power_metrics = (metrics_variant as Dictionary).duplicate(true)
 
+	if full_snapshot and data.has("great_discovery_definitions"):
+		_set_great_discovery_definitions(data["great_discovery_definitions"])
+
+	if full_snapshot and data.has("great_discoveries"):
+		_rebuild_great_discoveries(data["great_discoveries"])
+	elif data.has("great_discovery_updates"):
+		_merge_great_discovery_updates(data["great_discovery_updates"])
+
+	if full_snapshot and data.has("great_discovery_progress"):
+		_rebuild_great_discovery_progress(data["great_discovery_progress"])
+	elif data.has("great_discovery_progress_updates"):
+		_merge_great_discovery_progress(data["great_discovery_progress_updates"])
+
+	if data.has("great_discovery_telemetry"):
+		_set_great_discovery_telemetry(data["great_discovery_telemetry"])
+
 	if full_snapshot and data.has("discovery_progress"):
 		_rebuild_discovery_progress(data["discovery_progress"])
 	elif data.has("discovery_progress_updates"):
@@ -390,12 +442,121 @@ func _remove_influencers(ids) -> void:
 		_influencers.erase(int(id))
 	_refresh_influencer_dropdown()
 
+func _rebuild_great_discoveries(array_data) -> void:
+	_great_discovery_records.clear()
+	_merge_great_discovery_updates(array_data)
+
+func _merge_great_discovery_updates(array_data) -> void:
+	if array_data == null:
+		return
+	if array_data is Array:
+		for entry in array_data:
+			if entry is Dictionary:
+				_apply_great_discovery_entry(entry as Dictionary)
+	_ensure_great_discovery_selection_valid()
+
+func _apply_great_discovery_entry(entry: Dictionary) -> void:
+	var info: Dictionary = entry.duplicate(true)
+	var faction: int = int(info.get("faction", -1))
+	var discovery_id: int = int(info.get("id", -1))
+	if faction < 0 or discovery_id < 0:
+		return
+	var key := "%d:%d" % [faction, discovery_id]
+	_great_discovery_records[key] = info
+
+func _ensure_great_discovery_selection_valid() -> void:
+	if _selected_great_discovery_key != "" and not _great_discovery_records.has(_selected_great_discovery_key):
+		_selected_great_discovery_key = ""
+
+func _rebuild_great_discovery_progress(array_data) -> void:
+	_great_discovery_progress_map.clear()
+	_merge_great_discovery_progress(array_data)
+
+func _merge_great_discovery_progress(array_data) -> void:
+	if array_data == null:
+		return
+	if array_data is Array:
+		for entry in array_data:
+			if entry is Dictionary:
+				_apply_great_discovery_progress_entry(entry as Dictionary)
+	_ensure_great_discovery_progress_selection_valid()
+
+func _apply_great_discovery_progress_entry(entry: Dictionary) -> void:
+	var info: Dictionary = entry.duplicate(true)
+	var faction: int = int(info.get("faction", -1))
+	var discovery_id: int = int(info.get("discovery", -1))
+	if faction < 0 or discovery_id < 0:
+		return
+	if not _great_discovery_progress_map.has(faction):
+		_great_discovery_progress_map[faction] = {}
+	var faction_dict: Dictionary = _great_discovery_progress_map[faction]
+	faction_dict[discovery_id] = info
+
+func _ensure_great_discovery_progress_selection_valid() -> void:
+	if _selected_great_discovery_progress_key == "":
+		return
+	var entry := _get_great_discovery_progress_entry_by_key(_selected_great_discovery_progress_key)
+	if entry.is_empty():
+		_selected_great_discovery_progress_key = ""
+
+func _set_great_discovery_telemetry(value) -> void:
+	if value is Dictionary:
+		_great_discovery_telemetry = (value as Dictionary).duplicate(true)
+
+func _ensure_great_discovery_definition_selection_valid() -> void:
+	if _selected_great_discovery_definition_id >= 0 and not _great_discovery_definitions.has(_selected_great_discovery_definition_id):
+		_selected_great_discovery_definition_id = -1
+
+
+func _set_great_discovery_definitions(definitions_variant: Variant) -> void:
+	_great_discovery_definitions.clear()
+	if definitions_variant is Array:
+		for entry in definitions_variant:
+			if entry is Dictionary:
+				var info: Dictionary = (entry as Dictionary).duplicate(true)
+				var discovery_id: int = int(info.get("id", -1))
+				if discovery_id >= 0:
+					_great_discovery_definitions[discovery_id] = info
+	elif definitions_variant is Dictionary:
+		var definitions_dict: Dictionary = definitions_variant
+		for key in definitions_dict.keys():
+			var value: Variant = definitions_dict[key]
+			if value is Dictionary:
+				var info: Dictionary = (value as Dictionary).duplicate(true)
+				var discovery_id: int = int(info.get("id", int(key)))
+				if discovery_id >= 0:
+					_great_discovery_definitions[discovery_id] = info
+	if _great_discovery_definitions.is_empty():
+		if not _great_discovery_definitions_warned:
+			push_warning("Great Discovery definition catalog is empty; awaiting server metadata.")
+			_great_discovery_definitions_warned = true
+	else:
+		_great_discovery_definitions_warned = false
+	_ensure_great_discovery_definition_selection_valid()
+
+func _on_great_discovery_definition_selected(index: int) -> void:
+	if _suppress_definition_selection_signal:
+		return
+	if great_discovery_definitions_list == null:
+		return
+	if index < 0 or index >= great_discovery_definitions_list.get_item_count():
+		_selected_great_discovery_definition_id = -1
+		_render_great_discoveries()
+		return
+	var meta: Variant = great_discovery_definitions_list.get_item_metadata(index)
+	if typeof(meta) == TYPE_INT:
+		_selected_great_discovery_definition_id = int(meta)
+	else:
+		_selected_great_discovery_definition_id = -1
+	_render_great_discoveries()
+
 func _render_dynamic_sections() -> void:
 	_render_sentiment()
 	_render_influencers()
 	_render_corruption()
 	_render_trade()
 	_render_power()
+	_render_great_discoveries()
 	_render_knowledge()
 	_render_terrain()
 	_render_culture()
@@ -420,6 +581,11 @@ func _render_static_sections() -> void:
 	_selected_power_node_id = -1
 	_discovery_progress.clear()
 	_knowledge_events.clear()
+	_great_discovery_records.clear()
+	_great_discovery_progress_map.clear()
+	_great_discovery_telemetry.clear()
+	_selected_great_discovery_key = ""
+	_selected_great_discovery_progress_key = ""
 	_selected_trade_entity = -1
 	_clear_terrain_ui()
 	_reset_log_state()
@@ -440,6 +606,23 @@ func _render_static_sections() -> void:
 		trade_links_list.clear()
 	if trade_events_text != null:
 		trade_events_text.text = "[i]No diffusion events recorded yet.[/i]"
+	if great_discovery_summary_text != null:
+		great_discovery_summary_text.text = "[b]Great Discoveries[/b]\n[i]Awaiting snapshot data.[/i]"
+	if great_discovery_definitions_list != null:
+		great_discovery_definitions_list.clear()
+	if great_discovery_definitions_list != null:
+		great_discovery_definitions_list.add_item("All Discoveries")
+		great_discovery_definitions_list.set_item_metadata(0, -1)
+		great_discovery_definitions_list.select(0)
+	_selected_great_discovery_definition_id = -1
+	if great_discovery_ledger_list != null:
+		great_discovery_ledger_list.clear()
+	if great_discovery_ledger_detail != null:
+		great_discovery_ledger_detail.text = "[i]Select a resolved discovery to inspect its details.[/i]"
+	if great_discovery_progress_list != null:
+		great_discovery_progress_list.clear()
+	if great_discovery_progress_detail != null:
+		great_discovery_progress_detail.text = "[i]Pending constellations will appear here once telemetry arrives.[/i]"
 	if knowledge_summary_text != null:
 		knowledge_summary_text.text = "[b]Knowledge Ledger[/b]\nAwaiting discovery progress telemetry."
 	if discovery_progress_list != null:
@@ -496,6 +679,9 @@ func apply_typography() -> void:
 		trade_events_text,
 		knowledge_summary_text,
 		knowledge_events_text,
+		great_discovery_summary_text,
+		great_discovery_ledger_detail,
+		great_discovery_progress_detail,
 		logs_text,
 		command_log_text
 	]
@@ -505,7 +691,10 @@ func apply_typography() -> void:
 		map_size_label,
 		terrain_biome_section_label,
 		terrain_tile_section_label,
-		terrain_overlay_section_label
+		terrain_overlay_section_label,
+		great_discovery_summary_label,
+		great_discovery_ledger_label,
+		great_discovery_progress_label
 	]
 	_apply_typography_style(heading_labels, Typography.STYLE_HEADING)
 
@@ -526,7 +715,10 @@ func apply_typography() -> void:
 		terrain_tile_list,
 		culture_divergence_list,
 		trade_links_list,
-		discovery_progress_list
+		discovery_progress_list,
+		great_discovery_definitions_list,
+		great_discovery_ledger_list,
+		great_discovery_progress_list
 	]
 	_apply_typography_style(list_controls, Typography.STYLE_BODY)
 
@@ -1631,6 +1823,513 @@ func _on_power_node_selected(index: int) -> void:
 	else:
 		_selected_power_node_id = -1
 	_update_power_node_detail()
+
+func _render_great_discoveries() -> void:
+	if great_discovery_summary_text == null:
+		return
+
+	var summary_lines: Array[String] = ["[b]Great Discoveries[/b]"]
+	var resolved_count: int = int(_great_discovery_telemetry.get("total_resolved", _great_discovery_records.size()))
+	var pending_candidates: int = int(_great_discovery_telemetry.get("pending_candidates", 0))
+	var active_constellations: int = int(_great_discovery_telemetry.get("active_constellations", 0))
+	summary_lines.append("Resolved discoveries: %d" % resolved_count)
+	summary_lines.append("Pending candidates: %d" % pending_candidates)
+	summary_lines.append("Active constellations: %d" % active_constellations)
+	var definition_filter := _selected_great_discovery_definition_id
+	var faction_overview := _summarize_great_discovery_progress_by_faction(definition_filter)
+	if faction_overview.is_empty():
+		summary_lines.append("[i]No factions are actively pursuing Great Discoveries.[/i]")
+	else:
+		for faction_line in faction_overview:
+			summary_lines.append(faction_line)
+
+	var records := _collect_sorted_great_discoveries()
+	if records.is_empty():
+		summary_lines.append("[i]No discoveries have been resolved yet.[/i]")
+	else:
+		var preview: Array[String] = []
+		for record in records:
+			var record_id: int = int(record.get("id", -1))
+			if definition_filter >= 0 and record_id != definition_filter:
+				continue
+			preview.append(_format_great_discovery_record(record))
+			if preview.size() >= 3:
+				break
+		if not preview.is_empty():
+			summary_lines.append("Latest: %s" % ", ".join(preview))
+
+	great_discovery_summary_text.text = "\n".join(summary_lines)
+
+	if great_discovery_definitions_list != null:
+		_suppress_definition_selection_signal = true
+		var previous_definition := _selected_great_discovery_definition_id
+		great_discovery_definitions_list.clear()
+		great_discovery_definitions_list.add_item("All Discoveries")
+		great_discovery_definitions_list.set_item_metadata(0, -1)
+		var selected_definition_index := 0
+		var sorted_definition_ids: Array = _great_discovery_definitions.keys()
+		sorted_definition_ids.sort()
+		var list_index := 1
+		for id in sorted_definition_ids:
+			var int_id: int = int(id)
+			var label := _definition_label_for_id(int_id)
+			great_discovery_definitions_list.add_item(label)
+			great_discovery_definitions_list.set_item_metadata(list_index, int_id)
+			if int_id == previous_definition:
+				selected_definition_index = list_index
+			list_index += 1
+		great_discovery_definitions_list.select(selected_definition_index)
+		var meta: Variant = great_discovery_definitions_list.get_item_metadata(selected_definition_index)
+		_selected_great_discovery_definition_id = int(meta) if typeof(meta) == TYPE_INT else -1
+		_suppress_definition_selection_signal = false
+
+	if great_discovery_ledger_list != null:
+		var previous_key := _selected_great_discovery_key
+		great_discovery_ledger_list.clear()
+		var selected_index: int = -1
+		var row_index := 0
+		for record in records:
+			var discovery_id: int = int(record.get("id", -1))
+			if definition_filter >= 0 and discovery_id != definition_filter:
+				continue
+			var label := _format_great_discovery_record(record)
+			great_discovery_ledger_list.add_item(label)
+			great_discovery_ledger_list.set_item_metadata(row_index, record)
+			if String(record.get("_key", "")) == previous_key:
+				selected_index = row_index
+			row_index += 1
+		if selected_index >= 0:
+			great_discovery_ledger_list.select(selected_index)
+			_on_great_discovery_ledger_selected(selected_index)
+		else:
+			_selected_great_discovery_key = ""
+			_update_great_discovery_detail()
+
+	var progress_entries := _collect_sorted_great_discovery_progress()
+	if great_discovery_progress_list != null:
+		var previous_progress_key := _selected_great_discovery_progress_key
+		great_discovery_progress_list.clear()
+		var selected_progress_index: int = -1
+		var progress_row_index := 0
+		for entry in progress_entries:
+			var discovery_id: int = int(entry.get("discovery", -1))
+			if definition_filter >= 0 and discovery_id != definition_filter:
+				continue
+			var label := _format_great_discovery_progress_entry(entry)
+			great_discovery_progress_list.add_item(label)
+			great_discovery_progress_list.set_item_metadata(progress_row_index, entry)
+			if String(entry.get("_key", "")) == previous_progress_key:
+				selected_progress_index = progress_row_index
+			progress_row_index += 1
+		if selected_progress_index >= 0:
+			great_discovery_progress_list.select(selected_progress_index)
+			_on_great_discovery_progress_selected(selected_progress_index)
+		else:
+			_selected_great_discovery_progress_key = ""
+			_update_great_discovery_progress_detail()
+
+func _collect_sorted_great_discoveries() -> Array:
+	var records: Array = []
+	for key in _great_discovery_records.keys():
+		var record_variant: Variant = _great_discovery_records[key]
+		if record_variant is Dictionary:
+			var record: Dictionary = (record_variant as Dictionary).duplicate(true)
+			record["_key"] = String(key)
+			records.append(record)
+	records.sort_custom(Callable(self, "_compare_great_discovery_records"))
+	return records
+
+func _compare_great_discovery_records(a: Dictionary, b: Dictionary) -> bool:
+	var tick_a: int = int(a.get("tick", 0))
+	var tick_b: int = int(b.get("tick", 0))
+	if tick_a == tick_b:
+		var faction_a: int = int(a.get("faction", 0))
+		var faction_b: int = int(b.get("faction", 0))
+		if faction_a == faction_b:
+			return int(a.get("id", 0)) < int(b.get("id", 0))
+		return faction_a < faction_b
+	return tick_a > tick_b
+
+func _collect_sorted_great_discovery_progress() -> Array:
+	var entries: Array = []
+	for faction_key in _great_discovery_progress_map.keys():
+		var faction_int: int = int(faction_key)
+		var faction_variant: Variant = _great_discovery_progress_map[faction_key]
+		if not (faction_variant is Dictionary):
+			continue
+		var faction_dict: Dictionary = faction_variant
+		for discovery_key in faction_dict.keys():
+			var info_variant: Variant = faction_dict[discovery_key]
+			if not (info_variant is Dictionary):
+				continue
+			var entry: Dictionary = (info_variant as Dictionary).duplicate(true)
+			entry["faction"] = faction_int
+			entry["discovery"] = int(discovery_key)
+			entry["_key"] = "%d:%d" % [faction_int, int(discovery_key)]
+			entries.append(entry)
+	entries.sort_custom(Callable(self, "_compare_great_discovery_progress"))
+	return entries
+
+func _compare_great_discovery_progress(a: Dictionary, b: Dictionary) -> bool:
+	var progress_a: float = float(a.get("progress", 0.0))
+	var progress_b: float = float(b.get("progress", 0.0))
+	if is_equal_approx(progress_a, progress_b):
+		var deficit_a: int = int(a.get("observation_deficit", 0))
+		var deficit_b: int = int(b.get("observation_deficit", 0))
+		if deficit_a == deficit_b:
+			return int(a.get("eta_ticks", 0)) < int(b.get("eta_ticks", 0))
+		return deficit_a < deficit_b
+	return progress_a > progress_b
+
+func _format_great_discovery_record(record: Dictionary) -> String:
+	var faction: int = int(record.get("faction", -1))
+	var discovery_id: int = int(record.get("id", -1))
+	var tick: int = int(record.get("tick", 0))
+	var label: String = _definition_label_for_id(discovery_id)
+	var deployment_tag: String = "Public" if bool(record.get("publicly_deployed", false)) else "Classified"
+	return "%s — F%d (T%s, %s)" % [
+		label,
+		faction,
+		str(tick),
+		deployment_tag
+	]
+
+func _format_great_discovery_progress_entry(entry: Dictionary) -> String:
+	var faction: int = int(entry.get("faction", -1))
+	var discovery_id: int = int(entry.get("discovery", -1))
+	var progress_percent: float = float(entry.get("progress", 0.0)) * 100.0
+	var deficit: int = int(entry.get("observation_deficit", 0))
+	var eta: int = int(entry.get("eta_ticks", 0))
+	var covert_label: String = "Covert" if bool(entry.get("covert", false)) else "Visible"
+	return "%s — F%d :: %.1f%% (obs-%d, ETA %s, %s)" % [
+		_definition_label_for_id(discovery_id),
+		faction,
+		progress_percent,
+		deficit,
+		"—" if eta <= 0 else str(eta),
+		covert_label
+	]
+
+func _definition_name_for_id(discovery_id: int) -> String:
+	if _great_discovery_definitions.has(discovery_id):
+		var info: Dictionary = _great_discovery_definitions[discovery_id]
+		return String(info.get("name", "Discovery %d" % discovery_id))
+	return "Discovery %d" % discovery_id
+
+func _definition_label_for_id(discovery_id: int) -> String:
+	var name := _definition_name_for_id(discovery_id)
+	return "%s (D%d)" % [name, discovery_id]
+
+func _definition_metadata_for_id(discovery_id: int) -> Dictionary:
+	if _great_discovery_definitions.has(discovery_id):
+		var entry_variant: Variant = _great_discovery_definitions[discovery_id]
+		if entry_variant is Dictionary:
+			return entry_variant
+	return {}
+
+func _definition_tags_text(discovery_id: int) -> String:
+	var metadata := _definition_metadata_for_id(discovery_id)
+	if metadata.is_empty():
+		return ""
+	var tags_variant: Variant = metadata.get("tags", [])
+	var tags: Array[String] = []
+	if tags_variant is Array:
+		for tag in tags_variant:
+			tags.append(String(tag))
+	elif tags_variant is PackedStringArray:
+		var packed: PackedStringArray = tags_variant
+		for tag in packed:
+			tags.append(String(tag))
+	return ", ".join(tags)
+
+func _definition_int(metadata: Dictionary, key: String) -> int:
+	if not metadata.has(key):
+		return -1
+	var value: Variant = metadata[key]
+	var value_type := typeof(value)
+	if value_type == TYPE_INT or value_type == TYPE_FLOAT:
+		return int(value)
+	if value_type == TYPE_STRING:
+		return int(value)
+	return -1
+
+func _definition_bool(metadata: Dictionary, key: String, default_value: bool = false) -> bool:
+	if not metadata.has(key):
+		return default_value
+	var value: Variant = metadata[key]
+	var value_type := typeof(value)
+	if value_type == TYPE_BOOL:
+		return bool(value)
+	if value_type == TYPE_INT:
+		return int(value) != 0
+	if value_type == TYPE_STRING:
+		var text := String(value).to_lower()
+		return text == "true" or text == "1" or text == "yes"
+	return default_value
+
+func _format_definition_requirements(discovery_id: int) -> Array[String]:
+	var metadata := _definition_metadata_for_id(discovery_id)
+	var requirements_variant: Variant = metadata.get("requirements", [])
+	var lines: Array[String] = []
+	if requirements_variant is Array:
+		for req_variant in requirements_variant:
+			if not (req_variant is Dictionary):
+				continue
+			var req: Dictionary = req_variant
+			var req_id: int = int(req.get("discovery_id", -1))
+			var req_name: String = String(req.get("name", "Discovery %d" % req_id))
+			var min_progress: float = float(req.get("minimum_progress", 0.0))
+			var weight: float = float(req.get("weight", 1.0))
+			var summary_text: String = String(req.get("summary", ""))
+			var min_percent := min_progress * 100.0
+			var id_label := "unknown"
+			if req_id >= 0:
+				id_label = "d%d" % req_id
+			var entry := "• %s (%s) — min %.0f%%, weight %.2f" % [
+				req_name,
+				id_label,
+				min_percent,
+				weight
+			]
+			lines.append(entry)
+			if not summary_text.is_empty():
+				lines.append("    %s" % summary_text)
+	return lines
+
+func _on_great_discovery_ledger_selected(index: int) -> void:
+	if great_discovery_ledger_list == null:
+		return
+	if index < 0 or index >= great_discovery_ledger_list.get_item_count():
+		_selected_great_discovery_key = ""
+		_update_great_discovery_detail()
+		return
+	var meta: Variant = great_discovery_ledger_list.get_item_metadata(index)
+	if meta is Dictionary:
+		_selected_great_discovery_key = String((meta as Dictionary).get("_key", ""))
+	else:
+		_selected_great_discovery_key = ""
+	_update_great_discovery_detail()
+
+func _on_great_discovery_progress_selected(index: int) -> void:
+	if great_discovery_progress_list == null:
+		return
+	if index < 0 or index >= great_discovery_progress_list.get_item_count():
+		_selected_great_discovery_progress_key = ""
+		_update_great_discovery_progress_detail()
+		return
+	var meta: Variant = great_discovery_progress_list.get_item_metadata(index)
+	if meta is Dictionary:
+		_selected_great_discovery_progress_key = String((meta as Dictionary).get("_key", ""))
+	else:
+		_selected_great_discovery_progress_key = ""
+	_update_great_discovery_progress_detail()
+
+func _summarize_great_discovery_progress_by_faction(filter_definition: int) -> Array[String]:
+	var lines: Array[String] = []
+	var faction_keys := _great_discovery_progress_map.keys()
+	if faction_keys.is_empty():
+		return lines
+	faction_keys.sort()
+	for faction_key in faction_keys:
+		var faction_int: int = int(faction_key)
+		var faction_variant: Variant = _great_discovery_progress_map[faction_key]
+		if not (faction_variant is Dictionary):
+			continue
+		var faction_dict: Dictionary = faction_variant
+		if faction_dict.keys().is_empty():
+			continue
+		var entries: Array[Dictionary] = []
+		for discovery_key in faction_dict.keys():
+			var info_variant: Variant = faction_dict[discovery_key]
+			if info_variant is Dictionary:
+				var info: Dictionary = (info_variant as Dictionary).duplicate(true)
+				var discovery_id: int = int(discovery_key)
+				if filter_definition >= 0 and discovery_id != filter_definition:
+					continue
+				info["discovery"] = discovery_id
+				entries.append(info)
+		if entries.is_empty():
+			continue
+		entries.sort_custom(Callable(self, "_compare_great_discovery_progress"))
+		var fragments: Array[String] = []
+		var limit: int = min(entries.size(), 3)
+		for idx in range(limit):
+			var entry := entries[idx]
+			var discovery_id: int = int(entry.get("discovery", -1))
+			var progress_percent: float = float(entry.get("progress", 0.0)) * 100.0
+			var deficit: int = int(entry.get("observation_deficit", 0))
+			var eta: int = int(entry.get("eta_ticks", 0))
+			var flash: String = "ready" if eta <= 0 and deficit <= 0 else "eta %s" % ("now" if eta <= 0 else str(eta))
+			fragments.append("%s %.0f%% (%s)" % [_definition_name_for_id(discovery_id), progress_percent, flash])
+		lines.append("Faction %d: %s" % [faction_int, ", ".join(fragments)])
+	return lines
+
+func _update_great_discovery_detail() -> void:
+	if great_discovery_ledger_detail == null:
+		return
+	if _selected_great_discovery_key == "" or not _great_discovery_records.has(_selected_great_discovery_key):
+		great_discovery_ledger_detail.text = "[i]Select a resolved discovery to inspect its details.[/i]"
+		return
+	var record_variant: Variant = _great_discovery_records[_selected_great_discovery_key]
+	if not (record_variant is Dictionary):
+		great_discovery_ledger_detail.text = "[i]Select a resolved discovery to inspect its details.[/i]"
+		return
+	var record: Dictionary = record_variant
+	var id: int = int(record.get("id", -1))
+	var faction: int = int(record.get("faction", -1))
+	var tick: int = int(record.get("tick", 0))
+	var field_label: String = String(record.get("field_label", ""))
+	if field_label.is_empty():
+		field_label = "Field %s" % String(record.get("field", ""))
+	var definition_name := _definition_name_for_id(id)
+	var deployed := bool(record.get("publicly_deployed", false))
+	var effects_variant: Variant = record.get("effects", PackedStringArray())
+	var effect_labels: Array[String] = []
+	if effects_variant is PackedStringArray:
+		for effect_label in (effects_variant as PackedStringArray):
+			effect_labels.append(String(effect_label))
+	var effect_text: String = ", ".join(effect_labels)
+	if effect_text.is_empty():
+		effect_text = "None"
+	var lines: Array[String] = []
+	lines.append("[b]%s[/b] — Faction %d" % [_definition_label_for_id(id), faction])
+	lines.append("Name: %s" % definition_name)
+	lines.append("Field: %s" % field_label)
+	lines.append("Resolved on tick %d" % tick)
+	lines.append("Deployment: %s" % ("Publicly deployed" if deployed else "Classified ledger entry"))
+	lines.append("Effects: %s" % effect_text)
+
+	var metadata := _definition_metadata_for_id(id)
+	if not metadata.is_empty():
+		var tag_text := _definition_tags_text(id)
+		if not tag_text.is_empty():
+			lines.append("Tags: %s" % tag_text)
+
+		var gate_value := _definition_int(metadata, "observation_threshold")
+		if gate_value >= 0:
+			lines.append("Observation Gate: %d verified signals" % gate_value)
+
+		var cadence_bits: Array[String] = []
+		var cooldown_value := _definition_int(metadata, "cooldown_ticks")
+		if cooldown_value >= 0:
+			cadence_bits.append("cooldown %d ticks" % cooldown_value)
+		var freshness_value := _definition_int(metadata, "freshness_window")
+		if freshness_value > 0:
+			cadence_bits.append("freshness window %d ticks" % freshness_value)
+		if _definition_bool(metadata, "covert_until_public", false):
+			cadence_bits.append("covert until public")
+		if not cadence_bits.is_empty():
+			lines.append("Cadence: %s" % ", ".join(cadence_bits))
+
+		var summary_text := String(metadata.get("summary", ""))
+		if not summary_text.is_empty():
+			lines.append("")
+			lines.append("[b]Summary[/b]")
+			lines.append(summary_text)
+
+		var catalog_effects_variant: Variant = metadata.get("effects_summary", [])
+		if catalog_effects_variant is Array:
+			var catalog_effects: Array = catalog_effects_variant
+			if not catalog_effects.is_empty():
+				lines.append("")
+				lines.append("[b]Catalog Effects[/b]")
+				for effect_entry in catalog_effects:
+					lines.append("• %s" % String(effect_entry))
+
+		var requirement_lines := _format_definition_requirements(id)
+		if not requirement_lines.is_empty():
+			lines.append("")
+			lines.append("[b]Constellation Requirements[/b]")
+			lines.append_array(requirement_lines)
+
+		var observation_notes := String(metadata.get("observation_notes", ""))
+		if not observation_notes.is_empty():
+			lines.append("")
+			lines.append("[b]Observation Notes[/b]")
+			lines.append(observation_notes)
+
+		var leak_profile := String(metadata.get("leak_profile", ""))
+		if not leak_profile.is_empty():
+			lines.append("")
+			lines.append("[b]Leak Profile[/b]")
+			lines.append(leak_profile)
+
+	great_discovery_ledger_detail.text = "\n".join(lines)
+
+func _update_great_discovery_progress_detail() -> void:
+	if great_discovery_progress_detail == null:
+		return
+	if _selected_great_discovery_progress_key == "":
+		great_discovery_progress_detail.text = "[i]Pending constellations will appear here once telemetry arrives.[/i]"
+		return
+	var entry := _get_great_discovery_progress_entry_by_key(_selected_great_discovery_progress_key)
+	if entry.is_empty():
+		great_discovery_progress_detail.text = "[i]Pending constellations will appear here once telemetry arrives.[/i]"
+		return
+	var faction: int = int(entry.get("faction", -1))
+	var discovery_id: int = int(entry.get("discovery", -1))
+	var progress_percent: float = float(entry.get("progress", 0.0)) * 100.0
+	var deficit: int = int(entry.get("observation_deficit", 0))
+	var eta: int = int(entry.get("eta_ticks", 0))
+	var covert := bool(entry.get("covert", false))
+	var lines: Array[String] = []
+	lines.append("[b]Constellation Readiness[/b]")
+	lines.append("Discovery: %s" % _definition_label_for_id(discovery_id))
+	lines.append("Faction: F%d" % faction)
+	lines.append("Progress: %.2f%%" % progress_percent)
+	lines.append("Observation deficit: %d" % deficit)
+	lines.append("Estimated resolution: %s" % ("Now" if eta <= 0 else "%d ticks" % eta))
+	lines.append("Posture: %s" % ("Covert" if covert else "Visible"))
+
+	var metadata := _definition_metadata_for_id(discovery_id)
+	if not metadata.is_empty():
+		var gate_value := _definition_int(metadata, "observation_threshold")
+		if gate_value >= 0:
+			lines.append("Observation gate: %d verified signals" % gate_value)
+
+		var cadence_bits: Array[String] = []
+		var cooldown_value := _definition_int(metadata, "cooldown_ticks")
+		if cooldown_value >= 0:
+			cadence_bits.append("cooldown %d ticks" % cooldown_value)
+		var freshness_value := _definition_int(metadata, "freshness_window")
+		if freshness_value > 0:
+			cadence_bits.append("freshness window %d ticks" % freshness_value)
+		if _definition_bool(metadata, "covert_until_public", false):
+			cadence_bits.append("covert until public")
+		if not cadence_bits.is_empty():
+			lines.append("Cadence: %s" % ", ".join(cadence_bits))
+
+		var summary_text := String(metadata.get("summary", ""))
+		if not summary_text.is_empty():
+			lines.append("")
+			lines.append("Summary: %s" % summary_text)
+
+		var requirement_lines := _format_definition_requirements(discovery_id)
+		if not requirement_lines.is_empty():
+			lines.append("")
+			lines.append("Requirements:")
+			lines.append_array(requirement_lines)
+
+	great_discovery_progress_detail.text = "\n".join(lines)
+
+func _get_great_discovery_progress_entry_by_key(key: String) -> Dictionary:
+	var components := key.split(":")
+	if components.size() != 2:
+		return {}
+	var faction := int(components[0])
+	var discovery := int(components[1])
+	if not _great_discovery_progress_map.has(faction):
+		return {}
+	var faction_variant: Variant = _great_discovery_progress_map[faction]
+	if not (faction_variant is Dictionary):
+		return {}
+	var faction_dict: Dictionary = faction_variant
+	if not faction_dict.has(discovery):
+		return {}
+	var entry_variant: Variant = faction_dict[discovery]
+	if entry_variant is Dictionary:
+		return (entry_variant as Dictionary).duplicate(true)
+	return {}
 
 func _rebuild_discovery_progress(array) -> void:
 	_discovery_progress.clear()

@@ -248,6 +248,34 @@ pub struct GreatDiscoveryTelemetryState {
     pub active_constellations: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct GreatDiscoveryRequirementState {
+    pub discovery: u32,
+    pub weight: f32,
+    pub minimum_progress: f32,
+    pub name: Option<String>,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct GreatDiscoveryDefinitionState {
+    pub id: u16,
+    pub name: String,
+    pub field: KnowledgeField,
+    pub tier: Option<String>,
+    pub summary: Option<String>,
+    pub tags: Vec<String>,
+    pub observation_threshold: u32,
+    pub cooldown_ticks: u16,
+    pub freshness_window: Option<u16>,
+    pub effect_flags: u32,
+    pub covert_until_public: bool,
+    pub effects_summary: Vec<String>,
+    pub observation_notes: Option<String>,
+    pub leak_profile: Option<String>,
+    pub requirements: Vec<GreatDiscoveryRequirementState>,
+}
+
 impl From<TerrainTags> for u16 {
     fn from(value: TerrainTags) -> Self {
         value.bits()
@@ -731,6 +759,7 @@ pub struct WorldSnapshot {
     pub populations: Vec<PopulationCohortState>,
     pub power: Vec<PowerNodeState>,
     pub power_metrics: PowerTelemetryState,
+    pub great_discovery_definitions: Vec<GreatDiscoveryDefinitionState>,
     pub great_discoveries: Vec<GreatDiscoveryState>,
     pub great_discovery_progress: Vec<GreatDiscoveryProgressState>,
     pub great_discovery_telemetry: GreatDiscoveryTelemetryState,
@@ -765,6 +794,7 @@ pub struct WorldDelta {
     pub power: Vec<PowerNodeState>,
     pub removed_power: Vec<u64>,
     pub power_metrics: Option<PowerTelemetryState>,
+    pub great_discovery_definitions: Option<Vec<GreatDiscoveryDefinitionState>>,
     pub great_discoveries: Vec<GreatDiscoveryState>,
     pub great_discovery_progress: Vec<GreatDiscoveryProgressState>,
     pub great_discovery_telemetry: Option<GreatDiscoveryTelemetryState>,
@@ -869,6 +899,8 @@ fn build_snapshot_flatbuffer<'a>(
     let populations_vec = create_populations(builder, &snapshot.populations);
     let power_vec = create_power(builder, &snapshot.power);
     let power_metrics = create_power_metrics(builder, &snapshot.power_metrics);
+    let great_discovery_definitions_vec =
+        create_great_discovery_definitions(builder, &snapshot.great_discovery_definitions);
     let great_discoveries_vec = create_great_discoveries(builder, &snapshot.great_discoveries);
     let great_discovery_progress_vec =
         create_great_discovery_progress(builder, &snapshot.great_discovery_progress);
@@ -908,6 +940,7 @@ fn build_snapshot_flatbuffer<'a>(
             populations: Some(populations_vec),
             power: Some(power_vec),
             powerMetrics: Some(power_metrics),
+            greatDiscoveryDefinitions: Some(great_discovery_definitions_vec),
             greatDiscoveries: Some(great_discoveries_vec),
             greatDiscoveryProgress: Some(great_discovery_progress_vec),
             greatDiscoveryTelemetry: Some(great_discovery_telemetry),
@@ -970,6 +1003,10 @@ fn build_delta_flatbuffer<'a>(
         .power_metrics
         .as_ref()
         .map(|metrics| create_power_metrics(builder, metrics));
+    let great_discovery_definitions_vec = delta
+        .great_discovery_definitions
+        .as_ref()
+        .map(|definitions| create_great_discovery_definitions(builder, definitions));
     let great_discoveries_vec = create_great_discoveries(builder, &delta.great_discoveries);
     let great_discovery_progress_vec =
         create_great_discovery_progress(builder, &delta.great_discovery_progress);
@@ -1048,6 +1085,7 @@ fn build_delta_flatbuffer<'a>(
             power: Some(power_vec),
             removedPower: Some(removed_power_vec),
             powerMetrics: power_metrics,
+            greatDiscoveryDefinitions: great_discovery_definitions_vec,
             greatDiscoveries: Some(great_discoveries_vec),
             greatDiscoveryProgress: Some(great_discovery_progress_vec),
             greatDiscoveryTelemetry: great_discovery_telemetry,
@@ -1351,6 +1389,108 @@ fn create_great_discoveries<'a>(
                     tick: entry.tick,
                     publiclyDeployed: entry.publicly_deployed,
                     effectFlags: entry.effect_flags,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_great_discovery_definition_requirements<'a>(
+    builder: &mut FbBuilder<'a>,
+    entries: &[GreatDiscoveryRequirementState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::GreatDiscoveryRequirementDefinition<'a>>>>
+{
+    let offsets: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            let name = entry
+                .name
+                .as_ref()
+                .map(|value| builder.create_string(value.as_str()));
+            let summary = entry
+                .summary
+                .as_ref()
+                .map(|value| builder.create_string(value.as_str()));
+            fb::GreatDiscoveryRequirementDefinition::create(
+                builder,
+                &fb::GreatDiscoveryRequirementDefinitionArgs {
+                    discoveryId: entry.discovery,
+                    weight: entry.weight,
+                    minimumProgress: entry.minimum_progress,
+                    name,
+                    summary,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_great_discovery_definitions<'a>(
+    builder: &mut FbBuilder<'a>,
+    entries: &[GreatDiscoveryDefinitionState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::GreatDiscoveryDefinition<'a>>>> {
+    let offsets: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            let name = builder.create_string(entry.name.as_str());
+            let tier = entry
+                .tier
+                .as_ref()
+                .map(|value| builder.create_string(value.as_str()));
+            let summary = entry
+                .summary
+                .as_ref()
+                .map(|value| builder.create_string(value.as_str()));
+            let tags = if entry.tags.is_empty() {
+                None
+            } else {
+                let mut tag_offsets = Vec::with_capacity(entry.tags.len());
+                for tag in &entry.tags {
+                    tag_offsets.push(builder.create_string(tag.as_str()));
+                }
+                Some(builder.create_vector(&tag_offsets))
+            };
+            let effects_summary = if entry.effects_summary.is_empty() {
+                None
+            } else {
+                let mut effect_offsets = Vec::with_capacity(entry.effects_summary.len());
+                for line in &entry.effects_summary {
+                    effect_offsets.push(builder.create_string(line.as_str()));
+                }
+                Some(builder.create_vector(&effect_offsets))
+            };
+            let observation_notes = entry
+                .observation_notes
+                .as_ref()
+                .map(|value| builder.create_string(value.as_str()));
+            let leak_profile = entry
+                .leak_profile
+                .as_ref()
+                .map(|value| builder.create_string(value.as_str()));
+            let requirements =
+                create_great_discovery_definition_requirements(builder, &entry.requirements);
+
+            fb::GreatDiscoveryDefinition::create(
+                builder,
+                &fb::GreatDiscoveryDefinitionArgs {
+                    id: entry.id,
+                    name: Some(name),
+                    field: to_fb_knowledge_field(entry.field),
+                    observationThreshold: entry.observation_threshold,
+                    cooldownTicks: entry.cooldown_ticks,
+                    freshnessWindow: entry.freshness_window.unwrap_or_default(),
+                    hasFreshnessWindow: entry.freshness_window.is_some(),
+                    effectFlags: entry.effect_flags,
+                    covertUntilPublic: entry.covert_until_public,
+                    tier,
+                    summary,
+                    tags,
+                    effectsSummary: effects_summary,
+                    observationNotes: observation_notes,
+                    leakProfile: leak_profile,
+                    requirements: Some(requirements),
                 },
             )
         })
