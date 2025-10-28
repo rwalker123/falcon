@@ -161,6 +161,8 @@ pub struct CounterIntelSweepEvent {
     pub countermeasure: KnowledgeCountermeasure,
     pub tick: u64,
     pub note: Option<String>,
+    pub cleared_faction: Option<FactionId>,
+    pub suspicion_relief: Scalar,
 }
 
 impl KnowledgeLedger {
@@ -192,6 +194,48 @@ impl KnowledgeLedger {
             note: Some(note.unwrap_or_else(|| "Countermeasure deployed".into())),
         });
         true
+    }
+
+    pub fn apply_counterintel_sweep(&mut self, event: CounterIntelSweepEvent) {
+        let CounterIntelSweepEvent {
+            owner,
+            discovery_id,
+            countermeasure,
+            tick,
+            note,
+            cleared_faction,
+            suspicion_relief,
+        } = event;
+
+        self.apply_countermeasure(owner, discovery_id, countermeasure, tick, note);
+
+        if cleared_faction.is_some() || suspicion_relief > Scalar::zero() {
+            self.apply_infiltration_relief(owner, discovery_id, cleared_faction, suspicion_relief);
+        }
+    }
+
+    fn apply_infiltration_relief(
+        &mut self,
+        owner: FactionId,
+        discovery_id: u32,
+        cleared_faction: Option<FactionId>,
+        suspicion_relief: Scalar,
+    ) {
+        if let Some(entry) = self.entries.get_mut(&(owner, discovery_id)) {
+            if let Some(target) = cleared_faction {
+                entry.infiltrations.retain(|inf| inf.faction != target);
+            }
+
+            if suspicion_relief > Scalar::zero() {
+                for infiltration in &mut entry.infiltrations {
+                    if infiltration.suspicion > suspicion_relief {
+                        infiltration.suspicion -= suspicion_relief;
+                    } else {
+                        infiltration.suspicion = Scalar::zero();
+                    }
+                }
+            }
+        }
     }
 
     pub fn record_espionage_probe(&mut self, probe: EspionageProbeEvent) -> bool {
@@ -724,14 +768,7 @@ pub fn process_espionage_events(
     }
 
     for event in counter_events.read() {
-        let CounterIntelSweepEvent {
-            owner,
-            discovery_id,
-            countermeasure,
-            tick,
-            note,
-        } = event.clone();
-        ledger.apply_countermeasure(owner, discovery_id, countermeasure, tick, note);
+        ledger.apply_counterintel_sweep(event.clone());
     }
 }
 

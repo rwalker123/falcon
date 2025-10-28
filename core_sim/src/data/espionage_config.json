@@ -8,13 +8,18 @@
   "probe_resolution": {
     "recon_fidelity_bonus": 0.1,
     "suspicion_floor": 0.05,
-    "failure_extra_suspicion": 0.05
+    "failure_extra_suspicion": 0.05,
+    "partial_margin": 0.1,
+    "partial_fidelity_scalar": 0.5,
+    "partial_suspicion_scalar": 0.6,
+    "failure_misinformation_fidelity": -0.1
   },
   "counter_intel_resolution": {
     "security_penalty_factor": 0.5,
     "default_sweep_potency": 0.3,
     "default_sweep_upkeep": 0.05,
-    "default_sweep_duration": 2
+    "default_sweep_duration": 2,
+    "suspicion_relief": 0.25
   },
   "agent_generator_defaults": {
     "stealth_min": 0.3,
@@ -43,5 +48,9 @@
     "suspicion_relief_max": 0.35,
     "fidelity_suppression_min": 0.08,
     "fidelity_suppression_max": 0.16
+  },
+  "queue_defaults": {
+    "scheduled_tick_offset": 0,
+    "target_tier": null
   }
 }

@@ -110,6 +110,11 @@ message QueueEspionageMissionCommand {
   optional uint64 scheduled_tick = 7;
 }
 
+message UpdateEspionageQueueDefaultsCommand {
+  optional uint32 scheduled_tick_offset = 1;
+  optional uint32 target_tier = 2;
+}
+
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
@@ -127,5 +132,6 @@ message CommandEnvelope {
     InjectCorruptionCommand inject_corruption = 10;
     UpdateEspionageGeneratorsCommand update_espionage_generators = 12;
     QueueEspionageMissionCommand queue_espionage_mission = 13;
+    UpdateEspionageQueueDefaultsCommand update_espionage_queue_defaults = 14;
   }
 }

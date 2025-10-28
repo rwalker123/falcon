@@ -142,6 +142,8 @@ pub struct EspionageBalanceConfig {
     agent_generator_defaults: AgentGeneratorDefaults,
     #[serde(default)]
     mission_generator_defaults: MissionGeneratorDefaults,
+    #[serde(default)]
+    queue_defaults: EspionageQueueDefaults,
 }
 
 impl EspionageBalanceConfig {
@@ -163,6 +165,10 @@ impl EspionageBalanceConfig {
 
     pub fn mission_defaults(&self) -> &MissionGeneratorDefaults {
         &self.mission_generator_defaults
+    }
+
+    pub fn queue_defaults(&self) -> &EspionageQueueDefaults {
+        &self.queue_defaults
     }
 }
 
@@ -204,6 +210,10 @@ pub struct ProbeResolutionTuning {
     recon_fidelity_bonus: f32,
     suspicion_floor: f32,
     failure_extra_suspicion: f32,
+    partial_margin: f32,
+    partial_fidelity_scalar: f32,
+    partial_suspicion_scalar: f32,
+    failure_misinformation_fidelity: f32,
 }
 
 impl Default for ProbeResolutionTuning {
@@ -212,6 +222,10 @@ impl Default for ProbeResolutionTuning {
             recon_fidelity_bonus: 0.1,
             suspicion_floor: 0.05,
             failure_extra_suspicion: 0.05,
+            partial_margin: 0.1,
+            partial_fidelity_scalar: 0.5,
+            partial_suspicion_scalar: 0.6,
+            failure_misinformation_fidelity: -0.1,
         }
     }
 }
@@ -228,6 +242,22 @@ impl ProbeResolutionTuning {
     fn failure_extra_suspicion(&self) -> Scalar {
         Scalar::from_f32(self.failure_extra_suspicion)
     }
+
+    fn partial_margin(&self) -> f32 {
+        self.partial_margin.max(0.0)
+    }
+
+    fn partial_fidelity_scalar(&self) -> f32 {
+        self.partial_fidelity_scalar.clamp(0.0, 1.0)
+    }
+
+    fn partial_suspicion_scalar(&self) -> f32 {
+        self.partial_suspicion_scalar.clamp(0.0, 1.0)
+    }
+
+    fn failure_misinformation_fidelity(&self) -> Scalar {
+        Scalar::from_f32(self.failure_misinformation_fidelity)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -237,6 +267,7 @@ pub struct CounterIntelResolutionTuning {
     default_sweep_potency: f32,
     default_sweep_upkeep: f32,
     default_sweep_duration: u16,
+    suspicion_relief: f32,
 }
 
 impl Default for CounterIntelResolutionTuning {
@@ -246,6 +277,7 @@ impl Default for CounterIntelResolutionTuning {
             default_sweep_potency: 0.3,
             default_sweep_upkeep: 0.05,
             default_sweep_duration: 2,
+            suspicion_relief: 0.25,
         }
     }
 }
@@ -262,6 +294,10 @@ impl CounterIntelResolutionTuning {
             upkeep: Scalar::from_f32(self.default_sweep_upkeep),
             duration_ticks: self.default_sweep_duration,
         }
+    }
+
+    fn suspicion_relief(&self) -> Scalar {
+        Scalar::from_f32(self.suspicion_relief.max(0.0))
     }
 }
 
@@ -387,6 +423,13 @@ impl MissionGeneratorDefaults {
     fn fidelity_suppression(&self) -> (f32, f32) {
         (self.fidelity_suppression_min, self.fidelity_suppression_max)
     }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct EspionageQueueDefaults {
+    pub scheduled_tick_offset: u64,
+    pub target_tier: Option<u8>,
 }
 
 #[derive(Resource, Debug)]
@@ -565,6 +608,11 @@ impl EspionageCatalog {
 
     pub fn config(&self) -> &EspionageBalanceConfig {
         self.config.as_ref()
+    }
+
+    pub fn update_queue_defaults(&mut self, defaults: EspionageQueueDefaults) {
+        let config = Arc::make_mut(&mut self.config);
+        config.queue_defaults = defaults;
     }
 
     pub fn update_agent_generator(
@@ -1396,22 +1444,30 @@ fn determine_mission_outcome(
                 - security_penalty
                 - suspicion_penalty;
 
-            if success_score >= template.success_threshold {
-                let suspicion_base = template.suspicion_on_success - agent.stealth;
-                let suspicion_floor = probe_tuning.suspicion_floor();
-                let suspicion_gain = if suspicion_base < suspicion_floor {
-                    suspicion_floor
-                } else {
-                    suspicion_base
-                };
+            let success_threshold = template.success_threshold;
+            let partial_threshold = if probe_tuning.partial_margin() > 0.0 {
+                Scalar::from_f32(
+                    (success_threshold.to_f32() - probe_tuning.partial_margin()).max(0.0),
+                )
+            } else {
+                success_threshold
+            };
 
+            let base_fidelity_gain =
+                template.fidelity_gain + agent.recon * probe_tuning.recon_fidelity_bonus();
+            let suspicion_floor = probe_tuning.suspicion_floor();
+            let mut base_suspicion_gain = template.suspicion_on_success - agent.stealth;
+            if base_suspicion_gain < suspicion_floor {
+                base_suspicion_gain = suspicion_floor;
+            }
+
+            if success_score >= success_threshold {
                 outcome.probe_event = Some(EspionageProbeEvent {
                     owner: mission.target_owner,
                     discovery_id: mission.discovery_id,
                     infiltrator: mission.owner,
-                    fidelity_gain: template.fidelity_gain
-                        + agent.recon * probe_tuning.recon_fidelity_bonus(),
-                    suspicion_gain,
+                    fidelity_gain: base_fidelity_gain,
+                    suspicion_gain: base_suspicion_gain,
                     cells: template.cell_gain_on_success,
                     tick,
                     note: mission
@@ -1419,12 +1475,35 @@ fn determine_mission_outcome(
                         .clone()
                         .or_else(|| Some(format!("{} succeeded", template.name))),
                 });
+            } else if success_score >= partial_threshold {
+                let fidelity_scalar = Scalar::from_f32(probe_tuning.partial_fidelity_scalar());
+                let suspicion_scalar = Scalar::from_f32(probe_tuning.partial_suspicion_scalar());
+                let mut partial_suspicion_gain = base_suspicion_gain * suspicion_scalar;
+                if partial_suspicion_gain < suspicion_floor {
+                    partial_suspicion_gain = suspicion_floor;
+                }
+                let partial_fidelity_gain = base_fidelity_gain * fidelity_scalar;
+                let partial_cells = (template.cell_gain_on_success as u16).div_ceil(2).max(1) as u8;
+
+                outcome.probe_event = Some(EspionageProbeEvent {
+                    owner: mission.target_owner,
+                    discovery_id: mission.discovery_id,
+                    infiltrator: mission.owner,
+                    fidelity_gain: partial_fidelity_gain,
+                    suspicion_gain: partial_suspicion_gain,
+                    cells: partial_cells,
+                    tick,
+                    note: mission
+                        .note
+                        .clone()
+                        .or_else(|| Some(format!("{} achieved partial success", template.name))),
+                });
             } else {
                 outcome.probe_event = Some(EspionageProbeEvent {
                     owner: mission.target_owner,
                     discovery_id: mission.discovery_id,
                     infiltrator: mission.owner,
-                    fidelity_gain: scalar_zero(),
+                    fidelity_gain: probe_tuning.failure_misinformation_fidelity(),
                     suspicion_gain: template.suspicion_on_failure
                         + security_penalty
                         + probe_tuning.failure_extra_suspicion(),
@@ -1433,7 +1512,7 @@ fn determine_mission_outcome(
                     note: mission
                         .note
                         .clone()
-                        .or_else(|| Some(format!("{} detected", template.name))),
+                        .or_else(|| Some(format!("{} detected (misinformation)", template.name))),
                 });
             }
         }
@@ -1447,6 +1526,17 @@ fn determine_mission_outcome(
                     .countermeasure
                     .clone()
                     .unwrap_or_else(|| counter_tuning.default_countermeasure());
+
+                let cleared_faction =
+                    ledger
+                        .entry(mission.owner, mission.discovery_id)
+                        .and_then(|entry| {
+                            entry
+                                .infiltrations
+                                .iter()
+                                .max_by_key(|inf| inf.suspicion)
+                                .map(|inf| inf.faction)
+                        });
 
                 outcome.sweep_event = Some(CounterIntelSweepEvent {
                     owner: mission.owner,
@@ -1462,6 +1552,8 @@ fn determine_mission_outcome(
                         .note
                         .clone()
                         .or_else(|| Some(format!("{} succeeded", template.name))),
+                    cleared_faction,
+                    suspicion_relief: counter_tuning.suspicion_relief(),
                 });
             } else {
                 // No direct ledger effect beyond the failed attempt note.
@@ -1607,6 +1699,16 @@ mod tests {
             let mut entry = KnowledgeLedgerEntry::new(owner, 77);
             entry.security_posture = sim_runtime::KnowledgeSecurityPosture::Standard;
             ledger.upsert_entry(entry);
+            ledger.record_espionage_probe(EspionageProbeEvent {
+                owner,
+                discovery_id: 77,
+                infiltrator: FactionId(42),
+                fidelity_gain: Scalar::from_f32(0.4),
+                suspicion_gain: Scalar::from_f32(0.6),
+                cells: 2,
+                tick: 0,
+                note: None,
+            });
         }
 
         let agent_handle = {
@@ -1668,6 +1770,14 @@ mod tests {
             sweep.countermeasure.potency > scalar_zero(),
             "sweep should apply positive potency"
         );
+        assert!(
+            sweep.suspicion_relief > scalar_zero(),
+            "counter-intel sweeps should relieve suspicion"
+        );
+        assert!(
+            sweep.cleared_faction.is_some(),
+            "sweep should identify a cleared infiltration"
+        );
 
         app.world
             .run_system_once(knowledge_ledger::process_espionage_events);
@@ -1685,6 +1795,10 @@ mod tests {
             assert_eq!(
                 entry.countermeasures[0].remaining_ticks,
                 sweep.countermeasure.remaining_ticks
+            );
+            assert!(
+                entry.infiltrations.is_empty(),
+                "infiltration cells should be cleared"
             );
         }
     }

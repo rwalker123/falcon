@@ -78,6 +78,10 @@ pub enum CommandPayload {
         target_tier: Option<u8>,
         scheduled_tick: Option<u64>,
     },
+    UpdateEspionageQueueDefaults {
+        scheduled_tick_offset: Option<u32>,
+        target_tier: Option<u8>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -246,6 +250,15 @@ impl CommandEnvelope {
                     scheduled_tick: *scheduled_tick,
                 },
             ),
+            CommandPayload::UpdateEspionageQueueDefaults {
+                scheduled_tick_offset,
+                target_tier,
+            } => pb::command_envelope::Command::UpdateEspionageQueueDefaults(
+                pb::UpdateEspionageQueueDefaultsCommand {
+                    scheduled_tick_offset: *scheduled_tick_offset,
+                    target_tier: target_tier.map(|value| value as u32),
+                },
+            ),
         });
 
         pb::CommandEnvelope {
@@ -361,6 +374,22 @@ impl CommandEnvelope {
                     agent_handle: cmd.agent_handle,
                     target_tier,
                     scheduled_tick: cmd.scheduled_tick,
+                }
+            }
+            pb::command_envelope::Command::UpdateEspionageQueueDefaults(cmd) => {
+                let target_tier = match cmd.target_tier {
+                    Some(value) if value <= u8::MAX as u32 => Some(value as u8),
+                    Some(value) => {
+                        return Err(CommandDecodeError::InvalidEnum {
+                            field: "UpdateEspionageQueueDefaultsCommand.target_tier",
+                            value: value as i32,
+                        })
+                    }
+                    None => None,
+                };
+                CommandPayload::UpdateEspionageQueueDefaults {
+                    scheduled_tick_offset: cmd.scheduled_tick_offset,
+                    target_tier,
                 }
             }
         };

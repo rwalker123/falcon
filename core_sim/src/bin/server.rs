@@ -215,6 +215,12 @@ fn main() {
             Command::QueueEspionageMission { params } => {
                 handle_queue_espionage_mission(&mut app, params);
             }
+            Command::UpdateEspionageQueueDefaults {
+                scheduled_tick_offset,
+                target_tier,
+            } => {
+                handle_update_queue_defaults(&mut app, scheduled_tick_offset, target_tier);
+            }
         }
     }
 }
@@ -268,6 +274,10 @@ enum Command {
     },
     QueueEspionageMission {
         params: QueueMissionParams,
+    },
+    UpdateEspionageQueueDefaults {
+        scheduled_tick_offset: Option<u64>,
+        target_tier: Option<u8>,
     },
 }
 
@@ -441,6 +451,13 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             };
             Some(Command::QueueEspionageMission { params })
         }
+        ProtoCommandPayload::UpdateEspionageQueueDefaults {
+            scheduled_tick_offset,
+            target_tier,
+        } => Some(Command::UpdateEspionageQueueDefaults {
+            scheduled_tick_offset: scheduled_tick_offset.map(|value| value as u64),
+            target_tier,
+        }),
     }
 }
 
@@ -891,9 +908,53 @@ fn handle_update_espionage_generators(
     );
 }
 
+fn handle_update_queue_defaults(
+    app: &mut bevy::prelude::App,
+    scheduled_tick_offset: Option<u64>,
+    target_tier: Option<u8>,
+) {
+    if scheduled_tick_offset.is_none() && target_tier.is_none() {
+        info!(
+            target: "shadow_scale::espionage",
+            "espionage.queue_defaults.update_skipped=no_fields"
+        );
+        return;
+    }
+
+    let mut catalog = app.world.resource_mut::<EspionageCatalog>();
+    let mut defaults = catalog.config().queue_defaults().clone();
+
+    if let Some(offset) = scheduled_tick_offset {
+        defaults.scheduled_tick_offset = offset;
+    }
+
+    if target_tier.is_some() {
+        defaults.target_tier = target_tier;
+    }
+
+    catalog.update_queue_defaults(defaults.clone());
+
+    info!(
+        target: "shadow_scale::espionage",
+        scheduled_tick_offset = defaults.scheduled_tick_offset,
+        target_tier = ?defaults.target_tier,
+        "espionage.queue_defaults.updated"
+    );
+}
+
 fn handle_queue_espionage_mission(app: &mut bevy::prelude::App, mut params: QueueMissionParams) {
+    let current_tick = app.world.resource::<SimulationTick>().0;
+    let defaults = {
+        let catalog = app.world.resource::<EspionageCatalog>();
+        catalog.config().queue_defaults().clone()
+    };
+
     if params.scheduled_tick == 0 {
-        params.scheduled_tick = app.world.resource::<SimulationTick>().0;
+        params.scheduled_tick = current_tick.saturating_add(defaults.scheduled_tick_offset);
+    }
+
+    if params.target_tier.is_none() {
+        params.target_tier = defaults.target_tier;
     }
 
     let mission_id = params.mission_id.0.clone();
