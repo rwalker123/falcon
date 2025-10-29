@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use bevy::prelude::*;
+use bevy::{ecs::system::SystemParam, prelude::*};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -12,9 +12,11 @@ use crate::{
         CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
         KnowledgeLedgerEntry,
     },
+    metrics::SimulationMetrics,
     orders::{FactionId, FactionRegistry},
     scalar::{scalar_from_f32, scalar_zero, Scalar},
 };
+use log::{info, warn};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -141,6 +143,8 @@ pub struct EspionageBalanceConfig {
     #[serde(default)]
     counter_intel_resolution: CounterIntelResolutionTuning,
     #[serde(default)]
+    counter_intel_budget: CounterIntelBudgetConfig,
+    #[serde(default)]
     agent_generator_defaults: AgentGeneratorDefaults,
     #[serde(default)]
     mission_generator_defaults: MissionGeneratorDefaults,
@@ -161,6 +165,10 @@ impl EspionageBalanceConfig {
         &self.counter_intel_resolution
     }
 
+    pub fn counter_intel_budget(&self) -> &CounterIntelBudgetConfig {
+        &self.counter_intel_budget
+    }
+
     pub fn agent_defaults(&self) -> &AgentGeneratorDefaults {
         &self.agent_generator_defaults
     }
@@ -171,6 +179,68 @@ impl EspionageBalanceConfig {
 
     pub fn queue_defaults(&self) -> &EspionageQueueDefaults {
         &self.queue_defaults
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CounterIntelBudgetConfig {
+    initial_reserve: f32,
+    max_reserve: f32,
+    regen_per_tick: f32,
+    sweep_cost: f32,
+    min_reserve: f32,
+    lenient_suspicion_threshold: f32,
+    lenient_progress_threshold: u16,
+    hardened_progress_threshold: u16,
+}
+
+impl Default for CounterIntelBudgetConfig {
+    fn default() -> Self {
+        Self {
+            initial_reserve: 4.0,
+            max_reserve: 8.0,
+            regen_per_tick: 1.0,
+            sweep_cost: 2.0,
+            min_reserve: 1.0,
+            lenient_suspicion_threshold: 0.6,
+            lenient_progress_threshold: 95,
+            hardened_progress_threshold: 60,
+        }
+    }
+}
+
+impl CounterIntelBudgetConfig {
+    pub fn initial_reserve(&self) -> Scalar {
+        scalar_from_f32(self.initial_reserve)
+    }
+
+    pub fn max_reserve(&self) -> Scalar {
+        scalar_from_f32(self.max_reserve)
+    }
+
+    pub fn regen_per_tick(&self) -> Scalar {
+        scalar_from_f32(self.regen_per_tick)
+    }
+
+    pub fn sweep_cost(&self) -> Scalar {
+        scalar_from_f32(self.sweep_cost)
+    }
+
+    pub fn min_reserve(&self) -> Scalar {
+        scalar_from_f32(self.min_reserve)
+    }
+
+    pub fn lenient_suspicion_threshold(&self) -> Scalar {
+        scalar_from_f32(self.lenient_suspicion_threshold)
+    }
+
+    pub fn lenient_progress_threshold(&self) -> u16 {
+        self.lenient_progress_threshold
+    }
+
+    pub fn hardened_progress_threshold(&self) -> u16 {
+        self.hardened_progress_threshold
     }
 }
 
@@ -1359,22 +1429,156 @@ pub fn initialise_espionage_roster(
     roster.seed_from_catalog(&factions.factions, &catalog);
 }
 
+#[derive(Resource, Debug)]
+pub struct CounterIntelBudgets {
+    reserves: HashMap<FactionId, Scalar>,
+}
+
+impl CounterIntelBudgets {
+    pub fn new(factions: &[FactionId], config: &CounterIntelBudgetConfig) -> Self {
+        let mut reserves = HashMap::new();
+        let initial = config.initial_reserve();
+        for faction in factions {
+            reserves.insert(*faction, initial);
+        }
+        Self { reserves }
+    }
+
+    pub fn regenerate(&mut self, config: &CounterIntelBudgetConfig) {
+        let regen = config.regen_per_tick();
+        let max_reserve = config.max_reserve();
+        if regen <= Scalar::zero() {
+            return;
+        }
+        for value in self.reserves.values_mut() {
+            let mut updated = *value + regen;
+            if updated > max_reserve {
+                updated = max_reserve;
+            }
+            *value = updated;
+        }
+    }
+
+    pub fn available(&self, faction: FactionId) -> Scalar {
+        self.reserves
+            .get(&faction)
+            .copied()
+            .unwrap_or_else(scalar_zero)
+    }
+
+    pub fn try_spend(
+        &mut self,
+        faction: FactionId,
+        config: &CounterIntelBudgetConfig,
+        policy: SecurityPolicy,
+    ) -> Result<Scalar, Scalar> {
+        let cost = config.sweep_cost();
+        let min_reserve = config.min_reserve();
+        let allow_overdraft = matches!(policy, SecurityPolicy::Crisis);
+        let entry = self.reserves.entry(faction).or_insert_with(scalar_zero);
+        if allow_overdraft {
+            let remaining = if *entry > cost {
+                *entry - cost
+            } else {
+                Scalar::zero()
+            };
+            *entry = remaining;
+            return Ok(cost);
+        }
+
+        let available = *entry;
+        if available < cost {
+            return Err(available);
+        }
+
+        let remaining = available - cost;
+        if remaining < min_reserve {
+            return Err(available);
+        }
+
+        *entry = remaining;
+        Ok(cost)
+    }
+
+    #[cfg(test)]
+    pub fn set_reserve(&mut self, faction: FactionId, amount: Scalar) {
+        self.reserves.insert(faction, amount);
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecurityPolicy {
+    Lenient,
+    Standard,
+    Hardened,
+    Crisis,
+}
+
+#[derive(Resource, Debug)]
+pub struct FactionSecurityPolicies {
+    policies: HashMap<FactionId, SecurityPolicy>,
+    default_policy: SecurityPolicy,
+}
+
+#[derive(SystemParam)]
+pub struct CounterIntelScheduleParams<'w> {
+    pub tick: Res<'w, crate::resources::SimulationTick>,
+    pub catalog: Res<'w, EspionageCatalog>,
+    pub ledger: Res<'w, KnowledgeLedger>,
+    pub roster: ResMut<'w, EspionageRoster>,
+    pub missions: ResMut<'w, EspionageMissionState>,
+    pub budgets: ResMut<'w, CounterIntelBudgets>,
+    pub policies: Res<'w, FactionSecurityPolicies>,
+    pub metrics: ResMut<'w, SimulationMetrics>,
+}
+
+impl FactionSecurityPolicies {
+    pub fn new(factions: &[FactionId], default_policy: SecurityPolicy) -> Self {
+        let mut policies = HashMap::new();
+        for faction in factions {
+            policies.insert(*faction, default_policy);
+        }
+        Self {
+            policies,
+            default_policy,
+        }
+    }
+
+    pub fn policy(&self, faction: FactionId) -> SecurityPolicy {
+        self.policies
+            .get(&faction)
+            .copied()
+            .unwrap_or(self.default_policy)
+    }
+
+    #[cfg(test)]
+    pub fn set_policy(&mut self, faction: FactionId, policy: SecurityPolicy) {
+        self.policies.insert(faction, policy);
+    }
+}
+
 struct CounterIntelCandidate {
     owner: FactionId,
     discovery_id: u32,
     tier: Option<u8>,
     infiltration_active: bool,
     total_suspicion: Scalar,
+    max_suspicion: Scalar,
     progress_percent: u16,
 }
 
 impl CounterIntelCandidate {
     fn from_entry(entry: &KnowledgeLedgerEntry) -> Self {
         let infiltration_active = !entry.infiltrations.is_empty();
-        let total_suspicion = entry
-            .infiltrations
-            .iter()
-            .fold(Scalar::zero(), |acc, inf| acc + inf.suspicion);
+        let mut total_suspicion = Scalar::zero();
+        let mut max_suspicion = Scalar::zero();
+        for inf in &entry.infiltrations {
+            total_suspicion += inf.suspicion;
+            if inf.suspicion > max_suspicion {
+                max_suspicion = inf.suspicion;
+            }
+        }
         let tier = if entry.tier > 0 {
             Some(entry.tier)
         } else {
@@ -1387,15 +1591,10 @@ impl CounterIntelCandidate {
             tier,
             infiltration_active,
             total_suspicion,
+            max_suspicion,
             progress_percent: entry.progress_percent,
         }
     }
-}
-
-fn should_schedule_counter_intel(entry: &KnowledgeLedgerEntry) -> bool {
-    let infiltration_active = !entry.infiltrations.is_empty();
-    let high_progress = entry.progress_percent >= 70;
-    infiltration_active || high_progress
 }
 
 fn has_active_counterintel_countermeasure(entry: &KnowledgeLedgerEntry) -> bool {
@@ -1451,13 +1650,63 @@ fn pick_best_counter_agent(
         .map(|agent| agent.handle)
 }
 
-pub fn schedule_counter_intel_missions(
-    tick: Res<crate::resources::SimulationTick>,
-    catalog: Res<EspionageCatalog>,
-    ledger: Res<KnowledgeLedger>,
-    mut roster: ResMut<EspionageRoster>,
-    mut missions: ResMut<EspionageMissionState>,
+const STANDARD_PROGRESS_THRESHOLD: u16 = 70;
+
+fn policy_allows_auto_queue(
+    policy: SecurityPolicy,
+    candidate: &CounterIntelCandidate,
+    config: &CounterIntelBudgetConfig,
+) -> bool {
+    match policy {
+        SecurityPolicy::Standard => {
+            candidate.infiltration_active
+                || candidate.progress_percent >= STANDARD_PROGRESS_THRESHOLD
+        }
+        SecurityPolicy::Hardened => {
+            candidate.infiltration_active
+                || candidate.progress_percent >= config.hardened_progress_threshold()
+                || candidate.tier.map(|tier| tier >= 2).unwrap_or(false)
+        }
+        SecurityPolicy::Lenient => {
+            (candidate.infiltration_active
+                && candidate.max_suspicion >= config.lenient_suspicion_threshold())
+                || candidate.progress_percent >= config.lenient_progress_threshold()
+        }
+        SecurityPolicy::Crisis => {
+            candidate.infiltration_active
+                || candidate.progress_percent >= config.hardened_progress_threshold()
+        }
+    }
+}
+
+fn log_budget_shortfall(
+    faction: FactionId,
+    discovery_id: u32,
+    available: Scalar,
+    required: Scalar,
 ) {
+    warn!(
+        target: "shadow_scale::espionage",
+        "counter_intel_budget.insufficient faction={} discovery_id={} available={:.3} required={:.3}",
+        faction,
+        discovery_id,
+        available.to_f32(),
+        required.to_f32()
+    );
+}
+
+pub fn schedule_counter_intel_missions(params: CounterIntelScheduleParams) {
+    let CounterIntelScheduleParams {
+        tick,
+        catalog,
+        ledger,
+        mut roster,
+        mut missions,
+        mut budgets,
+        policies,
+        mut metrics,
+    } = params;
+
     let counter_templates: Vec<&EspionageMissionTemplate> = catalog
         .missions()
         .filter(|mission| mission.kind == EspionageMissionKind::CounterIntel)
@@ -1467,9 +1716,10 @@ pub fn schedule_counter_intel_missions(
         return;
     }
 
+    let budget_config = catalog.config().counter_intel_budget().clone();
+
     let mut candidates: Vec<CounterIntelCandidate> = ledger
         .entries()
-        .filter(|entry| should_schedule_counter_intel(entry))
         .filter(|entry| !has_active_counterintel_countermeasure(entry))
         .map(CounterIntelCandidate::from_entry)
         .collect();
@@ -1482,11 +1732,17 @@ pub fn schedule_counter_intel_missions(
         b.infiltration_active
             .cmp(&a.infiltration_active)
             .then_with(|| b.total_suspicion.cmp(&a.total_suspicion))
+            .then_with(|| b.max_suspicion.cmp(&a.max_suspicion))
             .then_with(|| b.progress_percent.cmp(&a.progress_percent))
             .then_with(|| a.discovery_id.cmp(&b.discovery_id))
     });
 
     for candidate in candidates {
+        let policy = policies.policy(candidate.owner);
+        if !policy_allows_auto_queue(policy, &candidate, &budget_config) {
+            continue;
+        }
+
         if has_pending_counterintel_mission(
             missions.as_ref(),
             catalog.as_ref(),
@@ -1499,6 +1755,20 @@ pub fn schedule_counter_intel_missions(
         let Some(template) = select_counterintel_template(&counter_templates, candidate.tier)
         else {
             continue;
+        };
+
+        let spend_result = budgets.try_spend(candidate.owner, &budget_config, policy);
+        let cost = match spend_result {
+            Ok(cost) => cost,
+            Err(available) => {
+                log_budget_shortfall(
+                    candidate.owner,
+                    candidate.discovery_id,
+                    available,
+                    budget_config.sweep_cost(),
+                );
+                continue;
+            }
         };
 
         let Some(agent_handle) = pick_best_counter_agent(&roster, candidate.owner) else {
@@ -1519,9 +1789,34 @@ pub fn schedule_counter_intel_missions(
             .queue_mission(catalog.as_ref(), &mut roster, params)
             .is_err()
         {
+            // refund on failure to queue
+            budgets
+                .reserves
+                .entry(candidate.owner)
+                .and_modify(|reserve| {
+                    *reserve = (*reserve + cost).min(budget_config.max_reserve())
+                });
             continue;
         }
+
+        metrics.knowledge_counterintel_budget_spent += cost.to_f32() as f64;
+        info!(
+            target: "shadow_scale::espionage",
+            "counter_intel_budget.spent faction={} discovery_id={} cost={:.3} policy={:?} available_after={:.3}",
+            candidate.owner,
+            candidate.discovery_id,
+            cost.to_f32(),
+            policy,
+            budgets.available(candidate.owner).to_f32()
+        );
     }
+}
+
+pub fn refresh_counter_intel_budgets(
+    catalog: Res<EspionageCatalog>,
+    mut budgets: ResMut<CounterIntelBudgets>,
+) {
+    budgets.regenerate(catalog.config().counter_intel_budget());
 }
 
 pub fn resolve_espionage_missions(
@@ -1744,6 +2039,7 @@ mod tests {
         self, InfiltrationRecord, KnowledgeLedger, KnowledgeLedgerConfigHandle,
         KnowledgeLedgerEntry,
     };
+    use crate::metrics::SimulationMetrics;
     use crate::orders::FactionRegistry;
     use crate::resources::SimulationTick;
     use bevy::app::App;
@@ -1764,12 +2060,19 @@ mod tests {
         let knowledge_ledger = KnowledgeLedger::with_config(knowledge_config_handle.get());
 
         app.insert_resource(SimulationTick(0));
+        app.insert_resource(SimulationMetrics::default());
         app.insert_resource(knowledge_config_handle);
         app.insert_resource(knowledge_ledger);
         app.insert_resource(FactionRegistry::new(factions.to_vec()));
+        let budget_config = catalog.config().counter_intel_budget().clone();
         app.insert_resource(catalog);
         app.insert_resource(roster);
         app.insert_resource(EspionageMissionState::default());
+        app.insert_resource(CounterIntelBudgets::new(factions, &budget_config));
+        app.insert_resource(FactionSecurityPolicies::new(
+            factions,
+            SecurityPolicy::Standard,
+        ));
 
         app
     }
@@ -2080,6 +2383,153 @@ mod tests {
         assert!(
             missions.missions().is_empty(),
             "scheduler should avoid queuing when a sweep countermeasure is active"
+        );
+    }
+
+    #[test]
+    fn auto_scheduler_skips_when_budget_insufficient() {
+        let owner = FactionId(0);
+        let mut app = setup_app_with_catalog(&[owner]);
+
+        {
+            let config_handle = app.world.resource::<KnowledgeLedgerConfigHandle>();
+            let mut entry = KnowledgeLedgerEntry::new(owner, 101, config_handle.get().as_ref());
+            entry.tier = 2;
+            entry.register_infiltration(
+                InfiltrationRecord {
+                    faction: FactionId(99),
+                    blueprint_fidelity: scalar_from_f32(0.4),
+                    suspicion: scalar_from_f32(0.6),
+                    cells: 1,
+                    last_activity_tick: 0,
+                },
+                config_handle.get().max_suspicion(),
+            );
+            app.world
+                .resource_mut::<KnowledgeLedger>()
+                .upsert_entry(entry);
+        }
+
+        {
+            let sweep_cost = app
+                .world
+                .resource::<EspionageCatalog>()
+                .config()
+                .counter_intel_budget()
+                .sweep_cost();
+            app.world
+                .resource_mut::<CounterIntelBudgets>()
+                .set_reserve(owner, sweep_cost / Scalar::from_f32(4.0));
+        }
+
+        app.world.run_system_once(schedule_counter_intel_missions);
+
+        let missions = app.world.resource::<EspionageMissionState>();
+        assert!(
+            missions.missions().is_empty(),
+            "budget shortfall should block scheduling"
+        );
+    }
+
+    #[test]
+    fn lenient_policy_requires_high_suspicion() {
+        let owner = FactionId(0);
+        let mut app = setup_app_with_catalog(&[owner]);
+
+        {
+            app.world
+                .resource_mut::<FactionSecurityPolicies>()
+                .set_policy(owner, SecurityPolicy::Lenient);
+        }
+
+        {
+            let config_handle = app.world.resource::<KnowledgeLedgerConfigHandle>();
+            let mut entry = KnowledgeLedgerEntry::new(owner, 111, config_handle.get().as_ref());
+            entry.tier = 1;
+            entry.progress_percent = 72;
+            entry.register_infiltration(
+                InfiltrationRecord {
+                    faction: FactionId(42),
+                    blueprint_fidelity: scalar_from_f32(0.2),
+                    suspicion: scalar_from_f32(0.2),
+                    cells: 1,
+                    last_activity_tick: 0,
+                },
+                config_handle.get().max_suspicion(),
+            );
+            app.world
+                .resource_mut::<KnowledgeLedger>()
+                .upsert_entry(entry);
+        }
+
+        app.world.run_system_once(schedule_counter_intel_missions);
+
+        {
+            let missions = app.world.resource::<EspionageMissionState>();
+            assert!(
+                missions.missions().is_empty(),
+                "lenient policy should not auto-queue with low suspicion"
+            );
+        }
+
+        {
+            let config_handle = app.world.resource::<KnowledgeLedgerConfigHandle>();
+            let mut entry = KnowledgeLedgerEntry::new(owner, 111, config_handle.get().as_ref());
+            entry.tier = 1;
+            entry.progress_percent = 72;
+            entry.register_infiltration(
+                InfiltrationRecord {
+                    faction: FactionId(42),
+                    blueprint_fidelity: scalar_from_f32(0.2),
+                    suspicion: scalar_from_f32(0.85),
+                    cells: 1,
+                    last_activity_tick: 0,
+                },
+                config_handle.get().max_suspicion(),
+            );
+            app.world
+                .resource_mut::<KnowledgeLedger>()
+                .upsert_entry(entry);
+        }
+
+        app.world.run_system_once(schedule_counter_intel_missions);
+
+        let missions = app.world.resource::<EspionageMissionState>();
+        assert_eq!(
+            missions.missions().len(),
+            1,
+            "high suspicion should trigger scheduling"
+        );
+    }
+
+    #[test]
+    fn hardened_policy_protects_high_tier_without_infiltration() {
+        let owner = FactionId(0);
+        let mut app = setup_app_with_catalog(&[owner]);
+
+        {
+            app.world
+                .resource_mut::<FactionSecurityPolicies>()
+                .set_policy(owner, SecurityPolicy::Hardened);
+        }
+
+        {
+            let config_handle = app.world.resource::<KnowledgeLedgerConfigHandle>();
+            let mut entry = KnowledgeLedgerEntry::new(owner, 211, config_handle.get().as_ref());
+            entry.tier = 3;
+            entry.progress_percent = 40;
+            app.world
+                .resource_mut::<KnowledgeLedger>()
+                .upsert_entry(entry);
+        }
+
+        app.world.run_system_once(schedule_counter_intel_missions);
+
+        let missions = app.world.resource::<EspionageMissionState>();
+        assert_eq!(
+            missions.missions().len(),
+            1,
+            "hardened policy should protect high-tier secrets"
         );
     }
 

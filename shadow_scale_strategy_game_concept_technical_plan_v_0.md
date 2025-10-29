@@ -377,6 +377,12 @@ Groundbreaking discoveries rarely remain siloed. Once ideas interact with trade,
 - **Budget Scaling**: Costs stack per protected discovery. Global policies can reduce marginal cost by up to 20%.
 - **Knowledge Debt Recovery**: Investing in training/documentation reduces debt by 50% over 4 turns at 2% additional upkeep.
 
+### Counter-Intel Budgets & Policy Hooks
+- **Defensive Reserve**: Each faction earmarks a `Counter-Intel Budget` that fuels rapid-response sweeps and network audits. When the ledger flags high-risk discoveries (≥70% leak progress or active infiltrations), the simulation automatically spends from this reserve to queue defensive missions if funds remain. Budget shortfalls delay or cancel the sweep, surfacing a warning in the Knowledge Ledger panel.
+- **Policy Modifiers**: Faction doctrine cards (e.g., *Zero Trust Mandate*, *Diplomatic Leniency*) adjust how aggressively the auto-scheduler reacts. Hardened policies bias toward protecting tier ≥2 breakthroughs, while lenient stances require manual authorization unless an infiltration breaches suspicion thresholds. See `docs/architecture.md` §Counter-Intel Automation Hooks for engineering details.
+- **Player Agency**: Leaders can pause automation per discovery, redirect budget to offensive probes, or raise spending caps during crises. UI exposes toggles alongside the Counter-Intel panel so players reconcile treasury pressure with secrecy risk.
+- **Prototype Defaults**: Defensive sweeps currently cost `2` budget from a per-faction reserve of `4`, regenerate `1` each turn, and maintain a `1`-point buffer before automation pauses. Designers can tune these values in `core_sim/src/data/espionage_config.json` (`counter_intel_budget` block).
+
 ### Espionage Event Timeline Examples
 - **Turn 0 (Discovery)**: Secure at Standard posture; leak meter set to 0% with half-life per tier.
 - **Turn 3 (Trade Mission Intercepted)**: Enemy spy cell gains 2 observation points; leak progress +10%. Notification: "Border inspection flagged tampered manifests."

@@ -21,6 +21,16 @@
     "default_sweep_duration": 2,
     "suspicion_relief": 0.25
   },
+  "counter_intel_budget": {
+    "initial_reserve": 4.0,
+    "max_reserve": 8.0,
+    "regen_per_tick": 1.0,
+    "sweep_cost": 2.0,
+    "min_reserve": 1.0,
+    "lenient_suspicion_threshold": 0.6,
+    "lenient_progress_threshold": 95,
+    "hardened_progress_threshold": 60
+  },
   "agent_generator_defaults": {
     "stealth_min": 0.3,
     "stealth_max": 0.8,
