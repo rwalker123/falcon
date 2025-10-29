@@ -1,0 +1,13 @@
+{
+  "timeline_capacity": 64,
+  "default_half_life_ticks": 10,
+  "default_time_to_cascade": 10,
+  "max_suspicion": 5.0,
+  "suspicion_decay": 0.05,
+  "suspicion_retention_threshold": 0.05,
+  "countermeasure_bonus_scale": 4.0,
+  "countermeasure_progress_penalty_ratio": 0.5,
+  "infiltration_cells_weight": 1.0,
+  "infiltration_fidelity_weight": 2.0,
+  "max_progress_per_tick": 25
+}

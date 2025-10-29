@@ -1,0 +1,40 @@
+{
+  "roster_cap": 12,
+  "support_decay": 0.85,
+  "suppression_decay": 0.88,
+  "boost_decay": 0.92,
+  "spawn_interval_min": 8,
+  "spawn_interval_max": 18,
+  "potential_min_ticks": 5,
+  "potential_fizzle_ticks": 12,
+  "potential_fizzle_coherence": 0.35,
+  "dormant_remove_threshold": 50,
+  "support_notoriety_gain": 0.08,
+  "support_channel_gain": 0.35,
+  "support_channel_max": 1.5,
+  "notoriety_min": 0.05,
+  "notoriety_max": 5.0,
+  "scope_thresholds": {
+    "local": {
+      "promote_coherence": 0.45,
+      "promote_notoriety": 0.4,
+      "demote_coherence": 0.25,
+      "promote_ticks": 3,
+      "demote_ticks": 6
+    },
+    "regional": {
+      "promote_coherence": 0.6,
+      "promote_notoriety": 0.6,
+      "demote_coherence": 0.3,
+      "promote_ticks": 4,
+      "demote_ticks": 7
+    },
+    "global": {
+      "promote_coherence": 0.72,
+      "promote_notoriety": 0.75,
+      "demote_coherence": 0.35,
+      "promote_ticks": 5,
+      "demote_ticks": 8
+    }
+  }
+}

@@ -21,6 +21,8 @@ mod snapshot;
 mod systems;
 mod terrain;
 
+use std::sync::Arc;
+
 use bevy::prelude::*;
 
 pub use components::{
@@ -45,12 +47,13 @@ pub use great_discovery::{
     GreatDiscoveryResolvedEvent, GreatDiscoveryTelemetry, ObservationLedger,
 };
 pub use influencers::{
-    tick_influencers, InfluencerCultureResonance, InfluencerImpacts, InfluentialId,
-    InfluentialRoster, SupportChannel,
+    tick_influencers, InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerCultureResonance,
+    InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel, BUILTIN_INFLUENCER_CONFIG,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
-    KnowledgeLedgerEntry, KnowledgeModifier, KnowledgeTimelineEvent,
+    KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle, KnowledgeLedgerEntry, KnowledgeModifier,
+    KnowledgeTimelineEvent, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
 };
 
 pub use metrics::SimulationMetrics;
@@ -94,7 +97,19 @@ pub fn build_headless_app() -> App {
     let turn_queue = orders::TurnQueue::new(faction_registry.factions.clone());
     let snapshot_history = SnapshotHistory::with_capacity(config.snapshot_history_limit.max(1));
     let generation_registry = GenerationRegistry::with_seed(0xC0FEBABE, 6);
-    let influencer_roster = InfluentialRoster::with_seed(0xA51C_E55E, &generation_registry);
+    let influencer_config = Arc::new(
+        InfluencerBalanceConfig::from_json_str(BUILTIN_INFLUENCER_CONFIG)
+            .expect("influencer config should parse"),
+    );
+    let influencer_roster =
+        InfluentialRoster::with_seed(0xA51C_E55E, &generation_registry, influencer_config.clone());
+    let influencer_config_handle = InfluencerConfigHandle::new(influencer_config);
+    let knowledge_config = Arc::new(
+        KnowledgeLedgerConfig::from_json_str(BUILTIN_KNOWLEDGE_LEDGER_CONFIG)
+            .expect("knowledge ledger config should parse"),
+    );
+    let knowledge_ledger = KnowledgeLedger::with_config(knowledge_config.clone());
+    let knowledge_config_handle = KnowledgeLedgerConfigHandle::new(knowledge_config);
     let culture_manager = CultureManager::new();
     let culture_effects = CultureEffectsCache::default();
     let espionage_catalog =
@@ -108,7 +123,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(SimulationTick::default())
         .insert_resource(SimulationMetrics::default())
         .insert_resource(SentimentAxisBias::default())
-        .insert_resource(KnowledgeLedger::default())
+        .insert_resource(knowledge_config_handle)
+        .insert_resource(knowledge_ledger)
         .insert_resource(CorruptionLedgers::default())
         .insert_resource(CorruptionTelemetry::default())
         .insert_resource(DiplomacyLeverage::default())
@@ -117,6 +133,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(espionage_catalog)
         .insert_resource(espionage_roster)
         .insert_resource(espionage::EspionageMissionState::default())
+        .insert_resource(influencer_config_handle)
         .insert_resource(influencer_roster)
         .insert_resource(InfluencerImpacts::default())
         .insert_resource(culture_manager)

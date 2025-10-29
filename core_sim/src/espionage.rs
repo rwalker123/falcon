@@ -1573,7 +1573,7 @@ fn determine_mission_outcome(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::knowledge_ledger::{self, KnowledgeLedgerEntry};
+    use crate::knowledge_ledger::{self, KnowledgeLedgerConfigHandle, KnowledgeLedgerEntry};
     use crate::orders::FactionRegistry;
     use crate::resources::SimulationTick;
     use bevy::app::App;
@@ -1590,8 +1590,12 @@ mod tests {
         let mut roster = EspionageRoster::default();
         roster.seed_from_catalog(factions, &catalog);
 
+        let knowledge_config_handle = KnowledgeLedgerConfigHandle::load_builtin();
+        let knowledge_ledger = KnowledgeLedger::with_config(knowledge_config_handle.get());
+
         app.insert_resource(SimulationTick(0));
-        app.insert_resource(KnowledgeLedger::default());
+        app.insert_resource(knowledge_config_handle);
+        app.insert_resource(knowledge_ledger);
         app.insert_resource(FactionRegistry::new(factions.to_vec()));
         app.insert_resource(catalog);
         app.insert_resource(roster);
@@ -1701,20 +1705,25 @@ mod tests {
         let mut app = setup_app_with_catalog(&[owner]);
 
         {
+            let (entry, probe_event) = {
+                let config_handle = app.world.resource::<KnowledgeLedgerConfigHandle>();
+                let mut entry = KnowledgeLedgerEntry::new(owner, 77, config_handle.get().as_ref());
+                entry.security_posture = sim_runtime::KnowledgeSecurityPosture::Standard;
+                let probe_event = EspionageProbeEvent {
+                    owner,
+                    discovery_id: 77,
+                    infiltrator: FactionId(42),
+                    fidelity_gain: Scalar::from_f32(0.4),
+                    suspicion_gain: Scalar::from_f32(0.6),
+                    cells: 2,
+                    tick: 0,
+                    note: None,
+                };
+                (entry, probe_event)
+            };
             let mut ledger = app.world.resource_mut::<KnowledgeLedger>();
-            let mut entry = KnowledgeLedgerEntry::new(owner, 77);
-            entry.security_posture = sim_runtime::KnowledgeSecurityPosture::Standard;
             ledger.upsert_entry(entry);
-            ledger.record_espionage_probe(EspionageProbeEvent {
-                owner,
-                discovery_id: 77,
-                infiltrator: FactionId(42),
-                fidelity_gain: Scalar::from_f32(0.4),
-                suspicion_gain: Scalar::from_f32(0.6),
-                cells: 2,
-                tick: 0,
-                note: None,
-            });
+            ledger.record_espionage_probe(probe_event);
         }
 
         let agent_handle = {

@@ -33,8 +33,14 @@ use crate::{
         GreatDiscoveryId, GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
         GreatDiscoveryTelemetry,
     },
-    influencers::{InfluencerImpacts, InfluentialRoster},
-    knowledge_ledger::{encode_ledger_key, KnowledgeLedger, KnowledgeSnapshotPayload},
+    influencers::{
+        InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerImpacts, InfluentialRoster,
+        BUILTIN_INFLUENCER_CONFIG,
+    },
+    knowledge_ledger::{
+        encode_ledger_key, KnowledgeLedger, KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle,
+        KnowledgeSnapshotPayload, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
+    },
     orders::FactionId,
     power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
     resources::{
@@ -1154,8 +1160,25 @@ pub fn capture_snapshot(
 }
 
 pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) {
+    let knowledge_config = if let Some(handle) = world.get_resource::<KnowledgeLedgerConfigHandle>()
+    {
+        handle.get()
+    } else {
+        let parsed = Arc::new(
+            KnowledgeLedgerConfig::from_json_str(BUILTIN_KNOWLEDGE_LEDGER_CONFIG)
+                .expect("knowledge ledger config should parse"),
+        );
+        world.insert_resource(KnowledgeLedgerConfigHandle::new(parsed.clone()));
+        parsed
+    };
+
     if let Some(mut ledger) = world.get_resource_mut::<KnowledgeLedger>() {
+        ledger.apply_config(knowledge_config.clone());
         ledger.sync_from_snapshot(snapshot);
+    } else {
+        let mut ledger = KnowledgeLedger::with_config(knowledge_config.clone());
+        ledger.sync_from_snapshot(snapshot);
+        world.insert_resource(ledger);
     }
 
     // Despawn existing entities.
@@ -1322,6 +1345,17 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         world.insert_resource(GenerationRegistry::from_states(&snapshot.generations));
     }
 
+    let influencer_config = if let Some(handle) = world.get_resource::<InfluencerConfigHandle>() {
+        handle.get()
+    } else {
+        let parsed = Arc::new(
+            InfluencerBalanceConfig::from_json_str(BUILTIN_INFLUENCER_CONFIG)
+                .expect("influencer config should parse"),
+        );
+        world.insert_resource(InfluencerConfigHandle::new(parsed.clone()));
+        parsed
+    };
+
     let roster_sentiment;
     let roster_logistics;
     let roster_morale;
@@ -1329,9 +1363,14 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
     {
         let generation_registry_clone = world.resource::<GenerationRegistry>().clone();
         if let Some(mut roster) = world.get_resource_mut::<InfluentialRoster>() {
+            roster.apply_config(influencer_config.clone());
             roster.update_from_states(&snapshot.influencers);
         } else {
-            let mut roster = InfluentialRoster::with_seed(0xA51C_E55E, &generation_registry_clone);
+            let mut roster = InfluentialRoster::with_seed(
+                0xA51C_E55E,
+                &generation_registry_clone,
+                influencer_config.clone(),
+            );
             roster.update_from_states(&snapshot.influencers);
             world.insert_resource(roster);
         }

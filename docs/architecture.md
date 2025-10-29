@@ -108,6 +108,17 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
   - Espionage missions inject `EspionageProbe` components with target discovery/tier, desired fidelity, and stealth score; successful probes raise `InfiltrationRecord.blueprint_fidelity` and shorten the leak timer. Failed probes increase suspicion, lowering future stealth chances and triggering UI alerts.
   - Counter-intelligence commands manipulate `KnowledgeSecurityProfile` (raising maintenance costs) or launch sweeps that consume `CounterIntelBudget`, roll against active probes, and, on success, erase infiltration records while applying short-term leak relief.
   - Knowledge Debt integrates with existing power/culture systems: high security posture writes penalties into `KnowledgeDebtLedger` consumed by power instability (`Power Systems Plan`) and workforce efficiency models.
+- **Configuration Surface**: `core_sim/src/data/knowledge_ledger_config.json` captures timeline capacity, default half-life/time-to-cascade, suspicion decay and retention thresholds, countermeasure bonus scaling, infiltrator weighting, and per-tick progress clamps. `KnowledgeLedgerConfigHandle` shares an `Arc<KnowledgeLedgerConfig>` between the ledger and callers, allowing tooling to reload numbers in step with the player experience outlined in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §5a.
+  - **Config fields**:
+    - `timeline_capacity`: number of timeline entries retained before trimming the oldest events.
+    - `default_half_life_ticks` / `default_time_to_cascade`: baseline secrecy timers assigned when a discovery registers.
+    - `max_suspicion`: clamp applied to infiltration suspicion meters.
+    - `suspicion_decay`: per-tick reduction applied to suspicion when no new probe lands.
+    - `suspicion_retention_threshold`: infiltrations below this suspicion/fidelity threshold are purged during decay.
+    - `countermeasure_bonus_scale`: multiplier translating countermeasure potency into additional half-life ticks.
+    - `countermeasure_progress_penalty_ratio`: portion of countermeasure bonus converted into reduced leak progress that same tick.
+    - `infiltration_cells_weight` / `infiltration_fidelity_weight`: weights that transform spy cells and blueprint fidelity into half-life penalties.
+    - `max_progress_per_tick`: upper bound on leak progress applied within a single tick after modifiers.
 - **Telemetry & UI feeds**:
   - Extend `WorldSnapshot` with `knowledge_ledger:[KnowledgeLedgerState]` entries carrying `discovery_id`, `owner_faction`, tier, current progress %, time-to-cascade estimate, active countermeasures, and suspected infiltrations. Include a child array `KnowledgeModifierBreakdownState` so the Godot inspector can show the modifier tooltips described in the manual’s Knowledge Ledger UI sketch.
   - Publish `KnowledgeEspionageTimeline` frames (ring buffer of the last N leak-affecting events) to snapshots and the `knowledge.telemetry` log channel, aligning with the UI timeline graph.
@@ -135,6 +146,13 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
   - Mission logs feed the timeline/telemetry channel consumed by the Godot Knowledge panel.
   - UI surfaces mission queue, success odds, agent availability, and ledger linkage (e.g., infiltrations per discovery).
 - **Configuration & Balancing**: Expose tuning knobs for mission difficulty, suspicion decay, countermeasure potency, mission prep costs, and agent progression.
+  - `core_sim/src/data/espionage_config.json` reference:
+    - `security_posture_penalties.minimal|standard|hardened|black_vault`: additive modifiers that accelerate leak progress as posture relaxes.
+    - `probe_resolution.*`: mission outcome tuning—`recon_fidelity_bonus` rewards recon-ready targets, `suspicion_floor`/`failure_extra_suspicion` set minimum suspicion deltas, `partial_*` scale partial successes, and `failure_misinformation_fidelity` models bad intel backlash.
+    - `counter_intel_resolution.*`: defaults for sweeps including posture penalty factor, base potency/upkeep/duration, and suspicion relief applied on success.
+    - `agent_generator_defaults.*`: stat ranges consumed when generator templates seed procedural agents.
+    - `mission_generator_defaults.*`: bounds governing auto-generated missions (resolution ticks, success odds, fidelity & suspicion deltas, cell gains, relief & suppression outputs).
+    - `queue_defaults.scheduled_tick_offset` / `queue_defaults.target_tier`: default scheduling offset and tier bias applied when remote tooling omits explicit values.
 - **Implementation Notes**:
   - Stage 1: define agent resources/components and mission queue from data-driven definitions; integrate scheduling commands.
   - Stage 2: mission resolution system producing ledger events; defensive sweeps; hooks into `knowledge_ledger_tick`.
@@ -185,6 +203,20 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 - **Religion Integration**: Represent sect dynamics as tagged modifiers on the `Devout`, `Mystical`, and `Syncretic` axes rather than a discrete subsystem. High Devout + Mystical regions spawn `RitualSchedule` entries that schedule pilgrimage logistics and sentiment modifiers; secular regions skip creation.
 - **Telemetry & UI**: Extend snapshots with `CultureLayerState` payloads (per layer trait vectors + divergence meters) so the Godot inspector’s Culture tab can surface the “Cultural Inspector” referenced in the manual. Provide layer filters and clash forecasts derived from pending `CultureTensionEvent`s.
   - Inspector update: `Influencers` tab now displays each figure’s strongest culture pushes (weight + current output), while the Culture tab aggregates the top scoped pushes (global/regional/local) for quick validation. Snapshot payload exposes `InfluencerCultureResonanceEntry` entries to keep tooling type-safe.
+- **Balance Surface**: `core_sim/src/data/influencer_config.json` defines `InfluencerBalanceConfig` (roster cap, spawn interval min/max, decay factors, notoriety clamps, scope threshold table). The config loads via `InfluencerConfigHandle`, which also powers future runtime reload commands; designers should pair edits with the narrative framing in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §7b.
+  - **Config fields**:
+    - `roster_cap`: maximum concurrent influencers before spontaneous spawns pause.
+    - `support_decay` / `suppression_decay`: per-tick damping multipliers for stored support/suppress charge.
+    - `boost_decay`: decay applied to channel boosts earned via commands/events.
+    - `spawn_interval_min` / `spawn_interval_max`: cooldown window (ticks) before the roster can spawn another figure.
+    - `potential_min_ticks`: minimum time a Potential influencer must remain in state before promotion can occur.
+    - `potential_fizzle_ticks`: patience window before a low-coherence Potential lapses to Dormant.
+    - `potential_fizzle_coherence`: coherence threshold that keeps Potentials active (also used when reviving Dormant figures).
+    - `dormant_remove_threshold`: number of dormant ticks before an inactive influencer is culled.
+    - `support_notoriety_gain`: notoriety delta gained per unit of support.
+    - `support_channel_gain` / `support_channel_max`: scaling and clamp for targeted support channel boosts.
+    - `notoriety_min` / `notoriety_max`: bounds used when clamping notoriety each tick.
+    - `scope_thresholds.local|regional|global`: per-scope configuration of promotion/demotion coherence & notoriety thresholds plus dwell times.
 - **Task Hooks**: Flag follow-up work in `TASKS.md` (forthcoming entries) for implementing the reconcile system, divergence events, and telemetry serialization so engineering backlog stays aligned with the manual.
 - **Schema Plan (`sim_schema`)**: Amend `snapshot.fbs` with the culture payload contracts before engineering begins:
   - `enum CultureLayerScope { Global, Regional, Local }` to disambiguate layer granularity in snapshots/deltas.

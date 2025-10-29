@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use bevy::prelude::*;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
+use serde::Deserialize;
 
 use crate::{
     components::PopulationCohort,
@@ -20,24 +22,226 @@ use sim_runtime::{
 
 pub type InfluentialId = u32;
 
-const MAX_INFLUENCERS: usize = 12;
-const SUPPORT_DECAY: f32 = 0.85;
-const SUPPRESSION_DECAY: f32 = 0.88;
-const SPAWN_INTERVAL_MIN: u32 = 8;
-const SPAWN_INTERVAL_MAX: u32 = 18;
+pub const BUILTIN_INFLUENCER_CONFIG: &str = include_str!("data/influencer_config.json");
 
-const POTENTIAL_MIN_TICKS: u16 = 5;
-const POTENTIAL_FIZZLE_TICKS: u16 = 12;
-const POTENTIAL_FIZZLE_COHERENCE: f32 = 0.35;
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct InfluencerBalanceConfig {
+    roster_cap: usize,
+    support_decay: f32,
+    suppression_decay: f32,
+    boost_decay: f32,
+    spawn_interval_min: u32,
+    spawn_interval_max: u32,
+    potential_min_ticks: u16,
+    potential_fizzle_ticks: u16,
+    potential_fizzle_coherence: f32,
+    dormant_remove_threshold: u16,
+    support_notoriety_gain: f32,
+    support_channel_gain: f32,
+    support_channel_max: f32,
+    notoriety_min: f32,
+    notoriety_max: f32,
+    scope_thresholds: ScopeThresholdConfig,
+}
 
-const DORMANT_REMOVE_THRESHOLD: u16 = 50;
+impl InfluencerBalanceConfig {
+    pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
 
-const BOOST_DECAY: f32 = 0.92;
-const SUPPORT_NOTORIETY_GAIN: f32 = 0.08;
-const SUPPORT_CHANNEL_GAIN: f32 = 0.35;
-const SUPPORT_CHANNEL_MAX: f32 = 1.5;
-const NOTORIETY_MIN: f32 = 0.05;
-const NOTORIETY_MAX: f32 = 5.0;
+    pub fn roster_cap(&self) -> usize {
+        self.roster_cap
+    }
+
+    pub fn support_decay(&self) -> f32 {
+        self.support_decay
+    }
+
+    pub fn suppression_decay(&self) -> f32 {
+        self.suppression_decay
+    }
+
+    pub fn boost_decay(&self) -> f32 {
+        self.boost_decay
+    }
+
+    pub fn spawn_interval_min(&self) -> u32 {
+        self.spawn_interval_min
+    }
+
+    pub fn spawn_interval_max(&self) -> u32 {
+        self.spawn_interval_max
+    }
+
+    pub fn potential_min_ticks(&self) -> u16 {
+        self.potential_min_ticks
+    }
+
+    pub fn potential_fizzle_ticks(&self) -> u16 {
+        self.potential_fizzle_ticks
+    }
+
+    pub fn potential_fizzle_coherence(&self) -> f32 {
+        self.potential_fizzle_coherence
+    }
+
+    pub fn dormant_remove_threshold(&self) -> u16 {
+        self.dormant_remove_threshold
+    }
+
+    pub fn support_notoriety_gain(&self) -> f32 {
+        self.support_notoriety_gain
+    }
+
+    pub fn support_channel_gain(&self) -> f32 {
+        self.support_channel_gain
+    }
+
+    pub fn support_channel_max(&self) -> f32 {
+        self.support_channel_max
+    }
+
+    pub fn notoriety_min(&self) -> f32 {
+        self.notoriety_min
+    }
+
+    pub fn notoriety_max(&self) -> f32 {
+        self.notoriety_max
+    }
+
+    pub(crate) fn scope_threshold(&self, scope: InfluenceScopeKind) -> ScopeThreshold {
+        match scope {
+            InfluenceScopeKind::Local => ScopeThreshold::from(&self.scope_thresholds.local),
+            InfluenceScopeKind::Regional => ScopeThreshold::from(&self.scope_thresholds.regional),
+            InfluenceScopeKind::Global | InfluenceScopeKind::Generation => {
+                ScopeThreshold::from(&self.scope_thresholds.global)
+            }
+        }
+    }
+}
+
+impl Default for InfluencerBalanceConfig {
+    fn default() -> Self {
+        Self {
+            roster_cap: 12,
+            support_decay: 0.85,
+            suppression_decay: 0.88,
+            boost_decay: 0.92,
+            spawn_interval_min: 8,
+            spawn_interval_max: 18,
+            potential_min_ticks: 5,
+            potential_fizzle_ticks: 12,
+            potential_fizzle_coherence: 0.35,
+            dormant_remove_threshold: 50,
+            support_notoriety_gain: 0.08,
+            support_channel_gain: 0.35,
+            support_channel_max: 1.5,
+            notoriety_min: 0.05,
+            notoriety_max: 5.0,
+            scope_thresholds: ScopeThresholdConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+struct ScopeThresholdConfig {
+    local: ScopeThresholdValues,
+    regional: ScopeThresholdValues,
+    global: ScopeThresholdValues,
+}
+
+impl Default for ScopeThresholdConfig {
+    fn default() -> Self {
+        Self {
+            local: ScopeThresholdValues {
+                promote_coherence: 0.45,
+                promote_notoriety: 0.40,
+                demote_coherence: 0.25,
+                promote_ticks: 3,
+                demote_ticks: 6,
+            },
+            regional: ScopeThresholdValues {
+                promote_coherence: 0.60,
+                promote_notoriety: 0.60,
+                demote_coherence: 0.30,
+                promote_ticks: 4,
+                demote_ticks: 7,
+            },
+            global: ScopeThresholdValues {
+                promote_coherence: 0.72,
+                promote_notoriety: 0.75,
+                demote_coherence: 0.35,
+                promote_ticks: 5,
+                demote_ticks: 8,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+struct ScopeThresholdValues {
+    promote_coherence: f32,
+    promote_notoriety: f32,
+    demote_coherence: f32,
+    promote_ticks: u16,
+    demote_ticks: u16,
+}
+
+impl Default for ScopeThresholdValues {
+    fn default() -> Self {
+        Self {
+            promote_coherence: 0.5,
+            promote_notoriety: 0.5,
+            demote_coherence: 0.3,
+            promote_ticks: 4,
+            demote_ticks: 6,
+        }
+    }
+}
+
+impl From<&ScopeThresholdValues> for ScopeThreshold {
+    fn from(values: &ScopeThresholdValues) -> Self {
+        Self {
+            promote_coherence: values.promote_coherence,
+            promote_notoriety: values.promote_notoriety,
+            demote_coherence: values.demote_coherence,
+            promote_ticks: values.promote_ticks,
+            demote_ticks: values.demote_ticks,
+        }
+    }
+}
+
+#[derive(Resource, Debug, Clone)]
+pub struct InfluencerConfigHandle(pub Arc<InfluencerBalanceConfig>);
+
+impl InfluencerConfigHandle {
+    pub fn new(inner: Arc<InfluencerBalanceConfig>) -> Self {
+        Self(inner)
+    }
+
+    pub fn load_builtin() -> Self {
+        let parsed = InfluencerBalanceConfig::from_json_str(BUILTIN_INFLUENCER_CONFIG)
+            .unwrap_or_else(|err| panic!("failed to parse builtin influencer config: {err}"));
+        Self(Arc::new(parsed))
+    }
+
+    pub fn get(&self) -> Arc<InfluencerBalanceConfig> {
+        Arc::clone(&self.0)
+    }
+
+    pub fn replace_from_json(
+        &mut self,
+        json: &str,
+    ) -> Result<Arc<InfluencerBalanceConfig>, serde_json::Error> {
+        let parsed = InfluencerBalanceConfig::from_json_str(json)?;
+        let shared = Arc::new(parsed);
+        self.0 = Arc::clone(&shared);
+        Ok(shared)
+    }
+}
 
 const ALL_DOMAINS: [InfluenceDomain; 5] = [
     InfluenceDomain::Sentiment,
@@ -209,38 +413,12 @@ impl FromStr for SupportChannel {
 }
 
 #[derive(Clone, Copy)]
-struct ScopeThreshold {
+pub(crate) struct ScopeThreshold {
     promote_coherence: f32,
     promote_notoriety: f32,
     demote_coherence: f32,
     promote_ticks: u16,
     demote_ticks: u16,
-}
-
-fn scope_threshold(scope: InfluenceScopeKind) -> ScopeThreshold {
-    match scope {
-        InfluenceScopeKind::Local => ScopeThreshold {
-            promote_coherence: 0.45,
-            promote_notoriety: 0.40,
-            demote_coherence: 0.25,
-            promote_ticks: 3,
-            demote_ticks: 6,
-        },
-        InfluenceScopeKind::Regional => ScopeThreshold {
-            promote_coherence: 0.60,
-            promote_notoriety: 0.60,
-            demote_coherence: 0.30,
-            promote_ticks: 4,
-            demote_ticks: 7,
-        },
-        InfluenceScopeKind::Global | InfluenceScopeKind::Generation => ScopeThreshold {
-            promote_coherence: 0.72,
-            promote_notoriety: 0.75,
-            demote_coherence: 0.35,
-            promote_ticks: 5,
-            demote_ticks: 8,
-        },
-    }
 }
 
 fn next_scope(scope: InfluenceScopeKind) -> Option<InfluenceScopeKind> {
@@ -410,20 +588,26 @@ pub struct InfluentialRoster {
     last_morale: Scalar,
     last_power: Scalar,
     last_culture: InfluencerCultureResonance,
+    config: Arc<InfluencerBalanceConfig>,
 }
 
 impl InfluentialRoster {
-    pub fn with_seed(seed: u64, registry: &GenerationRegistry) -> Self {
+    pub fn with_seed(
+        seed: u64,
+        registry: &GenerationRegistry,
+        config: Arc<InfluencerBalanceConfig>,
+    ) -> Self {
         let mut roster = Self {
             rng: SmallRng::seed_from_u64(seed),
             individuals: Vec::new(),
             next_id: 1,
-            spawn_cooldown: SPAWN_INTERVAL_MIN,
+            spawn_cooldown: config.spawn_interval_min(),
             last_sentiment: [scalar_zero(); 4],
             last_logistics: scalar_zero(),
             last_morale: scalar_zero(),
             last_power: scalar_zero(),
             last_culture: InfluencerCultureResonance::default(),
+            config,
         };
         roster.bootstrap(registry);
         roster
@@ -459,7 +643,7 @@ impl InfluentialRoster {
         if self.spawn_cooldown > 0 {
             self.spawn_cooldown -= 1;
         }
-        if self.spawn_cooldown == 0 && self.individuals.len() < MAX_INFLUENCERS {
+        if self.spawn_cooldown == 0 && self.individuals.len() < self.config.roster_cap() {
             let _ = self.spawn_influencer(None, None, None, registry);
         }
 
@@ -470,7 +654,7 @@ impl InfluentialRoster {
     fn advance_influence(&mut self) {
         for individual in &mut self.individuals {
             for boost in &mut individual.channel_boosts.iter_mut() {
-                *boost = damp_scalar(*boost, BOOST_DECAY);
+                *boost = damp_scalar(*boost, self.config.boost_decay());
             }
             let momentum = individual.momentum() * scalar_from_f32(0.05);
             let baseline_pull =
@@ -481,9 +665,12 @@ impl InfluentialRoster {
             individual.influence = (individual.influence + individual.growth_rate)
                 .clamp(scalar_from_f32(-2.8), scalar_from_f32(3.5));
 
-            individual.support_charge = damp_scalar(individual.support_charge, SUPPORT_DECAY);
-            individual.suppress_pressure =
-                damp_scalar(individual.suppress_pressure, SUPPRESSION_DECAY);
+            individual.support_charge =
+                damp_scalar(individual.support_charge, self.config.support_decay());
+            individual.suppress_pressure = damp_scalar(
+                individual.suppress_pressure,
+                self.config.suppression_decay(),
+            );
         }
     }
 
@@ -589,24 +776,25 @@ impl InfluentialRoster {
 
             if individual.status != InfluencerStatus::Dormant {
                 let new_value = individual.notoriety.to_f32() + notoriety_delta;
-                individual.notoriety = clamp_notoriety_value(new_value);
+                individual.notoriety = clamp_notoriety_value(new_value, &self.config);
             } else {
-                let new_value = (individual.notoriety.to_f32() - 0.02).max(NOTORIETY_MIN);
-                individual.notoriety = clamp_notoriety_value(new_value);
+                let new_value =
+                    (individual.notoriety.to_f32() - 0.02).max(self.config.notoriety_min());
+                individual.notoriety = clamp_notoriety_value(new_value, &self.config);
             }
 
-            let thresholds = scope_threshold(individual.scope);
+            let thresholds = self.config.scope_threshold(individual.scope);
 
             match individual.status {
                 InfluencerStatus::Potential => {
-                    if individual.ticks_in_status >= POTENTIAL_MIN_TICKS
+                    if individual.ticks_in_status >= self.config.potential_min_ticks()
                         && coherence >= thresholds.promote_coherence
                         && individual.notoriety.to_f32() >= thresholds.promote_notoriety
                     {
                         individual.status = InfluencerStatus::Active;
                         individual.ticks_in_status = 0;
-                    } else if individual.ticks_in_status >= POTENTIAL_FIZZLE_TICKS
-                        && coherence < POTENTIAL_FIZZLE_COHERENCE
+                    } else if individual.ticks_in_status >= self.config.potential_fizzle_ticks()
+                        && coherence < self.config.potential_fizzle_coherence()
                     {
                         individual.status = InfluencerStatus::Dormant;
                         individual.ticks_in_status = 0;
@@ -619,7 +807,7 @@ impl InfluentialRoster {
                         individual.status = InfluencerStatus::Dormant;
                         individual.ticks_in_status = 0;
                     } else if let Some(next_scope) = next_scope(individual.scope) {
-                        let next_threshold = scope_threshold(next_scope);
+                        let next_threshold = self.config.scope_threshold(next_scope);
                         if individual.ticks_in_status >= thresholds.promote_ticks
                             && coherence >= next_threshold.promote_coherence
                             && individual.notoriety.to_f32() >= next_threshold.promote_notoriety
@@ -636,9 +824,9 @@ impl InfluentialRoster {
                     {
                         individual.status = InfluencerStatus::Potential;
                         individual.ticks_in_status = 0;
-                    } else if individual.ticks_in_status >= DORMANT_REMOVE_THRESHOLD
-                        && coherence < POTENTIAL_FIZZLE_COHERENCE
-                        && individual.notoriety.to_f32() <= NOTORIETY_MIN + 0.05
+                    } else if individual.ticks_in_status >= self.config.dormant_remove_threshold()
+                        && coherence < self.config.potential_fizzle_coherence()
+                        && individual.notoriety.to_f32() <= self.config.notoriety_min() + 0.05
                     {
                         removals.insert(individual.id);
                     }
@@ -666,7 +854,7 @@ impl InfluentialRoster {
         label_hint: Option<&str>,
         registry: &GenerationRegistry,
     ) -> Option<InfluentialId> {
-        if self.individuals.len() >= MAX_INFLUENCERS {
+        if self.individuals.len() >= self.config.roster_cap() {
             return None;
         }
 
@@ -789,7 +977,13 @@ impl InfluentialRoster {
         };
 
         self.individuals.push(individual);
-        self.spawn_cooldown = self.rng.gen_range(SPAWN_INTERVAL_MIN..=SPAWN_INTERVAL_MAX);
+        let min = self.config.spawn_interval_min();
+        let max = self.config.spawn_interval_max();
+        self.spawn_cooldown = if min <= max {
+            self.rng.gen_range(min..=max)
+        } else {
+            min
+        };
         self.recompute_outputs();
         Some(id)
     }
@@ -811,12 +1005,12 @@ impl InfluentialRoster {
                 - magnitude * scalar_from_f32(0.25))
             .clamp(scalar_zero(), scalar_from_f32(5.0));
             let notoriety_gain = magnitude.to_f32()
-                * SUPPORT_NOTORIETY_GAIN
+                * self.config.support_notoriety_gain()
                 * individual.channel_weights[SupportChannel::Popular as usize]
                     .to_f32()
                     .max(0.25);
             individual.notoriety =
-                clamp_notoriety_value(individual.notoriety.to_f32() + notoriety_gain);
+                clamp_notoriety_value(individual.notoriety.to_f32() + notoriety_gain, &self.config);
             individual.ticks_in_status = 0;
             true
         } else {
@@ -831,9 +1025,10 @@ impl InfluentialRoster {
             individual.support_charge = (individual.support_charge
                 - magnitude * scalar_from_f32(0.25))
             .clamp(scalar_zero(), scalar_from_f32(5.0));
-            let notoriety_loss = magnitude.to_f32() * (SUPPORT_NOTORIETY_GAIN * 0.6);
+            let notoriety_loss = magnitude.to_f32() * (self.config.support_notoriety_gain() * 0.6);
             individual.notoriety = clamp_notoriety_value(
-                (individual.notoriety.to_f32() - notoriety_loss).max(NOTORIETY_MIN),
+                (individual.notoriety.to_f32() - notoriety_loss).max(self.config.notoriety_min()),
+                &self.config,
             );
             individual.ticks_in_status = 0;
             true
@@ -851,15 +1046,18 @@ impl InfluentialRoster {
         if let Some(individual) = self.individuals.iter_mut().find(|item| item.id == id) {
             let idx = channel as usize;
             let boost = (individual.channel_boosts[idx]
-                + magnitude * scalar_from_f32(SUPPORT_CHANNEL_GAIN))
-            .clamp(scalar_zero(), scalar_from_f32(SUPPORT_CHANNEL_MAX));
+                + magnitude * scalar_from_f32(self.config.support_channel_gain()))
+            .clamp(
+                scalar_zero(),
+                scalar_from_f32(self.config.support_channel_max()),
+            );
             individual.channel_boosts[idx] = boost;
 
             let notoriety_gain = magnitude.to_f32()
-                * SUPPORT_NOTORIETY_GAIN
+                * self.config.support_notoriety_gain()
                 * individual.channel_weights[idx].to_f32().max(0.2);
             individual.notoriety =
-                clamp_notoriety_value(individual.notoriety.to_f32() + notoriety_gain);
+                clamp_notoriety_value(individual.notoriety.to_f32() + notoriety_gain, &self.config);
             individual.ticks_in_status = 0;
             true
         } else {
@@ -904,6 +1102,15 @@ impl InfluentialRoster {
         self.last_culture
     }
 
+    pub fn apply_config(&mut self, config: Arc<InfluencerBalanceConfig>) {
+        self.config = config;
+        let min = self.config.spawn_interval_min();
+        let max = self.config.spawn_interval_max();
+        self.spawn_cooldown = self
+            .spawn_cooldown
+            .clamp(min, if max >= min { max } else { min });
+    }
+
     pub fn update_from_states(&mut self, states: &[InfluentialIndividualState]) {
         self.individuals = states
             .iter()
@@ -916,7 +1123,7 @@ impl InfluentialRoster {
             .max()
             .unwrap_or(0)
             .saturating_add(1);
-        self.spawn_cooldown = SPAWN_INTERVAL_MIN;
+        self.spawn_cooldown = self.config.spawn_interval_min();
         self.recompute_outputs();
     }
 
@@ -1243,8 +1450,8 @@ fn generate_name(rng: &mut SmallRng, scope: InfluenceScopeKind) -> String {
     }
 }
 
-fn clamp_notoriety_value(value: f32) -> Scalar {
-    scalar_from_f32(value.clamp(NOTORIETY_MIN, NOTORIETY_MAX))
+fn clamp_notoriety_value(value: f32, config: &InfluencerBalanceConfig) -> Scalar {
+    scalar_from_f32(value.clamp(config.notoriety_min(), config.notoriety_max()))
 }
 
 fn domain_channel_weights(domain: InfluenceDomain) -> [f32; CHANNEL_COUNT] {

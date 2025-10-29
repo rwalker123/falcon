@@ -303,9 +303,21 @@ Groundbreaking discoveries rarely remain siloed. Once ideas interact with trade,
 - The agent catalog now supports procedural generation via `generator` entries (e.g., `adaptive_sleeper_template`) that define min/max stat bands, tag pools, and per-faction counts. Toggling `enabled` or adjusting the ranges rebalances random rosters without code changes.
 - Mission templates can also declare generator blocks (see `auto_probe_template`) that spawn variant probe jobs with deterministic success/suspicion bands—useful for scaling campaign difficulty without bloating hand-authored JSON.
 - Global espionage tuning constants (security posture penalties, suspicion floors, counter-intel baselines, generator fallback bands) now live in `core_sim/src/data/espionage_config.json`, so designers can tweak systemic behavior without touching Rust.
+  - `security_posture_penalties`: leak-speed multipliers per posture band.
+  - `probe_resolution`: controls probe success bands, suspicion floors, failure backlash, and misinformation fallout.
+  - `counter_intel_resolution`: default sweep potency, upkeep, duration, and suspicion relief.
+  - `agent_generator_defaults` / `mission_generator_defaults`: stat and outcome ranges used by procedural catalogs.
+  - `queue_defaults`: fallback mission lead time and tier bias when commands omit overrides.
 - Ops can issue the new `update_espionage_generators` command to enable/disable generator templates or adjust per-faction spawn counts mid-campaign; the roster reseeds immediately so telemetry/UI stay in sync.
 - Remote tooling can queue missions in real time via the `queue_espionage_mission` command, which forwards directly into the simulation’s scheduling system, and can adjust default scheduling knobs through `update_espionage_queue_defaults` (e.g., lead time, target tier).
 - Probe missions now resolve with multiple bands (full, partial, detected misinformation); partial successes yield smaller blueprint gains, while failures can feed decoy data that reverses infiltration progress. Counter-intel sweeps actively clear infiltration cells and bleed suspicion when successful.
+- Knowledge ledger timing, suspicion decay, and countermeasure weights are now governed by `core_sim/src/data/knowledge_ledger_config.json`. See `docs/architecture.md` §"Knowledge Ledger & Leak Mechanics" for field definitions and the planned hot-reload path.
+  - `timeline_capacity`: limits how many events the inspector timeline retains.
+  - `default_half_life_ticks` / `default_time_to_cascade`: baseline secrecy timers applied when a discovery enters the ledger.
+  - `max_suspicion`, `suspicion_decay`, `suspicion_retention_threshold`: shape infiltration longevity and cleanup cadence.
+  - `countermeasure_bonus_scale`, `countermeasure_progress_penalty_ratio`: determine how security investments trade time extension for slower leak progress.
+  - `infiltration_cells_weight`, `infiltration_fidelity_weight`: translate spy pressure into half-life penalties.
+  - `max_progress_per_tick`: clamps leak acceleration even under stacked modifiers.
 
 ### Reverse Engineering & Catch-Up
 - **Exposure Thresholds**: Once rivals gather enough observation points (from trade goods, debris, captured units), they unlock reverse engineering projects.
@@ -476,6 +488,15 @@ Collective mood is modeled as a multi-axis vector rather than a single morale me
 #### Prototype Implementation Notes
 - The simulation now maintains an **Influential Roster**: each figure begins as a Local potential, carries a domain mix (sentiment, discovery, logistics, production, humanitarian), and tracks coherence, notoriety, and multi-channel support. Graduating to Regional and Global scopes requires sustained success; Dormant figures linger until obscurity claims them.
 - Sentiment totals now decompose into three visible inputs: sustained **policy levers**, time-bounded **incident pulses**, and live **influencer channel output**. These contributions stream through the inspector telemetry so designers can validate how reforms or scandals steer each axis (see `docs/architecture.md` §"Sentiment Telemetry").
+- Roster caps, spawn cadence, decay rates, and notoriety clamps now live in `core_sim/src/data/influencer_config.json`, mirroring the balance surface described in `docs/architecture.md` §"Influencer Systems". Tweaks hot-load at startup today, and the config handle will back future runtime toggles.
+  - `roster_cap`: total slots available before new influencers pause.
+  - `support_decay` / `suppression_decay`: how quickly support/suppress momentum fades.
+  - `boost_decay`: attrition applied to targeted channel boosts.
+  - `spawn_interval_min|max`: cooldown range governing when the roster can spawn another figure.
+  - `potential_min_ticks`, `potential_fizzle_ticks`, `potential_fizzle_coherence`: thresholds deciding when potentials graduate or stall.
+  - `dormant_remove_threshold`: dwell time before quietly removing dormant figures.
+  - `support_notoriety_gain`, `support_channel_gain|max`, `notoriety_min|max`: parameters shaping notoriety arcs.
+  - `scope_thresholds` per tier: coherence/notoriety requirements and dwell timers for scope promotion/demotion.
 - Each turn, influencers inject *procedural sentiment deltas* (axis nudges) and cross-system modifiers (logistics capacity, morale, power). Impact is scaled by lifecycle and scope so that local activists feel different from global icons.
 - Growth is multi-dimensional: **popular sentiment**, **peer prestige**, **institutional backing**, and **humanitarian capital** all contribute based on domain weighting. Players can exploit this via general-purpose support/suppress actions or targeted `support_channel` boosts.
 - Influencer state (lifecycle, scope tier, channel weights/support, audience generations) is serialized in snapshots, enabling deterministic rollbacks. The Godot inspector surfaces badges, filter controls, channel breakdowns, notoriety, and one-touch boosts for rapid experimentation.
