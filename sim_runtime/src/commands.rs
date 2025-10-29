@@ -535,7 +535,7 @@ fn reload_config_kind_from_proto(value: i32) -> Result<ReloadConfigKind, Command
         Ok(pb::ReloadConfigKind::Simulation) => Ok(ReloadConfigKind::Simulation),
         Ok(pb::ReloadConfigKind::TurnPipeline) => Ok(ReloadConfigKind::TurnPipeline),
         Ok(pb::ReloadConfigKind::SnapshotOverlays) => Ok(ReloadConfigKind::SnapshotOverlays),
-        _ => Err(CommandDecodeError::InvalidEnum {
+        Ok(pb::ReloadConfigKind::Unspecified) | Err(_) => Err(CommandDecodeError::InvalidEnum {
             field: "ReloadConfigKind",
             value,
         }),

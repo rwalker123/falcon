@@ -310,11 +310,9 @@ impl KnowledgeLedger {
 
     fn ensure_entry(&mut self, owner: FactionId, discovery_id: u32) -> &mut KnowledgeLedgerEntry {
         let key = (owner, discovery_id);
-        if !self.entries.contains_key(&key) {
-            let entry = KnowledgeLedgerEntry::new(owner, discovery_id, self.config.as_ref());
-            self.entries.insert(key, entry);
-        }
-        self.entries.get_mut(&key).expect("ledger entry exists")
+        self.entries
+            .entry(key)
+            .or_insert_with(|| KnowledgeLedgerEntry::new(owner, discovery_id, self.config.as_ref()))
     }
 
     pub fn apply_countermeasure(
