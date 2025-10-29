@@ -985,6 +985,31 @@ value = 100000.0
 layout_mode = 2
 text = "Apply Heat"
 
+[node name="ConfigControls" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ConfigLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/ConfigControls"]
+layout_mode = 2
+text = "Config Reload"
+
+[node name="ConfigRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/ConfigControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="TurnPipelinePathEdit" type="LineEdit" parent="Inspector/RootPanel/TabContainer/Commands/ConfigControls/ConfigRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Optional override path"
+
+[node name="TurnPipelineReloadButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/ConfigControls/ConfigRow"]
+layout_mode = 2
+text = "Reload Turn Pipeline"
+
+[node name="ConfigHintLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/ConfigControls"]
+layout_mode = 2
+text = "Leave path empty to reload the watched file."
+
 [node name="LogPanel" type="Panel" parent="Inspector/RootPanel/TabContainer/Commands"]
 custom_minimum_size = Vector2(0, 160)
 layout_mode = 2
