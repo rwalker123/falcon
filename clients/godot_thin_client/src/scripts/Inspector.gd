@@ -2718,11 +2718,11 @@ func _on_knowledge_queue_mission_button_pressed() -> void:
 		agent_token
 	]
 	var tier_val: int = int(knowledge_tier_spin.value)
-	if tier_val >= 0:
+	if tier_val != -1:
 		tokens.append("tier")
 		tokens.append(str(tier_val))
 	var schedule_val: int = int(knowledge_schedule_spin.value)
-	if schedule_val >= 0:
+	if schedule_val != -1:
 		var tick_value: int = max(_last_turn + schedule_val, 0)
 		tokens.append("tick")
 		tokens.append(str(tick_value))
