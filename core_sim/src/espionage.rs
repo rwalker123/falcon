@@ -970,6 +970,8 @@ pub enum QueueMissionError {
         handle: EspionageAgentHandle,
         mission: EspionageMissionInstanceId,
     },
+    #[error("no available agents for faction {faction:?}")]
+    NoAgentAvailable { faction: FactionId },
     #[error("mission '{mission}' cannot target tier {target_tier:?}")]
     TargetTierMismatch {
         mission: String,
