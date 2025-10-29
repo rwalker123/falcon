@@ -115,6 +115,10 @@ message UpdateEspionageQueueDefaultsCommand {
   optional uint32 target_tier = 2;
 }
 
+message ReloadSimulationConfigCommand {
+  optional string path = 1;
+}
+
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
@@ -133,5 +137,6 @@ message CommandEnvelope {
     UpdateEspionageGeneratorsCommand update_espionage_generators = 12;
     QueueEspionageMissionCommand queue_espionage_mission = 13;
     UpdateEspionageQueueDefaultsCommand update_espionage_queue_defaults = 14;
+    ReloadSimulationConfigCommand reload_simulation_config = 16;
   }
 }

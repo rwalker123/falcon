@@ -3,6 +3,7 @@
 ## Overview
 - **Headless Core (`core_sim`)**: Bevy-based ECS that resolves a single turn via `run_turn`. Systems run in the order materials → logistics → population → power → tick increment → snapshot capture.
 - **Networking**: Thin TCP layer (`core_sim::network`) streams snapshot deltas, emits structured tracing/log frames, and receives control commands. Commands flow over a single length-prefixed Protobuf `CommandEnvelope` socket (`SimulationConfig::command_bind`), while snapshots broadcast on `SimulationConfig::snapshot_bind` / `snapshot_flat_bind` and logs on `SimulationConfig::log_bind`.
+- **Simulation Defaults**: `core_sim/src/data/simulation_config.json` seeds `SimulationConfig` with map dimensions, environmental tuning, trade/power/corruption multipliers, migration knobs, and the default TCP bind addresses/snapshot history depth. Designers can edit these baselines (grid size, mass bounds, leak curve, corruption penalties, networking ports) without touching Rust; the loader converts floats to fixed-point `Scalar` values on startup.
 - **Serialization**: Snapshots/deltas represented via Rust structs and `sim_schema::schemas/snapshot.fbs` for cross-language clients.
 - **Shared Runtime (`sim_runtime`)**: Lightweight helpers (command parsing, bias handling, validation) shared by tooling and the headless core.
 - **Inspector Client (`clients/godot_thin_client`)**: Godot thin client that renders the map, streams snapshots, and exposes the tabbed inspector; the Logs tab subscribes to the tracing feed, offers level/target/text filters, and renders a per-turn duration sparkline alongside scrollback. A Bevy-native inspector is under evaluation (see `shadow_scale_strategy_game_concept_technical_plan_v_0.md` Option F) but would live in a separate binary to keep the headless core deterministic.
@@ -91,6 +92,16 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 - **Simulation stage**: `trade_knowledge_diffusion` runs after logistics, refreshes throughput/tariff (already reduced by corruption), decrements leak timers, emits `TradeDiffusionEvent`s when timers expire, applies linear research progress to `DiscoveryProgressLedger`, and resets timers via the configured leak curve. Telemetry increments `trade.tech_diffusion_applied` and archives the record for inspector use.
 - **Migration flow**: `simulate_population` manages optional `PendingMigration` payloads. When morale/openess align, cohorts snapshot scaled fragments (`migration_fragment_scaling`, `migration_fidelity_floor`) headed to a destination faction. On arrival the fragments merge into the destination ledger, the cohort flips ownership, and telemetry increments `trade.migration_knowledge_transfers` with `via_migration=true`.
 - **Configuration surface**: `SimulationConfig` exposes diffusion knobs (`trade_leak_min_ticks`, `trade_leak_max_ticks`, `trade_leak_exponent`, `trade_leak_progress`, `trade_openness_decay`) and migration knobs (`migration_fragment_scaling`, `migration_fidelity_floor`). Designers should cross-reference `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §8 while tuning these values.
+  - JSON keys in `core_sim/src/data/simulation_config.json` map to systems as follows:
+    - `grid_size`, `population_cluster_stride`, `population_cap`, `mass_bounds`: world bootstrap size/density and tile mass limits.
+    - `ambient_temperature`, `temperature_lerp`, `power_adjust_rate`, `mass_flux_epsilon`: environmental relaxation rates and power-temperature coupling.
+    - `logistics_flow_gain`, `base_link_capacity`, `base_trade_tariff`, `base_trade_openness`, `trade_openness_decay`: logistics/trade throughput defaults.
+    - `trade_leak_*`, `migration_fragment_scaling`, `migration_fidelity_floor`: knowledge diffusion curves for trade and migration.
+    - `power_*` fields: power generation/efficiency caps, storage behaviour, incident thresholds.
+    - `corruption_*` fields: subsystem penalties applied when ledgers accumulate corruption.
+    - `snapshot_bind`, `snapshot_flat_bind`, `command_bind`, `log_bind`: default TCP endpoints for server sockets.
+    - `snapshot_history_limit`: length of the SnapshotHistory ring-buffer used for rollbacks/broadcasts.
+  - The headless server reads from `SIM_CONFIG_PATH` when set (fallback: the repo default file) and watches the active path for changes; saving the JSON triggers an automatic reload of `SimulationConfig` (socket changes still require a restart). Remote tooling can issue `reload_config [path]` (or the `ReloadSimulationConfig` payload) to swap configurations programmatically.
 - **Telemetry & logging**: `TradeTelemetry` resets each tick, tracks diffusion/migration counts, stores per-event records, and emits `trade.telemetry` log lines after population resolution. Inspector overlays will subscribe directly to these counters.
 
 ### Knowledge Ledger & Leak Mechanics

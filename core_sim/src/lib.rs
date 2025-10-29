@@ -66,8 +66,8 @@ pub use power::{
 };
 pub use resources::{
     CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger,
-    PendingCrisisSeeds, SentimentAxisBias, SimulationConfig, SimulationTick, TileRegistry,
-    TradeDiffusionRecord, TradeTelemetry,
+    PendingCrisisSeeds, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata,
+    SimulationTick, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{restore_world_from_snapshot, SnapshotHistory, StoredSnapshot};
@@ -92,7 +92,7 @@ pub enum TurnStage {
 pub fn build_headless_app() -> App {
     let mut app = App::new();
 
-    let config = SimulationConfig::default();
+    let (config, config_metadata) = resources::load_simulation_config_from_env();
     let faction_registry = orders::FactionRegistry::default();
     let turn_queue = orders::TurnQueue::new(faction_registry.factions.clone());
     let snapshot_history = SnapshotHistory::with_capacity(config.snapshot_history_limit.max(1));
@@ -118,6 +118,7 @@ pub fn build_headless_app() -> App {
     espionage_roster.seed_from_catalog(&faction_registry.factions, &espionage_catalog);
 
     app.insert_resource(config)
+        .insert_resource(config_metadata)
         .insert_resource(PowerGridState::default())
         .insert_resource(PowerTopology::default())
         .insert_resource(SimulationTick::default())

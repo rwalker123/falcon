@@ -187,6 +187,15 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 exposure_timer,
             })
         }
+        "reload_config" | "reload_sim_config" => {
+            let remaining: Vec<_> = parts.collect();
+            let path = if remaining.is_empty() {
+                None
+            } else {
+                Some(remaining.join(" "))
+            };
+            Ok(CommandPayload::ReloadSimulationConfig { path })
+        }
         other => Err(CommandParseError::UnknownCommand(other.to_string())),
     }
 }

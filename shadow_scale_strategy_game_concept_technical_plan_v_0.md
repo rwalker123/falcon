@@ -296,6 +296,16 @@ Groundbreaking discoveries rarely remain siloed. Once ideas interact with trade,
 - **False Flag & Honey Pot**: Players can seed fake data; rivals risk adopting flawed techs, creating setbacks or disasters if not validated.
 
 **Prototype Hooks (v0.1)**  
+- Simulation and world defaults (grid size, temperature curves, trade/power tuning, corruption multipliers, and TCP bind ports) now live in `core_sim/src/data/simulation_config.json`. Editing the JSON reshapes the baseline map, environmental ticks, and server endpoints before the prototype boots.
+  - `grid_size`, `population_cluster_stride`, `population_cap`, `mass_bounds`: map extent, cohort spacing, and tile mass bounds.
+  - `ambient_temperature`, `temperature_lerp`, `power_adjust_rate`, `mass_flux_epsilon`: thermal relaxation and power-temperature coupling.
+  - `logistics_flow_gain`, `base_link_capacity`, `base_trade_tariff`, `base_trade_openness`, `trade_openness_decay`: baseline logistics/trade throughput and tariff assumptions.
+  - `trade_leak_*`, `migration_fragment_scaling`, `migration_fidelity_floor`: knowledge diffusion curves for trade/migration flows.
+  - `power_*` scalars: generation caps, efficiency, storage stability, bleed rates, and incident thresholds.
+  - `corruption_*`: subsystem penalties applied as corruption ledgers accumulate.
+  - `snapshot_bind`, `snapshot_flat_bind`, `command_bind`, `log_bind`, `snapshot_history_limit`: networking endpoints and snapshot history depth for the headless server.
+  - Use `reload_config [path]` (or omit the path to reuse the current file) to hot-load new values without restarting; the server also auto-reloads when the watched file changes on disk.
+  - Set `SIM_CONFIG_PATH` to point at an alternate JSON; the server watches the active file and hot-reloads values on save (socket changes still require a manual restart).
 - Each faction now fields a data-driven agent roster (Veil Runner, Signal Threader, Warden’s Shield) with stealth and counter-intel proficiencies. These map one-to-one with the mission planners surfaced in `docs/architecture.md` §Espionage Mission Outline.  
 - Mission scheduling currently exposes three archetypes: Laboratory Infiltration, Trade Manifest Intercept, and Rapid Response Sweep. Missions resolve deterministically every turn (minimal RNG) and feed the Knowledge Ledger via `EspionageProbeEvent` / `CounterIntelSweepEvent`, so leak meters and infiltration notes update in lockstep.  
 - Designers can iterate on mission/agent balance by editing `core_sim/src/data/espionage_agents.json` and `core_sim/src/data/espionage_missions.json`; updates hot-load at startup without code changes.  

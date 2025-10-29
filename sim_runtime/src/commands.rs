@@ -82,6 +82,9 @@ pub enum CommandPayload {
         scheduled_tick_offset: Option<u32>,
         target_tier: Option<u8>,
     },
+    ReloadSimulationConfig {
+        path: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -259,6 +262,11 @@ impl CommandEnvelope {
                     target_tier: target_tier.map(|value| value as u32),
                 },
             ),
+            CommandPayload::ReloadSimulationConfig { path } => {
+                pb::command_envelope::Command::ReloadSimulationConfig(
+                    pb::ReloadSimulationConfigCommand { path: path.clone() },
+                )
+            }
         });
 
         pb::CommandEnvelope {
@@ -391,6 +399,9 @@ impl CommandEnvelope {
                     scheduled_tick_offset: cmd.scheduled_tick_offset,
                     target_tier,
                 }
+            }
+            pb::command_envelope::Command::ReloadSimulationConfig(cmd) => {
+                CommandPayload::ReloadSimulationConfig { path: cmd.path }
             }
         };
 
