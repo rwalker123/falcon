@@ -42,9 +42,9 @@ pub use culture_corruption_config::{
     CultureSeverityConfig, CultureTensionTuning, BUILTIN_CULTURE_CORRUPTION_CONFIG,
 };
 pub use espionage::{
-    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionInstanceId,
-    EspionageMissionKind, EspionageMissionState, EspionageRoster, QueueMissionError,
-    QueueMissionParams,
+    CounterIntelBudgets, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
+    EspionageMissionInstanceId, EspionageMissionKind, EspionageMissionState, EspionageRoster,
+    FactionSecurityPolicies, QueueMissionError, QueueMissionParams, SecurityPolicy,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use great_discovery::{
@@ -143,6 +143,14 @@ pub fn build_headless_app() -> App {
         espionage::EspionageCatalog::load_builtin().expect("espionage catalog should parse");
     let mut espionage_roster = espionage::EspionageRoster::default();
     espionage_roster.seed_from_catalog(&faction_registry.factions, &espionage_catalog);
+    let counter_intel_budgets = espionage::CounterIntelBudgets::new(
+        &faction_registry.factions,
+        espionage_catalog.config().counter_intel_budget(),
+    );
+    let security_policies = espionage::FactionSecurityPolicies::new(
+        &faction_registry.factions,
+        espionage::SecurityPolicy::Standard,
+    );
 
     app.insert_resource(config)
         .insert_resource(config_metadata)
@@ -166,6 +174,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(espionage_catalog)
         .insert_resource(espionage_roster)
         .insert_resource(espionage::EspionageMissionState::default())
+        .insert_resource(counter_intel_budgets)
+        .insert_resource(security_policies)
         .insert_resource(influencer_config_handle)
         .insert_resource(influencer_roster)
         .insert_resource(InfluencerImpacts::default())
@@ -235,6 +245,8 @@ pub fn build_headless_app() -> App {
         .add_systems(
             Update,
             (
+                espionage::refresh_counter_intel_budgets,
+                espionage::schedule_counter_intel_missions,
                 espionage::resolve_espionage_missions,
                 knowledge_ledger::process_espionage_events,
                 knowledge_ledger::knowledge_ledger_tick,

@@ -16,10 +16,11 @@ use core_sim::log_stream::start_log_stream_server;
 use core_sim::metrics::{collect_metrics, SimulationMetrics};
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
-    build_headless_app, restore_world_from_snapshot, run_turn, CorruptionLedgers,
-    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionState,
-    EspionageRoster, FactionId, FactionOrders, FactionRegistry, GenerationId, GenerationRegistry,
-    InfluencerImpacts, InfluentialRoster, QueueMissionParams, Scalar, SentimentAxisBias,
+    build_headless_app, restore_world_from_snapshot, run_turn, scalar_from_f32, CorruptionLedgers,
+    CounterIntelBudgets, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
+    EspionageMissionState, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
+    FactionSecurityPolicies, GenerationId, GenerationRegistry, InfluencerImpacts,
+    InfluentialRoster, QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias,
     SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
     StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel, Tile, TurnPipelineConfig,
@@ -29,7 +30,8 @@ use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
     AxisBiasState, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
     CorruptionEntry, CorruptionSubsystem, InfluenceScopeKind,
-    OrdersDirective as ProtoOrdersDirective, SupportChannel as ProtoSupportChannel,
+    OrdersDirective as ProtoOrdersDirective, SecurityPolicyKind,
+    SupportChannel as ProtoSupportChannel,
 };
 
 fn main() {
@@ -263,6 +265,16 @@ fn main() {
             } => {
                 handle_update_queue_defaults(&mut app, scheduled_tick_offset, target_tier);
             }
+            Command::UpdateCounterIntelPolicy { faction, policy } => {
+                handle_update_counter_intel_policy(&mut app, faction, policy);
+            }
+            Command::AdjustCounterIntelBudget {
+                faction,
+                reserve,
+                delta,
+            } => {
+                handle_adjust_counter_intel_budget(&mut app, faction, reserve, delta);
+            }
             Command::ReloadConfig { kind, path } => {
                 handle_reload_config(&mut app, kind, path);
             }
@@ -323,6 +335,15 @@ enum Command {
     UpdateEspionageQueueDefaults {
         scheduled_tick_offset: Option<u64>,
         target_tier: Option<u8>,
+    },
+    UpdateCounterIntelPolicy {
+        faction: FactionId,
+        policy: SecurityPolicy,
+    },
+    AdjustCounterIntelBudget {
+        faction: FactionId,
+        reserve: Option<Scalar>,
+        delta: Option<Scalar>,
     },
     ReloadConfig {
         kind: ReloadConfigKind,
@@ -991,6 +1012,43 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             scheduled_tick_offset: scheduled_tick_offset.map(|value| value as u64),
             target_tier,
         }),
+        ProtoCommandPayload::UpdateCounterIntelPolicy { faction, policy } => {
+            match map_security_policy(policy) {
+                Some(mapped) => Some(Command::UpdateCounterIntelPolicy {
+                    faction: FactionId(faction),
+                    policy: mapped,
+                }),
+                None => {
+                    warn!(
+                        target: "shadow_scale::server",
+                        faction,
+                        policy = ?policy,
+                        "counter_intel_policy.update.invalid"
+                    );
+                    None
+                }
+            }
+        }
+        ProtoCommandPayload::AdjustCounterIntelBudget {
+            faction,
+            reserve,
+            delta,
+        } => {
+            if reserve.is_none() && delta.is_none() {
+                warn!(
+                    target: "shadow_scale::server",
+                    faction,
+                    "counter_intel_budget.adjust.ignore_empty"
+                );
+                None
+            } else {
+                Some(Command::AdjustCounterIntelBudget {
+                    faction: FactionId(faction),
+                    reserve: reserve.map(scalar_from_f32),
+                    delta: delta.map(scalar_from_f32),
+                })
+            }
+        }
         ProtoCommandPayload::ReloadConfig { kind, path } => {
             Some(Command::ReloadConfig { kind, path })
         }
@@ -1004,6 +1062,15 @@ fn map_support_channel(channel: ProtoSupportChannel) -> Option<SupportChannel> {
         ProtoSupportChannel::Institutional => Some(SupportChannel::Institutional),
         ProtoSupportChannel::Humanitarian => Some(SupportChannel::Humanitarian),
     }
+}
+
+fn map_security_policy(kind: SecurityPolicyKind) -> Option<SecurityPolicy> {
+    Some(match kind {
+        SecurityPolicyKind::Lenient => SecurityPolicy::Lenient,
+        SecurityPolicyKind::Standard => SecurityPolicy::Standard,
+        SecurityPolicyKind::Hardened => SecurityPolicy::Hardened,
+        SecurityPolicyKind::Crisis => SecurityPolicy::Crisis,
+    })
 }
 
 fn apply_heat(app: &mut bevy::prelude::App, entity_bits: u64, delta_raw: i64) {
@@ -1475,6 +1542,61 @@ fn handle_update_queue_defaults(
         scheduled_tick_offset = defaults.scheduled_tick_offset,
         target_tier = ?defaults.target_tier,
         "espionage.queue_defaults.updated"
+    );
+}
+
+fn handle_update_counter_intel_policy(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    policy: SecurityPolicy,
+) {
+    let mut policies = app.world.resource_mut::<FactionSecurityPolicies>();
+    policies.set_policy(faction, policy);
+    info!(
+        target: "shadow_scale::espionage",
+        %faction,
+        ?policy,
+        "counter_intel.policy.updated"
+    );
+}
+
+fn handle_adjust_counter_intel_budget(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    reserve: Option<Scalar>,
+    delta: Option<Scalar>,
+) {
+    if reserve.is_none() && delta.is_none() {
+        warn!(
+            target: "shadow_scale::espionage",
+            %faction,
+            "counter_intel_budget.adjust.noop"
+        );
+        return;
+    }
+
+    let budget_config = {
+        let catalog = app.world.resource::<EspionageCatalog>();
+        catalog.config().counter_intel_budget().clone()
+    };
+
+    let mut budgets = app.world.resource_mut::<CounterIntelBudgets>();
+    let mut updated = budgets.available(faction);
+
+    if let Some(value) = reserve {
+        updated = budgets.set_reserve(faction, value, &budget_config);
+    }
+    if let Some(value) = delta {
+        updated = budgets.adjust_reserve(faction, value, &budget_config);
+    }
+
+    info!(
+        target: "shadow_scale::espionage",
+        %faction,
+        reserve = reserve.map(|v| v.to_f32()),
+        delta = delta.map(|v| v.to_f32()),
+        available = updated.to_f32(),
+        "counter_intel_budget.adjusted"
     );
 }
 

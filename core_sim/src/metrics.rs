@@ -18,6 +18,7 @@ pub struct SimulationMetrics {
     pub knowledge_leak_criticals: u32,
     pub knowledge_countermeasures_active: u32,
     pub knowledge_common_knowledge_total: u32,
+    pub knowledge_counterintel_budget_spent: f64,
 }
 
 pub fn collect_metrics(
