@@ -15,6 +15,12 @@ const MAP_SIZE_OPTIONS := [
 ]
 const MAP_SIZE_DEFAULT_KEY := "standard"
 const MAP_SIZE_DEFAULT_DIMENSIONS := Vector2i(80, 52)
+const COUNTERINTEL_POLICY_OPTIONS := [
+	{"key": "lenient", "label": "Lenient"},
+	{"key": "standard", "label": "Standard"},
+	{"key": "hardened", "label": "Hardened"},
+	{"key": "crisis", "label": "Crisis"}
+]
 
 @onready var sentiment_text: RichTextLabel = $RootPanel/TabContainer/Sentiment/SentimentText
 @onready var terrain_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TerrainText
@@ -47,6 +53,14 @@ const MAP_SIZE_DEFAULT_DIMENSIONS := Vector2i(80, 52)
 @onready var knowledge_summary_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeSummaryText
 @onready var discovery_progress_list: ItemList = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection/DiscoveryProgressList
 @onready var knowledge_events_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection/KnowledgeEventsText
+@onready var knowledge_counter_faction_spin: SpinBox = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid/KnowledgeCounterFactionSpin
+@onready var knowledge_policy_dropdown: OptionButton = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid/KnowledgePolicyDropdown
+@onready var knowledge_policy_apply_button: Button = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid/KnowledgePolicyApplyButton
+@onready var knowledge_budget_reserve_spin: SpinBox = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid/KnowledgeBudgetReserveSpin
+@onready var knowledge_budget_set_button: Button = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid/KnowledgeBudgetSetButton
+@onready var knowledge_budget_delta_spin: SpinBox = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid/KnowledgeBudgetDeltaSpin
+@onready var knowledge_budget_adjust_button: Button = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid/KnowledgeBudgetAdjustButton
+@onready var knowledge_counterintel_status_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelStatusText
 @onready var knowledge_mission_dropdown: OptionButton = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeMissionDropdown
 @onready var knowledge_owner_spin: SpinBox = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeOwnerSpin
 @onready var knowledge_target_spin: SpinBox = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeTargetSpin
@@ -144,6 +158,8 @@ var _discovery_progress: Dictionary = {}
 var _knowledge_events: Array[Dictionary] = []
 var _knowledge_timeline_events: Array[Dictionary] = []
 var _knowledge_metrics: Dictionary = {}
+var _knowledge_policy_states: Dictionary = {}
+var _knowledge_budget_states: Dictionary = {}
 var _knowledge_missions: Array[Dictionary] = []
 var _great_discovery_records: Dictionary = {}
 var _great_discovery_progress_map: Dictionary = {}
@@ -328,6 +344,7 @@ func _ready() -> void:
 		_on_knowledge_agent_auto_toggled(knowledge_agent_auto_toggle.button_pressed)
 	if knowledge_queue_mission_button != null:
 		knowledge_queue_mission_button.pressed.connect(_on_knowledge_queue_mission_button_pressed)
+	_initialize_counterintel_controls()
 	_update_panel_layout()
 	_initialize_log_filters()
 	_render_static_sections()
@@ -1289,6 +1306,20 @@ func _update_command_controls_enabled() -> void:
 		knowledge_agent_auto_toggle.disabled = not connected
 	if knowledge_agent_spin != null:
 		knowledge_agent_spin.editable = connected and (knowledge_agent_auto_toggle == null or not knowledge_agent_auto_toggle.button_pressed)
+	if knowledge_counter_faction_spin != null:
+		knowledge_counter_faction_spin.editable = connected
+	if knowledge_policy_dropdown != null:
+		knowledge_policy_dropdown.disabled = not connected
+	if knowledge_policy_apply_button != null:
+		knowledge_policy_apply_button.disabled = not connected
+	if knowledge_budget_reserve_spin != null:
+		knowledge_budget_reserve_spin.editable = connected
+	if knowledge_budget_set_button != null:
+		knowledge_budget_set_button.disabled = not connected
+	if knowledge_budget_delta_spin != null:
+		knowledge_budget_delta_spin.editable = connected
+	if knowledge_budget_adjust_button != null:
+		knowledge_budget_adjust_button.disabled = not connected
 
 func _ensure_command_connection() -> bool:
 	if command_client == null:
@@ -2699,6 +2730,36 @@ func _on_knowledge_queue_mission_button_pressed() -> void:
 	var summary: String = "Queued %s (F%d→F%d, discovery %d)" % [mission_id, owner, target, discovery]
 	_send_command(command_line, summary)
 
+func _on_knowledge_policy_apply_pressed() -> void:
+	if knowledge_policy_dropdown == null:
+		return
+	if knowledge_policy_dropdown.get_item_count() == 0:
+		_append_command_log("No counter-intel policy options available.")
+		return
+	var faction: int = 0 if knowledge_counter_faction_spin == null else int(knowledge_counter_faction_spin.value)
+	var index: int = knowledge_policy_dropdown.get_selected()
+	if index < 0:
+		index = 0
+	var policy_variant: Variant = knowledge_policy_dropdown.get_item_metadata(index)
+	var policy_key: String = String(policy_variant) if typeof(policy_variant) == TYPE_STRING else knowledge_policy_dropdown.get_item_text(index).to_lower()
+	var summary: String = "Counter-intel policy set to %s for F%d" % [policy_key.capitalize(), faction]
+	_send_command("counterintel_policy %d %s" % [faction, policy_key], summary)
+
+func _on_knowledge_budget_set_pressed() -> void:
+	var faction: int = 0 if knowledge_counter_faction_spin == null else int(knowledge_counter_faction_spin.value)
+	var reserve_value: float = 0.0 if knowledge_budget_reserve_spin == null else float(knowledge_budget_reserve_spin.value)
+	var summary: String = "Counter-intel reserve set to %.2f for F%d" % [reserve_value, faction]
+	_send_command("counterintel_budget %d reserve %.3f" % [faction, reserve_value], summary)
+
+func _on_knowledge_budget_adjust_pressed() -> void:
+	var faction: int = 0 if knowledge_counter_faction_spin == null else int(knowledge_counter_faction_spin.value)
+	var delta_value: float = 0.0 if knowledge_budget_delta_spin == null else float(knowledge_budget_delta_spin.value)
+	if is_equal_approx(delta_value, 0.0):
+		_append_command_log("Budget adjustment of 0 ignored.")
+		return
+	var summary: String = "Counter-intel reserve adjusted by %+.2f for F%d" % [delta_value, faction]
+	_send_command("counterintel_budget %d delta %.3f" % [faction, delta_value], summary)
+
 func _compare_trade_links(a: Dictionary, b: Dictionary) -> bool:
 	var a_open: float = _extract_trade_openness(a)
 	var b_open: float = _extract_trade_openness(b)
@@ -2842,6 +2903,82 @@ func _maybe_ingest_knowledge_telemetry(entry: Dictionary) -> bool:
 	_refresh_knowledge_mission_options()
 	_render_knowledge()
 	return true
+
+func _maybe_ingest_counterintel_log(entry: Dictionary) -> void:
+	var target: String = String(entry.get("target", ""))
+	if target != "shadow_scale::espionage":
+		return
+	var message: String = String(entry.get("message", ""))
+	var fields_variant: Variant = entry.get("fields", {})
+	if typeof(fields_variant) != TYPE_DICTIONARY:
+		return
+	var fields: Dictionary = fields_variant
+	match message:
+		"counter_intel.policy.updated":
+			var faction: int = int(fields.get("faction", 0))
+			var policy_label: String = String(fields.get("policy", "Unknown"))
+			_knowledge_policy_states[faction] = policy_label
+			_refresh_knowledge_counterintel_status()
+		"counter_intel_budget.adjusted":
+			var faction_id: int = int(fields.get("faction", 0))
+			var reserve_val = _to_optional_float(fields.get("reserve", null))
+			var delta_val = _to_optional_float(fields.get("delta", null))
+			var available_val = _to_optional_float(fields.get("available", null))
+			_knowledge_budget_states[faction_id] = {
+				"reserve": reserve_val,
+				"delta": delta_val,
+				"available": available_val
+			}
+			_refresh_knowledge_counterintel_status()
+		_:
+			return
+
+func _refresh_knowledge_counterintel_status() -> void:
+	if knowledge_counterintel_status_text == null:
+		return
+	var faction_keys: Array = []
+	for key in _knowledge_policy_states.keys():
+		if not faction_keys.has(key):
+			faction_keys.append(key)
+	for key in _knowledge_budget_states.keys():
+		if not faction_keys.has(key):
+			faction_keys.append(key)
+	if faction_keys.is_empty():
+		knowledge_counterintel_status_text.text = "[i]No counter-intel activity recorded yet.[/i]"
+		return
+	faction_keys.sort()
+	var lines: Array[String] = []
+	for key in faction_keys:
+		var faction: int = int(key)
+		var policy_label: String = String(_knowledge_policy_states.get(faction, "Unknown"))
+		var budget: Dictionary = _knowledge_budget_states.get(faction, {})
+		var parts: Array[String] = []
+		var reserve_val = budget.get("reserve", null)
+		if reserve_val != null:
+			parts.append("Reserve %.2f" % float(reserve_val))
+		var available_val = budget.get("available", null)
+		if available_val != null:
+			parts.append("Available %.2f" % float(available_val))
+		var delta_val = budget.get("delta", null)
+		if delta_val != null:
+			parts.append("Δ %+.2f" % float(delta_val))
+		var budget_text: String = "No budget data" if parts.is_empty() else ", ".join(parts)
+		lines.append("Faction %d — Policy %s | %s" % [faction, policy_label, budget_text])
+	knowledge_counterintel_status_text.text = "\n".join(lines)
+
+func _to_optional_float(value) -> Variant:
+	match typeof(value):
+		TYPE_NIL:
+			return null
+		TYPE_INT, TYPE_FLOAT:
+			return float(value)
+		TYPE_STRING:
+			var text: String = String(value).strip_edges()
+			if text == "" or text.to_lower() == "null":
+				return null
+			return text.to_float()
+		_:
+			return null
 
 func _coerce_knowledge_timeline_event(raw_event: Dictionary, fallback_tick: int) -> Dictionary:
 	var tick_value: int = fallback_tick
@@ -3507,6 +3644,26 @@ func _initialize_log_channel() -> void:
 		_update_log_status("Log stream connection failed (%s)." % error_string(err))
 		_log_retry_timer = LOG_RECONNECT_INTERVAL
 
+func _initialize_counterintel_controls() -> void:
+	if knowledge_policy_dropdown != null:
+		knowledge_policy_dropdown.clear()
+		for option in COUNTERINTEL_POLICY_OPTIONS:
+			var label: String = String(option.get("label", option.get("key", "")))
+			var key: String = String(option.get("key", label.to_lower()))
+			knowledge_policy_dropdown.add_item(label)
+			knowledge_policy_dropdown.set_item_metadata(knowledge_policy_dropdown.get_item_count() - 1, key)
+		var option_count: int = knowledge_policy_dropdown.get_item_count()
+		if option_count > 0:
+			knowledge_policy_dropdown.select(min(option_count - 1, 1))
+	if knowledge_policy_apply_button != null:
+		knowledge_policy_apply_button.pressed.connect(_on_knowledge_policy_apply_pressed)
+	if knowledge_budget_set_button != null:
+		knowledge_budget_set_button.pressed.connect(_on_knowledge_budget_set_pressed)
+	if knowledge_budget_adjust_button != null:
+		knowledge_budget_adjust_button.pressed.connect(_on_knowledge_budget_adjust_pressed)
+	if knowledge_counterintel_status_text != null:
+		knowledge_counterintel_status_text.text = "[i]No counter-intel activity recorded yet.[/i]"
+
 func _determine_log_host() -> String:
 	var env_host: String = OS.get_environment("LOG_HOST")
 	if env_host != "":
@@ -3593,6 +3750,7 @@ func _ingest_log_entry(entry: Dictionary) -> void:
 	_record_tick_sample(entry)
 	_maybe_ingest_knowledge_telemetry(entry)
 	_maybe_ingest_trade_telemetry(entry)
+	_maybe_ingest_counterintel_log(entry)
 	var level: String = _normalize_log_level(String(entry.get("level", "INFO")))
 	var raw_target: String = String(entry.get("target", ""))
 	var timestamp_ms: int = int(entry.get("timestamp_ms", 0))

@@ -697,6 +697,83 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "Queue Espionage Mission"
 
+[node name="KnowledgeCounterintelSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="KnowledgeCounterintelLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Counter-Intel Controls"
+
+[node name="KnowledgeCounterintelGrid" type="GridContainer" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+columns = 3
+theme_override_constants/separation = 8
+
+[node name="KnowledgeCounterFactionLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Faction"
+
+[node name="KnowledgeCounterFactionSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+step = 1.0
+
+[node name="KnowledgeCounterFactionSpacer" type="Control" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+
+[node name="KnowledgePolicyLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Policy"
+
+[node name="KnowledgePolicyDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="KnowledgePolicyApplyButton" type="Button" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Apply"
+
+[node name="KnowledgeBudgetReserveLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Reserve"
+
+[node name="KnowledgeBudgetReserveSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+step = 0.1
+
+[node name="KnowledgeBudgetSetButton" type="Button" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Set"
+
+[node name="KnowledgeBudgetDeltaLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Adjust Δ"
+
+[node name="KnowledgeBudgetDeltaSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -10.0
+max_value = 10.0
+step = 0.1
+
+[node name="KnowledgeBudgetAdjustButton" type="Button" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Adjust"
+
+[node name="KnowledgeCounterintelStatusText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+selection_enabled = true
+
 [node name="KnowledgeEventsSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
 layout_mode = 2
 size_flags_horizontal = 3
