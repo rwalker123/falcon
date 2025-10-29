@@ -3,7 +3,8 @@ use std::num::{ParseFloatError, ParseIntError};
 use thiserror::Error;
 
 use crate::{
-    CommandPayload, CorruptionSubsystem, InfluenceScopeKind, OrdersDirective, SupportChannel,
+    CommandPayload, CorruptionSubsystem, InfluenceScopeKind, OrdersDirective, ReloadConfigKind,
+    SupportChannel,
 };
 
 #[derive(Debug, Error)]
@@ -186,6 +187,33 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 intensity,
                 exposure_timer,
             })
+        }
+        "reload_config" | "reload_sim_config" => {
+            let mut tokens: Vec<String> = parts.map(|p| p.to_string()).collect();
+            let mut kind = ReloadConfigKind::Simulation;
+            if let Some(first) = tokens.first() {
+                match first.to_ascii_lowercase().as_str() {
+                    "sim" | "simulation" | "sim_config" => {
+                        tokens.remove(0);
+                        kind = ReloadConfigKind::Simulation;
+                    }
+                    "pipeline" | "turn" | "turn_pipeline" | "phase" => {
+                        tokens.remove(0);
+                        kind = ReloadConfigKind::TurnPipeline;
+                    }
+                    "overlay" | "overlays" | "snapshot" | "snapshot_overlays" => {
+                        tokens.remove(0);
+                        kind = ReloadConfigKind::SnapshotOverlays;
+                    }
+                    _ => {}
+                }
+            }
+            let path = if tokens.is_empty() {
+                None
+            } else {
+                Some(tokens.join(" "))
+            };
+            Ok(CommandPayload::ReloadConfig { kind, path })
         }
         other => Err(CommandParseError::UnknownCommand(other.to_string())),
     }

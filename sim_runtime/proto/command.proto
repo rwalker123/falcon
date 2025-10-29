@@ -115,6 +115,18 @@ message UpdateEspionageQueueDefaultsCommand {
   optional uint32 target_tier = 2;
 }
 
+enum ReloadConfigKind {
+  RELOAD_CONFIG_KIND_UNSPECIFIED = 0;
+  RELOAD_CONFIG_KIND_SIMULATION = 1;
+  RELOAD_CONFIG_KIND_TURN_PIPELINE = 2;
+  RELOAD_CONFIG_KIND_SNAPSHOT_OVERLAYS = 3;
+}
+
+message ReloadConfigCommand {
+  ReloadConfigKind kind = 1;
+  optional string path = 2;
+}
+
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
@@ -133,5 +145,6 @@ message CommandEnvelope {
     UpdateEspionageGeneratorsCommand update_espionage_generators = 12;
     QueueEspionageMissionCommand queue_espionage_mission = 13;
     UpdateEspionageQueueDefaultsCommand update_espionage_queue_defaults = 14;
+    ReloadConfigCommand reload_config = 16;
   }
 }

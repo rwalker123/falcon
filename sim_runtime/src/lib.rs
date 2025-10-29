@@ -11,7 +11,7 @@ pub use sim_schema::*;
 pub mod commands;
 pub use commands::{
     CommandDecodeError, CommandEncodeError, CommandEnvelope, CommandPayload, OrdersDirective,
-    SupportChannel,
+    ReloadConfigKind, SupportChannel,
 };
 
 pub mod command_text;

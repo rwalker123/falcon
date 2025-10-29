@@ -1,0 +1,33 @@
+{
+  "culture": {
+    "trust_axis": 1,
+    "drift_warning": {
+      "severity_min": 0.0,
+      "severity_max": 3.0,
+      "incident_delta_scale": 0.02,
+      "incident_delta_min": 0.0,
+      "incident_delta_max": 0.08
+    },
+    "assimilation_push": {
+      "severity_min": 0.0,
+      "severity_max": 3.0,
+      "incident_delta_scale": 0.01,
+      "incident_delta_min": 0.0,
+      "incident_delta_max": 0.05
+    },
+    "schism_risk": {
+      "severity_min": 0.5,
+      "severity_max": 4.0,
+      "incident_delta_scale": 0.03,
+      "incident_delta_min": 0.05,
+      "incident_delta_max": 0.15
+    }
+  },
+  "corruption": {
+    "trust_axis": 1,
+    "sentiment_delta_min": -0.5,
+    "sentiment_delta_max": 0.5,
+    "max_penalty_ratio": 0.9,
+    "min_output_multiplier": 0.1
+  }
+}

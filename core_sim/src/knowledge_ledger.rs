@@ -1,7 +1,9 @@
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
 use bevy::prelude::*;
 use log::debug;
+use serde::Deserialize;
 use sim_runtime::knowledge::{
     KnowledgeTelemetryEvent, KnowledgeTelemetryFrame, KnowledgeTelemetryMission,
     KNOWLEDGE_TELEMETRY_TOPIC,
@@ -22,7 +24,120 @@ use crate::{
     scalar::Scalar,
 };
 
-const DEFAULT_TIMELINE_CAPACITY: usize = 64;
+pub const BUILTIN_KNOWLEDGE_LEDGER_CONFIG: &str = include_str!("data/knowledge_ledger_config.json");
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct KnowledgeLedgerConfig {
+    timeline_capacity: usize,
+    default_half_life_ticks: u16,
+    default_time_to_cascade: u16,
+    max_suspicion: f32,
+    suspicion_decay: f32,
+    suspicion_retention_threshold: f32,
+    countermeasure_bonus_scale: f32,
+    countermeasure_progress_penalty_ratio: f32,
+    infiltration_cells_weight: f32,
+    infiltration_fidelity_weight: f32,
+    max_progress_per_tick: i32,
+}
+
+impl KnowledgeLedgerConfig {
+    pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    pub fn timeline_capacity(&self) -> usize {
+        self.timeline_capacity
+    }
+
+    pub fn default_half_life_ticks(&self) -> u16 {
+        self.default_half_life_ticks
+    }
+
+    pub fn default_time_to_cascade(&self) -> u16 {
+        self.default_time_to_cascade
+    }
+
+    pub fn max_suspicion(&self) -> Scalar {
+        Scalar::from_f32(self.max_suspicion)
+    }
+
+    pub fn suspicion_decay(&self) -> Scalar {
+        Scalar::from_f32(self.suspicion_decay)
+    }
+
+    pub fn suspicion_retention_threshold(&self) -> Scalar {
+        Scalar::from_f32(self.suspicion_retention_threshold)
+    }
+
+    pub fn countermeasure_bonus_scale(&self) -> f32 {
+        self.countermeasure_bonus_scale
+    }
+
+    pub fn countermeasure_progress_penalty_ratio(&self) -> f32 {
+        self.countermeasure_progress_penalty_ratio
+    }
+
+    pub fn infiltration_cells_weight(&self) -> f32 {
+        self.infiltration_cells_weight
+    }
+
+    pub fn infiltration_fidelity_weight(&self) -> f32 {
+        self.infiltration_fidelity_weight
+    }
+
+    pub fn max_progress_per_tick(&self) -> i32 {
+        self.max_progress_per_tick
+    }
+}
+
+impl Default for KnowledgeLedgerConfig {
+    fn default() -> Self {
+        Self {
+            timeline_capacity: 64,
+            default_half_life_ticks: 10,
+            default_time_to_cascade: 10,
+            max_suspicion: 5.0,
+            suspicion_decay: 0.05,
+            suspicion_retention_threshold: 0.05,
+            countermeasure_bonus_scale: 4.0,
+            countermeasure_progress_penalty_ratio: 0.5,
+            infiltration_cells_weight: 1.0,
+            infiltration_fidelity_weight: 2.0,
+            max_progress_per_tick: 25,
+        }
+    }
+}
+
+#[derive(Resource, Debug, Clone)]
+pub struct KnowledgeLedgerConfigHandle(pub Arc<KnowledgeLedgerConfig>);
+
+impl KnowledgeLedgerConfigHandle {
+    pub fn new(config: Arc<KnowledgeLedgerConfig>) -> Self {
+        Self(config)
+    }
+
+    pub fn load_builtin() -> Self {
+        let parsed = KnowledgeLedgerConfig::from_json_str(BUILTIN_KNOWLEDGE_LEDGER_CONFIG)
+            .unwrap_or_else(|err| panic!("failed to parse builtin knowledge ledger config: {err}"));
+        Self(Arc::new(parsed))
+    }
+
+    pub fn get(&self) -> Arc<KnowledgeLedgerConfig> {
+        Arc::clone(&self.0)
+    }
+
+    pub fn replace_from_json(
+        &mut self,
+        json: &str,
+    ) -> Result<Arc<KnowledgeLedgerConfig>, serde_json::Error> {
+        let parsed = KnowledgeLedgerConfig::from_json_str(json)?;
+        let shared = Arc::new(parsed);
+        self.0 = Arc::clone(&shared);
+        Ok(shared)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct KnowledgeCountermeasure {
@@ -65,14 +180,14 @@ pub struct KnowledgeLedgerEntry {
 }
 
 impl KnowledgeLedgerEntry {
-    pub fn new(owner: FactionId, discovery_id: u32) -> Self {
+    pub fn new(owner: FactionId, discovery_id: u32, config: &KnowledgeLedgerConfig) -> Self {
         Self {
             discovery_id,
             owner_faction: owner,
             tier: 0,
             progress_percent: 0,
-            half_life_ticks: 10,
-            time_to_cascade: 10,
+            half_life_ticks: config.default_half_life_ticks(),
+            time_to_cascade: config.default_time_to_cascade(),
             security_posture: KnowledgeSecurityPosture::Standard,
             countermeasures: Vec::new(),
             infiltrations: Vec::new(),
@@ -89,8 +204,7 @@ impl KnowledgeLedgerEntry {
         self.countermeasures.push(countermeasure);
     }
 
-    pub fn register_infiltration(&mut self, mut probe: InfiltrationRecord) {
-        let max_suspicion = Scalar::from_f32(5.0);
+    pub fn register_infiltration(&mut self, mut probe: InfiltrationRecord, max_suspicion: Scalar) {
         if let Some(existing) = self
             .infiltrations
             .iter_mut()
@@ -128,16 +242,40 @@ pub struct KnowledgeLedger {
     max_timeline_events: usize,
     last_emitted_tick: Option<u64>,
     last_emitted_metrics: KnowledgeMetricsState,
+    config: Arc<KnowledgeLedgerConfig>,
 }
 
 impl Default for KnowledgeLedger {
     fn default() -> Self {
+        let config = Arc::new(
+            KnowledgeLedgerConfig::from_json_str(BUILTIN_KNOWLEDGE_LEDGER_CONFIG)
+                .expect("knowledge ledger config should parse"),
+        );
+        Self::with_config(config)
+    }
+}
+
+impl KnowledgeLedger {
+    pub fn with_config(config: Arc<KnowledgeLedgerConfig>) -> Self {
         Self {
             entries: HashMap::new(),
             timeline: VecDeque::new(),
-            max_timeline_events: DEFAULT_TIMELINE_CAPACITY,
+            max_timeline_events: config.timeline_capacity(),
             last_emitted_tick: None,
             last_emitted_metrics: KnowledgeMetricsState::default(),
+            config,
+        }
+    }
+
+    pub fn config(&self) -> Arc<KnowledgeLedgerConfig> {
+        Arc::clone(&self.config)
+    }
+
+    pub fn apply_config(&mut self, config: Arc<KnowledgeLedgerConfig>) {
+        self.config = config;
+        self.max_timeline_events = self.config.timeline_capacity();
+        if self.timeline.len() > self.max_timeline_events {
+            self.timeline.truncate(self.max_timeline_events);
         }
     }
 }
@@ -171,9 +309,10 @@ impl KnowledgeLedger {
     }
 
     fn ensure_entry(&mut self, owner: FactionId, discovery_id: u32) -> &mut KnowledgeLedgerEntry {
+        let key = (owner, discovery_id);
         self.entries
-            .entry((owner, discovery_id))
-            .or_insert_with(|| KnowledgeLedgerEntry::new(owner, discovery_id))
+            .entry(key)
+            .or_insert_with(|| KnowledgeLedgerEntry::new(owner, discovery_id, self.config.as_ref()))
     }
 
     pub fn apply_countermeasure(
@@ -253,6 +392,7 @@ impl KnowledgeLedger {
         let owner = probe_owner;
         let discovery_id = probe_discovery;
 
+        let max_suspicion = self.config.max_suspicion();
         let entry = self.ensure_entry(owner, discovery_id);
         let probe_record = InfiltrationRecord {
             faction: infiltrator,
@@ -261,7 +401,7 @@ impl KnowledgeLedger {
             cells,
             last_activity_tick: tick,
         };
-        entry.register_infiltration(probe_record);
+        entry.register_infiltration(probe_record, max_suspicion);
         self.push_timeline_event(KnowledgeTimelineEvent {
             tick,
             kind: KnowledgeTimelineEventKind::SpyProbe,
@@ -576,10 +716,12 @@ pub fn knowledge_ledger_tick(
     mut metrics: ResMut<SimulationMetrics>,
     catalog: Res<EspionageCatalog>,
 ) {
+    let config = ledger.config();
     let mut pending_events: Vec<KnowledgeTimelineEvent> = Vec::new();
     let mut expired_infiltrations: Vec<(FactionId, u32, FactionId)> = Vec::new();
 
     for entry in ledger.entries.values_mut() {
+        let cfg = config.as_ref();
         let base_half_life = entry.half_life_ticks.max(2) as i32;
         let modifier_half_life: i32 = entry
             .modifiers
@@ -589,12 +731,19 @@ pub fn knowledge_ledger_tick(
         let countermeasure_bonus_ticks: i32 = entry
             .countermeasures
             .iter()
-            .map(|cm| (cm.potency.to_f32() * 4.0).round() as i32)
+            .map(|cm| (cm.potency.to_f32() * cfg.countermeasure_bonus_scale()).round() as i32)
             .sum();
         let infiltration_penalty_ticks: i32 = entry
             .infiltrations
             .iter()
-            .map(|inf| inf.cells as i32 + (inf.blueprint_fidelity.to_f32() * 2.0).round() as i32)
+            .map(|inf| {
+                let cells_penalty =
+                    (inf.cells as f32 * cfg.infiltration_cells_weight()).round() as i32;
+                let fidelity_penalty = (inf.blueprint_fidelity.to_f32()
+                    * cfg.infiltration_fidelity_weight())
+                .round() as i32;
+                cells_penalty + fidelity_penalty
+            })
             .sum();
 
         let mut effective_half_life =
@@ -612,8 +761,11 @@ pub fn knowledge_ledger_tick(
             .sum();
         progress_delta += modifier_progress;
         progress_delta += infiltration_penalty_ticks.max(0);
-        progress_delta -= (countermeasure_bonus_ticks / 2).max(0);
-        progress_delta = progress_delta.clamp(0, 25);
+        let counter_penalty = (countermeasure_bonus_ticks as f32
+            * cfg.countermeasure_progress_penalty_ratio())
+        .round() as i32;
+        progress_delta -= counter_penalty.max(0);
+        progress_delta = progress_delta.clamp(0, cfg.max_progress_per_tick());
 
         let mut emitted_progress_event = false;
         if progress_delta > 0 {
@@ -681,15 +833,15 @@ pub fn knowledge_ledger_tick(
             });
         }
 
-        let suspicion_decay = Scalar::from_f32(0.05);
+        let suspicion_decay = cfg.suspicion_decay();
         entry.infiltrations.retain_mut(|inf| {
             inf.suspicion = if inf.suspicion > suspicion_decay {
                 inf.suspicion - suspicion_decay
             } else {
                 Scalar::zero()
             };
-            let should_keep = inf.suspicion > Scalar::from_f32(0.05)
-                || inf.blueprint_fidelity > Scalar::from_f32(0.05);
+            let threshold = cfg.suspicion_retention_threshold();
+            let should_keep = inf.suspicion > threshold || inf.blueprint_fidelity > threshold;
             if !should_keep {
                 expired_infiltrations.push((entry.owner_faction, entry.discovery_id, inf.faction));
             }

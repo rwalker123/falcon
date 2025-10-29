@@ -1,10 +1,15 @@
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    env, fs, io,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use bevy::{math::UVec2, prelude::*};
+use serde::Deserialize;
 use sim_runtime::{CorruptionLedger, CorruptionSubsystem};
+use thiserror::Error;
 
 use crate::{
     culture::CultureTensionRecord,
@@ -58,52 +63,224 @@ pub struct SimulationConfig {
     pub snapshot_history_limit: usize,
 }
 
+pub const BUILTIN_SIMULATION_CONFIG: &str = include_str!("data/simulation_config.json");
+
 impl Default for SimulationConfig {
     fn default() -> Self {
-        Self {
-            grid_size: UVec2::new(80, 52),
-            ambient_temperature: scalar_from_f32(18.0),
-            temperature_lerp: scalar_from_f32(0.05),
-            logistics_flow_gain: scalar_from_f32(0.1),
-            base_link_capacity: scalar_from_f32(0.8),
-            mass_bounds: (scalar_from_f32(0.2), scalar_from_f32(15.0)),
-            population_growth_rate: scalar_from_f32(0.01),
-            temperature_morale_penalty: scalar_from_f32(0.004),
-            population_cluster_stride: 8,
-            population_cap: 25_000,
-            power_adjust_rate: scalar_from_f32(0.02),
-            max_power_generation: scalar_from_f32(25.0),
-            max_power_efficiency: scalar_from_f32(1.75),
-            min_power_influence: -1.5,
-            max_power_influence: 1.5,
-            power_generation_adjust_rate: 0.4,
-            power_demand_adjust_rate: 0.25,
-            power_storage_stability_bonus: 0.25,
-            power_line_capacity: scalar_from_f32(4.0),
-            power_storage_efficiency: scalar_from_f32(0.85),
-            power_storage_bleed: scalar_from_f32(0.02),
-            power_instability_warn: scalar_from_f32(0.4),
-            power_instability_critical: scalar_from_f32(0.2),
-            mass_flux_epsilon: scalar_from_f32(0.001),
-            base_trade_tariff: scalar_from_f32(0.08),
-            base_trade_openness: scalar_from_f32(0.35),
-            trade_openness_decay: scalar_from_f32(0.005),
-            trade_leak_min_ticks: 3,
-            trade_leak_max_ticks: 12,
-            trade_leak_exponent: 1.4,
-            trade_leak_progress: scalar_from_f32(0.12),
-            migration_fragment_scaling: scalar_from_f32(0.25),
-            migration_fidelity_floor: scalar_from_f32(0.35),
-            corruption_logistics_penalty: scalar_from_f32(0.35),
-            corruption_trade_penalty: scalar_from_f32(0.3),
-            corruption_military_penalty: scalar_from_f32(0.4),
-            snapshot_bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000),
-            snapshot_flat_bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41002),
-            command_bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41001),
-            log_bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41003),
-            snapshot_history_limit: 256,
+        SimulationConfig::builtin()
+    }
+}
+
+impl SimulationConfig {
+    pub fn builtin() -> Self {
+        SimulationConfig::from_json_str(BUILTIN_SIMULATION_CONFIG)
+            .expect("builtin simulation config should parse")
+    }
+
+    pub fn from_json_str(json: &str) -> Result<Self, SimulationConfigError> {
+        let data: SimulationConfigData = serde_json::from_str(json)?;
+        data.into_config()
+    }
+
+    pub fn from_file(path: &Path) -> Result<Self, SimulationConfigError> {
+        let contents =
+            fs::read_to_string(path).map_err(|source| SimulationConfigError::ReadFailed {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        let config = SimulationConfig::from_json_str(&contents)?;
+        Ok(config)
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum SimulationConfigError {
+    #[error("failed to parse simulation config: {0}")]
+    Parse(#[from] serde_json::Error),
+    #[error("invalid socket address for `{field}`: {source}")]
+    InvalidSocket {
+        field: &'static str,
+        #[source]
+        source: std::net::AddrParseError,
+    },
+    #[error("failed to read simulation config from {path:?}: {source}")]
+    ReadFailed {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+struct SimulationConfigData {
+    grid_size: GridSizeData,
+    ambient_temperature: f32,
+    temperature_lerp: f32,
+    logistics_flow_gain: f32,
+    base_link_capacity: f32,
+    mass_bounds: MassBoundsData,
+    population_growth_rate: f32,
+    temperature_morale_penalty: f32,
+    population_cluster_stride: u32,
+    population_cap: u32,
+    power_adjust_rate: f32,
+    max_power_generation: f32,
+    max_power_efficiency: f32,
+    min_power_influence: f32,
+    max_power_influence: f32,
+    power_generation_adjust_rate: f32,
+    power_demand_adjust_rate: f32,
+    power_storage_stability_bonus: f32,
+    power_line_capacity: f32,
+    power_storage_efficiency: f32,
+    power_storage_bleed: f32,
+    power_instability_warn: f32,
+    power_instability_critical: f32,
+    mass_flux_epsilon: f32,
+    base_trade_tariff: f32,
+    base_trade_openness: f32,
+    trade_openness_decay: f32,
+    trade_leak_min_ticks: u32,
+    trade_leak_max_ticks: u32,
+    trade_leak_exponent: f32,
+    trade_leak_progress: f32,
+    migration_fragment_scaling: f32,
+    migration_fidelity_floor: f32,
+    corruption_logistics_penalty: f32,
+    corruption_trade_penalty: f32,
+    corruption_military_penalty: f32,
+    snapshot_bind: String,
+    snapshot_flat_bind: String,
+    command_bind: String,
+    log_bind: String,
+    snapshot_history_limit: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct GridSizeData {
+    x: u32,
+    y: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct MassBoundsData {
+    min: f32,
+    max: f32,
+}
+
+impl SimulationConfigData {
+    fn into_config(self) -> Result<SimulationConfig, SimulationConfigError> {
+        Ok(SimulationConfig {
+            grid_size: UVec2::new(self.grid_size.x, self.grid_size.y),
+            ambient_temperature: scalar_from_f32(self.ambient_temperature),
+            temperature_lerp: scalar_from_f32(self.temperature_lerp),
+            logistics_flow_gain: scalar_from_f32(self.logistics_flow_gain),
+            base_link_capacity: scalar_from_f32(self.base_link_capacity),
+            mass_bounds: (
+                scalar_from_f32(self.mass_bounds.min),
+                scalar_from_f32(self.mass_bounds.max),
+            ),
+            population_growth_rate: scalar_from_f32(self.population_growth_rate),
+            temperature_morale_penalty: scalar_from_f32(self.temperature_morale_penalty),
+            population_cluster_stride: self.population_cluster_stride,
+            population_cap: self.population_cap,
+            power_adjust_rate: scalar_from_f32(self.power_adjust_rate),
+            max_power_generation: scalar_from_f32(self.max_power_generation),
+            max_power_efficiency: scalar_from_f32(self.max_power_efficiency),
+            min_power_influence: self.min_power_influence,
+            max_power_influence: self.max_power_influence,
+            power_generation_adjust_rate: self.power_generation_adjust_rate,
+            power_demand_adjust_rate: self.power_demand_adjust_rate,
+            power_storage_stability_bonus: self.power_storage_stability_bonus,
+            power_line_capacity: scalar_from_f32(self.power_line_capacity),
+            power_storage_efficiency: scalar_from_f32(self.power_storage_efficiency),
+            power_storage_bleed: scalar_from_f32(self.power_storage_bleed),
+            power_instability_warn: scalar_from_f32(self.power_instability_warn),
+            power_instability_critical: scalar_from_f32(self.power_instability_critical),
+            mass_flux_epsilon: scalar_from_f32(self.mass_flux_epsilon),
+            base_trade_tariff: scalar_from_f32(self.base_trade_tariff),
+            base_trade_openness: scalar_from_f32(self.base_trade_openness),
+            trade_openness_decay: scalar_from_f32(self.trade_openness_decay),
+            trade_leak_min_ticks: self.trade_leak_min_ticks,
+            trade_leak_max_ticks: self.trade_leak_max_ticks,
+            trade_leak_exponent: self.trade_leak_exponent,
+            trade_leak_progress: scalar_from_f32(self.trade_leak_progress),
+            migration_fragment_scaling: scalar_from_f32(self.migration_fragment_scaling),
+            migration_fidelity_floor: scalar_from_f32(self.migration_fidelity_floor),
+            corruption_logistics_penalty: scalar_from_f32(self.corruption_logistics_penalty),
+            corruption_trade_penalty: scalar_from_f32(self.corruption_trade_penalty),
+            corruption_military_penalty: scalar_from_f32(self.corruption_military_penalty),
+            snapshot_bind: parse_socket(self.snapshot_bind, "snapshot_bind")?,
+            snapshot_flat_bind: parse_socket(self.snapshot_flat_bind, "snapshot_flat_bind")?,
+            command_bind: parse_socket(self.command_bind, "command_bind")?,
+            log_bind: parse_socket(self.log_bind, "log_bind")?,
+            snapshot_history_limit: self.snapshot_history_limit,
+        })
+    }
+}
+
+fn parse_socket(value: String, field: &'static str) -> Result<SocketAddr, SimulationConfigError> {
+    SocketAddr::from_str(&value)
+        .map_err(|source| SimulationConfigError::InvalidSocket { field, source })
+}
+
+#[derive(Resource, Debug, Clone)]
+pub struct SimulationConfigMetadata {
+    path: Option<PathBuf>,
+}
+
+impl SimulationConfigMetadata {
+    pub fn new(path: Option<PathBuf>) -> Self {
+        Self { path }
+    }
+
+    pub fn path(&self) -> Option<&PathBuf> {
+        self.path.as_ref()
+    }
+
+    pub fn set_path(&mut self, path: Option<PathBuf>) {
+        self.path = path;
+    }
+}
+
+pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigMetadata) {
+    let override_path = env::var("SIM_CONFIG_PATH").ok().map(PathBuf::from);
+
+    let default_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/simulation_config.json");
+
+    let candidates: Vec<PathBuf> = match override_path {
+        Some(ref path) => vec![path.clone()],
+        None => vec![default_path.clone()],
+    };
+
+    for path in candidates {
+        match SimulationConfig::from_file(&path) {
+            Ok(config) => {
+                tracing::info!(
+                    target: "shadow_scale::config",
+                    path = %path.display(),
+                    "simulation_config.loaded=file"
+                );
+                return (config, SimulationConfigMetadata::new(Some(path)));
+            }
+            Err(err) => {
+                tracing::warn!(
+                    target: "shadow_scale::config",
+                    path = %path.display(),
+                    error = %err,
+                    "simulation_config.load_failed"
+                );
+            }
         }
     }
+
+    let config = SimulationConfig::builtin();
+    tracing::info!(
+        target: "shadow_scale::config",
+        "simulation_config.loaded=builtin"
+    );
+    (config, SimulationConfigMetadata::new(None))
 }
 
 /// Tracks total simulation ticks elapsed.

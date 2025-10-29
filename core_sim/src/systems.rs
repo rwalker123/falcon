@@ -1,6 +1,6 @@
 use std::{cmp::max, collections::HashMap};
 
-use bevy::{math::UVec2, prelude::*};
+use bevy::{ecs::system::SystemParam, math::UVec2, prelude::*};
 use log::debug;
 use serde_json::json;
 
@@ -13,6 +13,7 @@ use crate::{
         CultureEffectsCache, CultureManager, CultureSchismEvent, CultureTensionEvent,
         CultureTensionKind, CultureTensionRecord, CultureTraitAxis, CULTURE_TRAIT_AXES,
     },
+    culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
     generations::GenerationRegistry,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
     orders::{FactionId, FactionRegistry},
@@ -27,6 +28,7 @@ use crate::{
     },
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
     terrain::{terrain_definition, terrain_for_position},
+    turn_pipeline_config::TurnPipelineConfigHandle,
 };
 use sim_runtime::{
     apply_openness_decay, merge_fragment_payload, scale_migration_fragments, CorruptionSubsystem,
@@ -52,10 +54,49 @@ pub struct MigrationKnowledgeEvent {
     pub delta: Scalar,
 }
 
+#[derive(SystemParam)]
+pub struct LogisticsSimParams<'w, 's> {
+    pub config: Res<'w, SimulationConfig>,
+    pub impacts: Res<'w, InfluencerImpacts>,
+    pub effects: Res<'w, CultureEffectsCache>,
+    pub ledgers: Res<'w, CorruptionLedgers>,
+    pub severity_config: Res<'w, CultureCorruptionConfigHandle>,
+    pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
+    pub links: Query<'w, 's, &'static mut LogisticsLink>,
+    pub tiles: Query<'w, 's, &'static mut Tile>,
+}
+
+#[derive(SystemParam)]
+pub struct TradeDiffusionParams<'w, 's> {
+    pub config: Res<'w, SimulationConfig>,
+    pub telemetry: ResMut<'w, TradeTelemetry>,
+    pub discovery: ResMut<'w, DiscoveryProgressLedger>,
+    pub ledgers: Res<'w, CorruptionLedgers>,
+    pub severity_config: Res<'w, CultureCorruptionConfigHandle>,
+    pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
+    pub tick: Res<'w, SimulationTick>,
+    pub events: EventWriter<'w, TradeDiffusionEvent>,
+    pub links: Query<'w, 's, (&'static LogisticsLink, &'static mut TradeLink)>,
+}
+
+#[derive(SystemParam)]
+pub struct PowerSimParams<'w, 's> {
+    pub nodes: Query<'w, 's, (Entity, &'static Tile, &'static mut PowerNode)>,
+    pub config: Res<'w, SimulationConfig>,
+    pub topology: Res<'w, PowerTopology>,
+    pub grid_state: ResMut<'w, PowerGridState>,
+    pub impacts: Res<'w, InfluencerImpacts>,
+    pub effects: Res<'w, CultureEffectsCache>,
+    pub ledgers: Res<'w, CorruptionLedgers>,
+    pub severity_config: Res<'w, CultureCorruptionConfigHandle>,
+    pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
+}
+
 fn corruption_multiplier(
     ledgers: &CorruptionLedgers,
     subsystem: CorruptionSubsystem,
     penalty: Scalar,
+    config: &CorruptionSeverityConfig,
 ) -> Scalar {
     let raw_intensity = ledgers.total_intensity(subsystem).max(0);
     if raw_intensity == 0 {
@@ -63,8 +104,8 @@ fn corruption_multiplier(
     }
     let intensity = Scalar::from_raw(raw_intensity).clamp(Scalar::zero(), Scalar::one());
     let mut reduction = intensity * penalty;
-    reduction = reduction.clamp(Scalar::zero(), scalar_from_f32(0.9));
-    (Scalar::one() - reduction).clamp(scalar_from_f32(0.1), Scalar::one())
+    reduction = reduction.clamp(Scalar::zero(), config.max_penalty_ratio());
+    (Scalar::one() - reduction).clamp(config.min_output_multiplier(), Scalar::one())
 }
 
 /// Spawn initial grid of tiles, logistics links, power nodes, and population cohorts.
@@ -245,40 +286,37 @@ pub fn simulate_materials(config: Res<SimulationConfig>, mut tiles: Query<&mut T
 }
 
 /// Move resources along logistics links based on mass gradients.
-pub fn simulate_logistics(
-    config: Res<SimulationConfig>,
-    impacts: Res<InfluencerImpacts>,
-    effects: Res<CultureEffectsCache>,
-    ledgers: Res<CorruptionLedgers>,
-    mut links: Query<&mut LogisticsLink>,
-    mut tiles: Query<&mut Tile>,
-) {
+pub fn simulate_logistics(mut params: LogisticsSimParams) {
+    let logistics_cfg = params.pipeline_config.config().logistics();
+    let corruption_cfg = params.severity_config.config().corruption();
     let corruption_factor = corruption_multiplier(
-        &ledgers,
+        &params.ledgers,
         CorruptionSubsystem::Logistics,
-        config.corruption_logistics_penalty,
+        params.config.corruption_logistics_penalty,
+        corruption_cfg,
     );
-    let flow_gain = (config.logistics_flow_gain
-        * impacts.logistics_multiplier
-        * effects.logistics_multiplier
+    let flow_gain = (params.config.logistics_flow_gain
+        * params.impacts.logistics_multiplier
+        * params.effects.logistics_multiplier
         * corruption_factor)
-        .clamp(scalar_from_f32(0.02), scalar_from_f32(0.5));
-    for mut link in links.iter_mut() {
-        let Ok([mut source, mut target]) = tiles.get_many_mut([link.from, link.to]) else {
+        .clamp(logistics_cfg.flow_gain_min(), logistics_cfg.flow_gain_max());
+    for mut link in params.links.iter_mut() {
+        let Ok([mut source, mut target]) = params.tiles.get_many_mut([link.from, link.to]) else {
             link.flow = scalar_zero();
             continue;
         };
         let source_profile = terrain_definition(source.terrain);
         let target_profile = terrain_definition(target.terrain);
-        let penalty_avg =
-            (source_profile.logistics_penalty + target_profile.logistics_penalty).max(0.05);
-        let attrition_avg =
-            (source_profile.attrition_rate + target_profile.attrition_rate).clamp(0.0, 0.95);
-        let penalty_scalar = Scalar::from_f32(penalty_avg.max(0.1));
+        let penalty_avg = (source_profile.logistics_penalty + target_profile.logistics_penalty)
+            .max(logistics_cfg.penalty_min());
+        let attrition_avg = (source_profile.attrition_rate + target_profile.attrition_rate)
+            .clamp(0.0, logistics_cfg.attrition_max());
+        let penalty_scalar = Scalar::from_f32(penalty_avg.max(logistics_cfg.penalty_scalar_min()));
         let attrition_scalar = Scalar::from_f32(attrition_avg);
-        let effective_gain = (flow_gain / penalty_scalar).clamp(scalar_from_f32(0.005), flow_gain);
-        let capacity =
-            ((link.capacity * corruption_factor) / penalty_scalar).max(scalar_from_f32(0.05));
+        let effective_gain =
+            (flow_gain / penalty_scalar).clamp(logistics_cfg.effective_gain_min(), flow_gain);
+        let capacity = ((link.capacity * corruption_factor) / penalty_scalar)
+            .max(logistics_cfg.capacity_min());
         let gradient = source.mass - target.mass;
         let transfer_raw = (gradient * effective_gain).clamp(-capacity, capacity);
         let delivered = transfer_raw * (Scalar::one() - attrition_scalar);
@@ -289,31 +327,27 @@ pub fn simulate_logistics(
 }
 
 /// Diffuse knowledge along trade links using openness-derived leak timers.
-pub fn trade_knowledge_diffusion(
-    config: Res<SimulationConfig>,
-    mut telemetry: ResMut<TradeTelemetry>,
-    mut discovery: ResMut<DiscoveryProgressLedger>,
-    ledgers: Res<CorruptionLedgers>,
-    tick: Res<SimulationTick>,
-    mut events: EventWriter<TradeDiffusionEvent>,
-    mut links: Query<(&LogisticsLink, &mut TradeLink)>,
-) {
-    telemetry.reset_turn();
+pub fn trade_knowledge_diffusion(mut params: TradeDiffusionParams) {
+    params.telemetry.reset_turn();
     let leak_curve = TradeLeakCurve::new(
-        config.trade_leak_min_ticks,
-        config.trade_leak_max_ticks,
-        config.trade_leak_exponent,
+        params.config.trade_leak_min_ticks,
+        params.config.trade_leak_max_ticks,
+        params.config.trade_leak_exponent,
     );
+    let corruption_cfg = params.severity_config.config().corruption();
     let trade_multiplier = corruption_multiplier(
-        &ledgers,
+        &params.ledgers,
         CorruptionSubsystem::Trade,
-        config.corruption_trade_penalty,
+        params.config.corruption_trade_penalty,
+        corruption_cfg,
     );
-    let tariff_base = config.base_trade_tariff;
+    let trade_cfg = params.pipeline_config.config().trade();
+    let tariff_base = params.config.base_trade_tariff;
 
-    for (logistics, mut trade) in links.iter_mut() {
+    for (logistics, mut trade) in params.links.iter_mut() {
         trade.throughput = logistics.flow * trade_multiplier;
-        trade.tariff = (tariff_base * trade_multiplier).clamp(scalar_zero(), tariff_base);
+        let tariff_max = tariff_base * trade_cfg.tariff_max_scalar();
+        trade.tariff = (tariff_base * trade_multiplier).clamp(trade_cfg.tariff_min(), tariff_max);
         trade.openness = trade.openness.clamp(scalar_zero(), scalar_one());
         trade.openness = Scalar::from_raw(apply_openness_decay(
             trade.openness.raw(),
@@ -331,25 +365,31 @@ pub fn trade_knowledge_diffusion(
                 let discovery_id = trade
                     .last_discovery
                     .unwrap_or((trade.from_faction.0 << 8) | trade.to_faction.0);
-                KnowledgeFragment::new(discovery_id, config.trade_leak_progress, Scalar::one())
+                KnowledgeFragment::new(
+                    discovery_id,
+                    params.config.trade_leak_progress,
+                    Scalar::one(),
+                )
             };
 
             let delta = fragment.progress;
             if delta > scalar_zero() {
                 let discovery_id = fragment.discovery_id;
-                let _ = discovery.add_progress(trade.to_faction, discovery_id, delta);
-                telemetry.tech_diffusion_applied =
-                    telemetry.tech_diffusion_applied.saturating_add(1);
-                telemetry.push_record(TradeDiffusionRecord {
-                    tick: tick.0,
+                let _ = params
+                    .discovery
+                    .add_progress(trade.to_faction, discovery_id, delta);
+                params.telemetry.tech_diffusion_applied =
+                    params.telemetry.tech_diffusion_applied.saturating_add(1);
+                params.telemetry.push_record(TradeDiffusionRecord {
+                    tick: params.tick.0,
                     from: trade.from_faction,
                     to: trade.to_faction,
                     discovery_id,
                     delta,
                     via_migration: false,
                 });
-                events.send(TradeDiffusionEvent {
-                    tick: tick.0,
+                params.events.send(TradeDiffusionEvent {
+                    tick: params.tick.0,
                     from: trade.from_faction,
                     to: trade.to_faction,
                     discovery_id,
@@ -361,7 +401,7 @@ pub fn trade_knowledge_diffusion(
 
             trade.leak_timer = leak_curve.ticks_for_openness(trade.openness.raw());
             if trade.leak_timer == 0 {
-                trade.leak_timer = config.trade_leak_min_ticks.max(1);
+                trade.leak_timer = params.config.trade_leak_min_ticks.max(1);
             }
         }
     }
@@ -409,6 +449,7 @@ pub fn simulate_population(
     registry: Res<FactionRegistry>,
     impacts: Res<InfluencerImpacts>,
     effects: Res<CultureEffectsCache>,
+    pipeline_config: Res<TurnPipelineConfigHandle>,
     tiles: Query<&Tile>,
     mut cohorts: Query<&mut PopulationCohort>,
     mut discovery: ResMut<DiscoveryProgressLedger>,
@@ -417,6 +458,7 @@ pub fn simulate_population(
     mut migration_events: EventWriter<MigrationKnowledgeEvent>,
     tick: Res<SimulationTick>,
 ) {
+    let population_cfg = pipeline_config.config().population();
     let max_cap_scalar = scalar_from_u32(config.population_cap);
     for mut cohort in cohorts.iter_mut() {
         let Ok(tile) = tiles.get(cohort.home) else {
@@ -425,9 +467,11 @@ pub fn simulate_population(
         };
         let terrain_profile = terrain_definition(tile.terrain);
         let temp_diff = (tile.temperature - config.ambient_temperature).abs();
-        let terrain_attrition_penalty = Scalar::from_f32(terrain_profile.attrition_rate * 0.2);
+        let terrain_attrition_penalty = scalar_from_f32(terrain_profile.attrition_rate)
+            * population_cfg.attrition_penalty_scale();
+        let hardness_excess = (terrain_profile.logistics_penalty - 1.0).max(0.0);
         let terrain_hardness_penalty =
-            Scalar::from_f32((terrain_profile.logistics_penalty - 1.0).max(0.0) * 0.05);
+            scalar_from_f32(hardness_excess) * population_cfg.hardness_penalty_scale();
         let morale_delta = config.population_growth_rate
             - temp_diff * config.temperature_morale_penalty
             + impacts.morale_delta
@@ -436,18 +480,20 @@ pub fn simulate_population(
             - terrain_hardness_penalty;
         cohort.morale = (cohort.morale + morale_delta).clamp(scalar_zero(), scalar_one());
 
-        let growth_base = config.population_growth_rate - temp_diff * scalar_from_f32(0.0005)
-            + impacts.morale_delta * scalar_from_f32(0.4)
-            + effects.morale_bias * scalar_from_f32(0.5)
-            - terrain_attrition_penalty * scalar_from_f32(0.5);
-        let growth_factor = growth_base.clamp(scalar_from_f32(-0.06), scalar_from_f32(0.06));
+        let growth_base = config.population_growth_rate
+            - temp_diff * population_cfg.temperature_growth_penalty()
+            + impacts.morale_delta * population_cfg.morale_influence_scale()
+            + effects.morale_bias * population_cfg.culture_bias_scale()
+            - terrain_attrition_penalty * population_cfg.attrition_morale_scale();
+        let growth_clamp = population_cfg.growth_clamp();
+        let growth_factor = growth_base.clamp(-growth_clamp, growth_clamp);
         let current_size = scalar_from_u32(cohort.size);
         let new_size =
             (current_size * (scalar_one() + growth_factor)).clamp(scalar_zero(), max_cap_scalar);
         cohort.size = new_size.to_u32();
 
         if cohort.migration.is_none()
-            && cohort.morale > scalar_from_f32(0.78)
+            && cohort.morale > population_cfg.migration_morale_threshold()
             && !cohort.knowledge.is_empty()
         {
             if let Some(&destination) = registry
@@ -455,6 +501,7 @@ pub fn simulate_population(
                 .iter()
                 .find(|&&faction| faction != cohort.faction)
             {
+                let migration_eta = population_cfg.migration_eta_ticks();
                 let source_contract = fragments_to_contract(&cohort.knowledge);
                 let scaled = scale_migration_fragments(
                     &source_contract,
@@ -464,7 +511,7 @@ pub fn simulate_population(
                 if !scaled.is_empty() {
                     cohort.migration = Some(PendingMigration {
                         destination,
-                        eta: 2,
+                        eta: migration_eta,
                         fragments: fragments_from_contract(&scaled),
                     });
                 }
@@ -529,15 +576,7 @@ pub fn simulate_population(
 }
 
 /// Adjust power nodes in response to tile state and demand.
-pub fn simulate_power(
-    mut nodes: Query<(Entity, &Tile, &mut PowerNode)>,
-    config: Res<SimulationConfig>,
-    topology: Res<PowerTopology>,
-    mut grid_state: ResMut<PowerGridState>,
-    impacts: Res<InfluencerImpacts>,
-    effects: Res<CultureEffectsCache>,
-    ledgers: Res<CorruptionLedgers>,
-) {
+pub fn simulate_power(mut params: PowerSimParams) {
     #[derive(Clone, Copy)]
     struct NodeCalc {
         entity: Entity,
@@ -564,20 +603,31 @@ pub fn simulate_power(
         demand: Scalar,
     }
 
+    let config = &*params.config;
+    let impacts = &*params.impacts;
+    let effects = &*params.effects;
+    let topology = params.topology.as_ref();
+    let grid_state = params.grid_state.as_mut();
+
+    let corruption_cfg = params.severity_config.config().corruption();
+    let power_cfg = params.pipeline_config.config().power();
     let corruption_factor = corruption_multiplier(
-        &ledgers,
+        &params.ledgers,
         CorruptionSubsystem::Military,
         config.corruption_military_penalty,
+        corruption_cfg,
     );
 
-    let mut node_calcs: Vec<NodeCalc> = Vec::with_capacity(nodes.iter().len());
-    let mut node_index: HashMap<PowerNodeId, usize> = HashMap::with_capacity(nodes.iter().len());
+    let mut node_calcs: Vec<NodeCalc> = Vec::with_capacity(params.nodes.iter().len());
+    let mut node_index: HashMap<PowerNodeId, usize> =
+        HashMap::with_capacity(params.nodes.iter().len());
 
-    for (entity, tile, mut node) in nodes.iter_mut() {
+    for (entity, tile, mut node) in params.nodes.iter_mut() {
         let efficiency_adjust =
             (config.ambient_temperature - tile.temperature) * config.power_adjust_rate;
-        node.efficiency = (node.efficiency + efficiency_adjust * scalar_from_f32(0.01))
-            .clamp(scalar_from_f32(0.5), config.max_power_efficiency);
+        node.efficiency = (node.efficiency
+            + efficiency_adjust * power_cfg.efficiency_adjust_scale())
+        .clamp(power_cfg.efficiency_floor(), config.max_power_efficiency);
 
         let influence_bonus = (impacts.power_bonus + effects.power_bonus).clamp(
             scalar_from_f32(config.min_power_influence),
@@ -586,8 +636,9 @@ pub fn simulate_power(
 
         let effective_generation = (node.base_generation * node.efficiency + influence_bonus)
             .clamp(scalar_zero(), config.max_power_generation);
-        let target_demand = (node.base_demand - influence_bonus * scalar_from_f32(0.25))
-            .clamp(scalar_zero(), config.max_power_generation);
+        let target_demand = (node.base_demand
+            - influence_bonus * power_cfg.influence_demand_reduction())
+        .clamp(scalar_zero(), config.max_power_generation);
         let net = (effective_generation - target_demand) * corruption_factor;
 
         node.generation = (node.base_generation
@@ -660,12 +711,13 @@ pub fn simulate_power(
         }
     }
 
-    let storage_efficiency = config
-        .power_storage_efficiency
-        .clamp(scalar_from_f32(0.1), scalar_from_f32(1.0));
+    let storage_efficiency = config.power_storage_efficiency.clamp(
+        power_cfg.storage_efficiency_min(),
+        power_cfg.storage_efficiency_max(),
+    );
     let storage_bleed = config
         .power_storage_bleed
-        .clamp(scalar_zero(), scalar_from_f32(0.25));
+        .clamp(scalar_zero(), power_cfg.storage_bleed_max());
 
     for idx in 0..node_count {
         if nets[idx] > scalar_zero() {
@@ -827,7 +879,7 @@ pub fn simulate_power(
         .map(|node| (node.entity, node))
         .collect();
 
-    for (entity, _tile, mut node) in nodes.iter_mut() {
+    for (entity, _tile, mut node) in params.nodes.iter_mut() {
         if let Some(result) = result_lookup.remove(&entity) {
             node.storage_level = result.storage_level;
             node.storage_capacity = result.storage_capacity;
@@ -845,20 +897,25 @@ pub fn process_culture_events(
     mut diplomacy: ResMut<DiplomacyLeverage>,
     mut tension_events: EventReader<CultureTensionEvent>,
     mut schism_events: EventReader<CultureSchismEvent>,
+    severity_config: Res<CultureCorruptionConfigHandle>,
 ) {
-    const TRUST_AXIS: usize = 1;
+    let config = severity_config.config();
+    let culture_cfg = config.culture();
+    let trust_axis = culture_cfg.trust_axis();
+    let drift_tuning = culture_cfg.drift_warning();
+    let assimilation_tuning = culture_cfg.assimilation_push();
+    let schism_tuning = culture_cfg.schism_risk();
 
     for event in tension_events.read() {
-        let severity = event.magnitude.to_f32().abs().clamp(0.0, 3.0);
         match event.kind {
             CultureTensionKind::DriftWarning => {
-                let delta = scalar_from_f32((severity * 0.02).clamp(0.0, 0.08));
-                sentiment.apply_incident_delta(TRUST_AXIS, -delta);
+                let delta = drift_tuning.delta_for_magnitude(event.magnitude);
+                sentiment.apply_incident_delta(trust_axis, -delta);
                 diplomacy.push_culture_signal(CultureTensionRecord::from(event));
             }
             CultureTensionKind::AssimilationPush => {
-                let delta = scalar_from_f32((severity * 0.01).clamp(0.0, 0.05));
-                sentiment.apply_incident_delta(TRUST_AXIS, delta);
+                let delta = assimilation_tuning.delta_for_magnitude(event.magnitude);
+                sentiment.apply_incident_delta(trust_axis, delta);
                 diplomacy.push_culture_signal(CultureTensionRecord::from(event));
             }
             CultureTensionKind::SchismRisk => {
@@ -868,9 +925,8 @@ pub fn process_culture_events(
     }
 
     for event in schism_events.read() {
-        let severity = event.magnitude.to_f32().abs().clamp(0.5, 4.0);
-        let delta = scalar_from_f32((severity * 0.03).clamp(0.05, 0.15));
-        sentiment.apply_incident_delta(TRUST_AXIS, -delta);
+        let delta = schism_tuning.delta_for_magnitude(event.magnitude);
+        sentiment.apply_incident_delta(trust_axis, -delta);
         diplomacy.push_culture_signal(CultureTensionRecord::from(event));
     }
 }
@@ -886,12 +942,16 @@ pub fn process_corruption(
     mut sentiment: ResMut<SentimentAxisBias>,
     mut telemetry: ResMut<CorruptionTelemetry>,
     mut diplomacy: ResMut<DiplomacyLeverage>,
+    severity_config: Res<CultureCorruptionConfigHandle>,
     tick: Res<SimulationTick>,
 ) {
     telemetry.reset_turn();
 
     let ledger = ledgers.ledger_mut();
     let mut resolved: Vec<u64> = Vec::new();
+    let corruption_cfg = severity_config.config().corruption();
+    let trust_idx = corruption_cfg.trust_axis();
+    let (delta_min, delta_max) = corruption_cfg.sentiment_delta_bounds();
 
     for entry in ledger.entries.iter_mut() {
         if entry.exposure_timer > 0 {
@@ -906,9 +966,7 @@ pub fn process_corruption(
                 trust_delta: 0,
             };
 
-            let trust_idx = 1;
-            let delta = Scalar::from_raw(entry.intensity)
-                .clamp(Scalar::from_f32(-0.5), Scalar::from_f32(0.5));
+            let delta = Scalar::from_raw(entry.intensity).clamp(delta_min, delta_max);
             record.trust_delta = (-delta).raw();
             telemetry.record_exposure(record.clone());
             diplomacy.push(record.clone());

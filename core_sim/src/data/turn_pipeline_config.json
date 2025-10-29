@@ -1,0 +1,34 @@
+{
+  "logistics": {
+    "flow_gain_min": 0.02,
+    "flow_gain_max": 0.5,
+    "effective_gain_min": 0.005,
+    "penalty_min": 0.05,
+    "penalty_scalar_min": 0.1,
+    "capacity_min": 0.05,
+    "attrition_max": 0.95
+  },
+  "trade": {
+    "tariff_min": 0.0,
+    "tariff_max_scalar": 1.0
+  },
+  "population": {
+    "attrition_penalty_scale": 0.2,
+    "hardness_penalty_scale": 0.05,
+    "temperature_growth_penalty": 0.0005,
+    "morale_influence_scale": 0.4,
+    "culture_bias_scale": 0.5,
+    "attrition_morale_scale": 0.5,
+    "growth_clamp": 0.06,
+    "migration_morale_threshold": 0.78,
+    "migration_eta_ticks": 2
+  },
+  "power": {
+    "efficiency_adjust_scale": 0.01,
+    "efficiency_floor": 0.5,
+    "influence_demand_reduction": 0.25,
+    "storage_efficiency_min": 0.1,
+    "storage_efficiency_max": 1.0,
+    "storage_bleed_max": 0.25
+  }
+}

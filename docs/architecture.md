@@ -3,6 +3,7 @@
 ## Overview
 - **Headless Core (`core_sim`)**: Bevy-based ECS that resolves a single turn via `run_turn`. Systems run in the order materials → logistics → population → power → tick increment → snapshot capture.
 - **Networking**: Thin TCP layer (`core_sim::network`) streams snapshot deltas, emits structured tracing/log frames, and receives control commands. Commands flow over a single length-prefixed Protobuf `CommandEnvelope` socket (`SimulationConfig::command_bind`), while snapshots broadcast on `SimulationConfig::snapshot_bind` / `snapshot_flat_bind` and logs on `SimulationConfig::log_bind`.
+- **Simulation Defaults**: `core_sim/src/data/simulation_config.json` seeds `SimulationConfig` with map dimensions, environmental tuning, trade/power/corruption multipliers, migration knobs, and the default TCP bind addresses/snapshot history depth. Designers can edit these baselines (grid size, mass bounds, leak curve, corruption penalties, networking ports) without touching Rust; the loader converts floats to fixed-point `Scalar` values on startup.
 - **Serialization**: Snapshots/deltas represented via Rust structs and `sim_schema::schemas/snapshot.fbs` for cross-language clients.
 - **Shared Runtime (`sim_runtime`)**: Lightweight helpers (command parsing, bias handling, validation) shared by tooling and the headless core.
 - **Inspector Client (`clients/godot_thin_client`)**: Godot thin client that renders the map, streams snapshots, and exposes the tabbed inspector; the Logs tab subscribes to the tracing feed, offers level/target/text filters, and renders a per-turn duration sparkline alongside scrollback. A Bevy-native inspector is under evaluation (see `shadow_scale_strategy_game_concept_technical_plan_v_0.md` Option F) but would live in a separate binary to keep the headless core deterministic.
@@ -91,6 +92,16 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 - **Simulation stage**: `trade_knowledge_diffusion` runs after logistics, refreshes throughput/tariff (already reduced by corruption), decrements leak timers, emits `TradeDiffusionEvent`s when timers expire, applies linear research progress to `DiscoveryProgressLedger`, and resets timers via the configured leak curve. Telemetry increments `trade.tech_diffusion_applied` and archives the record for inspector use.
 - **Migration flow**: `simulate_population` manages optional `PendingMigration` payloads. When morale/openess align, cohorts snapshot scaled fragments (`migration_fragment_scaling`, `migration_fidelity_floor`) headed to a destination faction. On arrival the fragments merge into the destination ledger, the cohort flips ownership, and telemetry increments `trade.migration_knowledge_transfers` with `via_migration=true`.
 - **Configuration surface**: `SimulationConfig` exposes diffusion knobs (`trade_leak_min_ticks`, `trade_leak_max_ticks`, `trade_leak_exponent`, `trade_leak_progress`, `trade_openness_decay`) and migration knobs (`migration_fragment_scaling`, `migration_fidelity_floor`). Designers should cross-reference `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §8 while tuning these values.
+  - JSON keys in `core_sim/src/data/simulation_config.json` map to systems as follows:
+    - `grid_size`, `population_cluster_stride`, `population_cap`, `mass_bounds`: world bootstrap size/density and tile mass limits.
+    - `ambient_temperature`, `temperature_lerp`, `power_adjust_rate`, `mass_flux_epsilon`: environmental relaxation rates and power-temperature coupling.
+    - `logistics_flow_gain`, `base_link_capacity`, `base_trade_tariff`, `base_trade_openness`, `trade_openness_decay`: logistics/trade throughput defaults.
+    - `trade_leak_*`, `migration_fragment_scaling`, `migration_fidelity_floor`: knowledge diffusion curves for trade and migration.
+    - `power_*` fields: power generation/efficiency caps, storage behaviour, incident thresholds.
+    - `corruption_*` fields: subsystem penalties applied when ledgers accumulate corruption.
+    - `snapshot_bind`, `snapshot_flat_bind`, `command_bind`, `log_bind`: default TCP endpoints for server sockets.
+    - `snapshot_history_limit`: length of the SnapshotHistory ring-buffer used for rollbacks/broadcasts.
+  - The headless server reads from `SIM_CONFIG_PATH` when set (fallback: the repo default file) and watches the active path for changes; saving the JSON triggers an automatic reload of `SimulationConfig` (socket changes still require a restart). Remote tooling can issue `reload_config [path]` (or the `ReloadSimulationConfig` payload) to swap configurations programmatically.
 - **Telemetry & logging**: `TradeTelemetry` resets each tick, tracks diffusion/migration counts, stores per-event records, and emits `trade.telemetry` log lines after population resolution. Inspector overlays will subscribe directly to these counters.
 
 ### Knowledge Ledger & Leak Mechanics
@@ -108,6 +119,17 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
   - Espionage missions inject `EspionageProbe` components with target discovery/tier, desired fidelity, and stealth score; successful probes raise `InfiltrationRecord.blueprint_fidelity` and shorten the leak timer. Failed probes increase suspicion, lowering future stealth chances and triggering UI alerts.
   - Counter-intelligence commands manipulate `KnowledgeSecurityProfile` (raising maintenance costs) or launch sweeps that consume `CounterIntelBudget`, roll against active probes, and, on success, erase infiltration records while applying short-term leak relief.
   - Knowledge Debt integrates with existing power/culture systems: high security posture writes penalties into `KnowledgeDebtLedger` consumed by power instability (`Power Systems Plan`) and workforce efficiency models.
+- **Configuration Surface**: `core_sim/src/data/knowledge_ledger_config.json` captures timeline capacity, default half-life/time-to-cascade, suspicion decay and retention thresholds, countermeasure bonus scaling, infiltrator weighting, and per-tick progress clamps. `KnowledgeLedgerConfigHandle` shares an `Arc<KnowledgeLedgerConfig>` between the ledger and callers, allowing tooling to reload numbers in step with the player experience outlined in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §5a.
+  - **Config fields**:
+    - `timeline_capacity`: number of timeline entries retained before trimming the oldest events.
+    - `default_half_life_ticks` / `default_time_to_cascade`: baseline secrecy timers assigned when a discovery registers.
+    - `max_suspicion`: clamp applied to infiltration suspicion meters.
+    - `suspicion_decay`: per-tick reduction applied to suspicion when no new probe lands.
+    - `suspicion_retention_threshold`: infiltrations below this suspicion/fidelity threshold are purged during decay.
+    - `countermeasure_bonus_scale`: multiplier translating countermeasure potency into additional half-life ticks.
+    - `countermeasure_progress_penalty_ratio`: portion of countermeasure bonus converted into reduced leak progress that same tick.
+    - `infiltration_cells_weight` / `infiltration_fidelity_weight`: weights that transform spy cells and blueprint fidelity into half-life penalties.
+    - `max_progress_per_tick`: upper bound on leak progress applied within a single tick after modifiers.
 - **Telemetry & UI feeds**:
   - Extend `WorldSnapshot` with `knowledge_ledger:[KnowledgeLedgerState]` entries carrying `discovery_id`, `owner_faction`, tier, current progress %, time-to-cascade estimate, active countermeasures, and suspected infiltrations. Include a child array `KnowledgeModifierBreakdownState` so the Godot inspector can show the modifier tooltips described in the manual’s Knowledge Ledger UI sketch.
   - Publish `KnowledgeEspionageTimeline` frames (ring buffer of the last N leak-affecting events) to snapshots and the `knowledge.telemetry` log channel, aligning with the UI timeline graph.
@@ -135,6 +157,13 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
   - Mission logs feed the timeline/telemetry channel consumed by the Godot Knowledge panel.
   - UI surfaces mission queue, success odds, agent availability, and ledger linkage (e.g., infiltrations per discovery).
 - **Configuration & Balancing**: Expose tuning knobs for mission difficulty, suspicion decay, countermeasure potency, mission prep costs, and agent progression.
+  - `core_sim/src/data/espionage_config.json` reference:
+    - `security_posture_penalties.minimal|standard|hardened|black_vault`: additive modifiers that accelerate leak progress as posture relaxes.
+    - `probe_resolution.*`: mission outcome tuning—`recon_fidelity_bonus` rewards recon-ready targets, `suspicion_floor`/`failure_extra_suspicion` set minimum suspicion deltas, `partial_*` scale partial successes, and `failure_misinformation_fidelity` models bad intel backlash.
+    - `counter_intel_resolution.*`: defaults for sweeps including posture penalty factor, base potency/upkeep/duration, and suspicion relief applied on success.
+    - `agent_generator_defaults.*`: stat ranges consumed when generator templates seed procedural agents.
+    - `mission_generator_defaults.*`: bounds governing auto-generated missions (resolution ticks, success odds, fidelity & suspicion deltas, cell gains, relief & suppression outputs).
+    - `queue_defaults.scheduled_tick_offset` / `queue_defaults.target_tier`: default scheduling offset and tier bias applied when remote tooling omits explicit values.
 - **Implementation Notes**:
   - Stage 1: define agent resources/components and mission queue from data-driven definitions; integrate scheduling commands.
   - Stage 2: mission resolution system producing ledger events; defensive sweeps; hooks into `knowledge_ledger_tick`.
@@ -158,8 +187,8 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 
 ### Corruption Simulation Backbone
 - **Subsystem multipliers**: `CorruptionLedgers::total_intensity` aggregates raw intensity by subsystem. `corruption_multiplier` converts that intensity into a clamped scalar applied by logistics (flow gain/capacity), trade (tariff yield), and military power (net generation), making corruption drag explicit.
-- **Config knobs**: `SimulationConfig` adds `corruption_logistics_penalty`, `corruption_trade_penalty`, and `corruption_military_penalty` so balance passes can tune how hard incidents bite. Integration tests confirm corrupted scenarios reduce throughput without breaking determinism.
-- **Telemetry coupling**: Exposures still feed sentiment/diplomacy via `CorruptionTelemetry` and `DiplomacyLeverage`; the new multipliers execute in the same tick, so designers see both scandal fallout and economic losses together.
+- **Config knobs**: `SimulationConfig` adds `corruption_logistics_penalty`, `corruption_trade_penalty`, and `corruption_military_penalty` so balance passes can tune how hard incidents bite. Complementary trust fallout and subsystem clamps now live in `core_sim/src/data/culture_corruption_config.json`; `CultureCorruptionConfig::corruption` feeds `sentiment_delta_min/max`, `max_penalty_ratio`, and `min_output_multiplier` into `process_corruption` and `corruption_multiplier`, keeping sentiment losses and throughput floors designer-controlled.
+- **Telemetry coupling**: Exposures still feed sentiment/diplomacy via `CorruptionTelemetry` and `DiplomacyLeverage`; the updated config bounds ensure the recorded `trust_delta` values match the JSON, and inspector tooling should surface those clamped numbers for validation. Manual coverage lives in §7c “Designer Tuning & Telemetry”.
 
 #### Inspector Overlay Prototype Plan
 - Gate rendering behind the `trade.tech_diffusion_applied` metric; reuse the Godot inspector snapshot stream to surface openness values per trade link (legacy CLI subscription stays available for verification).
@@ -182,9 +211,24 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 - **Trait Effects Bridge**: Convert trait vectors into system-ready coefficients each turn: e.g., `Aggressive` drives `MilitaryStanceBias`, `Open` modifies knowledge leak timers, `Devout` seeds ritual demand for logistics. Implement via `CultureEffectsCache` resource consumed by population, logistics, diplomacy, and espionage systems.
 - **Influencer Coupling**: Extend `InfluencerImpacts` (or companion resource) with culture resonance channels. Each influencer publishes weighted deltas onto specific trait axes; the reconcile pass blends those impulses with policy modifiers before divergence calculations.
   - Implemented: `InfluencerImpacts` now carries `InfluencerCultureResonance` (global/regional/local buckets). `InfluentialRoster::recompute_outputs` aggregates per-axis weights based on scope and coherence, clamping to ±1.0 to stay within Scalar bounds. `CultureManager::reconcile` applies those deltas before divergence checks, averaging within scope to avoid order-dependent bias. Inspector pulls the serialized resonance vectors via FlatBuffers (see below).
+- **Sentiment Coupling Tunables**: `core_sim/src/data/culture_corruption_config.json` stores the trust-axis routing plus per-event clamp/scale curves consumed by `process_culture_events`. Editing the `drift_warning`, `assimilation_push`, or `schism_risk` blocks lets designers reshape how much sentiment shifts per alert; the system clamps to those ranges before updating `SentimentAxisBias` and logging entries in `DiplomacyLeverage.culture_signals`. See the manual (§7c “Designer Tuning & Telemetry”) for the player-facing framing.
 - **Religion Integration**: Represent sect dynamics as tagged modifiers on the `Devout`, `Mystical`, and `Syncretic` axes rather than a discrete subsystem. High Devout + Mystical regions spawn `RitualSchedule` entries that schedule pilgrimage logistics and sentiment modifiers; secular regions skip creation.
 - **Telemetry & UI**: Extend snapshots with `CultureLayerState` payloads (per layer trait vectors + divergence meters) so the Godot inspector’s Culture tab can surface the “Cultural Inspector” referenced in the manual. Provide layer filters and clash forecasts derived from pending `CultureTensionEvent`s.
   - Inspector update: `Influencers` tab now displays each figure’s strongest culture pushes (weight + current output), while the Culture tab aggregates the top scoped pushes (global/regional/local) for quick validation. Snapshot payload exposes `InfluencerCultureResonanceEntry` entries to keep tooling type-safe.
+- **Balance Surface**: `core_sim/src/data/influencer_config.json` defines `InfluencerBalanceConfig` (roster cap, spawn interval min/max, decay factors, notoriety clamps, scope threshold table). The config loads via `InfluencerConfigHandle`, which also powers future runtime reload commands; designers should pair edits with the narrative framing in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §7b.
+  - **Config fields**:
+    - `roster_cap`: maximum concurrent influencers before spontaneous spawns pause.
+    - `support_decay` / `suppression_decay`: per-tick damping multipliers for stored support/suppress charge.
+    - `boost_decay`: decay applied to channel boosts earned via commands/events.
+    - `spawn_interval_min` / `spawn_interval_max`: cooldown window (ticks) before the roster can spawn another figure.
+    - `potential_min_ticks`: minimum time a Potential influencer must remain in state before promotion can occur.
+    - `potential_fizzle_ticks`: patience window before a low-coherence Potential lapses to Dormant.
+    - `potential_fizzle_coherence`: coherence threshold that keeps Potentials active (also used when reviving Dormant figures).
+    - `dormant_remove_threshold`: number of dormant ticks before an inactive influencer is culled.
+    - `support_notoriety_gain`: notoriety delta gained per unit of support.
+    - `support_channel_gain` / `support_channel_max`: scaling and clamp for targeted support channel boosts.
+    - `notoriety_min` / `notoriety_max`: bounds used when clamping notoriety each tick.
+    - `scope_thresholds.local|regional|global`: per-scope configuration of promotion/demotion coherence & notoriety thresholds plus dwell times.
 - **Task Hooks**: Flag follow-up work in `TASKS.md` (forthcoming entries) for implementing the reconcile system, divergence events, and telemetry serialization so engineering backlog stays aligned with the manual.
 - **Schema Plan (`sim_schema`)**: Amend `snapshot.fbs` with the culture payload contracts before engineering begins:
   - `enum CultureLayerScope { Global, Regional, Local }` to disambiguate layer granularity in snapshots/deltas.
@@ -208,6 +252,15 @@ per-faction orders -> command server -> turn queue -> run_turn -> snapshot -> br
 1. **Collect** – `TurnQueue` awaits submissions from all registered factions (`order <faction> ready`).
 2. **Resolve** – When all orders are present the server applies directives, executes `run_turn`, captures metrics, and broadcasts the snapshot delta.
 3. **Advance** – Queue resets for the next turn, reopening the Collect phase. Auto-generated orders keep single-faction testing ergonomic while preserving multi-faction semantics.
+
+### Turn Pipeline Configuration
+- `TurnPipelineConfig` (`core_sim/src/turn_pipeline_config.rs`) centralizes the previously hard-coded clamps per phase. The JSON backing file (`core_sim/src/data/turn_pipeline_config.json`) ships with defaults, is loaded via `load_turn_pipeline_config_from_env`, and is exposed at runtime through `TurnPipelineConfigHandle` + metadata for live reloads.
+- **Logistics**: `logistics.flow_gain_min/max` gates the blended flow gain multiplier, `effective_gain_min` enforces a floor after penalty scaling, `penalty_min` / `penalty_scalar_min` keep terrain penalties sane, `capacity_min` protects against zeroed links, and `attrition_max` caps average attrition used during transfer. These replace the 0.02/0.5/0.005/0.05/0.1/0.95 magic numbers inline in `simulate_logistics`.
+- **Trade**: `trade.tariff_min` and `tariff_max_scalar` bound the corruption-adjusted tariff that `trade_knowledge_diffusion` writes onto each link, ensuring designers can allow bonuses above baseline or floor the value without editing Rust.
+- **Population**: Attrition/hardness scaling, temperature penalty, morale/culture weighting, growth clamp, migration morale threshold, and migration ETA all now live in the `population` block. `simulate_population` consumes these knobs to compute morale drift, growth, and migration timers.
+- **Power**: `power.efficiency_adjust_scale`, `efficiency_floor`, `influence_demand_reduction`, and the storage efficiency/bleed clamps govern the smoothing behaviour in `simulate_power`. Designers regain the ability to make grids sloppier or stricter without recompile.
+- Hot reload support mirrors the simulation config path: the headless server watches the resolved file path (if any) and accepts `reload_config turn [path]`. Successful reloads update the Bevy resource, restart the watcher, and log the applied knobs. Manual framing lives in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §7c “Designer Tuning & Telemetry`.
+- `SnapshotOverlaysConfig` (`core_sim/src/data/snapshot_overlays_config.json`) moves overlay normalization out of code: corruption channel weights & spike multipliers, culture divergence boosts, military presence/support weights, and fog-of-war blending. Reload with `reload_config overlay [path]`; the inspector exposes buttons for both turn-pipeline and overlay reloads so designers can iterate without leaving the UI.
 
 ## Snapshot History & Rollback
 - `SnapshotHistory` retains a ring buffer of recent `WorldSnapshot` + `WorldDelta` pairs (default 256 entries; configurable via `SimulationConfig.snapshot_history_limit`).

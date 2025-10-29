@@ -1,9 +1,13 @@
 use std::io::{self, BufReader, Read};
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::{mpsc, Arc};
 use std::thread;
+use std::time::{Duration, Instant};
 
-use bevy::{app::Update, math::UVec2};
+use bevy::{app::Update, ecs::system::Resource, math::UVec2};
 use crossbeam_channel::{unbounded, Receiver, Sender};
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tracing::{info, warn};
 use tracing_subscriber::prelude::*;
 
@@ -16,12 +20,14 @@ use core_sim::{
     EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionState,
     EspionageRoster, FactionId, FactionOrders, FactionRegistry, GenerationId, GenerationRegistry,
     InfluencerImpacts, InfluentialRoster, QueueMissionParams, Scalar, SentimentAxisBias,
-    SimulationConfig, SimulationTick, SnapshotHistory, StoredSnapshot, SubmitError, SubmitOutcome,
-    SupportChannel, Tile, TurnQueue,
+    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
+    StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel, Tile, TurnPipelineConfig,
+    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
 };
 use sim_runtime::{
-    commands::EspionageGeneratorUpdate as CommandGeneratorUpdate, AxisBiasState,
-    CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
+    commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
+    AxisBiasState, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
     CorruptionEntry, CorruptionSubsystem, InfluenceScopeKind,
     OrdersDirective as ProtoOrdersDirective, SupportChannel as ProtoSupportChannel,
 };
@@ -57,7 +63,43 @@ fn main() {
 
     let snapshot_server = start_snapshot_server(config.snapshot_bind);
     let snapshot_flat_server = start_snapshot_server(config.snapshot_flat_bind);
-    let command_rx = spawn_command_listener(config.command_bind);
+
+    let config_watch_path = app
+        .world
+        .resource::<SimulationConfigMetadata>()
+        .path()
+        .cloned();
+    let turn_pipeline_watch_path = app
+        .world
+        .resource::<TurnPipelineConfigMetadata>()
+        .path()
+        .cloned();
+    let snapshot_overlays_watch_path = app
+        .world
+        .resource::<SnapshotOverlaysConfigMetadata>()
+        .path()
+        .cloned();
+
+    let (command_rx, command_tx) = spawn_command_listener(config.command_bind);
+    app.world
+        .insert_resource(CommandSenderResource(command_tx.clone()));
+    app.world.insert_resource(ConfigWatcherRegistry::default());
+
+    if let Some(path) = config_watch_path {
+        app.world
+            .resource_mut::<ConfigWatcherRegistry>()
+            .restart_simulation(Some(path), command_tx.clone());
+    }
+    if let Some(path) = turn_pipeline_watch_path {
+        app.world
+            .resource_mut::<ConfigWatcherRegistry>()
+            .restart_turn_pipeline(Some(path), command_tx.clone());
+    }
+    if let Some(path) = snapshot_overlays_watch_path {
+        app.world
+            .resource_mut::<ConfigWatcherRegistry>()
+            .restart_snapshot_overlays(Some(path), command_tx.clone());
+    }
 
     info!(
         command_bind = %config.command_bind,
@@ -221,6 +263,9 @@ fn main() {
             } => {
                 handle_update_queue_defaults(&mut app, scheduled_tick_offset, target_tier);
             }
+            Command::ReloadConfig { kind, path } => {
+                handle_reload_config(&mut app, kind, path);
+            }
         }
     }
 }
@@ -279,6 +324,10 @@ enum Command {
         scheduled_tick_offset: Option<u64>,
         target_tier: Option<u8>,
     },
+    ReloadConfig {
+        kind: ReloadConfigKind,
+        path: Option<String>,
+    },
 }
 
 enum InfluencerAction {
@@ -286,20 +335,152 @@ enum InfluencerAction {
     Suppress,
 }
 
+#[derive(Resource, Clone)]
+struct CommandSenderResource(Sender<Command>);
+
+#[derive(Resource, Default)]
+struct ConfigWatcherRegistry {
+    simulation: Option<FileWatcherHandle>,
+    turn_pipeline: Option<FileWatcherHandle>,
+    snapshot_overlays: Option<FileWatcherHandle>,
+}
+
+impl ConfigWatcherRegistry {
+    fn restart_simulation(&mut self, path: Option<PathBuf>, sender: Sender<Command>) {
+        if let Some(existing) = self.simulation.take() {
+            existing.stop();
+        }
+
+        if let Some(path) = path {
+            match start_file_watcher(path.clone(), sender, ReloadConfigKind::Simulation) {
+                Ok(watcher) => {
+                    info!(
+                        target: "shadow_scale::config",
+                        path = %path.display(),
+                        "simulation_config.watch_started"
+                    );
+                    self.simulation = Some(watcher);
+                }
+                Err(err) => {
+                    warn!(
+                        target: "shadow_scale::config",
+                        path = %path.display(),
+                        error = %err,
+                        "simulation_config.watch_failed"
+                    );
+                }
+            }
+        } else {
+            info!(
+                target: "shadow_scale::config",
+                "simulation_config.watch_disabled"
+            );
+        }
+    }
+
+    fn restart_turn_pipeline(&mut self, path: Option<PathBuf>, sender: Sender<Command>) {
+        if let Some(existing) = self.turn_pipeline.take() {
+            existing.stop();
+        }
+
+        if let Some(path) = path {
+            match start_file_watcher(path.clone(), sender, ReloadConfigKind::TurnPipeline) {
+                Ok(watcher) => {
+                    info!(
+                        target: "shadow_scale::config",
+                        path = %path.display(),
+                        "turn_pipeline_config.watch_started"
+                    );
+                    self.turn_pipeline = Some(watcher);
+                }
+                Err(err) => {
+                    warn!(
+                        target: "shadow_scale::config",
+                        path = %path.display(),
+                        error = %err,
+                        "turn_pipeline_config.watch_failed"
+                    );
+                }
+            }
+        } else {
+            info!(
+                target: "shadow_scale::config",
+                "turn_pipeline_config.watch_disabled"
+            );
+        }
+    }
+
+    fn restart_snapshot_overlays(&mut self, path: Option<PathBuf>, sender: Sender<Command>) {
+        if let Some(existing) = self.snapshot_overlays.take() {
+            existing.stop();
+        }
+
+        if let Some(path) = path {
+            match start_file_watcher(path.clone(), sender, ReloadConfigKind::SnapshotOverlays) {
+                Ok(watcher) => {
+                    info!(
+                        target: "shadow_scale::config",
+                        path = %path.display(),
+                        "snapshot_overlays_config.watch_started"
+                    );
+                    self.snapshot_overlays = Some(watcher);
+                }
+                Err(err) => {
+                    warn!(
+                        target: "shadow_scale::config",
+                        path = %path.display(),
+                        error = %err,
+                        "snapshot_overlays_config.watch_failed"
+                    );
+                }
+            }
+        } else {
+            info!(
+                target: "shadow_scale::config",
+                "snapshot_overlays_config.watch_disabled"
+            );
+        }
+    }
+}
+
+struct FileWatcherHandle {
+    stop_tx: mpsc::Sender<()>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl FileWatcherHandle {
+    fn stop(mut self) {
+        let _ = self.stop_tx.send(());
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for FileWatcherHandle {
+    fn drop(&mut self) {
+        let _ = self.stop_tx.send(());
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 const MAX_PROTO_FRAME: usize = 64 * 1024;
 
-fn spawn_command_listener(bind_addr: std::net::SocketAddr) -> Receiver<Command> {
+fn spawn_command_listener(bind_addr: std::net::SocketAddr) -> (Receiver<Command>, Sender<Command>) {
     let listener = TcpListener::bind(bind_addr).expect("command listener bind failed");
     if let Err(err) = listener.set_nonblocking(true) {
         warn!("Failed to set nonblocking on command listener: {}", err);
     }
 
     let (sender, receiver) = unbounded::<Command>();
+    let sender_for_thread = sender.clone();
     thread::spawn(move || loop {
         match listener.accept() {
             Ok((stream, addr)) => {
                 info!("Command client connected: {}", addr);
-                let sender = sender.clone();
+                let sender = sender_for_thread.clone();
                 thread::spawn(move || handle_proto_client(stream, sender));
             }
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
@@ -312,7 +493,7 @@ fn spawn_command_listener(bind_addr: std::net::SocketAddr) -> Receiver<Command> 
         }
     });
 
-    receiver
+    (receiver, sender)
 }
 
 fn handle_proto_client(stream: TcpStream, sender: Sender<Command>) {
@@ -360,6 +541,358 @@ fn handle_proto_client(stream: TcpStream, sender: Sender<Command>) {
             }
         }
     }
+}
+
+fn start_file_watcher(
+    path: PathBuf,
+    sender: Sender<Command>,
+    kind: ReloadConfigKind,
+) -> notify::Result<FileWatcherHandle> {
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (stop_tx, stop_rx) = mpsc::channel();
+    let watcher_path = path.clone();
+
+    let handle = thread::spawn(move || {
+        let (event_tx, event_rx) = mpsc::channel();
+        match notify::recommended_watcher(move |res| {
+            let _ = event_tx.send(res);
+        }) {
+            Ok(mut watcher) => {
+                if let Err(err) = watcher.watch(&watcher_path, RecursiveMode::NonRecursive) {
+                    let _ = ready_tx.send(Err(err));
+                    return;
+                }
+                let _ = ready_tx.send(Ok(()));
+                watch_config(watcher_path, watcher, event_rx, stop_rx, sender, kind);
+            }
+            Err(err) => {
+                let _ = ready_tx.send(Err(err));
+            }
+        }
+    });
+
+    match ready_rx.recv() {
+        Ok(Ok(())) => Ok(FileWatcherHandle {
+            stop_tx,
+            handle: Some(handle),
+        }),
+        Ok(Err(err)) => {
+            let _ = stop_tx.send(());
+            let _ = handle.join();
+            Err(err)
+        }
+        Err(_) => {
+            let _ = stop_tx.send(());
+            let _ = handle.join();
+            Err(notify::Error::generic(
+                "config watcher initialization channel closed",
+            ))
+        }
+    }
+}
+
+fn watch_config(
+    path: PathBuf,
+    mut watcher: RecommendedWatcher,
+    event_rx: mpsc::Receiver<notify::Result<notify::Event>>,
+    stop_rx: mpsc::Receiver<()>,
+    sender: Sender<Command>,
+    kind: ReloadConfigKind,
+) {
+    let debounce = Duration::from_millis(250);
+    let mut last_emit = Instant::now() - debounce;
+
+    loop {
+        if stop_rx.try_recv().is_ok() {
+            break;
+        }
+
+        match event_rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(Ok(event)) => match event.kind {
+                EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
+                    if last_emit.elapsed() >= debounce {
+                        if sender
+                            .send(Command::ReloadConfig { kind, path: None })
+                            .is_err()
+                        {
+                            break;
+                        }
+                        last_emit = Instant::now();
+                    }
+                }
+                _ => {}
+            },
+            Ok(Err(err)) => {
+                warn!(
+                    target: "shadow_scale::config",
+                    path = %path.display(),
+                    error = %err,
+                    "simulation_config.watch_event_error"
+                );
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    let _ = watcher.unwatch(&path);
+}
+
+fn handle_reload_config(
+    app: &mut bevy::prelude::App,
+    kind: ReloadConfigKind,
+    path: Option<String>,
+) {
+    match kind {
+        ReloadConfigKind::Simulation => handle_reload_simulation_config(app, path),
+        ReloadConfigKind::TurnPipeline => handle_reload_turn_pipeline_config(app, path),
+        ReloadConfigKind::SnapshotOverlays => handle_reload_snapshot_overlays_config(app, path),
+    }
+}
+
+fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<String>) {
+    let command_sender = {
+        let res = app.world.resource::<CommandSenderResource>();
+        res.0.clone()
+    };
+
+    let current_config = app.world.resource::<SimulationConfig>().clone();
+
+    let requested_path = path
+        .and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(trimmed))
+            }
+        })
+        .or_else(|| {
+            app.world
+                .resource::<SimulationConfigMetadata>()
+                .path()
+                .cloned()
+        });
+
+    let (new_config, applied_path) = match requested_path {
+        Some(path) => match SimulationConfig::from_file(&path) {
+            Ok(cfg) => (cfg, Some(path)),
+            Err(err) => {
+                warn!(
+                    target: "shadow_scale::config",
+                    error = %err,
+                    "simulation_config.reload_failed"
+                );
+                return;
+            }
+        },
+        None => (SimulationConfig::builtin(), None),
+    };
+
+    {
+        let mut metadata = app.world.resource_mut::<SimulationConfigMetadata>();
+        metadata.set_path(applied_path.clone());
+    }
+
+    {
+        let mut config_res = app.world.resource_mut::<SimulationConfig>();
+        *config_res = new_config.clone();
+    }
+
+    {
+        let mut history = app.world.resource_mut::<SnapshotHistory>();
+        history.set_capacity(new_config.snapshot_history_limit.max(1));
+    }
+
+    let watch_path = app
+        .world
+        .resource::<SimulationConfigMetadata>()
+        .path()
+        .cloned();
+
+    {
+        let mut watcher_state = app.world.resource_mut::<ConfigWatcherRegistry>();
+        watcher_state.restart_simulation(watch_path, command_sender);
+    }
+
+    info!(
+        target: "shadow_scale::config",
+        path = applied_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "builtin".to_string()),
+        grid_width = new_config.grid_size.x,
+        grid_height = new_config.grid_size.y,
+        "simulation_config.reloaded"
+    );
+
+    if new_config.grid_size != current_config.grid_size {
+        warn!(
+            target: "shadow_scale::config",
+            old = ?current_config.grid_size,
+            new = ?new_config.grid_size,
+            "simulation_config.grid_size_changed=map_reset_recommended"
+        );
+    }
+
+    if new_config.command_bind != current_config.command_bind
+        || new_config.snapshot_bind != current_config.snapshot_bind
+        || new_config.snapshot_flat_bind != current_config.snapshot_flat_bind
+        || new_config.log_bind != current_config.log_bind
+    {
+        warn!(
+            target: "shadow_scale::config",
+            "simulation_config.socket_changed=restart_required"
+        );
+    }
+}
+
+fn handle_reload_turn_pipeline_config(app: &mut bevy::prelude::App, path: Option<String>) {
+    let command_sender = {
+        let res = app.world.resource::<CommandSenderResource>();
+        res.0.clone()
+    };
+
+    let requested_path = path
+        .and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(trimmed))
+            }
+        })
+        .or_else(|| {
+            app.world
+                .resource::<TurnPipelineConfigMetadata>()
+                .path()
+                .cloned()
+        });
+
+    let (new_config, applied_path) = match requested_path {
+        Some(path) => match TurnPipelineConfig::from_file(&path) {
+            Ok(cfg) => (Arc::new(cfg), Some(path)),
+            Err(err) => {
+                warn!(
+                    target: "shadow_scale::config",
+                    error = %err,
+                    "turn_pipeline_config.reload_failed"
+                );
+                return;
+            }
+        },
+        None => (TurnPipelineConfig::builtin(), None),
+    };
+
+    {
+        let mut metadata = app.world.resource_mut::<TurnPipelineConfigMetadata>();
+        metadata.set_path(applied_path.clone());
+    }
+
+    {
+        let mut handle = app.world.resource_mut::<TurnPipelineConfigHandle>();
+        handle.replace(Arc::clone(&new_config));
+    }
+
+    let watch_path = app
+        .world
+        .resource::<TurnPipelineConfigMetadata>()
+        .path()
+        .cloned();
+
+    {
+        let mut watcher_state = app.world.resource_mut::<ConfigWatcherRegistry>();
+        watcher_state.restart_turn_pipeline(watch_path, command_sender);
+    }
+
+    let logistics = new_config.logistics();
+    info!(
+        target: "shadow_scale::config",
+        path = applied_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "builtin".to_string()),
+        flow_gain_min = logistics.flow_gain_min().to_f32(),
+        flow_gain_max = logistics.flow_gain_max().to_f32(),
+        "turn_pipeline_config.reloaded"
+    );
+}
+
+fn handle_reload_snapshot_overlays_config(app: &mut bevy::prelude::App, path: Option<String>) {
+    let command_sender = {
+        let res = app.world.resource::<CommandSenderResource>();
+        res.0.clone()
+    };
+
+    let requested_path = path
+        .and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(trimmed))
+            }
+        })
+        .or_else(|| {
+            app.world
+                .resource::<SnapshotOverlaysConfigMetadata>()
+                .path()
+                .cloned()
+        });
+
+    let (new_config, applied_path) = match requested_path {
+        Some(path) => match SnapshotOverlaysConfig::from_file(&path) {
+            Ok(cfg) => (Arc::new(cfg), Some(path)),
+            Err(err) => {
+                warn!(
+                    target: "shadow_scale::config",
+                    error = %err,
+                    "snapshot_overlays_config.reload_failed"
+                );
+                return;
+            }
+        },
+        None => (SnapshotOverlaysConfig::builtin(), None),
+    };
+
+    {
+        let mut metadata = app.world.resource_mut::<SnapshotOverlaysConfigMetadata>();
+        metadata.set_path(applied_path.clone());
+    }
+
+    {
+        let mut handle = app.world.resource_mut::<SnapshotOverlaysConfigHandle>();
+        handle.replace(Arc::clone(&new_config));
+    }
+
+    let watch_path = app
+        .world
+        .resource::<SnapshotOverlaysConfigMetadata>()
+        .path()
+        .cloned();
+
+    {
+        let mut watcher_state = app.world.resource_mut::<ConfigWatcherRegistry>();
+        watcher_state.restart_snapshot_overlays(watch_path, command_sender);
+    }
+
+    let corruption = new_config.corruption();
+    let military = new_config.military();
+
+    info!(
+        target: "shadow_scale::config",
+        path = applied_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "builtin".to_string()),
+        corruption_logistics_weight = corruption.logistics_weight().to_f32(),
+        corruption_trade_weight = corruption.trade_weight().to_f32(),
+        corruption_military_weight = corruption.military_weight().to_f32(),
+        corruption_governance_weight = corruption.governance_weight().to_f32(),
+        military_presence_weight = military.presence_weight().to_f32(),
+        military_support_weight = military.support_weight().to_f32(),
+        "snapshot_overlays_config.reloaded"
+    );
 }
 
 fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
@@ -458,6 +991,9 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             scheduled_tick_offset: scheduled_tick_offset.map(|value| value as u64),
             target_tier,
         }),
+        ProtoCommandPayload::ReloadConfig { kind, path } => {
+            Some(Command::ReloadConfig { kind, path })
+        }
     }
 }
 
