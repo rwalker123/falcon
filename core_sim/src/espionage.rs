@@ -1787,6 +1787,10 @@ pub fn schedule_counter_intel_missions(params: CounterIntelScheduleParams) {
             continue;
         };
 
+        let Some(agent_handle) = pick_best_counter_agent(&roster, candidate.owner) else {
+            continue;
+        };
+
         let spend_result = budgets.try_spend(candidate.owner, &budget_config, policy);
         let cost = match spend_result {
             Ok(cost) => cost,
@@ -1799,10 +1803,6 @@ pub fn schedule_counter_intel_missions(params: CounterIntelScheduleParams) {
                 );
                 continue;
             }
-        };
-
-        let Some(agent_handle) = pick_best_counter_agent(&roster, candidate.owner) else {
-            continue;
         };
 
         let params = QueueMissionParams {
