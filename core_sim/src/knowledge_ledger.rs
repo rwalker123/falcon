@@ -2,7 +2,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use log::debug;
 use serde::Deserialize;
 use sim_runtime::knowledge::{
     KnowledgeTelemetryEvent, KnowledgeTelemetryFrame, KnowledgeTelemetryMission,
@@ -15,6 +14,7 @@ use sim_runtime::{
     KnowledgeSecurityPosture, KnowledgeTimelineEventKind, KnowledgeTimelineEventState,
     WorldSnapshot,
 };
+use tracing::info;
 
 use crate::{
     espionage::{EspionageCatalog, EspionageMissionKind, EspionageMissionTemplate},
@@ -242,6 +242,8 @@ pub struct KnowledgeLedger {
     max_timeline_events: usize,
     last_emitted_tick: Option<u64>,
     last_emitted_metrics: KnowledgeMetricsState,
+    timeline_version: u64,
+    last_emitted_timeline_version: Option<u64>,
     config: Arc<KnowledgeLedgerConfig>,
 }
 
@@ -263,6 +265,8 @@ impl KnowledgeLedger {
             max_timeline_events: config.timeline_capacity(),
             last_emitted_tick: None,
             last_emitted_metrics: KnowledgeMetricsState::default(),
+            timeline_version: 0,
+            last_emitted_timeline_version: None,
             config,
         }
     }
@@ -442,6 +446,7 @@ impl KnowledgeLedger {
             self.timeline.pop_front();
         }
         self.timeline.push_back(event);
+        self.timeline_version = self.timeline_version.wrapping_add(1);
     }
 
     pub fn metrics(&self) -> KnowledgeMetricsState {
@@ -494,15 +499,23 @@ impl KnowledgeLedger {
         self.timeline.iter().map(to_telemetry_event).collect()
     }
 
-    fn should_emit(&self, tick: u64, metrics: &KnowledgeMetricsState) -> bool {
+    fn should_emit(&self, metrics: &KnowledgeMetricsState) -> bool {
         let metrics_changed = metrics != &self.last_emitted_metrics;
-        let tick_changed = self.last_emitted_tick != Some(tick);
-        metrics_changed || tick_changed
+        let timeline_changed = self
+            .last_emitted_timeline_version
+            .map(|version| version != self.timeline_version)
+            .unwrap_or(true);
+        metrics_changed || timeline_changed || self.last_emitted_tick.is_none()
     }
 
     fn mark_emitted(&mut self, tick: u64, metrics: KnowledgeMetricsState) {
         self.last_emitted_tick = Some(tick);
         self.last_emitted_metrics = metrics;
+        self.last_emitted_timeline_version = Some(self.timeline_version);
+    }
+
+    fn has_emitted(&self) -> bool {
+        self.last_emitted_tick.is_some()
     }
 }
 
@@ -703,6 +716,8 @@ impl KnowledgeLedger {
 
         self.last_emitted_metrics = snapshot.knowledge_metrics.clone();
         self.last_emitted_tick = None;
+        self.timeline_version = self.timeline.len() as u64;
+        self.last_emitted_timeline_version = None;
     }
 }
 
@@ -872,18 +887,19 @@ pub fn knowledge_ledger_tick(
     metrics.knowledge_countermeasures_active = summary.countermeasures_active;
     metrics.knowledge_common_knowledge_total = summary.common_knowledge_total;
 
-    if !ledger.should_emit(tick.0, &summary) {
-        return;
-    }
-
     let events = ledger.telemetry_events();
     let missions = mission_telemetry(&catalog);
+
+    if !ledger.should_emit(&summary) {
+        return;
+    }
     if events.is_empty()
         && missions.is_empty()
         && summary.leak_warnings == 0
         && summary.leak_criticals == 0
         && summary.countermeasures_active == 0
         && summary.common_knowledge_total == 0
+        && ledger.has_emitted()
     {
         ledger.mark_emitted(tick.0, summary);
         return;
@@ -900,7 +916,7 @@ pub fn knowledge_ledger_tick(
     };
 
     if let Ok(payload) = serde_json::to_string(&frame) {
-        debug!(target: KNOWLEDGE_TELEMETRY_TOPIC, "{} {}", KNOWLEDGE_TELEMETRY_TOPIC, payload);
+        info!(target: KNOWLEDGE_TELEMETRY_TOPIC, "{} {}", KNOWLEDGE_TELEMETRY_TOPIC, payload);
     }
 
     ledger.mark_emitted(tick.0, summary);
@@ -973,5 +989,30 @@ mod tests {
         let entry = ledger.entry(owner, discovery).expect("entry exists");
         assert_eq!(entry.countermeasures.len(), 1);
         assert_eq!(entry.countermeasures[0].remaining_ticks, 3);
+    }
+
+    #[test]
+    fn timeline_ring_buffer_caps_and_serializes_events() {
+        let config = Arc::new(
+            KnowledgeLedgerConfig::from_json_str(r#"{"timeline_capacity": 3}"#)
+                .expect("config should parse"),
+        );
+        let mut ledger = KnowledgeLedger::with_config(config);
+
+        for idx in 0..7u64 {
+            ledger.push_timeline_event(KnowledgeTimelineEvent {
+                tick: idx,
+                kind: KnowledgeTimelineEventKind::LeakProgress,
+                source_faction: None,
+                delta_percent: Some(idx as i16),
+                note: Some(format!("event {idx}")),
+            });
+        }
+
+        assert_eq!(ledger.timeline.len(), 3);
+        let events = ledger.telemetry_events();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].note.as_deref(), Some("event 4"));
+        assert_eq!(events[2].note.as_deref(), Some("event 6"));
     }
 }

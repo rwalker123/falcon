@@ -16,15 +16,16 @@ use core_sim::log_stream::start_log_stream_server;
 use core_sim::metrics::{collect_metrics, SimulationMetrics};
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
-    build_headless_app, restore_world_from_snapshot, run_turn, scalar_from_f32, CorruptionLedgers,
-    CounterIntelBudgets, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
-    EspionageMissionState, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
-    FactionSecurityPolicies, GenerationId, GenerationRegistry, InfluencerImpacts,
-    InfluentialRoster, QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias,
-    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
-    StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel, Tile, TurnPipelineConfig,
-    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
+    build_headless_app, restore_world_from_snapshot, run_turn, scalar_from_f32, AgentAssignment,
+    CorruptionLedgers, CounterIntelBudgets, EspionageAgentHandle, EspionageCatalog,
+    EspionageMissionId, EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate,
+    EspionageRoster, FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies,
+    GenerationId, GenerationRegistry, InfluencerImpacts, InfluentialRoster, QueueMissionError,
+    QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StoredSnapshot, SubmitError,
+    SubmitOutcome, SupportChannel, Tile, TurnPipelineConfig, TurnPipelineConfigHandle,
+    TurnPipelineConfigMetadata, TurnQueue,
 };
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
@@ -1600,6 +1601,8 @@ fn handle_adjust_counter_intel_budget(
     );
 }
 
+const AUTO_AGENT_HANDLE: u32 = u32::MAX;
+
 fn handle_queue_espionage_mission(app: &mut bevy::prelude::App, mut params: QueueMissionParams) {
     let current_tick = app.world.resource::<SimulationTick>().0;
     let defaults = {
@@ -1618,13 +1621,37 @@ fn handle_queue_espionage_mission(app: &mut bevy::prelude::App, mut params: Queu
     let mission_id = params.mission_id.0.clone();
     let owner = params.owner.0;
     let target_owner = params.target_owner.0;
-    let agent_handle = params.agent.0;
+    let auto_agent_requested = params.agent.0 == AUTO_AGENT_HANDLE;
+    let mut selected_agent = params.agent;
 
     let queue_result = app.world.resource_scope(
         |world, mut missions: bevy::prelude::Mut<EspionageMissionState>| {
-            let queued_params = params.clone();
+            let mut queued_params = params.clone();
             world.resource_scope(|world, mut roster: bevy::prelude::Mut<EspionageRoster>| {
                 let catalog = world.resource::<EspionageCatalog>();
+
+                if queued_params.agent.0 == AUTO_AGENT_HANDLE {
+                    let template = match catalog.mission(&queued_params.mission_id) {
+                        Some(template) => template,
+                        None => {
+                            return Err(QueueMissionError::UnknownMission(
+                                queued_params.mission_id.0.clone(),
+                            ));
+                        }
+                    };
+
+                    let Some(handle) =
+                        pick_best_agent_for_mission(&roster, queued_params.owner, template)
+                    else {
+                        return Err(QueueMissionError::NoAgentAvailable {
+                            faction: queued_params.owner,
+                        });
+                    };
+
+                    queued_params.agent = handle;
+                }
+
+                selected_agent = queued_params.agent;
                 missions.queue_mission(catalog, &mut roster, queued_params)
             })
         },
@@ -1638,10 +1665,11 @@ fn handle_queue_espionage_mission(app: &mut bevy::prelude::App, mut params: Queu
                 owner_faction = owner,
                 target_owner,
                 discovery_id = params.discovery_id,
-                agent_handle,
+                agent_handle = selected_agent.0,
                 target_tier = ?params.target_tier,
                 scheduled_tick = params.scheduled_tick,
                 instance = instance_id.0,
+                auto_agent = auto_agent_requested,
                 "espionage.mission.queued"
             );
         }
@@ -1652,7 +1680,7 @@ fn handle_queue_espionage_mission(app: &mut bevy::prelude::App, mut params: Queu
                 owner_faction = owner,
                 target_owner,
                 discovery_id = params.discovery_id,
-                agent_handle,
+                agent_handle = selected_agent.0,
                 target_tier = ?params.target_tier,
                 scheduled_tick = params.scheduled_tick,
                 %error,
@@ -1660,6 +1688,41 @@ fn handle_queue_espionage_mission(app: &mut bevy::prelude::App, mut params: Queu
             );
         }
     }
+}
+
+fn pick_best_agent_for_mission(
+    roster: &EspionageRoster,
+    faction: FactionId,
+    template: &EspionageMissionTemplate,
+) -> Option<EspionageAgentHandle> {
+    let mut best: Option<(EspionageAgentHandle, f32)> = None;
+
+    for agent in roster.agents_for(faction) {
+        if agent.assignment != AgentAssignment::Available {
+            continue;
+        }
+
+        let score = match template.kind {
+            EspionageMissionKind::Probe => {
+                agent.stealth.to_f32() * template.stealth_weight.to_f32()
+                    + agent.recon.to_f32() * template.recon_weight.to_f32()
+            }
+            EspionageMissionKind::CounterIntel => {
+                agent.counter_intel.to_f32() * template.counter_intel_weight.to_f32()
+            }
+        };
+
+        let is_better = match &best {
+            Some((_, best_score)) => score > *best_score,
+            None => true,
+        };
+
+        if is_better {
+            best = Some((agent.handle, score));
+        }
+    }
+
+    best.map(|(handle, _)| handle)
 }
 
 fn resolve_ready_turn(

@@ -47,6 +47,15 @@ const MAP_SIZE_DEFAULT_DIMENSIONS := Vector2i(80, 52)
 @onready var knowledge_summary_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeSummaryText
 @onready var discovery_progress_list: ItemList = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection/DiscoveryProgressList
 @onready var knowledge_events_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection/KnowledgeEventsText
+@onready var knowledge_mission_dropdown: OptionButton = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeMissionDropdown
+@onready var knowledge_owner_spin: SpinBox = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeOwnerSpin
+@onready var knowledge_target_spin: SpinBox = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeTargetSpin
+@onready var knowledge_discovery_spin: SpinBox = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeDiscoverySpin
+@onready var knowledge_tier_spin: SpinBox = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeTierSpin
+@onready var knowledge_agent_auto_toggle: CheckButton = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeAgentContainer/KnowledgeAgentAutoToggle
+@onready var knowledge_agent_spin: SpinBox = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeAgentContainer/KnowledgeAgentSpin
+@onready var knowledge_schedule_spin: SpinBox = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeScheduleSpin
+@onready var knowledge_queue_mission_button: Button = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeQueueMissionButton
 @onready var great_discovery_summary_label: Label = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoverySummaryLabel
 @onready var great_discovery_summary_text: RichTextLabel = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoverySummaryText
 @onready var great_discovery_definitions_list: ItemList = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryDefinitionsSection/GreatDiscoveryDefinitionsList
@@ -133,6 +142,9 @@ var _power_metrics: Dictionary = {}
 var _selected_power_node_id: int = -1
 var _discovery_progress: Dictionary = {}
 var _knowledge_events: Array[Dictionary] = []
+var _knowledge_timeline_events: Array[Dictionary] = []
+var _knowledge_metrics: Dictionary = {}
+var _knowledge_missions: Array[Dictionary] = []
 var _great_discovery_records: Dictionary = {}
 var _great_discovery_progress_map: Dictionary = {}
 var _great_discovery_telemetry: Dictionary = {}
@@ -235,6 +247,16 @@ const CORRUPTION_OPTIONS = [
 const TRADE_TOP_LINK_LIMIT = 10
 const TRADE_EVENT_HISTORY_LIMIT = 24
 const KNOWLEDGE_EVENT_HISTORY_LIMIT = 24
+const KNOWLEDGE_TIMELINE_HISTORY_LIMIT = 48
+const KNOWLEDGE_TIMELINE_KIND_LABELS := {
+	0: "Leak progress",
+	1: "Spy probe",
+	2: "Counter-intel",
+	3: "Exposure",
+	4: "Treaty",
+	5: "Cascade",
+	6: "Digest"
+}
 const POWER_NODE_LIST_LIMIT = 16
 const POWER_STABILITY_WARN = 0.4
 const POWER_STABILITY_CRITICAL = 0.2
@@ -301,6 +323,11 @@ func _ready() -> void:
 			great_discovery_definitions_list.item_selected.connect(_on_great_discovery_definition_selected)
 		if not great_discovery_definitions_list.is_connected("item_activated", definition_select_callable):
 			great_discovery_definitions_list.item_activated.connect(_on_great_discovery_definition_selected)
+	if knowledge_agent_auto_toggle != null:
+		knowledge_agent_auto_toggle.toggled.connect(_on_knowledge_agent_auto_toggled)
+		_on_knowledge_agent_auto_toggled(knowledge_agent_auto_toggle.button_pressed)
+	if knowledge_queue_mission_button != null:
+		knowledge_queue_mission_button.pressed.connect(_on_knowledge_queue_mission_button_pressed)
 	_update_panel_layout()
 	_initialize_log_filters()
 	_render_static_sections()
@@ -309,6 +336,8 @@ func _ready() -> void:
 	_initialize_log_channel()
 	_render_logs()
 	_update_tick_sparkline()
+	if command_log_text != null:
+		command_log_text.selection_enabled = true
 
 func _process(delta: float) -> void:
 	_poll_log_stream(delta)
@@ -585,6 +614,8 @@ func _render_static_sections() -> void:
 	_selected_power_node_id = -1
 	_discovery_progress.clear()
 	_knowledge_events.clear()
+	_knowledge_timeline_events.clear()
+	_knowledge_metrics.clear()
 	_great_discovery_records.clear()
 	_great_discovery_progress_map.clear()
 	_great_discovery_telemetry.clear()
@@ -1239,6 +1270,25 @@ func _update_command_controls_enabled() -> void:
 		snapshot_overlays_reload_button.disabled = not connected
 	if config_path_edit != null:
 		config_path_edit.editable = connected
+	var missions_available: bool = knowledge_mission_dropdown != null and knowledge_mission_dropdown.get_item_count() > 0
+	if knowledge_queue_mission_button != null:
+		knowledge_queue_mission_button.disabled = not (connected and missions_available)
+	if knowledge_mission_dropdown != null:
+		knowledge_mission_dropdown.disabled = _knowledge_missions.is_empty()
+	if knowledge_owner_spin != null:
+		knowledge_owner_spin.editable = connected
+	if knowledge_target_spin != null:
+		knowledge_target_spin.editable = connected
+	if knowledge_discovery_spin != null:
+		knowledge_discovery_spin.editable = connected
+	if knowledge_tier_spin != null:
+		knowledge_tier_spin.editable = connected
+	if knowledge_schedule_spin != null:
+		knowledge_schedule_spin.editable = connected
+	if knowledge_agent_auto_toggle != null:
+		knowledge_agent_auto_toggle.disabled = not connected
+	if knowledge_agent_spin != null:
+		knowledge_agent_spin.editable = connected and (knowledge_agent_auto_toggle == null or not knowledge_agent_auto_toggle.button_pressed)
 
 func _ensure_command_connection() -> bool:
 	if command_client == null:
@@ -2456,72 +2506,198 @@ func _render_knowledge() -> void:
 	if knowledge_summary_text == null:
 		return
 
-	if _discovery_progress.is_empty():
-		knowledge_summary_text.text = "[b]Knowledge Ledger[/b]\n[i]Awaiting discovery progress telemetry.[/i]"
-		if discovery_progress_list != null:
-			discovery_progress_list.clear()
-		if knowledge_events_text != null:
-			knowledge_events_text.text = "[i]No knowledge transfers recorded.[/i]"
-		return
-
 	var lines: Array[String] = []
 	lines.append("[b]Knowledge Ledger[/b]")
 	var faction_keys: Array = _discovery_progress.keys()
 	faction_keys.sort()
-	for key in faction_keys:
-		var faction: int = int(key)
-		var progress_variant: Variant = _discovery_progress[key]
-		if not (progress_variant is Dictionary):
-			continue
-		var progress_dict: Dictionary = progress_variant
-		var entries: Array[Dictionary] = []
-		for discovery_key in progress_dict.keys():
-			var entry_dict: Dictionary = {
-				"discovery": int(discovery_key),
-				"progress": float(progress_dict[discovery_key])
-			}
-			entries.append(entry_dict)
-		entries.sort_custom(Callable(self, "_compare_discovery_entries"))
-		var limit: int = min(entries.size(), 3)
-		var fragments: Array[String] = []
-		for idx in range(limit):
-			var entry = entries[idx]
-			var percent: float = entry.get("progress", 0.0) * 100.0
-			fragments.append("D%d %.1f%%" % [entry.get("discovery", -1), percent])
-		if fragments.is_empty():
-			fragments.append("No visible research")
-		lines.append("Faction %d: %s" % [faction, ", ".join(fragments)])
+	if _discovery_progress.is_empty():
+		lines.append("[i]Awaiting discovery progress telemetry.[/i]")
+	else:
+		for key in faction_keys:
+			var faction: int = int(key)
+			var progress_variant: Variant = _discovery_progress[key]
+			if not (progress_variant is Dictionary):
+				continue
+			var progress_dict: Dictionary = progress_variant
+			var entries: Array[Dictionary] = []
+			for discovery_key in progress_dict.keys():
+				var entry_dict: Dictionary = {
+					"discovery": int(discovery_key),
+					"progress": float(progress_dict[discovery_key])
+				}
+				entries.append(entry_dict)
+			entries.sort_custom(Callable(self, "_compare_discovery_entries"))
+			var limit: int = min(entries.size(), 3)
+			var fragments: Array[String] = []
+			for idx in range(limit):
+				var entry = entries[idx]
+				var percent: float = entry.get("progress", 0.0) * 100.0
+				fragments.append("D%d %.1f%%" % [entry.get("discovery", -1), percent])
+			if fragments.is_empty():
+				fragments.append("No visible research")
+			lines.append("Faction %d: %s" % [faction, ", ".join(fragments)])
+
+	if not _knowledge_metrics.is_empty():
+		lines.append("")
+		lines.append("[b]Telemetry Alerts[/b]")
+		lines.append(
+			"Warnings: %d | Criticals: %d | Countermeasures Active: %d | Common Knowledge: %d" % [
+				int(_knowledge_metrics.get("leak_warnings", 0)),
+				int(_knowledge_metrics.get("leak_criticals", 0)),
+				int(_knowledge_metrics.get("countermeasures_active", 0)),
+				int(_knowledge_metrics.get("common_knowledge_total", 0))
+			]
+		)
 
 	knowledge_summary_text.text = "\n".join(lines)
 
 	if discovery_progress_list != null:
 		discovery_progress_list.clear()
-		for faction_key in faction_keys:
-			var faction_int: int = int(faction_key)
-			var inner_variant: Variant = _discovery_progress[faction_key]
-			if not (inner_variant is Dictionary):
-				continue
-			var inner_dict: Dictionary = inner_variant
-			var discoveries: Array = inner_dict.keys()
-			discoveries.sort()
-			for discovery_key in discoveries:
-				var progress_val: float = float(inner_dict[discovery_key]) * 100.0
-				var row: String = "F%d :: Discovery %d — %.1f%%" % [
-					faction_int,
-					int(discovery_key),
-					progress_val
-				]
-				discovery_progress_list.add_item(row)
+		if not _discovery_progress.is_empty():
+			for faction_key in faction_keys:
+				var faction_int: int = int(faction_key)
+				var inner_variant: Variant = _discovery_progress[faction_key]
+				if not (inner_variant is Dictionary):
+					continue
+				var inner_dict: Dictionary = inner_variant
+				var discoveries: Array = inner_dict.keys()
+				discoveries.sort()
+				for discovery_key in discoveries:
+					var progress_val: float = float(inner_dict[discovery_key]) * 100.0
+					var row: String = "F%d :: Discovery %d — %.1f%%" % [
+						faction_int,
+						int(discovery_key),
+						progress_val
+					]
+					discovery_progress_list.add_item(row)
 
 	if knowledge_events_text != null:
-		if _knowledge_events.is_empty():
-			knowledge_events_text.text = "[i]No knowledge transfers recorded.[/i]"
-		else:
-			var lines_events: Array[String] = []
+		var lines_events: Array[String] = []
+		if not _knowledge_timeline_events.is_empty():
+			for event_record in _knowledge_timeline_events:
+				if event_record is Dictionary:
+					lines_events.append(_format_knowledge_timeline_line(event_record))
+		if not _knowledge_events.is_empty():
+			if not lines_events.is_empty():
+				lines_events.append("")
 			for record in _knowledge_events:
 				if record is Dictionary:
 					lines_events.append(_format_knowledge_event_line(record))
+		if lines_events.is_empty():
+			knowledge_events_text.text = "[i]No knowledge telemetry received.[/i]"
+		else:
 			knowledge_events_text.text = "\n".join(lines_events)
+
+func _refresh_knowledge_mission_options() -> void:
+	if knowledge_mission_dropdown == null:
+		return
+	var previous_id: String = ""
+	if knowledge_mission_dropdown.get_item_count() > 0:
+		var current_index: int = knowledge_mission_dropdown.get_selected()
+		if current_index >= 0:
+			var meta = knowledge_mission_dropdown.get_item_metadata(current_index)
+			if typeof(meta) == TYPE_STRING:
+				previous_id = String(meta)
+
+	knowledge_mission_dropdown.clear()
+	if _knowledge_missions.is_empty():
+		knowledge_mission_dropdown.disabled = true
+		return
+
+	knowledge_mission_dropdown.disabled = false
+	var entries: Array = []
+	for mission in _knowledge_missions:
+		if mission is Dictionary:
+			entries.append((mission as Dictionary).duplicate(true))
+	entries.sort_custom(Callable(self, "_compare_knowledge_mission_entries"))
+
+	var selected_index: int = 0
+	for idx in range(entries.size()):
+		var entry: Dictionary = entries[idx]
+		var mission_id: String = String(entry.get("id", ""))
+		var label: String = _format_knowledge_mission_label(entry)
+		knowledge_mission_dropdown.add_item(label)
+		knowledge_mission_dropdown.set_item_metadata(idx, mission_id)
+		if mission_id == previous_id:
+			selected_index = idx
+
+	knowledge_mission_dropdown.select(selected_index)
+	_update_command_controls_enabled()
+
+func _compare_knowledge_mission_entries(a: Dictionary, b: Dictionary) -> bool:
+	var a_label: String = String(a.get("name", a.get("id", "")))
+	var b_label: String = String(b.get("name", b.get("id", "")))
+	if a_label == "":
+		a_label = String(a.get("id", ""))
+	if b_label == "":
+		b_label = String(b.get("id", ""))
+	return a_label < b_label
+
+func _format_knowledge_mission_label(entry: Dictionary) -> String:
+	var mission_id: String = String(entry.get("id", "Mission"))
+	var name: String = String(entry.get("name", mission_id))
+	var kind: String = String(entry.get("kind", "")).strip_edges()
+	var generated: bool = bool(entry.get("generated", false))
+	var fragments: Array[String] = []
+	if kind != "":
+		fragments.append(kind)
+	if generated:
+		fragments.append("generated")
+	if fragments.is_empty():
+		return "%s (%s)" % [name, mission_id]
+	return "%s (%s | %s)" % [name, mission_id, ", ".join(fragments)]
+
+func _on_knowledge_agent_auto_toggled(pressed: bool) -> void:
+	if knowledge_agent_spin != null:
+		knowledge_agent_spin.editable = not pressed and command_connected
+	_update_command_controls_enabled()
+
+func _on_knowledge_queue_mission_button_pressed() -> void:
+	if knowledge_mission_dropdown == null or knowledge_mission_dropdown.get_item_count() == 0:
+		_append_command_log("No espionage missions available to queue.")
+		return
+	var selected_index: int = knowledge_mission_dropdown.get_selected()
+	if selected_index < 0:
+		selected_index = 0
+	var mission_meta: Variant = knowledge_mission_dropdown.get_item_metadata(selected_index)
+	var mission_id: String = String(mission_meta) if typeof(mission_meta) == TYPE_STRING else String(knowledge_mission_dropdown.get_item_text(selected_index))
+	mission_id = mission_id.strip_edges()
+	if mission_id == "":
+		_append_command_log("Mission template selection invalid.")
+		return
+	var owner: int = int(knowledge_owner_spin.value)
+	var target: int = int(knowledge_target_spin.value)
+	var discovery: int = int(knowledge_discovery_spin.value)
+	if owner < 0 or target < 0 or discovery < 0:
+		_append_command_log("Owner, target, and discovery must be non-negative.")
+		return
+	var agent_token: String = "auto"
+	if knowledge_agent_auto_toggle != null and not knowledge_agent_auto_toggle.button_pressed:
+		agent_token = str(int(knowledge_agent_spin.value))
+	var tokens: Array[String] = [
+		"queue_espionage_mission",
+		mission_id,
+		"owner",
+		str(owner),
+		"target",
+		str(target),
+		"discovery",
+		str(discovery),
+		"agent",
+		agent_token
+	]
+	var tier_val: int = int(knowledge_tier_spin.value)
+	if tier_val >= 0:
+		tokens.append("tier")
+		tokens.append(str(tier_val))
+	var schedule_val: int = int(knowledge_schedule_spin.value)
+	if schedule_val >= 0:
+		var tick_value: int = max(_last_turn + schedule_val, 0)
+		tokens.append("tick")
+		tokens.append(str(tick_value))
+	var command_line: String = " ".join(tokens)
+	var summary: String = "Queued %s (F%d→F%d, discovery %d)" % [mission_id, owner, target, discovery]
+	_send_command(command_line, summary)
 
 func _compare_trade_links(a: Dictionary, b: Dictionary) -> bool:
 	var a_open: float = _extract_trade_openness(a)
@@ -2628,6 +2804,98 @@ func _format_knowledge_event_line(record: Dictionary) -> String:
 		delta_percent,
 		source_label
 	]
+
+func _maybe_ingest_knowledge_telemetry(entry: Dictionary) -> bool:
+	var message: String = String(entry.get("message", ""))
+	if not message.begins_with("knowledge.telemetry "):
+		return false
+	var payload := message.substr("knowledge.telemetry ".length())
+	var parsed: Variant = JSON.parse_string(payload)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return false
+	var info: Dictionary = parsed
+	var tick_value: int = int(info.get("tick", _last_turn))
+	_knowledge_metrics = {
+		"tick": tick_value,
+		"leak_warnings": int(info.get("leak_warnings", 0)),
+		"leak_criticals": int(info.get("leak_criticals", 0)),
+		"countermeasures_active": int(info.get("countermeasures_active", 0)),
+		"common_knowledge_total": int(info.get("common_knowledge_total", 0))
+	}
+	var events_variant: Variant = info.get("events", [])
+	_knowledge_timeline_events.clear()
+	if events_variant is Array:
+		for event_variant in events_variant:
+			if event_variant is Dictionary:
+				var event_dict: Dictionary = _coerce_knowledge_timeline_event(event_variant as Dictionary, tick_value)
+				if not event_dict.is_empty():
+					_knowledge_timeline_events.append(event_dict)
+	if _knowledge_timeline_events.size() > KNOWLEDGE_TIMELINE_HISTORY_LIMIT:
+		var start_index: int = max(0, _knowledge_timeline_events.size() - KNOWLEDGE_TIMELINE_HISTORY_LIMIT)
+		_knowledge_timeline_events = _knowledge_timeline_events.slice(start_index, _knowledge_timeline_events.size())
+	var missions_variant: Variant = info.get("missions", [])
+	_knowledge_missions.clear()
+	if missions_variant is Array:
+		for mission_variant in missions_variant:
+			if mission_variant is Dictionary:
+				_knowledge_missions.append((mission_variant as Dictionary).duplicate(true))
+	_refresh_knowledge_mission_options()
+	_render_knowledge()
+	return true
+
+func _coerce_knowledge_timeline_event(raw_event: Dictionary, fallback_tick: int) -> Dictionary:
+	var tick_value: int = fallback_tick
+	var tick_variant: Variant = raw_event.get("tick", null)
+	if typeof(tick_variant) in [TYPE_INT, TYPE_FLOAT]:
+		tick_value = int(tick_variant)
+	var kind_value: int = int(raw_event.get("kind", -1))
+	var note_variant: Variant = raw_event.get("note", "")
+	var note_text: String = ""
+	if note_variant != null and note_variant != "":
+		note_text = String(note_variant)
+	var delta_variant: Variant = raw_event.get("delta_percent", null)
+	var delta_value: Variant = null
+	if typeof(delta_variant) in [TYPE_INT, TYPE_FLOAT]:
+		delta_value = float(delta_variant)
+	var source_variant: Variant = raw_event.get("source_faction", null)
+	var source_value: Variant = null
+	if typeof(source_variant) in [TYPE_INT, TYPE_FLOAT]:
+		source_value = int(source_variant)
+	return {
+		"tick": tick_value,
+		"kind": kind_value,
+		"kind_label": _knowledge_event_kind_label(kind_value),
+		"note": note_text,
+		"delta_percent": delta_value,
+		"source_faction": source_value
+	}
+
+func _knowledge_event_kind_label(kind_value: int) -> String:
+	if KNOWLEDGE_TIMELINE_KIND_LABELS.has(kind_value):
+		return KNOWLEDGE_TIMELINE_KIND_LABELS[kind_value]
+	return "Event"
+
+func _format_knowledge_timeline_line(record: Dictionary) -> String:
+	var tick: int = int(record.get("tick", _last_turn))
+	var label: String = String(record.get("kind_label", record.get("kind", "Event")))
+	var source_variant: Variant = record.get("source_faction", null)
+	var source_text: String = ""
+	if typeof(source_variant) in [TYPE_INT, TYPE_FLOAT]:
+		source_text = "F%d" % int(source_variant)
+	var note_text: String = String(record.get("note", "")).strip_edges()
+	var fragments: Array[String] = []
+	if source_text != "":
+		fragments.append(source_text)
+	if note_text != "":
+		fragments.append(note_text)
+	var detail_text: String = ""
+	if not fragments.is_empty():
+		detail_text = " — " + " · ".join(fragments)
+	var delta_variant: Variant = record.get("delta_percent", null)
+	var delta_text: String = ""
+	if typeof(delta_variant) in [TYPE_INT, TYPE_FLOAT]:
+		delta_text = " (Δ%+.1f%%)" % float(delta_variant)
+	return "[%03d] %s%s%s" % [tick, label, detail_text, delta_text]
 
 func _maybe_ingest_trade_telemetry(entry: Dictionary) -> bool:
 	var message: String = String(entry.get("message", ""))
@@ -3323,6 +3591,7 @@ func _update_log_status(message: String) -> void:
 
 func _ingest_log_entry(entry: Dictionary) -> void:
 	_record_tick_sample(entry)
+	_maybe_ingest_knowledge_telemetry(entry)
 	_maybe_ingest_trade_telemetry(entry)
 	var level: String = _normalize_log_level(String(entry.get("level", "INFO")))
 	var raw_target: String = String(entry.get("target", ""))

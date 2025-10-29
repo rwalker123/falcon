@@ -37,6 +37,8 @@ pub enum CommandParseError {
     InvalidDirective(String),
     #[error("invalid security policy '{0}'")]
     InvalidSecurityPolicy(String),
+    #[error("unexpected token '{0}'")]
+    UnexpectedToken(String),
 }
 
 pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseError> {
@@ -200,6 +202,85 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 delta,
             })
         }
+        "queue_espionage_mission" | "queue_mission" => {
+            let mission_id = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("mission_id"))?
+                .to_string();
+
+            let mut owner: Option<u32> = None;
+            let mut target_owner: Option<u32> = None;
+            let mut discovery_id: Option<u32> = None;
+            let mut agent_handle: Option<u32> = None;
+            let mut target_tier: Option<u8> = None;
+            let mut scheduled_tick: Option<u64> = None;
+
+            while let Some(token) = parts.next() {
+                match token.to_ascii_lowercase().as_str() {
+                    "owner" | "owner_faction" => {
+                        let value = parts
+                            .next()
+                            .ok_or(CommandParseError::MissingArgument("owner faction"))?;
+                        owner = Some(parse_u32(value, "mission owner faction")?);
+                    }
+                    "target" | "target_owner" | "target_faction" => {
+                        let value = parts
+                            .next()
+                            .ok_or(CommandParseError::MissingArgument("target faction"))?;
+                        target_owner = Some(parse_u32(value, "mission target faction")?);
+                    }
+                    "discovery" | "discovery_id" => {
+                        let value = parts
+                            .next()
+                            .ok_or(CommandParseError::MissingArgument("discovery id"))?;
+                        discovery_id = Some(parse_u32(value, "mission discovery id")?);
+                    }
+                    "agent" | "agent_handle" => {
+                        let value = parts
+                            .next()
+                            .ok_or(CommandParseError::MissingArgument("agent handle"))?;
+                        if value.eq_ignore_ascii_case("auto") {
+                            agent_handle = Some(u32::MAX);
+                        } else {
+                            agent_handle = Some(parse_u32(value, "mission agent handle")?);
+                        }
+                    }
+                    "tier" | "target_tier" => {
+                        let value = parts
+                            .next()
+                            .ok_or(CommandParseError::MissingArgument("target tier"))?;
+                        target_tier = Some(parse_u8(value, "mission target tier")?);
+                    }
+                    "tick" | "scheduled" | "scheduled_tick" => {
+                        let value = parts
+                            .next()
+                            .ok_or(CommandParseError::MissingArgument("scheduled tick"))?;
+                        scheduled_tick = Some(parse_u64(value, "mission scheduled tick")?);
+                    }
+                    other => {
+                        return Err(CommandParseError::UnexpectedToken(other.to_string()));
+                    }
+                }
+            }
+
+            let owner_faction = owner.ok_or(CommandParseError::MissingArgument("owner faction"))?;
+            let target_owner_faction =
+                target_owner.ok_or(CommandParseError::MissingArgument("target faction"))?;
+            let discovery_id =
+                discovery_id.ok_or(CommandParseError::MissingArgument("discovery id"))?;
+            let agent_handle =
+                agent_handle.ok_or(CommandParseError::MissingArgument("agent handle"))?;
+
+            Ok(CommandPayload::QueueEspionageMission {
+                mission_id,
+                owner_faction,
+                target_owner_faction,
+                discovery_id,
+                agent_handle,
+                target_tier,
+                scheduled_tick,
+            })
+        }
         "spawn_influencer" => {
             let mut scope: Option<InfluenceScopeKind> = None;
             let mut generation: Option<u16> = None;
@@ -284,6 +365,16 @@ fn parse_u32(value: &str, context: &'static str) -> Result<u32, CommandParseErro
 fn parse_u16(value: &str, context: &'static str) -> Result<u16, CommandParseError> {
     value
         .parse::<u16>()
+        .map_err(|source| CommandParseError::InvalidInteger {
+            value: value.to_string(),
+            context,
+            source,
+        })
+}
+
+fn parse_u8(value: &str, context: &'static str) -> Result<u8, CommandParseError> {
+    value
+        .parse::<u8>()
         .map_err(|source| CommandParseError::InvalidInteger {
             value: value.to_string(),
             context,
@@ -388,6 +479,45 @@ mod tests {
                 faction: 1,
                 reserve: None,
                 delta: Some(-1.25),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_queue_espionage_mission_command() {
+        let payload = parse_command_line(
+            "queue_espionage_mission probe_basic owner 1 target 2 discovery 17 agent 8 tier 2 tick 42",
+        )
+        .unwrap();
+        assert_eq!(
+            payload,
+            CommandPayload::QueueEspionageMission {
+                mission_id: "probe_basic".into(),
+                owner_faction: 1,
+                target_owner_faction: 2,
+                discovery_id: 17,
+                agent_handle: 8,
+                target_tier: Some(2),
+                scheduled_tick: Some(42),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_queue_espionage_mission_auto_agent() {
+        let payload =
+            parse_command_line("queue_mission sweep_auto owner 3 target 4 discovery 11 agent auto")
+                .unwrap();
+        assert_eq!(
+            payload,
+            CommandPayload::QueueEspionageMission {
+                mission_id: "sweep_auto".into(),
+                owner_faction: 3,
+                target_owner_faction: 4,
+                discovery_id: 11,
+                agent_handle: u32::MAX,
+                target_tier: None,
+                scheduled_tick: None,
             }
         );
     }

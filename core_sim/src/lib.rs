@@ -42,9 +42,10 @@ pub use culture_corruption_config::{
     CultureSeverityConfig, CultureTensionTuning, BUILTIN_CULTURE_CORRUPTION_CONFIG,
 };
 pub use espionage::{
-    CounterIntelBudgets, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
-    EspionageMissionInstanceId, EspionageMissionKind, EspionageMissionState, EspionageRoster,
-    FactionSecurityPolicies, QueueMissionError, QueueMissionParams, SecurityPolicy,
+    AgentAssignment, CounterIntelBudgets, EspionageAgentHandle, EspionageCatalog,
+    EspionageMissionId, EspionageMissionInstanceId, EspionageMissionKind, EspionageMissionState,
+    EspionageMissionTemplate, EspionageRoster, FactionSecurityPolicies, QueueMissionError,
+    QueueMissionParams, SecurityPolicy,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use great_discovery::{
