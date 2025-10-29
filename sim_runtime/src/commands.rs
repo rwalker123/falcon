@@ -82,6 +82,15 @@ pub enum CommandPayload {
         scheduled_tick_offset: Option<u32>,
         target_tier: Option<u8>,
     },
+    UpdateCounterIntelPolicy {
+        faction: u32,
+        policy: SecurityPolicyKind,
+    },
+    AdjustCounterIntelBudget {
+        faction: u32,
+        reserve: Option<f32>,
+        delta: Option<f32>,
+    },
     ReloadConfig {
         kind: ReloadConfigKind,
         path: Option<String>,
@@ -116,6 +125,15 @@ pub enum SupportChannel {
     Peer,
     Institutional,
     Humanitarian,
+}
+
+/// Counter-intelligence security posture controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecurityPolicyKind {
+    Lenient,
+    Standard,
+    Hardened,
+    Crisis,
 }
 
 /// Error returned when encoding a command envelope fails.
@@ -271,6 +289,25 @@ impl CommandEnvelope {
                     target_tier: target_tier.map(|value| value as u32),
                 },
             ),
+            CommandPayload::UpdateCounterIntelPolicy { faction, policy } => {
+                pb::command_envelope::Command::UpdateCounterIntelPolicy(
+                    pb::UpdateCounterIntelPolicyCommand {
+                        faction: *faction,
+                        policy: security_policy_kind_to_proto(*policy) as i32,
+                    },
+                )
+            }
+            CommandPayload::AdjustCounterIntelBudget {
+                faction,
+                reserve,
+                delta,
+            } => pb::command_envelope::Command::AdjustCounterIntelBudget(
+                pb::AdjustCounterIntelBudgetCommand {
+                    faction: *faction,
+                    reserve: *reserve,
+                    delta: *delta,
+                },
+            ),
             CommandPayload::ReloadConfig { kind, path } => {
                 pb::command_envelope::Command::ReloadConfig(pb::ReloadConfigCommand {
                     kind: reload_config_kind_to_proto(*kind) as i32,
@@ -410,6 +447,20 @@ impl CommandEnvelope {
                     target_tier,
                 }
             }
+            pb::command_envelope::Command::UpdateCounterIntelPolicy(cmd) => {
+                let policy = security_policy_kind_from_proto(cmd.policy)?;
+                CommandPayload::UpdateCounterIntelPolicy {
+                    faction: cmd.faction,
+                    policy,
+                }
+            }
+            pb::command_envelope::Command::AdjustCounterIntelBudget(cmd) => {
+                CommandPayload::AdjustCounterIntelBudget {
+                    faction: cmd.faction,
+                    reserve: cmd.reserve,
+                    delta: cmd.delta,
+                }
+            }
             pb::command_envelope::Command::ReloadConfig(cmd) => {
                 let kind = reload_config_kind_from_proto(cmd.kind)?;
                 CommandPayload::ReloadConfig {
@@ -478,6 +529,15 @@ fn support_channel_to_proto(value: SupportChannel) -> pb::SupportChannel {
     }
 }
 
+fn security_policy_kind_to_proto(value: SecurityPolicyKind) -> pb::SecurityPolicyKind {
+    match value {
+        SecurityPolicyKind::Lenient => pb::SecurityPolicyKind::Lenient,
+        SecurityPolicyKind::Standard => pb::SecurityPolicyKind::Standard,
+        SecurityPolicyKind::Hardened => pb::SecurityPolicyKind::Hardened,
+        SecurityPolicyKind::Crisis => pb::SecurityPolicyKind::Crisis,
+    }
+}
+
 fn reload_config_kind_to_proto(kind: ReloadConfigKind) -> pb::ReloadConfigKind {
     match kind {
         ReloadConfigKind::Simulation => pb::ReloadConfigKind::Simulation,
@@ -503,6 +563,19 @@ fn influence_scope_from_proto(value: i32) -> Result<InfluenceScopeKind, CommandD
         Ok(pb::InfluenceScopeKind::Generation) => Ok(InfluenceScopeKind::Generation),
         _ => Err(CommandDecodeError::InvalidEnum {
             field: "InfluenceScopeKind",
+            value,
+        }),
+    }
+}
+
+fn security_policy_kind_from_proto(value: i32) -> Result<SecurityPolicyKind, CommandDecodeError> {
+    match pb::SecurityPolicyKind::try_from(value) {
+        Ok(pb::SecurityPolicyKind::Lenient) => Ok(SecurityPolicyKind::Lenient),
+        Ok(pb::SecurityPolicyKind::Standard) => Ok(SecurityPolicyKind::Standard),
+        Ok(pb::SecurityPolicyKind::Hardened) => Ok(SecurityPolicyKind::Hardened),
+        Ok(pb::SecurityPolicyKind::Crisis) => Ok(SecurityPolicyKind::Crisis),
+        _ => Err(CommandDecodeError::InvalidEnum {
+            field: "SecurityPolicyKind",
             value,
         }),
     }

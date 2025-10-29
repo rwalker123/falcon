@@ -1466,6 +1466,43 @@ impl CounterIntelBudgets {
             .unwrap_or_else(scalar_zero)
     }
 
+    pub fn set_reserve(
+        &mut self,
+        faction: FactionId,
+        amount: Scalar,
+        config: &CounterIntelBudgetConfig,
+    ) -> Scalar {
+        let mut value = amount;
+        if value < Scalar::zero() {
+            value = Scalar::zero();
+        }
+        let max_reserve = config.max_reserve();
+        if value > max_reserve {
+            value = max_reserve;
+        }
+        self.reserves.insert(faction, value);
+        value
+    }
+
+    pub fn adjust_reserve(
+        &mut self,
+        faction: FactionId,
+        delta: Scalar,
+        config: &CounterIntelBudgetConfig,
+    ) -> Scalar {
+        let current = self.available(faction);
+        let mut value = current + delta;
+        if value < Scalar::zero() {
+            value = Scalar::zero();
+        }
+        let max_reserve = config.max_reserve();
+        if value > max_reserve {
+            value = max_reserve;
+        }
+        self.reserves.insert(faction, value);
+        value
+    }
+
     pub fn try_spend(
         &mut self,
         faction: FactionId,
@@ -1499,14 +1536,8 @@ impl CounterIntelBudgets {
         *entry = remaining;
         Ok(cost)
     }
-
-    #[cfg(test)]
-    pub fn set_reserve(&mut self, faction: FactionId, amount: Scalar) {
-        self.reserves.insert(faction, amount);
-    }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecurityPolicy {
     Lenient,
@@ -1552,7 +1583,6 @@ impl FactionSecurityPolicies {
             .unwrap_or(self.default_policy)
     }
 
-    #[cfg(test)]
     pub fn set_policy(&mut self, faction: FactionId, policy: SecurityPolicy) {
         self.policies.insert(faction, policy);
     }
@@ -2411,15 +2441,18 @@ mod tests {
         }
 
         {
-            let sweep_cost = app
+            let config = app
                 .world
                 .resource::<EspionageCatalog>()
                 .config()
                 .counter_intel_budget()
-                .sweep_cost();
-            app.world
-                .resource_mut::<CounterIntelBudgets>()
-                .set_reserve(owner, sweep_cost / Scalar::from_f32(4.0));
+                .clone();
+            let sweep_cost = config.sweep_cost();
+            app.world.resource_mut::<CounterIntelBudgets>().set_reserve(
+                owner,
+                sweep_cost / Scalar::from_f32(4.0),
+                &config,
+            );
         }
 
         app.world.run_system_once(schedule_counter_intel_missions);

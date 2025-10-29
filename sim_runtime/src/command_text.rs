@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::{
     CommandPayload, CorruptionSubsystem, InfluenceScopeKind, OrdersDirective, ReloadConfigKind,
-    SupportChannel,
+    SecurityPolicyKind, SupportChannel,
 };
 
 #[derive(Debug, Error)]
@@ -35,6 +35,8 @@ pub enum CommandParseError {
     InvalidSubsystem(String),
     #[error("invalid orders directive '{0}'")]
     InvalidDirective(String),
+    #[error("invalid security policy '{0}'")]
+    InvalidSecurityPolicy(String),
 }
 
 pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseError> {
@@ -146,6 +148,56 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 id,
                 channel,
                 magnitude,
+            })
+        }
+        "counterintel_policy" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction"))?;
+            let policy_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("policy"))?;
+            let faction = parse_u32(faction_str, "counterintel policy faction")?;
+            let policy = parse_security_policy(policy_str)?;
+            Ok(CommandPayload::UpdateCounterIntelPolicy { faction, policy })
+        }
+        "counterintel_budget" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction"))?;
+            let faction = parse_u32(faction_str, "counterintel budget faction")?;
+            let token = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("value"))?;
+
+            let mut reserve: Option<f32> = None;
+            let mut delta: Option<f32> = None;
+            match token.to_ascii_lowercase().as_str() {
+                "reserve" | "set" => {
+                    let value_str = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("reserve value"))?;
+                    reserve = Some(parse_f32(value_str, "counterintel reserve")?);
+                }
+                "delta" | "adjust" => {
+                    let value_str = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("delta value"))?;
+                    delta = Some(parse_f32(value_str, "counterintel delta")?);
+                }
+                other => {
+                    reserve = Some(parse_f32(other, "counterintel reserve")?);
+                }
+            }
+
+            if reserve.is_none() && delta.is_none() {
+                return Err(CommandParseError::MissingArgument("reserve or delta"));
+            }
+
+            Ok(CommandPayload::AdjustCounterIntelBudget {
+                faction,
+                reserve,
+                delta,
             })
         }
         "spawn_influencer" => {
@@ -281,6 +333,16 @@ fn parse_support_channel(token: &str) -> Result<SupportChannel, CommandParseErro
     }
 }
 
+fn parse_security_policy(token: &str) -> Result<SecurityPolicyKind, CommandParseError> {
+    match token.to_ascii_lowercase().as_str() {
+        "lenient" | "light" | "open" => Ok(SecurityPolicyKind::Lenient),
+        "standard" | "baseline" | "normal" => Ok(SecurityPolicyKind::Standard),
+        "hardened" | "secure" | "fortified" => Ok(SecurityPolicyKind::Hardened),
+        "crisis" | "panic" | "lockdown" => Ok(SecurityPolicyKind::Crisis),
+        other => Err(CommandParseError::InvalidSecurityPolicy(other.to_string())),
+    }
+}
+
 fn parse_corruption_subsystem(token: &str) -> Result<CorruptionSubsystem, CommandParseError> {
     match token {
         "logistics" | "log" | "supply" => Ok(CorruptionSubsystem::Logistics),
@@ -288,5 +350,45 @@ fn parse_corruption_subsystem(token: &str) -> Result<CorruptionSubsystem, Comman
         "military" | "procurement" | "army" => Ok(CorruptionSubsystem::Military),
         "governance" | "bureaucracy" | "civic" => Ok(CorruptionSubsystem::Governance),
         other => Err(CommandParseError::InvalidSubsystem(other.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_counterintel_policy_command() {
+        let payload = parse_command_line("counterintel_policy 3 hardened").unwrap();
+        assert_eq!(
+            payload,
+            CommandPayload::UpdateCounterIntelPolicy {
+                faction: 3,
+                policy: SecurityPolicyKind::Hardened,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_counterintel_budget_command() {
+        let payload = parse_command_line("counterintel_budget 2 reserve 5.5").unwrap();
+        assert_eq!(
+            payload,
+            CommandPayload::AdjustCounterIntelBudget {
+                faction: 2,
+                reserve: Some(5.5),
+                delta: None,
+            }
+        );
+
+        let delta_payload = parse_command_line("counterintel_budget 1 delta -1.25").unwrap();
+        assert_eq!(
+            delta_payload,
+            CommandPayload::AdjustCounterIntelBudget {
+                faction: 1,
+                reserve: None,
+                delta: Some(-1.25),
+            }
+        );
     }
 }
