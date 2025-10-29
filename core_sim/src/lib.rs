@@ -5,6 +5,7 @@
 
 mod components;
 mod culture;
+mod culture_corruption_config;
 mod espionage;
 mod generations;
 mod great_discovery;
@@ -20,6 +21,7 @@ mod scalar;
 mod snapshot;
 mod systems;
 mod terrain;
+mod turn_pipeline_config;
 
 use std::sync::Arc;
 
@@ -33,6 +35,10 @@ pub use culture::{
     reconcile_culture_layers, CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope,
     CultureManager, CultureOwner, CultureSchismEvent, CultureTensionEvent, CultureTensionKind,
     CultureTensionRecord, CultureTraitAxis, CultureTraitVector, CULTURE_TRAIT_AXES,
+};
+pub use culture_corruption_config::{
+    CorruptionSeverityConfig, CultureCorruptionConfig, CultureCorruptionConfigHandle,
+    CultureSeverityConfig, CultureTensionTuning, BUILTIN_CULTURE_CORRUPTION_CONFIG,
 };
 pub use espionage::{
     EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionInstanceId,
@@ -54,6 +60,11 @@ pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
     KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle, KnowledgeLedgerEntry, KnowledgeModifier,
     KnowledgeTimelineEvent, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
+};
+pub use turn_pipeline_config::{
+    load_turn_pipeline_config_from_env, LogisticsPhaseConfig, PopulationPhaseConfig,
+    PowerPhaseConfig, TradePhaseConfig, TurnPipelineConfig, TurnPipelineConfigHandle,
+    TurnPipelineConfigMetadata, BUILTIN_TURN_PIPELINE_CONFIG,
 };
 
 pub use metrics::SimulationMetrics;
@@ -110,6 +121,13 @@ pub fn build_headless_app() -> App {
     );
     let knowledge_ledger = KnowledgeLedger::with_config(knowledge_config.clone());
     let knowledge_config_handle = KnowledgeLedgerConfigHandle::new(knowledge_config);
+    let culture_corruption_config = Arc::new(
+        CultureCorruptionConfig::from_json_str(BUILTIN_CULTURE_CORRUPTION_CONFIG)
+            .expect("culture corruption config should parse"),
+    );
+    let culture_corruption_handle = CultureCorruptionConfigHandle::new(culture_corruption_config);
+    let (turn_pipeline_config, turn_pipeline_metadata) = load_turn_pipeline_config_from_env();
+    let turn_pipeline_handle = TurnPipelineConfigHandle::new(turn_pipeline_config.clone());
     let culture_manager = CultureManager::new();
     let culture_effects = CultureEffectsCache::default();
     let espionage_catalog =
@@ -126,6 +144,9 @@ pub fn build_headless_app() -> App {
         .insert_resource(SentimentAxisBias::default())
         .insert_resource(knowledge_config_handle)
         .insert_resource(knowledge_ledger)
+        .insert_resource(culture_corruption_handle)
+        .insert_resource(turn_pipeline_handle)
+        .insert_resource(turn_pipeline_metadata)
         .insert_resource(CorruptionLedgers::default())
         .insert_resource(CorruptionTelemetry::default())
         .insert_resource(DiplomacyLeverage::default())

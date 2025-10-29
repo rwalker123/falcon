@@ -82,7 +82,8 @@ pub enum CommandPayload {
         scheduled_tick_offset: Option<u32>,
         target_tier: Option<u8>,
     },
-    ReloadSimulationConfig {
+    ReloadConfig {
+        kind: ReloadConfigKind,
         path: Option<String>,
     },
 }
@@ -98,6 +99,13 @@ pub struct EspionageGeneratorUpdate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrdersDirective {
     Ready,
+}
+
+/// Configuration kinds supported by reload commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReloadConfigKind {
+    Simulation,
+    TurnPipeline,
 }
 
 /// Influencer support channels exposed to the command surface.
@@ -262,10 +270,11 @@ impl CommandEnvelope {
                     target_tier: target_tier.map(|value| value as u32),
                 },
             ),
-            CommandPayload::ReloadSimulationConfig { path } => {
-                pb::command_envelope::Command::ReloadSimulationConfig(
-                    pb::ReloadSimulationConfigCommand { path: path.clone() },
-                )
+            CommandPayload::ReloadConfig { kind, path } => {
+                pb::command_envelope::Command::ReloadConfig(pb::ReloadConfigCommand {
+                    kind: reload_config_kind_to_proto(*kind) as i32,
+                    path: path.clone(),
+                })
             }
         });
 
@@ -400,8 +409,12 @@ impl CommandEnvelope {
                     target_tier,
                 }
             }
-            pb::command_envelope::Command::ReloadSimulationConfig(cmd) => {
-                CommandPayload::ReloadSimulationConfig { path: cmd.path }
+            pb::command_envelope::Command::ReloadConfig(cmd) => {
+                let kind = reload_config_kind_from_proto(cmd.kind)?;
+                CommandPayload::ReloadConfig {
+                    kind,
+                    path: cmd.path,
+                }
             }
         };
 
@@ -464,6 +477,13 @@ fn support_channel_to_proto(value: SupportChannel) -> pb::SupportChannel {
     }
 }
 
+fn reload_config_kind_to_proto(kind: ReloadConfigKind) -> pb::ReloadConfigKind {
+    match kind {
+        ReloadConfigKind::Simulation => pb::ReloadConfigKind::Simulation,
+        ReloadConfigKind::TurnPipeline => pb::ReloadConfigKind::TurnPipeline,
+    }
+}
+
 fn influence_scope_to_proto(value: InfluenceScopeKind) -> pb::InfluenceScopeKind {
     match value {
         InfluenceScopeKind::Local => pb::InfluenceScopeKind::Local,
@@ -503,6 +523,17 @@ fn corruption_subsystem_from_proto(value: i32) -> Result<CorruptionSubsystem, Co
         Ok(pb::CorruptionSubsystem::Governance) => Ok(CorruptionSubsystem::Governance),
         _ => Err(CommandDecodeError::InvalidEnum {
             field: "CorruptionSubsystem",
+            value,
+        }),
+    }
+}
+
+fn reload_config_kind_from_proto(value: i32) -> Result<ReloadConfigKind, CommandDecodeError> {
+    match pb::ReloadConfigKind::try_from(value) {
+        Ok(pb::ReloadConfigKind::Simulation) => Ok(ReloadConfigKind::Simulation),
+        Ok(pb::ReloadConfigKind::TurnPipeline) => Ok(ReloadConfigKind::TurnPipeline),
+        _ => Err(CommandDecodeError::InvalidEnum {
+            field: "ReloadConfigKind",
             value,
         }),
     }
