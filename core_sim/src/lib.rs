@@ -235,6 +235,7 @@ pub fn build_headless_app() -> App {
         .add_systems(
             Update,
             (
+                espionage::schedule_counter_intel_missions,
                 espionage::resolve_espionage_missions,
                 knowledge_ledger::process_espionage_events,
                 knowledge_ledger::knowledge_ledger_tick,

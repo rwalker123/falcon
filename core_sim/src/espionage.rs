@@ -10,6 +10,7 @@ use thiserror::Error;
 use crate::{
     knowledge_ledger::{
         CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
+        KnowledgeLedgerEntry,
     },
     orders::{FactionId, FactionRegistry},
     scalar::{scalar_from_f32, scalar_zero, Scalar},
@@ -17,6 +18,7 @@ use crate::{
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
+use sim_runtime::KnowledgeCountermeasureKind;
 
 pub const BUILTIN_ESPIONAGE_AGENT_CATALOG: &str = include_str!("data/espionage_agents.json");
 pub const BUILTIN_ESPIONAGE_MISSION_CATALOG: &str = include_str!("data/espionage_missions.json");
@@ -1357,6 +1359,171 @@ pub fn initialise_espionage_roster(
     roster.seed_from_catalog(&factions.factions, &catalog);
 }
 
+struct CounterIntelCandidate {
+    owner: FactionId,
+    discovery_id: u32,
+    tier: Option<u8>,
+    infiltration_active: bool,
+    total_suspicion: Scalar,
+    progress_percent: u16,
+}
+
+impl CounterIntelCandidate {
+    fn from_entry(entry: &KnowledgeLedgerEntry) -> Self {
+        let infiltration_active = !entry.infiltrations.is_empty();
+        let total_suspicion = entry
+            .infiltrations
+            .iter()
+            .fold(Scalar::zero(), |acc, inf| acc + inf.suspicion);
+        let tier = if entry.tier > 0 {
+            Some(entry.tier)
+        } else {
+            None
+        };
+
+        Self {
+            owner: entry.owner_faction,
+            discovery_id: entry.discovery_id,
+            tier,
+            infiltration_active,
+            total_suspicion,
+            progress_percent: entry.progress_percent,
+        }
+    }
+}
+
+fn should_schedule_counter_intel(entry: &KnowledgeLedgerEntry) -> bool {
+    let infiltration_active = !entry.infiltrations.is_empty();
+    let high_progress = entry.progress_percent >= 70;
+    infiltration_active || high_progress
+}
+
+fn has_active_counterintel_countermeasure(entry: &KnowledgeLedgerEntry) -> bool {
+    entry.countermeasures.iter().any(|cm| {
+        cm.kind == KnowledgeCountermeasureKind::CounterIntelSweep && cm.remaining_ticks > 0
+    })
+}
+
+fn has_pending_counterintel_mission(
+    missions: &EspionageMissionState,
+    catalog: &EspionageCatalog,
+    owner: FactionId,
+    discovery_id: u32,
+) -> bool {
+    missions.missions().iter().any(|mission| {
+        mission.owner == owner
+            && mission.discovery_id == discovery_id
+            && catalog
+                .mission(&mission.mission_id)
+                .map(|template| template.kind == EspionageMissionKind::CounterIntel)
+                .unwrap_or(false)
+    })
+}
+
+fn select_counterintel_template<'a>(
+    templates: &'a [&EspionageMissionTemplate],
+    target_tier: Option<u8>,
+) -> Option<&'a EspionageMissionTemplate> {
+    templates
+        .iter()
+        .copied()
+        .filter(|template| template.is_valid_for_tier(target_tier))
+        .max_by(|a, b| {
+            a.base_success
+                .cmp(&b.base_success)
+                .then_with(|| a.counter_intel_weight.cmp(&b.counter_intel_weight))
+        })
+}
+
+fn pick_best_counter_agent(
+    roster: &EspionageRoster,
+    faction: FactionId,
+) -> Option<EspionageAgentHandle> {
+    roster
+        .agents_for(faction)
+        .iter()
+        .filter(|agent| matches!(agent.assignment, AgentAssignment::Available))
+        .max_by(|a, b| {
+            a.counter_intel
+                .cmp(&b.counter_intel)
+                .then_with(|| a.recon.cmp(&b.recon))
+        })
+        .map(|agent| agent.handle)
+}
+
+pub fn schedule_counter_intel_missions(
+    tick: Res<crate::resources::SimulationTick>,
+    catalog: Res<EspionageCatalog>,
+    ledger: Res<KnowledgeLedger>,
+    mut roster: ResMut<EspionageRoster>,
+    mut missions: ResMut<EspionageMissionState>,
+) {
+    let counter_templates: Vec<&EspionageMissionTemplate> = catalog
+        .missions()
+        .filter(|mission| mission.kind == EspionageMissionKind::CounterIntel)
+        .collect();
+
+    if counter_templates.is_empty() {
+        return;
+    }
+
+    let mut candidates: Vec<CounterIntelCandidate> = ledger
+        .entries()
+        .filter(|entry| should_schedule_counter_intel(entry))
+        .filter(|entry| !has_active_counterintel_countermeasure(entry))
+        .map(CounterIntelCandidate::from_entry)
+        .collect();
+
+    if candidates.is_empty() {
+        return;
+    }
+
+    candidates.sort_by(|a, b| {
+        b.infiltration_active
+            .cmp(&a.infiltration_active)
+            .then_with(|| b.total_suspicion.cmp(&a.total_suspicion))
+            .then_with(|| b.progress_percent.cmp(&a.progress_percent))
+            .then_with(|| a.discovery_id.cmp(&b.discovery_id))
+    });
+
+    for candidate in candidates {
+        if has_pending_counterintel_mission(
+            missions.as_ref(),
+            catalog.as_ref(),
+            candidate.owner,
+            candidate.discovery_id,
+        ) {
+            continue;
+        }
+
+        let Some(template) = select_counterintel_template(&counter_templates, candidate.tier)
+        else {
+            continue;
+        };
+
+        let Some(agent_handle) = pick_best_counter_agent(&roster, candidate.owner) else {
+            continue;
+        };
+
+        let params = QueueMissionParams {
+            mission_id: template.id.clone(),
+            owner: candidate.owner,
+            target_owner: candidate.owner,
+            discovery_id: candidate.discovery_id,
+            agent: agent_handle,
+            target_tier: candidate.tier,
+            scheduled_tick: tick.0,
+        };
+
+        if missions
+            .queue_mission(catalog.as_ref(), &mut roster, params)
+            .is_err()
+        {
+            continue;
+        }
+    }
+}
+
 pub fn resolve_espionage_missions(
     tick: Res<crate::resources::SimulationTick>,
     catalog: Res<EspionageCatalog>,
@@ -1573,7 +1740,10 @@ fn determine_mission_outcome(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::knowledge_ledger::{self, KnowledgeLedgerConfigHandle, KnowledgeLedgerEntry};
+    use crate::knowledge_ledger::{
+        self, InfiltrationRecord, KnowledgeLedger, KnowledgeLedgerConfigHandle,
+        KnowledgeLedgerEntry,
+    };
     use crate::orders::FactionRegistry;
     use crate::resources::SimulationTick;
     use bevy::app::App;
@@ -1816,6 +1986,101 @@ mod tests {
                 "infiltration cells should be cleared"
             );
         }
+    }
+
+    #[test]
+    fn auto_scheduler_queues_counter_intel_for_active_infiltration() {
+        let owner = FactionId(0);
+        let mut app = setup_app_with_catalog(&[owner]);
+
+        {
+            let config_handle = app.world.resource::<KnowledgeLedgerConfigHandle>();
+            let config = config_handle.get();
+            let mut entry = KnowledgeLedgerEntry::new(owner, 55, config.as_ref());
+            entry.tier = 2;
+            entry.register_infiltration(
+                InfiltrationRecord {
+                    faction: FactionId(99),
+                    blueprint_fidelity: scalar_from_f32(0.4),
+                    suspicion: scalar_from_f32(0.7),
+                    cells: 2,
+                    last_activity_tick: 0,
+                },
+                config.max_suspicion(),
+            );
+            app.world
+                .resource_mut::<KnowledgeLedger>()
+                .upsert_entry(entry);
+        }
+
+        app.world.run_system_once(schedule_counter_intel_missions);
+
+        let (mission_id, agent_handle) = {
+            let missions = app.world.resource::<EspionageMissionState>();
+            assert_eq!(
+                missions.missions().len(),
+                1,
+                "expected scheduler to enqueue a mission"
+            );
+            let scheduled = &missions.missions()[0];
+            assert_eq!(scheduled.owner, owner);
+            (scheduled.mission_id.clone(), scheduled.agent)
+        };
+
+        {
+            let catalog = app.world.resource::<EspionageCatalog>();
+            let template = catalog
+                .mission(&mission_id)
+                .expect("scheduled mission template should exist");
+            assert_eq!(template.kind, EspionageMissionKind::CounterIntel);
+        }
+
+        {
+            let roster = app.world.resource::<EspionageRoster>();
+            let agent = roster
+                .agent(owner, agent_handle)
+                .expect("agent should exist after scheduling");
+            assert!(matches!(agent.assignment, AgentAssignment::Assigned(_)));
+        }
+    }
+
+    #[test]
+    fn auto_scheduler_respects_active_countermeasures() {
+        let owner = FactionId(0);
+        let mut app = setup_app_with_catalog(&[owner]);
+
+        {
+            let config_handle = app.world.resource::<KnowledgeLedgerConfigHandle>();
+            let config = config_handle.get();
+            let mut entry = KnowledgeLedgerEntry::new(owner, 91, config.as_ref());
+            entry.register_infiltration(
+                InfiltrationRecord {
+                    faction: FactionId(77),
+                    blueprint_fidelity: scalar_from_f32(0.3),
+                    suspicion: scalar_from_f32(0.6),
+                    cells: 1,
+                    last_activity_tick: 0,
+                },
+                config.max_suspicion(),
+            );
+            entry.countermeasures.push(KnowledgeCountermeasure {
+                kind: KnowledgeCountermeasureKind::CounterIntelSweep,
+                potency: scalar_from_f32(0.3),
+                upkeep: scalar_from_f32(0.05),
+                remaining_ticks: 2,
+            });
+            app.world
+                .resource_mut::<KnowledgeLedger>()
+                .upsert_entry(entry);
+        }
+
+        app.world.run_system_once(schedule_counter_intel_missions);
+
+        let missions = app.world.resource::<EspionageMissionState>();
+        assert!(
+            missions.missions().is_empty(),
+            "scheduler should avoid queuing when a sweep countermeasure is active"
+        );
     }
 
     #[test]
