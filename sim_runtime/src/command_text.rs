@@ -201,6 +201,10 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         tokens.remove(0);
                         kind = ReloadConfigKind::TurnPipeline;
                     }
+                    "overlay" | "overlays" | "snapshot" | "snapshot_overlays" => {
+                        tokens.remove(0);
+                        kind = ReloadConfigKind::SnapshotOverlays;
+                    }
                     _ => {}
                 }
             }

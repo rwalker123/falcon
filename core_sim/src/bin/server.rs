@@ -20,9 +20,10 @@ use core_sim::{
     EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionState,
     EspionageRoster, FactionId, FactionOrders, FactionRegistry, GenerationId, GenerationRegistry,
     InfluencerImpacts, InfluentialRoster, QueueMissionParams, Scalar, SentimentAxisBias,
-    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory, StoredSnapshot,
-    SubmitError, SubmitOutcome, SupportChannel, Tile, TurnPipelineConfig, TurnPipelineConfigHandle,
-    TurnPipelineConfigMetadata, TurnQueue,
+    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
+    StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel, Tile, TurnPipelineConfig,
+    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
 };
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
@@ -73,6 +74,11 @@ fn main() {
         .resource::<TurnPipelineConfigMetadata>()
         .path()
         .cloned();
+    let snapshot_overlays_watch_path = app
+        .world
+        .resource::<SnapshotOverlaysConfigMetadata>()
+        .path()
+        .cloned();
 
     let (command_rx, command_tx) = spawn_command_listener(config.command_bind);
     app.world
@@ -88,6 +94,11 @@ fn main() {
         app.world
             .resource_mut::<ConfigWatcherRegistry>()
             .restart_turn_pipeline(Some(path), command_tx.clone());
+    }
+    if let Some(path) = snapshot_overlays_watch_path {
+        app.world
+            .resource_mut::<ConfigWatcherRegistry>()
+            .restart_snapshot_overlays(Some(path), command_tx.clone());
     }
 
     info!(
@@ -331,6 +342,7 @@ struct CommandSenderResource(Sender<Command>);
 struct ConfigWatcherRegistry {
     simulation: Option<FileWatcherHandle>,
     turn_pipeline: Option<FileWatcherHandle>,
+    snapshot_overlays: Option<FileWatcherHandle>,
 }
 
 impl ConfigWatcherRegistry {
@@ -394,6 +406,38 @@ impl ConfigWatcherRegistry {
             info!(
                 target: "shadow_scale::config",
                 "turn_pipeline_config.watch_disabled"
+            );
+        }
+    }
+
+    fn restart_snapshot_overlays(&mut self, path: Option<PathBuf>, sender: Sender<Command>) {
+        if let Some(existing) = self.snapshot_overlays.take() {
+            existing.stop();
+        }
+
+        if let Some(path) = path {
+            match start_file_watcher(path.clone(), sender, ReloadConfigKind::SnapshotOverlays) {
+                Ok(watcher) => {
+                    info!(
+                        target: "shadow_scale::config",
+                        path = %path.display(),
+                        "snapshot_overlays_config.watch_started"
+                    );
+                    self.snapshot_overlays = Some(watcher);
+                }
+                Err(err) => {
+                    warn!(
+                        target: "shadow_scale::config",
+                        path = %path.display(),
+                        error = %err,
+                        "snapshot_overlays_config.watch_failed"
+                    );
+                }
+            }
+        } else {
+            info!(
+                target: "shadow_scale::config",
+                "snapshot_overlays_config.watch_disabled"
             );
         }
     }
@@ -602,6 +646,7 @@ fn handle_reload_config(
     match kind {
         ReloadConfigKind::Simulation => handle_reload_simulation_config(app, path),
         ReloadConfigKind::TurnPipeline => handle_reload_turn_pipeline_config(app, path),
+        ReloadConfigKind::SnapshotOverlays => handle_reload_snapshot_overlays_config(app, path),
     }
 }
 
@@ -770,6 +815,83 @@ fn handle_reload_turn_pipeline_config(app: &mut bevy::prelude::App, path: Option
         flow_gain_min = logistics.flow_gain_min().to_f32(),
         flow_gain_max = logistics.flow_gain_max().to_f32(),
         "turn_pipeline_config.reloaded"
+    );
+}
+
+fn handle_reload_snapshot_overlays_config(app: &mut bevy::prelude::App, path: Option<String>) {
+    let command_sender = {
+        let res = app.world.resource::<CommandSenderResource>();
+        res.0.clone()
+    };
+
+    let requested_path = path
+        .and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(trimmed))
+            }
+        })
+        .or_else(|| {
+            app.world
+                .resource::<SnapshotOverlaysConfigMetadata>()
+                .path()
+                .cloned()
+        });
+
+    let (new_config, applied_path) = match requested_path {
+        Some(path) => match SnapshotOverlaysConfig::from_file(&path) {
+            Ok(cfg) => (Arc::new(cfg), Some(path)),
+            Err(err) => {
+                warn!(
+                    target: "shadow_scale::config",
+                    error = %err,
+                    "snapshot_overlays_config.reload_failed"
+                );
+                return;
+            }
+        },
+        None => (SnapshotOverlaysConfig::builtin(), None),
+    };
+
+    {
+        let mut metadata = app.world.resource_mut::<SnapshotOverlaysConfigMetadata>();
+        metadata.set_path(applied_path.clone());
+    }
+
+    {
+        let mut handle = app.world.resource_mut::<SnapshotOverlaysConfigHandle>();
+        handle.replace(Arc::clone(&new_config));
+    }
+
+    let watch_path = app
+        .world
+        .resource::<SnapshotOverlaysConfigMetadata>()
+        .path()
+        .cloned();
+
+    {
+        let mut watcher_state = app.world.resource_mut::<ConfigWatcherRegistry>();
+        watcher_state.restart_snapshot_overlays(watch_path, command_sender);
+    }
+
+    let corruption = new_config.corruption();
+    let military = new_config.military();
+
+    info!(
+        target: "shadow_scale::config",
+        path = applied_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "builtin".to_string()),
+        corruption_logistics_weight = corruption.logistics_weight().to_f32(),
+        corruption_trade_weight = corruption.trade_weight().to_f32(),
+        corruption_military_weight = corruption.military_weight().to_f32(),
+        corruption_governance_weight = corruption.governance_weight().to_f32(),
+        military_presence_weight = military.presence_weight().to_f32(),
+        military_support_weight = military.support_weight().to_f32(),
+        "snapshot_overlays_config.reloaded"
     );
 }
 

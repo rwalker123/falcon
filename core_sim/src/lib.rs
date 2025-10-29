@@ -19,6 +19,7 @@ mod power;
 mod resources;
 mod scalar;
 mod snapshot;
+mod snapshot_overlays_config;
 mod systems;
 mod terrain;
 mod turn_pipeline_config;
@@ -60,6 +61,11 @@ pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
     KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle, KnowledgeLedgerEntry, KnowledgeModifier,
     KnowledgeTimelineEvent, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
+};
+pub use snapshot_overlays_config::{
+    load_snapshot_overlays_config_from_env, CorruptionOverlayConfig, CultureOverlayConfig,
+    FogOverlayConfig, MilitaryOverlayConfig, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    SnapshotOverlaysConfigMetadata, BUILTIN_SNAPSHOT_OVERLAYS_CONFIG,
 };
 pub use turn_pipeline_config::{
     load_turn_pipeline_config_from_env, LogisticsPhaseConfig, PopulationPhaseConfig,
@@ -128,6 +134,9 @@ pub fn build_headless_app() -> App {
     let culture_corruption_handle = CultureCorruptionConfigHandle::new(culture_corruption_config);
     let (turn_pipeline_config, turn_pipeline_metadata) = load_turn_pipeline_config_from_env();
     let turn_pipeline_handle = TurnPipelineConfigHandle::new(turn_pipeline_config.clone());
+    let (snapshot_overlays_config, snapshot_overlays_metadata) =
+        load_snapshot_overlays_config_from_env();
+    let snapshot_overlays_handle = SnapshotOverlaysConfigHandle::new(snapshot_overlays_config);
     let culture_manager = CultureManager::new();
     let culture_effects = CultureEffectsCache::default();
     let espionage_catalog =
@@ -145,8 +154,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(knowledge_config_handle)
         .insert_resource(knowledge_ledger)
         .insert_resource(culture_corruption_handle)
+        .insert_resource(snapshot_overlays_handle)
         .insert_resource(turn_pipeline_handle)
         .insert_resource(turn_pipeline_metadata)
+        .insert_resource(snapshot_overlays_metadata)
         .insert_resource(CorruptionLedgers::default())
         .insert_resource(CorruptionTelemetry::default())
         .insert_resource(DiplomacyLeverage::default())

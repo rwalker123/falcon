@@ -106,6 +106,7 @@ pub enum OrdersDirective {
 pub enum ReloadConfigKind {
     Simulation,
     TurnPipeline,
+    SnapshotOverlays,
 }
 
 /// Influencer support channels exposed to the command surface.
@@ -481,6 +482,7 @@ fn reload_config_kind_to_proto(kind: ReloadConfigKind) -> pb::ReloadConfigKind {
     match kind {
         ReloadConfigKind::Simulation => pb::ReloadConfigKind::Simulation,
         ReloadConfigKind::TurnPipeline => pb::ReloadConfigKind::TurnPipeline,
+        ReloadConfigKind::SnapshotOverlays => pb::ReloadConfigKind::SnapshotOverlays,
     }
 }
 
@@ -532,6 +534,7 @@ fn reload_config_kind_from_proto(value: i32) -> Result<ReloadConfigKind, Command
     match pb::ReloadConfigKind::try_from(value) {
         Ok(pb::ReloadConfigKind::Simulation) => Ok(ReloadConfigKind::Simulation),
         Ok(pb::ReloadConfigKind::TurnPipeline) => Ok(ReloadConfigKind::TurnPipeline),
+        Ok(pb::ReloadConfigKind::SnapshotOverlays) => Ok(ReloadConfigKind::SnapshotOverlays),
         _ => Err(CommandDecodeError::InvalidEnum {
             field: "ReloadConfigKind",
             value,

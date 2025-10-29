@@ -48,6 +48,7 @@ use crate::{
         SimulationConfig, SimulationTick, TileRegistry,
     },
     scalar::Scalar,
+    snapshot_overlays_config::{SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle},
 };
 
 type EncodedBuffers = (Arc<Vec<u8>>, Arc<Vec<u8>>);
@@ -66,6 +67,7 @@ pub(crate) struct GreatDiscoverySnapshotParam<'w, 's> {
 pub struct SnapshotContext<'w> {
     pub config: Res<'w, SimulationConfig>,
     pub tick: Res<'w, SimulationTick>,
+    pub overlays: Res<'w, SnapshotOverlaysConfigHandle>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -894,7 +896,12 @@ pub fn capture_snapshot(
     culture: Res<CultureManager>,
     mut history: ResMut<SnapshotHistory>,
 ) {
-    let SnapshotContext { config, tick } = ctx;
+    let SnapshotContext {
+        config,
+        tick,
+        overlays,
+    } = ctx;
+    let overlays_config = overlays.get();
     history.set_capacity(config.snapshot_history_limit.max(1));
 
     let mut tile_states: Vec<TileState> = tiles
@@ -970,32 +977,39 @@ pub fn capture_snapshot(
         logistics_raster_from_links(&tile_states, &logistics_states, config.grid_size);
     let sentiment_raster =
         sentiment_raster_from_populations(&tile_states, &population_states, config.grid_size);
-    let corruption_raster = corruption_raster_from_simulation(
-        &tile_states,
-        &trade_states,
-        &population_states,
-        &power_states,
-        &logistics_raster,
-        CorruptionSignals {
+    let corruption_raster = corruption_raster_from_simulation(CorruptionRasterInputs {
+        tiles: &tile_states,
+        trade_links: &trade_states,
+        populations: &population_states,
+        power_nodes: &power_states,
+        logistics_raster: &logistics_raster,
+        corruption_signals: CorruptionSignals {
             ledger: corruption_ledgers.ledger(),
             telemetry: &corruption_telemetry,
         },
-        config.grid_size,
-    );
+        grid_size: config.grid_size,
+        overlays: overlays_config.as_ref(),
+    });
     let fog_raster = fog_raster_from_discoveries(
         &tile_states,
         &population_states,
         &discovery_progress,
         config.grid_size,
+        overlays_config.as_ref(),
     );
-    let culture_raster =
-        culture_raster_from_layers(&tile_states, culture.as_ref(), config.grid_size);
+    let culture_raster = culture_raster_from_layers(
+        &tile_states,
+        culture.as_ref(),
+        config.grid_size,
+        overlays_config.as_ref(),
+    );
     let military_raster = military_raster_from_state(
         &tile_states,
         &population_states,
         &power_states,
         &logistics_raster,
         config.grid_size,
+        overlays_config.as_ref(),
     );
 
     let policy_axes = axis_bias.policy_values();
@@ -1778,16 +1792,30 @@ struct CorruptionSignals<'a> {
     telemetry: &'a CorruptionTelemetry,
 }
 
-fn corruption_raster_from_simulation(
-    tiles: &[TileState],
-    trade_links: &[TradeLinkState],
-    populations: &[PopulationCohortState],
-    power_nodes: &[PowerNodeState],
-    logistics_raster: &ScalarRasterState,
-    corruption_signals: CorruptionSignals<'_>,
+struct CorruptionRasterInputs<'a> {
+    tiles: &'a [TileState],
+    trade_links: &'a [TradeLinkState],
+    populations: &'a [PopulationCohortState],
+    power_nodes: &'a [PowerNodeState],
+    logistics_raster: &'a ScalarRasterState,
+    corruption_signals: CorruptionSignals<'a>,
     grid_size: UVec2,
-) -> ScalarRasterState {
+    overlays: &'a SnapshotOverlaysConfig,
+}
+
+fn corruption_raster_from_simulation(inputs: CorruptionRasterInputs<'_>) -> ScalarRasterState {
+    let CorruptionRasterInputs {
+        tiles,
+        trade_links,
+        populations,
+        power_nodes,
+        logistics_raster,
+        corruption_signals,
+        grid_size,
+        overlays,
+    } = inputs;
     let CorruptionSignals { ledger, telemetry } = corruption_signals;
+    let overlay_cfg = overlays.corruption();
     let mut width = logistics_raster.width.max(grid_size.x).max(1);
     let mut height = logistics_raster.height.max(grid_size.y).max(1);
 
@@ -1903,20 +1931,28 @@ fn corruption_raster_from_simulation(
     let military_idx = CorruptionSubsystem::Military as usize;
     let governance_idx = CorruptionSubsystem::Governance as usize;
 
-    let logistic_intensity = subsystem_totals[logistics_idx]
-        .saturating_add(subsystem_spikes[logistics_idx].saturating_mul(2));
+    let logistic_intensity = subsystem_totals[logistics_idx].saturating_add(scale_spike(
+        subsystem_spikes[logistics_idx],
+        overlay_cfg.logistics_spike_multiplier(),
+    ));
     distribute_intensity(&mut samples, &logistics_weights, logistic_intensity);
 
-    let trade_intensity =
-        subsystem_totals[trade_idx].saturating_add(subsystem_spikes[trade_idx].saturating_mul(2));
+    let trade_intensity = subsystem_totals[trade_idx].saturating_add(scale_spike(
+        subsystem_spikes[trade_idx],
+        overlay_cfg.trade_spike_multiplier(),
+    ));
     distribute_intensity(&mut samples, &trade_weights, trade_intensity);
 
-    let military_intensity =
-        subsystem_totals[military_idx].saturating_add(subsystem_spikes[military_idx]);
+    let military_intensity = subsystem_totals[military_idx].saturating_add(scale_spike(
+        subsystem_spikes[military_idx],
+        overlay_cfg.military_spike_multiplier(),
+    ));
     distribute_intensity(&mut samples, &military_weights, military_intensity);
 
-    let governance_intensity =
-        subsystem_totals[governance_idx].saturating_add(subsystem_spikes[governance_idx]);
+    let governance_intensity = subsystem_totals[governance_idx].saturating_add(scale_spike(
+        subsystem_spikes[governance_idx],
+        overlay_cfg.governance_spike_multiplier(),
+    ));
     distribute_intensity(&mut samples, &governance_weights, governance_intensity);
 
     let logistic_norm = normalize_weights_to_scalar(&logistics_weights);
@@ -1924,10 +1960,10 @@ fn corruption_raster_from_simulation(
     let military_norm = normalize_weights_to_scalar(&military_weights);
     let governance_norm = normalize_weights_to_scalar(&governance_weights);
 
-    let logistic_weight = Scalar::from_f32(0.35);
-    let trade_weight = Scalar::from_f32(0.25);
-    let military_weight = Scalar::from_f32(0.2);
-    let governance_weight = Scalar::from_f32(0.2);
+    let logistic_weight = overlay_cfg.logistics_weight();
+    let trade_weight = overlay_cfg.trade_weight();
+    let military_weight = overlay_cfg.military_weight();
+    let governance_weight = overlay_cfg.governance_weight();
 
     for (idx, sample) in samples.iter_mut().enumerate() {
         let mut baseline = Scalar::zero();
@@ -1977,6 +2013,29 @@ fn normalize_weights_to_scalar(weights: &[i64]) -> Vec<Scalar> {
             }
         })
         .collect()
+}
+
+fn scale_spike(value: i64, multiplier: f32) -> i64 {
+    if value == 0 {
+        return 0;
+    }
+    if multiplier == 1.0 {
+        return value;
+    }
+    if multiplier == 0.0 {
+        return 0;
+    }
+    let scaled = (value as f64) * (multiplier as f64);
+    if scaled.is_nan() || scaled == 0.0 {
+        return 0;
+    }
+    if scaled > i64::MAX as f64 {
+        i64::MAX
+    } else if scaled < i64::MIN as f64 {
+        i64::MIN
+    } else {
+        scaled.round() as i64
+    }
 }
 
 fn distribute_intensity(samples: &mut [i64], weights: &[i64], intensity_raw: i64) {
@@ -2049,6 +2108,7 @@ fn fog_raster_from_discoveries(
     populations: &[PopulationCohortState],
     discovery: &DiscoveryProgressLedger,
     grid_size: UVec2,
+    overlays: &SnapshotOverlaysConfig,
 ) -> ScalarRasterState {
     let mut max_x = 0u32;
     let mut max_y = 0u32;
@@ -2142,7 +2202,7 @@ fn fog_raster_from_discoveries(
         }
     }
 
-    let blend_half = Scalar::from_f32(0.5);
+    let blend_weight = overlays.fog().global_local_blend();
 
     for tile in tiles {
         let Some(&idx) = tile_indices.get(&tile.entity) else {
@@ -2177,7 +2237,7 @@ fn fog_raster_from_discoveries(
         let local_cov = tile_local_average.get(&tile.entity).copied();
 
         let coverage = match (global_cov, local_cov) {
-            (Some(g), Some(l)) => ((g + l) * blend_half).clamp(Scalar::zero(), Scalar::one()),
+            (Some(g), Some(l)) => ((g + l) * blend_weight).clamp(Scalar::zero(), Scalar::one()),
             (Some(g), None) => g,
             (None, Some(l)) => l,
             (None, None) => Scalar::zero(),
@@ -2198,6 +2258,7 @@ fn culture_raster_from_layers(
     tiles: &[TileState],
     culture: &CultureManager,
     grid_size: UVec2,
+    overlays: &SnapshotOverlaysConfig,
 ) -> ScalarRasterState {
     let mut max_x = 0u32;
     let mut max_y = 0u32;
@@ -2211,10 +2272,11 @@ fn culture_raster_from_layers(
     let total = (width as usize).saturating_mul(height as usize).max(1);
     let mut samples = vec![0i64; total];
 
-    const HARD_TICK_BONUS_STEP: f32 = 0.05;
-    const HARD_TICK_BONUS_CAP: f32 = 0.5;
-    const SOFT_TICK_BONUS_STEP: f32 = 0.03;
-    const SOFT_TICK_BONUS_CAP: f32 = 0.3;
+    let culture_cfg = overlays.culture();
+    let hard_step = culture_cfg.hard_tick_bonus_step();
+    let hard_cap = culture_cfg.hard_tick_bonus_cap();
+    let soft_step = culture_cfg.soft_tick_bonus_step();
+    let soft_cap = culture_cfg.soft_tick_bonus_cap();
 
     for tile in tiles {
         if tile.x >= width || tile.y >= height {
@@ -2236,14 +2298,12 @@ fn culture_raster_from_layers(
         };
         let mut ratio = (magnitude / hard_threshold).clamp(Scalar::zero(), Scalar::one());
         if layer.divergence.ticks_above_hard > 0 {
-            let boost =
-                Scalar::from_f32(layer.divergence.ticks_above_hard as f32 * HARD_TICK_BONUS_STEP)
-                    .clamp(Scalar::zero(), Scalar::from_f32(HARD_TICK_BONUS_CAP));
+            let boost = Scalar::from_f32(layer.divergence.ticks_above_hard as f32 * hard_step)
+                .clamp(Scalar::zero(), Scalar::from_f32(hard_cap));
             ratio = (ratio + boost).clamp(Scalar::zero(), Scalar::one());
         } else if layer.divergence.ticks_above_soft > 0 {
-            let boost =
-                Scalar::from_f32(layer.divergence.ticks_above_soft as f32 * SOFT_TICK_BONUS_STEP)
-                    .clamp(Scalar::zero(), Scalar::from_f32(SOFT_TICK_BONUS_CAP));
+            let boost = Scalar::from_f32(layer.divergence.ticks_above_soft as f32 * soft_step)
+                .clamp(Scalar::zero(), Scalar::from_f32(soft_cap));
             ratio = (ratio + boost).clamp(Scalar::zero(), Scalar::one());
         }
         samples[idx] = ratio.raw();
@@ -2262,13 +2322,18 @@ fn military_raster_from_state(
     power_nodes: &[PowerNodeState],
     logistics_raster: &ScalarRasterState,
     grid_size: UVec2,
+    overlays: &SnapshotOverlaysConfig,
 ) -> ScalarRasterState {
-    const SIZE_FACTOR_DENOMINATOR: f32 = 1_500.0;
-    const PRESENCE_CLAMP_MAX: f32 = 5.0;
-    const HEAVY_SIZE_THRESHOLD: u32 = 2_500;
-    const HEAVY_SIZE_BONUS: f32 = 0.1;
-    const SUPPORT_CLAMP_MAX: f32 = 5.0;
-    const POWER_MARGIN_MAX: f32 = 5.0;
+    let config = overlays.military();
+    let size_factor_denominator = config.size_factor_denominator();
+    let presence_clamp_max = config.presence_clamp_max();
+    let heavy_size_threshold = config.heavy_size_threshold();
+    let heavy_size_bonus = config.heavy_size_bonus();
+    let support_clamp_max = config.support_clamp_max();
+    let power_margin_max = config.power_margin_max();
+    let presence_weight = config.presence_weight();
+    let support_weight = config.support_weight();
+    let combined_clamp_max = config.combined_clamp_max();
 
     let mut tile_positions = HashMap::with_capacity(tiles.len());
     let mut max_x = 0u32;
@@ -2300,13 +2365,12 @@ fn military_raster_from_state(
         if morale.raw() <= 0 {
             continue;
         }
-        let size_factor = Scalar::from_f32((cohort.size as f32) / SIZE_FACTOR_DENOMINATOR)
-            .clamp(Scalar::zero(), Scalar::from_f32(PRESENCE_CLAMP_MAX));
-        let mut contribution =
-            (size_factor * morale).clamp(Scalar::zero(), Scalar::from_f32(PRESENCE_CLAMP_MAX));
-        if cohort.size > HEAVY_SIZE_THRESHOLD {
-            contribution = (contribution + Scalar::from_f32(HEAVY_SIZE_BONUS))
-                .clamp(Scalar::zero(), Scalar::from_f32(PRESENCE_CLAMP_MAX));
+        let size_factor = Scalar::from_f32((cohort.size as f32) / size_factor_denominator)
+            .clamp(Scalar::zero(), presence_clamp_max);
+        let mut contribution = (size_factor * morale).clamp(Scalar::zero(), presence_clamp_max);
+        if cohort.size > heavy_size_threshold {
+            contribution =
+                (contribution + heavy_size_bonus).clamp(Scalar::zero(), presence_clamp_max);
         }
         presence[idx] += contribution;
     }
@@ -2332,7 +2396,7 @@ fn military_raster_from_state(
                     break;
                 }
                 let value = Scalar::from_raw(logistics_raster.samples[src_idx]).abs();
-                let clamped = value.clamp(Scalar::zero(), Scalar::from_f32(SUPPORT_CLAMP_MAX));
+                let clamped = value.clamp(Scalar::zero(), support_clamp_max);
                 support[dst_idx] += clamped;
             }
         }
@@ -2351,20 +2415,14 @@ fn military_raster_from_state(
         }
         let generation = Scalar::from_raw(node.generation).abs();
         let demand = Scalar::from_raw(node.demand).abs();
-        let margin =
-            (generation - demand).clamp(Scalar::zero(), Scalar::from_f32(POWER_MARGIN_MAX));
+        let margin = (generation - demand).clamp(Scalar::zero(), power_margin_max);
         support[idx] += margin;
     }
 
-    const PRESENCE_WEIGHT: f32 = 0.6;
-    const SUPPORT_WEIGHT: f32 = 0.4;
-
-    let presence_weight = Scalar::from_f32(PRESENCE_WEIGHT);
-    let support_weight = Scalar::from_f32(SUPPORT_WEIGHT);
     let mut samples = vec![0i64; total];
     for (idx, sample) in samples.iter_mut().enumerate() {
         let combined = (presence[idx] * presence_weight + support[idx] * support_weight)
-            .clamp(Scalar::zero(), Scalar::from_f32(5.0));
+            .clamp(Scalar::zero(), combined_clamp_max);
         *sample = combined.raw();
     }
 
@@ -2945,18 +3003,20 @@ mod tests {
 
         let telemetry = CorruptionTelemetry::default();
 
-        let raster = corruption_raster_from_simulation(
-            &tiles,
-            &trade_links,
-            &populations,
-            &power_nodes,
-            &logistics_raster,
-            CorruptionSignals {
+        let overlays_config = SnapshotOverlaysConfig::default();
+        let raster = corruption_raster_from_simulation(CorruptionRasterInputs {
+            tiles: &tiles,
+            trade_links: &trade_links,
+            populations: &populations,
+            power_nodes: &power_nodes,
+            logistics_raster: &logistics_raster,
+            corruption_signals: CorruptionSignals {
                 ledger: &ledger,
                 telemetry: &telemetry,
             },
-            UVec2::new(2, 1),
-        );
+            grid_size: UVec2::new(2, 1),
+            overlays: &overlays_config,
+        });
 
         assert_eq!(raster.width, 2);
         assert_eq!(raster.height, 1);
@@ -3001,7 +3061,14 @@ mod tests {
         discovery.add_progress(FactionId(0), 1, Scalar::from_f32(0.8));
         discovery.add_progress(FactionId(0), 2, Scalar::from_f32(0.4));
 
-        let fog = fog_raster_from_discoveries(&tiles, &populations, &discovery, UVec2::new(2, 1));
+        let overlays_config = SnapshotOverlaysConfig::default();
+        let fog = fog_raster_from_discoveries(
+            &tiles,
+            &populations,
+            &discovery,
+            UVec2::new(2, 1),
+            &overlays_config,
+        );
 
         assert_eq!(fog.width, 2);
         assert_eq!(fog.height, 1);

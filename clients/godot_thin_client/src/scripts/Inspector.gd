@@ -100,8 +100,9 @@ const MAP_SIZE_DEFAULT_DIMENSIONS := Vector2i(80, 52)
 @onready var heat_entity_spin: SpinBox = $RootPanel/TabContainer/Commands/HeatControls/HeatRow/HeatEntitySpin
 @onready var heat_delta_spin: SpinBox = $RootPanel/TabContainer/Commands/HeatControls/HeatRow/HeatDeltaSpin
 @onready var heat_apply_button: Button = $RootPanel/TabContainer/Commands/HeatControls/HeatRow/HeatApplyButton
-@onready var turn_pipeline_path_edit: LineEdit = $RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/TurnPipelinePathEdit
+@onready var config_path_edit: LineEdit = $RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/ConfigPathEdit
 @onready var turn_pipeline_reload_button: Button = $RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/TurnPipelineReloadButton
+@onready var snapshot_overlays_reload_button: Button = $RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/SnapshotOverlaysReloadButton
 
 var _axis_bias: Dictionary = {}
 var _sentiment: Dictionary = {}
@@ -262,7 +263,7 @@ func _ready() -> void:
 	_initialize_influencer_controls()
 	_initialize_corruption_controls()
 	_initialize_heat_controls()
-	_initialize_turn_pipeline_controls()
+	_initialize_config_controls()
 	_initialize_map_controls()
 	_ensure_overlay_selector()
 	apply_typography()
@@ -1075,12 +1076,14 @@ func _initialize_heat_controls() -> void:
 		heat_apply_button.pressed.connect(_on_heat_apply_button_pressed)
 	_update_command_controls_enabled()
 
-func _initialize_turn_pipeline_controls() -> void:
-	if turn_pipeline_path_edit != null:
-		turn_pipeline_path_edit.clear_button_enabled = true
-		turn_pipeline_path_edit.text = ""
+func _initialize_config_controls() -> void:
+	if config_path_edit != null:
+		config_path_edit.clear_button_enabled = true
+		config_path_edit.text = ""
 	if turn_pipeline_reload_button != null:
 		turn_pipeline_reload_button.pressed.connect(_on_turn_pipeline_reload_button_pressed)
+	if snapshot_overlays_reload_button != null:
+		snapshot_overlays_reload_button.pressed.connect(_on_snapshot_overlays_reload_button_pressed)
 	_update_command_controls_enabled()
 
 func attach_script_host(manager: ScriptHostManager) -> void:
@@ -1232,8 +1235,10 @@ func _update_command_controls_enabled() -> void:
 		heat_delta_spin.editable = connected
 	if turn_pipeline_reload_button != null:
 		turn_pipeline_reload_button.disabled = not connected
-	if turn_pipeline_path_edit != null:
-		turn_pipeline_path_edit.editable = connected
+	if snapshot_overlays_reload_button != null:
+		snapshot_overlays_reload_button.disabled = not connected
+	if config_path_edit != null:
+		config_path_edit.editable = connected
 
 func _ensure_command_connection() -> bool:
 	if command_client == null:
@@ -4363,13 +4368,24 @@ func _on_corruption_inject_button_pressed() -> void:
 
 func _on_turn_pipeline_reload_button_pressed() -> void:
 	var path: String = ""
-	if turn_pipeline_path_edit != null:
-		path = String(turn_pipeline_path_edit.text).strip_edges()
+	if config_path_edit != null:
+		path = String(config_path_edit.text).strip_edges()
 	var command_line: String = "reload_config turn"
 	var summary: String = "Turn pipeline config reload requested (watched file)."
 	if path != "":
 		command_line += " %s" % path
 		summary = "Turn pipeline config reload requested (%s)." % path
+	_send_command(command_line, summary)
+
+func _on_snapshot_overlays_reload_button_pressed() -> void:
+	var path: String = ""
+	if config_path_edit != null:
+		path = String(config_path_edit.text).strip_edges()
+	var command_line: String = "reload_config overlay"
+	var summary: String = "Snapshot overlays config reload requested (watched file)."
+	if path != "":
+		command_line += " %s" % path
+		summary = "Snapshot overlays config reload requested (%s)." % path
 	_send_command(command_line, summary)
 
 func _on_heat_apply_button_pressed() -> void:

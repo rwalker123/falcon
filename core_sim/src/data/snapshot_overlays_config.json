@@ -1,0 +1,32 @@
+{
+  "corruption": {
+    "logistics_weight": 0.35,
+    "trade_weight": 0.25,
+    "military_weight": 0.20,
+    "governance_weight": 0.20,
+    "logistics_spike_multiplier": 2.0,
+    "trade_spike_multiplier": 2.0,
+    "military_spike_multiplier": 1.0,
+    "governance_spike_multiplier": 1.0
+  },
+  "culture": {
+    "hard_tick_bonus_step": 0.05,
+    "hard_tick_bonus_cap": 0.5,
+    "soft_tick_bonus_step": 0.03,
+    "soft_tick_bonus_cap": 0.3
+  },
+  "military": {
+    "size_factor_denominator": 1500.0,
+    "presence_clamp_max": 5.0,
+    "heavy_size_threshold": 2500,
+    "heavy_size_bonus": 0.1,
+    "support_clamp_max": 5.0,
+    "power_margin_max": 5.0,
+    "presence_weight": 0.6,
+    "support_weight": 0.4,
+    "combined_clamp_max": 5.0
+  },
+  "fog": {
+    "global_local_blend": 0.5
+  }
+}
