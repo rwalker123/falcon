@@ -917,6 +917,10 @@ pub fn knowledge_ledger_tick(
 
     if let Ok(payload) = serde_json::to_string(&frame) {
         info!(target: KNOWLEDGE_TELEMETRY_TOPIC, "{} {}", KNOWLEDGE_TELEMETRY_TOPIC, payload);
+        // NOTE: Emitting telemetry frames at `info` ensures external tooling (e.g. log stream
+        // subscribers, dashboards) can consume the knowledge ledger without enabling verbose
+        // logging. This aligns with other telemetry topics, even though it increases default
+        // log volume slightly.
     }
 
     ledger.mark_emitted(tick.0, summary);
