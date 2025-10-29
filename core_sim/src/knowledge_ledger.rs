@@ -490,12 +490,8 @@ impl KnowledgeLedger {
         }
     }
 
-    fn telemetry_events_for_tick(&self, tick: u64) -> Vec<KnowledgeTelemetryEvent> {
-        self.timeline
-            .iter()
-            .filter(|event| event.tick == tick)
-            .map(to_telemetry_event)
-            .collect()
+    fn telemetry_events(&self) -> Vec<KnowledgeTelemetryEvent> {
+        self.timeline.iter().map(to_telemetry_event).collect()
     }
 
     fn should_emit(&self, tick: u64, metrics: &KnowledgeMetricsState) -> bool {
@@ -880,7 +876,7 @@ pub fn knowledge_ledger_tick(
         return;
     }
 
-    let events = ledger.telemetry_events_for_tick(tick.0);
+    let events = ledger.telemetry_events();
     let missions = mission_telemetry(&catalog);
     if events.is_empty()
         && missions.is_empty()
