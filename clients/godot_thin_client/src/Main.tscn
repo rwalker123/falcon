@@ -343,12 +343,49 @@ bbcode_enabled = true
 text = "[i]Awaiting overlay telemetry...[/i]"
 fit_content = true
 
-[node name="Culture" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+[node name="Crisis" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
 visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 metadata/_tab_index = 4
+
+[node name="CrisisVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Crisis"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="CrisisSummaryLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Gauge Summary"
+
+[node name="CrisisSummaryText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+text = "[b]Crisis Telemetry[/b]\nAwaiting crisis telemetry."
+fit_content = true
+
+[node name="CrisisAlertsLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Alert Summary"
+
+[node name="CrisisAlertsText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+text = "[i]No crisis alerts recorded.[/i]"
+fit_content = true
+
+[node name="Culture" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 13
 
 [node name="CultureVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Culture"]
 layout_mode = 2

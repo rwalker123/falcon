@@ -10,6 +10,7 @@ const CORRUPTION_COLOR := Color(0.92, 0.58, 0.18, 1.0)
 const FOG_COLOR := Color(0.6, 0.78, 0.95, 1.0)
 const CULTURE_COLOR := Color(0.72, 0.36, 0.88, 1.0)
 const MILITARY_COLOR := Color(0.36, 0.7, 0.43, 1.0)
+const CRISIS_COLOR := Color(0.92, 0.24, 0.46, 1.0)
 const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
 const GRID_LINE_COLOR := Color(0.1, 0.12, 0.18, 0.45)
 const SQRT3 := 1.7320508075688772
@@ -26,7 +27,14 @@ const OVERLAY_COLORS := {
     "corruption": CORRUPTION_COLOR,
     "fog": FOG_COLOR,
     "culture": CULTURE_COLOR,
-    "military": MILITARY_COLOR
+    "military": MILITARY_COLOR,
+    "crisis": CRISIS_COLOR
+}
+
+const CRISIS_SEVERITY_COLORS := {
+    "critical": Color(0.96, 0.28, 0.38, 0.95),
+    "warn": Color(0.97, 0.75, 0.28, 0.92),
+    "safe": Color(0.5, 0.82, 0.72, 0.85)
 }
 
 const TERRAIN_COLORS := {
@@ -128,6 +136,7 @@ var tile_lookup: Dictionary = {}
 var trade_links_overlay: Array = []
 var trade_overlay_enabled: bool = false
 var selected_trade_entity: int = -1
+var crisis_annotations: Array = []
 
 var terrain_mode: bool = true
 
@@ -172,6 +181,12 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
     terrain_tags_overlay = PackedInt32Array(overlays.get("terrain_tags", []))
     var tag_labels_raw: Variant = overlays.get("terrain_tag_labels", {})
     terrain_tag_labels = tag_labels_raw if typeof(tag_labels_raw) == TYPE_DICTIONARY else {}
+    crisis_annotations = []
+    var crisis_annotations_variant: Variant = overlays.get("crisis_annotations", [])
+    if crisis_annotations_variant is Array:
+        for entry in crisis_annotations_variant:
+            if entry is Dictionary:
+                crisis_annotations.append((entry as Dictionary).duplicate(true))
     units = Array(snapshot.get("units", []))
     routes = Array(snapshot.get("orders", []))
 
@@ -212,6 +227,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
         "avg_fog": _average_overlay("fog"),
         "avg_culture": _average_overlay("culture"),
         "avg_military": _average_overlay("military"),
+        "avg_crisis": _average_overlay("crisis"),
         "dimensions_changed": dimensions_changed,
         "active_overlay": active_overlay_key
     }
@@ -302,6 +318,7 @@ func _draw() -> void:
             draw_polyline(_hex_points(center, radius, true), GRID_LINE_COLOR, 2.0, true)
 
     _draw_trade_overlay(radius, origin)
+    _draw_crisis_annotations(radius, origin)
 
     for unit in units:
         _draw_unit(unit, radius, origin)
@@ -335,6 +352,76 @@ func set_overlay_channel(key: String) -> void:
     active_overlay_key = key
     queue_redraw()
     _emit_overlay_legend()
+
+func _draw_crisis_annotations(radius: float, origin: Vector2) -> void:
+    if active_overlay_key != "crisis":
+        return
+    if crisis_annotations.is_empty():
+        return
+    for entry_variant in crisis_annotations:
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        var severity := String(entry.get("severity", "safe"))
+        var color: Color = CRISIS_SEVERITY_COLORS.get(severity, CRISIS_COLOR)
+        var stroke_color: Color = color
+        stroke_color.a = max(color.a, 0.9)
+        var fill_color: Color = color
+        fill_color.a = min(color.a, 0.45)
+        var coords: Array[Vector2] = []
+        var path_variant: Variant = entry.get("path", PackedInt32Array())
+        if path_variant is PackedInt32Array:
+            var packed: PackedInt32Array = path_variant
+            var length: int = packed.size()
+            if length < 2:
+                continue
+            for idx in range(0, length, 2):
+                if idx + 1 >= length:
+                    break
+                var col := int(packed[idx])
+                var row := int(packed[idx + 1])
+                coords.append(_hex_center(col, row, radius, origin))
+        elif path_variant is Array:
+            var arr: Array = path_variant
+            if arr.is_empty():
+                continue
+            for step in arr:
+                if step is Array and step.size() >= 2:
+                    var col := int(step[0])
+                    var row := int(step[1])
+                    coords.append(_hex_center(col, row, radius, origin))
+        if coords.is_empty():
+            continue
+        var stroke_width: float = clamp(radius * 0.18, 2.0, 8.0)
+        if coords.size() == 1:
+            var center: Vector2 = coords[0]
+            var halo_color: Color = fill_color
+            halo_color.a = max(fill_color.a, 0.35)
+            draw_circle(center, radius * 0.55, halo_color)
+            var core_color: Color = stroke_color
+            core_color.a = max(stroke_color.a, 0.85)
+            draw_circle(center, radius * 0.32, core_color)
+        else:
+            var polyline := PackedVector2Array()
+            for point in coords:
+                polyline.append(point)
+            draw_polyline(polyline, stroke_color, stroke_width, true)
+            var head: Vector2 = coords[coords.size() - 1]
+            var tail: Vector2 = coords[0]
+            var head_radius: float = clamp(radius * 0.28, 4.0, 12.0)
+            var tail_radius: float = clamp(radius * 0.2, 3.0, 10.0)
+            draw_circle(head, head_radius, stroke_color)
+            var tail_color: Color = fill_color
+            tail_color.a = max(fill_color.a, 0.55)
+            draw_circle(tail, tail_radius, tail_color)
+        var label: String = String(entry.get("label", ""))
+        if label != "":
+            var font: Font = ThemeDB.fallback_font
+            if font != null:
+                var anchor: Vector2 = coords[coords.size() - 1]
+                var text_color: Color = Color(0.95, 0.96, 0.98, 0.95)
+                var font_size: int = int(round(clamp(radius * 0.5, 14.0, 26.0)))
+                draw_string(font, anchor + Vector2(radius * 0.3, -radius * 0.22), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, text_color)
 
 func _draw_trade_overlay(radius: float, origin: Vector2) -> void:
     if not trade_overlay_enabled:

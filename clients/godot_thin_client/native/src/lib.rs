@@ -1,3 +1,4 @@
+use flatbuffers::Vector;
 use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 use std::collections::{BTreeSet, HashMap};
@@ -572,6 +573,7 @@ struct OverlaySlices<'a> {
     fog: &'a [f32],
     culture: &'a [f32],
     military: &'a [f32],
+    crisis: &'a [f32],
 }
 
 struct TerrainSlices<'a> {
@@ -579,11 +581,19 @@ struct TerrainSlices<'a> {
     tags: Option<&'a [u16]>,
 }
 
+#[derive(Clone, Default)]
+struct CrisisAnnotationRecord {
+    label: Option<String>,
+    severity: fb::CrisisSeverityBand,
+    path: Vec<i32>,
+}
+
 fn snapshot_dict(
     tick: u64,
     grid_size: GridSize,
     overlays: OverlaySlices<'_>,
     terrain: TerrainSlices<'_>,
+    crisis_annotations: &[CrisisAnnotationRecord],
 ) -> Dictionary {
     let mut dict = Dictionary::new();
     let _ = dict.insert("turn", tick as i64);
@@ -612,6 +622,7 @@ fn snapshot_dict(
     let fog_base = copy_into(overlays.fog);
     let culture_base = copy_into(overlays.culture);
     let military_base = copy_into(overlays.military);
+    let crisis_base = copy_into(overlays.crisis);
 
     let mut logistics_normalized = logistics_base.clone();
     normalize_overlay(&mut logistics_normalized);
@@ -625,6 +636,8 @@ fn snapshot_dict(
     normalize_overlay(&mut culture_normalized);
     let mut military_normalized = military_base.clone();
     normalize_overlay(&mut military_normalized);
+    let mut crisis_normalized = crisis_base.clone();
+    normalize_overlay(&mut crisis_normalized);
 
     let mut logistics_contrast_vec = logistics_normalized.clone();
     for value in logistics_contrast_vec.iter_mut() {
@@ -644,6 +657,11 @@ fn snapshot_dict(
     for value in military_contrast_vec.iter_mut() {
         *value = ((*value - 0.5).abs() * 2.0).clamp(0.0, 1.0);
     }
+    let mut crisis_contrast_vec = crisis_normalized.clone();
+    for value in crisis_contrast_vec.iter_mut() {
+        let v = *value;
+        *value = v * (1.0 - v);
+    }
 
     let corruption_placeholder =
         overlays.corruption.is_empty() || corruption_base.iter().all(|v| v.abs() < f32::EPSILON);
@@ -653,6 +671,8 @@ fn snapshot_dict(
         overlays.culture.is_empty() || culture_base.iter().all(|v| v.abs() < f32::EPSILON);
     let military_placeholder =
         overlays.military.is_empty() || military_base.iter().all(|v| v.abs() < f32::EPSILON);
+    let crisis_placeholder =
+        overlays.crisis.is_empty() || crisis_base.iter().all(|v| v.abs() < f32::EPSILON);
 
     let logistics_array = packed_from_slice(&logistics_normalized);
     let logistics_raw_array = packed_from_slice(&logistics_base);
@@ -672,6 +692,9 @@ fn snapshot_dict(
     let military_array = packed_from_slice(&military_normalized);
     let military_raw_array = packed_from_slice(&military_base);
     let military_contrast_array = packed_from_slice(&military_contrast_vec);
+    let crisis_array = packed_from_slice(&crisis_normalized);
+    let crisis_raw_array = packed_from_slice(&crisis_base);
+    let crisis_contrast_array = packed_from_slice(&crisis_contrast_vec);
 
     let mut overlays = Dictionary::new();
     let mut channels = Dictionary::new();
@@ -690,6 +713,21 @@ fn snapshot_dict(
             raw: &logistics_raw_array,
             contrast: &logistics_contrast_array,
             placeholder: false,
+        },
+    );
+    insert_overlay_channel(
+        &mut channels,
+        &mut channel_order,
+        OverlayChannelParams {
+            key: "crisis",
+            label: "Crisis Stress",
+            description: Some(
+                "Normalized crisis pressure per tile derived from local grid stability and incidents.",
+            ),
+            normalized: &crisis_array,
+            raw: &crisis_raw_array,
+            contrast: &crisis_contrast_array,
+            placeholder: crisis_placeholder,
         },
     );
     insert_overlay_channel(
@@ -770,7 +808,12 @@ fn snapshot_dict(
     let _ = overlays.insert("channel_order", channel_order.clone());
     let _ = overlays.insert("default_channel", "logistics");
 
-    if corruption_placeholder || fog_placeholder || culture_placeholder || military_placeholder {
+    if corruption_placeholder
+        || fog_placeholder
+        || culture_placeholder
+        || military_placeholder
+        || crisis_placeholder
+    {
         let mut placeholder_keys = PackedStringArray::new();
         if corruption_placeholder {
             placeholder_keys.push(&GString::from("corruption"));
@@ -783,6 +826,9 @@ fn snapshot_dict(
         }
         if military_placeholder {
             placeholder_keys.push(&GString::from("military"));
+        }
+        if crisis_placeholder {
+            placeholder_keys.push(&GString::from("crisis"));
         }
         let _ = overlays.insert("placeholder_channels", placeholder_keys);
     }
@@ -806,6 +852,15 @@ fn snapshot_dict(
     let _ = overlays.insert("military", military_array.clone());
     let _ = overlays.insert("military_raw", military_raw_array.clone());
     let _ = overlays.insert("military_contrast", military_contrast_array.clone());
+    let _ = overlays.insert("crisis", crisis_array.clone());
+    let _ = overlays.insert("crisis_raw", crisis_raw_array.clone());
+    let _ = overlays.insert("crisis_contrast", crisis_contrast_array.clone());
+    let mut crisis_annotation_array = VariantArray::new();
+    for record in crisis_annotations {
+        let dict = crisis_annotation_to_dict(record);
+        crisis_annotation_array.push(&dict.to_variant());
+    }
+    let _ = overlays.insert("crisis_annotations", crisis_annotation_array);
 
     if let Some(terrain_data) = terrain.terrain {
         let mut terrain_array = PackedInt32Array::new();
@@ -928,6 +983,9 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     if let Some(raster) = delta.militaryRaster() {
         agg.apply_military_raster(raster);
     }
+    if let Some(overlay) = delta.crisisOverlay() {
+        agg.apply_crisis_overlay(overlay);
+    }
     let mut dict = agg.into_dictionary();
 
     if let Some(definitions) = delta.greatDiscoveryDefinitions() {
@@ -943,6 +1001,14 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
 
     if let Some(sentiment) = delta.sentiment() {
         let _ = dict.insert("sentiment", sentiment_to_dict(sentiment));
+    }
+
+    if let Some(crisis) = delta.crisisTelemetry() {
+        let _ = dict.insert("crisis_telemetry", crisis_telemetry_to_dict(crisis));
+    }
+
+    if let Some(crisis_overlay) = delta.crisisOverlay() {
+        let _ = dict.insert("crisis_overlay", crisis_overlay_to_dict(crisis_overlay));
     }
 
     if let Some(great_discoveries) = delta.greatDiscoveries() {
@@ -1079,6 +1145,10 @@ struct DeltaAggregator {
     military_width: u32,
     military_height: u32,
     military_samples: Vec<f32>,
+    crisis_width: u32,
+    crisis_height: u32,
+    crisis_samples: Vec<f32>,
+    crisis_annotations: Vec<CrisisAnnotationRecord>,
 }
 
 impl DeltaAggregator {
@@ -1210,6 +1280,43 @@ impl DeltaAggregator {
         }
     }
 
+    fn apply_crisis_overlay(&mut self, overlay: fb::CrisisOverlayState<'_>) {
+        if let Some(raster) = overlay.heatmap() {
+            self.crisis_width = raster.width();
+            self.crisis_height = raster.height();
+            let count = (self.crisis_width as usize)
+                .saturating_mul(self.crisis_height as usize)
+                .max(1);
+            self.crisis_samples.resize(count, 0.0);
+            if let Some(samples) = raster.samples() {
+                for (idx, value) in samples.iter().enumerate() {
+                    if idx >= count {
+                        break;
+                    }
+                    self.crisis_samples[idx] = fixed64_to_f32(value);
+                }
+            }
+        }
+        self.crisis_annotations.clear();
+        if let Some(entries) = overlay.annotations() {
+            self.crisis_annotations.reserve(entries.len());
+            for entry in entries {
+                let mut path = Vec::new();
+                if let Some(route) = entry.path() {
+                    path.reserve(route.len());
+                    for value in route {
+                        path.push(value as i32);
+                    }
+                }
+                self.crisis_annotations.push(CrisisAnnotationRecord {
+                    label: entry.label().map(|value| value.to_string()),
+                    severity: entry.severity(),
+                    path,
+                });
+            }
+        }
+    }
+
     fn into_dictionary(self) -> Dictionary {
         let DeltaAggregator {
             tick,
@@ -1238,6 +1345,10 @@ impl DeltaAggregator {
             military_width,
             military_height,
             military_samples,
+            crisis_width,
+            crisis_height,
+            crisis_samples,
+            crisis_annotations,
         } = self;
 
         let mut final_width = terrain_width
@@ -1374,6 +1485,23 @@ impl DeltaAggregator {
             }
         }
 
+        let mut crisis = vec![0.0f32; total];
+        if crisis_width > 0 && crisis_height > 0 && !crisis_samples.is_empty() {
+            for y in 0..crisis_height {
+                for x in 0..crisis_width {
+                    let src_idx = (y as usize) * (crisis_width as usize) + x as usize;
+                    if src_idx >= crisis_samples.len() {
+                        break;
+                    }
+                    if x >= final_width || y >= final_height {
+                        continue;
+                    }
+                    let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                    crisis[dst_idx] = crisis_samples[src_idx];
+                }
+            }
+        }
+
         let terrain_ref = if terrain_types.is_empty() {
             None
         } else {
@@ -1398,11 +1526,13 @@ impl DeltaAggregator {
                 fog: &fog,
                 culture: &culture,
                 military: &military,
+                crisis: &crisis,
             },
             TerrainSlices {
                 terrain: terrain_ref.as_deref(),
                 tags: tags_ref.as_deref(),
             },
+            &crisis_annotations,
         )
     }
 }
@@ -1474,6 +1604,9 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
     let mut culture_dims = (0u32, 0u32);
     let mut military_grid: Vec<f32> = Vec::new();
     let mut military_dims = (0u32, 0u32);
+    let mut crisis_grid: Vec<f32> = Vec::new();
+    let mut crisis_dims = (0u32, 0u32);
+    let mut crisis_annotations: Vec<CrisisAnnotationRecord> = Vec::new();
     if let Some(raster) = snapshot.logisticsRaster() {
         let width = raster.width();
         let height = raster.height();
@@ -1693,6 +1826,42 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         }
     }
 
+    if let Some(overlay) = snapshot.crisisOverlay() {
+        if let Some(raster) = overlay.heatmap() {
+            let width = raster.width();
+            let height = raster.height();
+            if width > 0 && height > 0 {
+                let total = (width as usize).saturating_mul(height as usize);
+                crisis_grid = vec![0.0f32; total];
+                if let Some(samples) = raster.samples() {
+                    for (idx, value) in samples.iter().enumerate() {
+                        if idx >= total {
+                            break;
+                        }
+                        crisis_grid[idx] = fixed64_to_f32(value);
+                    }
+                }
+                crisis_dims = (width, height);
+            }
+        }
+        if let Some(entries) = overlay.annotations() {
+            for annotation in entries {
+                let mut record = CrisisAnnotationRecord {
+                    label: annotation.label().map(|value| value.to_string()),
+                    severity: annotation.severity(),
+                    path: Vec::new(),
+                };
+                if let Some(path) = annotation.path() {
+                    record.path.reserve(path.len());
+                    for value in path {
+                        record.path.push(value as i32);
+                    }
+                }
+                crisis_annotations.push(record);
+            }
+        }
+    }
+
     if military_grid.is_empty() {
         let fallback_width = logistics_dims
             .0
@@ -1709,6 +1878,26 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
             .max(1);
         military_grid = vec![0.0f32; total];
         military_dims = (fallback_width, fallback_height);
+    }
+
+    if crisis_grid.is_empty() {
+        let fallback_width = logistics_dims
+            .0
+            .max(military_dims.0)
+            .max(culture_dims.0)
+            .max(terrain_width)
+            .max(1);
+        let fallback_height = logistics_dims
+            .1
+            .max(military_dims.1)
+            .max(culture_dims.1)
+            .max(terrain_height)
+            .max(1);
+        let total = (fallback_width as usize)
+            .saturating_mul(fallback_height as usize)
+            .max(1);
+        crisis_grid = vec![0.0f32; total];
+        crisis_dims = (fallback_width, fallback_height);
     }
 
     let final_width = logistics_dims
@@ -1835,6 +2024,23 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         }
     }
 
+    let mut crisis_resized = vec![0.0f32; total];
+    if crisis_dims.0 > 0 && crisis_dims.1 > 0 {
+        for y in 0..crisis_dims.1 {
+            for x in 0..crisis_dims.0 {
+                let src_idx = (y as usize) * (crisis_dims.0 as usize) + x as usize;
+                if src_idx >= crisis_grid.len() {
+                    break;
+                }
+                if x >= final_width || y >= final_height {
+                    continue;
+                }
+                let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                crisis_resized[dst_idx] = crisis_grid[src_idx];
+            }
+        }
+    }
+
     let mut terrain_vec: Vec<u16> = Vec::new();
     let mut tag_vec: Vec<u16> = Vec::new();
     if terrain_width > 0 && terrain_height > 0 && !terrain_samples.is_empty() {
@@ -1881,11 +2087,13 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
             fog: &fog_resized,
             culture: &culture_resized,
             military: &military_resized,
+            crisis: &crisis_resized,
         },
         TerrainSlices {
             terrain: terrain_slice,
             tags: terrain_tag_slice,
         },
+        &crisis_annotations,
     );
 
     if let Some(axis_bias) = snapshot.axisBias() {
@@ -1914,6 +2122,14 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
 
     if let Some(power_metrics) = snapshot.powerMetrics() {
         let _ = dict.insert("power_metrics", power_metrics_to_dict(power_metrics));
+    }
+
+    if let Some(crisis) = snapshot.crisisTelemetry() {
+        let _ = dict.insert("crisis_telemetry", crisis_telemetry_to_dict(crisis));
+    }
+
+    if let Some(crisis_overlay) = snapshot.crisisOverlay() {
+        let _ = dict.insert("crisis_overlay", crisis_overlay_to_dict(crisis_overlay));
     }
 
     if let Some(trade_links) = snapshot.tradeLinks() {
@@ -2757,6 +2973,164 @@ fn power_metrics_to_dict(metrics: fb::PowerTelemetryState<'_>) -> Dictionary {
     }
     let _ = dict.insert("incidents", incidents_array);
 
+    dict
+}
+
+fn crisis_metric_kind_to_str(kind: fb::CrisisMetricKind) -> &'static str {
+    match kind {
+        fb::CrisisMetricKind::R0 => "r0",
+        fb::CrisisMetricKind::GridStressPct => "grid_stress_pct",
+        fb::CrisisMetricKind::UnauthorizedQueuePct => "unauthorized_queue_pct",
+        fb::CrisisMetricKind::SwarmsActive => "swarms_active",
+        fb::CrisisMetricKind::PhageDensity => "phage_density",
+        _ => "unknown",
+    }
+}
+
+fn crisis_metric_label(kind: fb::CrisisMetricKind) -> &'static str {
+    match kind {
+        fb::CrisisMetricKind::R0 => "R₀",
+        fb::CrisisMetricKind::GridStressPct => "Grid Stress %",
+        fb::CrisisMetricKind::UnauthorizedQueuePct => "Unauthorized Queue %",
+        fb::CrisisMetricKind::SwarmsActive => "Swarms Active",
+        fb::CrisisMetricKind::PhageDensity => "Phage Density",
+        _ => "Metric",
+    }
+}
+
+fn crisis_severity_band_to_str(band: fb::CrisisSeverityBand) -> &'static str {
+    match band {
+        fb::CrisisSeverityBand::Warn => "warn",
+        fb::CrisisSeverityBand::Critical => "critical",
+        _ => "safe",
+    }
+}
+
+fn crisis_history_to_array(
+    history: Vector<'_, flatbuffers::ForwardsUOffset<fb::CrisisTrendSample<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for sample in history {
+        let mut entry = Dictionary::new();
+        let _ = entry.insert("tick", sample.tick() as i64);
+        let _ = entry.insert("value", sample.value());
+        array.push(&entry.to_variant());
+    }
+    array
+}
+
+fn crisis_gauge_to_dict(gauge: fb::CrisisGaugeState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let kind = gauge.kind();
+    let _ = dict.insert("kind", crisis_metric_kind_to_str(kind));
+    let _ = dict.insert("label", crisis_metric_label(kind));
+    let _ = dict.insert("raw", gauge.raw());
+    let _ = dict.insert("ema", gauge.ema());
+    let _ = dict.insert("trend_5t", gauge.trend5t());
+    let _ = dict.insert("warn_threshold", gauge.warnThreshold());
+    let _ = dict.insert("critical_threshold", gauge.criticalThreshold());
+    let _ = dict.insert("last_updated_tick", gauge.lastUpdatedTick() as i64);
+    let _ = dict.insert("stale_ticks", gauge.staleTicks() as i64);
+    let _ = dict.insert("band", crisis_severity_band_to_str(gauge.band()));
+    if let Some(history) = gauge.history() {
+        let _ = dict.insert("history", crisis_history_to_array(history));
+    } else {
+        let _ = dict.insert("history", VariantArray::new());
+    }
+    dict
+}
+
+fn crisis_telemetry_to_dict(telemetry: fb::CrisisTelemetryState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let mut gauges_array = VariantArray::new();
+    if let Some(gauges) = telemetry.gauges() {
+        for gauge in gauges {
+            let dict = crisis_gauge_to_dict(gauge);
+            gauges_array.push(&dict.to_variant());
+        }
+    }
+    let _ = dict.insert("gauges", gauges_array);
+    let _ = dict.insert("modifiers_active", telemetry.modifiersActive() as i64);
+    let _ = dict.insert("foreshock_incidents", telemetry.foreshockIncidents() as i64);
+    let _ = dict.insert(
+        "containment_incidents",
+        telemetry.containmentIncidents() as i64,
+    );
+    let _ = dict.insert("warnings_active", telemetry.warningsActive() as i64);
+    let _ = dict.insert("criticals_active", telemetry.criticalsActive() as i64);
+    dict
+}
+
+fn crisis_overlay_to_dict(overlay: fb::CrisisOverlayState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let mut heatmap_dict = Dictionary::new();
+    if let Some(raster) = overlay.heatmap() {
+        let width = raster.width();
+        let height = raster.height();
+        let mut data = Vec::new();
+        if width > 0 && height > 0 {
+            let total = (width as usize).saturating_mul(height as usize);
+            data = vec![0.0f32; total];
+            if let Some(samples) = raster.samples() {
+                for (idx, value) in samples.iter().enumerate() {
+                    if idx >= total {
+                        break;
+                    }
+                    data[idx] = fixed64_to_f32(value);
+                }
+            }
+        }
+        let _ = heatmap_dict.insert("width", width as i64);
+        let _ = heatmap_dict.insert("height", height as i64);
+        let _ = heatmap_dict.insert("samples", packed_from_slice(&data));
+    } else {
+        let _ = heatmap_dict.insert("width", 0);
+        let _ = heatmap_dict.insert("height", 0);
+        let _ = heatmap_dict.insert("samples", PackedFloat32Array::new());
+    }
+    let _ = dict.insert("heatmap", heatmap_dict);
+
+    let mut annotations = VariantArray::new();
+    if let Some(entries) = overlay.annotations() {
+        for entry in entries {
+            let mut annotation = Dictionary::new();
+            if let Some(label) = entry.label() {
+                let _ = annotation.insert("label", label);
+            }
+            let _ = annotation.insert("severity", crisis_severity_band_to_str(entry.severity()));
+            if let Some(path) = entry.path() {
+                let mut packed = PackedInt32Array::new();
+                packed.resize(path.len());
+                let slice = packed.as_mut_slice();
+                for (idx, value) in path.iter().enumerate() {
+                    slice[idx] = value as i32;
+                }
+                let _ = annotation.insert("path", packed);
+            } else {
+                let _ = annotation.insert("path", PackedInt32Array::new());
+            }
+            annotations.push(&annotation.to_variant());
+        }
+    }
+    let _ = dict.insert("annotations", annotations);
+    dict
+}
+
+fn crisis_annotation_to_dict(record: &CrisisAnnotationRecord) -> Dictionary {
+    let mut dict = Dictionary::new();
+    if let Some(label) = &record.label {
+        let _ = dict.insert("label", label.clone());
+    }
+    let _ = dict.insert("severity", crisis_severity_band_to_str(record.severity));
+    if record.path.is_empty() {
+        let _ = dict.insert("path", PackedInt32Array::new());
+    } else {
+        let mut packed = PackedInt32Array::new();
+        packed.resize(record.path.len());
+        let slice = packed.as_mut_slice();
+        slice.copy_from_slice(&record.path);
+        let _ = dict.insert("path", packed);
+    }
     dict
 }
 

@@ -50,6 +50,10 @@ const COUNTERINTEL_POLICY_OPTIONS := [
 @onready var power_summary_text: RichTextLabel = $RootPanel/TabContainer/Power/PowerVBox/PowerSummarySection/PowerSummaryText
 @onready var power_node_list: ItemList = $RootPanel/TabContainer/Power/PowerVBox/PowerNodeSection/PowerNodeList
 @onready var power_node_detail_text: RichTextLabel = $RootPanel/TabContainer/Power/PowerVBox/PowerNodeSection/PowerNodeDetailText
+@onready var crisis_summary_label: Label = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSummaryLabel
+@onready var crisis_summary_text: RichTextLabel = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSummaryText
+@onready var crisis_alerts_label: Label = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisAlertsLabel
+@onready var crisis_alerts_text: RichTextLabel = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisAlertsText
 @onready var knowledge_summary_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeSummaryText
 @onready var discovery_progress_list: ItemList = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection/DiscoveryProgressList
 @onready var knowledge_events_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection/KnowledgeEventsText
@@ -158,6 +162,8 @@ var _discovery_progress: Dictionary = {}
 var _knowledge_events: Array[Dictionary] = []
 var _knowledge_timeline_events: Array[Dictionary] = []
 var _knowledge_metrics: Dictionary = {}
+var _crisis_telemetry: Dictionary = {}
+var _crisis_annotations: Array[Dictionary] = []
 var _knowledge_policy_states: Dictionary = {}
 var _knowledge_budget_states: Dictionary = {}
 var _knowledge_missions: Array[Dictionary] = []
@@ -465,6 +471,13 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 	if data.has("culture_tensions"):
 		_update_culture_tensions(data["culture_tensions"], full_snapshot)
 
+	if data.has("crisis_telemetry"):
+		var crisis_variant: Variant = data["crisis_telemetry"]
+		if crisis_variant is Dictionary:
+			_crisis_telemetry = (crisis_variant as Dictionary).duplicate(true)
+	if data.has("crisis_overlay"):
+		_update_crisis_overlay(data["crisis_overlay"])
+
 func _rebuild_influencers(array_data) -> void:
 	_influencers.clear()
 	for entry in array_data:
@@ -606,6 +619,7 @@ func _render_dynamic_sections() -> void:
 	_render_corruption()
 	_render_trade()
 	_render_power()
+	_render_crisis()
 	_render_great_discoveries()
 	_render_knowledge()
 	_render_terrain()
@@ -633,6 +647,8 @@ func _render_static_sections() -> void:
 	_knowledge_events.clear()
 	_knowledge_timeline_events.clear()
 	_knowledge_metrics.clear()
+	_crisis_telemetry.clear()
+	_crisis_annotations.clear()
 	_great_discovery_records.clear()
 	_great_discovery_progress_map.clear()
 	_great_discovery_telemetry.clear()
@@ -658,6 +674,10 @@ func _render_static_sections() -> void:
 		trade_links_list.clear()
 	if trade_events_text != null:
 		trade_events_text.text = "[i]No diffusion events recorded yet.[/i]"
+	if crisis_summary_text != null:
+		crisis_summary_text.text = "[b]Crisis Telemetry[/b]\n[i]Awaiting telemetry.[/i]"
+	if crisis_alerts_text != null:
+		crisis_alerts_text.text = "[i]No crisis alerts reported.[/i]"
 	if great_discovery_summary_text != null:
 		great_discovery_summary_text.text = "[b]Great Discoveries[/b]\n[i]Awaiting snapshot data.[/i]"
 	if great_discovery_definitions_list != null:
@@ -727,9 +747,11 @@ func apply_typography() -> void:
 		culture_tension_text,
 		influencers_text,
 		corruption_text,
-		trade_summary_text,
-		trade_events_text,
-		knowledge_summary_text,
+	trade_summary_text,
+	trade_events_text,
+	crisis_summary_text,
+	crisis_alerts_text,
+	knowledge_summary_text,
 		knowledge_events_text,
 		great_discovery_summary_text,
 		great_discovery_ledger_detail,
@@ -743,8 +765,10 @@ func apply_typography() -> void:
 		map_size_label,
 		terrain_biome_section_label,
 		terrain_tile_section_label,
-		terrain_overlay_section_label,
-		great_discovery_summary_label,
+	terrain_overlay_section_label,
+	crisis_summary_label,
+	crisis_alerts_label,
+	great_discovery_summary_label,
 		great_discovery_ledger_label,
 		great_discovery_progress_label
 	]
@@ -1853,6 +1877,141 @@ func _render_power() -> void:
 			if first_meta is Dictionary:
 				_selected_power_node_id = int((first_meta as Dictionary).get("node_id", (first_meta as Dictionary).get("entity", -1)))
 	_update_power_node_detail()
+
+func _render_crisis() -> void:
+	if crisis_summary_text != null:
+		if _crisis_telemetry.is_empty():
+			crisis_summary_text.text = "[b]Crisis Telemetry[/b]\n[i]Awaiting telemetry.[/i]"
+		else:
+			var lines: Array[String] = []
+			lines.append("[b]Crisis Telemetry[/b]")
+			var warnings: int = int(_crisis_telemetry.get("warnings_active", 0))
+			var criticals: int = int(_crisis_telemetry.get("criticals_active", 0))
+			var modifiers: int = int(_crisis_telemetry.get("modifiers_active", 0))
+			lines.append("Warnings %d · Criticals %d · Modifiers %d" % [warnings, criticals, modifiers])
+			var foreshock: int = int(_crisis_telemetry.get("foreshock_incidents", 0))
+			var containment: int = int(_crisis_telemetry.get("containment_incidents", 0))
+			if foreshock > 0 or containment > 0:
+				lines.append("Incidents %d foreshock · %d containment" % [foreshock, containment])
+			var gauges_variant: Variant = _crisis_telemetry.get("gauges", [])
+			var gauge_lines: Array[String] = []
+			if gauges_variant is Array:
+				for gauge_entry in (gauges_variant as Array):
+					if not (gauge_entry is Dictionary):
+						continue
+					var gauge: Dictionary = gauge_entry
+					var label := String(gauge.get("label", gauge.get("kind", "Metric")))
+					var band := String(gauge.get("band", "safe"))
+					var raw := float(gauge.get("raw", 0.0))
+					var ema := float(gauge.get("ema", 0.0))
+					var trend := float(gauge.get("trend_5t", 0.0))
+					var warn_threshold := float(gauge.get("warn_threshold", 0.0))
+					var crit_threshold := float(gauge.get("critical_threshold", 0.0))
+					var stale := int(gauge.get("stale_ticks", 0))
+					var status := _format_crisis_band(band)
+					var gauge_text := "%s: raw %.3f · ema %.3f · trend %+0.3f [i](warn %.3f / crit %.3f)[/i] — %s" % [
+						label,
+						raw,
+						ema,
+						trend,
+						warn_threshold,
+						crit_threshold,
+						status
+					]
+					if stale > 0:
+						gauge_text += " [i](stale %dt)[/i]" % stale
+					gauge_lines.append(gauge_text)
+			if gauge_lines.is_empty():
+				gauge_lines.append("[i]No gauges reported.[/i]")
+			lines.append_array(gauge_lines)
+			crisis_summary_text.text = "\n".join(lines)
+	if crisis_alerts_text != null:
+		if _crisis_annotations.is_empty():
+			if _crisis_telemetry.is_empty():
+				crisis_alerts_text.text = "[i]Awaiting crisis telemetry.[/i]"
+			else:
+				var warnings := int(_crisis_telemetry.get("warnings_active", 0))
+				var criticals := int(_crisis_telemetry.get("criticals_active", 0))
+				if warnings == 0 and criticals == 0:
+					crisis_alerts_text.text = "[i]No active crisis alerts.[/i]"
+				else:
+					crisis_alerts_text.text = "Warnings %d · Criticals %d — awaiting annotations." % [warnings, criticals]
+		else:
+			var alert_lines: Array[String] = ["[b]Active Crisis Alerts[/b]"]
+			for annotation in _crisis_annotations:
+				if not (annotation is Dictionary):
+					continue
+				var entry: Dictionary = annotation
+				var label := String(entry.get("label", ""))
+				if label == "":
+					label = "Unlabelled vector"
+				var severity := String(entry.get("severity", "safe"))
+				var severity_text := _format_crisis_band(severity)
+				var path_summary := _summarize_crisis_path(entry.get("path", PackedInt32Array()))
+				if path_summary == "":
+					alert_lines.append("%s — %s" % [severity_text, label])
+				else:
+					alert_lines.append("%s — %s %s" % [severity_text, label, path_summary])
+			crisis_alerts_text.text = "\n".join(alert_lines)
+
+func _format_crisis_band(band: String) -> String:
+	var normalized := band.to_lower()
+	match normalized:
+		"critical":
+			return "[color=#ff4d6a]CRITICAL[/color]"
+		"warn":
+			return "[color=#f2c94c]Warning[/color]"
+		_:
+			return "[color=#7ce7ff]Stable[/color]"
+
+func _summarize_crisis_path(path_variant: Variant) -> String:
+	if path_variant is PackedInt32Array:
+		var packed: PackedInt32Array = path_variant
+		var length := packed.size()
+		if length < 2:
+			return ""
+		var start_col := int(packed[0])
+		var start_row := int(packed[1])
+		var tiles: int = max(int(length / 2), 1)
+		if length >= 4:
+			var end_col := int(packed[length - 2])
+			var end_row := int(packed[length - 1])
+			if start_col == end_col and start_row == end_row:
+				return "[i](%d,%d · %d tiles)[/i]" % [start_col, start_row, tiles]
+			return "[i](%d,%d → %d,%d · %d tiles)[/i]" % [start_col, start_row, end_col, end_row, tiles]
+		return "[i](%d,%d · %d tiles)[/i]" % [start_col, start_row, tiles]
+	elif path_variant is Array:
+		var arr: Array = path_variant
+		if arr.is_empty():
+			return ""
+		var tiles: int = max(int(arr.size()), 1)
+		var start_step = arr[0]
+		var end_step = arr[arr.size() - 1]
+		if start_step is Array and start_step.size() >= 2:
+			var start_col := int(start_step[0])
+			var start_row := int(start_step[1])
+			if end_step is Array and end_step.size() >= 2:
+				var end_col := int(end_step[0])
+				var end_row := int(end_step[1])
+				if start_col == end_col and start_row == end_row:
+					return "[i](%d,%d · %d tiles)[/i]" % [start_col, start_row, tiles]
+				return "[i](%d,%d → %d,%d · %d tiles)[/i]" % [start_col, start_row, end_col, end_row, tiles]
+		return "[i](path length %d)[/i]" % tiles
+	return ""
+
+func _update_crisis_overlay(data: Variant) -> void:
+	if not (data is Dictionary):
+		_crisis_annotations.clear()
+		return
+	var overlay: Dictionary = data
+	_store_crisis_annotations_from_variant(overlay.get("annotations", []))
+
+func _store_crisis_annotations_from_variant(source: Variant) -> void:
+	_crisis_annotations.clear()
+	if source is Array:
+		for entry in source:
+			if entry is Dictionary:
+				_crisis_annotations.append((entry as Dictionary).duplicate(true))
 
 func _compare_power_nodes(a: Dictionary, b: Dictionary) -> bool:
 	var stability_a: float = float(a.get("stability", a.get("stability_raw", 0.0)))
@@ -4217,6 +4376,8 @@ func _ingest_overlays(overlays: Variant) -> void:
 		var tag_variant: Variant = overlay_dict["terrain_tag_labels"]
 		if tag_variant is Dictionary:
 			_terrain_tag_labels = (tag_variant as Dictionary).duplicate(true)
+	if overlay_dict.has("crisis_annotations"):
+		_store_crisis_annotations_from_variant(overlay_dict["crisis_annotations"])
 	_update_overlay_channels(overlay_dict)
 
 func _update_overlay_channels(overlay_dict: Dictionary) -> void:
