@@ -297,6 +297,19 @@ fn parse_command_tokens(args: &[String]) -> Vec<ArgToken> {
         }
 
         if let Some(stripped) = arg.strip_prefix("--") {
+            if let Some((name, value)) = stripped.split_once('=') {
+                tokens.push(ArgToken {
+                    kind: ArgTokenKind::Flag {
+                        key: normalize_flag(name),
+                        value: Some(value.to_string()),
+                    },
+                    index,
+                    consumed: false,
+                });
+                i += 1;
+                index += 1;
+                continue;
+            }
             let key = normalize_flag(stripped);
             if i + 1 < args.len() && !args[i + 1].starts_with("--") {
                 let value = args[i + 1].clone();
