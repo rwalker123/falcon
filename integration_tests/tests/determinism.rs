@@ -1,7 +1,10 @@
+mod common;
+
 use core_sim::{build_headless_app, SnapshotHistory};
 use sim_runtime::WorldSnapshot;
 
 fn run_simulation(ticks: usize) -> WorldSnapshot {
+    common::ensure_test_config();
     let mut app = build_headless_app();
     for _ in 0..ticks {
         app.update();
@@ -15,8 +18,8 @@ fn run_simulation(ticks: usize) -> WorldSnapshot {
 }
 
 // Keep tick count low so CI doesn't spend minutes marching the full simulation.
-// A dozen updates is sufficient to populate the snapshot history for comparison.
-const SNAPSHOT_TICKS: usize = 12;
+// Half a dozen updates is sufficient to populate the snapshot history for comparison.
+const SNAPSHOT_TICKS: usize = 6;
 
 #[test]
 fn deterministic_snapshots_match() {

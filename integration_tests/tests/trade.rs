@@ -1,3 +1,5 @@
+mod common;
+
 use core_sim::{
     build_headless_app, restore_world_from_snapshot, scalar_from_f32, scalar_one, scalar_zero,
     DiscoveryProgressLedger, FactionId, FactionRegistry, KnowledgeFragment, PendingMigration,
@@ -6,6 +8,7 @@ use core_sim::{
 
 #[test]
 fn trade_diffusion_leaks_after_timer() {
+    common::ensure_test_config();
     let mut app = build_headless_app();
 
     {
@@ -55,6 +58,7 @@ fn trade_diffusion_leaks_after_timer() {
 
 #[test]
 fn migration_seeding_transfers_knowledge() {
+    common::ensure_test_config();
     let mut app = build_headless_app();
 
     {
@@ -122,6 +126,7 @@ fn migration_seeding_transfers_knowledge() {
 
 #[test]
 fn trade_pending_fragments_survive_snapshot_restore() {
+    common::ensure_test_config();
     let mut app = build_headless_app();
 
     {
@@ -179,6 +184,7 @@ fn trade_pending_fragments_survive_snapshot_restore() {
 
 #[test]
 fn pending_migration_survives_snapshot_restore() {
+    common::ensure_test_config();
     let mut app = build_headless_app();
 
     {
