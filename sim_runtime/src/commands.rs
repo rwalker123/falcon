@@ -116,6 +116,9 @@ pub enum ReloadConfigKind {
     Simulation,
     TurnPipeline,
     SnapshotOverlays,
+    CrisisArchetypes,
+    CrisisModifiers,
+    CrisisTelemetry,
 }
 
 /// Influencer support channels exposed to the command surface.
@@ -543,6 +546,9 @@ fn reload_config_kind_to_proto(kind: ReloadConfigKind) -> pb::ReloadConfigKind {
         ReloadConfigKind::Simulation => pb::ReloadConfigKind::Simulation,
         ReloadConfigKind::TurnPipeline => pb::ReloadConfigKind::TurnPipeline,
         ReloadConfigKind::SnapshotOverlays => pb::ReloadConfigKind::SnapshotOverlays,
+        ReloadConfigKind::CrisisArchetypes => pb::ReloadConfigKind::CrisisArchetypes,
+        ReloadConfigKind::CrisisModifiers => pb::ReloadConfigKind::CrisisModifiers,
+        ReloadConfigKind::CrisisTelemetry => pb::ReloadConfigKind::CrisisTelemetry,
     }
 }
 
@@ -608,6 +614,9 @@ fn reload_config_kind_from_proto(value: i32) -> Result<ReloadConfigKind, Command
         Ok(pb::ReloadConfigKind::Simulation) => Ok(ReloadConfigKind::Simulation),
         Ok(pb::ReloadConfigKind::TurnPipeline) => Ok(ReloadConfigKind::TurnPipeline),
         Ok(pb::ReloadConfigKind::SnapshotOverlays) => Ok(ReloadConfigKind::SnapshotOverlays),
+        Ok(pb::ReloadConfigKind::CrisisArchetypes) => Ok(ReloadConfigKind::CrisisArchetypes),
+        Ok(pb::ReloadConfigKind::CrisisModifiers) => Ok(ReloadConfigKind::CrisisModifiers),
+        Ok(pb::ReloadConfigKind::CrisisTelemetry) => Ok(ReloadConfigKind::CrisisTelemetry),
         Ok(pb::ReloadConfigKind::Unspecified) | Err(_) => Err(CommandDecodeError::InvalidEnum {
             field: "ReloadConfigKind",
             value,

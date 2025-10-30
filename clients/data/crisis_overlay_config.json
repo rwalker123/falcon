@@ -1,0 +1,34 @@
+{
+  "palette": {
+    "base": "#2B1D38",
+    "low": "#7C3E66",
+    "warn": "#F9A826",
+    "critical": "#FF5959",
+    "safe": "#4ECDC4"
+  },
+  "annotations": [
+    {
+      "id": "containment_line",
+      "label": "Containment Line",
+      "color": "#FF9E9E",
+      "width": 3.5,
+      "glyph": "chevron"
+    },
+    {
+      "id": "quarantine_zone",
+      "label": "Quarantine Zone",
+      "color": "#F98404",
+      "width": 2.5,
+      "glyph": "dashed"
+    }
+  ],
+  "legend": {
+    "title": "Crisis Stress",
+    "description": "Normalized crisis pressure derived from archetype telemetry weighting.",
+    "unit": "normalized"
+  },
+  "metadata": {
+    "default_channel": "crisis",
+    "placeholder_text": "Awaiting crisis overlay samples."
+  }
+}

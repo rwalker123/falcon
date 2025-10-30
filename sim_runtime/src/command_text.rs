@@ -334,6 +334,18 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         tokens.remove(0);
                         kind = ReloadConfigKind::TurnPipeline;
                     }
+                    "crisis_archetypes" | "crisis_catalog" | "crisis_archetype" => {
+                        tokens.remove(0);
+                        kind = ReloadConfigKind::CrisisArchetypes;
+                    }
+                    "crisis_modifiers" | "crisis_modifier" | "crisis_mod" => {
+                        tokens.remove(0);
+                        kind = ReloadConfigKind::CrisisModifiers;
+                    }
+                    "crisis_telemetry" | "crisis_telemetry_config" | "crisis_metrics" => {
+                        tokens.remove(0);
+                        kind = ReloadConfigKind::CrisisTelemetry;
+                    }
                     "overlay" | "overlays" | "snapshot" | "snapshot_overlays" => {
                         tokens.remove(0);
                         kind = ReloadConfigKind::SnapshotOverlays;

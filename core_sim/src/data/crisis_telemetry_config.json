@@ -1,0 +1,37 @@
+{
+  "ema_alpha": 0.35,
+  "history_depth": 6,
+  "trend_window": 5,
+  "stale_tick_warning": 6,
+  "stale_tick_critical": 12,
+  "alert_cooldown_ticks": 5,
+  "gauges": {
+    "r0": {
+      "warn": 0.9,
+      "critical": 1.2,
+      "escalation_delta": 0.08
+    },
+    "grid_stress_pct": {
+      "warn": 70.0,
+      "critical": 85.0,
+      "escalation_delta": 5.0
+    },
+    "unauthorized_queue_pct": {
+      "warn": 10.0,
+      "critical": 25.0,
+      "escalation_delta": 4.0
+    },
+    "swarms_active": {
+      "warn": 2.0,
+      "critical": 5.0
+    },
+    "phage_density": {
+      "warn": 0.35,
+      "critical": 0.6
+    }
+  },
+  "extra": {
+    "blink_period_warn": 3,
+    "blink_period_critical": 1
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "modifiers": [
+    {
+      "id": "grid_overload",
+      "name": "Grid Overload",
+      "category": "infrastructure",
+      "tags": [
+        "power",
+        "replicator"
+      ],
+      "description": "Transformer stress spills into the crisis telemetry grid_stress_pct metric.",
+      "effects": {
+        "grid_stress_pct": 12.5,
+        "swarms_active_bonus": 1
+      },
+      "decay": {
+        "type": "linear",
+        "per_tick": 2.0
+      }
+    },
+    {
+      "id": "viral_mutation",
+      "name": "Viral Mutation",
+      "category": "biological",
+      "tags": [
+        "plague_bloom"
+      ],
+      "description": "Adaptive mutation increases effective R₀ until countermeasures are deployed.",
+      "effects": {
+        "r0_delta": 0.15,
+        "queue_pressure_pct": 8.0
+      },
+      "stacking": "diminishing",
+      "decay": {
+        "type": "half_life",
+        "ticks": 12
+      }
+    }
+  ]
+}

@@ -5,6 +5,7 @@
 
 mod components;
 mod crisis;
+mod crisis_config;
 mod culture;
 mod culture_corruption_config;
 mod espionage;
@@ -36,6 +37,15 @@ pub use components::{
 pub use crisis::{
     CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot, CrisisSeverityBand,
     CrisisTelemetry, CrisisTelemetrySample, CrisisTrendSample,
+};
+pub use crisis_config::{
+    load_crisis_archetypes_from_env, load_crisis_modifiers_from_env,
+    load_crisis_telemetry_config_from_env, CrisisArchetype, CrisisArchetypeCatalog,
+    CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata, CrisisModifier,
+    CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
+    CrisisTelemetryConfig, CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata,
+    CrisisTelemetryThreshold, BUILTIN_CRISIS_ARCHETYPES, BUILTIN_CRISIS_MODIFIERS,
+    BUILTIN_CRISIS_TELEMETRY_CONFIG,
 };
 pub use culture::{
     reconcile_culture_layers, CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope,
@@ -143,6 +153,13 @@ pub fn build_headless_app() -> App {
     let (snapshot_overlays_config, snapshot_overlays_metadata) =
         load_snapshot_overlays_config_from_env();
     let snapshot_overlays_handle = SnapshotOverlaysConfigHandle::new(snapshot_overlays_config);
+    let (crisis_archetypes, crisis_archetypes_metadata) = load_crisis_archetypes_from_env();
+    let crisis_archetypes_handle = CrisisArchetypeCatalogHandle::new(crisis_archetypes);
+    let (crisis_modifiers, crisis_modifiers_metadata) = load_crisis_modifiers_from_env();
+    let crisis_modifiers_handle = CrisisModifierCatalogHandle::new(crisis_modifiers);
+    let (crisis_telemetry_config, crisis_telemetry_metadata) =
+        load_crisis_telemetry_config_from_env();
+    let crisis_telemetry_handle = CrisisTelemetryConfigHandle::new(crisis_telemetry_config);
     let culture_manager = CultureManager::new();
     let culture_effects = CultureEffectsCache::default();
     let espionage_catalog =
@@ -170,9 +187,15 @@ pub fn build_headless_app() -> App {
         .insert_resource(knowledge_ledger)
         .insert_resource(culture_corruption_handle)
         .insert_resource(snapshot_overlays_handle)
+        .insert_resource(crisis_archetypes_handle)
+        .insert_resource(crisis_modifiers_handle)
+        .insert_resource(crisis_telemetry_handle)
         .insert_resource(turn_pipeline_handle)
         .insert_resource(turn_pipeline_metadata)
         .insert_resource(snapshot_overlays_metadata)
+        .insert_resource(crisis_archetypes_metadata)
+        .insert_resource(crisis_modifiers_metadata)
+        .insert_resource(crisis_telemetry_metadata)
         .insert_resource(CorruptionLedgers::default())
         .insert_resource(CorruptionTelemetry::default())
         .insert_resource(DiplomacyLeverage::default())
