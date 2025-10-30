@@ -135,6 +135,7 @@ struct GreatDiscoveryCatalogRequirement {
     summary: Option<String>,
 }
 
+#[inline]
 fn default_requirement_weight() -> NumericBand<f32> {
     NumericBand::Scalar(1.0)
 }
@@ -258,7 +259,7 @@ fn resolve_catalog_entry(
 {
     let effect_flags = collect_effect_flags(entry.id, &entry.effect_flags, entry.effect_flag_bits)?;
     let id = GreatDiscoveryId(entry.id);
-    let seed = hash_identifier(&entry.id.to_string()) ^ entry.seed_offset.unwrap_or(0);
+    let seed = hash_identifier(&entry.id) ^ entry.seed_offset.unwrap_or(0);
     let mut rng = SmallRng::seed_from_u64(seed);
 
     let observation_threshold = entry.observation_threshold.sample(&mut rng);
@@ -328,7 +329,7 @@ fn resolve_catalog_entry(
     Ok((definition, metadata))
 }
 
-fn hash_identifier(identifier: &str) -> u64 {
+fn hash_identifier<T: Hash>(identifier: &T) -> u64 {
     let mut hasher = DefaultHasher::new();
     identifier.hash(&mut hasher);
     hasher.finish()
