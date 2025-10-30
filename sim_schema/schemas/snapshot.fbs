@@ -148,6 +148,20 @@ enum KnowledgeLeakFlag : uint {
   CascadePending = 4
 }
 
+enum CrisisMetricKind : ubyte {
+  R0,
+  GridStressPct,
+  UnauthorizedQueuePct,
+  SwarmsActive,
+  PhageDensity
+}
+
+enum CrisisSeverityBand : ubyte {
+  Safe,
+  Warn,
+  Critical
+}
+
 table TerrainSample {
   terrain:TerrainType;
   tags:ushort;
@@ -317,6 +331,44 @@ table KnowledgeMetricsState {
   leakCriticals:uint;
   countermeasuresActive:uint;
   commonKnowledgeTotal:uint;
+}
+
+table CrisisTrendSample {
+  tick:ulong;
+  value:float;
+}
+
+table CrisisGaugeState {
+  kind:CrisisMetricKind;
+  raw:float;
+  ema:float;
+  trend5t:float;
+  warnThreshold:float;
+  criticalThreshold:float;
+  lastUpdatedTick:ulong;
+  staleTicks:ulong;
+  band:CrisisSeverityBand;
+  history:[CrisisTrendSample];
+}
+
+table CrisisTelemetryState {
+  gauges:[CrisisGaugeState];
+  modifiersActive:uint;
+  foreshockIncidents:uint;
+  containmentIncidents:uint;
+  warningsActive:uint;
+  criticalsActive:uint;
+}
+
+table CrisisOverlayAnnotationState {
+  label:string;
+  severity:CrisisSeverityBand;
+  path:[uint];
+}
+
+table CrisisOverlayState {
+  heatmap:ScalarRaster;
+  annotations:[CrisisOverlayAnnotationState];
 }
 
 table TileState {
@@ -541,6 +593,8 @@ table WorldSnapshot {
   knowledgeLedger:[KnowledgeLedgerState];
   knowledgeTimeline:[KnowledgeTimelineEventState];
   knowledgeMetrics:KnowledgeMetricsState;
+  crisisTelemetry:CrisisTelemetryState;
+  crisisOverlay:CrisisOverlayState;
   terrainOverlay:TerrainOverlay;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
@@ -579,6 +633,8 @@ table WorldDelta {
   removedKnowledgeLedger:[ulong];
   knowledgeTimeline:[KnowledgeTimelineEventState];
   knowledgeMetrics:KnowledgeMetricsState;
+  crisisTelemetry:CrisisTelemetryState;
+  crisisOverlay:CrisisOverlayState;
   axisBias:AxisBiasState;
   sentiment:SentimentTelemetryState;
   generations:[GenerationState];

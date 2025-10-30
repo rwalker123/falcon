@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "archetypes": [
+    {
+      "id": "plague_bloom",
+      "name": "Plague Bloom",
+      "manual_ref": "§10.3",
+      "tags": [
+        "biological",
+        "contagion"
+      ],
+      "synopsis": "Rapidly replicating phage bloom that stresses medical and logistics networks.",
+      "generator": {
+        "enabled": true,
+        "variant_count": 3,
+        "id_pattern": "{base}_v{index}",
+        "name_suffixes": [
+          "Delta Bloom",
+          "Mirror Strain",
+          "Nightfall Bloom"
+        ],
+        "synopsis_pool": [
+          "Containment net struggles to map fast-splitting phage variants.",
+          "Freshwater channels saturate with bloom microcysts.",
+          "Mutation wave outruns medcap deployment windows."
+        ],
+        "add_tags": ["template", "volatile"],
+        "seed_offset": 14413,
+        "propagation": {
+          "base_r0": {"min": 0.86, "max": 1.18},
+          "max_r0": {"min": 1.25, "max": 1.6},
+          "incident_acceleration": {"min": 0.03, "max": 0.08}
+        },
+        "telemetry": {
+          "r0_weight": {"min": 0.85, "max": 1.1},
+          "grid_stress_weight": {"min": 0.15, "max": 0.3},
+          "queue_pressure_weight": {"min": 0.3, "max": 0.45}
+        }
+      },
+      "propagation": {
+        "base_r0": 0.94,
+        "max_r0": 1.4,
+        "spread_model": "logistic",
+        "terrain_bias": [
+          "freshwater",
+          "wetland"
+        ]
+      },
+      "telemetry": {
+        "r0_weight": 1.0,
+        "grid_stress_weight": 0.2,
+        "queue_pressure_weight": 0.35
+      },
+      "overlay": {
+        "palette": "biohazard",
+        "annotation_glyph": "containment_line"
+      },
+      "incident_table": [
+        {
+          "id": "plague_outbreak",
+          "severity": "critical",
+          "cooldown_ticks": 8
+        },
+        {
+          "id": "cold_storage_collapse",
+          "severity": "warn",
+          "cooldown_ticks": 5
+        }
+      ],
+      "mitigation": {
+        "unlock_requirements": [
+          "medbay_tier_2",
+          "countermeasure_lab"
+        ],
+        "recommended_actions": [
+          "deploy_quarantine",
+          "boost_medicine_production"
+        ]
+      }
+    },
+    {
+      "id": "replicator_swarm",
+      "name": "Replicator Swarm",
+      "manual_ref": "§10.5",
+      "tags": [
+        "nanotech",
+        "infrastructure"
+      ],
+      "synopsis": "Self-assembling replicators overwhelm fabrication bays and grid transformers.",
+      "generator": {
+        "enabled": true,
+        "variant_count": 2,
+        "id_pattern": "{base}_v{index}",
+        "name_suffixes": [
+          "Cascade",
+          "Hyperline"
+        ],
+        "synopsis_pool": [
+          "Replicator segments short logistics lots before command can isolate them.",
+          "Swarm threads hijack additive lines faster than countercode updates."
+        ],
+        "add_tags": ["template", "infrastructure"],
+        "seed_offset": 8881,
+        "propagation": {
+          "base_growth": {"min": 0.15, "max": 0.24},
+          "incident_acceleration": {"min": 0.04, "max": 0.09}
+        },
+        "telemetry": {
+          "grid_stress_weight": {"min": 0.45, "max": 0.65},
+          "swarms_active_weight": {"min": 0.9, "max": 1.1},
+          "queue_pressure_weight": {"min": 0.2, "max": 0.35}
+        }
+      },
+      "propagation": {
+        "base_growth": 0.18,
+        "incident_acceleration": 0.05,
+        "spread_model": "supply_chain"
+      },
+      "telemetry": {
+        "grid_stress_weight": 0.55,
+        "swarms_active_weight": 1.0,
+        "queue_pressure_weight": 0.25
+      },
+      "overlay": {
+        "palette": "replicator",
+        "annotation_glyph": "lockdown_sector"
+      },
+      "incident_table": [
+        {
+          "id": "assembly_breach",
+          "severity": "critical",
+          "cooldown_ticks": 10
+        },
+        {
+          "id": "fabricator_jam",
+          "severity": "warn",
+          "cooldown_ticks": 4
+        }
+      ],
+      "mitigation": {
+        "unlock_requirements": [
+          "nanotech_quarantine",
+          "distributed_control"
+        ],
+        "recommended_actions": [
+          "isolate_transformers",
+          "deploy_countercode"
+        ]
+      }
+    }
+  ]
+}

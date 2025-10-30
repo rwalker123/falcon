@@ -947,11 +947,14 @@ Defines concrete capabilities per domain tier to ground policy/tech/infra prereq
 - **Population Stability Index:** Summarizes societal well-being.
 - **Crisis & Outbreak Map:** Visualizes infection/replicator/AI control zones, foreshocks, and containment lines.
 
+The map overlay now streams the simulated `CrisisOverlayState` produced by the crisis ledger. Heatmap samples blend the archetype telemetry weights with active modifier effects, and per-incident annotations mark foreshock and containment events in-world, replacing the earlier power-grid stub. For implementation details, see [docs/architecture.md §Crisis System Architecture & Configuration Plan](docs/architecture.md#crisis-system-architecture--configuration-plan).
+
 ### UI Panels (Crisis)
 - Crisis Dashboard: compact gauges for `R0`, `Grid Stress`, `Unauthorized Queue %`, `Swarms Active`, `Phage Density`.
-- Event Log & Choice UI: step cards with Metrics, Sample text, and one‑click countermeasures; tags surface linked Policy/Tech/Infra.
+- Event Log & Choice UI: step cards with Metrics, Sample text, and one-click countermeasures; tags surface linked Policy/Tech/Infra.
 - Modifier Tray: lists active Global Modifiers with timers, scopes, and tooltips showing stacking/decay.
 - Network View: propagation graphs over transport, comms, and power networks with chokepoints highlighted.
+- Implementation notes for backend wiring live in `docs/architecture.md` §Crisis System Architecture & Configuration Plan (Archetype catalog, telemetry config, overlays).
 
 #### Crisis Dashboard Mock Gauges (Prototype Values)
 - R0: 1.6 (range 0.5–3.0; color bands: <=0.9 green, 0.9–1.2 yellow, >1.2 red)

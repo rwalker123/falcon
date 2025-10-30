@@ -95,6 +95,13 @@ pub enum CommandPayload {
         kind: ReloadConfigKind,
         path: Option<String>,
     },
+    SetCrisisAutoSeed {
+        enabled: bool,
+    },
+    SpawnCrisis {
+        faction_id: u32,
+        archetype_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,6 +123,9 @@ pub enum ReloadConfigKind {
     Simulation,
     TurnPipeline,
     SnapshotOverlays,
+    CrisisArchetypes,
+    CrisisModifiers,
+    CrisisTelemetry,
 }
 
 /// Influencer support channels exposed to the command surface.
@@ -314,6 +324,18 @@ impl CommandEnvelope {
                     path: path.clone(),
                 })
             }
+            CommandPayload::SetCrisisAutoSeed { enabled } => {
+                pb::command_envelope::Command::SetCrisisAutoSeed(pb::SetCrisisAutoSeedCommand {
+                    enabled: *enabled,
+                })
+            }
+            CommandPayload::SpawnCrisis {
+                faction_id,
+                archetype_id,
+            } => pb::command_envelope::Command::SpawnCrisis(pb::SpawnCrisisCommand {
+                faction: *faction_id,
+                archetype_id: archetype_id.clone(),
+            }),
         });
 
         pb::CommandEnvelope {
@@ -468,6 +490,15 @@ impl CommandEnvelope {
                     path: cmd.path,
                 }
             }
+            pb::command_envelope::Command::SetCrisisAutoSeed(cmd) => {
+                CommandPayload::SetCrisisAutoSeed {
+                    enabled: cmd.enabled,
+                }
+            }
+            pb::command_envelope::Command::SpawnCrisis(cmd) => CommandPayload::SpawnCrisis {
+                faction_id: cmd.faction,
+                archetype_id: cmd.archetype_id,
+            },
         };
 
         Ok(CommandEnvelope {
@@ -543,6 +574,9 @@ fn reload_config_kind_to_proto(kind: ReloadConfigKind) -> pb::ReloadConfigKind {
         ReloadConfigKind::Simulation => pb::ReloadConfigKind::Simulation,
         ReloadConfigKind::TurnPipeline => pb::ReloadConfigKind::TurnPipeline,
         ReloadConfigKind::SnapshotOverlays => pb::ReloadConfigKind::SnapshotOverlays,
+        ReloadConfigKind::CrisisArchetypes => pb::ReloadConfigKind::CrisisArchetypes,
+        ReloadConfigKind::CrisisModifiers => pb::ReloadConfigKind::CrisisModifiers,
+        ReloadConfigKind::CrisisTelemetry => pb::ReloadConfigKind::CrisisTelemetry,
     }
 }
 
@@ -608,6 +642,9 @@ fn reload_config_kind_from_proto(value: i32) -> Result<ReloadConfigKind, Command
         Ok(pb::ReloadConfigKind::Simulation) => Ok(ReloadConfigKind::Simulation),
         Ok(pb::ReloadConfigKind::TurnPipeline) => Ok(ReloadConfigKind::TurnPipeline),
         Ok(pb::ReloadConfigKind::SnapshotOverlays) => Ok(ReloadConfigKind::SnapshotOverlays),
+        Ok(pb::ReloadConfigKind::CrisisArchetypes) => Ok(ReloadConfigKind::CrisisArchetypes),
+        Ok(pb::ReloadConfigKind::CrisisModifiers) => Ok(ReloadConfigKind::CrisisModifiers),
+        Ok(pb::ReloadConfigKind::CrisisTelemetry) => Ok(ReloadConfigKind::CrisisTelemetry),
         Ok(pb::ReloadConfigKind::Unspecified) | Err(_) => Err(CommandDecodeError::InvalidEnum {
             field: "ReloadConfigKind",
             value,

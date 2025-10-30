@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "modifiers": [
+    {
+      "id": "grid_overload",
+      "name": "Grid Overload",
+      "category": "infrastructure",
+      "tags": [
+        "power",
+        "replicator"
+      ],
+      "description": "Transformer stress spills into the crisis telemetry grid_stress_pct metric.",
+      "generator": {
+        "enabled": true,
+        "variant_count": 2,
+        "id_pattern": "{base}_v{index}",
+        "name_suffixes": [
+          "Phase Spike",
+          "Spiral"
+        ],
+        "description_pool": [
+          "Grid inertia collapses, driving cascading stress bleeds into telemetry.",
+          "Replicator-induced phase hopping expands overload envelope."
+        ],
+        "add_tags": ["template", "grid"],
+        "seed_offset": 4011,
+        "effects": {
+          "grid_stress_pct": {"min": 10.0, "max": 18.0},
+          "swarms_active_bonus": {"min": 0.8, "max": 2.5}
+        },
+        "decay": {
+          "per_tick": {"min": 1.5, "max": 2.5}
+        }
+      },
+      "effects": {
+        "grid_stress_pct": 12.5,
+        "swarms_active_bonus": 1
+      },
+      "decay": {
+        "type": "linear",
+        "per_tick": 2.0
+      }
+    },
+    {
+      "id": "viral_mutation",
+      "name": "Viral Mutation",
+      "category": "biological",
+      "tags": [
+        "plague_bloom"
+      ],
+      "description": "Adaptive mutation increases effective R₀ until countermeasures are deployed.",
+      "generator": {
+        "enabled": true,
+        "variant_count": 3,
+        "id_pattern": "{base}_v{index}",
+        "name_suffixes": [
+          "Vector Shift",
+          "Spira Bloom",
+          "Glass Lance"
+        ],
+        "description_pool": [
+          "Mutation swarm exploits medbay lag, spiking infection velocity.",
+          "Micro-phage splice unlocks faster queue saturation.",
+          "Adaptive envelope learns around countermeasure heuristics."
+        ],
+        "add_tags": ["template", "mutation"],
+        "seed_offset": 9315,
+        "effects": {
+          "r0_delta": {"min": 0.12, "max": 0.22},
+          "queue_pressure_pct": {"min": 6.0, "max": 12.0}
+        },
+        "decay": {
+          "ticks": {"min": 10.0, "max": 16.0}
+        }
+      },
+      "effects": {
+        "r0_delta": 0.15,
+        "queue_pressure_pct": 8.0
+      },
+      "stacking": "diminishing",
+      "decay": {
+        "type": "half_life",
+        "ticks": 12
+      }
+    }
+  ]
+}

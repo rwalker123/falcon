@@ -5,7 +5,7 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use bevy::{app::Update, ecs::system::Resource, math::UVec2};
+use bevy::{ecs::system::Resource, math::UVec2};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tracing::{info, warn};
@@ -13,19 +13,22 @@ use tracing_subscriber::prelude::*;
 
 use core_sim::log_stream::start_log_stream_server;
 
-use core_sim::metrics::{collect_metrics, SimulationMetrics};
+use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
     build_headless_app, restore_world_from_snapshot, run_turn, scalar_from_f32, AgentAssignment,
-    CorruptionLedgers, CounterIntelBudgets, EspionageAgentHandle, EspionageCatalog,
-    EspionageMissionId, EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate,
-    EspionageRoster, FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies,
-    GenerationId, GenerationRegistry, InfluencerImpacts, InfluentialRoster, QueueMissionError,
-    QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StoredSnapshot, SubmitError,
-    SubmitOutcome, SupportChannel, Tile, TurnPipelineConfig, TurnPipelineConfigHandle,
-    TurnPipelineConfigMetadata, TurnQueue,
+    CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
+    CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
+    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
+    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, EspionageAgentHandle,
+    EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
+    EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
+    FactionSecurityPolicies, GenerationId, GenerationRegistry, InfluencerImpacts,
+    InfluentialRoster, PendingCrisisSpawns, QueueMissionError, QueueMissionParams, Scalar,
+    SecurityPolicy, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, SimulationTick,
+    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    SnapshotOverlaysConfigMetadata, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel,
+    Tile, TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
 };
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
@@ -38,7 +41,6 @@ use sim_runtime::{
 fn main() {
     let mut app = build_headless_app();
     app.insert_resource(SimulationMetrics::default());
-    app.add_systems(Update, collect_metrics);
 
     let config = app.world.resource::<SimulationConfig>().clone();
 
@@ -82,6 +84,21 @@ fn main() {
         .resource::<SnapshotOverlaysConfigMetadata>()
         .path()
         .cloned();
+    let crisis_archetypes_watch_path = app
+        .world
+        .resource::<CrisisArchetypeCatalogMetadata>()
+        .path()
+        .cloned();
+    let crisis_modifiers_watch_path = app
+        .world
+        .resource::<CrisisModifierCatalogMetadata>()
+        .path()
+        .cloned();
+    let crisis_telemetry_watch_path = app
+        .world
+        .resource::<CrisisTelemetryConfigMetadata>()
+        .path()
+        .cloned();
 
     let (command_rx, command_tx) = spawn_command_listener(config.command_bind);
     app.world
@@ -102,6 +119,21 @@ fn main() {
         app.world
             .resource_mut::<ConfigWatcherRegistry>()
             .restart_snapshot_overlays(Some(path), command_tx.clone());
+    }
+    if let Some(path) = crisis_archetypes_watch_path {
+        app.world
+            .resource_mut::<ConfigWatcherRegistry>()
+            .restart_crisis_archetypes(Some(path), command_tx.clone());
+    }
+    if let Some(path) = crisis_modifiers_watch_path {
+        app.world
+            .resource_mut::<ConfigWatcherRegistry>()
+            .restart_crisis_modifiers(Some(path), command_tx.clone());
+    }
+    if let Some(path) = crisis_telemetry_watch_path {
+        app.world
+            .resource_mut::<ConfigWatcherRegistry>()
+            .restart_crisis_telemetry(Some(path), command_tx.clone());
     }
 
     info!(
@@ -169,7 +201,6 @@ fn main() {
                     *config_res = new_config;
                 }
                 new_app.insert_resource(SimulationMetrics::default());
-                new_app.add_systems(Update, collect_metrics);
                 run_turn(&mut new_app);
 
                 {
@@ -279,6 +310,33 @@ fn main() {
             Command::ReloadConfig { kind, path } => {
                 handle_reload_config(&mut app, kind, path);
             }
+            Command::SetCrisisAutoSeed { enabled } => {
+                {
+                    let mut config_res = app.world.resource_mut::<SimulationConfig>();
+                    config_res.crisis_auto_seed = enabled;
+                }
+                info!(
+                    target: "shadow_scale::server",
+                    enabled,
+                    "crisis.autoseed.updated"
+                );
+            }
+            Command::SpawnCrisis {
+                faction,
+                archetype_id,
+            } => {
+                let archetype = archetype_id.clone();
+                {
+                    let mut spawns = app.world.resource_mut::<PendingCrisisSpawns>();
+                    spawns.push(faction, archetype);
+                }
+                info!(
+                    target: "shadow_scale::server",
+                    faction = %faction.0,
+                    archetype = %archetype_id,
+                    "crisis.spawn.enqueued"
+                );
+            }
         }
     }
 }
@@ -350,6 +408,13 @@ enum Command {
         kind: ReloadConfigKind,
         path: Option<String>,
     },
+    SetCrisisAutoSeed {
+        enabled: bool,
+    },
+    SpawnCrisis {
+        faction: FactionId,
+        archetype_id: String,
+    },
 }
 
 enum InfluencerAction {
@@ -365,6 +430,9 @@ struct ConfigWatcherRegistry {
     simulation: Option<FileWatcherHandle>,
     turn_pipeline: Option<FileWatcherHandle>,
     snapshot_overlays: Option<FileWatcherHandle>,
+    crisis_archetypes: Option<FileWatcherHandle>,
+    crisis_modifiers: Option<FileWatcherHandle>,
+    crisis_telemetry: Option<FileWatcherHandle>,
 }
 
 impl ConfigWatcherRegistry {
@@ -460,6 +528,102 @@ impl ConfigWatcherRegistry {
             info!(
                 target: "shadow_scale::config",
                 "snapshot_overlays_config.watch_disabled"
+            );
+        }
+    }
+
+    fn restart_crisis_archetypes(&mut self, path: Option<PathBuf>, sender: Sender<Command>) {
+        if let Some(existing) = self.crisis_archetypes.take() {
+            existing.stop();
+        }
+
+        if let Some(path) = path {
+            match start_file_watcher(path.clone(), sender, ReloadConfigKind::CrisisArchetypes) {
+                Ok(watcher) => {
+                    info!(
+                        target: "shadow_scale::config",
+                        path = %path.display(),
+                        "crisis_archetypes.watch_started"
+                    );
+                    self.crisis_archetypes = Some(watcher);
+                }
+                Err(err) => {
+                    warn!(
+                        target: "shadow_scale::config",
+                        path = %path.display(),
+                        error = %err,
+                        "crisis_archetypes.watch_failed"
+                    );
+                }
+            }
+        } else {
+            info!(
+                target: "shadow_scale::config",
+                "crisis_archetypes.watch_disabled"
+            );
+        }
+    }
+
+    fn restart_crisis_modifiers(&mut self, path: Option<PathBuf>, sender: Sender<Command>) {
+        if let Some(existing) = self.crisis_modifiers.take() {
+            existing.stop();
+        }
+
+        if let Some(path) = path {
+            match start_file_watcher(path.clone(), sender, ReloadConfigKind::CrisisModifiers) {
+                Ok(watcher) => {
+                    info!(
+                        target: "shadow_scale::config",
+                        path = %path.display(),
+                        "crisis_modifiers.watch_started"
+                    );
+                    self.crisis_modifiers = Some(watcher);
+                }
+                Err(err) => {
+                    warn!(
+                        target: "shadow_scale::config",
+                        path = %path.display(),
+                        error = %err,
+                        "crisis_modifiers.watch_failed"
+                    );
+                }
+            }
+        } else {
+            info!(
+                target: "shadow_scale::config",
+                "crisis_modifiers.watch_disabled"
+            );
+        }
+    }
+
+    fn restart_crisis_telemetry(&mut self, path: Option<PathBuf>, sender: Sender<Command>) {
+        if let Some(existing) = self.crisis_telemetry.take() {
+            existing.stop();
+        }
+
+        if let Some(path) = path {
+            match start_file_watcher(path.clone(), sender, ReloadConfigKind::CrisisTelemetry) {
+                Ok(watcher) => {
+                    info!(
+                        target: "shadow_scale::config",
+                        path = %path.display(),
+                        "crisis_telemetry_config.watch_started"
+                    );
+                    self.crisis_telemetry = Some(watcher);
+                }
+                Err(err) => {
+                    warn!(
+                        target: "shadow_scale::config",
+                        path = %path.display(),
+                        error = %err,
+                        "crisis_telemetry_config.watch_failed"
+                    );
+                }
+            }
+        } else {
+            info!(
+                target: "shadow_scale::config",
+                "crisis_telemetry_config.watch_disabled"
             );
         }
     }
@@ -669,6 +833,9 @@ fn handle_reload_config(
         ReloadConfigKind::Simulation => handle_reload_simulation_config(app, path),
         ReloadConfigKind::TurnPipeline => handle_reload_turn_pipeline_config(app, path),
         ReloadConfigKind::SnapshotOverlays => handle_reload_snapshot_overlays_config(app, path),
+        ReloadConfigKind::CrisisArchetypes => handle_reload_crisis_archetypes_config(app, path),
+        ReloadConfigKind::CrisisModifiers => handle_reload_crisis_modifiers_config(app, path),
+        ReloadConfigKind::CrisisTelemetry => handle_reload_crisis_telemetry_config(app, path),
     }
 }
 
@@ -917,6 +1084,219 @@ fn handle_reload_snapshot_overlays_config(app: &mut bevy::prelude::App, path: Op
     );
 }
 
+fn handle_reload_crisis_archetypes_config(app: &mut bevy::prelude::App, path: Option<String>) {
+    let command_sender = {
+        let res = app.world.resource::<CommandSenderResource>();
+        res.0.clone()
+    };
+
+    let requested_path = path
+        .and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(trimmed))
+            }
+        })
+        .or_else(|| {
+            app.world
+                .resource::<CrisisArchetypeCatalogMetadata>()
+                .path()
+                .cloned()
+        });
+
+    let (new_catalog, applied_path) = match requested_path {
+        Some(path) => match CrisisArchetypeCatalog::from_file(&path) {
+            Ok(cfg) => (Arc::new(cfg), Some(path)),
+            Err(err) => {
+                warn!(
+                    target: "shadow_scale::config",
+                    error = %err,
+                    "crisis_archetypes.reload_failed"
+                );
+                return;
+            }
+        },
+        None => (CrisisArchetypeCatalog::builtin(), None),
+    };
+
+    {
+        let mut metadata = app.world.resource_mut::<CrisisArchetypeCatalogMetadata>();
+        metadata.set_path(applied_path.clone());
+    }
+
+    {
+        let mut handle = app.world.resource_mut::<CrisisArchetypeCatalogHandle>();
+        handle.replace(Arc::clone(&new_catalog));
+    }
+
+    let watch_path = app
+        .world
+        .resource::<CrisisArchetypeCatalogMetadata>()
+        .path()
+        .cloned();
+
+    {
+        let mut watcher_state = app.world.resource_mut::<ConfigWatcherRegistry>();
+        watcher_state.restart_crisis_archetypes(watch_path, command_sender);
+    }
+
+    info!(
+        target: "shadow_scale::config",
+        path = applied_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "builtin".to_string()),
+        archetype_count = new_catalog.archetypes.len(),
+        "crisis_archetypes.reloaded"
+    );
+}
+
+fn handle_reload_crisis_modifiers_config(app: &mut bevy::prelude::App, path: Option<String>) {
+    let command_sender = {
+        let res = app.world.resource::<CommandSenderResource>();
+        res.0.clone()
+    };
+
+    let requested_path = path
+        .and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(trimmed))
+            }
+        })
+        .or_else(|| {
+            app.world
+                .resource::<CrisisModifierCatalogMetadata>()
+                .path()
+                .cloned()
+        });
+
+    let (new_catalog, applied_path) = match requested_path {
+        Some(path) => match CrisisModifierCatalog::from_file(&path) {
+            Ok(cfg) => (Arc::new(cfg), Some(path)),
+            Err(err) => {
+                warn!(
+                    target: "shadow_scale::config",
+                    error = %err,
+                    "crisis_modifiers.reload_failed"
+                );
+                return;
+            }
+        },
+        None => (CrisisModifierCatalog::builtin(), None),
+    };
+
+    {
+        let mut metadata = app.world.resource_mut::<CrisisModifierCatalogMetadata>();
+        metadata.set_path(applied_path.clone());
+    }
+
+    {
+        let mut handle = app.world.resource_mut::<CrisisModifierCatalogHandle>();
+        handle.replace(Arc::clone(&new_catalog));
+    }
+
+    let watch_path = app
+        .world
+        .resource::<CrisisModifierCatalogMetadata>()
+        .path()
+        .cloned();
+
+    {
+        let mut watcher_state = app.world.resource_mut::<ConfigWatcherRegistry>();
+        watcher_state.restart_crisis_modifiers(watch_path, command_sender);
+    }
+
+    info!(
+        target: "shadow_scale::config",
+        path = applied_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "builtin".to_string()),
+        modifier_count = new_catalog.modifiers.len(),
+        "crisis_modifiers.reloaded"
+    );
+}
+
+fn handle_reload_crisis_telemetry_config(app: &mut bevy::prelude::App, path: Option<String>) {
+    let command_sender = {
+        let res = app.world.resource::<CommandSenderResource>();
+        res.0.clone()
+    };
+
+    let requested_path = path
+        .and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(trimmed))
+            }
+        })
+        .or_else(|| {
+            app.world
+                .resource::<CrisisTelemetryConfigMetadata>()
+                .path()
+                .cloned()
+        });
+
+    let (new_config, applied_path) = match requested_path {
+        Some(path) => match CrisisTelemetryConfig::from_file(&path) {
+            Ok(cfg) => (Arc::new(cfg), Some(path)),
+            Err(err) => {
+                warn!(
+                    target: "shadow_scale::config",
+                    error = %err,
+                    "crisis_telemetry_config.reload_failed"
+                );
+                return;
+            }
+        },
+        None => (CrisisTelemetryConfig::builtin(), None),
+    };
+
+    {
+        let mut metadata = app.world.resource_mut::<CrisisTelemetryConfigMetadata>();
+        metadata.set_path(applied_path.clone());
+    }
+
+    {
+        let mut handle = app.world.resource_mut::<CrisisTelemetryConfigHandle>();
+        handle.replace(Arc::clone(&new_config));
+    }
+
+    {
+        let mut telemetry = app.world.resource_mut::<CrisisTelemetry>();
+        telemetry.apply_config(new_config.as_ref());
+    }
+
+    let watch_path = app
+        .world
+        .resource::<CrisisTelemetryConfigMetadata>()
+        .path()
+        .cloned();
+
+    {
+        let mut watcher_state = app.world.resource_mut::<ConfigWatcherRegistry>();
+        watcher_state.restart_crisis_telemetry(watch_path, command_sender);
+    }
+
+    info!(
+        target: "shadow_scale::config",
+        path = applied_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "builtin".to_string()),
+        ema_alpha = new_config.ema_alpha,
+        gauge_count = new_config.gauges.len(),
+        "crisis_telemetry_config.reloaded"
+    );
+}
+
 fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
     match payload {
         ProtoCommandPayload::Turn { steps } => Some(Command::Turn(steps)),
@@ -1053,6 +1433,16 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
         ProtoCommandPayload::ReloadConfig { kind, path } => {
             Some(Command::ReloadConfig { kind, path })
         }
+        ProtoCommandPayload::SetCrisisAutoSeed { enabled } => {
+            Some(Command::SetCrisisAutoSeed { enabled })
+        }
+        ProtoCommandPayload::SpawnCrisis {
+            faction_id,
+            archetype_id,
+        } => Some(Command::SpawnCrisis {
+            faction: FactionId(faction_id),
+            archetype_id,
+        }),
     }
 }
 

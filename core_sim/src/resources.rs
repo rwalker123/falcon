@@ -61,6 +61,7 @@ pub struct SimulationConfig {
     pub command_bind: SocketAddr,
     pub log_bind: SocketAddr,
     pub snapshot_history_limit: usize,
+    pub crisis_auto_seed: bool,
 }
 
 pub const BUILTIN_SIMULATION_CONFIG: &str = include_str!("data/simulation_config.json");
@@ -154,6 +155,8 @@ struct SimulationConfigData {
     command_bind: String,
     log_bind: String,
     snapshot_history_limit: usize,
+    #[serde(default)]
+    crisis_auto_seed: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -215,6 +218,7 @@ impl SimulationConfigData {
             command_bind: parse_socket(self.command_bind, "command_bind")?,
             log_bind: parse_socket(self.log_bind, "log_bind")?,
             snapshot_history_limit: self.snapshot_history_limit,
+            crisis_auto_seed: self.crisis_auto_seed,
         })
     }
 }
@@ -499,6 +503,21 @@ impl PendingCrisisSeeds {
 
     pub fn drain(&mut self) -> Vec<(FactionId, u16)> {
         std::mem::take(&mut self.seeds)
+    }
+}
+
+#[derive(Resource, Debug, Clone, Default)]
+pub struct PendingCrisisSpawns {
+    pub spawns: Vec<(FactionId, String)>,
+}
+
+impl PendingCrisisSpawns {
+    pub fn push<S: Into<String>>(&mut self, faction: FactionId, archetype_id: S) {
+        self.spawns.push((faction, archetype_id.into()));
+    }
+
+    pub fn drain(&mut self) -> Vec<(FactionId, String)> {
+        std::mem::take(&mut self.spawns)
     }
 }
 

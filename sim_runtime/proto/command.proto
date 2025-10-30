@@ -139,11 +139,23 @@ enum ReloadConfigKind {
   RELOAD_CONFIG_KIND_SIMULATION = 1;
   RELOAD_CONFIG_KIND_TURN_PIPELINE = 2;
   RELOAD_CONFIG_KIND_SNAPSHOT_OVERLAYS = 3;
+  RELOAD_CONFIG_KIND_CRISIS_ARCHETYPES = 4;
+  RELOAD_CONFIG_KIND_CRISIS_MODIFIERS = 5;
+  RELOAD_CONFIG_KIND_CRISIS_TELEMETRY = 6;
 }
 
 message ReloadConfigCommand {
   ReloadConfigKind kind = 1;
   optional string path = 2;
+}
+
+message SetCrisisAutoSeedCommand {
+  bool enabled = 1;
+}
+
+message SpawnCrisisCommand {
+  uint32 faction = 1;
+  string archetype_id = 2;
 }
 
 message CommandEnvelope {
@@ -167,5 +179,7 @@ message CommandEnvelope {
     UpdateCounterIntelPolicyCommand update_counter_intel_policy = 17;
     AdjustCounterIntelBudgetCommand adjust_counter_intel_budget = 18;
     ReloadConfigCommand reload_config = 16;
+    SetCrisisAutoSeedCommand set_crisis_auto_seed = 19;
+    SpawnCrisisCommand spawn_crisis = 20;
   }
 }

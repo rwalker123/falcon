@@ -1,6 +1,11 @@
 use bevy::prelude::*;
 
-use crate::{components::Tile, power::PowerGridState, resources::SimulationConfig};
+use crate::{
+    components::Tile,
+    crisis::CrisisTelemetry,
+    power::PowerGridState,
+    resources::{SimulationConfig, SimulationTick},
+};
 
 #[derive(Resource, Default, Debug, Clone)]
 pub struct SimulationMetrics {
@@ -19,6 +24,7 @@ pub struct SimulationMetrics {
     pub knowledge_countermeasures_active: u32,
     pub knowledge_common_knowledge_total: u32,
     pub knowledge_counterintel_budget_spent: f64,
+    pub crisis: crate::crisis::CrisisMetricsSnapshot,
 }
 
 pub fn collect_metrics(
@@ -26,6 +32,8 @@ pub fn collect_metrics(
     mut metrics: ResMut<SimulationMetrics>,
     tiles: Query<&Tile>,
     power: Option<Res<PowerGridState>>,
+    crisis: Res<CrisisTelemetry>,
+    tick: Res<SimulationTick>,
 ) {
     metrics.turn += 1;
     let mut total_mass = 0i128;
@@ -55,4 +63,7 @@ pub fn collect_metrics(
         metrics.grid_surplus_margin = 0.0;
         metrics.instability_alerts = 0;
     }
+
+    metrics.crisis = crisis.snapshot(tick.0);
+    crisis.log_telemetry(tick.0);
 }

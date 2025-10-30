@@ -343,12 +343,89 @@ bbcode_enabled = true
 text = "[i]Awaiting overlay telemetry...[/i]"
 fit_content = true
 
-[node name="Culture" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+[node name="Crisis" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
 visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 metadata/_tab_index = 4
+
+[node name="CrisisVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Crisis"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="CrisisControls" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 12
+
+[node name="CrisisAutoSeedCheck" type="CheckButton" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox/CrisisControls"]
+layout_mode = 2
+toggle_mode = true
+text = "Auto-seed when idle"
+
+[node name="CrisisControlsSpacer" type="Control" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox/CrisisControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="CrisisSpawnControls" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="CrisisSpawnLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls"]
+layout_mode = 2
+text = "Spawn crisis ID"
+
+[node name="CrisisArchetypeField" type="LineEdit" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "e.g. plague_bloom"
+
+[node name="CrisisFactionSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls"]
+layout_mode = 2
+min_value = 0.0
+step = 1.0
+allow_greater = true
+custom_arrow_step = 1.0
+size_flags_horizontal = 1
+
+[node name="CrisisSpawnButton" type="Button" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls"]
+layout_mode = 2
+text = "Spawn"
+
+[node name="CrisisSummaryLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Gauge Summary"
+
+[node name="CrisisSummaryText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+text = "[b]Crisis Telemetry[/b]\nAwaiting crisis telemetry."
+fit_content = true
+
+[node name="CrisisAlertsLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Alert Summary"
+
+[node name="CrisisAlertsText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+text = "[i]No crisis alerts recorded.[/i]"
+fit_content = true
+
+[node name="Culture" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 13
 
 [node name="CultureVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Culture"]
 layout_mode = 2

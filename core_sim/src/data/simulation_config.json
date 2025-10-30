@@ -39,5 +39,6 @@
   "snapshot_flat_bind": "127.0.0.1:41002",
   "command_bind": "127.0.0.1:41001",
   "log_bind": "127.0.0.1:41003",
-  "snapshot_history_limit": 256
+  "snapshot_history_limit": 256,
+  "crisis_auto_seed": false
 }

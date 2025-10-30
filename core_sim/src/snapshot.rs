@@ -6,7 +6,10 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use log::warn;
 use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
-    AxisBiasState, CorruptionLedger, CorruptionSubsystem, CultureLayerState, CultureTensionState,
+    AxisBiasState, CorruptionLedger, CorruptionSubsystem, CrisisGaugeState,
+    CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
+    CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
+    CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
     CultureTraitEntry, DiscoveryProgressEntry, GenerationState, GreatDiscoveryDefinitionState,
     GreatDiscoveryProgressState, GreatDiscoveryState, GreatDiscoveryTelemetryState,
     InfluentialIndividualState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
@@ -41,6 +44,7 @@ use crate::{
         encode_ledger_key, KnowledgeLedger, KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle,
         KnowledgeSnapshotPayload, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
     },
+    metrics::SimulationMetrics,
     orders::FactionId,
     power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
     resources::{
@@ -49,6 +53,13 @@ use crate::{
     },
     scalar::Scalar,
     snapshot_overlays_config::{SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle},
+};
+
+use crate::crisis::{
+    CrisisMetricKind as InternalCrisisMetricKind,
+    CrisisMetricsSnapshot as InternalCrisisMetricsSnapshot, CrisisOverlayCache,
+    CrisisSeverityBand as InternalCrisisSeverityBand,
+    CrisisTrendSample as InternalCrisisTrendSample,
 };
 
 type EncodedBuffers = (Arc<Vec<u8>>, Arc<Vec<u8>>);
@@ -68,6 +79,8 @@ pub struct SnapshotContext<'w> {
     pub config: Res<'w, SimulationConfig>,
     pub tick: Res<'w, SimulationTick>,
     pub overlays: Res<'w, SnapshotOverlaysConfigHandle>,
+    pub metrics: Res<'w, SimulationMetrics>,
+    pub crisis_overlay: Res<'w, CrisisOverlayCache>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -131,6 +144,8 @@ pub struct SnapshotHistory {
     knowledge_ledger: HashMap<u64, KnowledgeLedgerEntryState>,
     knowledge_metrics: KnowledgeMetricsState,
     knowledge_timeline: Vec<KnowledgeTimelineEventState>,
+    crisis_telemetry: CrisisTelemetryState,
+    crisis_overlay: CrisisOverlayState,
     axis_bias: AxisBiasState,
     sentiment: SentimentTelemetryState,
     terrain_overlay: TerrainOverlayState,
@@ -178,6 +193,8 @@ impl SnapshotHistory {
             knowledge_ledger: HashMap::new(),
             knowledge_metrics: KnowledgeMetricsState::default(),
             knowledge_timeline: Vec::new(),
+            crisis_telemetry: CrisisTelemetryState::default(),
+            crisis_overlay: CrisisOverlayState::default(),
             axis_bias: AxisBiasState::default(),
             sentiment: SentimentTelemetryState::default(),
             terrain_overlay: TerrainOverlayState::default(),
@@ -402,6 +419,20 @@ impl SnapshotHistory {
             snapshot.knowledge_timeline.clone()
         };
 
+        let crisis_telemetry_state = snapshot.crisis_telemetry.clone();
+        let crisis_telemetry_delta = if self.crisis_telemetry == crisis_telemetry_state {
+            None
+        } else {
+            Some(crisis_telemetry_state.clone())
+        };
+
+        let crisis_overlay_state = snapshot.crisis_overlay.clone();
+        let crisis_overlay_delta = if self.crisis_overlay == crisis_overlay_state {
+            None
+        } else {
+            Some(crisis_overlay_state.clone())
+        };
+
         let delta = WorldDelta {
             header: snapshot.header.clone(),
             tiles: diff_new(&self.tiles, &tiles_index),
@@ -426,6 +457,8 @@ impl SnapshotHistory {
             removed_knowledge_ledger: diff_removed(&self.knowledge_ledger, &knowledge_ledger_index),
             knowledge_metrics: knowledge_metrics_delta.clone(),
             knowledge_timeline: knowledge_timeline_delta.clone(),
+            crisis_telemetry: crisis_telemetry_delta.clone(),
+            crisis_overlay: crisis_overlay_delta.clone(),
             axis_bias: axis_bias_delta,
             sentiment: sentiment_delta.clone(),
             generations: diff_new(&self.generations, &generations_index),
@@ -463,6 +496,8 @@ impl SnapshotHistory {
         self.knowledge_ledger = knowledge_ledger_index;
         self.knowledge_metrics = knowledge_metrics_state;
         self.knowledge_timeline = snapshot_arc.knowledge_timeline.clone();
+        self.crisis_telemetry = crisis_telemetry_state;
+        self.crisis_overlay = crisis_overlay_state;
         self.generations = generations_index;
         self.influencers = influencers_index;
         self.culture_layers = culture_layers_index;
@@ -574,6 +609,8 @@ impl SnapshotHistory {
             .collect();
         self.knowledge_metrics = entry.snapshot.knowledge_metrics.clone();
         self.knowledge_timeline = entry.snapshot.knowledge_timeline.clone();
+        self.crisis_telemetry = entry.snapshot.crisis_telemetry.clone();
+        self.crisis_overlay = entry.snapshot.crisis_overlay.clone();
 
         self.last_snapshot = Some(entry.snapshot.clone());
         self.last_delta = Some(entry.delta.clone());
@@ -625,6 +662,8 @@ impl SnapshotHistory {
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
             knowledge_timeline: Vec::new(),
+            crisis_telemetry: None,
+            crisis_overlay: None,
             axis_bias: Some(bias.clone()),
             sentiment: None,
             logistics_raster: None,
@@ -723,6 +762,8 @@ impl SnapshotHistory {
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
             knowledge_timeline: Vec::new(),
+            crisis_telemetry: None,
+            crisis_overlay: None,
             axis_bias: None,
             sentiment: None,
             logistics_raster: None,
@@ -815,6 +856,8 @@ impl SnapshotHistory {
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
             knowledge_timeline: Vec::new(),
+            crisis_telemetry: None,
+            crisis_overlay: None,
             axis_bias: None,
             sentiment: None,
             logistics_raster: None,
@@ -900,6 +943,8 @@ pub fn capture_snapshot(
         config,
         tick,
         overlays,
+        metrics,
+        crisis_overlay,
     } = ctx;
     let overlays_config = overlays.get();
     history.set_capacity(config.snapshot_history_limit.max(1));
@@ -1126,6 +1171,11 @@ pub fn capture_snapshot(
     };
 
     let axis_bias_state = axis_bias_state_from_resource(&axis_bias);
+    let crisis_telemetry_state = crisis_telemetry_state_from_metrics(&metrics.crisis);
+    let crisis_overlay_state = CrisisOverlayState {
+        heatmap: crisis_overlay.raster.clone(),
+        annotations: crisis_overlay.annotations.clone(),
+    };
 
     let header = SnapshotHeader::new(
         tick.0,
@@ -1167,6 +1217,8 @@ pub fn capture_snapshot(
         knowledge_ledger: knowledge_ledger_states,
         knowledge_timeline: knowledge_timeline_states,
         knowledge_metrics: knowledge_metrics_state,
+        crisis_telemetry: crisis_telemetry_state.clone(),
+        crisis_overlay: crisis_overlay_state.clone(),
     }
     .finalize();
 
@@ -1515,6 +1567,66 @@ fn axis_bias_state_from_resource(bias: &SentimentAxisBias) -> AxisBiasState {
         trust: raw[1],
         equity: raw[2],
         agency: raw[3],
+    }
+}
+
+fn crisis_metric_kind_to_schema(kind: InternalCrisisMetricKind) -> SchemaCrisisMetricKind {
+    match kind {
+        InternalCrisisMetricKind::R0 => SchemaCrisisMetricKind::R0,
+        InternalCrisisMetricKind::GridStressPct => SchemaCrisisMetricKind::GridStressPct,
+        InternalCrisisMetricKind::UnauthorizedQueuePct => {
+            SchemaCrisisMetricKind::UnauthorizedQueuePct
+        }
+        InternalCrisisMetricKind::SwarmsActive => SchemaCrisisMetricKind::SwarmsActive,
+        InternalCrisisMetricKind::PhageDensity => SchemaCrisisMetricKind::PhageDensity,
+    }
+}
+
+fn crisis_severity_band_to_schema(band: InternalCrisisSeverityBand) -> SchemaCrisisSeverityBand {
+    match band {
+        InternalCrisisSeverityBand::Safe => SchemaCrisisSeverityBand::Safe,
+        InternalCrisisSeverityBand::Warn => SchemaCrisisSeverityBand::Warn,
+        InternalCrisisSeverityBand::Critical => SchemaCrisisSeverityBand::Critical,
+    }
+}
+
+fn crisis_history_to_schema(history: &[InternalCrisisTrendSample]) -> Vec<SchemaCrisisTrendSample> {
+    history
+        .iter()
+        .map(|sample| SchemaCrisisTrendSample {
+            tick: sample.tick,
+            value: sample.value,
+        })
+        .collect()
+}
+
+fn crisis_telemetry_state_from_metrics(
+    snapshot: &InternalCrisisMetricsSnapshot,
+) -> CrisisTelemetryState {
+    let gauges = snapshot
+        .gauges
+        .iter()
+        .map(|gauge| CrisisGaugeState {
+            kind: crisis_metric_kind_to_schema(gauge.kind),
+            raw: gauge.raw,
+            ema: gauge.ema,
+            trend_5t: gauge.trend_5t,
+            warn_threshold: gauge.warn_threshold,
+            critical_threshold: gauge.critical_threshold,
+            last_updated_tick: gauge.last_updated_tick,
+            stale_ticks: gauge.stale_ticks,
+            band: crisis_severity_band_to_schema(gauge.band),
+            history: crisis_history_to_schema(&gauge.history),
+        })
+        .collect();
+
+    CrisisTelemetryState {
+        gauges,
+        modifiers_active: snapshot.modifiers_active,
+        foreshock_incidents: snapshot.foreshock_incidents,
+        containment_incidents: snapshot.containment_incidents,
+        warnings_active: snapshot.warnings_active,
+        criticals_active: snapshot.criticals_active,
     }
 }
 
@@ -2697,6 +2809,8 @@ mod tests {
             knowledge_ledger: Vec::new(),
             knowledge_timeline: Vec::new(),
             knowledge_metrics: KnowledgeMetricsState::default(),
+            crisis_telemetry: CrisisTelemetryState::default(),
+            crisis_overlay: CrisisOverlayState::default(),
             terrain: overlay,
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
@@ -2738,6 +2852,8 @@ mod tests {
             knowledge_ledger: Vec::new(),
             knowledge_timeline: Vec::new(),
             knowledge_metrics: KnowledgeMetricsState::default(),
+            crisis_telemetry: CrisisTelemetryState::default(),
+            crisis_overlay: CrisisOverlayState::default(),
             terrain: TerrainOverlayState::default(),
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),

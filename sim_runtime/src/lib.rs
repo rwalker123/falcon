@@ -371,11 +371,12 @@ pub mod knowledge {
             KnowledgeTelemetryFrame,
         };
         use crate::{
-            AxisBiasState, CorruptionLedger, GreatDiscoveryTelemetryState, KnowledgeLeakFlags,
-            KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeSecurityPosture,
-            KnowledgeTimelineEventKind, KnowledgeTimelineEventState, PowerTelemetryState,
-            ScalarRasterState, SentimentTelemetryState, SnapshotHeader, TerrainOverlayState,
-            WorldDelta, WorldSnapshot,
+            AxisBiasState, CorruptionLedger, CrisisOverlayState, CrisisTelemetryState,
+            GreatDiscoveryTelemetryState, KnowledgeLeakFlags, KnowledgeLedgerEntryState,
+            KnowledgeMetricsState, KnowledgeSecurityPosture, KnowledgeTimelineEventKind,
+            KnowledgeTimelineEventState, PowerTelemetryState, ScalarRasterState,
+            SentimentTelemetryState, SnapshotHeader, TerrainOverlayState, WorldDelta,
+            WorldSnapshot,
         };
 
         fn empty_snapshot() -> WorldSnapshot {
@@ -394,6 +395,8 @@ pub mod knowledge {
                 knowledge_ledger: Vec::new(),
                 knowledge_timeline: Vec::new(),
                 knowledge_metrics: KnowledgeMetricsState::default(),
+                crisis_telemetry: CrisisTelemetryState::default(),
+                crisis_overlay: CrisisOverlayState::default(),
                 terrain: TerrainOverlayState::default(),
                 logistics_raster: ScalarRasterState::default(),
                 sentiment_raster: ScalarRasterState::default(),
