@@ -4,6 +4,7 @@
 //! simulation when [`run_turn`] is invoked.
 
 mod components;
+mod crisis;
 mod culture;
 mod culture_corruption_config;
 mod espionage;
@@ -31,6 +32,10 @@ use bevy::prelude::*;
 pub use components::{
     ElementKind, KnowledgeFragment, LogisticsLink, PendingMigration, PopulationCohort, PowerNode,
     Tile, TradeLink,
+};
+pub use crisis::{
+    CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot, CrisisSeverityBand,
+    CrisisTelemetry, CrisisTelemetrySample, CrisisTrendSample,
 };
 pub use culture::{
     reconcile_culture_layers, CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope,
@@ -159,6 +164,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(PowerTopology::default())
         .insert_resource(SimulationTick::default())
         .insert_resource(SimulationMetrics::default())
+        .insert_resource(CrisisTelemetry::default())
         .insert_resource(SentimentAxisBias::default())
         .insert_resource(knowledge_config_handle)
         .insert_resource(knowledge_ledger)

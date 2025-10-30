@@ -336,6 +336,79 @@ impl From<u32> for KnowledgeLeakFlags {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum CrisisMetricKind {
+    #[default]
+    R0 = 0,
+    GridStressPct = 1,
+    UnauthorizedQueuePct = 2,
+    SwarmsActive = 3,
+    PhageDensity = 4,
+}
+
+impl CrisisMetricKind {
+    pub const VALUES: [CrisisMetricKind; 5] = [
+        CrisisMetricKind::R0,
+        CrisisMetricKind::GridStressPct,
+        CrisisMetricKind::UnauthorizedQueuePct,
+        CrisisMetricKind::SwarmsActive,
+        CrisisMetricKind::PhageDensity,
+    ];
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum CrisisSeverityBand {
+    #[default]
+    Safe = 0,
+    Warn = 1,
+    Critical = 2,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct CrisisTrendSample {
+    pub tick: u64,
+    pub value: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct CrisisGaugeState {
+    pub kind: CrisisMetricKind,
+    pub raw: f32,
+    pub ema: f32,
+    pub trend_5t: f32,
+    pub warn_threshold: f32,
+    pub critical_threshold: f32,
+    pub last_updated_tick: u64,
+    pub stale_ticks: u64,
+    pub band: CrisisSeverityBand,
+    pub history: Vec<CrisisTrendSample>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct CrisisTelemetryState {
+    pub gauges: Vec<CrisisGaugeState>,
+    pub modifiers_active: u32,
+    pub foreshock_incidents: u32,
+    pub containment_incidents: u32,
+    pub warnings_active: u32,
+    pub criticals_active: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct CrisisOverlayAnnotationState {
+    pub label: String,
+    pub severity: CrisisSeverityBand,
+    pub path: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct CrisisOverlayState {
+    pub heatmap: ScalarRasterState,
+    pub annotations: Vec<CrisisOverlayAnnotationState>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct KnowledgeCountermeasureState {
     pub kind: KnowledgeCountermeasureKind,
@@ -944,6 +1017,8 @@ pub struct WorldSnapshot {
     pub knowledge_ledger: Vec<KnowledgeLedgerEntryState>,
     pub knowledge_timeline: Vec<KnowledgeTimelineEventState>,
     pub knowledge_metrics: KnowledgeMetricsState,
+    pub crisis_telemetry: CrisisTelemetryState,
+    pub crisis_overlay: CrisisOverlayState,
     pub terrain: TerrainOverlayState,
     pub logistics_raster: ScalarRasterState,
     pub sentiment_raster: ScalarRasterState,
@@ -983,6 +1058,8 @@ pub struct WorldDelta {
     pub removed_knowledge_ledger: Vec<u64>,
     pub knowledge_metrics: Option<KnowledgeMetricsState>,
     pub knowledge_timeline: Vec<KnowledgeTimelineEventState>,
+    pub crisis_telemetry: Option<CrisisTelemetryState>,
+    pub crisis_overlay: Option<CrisisOverlayState>,
     pub axis_bias: Option<AxisBiasState>,
     pub sentiment: Option<SentimentTelemetryState>,
     pub logistics_raster: Option<ScalarRasterState>,
@@ -1094,6 +1171,8 @@ fn build_snapshot_flatbuffer<'a>(
     let knowledge_ledger_vec = create_knowledge_ledger(builder, &snapshot.knowledge_ledger);
     let knowledge_timeline_vec = create_knowledge_timeline(builder, &snapshot.knowledge_timeline);
     let knowledge_metrics = create_knowledge_metrics(builder, &snapshot.knowledge_metrics);
+    let crisis_telemetry = create_crisis_telemetry(builder, &snapshot.crisis_telemetry);
+    let crisis_overlay = create_crisis_overlay(builder, &snapshot.crisis_overlay);
     let terrain_overlay = create_terrain_overlay(builder, &snapshot.terrain);
     let logistics_raster = create_scalar_raster(builder, &snapshot.logistics_raster);
     let sentiment_raster = create_scalar_raster(builder, &snapshot.sentiment_raster);
@@ -1135,6 +1214,8 @@ fn build_snapshot_flatbuffer<'a>(
             knowledgeLedger: Some(knowledge_ledger_vec),
             knowledgeTimeline: Some(knowledge_timeline_vec),
             knowledgeMetrics: Some(knowledge_metrics),
+            crisisTelemetry: Some(crisis_telemetry),
+            crisisOverlay: Some(crisis_overlay),
             terrainOverlay: Some(terrain_overlay),
             logisticsRaster: Some(logistics_raster),
             sentimentRaster: Some(sentiment_raster),
@@ -1212,6 +1293,14 @@ fn build_delta_flatbuffer<'a>(
         .knowledge_metrics
         .as_ref()
         .map(|metrics| create_knowledge_metrics(builder, metrics));
+    let crisis_telemetry = delta
+        .crisis_telemetry
+        .as_ref()
+        .map(|telemetry| create_crisis_telemetry(builder, telemetry));
+    let crisis_overlay = delta
+        .crisis_overlay
+        .as_ref()
+        .map(|overlay| create_crisis_overlay(builder, overlay));
     let terrain_overlay = delta
         .terrain
         .as_ref()
@@ -1291,6 +1380,8 @@ fn build_delta_flatbuffer<'a>(
             removedKnowledgeLedger: Some(removed_knowledge_vec),
             knowledgeTimeline: Some(knowledge_timeline_vec),
             knowledgeMetrics: knowledge_metrics,
+            crisisTelemetry: crisis_telemetry,
+            crisisOverlay: crisis_overlay,
             axisBias: axis_bias,
             sentiment,
             generations: Some(generations_vec),
@@ -1560,6 +1651,126 @@ fn create_power_metrics<'a>(
             surplusMargin: metrics.surplus_margin,
             instabilityAlerts: metrics.instability_alerts,
             incidents: Some(incidents),
+        },
+    )
+}
+
+fn to_fb_crisis_metric_kind(kind: CrisisMetricKind) -> fb::CrisisMetricKind {
+    match kind {
+        CrisisMetricKind::R0 => fb::CrisisMetricKind::R0,
+        CrisisMetricKind::GridStressPct => fb::CrisisMetricKind::GridStressPct,
+        CrisisMetricKind::UnauthorizedQueuePct => fb::CrisisMetricKind::UnauthorizedQueuePct,
+        CrisisMetricKind::SwarmsActive => fb::CrisisMetricKind::SwarmsActive,
+        CrisisMetricKind::PhageDensity => fb::CrisisMetricKind::PhageDensity,
+    }
+}
+
+fn to_fb_crisis_severity_band(band: CrisisSeverityBand) -> fb::CrisisSeverityBand {
+    match band {
+        CrisisSeverityBand::Safe => fb::CrisisSeverityBand::Safe,
+        CrisisSeverityBand::Warn => fb::CrisisSeverityBand::Warn,
+        CrisisSeverityBand::Critical => fb::CrisisSeverityBand::Critical,
+    }
+}
+
+fn create_crisis_trend_samples<'a>(
+    builder: &mut FbBuilder<'a>,
+    samples: &[CrisisTrendSample],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::CrisisTrendSample<'a>>>> {
+    let offsets: Vec<_> = samples
+        .iter()
+        .map(|sample| {
+            fb::CrisisTrendSample::create(
+                builder,
+                &fb::CrisisTrendSampleArgs {
+                    tick: sample.tick,
+                    value: sample.value,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_crisis_gauges<'a>(
+    builder: &mut FbBuilder<'a>,
+    gauges: &[CrisisGaugeState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::CrisisGaugeState<'a>>>> {
+    let offsets: Vec<_> = gauges
+        .iter()
+        .map(|gauge| {
+            let history = create_crisis_trend_samples(builder, &gauge.history);
+            fb::CrisisGaugeState::create(
+                builder,
+                &fb::CrisisGaugeStateArgs {
+                    kind: to_fb_crisis_metric_kind(gauge.kind),
+                    raw: gauge.raw,
+                    ema: gauge.ema,
+                    trend5t: gauge.trend_5t,
+                    warnThreshold: gauge.warn_threshold,
+                    criticalThreshold: gauge.critical_threshold,
+                    lastUpdatedTick: gauge.last_updated_tick,
+                    staleTicks: gauge.stale_ticks,
+                    band: to_fb_crisis_severity_band(gauge.band),
+                    history: Some(history),
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_crisis_telemetry<'a>(
+    builder: &mut FbBuilder<'a>,
+    telemetry: &CrisisTelemetryState,
+) -> WIPOffset<fb::CrisisTelemetryState<'a>> {
+    let gauges = create_crisis_gauges(builder, &telemetry.gauges);
+    fb::CrisisTelemetryState::create(
+        builder,
+        &fb::CrisisTelemetryStateArgs {
+            gauges: Some(gauges),
+            modifiersActive: telemetry.modifiers_active,
+            foreshockIncidents: telemetry.foreshock_incidents,
+            containmentIncidents: telemetry.containment_incidents,
+            warningsActive: telemetry.warnings_active,
+            criticalsActive: telemetry.criticals_active,
+        },
+    )
+}
+
+fn create_crisis_overlay_annotations<'a>(
+    builder: &mut FbBuilder<'a>,
+    annotations: &[CrisisOverlayAnnotationState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::CrisisOverlayAnnotationState<'a>>>> {
+    let offsets: Vec<_> = annotations
+        .iter()
+        .map(|annotation| {
+            let path = builder.create_vector(&annotation.path);
+            let label = builder.create_string(&annotation.label);
+            fb::CrisisOverlayAnnotationState::create(
+                builder,
+                &fb::CrisisOverlayAnnotationStateArgs {
+                    label: Some(label),
+                    severity: to_fb_crisis_severity_band(annotation.severity),
+                    path: Some(path),
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_crisis_overlay<'a>(
+    builder: &mut FbBuilder<'a>,
+    overlay: &CrisisOverlayState,
+) -> WIPOffset<fb::CrisisOverlayState<'a>> {
+    let heatmap = create_scalar_raster(builder, &overlay.heatmap);
+    let annotations = create_crisis_overlay_annotations(builder, &overlay.annotations);
+    fb::CrisisOverlayState::create(
+        builder,
+        &fb::CrisisOverlayStateArgs {
+            heatmap: Some(heatmap),
+            annotations: Some(annotations),
         },
     )
 }

@@ -1,0 +1,4 @@
+# Project Overview
+- Purpose: Prototype the Shadow-Scale headless simulation, exposing a deterministic Bevy-based core (`core_sim`) with snapshot/log streams and a Godot thin client for inspection and command tooling.
+- Tech stack: Rust (Bevy ECS, FlatBuffers serialization via `sim_schema`, shared helpers in `sim_runtime`), Godot 4 client with GDExtension bindings (`clients/godot_thin_client`), supporting tooling in `xtask`, `tools`, and integration tests.
+- Structure highlights: `core_sim` (simulation server), `sim_schema` (FlatBuffers schemas), `sim_runtime` (shared runtime utilities), `shadow_scale_flatbuffers` (generated bindings), `clients/godot_thin_client` (inspector UI), `docs/architecture.md` + `shadow_scale_strategy_game_concept_technical_plan_v_0.md` (design canon), `TASKS.md` (backlog), `integration_tests/` and `tools/` (regression harnesses).

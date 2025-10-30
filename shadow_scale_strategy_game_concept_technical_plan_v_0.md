@@ -949,9 +949,10 @@ Defines concrete capabilities per domain tier to ground policy/tech/infra prereq
 
 ### UI Panels (Crisis)
 - Crisis Dashboard: compact gauges for `R0`, `Grid Stress`, `Unauthorized Queue %`, `Swarms Active`, `Phage Density`.
-- Event Log & Choice UI: step cards with Metrics, Sample text, and one‑click countermeasures; tags surface linked Policy/Tech/Infra.
+- Event Log & Choice UI: step cards with Metrics, Sample text, and one-click countermeasures; tags surface linked Policy/Tech/Infra.
 - Modifier Tray: lists active Global Modifiers with timers, scopes, and tooltips showing stacking/decay.
 - Network View: propagation graphs over transport, comms, and power networks with chokepoints highlighted.
+- Implementation notes for backend wiring live in `docs/architecture.md` §Crisis System Architecture & Configuration Plan (Archetype catalog, telemetry config, overlays).
 
 #### Crisis Dashboard Mock Gauges (Prototype Values)
 - R0: 1.6 (range 0.5–3.0; color bands: <=0.9 green, 0.9–1.2 yellow, >1.2 red)

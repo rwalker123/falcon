@@ -335,6 +335,68 @@ Power resolution sits fourth in the turn chain (materials → logistics → popu
 - Extend Godot inspector to visualise the new telemetry and expose relevant command toggles.
 - Author regression tests/benchmarks covering stability band transitions, cascade propagation, and serialization of power telemetry.
 
+## Crisis Telemetry Scope
+This section scopes the engineering work needed to deliver the player-facing crisis telemetry experience described in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §10 (*Visualization & Player Experience*).
+
+### Simulation Metrics (`SimulationMetrics` + resource structs)
+- Emit explicit gauge primitives each turn: `crisis_r0`, `crisis_grid_stress_pct`, `crisis_unauthorized_queue_pct`, `crisis_swarms_active`, `crisis_phage_density`. Store raw instantaneous values and EMA-smoothed display values (α = 0.35) so both UI and automation can choose presentation; flag warn/critical bands using the manual thresholds (warn 0.9/70%/10%/2/0.35, critical 1.2/85%/25%/5/0.6).
+- Add trend deltas (`*_trend_5t`) computed over the last five ticks to support the dashboard’s trend animations and tooltip mini-history.
+- Record cadence metadata per metric (`last_updated_tick`, `stale_ticks`) so alerts can detect if feeds stall more than two turns.
+- Surface aggregated counts of active crisis modifiers (`crisis_modifiers_active`) and outstanding foreshock/containment incidents to keep Modifier Tray and Event Log summaries aligned with backend state.
+
+### Log & Telemetry Channels
+- Introduce a dedicated `crisis.telemetry` tracing target that emits per-turn frames (`{tick, metric, value_raw, value_ema, band, trend}`) for external monitoring and Godot log subscribers, mirroring the manual’s request for loggable KPI series.
+- Add `crisis.alerts` log frames whenever a metric crosses warn/critical thresholds or accelerates (trend delta > +10% over five ticks). Include an `ack_required` flag for critical re-entries so client UI can blink/escalate per accessibility rules.
+- Extend incident logging (`GridEventLedger`, crisis archetype emitters) to annotate entries with `crisis_overlay_ref` IDs, enabling drill-down from logs into map overlays.
+
+### Snapshot & Overlay Payloads
+- Extend `WorldSnapshot` with a `CrisisTelemetryState` table bundling the metric set, trend history (last five ticks per metric), active thresholds, and EMA parameters. This keeps the Crisis Dashboard synchronized without scraping logs.
+- Add a `CrisisOverlayState` raster describing infection/replicator/AI control zones, foreshocks, containment lines, and segmentation corridors. Provide both tiled heatmap data (normalized 0–1) and discrete vector annotations for containment lines so the Godot inspector can layer them per manual §10.
+- Attach an optional `CrisisNetworkGraphState` (nodes, weighted edges, chokepoint tags) to snapshots to back the Network View overlay, referencing the same transport/comms/power graph already captured for logistics but filtered for crisis context.
+- Include per-modifier payloads (`CrisisModifierState` entries with timers, stack counts, decay rules) so the Modifier Tray renders live tooltips.
+
+### Client Responsibilities (Godot thin client)
+- Implement the Crisis Dashboard panel: subscribe to `CrisisTelemetryState` and `crisis.telemetry` frames, render gauges with color bands and blink cadence per manual semantics, surface trend sparkles, hover tooltips (definition, source system, last five ticks, linked countermeasures).
+- Extend the Event Log/Choice UI to consume `crisis.alerts` frames, pair them with pending countermeasure commands, and respect the `ack_required` flag (pause blink when acknowledged). Provide filters for archetype, severity, and subsystem.
+- Augment the Modifier Tray to ingest `CrisisModifierState`, display stack indicators, timers, and provide tooltip breakdowns including decay models and linked policies.
+- Add a Crisis Map overlay toggle layering `CrisisOverlayState` heatmaps and vector lines; sync color palette with the manual and pipe chokepoint annotations into the Network View panel (transport/comms/power filters).
+- Wire an accessibility toggle (existing settings pane) to disable blinking animations while retaining color state, covering the manual’s accessibility guidance.
+
+### Delivery & Integration Notes
+- Crisis telemetry exporters run after crisis-resolution systems each turn so emitted metrics and overlays represent post-resolution state; ensure determinism by placing exporters immediately before snapshot capture.
+- Schema updates (`sim_schema/schemas/snapshot.fbs`, Godot GDScript bindings) must version-gate `CrisisTelemetryState`/`CrisisOverlayState` additions; coordinate with tooling to avoid breaking existing viewers.
+- Cross-link manual updates: whenever metric definitions, thresholds, or overlay semantics change in the manual (§10), mirror the change here and flag dependent tasks in `TASKS.md`.
+- Implementation status: `core_sim` now surfaces `CrisisTelemetryState` with EMA/trend/staleness metadata, emits placeholder `CrisisOverlayState`, and publishes `crisis.telemetry`/`crisis.alerts` tracing targets for per-turn gauges and threshold transitions.
+
+## Crisis System Architecture & Configuration Plan
+This section translates the manual’s crisis beats (see `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §§9–10) into implementation scaffolding and configuration artifacts that keep archetypes, telemetry, and overlays data-driven.
+
+### Simulation Structure
+- **Archetype registry (`CrisisArchetypeCatalog`)**: data-backed definitions for Plague, Replicator, AI Sovereign, etc. Each archetype lists seeds, propagation rules, mitigation hooks, modifier bundles, and telemetry feeds exposed to the gauges above.
+- **State resources**: `ActiveCrisisLedger` (per faction/world state with intensity, spread vectors, mitigation progress), `CrisisModifierLedger` (stacked modifiers with decay), and `CrisisIncidentFeed` (foreshocks, outbreaks, containment wins) driving overlays and alerts.
+- **Phase systems**: a dedicated `TurnStage::Crisis` inserted between Population and Finalize to (1) resolve propagation, (2) apply countermeasures, (3) emit incident events, and (4) push fresh samples into `CrisisTelemetry`. Existing Finalize stage then handles corruption sleeves and power fallout.
+- **Event flow**: archetype resolution emits `CrisisIncidentEvent` (map overlays + log frames), `CrisisModifierEvent` (Tray updates), and `CrisisAlertEvent` (warn/critical threshold crossings). Handlers push to telemetry/log channels and schedule UI commands.
+
+### Configuration Artifacts
+- `core_sim/src/data/crisis_archetypes.json`: canonical list of crisis archetypes. Fields include `id`, `name`, `manual_ref`, seed prerequisites (discoveries, world chemistry), propagation model parameters (growth curves, spread vectors), mitigation unlocks, telemetry contributions (`r0_source`, `grid_stress_weight`, etc.), overlay palette references, and scripted incident tables.
+- `core_sim/src/data/crisis_modifiers.json`: shared modifier definitions (name, effect handles, stacking rules, decay model, telemetry tags) consumed by both crisis archetypes and other systems.
+- `core_sim/src/data/crisis_telemetry_config.json`: tunable thresholds (warn/critical bands per gauge), EMA alpha, trend window size, stale tolerance, and escalation cadence (blink rates, alert cooldowns). Defaults align with manual §10 values and are referenced by `CrisisTelemetry`.
+- `core_sim/src/data/crisis_overlay_config.json`: layer palette, intensity mapping, and annotation glyphs for heatmaps/containment lines pulled by the Godot inspector alongside snapshot rasters.
+
+### Loading & Hot-Reload
+- Mirror the pattern used by knowledge ledger and espionage configs: introduce handle wrappers (`CrisisConfigHandle`, `CrisisTelemetryConfigHandle`) and load from env overrides with builtin fallbacks. Inject into `build_headless_app` so phase systems can access configuration without global state.
+- Implement file watchers in the tooling path (`cargo xtask crisis-hotload`) to let designers tweak JSON and refresh the running server in-place; emit `shadow_scale::config` log frames when reloads succeed or fail.
+
+### Client & Command Surface
+- Inspector integration: Crisis panels query archetype metadata (name, severity bands, mitigation tips) from streamed catalog payloads derived from `crisis_archetypes.json`.
+- Command verbs: extend `CommandEnvelope` with crisis controls (`queue_mitigation_action`, `set_crisis_posture`, `acknowledge_crisis_alert`) referencing IDs from the config. Ensure commands validate against the catalog and log rejections.
+- Scenario tooling: add CLI hooks (`cargo xtask spawn-crisis --archetype=replicator`) to trigger seeds defined in JSON for reproducible playtest setups. Uses the same data structures to avoid drift.
+
+### Testing & Telemetry Alignment
+- Unit suites cover JSON parsing, archetype lookup, and propagation math with deterministic seeds per archetype.
+- Integration tests spin a minimal world, load an archetype from JSON, advance the crisis stage, and assert telemetry/log payloads (EMA, trends, incidents) align with expectations.
+- Benchmarks: stress-test propagation loops with multiple concurrent archetypes to ensure the dedicated stage stays within the turn budget.
+
 ## Great Discovery System Plan
 This section translates the player-facing intent in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §5 into engineering scaffolding. The goal is to capture how overlapping discoveries crystallise into a Great Discovery, how those events interact with Knowledge Diffusion (§5a), and how clients observe the leap through snapshots.
 
