@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 
 use bevy::prelude::*;
 
@@ -9,6 +10,8 @@ use crate::{
     resources::{DiplomacyLeverage, DiscoveryProgressLedger, PendingCrisisSeeds, SimulationTick},
     scalar::{scalar_one, scalar_zero, Scalar},
 };
+
+use rand::{distributions::uniform::SampleUniform, rngs::SmallRng, Rng, SeedableRng};
 
 use serde::Deserialize;
 use sim_runtime::{
@@ -26,6 +29,53 @@ pub mod effect_flags {
 
 pub const BUILTIN_GREAT_DISCOVERY_CATALOG: &str =
     include_str!("data/great_discovery_definitions.json");
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum NumericBand<T> {
+    Scalar(T),
+    Range { min: T, max: T },
+}
+
+impl<T> Default for NumericBand<T>
+where
+    T: Default,
+{
+    fn default() -> Self {
+        Self::Scalar(T::default())
+    }
+}
+
+impl<T> NumericBand<T>
+where
+    T: Copy + PartialOrd,
+{
+    fn bounds(&self) -> (T, T) {
+        let (min, max) = match self {
+            NumericBand::Scalar(value) => (*value, *value),
+            NumericBand::Range { min, max } => (*min, *max),
+        };
+        if min <= max {
+            (min, max)
+        } else {
+            (max, min)
+        }
+    }
+}
+
+impl<T> NumericBand<T>
+where
+    T: Copy + PartialOrd + PartialEq + SampleUniform,
+{
+    fn sample(&self, rng: &mut SmallRng) -> T {
+        let (min, max) = self.bounds();
+        if min == max {
+            min
+        } else {
+            rng.gen_range(min..=max)
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum GreatDiscoveryCatalogError {
@@ -45,11 +95,11 @@ struct GreatDiscoveryCatalogEntry {
     #[serde(default)]
     requirements: Vec<GreatDiscoveryCatalogRequirement>,
     #[serde(default)]
-    observation_threshold: u32,
+    observation_threshold: NumericBand<u32>,
     #[serde(default)]
-    cooldown_ticks: u16,
+    cooldown_ticks: NumericBand<u16>,
     #[serde(default)]
-    freshness_window: Option<u16>,
+    freshness_window: Option<NumericBand<u16>>,
     #[serde(default)]
     effect_flags: Vec<String>,
     #[serde(default)]
@@ -68,23 +118,25 @@ struct GreatDiscoveryCatalogEntry {
     observation_notes: Option<String>,
     #[serde(default)]
     leak_profile: Option<String>,
+    #[serde(default)]
+    seed_offset: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct GreatDiscoveryCatalogRequirement {
     discovery_id: u32,
     #[serde(default = "default_requirement_weight")]
-    weight: f32,
+    weight: NumericBand<f32>,
     #[serde(default)]
-    minimum_progress: f32,
+    minimum_progress: NumericBand<f32>,
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
     summary: Option<String>,
 }
 
-const fn default_requirement_weight() -> f32 {
-    1.0
+fn default_requirement_weight() -> NumericBand<f32> {
+    NumericBand::Scalar(1.0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -174,42 +226,6 @@ impl GreatDiscoveryDefinition {
     }
 }
 
-fn definition_from_catalog_entry(
-    entry: &GreatDiscoveryCatalogEntry,
-) -> Result<GreatDiscoveryDefinition, GreatDiscoveryCatalogError> {
-    let id = GreatDiscoveryId(entry.id);
-    let requirements = requirements_from_catalog(&entry.requirements);
-    let effect_flags = collect_effect_flags(entry.id, &entry.effect_flags, entry.effect_flag_bits)?;
-    Ok(GreatDiscoveryDefinition::new(
-        id,
-        entry.name.clone(),
-        entry.field,
-        requirements,
-        entry.observation_threshold,
-        entry.cooldown_ticks,
-        entry.freshness_window,
-        effect_flags,
-        entry.covert_until_public,
-    ))
-}
-
-fn requirements_from_catalog(
-    requirements: &[GreatDiscoveryCatalogRequirement],
-) -> Vec<ConstellationRequirement> {
-    requirements
-        .iter()
-        .map(|req| {
-            let weight = if req.weight <= 0.0 { 1.0 } else { req.weight };
-            let minimum = req.minimum_progress.clamp(0.0, 1.0);
-            ConstellationRequirement::new(
-                req.discovery_id,
-                Scalar::from_f32(weight),
-                Scalar::from_f32(minimum),
-            )
-        })
-        .collect()
-}
-
 fn collect_effect_flags(
     id: u16,
     names: &[String],
@@ -236,39 +252,86 @@ fn parse_effect_flag(id: u16, flag: &str) -> Result<u32, GreatDiscoveryCatalogEr
     }
 }
 
-fn metadata_from_catalog_entry(
+fn resolve_catalog_entry(
     entry: &GreatDiscoveryCatalogEntry,
-) -> Result<GreatDiscoveryDefinitionMetadata, GreatDiscoveryCatalogError> {
+) -> Result<(GreatDiscoveryDefinition, GreatDiscoveryDefinitionMetadata), GreatDiscoveryCatalogError>
+{
     let effect_flags = collect_effect_flags(entry.id, &entry.effect_flags, entry.effect_flag_bits)?;
-    let requirements = entry
-        .requirements
-        .iter()
-        .map(|req| GreatDiscoveryRequirementMetadata {
-            discovery_id: req.discovery_id,
-            name: req.name.clone(),
-            summary: req.summary.clone(),
-            weight: if req.weight <= 0.0 { 1.0 } else { req.weight },
-            minimum_progress: req.minimum_progress.clamp(0.0, 1.0),
-        })
-        .collect();
+    let id = GreatDiscoveryId(entry.id);
+    let seed = hash_identifier(&entry.id.to_string()) ^ entry.seed_offset.unwrap_or(0);
+    let mut rng = SmallRng::seed_from_u64(seed);
 
-    Ok(GreatDiscoveryDefinitionMetadata {
-        id: GreatDiscoveryId(entry.id),
+    let observation_threshold = entry.observation_threshold.sample(&mut rng);
+    let cooldown_ticks = entry.cooldown_ticks.sample(&mut rng);
+    let freshness_window = entry
+        .freshness_window
+        .as_ref()
+        .map(|band| band.sample(&mut rng));
+
+    let mut requirement_defs = Vec::with_capacity(entry.requirements.len());
+    let mut requirement_meta = Vec::with_capacity(entry.requirements.len());
+    for requirement in &entry.requirements {
+        let mut weight = requirement.weight.sample(&mut rng);
+        if weight <= 0.0 {
+            weight = 1.0;
+        }
+
+        let minimum = requirement
+            .minimum_progress
+            .sample(&mut rng)
+            .clamp(0.0, 1.0);
+
+        requirement_defs.push(ConstellationRequirement::new(
+            requirement.discovery_id,
+            Scalar::from_f32(weight),
+            Scalar::from_f32(minimum),
+        ));
+        requirement_meta.push(GreatDiscoveryRequirementMetadata {
+            discovery_id: requirement.discovery_id,
+            name: requirement.name.clone(),
+            summary: requirement.summary.clone(),
+            weight,
+            minimum_progress: minimum,
+        });
+    }
+
+    let definition = GreatDiscoveryDefinition::new(
+        id,
+        entry.name.clone(),
+        entry.field,
+        requirement_defs,
+        observation_threshold,
+        cooldown_ticks,
+        freshness_window,
+        effect_flags,
+        entry.covert_until_public,
+    );
+
+    let metadata = GreatDiscoveryDefinitionMetadata {
+        id,
         name: entry.name.clone(),
         field: entry.field,
         tier: entry.tier.clone(),
         summary: entry.summary.clone(),
         tags: entry.tags.clone(),
-        observation_threshold: entry.observation_threshold,
-        cooldown_ticks: entry.cooldown_ticks,
-        freshness_window: entry.freshness_window,
+        observation_threshold,
+        cooldown_ticks,
+        freshness_window,
         effect_flags,
         covert_until_public: entry.covert_until_public,
         effects_summary: entry.effects_summary.clone(),
         observation_notes: entry.observation_notes.clone(),
         leak_profile: entry.leak_profile.clone(),
-        requirements,
-    })
+        requirements: requirement_meta,
+    };
+
+    Ok((definition, metadata))
+}
+
+fn hash_identifier(identifier: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    identifier.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[derive(Debug, Clone)]
@@ -317,8 +380,7 @@ impl GreatDiscoveryRegistry {
             if self.definitions.contains_key(&id) {
                 return Err(GreatDiscoveryCatalogError::DuplicateDefinition { id: entry.id });
             }
-            let definition = definition_from_catalog_entry(&entry)?;
-            let metadata = metadata_from_catalog_entry(&entry)?;
+            let (definition, metadata) = resolve_catalog_entry(&entry)?;
             self.register(definition);
             self.metadata.insert(id, metadata);
             added += 1;
@@ -1000,6 +1062,7 @@ mod tests {
     };
     use bevy::{app::App, prelude::Events};
     use bevy_ecs::system::RunSystemOnce;
+    use serde_json::from_str;
 
     fn scalar(val: f32) -> Scalar {
         Scalar::from_f32(val)
@@ -1084,6 +1147,125 @@ mod tests {
         assert_eq!(restored_metadata.observation_threshold, 3);
         assert_eq!(restored_metadata.requirements.len(), 1);
         assert_eq!(restored_metadata.requirements[0].discovery_id, 101);
+    }
+
+    #[test]
+    fn range_bands_sample_within_bounds() {
+        let entry: GreatDiscoveryCatalogEntry = from_str(
+            r#"{
+            "id": 4097,
+            "name": "Range Test",
+            "field": "Physics",
+            "observation_threshold": {"min": 2, "max": 4},
+            "cooldown_ticks": {"min": 3, "max": 7},
+            "freshness_window": {"min": 5, "max": 9},
+            "requirements": [
+                {
+                    "discovery_id": 303,
+                    "weight": {"min": 0.5, "max": 1.5},
+                    "minimum_progress": {"min": 0.2, "max": 0.8}
+                }
+            ],
+            "effect_flags": ["power"],
+            "covert_until_public": false
+        }"#,
+        )
+        .expect("entry parses");
+
+        let (definition, metadata) =
+            resolve_catalog_entry(&entry).expect("entry resolves successfully");
+
+        assert!((2..=4).contains(&definition.observation_threshold));
+        assert!(metadata.observation_threshold >= 2);
+        assert!(metadata.observation_threshold <= 4);
+        assert!(definition.cooldown_ticks >= 3 && definition.cooldown_ticks <= 7);
+        assert!(metadata.cooldown_ticks >= 3 && metadata.cooldown_ticks <= 7);
+        assert!(definition.freshness_window.unwrap() >= 5);
+        assert!(definition.freshness_window.unwrap() <= 9);
+
+        let requirement = definition
+            .requirements
+            .first()
+            .expect("definition has requirement");
+        let requirement_meta = metadata
+            .requirements
+            .first()
+            .expect("metadata has requirement");
+
+        let weight = requirement.weight.to_f32();
+        assert!((0.5..=1.5).contains(&weight));
+        assert!((0.5..=1.5).contains(&requirement_meta.weight));
+        assert!((weight - requirement_meta.weight).abs() < 1e-6);
+
+        let minimum_progress = requirement.minimum_progress.to_f32();
+        assert!((0.2..=0.8).contains(&minimum_progress));
+        assert!((0.2..=0.8).contains(&requirement_meta.minimum_progress));
+        assert!((minimum_progress - requirement_meta.minimum_progress).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sampling_is_deterministic_with_seed_offset_control() {
+        let entry: GreatDiscoveryCatalogEntry = from_str(
+            r#"{
+            "id": 4098,
+            "name": "Deterministic Test",
+            "field": "Physics",
+            "observation_threshold": {"min": 4, "max": 8},
+            "cooldown_ticks": {"min": 2, "max": 6},
+            "requirements": [
+                {
+                    "discovery_id": 404,
+                    "weight": {"min": 0.4, "max": 0.9},
+                    "minimum_progress": {"min": 0.1, "max": 0.9}
+                }
+            ],
+            "effect_flags": [],
+            "covert_until_public": false
+        }"#,
+        )
+        .expect("entry parses");
+
+        let (definition_a, metadata_a) =
+            resolve_catalog_entry(&entry).expect("deterministic resolution succeeds");
+        let (definition_b, metadata_b) =
+            resolve_catalog_entry(&entry).expect("repeat resolution stays deterministic");
+
+        assert_eq!(
+            definition_a.observation_threshold,
+            definition_b.observation_threshold
+        );
+        assert_eq!(definition_a.cooldown_ticks, definition_b.cooldown_ticks);
+        assert_eq!(
+            metadata_a.observation_threshold,
+            metadata_b.observation_threshold
+        );
+        assert_eq!(metadata_a.cooldown_ticks, metadata_b.cooldown_ticks);
+        assert_eq!(
+            metadata_a.requirements[0].weight,
+            metadata_b.requirements[0].weight
+        );
+        assert_eq!(
+            metadata_a.requirements[0].minimum_progress,
+            metadata_b.requirements[0].minimum_progress
+        );
+
+        let mut offset_entry = entry.clone();
+        offset_entry.seed_offset = Some(1337);
+        let (definition_c, metadata_c) =
+            resolve_catalog_entry(&offset_entry).expect("offset entry resolves");
+
+        let seed_shifted_same = definition_a.observation_threshold
+            == definition_c.observation_threshold
+            && definition_a.cooldown_ticks == definition_c.cooldown_ticks
+            && (metadata_a.requirements[0].weight - metadata_c.requirements[0].weight).abs() < 1e-6
+            && (metadata_a.requirements[0].minimum_progress
+                - metadata_c.requirements[0].minimum_progress)
+                .abs()
+                < 1e-6;
+        assert!(
+            !seed_shifted_same,
+            "changing the seed offset should alter at least one sampled value"
+        );
     }
 
     #[test]
