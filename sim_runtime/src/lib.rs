@@ -15,7 +15,7 @@ pub use commands::{
 };
 
 pub mod command_text;
-pub use command_text::{parse_command_line, CommandParseError};
+pub use command_text::{parse_command_line, CommandParseError, CommandVerbHelp, COMMAND_VERBS};
 
 pub mod scripting;
 pub use scripting::{
