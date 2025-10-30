@@ -95,6 +95,13 @@ pub enum CommandPayload {
         kind: ReloadConfigKind,
         path: Option<String>,
     },
+    SetCrisisAutoSeed {
+        enabled: bool,
+    },
+    SpawnCrisis {
+        faction_id: u32,
+        archetype_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -317,6 +324,18 @@ impl CommandEnvelope {
                     path: path.clone(),
                 })
             }
+            CommandPayload::SetCrisisAutoSeed { enabled } => {
+                pb::command_envelope::Command::SetCrisisAutoSeed(pb::SetCrisisAutoSeedCommand {
+                    enabled: *enabled,
+                })
+            }
+            CommandPayload::SpawnCrisis {
+                faction_id,
+                archetype_id,
+            } => pb::command_envelope::Command::SpawnCrisis(pb::SpawnCrisisCommand {
+                faction: *faction_id,
+                archetype_id: archetype_id.clone(),
+            }),
         });
 
         pb::CommandEnvelope {
@@ -471,6 +490,15 @@ impl CommandEnvelope {
                     path: cmd.path,
                 }
             }
+            pb::command_envelope::Command::SetCrisisAutoSeed(cmd) => {
+                CommandPayload::SetCrisisAutoSeed {
+                    enabled: cmd.enabled,
+                }
+            }
+            pb::command_envelope::Command::SpawnCrisis(cmd) => CommandPayload::SpawnCrisis {
+                faction_id: cmd.faction,
+                archetype_id: cmd.archetype_id,
+            },
         };
 
         Ok(CommandEnvelope {

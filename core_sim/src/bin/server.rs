@@ -5,7 +5,7 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use bevy::{app::Update, ecs::system::Resource, math::UVec2};
+use bevy::{ecs::system::Resource, math::UVec2};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tracing::{info, warn};
@@ -13,22 +13,22 @@ use tracing_subscriber::prelude::*;
 
 use core_sim::log_stream::start_log_stream_server;
 
-use core_sim::metrics::{collect_metrics, SimulationMetrics};
+use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
     build_headless_app, restore_world_from_snapshot, run_turn, scalar_from_f32, AgentAssignment,
     CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
     CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
-    CrisisModifierCatalogMetadata, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
-    CrisisTelemetryConfigMetadata, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
-    EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate, EspionageRoster,
-    FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies, GenerationId,
-    GenerationRegistry, InfluencerImpacts, InfluentialRoster, QueueMissionError,
-    QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StoredSnapshot, SubmitError,
-    SubmitOutcome, SupportChannel, Tile, TurnPipelineConfig, TurnPipelineConfigHandle,
-    TurnPipelineConfigMetadata, TurnQueue,
+    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
+    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, EspionageAgentHandle,
+    EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
+    EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
+    FactionSecurityPolicies, GenerationId, GenerationRegistry, InfluencerImpacts,
+    InfluentialRoster, PendingCrisisSpawns, QueueMissionError, QueueMissionParams, Scalar,
+    SecurityPolicy, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, SimulationTick,
+    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    SnapshotOverlaysConfigMetadata, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel,
+    Tile, TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
 };
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
@@ -41,7 +41,6 @@ use sim_runtime::{
 fn main() {
     let mut app = build_headless_app();
     app.insert_resource(SimulationMetrics::default());
-    app.add_systems(Update, collect_metrics);
 
     let config = app.world.resource::<SimulationConfig>().clone();
 
@@ -202,7 +201,6 @@ fn main() {
                     *config_res = new_config;
                 }
                 new_app.insert_resource(SimulationMetrics::default());
-                new_app.add_systems(Update, collect_metrics);
                 run_turn(&mut new_app);
 
                 {
@@ -312,6 +310,33 @@ fn main() {
             Command::ReloadConfig { kind, path } => {
                 handle_reload_config(&mut app, kind, path);
             }
+            Command::SetCrisisAutoSeed { enabled } => {
+                {
+                    let mut config_res = app.world.resource_mut::<SimulationConfig>();
+                    config_res.crisis_auto_seed = enabled;
+                }
+                info!(
+                    target: "shadow_scale::server",
+                    enabled,
+                    "crisis.autoseed.updated"
+                );
+            }
+            Command::SpawnCrisis {
+                faction,
+                archetype_id,
+            } => {
+                let archetype = archetype_id.clone();
+                {
+                    let mut spawns = app.world.resource_mut::<PendingCrisisSpawns>();
+                    spawns.push(faction, archetype);
+                }
+                info!(
+                    target: "shadow_scale::server",
+                    faction = %faction.0,
+                    archetype = %archetype_id,
+                    "crisis.spawn.enqueued"
+                );
+            }
         }
     }
 }
@@ -382,6 +407,13 @@ enum Command {
     ReloadConfig {
         kind: ReloadConfigKind,
         path: Option<String>,
+    },
+    SetCrisisAutoSeed {
+        enabled: bool,
+    },
+    SpawnCrisis {
+        faction: FactionId,
+        archetype_id: String,
     },
 }
 
@@ -1237,6 +1269,11 @@ fn handle_reload_crisis_telemetry_config(app: &mut bevy::prelude::App, path: Opt
         handle.replace(Arc::clone(&new_config));
     }
 
+    {
+        let mut telemetry = app.world.resource_mut::<CrisisTelemetry>();
+        telemetry.apply_config(new_config.as_ref());
+    }
+
     let watch_path = app
         .world
         .resource::<CrisisTelemetryConfigMetadata>()
@@ -1396,6 +1433,16 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
         ProtoCommandPayload::ReloadConfig { kind, path } => {
             Some(Command::ReloadConfig { kind, path })
         }
+        ProtoCommandPayload::SetCrisisAutoSeed { enabled } => {
+            Some(Command::SetCrisisAutoSeed { enabled })
+        }
+        ProtoCommandPayload::SpawnCrisis {
+            faction_id,
+            archetype_id,
+        } => Some(Command::SpawnCrisis {
+            faction: FactionId(faction_id),
+            archetype_id,
+        }),
     }
 }
 

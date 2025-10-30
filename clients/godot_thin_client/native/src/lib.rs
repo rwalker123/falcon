@@ -663,16 +663,11 @@ fn snapshot_dict(
         *value = v * (1.0 - v);
     }
 
-    let corruption_placeholder =
-        overlays.corruption.is_empty() || corruption_base.iter().all(|v| v.abs() < f32::EPSILON);
-    let fog_placeholder =
-        overlays.fog.is_empty() || fog_base.iter().all(|v| v.abs() < f32::EPSILON);
-    let culture_placeholder =
-        overlays.culture.is_empty() || culture_base.iter().all(|v| v.abs() < f32::EPSILON);
-    let military_placeholder =
-        overlays.military.is_empty() || military_base.iter().all(|v| v.abs() < f32::EPSILON);
-    let crisis_placeholder =
-        overlays.crisis.is_empty() || crisis_base.iter().all(|v| v.abs() < f32::EPSILON);
+    let corruption_placeholder = overlays.corruption.is_empty();
+    let fog_placeholder = overlays.fog.is_empty();
+    let culture_placeholder = overlays.culture.is_empty();
+    let military_placeholder = overlays.military.is_empty();
+    let crisis_placeholder = overlays.crisis.is_empty();
 
     let logistics_array = packed_from_slice(&logistics_normalized);
     let logistics_raw_array = packed_from_slice(&logistics_base);

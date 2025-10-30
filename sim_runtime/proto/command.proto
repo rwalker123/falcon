@@ -149,6 +149,15 @@ message ReloadConfigCommand {
   optional string path = 2;
 }
 
+message SetCrisisAutoSeedCommand {
+  bool enabled = 1;
+}
+
+message SpawnCrisisCommand {
+  uint32 faction = 1;
+  string archetype_id = 2;
+}
+
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
@@ -170,5 +179,7 @@ message CommandEnvelope {
     UpdateCounterIntelPolicyCommand update_counter_intel_policy = 17;
     AdjustCounterIntelBudgetCommand adjust_counter_intel_budget = 18;
     ReloadConfigCommand reload_config = 16;
+    SetCrisisAutoSeedCommand set_crisis_auto_seed = 19;
+    SpawnCrisisCommand spawn_crisis = 20;
   }
 }

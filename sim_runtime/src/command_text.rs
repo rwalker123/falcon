@@ -27,6 +27,11 @@ pub enum CommandParseError {
         context: &'static str,
         source: ParseFloatError,
     },
+    #[error("invalid boolean '{value}' for {context}")]
+    InvalidBoolean {
+        value: String,
+        context: &'static str,
+    },
     #[error("invalid support channel '{0}'")]
     InvalidSupportChannel(String),
     #[error("invalid influence scope '{0}'")]
@@ -360,6 +365,22 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             };
             Ok(CommandPayload::ReloadConfig { kind, path })
         }
+        "crisis_autoseed" | "crisis_auto_seed" => {
+            let value_str = parts.next().unwrap_or("on");
+            let enabled = parse_bool(value_str, "crisis auto-seed flag")?;
+            Ok(CommandPayload::SetCrisisAutoSeed { enabled })
+        }
+        "spawn_crisis" => {
+            let archetype_id = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("archetype_id"))?;
+            let faction_str = parts.next().unwrap_or("0");
+            let faction_id = parse_u32(faction_str, "crisis faction")?;
+            Ok(CommandPayload::SpawnCrisis {
+                faction_id,
+                archetype_id: archetype_id.to_string(),
+            })
+        }
         other => Err(CommandParseError::UnknownCommand(other.to_string())),
     }
 }
@@ -422,6 +443,17 @@ fn parse_f32(value: &str, context: &'static str) -> Result<f32, CommandParseErro
             context,
             source,
         })
+}
+
+fn parse_bool(value: &str, context: &'static str) -> Result<bool, CommandParseError> {
+    match value.to_ascii_lowercase().as_str() {
+        "true" | "t" | "yes" | "y" | "1" | "on" => Ok(true),
+        "false" | "f" | "no" | "n" | "0" | "off" => Ok(false),
+        other => Err(CommandParseError::InvalidBoolean {
+            value: other.to_string(),
+            context,
+        }),
+    }
 }
 
 fn parse_support_channel(token: &str) -> Result<SupportChannel, CommandParseError> {

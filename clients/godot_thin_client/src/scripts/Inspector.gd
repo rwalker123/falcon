@@ -54,6 +54,10 @@ const COUNTERINTEL_POLICY_OPTIONS := [
 @onready var crisis_summary_text: RichTextLabel = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSummaryText
 @onready var crisis_alerts_label: Label = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisAlertsLabel
 @onready var crisis_alerts_text: RichTextLabel = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisAlertsText
+@onready var crisis_auto_seed_check: CheckButton = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisControls/CrisisAutoSeedCheck
+@onready var crisis_archetype_field: LineEdit = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls/CrisisArchetypeField
+@onready var crisis_faction_spin: SpinBox = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls/CrisisFactionSpin
+@onready var crisis_spawn_button: Button = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls/CrisisSpawnButton
 @onready var knowledge_summary_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeSummaryText
 @onready var discovery_progress_list: ItemList = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection/DiscoveryProgressList
 @onready var knowledge_events_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection/KnowledgeEventsText
@@ -351,6 +355,10 @@ func _ready() -> void:
 	if knowledge_queue_mission_button != null:
 		knowledge_queue_mission_button.pressed.connect(_on_knowledge_queue_mission_button_pressed)
 	_initialize_counterintel_controls()
+	if crisis_auto_seed_check != null:
+		crisis_auto_seed_check.toggled.connect(_on_crisis_auto_seed_toggled)
+	if crisis_spawn_button != null:
+		crisis_spawn_button.pressed.connect(_on_crisis_spawn_button_pressed)
 	_update_panel_layout()
 	_initialize_log_filters()
 	_render_static_sections()
@@ -1385,6 +1393,28 @@ func _send_command(line: String, success_message: String) -> bool:
 	_append_command_log(success_message)
 	_update_command_status()
 	return true
+
+func _on_crisis_auto_seed_toggled(pressed: bool) -> void:
+	var line := "crisis_autoseed %s" % ("on" if pressed else "off")
+	var message := "Crisis auto-seed %s." % ("enabled" if pressed else "disabled")
+	if not _send_command(line, message) and crisis_auto_seed_check != null:
+		crisis_auto_seed_check.button_pressed = not pressed
+
+func _on_crisis_spawn_button_pressed() -> void:
+	if crisis_archetype_field == null:
+		return
+	var archetype_id := crisis_archetype_field.text.strip_edges()
+	if archetype_id.is_empty():
+		_append_command_log("Provide a crisis archetype id to spawn.")
+		return
+	var normalized_id := archetype_id.to_lower()
+	var faction := 0
+	if crisis_faction_spin != null:
+		faction = int(crisis_faction_spin.value)
+	var line := "spawn_crisis %s %d" % [normalized_id, faction]
+	var message := "Spawn request for crisis '%s' (faction %d)." % [normalized_id, faction]
+	if _send_command(line, message):
+		crisis_archetype_field.clear()
 
 func _send_turn(steps: int) -> bool:
 	return _send_command("turn %d" % steps, "+%d turns requested." % steps)

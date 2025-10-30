@@ -676,6 +676,12 @@ func _build_scalar_overlay_legend(key: String) -> Dictionary:
             "label": "No data",
             "value_text": "Channel awaiting telemetry",
         })
+    elif key == "crisis" and not has_values:
+        rows.append({
+            "color": GRID_COLOR,
+            "label": "No active crises",
+            "value_text": "Awaiting crisis incidents",
+        })
     elif not has_values:
         rows.append({
             "color": GRID_COLOR.lerp(overlay_color, 0.2),

@@ -7,7 +7,7 @@ use log::warn;
 use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
     AxisBiasState, CorruptionLedger, CorruptionSubsystem, CrisisGaugeState,
-    CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayAnnotationState, CrisisOverlayState,
+    CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
     CultureTraitEntry, DiscoveryProgressEntry, GenerationState, GreatDiscoveryDefinitionState,
@@ -57,7 +57,7 @@ use crate::{
 
 use crate::crisis::{
     CrisisMetricKind as InternalCrisisMetricKind,
-    CrisisMetricsSnapshot as InternalCrisisMetricsSnapshot,
+    CrisisMetricsSnapshot as InternalCrisisMetricsSnapshot, CrisisOverlayCache,
     CrisisSeverityBand as InternalCrisisSeverityBand,
     CrisisTrendSample as InternalCrisisTrendSample,
 };
@@ -80,6 +80,7 @@ pub struct SnapshotContext<'w> {
     pub tick: Res<'w, SimulationTick>,
     pub overlays: Res<'w, SnapshotOverlaysConfigHandle>,
     pub metrics: Res<'w, SimulationMetrics>,
+    pub crisis_overlay: Res<'w, CrisisOverlayCache>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -943,6 +944,7 @@ pub fn capture_snapshot(
         tick,
         overlays,
         metrics,
+        crisis_overlay,
     } = ctx;
     let overlays_config = overlays.get();
     history.set_capacity(config.snapshot_history_limit.max(1));
@@ -1170,8 +1172,10 @@ pub fn capture_snapshot(
 
     let axis_bias_state = axis_bias_state_from_resource(&axis_bias);
     let crisis_telemetry_state = crisis_telemetry_state_from_metrics(&metrics.crisis);
-    let crisis_overlay_state =
-        crisis_overlay_from_power(&tile_states, &power_states, config.grid_size);
+    let crisis_overlay_state = CrisisOverlayState {
+        heatmap: crisis_overlay.raster.clone(),
+        annotations: crisis_overlay.annotations.clone(),
+    };
 
     let header = SnapshotHeader::new(
         tick.0,
@@ -1890,61 +1894,6 @@ fn logistics_raster_from_links(
         width,
         height,
         samples,
-    }
-}
-
-fn crisis_overlay_from_power(
-    tiles: &[TileState],
-    power_nodes: &[PowerNodeState],
-    grid_size: UVec2,
-) -> CrisisOverlayState {
-    let mut tile_positions = HashMap::with_capacity(tiles.len());
-    let mut max_x = 0u32;
-    let mut max_y = 0u32;
-    for tile in tiles {
-        tile_positions.insert(tile.entity, (tile.x, tile.y));
-        max_x = max_x.max(tile.x);
-        max_y = max_y.max(tile.y);
-    }
-
-    let width = grid_size.x.max(max_x.saturating_add(1)).max(1);
-    let height = grid_size.y.max(max_y.saturating_add(1)).max(1);
-    let total = (width as usize).saturating_mul(height as usize).max(1);
-    let mut samples = vec![0i64; total];
-    let mut annotations = Vec::new();
-
-    for node in power_nodes {
-        if let Some(&(x, y)) = tile_positions.get(&node.entity) {
-            let idx = (y as usize) * (width as usize) + x as usize;
-            if idx >= samples.len() {
-                continue;
-            }
-            let stability = Scalar::from_raw(node.stability).clamp(Scalar::zero(), Scalar::one());
-            let stress = (Scalar::one() - stability).clamp(Scalar::zero(), Scalar::one());
-            samples[idx] = stress.raw();
-
-            if node.incident_count > 0 {
-                let severity = if node.incident_count >= 2 {
-                    SchemaCrisisSeverityBand::Critical
-                } else {
-                    SchemaCrisisSeverityBand::Warn
-                };
-                annotations.push(CrisisOverlayAnnotationState {
-                    label: format!("Incident x{}", node.incident_count),
-                    severity,
-                    path: vec![x, y],
-                });
-            }
-        }
-    }
-
-    CrisisOverlayState {
-        heatmap: ScalarRasterState {
-            width,
-            height,
-            samples,
-        },
-        annotations,
     }
 }
 
