@@ -2,6 +2,121 @@ use std::num::{ParseFloatError, ParseIntError};
 
 use thiserror::Error;
 
+/// Describes a runtime command verb, its aliases, and usage hint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandVerbHelp {
+    pub verb: &'static str,
+    pub aliases: &'static [&'static str],
+    pub summary: &'static str,
+    pub usage: &'static str,
+}
+
+/// Canonical list of supported runtime command verbs.
+pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
+    CommandVerbHelp {
+        verb: "turn",
+        aliases: &[],
+        summary: "Advance the simulation by one or more turns (default 1).",
+        usage: "turn [steps]",
+    },
+    CommandVerbHelp {
+        verb: "map_size",
+        aliases: &[],
+        summary: "Resize the active map grid and emit a fresh snapshot.",
+        usage: "map_size <width> <height>",
+    },
+    CommandVerbHelp {
+        verb: "heat",
+        aliases: &[],
+        summary: "Adjust an entity's heat budget by the provided delta (default 100000).",
+        usage: "heat <entity_bits> [delta]",
+    },
+    CommandVerbHelp {
+        verb: "order",
+        aliases: &[],
+        summary: "Submit orders for a faction (currently only 'ready').",
+        usage: "order <faction_id> [ready]",
+    },
+    CommandVerbHelp {
+        verb: "rollback",
+        aliases: &[],
+        summary: "Rollback the simulation to a specific tick.",
+        usage: "rollback <tick>",
+    },
+    CommandVerbHelp {
+        verb: "bias",
+        aliases: &[],
+        summary: "Override an axis bias with a floating-point value.",
+        usage: "bias <axis> <value>",
+    },
+    CommandVerbHelp {
+        verb: "support",
+        aliases: &[],
+        summary: "Add support for an influencer by id (default magnitude 1.0).",
+        usage: "support <id> [magnitude]",
+    },
+    CommandVerbHelp {
+        verb: "suppress",
+        aliases: &[],
+        summary: "Suppress support for an influencer by id (default magnitude 1.0).",
+        usage: "suppress <id> [magnitude]",
+    },
+    CommandVerbHelp {
+        verb: "support_channel",
+        aliases: &[],
+        summary: "Boost an influencer's specific support channel.",
+        usage: "support_channel <id> <channel> [magnitude]",
+    },
+    CommandVerbHelp {
+        verb: "spawn_influencer",
+        aliases: &[],
+        summary: "Spawn a new influencer with optional scope or generation id.",
+        usage: "spawn_influencer [local|regional|global|generation [id]]",
+    },
+    CommandVerbHelp {
+        verb: "counterintel_policy",
+        aliases: &[],
+        summary: "Set the counter-intelligence policy for a faction.",
+        usage: "counterintel_policy <faction_id> <lenient|standard|hardened|crisis>",
+    },
+    CommandVerbHelp {
+        verb: "counterintel_budget",
+        aliases: &[],
+        summary: "Adjust or set the counter-intel reserve for a faction.",
+        usage: "counterintel_budget <faction_id> [reserve <value>|delta <value>|<value>]",
+    },
+    CommandVerbHelp {
+        verb: "queue_espionage_mission",
+        aliases: &["queue_mission"],
+        summary: "Queue an espionage mission with owner/target metadata.",
+        usage: "queue_espionage_mission <mission_id> owner <id> target <id> discovery <id> agent <handle> [tier <value>] [tick <value>]",
+    },
+    CommandVerbHelp {
+        verb: "corruption",
+        aliases: &[],
+        summary: "Inject corruption into a subsystem with optional intensity/exposure.",
+        usage: "corruption [logistics|trade|military|governance] [intensity] [exposure_ticks]",
+    },
+    CommandVerbHelp {
+        verb: "reload_config",
+        aliases: &["reload_sim_config"],
+        summary: "Reload simulation or pipeline configuration from disk.",
+        usage: "reload_config [simulation|turn_pipeline|crisis_archetypes|crisis_modifiers|crisis_telemetry|snapshot_overlays] [path]",
+    },
+    CommandVerbHelp {
+        verb: "crisis_autoseed",
+        aliases: &["crisis_auto_seed"],
+        summary: "Toggle automatic crisis seeding on or off.",
+        usage: "crisis_autoseed [on|off]",
+    },
+    CommandVerbHelp {
+        verb: "spawn_crisis",
+        aliases: &[],
+        summary: "Spawn a crisis by archetype for the specified faction (default 0).",
+        usage: "spawn_crisis <archetype_id> [faction_id]",
+    },
+];
+
 use crate::{
     CommandPayload, CorruptionSubsystem, InfluenceScopeKind, OrdersDirective, ReloadConfigKind,
     SecurityPolicyKind, SupportChannel,

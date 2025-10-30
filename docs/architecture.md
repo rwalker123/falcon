@@ -378,6 +378,7 @@ This section translates the manual’s crisis beats (see `shadow_scale_strategy_
 - `TurnStage::Crisis` now drives the runtime overlay pipeline: the `advance_crisis_system` system consumes `PendingCrisisSeeds`, resolves archetype growth into `ActiveCrisisLedger`, refreshes telemetry gauges, and rebuilds `CrisisOverlayCache` so snapshot capture can copy the real raster instead of the historical power-grid stub.
 - Designers can enable automatic crisis seeding for empty worlds by setting `crisis_auto_seed` in `simulation_config.json`; this keeps test boards lively without forcing production sims to start with an outbreak.
 - Inspector tooling exposes the same knobs: the crisis tab offers an auto-seed toggle wired through the command surface and a manual spawn action that enqueues catalog archetypes on demand for playtest workflows.
+- Operator tooling: `cargo xtask command` wraps the protobuf command surface so designers can issue any verb (`spawn_crisis`, `spawn_influencer`, `inject_corruption`, etc.) without bespoke subcommands. Run `cargo xtask command --list` for verb hints and argument notes; the helper streams envelopes directly to the server's command socket.
 - **Event flow**: archetype resolution emits `CrisisIncidentEvent` (map overlays + log frames), `CrisisModifierEvent` (Tray updates), and `CrisisAlertEvent` (warn/critical threshold crossings). Handlers push to telemetry/log channels and schedule UI commands.
 
 ### Configuration Artifacts
@@ -394,7 +395,7 @@ This section translates the manual’s crisis beats (see `shadow_scale_strategy_
 ### Client & Command Surface
 - Inspector integration: Crisis panels query archetype metadata (name, severity bands, mitigation tips) from streamed catalog payloads derived from `crisis_archetypes.json`.
 - Command verbs: extend `CommandEnvelope` with crisis controls (`queue_mitigation_action`, `set_crisis_posture`, `acknowledge_crisis_alert`) referencing IDs from the config. Ensure commands validate against the catalog and log rejections.
-- Scenario tooling: add CLI hooks (`cargo xtask spawn-crisis --archetype=replicator`) to trigger seeds defined in JSON for reproducible playtest setups. Uses the same data structures to avoid drift.
+- Scenario tooling: trigger catalog seeds via the helper (`cargo xtask command spawn_crisis --archetype=replicator --faction=0`) to align playtest setups with JSON definitions while reusing the shared command machinery.
 
 ### Testing & Telemetry Alignment
 - Unit suites cover JSON parsing, archetype lookup, and propagation math with deterministic seeds per archetype.

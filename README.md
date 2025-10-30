@@ -72,6 +72,18 @@ cargo xtask prepare-client
 
 It regenerates the FlatBuffers bindings and refreshes the Godot GDExtension (`clients/godot_thin_client/native/bin/…`). No generated files are checked in, so commit any schema updates and rerun the command before pushing.
 
+### Issuing Runtime Commands
+
+Use the xtask helper to send protobuf commands to a running server:
+
+```bash
+cargo xtask command --list
+cargo xtask command turn --steps 5
+cargo xtask command spawn_crisis --archetype plague_bloom --faction 0
+```
+
+`--host`, `--port`, or `--address host:port` override the default `127.0.0.1:41001`, and `--correlation <id>` sets the envelope correlation id. See `docs/architecture.md` (“Operator tooling”) for how this ties into the broader command surface.
+
 ### Install Rust/Cargo
 
 #### macOS
