@@ -1393,8 +1393,8 @@ mod tests {
         app.insert_resource(CrisisTelemetry::from_config(telemetry_cfg.as_ref()));
 
         {
-            let mut seeds = app.world.resource_mut::<PendingCrisisSeeds>();
-            seeds.push(FactionId(0), 11);
+            let mut spawns = app.world.resource_mut::<PendingCrisisSpawns>();
+            spawns.push(FactionId(0), "plague_bloom");
         }
 
         app.world.run_system_once(advance_crisis_system);
