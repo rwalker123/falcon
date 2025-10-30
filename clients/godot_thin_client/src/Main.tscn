@@ -111,12 +111,54 @@ offset_right = 627.0
 offset_bottom = 23.0
 grow_vertical = 2
 
+[node name="CommandToolbar" type="HBoxContainer" parent="Inspector/RootPanel"]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 0.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = 48.0
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="RollbackTenButton" type="Button" parent="Inspector/RootPanel/CommandToolbar"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "<<"
+tooltip_text = "Rollback 10 turns"
+
+[node name="RollbackButton" type="Button" parent="Inspector/RootPanel/CommandToolbar"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "<"
+tooltip_text = "Rollback 1 turn"
+
+[node name="PlayPauseButton" type="Button" parent="Inspector/RootPanel/CommandToolbar"]
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "[]"
+tooltip_text = "Toggle auto-play"
+
+[node name="StepOneButton" type="Button" parent="Inspector/RootPanel/CommandToolbar"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = ">"
+tooltip_text = "Advance 1 turn"
+
+[node name="StepTenButton" type="Button" parent="Inspector/RootPanel/CommandToolbar"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = ">>"
+tooltip_text = "Advance 10 turns"
+
 [node name="TabContainer" type="TabContainer" parent="Inspector/RootPanel"]
 layout_mode = 0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 8.0
-offset_top = 8.0
+offset_top = 56.0
 offset_right = -8.0
 offset_bottom = -8.0
 current_tab = 9
@@ -1051,22 +1093,6 @@ metadata/_tab_index = 12
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Commands: disconnected."
-
-[node name="ControlsRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="StepOneButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/ControlsRow"]
-layout_mode = 2
-text = "Step +1"
-
-[node name="StepTenButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/ControlsRow"]
-layout_mode = 2
-text = "Step +10"
-
-[node name="RollbackButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/ControlsRow"]
-layout_mode = 2
-text = "Rollback -1"
 
 [node name="AutoplayRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
 layout_mode = 2
