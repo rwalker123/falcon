@@ -6,9 +6,9 @@
     "tier": "Tier 3 Energy",
     "summary": "Controlled stellar reactors deliver grid-scale surplus and rewire geopolitical leverage.",
     "tags": ["energy", "strategic", "infrastructure"],
-    "observation_threshold": 6,
-    "cooldown_ticks": 8,
-    "freshness_window": 10,
+    "observation_threshold": { "min": 6, "max": 8 },
+    "cooldown_ticks": { "min": 7, "max": 9 },
+    "freshness_window": { "min": 9, "max": 12 },
     "effect_flags": ["power", "diplomacy"],
     "covert_until_public": false,
     "effects_summary": [
@@ -21,8 +21,8 @@
       {
         "discovery_id": 5001,
         "name": "Atomic Resonance Stabilizers",
-        "weight": 1.0,
-        "minimum_progress": 0.65,
+        "weight": { "min": 0.9, "max": 1.1 },
+        "minimum_progress": { "min": 0.6, "max": 0.7 },
         "summary": "Precision isotope refinement enabling sustained reaction fuel blends."
       },
       {
