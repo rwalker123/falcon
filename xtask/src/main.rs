@@ -404,8 +404,10 @@ fn build_command_pieces(
             }
         }
         "spawn_influencer" => {
+            let mut scope_provided = false;
             let mut scope_is_generation = false;
             if let Some(scope) = parser.flag_or_pos(&["scope"])? {
+                scope_provided = true;
                 scope_is_generation =
                     matches!(scope.to_ascii_lowercase().as_str(), "generation" | "gen");
                 parts.push(scope);
@@ -414,7 +416,7 @@ fn build_command_pieces(
                 if let Some(generation) = parser.flag_or_pos(&["generation", "gen"])? {
                     parts.push(generation);
                 }
-            } else if parts.len() == 1 {
+            } else if !scope_provided {
                 if let Some(generation) = parser.flag_or_pos(&["generation", "gen"])? {
                     parts.push("generation".to_string());
                     parts.push(generation);
