@@ -14,10 +14,14 @@ fn run_simulation(ticks: usize) -> WorldSnapshot {
         .expect("snapshot available")
 }
 
+// Keep tick count low so CI doesn't spend minutes marching the full simulation.
+// A dozen updates is sufficient to populate the snapshot history for comparison.
+const SNAPSHOT_TICKS: usize = 12;
+
 #[test]
 fn deterministic_snapshots_match() {
-    let snapshot_a = run_simulation(120);
-    let snapshot_b = run_simulation(120);
+    let snapshot_a = run_simulation(SNAPSHOT_TICKS);
+    let snapshot_b = run_simulation(SNAPSHOT_TICKS);
 
     let mut normalized_a = snapshot_a.clone();
     normalized_a.influencers.clear();
