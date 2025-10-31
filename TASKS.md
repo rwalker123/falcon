@@ -42,7 +42,7 @@
 - [x] Implement `PowerGridState`, `PowerTopology`, and associated ECS systems (`collect_generation_orders` through `export_power_metrics`) inside `core_sim`, ensuring deterministic scheduling and integration with materials/logistics/population phases (Owner: TBD, Estimate: 4d; Deps: `docs/architecture.md` §Power Systems Plan). _Status_: Power phase now models generation, routing, storage, instability, and exports telemetry through `PowerGridState`.
 - [x] Extend `sim_schema`/`sim_runtime` with `PowerGridNode`, `PowerTelemetryState`, and headless diagnostics helpers consumed by automated tests (Owner: TBD, Estimate: 2d; Deps: core_sim ECS scaffolding). _Status_: Snapshot/delta payloads carry node telemetry plus aggregated metrics/incidents; tests cover telemetry conversion.
 - [x] Enhance Godot thin client with a Power tab, overlay toggles, and incident feed consuming the new telemetry (Owner: TBD, Estimate: 3d; Deps: schema updates + snapshot payloads). _Status_: Inspector Power tab surfaces grid metrics, sortable node list, and node detail panel tied to streamed updates.
-- [ ] Add regression tests and benchmarks covering stability band transitions, cascade propagation, and serialization/delta output for power telemetry (Owner: TBD, Estimate: 2d; Deps: core_sim implementation + schema updates).
+- [x] Add regression tests and benchmarks covering stability band transitions, cascade propagation, and serialization/delta output for power telemetry (Owner: TBD, Estimate: 2d; Deps: core_sim implementation + schema updates).
 
 ### Terrain Foundations
 - [x] Implement `TerrainType` enum + tag metadata in worldgen and data contracts (Owner: TBD, Estimate: 2d; Deps: align with `docs/architecture.md` Terrain Type Taxonomy).

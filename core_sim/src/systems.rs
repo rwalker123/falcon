@@ -985,3 +985,221 @@ pub fn process_corruption(
 
     telemetry.active_incidents = ledger.entry_count();
 }
+
+#[cfg(test)]
+mod power_tests {
+    use super::*;
+    use crate::{CultureCorruptionConfig, TurnPipelineConfig};
+    use bevy::{
+        ecs::system::SystemState,
+        prelude::{App, Entity, UVec2, World},
+    };
+    use sim_runtime::{TerrainTags, TerrainType};
+    use std::sync::Arc;
+
+    #[derive(Clone, Copy)]
+    struct NodeSpec {
+        base_generation: f32,
+        base_demand: f32,
+        storage_capacity: f32,
+        storage_level: f32,
+        incident_count: u32,
+    }
+
+    impl NodeSpec {
+        fn new(base_generation: f32, base_demand: f32) -> Self {
+            Self {
+                base_generation,
+                base_demand,
+                storage_capacity: 0.0,
+                storage_level: 0.0,
+                incident_count: 0,
+            }
+        }
+    }
+
+    fn configure_simulation(app: &mut App, grid_size: UVec2) {
+        app.insert_resource(SimulationConfig::builtin());
+        {
+            let mut config = app.world.resource_mut::<SimulationConfig>();
+            config.grid_size = grid_size;
+            config.power_generation_adjust_rate = 0.0;
+            config.power_demand_adjust_rate = 0.0;
+            config.power_storage_stability_bonus = 0.0;
+            config.power_storage_efficiency = Scalar::one();
+            config.power_storage_bleed = scalar_zero();
+            config.power_adjust_rate = scalar_zero();
+            config.max_power_generation = scalar_from_f32(100.0);
+            config.power_instability_warn = scalar_from_f32(0.8);
+            config.power_instability_critical = scalar_from_f32(0.5);
+        }
+
+        app.insert_resource(CultureEffectsCache::default());
+        app.insert_resource(InfluencerImpacts::default());
+        app.insert_resource(CorruptionLedgers::default());
+        app.insert_resource(PowerGridState::default());
+        app.insert_resource(CultureCorruptionConfigHandle::new(Arc::new(
+            CultureCorruptionConfig::default(),
+        )));
+        app.insert_resource(TurnPipelineConfigHandle::new(Arc::new(
+            TurnPipelineConfig::default(),
+        )));
+    }
+
+    fn spawn_power_nodes(
+        world: &mut World,
+        width: u32,
+        height: u32,
+        specs: &[NodeSpec],
+    ) -> Vec<Entity> {
+        assert_eq!(specs.len(), (width * height) as usize);
+        let ambient_temperature = world.resource::<SimulationConfig>().ambient_temperature;
+        let mut entities = Vec::with_capacity(specs.len());
+
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) as usize;
+                let spec = specs[idx];
+                let entity = world
+                    .spawn((
+                        Tile {
+                            position: UVec2::new(x, y),
+                            element: ElementKind::Ferrite,
+                            mass: Scalar::one(),
+                            temperature: ambient_temperature,
+                            terrain: TerrainType::AlluvialPlain,
+                            terrain_tags: TerrainTags::empty(),
+                        },
+                        PowerNode {
+                            id: PowerNodeId(idx as u32),
+                            base_generation: Scalar::from_f32(spec.base_generation),
+                            base_demand: Scalar::from_f32(spec.base_demand),
+                            generation: Scalar::from_f32(spec.base_generation),
+                            demand: Scalar::from_f32(spec.base_demand),
+                            efficiency: Scalar::one(),
+                            storage_capacity: Scalar::from_f32(spec.storage_capacity),
+                            storage_level: Scalar::from_f32(spec.storage_level),
+                            stability: Scalar::one(),
+                            surplus: scalar_zero(),
+                            deficit: scalar_zero(),
+                            incident_count: spec.incident_count,
+                        },
+                    ))
+                    .id();
+                entities.push(entity);
+            }
+        }
+
+        entities
+    }
+
+    fn run_power_system(app: &mut App) {
+        let mut system_state = SystemState::<PowerSimParams>::new(&mut app.world);
+        {
+            let params = system_state.get_mut(&mut app.world);
+            simulate_power(params);
+        }
+        system_state.apply(&mut app.world);
+    }
+
+    #[test]
+    fn simulate_power_emits_expected_incidents_for_stability_thresholds() {
+        let mut app = App::new();
+        configure_simulation(&mut app, UVec2::new(3, 1));
+
+        let specs = vec![
+            NodeSpec::new(10.0, 6.0),
+            NodeSpec::new(7.0, 10.0),
+            NodeSpec::new(3.0, 10.0),
+        ];
+
+        let entities = spawn_power_nodes(&mut app.world, 3, 1, &specs);
+        let topology = PowerTopology::from_grid(&entities, 3, 1, scalar_zero());
+        app.insert_resource(topology);
+
+        run_power_system(&mut app);
+
+        let grid_state = app.world.resource::<PowerGridState>();
+        assert_eq!(grid_state.instability_alerts, 2);
+        assert_eq!(grid_state.incidents.len(), 2);
+
+        let mut warning_count = 0;
+        let mut critical_count = 0;
+        for incident in &grid_state.incidents {
+            match incident.severity {
+                PowerIncidentSeverity::Warning => warning_count += 1,
+                PowerIncidentSeverity::Critical => critical_count += 1,
+            }
+        }
+        assert_eq!(warning_count, 1);
+        assert_eq!(critical_count, 1);
+
+        let warn_node = grid_state
+            .nodes
+            .get(&PowerNodeId(1))
+            .expect("warn node telemetry present");
+        let critical_node = grid_state
+            .nodes
+            .get(&PowerNodeId(2))
+            .expect("critical node telemetry present");
+
+        assert!((warn_node.stability.to_f32() - 0.7).abs() < 1e-6);
+        assert!((critical_node.stability.to_f32() - 0.3).abs() < 1e-6);
+        assert_eq!(critical_node.incident_count, 1);
+
+        let _ = grid_state;
+
+        let warn_component = app
+            .world
+            .entity(entities[1])
+            .get::<PowerNode>()
+            .expect("warn node component");
+        let critical_component = app
+            .world
+            .entity(entities[2])
+            .get::<PowerNode>()
+            .expect("critical node component");
+
+        assert_eq!(warn_component.incident_count, 0);
+        assert_eq!(critical_component.incident_count, 1);
+    }
+
+    #[test]
+    fn simulate_power_redistributes_surplus_along_topology() {
+        let mut app = App::new();
+        configure_simulation(&mut app, UVec2::new(2, 2));
+
+        let specs = vec![
+            NodeSpec::new(12.0, 4.0),
+            NodeSpec::new(5.0, 10.0),
+            NodeSpec::new(3.0, 6.0),
+            NodeSpec::new(4.0, 4.0),
+        ];
+
+        let entities = spawn_power_nodes(&mut app.world, 2, 2, &specs);
+        let topology = PowerTopology::from_grid(&entities, 2, 2, scalar_from_f32(4.0));
+        app.insert_resource(topology);
+
+        run_power_system(&mut app);
+
+        let grid_state = app.world.resource::<PowerGridState>();
+        let node_a = grid_state
+            .nodes
+            .get(&PowerNodeId(0))
+            .expect("node A telemetry");
+        let node_b = grid_state
+            .nodes
+            .get(&PowerNodeId(1))
+            .expect("node B telemetry");
+        let node_c = grid_state
+            .nodes
+            .get(&PowerNodeId(2))
+            .expect("node C telemetry");
+
+        assert!((node_a.surplus.to_f32() - 1.0).abs() < 1e-6);
+        assert!((node_b.deficit.to_f32() - 1.0).abs() < 1e-6);
+        assert!(node_c.deficit.to_f32().abs() < 1e-6);
+        assert!(node_c.surplus.to_f32().abs() < 1e-6);
+        assert_eq!(grid_state.instability_alerts, 0);
+    }
+}

@@ -105,7 +105,7 @@ pub use resources::{
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{restore_world_from_snapshot, SnapshotHistory, StoredSnapshot};
-pub use systems::{MigrationKnowledgeEvent, TradeDiffusionEvent};
+pub use systems::{simulate_power, MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent};
 pub use terrain::{
     classify_terrain, terrain_definition, terrain_for_position, MovementProfile, TerrainDefinition,
     TerrainResourceBias,

@@ -51,3 +51,8 @@ insta = "1.36"
 name = "turn_bench"
 path = "benchmarks/turn_bench.rs"
 harness = false
+
+[[bench]]
+name = "power_bench"
+path = "benchmarks/power_bench.rs"
+harness = false
