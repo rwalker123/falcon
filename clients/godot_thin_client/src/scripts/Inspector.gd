@@ -101,9 +101,11 @@ const COUNTERINTEL_POLICY_OPTIONS := [
 @onready var root_panel: Panel = $RootPanel
 @onready var tab_container: TabContainer = $RootPanel/TabContainer
 @onready var command_status_label: Label = $RootPanel/TabContainer/Commands/StatusLabel
-@onready var step_one_button: Button = $RootPanel/TabContainer/Commands/ControlsRow/StepOneButton
-@onready var step_ten_button: Button = $RootPanel/TabContainer/Commands/ControlsRow/StepTenButton
-@onready var rollback_button: Button = $RootPanel/TabContainer/Commands/ControlsRow/RollbackButton
+@onready var rollback_ten_button: Button = $RootPanel/CommandToolbar/RollbackTenButton
+@onready var rollback_button: Button = $RootPanel/CommandToolbar/RollbackButton
+@onready var play_pause_button: Button = $RootPanel/CommandToolbar/PlayPauseButton
+@onready var step_one_button: Button = $RootPanel/CommandToolbar/StepOneButton
+@onready var step_ten_button: Button = $RootPanel/CommandToolbar/StepTenButton
 @onready var autoplay_toggle: CheckButton = $RootPanel/TabContainer/Commands/AutoplayRow/AutoplayToggle
 @onready var autoplay_spin: SpinBox = $RootPanel/TabContainer/Commands/AutoplayRow/AutoplayIntervalSpin
 @onready var autoplay_label: Label = $RootPanel/TabContainer/Commands/AutoplayRow/AutoplayIntervalLabel
@@ -809,9 +811,11 @@ func apply_typography() -> void:
 	var control_nodes: Array = [
 		map_size_dropdown,
 		trade_overlay_toggle,
+		rollback_ten_button,
+		rollback_button,
+		play_pause_button,
 		step_one_button,
 		step_ten_button,
-		rollback_button,
 		autoplay_toggle,
 		autoplay_spin,
 		axis_dropdown,
@@ -1044,9 +1048,11 @@ func _ensure_overlay_selector() -> void:
 	_overlay_selector.visible = false
 
 func _setup_command_controls() -> void:
+	rollback_ten_button.pressed.connect(_on_rollback_ten_button_pressed)
+	rollback_button.pressed.connect(_on_rollback_button_pressed)
+	play_pause_button.pressed.connect(_on_play_pause_button_pressed)
 	step_one_button.pressed.connect(_on_step_one_button_pressed)
 	step_ten_button.pressed.connect(_on_step_ten_button_pressed)
-	rollback_button.pressed.connect(_on_rollback_button_pressed)
 	autoplay_toggle.toggled.connect(_on_autoplay_toggled)
 	autoplay_spin.value_changed.connect(_on_autoplay_interval_changed)
 	autoplay_spin.min_value = 0.2
@@ -1055,6 +1061,7 @@ func _setup_command_controls() -> void:
 	if autoplay_spin.value < 0.2:
 		autoplay_spin.value = 0.5
 	autoplay_toggle.button_pressed = false
+	play_pause_button.button_pressed = false
 	autoplay_timer = Timer.new()
 	autoplay_timer.one_shot = false
 	autoplay_timer.wait_time = float(autoplay_spin.value)
@@ -1419,23 +1426,46 @@ func _on_crisis_spawn_button_pressed() -> void:
 func _send_turn(steps: int) -> bool:
 	return _send_command("turn %d" % steps, "+%d turns requested." % steps)
 
+func _request_rollback(steps: int) -> void:
+	if _last_turn <= 0:
+		_append_command_log("Rollback unavailable (turn 0).")
+		return
+	var target: int = max(_last_turn - steps, 0)
+	if target == _last_turn:
+		_append_command_log("Rollback unavailable (turn 0).")
+		return
+	_send_command("rollback %d" % target, "Rollback to turn %d requested." % target)
+
 func _on_step_one_button_pressed() -> void:
 	_send_turn(1)
 
 func _on_step_ten_button_pressed() -> void:
 	_send_turn(10)
 
+func _on_rollback_ten_button_pressed() -> void:
+	_request_rollback(10)
+
 func _on_rollback_button_pressed() -> void:
-	if _last_turn <= 0:
-		_append_command_log("Rollback unavailable (turn 0).")
-		return
-	var target: int = max(_last_turn - 1, 0)
-	_send_command("rollback %d" % target, "Rollback to turn %d requested." % target)
+	_request_rollback(1)
+
+func _on_play_pause_button_pressed() -> void:
+	var desired_state := play_pause_button.button_pressed
+	if autoplay_toggle != null:
+		if autoplay_toggle.button_pressed != desired_state:
+			autoplay_toggle.button_pressed = desired_state
+		else:
+			_on_autoplay_toggled(desired_state)
+	else:
+		_on_autoplay_toggled(desired_state)
 
 func _on_autoplay_toggled(pressed: bool) -> void:
+	if play_pause_button != null and play_pause_button.button_pressed != pressed:
+		play_pause_button.button_pressed = pressed
 	if pressed:
 		if not _ensure_command_connection():
 			autoplay_toggle.button_pressed = false
+			if play_pause_button != null:
+				play_pause_button.button_pressed = false
 			_append_command_log("Auto-play requires an active command connection.")
 			return
 		autoplay_timer.wait_time = float(autoplay_spin.value)

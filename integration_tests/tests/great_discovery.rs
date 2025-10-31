@@ -1,3 +1,5 @@
+mod common;
+
 use std::time::{Duration, Instant};
 
 use core_sim::{
@@ -13,6 +15,7 @@ const FORCED_PUBLICATION_FLAG: u32 = 1 << 3;
 
 #[test]
 fn gds_turn_budget_processes_many_constellations_in_single_turn() {
+    common::ensure_test_config();
     let mut app = build_headless_app();
 
     {
@@ -96,6 +99,7 @@ fn gds_turn_budget_processes_many_constellations_in_single_turn() {
 
 #[test]
 fn gds_snapshot_stream_carries_resolved_records() {
+    common::ensure_test_config();
     let mut app = build_headless_app();
 
     {
@@ -181,6 +185,7 @@ fn gds_snapshot_stream_carries_resolved_records() {
 
 #[test]
 fn gds_forced_publication_accelerates_trade_leaks() {
+    common::ensure_test_config();
     let mut app = build_headless_app();
 
     {

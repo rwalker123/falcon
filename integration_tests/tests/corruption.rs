@@ -1,3 +1,5 @@
+mod common;
+
 use core_sim::{
     build_headless_app, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, LogisticsLink,
     PowerNode, Scalar, SentimentAxisBias, TradeLink,
@@ -6,6 +8,7 @@ use sim_runtime::{CorruptionEntry, CorruptionSubsystem};
 
 #[test]
 fn corruption_exposure_updates_sentiment_and_telemetry() {
+    common::ensure_test_config();
     let mut app = build_headless_app();
 
     {
@@ -65,6 +68,7 @@ fn corruption_exposure_updates_sentiment_and_telemetry() {
 
 #[test]
 fn corruption_modifiers_reduce_outputs() {
+    common::ensure_test_config();
     let mut clean = build_headless_app();
     let mut corrupt = build_headless_app();
 

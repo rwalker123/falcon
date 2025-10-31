@@ -34,7 +34,6 @@ jobs:
           ~/.cargo/bin
           ~/.cargo/registry
           ~/.cargo/git
-          target
         key: ${{ runner.os }}-stable-cargo-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
           ${{ runner.os }}-stable-cargo-
@@ -61,7 +60,7 @@ jobs:
     - name: cargo clippy
       run: cargo clippy --workspace --all-targets --all-features -- -D warnings
     - name: Build
-      run: cargo build --workspace --all-targets --locked --verbose
+      run: cargo build --workspace --all-targets --locked --verbose --jobs 2
     - name: Run tests
       run: cargo test --workspace --locked --verbose
 
