@@ -1715,6 +1715,11 @@ func _render_culture() -> void:
 	if global_layer.is_empty():
 		summary_lines.append("[i]Global layer missing.[/i]")
 	else:
+		var divergence_val: float = float(global_layer.get("divergence", 0.0))
+		var soft_threshold: float = float(global_layer.get("soft_threshold", 0.0))
+		var hard_threshold: float = float(global_layer.get("hard_threshold", 0.0))
+		var ticks_soft: int = int(global_layer.get("ticks_above_soft", 0))
+		var ticks_hard: int = int(global_layer.get("ticks_above_hard", 0))
 		var traits: Array[Dictionary] = _extract_culture_traits(global_layer)
 		traits.sort_custom(Callable(self, "_compare_trait_strength"))
 		var limit: int = min(traits.size(), CULTURE_TOP_TRAIT_LIMIT)
@@ -1733,6 +1738,9 @@ func _render_culture() -> void:
 				var value: float = float(atrait.get("value", 0.0))
 				var modifier: float = float(atrait.get("modifier", 0.0))
 				summary_lines.append("%d. %s: %+.2f (modifier %+.2f)" % [idx + 1, label, value, modifier])
+		summary_lines.append("")
+		summary_lines.append("Δ %+.2f | soft %.2f · hard %.2f" % [divergence_val, soft_threshold, hard_threshold])
+		summary_lines.append("Ticks above soft: %d · hard: %d" % [ticks_soft, ticks_hard])
 	var resonance_summary := _aggregate_influencer_resonance()
 	var scope_sequence: Array[String] = ["Global", "Regional", "Local"]
 	for scope_key in scope_sequence:
