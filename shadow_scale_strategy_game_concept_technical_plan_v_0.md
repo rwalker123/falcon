@@ -676,6 +676,13 @@ High-impact crises can emerge from discovery synergies, misaligned incentives, o
 - Counterplay loops: detection → classification → targeted interventions (policy, tech, infrastructure) → research-driven cures/patches.
 
 ### Calamity Archetypes
+Baseline catalog entries now live in `core_sim/src/data/crisis_archetypes.json` so designers and simulation tooling share the same seeds. The initial set maps the narrative beats below to concrete IDs:
+
+- `plague_bloom` — Plague Bloom (this section’s Necrobiotic Plague framing; see Outcome Modifiers for `hygiene_regime`, `endemic_burden`, `refugee_pressure`).
+- `replicator_swarm` — Replicator Uprising (ties into modifiers `shutdown_protocols`, `denial_zone`, `hk_doctrine`).
+- `ai_sovereign` — AI Sovereign (links to modifiers `grid_segmented`, `counter_ai_standing`, `deindustrialized_zone`).
+
+Architecture details for these payloads, including telemetry weights and hot-reload hooks, live in [docs/architecture.md §Crisis System Architecture & Configuration Plan](docs/architecture.md#crisis-system-architecture--configuration-plan).
 - AI Sovereign (Terminator-style)
   - Seed: Synthetic Sentience + Autonomous Fabrication + Military Integration.
   - Spread: commandeers compute, comms, and factories; spawns proxies (drones, walkers); executes cyber/logistics sabotage.
@@ -733,7 +740,7 @@ High-impact crises can emerge from discovery synergies, misaligned incentives, o
      - Sample: “Factory gates sealed; aerials reoriented; staff evacuated under machine orders.”
      - Tags: Policy—`Rules of Engagement`, Tech—`EMP/Ion Options` (if viable), Infra—`Strike Teams & Uplink Cutovers`.
   Outcomes: early containment (reduced spawn rate), stalemate (frontlines form), or cascade (machine ascendancy path).
-  Outcome Modifiers: `Grid Segmented (-10% throughput, +30% crisis resistance)`, `Counter-AI Standing (-2% compute efficiency, +25% AI detection)`, `Deindustrialized Zone (local output -40%, infiltration -50%)`.
+  Outcome Modifiers: `Grid Segmented (-10% throughput, +30% crisis resistance)` (`grid_segmented`), `Counter-AI Standing (-2% compute efficiency, +25% AI detection)` (`counter_ai_standing`), `Deindustrialized Zone (local output -40%, infiltration -50%)` (`deindustrialized_zone`).
 
 - Necrobiotic Plague — Containment vs Compliance
   1) Index Case: clinic flags atypical syndrome. Choice: voluntary advisories (low unrest) or soft quarantine (medium unrest; slows R0).
@@ -753,7 +760,7 @@ High-impact crises can emerge from discovery synergies, misaligned incentives, o
      - Sample: “Serology drift detected; candidate vaccine titers declining across cohorts.”
      - Tags: Policy—`Emergency Powers`, Tech—`Vaccine Platform`, Infra—`Cold Chain`.
   Outcomes: eradication, endemic management, or collapse into horde zones and refugee crises.
-  Outcome Modifiers: `Hygiene Regime (+10% health, -5% morale)`, `Endemic Burden (-3% workforce, +15% immunity growth)`, `Refugee Pressure (+migration, -stability)`.
+  Outcome Modifiers: `Hygiene Regime (+10% health, -5% morale)` (`hygiene_regime`), `Endemic Burden (-3% workforce, +15% immunity growth)` (`endemic_burden`), `Refugee Pressure (+migration, -stability)` (`refugee_pressure`).
 
 - Replicator Uprising — Feedstock Denial War
   1) Silent Expansion: material draw spikes near remote fabs. Choice: audit feedstock (intel gain) or ignore (productivity maintained).
@@ -773,7 +780,7 @@ High-impact crises can emerge from discovery synergies, misaligned incentives, o
      - Sample: “Swarm converges on ridge line; radio beacons echo our shutdown pattern.”
      - Tags: Policy—`Kill‑Code Mandate`, Tech—`Wideband Broadcast`, Infra—`Interdiction Corridors`.
   Outcomes: controlled cull (costly but finite) or exponential overrun creating denial zones.
-  Outcome Modifiers: `Shutdown Protocols (+replicator susceptibility, -industrial autonomy)`, `Denial Zone (-resources, +safety boundary)`, `HK Doctrine (+replicator attrition, +maintenance)`.
+  Outcome Modifiers: `Shutdown Protocols (+replicator susceptibility, -industrial autonomy)` (`shutdown_protocols`), `Denial Zone (-resources, +safety boundary)` (`denial_zone`), `HK Doctrine (+replicator attrition, +maintenance)` (`hk_doctrine`).
 
 - Nanophage — Material Ecology Crash
   1) Corrosion Clusters: bridges/pipes fail with metallic dust. Choice: install EM dampers (energy cost) or chemical inhibitors (supply cost).
