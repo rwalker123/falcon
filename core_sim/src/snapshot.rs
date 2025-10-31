@@ -2873,6 +2873,44 @@ mod tests {
         .finalize()
     }
 
+    fn snapshot_with_power_metrics(tick: u64, power_metrics: PowerTelemetryState) -> WorldSnapshot {
+        let header = SnapshotHeader::new(tick, 0, 0, 0, 0, 0, 0);
+        WorldSnapshot {
+            header,
+            tiles: Vec::new(),
+            logistics: Vec::new(),
+            trade_links: Vec::new(),
+            populations: Vec::new(),
+            power: Vec::new(),
+            power_metrics,
+            great_discovery_definitions: Vec::new(),
+            great_discoveries: Vec::new(),
+            great_discovery_progress: Vec::new(),
+            great_discovery_telemetry: GreatDiscoveryTelemetryState::default(),
+            knowledge_ledger: Vec::new(),
+            knowledge_timeline: Vec::new(),
+            knowledge_metrics: KnowledgeMetricsState::default(),
+            crisis_telemetry: CrisisTelemetryState::default(),
+            crisis_overlay: CrisisOverlayState::default(),
+            terrain: TerrainOverlayState::default(),
+            logistics_raster: ScalarRasterState::default(),
+            sentiment_raster: ScalarRasterState::default(),
+            corruption_raster: ScalarRasterState::default(),
+            fog_raster: ScalarRasterState::default(),
+            culture_raster: ScalarRasterState::default(),
+            military_raster: ScalarRasterState::default(),
+            axis_bias: AxisBiasState::default(),
+            sentiment: SentimentTelemetryState::default(),
+            generations: Vec::new(),
+            corruption: CorruptionLedger::default(),
+            influencers: Vec::new(),
+            culture_layers: Vec::new(),
+            culture_tensions: Vec::new(),
+            discovery_progress: Vec::new(),
+        }
+        .finalize()
+    }
+
     #[test]
     fn power_metrics_from_grid_tracks_totals() {
         let mut grid = PowerGridState {
@@ -2890,6 +2928,11 @@ mod tests {
             severity: GridIncidentSeverity::Critical,
             deficit: Scalar::from_f32(1.2),
         });
+        grid.incidents.push(PowerIncident {
+            node_id: PowerNodeId(99),
+            severity: GridIncidentSeverity::Warning,
+            deficit: Scalar::from_f32(0.4),
+        });
 
         let telemetry = power_metrics_from_grid(&grid);
         assert_eq!(telemetry.total_supply, Scalar::from_f32(12.5).raw());
@@ -2899,11 +2942,26 @@ mod tests {
         assert!((telemetry.grid_stress_avg - 0.35).abs() < f32::EPSILON);
         assert!((telemetry.surplus_margin - 0.22).abs() < f32::EPSILON);
         assert_eq!(telemetry.instability_alerts, 3);
-        assert_eq!(telemetry.incidents.len(), 1);
-        let incident = &telemetry.incidents[0];
-        assert_eq!(incident.node_id, 42);
-        assert_eq!(incident.severity, PowerIncidentSeverity::Critical);
-        assert_eq!(incident.deficit, Scalar::from_f32(1.2).raw());
+        assert_eq!(telemetry.incidents.len(), 2);
+
+        let mut saw_critical = false;
+        let mut saw_warning = false;
+        for incident in &telemetry.incidents {
+            match incident.severity {
+                PowerIncidentSeverity::Critical => {
+                    saw_critical = true;
+                    assert_eq!(incident.node_id, 42);
+                    assert_eq!(incident.deficit, Scalar::from_f32(1.2).raw());
+                }
+                PowerIncidentSeverity::Warning => {
+                    saw_warning = true;
+                    assert_eq!(incident.node_id, 99);
+                    assert_eq!(incident.deficit, Scalar::from_f32(0.4).raw());
+                }
+            }
+        }
+        assert!(saw_critical, "expected critical incident serialized");
+        assert!(saw_warning, "expected warning incident serialized");
     }
 
     #[test]
@@ -2969,6 +3027,63 @@ mod tests {
             .as_ref()
             .expect("latest snapshot retained");
         assert_eq!(latest_snapshot.terrain, updated_overlay);
+    }
+
+    #[test]
+    fn snapshot_history_records_power_metrics_delta() {
+        let mut history = SnapshotHistory::default();
+
+        let baseline = snapshot_with_power_metrics(1, PowerTelemetryState::default());
+        history.update(baseline);
+
+        let updated_metrics = PowerTelemetryState {
+            total_supply: Scalar::from_f32(20.0).raw(),
+            total_demand: Scalar::from_f32(15.0).raw(),
+            total_storage: Scalar::from_f32(5.0).raw(),
+            total_capacity: Scalar::from_f32(25.0).raw(),
+            grid_stress_avg: 0.42,
+            surplus_margin: -0.1,
+            instability_alerts: 4,
+            incidents: vec![
+                PowerIncidentState {
+                    node_id: 7,
+                    severity: PowerIncidentSeverity::Critical,
+                    deficit: Scalar::from_f32(2.3).raw(),
+                },
+                PowerIncidentState {
+                    node_id: 11,
+                    severity: PowerIncidentSeverity::Warning,
+                    deficit: Scalar::from_f32(0.8).raw(),
+                },
+            ],
+        };
+        let updated_snapshot = snapshot_with_power_metrics(2, updated_metrics.clone());
+        history.update(updated_snapshot);
+
+        let delta = history
+            .last_delta
+            .as_ref()
+            .expect("delta captured after power metrics change");
+        let power_delta = delta
+            .power_metrics
+            .as_ref()
+            .expect("power metrics delta emitted");
+
+        assert_eq!(
+            power_delta.instability_alerts,
+            updated_metrics.instability_alerts
+        );
+        assert_eq!(power_delta.incidents.len(), updated_metrics.incidents.len());
+        assert!(
+            (power_delta.grid_stress_avg - updated_metrics.grid_stress_avg).abs() < f32::EPSILON
+        );
+        assert!((power_delta.surplus_margin - updated_metrics.surplus_margin).abs() < f32::EPSILON);
+
+        let latest_snapshot = history
+            .last_snapshot
+            .as_ref()
+            .expect("latest snapshot retained");
+        assert_eq!(latest_snapshot.power_metrics, updated_metrics);
     }
 
     #[test]
