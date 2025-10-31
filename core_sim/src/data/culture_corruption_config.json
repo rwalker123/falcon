@@ -1,6 +1,29 @@
 {
   "culture": {
     "trust_axis": 1,
+    "propagation": {
+      "global": {
+        "elasticity": 0.1,
+        "soft_threshold": 0.6,
+        "hard_threshold": 1.2,
+        "soft_trigger_ticks": 1,
+        "hard_trigger_ticks": 1
+      },
+      "regional": {
+        "elasticity": 0.25,
+        "soft_threshold": 0.6,
+        "hard_threshold": 1.2,
+        "soft_trigger_ticks": 1,
+        "hard_trigger_ticks": 1
+      },
+      "local": {
+        "elasticity": 0.4,
+        "soft_threshold": 0.6,
+        "hard_threshold": 1.2,
+        "soft_trigger_ticks": 1,
+        "hard_trigger_ticks": 1
+      }
+    },
     "drift_warning": {
       "severity_min": 0.0,
       "severity_max": 3.0,

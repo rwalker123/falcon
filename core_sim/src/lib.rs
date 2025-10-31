@@ -149,6 +149,8 @@ pub fn build_headless_app() -> App {
         CultureCorruptionConfig::from_json_str(BUILTIN_CULTURE_CORRUPTION_CONFIG)
             .expect("culture corruption config should parse"),
     );
+    let culture_manager =
+        CultureManager::from_config(culture_corruption_config.culture().propagation());
     let culture_corruption_handle = CultureCorruptionConfigHandle::new(culture_corruption_config);
     let (turn_pipeline_config, turn_pipeline_metadata) = load_turn_pipeline_config_from_env();
     let turn_pipeline_handle = TurnPipelineConfigHandle::new(turn_pipeline_config.clone());
@@ -163,7 +165,6 @@ pub fn build_headless_app() -> App {
         load_crisis_telemetry_config_from_env();
     let crisis_telemetry_handle = CrisisTelemetryConfigHandle::new(crisis_telemetry_config.clone());
     let crisis_telemetry_resource = CrisisTelemetry::from_config(crisis_telemetry_config.as_ref());
-    let culture_manager = CultureManager::new();
     let culture_effects = CultureEffectsCache::default();
     let espionage_catalog =
         espionage::EspionageCatalog::load_builtin().expect("espionage catalog should parse");

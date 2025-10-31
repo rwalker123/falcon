@@ -24,6 +24,10 @@ impl CultureCorruptionConfig {
         &self.culture
     }
 
+    pub fn culture_mut(&mut self) -> &mut CultureSeverityConfig {
+        &mut self.culture
+    }
+
     pub fn corruption(&self) -> &CorruptionSeverityConfig {
         &self.corruption
     }
@@ -33,6 +37,7 @@ impl CultureCorruptionConfig {
 #[serde(default)]
 pub struct CultureSeverityConfig {
     trust_axis: usize,
+    propagation: CulturePropagationSettings,
     drift_warning: CultureTensionTuning,
     assimilation_push: CultureTensionTuning,
     schism_risk: CultureTensionTuning,
@@ -41,6 +46,10 @@ pub struct CultureSeverityConfig {
 impl CultureSeverityConfig {
     pub fn trust_axis(&self) -> usize {
         self.trust_axis
+    }
+
+    pub fn propagation(&self) -> &CulturePropagationSettings {
+        &self.propagation
     }
 
     pub fn drift_warning(&self) -> &CultureTensionTuning {
@@ -60,6 +69,7 @@ impl Default for CultureSeverityConfig {
     fn default() -> Self {
         Self {
             trust_axis: 1,
+            propagation: CulturePropagationSettings::default(),
             drift_warning: CultureTensionTuning {
                 severity_min: 0.0,
                 severity_max: 3.0,
@@ -81,6 +91,100 @@ impl Default for CultureSeverityConfig {
                 incident_delta_min: 0.05,
                 incident_delta_max: 0.15,
             },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CulturePropagationSettings {
+    global: CultureScopePropagation,
+    regional: CultureScopePropagation,
+    local: CultureScopePropagation,
+}
+
+impl CulturePropagationSettings {
+    pub fn global(&self) -> &CultureScopePropagation {
+        &self.global
+    }
+
+    pub fn regional(&self) -> &CultureScopePropagation {
+        &self.regional
+    }
+
+    pub fn local(&self) -> &CultureScopePropagation {
+        &self.local
+    }
+}
+
+impl Default for CulturePropagationSettings {
+    fn default() -> Self {
+        Self {
+            global: CultureScopePropagation {
+                elasticity: 0.10,
+                soft_threshold: 0.6,
+                hard_threshold: 1.2,
+                soft_trigger_ticks: 1,
+                hard_trigger_ticks: 1,
+            },
+            regional: CultureScopePropagation {
+                elasticity: 0.25,
+                soft_threshold: 0.6,
+                hard_threshold: 1.2,
+                soft_trigger_ticks: 1,
+                hard_trigger_ticks: 1,
+            },
+            local: CultureScopePropagation {
+                elasticity: 0.40,
+                soft_threshold: 0.6,
+                hard_threshold: 1.2,
+                soft_trigger_ticks: 1,
+                hard_trigger_ticks: 1,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CultureScopePropagation {
+    elasticity: f32,
+    soft_threshold: f32,
+    hard_threshold: f32,
+    soft_trigger_ticks: u16,
+    hard_trigger_ticks: u16,
+}
+
+impl CultureScopePropagation {
+    pub fn elasticity(&self) -> f32 {
+        self.elasticity
+    }
+
+    pub fn soft_threshold(&self) -> f32 {
+        self.soft_threshold
+    }
+
+    pub fn hard_threshold(&self) -> f32 {
+        self.hard_threshold
+    }
+
+    pub fn soft_trigger_ticks(&self) -> u16 {
+        self.soft_trigger_ticks
+    }
+
+    pub fn hard_trigger_ticks(&self) -> u16 {
+        self.hard_trigger_ticks
+    }
+}
+
+impl Default for CultureScopePropagation {
+    fn default() -> Self {
+        Self {
+            elasticity: 0.25,
+            soft_threshold: 0.6,
+            hard_threshold: 1.2,
+            soft_trigger_ticks: 1,
+            hard_trigger_ticks: 1,
         }
     }
 }

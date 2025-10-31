@@ -68,6 +68,8 @@
 - [x] Introduce influencer culture resonance channels and serialize weights in snapshot payloads (Owner: Mira, Estimate: 2d; Deps: influencer roster refactor).
 - [x] Apply influencer culture deltas during `reconcile_culture_layers`, blending with policy modifiers (Owner: Elena, Estimate: 1.5d; Deps: resonance channels).
 - [x] Extend inspector UI to display per-influencer culture resonance and recent trait pushes (Owner: Jun, Estimate: 1d; Deps: snapshot serialization + Godot culture tab groundwork).
+- [ ] Implement the culture reconcile pipeline end-to-end (propagation, divergence timers, culture effect cache refresh) and ensure `CultureTensionEvent` / `CultureSchismEvent` handling matches `docs/architecture.md` §Culture Simulation Spine and manual §7c expectations (Owner: TBD, Estimate: 3d; Deps: existing `CultureLayer` scaffolding).
+- [ ] Extend culture telemetry and inspector surfacing: add `CultureLayerState` / `CultureTensionState` payloads to snapshots, regenerate FlatBuffers, and update the Godot Cultural Inspector overlay with divergence heatmaps and clash forecasts per `docs/architecture.md` §Culture Simulation Spine and manual §7c UI notes (Owner: TBD, Estimate: 2d; Deps: previous task, FlatBuffers regeneration workflow).
 
 ## Data Contracts (`sim_schema` + `sim_runtime`)
 - [x] Define FlatBuffers schema for snapshots and deltas.
@@ -88,6 +90,7 @@
 - [x] Rework HUD/inspector layout math to consume the shared typography metrics so panel placement adapts to base font changes without manual offsets (Owner: TBD, Estimate: 1d; Deps: shared typography theme scaffolding).
 - [x] Add a Great Discoveries inspector tab rendering resolved ledger entries, telemetry summaries, and player-facing copy (Owner: TBD, Estimate: 1d; Deps: Great Discovery snapshot contracts). _Status_: Godot inspector now includes a Great Discoveries tab summarizing telemetry, listing resolved entries with detail panes, and wiring snapshot stream fields through the native decoder._
 - [x] Surface faction-specific Great Discovery progress (constellation readiness, observation gates, ETA) in the Knowledge tab with filtering/summary affordances (Owner: TBD, Estimate: 1d; Deps: Great Discovery snapshot contracts). _Status_: The new tab also renders faction-specific constellation readiness with observation deficits, ETA, and posture details driven by snapshot/delta updates._
+- [ ] Hook espionage mission control into the Godot inspector Knowledge tab: surface mission queues, success odds, misinformation flags, and counter-intel posture/budget controls using the existing command envelopes (`queue_espionage_mission`, `counterintel_policy`, `counterintel_budget`) per `docs/architecture.md` Knowledge Ledger follow-up notes (Owner: TBD, Estimate: 2d; Deps: command bridge, Knowledge telemetry bindings).
 
 ### Sentiment Sphere Enhancements
 - [x] Implement quadrant heatmap widget with vector overlay and legend (Owner: Mira, Estimate: 2d).
@@ -136,6 +139,7 @@
 - [x] Deliver `tools/script_harness` headless runner with mock feeds, fuzz hooks, and CI budget assertions for sandbox violations (Owner: Omar, Estimate: 2d; Deps: capability registry & host bindings). _Status_: Harness builds against the native runtime and exposes tick/event CLI hooks; next step is adding scripted smoke tests.
 - [x] Implement save/load serialization for active scripts and `storage.session` payloads via new `SimScriptState` struct and add regression coverage (Owner: Devi, Estimate: 1.5d; Deps: `sim_runtime` capability registry). _Status_: `SimScriptState`/`ScriptManifestRef` capture enabled script metadata; Godot host exposes `capture_state`/`restore_state`, and runtime applies session + subscription restores with validation.
 - [x] Formalize the scripting manifest contract: publish JSON schema, add lint/validation tooling against `CapabilitySpec`, document host runtime checks, and sync manual/architecture references (Owner: TBD, Estimate: 2d; Deps: capability registry finalized). _Status_: Schema emitted to `docs/scripting_manifest.schema.json`, `cargo xtask validate-manifests` enforces shape + capability coverage, and docs/manual sections reference the contract + runtime checks.
+- [ ] Decide and document the distribution model for inspector scripts/mods (signed bundles vs Workshop-style feeds), outline load/unload flows, and sync the plan between `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §Next Steps (Frontend) and `docs/architecture.md` Shared Scripting Capability Model (Owner: TBD, Estimate: 2d; Deps: stakeholder interviews, packaging spike).
 
 ## Tooling & Tests
 - [x] Add determinism regression test comparing dual runs.
