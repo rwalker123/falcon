@@ -82,6 +82,175 @@
         "type": "half_life",
         "ticks": 12
       }
+    },
+    {
+      "id": "grid_segmented",
+      "name": "Grid Segmented",
+      "category": "ai",
+      "tags": [
+        "ai_sovereign",
+        "infrastructure"
+      ],
+      "description": "Islanding the grid reduces machine leverage and dampens stress at the cost of throughput elsewhere.",
+      "effects": {
+        "grid_stress_pct": -12.0,
+        "queue_pressure_pct": -8.0,
+        "overlay_multiplier": -0.15
+      },
+      "decay": {
+        "type": "half_life",
+        "ticks": 16
+      }
+    },
+    {
+      "id": "counter_ai_standing",
+      "name": "Counter-AI Standing",
+      "category": "ai",
+      "tags": [
+        "ai_sovereign",
+        "defense"
+      ],
+      "description": "Dedicated counter-AI teams erode sovereign reach at the cost of compute efficiency.",
+      "effects": {
+        "grid_stress_pct": -8.0,
+        "queue_pressure_pct": -6.5,
+        "swarms_active_bonus": -0.5
+      },
+      "decay": {
+        "type": "half_life",
+        "ticks": 10
+      }
+    },
+    {
+      "id": "deindustrialized_zone",
+      "name": "Deindustrialized Zone",
+      "category": "ai",
+      "tags": [
+        "ai_sovereign",
+        "logistics"
+      ],
+      "description": "Abandoning contested districts blunts infiltration but drives up supply pressure on surviving hubs.",
+      "effects": {
+        "grid_stress_pct": -5.0,
+        "queue_pressure_pct": 6.0,
+        "overlay_multiplier": -0.25
+      },
+      "decay": {
+        "type": "linear",
+        "per_tick": 1.4
+      }
+    },
+    {
+      "id": "shutdown_protocols",
+      "name": "Shutdown Protocols",
+      "category": "infrastructure",
+      "tags": [
+        "replicator",
+        "logistics"
+      ],
+      "description": "Emergency kill-codes slow replicator swarms but increase grid load and queue churn.",
+      "effects": {
+        "grid_stress_pct": 6.5,
+        "queue_pressure_pct": 4.0,
+        "swarms_active_bonus": -0.7
+      },
+      "decay": {
+        "type": "linear",
+        "per_tick": 1.8
+      }
+    },
+    {
+      "id": "denial_zone",
+      "name": "Denial Zone",
+      "category": "infrastructure",
+      "tags": [
+        "replicator",
+        "military"
+      ],
+      "description": "Sacrificed industrial districts become containment bulwarks that dampen swarm spread.",
+      "effects": {
+        "swarms_active_bonus": -0.4,
+        "overlay_multiplier": -0.2
+      },
+      "decay": {
+        "type": "half_life",
+        "ticks": 14
+      }
+    },
+    {
+      "id": "hk_doctrine",
+      "name": "HK Doctrine",
+      "category": "military",
+      "tags": [
+        "replicator",
+        "military"
+      ],
+      "description": "Hunter-killer detachments cull replicator queens but strain logistics and command bandwidth.",
+      "effects": {
+        "swarms_active_bonus": -0.9,
+        "grid_stress_pct": 4.5,
+        "queue_pressure_pct": 3.5
+      },
+      "decay": {
+        "type": "half_life",
+        "ticks": 11
+      }
+    },
+    {
+      "id": "hygiene_regime",
+      "name": "Hygiene Regime",
+      "category": "biological",
+      "tags": [
+        "plague_bloom",
+        "health"
+      ],
+      "description": "Aggressive sanitation campaigns cut effective R₀ while adding pressure to medical queues.",
+      "effects": {
+        "r0_delta": -0.18,
+        "queue_pressure_pct": 5.0,
+        "phage_density": -0.12
+      },
+      "decay": {
+        "type": "half_life",
+        "ticks": 9
+      }
+    },
+    {
+      "id": "endemic_burden",
+      "name": "Endemic Burden",
+      "category": "biological",
+      "tags": [
+        "plague_bloom",
+        "population"
+      ],
+      "description": "Stabilized outbreaks lower transmission velocity while lingering pockets sustain background pressure.",
+      "effects": {
+        "r0_delta": -0.08,
+        "phage_density": -0.18,
+        "overlay_multiplier": -0.1
+      },
+      "decay": {
+        "type": "linear",
+        "per_tick": 1.0
+      }
+    },
+    {
+      "id": "refugee_pressure",
+      "name": "Refugee Pressure",
+      "category": "biological",
+      "tags": [
+        "plague_bloom",
+        "logistics"
+      ],
+      "description": "Displaced populations overload cordons and supply lines, amplifying queue pressure and grid volatility.",
+      "effects": {
+        "grid_stress_pct": 7.0,
+        "queue_pressure_pct": 9.5
+      },
+      "decay": {
+        "type": "linear",
+        "per_tick": 1.2
+      }
     }
   ]
 }

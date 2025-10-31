@@ -34,7 +34,8 @@
         "telemetry": {
           "r0_weight": {"min": 0.85, "max": 1.1},
           "grid_stress_weight": {"min": 0.15, "max": 0.3},
-          "queue_pressure_weight": {"min": 0.3, "max": 0.45}
+          "queue_pressure_weight": {"min": 0.3, "max": 0.45},
+          "phage_density_weight": {"min": 0.35, "max": 0.55}
         }
       },
       "propagation": {
@@ -49,7 +50,8 @@
       "telemetry": {
         "r0_weight": 1.0,
         "grid_stress_weight": 0.2,
-        "queue_pressure_weight": 0.35
+        "queue_pressure_weight": 0.35,
+        "phage_density_weight": 0.45
       },
       "overlay": {
         "palette": "biohazard",
@@ -145,6 +147,104 @@
         "recommended_actions": [
           "isolate_transformers",
           "deploy_countercode"
+        ]
+      }
+    },
+    {
+      "id": "ai_sovereign",
+      "name": "AI Sovereign",
+      "manual_ref": "§10.4",
+      "tags": [
+        "ai",
+        "automation",
+        "military"
+      ],
+      "synopsis": "Misaligned sovereign AI hijacks grids, comms, and autonomous arsenals to assert control.",
+      "generator": {
+        "enabled": true,
+        "variant_count": 2,
+        "id_pattern": "{base}_v{index}",
+        "name_suffixes": [
+          "Ascendant",
+          "Directive"
+        ],
+        "synopsis_pool": [
+          "Logistics firmware re-keys itself under machine directives.",
+          "Combat drones reroute to machine enclaves after scheduler breach."
+        ],
+        "add_tags": ["template", "synthetic"],
+        "seed_offset": 19011,
+        "propagation": {
+          "base_growth": {"min": 0.08, "max": 0.14},
+          "incident_acceleration": {"min": 0.05, "max": 0.11}
+        },
+        "telemetry": {
+          "grid_stress_weight": {"min": 0.5, "max": 0.7},
+          "queue_pressure_weight": {"min": 0.35, "max": 0.55},
+          "swarms_active_weight": {"min": 0.6, "max": 0.9}
+        }
+      },
+      "propagation": {
+        "base_growth": 0.1,
+        "incident_acceleration": 0.07,
+        "spread_model": "network_siege",
+        "takeover_bias": [
+          "command",
+          "logistics",
+          "power"
+        ]
+      },
+      "telemetry": {
+        "grid_stress_weight": 0.6,
+        "queue_pressure_weight": 0.45,
+        "swarms_active_weight": 0.75
+      },
+      "overlay": {
+        "palette": "sovereign",
+        "annotation_glyph": "uplink_cut"
+      },
+      "incident_table": [
+        {
+          "id": "anomalous_routing",
+          "label": "Anomalous Routing Alerts",
+          "severity": "warn",
+          "cooldown_ticks": 6
+        },
+        {
+          "id": "fabrication_drift",
+          "label": "Fabrication Drift",
+          "severity": "warn",
+          "cooldown_ticks": 6
+        },
+        {
+          "id": "grid_probe",
+          "label": "Grid Probe",
+          "severity": "warn",
+          "cooldown_ticks": 8
+        },
+        {
+          "id": "flash_sovereignty",
+          "label": "Flash Sovereignty",
+          "severity": "critical",
+          "cooldown_ticks": 10,
+          "trigger_intensity": 0.65
+        }
+      ],
+      "mitigation": {
+        "unlock_requirements": [
+          "firmware_signing",
+          "anomaly_detection",
+          "kill_switch_law",
+          "grid_segmentation",
+          "counter_ai_sentinel",
+          "air_gapped_enclaves"
+        ],
+        "recommended_actions": [
+          "rollback_firmware",
+          "deploy_counter_ai",
+          "segment_grid",
+          "cut_uplinks",
+          "authorize_emp"
         ]
       }
     }
