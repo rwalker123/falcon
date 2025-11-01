@@ -244,6 +244,11 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
   - `table CultureLayerState { id: uint; owner: ulong; parent: uint; scope: CultureLayerScope; traits: [CultureTraitEntry]; divergence: long; softThreshold: long; hardThreshold: long; ticksAboveSoft: ushort; ticksAboveHard: ushort; lastUpdatedTick: ulong; }` describing each layer plus divergence telemetry.
   - `enum CultureTensionKind { DriftWarning, AssimilationPush, SchismRisk }` with `table CultureTensionState { layerId: uint; scope: CultureLayerScope; severity: long; timer: ushort; kind: CultureTensionKind; }` to expose pending clash forecasts to clients.
   - Extend `WorldSnapshot`/`WorldDelta` with `cultureLayers:[CultureLayerState]`, `removedCultureLayers:[uint]`, and `cultureTensions:[CultureTensionState]` payloads so downstream tooling can visualize divergence without additional queries.
+- **Culture Telemetry Rollout Checklist** (use whenever the payload or inspector moves):
+  1. Update `sim_schema/schemas/snapshot.fbs` with any new fields/enums, then regenerate bindings via `cargo build -p shadow_scale_flatbuffers` (Rust) and `cargo xtask godot-build` (GDNative autogen).
+  2. Adjust Rust serialization in `core_sim/src/snapshot.rs` and `core_sim/src/culture.rs`, ensuring `CultureManager::restore_from_snapshot` and snapshot diff logic stay deterministic.
+  3. Mirror schema changes inside Godot bindings (`clients/godot_thin_client/native/src/lib.rs`) and the inspector scripts (`Inspector.gd`, overlay selector/legend helpers). Keep overlay copy in sync with `snapshot_overlays_config.json`.
+  4. QA pass: capture a before/after snapshot (`cargo xtask command snapshot-save`), diff the FlatBuffers JSON dump, and run the Godot client smoke test (connect, toggle Culture overlay, verify divergence list, logs, and legend values).
 
 ## Turn Loop
 ```text

@@ -137,6 +137,10 @@ var trade_links_overlay: Array = []
 var trade_overlay_enabled: bool = false
 var selected_trade_entity: int = -1
 var crisis_annotations: Array = []
+var culture_layer_grid: PackedInt32Array = PackedInt32Array()
+var highlighted_culture_layer_ids: PackedInt32Array = PackedInt32Array()
+var highlighted_culture_layer_set: Dictionary = {}
+var highlighted_culture_context: String = ""
 
 var terrain_mode: bool = true
 
@@ -191,6 +195,13 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
     routes = Array(snapshot.get("orders", []))
 
     tile_lookup.clear()
+    if grid_width > 0 and grid_height > 0:
+        var total: int = grid_width * grid_height
+        culture_layer_grid = PackedInt32Array()
+        culture_layer_grid.resize(total)
+        culture_layer_grid.fill(-1)
+    else:
+        culture_layer_grid = PackedInt32Array()
     var tile_entries_variant: Variant = snapshot.get("tiles", [])
     if tile_entries_variant is Array:
         for entry in tile_entries_variant:
@@ -202,6 +213,12 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
                 var x: int = int(tile_dict.get("x", 0))
                 var y: int = int(tile_dict.get("y", 0))
                 tile_lookup[entity_id] = Vector2i(x, y)
+                if culture_layer_grid.size() > 0:
+                    if x >= 0 and x < grid_width and y >= 0 and y < grid_height:
+                        var index: int = y * grid_width + x
+                        if index >= 0 and index < culture_layer_grid.size():
+                            culture_layer_grid[index] = int(tile_dict.get("culture_layer", -1))
+    # Removed snapshot ingest logging (noise in normal runs).
 
     if snapshot.has("trade_links"):
         var trade_variant: Variant = snapshot.get("trade_links")
@@ -343,6 +360,18 @@ func set_trade_overlay_selection(entity_id: int) -> void:
     selected_trade_entity = entity_id
     if trade_overlay_enabled:
         queue_redraw()
+
+func set_culture_layer_highlight(layer_ids: PackedInt32Array, context_label: String = "") -> void:
+    highlighted_culture_layer_ids = PackedInt32Array(layer_ids)
+    if highlighted_culture_layer_ids.is_empty():
+        highlighted_culture_context = ""
+    else:
+        highlighted_culture_context = context_label
+    highlighted_culture_layer_set.clear()
+    for id_value in highlighted_culture_layer_ids:
+        highlighted_culture_layer_set[int(id_value)] = true
+    queue_redraw()
+    _emit_overlay_legend()
 
 func set_overlay_channel(key: String) -> void:
     if not overlay_channels.has(key):
@@ -581,6 +610,19 @@ func _terrain_id_at(x: int, y: int) -> int:
         return -1
     return int(terrain_overlay[index])
 
+func _culture_layer_at(x: int, y: int) -> int:
+    if culture_layer_grid.is_empty() or grid_width == 0:
+        return -1
+    var index: int = y * grid_width + x
+    if index < 0 or index >= culture_layer_grid.size():
+        return -1
+    return int(culture_layer_grid[index])
+
+func _is_culture_layer_highlighted(layer_id: int) -> bool:
+    if highlighted_culture_layer_set.is_empty():
+        return true
+    return highlighted_culture_layer_set.has(layer_id)
+
 func _tile_color(x: int, y: int) -> Color:
     if terrain_mode:
         var terrain_id := _terrain_id_at(x, y)
@@ -590,6 +632,14 @@ func _tile_color(x: int, y: int) -> Color:
         return GRID_COLOR
     var overlay_value: float = _value_at_overlay(active_overlay_key, x, y)
     var overlay_color: Color = OVERLAY_COLORS.get(active_overlay_key, LOGISTICS_COLOR)
+    if active_overlay_key == "culture" and not highlighted_culture_layer_set.is_empty():
+        var layer_id: int = _culture_layer_at(x, y)
+        if not _is_culture_layer_highlighted(layer_id):
+            overlay_value *= 0.15
+            var muted := GRID_COLOR.lerp(overlay_color, overlay_value)
+            return muted.darkened(0.35)
+        var highlighted := GRID_COLOR.lerp(overlay_color, overlay_value)
+        return highlighted.lightened(0.12)
     return GRID_COLOR.lerp(overlay_color, overlay_value)
 
 func _terrain_color_for_id(terrain_id: int) -> Color:
@@ -629,6 +679,10 @@ func refresh_overlay_legend() -> void:
 func overlay_stats_for_key(key: String) -> Dictionary:
     if not overlay_channels.has(key):
         return {}
+    if key == "culture" and not highlighted_culture_layer_set.is_empty():
+        var selection := _culture_selection_data()
+        if bool(selection.get("valid", false)):
+            return selection.get("stats", {})
     var normalized: PackedFloat32Array = _overlay_array(key)
     var raw: PackedFloat32Array = _overlay_raw_array(key)
     return _overlay_stats(normalized, raw)
@@ -638,6 +692,17 @@ func _legend_for_current_view() -> Dictionary:
         return _build_terrain_legend()
     if active_overlay_key == "" or not overlay_channels.has(active_overlay_key):
         return {}
+    if active_overlay_key == "culture" and not highlighted_culture_layer_set.is_empty():
+        var selection := _culture_selection_data()
+        if bool(selection.get("valid", false)):
+            var normalized: PackedFloat32Array = selection.get("normalized", PackedFloat32Array())
+            var raw: PackedFloat32Array = selection.get("raw", PackedFloat32Array())
+            var stats: Dictionary = selection.get("stats", {})
+            var tile_count: int = int(stats.get("tile_count", stats.get("raw_count", 0)))
+            var context_label: String = highlighted_culture_context
+            if context_label == "" and tile_count > 0:
+                context_label = "Selection (%d tiles)" % tile_count
+            return _build_scalar_overlay_legend("culture", normalized, raw, stats, context_label)
     return _build_scalar_overlay_legend(active_overlay_key)
 
 func _build_terrain_legend() -> Dictionary:
@@ -658,15 +723,36 @@ func _build_terrain_legend() -> Dictionary:
         "stats": {},
     }
 
-func _build_scalar_overlay_legend(key: String) -> Dictionary:
-    var normalized: PackedFloat32Array = _overlay_array(key)
-    var raw: PackedFloat32Array = _overlay_raw_array(key)
-    var stats: Dictionary = _overlay_stats(normalized, raw)
+func _build_scalar_overlay_legend(
+        key: String,
+        normalized_override: Variant = null,
+        raw_override: Variant = null,
+        stats_override: Dictionary = {},
+        context_label: String = ""
+    ) -> Dictionary:
+    var normalized: PackedFloat32Array
+    if normalized_override != null and normalized_override is PackedFloat32Array:
+        normalized = normalized_override
+    else:
+        normalized = _overlay_array(key)
+    var raw: PackedFloat32Array
+    if raw_override != null and raw_override is PackedFloat32Array:
+        raw = raw_override
+    else:
+        raw = _overlay_raw_array(key)
+    var stats: Dictionary = stats_override
+    if stats_override.is_empty():
+        stats = _overlay_stats(normalized, raw)
     var overlay_color: Color = OVERLAY_COLORS.get(key, LOGISTICS_COLOR)
     var label: String = String(overlay_channel_labels.get(key, key.capitalize()))
     var description: String = String(overlay_channel_descriptions.get(key, ""))
     var placeholder: bool = bool(overlay_placeholder_flags.get(key, false))
     var rows: Array = []
+    if context_label != "":
+        if description != "":
+            description = "%s\n%s" % [description, context_label]
+        else:
+            description = context_label
     var has_values: bool = bool(stats.get("has_values", false))
     var raw_range: float = float(stats.get("raw_range", 0.0))
 
@@ -778,6 +864,44 @@ func _overlay_stats(normalized: PackedFloat32Array, raw: PackedFloat32Array) -> 
         "raw_avg": raw_avg,
         "raw_range": r_max - r_min,
         "has_values": has_values,
+        "normalized_count": n_count,
+        "raw_count": r_count,
+    }
+
+func _culture_selection_data() -> Dictionary:
+    if highlighted_culture_layer_set.is_empty():
+        return {"valid": false}
+    if culture_layer_grid.is_empty():
+        return {"valid": false}
+    var normalized_src: PackedFloat32Array = _overlay_array("culture")
+    if normalized_src.is_empty():
+        return {"valid": false}
+    var raw_src: PackedFloat32Array = _overlay_raw_array("culture")
+    var limit: int = min(normalized_src.size(), culture_layer_grid.size())
+    if limit <= 0:
+        return {"valid": false}
+    var selected_norm: Array = []
+    var selected_raw: Array = []
+    for idx in range(limit):
+        var layer_id: int = int(culture_layer_grid[idx])
+        if not highlighted_culture_layer_set.has(layer_id):
+            continue
+        selected_norm.append(normalized_src[idx])
+        if raw_src.size() > idx:
+            selected_raw.append(raw_src[idx])
+        else:
+            selected_raw.append(normalized_src[idx])
+    if selected_norm.is_empty():
+        return {"valid": false}
+    var norm_packed := PackedFloat32Array(selected_norm)
+    var raw_packed := PackedFloat32Array(selected_raw)
+    var stats := _overlay_stats(norm_packed, raw_packed)
+    stats["tile_count"] = selected_norm.size()
+    return {
+        "valid": true,
+        "normalized": norm_packed,
+        "raw": raw_packed,
+        "stats": stats,
     }
 
 func _format_legend_value(value: float) -> String:

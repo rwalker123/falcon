@@ -953,6 +953,12 @@ pub fn capture_snapshot(
         .iter()
         .map(|(entity, tile)| tile_state(entity, tile))
         .collect();
+    for tile in tile_states.iter_mut() {
+        let owner = CultureOwner(tile.entity);
+        if let Some(layer) = culture.local_layer_by_owner(owner) {
+            tile.culture_layer = layer.id;
+        }
+    }
     tile_states.sort_unstable_by_key(|state| state.entity);
 
     let mut logistics_states: Vec<LogisticsLinkState> = Vec::new();
@@ -2604,6 +2610,7 @@ fn tile_state(entity: Entity, tile: &Tile) -> TileState {
         temperature: tile.temperature.raw(),
         terrain: tile.terrain,
         terrain_tags: tile.terrain_tags,
+        culture_layer: 0,
     }
 }
 
@@ -2784,6 +2791,7 @@ mod tests {
             temperature: 0,
             terrain: TerrainType::AlluvialPlain,
             terrain_tags: TerrainTags::empty(),
+            culture_layer: 0,
         }
     }
 
@@ -2975,6 +2983,7 @@ mod tests {
             temperature: 0,
             terrain: TerrainType::AlluvialPlain,
             terrain_tags: TerrainTags::FERTILE,
+            culture_layer: 0,
         };
         let base_overlay = TerrainOverlayState {
             width: 1,

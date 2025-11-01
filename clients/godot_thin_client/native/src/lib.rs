@@ -2820,6 +2820,7 @@ fn tile_to_dict(tile: fb::TileState<'_>) -> Dictionary {
     let _ = dict.insert("temperature", fixed64_to_f64(tile.temperature()));
     let _ = dict.insert("terrain", tile.terrain().0 as i64);
     let _ = dict.insert("terrain_tags", tile.terrainTags() as i64);
+    let _ = dict.insert("culture_layer", tile.cultureLayer() as i64);
     dict
 }
 
