@@ -380,6 +380,7 @@ table TileState {
   temperature:long;
   terrain:TerrainType;
   terrainTags:ushort;
+  cultureLayer:uint;
 }
 
 table LogisticsLinkState {

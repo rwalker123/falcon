@@ -572,6 +572,7 @@ pub struct TileState {
     pub temperature: i64,
     pub terrain: TerrainType,
     pub terrain_tags: TerrainTags,
+    pub culture_layer: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1430,6 +1431,7 @@ fn create_tiles<'a>(
                     temperature: tile.temperature,
                     terrain: to_fb_terrain_type(tile.terrain),
                     terrainTags: tile.terrain_tags.bits(),
+                    cultureLayer: tile.culture_layer,
                 },
             )
         })

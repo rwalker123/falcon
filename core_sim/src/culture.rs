@@ -7,6 +7,7 @@ use sim_runtime::{
 };
 
 use crate::{
+    culture_corruption_config::CulturePropagationSettings,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
     resources::SimulationTick,
     scalar::{scalar_from_f32, Scalar},
@@ -43,16 +44,6 @@ pub enum CultureLayerScope {
     Global,
     Regional,
     Local,
-}
-
-impl CultureLayerScope {
-    pub fn elasticity(self) -> Scalar {
-        match self {
-            CultureLayerScope::Global => scalar_from_f32(0.10),
-            CultureLayerScope::Regional => scalar_from_f32(0.25),
-            CultureLayerScope::Local => scalar_from_f32(0.40),
-        }
-    }
 }
 
 /// Named axes as described in the game manual.
@@ -276,13 +267,117 @@ impl CultureTraitVector {
 }
 
 /// Book-keeping for divergence tracking against thresholds.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CultureDivergence {
     pub magnitude: Scalar,
     pub soft_threshold: Scalar,
     pub hard_threshold: Scalar,
     pub ticks_above_soft: u16,
     pub ticks_above_hard: u16,
+    pub soft_trigger_ticks: u16,
+    pub hard_trigger_ticks: u16,
+}
+
+impl Default for CultureDivergence {
+    fn default() -> Self {
+        Self {
+            magnitude: Scalar::zero(),
+            soft_threshold: scalar_from_f32(0.6),
+            hard_threshold: scalar_from_f32(1.2),
+            ticks_above_soft: 0,
+            ticks_above_hard: 0,
+            soft_trigger_ticks: 1,
+            hard_trigger_ticks: 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScopeSettings {
+    elasticity: Scalar,
+    soft_threshold: Scalar,
+    hard_threshold: Scalar,
+    soft_trigger_ticks: u16,
+    hard_trigger_ticks: u16,
+}
+
+impl ScopeSettings {
+    fn new(
+        elasticity: f32,
+        soft_threshold: f32,
+        hard_threshold: f32,
+        soft_trigger_ticks: u16,
+        hard_trigger_ticks: u16,
+    ) -> Self {
+        Self {
+            elasticity: scalar_from_f32(elasticity),
+            soft_threshold: scalar_from_f32(soft_threshold),
+            hard_threshold: scalar_from_f32(hard_threshold),
+            soft_trigger_ticks,
+            hard_trigger_ticks,
+        }
+    }
+
+    fn default_for(scope: CultureLayerScope) -> Self {
+        match scope {
+            CultureLayerScope::Global => Self::new(0.10, 0.6, 1.2, 1, 1),
+            CultureLayerScope::Regional => Self::new(0.25, 0.6, 1.2, 1, 1),
+            CultureLayerScope::Local => Self::new(0.40, 0.6, 1.2, 1, 1),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CultureManagerSettings {
+    global: ScopeSettings,
+    regional: ScopeSettings,
+    local: ScopeSettings,
+}
+
+impl Default for CultureManagerSettings {
+    fn default() -> Self {
+        Self {
+            global: ScopeSettings::default_for(CultureLayerScope::Global),
+            regional: ScopeSettings::default_for(CultureLayerScope::Regional),
+            local: ScopeSettings::default_for(CultureLayerScope::Local),
+        }
+    }
+}
+
+impl CultureManagerSettings {
+    fn from_propagation(config: &CulturePropagationSettings) -> Self {
+        Self {
+            global: ScopeSettings::new(
+                config.global().elasticity(),
+                config.global().soft_threshold(),
+                config.global().hard_threshold(),
+                config.global().soft_trigger_ticks(),
+                config.global().hard_trigger_ticks(),
+            ),
+            regional: ScopeSettings::new(
+                config.regional().elasticity(),
+                config.regional().soft_threshold(),
+                config.regional().hard_threshold(),
+                config.regional().soft_trigger_ticks(),
+                config.regional().hard_trigger_ticks(),
+            ),
+            local: ScopeSettings::new(
+                config.local().elasticity(),
+                config.local().soft_threshold(),
+                config.local().hard_threshold(),
+                config.local().soft_trigger_ticks(),
+                config.local().hard_trigger_ticks(),
+            ),
+        }
+    }
+
+    fn scope(&self, scope: CultureLayerScope) -> ScopeSettings {
+        match scope {
+            CultureLayerScope::Global => self.global,
+            CultureLayerScope::Regional => self.regional,
+            CultureLayerScope::Local => self.local,
+        }
+    }
 }
 
 /// Culture layer data structure.
@@ -300,23 +395,19 @@ pub struct CultureLayer {
 
 impl CultureLayer {
     pub fn new(id: CultureLayerId, scope: CultureLayerScope) -> Self {
-        let elasticity = scope.elasticity();
-        Self {
+        let settings = ScopeSettings::default_for(scope);
+        let mut layer = Self {
             id,
             scope,
             owner: CultureOwner::default(),
             parent: None,
             traits: CultureTraitVector::neutral(),
-            elasticity,
-            divergence: CultureDivergence {
-                magnitude: Scalar::zero(),
-                soft_threshold: scalar_from_f32(0.6),
-                hard_threshold: scalar_from_f32(1.2),
-                ticks_above_soft: 0,
-                ticks_above_hard: 0,
-            },
+            elasticity: settings.elasticity,
+            divergence: CultureDivergence::default(),
             last_updated_tick: 0,
-        }
+        };
+        layer.apply_scope_settings(settings, false);
+        layer
     }
 
     fn resolve_against(
@@ -373,37 +464,60 @@ impl CultureLayer {
             }
         }
 
-        if prev_hard == 0 && self.divergence.ticks_above_hard > 0 {
+        let soft_trigger = self.divergence.soft_trigger_ticks.max(1);
+        let hard_trigger = self.divergence.hard_trigger_ticks.max(1);
+
+        if prev_hard < hard_trigger && self.divergence.ticks_above_hard >= hard_trigger {
             return Some(CultureTensionKind::SchismRisk);
         }
 
-        if prev_soft == 0 && self.divergence.ticks_above_soft > 0 {
+        if prev_soft < soft_trigger && self.divergence.ticks_above_soft >= soft_trigger {
             return Some(CultureTensionKind::DriftWarning);
         }
 
         resolution_event
     }
+
+    fn apply_scope_settings(&mut self, settings: ScopeSettings, preserve_thresholds: bool) {
+        self.elasticity = settings.elasticity;
+        if !preserve_thresholds {
+            self.divergence.soft_threshold = settings.soft_threshold;
+            self.divergence.hard_threshold = settings.hard_threshold;
+        }
+        self.divergence.soft_trigger_ticks = settings.soft_trigger_ticks;
+        self.divergence.hard_trigger_ticks = settings.hard_trigger_ticks;
+    }
 }
 
 /// Tracks all culture layers and performs reconcile passes each tick.
-#[derive(Resource, Debug, Default)]
+#[derive(Resource, Debug)]
 pub struct CultureManager {
     next_id: CultureLayerId,
     global: Option<CultureLayer>,
     regional: HashMap<u32, CultureLayer>,
     locals: HashMap<u64, CultureLayer>,
     tension_events: Vec<CultureTensionRecord>,
+    settings: CultureManagerSettings,
 }
 
 impl CultureManager {
     pub fn new() -> Self {
+        Self::with_settings(CultureManagerSettings::default())
+    }
+
+    pub(crate) fn with_settings(settings: CultureManagerSettings) -> Self {
         Self {
             next_id: 1,
             global: None,
             regional: HashMap::new(),
             locals: HashMap::new(),
             tension_events: Vec::new(),
+            settings,
         }
+    }
+
+    pub fn from_config(config: &CulturePropagationSettings) -> Self {
+        Self::with_settings(CultureManagerSettings::from_propagation(config))
     }
 
     pub fn ensure_global(&mut self) -> CultureLayerId {
@@ -412,6 +526,7 @@ impl CultureManager {
         }
         let id = self.allocate_id();
         let mut layer = CultureLayer::new(id, CultureLayerScope::Global);
+        layer.apply_scope_settings(self.settings.scope(CultureLayerScope::Global), false);
         layer.owner = CultureOwner::GLOBAL;
         layer.traits = CultureTraitVector::neutral();
         self.global = Some(layer);
@@ -425,6 +540,7 @@ impl CultureManager {
         let parent = self.ensure_global();
         let id = self.allocate_id();
         let mut layer = CultureLayer::new(id, CultureLayerScope::Regional);
+        layer.apply_scope_settings(self.settings.scope(CultureLayerScope::Regional), false);
         layer.parent = Some(parent);
         layer.owner = CultureOwner::from_region(region_id);
         layer.traits = CultureTraitVector::neutral();
@@ -445,6 +561,7 @@ impl CultureManager {
         let mut layer = CultureLayer::new(id, CultureLayerScope::Local);
         layer.parent = Some(parent_region);
         layer.owner = owner;
+        layer.apply_scope_settings(self.settings.scope(CultureLayerScope::Local), false);
         layer.traits = CultureTraitVector::neutral();
         self.locals.insert(owner.0, layer);
         id
@@ -475,6 +592,14 @@ impl CultureManager {
         if self.global.is_none() && self.regional.is_empty() && self.locals.is_empty() {
             return;
         }
+
+        tracing::trace!(
+            target: "culture.reconcile",
+            tick = tick.0,
+            has_global = self.global.is_some(),
+            regional_layers = self.regional.len(),
+            local_layers = self.locals.len()
+        );
 
         self.tension_events.clear();
         let mut pending_events = Vec::new();
@@ -509,7 +634,18 @@ impl CultureManager {
             let alert = layer.tick_thresholds();
             layer.last_updated_tick = tick.0;
             if let Some(kind) = alert {
-                pending_events.push(Self::build_tension_record(layer, kind));
+                let record = Self::build_tension_record(layer, kind);
+                tracing::debug!(
+                    target: "culture.tension",
+                    kind = ?record.kind,
+                    scope = ?record.scope,
+                    owner = record.owner.0,
+                    layer_id = record.layer_id,
+                    magnitude = record.magnitude.to_f32(),
+                    timer = record.timer,
+                    "regional culture tension triggered"
+                );
+                pending_events.push(record);
             }
         }
 
@@ -538,7 +674,18 @@ impl CultureManager {
             let alert = layer.tick_thresholds();
             layer.last_updated_tick = tick.0;
             if let Some(kind) = alert {
-                pending_events.push(Self::build_tension_record(layer, kind));
+                let record = Self::build_tension_record(layer, kind);
+                tracing::debug!(
+                    target: "culture.tension",
+                    kind = ?record.kind,
+                    scope = ?record.scope,
+                    owner = record.owner.0,
+                    layer_id = record.layer_id,
+                    magnitude = record.magnitude.to_f32(),
+                    timer = record.timer,
+                    "local culture tension triggered"
+                );
+                pending_events.push(record);
             }
         }
 
@@ -585,15 +732,18 @@ impl CultureManager {
     }
 
     fn collect_active(&self, layer: &CultureLayer, out: &mut Vec<CultureTensionRecord>) {
-        if layer.divergence.magnitude >= layer.divergence.soft_threshold
-            || layer.divergence.ticks_above_soft > 0
-        {
-            let kind = if layer.divergence.ticks_above_hard > 0 {
+        let soft_trigger = layer.divergence.soft_trigger_ticks.max(1);
+        let hard_trigger = layer.divergence.hard_trigger_ticks.max(1);
+        let hard_active = layer.divergence.ticks_above_hard >= hard_trigger;
+        let soft_active = layer.divergence.ticks_above_soft >= soft_trigger;
+
+        if hard_active || soft_active {
+            let kind = if hard_active {
                 CultureTensionKind::SchismRisk
             } else {
                 CultureTensionKind::DriftWarning
             };
-            let timer = if layer.divergence.ticks_above_hard > 0 {
+            let timer = if hard_active {
                 layer.divergence.ticks_above_hard
             } else {
                 layer.divergence.ticks_above_soft
@@ -688,6 +838,7 @@ impl CultureManager {
             layer.divergence.ticks_above_soft = state.ticks_above_soft;
             layer.divergence.ticks_above_hard = state.ticks_above_hard;
             layer.last_updated_tick = state.last_updated_tick;
+            layer.apply_scope_settings(self.settings.scope(scope), true);
 
             match scope {
                 CultureLayerScope::Global => {
@@ -733,6 +884,12 @@ impl CultureManager {
     }
 }
 
+impl Default for CultureManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// System wrapper that performs the reconcile pass each turn.
 pub fn reconcile_culture_layers(
     mut manager: ResMut<CultureManager>,
@@ -749,6 +906,16 @@ pub fn reconcile_culture_layers(
     let records = manager.take_tension_events();
     for record in records.iter() {
         tension_writer.send(record.into());
+        tracing::info!(
+            target: "culture.tension",
+            kind = ?record.kind,
+            scope = ?record.scope,
+            owner = record.owner.0,
+            layer_id = record.layer_id,
+            magnitude = record.magnitude.to_f32(),
+            timer = record.timer,
+            "culture tension event emitted"
+        );
         if record.kind == CultureTensionKind::SchismRisk {
             schism_writer.send(record.into());
         }
@@ -792,5 +959,141 @@ fn from_schema_axis(axis: SchemaCultureTraitAxis) -> CultureTraitAxis {
         SchemaCultureTraitAxis::PluralisticMonocultural => {
             CultureTraitAxis::PluralisticMonocultural
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::influencers::InfluencerCultureResonance;
+
+    fn default_resonance() -> InfluencerCultureResonance {
+        InfluencerCultureResonance::default()
+    }
+
+    fn settings(global: ScopeSettings, regional: ScopeSettings) -> CultureManagerSettings {
+        CultureManagerSettings {
+            global,
+            regional,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn drift_warning_respects_trigger_ticks() {
+        let mut manager = CultureManager::with_settings(settings(
+            ScopeSettings::new(1.0, 0.0, 1.0, 1, 1),
+            ScopeSettings::new(1.0, 0.2, 1.0, 3, 5),
+        ));
+        let resonance = default_resonance();
+
+        manager.ensure_global();
+        let region = 1;
+        manager.upsert_regional(region);
+        {
+            let region = manager
+                .regional_layer_mut_by_region(region)
+                .expect("regional layer should exist");
+            region
+                .traits
+                .set_modifier(CultureTraitAxis::OpenClosed, scalar_from_f32(1.0));
+        }
+
+        manager.reconcile(&SimulationTick(1), &resonance);
+        assert!(
+            manager.take_tension_events().is_empty(),
+            "drift event should wait for trigger ticks"
+        );
+
+        manager.reconcile(&SimulationTick(2), &resonance);
+        assert!(
+            manager.take_tension_events().is_empty(),
+            "drift event should still wait for trigger ticks"
+        );
+
+        manager.reconcile(&SimulationTick(3), &resonance);
+        let events = manager.take_tension_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, CultureTensionKind::DriftWarning);
+        assert_eq!(events[0].timer, 3);
+    }
+
+    #[test]
+    fn schism_requires_multiple_ticks() {
+        let mut manager = CultureManager::with_settings(settings(
+            ScopeSettings::new(1.0, 0.0, 1.0, 1, 1),
+            ScopeSettings::new(1.0, 0.2, 0.5, 1, 2),
+        ));
+        let resonance = default_resonance();
+
+        manager.ensure_global();
+        let region = 7;
+        manager.upsert_regional(region);
+        {
+            let region = manager
+                .regional_layer_mut_by_region(region)
+                .expect("regional layer should exist");
+            region
+                .traits
+                .set_modifier(CultureTraitAxis::OpenClosed, scalar_from_f32(1.0));
+        }
+
+        manager.reconcile(&SimulationTick(1), &resonance);
+        let first_events = manager.take_tension_events();
+        assert_eq!(first_events.len(), 1);
+        assert_eq!(first_events[0].kind, CultureTensionKind::DriftWarning);
+
+        manager.reconcile(&SimulationTick(2), &resonance);
+        let second_events = manager.take_tension_events();
+        assert!(
+            second_events
+                .iter()
+                .any(|event| event.kind == CultureTensionKind::SchismRisk),
+            "schism risk should trigger after configured hard trigger ticks"
+        );
+    }
+
+    #[test]
+    fn assimilation_push_emitted_on_resolution() {
+        let mut manager = CultureManager::with_settings(settings(
+            ScopeSettings::new(1.0, 0.0, 1.0, 1, 1),
+            ScopeSettings::new(1.0, 0.2, 1.0, 1, 2),
+        ));
+        let resonance = default_resonance();
+
+        manager.ensure_global();
+        let region = 21;
+        manager.upsert_regional(region);
+        {
+            let region = manager
+                .regional_layer_mut_by_region(region)
+                .expect("regional layer should exist");
+            region
+                .traits
+                .set_modifier(CultureTraitAxis::OpenClosed, scalar_from_f32(1.0));
+        }
+
+        manager.reconcile(&SimulationTick(1), &resonance);
+        let initial_events = manager.take_tension_events();
+        assert_eq!(initial_events.len(), 1);
+        assert_eq!(initial_events[0].kind, CultureTensionKind::DriftWarning);
+
+        {
+            let region = manager
+                .regional_layer_mut_by_region(region)
+                .expect("regional layer should exist");
+            region
+                .traits
+                .set_modifier(CultureTraitAxis::OpenClosed, Scalar::zero());
+        }
+
+        manager.reconcile(&SimulationTick(2), &resonance);
+        let resolve_events = manager.take_tension_events();
+        assert!(
+            resolve_events
+                .iter()
+                .any(|event| event.kind == CultureTensionKind::AssimilationPush),
+            "assimilation push should emit when divergence resolves"
+        );
     }
 }
