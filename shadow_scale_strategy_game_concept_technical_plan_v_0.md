@@ -359,6 +359,7 @@ Groundbreaking discoveries rarely remain siloed. Once ideas interact with trade,
   - Row Tooltips: show modifiers currently affecting half-life, suspected infiltrations, and time-to-cascade estimate.
 - **Detail Drawer (on selection)**
   - Timeline graph (turns vs leak progress) with annotations for events (espionage hits, public deployments).
+  - Mission control console listing queued probes/sweeps with success odds, misinformation cues, and ETA, mirrored against counter-intel posture and budget readouts.
   - Countermeasure toggles (increase security, misinformation campaigns) with projected effects and costs.
   - Rival comprehension breakdown: stacked bars for each faction showing % theoretical, % practical, % deployed.
   - Export/Share controls: treaties, trade deals; highlight expected diplomatic consequences.

@@ -78,6 +78,8 @@ const COUNTERINTEL_POLICY_OPTIONS := [
 @onready var knowledge_agent_spin: SpinBox = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeAgentContainer/KnowledgeAgentSpin
 @onready var knowledge_schedule_spin: SpinBox = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeScheduleSpin
 @onready var knowledge_queue_mission_button: Button = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeQueueMissionButton
+@onready var knowledge_mission_details_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeMissionDetailsText
+@onready var knowledge_queue_list: ItemList = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeQueueSection/KnowledgeQueueList
 @onready var great_discovery_summary_label: Label = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoverySummaryLabel
 @onready var great_discovery_summary_text: RichTextLabel = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoverySummaryText
 @onready var great_discovery_definitions_list: ItemList = $RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryDefinitionsSection/GreatDiscoveryDefinitionsList
@@ -173,6 +175,8 @@ var _crisis_annotations: Array[Dictionary] = []
 var _knowledge_policy_states: Dictionary = {}
 var _knowledge_budget_states: Dictionary = {}
 var _knowledge_missions: Array[Dictionary] = []
+var _knowledge_mission_lookup: Dictionary = {}
+var _knowledge_mission_queue: Array[Dictionary] = []
 var _great_discovery_records: Dictionary = {}
 var _great_discovery_progress_map: Dictionary = {}
 var _great_discovery_telemetry: Dictionary = {}
@@ -356,6 +360,10 @@ func _ready() -> void:
         _on_knowledge_agent_auto_toggled(knowledge_agent_auto_toggle.button_pressed)
     if knowledge_queue_mission_button != null:
         knowledge_queue_mission_button.pressed.connect(_on_knowledge_queue_mission_button_pressed)
+    if knowledge_mission_dropdown != null:
+        var mission_select_callable = Callable(self, "_on_knowledge_mission_selected")
+        if not knowledge_mission_dropdown.is_connected("item_selected", mission_select_callable):
+            knowledge_mission_dropdown.item_selected.connect(_on_knowledge_mission_selected)
     _initialize_counterintel_controls()
     if crisis_auto_seed_check != null:
         crisis_auto_seed_check.toggled.connect(_on_crisis_auto_seed_toggled)
@@ -2854,6 +2862,10 @@ func _render_knowledge() -> void:
         else:
             knowledge_events_text.text = "\n".join(lines_events)
 
+    _prune_expired_missions(_last_turn)
+    _render_knowledge_mission_queue()
+    _update_selected_mission_details()
+
 func _refresh_knowledge_mission_options() -> void:
     if knowledge_mission_dropdown == null:
         return
@@ -2868,6 +2880,8 @@ func _refresh_knowledge_mission_options() -> void:
     knowledge_mission_dropdown.clear()
     if _knowledge_missions.is_empty():
         knowledge_mission_dropdown.disabled = true
+        if knowledge_mission_details_text != null:
+            knowledge_mission_details_text.text = "[i]Select a mission template to view statistics.[/i]"
         return
 
     knowledge_mission_dropdown.disabled = false
@@ -2889,6 +2903,7 @@ func _refresh_knowledge_mission_options() -> void:
 
     knowledge_mission_dropdown.select(selected_index)
     _update_command_controls_enabled()
+    _update_selected_mission_details()
 
 func _compare_knowledge_mission_entries(a: Dictionary, b: Dictionary) -> bool:
     var a_label: String = String(a.get("name", a.get("id", "")))
@@ -2898,6 +2913,230 @@ func _compare_knowledge_mission_entries(a: Dictionary, b: Dictionary) -> bool:
     if b_label == "":
         b_label = String(b.get("id", ""))
     return a_label < b_label
+
+func _on_knowledge_mission_selected(_index: int) -> void:
+    _update_selected_mission_details()
+
+func _selected_mission_id() -> String:
+    if knowledge_mission_dropdown == null:
+        return ""
+    if knowledge_mission_dropdown.get_item_count() == 0:
+        return ""
+    var index: int = knowledge_mission_dropdown.get_selected()
+    if index < 0:
+        index = 0
+    var meta: Variant = knowledge_mission_dropdown.get_item_metadata(index)
+    if typeof(meta) == TYPE_STRING:
+        return String(meta)
+    return String(knowledge_mission_dropdown.get_item_text(index)).strip_edges()
+
+func _update_selected_mission_details() -> void:
+    if knowledge_mission_details_text == null:
+        return
+    var mission_id: String = _selected_mission_id()
+    if mission_id == "":
+        knowledge_mission_details_text.text = "[i]Select a mission template to view statistics.[/i]"
+        return
+    var mission_variant: Variant = _knowledge_mission_lookup.get(mission_id, null)
+    if typeof(mission_variant) != TYPE_DICTIONARY:
+        knowledge_mission_details_text.text = "[i]Awaiting telemetry for %s.[/i]" % mission_id
+        return
+    var mission: Dictionary = mission_variant
+    var lines: Array[String] = []
+    var name: String = String(mission.get("name", mission_id))
+    lines.append("[b]%s[/b] (%s)" % [name, mission_id])
+    var tags: Array[String] = []
+    var kind: String = String(mission.get("kind", "")).strip_edges()
+    if kind != "":
+        tags.append(kind.capitalize())
+    if bool(mission.get("generated", false)):
+        tags.append("Generated")
+    var misinfo_flag: bool = absf(float(mission.get("fidelity_suppression", 0.0))) > 0.0001
+    if misinfo_flag:
+        tags.append("Misinformation")
+    if not tags.is_empty():
+        lines.append("Tags: %s" % ", ".join(tags))
+    var resolution: int = max(int(mission.get("resolution_ticks", 0)), 1)
+    lines.append("Resolution: %d turn%s" % [resolution, "s" if resolution != 1 else ""])
+    var success_pct: float = float(mission.get("base_success", 0.0)) * 100.0
+    var threshold_pct: float = float(mission.get("success_threshold", 0.0)) * 100.0
+    lines.append("Base success %.1f%% · Threshold %.1f%%" % [success_pct, threshold_pct])
+    var fidelity_gain: float = float(mission.get("fidelity_gain", 0.0))
+    var suspicion_success: float = float(mission.get("suspicion_on_success", 0.0))
+    var suspicion_failure: float = float(mission.get("suspicion_on_failure", 0.0))
+    var cell_gain: int = int(mission.get("cell_gain_on_success", 0))
+    lines.append("Fidelity %+0.2f | Suspicion %+0.2f / %+0.2f | Cells +%d" % [
+        fidelity_gain,
+        suspicion_success,
+        suspicion_failure,
+        cell_gain
+    ])
+    var detail_parts: Array[String] = []
+    var suspicion_relief: float = float(mission.get("suspicion_relief", 0.0))
+    if absf(suspicion_relief) > 0.0001:
+        var relief_value: float = -absf(suspicion_relief) if suspicion_relief > 0.0 else suspicion_relief
+        detail_parts.append("Relief %+.2f" % relief_value)
+    var fidelity_suppression: float = float(mission.get("fidelity_suppression", 0.0))
+    if absf(fidelity_suppression) > 0.0001:
+        var suppression_value: float = -absf(fidelity_suppression) if fidelity_suppression > 0.0 else fidelity_suppression
+        detail_parts.append("Suppression %+.2f" % suppression_value)
+    if not detail_parts.is_empty():
+        lines.append(", ".join(detail_parts))
+    var note_variant: Variant = mission.get("note", "")
+    var note_text: String = ""
+    if note_variant != null:
+        note_text = String(note_variant).strip_edges()
+    if note_text != "":
+        lines.append("[i]%s[/i]" % note_text)
+    knowledge_mission_details_text.text = "\n".join(lines)
+
+func _enrich_mission_queue_entries() -> void:
+    if _knowledge_mission_queue.is_empty():
+        return
+    var updated: bool = false
+    for idx in range(_knowledge_mission_queue.size()):
+        var entry_variant = _knowledge_mission_queue[idx]
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        if _apply_mission_metadata(entry):
+            updated = true
+    if updated:
+        _render_knowledge_mission_queue()
+
+func _apply_mission_metadata(entry: Dictionary) -> bool:
+    var mission_id: String = String(entry.get("mission_id", ""))
+    if mission_id == "":
+        return false
+    var mission_variant: Variant = _knowledge_mission_lookup.get(mission_id, null)
+    if typeof(mission_variant) != TYPE_DICTIONARY:
+        return false
+    var mission: Dictionary = mission_variant
+    entry["name"] = String(mission.get("name", mission_id))
+    entry["kind"] = String(mission.get("kind", ""))
+    entry["generated"] = bool(mission.get("generated", entry.get("generated", false)))
+    entry["resolution_ticks"] = max(int(mission.get("resolution_ticks", entry.get("resolution_ticks", 1))), 1)
+    entry["base_success"] = float(mission.get("base_success", entry.get("base_success", 0.0)))
+    entry["success_threshold"] = float(mission.get("success_threshold", entry.get("success_threshold", 0.0)))
+    entry["fidelity_gain"] = float(mission.get("fidelity_gain", entry.get("fidelity_gain", 0.0)))
+    entry["suspicion_on_success"] = float(mission.get("suspicion_on_success", entry.get("suspicion_on_success", 0.0)))
+    entry["suspicion_on_failure"] = float(mission.get("suspicion_on_failure", entry.get("suspicion_on_failure", 0.0)))
+    entry["suspicion_relief"] = float(mission.get("suspicion_relief", entry.get("suspicion_relief", 0.0)))
+    entry["fidelity_suppression"] = float(mission.get("fidelity_suppression", entry.get("fidelity_suppression", 0.0)))
+    entry["cell_gain_on_success"] = int(mission.get("cell_gain_on_success", entry.get("cell_gain_on_success", 0)))
+    var note_variant: Variant = mission.get("note", entry.get("note", ""))
+    entry["note"] = "" if note_variant == null else String(note_variant)
+    entry["has_misinformation"] = absf(float(entry.get("fidelity_suppression", 0.0))) > 0.0001
+    return true
+
+func _prune_expired_missions(current_tick: int) -> void:
+    if _knowledge_mission_queue.is_empty():
+        return
+    var removed: bool = false
+    for idx in range(_knowledge_mission_queue.size() - 1, -1, -1):
+        var entry_variant = _knowledge_mission_queue[idx]
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        var scheduled_tick: int = int(entry.get("scheduled_tick", current_tick))
+        var resolution: int = max(int(entry.get("resolution_ticks", 1)), 1)
+        if current_tick > scheduled_tick + resolution:
+            _knowledge_mission_queue.remove_at(idx)
+            removed = true
+    if removed:
+        _render_knowledge_mission_queue()
+
+func _render_knowledge_mission_queue() -> void:
+    if knowledge_queue_list == null:
+        return
+    knowledge_queue_list.clear()
+    var entries: Array = []
+    for entry_variant in _knowledge_mission_queue:
+        if entry_variant is Dictionary:
+            entries.append(entry_variant)
+    if entries.is_empty():
+        knowledge_queue_list.add_item("No active missions queued.")
+        var placeholder_index: int = knowledge_queue_list.get_item_count() - 1
+        if placeholder_index >= 0:
+            knowledge_queue_list.set_item_disabled(placeholder_index, true)
+        return
+    entries.sort_custom(Callable(self, "_compare_mission_queue_entries"))
+    for entry in entries:
+        var label: String = _format_mission_queue_entry(entry)
+        var index: int = knowledge_queue_list.get_item_count()
+        knowledge_queue_list.add_item(label)
+        knowledge_queue_list.set_item_metadata(index, int(entry.get("instance", -1)))
+
+func _compare_mission_queue_entries(a: Dictionary, b: Dictionary) -> bool:
+    var a_tick: int = int(a.get("scheduled_tick", 0))
+    var b_tick: int = int(b.get("scheduled_tick", 0))
+    if a_tick != b_tick:
+        return a_tick < b_tick
+    return int(a.get("instance", 0)) < int(b.get("instance", 0))
+
+func _format_mission_queue_entry(entry: Dictionary) -> String:
+    var instance: int = int(entry.get("instance", -1))
+    var instance_label: String = "#%03d" % instance if instance >= 0 else "#---"
+    var mission_id: String = String(entry.get("mission_id", ""))
+    var mission_name: String = String(entry.get("name", mission_id if mission_id != "" else "Mission"))
+    var owner: int = int(entry.get("owner", -1))
+    var target_owner: int = int(entry.get("target_owner", -1))
+    var discovery_id: int = int(entry.get("discovery", -1))
+    var tier_variant: Variant = entry.get("target_tier", null)
+    var tier_segment: String = ""
+    if tier_variant != null:
+        tier_segment = " T%s" % str(tier_variant)
+    var path_label: String = "F%d→F%d D%d%s" % [owner, target_owner, discovery_id, tier_segment]
+    var tags: Array[String] = []
+    if bool(entry.get("generated", false)):
+        tags.append("GEN")
+    if bool(entry.get("has_misinformation", false)):
+        tags.append("MISINFO")
+    if bool(entry.get("auto_agent", false)):
+        tags.append("AUTO")
+    var tag_segment: String = ""
+    if not tags.is_empty():
+        tag_segment = " [%s]" % ", ".join(tags)
+    var scheduled_tick: int = int(entry.get("scheduled_tick", -1))
+    var resolution: int = max(int(entry.get("resolution_ticks", 1)), 1)
+    var status: String = "Queued"
+    var eta_label: String = ""
+    if scheduled_tick >= 0:
+        if _last_turn < scheduled_tick:
+            status = "Queued"
+            eta_label = " (ETA %d)" % max(scheduled_tick - _last_turn, 0)
+        else:
+            status = "Resolving"
+            var completion_tick: int = scheduled_tick + resolution
+            if _last_turn < completion_tick:
+                eta_label = " (ETA %d)" % max(completion_tick - _last_turn, 0)
+    var success_pct: float = float(entry.get("base_success", 0.0)) * 100.0
+    return "%s %s %s%s · Success %.1f%% · %s%s" % [
+        instance_label,
+        mission_name,
+        path_label,
+        tag_segment,
+        success_pct,
+        status,
+        eta_label
+    ]
+
+func _find_mission_queue_index(instance_id: int) -> int:
+    for idx in range(_knowledge_mission_queue.size()):
+        var entry_variant = _knowledge_mission_queue[idx]
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        if int(entry.get("instance", -1)) == instance_id:
+            return idx
+    return -1
+
+func _remove_mission_queue_entry(instance_id: int) -> void:
+    var index: int = _find_mission_queue_index(instance_id)
+    if index < 0:
+        return
+    _knowledge_mission_queue.remove_at(index)
+    _render_knowledge_mission_queue()
 
 func _format_knowledge_mission_label(entry: Dictionary) -> String:
     var mission_id: String = String(entry.get("id", "Mission"))
@@ -3139,13 +3378,67 @@ func _maybe_ingest_knowledge_telemetry(entry: Dictionary) -> bool:
         _knowledge_timeline_events = _knowledge_timeline_events.slice(start_index, _knowledge_timeline_events.size())
     var missions_variant: Variant = info.get("missions", [])
     _knowledge_missions.clear()
+    _knowledge_mission_lookup.clear()
     if missions_variant is Array:
         for mission_variant in missions_variant:
             if mission_variant is Dictionary:
-                _knowledge_missions.append((mission_variant as Dictionary).duplicate(true))
+                var mission_dict: Dictionary = (mission_variant as Dictionary).duplicate(true)
+                _knowledge_missions.append(mission_dict)
+                var mission_id: String = String(mission_dict.get("id", ""))
+                if mission_id != "":
+                    _knowledge_mission_lookup[mission_id] = mission_dict
+    _enrich_mission_queue_entries()
     _refresh_knowledge_mission_options()
     _render_knowledge()
     return true
+
+func _maybe_ingest_espionage_log(entry: Dictionary) -> void:
+    var target: String = String(entry.get("target", ""))
+    if target != "shadow_scale::espionage":
+        return
+    var message: String = String(entry.get("message", ""))
+    var fields_variant: Variant = entry.get("fields", {})
+    if typeof(fields_variant) != TYPE_DICTIONARY:
+        return
+    var fields: Dictionary = fields_variant
+    match message:
+        "espionage.mission.queued":
+            var mission_id: String = String(fields.get("mission_id", "")).strip_edges()
+            if mission_id == "":
+                return
+            var instance_id: int = int(fields.get("instance", -1))
+            var queue_entry: Dictionary = {
+                "instance": instance_id,
+                "mission_id": mission_id,
+                "owner": int(fields.get("owner_faction", -1)),
+                "target_owner": int(fields.get("target_owner", -1)),
+                "discovery": int(fields.get("discovery_id", -1)),
+                "agent_handle": int(fields.get("agent_handle", -1)),
+                "scheduled_tick": int(fields.get("scheduled_tick", -1)),
+                "target_tier": _to_optional_int(fields.get("target_tier", null)),
+                "auto_agent": _coerce_bool(fields.get("auto_agent", false)),
+                "queued_tick": _last_turn
+            }
+            _apply_mission_metadata(queue_entry)
+            var existing_index: int = _find_mission_queue_index(instance_id)
+            if existing_index >= 0:
+                _knowledge_mission_queue[existing_index] = queue_entry
+            else:
+                _knowledge_mission_queue.append(queue_entry)
+            _render_knowledge_mission_queue()
+        "espionage.mission.queue_failed":
+            var failed_instance: int = int(fields.get("instance", -1))
+            _remove_mission_queue_entry(failed_instance)
+            var mission_label: String = String(fields.get("mission_id", "")).strip_edges()
+            var error_text: String = String(fields.get("error", "")).strip_edges()
+            if mission_label == "":
+                mission_label = "mission"
+            if error_text != "":
+                _append_command_log("%s queue failed: %s." % [mission_label, error_text])
+            else:
+                _append_command_log("%s queue failed." % mission_label)
+        _:
+            pass
 
 func _maybe_ingest_counterintel_log(entry: Dictionary) -> void:
     var target: String = String(entry.get("target", ""))
@@ -3213,6 +3506,8 @@ func _to_optional_float(value) -> Variant:
     match typeof(value):
         TYPE_NIL:
             return null
+        TYPE_BOOL:
+            return 1.0 if value else 0.0
         TYPE_INT, TYPE_FLOAT:
             return float(value)
         TYPE_STRING:
@@ -3222,6 +3517,36 @@ func _to_optional_float(value) -> Variant:
             return text.to_float()
         _:
             return null
+
+func _to_optional_int(value) -> Variant:
+    match typeof(value):
+        TYPE_NIL:
+            return null
+        TYPE_BOOL:
+            return 1 if value else 0
+        TYPE_INT, TYPE_FLOAT:
+            return int(value)
+        TYPE_STRING:
+            var text: String = String(value).strip_edges()
+            if text == "" or text.to_lower() == "null":
+                return null
+            return text.to_int()
+        _:
+            return null
+
+func _coerce_bool(value) -> bool:
+    match typeof(value):
+        TYPE_BOOL:
+            return value
+        TYPE_INT:
+            return int(value) != 0
+        TYPE_FLOAT:
+            return not is_equal_approx(float(value), 0.0)
+        TYPE_STRING:
+            var lowered := String(value).strip_edges().to_lower()
+            return lowered in ["true", "1", "yes", "on"]
+        _:
+            return false
 
 func _coerce_knowledge_timeline_event(raw_event: Dictionary, fallback_tick: int) -> Dictionary:
     var tick_value: int = fallback_tick
@@ -4038,6 +4363,7 @@ func _ingest_log_entry(entry: Dictionary) -> void:
     _maybe_ingest_knowledge_telemetry(entry)
     _maybe_ingest_trade_telemetry(entry)
     _maybe_ingest_counterintel_log(entry)
+    _maybe_ingest_espionage_log(entry)
     var level: String = _normalize_log_level(String(entry.get("level", "INFO")))
     var raw_target: String = String(entry.get("target", ""))
     var timestamp_ms: int = int(entry.get("timestamp_ms", 0))

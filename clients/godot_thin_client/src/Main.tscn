@@ -816,6 +816,35 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "Queue Espionage Mission"
 
+[node name="KnowledgeMissionDetailsLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Mission Details"
+
+[node name="KnowledgeMissionDetailsText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+text = "[i]Select a mission template to view statistics.[/i]"
+
+[node name="KnowledgeQueueSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="KnowledgeQueueLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeQueueSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Active Mission Queue"
+
+[node name="KnowledgeQueueList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeQueueSection"]
+custom_minimum_size = Vector2(0, 160)
+layout_mode = 2
+size_flags_horizontal = 3
+same_column_width = true
+allow_rmb_select = true
+
 [node name="KnowledgeCounterintelSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
 layout_mode = 2
 size_flags_horizontal = 3
