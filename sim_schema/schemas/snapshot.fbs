@@ -596,6 +596,8 @@ table WorldSnapshot {
   knowledgeMetrics:KnowledgeMetricsState;
   crisisTelemetry:CrisisTelemetryState;
   crisisOverlay:CrisisOverlayState;
+  hydrologyOverlay:HydrologyOverlay; // rivers/streams polylines
+  startMarker:StartMarker;
   terrainOverlay:TerrainOverlay;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
@@ -644,6 +646,8 @@ table WorldDelta {
   influencers:[InfluentialIndividualState];
   removedInfluencers:[uint];
   terrainOverlay:TerrainOverlay;
+  hydrologyOverlay:HydrologyOverlay;
+  startMarker:StartMarker;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
   corruptionRaster:ScalarRaster;
@@ -654,6 +658,25 @@ table WorldDelta {
   removedCultureLayers:[uint];
   cultureTensions:[CultureTensionState];
   discoveryProgress:[DiscoveryProgressEntry];
+}
+
+// Hydrology overlay types
+table HydrologyPoint { x:uint; y:uint; }
+
+table RiverSegment {
+  id:uint;
+  order:ubyte;
+  width:ubyte;
+  points:[HydrologyPoint];
+}
+
+table HydrologyOverlay {
+  rivers:[RiverSegment];
+}
+
+table StartMarker {
+  x:uint;
+  y:uint;
 }
 
 union SnapshotPayload {

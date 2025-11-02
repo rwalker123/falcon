@@ -556,6 +556,33 @@ pub struct TerrainOverlayState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+pub struct HydrologyPointState {
+    pub x: u32,
+    pub y: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+pub struct RiverSegmentState {
+    pub id: u32,
+    pub order: u8,
+    pub width: u8,
+    #[serde(default)]
+    pub points: Vec<HydrologyPointState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+pub struct HydrologyOverlayState {
+    #[serde(default)]
+    pub rivers: Vec<RiverSegmentState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+pub struct StartMarkerState {
+    pub x: u32,
+    pub y: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 pub struct ScalarRasterState {
     pub width: u32,
     pub height: u32,
@@ -1020,6 +1047,8 @@ pub struct WorldSnapshot {
     pub knowledge_metrics: KnowledgeMetricsState,
     pub crisis_telemetry: CrisisTelemetryState,
     pub crisis_overlay: CrisisOverlayState,
+    pub hydrology_overlay: HydrologyOverlayState,
+    pub start_marker: Option<StartMarkerState>,
     pub terrain: TerrainOverlayState,
     pub logistics_raster: ScalarRasterState,
     pub sentiment_raster: ScalarRasterState,
@@ -1061,6 +1090,8 @@ pub struct WorldDelta {
     pub knowledge_timeline: Vec<KnowledgeTimelineEventState>,
     pub crisis_telemetry: Option<CrisisTelemetryState>,
     pub crisis_overlay: Option<CrisisOverlayState>,
+    pub hydrology_overlay: Option<HydrologyOverlayState>,
+    pub start_marker: Option<StartMarkerState>,
     pub axis_bias: Option<AxisBiasState>,
     pub sentiment: Option<SentimentTelemetryState>,
     pub logistics_raster: Option<ScalarRasterState>,
@@ -1174,6 +1205,11 @@ fn build_snapshot_flatbuffer<'a>(
     let knowledge_metrics = create_knowledge_metrics(builder, &snapshot.knowledge_metrics);
     let crisis_telemetry = create_crisis_telemetry(builder, &snapshot.crisis_telemetry);
     let crisis_overlay = create_crisis_overlay(builder, &snapshot.crisis_overlay);
+    let hydrology_overlay = create_hydrology_overlay(builder, &snapshot.hydrology_overlay);
+    let start_marker = snapshot
+        .start_marker
+        .as_ref()
+        .map(|marker| create_start_marker(builder, marker));
     let terrain_overlay = create_terrain_overlay(builder, &snapshot.terrain);
     let logistics_raster = create_scalar_raster(builder, &snapshot.logistics_raster);
     let sentiment_raster = create_scalar_raster(builder, &snapshot.sentiment_raster);
@@ -1217,6 +1253,8 @@ fn build_snapshot_flatbuffer<'a>(
             knowledgeMetrics: Some(knowledge_metrics),
             crisisTelemetry: Some(crisis_telemetry),
             crisisOverlay: Some(crisis_overlay),
+            hydrologyOverlay: Some(hydrology_overlay),
+            startMarker: start_marker,
             terrainOverlay: Some(terrain_overlay),
             logisticsRaster: Some(logistics_raster),
             sentimentRaster: Some(sentiment_raster),
@@ -1302,6 +1340,14 @@ fn build_delta_flatbuffer<'a>(
         .crisis_overlay
         .as_ref()
         .map(|overlay| create_crisis_overlay(builder, overlay));
+    let hydrology_overlay = delta
+        .hydrology_overlay
+        .as_ref()
+        .map(|overlay| create_hydrology_overlay(builder, overlay));
+    let start_marker = delta
+        .start_marker
+        .as_ref()
+        .map(|marker| create_start_marker(builder, marker));
     let terrain_overlay = delta
         .terrain
         .as_ref()
@@ -1391,6 +1437,8 @@ fn build_delta_flatbuffer<'a>(
             influencers: Some(influencers_vec),
             removedInfluencers: Some(removed_influencers_vec),
             terrainOverlay: terrain_overlay,
+            hydrologyOverlay: hydrology_overlay,
+            startMarker: start_marker,
             logisticsRaster: logistics_raster,
             sentimentRaster: sentiment_raster,
             corruptionRaster: corruption_raster,
@@ -1409,6 +1457,55 @@ fn build_delta_flatbuffer<'a>(
         &fb::EnvelopeArgs {
             payload_type: fb::SnapshotPayload::delta,
             payload: Some(delta_table.as_union_value()),
+        },
+    )
+}
+
+fn create_hydrology_overlay<'a>(
+    builder: &mut FbBuilder<'a>,
+    overlay: &HydrologyOverlayState,
+) -> WIPOffset<fb::HydrologyOverlay<'a>> {
+    let rivers_vec: Vec<_> = overlay
+        .rivers
+        .iter()
+        .map(|river| {
+            let points: Vec<_> = river
+                .points
+                .iter()
+                .map(|p| {
+                    fb::HydrologyPoint::create(builder, &fb::HydrologyPointArgs { x: p.x, y: p.y })
+                })
+                .collect();
+            let points_vec = builder.create_vector(&points);
+            fb::RiverSegment::create(
+                builder,
+                &fb::RiverSegmentArgs {
+                    id: river.id,
+                    order: river.order,
+                    width: river.width,
+                    points: Some(points_vec),
+                },
+            )
+        })
+        .collect();
+    let rivers_fb = builder.create_vector(&rivers_vec);
+    fb::HydrologyOverlay::create(
+        builder,
+        &fb::HydrologyOverlayArgs {
+            rivers: Some(rivers_fb),
+        },
+    )
+}
+
+fn create_start_marker<'a>(
+    builder: &mut FbBuilder<'a>,
+    marker: &StartMarkerState,
+) -> WIPOffset<fb::StartMarker<'a>> {
+    fb::StartMarker::create(
+        builder,
+        &fb::StartMarkerArgs {
+            x: marker.x,
+            y: marker.y,
         },
     )
 }

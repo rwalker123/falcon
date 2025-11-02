@@ -594,6 +594,8 @@ fn snapshot_dict(
     overlays: OverlaySlices<'_>,
     terrain: TerrainSlices<'_>,
     crisis_annotations: &[CrisisAnnotationRecord],
+    hydrology_rivers: Option<&VariantArray>,
+    start_marker: Option<(u32, u32)>,
 ) -> Dictionary {
     let mut dict = Dictionary::new();
     let _ = dict.insert("turn", tick as i64);
@@ -898,6 +900,16 @@ fn snapshot_dict(
         let _ = overlays.insert("terrain_tag_labels", tag_labels);
     }
 
+    if let Some(rivers) = hydrology_rivers {
+        let _ = overlays.insert("hydrology_rivers", rivers.clone());
+    }
+    if let Some((sx, sy)) = start_marker {
+        let mut marker = Dictionary::new();
+        let _ = marker.insert("x", sx as i64);
+        let _ = marker.insert("y", sy as i64);
+        let _ = overlays.insert("start_marker", marker);
+    }
+
     let _ = dict.insert("overlays", overlays);
 
     let _ = dict.insert("units", VariantArray::new());
@@ -980,6 +992,9 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     }
     if let Some(overlay) = delta.crisisOverlay() {
         agg.apply_crisis_overlay(overlay);
+    }
+    if let Some(marker) = delta.startMarker() {
+        agg.start_marker = Some((marker.x(), marker.y()));
     }
     let mut dict = agg.into_dictionary();
 
@@ -1144,6 +1159,7 @@ struct DeltaAggregator {
     crisis_height: u32,
     crisis_samples: Vec<f32>,
     crisis_annotations: Vec<CrisisAnnotationRecord>,
+    start_marker: Option<(u32, u32)>,
 }
 
 impl DeltaAggregator {
@@ -1344,6 +1360,7 @@ impl DeltaAggregator {
             crisis_height,
             crisis_samples,
             crisis_annotations,
+            start_marker,
         } = self;
 
         let mut final_width = terrain_width
@@ -1528,6 +1545,8 @@ impl DeltaAggregator {
                 tags: tags_ref.as_deref(),
             },
             &crisis_annotations,
+            None,
+            start_marker,
         )
     }
 }
@@ -2069,6 +2088,36 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         Some(tag_vec.as_slice())
     };
 
+    // Construct hydrology rivers array for overlays.
+    let mut hydrology_rivers = VariantArray::new();
+    if let Some(hydro) = snapshot.hydrologyOverlay() {
+        if let Some(rivers) = hydro.rivers() {
+            for river in rivers {
+                let mut points_array = VariantArray::new();
+                if let Some(points) = river.points() {
+                    for p in points {
+                        let mut pt = Dictionary::new();
+                        let _ = pt.insert("x", p.x() as i64);
+                        let _ = pt.insert("y", p.y() as i64);
+                        let variant = pt.to_variant();
+                        points_array.push(&variant);
+                    }
+                }
+                let mut rdict = Dictionary::new();
+                let _ = rdict.insert("id", river.id() as i64);
+                let _ = rdict.insert("order", river.order() as i64);
+                let _ = rdict.insert("width", river.width() as i64);
+                let _ = rdict.insert("points", points_array);
+                let river_variant = rdict.to_variant();
+                hydrology_rivers.push(&river_variant);
+            }
+        }
+    }
+
+    let start_marker_tuple = snapshot
+        .startMarker()
+        .map(|marker| (marker.x(), marker.y()));
+
     let mut dict = snapshot_dict(
         header.tick(),
         GridSize {
@@ -2089,6 +2138,12 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
             tags: terrain_tag_slice,
         },
         &crisis_annotations,
+        if hydrology_rivers.is_empty() {
+            None
+        } else {
+            Some(&hydrology_rivers)
+        },
+        start_marker_tuple,
     );
 
     if let Some(axis_bias) = snapshot.axisBias() {

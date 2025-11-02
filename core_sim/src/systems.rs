@@ -4,6 +4,7 @@ use bevy::{ecs::system::SystemParam, math::UVec2, prelude::*};
 use log::debug;
 use serde_json::json;
 
+use crate::map_preset::{MapPreset, MapPresetsHandle};
 use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, KnowledgeFragment,
@@ -15,7 +16,10 @@ use crate::{
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
     generations::GenerationRegistry,
+    heightfield::build_elevation_field,
+    hydrology::HydrologyState,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
+    mapgen::{build_bands, validate_bands, TerrainBand},
     orders::{FactionId, FactionRegistry},
     power::{
         PowerGridNodeTelemetry, PowerGridState, PowerIncident, PowerIncidentSeverity, PowerNodeId,
@@ -23,8 +27,8 @@ use crate::{
     },
     resources::{
         CorruptionExposureRecord, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
-        DiscoveryProgressLedger, SentimentAxisBias, SimulationConfig, SimulationTick, TileRegistry,
-        TradeDiffusionRecord, TradeTelemetry,
+        DiscoveryProgressLedger, SentimentAxisBias, SimulationConfig, SimulationTick,
+        StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
     },
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
     terrain::{terrain_definition, terrain_for_position},
@@ -112,6 +116,7 @@ fn corruption_multiplier(
 pub fn spawn_initial_world(
     mut commands: Commands,
     config: Res<SimulationConfig>,
+    map_presets: Res<MapPresetsHandle>,
     registry: Res<GenerationRegistry>,
     tick: Res<SimulationTick>,
     mut culture: ResMut<CultureManager>,
@@ -130,11 +135,74 @@ pub fn spawn_initial_world(
         modifiers[CultureTraitAxis::SecularDevout.index()] = scalar_from_f32(0.05);
     }
 
+    let preset_handle = map_presets.get();
+    let preset_ref = preset_handle.get(&config.map_preset_id);
+    let sea_level = preset_ref.map(|p| p.sea_level).unwrap_or(0.6);
+
+    let base_elevation_field = build_elevation_field(&config, preset_ref);
+    // Build coherent bands and restamped elevation (if preset available)
+    let bands = preset_ref.map(|preset| {
+        build_bands(
+            &base_elevation_field,
+            sea_level,
+            &preset.macro_land,
+            &preset.shelf,
+            &preset.islands,
+            &preset.inland_sea,
+            &preset.ocean,
+        )
+    });
+    if bands.is_none() {
+        // Fallback: insert base elevation so downstream systems have a field
+        commands.insert_resource(base_elevation_field.clone());
+    }
+
+    let mut tags_grid: Vec<sim_runtime::TerrainTags> = Vec::with_capacity(width * height);
     for y in 0..height {
         for x in 0..width {
             let position = UVec2::new(x as u32, y as u32);
             let element = ElementKind::from_grid(position);
-            let (terrain, terrain_tags) = terrain_for_position(position, config.grid_size);
+            let (terrain, terrain_tags) = if let Some(ref bands_res) = bands {
+                let b = bands_res.terrain[y * width + x];
+                match b {
+                    TerrainBand::Land => terrain_for_position(position, config.grid_size),
+                    TerrainBand::ContinentalShelf => (
+                        sim_runtime::TerrainType::ContinentalShelf,
+                        terrain_definition(sim_runtime::TerrainType::ContinentalShelf).tags,
+                    ),
+                    TerrainBand::InlandSea => (
+                        sim_runtime::TerrainType::InlandSea,
+                        terrain_definition(sim_runtime::TerrainType::InlandSea).tags,
+                    ),
+                    TerrainBand::ContinentalSlope | TerrainBand::DeepOcean => (
+                        sim_runtime::TerrainType::DeepOcean,
+                        terrain_definition(sim_runtime::TerrainType::DeepOcean).tags,
+                    ),
+                }
+            } else {
+                let elevation = base_elevation_field.sample(position.x, position.y);
+                if elevation <= sea_level {
+                    if (tile_hash(position) & 1) == 0 {
+                        (
+                            sim_runtime::TerrainType::DeepOcean,
+                            terrain_definition(sim_runtime::TerrainType::DeepOcean).tags,
+                        )
+                    } else {
+                        (
+                            sim_runtime::TerrainType::ContinentalShelf,
+                            terrain_definition(sim_runtime::TerrainType::ContinentalShelf).tags,
+                        )
+                    }
+                } else {
+                    terrain_for_position(position, config.grid_size)
+                }
+            };
+            let (terrain, terrain_tags) = if let Some(preset) = preset_ref {
+                bias_terrain_for_preset(terrain, terrain_tags, preset, position, config.grid_size.y)
+            } else {
+                (terrain, terrain_tags)
+            };
+            tags_grid.push(terrain_tags);
             let (generation, demand, efficiency) = element.power_profile();
             let base_mass = scalar_from_f32(1.0 + ((x + y) % 5) as f32 * 0.35);
             let node_id = PowerNodeId(y as u32 * config.grid_size.x + x as u32);
@@ -225,11 +293,26 @@ pub fn spawn_initial_world(
         }
     }
 
-    let stride = max(1, config.population_cluster_stride) as usize;
+    // Choose a start center favoring freshwater + fertile tiles.
+    let (start_x, start_y) = best_start_tile(width as u32, height as u32, &tags_grid);
+
+    // Spawn population cohorts clustered around the chosen start center.
+    let stride = max(1, config.population_cluster_stride) as i32;
     let mut cohort_index = 0usize;
-    for y in (0..height).step_by(stride) {
-        for x in (0..width).step_by(stride) {
-            let tile_entity = tiles[y * width + x];
+    let radius: i32 = (stride * 3).max(3);
+    for dy in (-radius..=radius).step_by(stride as usize) {
+        for dx in (-radius..=radius).step_by(stride as usize) {
+            let x = start_x as i32 + dx;
+            let y = start_y as i32 + dy;
+            if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {
+                continue;
+            }
+            let idx = y as usize * width + x as usize;
+            let tile_entity = tiles[idx];
+            // Avoid water tiles for initial cohorts.
+            if tags_grid[idx].contains(sim_runtime::TerrainTags::WATER) {
+                continue;
+            }
             commands.spawn(PopulationCohort {
                 home: tile_entity,
                 size: 1_000,
@@ -241,6 +324,15 @@ pub fn spawn_initial_world(
             });
             cohort_index += 1;
         }
+    }
+
+    commands.insert_resource(StartLocation::new(Some(UVec2::new(start_x, start_y))));
+
+    // If we produced bands, use their restamped elevation field resource now
+    if let Some(bands_res) = bands {
+        commands.insert_resource(bands_res.elevation.clone());
+        // Validate invariants and log
+        validate_bands(&bands_res, config.grid_size);
     }
 
     let topology = PowerTopology::from_grid(
@@ -261,6 +353,370 @@ pub fn spawn_initial_world(
     let _ = culture.take_tension_events();
 }
 
+fn tile_hash(position: UVec2) -> u32 {
+    let mut n = position.x;
+    n = n.wrapping_mul(0x6C8E_9CF5) ^ position.y.wrapping_mul(0xB529_7A4D);
+    n ^= n >> 13;
+    n = n.wrapping_mul(0x68E3_1DA4);
+    n ^= n >> 11;
+    n = n.wrapping_mul(0x1B56_C4E9);
+    n ^ (n >> 16)
+}
+
+fn bias_terrain_for_preset(
+    terrain: sim_runtime::TerrainType,
+    tags: sim_runtime::TerrainTags,
+    preset: &MapPreset,
+    position: UVec2,
+    grid_height: u32,
+) -> (sim_runtime::TerrainType, sim_runtime::TerrainTags) {
+    let key = format!("{:?}", terrain);
+    let biome_weight = preset.biome_weights.get(&key).copied().unwrap_or(1.0);
+    let climate_weight = climate_weight_for_tags(preset, tags, position, grid_height);
+    let effective_weight = (biome_weight * climate_weight).clamp(0.0, 2.0);
+
+    let noise = (tile_hash(position) & 0xFFFF) as f32 / 65535.0;
+
+    if effective_weight < 1.0 {
+        if noise > effective_weight {
+            if let Some(next) = biome_downgrade(terrain) {
+                let def = terrain_definition(next);
+                return (next, def.tags);
+            }
+        }
+    } else if effective_weight > 1.0 {
+        let chance = (effective_weight - 1.0).clamp(0.0, 1.0);
+        if noise < chance {
+            if let Some(next) = biome_upgrade(terrain) {
+                let def = terrain_definition(next);
+                return (next, def.tags);
+            }
+        }
+    }
+
+    (terrain, tags)
+}
+
+fn biome_downgrade(terrain: sim_runtime::TerrainType) -> Option<sim_runtime::TerrainType> {
+    use sim_runtime::TerrainType::*;
+    match terrain {
+        Floodplain => Some(AlluvialPlain),
+        FreshwaterMarsh => Some(Floodplain),
+        AlluvialPlain => Some(PrairieSteppe),
+        PrairieSteppe => Some(SemiAridScrub),
+        MixedWoodland => Some(PrairieSteppe),
+        SemiAridScrub => Some(HotDesertErg),
+        TidalFlat => Some(AlluvialPlain),
+        MangroveSwamp => Some(Floodplain),
+        _ => None,
+    }
+}
+
+fn biome_upgrade(terrain: sim_runtime::TerrainType) -> Option<sim_runtime::TerrainType> {
+    use sim_runtime::TerrainType::*;
+    match terrain {
+        AlluvialPlain => Some(Floodplain),
+        PrairieSteppe => Some(MixedWoodland),
+        SemiAridScrub => Some(PrairieSteppe),
+        HotDesertErg => Some(SemiAridScrub),
+        Floodplain => Some(FreshwaterMarsh),
+        MixedWoodland => Some(Floodplain),
+        TidalFlat => Some(RiverDelta),
+        MangroveSwamp => Some(FreshwaterMarsh),
+        _ => None,
+    }
+}
+
+fn climate_weight_for_tags(
+    preset: &MapPreset,
+    tags: sim_runtime::TerrainTags,
+    position: UVec2,
+    grid_height: u32,
+) -> f32 {
+    let band = climate_band_for_position(position, grid_height);
+    let band_weight = preset
+        .climate_band_weights
+        .get(band)
+        .copied()
+        .unwrap_or(1.0);
+    if (band_weight - 1.0).abs() < f32::EPSILON {
+        return 1.0;
+    }
+    let alignment = climate_alignment_factor(band, tags);
+    if band_weight > 1.0 {
+        if alignment > 0.0 {
+            1.0 + (band_weight - 1.0) * alignment
+        } else {
+            (1.0 - (band_weight - 1.0) * 0.5).clamp(0.2, 1.0)
+        }
+    } else if alignment > 0.0 {
+        band_weight.max(0.1)
+    } else {
+        1.0
+    }
+}
+
+fn climate_band_for_position(position: UVec2, grid_height: u32) -> &'static str {
+    if grid_height <= 1 {
+        return "temperate";
+    }
+    let lat = position.y as f32 / (grid_height.saturating_sub(1) as f32);
+    let dist_from_equator = (lat - 0.5).abs();
+    if dist_from_equator >= 0.35 {
+        "polar"
+    } else if dist_from_equator >= 0.18 {
+        "temperate"
+    } else {
+        "tropical"
+    }
+}
+
+fn climate_alignment_factor(band: &str, tags: sim_runtime::TerrainTags) -> f32 {
+    use sim_runtime::TerrainTags as Tag;
+    match band {
+        "polar" => {
+            if tags.contains(Tag::POLAR) {
+                1.0
+            } else if tags.contains(Tag::HIGHLAND) {
+                0.5
+            } else {
+                0.0
+            }
+        }
+        "tropical" => {
+            if tags.contains(Tag::WETLAND) {
+                1.0
+            } else if tags.contains(Tag::FERTILE) && tags.contains(Tag::FRESHWATER) {
+                0.6
+            } else {
+                0.0
+            }
+        }
+        "arid" => {
+            if tags.contains(Tag::ARID) {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        _ => {
+            if tags.contains(Tag::FERTILE)
+                && !tags.contains(Tag::ARID)
+                && !tags.contains(Tag::POLAR)
+            {
+                1.0
+            } else if tags.contains(Tag::COASTAL) {
+                0.5
+            } else {
+                0.0
+            }
+        }
+    }
+}
+
+/// Post-stamping nudge toward target tag budgets using simple heuristics.
+pub fn apply_tag_budget_solver(
+    config: Res<SimulationConfig>,
+    map_presets: Res<MapPresetsHandle>,
+    hydro: Option<Res<HydrologyState>>,
+    registry: Res<TileRegistry>,
+    mut tiles: Query<&mut Tile>,
+) {
+    let presets = map_presets.get();
+    let preset = match presets.get(&config.map_preset_id) {
+        Some(p) => p,
+        None => return,
+    };
+
+    let targets = &preset.terrain_tag_targets;
+    let want_wetland = targets.get("Wetland").copied().unwrap_or(0.0);
+    let want_fertile = targets.get("Fertile").copied().unwrap_or(0.0);
+    let want_coastal = targets.get("Coastal").copied().unwrap_or(0.0);
+    let total = (registry.width * registry.height) as usize;
+
+    // Snapshot current terrain tags for quick lookup and adjacency checks.
+    let mut tags_grid: Vec<sim_runtime::TerrainTags> = Vec::with_capacity(total);
+    for &entity in registry.tiles.iter() {
+        let tags = tiles
+            .get(entity)
+            .map(|tile| tile.terrain_tags)
+            .unwrap_or_else(|_| sim_runtime::TerrainTags::empty());
+        tags_grid.push(tags);
+    }
+
+    // Count current wetland tiles
+    let wetland_count = tags_grid
+        .iter()
+        .filter(|tags| tags.contains(sim_runtime::TerrainTags::WETLAND))
+        .count();
+    let current_wetland = wetland_count as f32 / total as f32;
+    let mut needed_wetland = 0isize;
+    if want_wetland > 0.0 && current_wetland + 0.01 < want_wetland {
+        needed_wetland = ((want_wetland * total as f32) - wetland_count as f32).ceil() as isize;
+    }
+
+    let hydro_ref = hydro.as_ref();
+
+    if needed_wetland > 0 {
+        if let Some(hydro) = hydro_ref {
+            // Promote tiles along rivers to FreshwaterMarsh until we hit target.
+            'wetland: for river in hydro.rivers.iter() {
+                for p in river.path.iter() {
+                    for dy in -1i32..=1 {
+                        for dx in -1i32..=1 {
+                            let nx = p.x as i32 + dx;
+                            let ny = p.y as i32 + dy;
+                            if nx < 0
+                                || ny < 0
+                                || nx >= registry.width as i32
+                                || ny >= registry.height as i32
+                            {
+                                continue;
+                            }
+                            let idx = (ny as u32 * registry.width + nx as u32) as usize;
+                            let entity = registry.tiles[idx];
+                            let tags = tags_grid[idx];
+                            if tags.contains(sim_runtime::TerrainTags::WATER)
+                                || tags.contains(sim_runtime::TerrainTags::WETLAND)
+                            {
+                                continue;
+                            }
+                            if let Ok(mut tile) = tiles.get_mut(entity) {
+                                tile.terrain = sim_runtime::TerrainType::FreshwaterMarsh;
+                                let def = terrain_definition(tile.terrain);
+                                tile.terrain_tags = def.tags;
+                                tags_grid[idx] = def.tags;
+                                needed_wetland -= 1;
+                                if needed_wetland <= 0 {
+                                    break 'wetland;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fertile pass: if below target, promote adjacent-to-river land tiles to Floodplain/AlluvialPlain.
+    let fertile_count = tags_grid
+        .iter()
+        .filter(|tags| tags.contains(sim_runtime::TerrainTags::FERTILE))
+        .count();
+    let current_fertile = fertile_count as f32 / total as f32;
+    let mut needed_fertile: isize = 0;
+    if want_fertile > 0.0 && current_fertile + 0.01 < want_fertile {
+        needed_fertile = ((want_fertile * total as f32) - fertile_count as f32).ceil() as isize;
+    }
+    if needed_fertile > 0 {
+        if let Some(hydro) = hydro_ref {
+            'fertile: for river in hydro.rivers.iter() {
+                for p in river.path.iter() {
+                    for dy in -1i32..=1 {
+                        for dx in -1i32..=1 {
+                            let nx = p.x as i32 + dx;
+                            let ny = p.y as i32 + dy;
+                            if nx < 0
+                                || ny < 0
+                                || nx >= registry.width as i32
+                                || ny >= registry.height as i32
+                            {
+                                continue;
+                            }
+                            let idx = (ny as u32 * registry.width + nx as u32) as usize;
+                            let entity = registry.tiles[idx];
+                            let tags = tags_grid[idx];
+                            if tags.contains(sim_runtime::TerrainTags::WATER)
+                                || tags.contains(sim_runtime::TerrainTags::FERTILE)
+                            {
+                                continue;
+                            }
+                            if let Ok(mut tile) = tiles.get_mut(entity) {
+                                tile.terrain = sim_runtime::TerrainType::Floodplain;
+                                let def = terrain_definition(tile.terrain);
+                                tile.terrain_tags = def.tags;
+                                tags_grid[idx] = def.tags;
+                                needed_fertile -= 1;
+                                if needed_fertile <= 0 {
+                                    break 'fertile;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Coastal pass: if below target, promote land tiles adjacent to water to TidalFlat.
+    let coastal_count = tags_grid
+        .iter()
+        .filter(|tags| tags.contains(sim_runtime::TerrainTags::COASTAL))
+        .count();
+    let current_coastal = coastal_count as f32 / total as f32;
+    let mut needed_coastal: isize = 0;
+    if want_coastal > 0.0 && current_coastal + 0.005 < want_coastal {
+        needed_coastal = ((want_coastal * total as f32) - coastal_count as f32).ceil() as isize;
+    }
+    if needed_coastal > 0 {
+        for y in 0..registry.height as i32 {
+            for x in 0..registry.width as i32 {
+                if needed_coastal <= 0 {
+                    break;
+                }
+                let idx = (y as u32 * registry.width + x as u32) as usize;
+                let tags = tags_grid[idx];
+                if tags.contains(sim_runtime::TerrainTags::WATER) {
+                    continue;
+                }
+                // Check adjacency to WATER via tags grid.
+                let mut near_water = false;
+                for (dx, dy) in [
+                    (-1, 0),
+                    (1, 0),
+                    (0, -1),
+                    (0, 1),
+                    (-1, -1),
+                    (1, 1),
+                    (-1, 1),
+                    (1, -1),
+                ] {
+                    let nx = x + dx;
+                    let ny = y + dy;
+                    if nx < 0
+                        || ny < 0
+                        || nx >= registry.width as i32
+                        || ny >= registry.height as i32
+                    {
+                        continue;
+                    }
+                    let nidx = (ny as u32 * registry.width + nx as u32) as usize;
+                    if tags_grid[nidx].contains(sim_runtime::TerrainTags::WATER) {
+                        near_water = true;
+                        break;
+                    }
+                }
+                if near_water && !tags.contains(sim_runtime::TerrainTags::COASTAL) {
+                    let entity = registry.tiles[idx];
+                    if let Ok(mut tile) = tiles.get_mut(entity) {
+                        tile.terrain = sim_runtime::TerrainType::TidalFlat;
+                        let def = terrain_definition(tile.terrain);
+                        tile.terrain_tags = def.tags;
+                        tags_grid[idx] = def.tags;
+                        needed_coastal -= 1;
+                        if needed_coastal <= 0 {
+                            break;
+                        }
+                    }
+                }
+            }
+            if needed_coastal <= 0 {
+                break;
+            }
+        }
+    }
+}
+
 fn seeded_modifiers_for_position(position: UVec2) -> [Scalar; CULTURE_TRAIT_AXES] {
     let mut modifiers = [Scalar::zero(); CULTURE_TRAIT_AXES];
     let seed = position.x as i32 * 31 + position.y as i32 * 17;
@@ -270,6 +726,61 @@ fn seeded_modifiers_for_position(position: UVec2) -> [Scalar; CULTURE_TRAIT_AXES
         *slot = scalar_from_f32(scaled);
     }
     modifiers
+}
+
+fn best_start_tile(width: u32, height: u32, tags_grid: &[sim_runtime::TerrainTags]) -> (u32, u32) {
+    let mut best_score: i32 = i32::MIN;
+    let mut best_pos: (u32, u32) = (width / 2, height / 2);
+    let idx_of = |x: u32, y: u32| -> usize { (y * width + x) as usize };
+    for y in 0..height {
+        for x in 0..width {
+            let idx = idx_of(x, y);
+            let tags = tags_grid.get(idx).copied().unwrap_or_default();
+            if tags.contains(sim_runtime::TerrainTags::WATER) {
+                continue;
+            }
+            let mut score: i32 = 0;
+            // Local tile
+            if tags.contains(sim_runtime::TerrainTags::FERTILE) {
+                score += 5;
+            }
+            if tags.contains(sim_runtime::TerrainTags::FRESHWATER) {
+                score += 5;
+            }
+            if tags.contains(sim_runtime::TerrainTags::HAZARDOUS) {
+                score -= 6;
+            }
+            // Neighborhood
+            for dy in -3i32..=3 {
+                for dx in -3i32..=3 {
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    let nx = x as i32 + dx;
+                    let ny = y as i32 + dy;
+                    if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                        continue;
+                    }
+                    let nidx = idx_of(nx as u32, ny as u32);
+                    let ntags = tags_grid.get(nidx).copied().unwrap_or_default();
+                    if ntags.contains(sim_runtime::TerrainTags::FERTILE) {
+                        score += 1;
+                    }
+                    if ntags.contains(sim_runtime::TerrainTags::FRESHWATER) {
+                        score += 2;
+                    }
+                    if ntags.contains(sim_runtime::TerrainTags::HAZARDOUS) {
+                        score -= 2;
+                    }
+                }
+            }
+            if score > best_score {
+                best_score = score;
+                best_pos = (x, y);
+            }
+        }
+    }
+    best_pos
 }
 
 /// Relax material temperatures and adjust masses using deterministic rules.

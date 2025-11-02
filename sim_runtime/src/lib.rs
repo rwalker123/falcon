@@ -404,6 +404,8 @@ pub mod knowledge {
                 fog_raster: ScalarRasterState::default(),
                 culture_raster: ScalarRasterState::default(),
                 military_raster: ScalarRasterState::default(),
+                hydrology_overlay: crate::HydrologyOverlayState::default(),
+                start_marker: None,
                 axis_bias: AxisBiasState::default(),
                 sentiment: SentimentTelemetryState::default(),
                 generations: Vec::new(),

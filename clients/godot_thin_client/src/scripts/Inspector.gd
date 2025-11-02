@@ -45,6 +45,7 @@ const COUNTERINTEL_POLICY_OPTIONS := [
 @onready var corruption_text: RichTextLabel = $RootPanel/TabContainer/Corruption/CorruptionText
 @onready var trade_summary_text: RichTextLabel = $RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection/TradeSummaryText
 @onready var trade_overlay_toggle: CheckButton = $RootPanel/TabContainer/Map/MapVBox/LogisticsSection/LogisticsOverlayToggle
+@onready var highlight_rivers_toggle: CheckButton = $RootPanel/TabContainer/Map/MapVBox/HydrologySection/HighlightRiversToggle
 @onready var trade_links_list: ItemList = $RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection/TradeLinksList
 @onready var trade_events_text: RichTextLabel = $RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection/TradeEventsText
 @onready var power_summary_text: RichTextLabel = $RootPanel/TabContainer/Power/PowerVBox/PowerSummarySection/PowerSummaryText
@@ -325,6 +326,9 @@ func _ready() -> void:
     _connect_culture_ui()
     if trade_overlay_toggle != null:
         trade_overlay_toggle.toggled.connect(_on_trade_overlay_toggled)
+    if highlight_rivers_toggle != null:
+        highlight_rivers_toggle.toggled.connect(_on_highlight_rivers_toggled)
+        _on_highlight_rivers_toggled(highlight_rivers_toggle.button_pressed)
     if trade_links_list != null:
         var trade_select_callable = Callable(self, "_on_trade_link_selected")
         if not trade_links_list.is_connected("item_selected", trade_select_callable):
@@ -2974,11 +2978,11 @@ func _update_selected_mission_details() -> void:
     var detail_parts: Array[String] = []
     var suspicion_relief: float = float(mission.get("suspicion_relief", 0.0))
     if absf(suspicion_relief) > 0.0001:
-        var relief_value: float = -absf(suspicion_relief) if suspicion_relief > 0.0 else suspicion_relief
+        var relief_value: float = -absf(suspicion_relief) if suspicion_relief >= 0.0 else absf(suspicion_relief)
         detail_parts.append("Relief %+.2f" % relief_value)
     var fidelity_suppression: float = float(mission.get("fidelity_suppression", 0.0))
     if absf(fidelity_suppression) > 0.0001:
-        var suppression_value: float = -absf(fidelity_suppression) if fidelity_suppression > 0.0 else fidelity_suppression
+        var suppression_value: float = -absf(fidelity_suppression) if fidelity_suppression >= 0.0 else absf(fidelity_suppression)
         detail_parts.append("Suppression %+.2f" % suppression_value)
     if not detail_parts.is_empty():
         lines.append(", ".join(detail_parts))
@@ -3257,6 +3261,8 @@ func _extract_trade_openness(info: Dictionary) -> float:
 func attach_map_view(view: Node) -> void:
     _map_view = view
     _sync_map_trade_overlay()
+    if highlight_rivers_toggle != null and _map_view.has_method("set_highlight_rivers"):
+        _map_view.call("set_highlight_rivers", highlight_rivers_toggle.button_pressed)
     _apply_overlay_selection_to_map()
     _refresh_overlay_panels()
     if _selected_culture_layer_id >= 0 and _culture_layers.has(_selected_culture_layer_id):
@@ -3289,6 +3295,10 @@ func _sync_map_trade_overlay() -> void:
 
 func _on_trade_overlay_toggled(pressed: bool) -> void:
     _sync_map_trade_overlay()
+
+func _on_highlight_rivers_toggled(pressed: bool) -> void:
+    if _map_view != null and _map_view.has_method("set_highlight_rivers"):
+        _map_view.call("set_highlight_rivers", pressed)
 
 func _on_trade_link_selected(index: int) -> void:
     if trade_links_list == null:

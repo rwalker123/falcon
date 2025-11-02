@@ -1,0 +1,64 @@
+{
+  "presets": [
+    {
+      "id": "earthlike",
+      "name": "Earthlike (Oceans & Continents)",
+      "description": "Large oceans with continental shelves, 2–5 major landmasses, moderate-to-high river density, temperate/tropical mix with polar caps.",
+      "seed_policy": "use_simulation_seed",
+      "dimensions": { "width": 256, "height": 192 },
+      "sea_level": 0.62,
+      "continent_scale": 0.55,
+      "mountain_scale": 0.68,
+      "moisture_scale": 0.6,
+      "river_density": 1.2,
+      "river_accum_threshold_factor": 0.35,
+      "river_min_accum": 6,
+      "river_min_length": 8,
+      "river_fallback_min_length": 1,
+      "river_accum_percentile": 0.95,
+      "river_land_ratio": 110.0,
+      "river_min_count": 8,
+      "river_max_count": 20,
+      "river_source_percentile": 0.65,
+      "river_source_sea_buffer": 0.05,
+      "river_min_spacing": 8.0,
+      "river_uphill_step_limit": 3,
+      "river_uphill_gain_pct": 0.08,
+      "lake_chance": 0.15,
+      "macro_land": { "continents": 4, "min_area": 256, "target_land_pct": 0.38, "jitter": 0.18 },
+      "shelf": { "width_tiles": 2, "slope_width_tiles": 3 },
+      "islands": { "continental_density": 0.0025, "oceanic_density": 0.0012, "fringing_shelf_width": 2, "min_distance_from_continent": 12 },
+      "inland_sea": { "min_area": 24, "merge_strait_width": 2 },
+      "ocean": { "ridge_density": 0.0, "ridge_amplitude": 0.0 },
+      "biomes": { "orographic_strength": 0.6, "transition_width": 2, "band_profile": "default" },
+      "climate_band_weights": { "polar": 0.12, "temperate": 0.46, "tropical": 0.42 },
+      "terrain_tag_targets": {
+        "Water": 0.65,
+        "Coastal": 0.06,
+        "Wetland": 0.06,
+        "Fertile": 0.22,
+        "Arid": 0.12,
+        "Polar": 0.08,
+        "Highland": 0.10,
+        "Volcanic": 0.01,
+        "Hazardous": 0.03
+      },
+      "biome_weights": {
+        "Floodplain": 1.2,
+        "FreshwaterMarsh": 1.1,
+        "PrairieSteppe": 1.05,
+        "MixedWoodland": 1.0,
+        "HotDesertErg": 1.0,
+        "AlpineMountain": 1.0,
+        "BasalticLavaField": 0.9,
+        "AshPlain": 0.9
+      },
+      "postprocess": {
+        "adjacency_weight": 0.6,
+        "river_wetland_jitter": 0.5,
+        "floodplain_spread": 0.4
+      },
+      "tolerance": 0.02
+    }
+  ]
+}

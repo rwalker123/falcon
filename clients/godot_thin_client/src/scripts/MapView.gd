@@ -137,6 +137,9 @@ var trade_links_overlay: Array = []
 var trade_overlay_enabled: bool = false
 var selected_trade_entity: int = -1
 var crisis_annotations: Array = []
+var hydrology_rivers: Array = []
+var highlight_rivers: bool = false
+var start_marker: Vector2i = Vector2i(-1, -1)
 var culture_layer_grid: PackedInt32Array = PackedInt32Array()
 var highlighted_culture_layer_ids: PackedInt32Array = PackedInt32Array()
 var highlighted_culture_layer_set: Dictionary = {}
@@ -191,6 +194,18 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
         for entry in crisis_annotations_variant:
             if entry is Dictionary:
                 crisis_annotations.append((entry as Dictionary).duplicate(true))
+    hydrology_rivers = []
+    var rivers_variant: Variant = overlays.get("hydrology_rivers", [])
+    if rivers_variant is Array:
+        for entry in rivers_variant:
+            if entry is Dictionary:
+                hydrology_rivers.append((entry as Dictionary).duplicate(true))
+    var start_marker_variant: Variant = overlays.get("start_marker", null)
+    if start_marker_variant is Dictionary:
+        var marker_dict: Dictionary = start_marker_variant
+        start_marker = Vector2i(int(marker_dict.get("x", -1)), int(marker_dict.get("y", -1)))
+    else:
+        start_marker = Vector2i(-1, -1)
     units = Array(snapshot.get("units", []))
     routes = Array(snapshot.get("orders", []))
 
@@ -335,13 +350,18 @@ func _draw() -> void:
             draw_polyline(_hex_points(center, radius, true), GRID_LINE_COLOR, 2.0, true)
 
     _draw_trade_overlay(radius, origin)
+    _draw_hydrology(radius, origin)
     _draw_crisis_annotations(radius, origin)
+    _draw_start_marker(radius, origin)
+    _draw_hydrology(radius, origin)
 
     for unit in units:
         _draw_unit(unit, radius, origin)
 
     for order in routes:
         _draw_route(order, radius, origin)
+
+    _draw_start_marker(radius, origin)
 
 func update_trade_overlay(trade_links: Array, enabled: bool = trade_overlay_enabled) -> void:
     trade_links_overlay = []
@@ -910,6 +930,40 @@ func _format_legend_value(value: float) -> String:
 func set_terrain_mode(enabled: bool) -> void:
     terrain_mode = enabled
     queue_redraw()
+
+func _draw_hydrology(radius: float, origin: Vector2) -> void:
+    if hydrology_rivers.is_empty():
+        return
+    var river_color := (Color(0.95, 0.25, 0.25, 0.95) if highlight_rivers else Color(0.12, 0.5, 0.85, 0.85))
+    var line_width := (4.0 if highlight_rivers else 3.0)
+    for river in hydrology_rivers:
+        if not (river is Dictionary):
+            continue
+        var points := Array(river.get("points", []))
+        if points.size() < 2:
+            continue
+        var poly: PackedVector2Array = PackedVector2Array()
+        for pt in points:
+            if not (pt is Dictionary):
+                continue
+            var x := int(pt.get("x", 0))
+            var y := int(pt.get("y", 0))
+            poly.append(_hex_center(x, y, radius, origin))
+        if poly.size() >= 2:
+            draw_polyline(poly, river_color, line_width, false)
+
+func set_highlight_rivers(enabled: bool) -> void:
+    highlight_rivers = enabled
+    queue_redraw()
+
+func _draw_start_marker(radius: float, origin: Vector2) -> void:
+    if start_marker.x < 0 or start_marker.y < 0:
+        return
+    var center := _hex_center(start_marker.x, start_marker.y, radius, origin)
+    var size := radius * 0.3
+    var color := Color(1.0, 0.86, 0.2, 0.9)
+    var points := PackedVector2Array([center + Vector2(size, 0), center + Vector2(0, size), center + Vector2(-size, 0), center + Vector2(0, -size)])
+    draw_polyline(points, color, 3.0, true)
     _emit_overlay_legend()
 
 func toggle_terrain_mode() -> void:

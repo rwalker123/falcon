@@ -21,6 +21,7 @@ use crate::{
 #[derive(Resource, Debug, Clone)]
 pub struct SimulationConfig {
     pub grid_size: UVec2,
+    pub map_preset_id: String,
     pub ambient_temperature: Scalar,
     pub temperature_lerp: Scalar,
     pub logistics_flow_gain: Scalar,
@@ -115,6 +116,8 @@ pub enum SimulationConfigError {
 #[derive(Debug, Deserialize)]
 struct SimulationConfigData {
     grid_size: GridSizeData,
+    #[serde(default = "default_map_preset_id")]
+    map_preset_id: String,
     ambient_temperature: f32,
     temperature_lerp: f32,
     logistics_flow_gain: f32,
@@ -175,6 +178,7 @@ impl SimulationConfigData {
     fn into_config(self) -> Result<SimulationConfig, SimulationConfigError> {
         Ok(SimulationConfig {
             grid_size: UVec2::new(self.grid_size.x, self.grid_size.y),
+            map_preset_id: self.map_preset_id,
             ambient_temperature: scalar_from_f32(self.ambient_temperature),
             temperature_lerp: scalar_from_f32(self.temperature_lerp),
             logistics_flow_gain: scalar_from_f32(self.logistics_flow_gain),
@@ -221,6 +225,10 @@ impl SimulationConfigData {
             crisis_auto_seed: self.crisis_auto_seed,
         })
     }
+}
+
+fn default_map_preset_id() -> String {
+    "earthlike".to_string()
 }
 
 fn parse_socket(value: String, field: &'static str) -> Result<SocketAddr, SimulationConfigError> {
@@ -290,6 +298,21 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
 /// Tracks total simulation ticks elapsed.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SimulationTick(pub u64);
+
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct StartLocation {
+    position: Option<UVec2>,
+}
+
+impl StartLocation {
+    pub fn new(position: Option<UVec2>) -> Self {
+        Self { position }
+    }
+
+    pub fn position(&self) -> Option<UVec2> {
+        self.position
+    }
+}
 
 /// Authoritative sentiment axis bias values applied across factions.
 ///

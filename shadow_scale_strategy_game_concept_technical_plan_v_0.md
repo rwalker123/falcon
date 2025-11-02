@@ -27,6 +27,82 @@ A modular grand-strategy simulation built on emergent physics, procedural discov
 
 ---
 
+## 2a. Playable Campaign: Start, Progression, Victory
+
+This section translates the sandbox into a concrete, Civ-like campaign loop while centering a Nomadic default opening. You begin as a mobile tribe with multiple bands and only settle when conditions organically justify it. It also explains when major systems (e.g., power) actually come online.
+
+### Start of Game — Nomadic Default (Turn 0 → 5)
+- You begin as the lead of a Late Forager Tribe composed of 2–3 bands/clans (e.g., Scout, Hunter, Crafter/Guardian). The world is shrouded by Fog of Discovery: tiles are unknown until observed; resources and chemistry hints appear only after local surveys and experiments.
+- Initial kit: food rations, simple tools, portable camp gear (tents, drying racks), and a knowledge kit enabling basic assays (kiln/burn/solvent tests). No permanent buildings exist yet.
+- Camps, not cities: you can place a Seasonal Camp (temporary, decays if abandoned) that provides limited storage, healing, and crafting. Camps leave “trail knowledge” that improves movement/attrition when revisiting.
+- Seasonal routes: biomes regenerate and herds migrate; a seasonal viability overlay highlights promising circuits that shift with climate and depletion.
+- Loose territory: project soft “roaming rights” via patrols/totems; early conflicts are skirmishes/raids, not sieges. Encounters with other tribes can lead to parley, exchange, intermarriage/adoption, or feud.
+
+### Organic Settlement — Sedentarization (When/Why to Found)
+- Sedentarization Score (0–100): emergent pressure to root in place. Inputs: local resource density, food stability, storage/spoilage reductions, domestication progress, trade hub potential, travel fatigue, security.
+- Soft prompt at ~40 (“establish seasonal base?”); hard opportunity at ~70 (“invest in storehouses/fields and settle?”). You can ignore prompts and remain nomadic.
+- Multiple settlement on-ramps:
+  - Farming path: tending patches → seed selection → fields, coupled with storage breakthroughs (sealed pottery/pits).
+  - Pastoral path: herd growth + corrals → semi-sedentary calving/winter grounds.
+  - Trade hub path: chokepoints/crossroads/portage sites reward permanence for safety and throughput.
+  - Cultural/religious path: sacred sites anchor festivals; population lingers and builders stay.
+  - Crisis path: displacement/climate shock incentivizes consolidation and defenses.
+
+### Optional Scenario — Settler Start (Founders)
+- Some scenarios (e.g., Early Agrarian bias or Frontier Colony) begin with a single expedition unit, the Founders, and a `Found Settlement` action. This mirrors classic 4X starts. See Alternative Start Profiles (§3a).
+
+### Early Loop (Turn 5 → 30)
+- Nomadic stabilization: place/relocate Seasonal Camps; craft storage (drying/smoking, early pottery); build rafts/small boats; map seasonal circuits.
+- Discovery: run guided experiments (kiln/smelt/solvent tests) to label unknowns; establish a soft metal path if viable; identify at least one fuel.
+- Diplomacy & skirmish: parley/route-rights treaties, intermarriage/adoption, or raids/feuds; no sieges before settlements exist.
+- Objective: reach a self-sustaining surplus, resolve 1–2 early Great Discoveries, and approach a sedentarization decision organically (or lean into Nomadic ascendancy).
+
+### Milestones & Emergent “Eras”
+Shadow-Scale avoids fixed historical era names. Instead, your civilization crosses capability milestones via Great Discoveries that unlock systems. Typical sequence (names are illustrative; the exact path is unique per world):
+- Forager → Pastoralist or Tended Patches (semi‑sedentary) → Agrarian Towns → Mechanization → Electricity → Flight/Information → Advanced Power.
+- Hearthcraft: reliable heat-processing; enables bricks, advanced pottery, early metallurgy trials. Systems fully active: Materials, Logistics, Population, Storage, Militia.
+- Metallurgy Breakthrough: stable soft/hard metal process; enables improved tools, weapons, and infrastructure. Systems expanded: Industry tier 1, Fortifications, Trade routes.
+- Mechanization: repeatable rotary/linear work (water/animal/pressure); unlocks workshops and throughput scaling. Systems expanded: Industry tier 2, Maintenance.
+- Electricity: conductor path + generator/rectifier discovery; unlocks the Power system and grids. Systems expanded: Power stage, Sensors, Communications.
+- Flight/Information: sustained lift or long-range signaling; unlocks air/naval operational layers and fast diplomacy/logistics. Systems expanded: Air/Naval ops, Espionage tier 2, Knowledge diffusion accelerants.
+- Advanced Power: exotic energy harnessing; unlocks megaprojects and crises. Systems expanded: Megastructures, Crisis interactions.
+
+These milestones are resolved by the Great Discovery System (GDS). When their effect flags flip, downstream systems unhide or change behavior (cross-link: docs/architecture.md §Campaign Loop & System Activation).
+
+### System Activation Matrix (When systems come online)
+- Always on: Materials, Logistics (basic), Population dynamics, Storage, Terrain/Climate, Discovery UI.
+- While Nomadic: Camps (portable buildings), limited queue, light storage, temporary influence, pack/raft logistics.
+- After Found Settlement: full Construction queue, local governance, basic trade, militia.
+- After Metallurgy: Industry (tier 1), fortifications, improved logistics (carts, boats), siege.
+- After Mechanization: Industry (tier 2) throughput, maintenance decay, proto-automation, bridges/roads upgrades.
+- After Electricity: Power simulation (generation, grid, instability), sensors/communications, electrified transport and industry variants.
+- After Flight/Information: Air/naval ops, extended trade lanes, strategic intel, higher-tier espionage.
+- After Advanced Power: Megaprojects, endgame crisis interactions, ascension projects.
+
+### Victory Conditions (Multiple Paths)
+Shadow-Scale supports several victory archetypes; scenarios can enable/disable sets. Because worlds differ, thresholds scale to world size and discovery density.
+- Hegemony (Domination): control a supermajority of population and production (e.g., ≥60%), hold all opposing capitals for N turns, and maintain internal stability.
+- Cultural Diffusion (Nomadic): sustain dominant cultural influence across route networks/seasonal circuits and alliances while meeting stewardship minimums and cohesion.
+- Stewardship: meet ecological recovery targets across biomes (pollution drawdown, biodiversity/chemistry harmony) while achieving minimum development thresholds.
+- Survival/Crises: neutralize or co-govern the endgame crisis vector (eradicate, contain, or integrate) depending on its nature (see §8 Crises).
+- Economic Hegemon: sustain a dominant share of global trade throughput and reserve currency influence while meeting stability and emissions/impact limits. (Enabled midgame+.)
+- Scientific/Ascension: resolve a defined set of late-tier Great Discoveries and complete an Ascension Project (advanced power megaproject). Survive resulting crisis pressure for N turns. (Enabled mid/late.)
+
+Default scenario enables: Hegemony, Cultural Diffusion (Nomadic), Stewardship, Survival. Economic and Ascension unlock when mid/late capability milestones are reached or if the chosen scenario pre-enables them.
+
+Loss states include extinction, collapse below recoverable thresholds (population, food/energy), or federations failing critical cohesion votes during crises.
+
+Victory detection and UI are scenario-configurable. See docs/architecture.md §Victory Engine for implementation details.
+
+### Pacing Example (First 50 Turns)
+- 0–10: Scout rivers/coasts, establish moving camp, complete Firecraft; learn seasonal fish/mast patterns.
+- 11–20: Storage Revolution; first trade contact; soft territory via patrols; identify herd routes or fertile basins.
+- 21–30: Branch choice emerges—Pastoralist momentum via captured herd and corrals, or Tended Patches via seed selection; sedentarization hits 40 → seasonal‑base prompt.
+- 31–40: Semi‑sedentary; offshoot camp forms; social innovations stabilize growth; occasional skirmishes and intermarriage events.
+- 41–50: Hard settle opportunity at 70+ if conditions align; or double‑down on Nomadic ascendancy (alliances + route control).
+
+Scenarios can start later (e.g., Frontier Colony) but still use the same milestone gates and victory sets.
+
 ## 3. Dynamic Atomic & Material System
 Each world begins with a **procedurally generated atomic chart**, redefining its chemistry and physics.
 
@@ -61,17 +137,18 @@ Shadow-Scale references “atoms to civilization,” but the default game should
 - Knowledge Fog: the periodic chart renders fully but only a minority of elements/compounds are identified; others are hinted via folk names and observed behaviors.
 - Early energy is guaranteed: if oxygen-combustion is not viable, worldgen guarantees an alternative early exothermic pathway (e.g., catalytic ‘cold flame’, halogen oxidizers, exothermic hydration) with analogous gameplay affordances.
 
-### Default Start Profile: Early Agrarian City-States
-Grounded, discoverer-focused start that avoids survival tedium while preserving emergent science.
-- Baseline capabilities: agriculture/domestication, pottery/kilns, fiber/rope, carpentry/stonework, basic trade/storage, navigation by landmarks/waterways.
-- Materials: common stone/wood analogs, fibers, clays, at least one soft metal path (copper/bronze-like) if fluxes/ores are locally plausible.
-- Energy: hearths/kilns/fires or alternative low-tier exothermic source; no engines.
-- Unlocks: camps → villages → fortified towns; storehouses, roads/tracks, small boats/rafts; militia/levies (see 9a Military System).
-- Unknowns: harder metallurgy, electricity, advanced alloys, precise chemistry, and any exotic energy.
+### Default Start Profile: Late Forager Tribe (Nomadic)
+Mobile-tribe start emphasizing exploration, seasonal routes, and organic settlement.
+- Bands: begin with 2–3 mobile bands (Scout, Hunter, Crafter/Guardian). Split/merge is allowed.
+- Camps: can found Seasonal Camps (temporary, portable buildings, decay on abandonment) for light storage/healing/crafting; camps leave trail knowledge.
+- Economy: foraging, hunting/fishing, barter; early storage via drying/smoking, then sealed pottery; herd capture/domestication or tended patches can emerge.
+- Diplomacy: encounters with other tribes enable parley/exchange/intermarriage/feud; soft territory via patrols/totems (“roaming rights”).
+- Energy: hearths/campfires; no engines; kilns once discovered.
+- Goal: grow knowledge, stabilize surplus, and let sedentarization emerge from conditions (or pursue a viable nomadic ascendancy).
 
 ### Alternative Start Profiles (Scenario-Selectable)
-- Survival Age (Late Forager): minimal agriculture; emphasis on discovery of fire/analogs and first kilns; faster early pacing and guided experiments.
-- Early City-States (Bronze/Iron Bias): stronger metallurgy baseline; denser settlement; accelerated logistics and conflict.
+- Early Agrarian City-States: stronger metallurgy baseline; denser settlement; accelerated logistics and conflict.
+- Survival Age (Early Forager): minimal agriculture; emphasis on discovery of fire/analogs and first kilns; faster early pacing and guided experiments.
 - Frontier Colony (High Knowledge, Low Infrastructure): crash-landed group with retained theory but no industry; rapid mid-tech ramp constrained by materials.
 - Post-Collapse Remnant: scattered tech ruins, partial artifacts; reverse-engineering drives early Great Discoveries.
 - Custom Builder: player mixes atmosphere/chemistry presets with starting knowledge breadth.
@@ -99,6 +176,17 @@ Gather → Process → Build → Power → Store → Move → Defend
 ### Worldgen Coupling
 - Start profile influences biome/ore surfacing to prevent dead starts (e.g., clay near water; fluxes within travel range; at least one workable fuel).
 - Climate bands, hydrology, and atmospheric composition align with chemistry and the chosen early energy pathway.
+- Map presets: scenario-selectable map presets (e.g., Earthlike) define macro shape and target proportions of tag categories (Water, Fertile, Wetland, Hazardous, etc.). The builder iteratively nudges marginal tiles to meet targets within tolerance while respecting adjacency rules.
+
+### Coherent Coasts & Inland Waters (Player-Facing Summary)
+- Coasts feel geologic: every landmass has a shallow continental shelf ringing its shores, then a steeper slope, then deep ocean. You’ll see fisheries and easy early trade hugging the shelf tiles.
+- Two island families exist:
+  - Continental fragments: small splinters near continents, with a normal shelf ring. Great stepping stones for coastal routes.
+  - Oceanic islands: far out on abyssal plains, with a narrow fringing shelf. Rare, strategic harbors and waypoints.
+- Inland seas and large lakes form inside continents with lacustrine margins (never mislabeled as continental shelf). If an inland sea is close enough to the ocean, a narrow strait will open and merge it—no awkward “lake next to ocean with a river between.”
+- Elevation reads intuitively: land > shelf (shallow) > slope (steeper) > abyss (deep). A few broad mid‑ocean plateaus may appear in some presets.
+- Biomes blend logically across latitude + rain shadows + moisture. Expect savanna or semi‑arid scrub between rainforest and hot desert rather than hard seams.
+- Presets advertise how many continents to expect and how much land they occupy; macro landmask growth now honors those numbers, so “90% land” really means a world-dominating supercontinent unless you dial the knob back.
 
 ### 3b. Foundational Terrain Palette
 Raw terrain defines movement, habitability, and discovery potential before factions reshape the landscape. Each tile/hex samples one of these base classes; improvements, infrastructure, and disasters layer on afterwards. (Implementation hooks: see `docs/architecture.md` “Terrain Type Taxonomy”.)

@@ -12,12 +12,13 @@ use sim_runtime::{
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
     CultureTraitEntry, DiscoveryProgressEntry, GenerationState, GreatDiscoveryDefinitionState,
     GreatDiscoveryProgressState, GreatDiscoveryState, GreatDiscoveryTelemetryState,
-    InfluentialIndividualState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
-    KnowledgeTimelineEventState, LogisticsLinkState, PendingMigrationState, PopulationCohortState,
-    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState,
-    ScalarRasterState, SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState,
-    SentimentTelemetryState, SnapshotHeader, TerrainOverlayState, TerrainSample, TileState,
-    TradeLinkKnowledge, TradeLinkState, WorldDelta, WorldSnapshot,
+    HydrologyOverlayState, InfluentialIndividualState, KnowledgeLedgerEntryState,
+    KnowledgeMetricsState, KnowledgeTimelineEventState, LogisticsLinkState, PendingMigrationState,
+    PopulationCohortState, PowerIncidentSeverity, PowerIncidentState, PowerNodeState,
+    PowerTelemetryState, ScalarRasterState, SentimentAxisTelemetry, SentimentDriverCategory,
+    SentimentDriverState, SentimentTelemetryState, SnapshotHeader, StartMarkerState,
+    TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState, WorldDelta,
+    WorldSnapshot,
 };
 
 use crate::{
@@ -36,6 +37,7 @@ use crate::{
         GreatDiscoveryId, GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
         GreatDiscoveryTelemetry,
     },
+    hydrology::HydrologyState,
     influencers::{
         InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerImpacts, InfluentialRoster,
         BUILTIN_INFLUENCER_CONFIG,
@@ -49,7 +51,7 @@ use crate::{
     power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
     resources::{
         CorruptionLedgers, CorruptionTelemetry, DiscoveryProgressLedger, SentimentAxisBias,
-        SimulationConfig, SimulationTick, TileRegistry,
+        SimulationConfig, SimulationTick, StartLocation, TileRegistry,
     },
     scalar::Scalar,
     snapshot_overlays_config::{SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle},
@@ -81,6 +83,8 @@ pub struct SnapshotContext<'w> {
     pub overlays: Res<'w, SnapshotOverlaysConfigHandle>,
     pub metrics: Res<'w, SimulationMetrics>,
     pub crisis_overlay: Res<'w, CrisisOverlayCache>,
+    pub start_location: Res<'w, StartLocation>,
+    pub hydrology: Res<'w, HydrologyState>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -146,6 +150,7 @@ pub struct SnapshotHistory {
     knowledge_timeline: Vec<KnowledgeTimelineEventState>,
     crisis_telemetry: CrisisTelemetryState,
     crisis_overlay: CrisisOverlayState,
+    start_marker: Option<StartMarkerState>,
     axis_bias: AxisBiasState,
     sentiment: SentimentTelemetryState,
     terrain_overlay: TerrainOverlayState,
@@ -155,6 +160,7 @@ pub struct SnapshotHistory {
     fog_raster: ScalarRasterState,
     culture_raster: ScalarRasterState,
     military_raster: ScalarRasterState,
+    hydrology_overlay: HydrologyOverlayState,
     corruption: CorruptionLedger,
     history: VecDeque<StoredSnapshot>,
 }
@@ -195,6 +201,7 @@ impl SnapshotHistory {
             knowledge_timeline: Vec::new(),
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
+            start_marker: None,
             axis_bias: AxisBiasState::default(),
             sentiment: SentimentTelemetryState::default(),
             terrain_overlay: TerrainOverlayState::default(),
@@ -204,6 +211,7 @@ impl SnapshotHistory {
             fog_raster: ScalarRasterState::default(),
             culture_raster: ScalarRasterState::default(),
             military_raster: ScalarRasterState::default(),
+            hydrology_overlay: HydrologyOverlayState::default(),
             corruption: CorruptionLedger::default(),
             history: VecDeque::new(),
         }
@@ -309,6 +317,20 @@ impl SnapshotHistory {
             None
         } else {
             Some(terrain_state.clone())
+        };
+
+        let hydrology_state = snapshot.hydrology_overlay.clone();
+        let hydrology_delta = if self.hydrology_overlay == hydrology_state {
+            None
+        } else {
+            Some(hydrology_state.clone())
+        };
+
+        let start_marker_state = snapshot.start_marker.clone();
+        let start_marker_delta = if self.start_marker == start_marker_state {
+            None
+        } else {
+            start_marker_state.clone()
         };
 
         let logistics_raster_state = snapshot.logistics_raster.clone();
@@ -459,6 +481,8 @@ impl SnapshotHistory {
             knowledge_timeline: knowledge_timeline_delta.clone(),
             crisis_telemetry: crisis_telemetry_delta.clone(),
             crisis_overlay: crisis_overlay_delta.clone(),
+            hydrology_overlay: hydrology_delta.clone(),
+            start_marker: start_marker_delta.clone(),
             axis_bias: axis_bias_delta,
             sentiment: sentiment_delta.clone(),
             generations: diff_new(&self.generations, &generations_index),
@@ -504,6 +528,8 @@ impl SnapshotHistory {
         self.axis_bias = axis_bias_state;
         self.sentiment = sentiment_state;
         self.terrain_overlay = terrain_state;
+        self.hydrology_overlay = hydrology_state;
+        self.start_marker = start_marker_state;
         self.logistics_raster = logistics_raster_state;
         self.sentiment_raster = sentiment_raster_state;
         self.corruption_raster = corruption_raster_state;
@@ -611,6 +637,8 @@ impl SnapshotHistory {
         self.knowledge_timeline = entry.snapshot.knowledge_timeline.clone();
         self.crisis_telemetry = entry.snapshot.crisis_telemetry.clone();
         self.crisis_overlay = entry.snapshot.crisis_overlay.clone();
+        self.hydrology_overlay = entry.snapshot.hydrology_overlay.clone();
+        self.start_marker = entry.snapshot.start_marker.clone();
 
         self.last_snapshot = Some(entry.snapshot.clone());
         self.last_delta = Some(entry.delta.clone());
@@ -664,6 +692,8 @@ impl SnapshotHistory {
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
+            hydrology_overlay: None,
+            start_marker: None,
             axis_bias: Some(bias.clone()),
             sentiment: None,
             logistics_raster: None,
@@ -764,6 +794,8 @@ impl SnapshotHistory {
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
+            hydrology_overlay: None,
+            start_marker: None,
             axis_bias: None,
             sentiment: None,
             logistics_raster: None,
@@ -858,6 +890,8 @@ impl SnapshotHistory {
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
+            hydrology_overlay: None,
+            start_marker: None,
             axis_bias: None,
             sentiment: None,
             logistics_raster: None,
@@ -945,6 +979,8 @@ pub fn capture_snapshot(
         overlays,
         metrics,
         crisis_overlay,
+        start_location,
+        hydrology,
     } = ctx;
     let overlays_config = overlays.get();
     history.set_capacity(config.snapshot_history_limit.max(1));
@@ -1193,6 +1229,27 @@ pub fn capture_snapshot(
         influencer_states.len(),
     );
 
+    let hydrology_overlay_state = HydrologyOverlayState {
+        rivers: hydrology
+            .rivers
+            .iter()
+            .map(|r| sim_runtime::RiverSegmentState {
+                id: r.id,
+                order: r.order,
+                width: r.width,
+                points: r
+                    .path
+                    .iter()
+                    .map(|p| sim_runtime::HydrologyPointState { x: p.x, y: p.y })
+                    .collect(),
+            })
+            .collect(),
+    };
+
+    let start_marker_state = start_location
+        .position()
+        .map(|pos| StartMarkerState { x: pos.x, y: pos.y });
+
     let snapshot = WorldSnapshot {
         header,
         tiles: tile_states,
@@ -1208,6 +1265,8 @@ pub fn capture_snapshot(
         fog_raster: fog_raster.clone(),
         culture_raster: culture_raster.clone(),
         military_raster: military_raster.clone(),
+        hydrology_overlay: hydrology_overlay_state,
+        start_marker: start_marker_state.clone(),
         axis_bias: axis_bias_state,
         sentiment: sentiment_state,
         generations: generation_states,
@@ -1251,6 +1310,16 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         let mut ledger = KnowledgeLedger::with_config(knowledge_config.clone());
         ledger.sync_from_snapshot(snapshot);
         world.insert_resource(ledger);
+    }
+
+    let start_marker_position = snapshot
+        .start_marker
+        .as_ref()
+        .map(|marker| UVec2::new(marker.x, marker.y));
+    if let Some(mut start_loc) = world.get_resource_mut::<StartLocation>() {
+        *start_loc = StartLocation::new(start_marker_position);
+    } else {
+        world.insert_resource(StartLocation::new(start_marker_position));
     }
 
     // Despawn existing entities.
@@ -2820,6 +2889,8 @@ mod tests {
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
             terrain: overlay,
+            hydrology_overlay: HydrologyOverlayState::default(),
+            start_marker: None,
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
@@ -2863,6 +2934,8 @@ mod tests {
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
             terrain: TerrainOverlayState::default(),
+            hydrology_overlay: HydrologyOverlayState::default(),
+            start_marker: None,
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
@@ -2901,6 +2974,8 @@ mod tests {
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
             terrain: TerrainOverlayState::default(),
+            hydrology_overlay: HydrologyOverlayState::default(),
+            start_marker: None,
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),

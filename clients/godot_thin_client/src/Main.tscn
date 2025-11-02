@@ -342,6 +342,16 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "Show logistics overlay"
 
+[node name="HydrologySection" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Map/MapVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="HighlightRiversToggle" type="CheckButton" parent="Inspector/RootPanel/TabContainer/Map/MapVBox/HydrologySection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Highlight rivers"
+
 [node name="OverlaySection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Map/MapVBox"]
 layout_mode = 2
 size_flags_horizontal = 3

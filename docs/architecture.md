@@ -9,6 +9,126 @@
 - **Inspector Client (`clients/godot_thin_client`)**: Godot thin client that renders the map, streams snapshots, and exposes the tabbed inspector; the Logs tab subscribes to the tracing feed, offers level/target/text filters, and renders a per-turn duration sparkline alongside scrollback. A Bevy-native inspector is under evaluation (see `shadow_scale_strategy_game_concept_technical_plan_v_0.md` Option F) but would live in a separate binary to keep the headless core deterministic.
 - **Benchmark & Tests**: Criterion harness (`cargo bench -p core_sim --bench turn_bench`) and determinism tests ensure turn consistency.
 
+## World Generation (Map Builder)
+Implements the procedural map pipeline that produces terrain, coasts, rivers/lakes, climate bands, resources, and wildlife spawners. Player-facing framing lives in the manual (§3a World Bootstrapping, §3b Terrain Palette); this section defines the data and steps that feed snapshots and downstream systems.
+
+### Pipeline (MVP → Extensible)
+- Macro landmask: Place `macro_land.continents` seeds (biased toward high elevation), grow each continent using weighted BFS until it meets its quota (`target_land_pct`, `min_area`, `jitter`). Remaining tiles fill by descending elevation so the global land percentage matches the preset.
+- Heightfield: Generate a seeded multi-octave height raster; apply erosion-ish smoothing; persist `elevation_m` per tile.
+- Ocean/coasts (distance-transform bands): Compute landmask via the macro pass, flood-fill from map edges to separate true ocean from interior basins, then run a distance transform from land to classify coherent bands:
+  - Shelf rule: `ContinentalShelf = ocean tiles with distance_to_land ≤ shelf_width` (no mid‑ocean shelves).
+  - Slope rule: tiles with `distance ∈ (shelf_width .. shelf_width + slope_width]` are slope; beyond is deep ocean.
+  - Inland water: interior basins become `InlandSea` (never `ContinentalShelf`). If a basin lies within `merge_strait_width` tiles of the ocean, we open a narrow strait and merge; otherwise it remains inland.
+  - Elevation consistency: re-stamp elevations to monotonically fall Land → Shelf → Slope → Abyss; inland seas are shallow lacustrine. Optional mid‑ocean ridges/plateaus can be added by preset knobs.
+- Climate: Assign `climate_band` using latitude proxy + elevation + moisture; store per-tile band for biome decisions.
+- Hydrology: Compute flow direction (D8), fill sinks (limited), compute flow accumulation; choose sources above threshold; trace polylines to nearest sea/lake; classify river order/width; mark `Floodplain`/`FreshwaterMarsh` adjacencies and `RiverDelta` at coast.
+- Elevation Field: Shared `ElevationField` (multi-octave value noise shaped by preset `continent_scale`/`mountain_scale`) seeds both terrain stamping and hydrology so rivers follow coherent basins instead of hash-noise pits.
+- Biomes: Use climate + elevation + moisture to stamp `TerrainType` (via `terrain_for_position`) with micro-variant jitters along rivers/coasts to respect adjacency rules.
+  - Current MVP implemented: sea-level gating during initial tile spawn (ocean tiles vs land) and a post-stamp wetland nudge near generated river polylines to raise `Wetland` tag share toward preset targets.
+  - Transitions: presets expose `biomes.transition_width` and `biomes.orographic_strength` to soften boundaries (e.g., savanna/semi‑arid scrub between rainforest and hot desert).
+- Resources: Surface ore/organics/energy deposits biased by `TerrainDefinition.resource_bias` and world chemistry tables.
+- Wildlife (Game): Seed herd spawners and migratory paths, density weighted by biome and water proximity; expose “game density” scalar raster for foraging/hunting yields.
+- Starting areas: Place candidate starts respecting the “World Viability Contract” (manual §3a). For the nomadic default, spawn bands within reach of freshwater, forage clusters, and at least one soft metal + fuel path within N tiles.
+
+### Data Shapes
+- Rasters: `elevation_m: i16`, `climate_band: u8`, `flow_dir: u8`, `flow_accum: u16`, `game_density: u8` (all fixed-point compatible), dimensions `width x height`.
+- Vectors: `rivers: [RiverSegment]` where `RiverSegment { id, order, width, polyline: Vec<Hex>, edges: Vec<(Hex, EdgeDir)> }` and per-tile `hydrology_id: Option<id>` for fast joins (edges track which hex boundaries the water occupies for movement penalties and bridge logic).
+- Tiles: Extend per-tile metadata with `hydrology_id`, `substrate_material`, and keep `terrain_type` + `TerrainTags`.
+- Snapshots: Add optional overlays `overlays.hydrology` (river polylines with order/width) and `overlays.game_density` (compressed scalar raster). Keep terrain overlay unchanged.
+
+### Integration Points
+- Movement/logistics: River tiles and banks adjust movement/attrition; navigable segments enable early boats; floodplain tags affect yields and disasters.
+- RouteNetwork: Early traversals will naturally hug river/coast corridors; the derived overlay (see below) will reflect this without bespoke logic.
+- Crisis/Events: Hydrology feeds flood events; volcano/impact masks continue to seed their terrain as today.
+
+### Map Presets & Tuning (Data-Driven)
+Expose worldgen knobs via JSON presets in `core_sim/src/data/map_presets.json`. A preset controls macro shape (oceans/continents), climate/hydrology intensity, and desired proportions of tag categories (e.g., `Water`, `Fertile`, `Wetland`, `Hazardous`) that biomes belong to.
+
+- Loader: `SimulationConfig` gains `map_preset_id` and loads the referenced preset at startup. Include `preset_id` in `WorldSnapshot` for clients.
+- Preset shape (schema sketch):
+  - `id`, `name`, `description`
+  - `seed_policy` (use `simulation_seed` or override)
+  - `dimensions` (`width`, `height`)
+  - `sea_level`, `continent_scale`, `mountain_scale`, `moisture_scale`
+  - `river_density`, `lake_chance`
+  - `river_accum_threshold_factor`, `river_min_accum`, `river_min_length`, `river_fallback_min_length`
+  - `river_accum_percentile`, `river_land_ratio`, `river_min_count`, `river_max_count`
+  - `river_source_percentile`, `river_source_sea_buffer`, `river_min_spacing`, `river_uphill_step_limit`, `river_uphill_gain_pct`
+  - `climate_band_weights` (e.g., `{ polar: 0.12, temperate: 0.46, tropical: 0.42 }`)
+  - `terrain_tag_targets` (normalized shares for `Water`, `Coastal`, `Wetland`, `Fertile`, `Arid`, `Polar`, `Highland`, `Volcanic`, `Hazardous`)
+  - `biome_weights` (optional per-`TerrainType` multipliers to bias specific biomes)
+  - `postprocess` (adjacency weight, river/wetland jitter strength, floodplain spread)
+  - `tolerance` (acceptable error on tag targets, e.g., ±2%)
+
+### Tag Budget Solver (Hitting Target Shares)
+After initial biome stamping, run a fast post-process to better match `terrain_tag_targets` within `tolerance`:
+- Compute current tag coverage from stamped `TerrainTags`.
+- MVP implemented: if `Wetland` share is under target, promote tiles along river polylines and immediate neighbors to `FreshwaterMarsh` until within tolerance budget. Future: expand to multi-tag balancing with adjacency constraints.
+- Use fixed-point friendly scoring; keep adjustments local to avoid destabilizing hydrology classifications.
+
+### Default Preset: Earthlike (Oceans/Continents)
+- Macro: 60–70% water with continental shelves and inland seas; 2–5 large continents + scattered archipelagos.
+- Climate: weighted temperate/tropical bands; ice caps; rain-shadow support via `mountain_scale` and moisture noise.
+- Hydrology: moderate-to-high river density; deltas and floodplains common on large coasts.
+- Tag targets (example): `Water: 0.65`, `Coastal: 0.06`, `Wetland: 0.06`, `Fertile: 0.22`, `Arid: 0.12`, `Polar: 0.08`, `Highland: 0.10`, `Volcanic: 0.01`, `Hazardous: 0.03` (overlap permitted; solver aims for balanced coverage across overlapping tags).
+
+### Snapshot & Client
+- Hydrology state is generated at startup and stored server-side. Exporting a dedicated hydrology overlay (raster/polylines) to clients requires a schema update; tracked in TASKS.md. For now, debug logs report river counts and generation details.
+
+## Campaign Loop & System Activation
+This section connects the headless simulation to a Civ-like playable loop: campaign start, capability gating, and win detection. It mirrors player-facing details in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §2a.
+
+### Start Flow (Nomadic Default → Organic Settlement)
+- Data: `StartProfile` records (JSON) loaded by `SimulationConfig` at worldgen. Fields: `id`, `manual_ref`, `starting_units`, `starting_knowledge_tags`, `inventory`, `survey_radius`, `fog_mode`, `ai_profile_overrides`, `victory_modes_enabled`.
+- Default profile: `late_forager_tribe` (manual §2a, §3a) with 2–3 bands and no permanent buildings.
+- Spawn: Worldgen seeds 2–3 bands (`UnitKind::BandScout`, `BandHunter`, `BandCrafter` or `BandGuardian`) and enables `FoundSeasonalCamp`, `SplitClan`, `MergeClan`, and `NegotiateRouteRights` commands.
+- Camps: `Camp` entities are transient settlement-likes with `PortableBuildings`, `CampStorage`, `DecayOnAbandon`, and `TrailKnowledge` markers. They unlock a light construction queue; decay unless maintained.
+- Sedentarization: Add `SedentarizationScore` resource per faction computed each turn from local resource density, surplus stability, storage tech/spoilage modifiers, domestication progress, trade hub potential, travel fatigue, and security. When thresholds are crossed, the server emits `CampaignEvent::SedentarizationPrompt { level }` without forcing action.
+- Founding: `Command::FoundSettlement { q, r }` remains available (manual scenario: Founders), but for the nomadic path it is enabled after sedentarization ≥ threshold and a camp is upgraded in place.
+- Persistence/Network: Emissions include `CampaignEvent::{Founded, SeasonalCampFounded, SeasonalCampAbandoned, SedentarizationPrompt}`.
+
+### Capability Flags (System Gating)
+- Resource: `CapabilityFlags` (bitflags) lives in `core_sim` as a `Resource` and is persisted in `WorldSnapshot`. Example flags: `AlwaysOn`, `Construction`, `IndustryT1`, `IndustryT2`, `Power`, `NavalOps`, `AirOps`, `EspionageT2`, `Megaprojects`.
+- Schedule wiring: Each major schedule (e.g., `power_tick`, `air_ops_tick`) is registered but inert until the corresponding capability bit is set. Use Bevy run criteria to skip entire system groups when flags are unset.
+- Triggers: Flags flip when Great Discoveries resolve with effect hooks (see §Great Discovery System Plan). Scenario profiles may also preflip flags (e.g., Frontier Colony).
+- Telemetry: Include `capability_flags` in snapshots; clients gray/lock UI tabs until visible.
+
+### Victory Engine
+- Resource: `VictoryState` with `modes: [VictoryModeState]`, per-mode progress meters, and a terminal `winner: Option<FactionId>`.
+- Config: `victory_config.json` enumerates available modes, thresholds, scaling policy (e.g., relative to world pop/production), and dependencies (e.g., requires `Power` capability).
+- Checkpoints: A `victory_tick` stage runs after end-of-turn accounting. It evaluates enabled modes:
+  - Hegemony: compute control shares over population and production; verify capital control and stability constraints.
+  - Ascension: verify required late-tier discoveries present, megaproject completion, and post-completion survival window.
+  - Economic: rolling average of global trade share and currency dominance; check emissions/impact bounds and unrest.
+  - Diplomatic: federation membership and cohesion votes; no critical secessions within window.
+  - Stewardship: biome recovery indices, pollution drawdown, biodiversity/chemistry harmony targets.
+  - Survival/Crises: per-crisis resolver reports eradication/containment/co-governed.
+- Emission: When a mode crosses its terminal threshold, set `winner`, emit `CampaignEvent::Victory { mode, faction, tick }`, and expose in the snapshot. Clients show a win screen and can continue in free-play.
+
+### Early Diplomacy & Route Network
+- Derived overlay (no parallel graph): `RouteNetwork` is computed from existing movement/logistics traversals (bands, convoys, boats). Each time a unit traverses between adjacent hexes, record a segment hit and maintain an exponentially decaying occupancy counter per segment (fixed-point). Visibility thresholds determine which segments appear in the overlay. Pathfinding remains owned by existing logistics; RouteNetwork is read-only telemetry + diplomacy keys.
+- Route rights: Add a lightweight diplomacy primitive `RouteRightsTreaty` granting passage/toll norms on specific segment keys (the same `(from_hex, to_hex)` identifiers used by traversal logs) or seasonal circuits. Path cost/conflict checkers consult treaty state to adjust friction and hostility.
+- Cultural diffusion: While nomadic, cultural influence spreads along traversed routes; surface time-weighted occupancy by faction to the `Victory Engine` for Cultural Diffusion mode.
+
+### Scenario Profiles & Loader
+- Files: `core_sim/src/data/start_profiles.json`, `core_sim/src/data/victory_config.json`.
+- Loader: `SimulationConfig` reads the selected `StartProfile` and victory modes, sets initial units/knowledge/inventory, and preflips capability bits if specified.
+- AI: Start profiles can override AI doctrines for more interesting asymmetries at game start.
+
+### Client/UI Expectations
+- Lock/Unlock: Telemetry includes `capability_flags` and `VictoryState`. The client disables tabs/buttons until flags appear and renders victory progress meters.
+- Campaign Log: Clients subscribe to `CampaignEvent` frames for lightweight narration (founding, milestones, victories, crises).
+
+## Nomadic Entities & Commands (Specs)
+- Entities:
+  - `Camp`: components `CampStorage`, `PortableBuildings`, `DecayOnAbandon { half_life }`, `TrailKnowledge { movement_bonus, attrition_bonus }`.
+  - `Band`: domain-agnostic movables with role tags (`Scout`, `Hunter`, `Crafter`, `Guardian`), inventory capacity, and fatigue.
+- Commands:
+  - `FoundSeasonalCamp { q, r }`: validates terrain scarcity and proximity; spawns `Camp` with initial buildings; registers decay timer; emits `SeasonalCampFounded`.
+  - `AbandonCamp { camp_id }`: flags decay immediately; transfers salvageable inventory to bands; emits `SeasonalCampAbandoned`.
+  - `SplitClan { band_id, split_spec }` / `MergeClan { a, b }`: reassigns population/cohorts and inventory; updates upkeep and discovery throughput.
+  - `NegotiateRouteRights { segment_ids|circuit_id, other_faction, terms }`: proposes a route treaty over derived segment keys or named seasonal circuits; upon accept, grants passage/toll modifiers referenced by traversal-derived identifiers.
+
 ### Terrain Type Taxonomy
 See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the player-facing palette. Implementation uses a `TerrainType` enum (u16) plus per-type metadata and tag bitsets that downstream systems interpret.
 
@@ -465,3 +585,19 @@ The turn schedule should place `update_constellation_progress` immediately after
 - ~~Implement per-faction order submission and turn resolution phases.~~ (Handled via `TurnQueue` + per-faction `order` commands.)
 - ~~Persist snapshot history for replays and rollbacks.~~ (Ring-buffered `SnapshotHistory` with `rollback` command.)
 - Protobuf `CommandEnvelope` command channel (with host helpers) now handles all control traffic; Godot tooling issues structured requests via the native bridge and the legacy text parser/wire format has been removed. Future protocol work can extend the envelope without reintroducing text compatibility.
+
+### Configuration (Map Presets)
+`core_sim/src/data/map_presets.json` adds knobs for physically coherent coasts and biomes:
+- `macro_land`: `{ continents, min_area, target_land_pct, jitter }`
+- `shelf`: `{ width_tiles, slope_width_tiles }`
+- `islands`: `{ continental_density, oceanic_density, fringing_shelf_width, min_distance_from_continent }`
+- `inland_sea`: `{ min_area, merge_strait_width }`
+- `ocean`: `{ ridge_density, ridge_amplitude }`
+- `biomes`: `{ orographic_strength, transition_width, band_profile }`
+
+### Validation & Debug
+- Invariants logged at startup (target `shadow_scale::mapgen`):
+  - Every `ContinentalShelf` tile lies within `shelf.width_tiles` of land.
+  - No `InlandSea` touches `DeepOcean` (unless merged via a strait).
+  - Detached shelf tile count (should be 0 for contiguous coasts).
+- Metrics: counts of land, shelf, slope, abyss, inland tiles are emitted for quick inspection.
