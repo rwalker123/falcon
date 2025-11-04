@@ -1,7 +1,7 @@
 use bevy::prelude::UVec2;
 use sim_runtime::{TerrainTags, TerrainType};
 
-use crate::mapgen::MountainType;
+use crate::{map_preset::TerrainClassifierConfig, mapgen::MountainType};
 
 #[derive(Debug, Clone, Copy)]
 pub struct MovementProfile {
@@ -447,24 +447,30 @@ pub fn terrain_definition(terrain: TerrainType) -> TerrainDefinition {
     }
 }
 
-pub fn classify_terrain(position: UVec2, grid_size: UVec2) -> TerrainType {
+pub fn classify_terrain(
+    position: UVec2,
+    grid_size: UVec2,
+    classifier: &TerrainClassifierConfig,
+) -> TerrainType {
     let width = grid_size.x.max(1) as f32;
     let height = grid_size.y.max(1) as f32;
     let fx = position.x as f32 / width;
     let fy = position.y as f32 / height;
     let edge = fx.min(1.0 - fx).min(fy).min(1.0 - fy);
+    let dist_from_equator = (fy - 0.5).abs();
+    let is_high_latitude = dist_from_equator >= classifier.high_latitude_threshold;
     let noise = tile_noise(position);
     let humidity = ((noise >> 8) & 0xFF) as f32 / 255.0;
     let elevation = ((noise >> 16) & 0xFF) as f32 / 255.0;
     let anomaly = (noise >> 4) & 0x0F;
 
-    if edge < 0.04 {
+    if edge < classifier.coastal_deep_ocean_edge {
         return pick(
             noise,
             &[TerrainType::DeepOcean, TerrainType::HydrothermalVentField],
         );
     }
-    if edge < 0.08 {
+    if edge < classifier.coastal_shelf_edge {
         return pick(
             noise,
             &[
@@ -475,7 +481,7 @@ pub fn classify_terrain(position: UVec2, grid_size: UVec2) -> TerrainType {
             ],
         );
     }
-    if edge < 0.12 {
+    if edge < classifier.coastal_inland_edge {
         return pick(
             noise,
             &[
@@ -486,7 +492,7 @@ pub fn classify_terrain(position: UVec2, grid_size: UVec2) -> TerrainType {
         );
     }
 
-    if !(0.12..=0.88).contains(&fy) {
+    if dist_from_equator >= classifier.polar_latitude_cutoff {
         return pick(
             noise,
             &[
@@ -531,7 +537,7 @@ pub fn classify_terrain(position: UVec2, grid_size: UVec2) -> TerrainType {
         );
     }
 
-    if humidity > 0.7 {
+    if humidity > 0.7 && !is_high_latitude {
         return pick(
             noise,
             &[
@@ -542,7 +548,7 @@ pub fn classify_terrain(position: UVec2, grid_size: UVec2) -> TerrainType {
         );
     }
 
-    if humidity > 0.5 {
+    if humidity > 0.5 && !is_high_latitude {
         return pick(
             noise,
             &[
@@ -577,7 +583,7 @@ pub fn classify_terrain(position: UVec2, grid_size: UVec2) -> TerrainType {
         );
     }
 
-    if fy > 0.65 {
+    if is_high_latitude {
         return pick(
             noise,
             &[
@@ -632,14 +638,15 @@ fn select_mountain_terrain(kind: MountainType, relief: f32, moisture: f32) -> Te
     }
 }
 
-pub fn terrain_for_position_with_context(
+pub fn terrain_for_position_with_classifier(
     position: UVec2,
     grid_size: UVec2,
     moisture: Option<f32>,
     elevation: Option<f32>,
     mountain: Option<(MountainType, f32)>,
+    classifier: &TerrainClassifierConfig,
 ) -> (TerrainType, TerrainTags) {
-    let mut terrain = classify_terrain(position, grid_size);
+    let mut terrain = classify_terrain(position, grid_size, classifier);
     let mut definition = terrain_definition(terrain);
     let mut tags = definition.tags;
     let moisture = moisture.unwrap_or(0.5);
@@ -674,6 +681,23 @@ pub fn terrain_for_position_with_context(
     }
 
     (terrain, tags)
+}
+
+pub fn terrain_for_position_with_context(
+    position: UVec2,
+    grid_size: UVec2,
+    moisture: Option<f32>,
+    elevation: Option<f32>,
+    mountain: Option<(MountainType, f32)>,
+) -> (TerrainType, TerrainTags) {
+    terrain_for_position_with_classifier(
+        position,
+        grid_size,
+        moisture,
+        elevation,
+        mountain,
+        &TerrainClassifierConfig::default(),
+    )
 }
 
 pub fn terrain_for_position(position: UVec2, grid_size: UVec2) -> (TerrainType, TerrainTags) {

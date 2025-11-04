@@ -87,6 +87,8 @@ pub struct MapPreset {
     pub ocean: OceanConfig,
     #[serde(default)]
     pub biomes: BiomeTransitionConfig,
+    #[serde(default)]
+    pub terrain_classifier: TerrainClassifierConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -320,6 +322,28 @@ pub struct BiomeTransitionConfig {
     pub coastal_bonus_scale: f32,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default)]
+pub struct TerrainClassifierConfig {
+    pub coastal_deep_ocean_edge: f32,
+    pub coastal_shelf_edge: f32,
+    pub coastal_inland_edge: f32,
+    pub polar_latitude_cutoff: f32,
+    pub high_latitude_threshold: f32,
+}
+
+impl TerrainClassifierConfig {
+    pub const fn default_values() -> Self {
+        Self {
+            coastal_deep_ocean_edge: 0.04,
+            coastal_shelf_edge: 0.08,
+            coastal_inland_edge: 0.12,
+            polar_latitude_cutoff: 0.38,
+            high_latitude_threshold: 0.15,
+        }
+    }
+}
+
 impl Default for BiomeTransitionConfig {
     fn default() -> Self {
         Self {
@@ -339,6 +363,12 @@ impl Default for BiomeTransitionConfig {
             humidity_bias: 0.0,
             coastal_bonus_scale: 0.8,
         }
+    }
+}
+
+impl Default for TerrainClassifierConfig {
+    fn default() -> Self {
+        Self::default_values()
     }
 }
 
