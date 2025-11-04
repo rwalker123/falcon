@@ -493,6 +493,7 @@ pub fn generate_hydrology(world: &mut World) {
     if target_rivers == 0 {
         target_rivers = river_min_count;
     }
+    elev_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
     let source_percentile = preset_opt
         .as_ref()
         .map(|p| p.river_source_percentile)
@@ -728,7 +729,6 @@ pub fn generate_hydrology(world: &mut World) {
     } else {
         sum_elev / total_tiles
     };
-    elev_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let median_elev = quantile(&elev_samples, 0.5);
 
     let max_flow_total = flow_accum.iter().copied().max().unwrap_or(0);
