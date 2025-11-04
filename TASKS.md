@@ -94,7 +94,7 @@
 - [x] Add a Great Discoveries inspector tab rendering resolved ledger entries, telemetry summaries, and player-facing copy (Owner: TBD, Estimate: 1d; Deps: Great Discovery snapshot contracts). _Status_: Godot inspector now includes a Great Discoveries tab summarizing telemetry, listing resolved entries with detail panes, and wiring snapshot stream fields through the native decoder._
 - [x] Surface faction-specific Great Discovery progress (constellation readiness, observation gates, ETA) in the Knowledge tab with filtering/summary affordances (Owner: TBD, Estimate: 1d; Deps: Great Discovery snapshot contracts). _Status_: The new tab also renders faction-specific constellation readiness with observation deficits, ETA, and posture details driven by snapshot/delta updates._
 - [x] Visualise selected culture layers on the map: from the Culture tab, highlight the chosen regional/local footprint, dim non-selected tiles, and align overlay stats with the selection so divergence hotspots match the list (Owner: TBD, Estimate: 2d; Deps: culture overlay rendering hooks, selection broadcast). _Status_: Inspector selection now persists across refreshes, passes highlighted layer ids to the map, dims non-selected tiles, and reuses the selection set for overlay stats/legend context so divergence hotspots match the list._
-- [ ] Hook espionage mission control into the Godot inspector Knowledge tab: surface mission queues, success odds, misinformation flags, and counter-intel posture/budget controls using the existing command envelopes (`queue_espionage_mission`, `counterintel_policy`, `counterintel_budget`) per `docs/architecture.md` Knowledge Ledger follow-up notes (Owner: TBD, Estimate: 2d; Deps: command bridge, Knowledge telemetry bindings).
+- [x] Hook espionage mission control into the Godot inspector Knowledge tab: surface mission queues, success odds, misinformation flags, and counter-intel posture/budget controls using the existing command envelopes (`queue_espionage_mission`, `counterintel_policy`, `counterintel_budget`) per `docs/architecture.md` Knowledge Ledger follow-up notes (Owner: TBD, Estimate: 2d; Deps: command bridge, Knowledge telemetry bindings). _Status_: Knowledge inspector now renders mission telemetry/queue data, including success odds, MISINFO tags, and live counter-intel posture/budget feedback (`clients/godot_thin_client/src/Main.tscn`, `clients/godot_thin_client/src/scripts/Inspector.gd`). Documentation updated (`docs/architecture.md`, `shadow_scale_strategy_game_concept_technical_plan_v_0.md`) to match the new UI flow.
 
 ### Sentiment Sphere Enhancements
 - [x] Implement quadrant heatmap widget with vector overlay and legend (Owner: Mira, Estimate: 2d).
@@ -162,3 +162,70 @@
 - [x] Document workflow and architecture decisions in `/docs`.
 - [x] Capture integration guide for frontend clients (API schema draft).
 - [x] Write developer ergonomics survey template for week 2 milestone.
+
+## Campaign & Victory
+
+### Start Flow and Scenario Profiles
+- [ ] Implement `StartProfile` loader and schema (Owner: TBD, Estimate: 1.5d; Deps: `SimulationConfig` JSON plumbing). Description: Add `core_sim/src/data/start_profiles.json` and parse into `SimulationConfig`. Fields include starting units, knowledge tags, inventory, survey radius, fog mode, AI profile overrides. Cross-link: manual §2a Start of Game; architecture §Campaign Loop & System Activation.
+- [ ] Add `UnitKind::Founders` and `Command::FoundSettlement { q, r }` with validation (Owner: TBD, Estimate: 2d; Deps: unit/command plumbing). Description: Consume founders on success; create `Settlement` with TownCenter, unlock construction/logistics radius, emit `CampaignEvent::Founded`.
+- [ ] Telemetry and log frames for campaign events (Owner: TBD, Estimate: 1d; Deps: snapshot delta wiring). Description: Stream `CampaignEvent` frames (Founded, Milestone, Victory) for client narration.
+
+### Capability Flags & System Gating
+- [ ] Add `CapabilityFlags` resource and snapshot field (Owner: TBD, Estimate: 1.5d; Deps: schedule registry). Description: Define bitflags for `Construction`, `IndustryT1`, `IndustryT2`, `Power`, `NavalOps`, `AirOps`, `EspionageT2`, `Megaprojects`.
+- [ ] Gate system schedules via run criteria (Owner: TBD, Estimate: 1.5d; Deps: `CapabilityFlags`). Description: Skip `power_tick`, `air_ops_tick`, etc., when flags are unset; ensure determinism unaffected.
+- [ ] Hook Great Discovery effects to flip capability flags (Owner: TBD, Estimate: 1d; Deps: Great Discovery resolver). Description: Register effect lambdas mapping discoveries → flags; allow scenarios to preflip.
+
+### Victory Engine
+- [ ] Add `victory_config.json` and `VictoryState` resource (Owner: TBD, Estimate: 2d; Deps: snapshot plumb). Description: Enumerate enabled modes, thresholds, scaling policy, dependencies.
+- [ ] Implement `victory_tick` stage and win detection for Hegemony, Ascension, Economic, Diplomatic, Stewardship, Survival (Owner: TBD, Estimate: 3–4d; Deps: per-system metrics availability). Description: Compute progress per mode; when terminal, set winner and emit `CampaignEvent::Victory`.
+- [ ] Expose victory progress and winner in snapshots; add continue-after-win toggle (Owner: TBD, Estimate: 1d; Deps: `VictoryState`).
+
+### Client/UI
+- [ ] Scenario picker UI and Start Profile selection (Owner: TBD, Estimate: 1.5d; Deps: start profile loader). Description: Godot UI to choose scenario; pass id to server.
+- [ ] Lock/disable UI tabs by `CapabilityFlags` until unlocked (Owner: TBD, Estimate: 1d; Deps: capability telemetry). Description: Gray out Power/Air/Naval/Spy tier 2 tabs until flags present; show tooltips linking to manual §2a.
+- [ ] Victory panel rendering progress per mode + win screen flow (Owner: TBD, Estimate: 2d; Deps: `VictoryState` telemetry). Description: Allow enable/disable of modes per scenario.
+
+### Nomadic Start Prototype
+- [ ] Define default `late_forager_tribe` StartProfile (Owner: TBD, Estimate: 0.5d; Deps: StartProfile loader). Description: 2–3 bands, no permanent buildings, enable Nomadic commands; victory modes enabled: Hegemony, Cultural Diffusion, Stewardship, Survival.
+- [ ] Implement `Band` units and roles (`Scout`, `Hunter`, `Crafter`/`Guardian`) (Owner: TBD, Estimate: 2d; Deps: unit registry). Description: Movement profiles, inventory capacity, fatigue, discovery throughput.
+- [ ] Implement `Camp` entity with portable buildings, light queue, storage, decay (Owner: TBD, Estimate: 2d; Deps: construction/storage systems). Description: Components `PortableBuildings`, `CampStorage`, `DecayOnAbandon`, `TrailKnowledge`.
+- [ ] Commands: `FoundSeasonalCamp`, `AbandonCamp`, `SplitClan`, `MergeClan` (Owner: TBD, Estimate: 2–3d; Deps: command plumbing). Description: Validation, salvage rules, population/inventory reassignment, telemetry.
+- [ ] Add `SedentarizationScore` resource and per-turn computation (Owner: TBD, Estimate: 1.5d; Deps: population/economy metrics). Description: Inputs: resource density, surplus stability, storage tech/spoilage modifiers, domestication progress, hub potential, fatigue, security; emits `SedentarizationPrompt` events at thresholds.
+
+### Early Diplomacy & Route Network
+- [ ] Derive `RouteNetwork` overlay from movement/logistics traversals (Owner: TBD, Estimate: 2d; Deps: movement/logistics stage hooks). Description: Record adjacent-hex segment hits during movement/logistics; maintain exponentially decaying occupancy counters (fixed-point); surface segments above threshold via telemetry. Do not build a separate path graph.
+- [ ] `RouteRightsTreaty` diplomacy primitive and pathing integration (Owner: TBD, Estimate: 2d; Deps: diplomacy system). Description: Treaties attach to traversal-derived segment keys (or named seasonal circuits); path cost/conflict checkers consult treaty state for friction/toll modifiers.
+- [ ] Cultural Diffusion victory mode metrics (Owner: TBD, Estimate: 2d; Deps: VictoryState). Description: Compute influence along routes from time-weighted occupancy by faction, alliances, and cultural spread; feed into Victory Engine progress.
+
+## World Generation (Map Builder)
+
+### MVP Pipeline
+- [ ] Heightfield + Coasts (Owner: TBD, Estimate: 2d; Deps: grid size config). Description: Generate seeded height raster, set sea level, classify ocean/shelf/inland sea; persist `elevation_m`.
+- [ ] Climate Bands (Owner: TBD, Estimate: 1d; Deps: heightfield). Description: Assign `climate_band` via latitude proxy + elevation + moisture noise; store per tile.
+- [ ] Hydrology: Flow/Accumulation + Rivers (Owner: TBD, Estimate: 3d; Deps: heightfield). Description: D8 flow, limited sink fill, flow accumulation; pick sources, trace polylines to sea; compute order/width; stamp `RiverDelta`, floodplain/wetland adjacencies; store `hydrology_id`.
+- [x] Biome Stamping Integration (Owner: TBD, Estimate: 2d; Deps: climate/hydrology). Description: Feed climate/hydrology into `terrain_for_position` and add river/coast adjacency jitters; maintain terrain adjacency rules.
+- [ ] Resource Surfacing (Owner: TBD, Estimate: 2d; Deps: chemistry tables). Description: Place deposits biased by `TerrainDefinition.resource_bias` and world chemistry tables; guarantee early fuel/conductor/structural paths near starts.
+- [ ] Wildlife/Game Density (Owner: TBD, Estimate: 2d; Deps: biomes/hydrology). Description: Seed herd spawners and migratory paths; emit `game_density` scalar raster for foraging/hunting yields.
+- [ ] Start Location Placement (Owner: TBD, Estimate: 1d; Deps: above). Description: Place nomadic bands near freshwater, forage clusters, soft metal + fuel path within N tiles; validate viability contract.
+- [ ] Snapshot Overlays (Owner: TBD, Estimate: 1.5d; Deps: overlay plumbing). Description: Add `overlays.hydrology` (river polylines) and `overlays.game_density` (scalar raster) to snapshots and Godot client rendering.
+  - [ ] Schema update (Owner: TBD, Estimate: 1d; Deps: sim_schema). Description: Add hydrology overlay contract (polylines or compressed raster) to schema and decoder; wire to Godot.
+
+### Validation
+- [ ] Determinism & Seeds (Owner: TBD, Estimate: 1d). Description: Ensure worldgen deterministic per seed; add test harness.
+- [ ] Viability Checks (Owner: TBD, Estimate: 1d). Description: Assert starts satisfy manual §3a viability; fail-fast with regen if not.
+
+### Map Presets & Tuning
+- [ ] Map Presets file and loader (Owner: TBD, Estimate: 1d; Deps: SimulationConfig). Description: Add `core_sim/src/data/map_presets.json`, extend `SimulationConfig` with `map_preset_id`, load preset at startup, and include `preset_id` in `WorldSnapshot`.
+- [ ] Implement Tag Budget Solver (Owner: TBD, Estimate: 2d; Deps: biome stamping). Description: Post-process to match `terrain_tag_targets` within `tolerance`, adjusting marginal tiles while respecting adjacency.
+- [ ] Earthlike default preset (Owner: TBD, Estimate: 0.5d; Deps: presets loader). Description: Oceans/continents macro, climate weights, hydrology intensity, tag targets, and mild biome weight biases.
+
+### Implemented (scaffold)
+- [x] Load `map_preset_id` from SimulationConfig and presets file; log selection; insert preset handle as resource.
+- [x] Generate hydrology rasters and basic river polylines at Startup using preset sea level.
+- [x] Sea-level gating during tile spawn to stamp ocean vs land.
+- [x] Simple Tag Budget Solver passes:
+  - Wetland: promote tiles adjacent to rivers to `FreshwaterMarsh` until target share approached.
+  - Fertile: promote adjacent-to-river land to `Floodplain` until target share approached.
+  - Coastal: promote land adjacent to water to `TidalFlat` to raise `Coastal` coverage.
+- [x] Hydrology overlay export: extended schema (FlatBuffers) with `HydrologyOverlay` and wired server snapshot + Godot decoder to render polylines.
+- [ ] Godot preset selector (Owner: TBD, Estimate: 1d; Deps: loader). Description: UI to choose `map_preset_id`, pass through to server, display preset summary.

@@ -8,7 +8,7 @@ use std::{
 
 use bevy::{math::UVec2, prelude::*};
 use serde::Deserialize;
-use sim_runtime::{CorruptionLedger, CorruptionSubsystem};
+use sim_runtime::{CorruptionLedger, CorruptionSubsystem, FloatRasterState};
 use thiserror::Error;
 
 use crate::{
@@ -21,6 +21,8 @@ use crate::{
 #[derive(Resource, Debug, Clone)]
 pub struct SimulationConfig {
     pub grid_size: UVec2,
+    pub map_preset_id: String,
+    pub map_seed: u64,
     pub ambient_temperature: Scalar,
     pub temperature_lerp: Scalar,
     pub logistics_flow_gain: Scalar,
@@ -62,6 +64,39 @@ pub struct SimulationConfig {
     pub log_bind: SocketAddr,
     pub snapshot_history_limit: usize,
     pub crisis_auto_seed: bool,
+}
+
+#[derive(Resource, Debug, Clone, Default)]
+pub struct MoistureRaster {
+    pub width: u32,
+    pub height: u32,
+    pub values: Vec<f32>,
+}
+
+impl MoistureRaster {
+    pub fn new(width: u32, height: u32, values: Vec<f32>) -> Self {
+        Self {
+            width,
+            height,
+            values,
+        }
+    }
+
+    pub fn from_state(state: &FloatRasterState) -> Self {
+        Self {
+            width: state.width,
+            height: state.height,
+            values: state.samples.clone(),
+        }
+    }
+
+    pub fn as_state(&self) -> FloatRasterState {
+        FloatRasterState {
+            width: self.width,
+            height: self.height,
+            samples: self.values.clone(),
+        }
+    }
 }
 
 pub const BUILTIN_SIMULATION_CONFIG: &str = include_str!("data/simulation_config.json");
@@ -115,6 +150,10 @@ pub enum SimulationConfigError {
 #[derive(Debug, Deserialize)]
 struct SimulationConfigData {
     grid_size: GridSizeData,
+    #[serde(default = "default_map_preset_id")]
+    map_preset_id: String,
+    #[serde(default)]
+    map_seed: u64,
     ambient_temperature: f32,
     temperature_lerp: f32,
     logistics_flow_gain: f32,
@@ -175,6 +214,8 @@ impl SimulationConfigData {
     fn into_config(self) -> Result<SimulationConfig, SimulationConfigError> {
         Ok(SimulationConfig {
             grid_size: UVec2::new(self.grid_size.x, self.grid_size.y),
+            map_preset_id: self.map_preset_id,
+            map_seed: self.map_seed,
             ambient_temperature: scalar_from_f32(self.ambient_temperature),
             temperature_lerp: scalar_from_f32(self.temperature_lerp),
             logistics_flow_gain: scalar_from_f32(self.logistics_flow_gain),
@@ -221,6 +262,10 @@ impl SimulationConfigData {
             crisis_auto_seed: self.crisis_auto_seed,
         })
     }
+}
+
+fn default_map_preset_id() -> String {
+    "earthlike".to_string()
 }
 
 fn parse_socket(value: String, field: &'static str) -> Result<SocketAddr, SimulationConfigError> {
@@ -290,6 +335,21 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
 /// Tracks total simulation ticks elapsed.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SimulationTick(pub u64);
+
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct StartLocation {
+    position: Option<UVec2>,
+}
+
+impl StartLocation {
+    pub fn new(position: Option<UVec2>) -> Self {
+        Self { position }
+    }
+
+    pub fn position(&self) -> Option<UVec2> {
+        self.position
+    }
+}
 
 /// Authoritative sentiment axis bias values applied across factions.
 ///

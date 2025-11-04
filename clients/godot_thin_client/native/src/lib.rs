@@ -574,6 +574,8 @@ struct OverlaySlices<'a> {
     culture: &'a [f32],
     military: &'a [f32],
     crisis: &'a [f32],
+    elevation: &'a [f32],
+    moisture: &'a [f32],
 }
 
 struct TerrainSlices<'a> {
@@ -594,6 +596,8 @@ fn snapshot_dict(
     overlays: OverlaySlices<'_>,
     terrain: TerrainSlices<'_>,
     crisis_annotations: &[CrisisAnnotationRecord],
+    hydrology_rivers: Option<&VariantArray>,
+    start_marker: Option<(u32, u32)>,
 ) -> Dictionary {
     let mut dict = Dictionary::new();
     let _ = dict.insert("turn", tick as i64);
@@ -623,6 +627,8 @@ fn snapshot_dict(
     let culture_base = copy_into(overlays.culture);
     let military_base = copy_into(overlays.military);
     let crisis_base = copy_into(overlays.crisis);
+    let elevation_base = copy_into(overlays.elevation);
+    let moisture_base = copy_into(overlays.moisture);
 
     let mut logistics_normalized = logistics_base.clone();
     normalize_overlay(&mut logistics_normalized);
@@ -638,6 +644,10 @@ fn snapshot_dict(
     normalize_overlay(&mut military_normalized);
     let mut crisis_normalized = crisis_base.clone();
     normalize_overlay(&mut crisis_normalized);
+    let mut elevation_normalized = elevation_base.clone();
+    normalize_overlay(&mut elevation_normalized);
+    let mut moisture_normalized = moisture_base.clone();
+    normalize_overlay(&mut moisture_normalized);
 
     let mut logistics_contrast_vec = logistics_normalized.clone();
     for value in logistics_contrast_vec.iter_mut() {
@@ -662,6 +672,8 @@ fn snapshot_dict(
         let v = *value;
         *value = v * (1.0 - v);
     }
+    let elevation_contrast_vec = elevation_normalized.clone();
+    let moisture_contrast_vec = moisture_normalized.clone();
 
     let corruption_placeholder = overlays.corruption.is_empty();
     let fog_placeholder = overlays.fog.is_empty();
@@ -690,6 +702,15 @@ fn snapshot_dict(
     let crisis_array = packed_from_slice(&crisis_normalized);
     let crisis_raw_array = packed_from_slice(&crisis_base);
     let crisis_contrast_array = packed_from_slice(&crisis_contrast_vec);
+    let elevation_array = packed_from_slice(&elevation_normalized);
+    let elevation_raw_array = packed_from_slice(&elevation_base);
+    let elevation_contrast_array = packed_from_slice(&elevation_contrast_vec);
+    let moisture_array = packed_from_slice(&moisture_normalized);
+    let moisture_raw_array = packed_from_slice(&moisture_base);
+    let moisture_contrast_array = packed_from_slice(&moisture_contrast_vec);
+
+    let elevation_placeholder = elevation_array.is_empty();
+    let moisture_placeholder = overlays.moisture.is_empty();
 
     let mut overlays = Dictionary::new();
     let mut channels = Dictionary::new();
@@ -798,6 +819,36 @@ fn snapshot_dict(
             placeholder: military_placeholder,
         },
     );
+    insert_overlay_channel(
+        &mut channels,
+        &mut channel_order,
+        OverlayChannelParams {
+            key: "moisture",
+            label: "Moisture & Rain Shadows",
+            description: Some(
+                "Humidity field after windward lift and leeward drying (0 = arid, 1 = saturated).",
+            ),
+            normalized: &moisture_array,
+            raw: &moisture_raw_array,
+            contrast: &moisture_contrast_array,
+            placeholder: moisture_placeholder,
+        },
+    );
+    insert_overlay_channel(
+        &mut channels,
+        &mut channel_order,
+        OverlayChannelParams {
+            key: "elevation",
+            label: "Elevation Heatmap",
+            description: Some(
+                "Relative elevation above sea level after tectonic restamp (0 = coast, 1 = peaks).",
+            ),
+            normalized: &elevation_array,
+            raw: &elevation_raw_array,
+            contrast: &elevation_contrast_array,
+            placeholder: elevation_base.is_empty(),
+        },
+    );
 
     let _ = overlays.insert("channels", channels);
     let _ = overlays.insert("channel_order", channel_order.clone());
@@ -808,6 +859,8 @@ fn snapshot_dict(
         || culture_placeholder
         || military_placeholder
         || crisis_placeholder
+        || elevation_placeholder
+        || moisture_placeholder
     {
         let mut placeholder_keys = PackedStringArray::new();
         if corruption_placeholder {
@@ -824,6 +877,12 @@ fn snapshot_dict(
         }
         if crisis_placeholder {
             placeholder_keys.push(&GString::from("crisis"));
+        }
+        if elevation_placeholder {
+            placeholder_keys.push(&GString::from("elevation"));
+        }
+        if moisture_placeholder {
+            placeholder_keys.push(&GString::from("moisture"));
         }
         let _ = overlays.insert("placeholder_channels", placeholder_keys);
     }
@@ -850,6 +909,12 @@ fn snapshot_dict(
     let _ = overlays.insert("crisis", crisis_array.clone());
     let _ = overlays.insert("crisis_raw", crisis_raw_array.clone());
     let _ = overlays.insert("crisis_contrast", crisis_contrast_array.clone());
+    let _ = overlays.insert("elevation", elevation_array.clone());
+    let _ = overlays.insert("elevation_raw", elevation_raw_array.clone());
+    let _ = overlays.insert("elevation_contrast", elevation_contrast_array.clone());
+    let _ = overlays.insert("moisture", moisture_array.clone());
+    let _ = overlays.insert("moisture_raw", moisture_raw_array.clone());
+    let _ = overlays.insert("moisture_contrast", moisture_contrast_array.clone());
     let mut crisis_annotation_array = VariantArray::new();
     for record in crisis_annotations {
         let dict = crisis_annotation_to_dict(record);
@@ -896,6 +961,16 @@ fn snapshot_dict(
             let _ = tag_labels.insert(*mask as i64, *label);
         }
         let _ = overlays.insert("terrain_tag_labels", tag_labels);
+    }
+
+    if let Some(rivers) = hydrology_rivers {
+        let _ = overlays.insert("hydrology_rivers", rivers.clone());
+    }
+    if let Some((sx, sy)) = start_marker {
+        let mut marker = Dictionary::new();
+        let _ = marker.insert("x", sx as i64);
+        let _ = marker.insert("y", sy as i64);
+        let _ = overlays.insert("start_marker", marker);
     }
 
     let _ = dict.insert("overlays", overlays);
@@ -980,6 +1055,15 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
     }
     if let Some(overlay) = delta.crisisOverlay() {
         agg.apply_crisis_overlay(overlay);
+    }
+    if let Some(overlay) = delta.elevationOverlay() {
+        agg.apply_elevation_overlay(overlay);
+    }
+    if let Some(raster) = delta.moistureRaster() {
+        agg.apply_moisture_raster(raster);
+    }
+    if let Some(marker) = delta.startMarker() {
+        agg.start_marker = Some((marker.x(), marker.y()));
     }
     let mut dict = agg.into_dictionary();
 
@@ -1143,7 +1227,14 @@ struct DeltaAggregator {
     crisis_width: u32,
     crisis_height: u32,
     crisis_samples: Vec<f32>,
+    elevation_width: u32,
+    elevation_height: u32,
+    elevation_samples: Vec<f32>,
+    moisture_width: u32,
+    moisture_height: u32,
+    moisture_samples: Vec<f32>,
     crisis_annotations: Vec<CrisisAnnotationRecord>,
+    start_marker: Option<(u32, u32)>,
 }
 
 impl DeltaAggregator {
@@ -1312,6 +1403,40 @@ impl DeltaAggregator {
         }
     }
 
+    fn apply_elevation_overlay(&mut self, overlay: fb::ElevationOverlay<'_>) {
+        self.elevation_width = overlay.width();
+        self.elevation_height = overlay.height();
+        let count = (self.elevation_width as usize)
+            .saturating_mul(self.elevation_height as usize)
+            .max(1);
+        self.elevation_samples.resize(count, 0.0);
+        if let Some(samples) = overlay.samples() {
+            for (idx, value) in samples.iter().enumerate() {
+                if idx >= count {
+                    break;
+                }
+                self.elevation_samples[idx] = (value as f32) / 255.0;
+            }
+        }
+    }
+
+    fn apply_moisture_raster(&mut self, raster: fb::FloatRaster<'_>) {
+        self.moisture_width = raster.width();
+        self.moisture_height = raster.height();
+        let count = (self.moisture_width as usize)
+            .saturating_mul(self.moisture_height as usize)
+            .max(1);
+        self.moisture_samples.resize(count, 0.0);
+        if let Some(samples) = raster.samples() {
+            for (idx, value) in samples.iter().enumerate() {
+                if idx >= count {
+                    break;
+                }
+                self.moisture_samples[idx] = value;
+            }
+        }
+    }
+
     fn into_dictionary(self) -> Dictionary {
         let DeltaAggregator {
             tick,
@@ -1343,7 +1468,14 @@ impl DeltaAggregator {
             crisis_width,
             crisis_height,
             crisis_samples,
+            elevation_width,
+            elevation_height,
+            elevation_samples,
+            moisture_width,
+            moisture_height,
+            moisture_samples,
             crisis_annotations,
+            start_marker,
         } = self;
 
         let mut final_width = terrain_width
@@ -1353,7 +1485,10 @@ impl DeltaAggregator {
             .max(corruption_width)
             .max(fog_width)
             .max(culture_width)
-            .max(military_width);
+            .max(military_width)
+            .max(crisis_width)
+            .max(elevation_width)
+            .max(moisture_width);
         let mut final_height = terrain_height
             .max(height)
             .max(logistics_height)
@@ -1361,7 +1496,10 @@ impl DeltaAggregator {
             .max(corruption_height)
             .max(fog_height)
             .max(culture_height)
-            .max(military_height);
+            .max(military_height)
+            .max(crisis_height)
+            .max(elevation_height)
+            .max(moisture_height);
         if final_width == 0 || final_height == 0 {
             final_width = final_width.max(1);
             final_height = final_height.max(1);
@@ -1497,6 +1635,40 @@ impl DeltaAggregator {
             }
         }
 
+        let mut elevation = vec![0.0f32; total];
+        if elevation_width > 0 && elevation_height > 0 && !elevation_samples.is_empty() {
+            for y in 0..elevation_height {
+                for x in 0..elevation_width {
+                    let src_idx = (y as usize) * (elevation_width as usize) + x as usize;
+                    if src_idx >= elevation_samples.len() {
+                        break;
+                    }
+                    if x >= final_width || y >= final_height {
+                        continue;
+                    }
+                    let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                    elevation[dst_idx] = elevation_samples[src_idx];
+                }
+            }
+        }
+
+        let mut moisture = vec![0.0f32; total];
+        if moisture_width > 0 && moisture_height > 0 && !moisture_samples.is_empty() {
+            for y in 0..moisture_height {
+                for x in 0..moisture_width {
+                    let src_idx = (y as usize) * (moisture_width as usize) + x as usize;
+                    if src_idx >= moisture_samples.len() {
+                        break;
+                    }
+                    if x >= final_width || y >= final_height {
+                        continue;
+                    }
+                    let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                    moisture[dst_idx] = moisture_samples[src_idx];
+                }
+            }
+        }
+
         let terrain_ref = if terrain_types.is_empty() {
             None
         } else {
@@ -1522,12 +1694,16 @@ impl DeltaAggregator {
                 culture: &culture,
                 military: &military,
                 crisis: &crisis,
+                elevation: &elevation,
+                moisture: &moisture,
             },
             TerrainSlices {
                 terrain: terrain_ref.as_deref(),
                 tags: tags_ref.as_deref(),
             },
             &crisis_annotations,
+            None,
+            start_marker,
         )
     }
 }
@@ -1601,6 +1777,10 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
     let mut military_dims = (0u32, 0u32);
     let mut crisis_grid: Vec<f32> = Vec::new();
     let mut crisis_dims = (0u32, 0u32);
+    let mut elevation_grid: Vec<f32> = Vec::new();
+    let mut elevation_dims = (0u32, 0u32);
+    let mut moisture_grid: Vec<f32> = Vec::new();
+    let mut moisture_dims = (0u32, 0u32);
     let mut crisis_annotations: Vec<CrisisAnnotationRecord> = Vec::new();
     if let Some(raster) = snapshot.logisticsRaster() {
         let width = raster.width();
@@ -1857,6 +2037,42 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         }
     }
 
+    if let Some(raster) = snapshot.moistureRaster() {
+        let width = raster.width();
+        let height = raster.height();
+        if width > 0 && height > 0 {
+            let total = (width as usize).saturating_mul(height as usize);
+            moisture_grid = vec![0.0f32; total];
+            if let Some(samples) = raster.samples() {
+                for (idx, value) in samples.iter().enumerate() {
+                    if idx >= total {
+                        break;
+                    }
+                    moisture_grid[idx] = value;
+                }
+            }
+            moisture_dims = (width, height);
+        }
+    }
+
+    if let Some(overlay) = snapshot.elevationOverlay() {
+        let width = overlay.width();
+        let height = overlay.height();
+        if width > 0 && height > 0 {
+            let total = (width as usize).saturating_mul(height as usize);
+            elevation_grid = vec![0.0f32; total];
+            if let Some(samples) = overlay.samples() {
+                for (idx, value) in samples.iter().enumerate() {
+                    if idx >= total {
+                        break;
+                    }
+                    elevation_grid[idx] = (value as f32) / 255.0;
+                }
+            }
+            elevation_dims = (width, height);
+        }
+    }
+
     if military_grid.is_empty() {
         let fallback_width = logistics_dims
             .0
@@ -1895,6 +2111,26 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         crisis_dims = (fallback_width, fallback_height);
     }
 
+    if elevation_grid.is_empty() {
+        let fallback_width = logistics_dims
+            .0
+            .max(sentiment_dims.0)
+            .max(corruption_dims.0)
+            .max(terrain_width)
+            .max(1);
+        let fallback_height = logistics_dims
+            .1
+            .max(sentiment_dims.1)
+            .max(corruption_dims.1)
+            .max(terrain_height)
+            .max(1);
+        let total = (fallback_width as usize)
+            .saturating_mul(fallback_height as usize)
+            .max(1);
+        elevation_grid = vec![0.0f32; total];
+        elevation_dims = (fallback_width, fallback_height);
+    }
+
     let final_width = logistics_dims
         .0
         .max(sentiment_dims.0)
@@ -1903,6 +2139,9 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         .max(fog_dims.0)
         .max(culture_dims.0)
         .max(military_dims.0)
+        .max(crisis_dims.0)
+        .max(elevation_dims.0)
+        .max(moisture_dims.0)
         .max(1);
     let final_height = logistics_dims
         .1
@@ -1912,6 +2151,9 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         .max(fog_dims.1)
         .max(culture_dims.1)
         .max(military_dims.1)
+        .max(crisis_dims.1)
+        .max(elevation_dims.1)
+        .max(moisture_dims.1)
         .max(1);
     let total = (final_width as usize)
         .saturating_mul(final_height as usize)
@@ -2036,6 +2278,39 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         }
     }
 
+    let mut elevation_resized = vec![0.0f32; total];
+    if elevation_dims.0 > 0 && elevation_dims.1 > 0 {
+        for y in 0..elevation_dims.1 {
+            for x in 0..elevation_dims.0 {
+                let src_idx = (y as usize) * (elevation_dims.0 as usize) + x as usize;
+                if src_idx >= elevation_grid.len() {
+                    break;
+                }
+                if x >= final_width || y >= final_height {
+                    continue;
+                }
+                let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                elevation_resized[dst_idx] = elevation_grid[src_idx];
+            }
+        }
+    }
+    let mut moisture_resized = vec![0.0f32; total];
+    if moisture_dims.0 > 0 && moisture_dims.1 > 0 {
+        for y in 0..moisture_dims.1 {
+            for x in 0..moisture_dims.0 {
+                let src_idx = (y as usize) * (moisture_dims.0 as usize) + x as usize;
+                if src_idx >= moisture_grid.len() {
+                    break;
+                }
+                if x >= final_width || y >= final_height {
+                    continue;
+                }
+                let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                moisture_resized[dst_idx] = moisture_grid[src_idx];
+            }
+        }
+    }
+
     let mut terrain_vec: Vec<u16> = Vec::new();
     let mut tag_vec: Vec<u16> = Vec::new();
     if terrain_width > 0 && terrain_height > 0 && !terrain_samples.is_empty() {
@@ -2069,6 +2344,36 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         Some(tag_vec.as_slice())
     };
 
+    // Construct hydrology rivers array for overlays.
+    let mut hydrology_rivers = VariantArray::new();
+    if let Some(hydro) = snapshot.hydrologyOverlay() {
+        if let Some(rivers) = hydro.rivers() {
+            for river in rivers {
+                let mut points_array = VariantArray::new();
+                if let Some(points) = river.points() {
+                    for p in points {
+                        let mut pt = Dictionary::new();
+                        let _ = pt.insert("x", p.x() as i64);
+                        let _ = pt.insert("y", p.y() as i64);
+                        let variant = pt.to_variant();
+                        points_array.push(&variant);
+                    }
+                }
+                let mut rdict = Dictionary::new();
+                let _ = rdict.insert("id", river.id() as i64);
+                let _ = rdict.insert("order", river.order() as i64);
+                let _ = rdict.insert("width", river.width() as i64);
+                let _ = rdict.insert("points", points_array);
+                let river_variant = rdict.to_variant();
+                hydrology_rivers.push(&river_variant);
+            }
+        }
+    }
+
+    let start_marker_tuple = snapshot
+        .startMarker()
+        .map(|marker| (marker.x(), marker.y()));
+
     let mut dict = snapshot_dict(
         header.tick(),
         GridSize {
@@ -2083,12 +2388,20 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
             culture: &culture_resized,
             military: &military_resized,
             crisis: &crisis_resized,
+            elevation: &elevation_resized,
+            moisture: &moisture_resized,
         },
         TerrainSlices {
             terrain: terrain_slice,
             tags: terrain_tag_slice,
         },
         &crisis_annotations,
+        if hydrology_rivers.is_empty() {
+            None
+        } else {
+            Some(&hydrology_rivers)
+        },
+        start_marker_tuple,
     );
 
     if let Some(axis_bias) = snapshot.axisBias() {
@@ -2821,6 +3134,8 @@ fn tile_to_dict(tile: fb::TileState<'_>) -> Dictionary {
     let _ = dict.insert("terrain", tile.terrain().0 as i64);
     let _ = dict.insert("terrain_tags", tile.terrainTags() as i64);
     let _ = dict.insert("culture_layer", tile.cultureLayer() as i64);
+    let _ = dict.insert("mountain_kind", i64::from(tile.mountainKind().0));
+    let _ = dict.insert("mountain_relief", tile.mountainRelief());
     dict
 }
 

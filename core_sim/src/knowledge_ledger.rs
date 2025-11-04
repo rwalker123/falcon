@@ -782,25 +782,27 @@ pub fn knowledge_ledger_tick(
         if progress_delta > 0 {
             let previous_progress = entry.progress_percent;
             let new_progress = (previous_progress as i32 + progress_delta).min(100) as u16;
+            let progress_increment = new_progress.saturating_sub(previous_progress) as i16;
             entry.progress_percent = new_progress;
 
-            if new_progress >= 100 && !entry.flags.contains(KnowledgeLeakFlags::COMMON_KNOWLEDGE) {
-                entry.flags.insert(KnowledgeLeakFlags::COMMON_KNOWLEDGE);
-                entry.flags.remove(KnowledgeLeakFlags::CASCADE_PENDING);
+            if new_progress >= 100 {
                 entry.time_to_cascade = 0;
-                pending_events.push(KnowledgeTimelineEvent {
-                    tick: tick.0,
-                    kind: KnowledgeTimelineEventKind::Cascade,
-                    source_faction: Some(entry.owner_faction),
-                    delta_percent: Some(progress_delta as i16),
-                    note: Some("Knowledge cascade reached 100%".into()),
-                });
+                entry.flags.remove(KnowledgeLeakFlags::CASCADE_PENDING);
+
+                if !entry.flags.contains(KnowledgeLeakFlags::COMMON_KNOWLEDGE) {
+                    entry.flags.insert(KnowledgeLeakFlags::COMMON_KNOWLEDGE);
+                    pending_events.push(KnowledgeTimelineEvent {
+                        tick: tick.0,
+                        kind: KnowledgeTimelineEventKind::Cascade,
+                        source_faction: Some(entry.owner_faction),
+                        delta_percent: Some(progress_increment.max(1)),
+                        note: Some("Knowledge cascade reached 100%".into()),
+                    });
+                }
             } else {
-                entry.time_to_cascade = if progress_delta > 0 {
+                entry.time_to_cascade = {
                     let remaining = (100 - new_progress as i32).max(0);
                     ((remaining + progress_delta - 1) / progress_delta) as u16
-                } else {
-                    entry.time_to_cascade
                 };
                 if new_progress >= 90 {
                     entry.flags.insert(KnowledgeLeakFlags::CASCADE_PENDING);
@@ -808,17 +810,19 @@ pub fn knowledge_ledger_tick(
                     entry.flags.remove(KnowledgeLeakFlags::CASCADE_PENDING);
                 }
 
-                pending_events.push(KnowledgeTimelineEvent {
-                    tick: tick.0,
-                    kind: KnowledgeTimelineEventKind::LeakProgress,
-                    source_faction: Some(entry.owner_faction),
-                    delta_percent: Some((new_progress - previous_progress) as i16),
-                    note: Some(format!(
-                        "Half-life {}→{}",
-                        base_half_life, effective_half_life
-                    )),
-                });
-                emitted_progress_event = true;
+                if progress_increment > 0 {
+                    pending_events.push(KnowledgeTimelineEvent {
+                        tick: tick.0,
+                        kind: KnowledgeTimelineEventKind::LeakProgress,
+                        source_faction: Some(entry.owner_faction),
+                        delta_percent: Some(progress_increment),
+                        note: Some(format!(
+                            "Half-life {}→{}",
+                            base_half_life, effective_half_life
+                        )),
+                    });
+                    emitted_progress_event = true;
+                }
             }
         }
 
@@ -947,6 +951,10 @@ pub fn encode_ledger_key(owner: FactionId, discovery_id: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::prelude::App;
+    use bevy_ecs::system::RunSystemOnce;
+
+    use crate::{EspionageCatalog, SimulationMetrics, SimulationTick};
 
     #[test]
     fn record_probe_creates_entry() {
@@ -1018,5 +1026,41 @@ mod tests {
         assert_eq!(events.len(), 3);
         assert_eq!(events[0].note.as_deref(), Some("event 4"));
         assert_eq!(events[2].note.as_deref(), Some("event 6"));
+    }
+
+    #[test]
+    fn common_knowledge_entries_do_not_emit_zero_delta_progress() {
+        let mut app = App::new();
+        let config_handle = KnowledgeLedgerConfigHandle::load_builtin();
+        let config = config_handle.get();
+        let mut ledger = KnowledgeLedger::with_config(Arc::clone(&config));
+
+        let owner = FactionId(1);
+        let discovery = 99;
+        let mut entry = KnowledgeLedgerEntry::new(owner, discovery, config.as_ref());
+        entry.progress_percent = 100;
+        entry.flags.insert(KnowledgeLeakFlags::COMMON_KNOWLEDGE);
+        ledger.upsert_entry(entry);
+
+        app.insert_resource(SimulationTick(0));
+        app.insert_resource(SimulationMetrics::default());
+        app.insert_resource(ledger);
+        app.insert_resource(EspionageCatalog::load_builtin().expect("catalog parses"));
+
+        app.world.run_system_once(knowledge_ledger_tick);
+
+        let ledger = app.world.resource::<KnowledgeLedger>();
+        assert!(
+            ledger.timeline.is_empty(),
+            "expected no new leak progress events after cascade completion"
+        );
+        let entry = ledger
+            .entry(owner, discovery)
+            .expect("entry should still exist");
+        assert!(
+            entry.flags.contains(KnowledgeLeakFlags::COMMON_KNOWLEDGE)
+                && !entry.flags.contains(KnowledgeLeakFlags::CASCADE_PENDING),
+            "common knowledge flag should stay set without re-adding cascade pending"
+        );
     }
 }

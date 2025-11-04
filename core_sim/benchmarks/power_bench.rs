@@ -76,6 +76,7 @@ fn spawn_power_nodes(
                         temperature: scalar_zero(),
                         terrain: TerrainType::AlluvialPlain,
                         terrain_tags: TerrainTags::empty(),
+                        mountain: None,
                     },
                     PowerNode {
                         id: PowerNodeId(idx as u32),

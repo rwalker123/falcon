@@ -3,6 +3,7 @@ use sim_runtime::{KnownTechFragment as ContractKnowledgeFragment, TerrainTags, T
 
 use crate::{
     generations::GenerationId,
+    mapgen::MountainType,
     orders::FactionId,
     power::PowerNodeId,
     scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar},
@@ -17,6 +18,13 @@ pub struct Tile {
     pub temperature: Scalar,
     pub terrain: TerrainType,
     pub terrain_tags: TerrainTags,
+    pub mountain: Option<MountainMetadata>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MountainMetadata {
+    pub kind: MountainType,
+    pub relief: f32,
 }
 
 /// Procedural element categories used to vary material behavior.
@@ -260,6 +268,7 @@ impl Default for Tile {
             temperature: scalar_zero(),
             terrain: TerrainType::AlluvialPlain,
             terrain_tags: TerrainTags::empty(),
+            mountain: None,
         }
     }
 }

@@ -10,20 +10,22 @@ use sim_runtime::{
     CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
-    CultureTraitEntry, DiscoveryProgressEntry, GenerationState, GreatDiscoveryDefinitionState,
-    GreatDiscoveryProgressState, GreatDiscoveryState, GreatDiscoveryTelemetryState,
+    CultureTraitEntry, DiscoveryProgressEntry, ElevationOverlayState, FloatRasterState,
+    GenerationState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
+    GreatDiscoveryState, GreatDiscoveryTelemetryState, HydrologyOverlayState,
     InfluentialIndividualState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
-    KnowledgeTimelineEventState, LogisticsLinkState, PendingMigrationState, PopulationCohortState,
-    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState,
-    ScalarRasterState, SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState,
-    SentimentTelemetryState, SnapshotHeader, TerrainOverlayState, TerrainSample, TileState,
-    TradeLinkKnowledge, TradeLinkState, WorldDelta, WorldSnapshot,
+    KnowledgeTimelineEventState, LogisticsLinkState, MountainKind, PendingMigrationState,
+    PopulationCohortState, PowerIncidentSeverity, PowerIncidentState, PowerNodeState,
+    PowerTelemetryState, ScalarRasterState, SentimentAxisTelemetry, SentimentDriverCategory,
+    SentimentDriverState, SentimentTelemetryState, SnapshotHeader, StartMarkerState,
+    TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState, WorldDelta,
+    WorldSnapshot,
 };
 
 use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, LogisticsLink,
-        PendingMigration, PopulationCohort, PowerNode, Tile, TradeLink,
+        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, Tile, TradeLink,
     },
     culture::{
         CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
@@ -36,6 +38,8 @@ use crate::{
         GreatDiscoveryId, GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
         GreatDiscoveryTelemetry,
     },
+    heightfield::ElevationField,
+    hydrology::HydrologyState,
     influencers::{
         InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerImpacts, InfluentialRoster,
         BUILTIN_INFLUENCER_CONFIG,
@@ -44,16 +48,19 @@ use crate::{
         encode_ledger_key, KnowledgeLedger, KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle,
         KnowledgeSnapshotPayload, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
     },
+    map_preset::MapPresetsHandle,
     metrics::SimulationMetrics,
     orders::FactionId,
     power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
     resources::{
-        CorruptionLedgers, CorruptionTelemetry, DiscoveryProgressLedger, SentimentAxisBias,
-        SimulationConfig, SimulationTick, TileRegistry,
+        CorruptionLedgers, CorruptionTelemetry, DiscoveryProgressLedger, MoistureRaster,
+        SentimentAxisBias, SimulationConfig, SimulationTick, StartLocation, TileRegistry,
     },
     scalar::Scalar,
     snapshot_overlays_config::{SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle},
 };
+
+use crate::mapgen::MountainType;
 
 use crate::crisis::{
     CrisisMetricKind as InternalCrisisMetricKind,
@@ -81,6 +88,11 @@ pub struct SnapshotContext<'w> {
     pub overlays: Res<'w, SnapshotOverlaysConfigHandle>,
     pub metrics: Res<'w, SimulationMetrics>,
     pub crisis_overlay: Res<'w, CrisisOverlayCache>,
+    pub start_location: Res<'w, StartLocation>,
+    pub hydrology: Res<'w, HydrologyState>,
+    pub elevation: Res<'w, ElevationField>,
+    pub moisture: Option<Res<'w, MoistureRaster>>,
+    pub map_presets: Res<'w, MapPresetsHandle>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -146,6 +158,7 @@ pub struct SnapshotHistory {
     knowledge_timeline: Vec<KnowledgeTimelineEventState>,
     crisis_telemetry: CrisisTelemetryState,
     crisis_overlay: CrisisOverlayState,
+    start_marker: Option<StartMarkerState>,
     axis_bias: AxisBiasState,
     sentiment: SentimentTelemetryState,
     terrain_overlay: TerrainOverlayState,
@@ -155,6 +168,9 @@ pub struct SnapshotHistory {
     fog_raster: ScalarRasterState,
     culture_raster: ScalarRasterState,
     military_raster: ScalarRasterState,
+    moisture_raster: FloatRasterState,
+    hydrology_overlay: HydrologyOverlayState,
+    elevation_overlay: ElevationOverlayState,
     corruption: CorruptionLedger,
     history: VecDeque<StoredSnapshot>,
 }
@@ -195,6 +211,7 @@ impl SnapshotHistory {
             knowledge_timeline: Vec::new(),
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
+            start_marker: None,
             axis_bias: AxisBiasState::default(),
             sentiment: SentimentTelemetryState::default(),
             terrain_overlay: TerrainOverlayState::default(),
@@ -204,6 +221,9 @@ impl SnapshotHistory {
             fog_raster: ScalarRasterState::default(),
             culture_raster: ScalarRasterState::default(),
             military_raster: ScalarRasterState::default(),
+            moisture_raster: FloatRasterState::default(),
+            hydrology_overlay: HydrologyOverlayState::default(),
+            elevation_overlay: ElevationOverlayState::default(),
             corruption: CorruptionLedger::default(),
             history: VecDeque::new(),
         }
@@ -309,6 +329,33 @@ impl SnapshotHistory {
             None
         } else {
             Some(terrain_state.clone())
+        };
+
+        let hydrology_state = snapshot.hydrology_overlay.clone();
+        let hydrology_delta = if self.hydrology_overlay == hydrology_state {
+            None
+        } else {
+            Some(hydrology_state.clone())
+        };
+        let moisture_state = snapshot.moisture_raster.clone();
+        let moisture_delta = if self.moisture_raster == moisture_state {
+            None
+        } else {
+            Some(moisture_state.clone())
+        };
+
+        let elevation_state = snapshot.elevation_overlay.clone();
+        let elevation_delta = if self.elevation_overlay == elevation_state {
+            None
+        } else {
+            Some(elevation_state.clone())
+        };
+
+        let start_marker_state = snapshot.start_marker.clone();
+        let start_marker_delta = if self.start_marker == start_marker_state {
+            None
+        } else {
+            start_marker_state.clone()
         };
 
         let logistics_raster_state = snapshot.logistics_raster.clone();
@@ -459,6 +506,10 @@ impl SnapshotHistory {
             knowledge_timeline: knowledge_timeline_delta.clone(),
             crisis_telemetry: crisis_telemetry_delta.clone(),
             crisis_overlay: crisis_overlay_delta.clone(),
+            moisture_raster: moisture_delta.clone(),
+            hydrology_overlay: hydrology_delta.clone(),
+            elevation_overlay: elevation_delta.clone(),
+            start_marker: start_marker_delta.clone(),
             axis_bias: axis_bias_delta,
             sentiment: sentiment_delta.clone(),
             generations: diff_new(&self.generations, &generations_index),
@@ -504,12 +555,16 @@ impl SnapshotHistory {
         self.axis_bias = axis_bias_state;
         self.sentiment = sentiment_state;
         self.terrain_overlay = terrain_state;
+        self.hydrology_overlay = hydrology_state;
+        self.elevation_overlay = elevation_state;
+        self.start_marker = start_marker_state;
         self.logistics_raster = logistics_raster_state;
         self.sentiment_raster = sentiment_raster_state;
         self.corruption_raster = corruption_raster_state;
         self.fog_raster = fog_raster_state;
         self.culture_raster = culture_raster_state;
         self.military_raster = military_raster_state;
+        self.moisture_raster = moisture_state;
         self.corruption = corruption_state;
         self.culture_tensions = culture_tensions_state;
         self.discovery_progress = discovery_index;
@@ -576,6 +631,7 @@ impl SnapshotHistory {
         self.fog_raster = entry.snapshot.fog_raster.clone();
         self.culture_raster = entry.snapshot.culture_raster.clone();
         self.military_raster = entry.snapshot.military_raster.clone();
+        self.moisture_raster = entry.snapshot.moisture_raster.clone();
         self.culture_tensions = entry.snapshot.culture_tensions.clone();
         self.discovery_progress = entry
             .snapshot
@@ -611,6 +667,9 @@ impl SnapshotHistory {
         self.knowledge_timeline = entry.snapshot.knowledge_timeline.clone();
         self.crisis_telemetry = entry.snapshot.crisis_telemetry.clone();
         self.crisis_overlay = entry.snapshot.crisis_overlay.clone();
+        self.hydrology_overlay = entry.snapshot.hydrology_overlay.clone();
+        self.elevation_overlay = entry.snapshot.elevation_overlay.clone();
+        self.start_marker = entry.snapshot.start_marker.clone();
 
         self.last_snapshot = Some(entry.snapshot.clone());
         self.last_delta = Some(entry.delta.clone());
@@ -664,6 +723,10 @@ impl SnapshotHistory {
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
+            moisture_raster: None,
+            hydrology_overlay: None,
+            elevation_overlay: None,
+            start_marker: None,
             axis_bias: Some(bias.clone()),
             sentiment: None,
             logistics_raster: None,
@@ -764,6 +827,10 @@ impl SnapshotHistory {
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
+            moisture_raster: None,
+            hydrology_overlay: None,
+            elevation_overlay: None,
+            start_marker: None,
             axis_bias: None,
             sentiment: None,
             logistics_raster: None,
@@ -858,6 +925,10 @@ impl SnapshotHistory {
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
+            moisture_raster: None,
+            hydrology_overlay: None,
+            elevation_overlay: None,
+            start_marker: None,
             axis_bias: None,
             sentiment: None,
             logistics_raster: None,
@@ -945,8 +1016,16 @@ pub fn capture_snapshot(
         overlays,
         metrics,
         crisis_overlay,
+        start_location,
+        hydrology,
+        elevation,
+        moisture,
+        map_presets,
     } = ctx;
     let overlays_config = overlays.get();
+    let presets = map_presets.get();
+    let preset_ref = presets.get(&config.map_preset_id);
+    let sea_level = preset_ref.map(|p| p.sea_level).unwrap_or(0.6);
     history.set_capacity(config.snapshot_history_limit.max(1));
 
     let mut tile_states: Vec<TileState> = tiles
@@ -1193,6 +1272,33 @@ pub fn capture_snapshot(
         influencer_states.len(),
     );
 
+    let hydrology_overlay_state = HydrologyOverlayState {
+        rivers: hydrology
+            .rivers
+            .iter()
+            .map(|r| sim_runtime::RiverSegmentState {
+                id: r.id,
+                order: r.order,
+                width: r.width,
+                points: r
+                    .path
+                    .iter()
+                    .map(|p| sim_runtime::HydrologyPointState { x: p.x, y: p.y })
+                    .collect(),
+            })
+            .collect(),
+    };
+
+    let start_marker_state = start_location
+        .position()
+        .map(|pos| StartMarkerState { x: pos.x, y: pos.y });
+
+    let moisture_overlay_state =
+        moisture_overlay_from_resource(moisture.as_ref().map(|res| res.as_ref()), config.grid_size);
+
+    let elevation_overlay_state =
+        elevation_overlay_from_field(elevation.as_ref(), config.grid_size, sea_level);
+
     let snapshot = WorldSnapshot {
         header,
         tiles: tile_states,
@@ -1208,6 +1314,10 @@ pub fn capture_snapshot(
         fog_raster: fog_raster.clone(),
         culture_raster: culture_raster.clone(),
         military_raster: military_raster.clone(),
+        moisture_raster: moisture_overlay_state.clone(),
+        hydrology_overlay: hydrology_overlay_state,
+        elevation_overlay: elevation_overlay_state.clone(),
+        start_marker: start_marker_state.clone(),
         axis_bias: axis_bias_state,
         sentiment: sentiment_state,
         generations: generation_states,
@@ -1251,6 +1361,23 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         let mut ledger = KnowledgeLedger::with_config(knowledge_config.clone());
         ledger.sync_from_snapshot(snapshot);
         world.insert_resource(ledger);
+    }
+
+    let start_marker_position = snapshot
+        .start_marker
+        .as_ref()
+        .map(|marker| UVec2::new(marker.x, marker.y));
+    if let Some(mut start_loc) = world.get_resource_mut::<StartLocation>() {
+        *start_loc = StartLocation::new(start_marker_position);
+    } else {
+        world.insert_resource(StartLocation::new(start_marker_position));
+    }
+
+    let moisture_raster = MoistureRaster::from_state(&snapshot.moisture_raster);
+    if let Some(mut existing) = world.get_resource_mut::<MoistureRaster>() {
+        *existing = moisture_raster;
+    } else {
+        world.insert_resource(moisture_raster);
     }
 
     // Despawn existing entities.
@@ -1302,6 +1429,10 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             temperature: Scalar::from_raw(tile_state.temperature),
             terrain: tile_state.terrain,
             terrain_tags: tile_state.terrain_tags,
+            mountain: mountain_metadata_from_state(
+                tile_state.mountain_kind,
+                tile_state.mountain_relief,
+            ),
         });
 
         if let Some(power_state) = power_lookup.get(&tile_state.entity) {
@@ -1838,6 +1969,8 @@ fn terrain_overlay_from_tiles(tiles: &[TileState], grid_size: UVec2) -> TerrainO
             samples[idx] = TerrainSample {
                 terrain: tile.terrain,
                 tags: tile.terrain_tags,
+                mountain_kind: tile.mountain_kind,
+                relief_scale: tile.mountain_relief,
             };
         }
     }
@@ -1846,6 +1979,67 @@ fn terrain_overlay_from_tiles(tiles: &[TileState], grid_size: UVec2) -> TerrainO
         height,
         samples,
     }
+}
+
+fn elevation_overlay_from_field(
+    field: &ElevationField,
+    grid_size: UVec2,
+    sea_level: f32,
+) -> ElevationOverlayState {
+    let width = grid_size.x.max(field.width).max(1);
+    let height = grid_size.y.max(field.height).max(1);
+    let total = (width as usize).saturating_mul(height as usize).max(1);
+    let mut samples = vec![0u8; total];
+
+    let mut max_land = sea_level;
+    for y in 0..field.height.min(height) {
+        for x in 0..field.width.min(width) {
+            let value = field.sample(x, y);
+            if value > sea_level {
+                max_land = max_land.max(value);
+            }
+        }
+    }
+
+    let scale = if max_land > sea_level {
+        1.0 / (max_land - sea_level)
+    } else {
+        0.0
+    };
+
+    for y in 0..field.height.min(height) {
+        for x in 0..field.width.min(width) {
+            let idx = (y as usize) * (width as usize) + x as usize;
+            if idx >= samples.len() {
+                continue;
+            }
+            let value = field.sample(x, y);
+            if value <= sea_level || scale == 0.0 {
+                samples[idx] = 0;
+            } else {
+                let normalised = ((value - sea_level) * scale).clamp(0.0, 1.0);
+                samples[idx] = (normalised * 255.0).round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+
+    ElevationOverlayState {
+        width,
+        height,
+        samples,
+    }
+}
+
+fn moisture_overlay_from_resource(
+    moisture: Option<&MoistureRaster>,
+    grid_size: UVec2,
+) -> FloatRasterState {
+    if let Some(raster) = moisture {
+        if raster.width == grid_size.x && raster.height == grid_size.y {
+            return raster.as_state();
+        }
+    }
+    FloatRasterState::default()
 }
 
 fn logistics_raster_from_links(
@@ -2601,6 +2795,10 @@ fn sentiment_raster_from_populations(
 }
 
 fn tile_state(entity: Entity, tile: &Tile) -> TileState {
+    let (mountain_kind, mountain_relief) = match tile.mountain {
+        Some(meta) => (map_mountain_kind(meta.kind), meta.relief),
+        None => (MountainKind::None, 1.0),
+    };
     TileState {
         entity: entity.to_bits(),
         x: tile.position.x,
@@ -2611,6 +2809,39 @@ fn tile_state(entity: Entity, tile: &Tile) -> TileState {
         terrain: tile.terrain,
         terrain_tags: tile.terrain_tags,
         culture_layer: 0,
+        mountain_kind,
+        mountain_relief,
+    }
+}
+
+fn map_mountain_kind(kind: MountainType) -> MountainKind {
+    match kind {
+        MountainType::Fold => MountainKind::Fold,
+        MountainType::Fault => MountainKind::Fault,
+        MountainType::Volcanic => MountainKind::Volcanic,
+        MountainType::Dome => MountainKind::Dome,
+    }
+}
+
+fn mountain_metadata_from_state(kind: MountainKind, relief: f32) -> Option<MountainMetadata> {
+    match kind {
+        MountainKind::None => None,
+        MountainKind::Fold => Some(MountainMetadata {
+            kind: MountainType::Fold,
+            relief,
+        }),
+        MountainKind::Fault => Some(MountainMetadata {
+            kind: MountainType::Fault,
+            relief,
+        }),
+        MountainKind::Volcanic => Some(MountainMetadata {
+            kind: MountainType::Volcanic,
+            relief,
+        }),
+        MountainKind::Dome => Some(MountainMetadata {
+            kind: MountainType::Dome,
+            relief,
+        }),
     }
 }
 
@@ -2792,6 +3023,8 @@ mod tests {
             terrain: TerrainType::AlluvialPlain,
             terrain_tags: TerrainTags::empty(),
             culture_layer: 0,
+            mountain_kind: MountainKind::None,
+            mountain_relief: 1.0,
         }
     }
 
@@ -2820,6 +3053,10 @@ mod tests {
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
             terrain: overlay,
+            moisture_raster: FloatRasterState::default(),
+            hydrology_overlay: HydrologyOverlayState::default(),
+            elevation_overlay: ElevationOverlayState::default(),
+            start_marker: None,
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
@@ -2862,6 +3099,10 @@ mod tests {
             knowledge_metrics: KnowledgeMetricsState::default(),
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
+            moisture_raster: FloatRasterState::default(),
+            hydrology_overlay: HydrologyOverlayState::default(),
+            elevation_overlay: ElevationOverlayState::default(),
+            start_marker: None,
             terrain: TerrainOverlayState::default(),
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
@@ -2900,6 +3141,10 @@ mod tests {
             knowledge_metrics: KnowledgeMetricsState::default(),
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
+            moisture_raster: FloatRasterState::default(),
+            hydrology_overlay: HydrologyOverlayState::default(),
+            elevation_overlay: ElevationOverlayState::default(),
+            start_marker: None,
             terrain: TerrainOverlayState::default(),
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
@@ -2984,6 +3229,8 @@ mod tests {
             terrain: TerrainType::AlluvialPlain,
             terrain_tags: TerrainTags::FERTILE,
             culture_layer: 0,
+            mountain_kind: MountainKind::None,
+            mountain_relief: 1.0,
         };
         let base_overlay = TerrainOverlayState {
             width: 1,
@@ -2991,6 +3238,8 @@ mod tests {
             samples: vec![TerrainSample {
                 terrain: base_tile.terrain,
                 tags: base_tile.terrain_tags,
+                mountain_kind: base_tile.mountain_kind,
+                relief_scale: base_tile.mountain_relief,
             }],
         };
         let base_snapshot = snapshot_with_overlay(1, base_tile.clone(), base_overlay);
@@ -3009,6 +3258,8 @@ mod tests {
             samples: vec![TerrainSample {
                 terrain: updated_tile.terrain,
                 tags: updated_tile.terrain_tags,
+                mountain_kind: updated_tile.mountain_kind,
+                relief_scale: updated_tile.mountain_relief,
             }],
         };
         let updated_snapshot =

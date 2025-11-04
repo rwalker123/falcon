@@ -11,9 +11,13 @@ mod culture_corruption_config;
 mod espionage;
 mod generations;
 mod great_discovery;
+mod heightfield;
+mod hydrology;
 mod influencers;
 mod knowledge_ledger;
 pub mod log_stream;
+mod map_preset;
+mod mapgen;
 pub mod metrics;
 pub mod network;
 mod orders;
@@ -28,6 +32,7 @@ mod turn_pipeline_config;
 
 use std::sync::Arc;
 
+use crate::map_preset::{load_map_presets_from_env, MapPresetsHandle};
 use bevy::prelude::*;
 
 pub use components::{
@@ -128,6 +133,22 @@ pub fn build_headless_app() -> App {
     let mut app = App::new();
 
     let (config, config_metadata) = resources::load_simulation_config_from_env();
+    let (map_presets, map_presets_metadata) = load_map_presets_from_env();
+    let preset_count = map_presets.len();
+    if let Some(path) = map_presets_metadata.path() {
+        tracing::debug!(
+            target: "shadow_scale::mapgen",
+            presets = preset_count,
+            path = %path.display(),
+            "map_presets.metadata.available"
+        );
+    } else {
+        tracing::debug!(
+            target: "shadow_scale::mapgen",
+            presets = preset_count,
+            "map_presets.metadata.builtin"
+        );
+    }
     let faction_registry = orders::FactionRegistry::default();
     let turn_queue = orders::TurnQueue::new(faction_registry.factions.clone());
     let snapshot_history = SnapshotHistory::with_capacity(config.snapshot_history_limit.max(1));
@@ -181,6 +202,10 @@ pub fn build_headless_app() -> App {
 
     app.insert_resource(config)
         .insert_resource(config_metadata)
+        .insert_resource(MapPresetsHandle::new(map_presets.clone()))
+        .insert_resource(map_presets_metadata)
+        .insert_resource(resources::StartLocation::default())
+        .insert_resource(hydrology::HydrologyState::default())
         .insert_resource(PowerGridState::default())
         .insert_resource(PowerTopology::default())
         .insert_resource(SimulationTick::default())
@@ -257,8 +282,11 @@ pub fn build_headless_app() -> App {
             Startup,
             (
                 systems::spawn_initial_world,
+                hydrology::generate_hydrology,
+                systems::apply_tag_budget_solver,
                 espionage::initialise_espionage_roster,
-            ),
+            )
+                .chain(),
         )
         .add_systems(
             Update,
@@ -336,6 +364,25 @@ pub fn build_headless_app() -> App {
         );
 
     {
+        // Log chosen map preset id; worldgen consumes later.
+        if let Some(preset) = map_presets.get(
+            &app.world
+                .resource::<resources::SimulationConfig>()
+                .map_preset_id,
+        ) {
+            tracing::info!(
+                target: "shadow_scale::mapgen",
+                preset_id = %preset.id,
+                name = %preset.name,
+                "mapgen.preset.selected"
+            );
+        } else {
+            tracing::warn!(
+                target: "shadow_scale::mapgen",
+                preset_id = %app.world.resource::<resources::SimulationConfig>().map_preset_id,
+                "mapgen.preset.missing_using_first"
+            );
+        }
         let mut registry = app.world.resource_mut::<GreatDiscoveryRegistry>();
         let loaded = registry
             .load_catalog_from_str(great_discovery::BUILTIN_GREAT_DISCOVERY_CATALOG)

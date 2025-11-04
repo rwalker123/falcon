@@ -162,9 +162,19 @@ enum CrisisSeverityBand : ubyte {
   Critical
 }
 
+enum MountainKind : ubyte {
+  None,
+  Fold,
+  Fault,
+  Volcanic,
+  Dome
+}
+
 table TerrainSample {
   terrain:TerrainType;
   tags:ushort;
+  mountainKind:MountainKind = None;
+  reliefScale:float = 1.0;
 }
 
 table TerrainOverlay {
@@ -177,6 +187,18 @@ table ScalarRaster {
   width:uint;
   height:uint;
   samples:[long];
+}
+
+table FloatRaster {
+  width:uint;
+  height:uint;
+  samples:[float];
+}
+
+table ElevationOverlay {
+  width:uint;
+  height:uint;
+  samples:[ubyte];
 }
 
 table InfluentialIndividualState {
@@ -381,6 +403,8 @@ table TileState {
   terrain:TerrainType;
   terrainTags:ushort;
   cultureLayer:uint;
+  mountainKind:MountainKind = None;
+  mountainRelief:float = 1.0;
 }
 
 table LogisticsLinkState {
@@ -596,6 +620,10 @@ table WorldSnapshot {
   knowledgeMetrics:KnowledgeMetricsState;
   crisisTelemetry:CrisisTelemetryState;
   crisisOverlay:CrisisOverlayState;
+  moistureRaster:FloatRaster;
+  hydrologyOverlay:HydrologyOverlay; // rivers/streams polylines
+  elevationOverlay:ElevationOverlay;
+  startMarker:StartMarker;
   terrainOverlay:TerrainOverlay;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
@@ -636,6 +664,7 @@ table WorldDelta {
   knowledgeMetrics:KnowledgeMetricsState;
   crisisTelemetry:CrisisTelemetryState;
   crisisOverlay:CrisisOverlayState;
+  moistureRaster:FloatRaster;
   axisBias:AxisBiasState;
   sentiment:SentimentTelemetryState;
   generations:[GenerationState];
@@ -644,6 +673,9 @@ table WorldDelta {
   influencers:[InfluentialIndividualState];
   removedInfluencers:[uint];
   terrainOverlay:TerrainOverlay;
+  hydrologyOverlay:HydrologyOverlay;
+  elevationOverlay:ElevationOverlay;
+  startMarker:StartMarker;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
   corruptionRaster:ScalarRaster;
@@ -654,6 +686,25 @@ table WorldDelta {
   removedCultureLayers:[uint];
   cultureTensions:[CultureTensionState];
   discoveryProgress:[DiscoveryProgressEntry];
+}
+
+// Hydrology overlay types
+table HydrologyPoint { x:uint; y:uint; }
+
+table RiverSegment {
+  id:uint;
+  order:ubyte;
+  width:ubyte;
+  points:[HydrologyPoint];
+}
+
+table HydrologyOverlay {
+  rivers:[RiverSegment];
+}
+
+table StartMarker {
+  x:uint;
+  y:uint;
 }
 
 union SnapshotPayload {

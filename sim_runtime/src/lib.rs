@@ -372,11 +372,11 @@ pub mod knowledge {
         };
         use crate::{
             AxisBiasState, CorruptionLedger, CrisisOverlayState, CrisisTelemetryState,
-            GreatDiscoveryTelemetryState, KnowledgeLeakFlags, KnowledgeLedgerEntryState,
-            KnowledgeMetricsState, KnowledgeSecurityPosture, KnowledgeTimelineEventKind,
-            KnowledgeTimelineEventState, PowerTelemetryState, ScalarRasterState,
-            SentimentTelemetryState, SnapshotHeader, TerrainOverlayState, WorldDelta,
-            WorldSnapshot,
+            FloatRasterState, GreatDiscoveryTelemetryState, KnowledgeLeakFlags,
+            KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeSecurityPosture,
+            KnowledgeTimelineEventKind, KnowledgeTimelineEventState, PowerTelemetryState,
+            ScalarRasterState, SentimentTelemetryState, SnapshotHeader, TerrainOverlayState,
+            WorldDelta, WorldSnapshot,
         };
 
         fn empty_snapshot() -> WorldSnapshot {
@@ -397,6 +397,7 @@ pub mod knowledge {
                 knowledge_metrics: KnowledgeMetricsState::default(),
                 crisis_telemetry: CrisisTelemetryState::default(),
                 crisis_overlay: CrisisOverlayState::default(),
+                moisture_raster: FloatRasterState::default(),
                 terrain: TerrainOverlayState::default(),
                 logistics_raster: ScalarRasterState::default(),
                 sentiment_raster: ScalarRasterState::default(),
@@ -404,6 +405,9 @@ pub mod knowledge {
                 fog_raster: ScalarRasterState::default(),
                 culture_raster: ScalarRasterState::default(),
                 military_raster: ScalarRasterState::default(),
+                hydrology_overlay: crate::HydrologyOverlayState::default(),
+                elevation_overlay: crate::ElevationOverlayState::default(),
+                start_marker: None,
                 axis_bias: AxisBiasState::default(),
                 sentiment: SentimentTelemetryState::default(),
                 generations: Vec::new(),
