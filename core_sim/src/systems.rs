@@ -7,7 +7,7 @@ use bevy::{ecs::system::SystemParam, math::UVec2, prelude::*};
 use log::debug;
 use serde_json::json;
 
-use crate::map_preset::{MapPreset, MapPresetsHandle};
+use crate::map_preset::{MapPreset, MapPresetsHandle, TerrainClassifierConfig};
 use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, KnowledgeFragment,
@@ -36,13 +36,16 @@ use crate::{
         SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
     },
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
-    terrain::{terrain_definition, terrain_for_position_with_context},
+    terrain::{terrain_definition, terrain_for_position_with_classifier},
     turn_pipeline_config::TurnPipelineConfigHandle,
 };
 use sim_runtime::{
     apply_openness_decay, merge_fragment_payload, scale_migration_fragments, CorruptionSubsystem,
     TradeLeakCurve,
 };
+
+const POLAR_LATITUDE_THRESHOLD: f32 =
+    TerrainClassifierConfig::default_values().polar_latitude_cutoff;
 
 #[derive(Event, Debug, Clone)]
 pub struct TradeDiffusionEvent {
@@ -142,6 +145,10 @@ pub fn spawn_initial_world(
 
     let preset_handle = map_presets.get();
     let preset_ref = preset_handle.get(&config.map_preset_id);
+    let default_classifier = TerrainClassifierConfig::default();
+    let classifier_cfg = preset_ref
+        .map(|preset| &preset.terrain_classifier)
+        .unwrap_or(&default_classifier);
     let sea_level = preset_ref.map(|p| p.sea_level).unwrap_or(0.6);
     let world_seed = preset_ref
         .and_then(|preset| preset.map_seed)
@@ -201,12 +208,13 @@ pub fn spawn_initial_world(
                                 relief,
                             });
                         }
-                        terrain_for_position_with_context(
+                        terrain_for_position_with_classifier(
                             position,
                             config.grid_size,
                             bands_res.moisture.get(idx).copied(),
                             Some(bands_res.elevation.sample(position.x, position.y)),
                             mountain_cell.map(|cell| (cell.ty, relief)),
+                            classifier_cfg,
                         )
                     }
                     TerrainBand::ContinentalShelf => (
@@ -237,7 +245,14 @@ pub fn spawn_initial_world(
                         )
                     }
                 } else {
-                    terrain_for_position_with_context(position, config.grid_size, None, None, None)
+                    terrain_for_position_with_classifier(
+                        position,
+                        config.grid_size,
+                        None,
+                        None,
+                        None,
+                        &default_classifier,
+                    )
                 }
             };
             let (terrain, terrain_tags) = if let Some(preset) = preset_ref {
@@ -430,12 +445,18 @@ fn bias_terrain_for_preset(
     let effective_weight = (biome_weight * climate_weight).clamp(0.0, 2.0);
 
     let noise = (tile_hash(position) & 0xFFFF) as f32 / 65535.0;
+    let lat_denom = grid_height.saturating_sub(1).max(1) as f32;
+    let lat = position.y as f32 / lat_denom;
+    let dist_from_equator = (lat - 0.5).abs();
+    let polar_cutoff = preset.terrain_classifier.polar_latitude_cutoff;
+    let is_polar_lat = dist_from_equator >= polar_cutoff;
+    let mut result = (terrain, tags);
 
     if effective_weight < 1.0 {
         if noise > effective_weight {
             if let Some(next) = biome_downgrade(terrain) {
                 let def = terrain_definition(next);
-                return (next, def.tags);
+                result = (next, def.tags);
             }
         }
     } else if effective_weight > 1.0 {
@@ -443,12 +464,33 @@ fn bias_terrain_for_preset(
         if noise < chance {
             if let Some(next) = biome_upgrade(terrain) {
                 let def = terrain_definition(next);
-                return (next, def.tags);
+                result = (next, def.tags);
             }
         }
     }
 
-    (terrain, tags)
+    if is_polar_lat && result.0 == sim_runtime::TerrainType::FreshwaterMarsh {
+        let fallback = sim_runtime::TerrainType::PeatHeath;
+        let def = terrain_definition(fallback);
+        result = (fallback, def.tags);
+    } else if is_polar_lat
+        && result.1.contains(sim_runtime::TerrainTags::FERTILE)
+        && !result.1.contains(sim_runtime::TerrainTags::POLAR)
+        && !result.1.contains(sim_runtime::TerrainTags::HIGHLAND)
+        && !result.1.contains(sim_runtime::TerrainTags::WATER)
+    {
+        let fallback = match result.0 {
+            sim_runtime::TerrainType::MixedWoodland => sim_runtime::TerrainType::BorealTaiga,
+            sim_runtime::TerrainType::PrairieSteppe
+            | sim_runtime::TerrainType::AlluvialPlain
+            | sim_runtime::TerrainType::Floodplain => sim_runtime::TerrainType::PeriglacialSteppe,
+            _ => sim_runtime::TerrainType::BorealTaiga,
+        };
+        let def = terrain_definition(fallback);
+        result = (fallback, def.tags);
+    }
+
+    result
 }
 
 fn biome_downgrade(terrain: sim_runtime::TerrainType) -> Option<sim_runtime::TerrainType> {
@@ -516,7 +558,7 @@ fn climate_band_for_position(position: UVec2, grid_height: u32) -> &'static str 
     }
     let lat = position.y as f32 / (grid_height.saturating_sub(1) as f32);
     let dist_from_equator = (lat - 0.5).abs();
-    if dist_from_equator >= 0.35 {
+    if dist_from_equator >= POLAR_LATITUDE_THRESHOLD {
         "polar"
     } else if dist_from_equator >= 0.18 {
         "temperate"
@@ -841,16 +883,19 @@ pub fn apply_tag_budget_solver(
                     if tile_info[idx]
                         .tags
                         .contains(sim_runtime::TerrainTags::WATER)
-                        && apply_tile_change(
-                            &mut tiles,
-                            &mut tile_info,
-                            idx,
-                            sim_runtime::TerrainType::AlluvialPlain,
-                            None,
-                        )
                     {
-                        remaining -= 1;
-                        changed += 1;
+                        let is_polar =
+                            climate_band_for_position(tile_info[idx].position, height as u32)
+                                == "polar";
+                        let replacement = if is_polar {
+                            sim_runtime::TerrainType::SeasonalSnowfield
+                        } else {
+                            sim_runtime::TerrainType::AlluvialPlain
+                        };
+                        if apply_tile_change(&mut tiles, &mut tile_info, idx, replacement, None) {
+                            remaining -= 1;
+                            changed += 1;
+                        }
                     }
                 }
             }
@@ -911,13 +956,15 @@ pub fn apply_tag_budget_solver(
                     if remaining == 0 {
                         break;
                     }
-                    if apply_tile_change(
-                        &mut tiles,
-                        &mut tile_info,
-                        idx,
-                        sim_runtime::TerrainType::FreshwaterMarsh,
-                        None,
-                    ) {
+                    let is_polar =
+                        climate_band_for_position(tile_info[idx].position, height as u32)
+                            == "polar";
+                    let replacement = if is_polar {
+                        sim_runtime::TerrainType::PeatHeath
+                    } else {
+                        sim_runtime::TerrainType::FreshwaterMarsh
+                    };
+                    if apply_tile_change(&mut tiles, &mut tile_info, idx, replacement, None) {
                         remaining -= 1;
                         changed += 1;
                     }
@@ -933,13 +980,15 @@ pub fn apply_tag_budget_solver(
                         {
                             continue;
                         }
-                        if apply_tile_change(
-                            &mut tiles,
-                            &mut tile_info,
-                            idx,
-                            sim_runtime::TerrainType::FreshwaterMarsh,
-                            None,
-                        ) {
+                        let is_polar =
+                            climate_band_for_position(tile_info[idx].position, height as u32)
+                                == "polar";
+                        let replacement = if is_polar {
+                            sim_runtime::TerrainType::PeatHeath
+                        } else {
+                            sim_runtime::TerrainType::FreshwaterMarsh
+                        };
+                        if apply_tile_change(&mut tiles, &mut tile_info, idx, replacement, None) {
                             remaining -= 1;
                             changed += 1;
                         }
@@ -955,17 +1004,27 @@ pub fn apply_tag_budget_solver(
                         .tags
                         .contains(sim_runtime::TerrainTags::WETLAND)
                     {
-                        let replacement = if has_neighbor(
+                        let near_freshwater = has_neighbor(
                             &tile_info,
                             idx,
                             sim_runtime::TerrainTags::FRESHWATER,
                             width,
                             height,
-                        ) {
-                            sim_runtime::TerrainType::PrairieSteppe
-                        } else {
-                            sim_runtime::TerrainType::AlluvialPlain
-                        };
+                        );
+                        let replacement =
+                            if climate_band_for_position(tile_info[idx].position, height as u32)
+                                == "polar"
+                            {
+                                if near_freshwater {
+                                    sim_runtime::TerrainType::PeriglacialSteppe
+                                } else {
+                                    sim_runtime::TerrainType::BorealTaiga
+                                }
+                            } else if near_freshwater {
+                                sim_runtime::TerrainType::PrairieSteppe
+                            } else {
+                                sim_runtime::TerrainType::AlluvialPlain
+                            };
                         if apply_tile_change(&mut tiles, &mut tile_info, idx, replacement, None) {
                             remaining -= 1;
                             changed += 1;
@@ -2492,7 +2551,7 @@ mod terrain_tag_tests {
         prelude::{UVec2, World},
     };
     use bevy_ecs::system::RunSystemOnce;
-    use sim_runtime::TerrainTags;
+    use sim_runtime::{TerrainTags, TerrainType};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -2854,6 +2913,68 @@ mod terrain_tag_tests {
         assert!(
             fertile_midband > 0,
             "expected fertile conversion on non-polar tiles"
+        );
+    }
+
+    #[test]
+    fn polar_latitudes_avoid_alluvial_plain_regression() {
+        let mut world = World::default();
+        let presets = MapPresets::builtin();
+
+        world.insert_resource(SimulationConfig::builtin());
+        world.insert_resource(SimulationTick::default());
+        world.insert_resource(CultureManager::default());
+        world.insert_resource(GenerationRegistry::with_seed(0xFACE_FEED, 6));
+        world.insert_resource(MapPresetsHandle::new(presets));
+
+        world.run_system_once(crate::systems::spawn_initial_world);
+        hydrology::generate_hydrology(&mut world);
+        world.run_system_once(crate::systems::apply_tag_budget_solver);
+
+        let config = world.resource::<SimulationConfig>().clone();
+        let registry = world
+            .get_resource::<TileRegistry>()
+            .expect("tile registry after spawn")
+            .clone();
+
+        let mut query = world.query::<&Tile>();
+        let lat_denom = config.grid_size.y.saturating_sub(1).max(1) as f32;
+
+        let mut polar_land = 0usize;
+        let mut polar_alluvial = 0usize;
+        let mut polar_freshwater_marsh = 0usize;
+
+        for &entity in registry.tiles.iter() {
+            let tile = query.get(&world, entity).expect("tile component");
+            if tile.terrain_tags.contains(TerrainTags::WATER) {
+                continue;
+            }
+            let lat = tile.position.y as f32 / lat_denom;
+            let dist_from_equator = (lat - 0.5).abs();
+            if dist_from_equator < POLAR_LATITUDE_THRESHOLD {
+                continue;
+            }
+            polar_land += 1;
+            match tile.terrain {
+                TerrainType::AlluvialPlain => polar_alluvial += 1,
+                TerrainType::FreshwaterMarsh => polar_freshwater_marsh += 1,
+                _ => {}
+            }
+        }
+
+        assert!(
+            polar_land > 0,
+            "expected polar land tiles to evaluate latitude constraints"
+        );
+        assert_eq!(
+            polar_alluvial, 0,
+            "expected no alluvial plains in polar latitudes (found {} of {})",
+            polar_alluvial, polar_land
+        );
+        assert_eq!(
+            polar_freshwater_marsh, 0,
+            "expected no freshwater marsh in polar latitudes (found {} of {})",
+            polar_freshwater_marsh, polar_land
         );
     }
 
