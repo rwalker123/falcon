@@ -1,4 +1,7 @@
-use std::{cmp::max, collections::HashMap};
+use std::{
+    cmp::max,
+    collections::{HashMap, HashSet},
+};
 
 use bevy::{ecs::system::SystemParam, math::UVec2, prelude::*};
 use log::debug;
@@ -8,7 +11,8 @@ use crate::map_preset::{MapPreset, MapPresetsHandle};
 use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, KnowledgeFragment,
-        LogisticsLink, PendingMigration, PopulationCohort, PowerNode, Tile, TradeLink,
+        LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort, PowerNode, Tile,
+        TradeLink,
     },
     culture::{
         CultureEffectsCache, CultureManager, CultureSchismEvent, CultureTensionEvent,
@@ -19,7 +23,8 @@ use crate::{
     heightfield::build_elevation_field,
     hydrology::HydrologyState,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
-    mapgen::{build_bands, validate_bands, TerrainBand},
+    mapgen::MountainType,
+    mapgen::{build_bands, validate_bands, TerrainBand, WorldGenSeed},
     orders::{FactionId, FactionRegistry},
     power::{
         PowerGridNodeTelemetry, PowerGridState, PowerIncident, PowerIncidentSeverity, PowerNodeId,
@@ -27,11 +32,11 @@ use crate::{
     },
     resources::{
         CorruptionExposureRecord, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
-        DiscoveryProgressLedger, SentimentAxisBias, SimulationConfig, SimulationTick,
-        StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
+        DiscoveryProgressLedger, MoistureRaster, SentimentAxisBias, SimulationConfig,
+        SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
     },
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
-    terrain::{terrain_definition, terrain_for_position},
+    terrain::{terrain_definition, terrain_for_position_with_context},
     turn_pipeline_config::TurnPipelineConfigHandle,
 };
 use sim_runtime::{
@@ -138,8 +143,12 @@ pub fn spawn_initial_world(
     let preset_handle = map_presets.get();
     let preset_ref = preset_handle.get(&config.map_preset_id);
     let sea_level = preset_ref.map(|p| p.sea_level).unwrap_or(0.6);
+    let world_seed = preset_ref
+        .and_then(|preset| preset.map_seed)
+        .unwrap_or(config.map_seed);
+    commands.insert_resource(WorldGenSeed(world_seed));
 
-    let base_elevation_field = build_elevation_field(&config, preset_ref);
+    let base_elevation_field = build_elevation_field(&config, preset_ref, world_seed);
     // Build coherent bands and restamped elevation (if preset available)
     let bands = preset_ref.map(|preset| {
         build_bands(
@@ -150,11 +159,28 @@ pub fn spawn_initial_world(
             &preset.islands,
             &preset.inland_sea,
             &preset.ocean,
+            preset.moisture_scale,
+            &preset.biomes,
+            world_seed,
+            preset.mountain_scale,
+            &preset.mountains,
         )
     });
-    if bands.is_none() {
-        // Fallback: insert base elevation so downstream systems have a field
+    if let Some(ref bands_res) = bands {
+        commands.insert_resource(bands_res.elevation.clone());
+        commands.insert_resource(MoistureRaster::new(
+            config.grid_size.x,
+            config.grid_size.y,
+            bands_res.moisture.clone(),
+        ));
+        validate_bands(bands_res, config.grid_size);
+    } else {
         commands.insert_resource(base_elevation_field.clone());
+        commands.insert_resource(MoistureRaster::new(
+            config.grid_size.x,
+            config.grid_size.y,
+            vec![0.0; (config.grid_size.x * config.grid_size.y) as usize],
+        ));
     }
 
     let mut tags_grid: Vec<sim_runtime::TerrainTags> = Vec::with_capacity(width * height);
@@ -162,10 +188,27 @@ pub fn spawn_initial_world(
         for x in 0..width {
             let position = UVec2::new(x as u32, y as u32);
             let element = ElementKind::from_grid(position);
+            let mut mountain_meta: Option<MountainMetadata> = None;
+            let idx = y * width + x;
             let (terrain, terrain_tags) = if let Some(ref bands_res) = bands {
-                let b = bands_res.terrain[y * width + x];
-                match b {
-                    TerrainBand::Land => terrain_for_position(position, config.grid_size),
+                match bands_res.terrain[idx] {
+                    TerrainBand::Land => {
+                        let mountain_cell = bands_res.mountains.get(idx);
+                        let relief = bands_res.mountains.relief_scale(idx);
+                        if let Some(cell) = mountain_cell {
+                            mountain_meta = Some(MountainMetadata {
+                                kind: cell.ty,
+                                relief,
+                            });
+                        }
+                        terrain_for_position_with_context(
+                            position,
+                            config.grid_size,
+                            bands_res.moisture.get(idx).copied(),
+                            Some(bands_res.elevation.sample(position.x, position.y)),
+                            mountain_cell.map(|cell| (cell.ty, relief)),
+                        )
+                    }
                     TerrainBand::ContinentalShelf => (
                         sim_runtime::TerrainType::ContinentalShelf,
                         terrain_definition(sim_runtime::TerrainType::ContinentalShelf).tags,
@@ -194,13 +237,23 @@ pub fn spawn_initial_world(
                         )
                     }
                 } else {
-                    terrain_for_position(position, config.grid_size)
+                    terrain_for_position_with_context(position, config.grid_size, None, None, None)
                 }
             };
             let (terrain, terrain_tags) = if let Some(preset) = preset_ref {
                 bias_terrain_for_preset(terrain, terrain_tags, preset, position, config.grid_size.y)
             } else {
                 (terrain, terrain_tags)
+            };
+            let mountain = if matches!(
+                terrain,
+                sim_runtime::TerrainType::DeepOcean
+                    | sim_runtime::TerrainType::InlandSea
+                    | sim_runtime::TerrainType::ContinentalShelf
+            ) {
+                None
+            } else {
+                mountain_meta
             };
             tags_grid.push(terrain_tags);
             let (generation, demand, efficiency) = element.power_profile();
@@ -219,6 +272,7 @@ pub fn spawn_initial_world(
                         temperature: config.ambient_temperature + element.thermal_bias(),
                         terrain,
                         terrain_tags,
+                        mountain,
                     },
                     PowerNode {
                         id: node_id,
@@ -528,191 +582,1114 @@ pub fn apply_tag_budget_solver(
         None => return,
     };
 
-    let targets = &preset.terrain_tag_targets;
-    let want_wetland = targets.get("Wetland").copied().unwrap_or(0.0);
-    let want_fertile = targets.get("Fertile").copied().unwrap_or(0.0);
-    let want_coastal = targets.get("Coastal").copied().unwrap_or(0.0);
     let total = (registry.width * registry.height) as usize;
+    if total == 0 {
+        return;
+    }
 
-    // Snapshot current terrain tags for quick lookup and adjacency checks.
-    let mut tags_grid: Vec<sim_runtime::TerrainTags> = Vec::with_capacity(total);
+    #[derive(Clone, Copy)]
+    struct TileInfo {
+        entity: Entity,
+        terrain: sim_runtime::TerrainType,
+        tags: sim_runtime::TerrainTags,
+        position: UVec2,
+        mountain_kind: Option<MountainType>,
+        mountain_relief: f32,
+    }
+
+    const NEIGHBOR_OFFSETS_4: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
+    const NEIGHBOR_OFFSETS_8: [(i32, i32); 8] = [
+        (-1, 0),
+        (1, 0),
+        (0, -1),
+        (0, 1),
+        (-1, -1),
+        (1, 1),
+        (-1, 1),
+        (1, -1),
+    ];
+
+    let width = registry.width as usize;
+    let height = registry.height as usize;
+
+    let mut tile_info: Vec<TileInfo> = Vec::with_capacity(total);
     for &entity in registry.tiles.iter() {
-        let tags = tiles
-            .get(entity)
-            .map(|tile| tile.terrain_tags)
-            .unwrap_or_else(|_| sim_runtime::TerrainTags::empty());
-        tags_grid.push(tags);
+        if let Ok(tile) = tiles.get(entity) {
+            tile_info.push(TileInfo {
+                entity,
+                terrain: tile.terrain,
+                tags: tile.terrain_tags,
+                position: tile.position,
+                mountain_kind: tile.mountain.map(|m| m.kind),
+                mountain_relief: tile.mountain.map(|m| m.relief).unwrap_or(1.0),
+            });
+        } else {
+            tile_info.push(TileInfo {
+                entity,
+                terrain: sim_runtime::TerrainType::DeepOcean,
+                tags: sim_runtime::TerrainTags::WATER,
+                position: UVec2::ZERO,
+                mountain_kind: None,
+                mountain_relief: 1.0,
+            });
+        }
     }
 
-    // Count current wetland tiles
-    let wetland_count = tags_grid
-        .iter()
-        .filter(|tags| tags.contains(sim_runtime::TerrainTags::WETLAND))
-        .count();
-    let current_wetland = wetland_count as f32 / total as f32;
-    let mut needed_wetland = 0isize;
-    if want_wetland > 0.0 && current_wetland + 0.01 < want_wetland {
-        needed_wetland = ((want_wetland * total as f32) - wetland_count as f32).ceil() as isize;
-    }
-
-    let hydro_ref = hydro.as_ref();
-
-    if needed_wetland > 0 {
-        if let Some(hydro) = hydro_ref {
-            // Promote tiles along rivers to FreshwaterMarsh until we hit target.
-            'wetland: for river in hydro.rivers.iter() {
-                for p in river.path.iter() {
-                    for dy in -1i32..=1 {
-                        for dx in -1i32..=1 {
-                            let nx = p.x as i32 + dx;
-                            let ny = p.y as i32 + dy;
-                            if nx < 0
-                                || ny < 0
-                                || nx >= registry.width as i32
-                                || ny >= registry.height as i32
-                            {
-                                continue;
-                            }
-                            let idx = (ny as u32 * registry.width + nx as u32) as usize;
-                            let entity = registry.tiles[idx];
-                            let tags = tags_grid[idx];
-                            if tags.contains(sim_runtime::TerrainTags::WATER)
-                                || tags.contains(sim_runtime::TerrainTags::WETLAND)
-                            {
-                                continue;
-                            }
-                            if let Ok(mut tile) = tiles.get_mut(entity) {
-                                tile.terrain = sim_runtime::TerrainType::FreshwaterMarsh;
-                                let def = terrain_definition(tile.terrain);
-                                tile.terrain_tags = def.tags;
-                                tags_grid[idx] = def.tags;
-                                needed_wetland -= 1;
-                                if needed_wetland <= 0 {
-                                    break 'wetland;
-                                }
-                            }
-                        }
+    let mut river_mask = vec![false; total];
+    if let Some(hydro) = hydro.as_ref() {
+        for river in hydro.rivers.iter() {
+            for point in river.path.iter() {
+                if point.x < registry.width && point.y < registry.height {
+                    let idx = (point.y * registry.width + point.x) as usize;
+                    if idx < river_mask.len() {
+                        river_mask[idx] = true;
                     }
                 }
             }
         }
     }
 
-    // Fertile pass: if below target, promote adjacent-to-river land tiles to Floodplain/AlluvialPlain.
-    let fertile_count = tags_grid
-        .iter()
-        .filter(|tags| tags.contains(sim_runtime::TerrainTags::FERTILE))
-        .count();
-    let current_fertile = fertile_count as f32 / total as f32;
-    let mut needed_fertile: isize = 0;
-    if want_fertile > 0.0 && current_fertile + 0.01 < want_fertile {
-        needed_fertile = ((want_fertile * total as f32) - fertile_count as f32).ceil() as isize;
+    fn apply_tile_change(
+        tiles: &mut Query<&mut Tile>,
+        info: &mut [TileInfo],
+        idx: usize,
+        new_terrain: sim_runtime::TerrainType,
+        mountain_kind: Option<MountainType>,
+    ) -> bool {
+        let entity = info[idx].entity;
+        if let Ok(mut tile) = tiles.get_mut(entity) {
+            tile.terrain = new_terrain;
+            let def = terrain_definition(new_terrain);
+            tile.terrain_tags = def.tags;
+            tile.mountain = mountain_kind.map(|kind| MountainMetadata {
+                kind,
+                relief: info[idx].mountain_relief,
+            });
+            info[idx].terrain = new_terrain;
+            info[idx].tags = def.tags;
+            info[idx].mountain_kind = mountain_kind;
+            if mountain_kind.is_none() {
+                info[idx].mountain_relief = 1.0;
+            }
+            true
+        } else {
+            false
+        }
     }
-    if needed_fertile > 0 {
-        if let Some(hydro) = hydro_ref {
-            'fertile: for river in hydro.rivers.iter() {
-                for p in river.path.iter() {
-                    for dy in -1i32..=1 {
-                        for dx in -1i32..=1 {
-                            let nx = p.x as i32 + dx;
-                            let ny = p.y as i32 + dy;
-                            if nx < 0
-                                || ny < 0
-                                || nx >= registry.width as i32
-                                || ny >= registry.height as i32
-                            {
-                                continue;
-                            }
-                            let idx = (ny as u32 * registry.width + nx as u32) as usize;
-                            let entity = registry.tiles[idx];
-                            let tags = tags_grid[idx];
-                            if tags.contains(sim_runtime::TerrainTags::WATER)
-                                || tags.contains(sim_runtime::TerrainTags::FERTILE)
-                            {
-                                continue;
-                            }
-                            if let Ok(mut tile) = tiles.get_mut(entity) {
-                                tile.terrain = sim_runtime::TerrainType::Floodplain;
-                                let def = terrain_definition(tile.terrain);
-                                tile.terrain_tags = def.tags;
-                                tags_grid[idx] = def.tags;
-                                needed_fertile -= 1;
-                                if needed_fertile <= 0 {
-                                    break 'fertile;
-                                }
-                            }
+
+    let total_tiles = tile_info.len().max(1);
+    let max_iterations = total_tiles * 2;
+    let locked: HashSet<&str> = preset
+        .locked_terrain_tags
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let lock_water = locked.contains("Water");
+    let lock_wetland = locked.contains("Wetland");
+    let lock_fertile = locked.contains("Fertile");
+    let lock_coastal = locked.contains("Coastal");
+    let lock_highland = locked.contains("Highland");
+    let lock_polar = locked.contains("Polar");
+    let lock_arid = locked.contains("Arid");
+    let lock_volcanic = locked.contains("Volcanic");
+    let lock_hazard = locked.contains("Hazardous");
+
+    let tolerance = preset.tolerance.max(0.0);
+
+    let tag_ratio = |tiles: &[TileInfo], mask: sim_runtime::TerrainTags| -> f32 {
+        let count = tiles.iter().filter(|info| info.tags.contains(mask)).count() as f32;
+        count / tiles.len().max(1) as f32
+    };
+
+    let land_ratio = |tiles: &[TileInfo], mask: sim_runtime::TerrainTags| -> f32 {
+        let land_total = tiles
+            .iter()
+            .filter(|info| !info.tags.contains(sim_runtime::TerrainTags::WATER))
+            .count()
+            .max(1) as f32;
+        let count = tiles
+            .iter()
+            .filter(|info| {
+                !info.tags.contains(sim_runtime::TerrainTags::WATER) && info.tags.contains(mask)
+            })
+            .count() as f32;
+        count / land_total
+    };
+
+    let need_delta = |actual: f32, target: f32, denom: usize| -> isize {
+        if denom == 0 {
+            return 0;
+        }
+        if actual + tolerance < target {
+            ((target - (actual + tolerance)) * denom as f32).ceil() as isize
+        } else if actual > target + tolerance {
+            -((actual - (target + tolerance)) * denom as f32).ceil() as isize
+        } else {
+            0
+        }
+    };
+
+    fn has_neighbor(
+        info: &[TileInfo],
+        idx: usize,
+        mask: sim_runtime::TerrainTags,
+        width: usize,
+        height: usize,
+    ) -> bool {
+        let pos = info[idx].position;
+        let x = pos.x as i32;
+        let y = pos.y as i32;
+        for (dx, dy) in NEIGHBOR_OFFSETS_4 {
+            let nx = x + dx;
+            let ny = y + dy;
+            if nx < 0 || ny < 0 || nx as usize >= width || ny as usize >= height {
+                continue;
+            }
+            let nidx = ny as usize * width + nx as usize;
+            if info[nidx].tags.contains(mask) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn has_neighbor_any(
+        info: &[TileInfo],
+        idx: usize,
+        mask: sim_runtime::TerrainTags,
+        width: usize,
+        height: usize,
+    ) -> bool {
+        let pos = info[idx].position;
+        let x = pos.x as i32;
+        let y = pos.y as i32;
+        for (dx, dy) in NEIGHBOR_OFFSETS_8 {
+            let nx = x + dx;
+            let ny = y + dy;
+            if nx < 0 || ny < 0 || nx as usize >= width || ny as usize >= height {
+                continue;
+            }
+            let nidx = ny as usize * width + nx as usize;
+            if info[nidx].tags.contains(mask) {
+                return true;
+            }
+        }
+        false
+    }
+
+    let targets = &preset.terrain_tag_targets;
+    let get_target = |name: &str| targets.get(name).copied().unwrap_or(0.0);
+
+    if lock_water {
+        // --- Water ---
+        let want_water = get_target("Water");
+        let mut water_iterations = 0usize;
+        loop {
+            let delta = need_delta(
+                tag_ratio(&tile_info, sim_runtime::TerrainTags::WATER),
+                want_water,
+                total_tiles,
+            );
+            if delta == 0 {
+                break;
+            }
+            if water_iterations > max_iterations {
+                break;
+            }
+            let mut changed = 0usize;
+            if delta > 0 {
+                let mut remaining = delta as usize;
+                let mut candidates: Vec<usize> = (0..tile_info.len())
+                    .filter(|&idx| {
+                        !tile_info[idx]
+                            .tags
+                            .contains(sim_runtime::TerrainTags::WATER)
+                    })
+                    .collect();
+                candidates.sort_by_key(|idx| {
+                    let info = &tile_info[*idx];
+                    let priority = if info.tags.contains(sim_runtime::TerrainTags::COASTAL) {
+                        0
+                    } else if info.tags.contains(sim_runtime::TerrainTags::WETLAND) {
+                        1
+                    } else {
+                        2
+                    };
+                    (priority, info.position.y, info.position.x)
+                });
+                for idx in candidates {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if apply_tile_change(
+                        &mut tiles,
+                        &mut tile_info,
+                        idx,
+                        sim_runtime::TerrainType::DeepOcean,
+                        None,
+                    ) {
+                        remaining -= 1;
+                        changed += 1;
+                    }
+                }
+            } else {
+                let mut remaining = (-delta) as usize;
+                for idx in 0..tile_info.len() {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if tile_info[idx]
+                        .tags
+                        .contains(sim_runtime::TerrainTags::WATER)
+                        && apply_tile_change(
+                            &mut tiles,
+                            &mut tile_info,
+                            idx,
+                            sim_runtime::TerrainType::AlluvialPlain,
+                            None,
+                        )
+                    {
+                        remaining -= 1;
+                        changed += 1;
+                    }
+                }
+            }
+            if changed == 0 {
+                break;
+            }
+            water_iterations += 1;
+        }
+    }
+    if lock_wetland {
+        // --- Wetland ---
+        let want_wetland = get_target("Wetland");
+        let mut wetland_iterations = 0usize;
+        loop {
+            let delta = need_delta(
+                tag_ratio(&tile_info, sim_runtime::TerrainTags::WETLAND),
+                want_wetland,
+                total_tiles,
+            );
+            if delta == 0 {
+                break;
+            }
+            if wetland_iterations > max_iterations {
+                break;
+            }
+            let mut changed = 0usize;
+            if delta > 0 {
+                let mut remaining = delta as usize;
+                let mut candidates: Vec<usize> = (0..tile_info.len())
+                    .filter(|&idx| {
+                        let info = &tile_info[idx];
+                        if info.tags.contains(sim_runtime::TerrainTags::WETLAND)
+                            || info.tags.contains(sim_runtime::TerrainTags::WATER)
+                            || info.tags.contains(sim_runtime::TerrainTags::HIGHLAND)
+                        {
+                            return false;
+                        }
+                        has_neighbor_any(
+                            &tile_info,
+                            idx,
+                            sim_runtime::TerrainTags::WATER
+                                | sim_runtime::TerrainTags::FRESHWATER
+                                | sim_runtime::TerrainTags::WETLAND,
+                            width,
+                            height,
+                        )
+                    })
+                    .collect();
+                candidates.sort_by_key(|idx| {
+                    let info = &tile_info[*idx];
+                    (
+                        if river_mask[*idx] { 0 } else { 1 },
+                        info.position.y,
+                        info.position.x,
+                    )
+                });
+                for idx in candidates {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if apply_tile_change(
+                        &mut tiles,
+                        &mut tile_info,
+                        idx,
+                        sim_runtime::TerrainType::FreshwaterMarsh,
+                        None,
+                    ) {
+                        remaining -= 1;
+                        changed += 1;
+                    }
+                }
+                if remaining > 0 {
+                    for idx in 0..tile_info.len() {
+                        if remaining == 0 {
+                            break;
+                        }
+                        let info = &tile_info[idx];
+                        if info.tags.contains(sim_runtime::TerrainTags::WETLAND)
+                            || info.tags.contains(sim_runtime::TerrainTags::WATER)
+                        {
+                            continue;
+                        }
+                        if apply_tile_change(
+                            &mut tiles,
+                            &mut tile_info,
+                            idx,
+                            sim_runtime::TerrainType::FreshwaterMarsh,
+                            None,
+                        ) {
+                            remaining -= 1;
+                            changed += 1;
+                        }
+                    }
+                }
+            } else {
+                let mut remaining = (-delta) as usize;
+                for idx in 0..tile_info.len() {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if tile_info[idx]
+                        .tags
+                        .contains(sim_runtime::TerrainTags::WETLAND)
+                    {
+                        let replacement = if has_neighbor(
+                            &tile_info,
+                            idx,
+                            sim_runtime::TerrainTags::FRESHWATER,
+                            width,
+                            height,
+                        ) {
+                            sim_runtime::TerrainType::PrairieSteppe
+                        } else {
+                            sim_runtime::TerrainType::AlluvialPlain
+                        };
+                        if apply_tile_change(&mut tiles, &mut tile_info, idx, replacement, None) {
+                            remaining -= 1;
+                            changed += 1;
                         }
                     }
                 }
             }
+            if changed == 0 {
+                break;
+            }
+            wetland_iterations += 1;
         }
     }
-
-    // Coastal pass: if below target, promote land tiles adjacent to water to TidalFlat.
-    let coastal_count = tags_grid
-        .iter()
-        .filter(|tags| tags.contains(sim_runtime::TerrainTags::COASTAL))
-        .count();
-    let current_coastal = coastal_count as f32 / total as f32;
-    let mut needed_coastal: isize = 0;
-    if want_coastal > 0.0 && current_coastal + 0.005 < want_coastal {
-        needed_coastal = ((want_coastal * total as f32) - coastal_count as f32).ceil() as isize;
+    if lock_fertile {
+        // --- Fertile ---
+        let want_fertile = get_target("Fertile");
+        let mut fertile_iterations = 0usize;
+        loop {
+            let delta = need_delta(
+                tag_ratio(&tile_info, sim_runtime::TerrainTags::FERTILE),
+                want_fertile,
+                total_tiles,
+            );
+            if delta == 0 {
+                break;
+            }
+            if fertile_iterations > max_iterations {
+                break;
+            }
+            let mut changed = 0usize;
+            if delta > 0 {
+                let mut remaining = delta as usize;
+                let mut candidates: Vec<usize> = (0..tile_info.len())
+                    .filter(|&idx| {
+                        let info = &tile_info[idx];
+                        if info.tags.contains(sim_runtime::TerrainTags::FERTILE)
+                            || info.tags.contains(sim_runtime::TerrainTags::WATER)
+                            || info.tags.contains(sim_runtime::TerrainTags::HIGHLAND)
+                            || info.tags.contains(sim_runtime::TerrainTags::POLAR)
+                            || info.tags.contains(sim_runtime::TerrainTags::HAZARDOUS)
+                        {
+                            return false;
+                        }
+                        if climate_band_for_position(info.position, height as u32) == "polar" {
+                            return false;
+                        }
+                        has_neighbor_any(
+                            &tile_info,
+                            idx,
+                            sim_runtime::TerrainTags::WATER
+                                | sim_runtime::TerrainTags::FRESHWATER
+                                | sim_runtime::TerrainTags::WETLAND
+                                | sim_runtime::TerrainTags::COASTAL,
+                            width,
+                            height,
+                        )
+                    })
+                    .collect();
+                candidates.sort_by_key(|idx| {
+                    let info = &tile_info[*idx];
+                    (
+                        if river_mask[*idx] { 0 } else { 1 },
+                        info.position.y,
+                        info.position.x,
+                    )
+                });
+                for idx in candidates {
+                    if remaining == 0 {
+                        break;
+                    }
+                    let near_water = has_neighbor_any(
+                        &tile_info,
+                        idx,
+                        sim_runtime::TerrainTags::WATER
+                            | sim_runtime::TerrainTags::FRESHWATER
+                            | sim_runtime::TerrainTags::WETLAND,
+                        width,
+                        height,
+                    );
+                    let terrain = if near_water {
+                        sim_runtime::TerrainType::Floodplain
+                    } else {
+                        sim_runtime::TerrainType::AlluvialPlain
+                    };
+                    if apply_tile_change(&mut tiles, &mut tile_info, idx, terrain, None) {
+                        remaining -= 1;
+                        changed += 1;
+                    }
+                }
+                if remaining > 0 {
+                    for idx in 0..tile_info.len() {
+                        if remaining == 0 {
+                            break;
+                        }
+                        let info = &tile_info[idx];
+                        if info.tags.contains(sim_runtime::TerrainTags::FERTILE)
+                            || info.tags.contains(sim_runtime::TerrainTags::WATER)
+                        {
+                            continue;
+                        }
+                        if climate_band_for_position(info.position, height as u32) == "polar" {
+                            continue;
+                        }
+                        if apply_tile_change(
+                            &mut tiles,
+                            &mut tile_info,
+                            idx,
+                            sim_runtime::TerrainType::AlluvialPlain,
+                            None,
+                        ) {
+                            remaining -= 1;
+                            changed += 1;
+                        }
+                    }
+                }
+            } else {
+                let mut remaining = (-delta) as usize;
+                for idx in 0..tile_info.len() {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if tile_info[idx]
+                        .tags
+                        .contains(sim_runtime::TerrainTags::FERTILE)
+                    {
+                        let terrain = if river_mask[idx] {
+                            sim_runtime::TerrainType::SemiAridScrub
+                        } else {
+                            sim_runtime::TerrainType::RockyReg
+                        };
+                        if apply_tile_change(&mut tiles, &mut tile_info, idx, terrain, None) {
+                            remaining -= 1;
+                            changed += 1;
+                        }
+                    }
+                }
+            }
+            if changed == 0 {
+                break;
+            }
+            fertile_iterations += 1;
+        }
     }
-    if needed_coastal > 0 {
-        for y in 0..registry.height as i32 {
-            for x in 0..registry.width as i32 {
-                if needed_coastal <= 0 {
-                    break;
+    if lock_coastal {
+        // --- Coastal ---
+        let want_coastal = get_target("Coastal");
+        let mut coastal_iterations = 0usize;
+        loop {
+            let delta = need_delta(
+                tag_ratio(&tile_info, sim_runtime::TerrainTags::COASTAL),
+                want_coastal,
+                total_tiles,
+            );
+            if delta == 0 {
+                break;
+            }
+            if coastal_iterations > max_iterations {
+                break;
+            }
+            let mut changed = 0usize;
+            if delta > 0 {
+                let mut remaining = delta as usize;
+                let mut candidates: Vec<usize> = (0..tile_info.len())
+                    .filter(|&idx| {
+                        let info = &tile_info[idx];
+                        if info.tags.contains(sim_runtime::TerrainTags::COASTAL)
+                            || info.tags.contains(sim_runtime::TerrainTags::WATER)
+                        {
+                            return false;
+                        }
+                        has_neighbor(
+                            &tile_info,
+                            idx,
+                            sim_runtime::TerrainTags::WATER,
+                            width,
+                            height,
+                        )
+                    })
+                    .collect();
+                candidates.sort_by_key(|idx| {
+                    let info = &tile_info[*idx];
+                    (info.position.y, info.position.x)
+                });
+                for idx in candidates {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if apply_tile_change(
+                        &mut tiles,
+                        &mut tile_info,
+                        idx,
+                        sim_runtime::TerrainType::TidalFlat,
+                        None,
+                    ) {
+                        remaining -= 1;
+                        changed += 1;
+                    }
                 }
-                let idx = (y as u32 * registry.width + x as u32) as usize;
-                let tags = tags_grid[idx];
-                if tags.contains(sim_runtime::TerrainTags::WATER) {
-                    continue;
+                if remaining > 0 {
+                    for idx in 0..tile_info.len() {
+                        if remaining == 0 {
+                            break;
+                        }
+                        let info = &tile_info[idx];
+                        if info.tags.contains(sim_runtime::TerrainTags::COASTAL)
+                            || info.tags.contains(sim_runtime::TerrainTags::WATER)
+                        {
+                            continue;
+                        }
+                        if apply_tile_change(
+                            &mut tiles,
+                            &mut tile_info,
+                            idx,
+                            sim_runtime::TerrainType::TidalFlat,
+                            None,
+                        ) {
+                            remaining -= 1;
+                            changed += 1;
+                        }
+                    }
                 }
-                // Check adjacency to WATER via tags grid.
-                let mut near_water = false;
-                for (dx, dy) in [
-                    (-1, 0),
-                    (1, 0),
-                    (0, -1),
-                    (0, 1),
-                    (-1, -1),
-                    (1, 1),
-                    (-1, 1),
-                    (1, -1),
-                ] {
-                    let nx = x + dx;
-                    let ny = y + dy;
-                    if nx < 0
-                        || ny < 0
-                        || nx >= registry.width as i32
-                        || ny >= registry.height as i32
+            } else {
+                let mut remaining = (-delta) as usize;
+                for idx in 0..tile_info.len() {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if tile_info[idx]
+                        .tags
+                        .contains(sim_runtime::TerrainTags::COASTAL)
+                        && !tile_info[idx]
+                            .tags
+                            .contains(sim_runtime::TerrainTags::WATER)
+                        && apply_tile_change(
+                            &mut tiles,
+                            &mut tile_info,
+                            idx,
+                            sim_runtime::TerrainType::AlluvialPlain,
+                            None,
+                        )
+                    {
+                        remaining -= 1;
+                        changed += 1;
+                    }
+                }
+            }
+            if changed == 0 {
+                break;
+            }
+            coastal_iterations += 1;
+        }
+    }
+    if lock_highland {
+        // --- Highland ---
+        let want_highland = get_target("Highland");
+        let mut highland_iterations = 0usize;
+        loop {
+            let delta = need_delta(
+                tag_ratio(&tile_info, sim_runtime::TerrainTags::HIGHLAND),
+                want_highland,
+                total_tiles,
+            );
+            if delta == 0 {
+                break;
+            }
+            if highland_iterations > max_iterations {
+                break;
+            }
+            let mut changed = 0usize;
+            if delta > 0 {
+                let mut remaining = delta as usize;
+                let mut candidates: Vec<usize> = (0..tile_info.len())
+                    .filter(|&idx| {
+                        let info = &tile_info[idx];
+                        if info.tags.contains(sim_runtime::TerrainTags::HIGHLAND)
+                            || info.tags.contains(sim_runtime::TerrainTags::WATER)
+                        {
+                            return false;
+                        }
+                        has_neighbor_any(
+                            &tile_info,
+                            idx,
+                            sim_runtime::TerrainTags::HIGHLAND,
+                            width,
+                            height,
+                        ) || matches!(
+                            info.mountain_kind,
+                            Some(MountainType::Fold | MountainType::Fault)
+                        )
+                    })
+                    .collect();
+                candidates.sort_by_key(|idx| {
+                    let info = &tile_info[*idx];
+                    (info.position.y, info.position.x)
+                });
+                for idx in candidates {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if apply_tile_change(
+                        &mut tiles,
+                        &mut tile_info,
+                        idx,
+                        sim_runtime::TerrainType::RollingHills,
+                        Some(MountainType::Fold),
+                    ) {
+                        remaining -= 1;
+                        changed += 1;
+                    }
+                }
+                if remaining > 0 {
+                    for idx in 0..tile_info.len() {
+                        if remaining == 0 {
+                            break;
+                        }
+                        let info = &tile_info[idx];
+                        if info.tags.contains(sim_runtime::TerrainTags::HIGHLAND)
+                            || info.tags.contains(sim_runtime::TerrainTags::WATER)
+                        {
+                            continue;
+                        }
+                        if apply_tile_change(
+                            &mut tiles,
+                            &mut tile_info,
+                            idx,
+                            sim_runtime::TerrainType::RollingHills,
+                            Some(MountainType::Fold),
+                        ) {
+                            remaining -= 1;
+                            changed += 1;
+                        }
+                    }
+                }
+            } else {
+                let mut remaining = (-delta) as usize;
+                for idx in 0..tile_info.len() {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if tile_info[idx]
+                        .tags
+                        .contains(sim_runtime::TerrainTags::HIGHLAND)
+                        && apply_tile_change(
+                            &mut tiles,
+                            &mut tile_info,
+                            idx,
+                            sim_runtime::TerrainType::PrairieSteppe,
+                            None,
+                        )
+                    {
+                        remaining -= 1;
+                        changed += 1;
+                    }
+                }
+            }
+            if changed == 0 {
+                break;
+            }
+            highland_iterations += 1;
+        }
+    }
+    if lock_polar {
+        // --- Polar ---
+        let want_polar = get_target("Polar");
+        let polar_band = ((height as f32 * preset.mountains.polar_latitude_fraction)
+            .ceil()
+            .clamp(1.0, height as f32)) as usize;
+        let mut polar_iterations = 0usize;
+        loop {
+            let delta = need_delta(
+                tag_ratio(&tile_info, sim_runtime::TerrainTags::POLAR),
+                want_polar,
+                total_tiles,
+            );
+            if delta == 0 {
+                break;
+            }
+            if polar_iterations > max_iterations {
+                break;
+            }
+            let mut changed = 0usize;
+            if delta > 0 {
+                let mut remaining = delta as usize;
+                let mut candidates: Vec<usize> = (0..tile_info.len())
+                    .filter(|&idx| {
+                        let info = &tile_info[idx];
+                        if info.tags.contains(sim_runtime::TerrainTags::POLAR)
+                            || info.tags.contains(sim_runtime::TerrainTags::WATER)
+                        {
+                            return false;
+                        }
+                        let y = info.position.y as usize;
+                        y < polar_band || y >= height - polar_band
+                    })
+                    .collect();
+                candidates.sort_by_key(|idx| {
+                    let info = &tile_info[*idx];
+                    (info.position.y, info.position.x)
+                });
+                for idx in candidates {
+                    if remaining == 0 {
+                        break;
+                    }
+                    let terrain = if tile_info[idx]
+                        .tags
+                        .contains(sim_runtime::TerrainTags::HIGHLAND)
+                    {
+                        sim_runtime::TerrainType::SeasonalSnowfield
+                    } else {
+                        sim_runtime::TerrainType::Tundra
+                    };
+                    let mount_kind = tile_info[idx].mountain_kind;
+                    if apply_tile_change(&mut tiles, &mut tile_info, idx, terrain, mount_kind) {
+                        remaining -= 1;
+                        changed += 1;
+                    }
+                }
+                if remaining > 0 {
+                    for idx in 0..tile_info.len() {
+                        if remaining == 0 {
+                            break;
+                        }
+                        if tile_info[idx]
+                            .tags
+                            .contains(sim_runtime::TerrainTags::POLAR)
+                            || tile_info[idx]
+                                .tags
+                                .contains(sim_runtime::TerrainTags::WATER)
+                        {
+                            continue;
+                        }
+                        let terrain = if tile_info[idx]
+                            .tags
+                            .contains(sim_runtime::TerrainTags::HIGHLAND)
+                        {
+                            sim_runtime::TerrainType::SeasonalSnowfield
+                        } else {
+                            sim_runtime::TerrainType::Tundra
+                        };
+                        let mount_kind = tile_info[idx].mountain_kind;
+                        if apply_tile_change(&mut tiles, &mut tile_info, idx, terrain, mount_kind) {
+                            remaining -= 1;
+                            changed += 1;
+                        }
+                    }
+                }
+            } else {
+                let mut remaining = (-delta) as usize;
+                for idx in 0..tile_info.len() {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if tile_info[idx]
+                        .tags
+                        .contains(sim_runtime::TerrainTags::POLAR)
+                    {
+                        let mount_kind = tile_info[idx].mountain_kind;
+                        if apply_tile_change(
+                            &mut tiles,
+                            &mut tile_info,
+                            idx,
+                            sim_runtime::TerrainType::PrairieSteppe,
+                            mount_kind,
+                        ) {
+                            remaining -= 1;
+                            changed += 1;
+                        }
+                    }
+                }
+            }
+            if changed == 0 {
+                break;
+            }
+            polar_iterations += 1;
+        }
+    }
+    if lock_arid {
+        // --- Arid ---
+        let want_arid = get_target("Arid");
+        let mut arid_iterations = 0usize;
+        loop {
+            let delta = need_delta(
+                tag_ratio(&tile_info, sim_runtime::TerrainTags::ARID),
+                want_arid,
+                total_tiles,
+            );
+            if delta == 0 {
+                break;
+            }
+            if arid_iterations > max_iterations {
+                break;
+            }
+            let mut changed = 0usize;
+            if delta > 0 {
+                let mut remaining = delta as usize;
+                let mut candidates: Vec<usize> = (0..tile_info.len())
+                    .filter(|&idx| {
+                        let info = &tile_info[idx];
+                        if info.tags.contains(sim_runtime::TerrainTags::ARID)
+                            || info.tags.contains(sim_runtime::TerrainTags::WATER)
+                            || info.tags.contains(sim_runtime::TerrainTags::WETLAND)
+                            || info.tags.contains(sim_runtime::TerrainTags::FRESHWATER)
+                            || info.tags.contains(sim_runtime::TerrainTags::POLAR)
+                            || info.tags.contains(sim_runtime::TerrainTags::HIGHLAND)
+                        {
+                            return false;
+                        }
+                        true
+                    })
+                    .collect();
+                candidates.sort_by_key(|idx| {
+                    let info = &tile_info[*idx];
+                    (
+                        (info.position.y as i32 - height as i32 / 2).abs(),
+                        info.position.y,
+                        info.position.x,
+                    )
+                });
+                for idx in candidates {
+                    if remaining == 0 {
+                        break;
+                    }
+                    let hash = tile_hash(tile_info[idx].position);
+                    let terrain = match hash % 3 {
+                        0 => sim_runtime::TerrainType::HotDesertErg,
+                        1 => sim_runtime::TerrainType::SemiAridScrub,
+                        _ => sim_runtime::TerrainType::RockyReg,
+                    };
+                    if apply_tile_change(&mut tiles, &mut tile_info, idx, terrain, None) {
+                        remaining -= 1;
+                        changed += 1;
+                    }
+                }
+                if remaining > 0 {
+                    for idx in 0..tile_info.len() {
+                        if remaining == 0 {
+                            break;
+                        }
+                        let info = &tile_info[idx];
+                        if info.tags.contains(sim_runtime::TerrainTags::ARID)
+                            || info.tags.contains(sim_runtime::TerrainTags::WATER)
+                        {
+                            continue;
+                        }
+                        if apply_tile_change(
+                            &mut tiles,
+                            &mut tile_info,
+                            idx,
+                            sim_runtime::TerrainType::SemiAridScrub,
+                            None,
+                        ) {
+                            remaining -= 1;
+                            changed += 1;
+                        }
+                    }
+                }
+            } else {
+                let mut remaining = (-delta) as usize;
+                for idx in 0..tile_info.len() {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if tile_info[idx].tags.contains(sim_runtime::TerrainTags::ARID)
+                        && apply_tile_change(
+                            &mut tiles,
+                            &mut tile_info,
+                            idx,
+                            sim_runtime::TerrainType::PrairieSteppe,
+                            None,
+                        )
+                    {
+                        remaining -= 1;
+                        changed += 1;
+                    }
+                }
+            }
+            if changed == 0 {
+                break;
+            }
+            arid_iterations += 1;
+        }
+    }
+    if lock_volcanic {
+        // --- Volcanic ---
+        let want_volcanic = get_target("Volcanic");
+        let mut volcanic_iterations = 0usize;
+        loop {
+            let delta = need_delta(
+                tag_ratio(&tile_info, sim_runtime::TerrainTags::VOLCANIC),
+                want_volcanic,
+                total_tiles,
+            );
+            if delta == 0 {
+                break;
+            }
+            if volcanic_iterations > max_iterations {
+                break;
+            }
+            let mut changed = 0usize;
+            if delta > 0 {
+                let mut remaining = delta as usize;
+                for idx in 0..tile_info.len() {
+                    if remaining == 0 {
+                        break;
+                    }
+                    let info = tile_info[idx];
+                    if info.tags.contains(sim_runtime::TerrainTags::VOLCANIC)
+                        || info.tags.contains(sim_runtime::TerrainTags::WATER)
                     {
                         continue;
                     }
-                    let nidx = (ny as u32 * registry.width + nx as u32) as usize;
-                    if tags_grid[nidx].contains(sim_runtime::TerrainTags::WATER) {
-                        near_water = true;
+                    if !matches!(info.mountain_kind, Some(MountainType::Volcanic)) {
+                        continue;
+                    }
+                    if apply_tile_change(
+                        &mut tiles,
+                        &mut tile_info,
+                        idx,
+                        sim_runtime::TerrainType::ActiveVolcanoSlope,
+                        Some(MountainType::Volcanic),
+                    ) {
+                        remaining -= 1;
+                        changed += 1;
+                    }
+                }
+            } else {
+                let mut remaining = (-delta) as usize;
+                for idx in 0..tile_info.len() {
+                    if remaining == 0 {
                         break;
                     }
-                }
-                if near_water && !tags.contains(sim_runtime::TerrainTags::COASTAL) {
-                    let entity = registry.tiles[idx];
-                    if let Ok(mut tile) = tiles.get_mut(entity) {
-                        tile.terrain = sim_runtime::TerrainType::TidalFlat;
-                        let def = terrain_definition(tile.terrain);
-                        tile.terrain_tags = def.tags;
-                        tags_grid[idx] = def.tags;
-                        needed_coastal -= 1;
-                        if needed_coastal <= 0 {
-                            break;
-                        }
+                    if tile_info[idx]
+                        .tags
+                        .contains(sim_runtime::TerrainTags::VOLCANIC)
+                        && apply_tile_change(
+                            &mut tiles,
+                            &mut tile_info,
+                            idx,
+                            sim_runtime::TerrainType::HighPlateau,
+                            Some(MountainType::Dome),
+                        )
+                    {
+                        remaining -= 1;
+                        changed += 1;
                     }
                 }
             }
-            if needed_coastal <= 0 {
+            if changed == 0 {
                 break;
             }
+            volcanic_iterations += 1;
+        }
+    }
+    if lock_hazard {
+        // --- Hazardous (land-based ratio) ---
+        let want_hazard = get_target("Hazardous");
+        let mut hazard_iterations = 0usize;
+        loop {
+            let land_total = tile_info
+                .iter()
+                .filter(|info| !info.tags.contains(sim_runtime::TerrainTags::WATER))
+                .count()
+                .max(1);
+            let delta = need_delta(
+                land_ratio(&tile_info, sim_runtime::TerrainTags::HAZARDOUS),
+                want_hazard,
+                land_total,
+            );
+            if delta == 0 {
+                break;
+            }
+            if hazard_iterations > max_iterations {
+                break;
+            }
+            let mut changed = 0usize;
+            if delta > 0 {
+                let mut remaining = delta as usize;
+                for idx in 0..tile_info.len() {
+                    if remaining == 0 {
+                        break;
+                    }
+                    let info = tile_info[idx];
+                    if info.tags.contains(sim_runtime::TerrainTags::WATER)
+                        || info.tags.contains(sim_runtime::TerrainTags::HAZARDOUS)
+                    {
+                        continue;
+                    }
+                    if apply_tile_change(
+                        &mut tiles,
+                        &mut tile_info,
+                        idx,
+                        sim_runtime::TerrainType::ImpactCraterField,
+                        None,
+                    ) {
+                        remaining -= 1;
+                        changed += 1;
+                    }
+                }
+            } else {
+                let mut remaining = (-delta) as usize;
+                for idx in 0..tile_info.len() {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if tile_info[idx]
+                        .tags
+                        .contains(sim_runtime::TerrainTags::HAZARDOUS)
+                        && apply_tile_change(
+                            &mut tiles,
+                            &mut tile_info,
+                            idx,
+                            sim_runtime::TerrainType::PrairieSteppe,
+                            None,
+                        )
+                    {
+                        remaining -= 1;
+                        changed += 1;
+                    }
+                }
+            }
+            if changed == 0 {
+                break;
+            }
+            hazard_iterations += 1;
         }
     }
 }
@@ -1498,6 +2475,401 @@ pub fn process_corruption(
 }
 
 #[cfg(test)]
+mod terrain_tag_tests {
+    use super::*;
+    use crate::{
+        components::{ElementKind, MountainMetadata, Tile},
+        culture::CultureManager,
+        generations::GenerationRegistry,
+        hydrology,
+        map_preset::{MapPreset, MapPresets, MapPresetsHandle},
+        mapgen::MountainType,
+        resources::{SimulationConfig, SimulationTick, TileRegistry},
+        scalar::scalar_from_f32,
+    };
+    use bevy::{
+        ecs::system::SystemState,
+        prelude::{UVec2, World},
+    };
+    use bevy_ecs::system::RunSystemOnce;
+    use sim_runtime::TerrainTags;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn tag_from_name(name: &str) -> TerrainTags {
+        match name {
+            "Water" => TerrainTags::WATER,
+            "Coastal" => TerrainTags::COASTAL,
+            "Wetland" => TerrainTags::WETLAND,
+            "Fertile" => TerrainTags::FERTILE,
+            "Arid" => TerrainTags::ARID,
+            "Polar" => TerrainTags::POLAR,
+            "Highland" => TerrainTags::HIGHLAND,
+            "Volcanic" => TerrainTags::VOLCANIC,
+            "Hazardous" => TerrainTags::HAZARDOUS,
+            _ => TerrainTags::empty(),
+        }
+    }
+
+    fn tag_ratios_for_preset(
+        preset_id: &str,
+        seed: u64,
+    ) -> (HashMap<String, f32>, MapPreset, usize) {
+        let presets = MapPresets::builtin();
+        let preset = presets
+            .get(preset_id)
+            .unwrap_or_else(|| panic!("missing preset {}", preset_id))
+            .clone();
+
+        let mut config = SimulationConfig::builtin();
+        config.map_preset_id = preset.id.clone();
+        config.map_seed = seed;
+        config.grid_size = UVec2::new(preset.dimensions.width, preset.dimensions.height);
+
+        let mut world = World::default();
+        world.insert_resource(config);
+        world.insert_resource(SimulationTick::default());
+        world.insert_resource(CultureManager::default());
+        world.insert_resource(GenerationRegistry::with_seed(0xFACE_FEED, 6));
+        world.insert_resource(MapPresetsHandle::new(presets));
+
+        world.run_system_once(crate::systems::spawn_initial_world);
+        hydrology::generate_hydrology(&mut world);
+        world.run_system_once(crate::systems::apply_tag_budget_solver);
+
+        let registry = world
+            .get_resource::<TileRegistry>()
+            .expect("tile registry")
+            .clone();
+        let mut query = world.query::<&Tile>();
+        let total = registry.tiles.len().max(1);
+        let mut ratios = HashMap::new();
+
+        let mut land_total = total;
+        let mut hazard_land = 0usize;
+
+        for &entity in registry.tiles.iter() {
+            if let Ok(tile) = query.get(&world, entity) {
+                if tile.terrain_tags.contains(TerrainTags::WATER) {
+                    land_total = land_total.saturating_sub(1);
+                } else if tile.terrain_tags.contains(TerrainTags::HAZARDOUS) {
+                    hazard_land += 1;
+                }
+            }
+        }
+
+        for (name, _) in preset.terrain_tag_targets.iter() {
+            let tag = tag_from_name(name);
+            if tag == TerrainTags::empty() {
+                continue;
+            }
+            if name == "Hazardous" {
+                let denominator = land_total.max(1);
+                ratios.insert(name.to_string(), hazard_land as f32 / denominator as f32);
+                continue;
+            }
+            let mut count = 0usize;
+            for &entity in registry.tiles.iter() {
+                if let Ok(tile) = query.get(&world, entity) {
+                    if tile.terrain_tags.contains(tag) {
+                        count += 1;
+                    }
+                }
+            }
+            ratios.insert(name.to_string(), count as f32 / total as f32);
+        }
+
+        (ratios, preset, total)
+    }
+
+    fn assert_locked_tags_within_tolerance(preset_id: &str, seed: u64) {
+        let (ratios, preset, total_tiles) = tag_ratios_for_preset(preset_id, seed);
+        let tolerance = preset.tolerance.max(0.01) + 0.02;
+        if preset.locked_terrain_tags.is_empty() {
+            panic!("preset {preset_id} has no locked terrain tags to verify");
+        }
+        for name in preset.locked_terrain_tags.iter() {
+            let tag = tag_from_name(name);
+            if tag == TerrainTags::empty() {
+                panic!("preset {preset_id} references unknown locked tag {name}");
+            }
+            let target = preset.terrain_tag_targets.get(name).copied().unwrap_or(0.0);
+            let actual = ratios.get(name).copied().unwrap_or(0.0);
+            assert!(
+                (actual - target).abs() <= tolerance,
+                "{preset_id} locked tag '{name}' ratio out of tolerance: actual {actual:.4}, target {target:.4}, tolerance {tolerance:.4} (tiles={total_tiles})"
+            );
+        }
+    }
+
+    #[test]
+    fn locked_tag_solver_respects_tolerances_across_representative_seeds() {
+        let scenarios: [(&str, &[u64]); 2] = [
+            ("earthlike", &[0xE47E_51DE_2024u64, 0xA17A_DA7A_5E7Du64]),
+            ("polar_contrast", &[0x0001_1BAD_C0DEu64, 119_304_647u64]),
+        ];
+
+        for (preset_id, seeds) in scenarios {
+            for &seed in seeds {
+                assert_locked_tags_within_tolerance(preset_id, seed);
+            }
+        }
+    }
+
+    #[test]
+    fn tag_solver_counts_existing_highland_tiles() {
+        let preset_json = r#"
+        {
+            "presets": [
+                {
+                    "id": "test_highland_lock",
+                    "name": "Test Highland",
+                    "description": "Test preset for highland lock",
+                    "seed_policy": "preset_fixed",
+                    "map_seed": 42,
+                    "dimensions": {"width": 4, "height": 1},
+                    "sea_level": 0.4,
+                    "continent_scale": 0.5,
+                    "mountain_scale": 0.5,
+                    "moisture_scale": 1.0,
+                    "river_density": 0.0,
+                    "lake_chance": 0.0,
+                    "climate_band_weights": {},
+                    "terrain_tag_targets": {"Highland": 0.25},
+                    "biome_weights": {},
+                    "postprocess": {},
+                    "tolerance": 0.0,
+                    "locked_terrain_tags": ["Highland"],
+                    "mountains": {},
+                    "macro_land": {},
+                    "shelf": {},
+                    "islands": {},
+                    "inland_sea": {},
+                    "ocean": {},
+                    "biomes": {}
+                }
+            ]
+        }
+        "#;
+
+        let presets = MapPresets::from_json_str(preset_json).expect("test preset parses");
+        let presets_handle = MapPresetsHandle::new(Arc::new(presets));
+
+        let mut config = SimulationConfig::builtin();
+        config.grid_size = UVec2::new(4, 1);
+        config.map_preset_id = "test_highland_lock".to_string();
+        config.map_seed = 42;
+
+        let mut world = World::new();
+        world.insert_resource(config);
+        world.insert_resource(presets_handle);
+
+        let mut tile_entities = Vec::new();
+        for x in 0..4u32 {
+            let position = UVec2::new(x, 0);
+            let element = ElementKind::Ferrite;
+            let (terrain, tags, mountain) = if x == 1 {
+                let def = terrain_definition(sim_runtime::TerrainType::RollingHills);
+                (
+                    sim_runtime::TerrainType::RollingHills,
+                    def.tags,
+                    Some(MountainMetadata {
+                        kind: MountainType::Fold,
+                        relief: 1.4,
+                    }),
+                )
+            } else {
+                let def = terrain_definition(sim_runtime::TerrainType::PrairieSteppe);
+                (sim_runtime::TerrainType::PrairieSteppe, def.tags, None)
+            };
+
+            let entity = world
+                .spawn(Tile {
+                    position,
+                    element,
+                    mass: scalar_from_f32(1.0),
+                    temperature: scalar_from_f32(0.5),
+                    terrain,
+                    terrain_tags: tags,
+                    mountain,
+                })
+                .id();
+            tile_entities.push(entity);
+        }
+
+        world.insert_resource(TileRegistry {
+            tiles: tile_entities.clone(),
+            width: 4,
+            height: 1,
+        });
+
+        #[allow(clippy::type_complexity)]
+        let mut system_state: SystemState<(
+            Res<SimulationConfig>,
+            Res<MapPresetsHandle>,
+            Option<Res<HydrologyState>>,
+            Res<TileRegistry>,
+            Query<&mut Tile>,
+        )> = SystemState::new(&mut world);
+
+        {
+            let (config_res, presets_res, hydro_res, registry_res, tiles_query) =
+                system_state.get_mut(&mut world);
+            apply_tag_budget_solver(
+                config_res,
+                presets_res,
+                hydro_res,
+                registry_res,
+                tiles_query,
+            );
+        }
+        system_state.apply(&mut world);
+
+        let highland_tile = world.entity(tile_entities[1]).get::<Tile>().unwrap();
+        assert!(highland_tile
+            .terrain_tags
+            .contains(sim_runtime::TerrainTags::HIGHLAND));
+    }
+
+    #[test]
+    fn fertile_lock_skips_polar_latitudes() {
+        let preset_json = r#"
+        {
+            "presets": [
+                {
+                    "id": "fertile_polar_guard",
+                    "name": "Test Fertile Guard",
+                    "description": "",
+                    "seed_policy": "preset_fixed",
+                    "map_seed": 1,
+                    "dimensions": {"width": 2, "height": 2},
+                    "sea_level": 0.4,
+                    "continent_scale": 0.5,
+                    "mountain_scale": 0.2,
+                    "moisture_scale": 0.6,
+                    "river_density": 0.0,
+                    "lake_chance": 0.0,
+                    "climate_band_weights": {},
+                    "terrain_tag_targets": {"Fertile": 0.25},
+                    "biome_weights": {},
+                    "postprocess": {},
+                    "tolerance": 0.0,
+                    "locked_terrain_tags": ["Fertile"],
+                    "mountains": {},
+                    "macro_land": {},
+                    "shelf": {},
+                    "islands": {},
+                    "inland_sea": {},
+                    "ocean": {},
+                    "biomes": {}
+                }
+            ]
+        }
+        "#;
+
+        let presets = MapPresets::from_json_str(preset_json).expect("test preset parses");
+        let presets_handle = MapPresetsHandle::new(Arc::new(presets));
+
+        let mut config = SimulationConfig::builtin();
+        config.grid_size = UVec2::new(2, 6);
+        config.map_preset_id = "fertile_polar_guard".to_string();
+        config.map_seed = 1;
+
+        let mut world = World::new();
+        world.insert_resource(config);
+        world.insert_resource(presets_handle);
+
+        let mut tile_entities = Vec::new();
+        for y in 0..6u32 {
+            for x in 0..2u32 {
+                let position = UVec2::new(x, y);
+                let element = ElementKind::Ferrite;
+                let terrain = if y == 0 || y == 5 {
+                    sim_runtime::TerrainType::RockyReg
+                } else {
+                    sim_runtime::TerrainType::SemiAridScrub
+                };
+                let def = terrain_definition(terrain);
+                let entity = world
+                    .spawn(Tile {
+                        position,
+                        element,
+                        mass: scalar_from_f32(1.0),
+                        temperature: scalar_from_f32(0.5),
+                        terrain,
+                        terrain_tags: def.tags,
+                        mountain: None,
+                    })
+                    .id();
+                tile_entities.push(entity);
+            }
+        }
+
+        world.insert_resource(TileRegistry {
+            tiles: tile_entities.clone(),
+            width: 2,
+            height: 6,
+        });
+
+        #[allow(clippy::type_complexity)]
+        let mut system_state: SystemState<(
+            Res<SimulationConfig>,
+            Res<MapPresetsHandle>,
+            Option<Res<HydrologyState>>,
+            Res<TileRegistry>,
+            Query<&mut Tile>,
+        )> = SystemState::new(&mut world);
+
+        {
+            let (config_res, presets_res, hydro_res, registry_res, tiles_query) =
+                system_state.get_mut(&mut world);
+            apply_tag_budget_solver(
+                config_res,
+                presets_res,
+                hydro_res,
+                registry_res,
+                tiles_query,
+            );
+        }
+        system_state.apply(&mut world);
+
+        for polar_entity in tile_entities.iter().take(2) {
+            let tile = world.entity(*polar_entity).get::<Tile>().unwrap();
+            assert!(
+                !tile
+                    .terrain_tags
+                    .contains(sim_runtime::TerrainTags::FERTILE),
+                "polar latitude tile should not be converted to fertile terrain"
+            );
+        }
+
+        let fertile_midband = tile_entities[2..]
+            .iter()
+            .map(|entity| world.entity(*entity).get::<Tile>().unwrap())
+            .filter(|tile| {
+                tile.terrain_tags
+                    .contains(sim_runtime::TerrainTags::FERTILE)
+            })
+            .count();
+        assert!(
+            fertile_midband > 0,
+            "expected fertile conversion on non-polar tiles"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn debug_earthlike_ratios() {
+        let (ratios, preset, total_tiles) = tag_ratios_for_preset("earthlike", 0xE47E_51DE_2024u64);
+        println!("earthlike ratios (tiles={total_tiles}):");
+        for (name, target) in preset.terrain_tag_targets.iter() {
+            let actual = ratios.get(name).copied().unwrap_or(0.0);
+            println!("  {name}: actual {actual:.4}, target {target:.4}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod power_tests {
     use super::*;
     use crate::{CultureCorruptionConfig, TurnPipelineConfig};
@@ -1580,6 +2952,7 @@ mod power_tests {
                             temperature: ambient_temperature,
                             terrain: TerrainType::AlluvialPlain,
                             terrain_tags: TerrainTags::empty(),
+                            mountain: None,
                         },
                         PowerNode {
                             id: PowerNodeId(idx as u32),

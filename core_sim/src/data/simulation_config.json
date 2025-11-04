@@ -1,6 +1,7 @@
 {
   "grid_size": { "x": 80, "y": 52 },
   "map_preset_id": "earthlike",
+  "map_seed": 0,
   "ambient_temperature": 18.0,
   "temperature_lerp": 0.05,
   "logistics_flow_gain": 0.1,

@@ -11,6 +11,9 @@ const FOG_COLOR := Color(0.6, 0.78, 0.95, 1.0)
 const CULTURE_COLOR := Color(0.72, 0.36, 0.88, 1.0)
 const MILITARY_COLOR := Color(0.36, 0.7, 0.43, 1.0)
 const CRISIS_COLOR := Color(0.92, 0.24, 0.46, 1.0)
+const ELEVATION_LOW_COLOR := Color(0.16, 0.32, 0.78, 1.0)
+const ELEVATION_MID_COLOR := Color(0.97, 0.82, 0.32, 1.0)
+const ELEVATION_HIGH_COLOR := Color(0.78, 0.14, 0.18, 1.0)
 const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
 const GRID_LINE_COLOR := Color(0.1, 0.12, 0.18, 0.45)
 const SQRT3 := 1.7320508075688772
@@ -28,7 +31,9 @@ const OVERLAY_COLORS := {
     "fog": FOG_COLOR,
     "culture": CULTURE_COLOR,
     "military": MILITARY_COLOR,
-    "crisis": CRISIS_COLOR
+    "crisis": CRISIS_COLOR,
+    "elevation": ELEVATION_HIGH_COLOR,
+    "moisture": Color(0.2, 0.65, 0.95, 1.0),
 }
 
 const CRISIS_SEVERITY_COLORS := {
@@ -643,6 +648,12 @@ func _is_culture_layer_highlighted(layer_id: int) -> bool:
         return true
     return highlighted_culture_layer_set.has(layer_id)
 
+func _elevation_color(value: float) -> Color:
+    var t: float = clampf(value, 0.0, 1.0)
+    if t <= 0.5:
+        return ELEVATION_LOW_COLOR.lerp(ELEVATION_MID_COLOR, t * 2.0)
+    return ELEVATION_MID_COLOR.lerp(ELEVATION_HIGH_COLOR, (t - 0.5) * 2.0)
+
 func _tile_color(x: int, y: int) -> Color:
     if terrain_mode:
         var terrain_id := _terrain_id_at(x, y)
@@ -660,6 +671,10 @@ func _tile_color(x: int, y: int) -> Color:
             return muted.darkened(0.35)
         var highlighted := GRID_COLOR.lerp(overlay_color, overlay_value)
         return highlighted.lightened(0.12)
+    if active_overlay_key == "elevation":
+        var gradient_color: Color = _elevation_color(overlay_value)
+        var blend: float = clampf(overlay_value * 0.85 + 0.15, 0.0, 1.0)
+        return GRID_COLOR.lerp(gradient_color, blend)
     return GRID_COLOR.lerp(overlay_color, overlay_value)
 
 func _terrain_color_for_id(terrain_id: int) -> Color:

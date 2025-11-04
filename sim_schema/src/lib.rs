@@ -3,7 +3,7 @@ use flatbuffers::{DefaultAllocator, FlatBufferBuilder, ForwardsUOffset, WIPOffse
 use serde::{Deserialize, Serialize};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 use std::{
-    hash::{BuildHasher, Hasher},
+    hash::{BuildHasher, Hash, Hasher},
     ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign},
 };
 
@@ -533,10 +533,25 @@ impl From<TerrainTags> for u16 {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum MountainKind {
+    #[default]
+    None = 0,
+    Fold = 1,
+    Fault = 2,
+    Volcanic = 3,
+    Dome = 4,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerrainSample {
     pub terrain: TerrainType,
     pub tags: TerrainTags,
+    #[serde(default)]
+    pub mountain_kind: MountainKind,
+    #[serde(default = "default_relief_scale")]
+    pub relief_scale: f32,
 }
 
 impl Default for TerrainSample {
@@ -544,8 +559,34 @@ impl Default for TerrainSample {
         Self {
             terrain: TerrainType::AlluvialPlain,
             tags: TerrainTags::empty(),
+            mountain_kind: MountainKind::None,
+            relief_scale: 1.0,
         }
     }
+}
+
+impl PartialEq for TerrainSample {
+    fn eq(&self, other: &Self) -> bool {
+        self.terrain == other.terrain
+            && self.tags == other.tags
+            && self.mountain_kind == other.mountain_kind
+            && self.relief_scale.to_bits() == other.relief_scale.to_bits()
+    }
+}
+
+impl Eq for TerrainSample {}
+
+impl std::hash::Hash for TerrainSample {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.terrain.hash(state);
+        self.tags.hash(state);
+        self.mountain_kind.hash(state);
+        self.relief_scale.to_bits().hash(state);
+    }
+}
+
+const fn default_relief_scale() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -577,6 +618,14 @@ pub struct HydrologyOverlayState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+pub struct ElevationOverlayState {
+    pub width: u32,
+    pub height: u32,
+    #[serde(default)]
+    pub samples: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 pub struct StartMarkerState {
     pub x: u32,
     pub y: u32,
@@ -587,6 +636,14 @@ pub struct ScalarRasterState {
     pub width: u32,
     pub height: u32,
     pub samples: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct FloatRasterState {
+    pub width: u32,
+    pub height: u32,
+    #[serde(default)]
+    pub samples: Vec<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -600,6 +657,10 @@ pub struct TileState {
     pub terrain: TerrainType,
     pub terrain_tags: TerrainTags,
     pub culture_layer: u32,
+    #[serde(default)]
+    pub mountain_kind: MountainKind,
+    #[serde(default = "default_relief_scale")]
+    pub mountain_relief: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1047,7 +1108,9 @@ pub struct WorldSnapshot {
     pub knowledge_metrics: KnowledgeMetricsState,
     pub crisis_telemetry: CrisisTelemetryState,
     pub crisis_overlay: CrisisOverlayState,
+    pub moisture_raster: FloatRasterState,
     pub hydrology_overlay: HydrologyOverlayState,
+    pub elevation_overlay: ElevationOverlayState,
     pub start_marker: Option<StartMarkerState>,
     pub terrain: TerrainOverlayState,
     pub logistics_raster: ScalarRasterState,
@@ -1090,7 +1153,9 @@ pub struct WorldDelta {
     pub knowledge_timeline: Vec<KnowledgeTimelineEventState>,
     pub crisis_telemetry: Option<CrisisTelemetryState>,
     pub crisis_overlay: Option<CrisisOverlayState>,
+    pub moisture_raster: Option<FloatRasterState>,
     pub hydrology_overlay: Option<HydrologyOverlayState>,
+    pub elevation_overlay: Option<ElevationOverlayState>,
     pub start_marker: Option<StartMarkerState>,
     pub axis_bias: Option<AxisBiasState>,
     pub sentiment: Option<SentimentTelemetryState>,
@@ -1206,6 +1271,8 @@ fn build_snapshot_flatbuffer<'a>(
     let crisis_telemetry = create_crisis_telemetry(builder, &snapshot.crisis_telemetry);
     let crisis_overlay = create_crisis_overlay(builder, &snapshot.crisis_overlay);
     let hydrology_overlay = create_hydrology_overlay(builder, &snapshot.hydrology_overlay);
+    let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
+    let elevation_overlay = create_elevation_overlay(builder, &snapshot.elevation_overlay);
     let start_marker = snapshot
         .start_marker
         .as_ref()
@@ -1253,7 +1320,9 @@ fn build_snapshot_flatbuffer<'a>(
             knowledgeMetrics: Some(knowledge_metrics),
             crisisTelemetry: Some(crisis_telemetry),
             crisisOverlay: Some(crisis_overlay),
+            moistureRaster: Some(moisture_raster),
             hydrologyOverlay: Some(hydrology_overlay),
+            elevationOverlay: Some(elevation_overlay),
             startMarker: start_marker,
             terrainOverlay: Some(terrain_overlay),
             logisticsRaster: Some(logistics_raster),
@@ -1340,10 +1409,18 @@ fn build_delta_flatbuffer<'a>(
         .crisis_overlay
         .as_ref()
         .map(|overlay| create_crisis_overlay(builder, overlay));
+    let moisture_raster = delta
+        .moisture_raster
+        .as_ref()
+        .map(|raster| create_float_raster(builder, raster));
     let hydrology_overlay = delta
         .hydrology_overlay
         .as_ref()
         .map(|overlay| create_hydrology_overlay(builder, overlay));
+    let elevation_overlay = delta
+        .elevation_overlay
+        .as_ref()
+        .map(|overlay| create_elevation_overlay(builder, overlay));
     let start_marker = delta
         .start_marker
         .as_ref()
@@ -1429,6 +1506,8 @@ fn build_delta_flatbuffer<'a>(
             knowledgeMetrics: knowledge_metrics,
             crisisTelemetry: crisis_telemetry,
             crisisOverlay: crisis_overlay,
+            moistureRaster: moisture_raster,
+            elevationOverlay: elevation_overlay,
             axisBias: axis_bias,
             sentiment,
             generations: Some(generations_vec),
@@ -1497,6 +1576,21 @@ fn create_hydrology_overlay<'a>(
     )
 }
 
+fn create_elevation_overlay<'a>(
+    builder: &mut FbBuilder<'a>,
+    overlay: &ElevationOverlayState,
+) -> WIPOffset<fb::ElevationOverlay<'a>> {
+    let samples_vec = builder.create_vector(&overlay.samples);
+    fb::ElevationOverlay::create(
+        builder,
+        &fb::ElevationOverlayArgs {
+            width: overlay.width,
+            height: overlay.height,
+            samples: Some(samples_vec),
+        },
+    )
+}
+
 fn create_start_marker<'a>(
     builder: &mut FbBuilder<'a>,
     marker: &StartMarkerState,
@@ -1529,6 +1623,8 @@ fn create_tiles<'a>(
                     terrain: to_fb_terrain_type(tile.terrain),
                     terrainTags: tile.terrain_tags.bits(),
                     cultureLayer: tile.culture_layer,
+                    mountainKind: to_fb_mountain_kind(tile.mountain_kind),
+                    mountainRelief: tile.mountain_relief,
                 },
             )
         })
@@ -2200,6 +2296,8 @@ fn create_terrain_overlay<'a>(
                 &fb::TerrainSampleArgs {
                     terrain: to_fb_terrain_type(sample.terrain),
                     tags: sample.tags.bits(),
+                    mountainKind: to_fb_mountain_kind(sample.mountain_kind),
+                    reliefScale: sample.relief_scale,
                 },
             )
         })
@@ -2223,6 +2321,21 @@ fn create_scalar_raster<'a>(
     fb::ScalarRaster::create(
         builder,
         &fb::ScalarRasterArgs {
+            width: raster.width,
+            height: raster.height,
+            samples: Some(samples),
+        },
+    )
+}
+
+fn create_float_raster<'a>(
+    builder: &mut FbBuilder<'a>,
+    raster: &FloatRasterState,
+) -> WIPOffset<fb::FloatRaster<'a>> {
+    let samples = builder.create_vector(&raster.samples);
+    fb::FloatRaster::create(
+        builder,
+        &fb::FloatRasterArgs {
             width: raster.width,
             height: raster.height,
             samples: Some(samples),
@@ -2539,6 +2652,16 @@ fn to_fb_terrain_type(terrain: TerrainType) -> fb::TerrainType {
         TerrainType::KarstCavernMouth => fb::TerrainType::KarstCavernMouth,
         TerrainType::SinkholeField => fb::TerrainType::SinkholeField,
         TerrainType::AquiferCeiling => fb::TerrainType::AquiferCeiling,
+    }
+}
+
+fn to_fb_mountain_kind(kind: MountainKind) -> fb::MountainKind {
+    match kind {
+        MountainKind::None => fb::MountainKind::None,
+        MountainKind::Fold => fb::MountainKind::Fold,
+        MountainKind::Fault => fb::MountainKind::Fault,
+        MountainKind::Volcanic => fb::MountainKind::Volcanic,
+        MountainKind::Dome => fb::MountainKind::Dome,
     }
 }
 

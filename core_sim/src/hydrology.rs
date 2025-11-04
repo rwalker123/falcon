@@ -9,6 +9,7 @@ use crate::{
     components::Tile,
     heightfield::ElevationField,
     map_preset::MapPresetsHandle,
+    mapgen::WorldGenSeed,
     resources::{SimulationConfig, TileRegistry},
 };
 
@@ -210,10 +211,16 @@ pub fn generate_hydrology(world: &mut World) {
         } else {
             None
         };
+        let seed = world
+            .get_resource::<WorldGenSeed>()
+            .map(|s| s.0)
+            .unwrap_or(0);
         let elevation = world
             .get_resource::<ElevationField>()
             .cloned()
-            .unwrap_or_else(|| crate::heightfield::build_elevation_field(&cfg, preset.as_ref()));
+            .unwrap_or_else(|| {
+                crate::heightfield::build_elevation_field(&cfg, preset.as_ref(), seed)
+            });
         (width, height, preset, elevation)
     };
 

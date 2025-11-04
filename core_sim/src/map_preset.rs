@@ -25,6 +25,8 @@ pub struct MapPreset {
     pub name: String,
     pub description: String,
     pub seed_policy: String,
+    #[serde(default)]
+    pub map_seed: Option<u64>,
     pub dimensions: MapPresetDimensions,
     pub sea_level: f32,
     pub continent_scale: f32,
@@ -42,6 +44,10 @@ pub struct MapPreset {
     pub postprocess: serde_json::Value,
     #[serde(default)]
     pub tolerance: f32,
+    #[serde(default)]
+    pub locked_terrain_tags: Vec<String>,
+    #[serde(default)]
+    pub mountains: MountainsConfig,
     #[serde(default = "default_river_accum_threshold_factor")]
     pub river_accum_threshold_factor: f32,
     #[serde(default = "default_river_min_accum")]
@@ -81,6 +87,77 @@ pub struct MapPreset {
     pub ocean: OceanConfig,
     #[serde(default)]
     pub biomes: BiomeTransitionConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MountainsConfig {
+    pub belt_width_tiles: u32,
+    pub fold_strength: f32,
+    pub fault_line_count: u32,
+    pub fault_strength: f32,
+    pub volcanic_arc_chance: f32,
+    pub volcanic_chain_length: u32,
+    pub volcanic_strength: f32,
+    pub max_volcanic_chains_per_plate: u32,
+    pub volcanic_strength_drop: f32,
+    pub volcanic_tile_cap_per_plate: u32,
+    pub plateau_density: f32,
+    #[serde(default)]
+    pub plateau_microrelief_strength: f32,
+    #[serde(default)]
+    pub plateau_rim_width: u32,
+    #[serde(default)]
+    pub plateau_terrace_variance: f32,
+    #[serde(default = "default_polar_latitude_fraction")]
+    pub polar_latitude_fraction: f32,
+    #[serde(default = "default_polar_microplate_density")]
+    pub polar_microplate_density: f32,
+    #[serde(default = "default_polar_uplift_scale")]
+    pub polar_uplift_scale: f32,
+    #[serde(default = "default_polar_low_relief_scale")]
+    pub polar_low_relief_scale: f32,
+}
+
+const fn default_polar_latitude_fraction() -> f32 {
+    0.18
+}
+
+const fn default_polar_microplate_density() -> f32 {
+    0.0015
+}
+
+const fn default_polar_uplift_scale() -> f32 {
+    1.3
+}
+
+const fn default_polar_low_relief_scale() -> f32 {
+    0.65
+}
+
+impl Default for MountainsConfig {
+    fn default() -> Self {
+        Self {
+            belt_width_tiles: 3,
+            fold_strength: 0.45,
+            fault_line_count: 1,
+            fault_strength: 0.3,
+            volcanic_arc_chance: 0.35,
+            volcanic_chain_length: 4,
+            volcanic_strength: 0.35,
+            max_volcanic_chains_per_plate: 2,
+            volcanic_strength_drop: 1.5,
+            volcanic_tile_cap_per_plate: 36,
+            plateau_density: 0.05,
+            plateau_microrelief_strength: 0.0,
+            plateau_rim_width: 1,
+            plateau_terrace_variance: 0.0,
+            polar_latitude_fraction: default_polar_latitude_fraction(),
+            polar_microplate_density: default_polar_microplate_density(),
+            polar_uplift_scale: default_polar_uplift_scale(),
+            polar_low_relief_scale: default_polar_low_relief_scale(),
+        }
+    }
 }
 
 const fn default_river_accum_threshold_factor() -> f32 {
@@ -229,6 +306,18 @@ pub struct BiomeTransitionConfig {
     pub orographic_strength: f32,
     pub transition_width: u32,
     pub band_profile: String,
+    pub coastal_rainfall_decay: f32,
+    pub interior_aridity_strength: f32,
+    pub prevailing_wind_flip_chance: f32,
+    pub rain_shadow_strength: f32,
+    pub rain_shadow_decay: f32,
+    pub windward_moisture_bonus: f32,
+    pub base_humidity_weight: f32,
+    pub latitude_humidity_weight: f32,
+    pub dryness_thresholds: [f32; 3],
+    pub humidity_scale: f32,
+    pub humidity_bias: f32,
+    pub coastal_bonus_scale: f32,
 }
 
 impl Default for BiomeTransitionConfig {
@@ -237,6 +326,18 @@ impl Default for BiomeTransitionConfig {
             orographic_strength: 0.6,
             transition_width: 2,
             band_profile: "default".to_string(),
+            coastal_rainfall_decay: 3.0,
+            interior_aridity_strength: 0.35,
+            prevailing_wind_flip_chance: 0.1,
+            rain_shadow_strength: 0.28,
+            rain_shadow_decay: 0.08,
+            windward_moisture_bonus: 0.2,
+            base_humidity_weight: 0.55,
+            latitude_humidity_weight: 0.45,
+            dryness_thresholds: [0.65, 0.45, 0.30],
+            humidity_scale: 1.0,
+            humidity_bias: 0.0,
+            coastal_bonus_scale: 0.8,
         }
     }
 }

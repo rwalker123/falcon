@@ -1,6 +1,8 @@
 use bevy::prelude::UVec2;
 use sim_runtime::{TerrainTags, TerrainType};
 
+use crate::mapgen::MountainType;
+
 #[derive(Debug, Clone, Copy)]
 pub struct MovementProfile {
     pub foot: f32,
@@ -596,10 +598,86 @@ pub fn classify_terrain(position: UVec2, grid_size: UVec2) -> TerrainType {
     )
 }
 
+fn select_mountain_terrain(kind: MountainType, relief: f32, moisture: f32) -> TerrainType {
+    use sim_runtime::TerrainType::*;
+    let relief = relief.clamp(0.5, 3.0);
+    let moisture = moisture.clamp(0.0, 1.0);
+    match kind {
+        MountainType::Fold => {
+            if relief >= 1.45 {
+                AlpineMountain
+            } else if moisture >= 0.6 {
+                RollingHills
+            } else if moisture >= 0.4 {
+                HighPlateau
+            } else {
+                CanyonBadlands
+            }
+        }
+        MountainType::Fault => {
+            if moisture >= 0.5 {
+                KarstHighland
+            } else {
+                CanyonBadlands
+            }
+        }
+        MountainType::Volcanic => ActiveVolcanoSlope,
+        MountainType::Dome => {
+            if moisture >= 0.55 {
+                HighPlateau
+            } else {
+                RollingHills
+            }
+        }
+    }
+}
+
+pub fn terrain_for_position_with_context(
+    position: UVec2,
+    grid_size: UVec2,
+    moisture: Option<f32>,
+    elevation: Option<f32>,
+    mountain: Option<(MountainType, f32)>,
+) -> (TerrainType, TerrainTags) {
+    let mut terrain = classify_terrain(position, grid_size);
+    let mut definition = terrain_definition(terrain);
+    let mut tags = definition.tags;
+    let moisture = moisture.unwrap_or(0.5);
+    let lat_denom = grid_size.y.saturating_sub(1).max(1) as f32;
+    let lat = position.y as f32 / lat_denom;
+    let dist_from_equator = (lat - 0.5).abs();
+    let is_polar_lat = dist_from_equator >= 0.35;
+
+    if let Some((kind, relief)) = mountain {
+        if is_polar_lat {
+            terrain = sim_runtime::TerrainType::SeasonalSnowfield;
+            definition = terrain_definition(terrain);
+            tags = definition.tags | TerrainTags::HIGHLAND;
+        } else {
+            terrain = select_mountain_terrain(kind, relief, moisture);
+            definition = terrain_definition(terrain);
+            tags = definition.tags;
+        }
+    } else if let Some(elev) = elevation {
+        if !is_polar_lat && elev >= 0.86 && moisture < 0.28 {
+            terrain = sim_runtime::TerrainType::CanyonBadlands;
+            definition = terrain_definition(terrain);
+            tags = definition.tags;
+        } else if elev >= 0.78
+            && moisture >= 0.6
+            && !definition.tags.contains(TerrainTags::HIGHLAND)
+        {
+            terrain = sim_runtime::TerrainType::RollingHills;
+            definition = terrain_definition(terrain);
+            tags = definition.tags;
+        }
+    }
+
+    (terrain, tags)
+}
+
 pub fn terrain_for_position(position: UVec2, grid_size: UVec2) -> (TerrainType, TerrainTags) {
-    let terrain = classify_terrain(position, grid_size);
-    let definition = terrain_definition(terrain);
-    (terrain, definition.tags)
+    terrain_for_position_with_context(position, grid_size, None, None, None)
 }
 
 fn tile_noise(position: UVec2) -> u32 {
@@ -618,4 +696,64 @@ fn pick(noise: u32, options: &[TerrainType]) -> TerrainType {
     }
     let idx = (noise as usize) % options.len();
     options[idx]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fold_mountains_become_alpine_highland() {
+        let position = UVec2::new(8, 8);
+        let grid = UVec2::new(32, 32);
+        let (terrain, tags) = terrain_for_position_with_context(
+            position,
+            grid,
+            Some(0.55),
+            Some(0.9),
+            Some((MountainType::Fold, 1.6)),
+        );
+        assert_eq!(terrain, TerrainType::AlpineMountain);
+        assert!(tags.contains(TerrainTags::HIGHLAND));
+    }
+
+    #[test]
+    fn dome_mountains_respect_moisture_bias() {
+        let position = UVec2::new(4, 12);
+        let grid = UVec2::new(32, 32);
+        let (wet_terrain, wet_tags) = terrain_for_position_with_context(
+            position,
+            grid,
+            Some(0.7),
+            Some(0.75),
+            Some((MountainType::Dome, 1.1)),
+        );
+        assert_eq!(wet_terrain, TerrainType::HighPlateau);
+        assert!(wet_tags.contains(TerrainTags::HIGHLAND));
+
+        let (dry_terrain, _) = terrain_for_position_with_context(
+            position,
+            grid,
+            Some(0.25),
+            Some(0.72),
+            Some((MountainType::Dome, 1.1)),
+        );
+        assert_eq!(dry_terrain, TerrainType::RollingHills);
+    }
+
+    #[test]
+    fn polar_mountains_preserve_polar_tags() {
+        let grid = UVec2::new(64, 48);
+        let position = UVec2::new(8, 4);
+        let (terrain, tags) = terrain_for_position_with_context(
+            position,
+            grid,
+            Some(0.18),
+            Some(0.88),
+            Some((MountainType::Fold, 1.4)),
+        );
+        assert_eq!(terrain, TerrainType::SeasonalSnowfield);
+        assert!(tags.contains(TerrainTags::POLAR));
+        assert!(tags.contains(TerrainTags::HIGHLAND));
+    }
 }

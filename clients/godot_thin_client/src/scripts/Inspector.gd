@@ -22,6 +22,14 @@ const COUNTERINTEL_POLICY_OPTIONS := [
     {"key": "crisis", "label": "Crisis"}
 ]
 
+const MOUNTAIN_KIND_LABELS := {
+    0: "None",
+    1: "Fold Belt",
+    2: "Fault Block Range",
+    3: "Volcanic Chain",
+    4: "Dome Plateau",
+}
+
 @onready var sentiment_text: RichTextLabel = $RootPanel/TabContainer/Sentiment/SentimentText
 @onready var terrain_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TerrainText
 @onready var terrain_biome_section_label: Label = $RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection/BiomeSectionLabel
@@ -4112,6 +4120,9 @@ func _format_tile_list_entry(entity_id: int, record: Dictionary) -> String:
     var parts: Array[String] = []
     parts.append(coords_text)
     parts.append("entity %d" % entity_id)
+    var mountain_kind: int = int(record.get("mountain_kind", 0))
+    if mountain_kind > 0:
+        parts.append(_label_for_mountain_kind(mountain_kind))
     if not preview_tags.is_empty():
         parts.append(_join_strings_with_separator(preview_tags, ", "))
     return _join_strings_with_separator(parts, " • ")
@@ -4140,11 +4151,17 @@ Hover or select a tile to inspect biome tags and conditions."""
     var tags: Array[String] = _tag_labels_from_mask(int(record.get("tags", 0)))
     var tags_text: String = "none"
     if not tags.is_empty():
-            tags_text = _join_strings_with_separator(tags, ", ")
+        tags_text = _join_strings_with_separator(tags, ", ")
     lines.append("Tags: %s" % tags_text)
     lines.append("Temperature: %.1f" % float(record.get("temperature", 0.0)))
     lines.append("Mass: %.1f" % float(record.get("mass", 0.0)))
     lines.append("Element ID: %d" % int(record.get("element", -1)))
+    var mountain_kind: int = int(record.get("mountain_kind", 0))
+    if mountain_kind > 0:
+        var relief_scale: float = float(record.get("mountain_relief", 1.0))
+        lines.append("Mountain: %s (relief ×%.2f)" % [_label_for_mountain_kind(mountain_kind), relief_scale])
+    else:
+        lines.append("Mountain: none")
     if preview:
         lines.append("")
         lines.append("[i]Hover preview[/i]")
@@ -4159,6 +4176,10 @@ func _tag_labels_from_mask(mask: int) -> Array[String]:
         if (mask & bit_value) != 0:
             labels.append(_label_for_tag(bit_value))
     return labels
+
+func _label_for_mountain_kind(kind: int) -> String:
+    var value: Variant = MOUNTAIN_KIND_LABELS.get(kind, "Unknown")
+    return str(value)
 
 func focus_tile_from_map(col: int, row: int, terrain_id: int) -> void:
     if terrain_biome_list == null:
@@ -5159,6 +5180,8 @@ func _store_tile(entry) -> void:
         return
     var terrain_id = int(info.get("terrain", -1))
     var tags_mask = int(info.get("terrain_tags", 0))
+    var mountain_kind = int(info.get("mountain_kind", 0))
+    var mountain_relief = float(info.get("mountain_relief", 1.0))
     var record = {
         "terrain": terrain_id,
         "tags": tags_mask,
@@ -5166,7 +5189,9 @@ func _store_tile(entry) -> void:
         "y": int(info.get("y", -1)),
         "element": int(info.get("element", -1)),
         "temperature": float(info.get("temperature", 0.0)),
-        "mass": float(info.get("mass", 0.0))
+        "mass": float(info.get("mass", 0.0)),
+        "mountain_kind": mountain_kind,
+        "mountain_relief": mountain_relief,
     }
     _tile_records[entity] = record
     var coord := Vector2i(int(record.get("x", -1)), int(record.get("y", -1)))

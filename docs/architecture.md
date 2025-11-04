@@ -14,7 +14,10 @@ Implements the procedural map pipeline that produces terrain, coasts, rivers/lak
 
 ### Pipeline (MVP → Extensible)
 - Macro landmask: Place `macro_land.continents` seeds (biased toward high elevation), grow each continent using weighted BFS until it meets its quota (`target_land_pct`, `min_area`, `jitter`). Remaining tiles fill by descending elevation so the global land percentage matches the preset.
+- Tectonics pass: For each continent, derive drift vectors, collision belts, interior fault seams, volcanic arcs, and dome plateaus. Emit a mountain mask (`Fold`, `Fault`, `Volcanic`, `Dome`) with strength metadata before shelves/elevation restamping run. Fold belts widen according to `mountains.belt_width_tiles` and feed elevation restamping to form continuous ridges.
+- Polar microplates: When a land component intersects the configurable polar band (`mountains.polar_latitude_fraction`), subdivide the polar tiles into micro-plates whose density comes from `mountains.polar_microplate_density`. Converging vectors raise fold strength (multiplied by `mountains.polar_uplift_scale`), divergent seams cap relief (`mountains.polar_low_relief_scale`), and shear seams sprinkle extra faults. The `mapgen.tectonics.polar_microplates` trace target logs per component so designers can tune presets; see the player framing in §3a “World Bootstrapping” of the manual. The built-in `polar_contrast` preset pins a repeatable polar layout via `seed_policy = "preset_fixed"` + `map_seed`, and bumps density/uplift (`polar_microplate_density ≈ 0.0065`, `polar_uplift_scale ≈ 1.85`) so each cap fractures into multiple belts without losing flat corridors—no edits to `simulation_config.json` required.
 - Heightfield: Generate a seeded multi-octave height raster; apply erosion-ish smoothing; persist `elevation_m` per tile.
+- Coastal smoothing: After tectonic restamping, blend shoreline land tiles toward a local 3×3 blur based on `land_distance`. This widens lowlands and mutes sheer coastal cliffs without flattening interior plateaus.
 - Ocean/coasts (distance-transform bands): Compute landmask via the macro pass, flood-fill from map edges to separate true ocean from interior basins, then run a distance transform from land to classify coherent bands:
   - Shelf rule: `ContinentalShelf = ocean tiles with distance_to_land ≤ shelf_width` (no mid‑ocean shelves).
   - Slope rule: tiles with `distance ∈ (shelf_width .. shelf_width + slope_width]` are slope; beyond is deep ocean.
@@ -23,9 +26,11 @@ Implements the procedural map pipeline that produces terrain, coasts, rivers/lak
 - Climate: Assign `climate_band` using latitude proxy + elevation + moisture; store per-tile band for biome decisions.
 - Hydrology: Compute flow direction (D8), fill sinks (limited), compute flow accumulation; choose sources above threshold; trace polylines to nearest sea/lake; classify river order/width; mark `Floodplain`/`FreshwaterMarsh` adjacencies and `RiverDelta` at coast.
 - Elevation Field: Shared `ElevationField` (multi-octave value noise shaped by preset `continent_scale`/`mountain_scale`) seeds both terrain stamping and hydrology so rivers follow coherent basins instead of hash-noise pits.
-- Biomes: Use climate + elevation + moisture to stamp `TerrainType` (via `terrain_for_position`) with micro-variant jitters along rivers/coasts to respect adjacency rules.
-  - Current MVP implemented: sea-level gating during initial tile spawn (ocean tiles vs land) and a post-stamp wetland nudge near generated river polylines to raise `Wetland` tag share toward preset targets.
-  - Transitions: presets expose `biomes.transition_width` and `biomes.orographic_strength` to soften boundaries (e.g., savanna/semi‑arid scrub between rainforest and hot desert).
+- Biomes: Use climate + elevation + moisture to stamp `TerrainType` (via `terrain_for_position`) with micro-variant jitters along rivers/coasts to respect adjacency rules. Structural mountain tiles short-circuit this pass: fold/fault/volcanic/dome cells pick their dedicated highland terrains (Alpine vs Plateau vs Badlands vs Volcano) before the climate classifier runs so later passes see consistent tags.
+- Moisture transport: per-tile humidity blends latitude, coastal distance decay, interior aridity, and a wind-driven rain-shadow pass. Prevailing winds derive from latitude bands with preset-controlled jitter (`biomes.prevailing_wind_flip_chance`), ridge tiles add windward lift via `biomes.windward_moisture_bonus`, and downwind corridors dry out according to `biomes.rain_shadow_strength` / `biomes.rain_shadow_decay`. These knobs pair with the player-facing explanation in the world manual (§3b Terrain Palette).
+  - **Highland Propagation**: the tectonic mask now feeds directly into the moisture solver and biome tagging. Each `MountainType` injects windward lift proportional to relief, seeds a decaying rain shadow along the prevailing wind direction, and selects a highland terrain override (`Fold`→`AlpineMountain`, `Fault`→`KarstHighland`, `Volcanic`→`ActiveVolcanoSlope`, `Dome`→`HighPlateau`/`RollingHills`). The resulting tags are preserved through `bias_terrain_for_preset` and counted by the tag-budget solver even when presets lock `Highland`. This keeps moisture, climate bias, and snapshot overlays in sync; designers can depend on highland tags surviving to presentation.
+  - Smoothing: the moisture raster is blurred using `biomes.transition_width` before classification, yielding ecotones (savanna/semi-arid scrub) instead of hard biome seams.
+  - Terrain picks now respect humidity/temperature bands directly; preset biases still nudge outcomes post-classification.
 - Resources: Surface ore/organics/energy deposits biased by `TerrainDefinition.resource_bias` and world chemistry tables.
 - Wildlife (Game): Seed herd spawners and migratory paths, density weighted by biome and water proximity; expose “game density” scalar raster for foraging/hunting yields.
 - Starting areas: Place candidate starts respecting the “World Viability Contract” (manual §3a). For the nomadic default, spawn bands within reach of freshwater, forage clusters, and at least one soft metal + fuel path within N tiles.
@@ -47,7 +52,8 @@ Expose worldgen knobs via JSON presets in `core_sim/src/data/map_presets.json`. 
 - Loader: `SimulationConfig` gains `map_preset_id` and loads the referenced preset at startup. Include `preset_id` in `WorldSnapshot` for clients.
 - Preset shape (schema sketch):
   - `id`, `name`, `description`
-  - `seed_policy` (use `simulation_seed` or override)
+  - `seed_policy` (values: `use_simulation_seed`, `preset_fixed`, or `preset_seed`)
+  - `map_seed` (optional world-seed override used by `preset_fixed`/`preset_seed`)
   - `dimensions` (`width`, `height`)
   - `sea_level`, `continent_scale`, `mountain_scale`, `moisture_scale`
   - `river_density`, `lake_chance`
@@ -56,14 +62,15 @@ Expose worldgen knobs via JSON presets in `core_sim/src/data/map_presets.json`. 
   - `river_source_percentile`, `river_source_sea_buffer`, `river_min_spacing`, `river_uphill_step_limit`, `river_uphill_gain_pct`
   - `climate_band_weights` (e.g., `{ polar: 0.12, temperate: 0.46, tropical: 0.42 }`)
   - `terrain_tag_targets` (normalized shares for `Water`, `Coastal`, `Wetland`, `Fertile`, `Arid`, `Polar`, `Highland`, `Volcanic`, `Hazardous`)
+  - `locked_terrain_tags` (handful of tag families the solver must keep within tolerance; others become advisory)
   - `biome_weights` (optional per-`TerrainType` multipliers to bias specific biomes)
   - `postprocess` (adjacency weight, river/wetland jitter strength, floodplain spread)
   - `tolerance` (acceptable error on tag targets, e.g., ±2%)
 
 ### Tag Budget Solver (Hitting Target Shares)
-After initial biome stamping, run a fast post-process to better match `terrain_tag_targets` within `tolerance`:
-- Compute current tag coverage from stamped `TerrainTags`.
-- MVP implemented: if `Wetland` share is under target, promote tiles along river polylines and immediate neighbors to `FreshwaterMarsh` until within tolerance budget. Future: expand to multi-tag balancing with adjacency constraints.
+After initial biome stamping, presets may optionally lock a subset of tag families (`locked_terrain_tags`). The post-process iterates only those families—water → wetlands → fertile → coastal → highland → polar → arid → volcanic → hazardous—and nudges nearby tiles until the locked tag falls back inside `tolerance`, bailing out if an iteration cap triggers. Unlocked tags are best effort; they inherit whatever coverage the upstream generator produced once the locks have converged.
+- Compute current tag coverage from stamped `TerrainTags`, honouring hazardous ratios as land-only.
+- Promote/demote tiles with adjacency checks (rivers, coastlines, mountain metadata) depending on which family is locked, then re-read coverage before the next pass.
 - Use fixed-point friendly scoring; keep adjustments local to avoid destabilizing hydrology classifications.
 
 ### Default Preset: Earthlike (Oceans/Continents)
@@ -593,7 +600,8 @@ The turn schedule should place `update_constellation_progress` immediately after
 - `islands`: `{ continental_density, oceanic_density, fringing_shelf_width, min_distance_from_continent }`
 - `inland_sea`: `{ min_area, merge_strait_width }`
 - `ocean`: `{ ridge_density, ridge_amplitude }`
-- `biomes`: `{ orographic_strength, transition_width, band_profile }`
+- `biomes`: `{ orographic_strength, transition_width, band_profile, coastal_rainfall_decay, interior_aridity_strength }`
+- `mountains`: `{ belt_width_tiles, fold_strength, fault_line_count, fault_strength, volcanic_arc_chance, volcanic_chain_length, volcanic_strength, plateau_density }`
 
 ### Validation & Debug
 - Invariants logged at startup (target `shadow_scale::mapgen`):

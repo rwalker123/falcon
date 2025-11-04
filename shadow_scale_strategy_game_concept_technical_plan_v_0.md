@@ -176,7 +176,7 @@ Gather → Process → Build → Power → Store → Move → Defend
 ### Worldgen Coupling
 - Start profile influences biome/ore surfacing to prevent dead starts (e.g., clay near water; fluxes within travel range; at least one workable fuel).
 - Climate bands, hydrology, and atmospheric composition align with chemistry and the chosen early energy pathway.
-- Map presets: scenario-selectable map presets (e.g., Earthlike) define macro shape and target proportions of tag categories (Water, Fertile, Wetland, Hazardous, etc.). The builder iteratively nudges marginal tiles to meet targets within tolerance while respecting adjacency rules.
+- Map presets: scenario-selectable map presets (e.g., Earthlike) define macro shape and target proportions of tag categories (Water, Fertile, Wetland, Hazardous, etc.). Presets can also nominate a short list of `locked_terrain_tags`; the solver focuses on keeping those families within tolerance (great for promising farmland or wetlands) while letting everything else drift naturally. The builder still nudges marginal tiles with adjacency rules, but only applies adjustments to locked tags so we avoid a tug-of-war across every category. Presets can pin their own world seed; use `seed_policy = preset_fixed` with a `map_seed` to lock in a signature arrangement. The `Polar Microplate Contrast` preset does this and leans on a higher microplate density/uplift pair so the caps pop with alternating ridges and flats.
 
 ### Coherent Coasts & Inland Waters (Player-Facing Summary)
 - Coasts feel geologic: every landmass has a shallow continental shelf ringing its shores, then a steeper slope, then deep ocean. You’ll see fisheries and easy early trade hugging the shelf tiles.
@@ -185,8 +185,12 @@ Gather → Process → Build → Power → Store → Move → Defend
   - Oceanic islands: far out on abyssal plains, with a narrow fringing shelf. Rare, strategic harbors and waypoints.
 - Inland seas and large lakes form inside continents with lacustrine margins (never mislabeled as continental shelf). If an inland sea is close enough to the ocean, a narrow strait will open and merge it—no awkward “lake next to ocean with a river between.”
 - Elevation reads intuitively: land > shelf (shallow) > slope (steeper) > abyss (deep). A few broad mid‑ocean plateaus may appear in some presets.
+- Coastal lowlands feel walkable: the generator now feathers shoreline tiles into nearby plains instead of hard cliff walls, so deltas, estuaries, and early settlements have believable breathing room.
 - Biomes blend logically across latitude + rain shadows + moisture. Expect savanna or semi‑arid scrub between rainforest and hot desert rather than hard seams.
 - Presets advertise how many continents to expect and how much land they occupy; macro landmask growth now honors those numbers, so “90% land” really means a world-dominating supercontinent unless you dial the knob back.
+- Moisture modeling now flows from coast to interior with wind-aware rain shadows: coastal tiles get bonus rainfall that decays inland, latitude bands set prevailing winds with jitter, windward slopes gain extra lift, and leeward corridors dry out over several tiles. Scenario presets expose these knobs (`prevailing_wind_flip_chance`, `windward_moisture_bonus`, `rain_shadow_strength`, `rain_shadow_decay`) so designers can push for monsoon tropics or stark rain shadows; see the engineering notes in `docs/architecture.md`.
+- Tectonics sits between the landmask and biome passes: each continent gets a drift vector, collision belts grow fold ranges, interior faults spawn blocky chains, rare volcanic arcs punctuate coasts, and high plateaus/domes seed unique uplifts before we restamp elevation. Those structural tiles now force the right mountain biomes (Alpine ridges, canyon badlands, volcanic slopes, high plateaus) before climate noise paints anything else.
+- Polar landmasses now brim with contrast: whenever a continent reaches the high-latitude collar, the generator breaks those tiles into micro-plates whose density and strength come from `mountains.polar_microplate_density`, `mountains.polar_latitude_fraction`, and the uplift/relief scales in presets. Expect alternating polar ridges and low-relief corridors instead of uniform caps, with tectonic logs (`mapgen.tectonics.polar_microplates`) flagging what the worldbuilder just stamped.
 
 ### 3b. Foundational Terrain Palette
 Raw terrain defines movement, habitability, and discovery potential before factions reshape the landscape. Each tile/hex samples one of these base classes; improvements, infrastructure, and disasters layer on afterwards. (Implementation hooks: see `docs/architecture.md` “Terrain Type Taxonomy”.)
@@ -274,6 +278,7 @@ Raw terrain defines movement, habitability, and discovery potential before facti
   - **Alpine Mountains**: rugged peaks with altitude stress, avalanches, and rare earth seams.
   - **Karst Highlands**: limestone/dolomite riddled with sinkholes and caverns; underground aquifers and instability hazards.
   - **Canyon/Badlands**: eroded escarpments exposing geologic strata; natural fortifications with limited arable land.
+  - **Systems Note**: Structural highlands now propagate through the simulation pipeline—windward tiles pick up extra rainfall, leeward corridors dry out, and the climate/tag budget passes honor locked Highland quotas. Designers can rely on those tags when pitching scenarios (see `docs/architecture.md` “Highland Propagation” for the engineering hooks).
 
 - **Volcanic & Geothermal Terrains**
   - **Active Volcano Slopes**: lava channels and ash; catastrophic risk balanced by geothermal energy and mineral vents.

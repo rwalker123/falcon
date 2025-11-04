@@ -32,6 +32,7 @@ impl ElevationField {
 pub fn build_elevation_field(
     config: &SimulationConfig,
     preset: Option<&MapPreset>,
+    seed: u64,
 ) -> ElevationField {
     let width = config.grid_size.x;
     let height = config.grid_size.y;
@@ -51,17 +52,26 @@ pub fn build_elevation_field(
             let continent_freq = 2.0 + continent_scale.clamp(0.1, 1.5) * 6.0;
             let mountain_freq = 6.0 + mountain_scale.clamp(0.2, 2.5) * 16.0;
 
+            let continent_seed = mix_seed(0x9E37_0001, seed, 0);
+            let ridge_seed = mix_seed(0xC0F3_0001, seed, 0x85EB);
+
             let continent = fbm_noise(
                 nx * continent_freq,
                 ny * continent_freq,
                 4,
                 2.0,
                 0.5,
-                0x9E37,
+                continent_seed,
             );
 
-            let ridge_source =
-                fbm_noise(nx * mountain_freq, ny * mountain_freq, 3, 2.1, 0.45, 0xC0F3);
+            let ridge_source = fbm_noise(
+                nx * mountain_freq,
+                ny * mountain_freq,
+                3,
+                2.1,
+                0.45,
+                ridge_seed,
+            );
             let ridged = (1.0 - (ridge_source - 0.5).abs() * 2.0)
                 .clamp(0.0, 1.0)
                 .powf(1.6);
@@ -148,4 +158,10 @@ fn hash2(x: i32, y: i32, seed: u32) -> f32 {
     n = n.wrapping_mul(0x1B56_C4E9);
     n ^= n >> 11;
     ((n >> 8) & 0xFFFF) as f32 / 65535.0
+}
+
+fn mix_seed(base: u32, seed: u64, salt: u32) -> u32 {
+    let seed_low = seed as u32;
+    let seed_high = (seed >> 32) as u32;
+    base ^ seed_low.rotate_left(7) ^ seed_high.rotate_left(11) ^ salt
 }
