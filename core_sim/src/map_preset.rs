@@ -338,7 +338,7 @@ impl TerrainClassifierConfig {
             coastal_deep_ocean_edge: 0.04,
             coastal_shelf_edge: 0.08,
             coastal_inland_edge: 0.12,
-            polar_latitude_cutoff: 0.38,
+            polar_latitude_cutoff: 0.35,
             high_latitude_threshold: 0.15,
         }
     }

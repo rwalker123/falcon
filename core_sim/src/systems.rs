@@ -44,6 +44,9 @@ use sim_runtime::{
     TradeLeakCurve,
 };
 
+const POLAR_LATITUDE_THRESHOLD: f32 =
+    TerrainClassifierConfig::default_values().polar_latitude_cutoff;
+
 #[derive(Event, Debug, Clone)]
 pub struct TradeDiffusionEvent {
     pub tick: u64,
@@ -445,7 +448,8 @@ fn bias_terrain_for_preset(
     let lat_denom = grid_height.saturating_sub(1).max(1) as f32;
     let lat = position.y as f32 / lat_denom;
     let dist_from_equator = (lat - 0.5).abs();
-    let is_polar_lat = dist_from_equator >= 0.35;
+    let polar_cutoff = preset.terrain_classifier.polar_latitude_cutoff;
+    let is_polar_lat = dist_from_equator >= polar_cutoff;
     let mut result = (terrain, tags);
 
     if effective_weight < 1.0 {
@@ -554,7 +558,7 @@ fn climate_band_for_position(position: UVec2, grid_height: u32) -> &'static str 
     }
     let lat = position.y as f32 / (grid_height.saturating_sub(1) as f32);
     let dist_from_equator = (lat - 0.5).abs();
-    if dist_from_equator >= 0.35 {
+    if dist_from_equator >= POLAR_LATITUDE_THRESHOLD {
         "polar"
     } else if dist_from_equator >= 0.18 {
         "temperate"
@@ -2947,7 +2951,7 @@ mod terrain_tag_tests {
             }
             let lat = tile.position.y as f32 / lat_denom;
             let dist_from_equator = (lat - 0.5).abs();
-            if dist_from_equator < 0.35 {
+            if dist_from_equator < POLAR_LATITUDE_THRESHOLD {
                 continue;
             }
             polar_land += 1;

@@ -67,6 +67,9 @@ Expose worldgen knobs via JSON presets in `core_sim/src/data/map_presets.json`. 
   - `postprocess` (adjacency weight, river/wetland jitter strength, floodplain spread)
   - `tolerance` (acceptable error on tag targets, e.g., ±2%)
 
+### Terrain Classifier Knobs
+- Presets surface a `terrain_classifier` block that feeds `TerrainClassifierConfig`. The key live knob today is `polar_latitude_cutoff` (default `0.35`), which defines the absolute distance from the equator where we flip climate bands to “polar” and where `bias_terrain_for_preset` forces polar-friendly biome substitutions. Aligning this value with the manual’s polar expectations keeps climate overlays, tag budgets, and player-facing copy consistent; see `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3a for the design framing. The systems layer also exposes `POLAR_LATITUDE_THRESHOLD` so tests and helpers share the same cutoff.
+
 ### Tag Budget Solver (Hitting Target Shares)
 After initial biome stamping, presets may optionally lock a subset of tag families (`locked_terrain_tags`). The post-process iterates only those families—water → wetlands → fertile → coastal → highland → polar → arid → volcanic → hazardous—and nudges nearby tiles until the locked tag falls back inside `tolerance`, bailing out if an iteration cap triggers. Unlocked tags are best effort; they inherit whatever coverage the upstream generator produced once the locks have converged.
 - Compute current tag coverage from stamped `TerrainTags`, honouring hazardous ratios as land-only.
