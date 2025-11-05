@@ -40,6 +40,7 @@ const MOUNTAIN_KIND_LABELS := {
 @onready var terrain_tile_detail_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileDetailText
 @onready var map_size_label: Label = $RootPanel/TabContainer/Map/MapVBox/MapSizeSection/MapSizeLabel
 @onready var map_size_dropdown: OptionButton = $RootPanel/TabContainer/Map/MapVBox/MapSizeSection/MapSizeDropdown
+@onready var map_generate_button: Button = $RootPanel/TabContainer/Map/MapVBox/MapSizeSection/GenerateMapButton
 @onready var map_terrain_hint_label: Label = $RootPanel/TabContainer/Map/MapVBox/MapTerrainHint
 @onready var terrain_overlay_section_label: Label = $RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlaySectionLabel
 @onready var terrain_overlay_tabs: TabContainer = $RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlayTabs
@@ -109,6 +110,7 @@ const MOUNTAIN_KIND_LABELS := {
 @onready var log_filter_label: Label = $RootPanel/TabContainer/Logs/FilterControls/FilterLabel
 @onready var log_filter_line: LineEdit = $RootPanel/TabContainer/Logs/FilterControls/LogFilterLine
 @onready var log_clear_button: Button = $RootPanel/TabContainer/Logs/FilterControls/ClearButton
+@onready var log_copy_button: Button = $RootPanel/TabContainer/Logs/FilterControls/CopyButton
 @onready var root_panel: Panel = $RootPanel
 @onready var tab_container: TabContainer = $RootPanel/TabContainer
 @onready var command_status_label: Label = $RootPanel/TabContainer/Commands/StatusLabel
@@ -200,6 +202,7 @@ var _map_size_key: String = MAP_SIZE_DEFAULT_KEY
 var _map_dimensions: Vector2i = MAP_SIZE_DEFAULT_DIMENSIONS
 var _map_size_custom_index: int = -1
 var _suppress_map_size_signal: bool = false
+var _panel_visible: bool = true
 var _selected_trade_entity: int = -1
 var _log_entries: Array = []
 var _log_filtered_records: Array = []
@@ -391,6 +394,20 @@ func _ready() -> void:
     _update_tick_sparkline()
     if command_log_text != null:
         command_log_text.selection_enabled = true
+
+func is_panel_visible() -> bool:
+    return _panel_visible
+
+func set_panel_visible(visible: bool) -> void:
+    _panel_visible = visible
+    if root_panel != null:
+        root_panel.visible = visible
+    set_process(visible)
+    set_process_input(visible)
+    push_warning("Inspector panel visibility -> %s" % str(visible))
+
+func toggle_panel_visibility() -> void:
+    set_panel_visible(not _panel_visible)
 
 func _process(delta: float) -> void:
     _poll_log_stream(delta)
@@ -686,7 +703,7 @@ func _render_static_sections() -> void:
     _selected_great_discovery_progress_key = ""
     _selected_trade_entity = -1
     _clear_terrain_ui()
-    _reset_log_state()
+    _mark_logs_dirty()
     _render_terrain()
     _render_culture()
     _render_power()
@@ -864,7 +881,8 @@ func apply_typography() -> void:
         log_level_dropdown,
         log_target_dropdown,
         log_filter_line,
-        log_clear_button
+        log_clear_button,
+        log_copy_button
     ]
     if _overlay_selector != null:
         control_nodes.append(_overlay_selector)
@@ -935,6 +953,11 @@ func _initialize_log_filters() -> void:
         if not log_clear_button.is_connected("pressed", clear_callable):
             log_clear_button.pressed.connect(_on_log_clear_pressed)
 
+    if log_copy_button != null:
+        var copy_callable = Callable(self, "_on_log_copy_pressed")
+        if not log_copy_button.is_connected("pressed", copy_callable):
+            log_copy_button.pressed.connect(_on_log_copy_pressed)
+
 func _initialize_map_controls() -> void:
     if map_size_dropdown != null:
         _populate_map_size_dropdown()
@@ -942,11 +965,25 @@ func _initialize_map_controls() -> void:
         if not map_size_dropdown.is_connected("item_selected", callable):
             map_size_dropdown.item_selected.connect(_on_map_size_selected)
         map_size_dropdown.focus_mode = Control.FOCUS_ALL
+    if map_generate_button != null:
+        map_generate_button.focus_mode = Control.FOCUS_ALL
+        var generate_callable = Callable(self, "_on_map_generate_button_pressed")
+        if not map_generate_button.is_connected("pressed", generate_callable):
+            map_generate_button.pressed.connect(_on_map_generate_button_pressed)
+        map_generate_button.tooltip_text = "Regenerate the map using the current dimensions."
 
 func _custom_map_size_label(dimensions: Vector2i) -> String:
     if dimensions.x <= 0 or dimensions.y <= 0:
         return "Custom"
     return "Custom (%dx%d)" % [dimensions.x, dimensions.y]
+
+func _active_map_label() -> String:
+    if _map_size_key == "" or _map_size_key == "custom":
+        return "Custom"
+    for option in MAP_SIZE_OPTIONS:
+        if String(option.get("key", "")) == _map_size_key:
+            return String(option.get("label", _map_size_key.capitalize()))
+    return _map_size_key.capitalize()
 
 func _populate_map_size_dropdown() -> void:
     if map_size_dropdown == null:
@@ -1044,6 +1081,16 @@ func _send_map_size_command(width: int, height: int, label: String) -> bool:
         "map_size %d %d" % [width, height],
         "%s map (%dx%d) requested." % [descriptor, width, height]
     )
+
+func _on_map_generate_button_pressed() -> void:
+    var width: int = _map_dimensions.x
+    var height: int = _map_dimensions.y
+    if width <= 0 or height <= 0:
+        _append_command_log("Map dimensions unavailable; cannot generate a new map.")
+        return
+    var descriptor := "%s (regenerate)" % _active_map_label()
+    if not _send_map_size_command(width, height, descriptor):
+        _append_command_log("Failed to request map generation.")
 
 func _ensure_overlay_selector() -> void:
     if _overlay_selector != null:
@@ -1304,6 +1351,10 @@ func _append_command_log(entry: String) -> void:
 
 func _update_command_controls_enabled() -> void:
     var connected = command_connected
+    if map_size_dropdown != null:
+        map_size_dropdown.disabled = not connected
+    if map_generate_button != null:
+        map_generate_button.disabled = not connected
     if axis_apply_button != null:
         axis_apply_button.disabled = not connected
     if axis_reset_button != null:
@@ -4726,6 +4777,21 @@ func _on_log_clear_pressed() -> void:
     _log_search_query_lower = ""
     _mark_logs_dirty()
     _render_logs()
+    _update_log_status("Logs cleared")
+
+func _on_log_copy_pressed() -> void:
+    if logs_text == null:
+        return
+    var contents := logs_text.text
+    if contents.strip_edges().is_empty():
+        _update_log_status("No logs to copy")
+        return
+    DisplayServer.clipboard_set(contents)
+    var line_count := logs_text.get_line_count()
+    if line_count > 0:
+        _update_log_status("Copied %d log lines" % line_count)
+    else:
+        _update_log_status("Logs copied to clipboard")
 
 func get_resolved_font_size() -> int:
     return _resolved_font_size

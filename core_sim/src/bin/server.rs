@@ -24,11 +24,12 @@ use core_sim::{
     EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
     EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
     FactionSecurityPolicies, GenerationId, GenerationRegistry, InfluencerImpacts,
-    InfluentialRoster, PendingCrisisSpawns, QueueMissionError, QueueMissionParams, Scalar,
-    SecurityPolicy, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, SimulationTick,
-    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    SnapshotOverlaysConfigMetadata, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel,
-    Tile, TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
+    InfluentialRoster, MapPresetsHandle, PendingCrisisSpawns, QueueMissionError,
+    QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StoredSnapshot, SubmitError,
+    SubmitOutcome, SupportChannel, Tile, TurnPipelineConfig, TurnPipelineConfigHandle,
+    TurnPipelineConfigMetadata, TurnQueue,
 };
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
@@ -136,6 +137,17 @@ fn main() {
             .restart_crisis_telemetry(Some(path), command_tx.clone());
     }
 
+    run_turn(&mut app);
+
+    {
+        let history = app.world.resource::<SnapshotHistory>();
+        broadcast_latest(
+            snapshot_server.as_ref(),
+            snapshot_flat_server.as_ref(),
+            history,
+        );
+    }
+
     info!(
         command_bind = %config.command_bind,
         snapshot_bind = %config.snapshot_bind,
@@ -176,24 +188,67 @@ fn main() {
                     );
                     continue;
                 }
+                let command_sender = {
+                    let res = app.world.resource::<CommandSenderResource>();
+                    res.0.clone()
+                };
                 let current_config = app.world.resource::<SimulationConfig>().clone();
-                if current_config.grid_size.x == width && current_config.grid_size.y == height {
-                    info!(
-                        target: "shadow_scale::server",
-                        width,
-                        height,
-                        "map.reset.skipped=dimensions_unchanged"
-                    );
-                    continue;
-                }
+                let seed_random_requested = {
+                    let metadata = app.world.resource::<SimulationConfigMetadata>();
+                    metadata.seed_random()
+                };
+                let preset_seed = {
+                    let presets = app.world.resource::<MapPresetsHandle>();
+                    presets
+                        .get()
+                        .get(&current_config.map_preset_id)
+                        .and_then(|preset| preset.map_seed)
+                };
+                let should_randomize_seed = seed_random_requested && preset_seed.is_none();
+                let same_dimensions =
+                    current_config.grid_size.x == width && current_config.grid_size.y == height;
+                let sim_watch_path = app
+                    .world
+                    .resource::<SimulationConfigMetadata>()
+                    .path()
+                    .cloned();
+                let turn_pipeline_watch_path = app
+                    .world
+                    .resource::<TurnPipelineConfigMetadata>()
+                    .path()
+                    .cloned();
+                let snapshot_overlays_watch_path = app
+                    .world
+                    .resource::<SnapshotOverlaysConfigMetadata>()
+                    .path()
+                    .cloned();
+                let crisis_archetypes_watch_path = app
+                    .world
+                    .resource::<CrisisArchetypeCatalogMetadata>()
+                    .path()
+                    .cloned();
+                let crisis_modifiers_watch_path = app
+                    .world
+                    .resource::<CrisisModifierCatalogMetadata>()
+                    .path()
+                    .cloned();
+                let crisis_telemetry_watch_path = app
+                    .world
+                    .resource::<CrisisTelemetryConfigMetadata>()
+                    .path()
+                    .cloned();
                 info!(
                     target: "shadow_scale::server",
                     width,
                     height,
+                    same_dimensions,
                     "map.reset.begin"
                 );
                 let mut new_config = current_config.clone();
                 new_config.grid_size = UVec2::new(width, height);
+                if should_randomize_seed {
+                    new_config.map_seed = 0;
+                }
 
                 let mut new_app = build_headless_app();
                 {
@@ -201,6 +256,67 @@ fn main() {
                     *config_res = new_config;
                 }
                 new_app.insert_resource(SimulationMetrics::default());
+                new_app.insert_resource(CommandSenderResource(command_sender.clone()));
+                new_app.insert_resource(ConfigWatcherRegistry::default());
+                {
+                    let mut metadata = new_app.world.resource_mut::<SimulationConfigMetadata>();
+                    metadata.set_path(sim_watch_path.clone());
+                    metadata.set_seed_random(seed_random_requested);
+                }
+                {
+                    let mut metadata = new_app.world.resource_mut::<TurnPipelineConfigMetadata>();
+                    metadata.set_path(turn_pipeline_watch_path.clone());
+                }
+                {
+                    let mut metadata = new_app
+                        .world
+                        .resource_mut::<SnapshotOverlaysConfigMetadata>();
+                    metadata.set_path(snapshot_overlays_watch_path.clone());
+                }
+                {
+                    let mut metadata = new_app
+                        .world
+                        .resource_mut::<CrisisArchetypeCatalogMetadata>();
+                    metadata.set_path(crisis_archetypes_watch_path.clone());
+                }
+                {
+                    let mut metadata = new_app
+                        .world
+                        .resource_mut::<CrisisModifierCatalogMetadata>();
+                    metadata.set_path(crisis_modifiers_watch_path.clone());
+                }
+                {
+                    let mut metadata = new_app
+                        .world
+                        .resource_mut::<CrisisTelemetryConfigMetadata>();
+                    metadata.set_path(crisis_telemetry_watch_path.clone());
+                }
+                {
+                    let mut watcher_registry =
+                        new_app.world.resource_mut::<ConfigWatcherRegistry>();
+                    watcher_registry
+                        .restart_simulation(sim_watch_path.clone(), command_sender.clone());
+                    watcher_registry.restart_turn_pipeline(
+                        turn_pipeline_watch_path.clone(),
+                        command_sender.clone(),
+                    );
+                    watcher_registry.restart_snapshot_overlays(
+                        snapshot_overlays_watch_path.clone(),
+                        command_sender.clone(),
+                    );
+                    watcher_registry.restart_crisis_archetypes(
+                        crisis_archetypes_watch_path.clone(),
+                        command_sender.clone(),
+                    );
+                    watcher_registry.restart_crisis_modifiers(
+                        crisis_modifiers_watch_path.clone(),
+                        command_sender.clone(),
+                    );
+                    watcher_registry.restart_crisis_telemetry(
+                        crisis_telemetry_watch_path.clone(),
+                        command_sender.clone(),
+                    );
+                }
                 run_turn(&mut new_app);
 
                 {
@@ -213,6 +329,7 @@ fn main() {
                     target: "shadow_scale::server",
                     width,
                     height,
+                    same_dimensions,
                     "map.reset.completed"
                 );
             }
@@ -881,6 +998,7 @@ fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<St
     {
         let mut metadata = app.world.resource_mut::<SimulationConfigMetadata>();
         metadata.set_path(applied_path.clone());
+        metadata.set_seed_random(new_config.map_seed == 0);
     }
 
     {

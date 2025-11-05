@@ -30,6 +30,7 @@ const LEGEND_HEADER_SPACING := 6.0
 const STACK_ADDITIONAL_MARGIN := 16.0
 
 var overlay_legend: Dictionary = {}
+var legend_suppressed: bool = false
 
 func _ready() -> void:
     set_ui_zoom(1.0)
@@ -67,12 +68,13 @@ func _on_zoom_in_pressed() -> void:
 
 func update_overlay_legend(legend: Dictionary) -> void:
     overlay_legend = legend.duplicate(true) if legend is Dictionary else {}
+    if legend_suppressed:
+        _hide_legend_panel()
+        return
     for child in terrain_legend_list.get_children():
         child.queue_free()
     if overlay_legend.is_empty():
-        terrain_legend_panel.visible = false
-        terrain_legend_description.visible = false
-        terrain_legend_description.text = ""
+        _hide_legend_panel()
         return
     terrain_legend_panel.visible = true
     var title := String(overlay_legend.get("title", "Map Legend"))
@@ -195,3 +197,17 @@ func _resize_legend_panel(list_size: Vector2) -> void:
     scroll_width = clamp(scroll_width, LEGEND_MIN_WIDTH * 0.5, padded_width - LEGEND_RIGHT_MARGIN)
     terrain_legend_scroll.custom_minimum_size = Vector2(scroll_width, scroll_height)
     terrain_legend_scroll.scroll_vertical = 0
+
+func toggle_legend() -> void:
+    legend_suppressed = not legend_suppressed
+    if legend_suppressed:
+        _hide_legend_panel()
+    else:
+        update_overlay_legend(overlay_legend)
+
+func _hide_legend_panel() -> void:
+    if terrain_legend_panel != null:
+        terrain_legend_panel.visible = false
+    if terrain_legend_description != null:
+        terrain_legend_description.visible = false
+        terrain_legend_description.text = ""

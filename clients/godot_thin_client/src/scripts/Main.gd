@@ -105,6 +105,8 @@ func _ready() -> void:
         map_view.call_deferred("refresh_overlay_legend")
     if inspector != null and inspector.has_method("set_streaming_active"):
         inspector.call("set_streaming_active", streaming_mode)
+    _ensure_action_binding("toggle_inspector", Key.KEY_I)
+    _ensure_action_binding("toggle_legend", Key.KEY_L)
 
 func _ensure_timer() -> void:
     if is_instance_valid(playback_timer):
@@ -182,7 +184,26 @@ func _unhandled_input(event: InputEvent) -> void:
         elif mouse_event.button_index == MOUSE_BUTTON_WHEEL_DOWN and mouse_event.pressed:
             _adjust_camera_zoom(CAMERA_ZOOM_STEP)
 
+func _toggle_inspector_visibility() -> void:
+    if inspector == null:
+        return
+    if inspector.has_method("toggle_panel_visibility"):
+        inspector.call("toggle_panel_visibility")
+    elif inspector.has_method("set_panel_visible") and inspector.has_method("is_panel_visible"):
+        var current_visible: bool = bool(inspector.call("is_panel_visible"))
+        inspector.call("set_panel_visible", not current_visible)
+
+func _toggle_legend_visibility() -> void:
+    if hud == null:
+        return
+    if hud.has_method("toggle_legend"):
+        hud.call("toggle_legend")
+
 func _process(delta: float) -> void:
+    if Input.is_action_just_pressed("toggle_inspector"):
+        _toggle_inspector_visibility()
+    if Input.is_action_just_pressed("toggle_legend"):
+        _toggle_legend_visibility()
     if command_client != null:
         command_client.poll()
         command_client.ensure_connected()
@@ -221,6 +242,24 @@ func _process(delta: float) -> void:
 func _on_overlay_legend_changed(legend: Dictionary) -> void:
     if hud != null and hud.has_method("update_overlay_legend"):
         hud.call("update_overlay_legend", legend)
+
+func _debug_action_binding(action_name: String) -> void:
+    if not InputMap.has_action(action_name):
+        return
+
+func _ensure_action_binding(action_name: String, keycode: Key) -> void:
+    if not InputMap.has_action(action_name):
+        InputMap.add_action(action_name)
+    var events := InputMap.action_get_events(action_name)
+    for event in events:
+        if event is InputEventKey:
+            var key_event := event as InputEventKey
+            if key_event.physical_keycode == keycode or key_event.keycode == keycode:
+                return
+    var ev := InputEventKey.new()
+    ev.physical_keycode = keycode
+    ev.keycode = keycode
+    InputMap.action_add_event(action_name, ev)
 
 func _snapshot_is_delta(snapshot: Dictionary) -> bool:
     for field in SNAPSHOT_DELTA_FIELDS:

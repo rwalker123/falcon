@@ -105,6 +105,30 @@ map_zoom_out={
 "unicode": 113
 }]
 }
+toggle_inspector={
+"deadzone": 0.5,
+"events": [{
+"device": 0,
+"echo": false,
+"keycode": 73,
+"physical_keycode": 73,
+"pressed": false,
+"type": "InputEventKey",
+"unicode": 105
+}]
+}
+toggle_legend={
+"deadzone": 0.5,
+"events": [{
+"device": 0,
+"echo": false,
+"keycode": 76,
+"physical_keycode": 76,
+"pressed": false,
+"type": "InputEventKey",
+"unicode": 108
+}]
+}
 
 [rendering]
 
