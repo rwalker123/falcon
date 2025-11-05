@@ -4970,6 +4970,19 @@ func _update_overlay_channels(overlay_dict: Dictionary) -> void:
         keys.sort()
         _overlay_channel_order = keys
 
+    var tag_overlay_available: bool = overlay_dict.has("terrain_tags") or not _terrain_tag_labels.is_empty()
+    if tag_overlay_available:
+        _overlay_channel_labels["terrain_tags"] = "Terrain Tags"
+        _overlay_channel_descriptions["terrain_tags"] = "Colors tiles by environmental tags (blends when multiple tags apply)."
+        _overlay_placeholder_flags["terrain_tags"] = false
+        var has_tag_channel := false
+        for raw_key in _overlay_channel_order:
+            if String(raw_key) == "terrain_tags":
+                has_tag_channel = true
+                break
+        if not has_tag_channel:
+            _overlay_channel_order.append("terrain_tags")
+
     if _overlay_channel_labels.is_empty():
         _selected_overlay_key = "logistics"
         _refresh_overlay_selector()
