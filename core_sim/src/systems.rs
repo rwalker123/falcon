@@ -75,7 +75,7 @@ pub struct LogisticsSimParams<'w, 's> {
     pub ledgers: Res<'w, CorruptionLedgers>,
     pub severity_config: Res<'w, CultureCorruptionConfigHandle>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
-    pub links: Query<'w, 's, &'static mut LogisticsLink>,
+    pub links: Query<'w, 's, (Entity, &'static mut LogisticsLink)>,
     pub tiles: Query<'w, 's, &'static mut Tile>,
 }
 
@@ -1862,7 +1862,9 @@ pub fn simulate_logistics(mut params: LogisticsSimParams) {
         * params.effects.logistics_multiplier
         * corruption_factor)
         .clamp(logistics_cfg.flow_gain_min(), logistics_cfg.flow_gain_max());
-    for mut link in params.links.iter_mut() {
+    let mut links: Vec<_> = params.links.iter_mut().collect();
+    links.sort_by_key(|(entity, _)| entity.to_bits());
+    for (_, mut link) in links {
         let Ok([mut source, mut target]) = params.tiles.get_many_mut([link.from, link.to]) else {
             link.flow = scalar_zero();
             continue;
