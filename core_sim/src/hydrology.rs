@@ -1141,26 +1141,30 @@ pub fn generate_hydrology(world: &mut World) {
     }
 
     let mut delta_tiles_applied = 0usize;
-    if let Some(registry) = world.get_resource::<TileRegistry>() {
+    let updates: Vec<(usize, Entity)> = if let Some(registry) = world.get_resource::<TileRegistry>()
+    {
         let mut unique = HashSet::new();
-        let mut updates: Vec<(usize, Entity)> = Vec::new();
-        for idx in delta_candidates {
+        let mut collected = Vec::new();
+        for &idx in &delta_candidates {
             if unique.insert(idx) {
                 if let Some(&entity) = registry.tiles.get(idx) {
-                    updates.push((idx, entity));
+                    collected.push((idx, entity));
                 }
             }
         }
-        let _ = registry;
-        for (idx, entity) in updates {
-            if let Some(mut tile) = world.get_mut::<Tile>(entity) {
-                if tile.terrain != TerrainType::RiverDelta {
-                    tile.terrain = TerrainType::RiverDelta;
-                    tile.terrain_tags |= TerrainTags::WETLAND;
-                    tile.terrain_tags |= TerrainTags::FRESHWATER;
-                    delta_tiles_applied += 1;
-                    tile_terrain[idx] = Some((tile.terrain, tile.terrain_tags));
-                }
+        collected
+    } else {
+        Vec::new()
+    };
+
+    for (idx, entity) in updates {
+        if let Some(mut tile) = world.get_mut::<Tile>(entity) {
+            if tile.terrain != TerrainType::RiverDelta {
+                tile.terrain = TerrainType::RiverDelta;
+                tile.terrain_tags |= TerrainTags::WETLAND;
+                tile.terrain_tags |= TerrainTags::FRESHWATER;
+                delta_tiles_applied += 1;
+                tile_terrain[idx] = Some((tile.terrain, tile.terrain_tags));
             }
         }
     }
