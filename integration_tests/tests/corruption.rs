@@ -2,7 +2,7 @@ mod common;
 
 use core_sim::{
     build_headless_app, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, LogisticsLink,
-    PowerNode, Scalar, SentimentAxisBias, TradeLink,
+    PowerNode, Scalar, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, TradeLink,
 };
 use sim_runtime::{CorruptionEntry, CorruptionSubsystem};
 
@@ -71,6 +71,24 @@ fn corruption_modifiers_reduce_outputs() {
     common::ensure_test_config();
     let mut clean = build_headless_app();
     let mut corrupt = build_headless_app();
+
+    if let Some(mut metadata) = clean.world.get_resource_mut::<SimulationConfigMetadata>() {
+        metadata.set_seed_random(false);
+    }
+    if let Some(mut config) = clean.world.get_resource_mut::<SimulationConfig>() {
+        if config.map_seed == 0 {
+            config.map_seed = 0xC0FFEE17_u64;
+        }
+    }
+
+    if let Some(mut metadata) = corrupt.world.get_resource_mut::<SimulationConfigMetadata>() {
+        metadata.set_seed_random(false);
+    }
+    if let Some(mut config) = corrupt.world.get_resource_mut::<SimulationConfig>() {
+        if config.map_seed == 0 {
+            config.map_seed = 0xC0FFEE17_u64;
+        }
+    }
 
     {
         let mut ledgers = corrupt.world.resource_mut::<CorruptionLedgers>();
