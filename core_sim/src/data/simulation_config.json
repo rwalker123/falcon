@@ -2,6 +2,18 @@
   "grid_size": { "x": 80, "y": 52 },
   "map_preset_id": "earthlike",
   "map_seed": 0,
+  "hydrology": {
+    "river_density": 1.7,
+    "river_min_count": 12,
+    "river_max_count": 24,
+    "accumulation_threshold_factor": 0.12,
+    "source_percentile": 0.55,
+    "source_sea_buffer": 0.04,
+    "min_length": 8,
+    "fallback_min_length": 4,
+    "spacing": 8.0,
+    "uphill_gain_pct": 0.1
+  },
   "ambient_temperature": 18.0,
   "temperature_lerp": 0.05,
   "logistics_flow_gain": 0.1,

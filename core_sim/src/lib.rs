@@ -32,7 +32,7 @@ mod turn_pipeline_config;
 
 use std::sync::Arc;
 
-use crate::map_preset::{load_map_presets_from_env, MapPresetsHandle};
+use crate::map_preset::load_map_presets_from_env;
 use bevy::prelude::*;
 
 pub use components::{
@@ -75,6 +75,7 @@ pub use great_discovery::{
     GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
     GreatDiscoveryResolvedEvent, GreatDiscoveryTelemetry, ObservationLedger,
 };
+pub use hydrology::{generate_hydrology, HydrologyState};
 pub use influencers::{
     tick_influencers, InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerCultureResonance,
     InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel, BUILTIN_INFLUENCER_CONFIG,
@@ -84,6 +85,7 @@ pub use knowledge_ledger::{
     KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle, KnowledgeLedgerEntry, KnowledgeModifier,
     KnowledgeTimelineEvent, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
 };
+pub use map_preset::{MapPreset, MapPresets, MapPresetsHandle};
 pub use snapshot_overlays_config::{
     load_snapshot_overlays_config_from_env, CorruptionOverlayConfig, CultureOverlayConfig,
     FogOverlayConfig, MilitaryOverlayConfig, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
@@ -105,11 +107,13 @@ pub use power::{
 };
 pub use resources::{
     CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger,
-    PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
+    HydrologyOverrides, PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias,
+    SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry,
+    TradeDiffusionRecord, TradeTelemetry,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{restore_world_from_snapshot, SnapshotHistory, StoredSnapshot};
+pub use systems::spawn_initial_world;
 pub use systems::{simulate_power, MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent};
 pub use terrain::{
     classify_terrain, terrain_definition, terrain_for_position, MovementProfile, TerrainDefinition,

@@ -4,7 +4,8 @@ use std::{
 };
 
 use bevy::{ecs::system::SystemParam, math::UVec2, prelude::*};
-use log::debug;
+use log::{debug, info};
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 use serde_json::json;
 
 use crate::map_preset::{MapPreset, MapPresetsHandle, TerrainClassifierConfig};
@@ -74,7 +75,7 @@ pub struct LogisticsSimParams<'w, 's> {
     pub ledgers: Res<'w, CorruptionLedgers>,
     pub severity_config: Res<'w, CultureCorruptionConfigHandle>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
-    pub links: Query<'w, 's, &'static mut LogisticsLink>,
+    pub links: Query<'w, 's, (Entity, &'static mut LogisticsLink)>,
     pub tiles: Query<'w, 's, &'static mut Tile>,
 }
 
@@ -123,7 +124,7 @@ fn corruption_multiplier(
 /// Spawn initial grid of tiles, logistics links, power nodes, and population cohorts.
 pub fn spawn_initial_world(
     mut commands: Commands,
-    config: Res<SimulationConfig>,
+    mut config: ResMut<SimulationConfig>,
     map_presets: Res<MapPresetsHandle>,
     registry: Res<GenerationRegistry>,
     tick: Res<SimulationTick>,
@@ -150,9 +151,23 @@ pub fn spawn_initial_world(
         .map(|preset| &preset.terrain_classifier)
         .unwrap_or(&default_classifier);
     let sea_level = preset_ref.map(|p| p.sea_level).unwrap_or(0.6);
-    let world_seed = preset_ref
-        .and_then(|preset| preset.map_seed)
-        .unwrap_or(config.map_seed);
+    let preset_seed = preset_ref.and_then(|preset| preset.map_seed);
+    let mut world_seed = preset_seed.unwrap_or(config.map_seed);
+
+    if preset_seed.is_none() && world_seed == 0 {
+        let mut rng = SmallRng::from_entropy();
+        world_seed = loop {
+            let candidate = rng.gen::<u64>();
+            if candidate != 0 {
+                break candidate;
+            }
+        };
+        info!(
+            "mapgen.seed_selected preset={} seed={}",
+            config.map_preset_id, world_seed
+        );
+    }
+    config.map_seed = world_seed;
     commands.insert_resource(WorldGenSeed(world_seed));
 
     let base_elevation_field = build_elevation_field(&config, preset_ref, world_seed);
@@ -1847,7 +1862,9 @@ pub fn simulate_logistics(mut params: LogisticsSimParams) {
         * params.effects.logistics_multiplier
         * corruption_factor)
         .clamp(logistics_cfg.flow_gain_min(), logistics_cfg.flow_gain_max());
-    for mut link in params.links.iter_mut() {
+    let mut links: Vec<_> = params.links.iter_mut().collect();
+    links.sort_by_key(|(entity, _)| entity.to_bits());
+    for (_, mut link) in links {
         let Ok([mut source, mut target]) = params.tiles.get_many_mut([link.from, link.to]) else {
             link.flow = scalar_zero();
             continue;

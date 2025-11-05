@@ -17,12 +17,27 @@ use crate::{
     scalar::{scalar_from_f32, Scalar},
 };
 
+#[derive(Debug, Clone, Default)]
+pub struct HydrologyOverrides {
+    pub river_density: Option<f32>,
+    pub river_min_count: Option<usize>,
+    pub river_max_count: Option<usize>,
+    pub accumulation_threshold_factor: Option<f32>,
+    pub source_percentile: Option<f32>,
+    pub source_sea_buffer: Option<f32>,
+    pub min_length: Option<usize>,
+    pub fallback_min_length: Option<usize>,
+    pub spacing: Option<f32>,
+    pub uphill_gain_pct: Option<f32>,
+}
+
 /// Global configuration parameters for the headless simulation prototype.
 #[derive(Resource, Debug, Clone)]
 pub struct SimulationConfig {
     pub grid_size: UVec2,
     pub map_preset_id: String,
     pub map_seed: u64,
+    pub hydrology: HydrologyOverrides,
     pub ambient_temperature: Scalar,
     pub temperature_lerp: Scalar,
     pub logistics_flow_gain: Scalar,
@@ -154,6 +169,8 @@ struct SimulationConfigData {
     map_preset_id: String,
     #[serde(default)]
     map_seed: u64,
+    #[serde(default)]
+    hydrology: Option<HydrologyOverridesData>,
     ambient_temperature: f32,
     temperature_lerp: f32,
     logistics_flow_gain: f32,
@@ -210,12 +227,47 @@ struct MassBoundsData {
     max: f32,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct HydrologyOverridesData {
+    river_density: Option<f32>,
+    river_min_count: Option<usize>,
+    river_max_count: Option<usize>,
+    accumulation_threshold_factor: Option<f32>,
+    source_percentile: Option<f32>,
+    source_sea_buffer: Option<f32>,
+    min_length: Option<usize>,
+    fallback_min_length: Option<usize>,
+    spacing: Option<f32>,
+    uphill_gain_pct: Option<f32>,
+}
+
+impl HydrologyOverridesData {
+    fn into_overrides(self) -> HydrologyOverrides {
+        HydrologyOverrides {
+            river_density: self.river_density,
+            river_min_count: self.river_min_count,
+            river_max_count: self.river_max_count,
+            accumulation_threshold_factor: self.accumulation_threshold_factor,
+            source_percentile: self.source_percentile,
+            source_sea_buffer: self.source_sea_buffer,
+            min_length: self.min_length,
+            fallback_min_length: self.fallback_min_length,
+            spacing: self.spacing,
+            uphill_gain_pct: self.uphill_gain_pct,
+        }
+    }
+}
+
 impl SimulationConfigData {
     fn into_config(self) -> Result<SimulationConfig, SimulationConfigError> {
         Ok(SimulationConfig {
             grid_size: UVec2::new(self.grid_size.x, self.grid_size.y),
             map_preset_id: self.map_preset_id,
             map_seed: self.map_seed,
+            hydrology: self
+                .hydrology
+                .map(|d| d.into_overrides())
+                .unwrap_or_default(),
             ambient_temperature: scalar_from_f32(self.ambient_temperature),
             temperature_lerp: scalar_from_f32(self.temperature_lerp),
             logistics_flow_gain: scalar_from_f32(self.logistics_flow_gain),
@@ -276,11 +328,12 @@ fn parse_socket(value: String, field: &'static str) -> Result<SocketAddr, Simula
 #[derive(Resource, Debug, Clone)]
 pub struct SimulationConfigMetadata {
     path: Option<PathBuf>,
+    seed_random: bool,
 }
 
 impl SimulationConfigMetadata {
-    pub fn new(path: Option<PathBuf>) -> Self {
-        Self { path }
+    pub fn new(path: Option<PathBuf>, seed_random: bool) -> Self {
+        Self { path, seed_random }
     }
 
     pub fn path(&self) -> Option<&PathBuf> {
@@ -289,6 +342,14 @@ impl SimulationConfigMetadata {
 
     pub fn set_path(&mut self, path: Option<PathBuf>) {
         self.path = path;
+    }
+
+    pub fn seed_random(&self) -> bool {
+        self.seed_random
+    }
+
+    pub fn set_seed_random(&mut self, value: bool) {
+        self.seed_random = value;
     }
 }
 
@@ -311,7 +372,11 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
                     path = %path.display(),
                     "simulation_config.loaded=file"
                 );
-                return (config, SimulationConfigMetadata::new(Some(path)));
+                let random_seed = config.map_seed == 0;
+                return (
+                    config,
+                    SimulationConfigMetadata::new(Some(path), random_seed),
+                );
             }
             Err(err) => {
                 tracing::warn!(
@@ -329,7 +394,8 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
         target: "shadow_scale::config",
         "simulation_config.loaded=builtin"
     );
-    (config, SimulationConfigMetadata::new(None))
+    let random_seed = config.map_seed == 0;
+    (config, SimulationConfigMetadata::new(None, random_seed))
 }
 
 /// Tracks total simulation ticks elapsed.
