@@ -243,10 +243,6 @@ func _on_overlay_legend_changed(legend: Dictionary) -> void:
     if hud != null and hud.has_method("update_overlay_legend"):
         hud.call("update_overlay_legend", legend)
 
-func _debug_action_binding(action_name: String) -> void:
-    if not InputMap.has_action(action_name):
-        return
-
 func _ensure_action_binding(action_name: String, keycode: Key) -> void:
     if not InputMap.has_action(action_name):
         InputMap.add_action(action_name)
