@@ -36,6 +36,51 @@ const OVERLAY_COLORS := {
     "moisture": Color(0.2, 0.65, 0.95, 1.0),
 }
 
+const TERRAIN_TAG_KEYS := [
+    1 << 0,  # Water
+    1 << 1,  # Freshwater
+    1 << 2,  # Coastal
+    1 << 3,  # Wetland
+    1 << 4,  # Fertile
+    1 << 5,  # Arid
+    1 << 6,  # Polar
+    1 << 7,  # Highland
+    1 << 8,  # Volcanic
+    1 << 9,  # Hazardous
+    1 << 10, # Subsurface
+    1 << 11, # Hydrothermal
+]
+
+const TERRAIN_TAG_COLORS := {
+    TERRAIN_TAG_KEYS[0]: Color8(28, 102, 189),   # Water
+    TERRAIN_TAG_KEYS[1]: Color8(72, 174, 206),   # Freshwater
+    TERRAIN_TAG_KEYS[2]: Color8(64, 176, 150),   # Coastal
+    TERRAIN_TAG_KEYS[3]: Color8(70, 140, 96),    # Wetland
+    TERRAIN_TAG_KEYS[4]: Color8(192, 198, 96),   # Fertile
+    TERRAIN_TAG_KEYS[5]: Color8(210, 166, 84),   # Arid
+    TERRAIN_TAG_KEYS[6]: Color8(214, 232, 246),  # Polar
+    TERRAIN_TAG_KEYS[7]: Color8(136, 128, 184),  # Highland
+    TERRAIN_TAG_KEYS[8]: Color8(216, 102, 72),   # Volcanic
+    TERRAIN_TAG_KEYS[9]: Color8(198, 62, 132),   # Hazardous
+    TERRAIN_TAG_KEYS[10]: Color8(124, 118, 150), # Subsurface
+    TERRAIN_TAG_KEYS[11]: Color8(244, 156, 68),  # Hydrothermal
+}
+
+const TERRAIN_TAG_BLEND_WEIGHTS := {
+    TERRAIN_TAG_KEYS[0]: 0.92,
+    TERRAIN_TAG_KEYS[1]: 0.8,
+    TERRAIN_TAG_KEYS[2]: 0.7,
+    TERRAIN_TAG_KEYS[3]: 0.66,
+    TERRAIN_TAG_KEYS[4]: 0.65,
+    TERRAIN_TAG_KEYS[5]: 0.6,
+    TERRAIN_TAG_KEYS[6]: 0.7,
+    TERRAIN_TAG_KEYS[7]: 0.68,
+    TERRAIN_TAG_KEYS[8]: 0.75,
+    TERRAIN_TAG_KEYS[9]: 0.45,
+    TERRAIN_TAG_KEYS[10]: 0.4,
+    TERRAIN_TAG_KEYS[11]: 0.55,
+}
+
 const CRISIS_SEVERITY_COLORS := {
     "critical": Color(0.96, 0.28, 0.38, 0.95),
     "warn": Color(0.97, 0.75, 0.28, 0.92),
@@ -270,6 +315,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
     }
 
 func _ingest_overlay_channels(overlays: Variant) -> void:
+    var preserve_tag_overlay: bool = (active_overlay_key == "terrain_tags")
     overlay_channels.clear()
     overlay_raw_channels.clear()
     overlay_channel_labels.clear()
@@ -318,18 +364,26 @@ func _ingest_overlay_channels(overlays: Variant) -> void:
         for key in keys:
             overlay_channel_order.append(String(key))
 
+    var tag_channel_available: bool = false
+    if overlays is Dictionary:
+        tag_channel_available = overlays.has("terrain_tags")
+
     if overlay_channels.is_empty():
-        active_overlay_key = ""
+        if preserve_tag_overlay and tag_channel_available:
+            active_overlay_key = "terrain_tags"
+        else:
+            active_overlay_key = ""
         return
 
     var default_variant: Variant = overlay_dict.get("default_channel", active_overlay_key)
     var default_key: String = String(default_variant)
     if overlay_channels.has(active_overlay_key):
+        if preserve_tag_overlay and tag_channel_available:
+            active_overlay_key = "terrain_tags"
         return
     if overlay_channels.has(default_key):
         active_overlay_key = default_key
-        return
-    if overlay_channel_order.size() > 0:
+    elif overlay_channel_order.size() > 0:
         active_overlay_key = String(overlay_channel_order[0])
     else:
         var keys_list: Array = overlay_channels.keys()
@@ -337,6 +391,8 @@ func _ingest_overlay_channels(overlays: Variant) -> void:
             active_overlay_key = String(keys_list[0])
         else:
             active_overlay_key = ""
+    if preserve_tag_overlay and tag_channel_available:
+        active_overlay_key = "terrain_tags"
 func _draw() -> void:
     if grid_width == 0 or grid_height == 0:
         return
@@ -399,6 +455,13 @@ func set_culture_layer_highlight(layer_ids: PackedInt32Array, context_label: Str
     _emit_overlay_legend()
 
 func set_overlay_channel(key: String) -> void:
+    if key == "terrain_tags":
+        if active_overlay_key == key:
+            return
+        active_overlay_key = key
+        queue_redraw()
+        _emit_overlay_legend()
+        return
     if not overlay_channels.has(key):
         return
     if active_overlay_key == key:
@@ -661,6 +724,12 @@ func _tile_color(x: int, y: int) -> Color:
             return _terrain_color_for_id(terrain_id)
     if active_overlay_key == "":
         return GRID_COLOR
+    if active_overlay_key == "terrain_tags":
+        var mask := _tag_mask_at(x, y)
+        if mask == 0:
+            return GRID_COLOR
+        var tag_color: Color = _tag_color_for_mask(mask)
+        return GRID_COLOR.lerp(tag_color, 0.92)
     var overlay_value: float = _value_at_overlay(active_overlay_key, x, y)
     var overlay_color: Color = OVERLAY_COLORS.get(active_overlay_key, LOGISTICS_COLOR)
     if active_overlay_key == "culture" and not highlighted_culture_layer_set.is_empty():
@@ -681,6 +750,119 @@ func _terrain_color_for_id(terrain_id: int) -> Color:
     if TERRAIN_COLORS.has(terrain_id):
         return TERRAIN_COLORS[terrain_id]
     return Color(0.2, 0.2, 0.2, 1.0)
+
+func _tag_mask_at(x: int, y: int) -> int:
+    if terrain_tags_overlay.is_empty() or grid_width == 0:
+        return 0
+    var index: int = y * grid_width + x
+    if index < 0 or index >= terrain_tags_overlay.size():
+        return 0
+    return int(terrain_tags_overlay[index])
+
+func _tag_color_for_mask(mask: int) -> Color:
+    var color := GRID_COLOR
+    var applied := false
+    for raw_bit in TERRAIN_TAG_KEYS:
+        var bit: int = int(raw_bit)
+        if (mask & bit) == 0:
+            continue
+        var tag_color: Color = TERRAIN_TAG_COLORS.get(bit, Color.WHITE)
+        var weight: float = float(TERRAIN_TAG_BLEND_WEIGHTS.get(bit, 0.6))
+        color = color.lerp(tag_color, weight)
+        applied = true
+    if not applied:
+        return GRID_COLOR
+    return color
+
+func _tag_label_for_mask(mask: int) -> String:
+    if terrain_tag_labels.has(mask):
+        return str(terrain_tag_labels[mask])
+    for key in terrain_tag_labels.keys():
+        if int(key) == mask:
+            return str(terrain_tag_labels[key])
+    return "Tag %d" % mask
+
+func _compare_tag_rows(a: Dictionary, b: Dictionary) -> bool:
+    var a_count: int = int(a.get("count", 0))
+    var b_count: int = int(b.get("count", 0))
+    if a_count == b_count:
+        return int(a.get("mask", 0)) < int(b.get("mask", 0))
+    return a_count > b_count
+
+func _tag_coverage_rows() -> Array:
+    var rows: Array = []
+    if terrain_tags_overlay.is_empty() or grid_width <= 0 or grid_height <= 0:
+        return rows
+    var total_tiles: int = grid_width * grid_height
+    if total_tiles <= 0:
+        return rows
+    var counts: Dictionary = {}
+    var limit: int = min(terrain_tags_overlay.size(), total_tiles)
+    for idx in range(limit):
+        var mask: int = int(terrain_tags_overlay[idx])
+        if mask == 0:
+            continue
+        for raw_bit in TERRAIN_TAG_KEYS:
+            var bit: int = int(raw_bit)
+            if (mask & bit) != 0:
+                counts[bit] = int(counts.get(bit, 0)) + 1
+    for raw_bit in counts.keys():
+        var bit_value: int = int(raw_bit)
+        var count: int = int(counts[raw_bit])
+        var percent: float = 0.0
+        if total_tiles > 0:
+            percent = (float(count) / float(total_tiles)) * 100.0
+        rows.append({
+            "mask": bit_value,
+            "label": _tag_label_for_mask(bit_value),
+            "count": count,
+            "percent": percent,
+        })
+    rows.sort_custom(Callable(self, "_compare_tag_rows"))
+    return rows
+
+func _tag_overlay_stats() -> Dictionary:
+    var rows: Array = _tag_coverage_rows()
+    if rows.is_empty():
+        return {"has_values": false}
+    return {
+        "has_values": true,
+        "coverage": rows,
+        "tile_total": grid_width * grid_height,
+    }
+
+func _build_tag_legend() -> Dictionary:
+    var coverage: Array = _tag_coverage_rows()
+    var coverage_lookup: Dictionary = {}
+    for entry in coverage:
+        if typeof(entry) != TYPE_DICTIONARY:
+            continue
+        coverage_lookup[int(entry.get("mask", 0))] = entry
+    var rows: Array = []
+    for raw_bit in TERRAIN_TAG_KEYS:
+        var mask: int = int(raw_bit)
+        var label: String = _tag_label_for_mask(mask)
+        var entry: Dictionary = coverage_lookup.get(mask, {})
+        var percent_val: float = float(entry.get("percent", 0.0))
+        var count: int = int(entry.get("count", 0))
+        var value_text := ""
+        if percent_val > 0.0:
+            value_text = "%.1f%%" % percent_val
+        var display_label := "%s (%d)" % [label, count] if count > 0 else label
+        rows.append({
+            "color": TERRAIN_TAG_COLORS.get(mask, Color.WHITE),
+            "label": display_label,
+            "value_text": value_text,
+        })
+    return {
+        "key": "terrain_tags",
+        "title": "Terrain Tags",
+        "description": "Tiles blend colors for all active environmental tags.",
+        "rows": rows,
+        "stats": {
+            "tile_total": grid_width * grid_height,
+        },
+    }
 
 func terrain_palette_entries() -> Array:
     var ids: Array = []
@@ -712,6 +894,8 @@ func refresh_overlay_legend() -> void:
     _emit_overlay_legend()
 
 func overlay_stats_for_key(key: String) -> Dictionary:
+    if key == "terrain_tags":
+        return _tag_overlay_stats()
     if not overlay_channels.has(key):
         return {}
     if key == "culture" and not highlighted_culture_layer_set.is_empty():
@@ -725,7 +909,11 @@ func overlay_stats_for_key(key: String) -> Dictionary:
 func _legend_for_current_view() -> Dictionary:
     if terrain_mode:
         return _build_terrain_legend()
-    if active_overlay_key == "" or not overlay_channels.has(active_overlay_key):
+    if active_overlay_key == "":
+        return {}
+    if active_overlay_key == "terrain_tags":
+        return _build_tag_legend()
+    if not overlay_channels.has(active_overlay_key):
         return {}
     if active_overlay_key == "culture" and not highlighted_culture_layer_set.is_empty():
         var selection := _culture_selection_data()

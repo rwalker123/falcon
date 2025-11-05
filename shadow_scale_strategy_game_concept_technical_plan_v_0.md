@@ -295,7 +295,7 @@ Raw terrain defines movement, habitability, and discovery potential before facti
 
 Players read terrain primarily through logistics, viability, and anomaly cues: each class modulates movement cost, detection, resource yield, disaster likelihood, and the discovery tables pulled during exploration. Later systems (infrastructure, climate drift, terraforming) pivot these baselines rather than replacing them wholesale.
 
-Designers and clients can now tap a dedicated terrain overlay channel in snapshots; the inspector surfaces a biome/tag ledger while the Godot thin client renders the same palette, keeping visual validation tight as we iterate on colours and iconography.
+Designers and clients can now tap a dedicated terrain overlay channel in snapshots; the inspector surfaces a biome/tag ledger while the Godot thin client renders the same palette, keeping visual validation tight as we iterate on colours and iconography. A companion terrain-tag overlay blends hex colours by active environmental tags (Water, Hazardous, Coastal, Fertile, Polar, Highland, and niche flags like Volcanic or Hydrothermal), so the same ledger percentages now translate into an at-a-glance spatial read. The legend mirrors coverage, and combinations tint proportionally, letting balancing passes confirm that tag locks and generation quotas manifest on the world map. (Engineering notes in `docs/architecture.md` §“Inspector Tooling”.)
 
 ### Pacing & Onboarding
 - Short, optional “First Fires” (or analog) tutorial chain introduces experiment UI, safety, and labeling.
