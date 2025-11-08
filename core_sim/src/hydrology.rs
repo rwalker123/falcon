@@ -953,7 +953,7 @@ pub fn generate_hydrology(world: &mut World) {
                     );
                     sample_paths_logged += 1;
                 }
-                tracing::info!(
+                tracing::trace!(
                     target: "shadow_scale::mapgen",
                     category = ?category,
                     acc,
@@ -1026,7 +1026,7 @@ pub fn generate_hydrology(world: &mut World) {
                     path = ?samples,
                     "hydrology.sample_path_fallback"
                 );
-                tracing::info!(
+                tracing::trace!(
                     target: "shadow_scale::mapgen",
                     category = ?SourceCategory::Fallback,
                     acc,

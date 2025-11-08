@@ -18,8 +18,8 @@ use sim_runtime::{
     PopulationCohortState, PowerIncidentSeverity, PowerIncidentState, PowerNodeState,
     PowerTelemetryState, ScalarRasterState, SentimentAxisTelemetry, SentimentDriverCategory,
     SentimentDriverState, SentimentTelemetryState, SnapshotHeader, StartMarkerState,
-    TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState, WorldDelta,
-    WorldSnapshot,
+    TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState,
+    VictoryModeSnapshotState, VictoryResultState, VictorySnapshotState, WorldDelta, WorldSnapshot,
 };
 
 use crate::{
@@ -58,6 +58,8 @@ use crate::{
     },
     scalar::Scalar,
     snapshot_overlays_config::{SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle},
+    start_profile::{snapshot_profiles, CampaignLabel, FogMode, StartProfilesHandle},
+    victory::VictoryState,
 };
 
 use crate::mapgen::MountainType;
@@ -93,6 +95,9 @@ pub struct SnapshotContext<'w> {
     pub elevation: Res<'w, ElevationField>,
     pub moisture: Option<Res<'w, MoistureRaster>>,
     pub map_presets: Res<'w, MapPresetsHandle>,
+    pub campaign_label: Option<Res<'w, CampaignLabel>>,
+    pub start_profiles: Res<'w, StartProfilesHandle>,
+    pub victory: Res<'w, VictoryState>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -172,6 +177,7 @@ pub struct SnapshotHistory {
     hydrology_overlay: HydrologyOverlayState,
     elevation_overlay: ElevationOverlayState,
     corruption: CorruptionLedger,
+    victory: VictorySnapshotState,
     history: VecDeque<StoredSnapshot>,
 }
 
@@ -225,6 +231,7 @@ impl SnapshotHistory {
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
             corruption: CorruptionLedger::default(),
+            victory: VictorySnapshotState::default(),
             history: VecDeque::new(),
         }
     }
@@ -480,6 +487,13 @@ impl SnapshotHistory {
             Some(crisis_overlay_state.clone())
         };
 
+        let victory_state = snapshot.victory.clone();
+        let victory_delta = if self.victory == victory_state {
+            None
+        } else {
+            Some(victory_state.clone())
+        };
+
         let delta = WorldDelta {
             header: snapshot.header.clone(),
             tiles: diff_new(&self.tiles, &tiles_index),
@@ -503,6 +517,7 @@ impl SnapshotHistory {
             knowledge_ledger: diff_new(&self.knowledge_ledger, &knowledge_ledger_index),
             removed_knowledge_ledger: diff_removed(&self.knowledge_ledger, &knowledge_ledger_index),
             knowledge_metrics: knowledge_metrics_delta.clone(),
+            victory: victory_delta.clone(),
             knowledge_timeline: knowledge_timeline_delta.clone(),
             crisis_telemetry: crisis_telemetry_delta.clone(),
             crisis_overlay: crisis_overlay_delta.clone(),
@@ -568,6 +583,7 @@ impl SnapshotHistory {
         self.corruption = corruption_state;
         self.culture_tensions = culture_tensions_state;
         self.discovery_progress = discovery_index;
+        self.victory = victory_state;
         self.last_snapshot = Some(snapshot_arc);
         self.last_delta = Some(delta_arc);
         self.encoded_snapshot = Some(stored.encoded_snapshot.clone());
@@ -639,6 +655,7 @@ impl SnapshotHistory {
             .iter()
             .map(|state| ((state.faction, state.discovery), state.clone()))
             .collect();
+        self.victory = entry.snapshot.victory.clone();
         self.great_discoveries = entry
             .snapshot
             .great_discoveries
@@ -720,6 +737,7 @@ impl SnapshotHistory {
             knowledge_ledger: Vec::new(),
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
+            victory: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -824,6 +842,7 @@ impl SnapshotHistory {
             knowledge_ledger: Vec::new(),
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
+            victory: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -922,6 +941,7 @@ impl SnapshotHistory {
             knowledge_ledger: Vec::new(),
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
+            victory: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1021,6 +1041,9 @@ pub fn capture_snapshot(
         elevation,
         moisture,
         map_presets,
+        campaign_label,
+        start_profiles,
+        victory,
     } = ctx;
     let overlays_config = overlays.get();
     let presets = map_presets.get();
@@ -1126,6 +1149,7 @@ pub fn capture_snapshot(
         &discovery_progress,
         config.grid_size,
         overlays_config.as_ref(),
+        start_location.as_ref(),
     );
     let culture_raster = culture_raster_from_layers(
         &tile_states,
@@ -1262,7 +1286,7 @@ pub fn capture_snapshot(
         annotations: crisis_overlay.annotations.clone(),
     };
 
-    let header = SnapshotHeader::new(
+    let mut header = SnapshotHeader::new(
         tick.0,
         tile_states.len(),
         logistics_states.len(),
@@ -1271,6 +1295,11 @@ pub fn capture_snapshot(
         power_states.len(),
         influencer_states.len(),
     );
+
+    if let Some(label_res) = campaign_label.as_ref() {
+        let label = label_res.as_ref();
+        header.campaign_label = Some(label.to_snapshot());
+    }
 
     let hydrology_overlay_state = HydrologyOverlayState {
         rivers: hydrology
@@ -1298,6 +1327,11 @@ pub fn capture_snapshot(
 
     let elevation_overlay_state =
         elevation_overlay_from_field(elevation.as_ref(), config.grid_size, sea_level);
+    let campaign_profiles_state: Vec<_> = snapshot_profiles(&start_profiles)
+        .into_iter()
+        .map(|entry| entry.to_schema())
+        .collect();
+    let victory_snapshot_state = victory_snapshot_from_resource(&victory);
 
     let snapshot = WorldSnapshot {
         header,
@@ -1318,6 +1352,8 @@ pub fn capture_snapshot(
         hydrology_overlay: hydrology_overlay_state,
         elevation_overlay: elevation_overlay_state.clone(),
         start_marker: start_marker_state.clone(),
+        victory: victory_snapshot_state.clone(),
+        campaign_profiles: campaign_profiles_state,
         axis_bias: axis_bias_state,
         sentiment: sentiment_state,
         generations: generation_states,
@@ -1705,6 +1741,28 @@ fn axis_bias_state_from_resource(bias: &SentimentAxisBias) -> AxisBiasState {
         equity: raw[2],
         agency: raw[3],
     }
+}
+
+fn victory_snapshot_from_resource(state: &VictoryState) -> VictorySnapshotState {
+    let modes = state
+        .modes
+        .iter()
+        .map(|mode| VictoryModeSnapshotState {
+            id: mode.id.0.clone(),
+            kind: mode.kind.as_str().to_string(),
+            progress: mode.progress,
+            threshold: mode.threshold,
+            achieved: mode.achieved,
+        })
+        .collect();
+
+    let winner = state.winner.as_ref().map(|winner| VictoryResultState {
+        mode: winner.mode.0.clone(),
+        faction: winner.faction.0,
+        tick: winner.tick,
+    });
+
+    VictorySnapshotState { modes, winner }
 }
 
 fn crisis_metric_kind_to_schema(kind: InternalCrisisMetricKind) -> SchemaCrisisMetricKind {
@@ -2421,6 +2479,7 @@ fn fog_raster_from_discoveries(
     discovery: &DiscoveryProgressLedger,
     grid_size: UVec2,
     overlays: &SnapshotOverlaysConfig,
+    start_location: &StartLocation,
 ) -> ScalarRasterState {
     let mut max_x = 0u32;
     let mut max_y = 0u32;
@@ -2433,136 +2492,185 @@ fn fog_raster_from_discoveries(
     let height = grid_size.y.max(max_y.saturating_add(1)).max(1);
     let total = (width as usize).saturating_mul(height as usize).max(1);
 
+    if matches!(start_location.fog_mode(), FogMode::Revealed) {
+        return ScalarRasterState {
+            width,
+            height,
+            samples: vec![Scalar::zero().raw(); total],
+        };
+    }
+
     let mut samples = vec![Scalar::one().raw(); total];
-    let mut tile_indices = HashMap::with_capacity(tiles.len());
-    for tile in tiles {
-        if tile.x < width && tile.y < height {
-            let idx = (tile.y as usize) * (width as usize) + tile.x as usize;
-            tile_indices.insert(tile.entity, idx);
-        }
-    }
+    let skip_coverage = matches!(start_location.fog_mode(), FogMode::Shroud);
 
-    let mut tile_faction_sizes: HashMap<u64, HashMap<u32, u64>> = HashMap::new();
-    let mut tile_local_weighted: HashMap<u64, (i128, i128)> = HashMap::new();
-
-    for cohort in populations {
-        let size = u64::from(cohort.size);
-        if size > 0 {
-            let faction_map = tile_faction_sizes.entry(cohort.home).or_default();
-            *faction_map.entry(cohort.faction).or_insert(0) += size;
-        }
-
-        if size == 0 {
-            continue;
-        }
-
-        let fragments = &cohort.knowledge_fragments;
-        let fragment_average_raw = if fragments.is_empty() {
-            0i64
-        } else {
-            let mut total = Scalar::zero();
-            for fragment in fragments {
-                total += Scalar::from_raw(fragment.progress).clamp(Scalar::zero(), Scalar::one());
+    if !skip_coverage {
+        let mut tile_indices = HashMap::with_capacity(tiles.len());
+        for tile in tiles {
+            if tile.x < width && tile.y < height {
+                let idx = (tile.y as usize) * (width as usize) + tile.x as usize;
+                tile_indices.insert(tile.entity, idx);
             }
-            let count = fragments.len() as u32;
-            (total / Scalar::from_u32(count))
-                .clamp(Scalar::zero(), Scalar::one())
-                .raw()
-        };
-
-        let weight = i128::from(size);
-        let entry = tile_local_weighted.entry(cohort.home).or_insert((0, 0));
-        entry.0 = entry
-            .0
-            .saturating_add(i128::from(fragment_average_raw) * weight);
-        entry.1 = entry.1.saturating_add(weight);
-    }
-
-    let mut tile_local_average: HashMap<u64, Scalar> = HashMap::new();
-    for (tile_entity, (weighted_sum, total_weight)) in tile_local_weighted {
-        if total_weight <= 0 {
-            continue;
         }
-        let mut average = weighted_sum / total_weight;
-        if average < 0 {
-            average = 0;
-        }
-        let scale = i128::from(Scalar::SCALE);
-        if average > scale {
-            average = scale;
-        }
-        tile_local_average.insert(tile_entity, Scalar::from_raw(average as i64));
-    }
 
-    let mut tile_controllers: HashMap<u64, u32> = HashMap::new();
-    for (tile_entity, faction_map) in &tile_faction_sizes {
-        let mut best: Option<(u32, u64)> = None;
-        for (&faction, &count) in faction_map.iter() {
-            best = match best {
-                None => Some((faction, count)),
-                Some((best_faction, best_count)) => {
-                    if count > best_count || (count == best_count && faction < best_faction) {
-                        Some((faction, count))
-                    } else {
-                        Some((best_faction, best_count))
-                    }
+        let mut tile_faction_sizes: HashMap<u64, HashMap<u32, u64>> = HashMap::new();
+        let mut tile_local_weighted: HashMap<u64, (i128, i128)> = HashMap::new();
+
+        for cohort in populations {
+            let size = u64::from(cohort.size);
+            if size > 0 {
+                let faction_map = tile_faction_sizes.entry(cohort.home).or_default();
+                *faction_map.entry(cohort.faction).or_insert(0) += size;
+            }
+
+            if size == 0 {
+                continue;
+            }
+
+            let fragments = &cohort.knowledge_fragments;
+            let fragment_average_raw = if fragments.is_empty() {
+                0i64
+            } else {
+                let mut total = Scalar::zero();
+                for fragment in fragments {
+                    total +=
+                        Scalar::from_raw(fragment.progress).clamp(Scalar::zero(), Scalar::one());
                 }
+                let count = fragments.len() as u32;
+                (total / Scalar::from_u32(count))
+                    .clamp(Scalar::zero(), Scalar::one())
+                    .raw()
             };
+
+            let weight = i128::from(size);
+            let entry = tile_local_weighted.entry(cohort.home).or_insert((0, 0));
+            entry.0 = entry
+                .0
+                .saturating_add(i128::from(fragment_average_raw) * weight);
+            entry.1 = entry.1.saturating_add(weight);
         }
-        if let Some((faction, _)) = best {
-            tile_controllers.insert(*tile_entity, faction);
+
+        let mut tile_local_average: HashMap<u64, Scalar> = HashMap::new();
+        for (tile_entity, (weighted_sum, total_weight)) in tile_local_weighted {
+            if total_weight <= 0 {
+                continue;
+            }
+            let mut average = weighted_sum / total_weight;
+            if average < 0 {
+                average = 0;
+            }
+            let scale = i128::from(Scalar::SCALE);
+            if average > scale {
+                average = scale;
+            }
+            tile_local_average.insert(tile_entity, Scalar::from_raw(average as i64));
         }
-    }
 
-    let blend_weight = overlays.fog().global_local_blend();
-
-    for tile in tiles {
-        let Some(&idx) = tile_indices.get(&tile.entity) else {
-            continue;
-        };
-
-        let global_cov = tile_controllers.get(&tile.entity).and_then(|&faction| {
-            discovery
-                .progress
-                .get(&FactionId(faction))
-                .and_then(|entries| {
-                    if entries.is_empty() {
-                        return None;
-                    }
-                    let mut total = Scalar::zero();
-                    let mut count = 0u32;
-                    for value in entries.values() {
-                        if value.raw() <= 0 {
-                            continue;
+        let mut tile_controllers: HashMap<u64, u32> = HashMap::new();
+        for (tile_entity, faction_map) in &tile_faction_sizes {
+            let mut best: Option<(u32, u64)> = None;
+            for (&faction, &count) in faction_map.iter() {
+                best = match best {
+                    None => Some((faction, count)),
+                    Some((best_faction, best_count)) => {
+                        if count > best_count || (count == best_count && faction < best_faction) {
+                            Some((faction, count))
+                        } else {
+                            Some((best_faction, best_count))
                         }
-                        total += (*value).clamp(Scalar::zero(), Scalar::one());
-                        count = count.saturating_add(1);
                     }
-                    if count == 0 {
-                        None
-                    } else {
-                        Some((total / Scalar::from_u32(count)).clamp(Scalar::zero(), Scalar::one()))
-                    }
-                })
-        });
+                };
+            }
+            if let Some((faction, _)) = best {
+                tile_controllers.insert(*tile_entity, faction);
+            }
+        }
 
-        let local_cov = tile_local_average.get(&tile.entity).copied();
+        let blend_weight = overlays.fog().global_local_blend();
 
-        let coverage = match (global_cov, local_cov) {
-            (Some(g), Some(l)) => ((g + l) * blend_weight).clamp(Scalar::zero(), Scalar::one()),
-            (Some(g), None) => g,
-            (None, Some(l)) => l,
-            (None, None) => Scalar::zero(),
-        };
+        for tile in tiles {
+            let Some(&idx) = tile_indices.get(&tile.entity) else {
+                continue;
+            };
 
-        let fog = (Scalar::one() - coverage).clamp(Scalar::zero(), Scalar::one());
-        samples[idx] = fog.raw();
+            let global_cov = tile_controllers.get(&tile.entity).and_then(|&faction| {
+                discovery
+                    .progress
+                    .get(&FactionId(faction))
+                    .and_then(|entries| {
+                        if entries.is_empty() {
+                            return None;
+                        }
+                        let mut total = Scalar::zero();
+                        let mut count = 0u32;
+                        for value in entries.values() {
+                            if value.raw() <= 0 {
+                                continue;
+                            }
+                            total += (*value).clamp(Scalar::zero(), Scalar::one());
+                            count = count.saturating_add(1);
+                        }
+                        if count == 0 {
+                            None
+                        } else {
+                            Some(
+                                (total / Scalar::from_u32(count))
+                                    .clamp(Scalar::zero(), Scalar::one()),
+                            )
+                        }
+                    })
+            });
+
+            let local_cov = tile_local_average.get(&tile.entity).copied();
+
+            let coverage = match (global_cov, local_cov) {
+                (Some(g), Some(l)) => ((g + l) * blend_weight).clamp(Scalar::zero(), Scalar::one()),
+                (Some(g), None) => g,
+                (None, Some(l)) => l,
+                (None, None) => Scalar::zero(),
+            };
+
+            let fog = (Scalar::one() - coverage).clamp(Scalar::zero(), Scalar::one());
+            samples[idx] = fog.raw();
+        }
     }
+
+    apply_start_location_reveal(&mut samples, width, height, start_location);
 
     ScalarRasterState {
         width,
         height,
         samples,
+    }
+}
+
+fn apply_start_location_reveal(
+    samples: &mut [i64],
+    width: u32,
+    height: u32,
+    start_location: &StartLocation,
+) {
+    let Some(center) = start_location.position() else {
+        return;
+    };
+    let radius = start_location.survey_radius().unwrap_or(0);
+    if samples.is_empty() {
+        return;
+    }
+    let width = width.max(1) as usize;
+    let height = height.max(1) as usize;
+    let radius_i32 = radius.min(i32::MAX as u32) as i32;
+    let radius_sq = radius_i32.pow(2);
+    for y in 0..height {
+        for x in 0..width {
+            let dx = x as i32 - center.x as i32;
+            let dy = y as i32 - center.y as i32;
+            if dx * dx + dy * dy <= radius_sq {
+                let idx = y * width + x;
+                if idx < samples.len() {
+                    samples[idx] = 0;
+                }
+            }
+        }
     }
 }
 
@@ -3003,6 +3111,7 @@ mod tests {
         power::PowerIncidentSeverity as GridIncidentSeverity,
         resources::{CorruptionTelemetry, DiscoveryProgressLedger},
         scalar::Scalar,
+        start_profile::StartProfileOverrides,
         PowerIncident,
     };
     use bevy::math::UVec2;
@@ -3050,8 +3159,10 @@ mod tests {
             knowledge_ledger: Vec::new(),
             knowledge_timeline: Vec::new(),
             knowledge_metrics: KnowledgeMetricsState::default(),
+            victory: VictorySnapshotState::default(),
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
+            campaign_profiles: Vec::new(),
             terrain: overlay,
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
@@ -3097,8 +3208,10 @@ mod tests {
             knowledge_ledger: Vec::new(),
             knowledge_timeline: Vec::new(),
             knowledge_metrics: KnowledgeMetricsState::default(),
+            victory: VictorySnapshotState::default(),
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
+            campaign_profiles: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
@@ -3139,8 +3252,10 @@ mod tests {
             knowledge_ledger: Vec::new(),
             knowledge_timeline: Vec::new(),
             knowledge_metrics: KnowledgeMetricsState::default(),
+            victory: VictorySnapshotState::default(),
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
+            campaign_profiles: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
@@ -3553,17 +3668,72 @@ mod tests {
         discovery.add_progress(FactionId(0), 2, Scalar::from_f32(0.4));
 
         let overlays_config = SnapshotOverlaysConfig::default();
+        let start_location = StartLocation::default();
         let fog = fog_raster_from_discoveries(
             &tiles,
             &populations,
             &discovery,
             UVec2::new(2, 1),
             &overlays_config,
+            &start_location,
         );
 
         assert_eq!(fog.width, 2);
         assert_eq!(fog.height, 1);
         assert!(fog.samples[0] < Scalar::one().raw());
+        assert_eq!(fog.samples[1], Scalar::one().raw());
+    }
+
+    #[test]
+    fn fog_raster_revealed_mode_clears_samples() {
+        let tiles = vec![tile(1, 0, 0), tile(2, 1, 0)];
+        let populations = Vec::new();
+        let discovery = DiscoveryProgressLedger::default();
+        let overlays_config = SnapshotOverlaysConfig::default();
+        let overrides = StartProfileOverrides {
+            fog_mode: Some(FogMode::Revealed),
+            ..Default::default()
+        };
+        let start_location = StartLocation::from_profile(Some(UVec2::new(0, 0)), &overrides);
+
+        let fog = fog_raster_from_discoveries(
+            &tiles,
+            &populations,
+            &discovery,
+            UVec2::new(2, 1),
+            &overlays_config,
+            &start_location,
+        );
+
+        assert!(fog
+            .samples
+            .iter()
+            .all(|sample| *sample == Scalar::zero().raw()));
+    }
+
+    #[test]
+    fn fog_raster_shroud_only_reveals_radius() {
+        let tiles = vec![tile(1, 0, 0), tile(2, 1, 0)];
+        let populations = Vec::new();
+        let discovery = DiscoveryProgressLedger::default();
+        let overlays_config = SnapshotOverlaysConfig::default();
+        let overrides = StartProfileOverrides {
+            fog_mode: Some(FogMode::Shroud),
+            survey_radius: Some(0),
+            ..Default::default()
+        };
+        let start_location = StartLocation::from_profile(Some(UVec2::new(0, 0)), &overrides);
+
+        let fog = fog_raster_from_discoveries(
+            &tiles,
+            &populations,
+            &discovery,
+            UVec2::new(2, 1),
+            &overlays_config,
+            &start_location,
+        );
+
+        assert_eq!(fog.samples[0], Scalar::zero().raw());
         assert_eq!(fog.samples[1], Scalar::one().raw());
     }
 }

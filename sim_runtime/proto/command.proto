@@ -158,6 +158,10 @@ message SpawnCrisisCommand {
   string archetype_id = 2;
 }
 
+message SetStartProfileCommand {
+  string profile_id = 1;
+}
+
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
@@ -181,5 +185,6 @@ message CommandEnvelope {
     ReloadConfigCommand reload_config = 16;
     SetCrisisAutoSeedCommand set_crisis_auto_seed = 19;
     SpawnCrisisCommand spawn_crisis = 20;
+    SetStartProfileCommand set_start_profile = 21;
   }
 }

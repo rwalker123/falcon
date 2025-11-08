@@ -1,4 +1,4 @@
-use flatbuffers::Vector;
+use flatbuffers::{ForwardsUOffset, Vector};
 use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 use std::collections::{BTreeSet, HashMap};
@@ -590,6 +590,7 @@ struct CrisisAnnotationRecord {
     path: Vec<i32>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn snapshot_dict(
     tick: u64,
     grid_size: GridSize,
@@ -598,6 +599,9 @@ fn snapshot_dict(
     crisis_annotations: &[CrisisAnnotationRecord],
     hydrology_rivers: Option<&VariantArray>,
     start_marker: Option<(u32, u32)>,
+    campaign_label: Option<Dictionary>,
+    campaign_profiles: Option<VariantArray>,
+    victory_state: Option<Dictionary>,
 ) -> Dictionary {
     let mut dict = Dictionary::new();
     let _ = dict.insert("turn", tick as i64);
@@ -978,6 +982,16 @@ fn snapshot_dict(
     let _ = dict.insert("units", VariantArray::new());
     let _ = dict.insert("orders", VariantArray::new());
 
+    if let Some(label) = campaign_label {
+        let _ = dict.insert("campaign_label", label);
+    }
+    if let Some(profiles) = campaign_profiles {
+        let _ = dict.insert("campaign_profiles", profiles);
+    }
+    if let Some(victory) = victory_state {
+        let _ = dict.insert("victory", victory);
+    }
+
     dict
 }
 #[derive(Default, GodotClass)]
@@ -1066,6 +1080,10 @@ fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
         agg.start_marker = Some((marker.x(), marker.y()));
     }
     let mut dict = agg.into_dictionary();
+
+    if let Some(victory) = delta.victory() {
+        let _ = dict.insert("victory", victory_state_to_dict(victory));
+    }
 
     if let Some(definitions) = delta.greatDiscoveryDefinitions() {
         let _ = dict.insert(
@@ -1704,6 +1722,9 @@ impl DeltaAggregator {
             &crisis_annotations,
             None,
             start_marker,
+            None,
+            None,
+            None,
         )
     }
 }
@@ -2374,6 +2395,20 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         .startMarker()
         .map(|marker| (marker.x(), marker.y()));
 
+    let campaign_label_dict = header.campaignLabel().map(campaign_label_to_dict);
+    let mut campaign_profiles_array: Option<VariantArray> = None;
+    if let Some(profiles) = snapshot.campaignProfiles() {
+        let mut arr = VariantArray::new();
+        for profile in profiles {
+            let dict = campaign_profile_to_dict(profile);
+            arr.push(&dict.to_variant());
+        }
+        if !arr.is_empty() {
+            campaign_profiles_array = Some(arr);
+        }
+    }
+    let victory_dict = snapshot.victory().map(victory_state_to_dict);
+
     let mut dict = snapshot_dict(
         header.tick(),
         GridSize {
@@ -2402,6 +2437,9 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
             Some(&hydrology_rivers)
         },
         start_marker_tuple,
+        campaign_label_dict,
+        campaign_profiles_array,
+        victory_dict,
     );
 
     if let Some(axis_bias) = snapshot.axisBias() {
@@ -2493,6 +2531,199 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
     }
 
     dict
+}
+
+fn campaign_label_to_dict(label: fb::CampaignLabel<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    if let Some(profile_id) = label.profileId() {
+        let _ = dict.insert("profile_id", profile_id);
+    }
+    if let Some(title) = label.title() {
+        let _ = dict.insert("title", title);
+    }
+    if let Some(loc_key) = label.titleLocKey() {
+        let _ = dict.insert("title_loc_key", loc_key);
+    }
+    if let Some(subtitle) = label.subtitle() {
+        let _ = dict.insert("subtitle", subtitle);
+    }
+    if let Some(loc_key) = label.subtitleLocKey() {
+        let _ = dict.insert("subtitle_loc_key", loc_key);
+    }
+    dict
+}
+
+fn campaign_profile_to_dict(profile: fb::CampaignProfile<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    if let Some(id) = profile.id() {
+        let _ = dict.insert("id", id);
+    }
+    if let Some(title) = profile.title() {
+        let _ = dict.insert("title", title);
+    }
+    if let Some(loc_key) = profile.titleLocKey() {
+        let _ = dict.insert("title_loc_key", loc_key);
+    }
+    if let Some(subtitle) = profile.subtitle() {
+        let _ = dict.insert("subtitle", subtitle);
+    }
+    if let Some(loc_key) = profile.subtitleLocKey() {
+        let _ = dict.insert("subtitle_loc_key", loc_key);
+    }
+    if let Some(units) = profile.startingUnits() {
+        let units_array = campaign_starting_units_to_array(units);
+        if !units_array.is_empty() {
+            let _ = dict.insert("starting_units", units_array);
+        }
+    }
+    if let Some(entries) = profile.inventory() {
+        let inventory_array = campaign_inventory_to_array(entries);
+        if !inventory_array.is_empty() {
+            let _ = dict.insert("inventory", inventory_array);
+        }
+    }
+    if let Some(tags) = profile.knowledgeTags() {
+        let tag_array = strings_to_variant_array(tags);
+        if !tag_array.is_empty() {
+            let _ = dict.insert("knowledge_tags", tag_array);
+        }
+    }
+    let radius = profile.surveyRadius();
+    if radius > 0 {
+        let _ = dict.insert("survey_radius", radius as i64);
+    }
+    if let Some(mode) = profile.fogMode() {
+        if !mode.is_empty() {
+            let _ = dict.insert("fog_mode", mode);
+        }
+    }
+    dict
+}
+
+fn campaign_starting_units_to_array(
+    units: Vector<'_, ForwardsUOffset<fb::CampaignStartingUnit<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for unit in units {
+        let mut dict = Dictionary::new();
+        if let Some(kind) = unit.kind() {
+            let _ = dict.insert("kind", kind);
+        }
+        let _ = dict.insert("count", unit.count() as i64);
+        if let Some(tags) = unit.tags() {
+            let tag_array = strings_to_variant_array(tags);
+            if !tag_array.is_empty() {
+                let _ = dict.insert("tags", tag_array);
+            }
+        }
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn campaign_inventory_to_array(
+    inventory: Vector<'_, ForwardsUOffset<fb::CampaignInventoryEntry<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for entry in inventory {
+        let mut dict = Dictionary::new();
+        if let Some(item) = entry.item() {
+            let _ = dict.insert("item", item);
+        }
+        let _ = dict.insert("quantity", entry.quantity());
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn strings_to_variant_array(values: Vector<'_, ForwardsUOffset<&'_ str>>) -> VariantArray {
+    let mut array = VariantArray::new();
+    for value in values {
+        array.push(&value.to_variant());
+    }
+    array
+}
+
+fn victory_state_to_dict(state: fb::VictoryState<'_>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    let mut modes_array = VariantArray::new();
+    let winner_mode_id = state
+        .winner()
+        .and_then(|winner| winner.mode())
+        .map(|raw| raw.to_owned());
+    let mut winner_label: Option<String> = None;
+
+    if let Some(modes) = state.modes() {
+        for mode in modes {
+            let id = mode.id().unwrap_or("");
+            let kind = mode.kind().unwrap_or("");
+            let label_source = if id.is_empty() { kind } else { id };
+            let label_text = format_victory_label(label_source);
+            let kind_label = format_victory_label(kind);
+            let progress = mode.progress();
+            let threshold = mode.threshold();
+            let mut progress_pct = 0.0f32;
+            if threshold > f32::EPSILON {
+                progress_pct = (progress / threshold).clamp(0.0, 1.0);
+            }
+
+            let mut entry = Dictionary::new();
+            let _ = entry.insert("id", id);
+            let _ = entry.insert("kind", kind);
+            let _ = entry.insert("label", label_text.clone());
+            let _ = entry.insert("kind_label", kind_label);
+            let _ = entry.insert("progress", f64::from(progress));
+            let _ = entry.insert("threshold", f64::from(threshold));
+            let _ = entry.insert("achieved", mode.achieved());
+            let _ = entry.insert("progress_pct", f64::from(progress_pct));
+            modes_array.push(&entry.to_variant());
+
+            if let Some(target) = winner_mode_id.as_ref() {
+                if !target.is_empty() && target == id {
+                    winner_label = Some(label_text);
+                }
+            }
+        }
+    }
+
+    if !modes_array.is_empty() {
+        let _ = dict.insert("modes", modes_array);
+    }
+
+    if let Some(winner) = state.winner() {
+        let mut winner_dict = Dictionary::new();
+        if let Some(mode) = winner.mode() {
+            let _ = winner_dict.insert("mode", mode);
+        }
+        let label_text = winner_label
+            .or_else(|| winner.mode().map(format_victory_label))
+            .unwrap_or_else(|| "Victory".to_string());
+        let _ = winner_dict.insert("label", label_text);
+        let _ = winner_dict.insert("faction", winner.faction() as i64);
+        let _ = winner_dict.insert("tick", winner.tick() as i64);
+        let _ = dict.insert("winner", winner_dict);
+    }
+
+    dict
+}
+
+fn format_victory_label(raw: &str) -> String {
+    if raw.is_empty() {
+        return String::new();
+    }
+    raw.split(['_', '-', '.'])
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            let mut chars = segment.chars();
+            let mut formatted = String::new();
+            if let Some(first) = chars.next() {
+                formatted.extend(first.to_uppercase());
+            }
+            formatted.extend(chars.flat_map(|c| c.to_lowercase()));
+            formatted
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn terrain_label_from_id(id: u16) -> &'static str {

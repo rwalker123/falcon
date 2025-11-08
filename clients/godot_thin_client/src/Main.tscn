@@ -31,11 +31,26 @@ offset_top = 48.0
 theme_override_colors/font_color = Color(0.8, 0.95, 1, 1)
 text = "Units: 0"
 
-[node name="InspectorFontLabel" type="Label" parent="HUD"]
+[node name="CampaignTitleLabel" type="Label" parent="HUD"]
 offset_left = 16.0
 offset_top = 80.0
-theme_override_colors/font_color = Color(0.95, 0.8, 0.4, 1)
-text = "UI zoom:"
+theme_override_colors/font_color = Color(0.95, 0.9, 0.75, 1)
+text = "Trail Sovereigns"
+
+[node name="CampaignSubtitleLabel" type="Label" parent="HUD"]
+offset_left = 16.0
+offset_top = 108.0
+theme_override_colors/font_color = Color(0.8, 0.9, 1, 1)
+text = "Nomadic strategy saga"
+
+[node name="VictoryLabel" type="RichTextLabel" parent="HUD"]
+offset_left = 16.0
+offset_top = 140.0
+offset_right = 360.0
+offset_bottom = 220.0
+bbcode_enabled = true
+scroll_active = false
+text = "[b]Victory[/b]\n[i]Awaiting telemetry.[/i]"
 
 [node name="ZoomControls" type="HBoxContainer" parent="HUD"]
 offset_left = 129.0
@@ -337,6 +352,42 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "Changing size resets the simulation. Press Enter to toggle terrain shading on/off."
 
+[node name="ScenarioSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Map/MapVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="ScenarioLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Map/MapVBox/ScenarioSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Start Profile"
+
+[node name="ScenarioDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Map/MapVBox/ScenarioSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ScenarioDescription" type="Label" parent="Inspector/RootPanel/TabContainer/Map/MapVBox/ScenarioSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+autowrap_mode = 1
+text = "Select a start profile to see its description."
+
+[node name="ScenarioActions" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Map/MapVBox/ScenarioSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="ApplyScenarioButton" type="Button" parent="Inspector/RootPanel/TabContainer/Map/MapVBox/ScenarioSection/ScenarioActions"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Apply Profile"
+
+[node name="RegenerateToggle" type="CheckButton" parent="Inspector/RootPanel/TabContainer/Map/MapVBox/ScenarioSection/ScenarioActions"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Regenerate map"
+button_pressed = true
+
 [node name="LogisticsSection" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Map/MapVBox"]
 layout_mode = 2
 size_flags_horizontal = 3
@@ -476,6 +527,38 @@ size_flags_horizontal = 3
 bbcode_enabled = true
 text = "[i]No crisis alerts recorded.[/i]"
 fit_content = true
+
+[node name="Victory" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 10
+
+[node name="VictoryVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Victory"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="VictorySummaryText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Victory/VictoryVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+text = "[b]Victory Progress[/b]\n[i]Awaiting telemetry.[/i]"
+
+[node name="VictoryModesLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Victory/VictoryVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Victory Modes"
+
+[node name="VictoryModesList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Victory/VictoryVBox"]
+custom_minimum_size = Vector2(0, 160)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+allow_rmb_select = true
 
 [node name="Culture" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
 visible = false

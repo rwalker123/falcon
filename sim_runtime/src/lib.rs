@@ -376,7 +376,7 @@ pub mod knowledge {
             KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeSecurityPosture,
             KnowledgeTimelineEventKind, KnowledgeTimelineEventState, PowerTelemetryState,
             ScalarRasterState, SentimentTelemetryState, SnapshotHeader, TerrainOverlayState,
-            WorldDelta, WorldSnapshot,
+            VictorySnapshotState, WorldDelta, WorldSnapshot,
         };
 
         fn empty_snapshot() -> WorldSnapshot {
@@ -395,8 +395,10 @@ pub mod knowledge {
                 knowledge_ledger: Vec::new(),
                 knowledge_timeline: Vec::new(),
                 knowledge_metrics: KnowledgeMetricsState::default(),
+                victory: VictorySnapshotState::default(),
                 crisis_telemetry: CrisisTelemetryState::default(),
                 crisis_overlay: CrisisOverlayState::default(),
+                campaign_profiles: Vec::new(),
                 moisture_raster: FloatRasterState::default(),
                 terrain: TerrainOverlayState::default(),
                 logistics_raster: ScalarRasterState::default(),

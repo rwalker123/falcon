@@ -534,6 +534,57 @@ table GenerationState {
   biasAgency:long;
 }
 
+table CampaignLabel {
+  profileId:string;
+  title:string;
+  titleLocKey:string;
+  subtitle:string;
+  subtitleLocKey:string;
+}
+
+table CampaignProfile {
+  id:string;
+  title:string;
+  titleLocKey:string;
+  subtitle:string;
+  subtitleLocKey:string;
+  startingUnits:[CampaignStartingUnit];
+  inventory:[CampaignInventoryEntry];
+  knowledgeTags:[string];
+  surveyRadius:uint;
+  fogMode:string;
+}
+
+table CampaignInventoryEntry {
+  item:string;
+  quantity:long;
+}
+
+table CampaignStartingUnit {
+  kind:string;
+  count:uint;
+  tags:[string];
+}
+
+table VictoryModeState {
+  id:string;
+  kind:string;
+  progress:float;
+  threshold:float;
+  achieved:bool;
+}
+
+table VictoryResult {
+  mode:string;
+  faction:uint;
+  tick:ulong;
+}
+
+table VictoryState {
+  modes:[VictoryModeState];
+  winner:VictoryResult;
+}
+
 table SnapshotHeader {
   tick:ulong;
   tileCount:uint;
@@ -543,6 +594,8 @@ table SnapshotHeader {
   powerCount:uint;
   influencerCount:uint;
   hash:ulong;
+  campaignLabel:CampaignLabel;
+  victory:VictoryState;
 }
 
 table KnownTechFragment {
@@ -618,8 +671,10 @@ table WorldSnapshot {
   knowledgeLedger:[KnowledgeLedgerState];
   knowledgeTimeline:[KnowledgeTimelineEventState];
   knowledgeMetrics:KnowledgeMetricsState;
+  victory:VictoryState;
   crisisTelemetry:CrisisTelemetryState;
   crisisOverlay:CrisisOverlayState;
+  campaignProfiles:[CampaignProfile];
   moistureRaster:FloatRaster;
   hydrologyOverlay:HydrologyOverlay; // rivers/streams polylines
   elevationOverlay:ElevationOverlay;
@@ -662,6 +717,7 @@ table WorldDelta {
   removedKnowledgeLedger:[ulong];
   knowledgeTimeline:[KnowledgeTimelineEventState];
   knowledgeMetrics:KnowledgeMetricsState;
+  victory:VictoryState;
   crisisTelemetry:CrisisTelemetryState;
   crisisOverlay:CrisisOverlayState;
   moistureRaster:FloatRaster;

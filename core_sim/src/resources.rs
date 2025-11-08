@@ -15,6 +15,7 @@ use crate::{
     culture::CultureTensionRecord,
     orders::FactionId,
     scalar::{scalar_from_f32, Scalar},
+    start_profile::{FogMode, StartProfileOverrides},
 };
 
 #[derive(Debug, Clone, Default)]
@@ -37,6 +38,8 @@ pub struct SimulationConfig {
     pub grid_size: UVec2,
     pub map_preset_id: String,
     pub map_seed: u64,
+    pub start_profile_id: String,
+    pub start_profile_overrides: StartProfileOverrides,
     pub hydrology: HydrologyOverrides,
     pub ambient_temperature: Scalar,
     pub temperature_lerp: Scalar,
@@ -169,6 +172,8 @@ struct SimulationConfigData {
     map_preset_id: String,
     #[serde(default)]
     map_seed: u64,
+    #[serde(default = "default_start_profile_id")]
+    start_profile_id: String,
     #[serde(default)]
     hydrology: Option<HydrologyOverridesData>,
     ambient_temperature: f32,
@@ -264,6 +269,8 @@ impl SimulationConfigData {
             grid_size: UVec2::new(self.grid_size.x, self.grid_size.y),
             map_preset_id: self.map_preset_id,
             map_seed: self.map_seed,
+            start_profile_id: self.start_profile_id,
+            start_profile_overrides: StartProfileOverrides::default(),
             hydrology: self
                 .hydrology
                 .map(|d| d.into_overrides())
@@ -318,6 +325,10 @@ impl SimulationConfigData {
 
 fn default_map_preset_id() -> String {
     "earthlike".to_string()
+}
+
+fn default_start_profile_id() -> String {
+    "late_forager_tribe".to_string()
 }
 
 fn parse_socket(value: String, field: &'static str) -> Result<SocketAddr, SimulationConfigError> {
@@ -402,18 +413,50 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SimulationTick(pub u64);
 
-#[derive(Resource, Debug, Clone, Copy, Default)]
+#[derive(Resource, Debug, Clone, Copy)]
 pub struct StartLocation {
     position: Option<UVec2>,
+    survey_radius: Option<u32>,
+    fog_mode: FogMode,
+}
+
+impl Default for StartLocation {
+    fn default() -> Self {
+        Self {
+            position: None,
+            survey_radius: None,
+            fog_mode: FogMode::Standard,
+        }
+    }
 }
 
 impl StartLocation {
     pub fn new(position: Option<UVec2>) -> Self {
-        Self { position }
+        Self {
+            position,
+            survey_radius: None,
+            fog_mode: FogMode::Standard,
+        }
+    }
+
+    pub fn from_profile(position: Option<UVec2>, overrides: &StartProfileOverrides) -> Self {
+        Self {
+            position,
+            survey_radius: overrides.survey_radius,
+            fog_mode: overrides.fog_mode.unwrap_or(FogMode::Standard),
+        }
     }
 
     pub fn position(&self) -> Option<UVec2> {
         self.position
+    }
+
+    pub fn survey_radius(&self) -> Option<u32> {
+        self.survey_radius
+    }
+
+    pub fn fog_mode(&self) -> FogMode {
+        self.fog_mode
     }
 }
 
@@ -697,5 +740,53 @@ impl TradeTelemetry {
 
     pub fn push_record(&mut self, record: TradeDiffusionRecord) {
         self.records.push(record);
+    }
+}
+
+/// Per-faction stockpile of abstracted inventory items granted by start profiles.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct FactionInventory {
+    stockpiles: HashMap<FactionId, HashMap<String, i64>>,
+}
+
+impl FactionInventory {
+    pub fn add_stockpile<S: Into<String>>(&mut self, faction: FactionId, item: S, quantity: i64) {
+        if quantity == 0 {
+            return;
+        }
+        let entry = self.stockpiles.entry(faction).or_default();
+        *entry.entry(item.into()).or_insert(0) += quantity;
+    }
+
+    pub fn take_stockpile(&mut self, faction: FactionId, item: &str, quantity: i64) -> i64 {
+        if quantity <= 0 {
+            return 0;
+        }
+        let Some(entry) = self.stockpiles.get_mut(&faction) else {
+            return 0;
+        };
+        let (removable, cleanup_faction) = {
+            let Some(slot) = entry.get_mut(item) else {
+                return 0;
+            };
+            let removable = (*slot).min(quantity);
+            *slot -= removable;
+            if *slot == 0 {
+                entry.remove(item);
+            }
+            (removable, entry.is_empty())
+        };
+        if cleanup_faction {
+            self.stockpiles.remove(&faction);
+        }
+        removable
+    }
+
+    pub fn stockpile(&self, faction: FactionId) -> Option<&HashMap<String, i64>> {
+        self.stockpiles.get(&faction)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&FactionId, &HashMap<String, i64>)> {
+        self.stockpiles.iter()
     }
 }

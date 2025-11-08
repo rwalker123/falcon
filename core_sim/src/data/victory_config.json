@@ -1,0 +1,21 @@
+{
+  "continue_after_win": true,
+  "modes": [
+    {
+      "id": "hegemony",
+      "kind": "hegemony",
+      "enabled": true,
+      "threshold": 1.0,
+      "description": "Control a dominant share of population and production.",
+      "requires_capabilities": []
+    },
+    {
+      "id": "stewardship",
+      "kind": "stewardship",
+      "enabled": false,
+      "threshold": 1.0,
+      "description": "Restore ecosystems and stabilize chemistry.",
+      "requires_capabilities": []
+    }
+  ]
+}

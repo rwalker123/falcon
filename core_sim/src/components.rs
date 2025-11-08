@@ -154,6 +154,19 @@ pub struct PowerNode {
     pub incident_count: u32,
 }
 
+/// Marks a starting population cohort spawned from a scenario profile.
+#[derive(Component, Debug, Clone)]
+pub struct StartingUnit {
+    pub kind: String,
+    pub tags: Vec<String>,
+}
+
+impl StartingUnit {
+    pub fn new(kind: String, tags: Vec<String>) -> Self {
+        Self { kind, tags }
+    }
+}
+
 impl Default for PowerNode {
     fn default() -> Self {
         Self {

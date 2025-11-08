@@ -4,9 +4,10 @@ class_name HudLayer
 signal ui_zoom_delta(delta: float)
 signal ui_zoom_reset
 
+@onready var campaign_title_label: Label = $CampaignTitleLabel
+@onready var campaign_subtitle_label: Label = $CampaignSubtitleLabel
 @onready var turn_label: Label = $TurnLabel
 @onready var metrics_label: Label = $MetricsLabel
-@onready var inspector_font_label: Label = $InspectorFontLabel
 @onready var zoom_controls: HBoxContainer = $ZoomControls
 @onready var zoom_out_button: Button = $ZoomControls/ZoomOutButton
 @onready var zoom_reset_button: Button = $ZoomControls/ZoomResetButton
@@ -17,6 +18,7 @@ signal ui_zoom_reset
 @onready var terrain_legend_list: VBoxContainer = $TerrainLegendPanel/LegendContainer/LegendScroll/LegendList
 @onready var terrain_legend_title: Label = $TerrainLegendPanel/LegendContainer/LegendTitle
 @onready var terrain_legend_description: Label = $TerrainLegendPanel/LegendContainer/LegendDescription
+@onready var victory_status_label: RichTextLabel = $VictoryLabel
 
 const LEGEND_SWATCH_FRACTION := 0.75
 const LEGEND_MIN_ROW_HEIGHT := 20.0
@@ -31,12 +33,29 @@ const STACK_ADDITIONAL_MARGIN := 16.0
 
 var overlay_legend: Dictionary = {}
 var legend_suppressed: bool = false
+var localization_store = null
+var campaign_label: Dictionary = {}
+var victory_state: Dictionary = {}
 
 func _ready() -> void:
     set_ui_zoom(1.0)
     _connect_zoom_controls()
     _refresh_existing_legend_rows()
     _resize_legend_panel(_legend_list_size())
+    _refresh_campaign_label()
+    _refresh_victory_status()
+
+func set_localization_store(store) -> void:
+    localization_store = store
+    _refresh_campaign_label()
+
+func update_campaign_label(label: Dictionary) -> void:
+    campaign_label = label.duplicate(true) if label is Dictionary else {}
+    _refresh_campaign_label()
+
+func update_victory_state(state: Dictionary) -> void:
+    victory_state = state.duplicate(true) if state is Dictionary else {}
+    _refresh_victory_status()
 
 func update_overlay(turn: int, metrics: Dictionary) -> void:
     turn_label.text = "Turn %d" % turn
@@ -125,7 +144,7 @@ func update_overlay_legend(legend: Dictionary) -> void:
 
 func get_upper_stack_height() -> float:
     var max_bottom := 0.0
-    for label in [turn_label, metrics_label, inspector_font_label]:
+    for label in [campaign_title_label, campaign_subtitle_label, turn_label, metrics_label, victory_status_label]:
         if label == null:
             continue
         var top: float = label.position.y
@@ -157,6 +176,88 @@ func _refresh_existing_legend_rows() -> void:
                 if grandchild is ColorRect:
                     (grandchild as ColorRect).custom_minimum_size = swatch_size
     _resize_legend_panel(_legend_list_size())
+
+func _refresh_campaign_label() -> void:
+    if campaign_title_label == null or campaign_subtitle_label == null:
+        return
+    var title_text := _resolve_localized_field("title")
+    var subtitle_text := _resolve_localized_field("subtitle")
+    var has_title := title_text.strip_edges() != ""
+    var has_subtitle := subtitle_text.strip_edges() != ""
+    campaign_title_label.visible = has_title
+    campaign_subtitle_label.visible = has_subtitle
+    campaign_title_label.text = title_text if has_title else ""
+    campaign_subtitle_label.text = subtitle_text if has_subtitle else ""
+
+func _refresh_victory_status() -> void:
+    if victory_status_label == null:
+        return
+    if victory_state.is_empty():
+        victory_status_label.visible = false
+        victory_status_label.text = ""
+        return
+    victory_status_label.visible = true
+    var lines: Array = ["[b]Victory[/b]"]
+    var winner_variant: Variant = victory_state.get("winner", {})
+    if winner_variant is Dictionary and not (winner_variant as Dictionary).is_empty():
+        var winner_dict: Dictionary = winner_variant
+        var label_text := String(winner_dict.get("label", winner_dict.get("mode", "Victory")))
+        var tick := int(winner_dict.get("tick", 0))
+        lines.append("[color=gold]Winner:[/color] %s · Tick %d" % [label_text, tick])
+    else:
+        lines.append("[color=gray]No victory declared.[/color]")
+    var modes_variant: Variant = victory_state.get("modes", [])
+    if modes_variant is Array:
+        var sorted_modes: Array = _sorted_victory_modes(modes_variant as Array)
+        var limit: int = min(sorted_modes.size(), 3)
+        for idx in range(limit):
+            var mode_dict: Dictionary = sorted_modes[idx]
+            var label_text := String(mode_dict.get("label", mode_dict.get("id", "Mode")))
+            if label_text.strip_edges() == "":
+                label_text = _format_victory_label(String(mode_dict.get("id", mode_dict.get("kind", "Mode"))))
+            var pct: float = clamp(float(mode_dict.get("progress_pct", 0.0)), 0.0, 1.0) * 100.0
+            var achieved := bool(mode_dict.get("achieved", false))
+            var prefix := "✔" if achieved else "•"
+            lines.append("%s %s — %.1f%%" % [prefix, label_text, pct])
+    victory_status_label.bbcode_enabled = true
+    victory_status_label.text = String("\n".join(lines))
+
+func _sorted_victory_modes(source: Array) -> Array:
+    var entries: Array = []
+    for entry in source:
+        if entry is Dictionary:
+            entries.append((entry as Dictionary).duplicate(true))
+    entries.sort_custom(Callable(self, "_victory_mode_sort"))
+    return entries
+
+func _victory_mode_sort(a: Dictionary, b: Dictionary) -> bool:
+    var pct_a := float(a.get("progress_pct", 0.0))
+    var pct_b := float(b.get("progress_pct", 0.0))
+    if is_equal_approx(pct_a, pct_b):
+        var label_a := _format_victory_label(String(a.get("label", a.get("id", ""))))
+        var label_b := _format_victory_label(String(b.get("label", b.get("id", ""))))
+        return label_a < label_b
+    return pct_a > pct_b
+
+func _format_victory_label(raw: String) -> String:
+    var trimmed := raw.strip_edges()
+    if trimmed == "":
+        return "Victory Mode"
+    var sanitized := trimmed.replace("_", " ").replace("-", " ").replace(".", " ")
+    var parts: Array = sanitized.split(" ", false)
+    for i in range(parts.size()):
+        parts[i] = String(parts[i]).capitalize()
+    return String(" ".join(parts)).strip_edges()
+
+func _resolve_localized_field(field: String) -> String:
+    var text := String(campaign_label.get(field, ""))
+    var loc_key_field := "%s_loc_key" % field
+    var loc_key := String(campaign_label.get(loc_key_field, ""))
+    if localization_store != null and loc_key != "":
+        var localized: String = localization_store.resolve(loc_key, text)
+        if localized.strip_edges() != "":
+            return localized
+    return text
 
 func _legend_list_size() -> Vector2:
     if terrain_legend_list == null:

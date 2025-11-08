@@ -115,6 +115,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         summary: "Spawn a crisis by archetype for the specified faction (default 0).",
         usage: "spawn_crisis <archetype_id> [faction_id]",
     },
+    CommandVerbHelp {
+        verb: "start_profile",
+        aliases: &["scenario"],
+        summary: "Select the active start profile/scenario id.",
+        usage: "start_profile <profile_id>",
+    },
 ];
 
 use crate::{
@@ -494,6 +500,14 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             Ok(CommandPayload::SpawnCrisis {
                 faction_id,
                 archetype_id: archetype_id.to_string(),
+            })
+        }
+        "start_profile" | "scenario" => {
+            let profile_id = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("profile_id"))?;
+            Ok(CommandPayload::SetStartProfile {
+                profile_id: profile_id.to_string(),
             })
         }
         other => Err(CommandParseError::UnknownCommand(other.to_string())),

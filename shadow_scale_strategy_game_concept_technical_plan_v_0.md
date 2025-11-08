@@ -5,6 +5,27 @@ A modular grand-strategy simulation built on emergent physics, procedural discov
 
 ---
 
+### Naming Exploration — “Trail Sovereigns”
+“Trail Sovereigns” foregrounds the nomadic campaign arc described in §2a by framing players as custodians of roaming-rights diplomacy and seasonal knowledge. The name emphasizes:
+- **Bands as polity**: authority rests with the mobile Scout/Hunter/Crafter cadres rather than a fixed capital (see §2a “Start of Game”).
+- **Sovereignty without walls**: “sovereigns” signals legitimacy earned through patrol networks, treaties, and trail knowledge instead of fortresses (§2a “Loose territory”).
+- **Discovery on the move**: the term “trail” nods to Fog of Discovery, portable hearthcraft, and guided assays that happen while the tribe migrates (§2a “Early Loop”).
+
+Narrative positioning: market the campaign as “Trail Sovereigns: a nomadic strategy saga set in the Shadow-Scale simulation,” keeping Shadow-Scale as the systemic umbrella until a final rename decision. Implementation notes live in `docs/architecture.md` §“Brand & Campaign Labels”.
+
+#### Messaging Exploration
+- **Taglines**
+  - “Claim the road, not the city.” Emphasizes roaming-rights sovereignty and that authority follows the caravans (§2a “Loose territory”).
+  - “Every trail is a treaty.” Highlights diplomacy-first encounters and negotiable passage before fortifications (§2a “Seasonal routes”).
+  - “Forge legend between camps.” Connects Fog of Discovery experiments to hearthcraft milestones while still nomadic (§2a “Early Loop”).
+- **Key Art Hooks**
+  - Trio of bands (Scout, Hunter, Crafter/Guardian) overlooking a seasonal circuit map etched in bioluminescent trail markers; reinforces multi-band leadership.
+  - Portable hearth rig casting light into surrounding fog with chemical assay tools laid out, hinting at emergent science on the move.
+  - Totem-lined pass showing exchanged clan ribbons and open routes, visualizing treaties and roaming rights without walls.
+- **Comms Targets**: Use the taglines for marketing beats (trailers, key art captions) and tooltips in the scenario picker once localization and label plumbing land (`docs/architecture.md` §Brand & Campaign Labels).
+
+---
+
 ## 1. Foundational Simulation Philosophy
 - **Everything Emerges**: From atoms to societies, all systems are generated and interact procedurally.
 - **No Hardcoding**: Units, technologies, materials, and even laws of physics differ each game.
@@ -145,6 +166,8 @@ Mobile-tribe start emphasizing exploration, seasonal routes, and organic settlem
 - Diplomacy: encounters with other tribes enable parley/exchange/intermarriage/feud; soft territory via patrols/totems (“roaming rights”).
 - Energy: hearths/campfires; no engines; kilns once discovered.
 - Goal: grow knowledge, stabilize surplus, and let sedentarization emerge from conditions (or pursue a viable nomadic ascendancy).
+
+Implementation note: the prototype now reads this data from `core_sim/src/data/start_profiles.json`. The JSON entry for `late_forager_tribe` describes `starting_units`, `starting_knowledge_tags`, `inventory`, `survey_radius`, `fog_mode`, `ai_profile_overrides`, and `victory_modes_enabled`; the loader surfaces those values through `SimulationConfig.start_profile_overrides` so worldgen, fog, and scripted tutorials can branch on the scenario without touching code. Designers can clone/edit the JSON file to spin new profiles while keeping the user-facing copy aligned with this section.
 
 ### Alternative Start Profiles (Scenario-Selectable)
 - Early Agrarian City-States: stronger metallurgy baseline; denser settlement; accelerated logistics and conflict.
@@ -1272,6 +1295,13 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 - Reference implementations and manifest schemas live under `clients/godot_thin_client`; see `docs/godot_thin_client_spike.md` for applied notes on the sandboxed scripting API design.
 - Current Godot spike renders live FlatBuffers snapshots, and the overlay selector exposes the logistics/sentiment/corruption/fog layers with consistent colour ramps. Logistics still visualises per-link throughput and sentiment maps morale, but corruption now visualises active incident pressure blended with structural risk (supply flow, trade lanes, power demand, morale-weighted population) while fog paints the knowledge gap for the controlling faction and resident cohorts (`1.0` = opaque ignorance, `0.0` = fully known). Inspector tooltips mirror these legends so raw vs. normalised values stay interpretable; we spot-check tiles against the corruption ledger and discovery/migration telemetry whenever balance passes move the numbers.
 - The HUD legend now follows the active overlay—terrain palette, logistics throughput, corruption pressure, or fog-of-knowledge—and presents low/average/high values with the same descriptive copy as the selector, so map interpretation stays anchored even when the terrain layer is hidden.
+
+### Inspector Script Distribution (Signed Bundles)
+- **Bundle format**: every inspector mod is packaged as a `.sscmod` archive (zip) containing its manifest, scripts, assets, and a detached Ed25519 signature. The manifest matches `docs/scripting_manifest.schema.json` and now lists signing certificate fingerprints plus the capabilities the script consumes.
+- **Local workflow**: designers can drop bundles into `mods/inspector/` or import via the Inspector UI. The client validates the signature, lints the manifest, and stages the payload into a versioned cache before exposing enable/disable controls. Invalid bundles stay quarantined with surfaced errors.
+- **Workshop feeds**: curated feeds publish signed bundle hashes + download URLs. Because the bundles themselves are signed, mirrors can redistribute them without new trust decisions; the client only needs the feed’s HTTPS integrity to know when to fetch updates.
+- **Load / unload**: enabling a mod mounts the cached payload, issues capability tokens, and registers UI components. Disabling (or quarantining) a mod tears down its UI, releases tokens, and keeps the cached files for instant re-enable. Emergency unloads mark the bundle until a subsequent review, preventing quiet reactivation.
+- **Cross-reference**: see `docs/architecture.md` §Inspector Script Distribution & Trust Model for engineering details on the signing pipeline, cache structure, and watchdog flows.
 
 
 ### Recommended Shortlist & Next Steps (Headless First)

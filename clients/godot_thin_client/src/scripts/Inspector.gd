@@ -42,6 +42,11 @@ const MOUNTAIN_KIND_LABELS := {
 @onready var map_size_dropdown: OptionButton = $RootPanel/TabContainer/Map/MapVBox/MapSizeSection/MapSizeDropdown
 @onready var map_generate_button: Button = $RootPanel/TabContainer/Map/MapVBox/MapSizeSection/GenerateMapButton
 @onready var map_terrain_hint_label: Label = $RootPanel/TabContainer/Map/MapVBox/MapTerrainHint
+@onready var scenario_label: Label = $RootPanel/TabContainer/Map/MapVBox/ScenarioSection/ScenarioLabel
+@onready var scenario_dropdown: OptionButton = $RootPanel/TabContainer/Map/MapVBox/ScenarioSection/ScenarioDropdown
+@onready var scenario_description_label: Label = $RootPanel/TabContainer/Map/MapVBox/ScenarioSection/ScenarioDescription
+@onready var scenario_apply_button: Button = $RootPanel/TabContainer/Map/MapVBox/ScenarioSection/ScenarioActions/ApplyScenarioButton
+@onready var scenario_regen_toggle: CheckButton = $RootPanel/TabContainer/Map/MapVBox/ScenarioSection/ScenarioActions/RegenerateToggle
 @onready var terrain_overlay_section_label: Label = $RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlaySectionLabel
 @onready var terrain_overlay_tabs: TabContainer = $RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlayTabs
 @onready var terrain_overlay_culture_placeholder: RichTextLabel = $RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlayTabs/Culture/CulturePlaceholder
@@ -50,6 +55,8 @@ const MOUNTAIN_KIND_LABELS := {
 @onready var culture_divergence_list: ItemList = $RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection/CultureDivergenceList
 @onready var culture_divergence_detail: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection/CultureDivergenceDetail
 @onready var culture_tension_text: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureTensionSection/CultureTensionText
+@onready var victory_summary_text: RichTextLabel = $RootPanel/TabContainer/Victory/VictoryVBox/VictorySummaryText
+@onready var victory_modes_list: ItemList = $RootPanel/TabContainer/Victory/VictoryVBox/VictoryModesList
 @onready var influencers_text: RichTextLabel = $RootPanel/TabContainer/Influencers/InfluencersText
 @onready var corruption_text: RichTextLabel = $RootPanel/TabContainer/Corruption/CorruptionText
 @onready var trade_summary_text: RichTextLabel = $RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection/TradeSummaryText
@@ -154,6 +161,7 @@ var _axis_bias: Dictionary = {}
 var _sentiment: Dictionary = {}
 var _influencers: Dictionary = {}
 var _corruption: Dictionary = {}
+var _victory_state: Dictionary = {}
 var _terrain_palette: Dictionary = {}
 var _terrain_tag_labels: Dictionary = {}
 var _tile_records: Dictionary = {}
@@ -314,6 +322,10 @@ var _overlay_channel_descriptions: Dictionary = {}
 var _overlay_channel_order: Array = []
 var _overlay_placeholder_flags: Dictionary = {}
 var _selected_overlay_key: String = "logistics"
+var _campaign_profiles: Array = []
+var _active_profile_id: String = ""
+var _selected_profile_id: String = ""
+var _suppress_scenario_signal: bool = false
 
 func _ready() -> void:
     Typography.initialize()
@@ -331,6 +343,7 @@ func _ready() -> void:
     _initialize_heat_controls()
     _initialize_config_controls()
     _initialize_map_controls()
+    _initialize_scenario_controls()
     _ensure_overlay_selector()
     apply_typography()
     _connect_terrain_ui()
@@ -423,6 +436,26 @@ func update_delta(delta: Dictionary) -> void:
 func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
     if data.has("turn"):
         _last_turn = int(data.get("turn", _last_turn))
+
+    if data.has("campaign_profiles"):
+        var profiles_variant: Variant = data["campaign_profiles"]
+        if profiles_variant is Array:
+            _campaign_profiles = (profiles_variant as Array).duplicate(true)
+            _refresh_scenario_dropdown()
+
+    if data.has("campaign_label"):
+        var label_variant: Variant = data["campaign_label"]
+        if label_variant is Dictionary:
+            var label_dict: Dictionary = label_variant
+            _active_profile_id = String(label_dict.get("profile_id", _active_profile_id))
+            if _selected_profile_id == "":
+                _selected_profile_id = _active_profile_id
+            _refresh_scenario_selection()
+
+    if data.has("victory"):
+        var victory_variant: Variant = data["victory"]
+        if victory_variant is Dictionary:
+            _victory_state = (victory_variant as Dictionary).duplicate(true)
 
     if data.has("grid"):
         var grid_variant: Variant = data["grid"]
@@ -667,6 +700,7 @@ func _render_dynamic_sections() -> void:
     _render_trade()
     _render_power()
     _render_crisis()
+    _render_victory()
     _render_great_discoveries()
     _render_knowledge()
     _render_terrain()
@@ -696,6 +730,7 @@ func _render_static_sections() -> void:
     _knowledge_metrics.clear()
     _crisis_telemetry.clear()
     _crisis_annotations.clear()
+    _victory_state.clear()
     _great_discovery_records.clear()
     _great_discovery_progress_map.clear()
     _great_discovery_telemetry.clear()
@@ -725,6 +760,11 @@ func _render_static_sections() -> void:
         crisis_summary_text.text = "[b]Crisis Telemetry[/b]\n[i]Awaiting telemetry.[/i]"
     if crisis_alerts_text != null:
         crisis_alerts_text.text = "[i]No crisis alerts reported.[/i]"
+    if victory_summary_text != null:
+        victory_summary_text.text = "[b]Victory Progress[/b]\n[i]Awaiting telemetry.[/i]"
+    if victory_modes_list != null:
+        victory_modes_list.clear()
+        victory_modes_list.add_item("Awaiting telemetry.")
     if great_discovery_summary_text != null:
         great_discovery_summary_text.text = "[b]Great Discoveries[/b]\n[i]Awaiting snapshot data.[/i]"
     if great_discovery_definitions_list != null:
@@ -971,6 +1011,199 @@ func _initialize_map_controls() -> void:
         if not map_generate_button.is_connected("pressed", generate_callable):
             map_generate_button.pressed.connect(_on_map_generate_button_pressed)
         map_generate_button.tooltip_text = "Regenerate the map using the current dimensions."
+
+func _initialize_scenario_controls() -> void:
+    if scenario_dropdown != null:
+        scenario_dropdown.focus_mode = Control.FOCUS_ALL
+        var callable = Callable(self, "_on_scenario_selected")
+        if not scenario_dropdown.is_connected("item_selected", callable):
+            scenario_dropdown.item_selected.connect(_on_scenario_selected)
+    if scenario_apply_button != null:
+        scenario_apply_button.focus_mode = Control.FOCUS_ALL
+        var apply_callable = Callable(self, "_on_scenario_apply_pressed")
+        if not scenario_apply_button.is_connected("pressed", apply_callable):
+            scenario_apply_button.pressed.connect(_on_scenario_apply_pressed)
+    if scenario_regen_toggle != null:
+        scenario_regen_toggle.button_pressed = true
+
+func _refresh_scenario_dropdown() -> void:
+    if scenario_dropdown == null:
+        return
+    _suppress_scenario_signal = true
+    scenario_dropdown.clear()
+    for idx in range(_campaign_profiles.size()):
+        var profile: Dictionary = _campaign_profiles[idx]
+        var label := _scenario_profile_label(profile)
+        scenario_dropdown.add_item(label)
+        scenario_dropdown.set_item_metadata(idx, profile)
+    _suppress_scenario_signal = false
+    _refresh_scenario_selection()
+
+func _refresh_scenario_selection() -> void:
+    if scenario_dropdown == null:
+        return
+    var count := scenario_dropdown.get_item_count()
+    if count == 0:
+        _refresh_scenario_description()
+        return
+    var desired_id: String = _active_profile_id if _active_profile_id != "" else _selected_profile_id
+    var applied: bool = false
+    if desired_id != "":
+        for idx in range(count):
+            var metadata: Variant = scenario_dropdown.get_item_metadata(idx)
+            if metadata is Dictionary and String(metadata.get("id", "")) == desired_id:
+                if scenario_dropdown.get_selected() != idx:
+                    _suppress_scenario_signal = true
+                    scenario_dropdown.select(idx)
+                    _suppress_scenario_signal = false
+                _selected_profile_id = desired_id
+                applied = true
+                break
+    if not applied:
+        if scenario_dropdown.get_selected() < 0:
+            _suppress_scenario_signal = true
+            scenario_dropdown.select(0)
+            _suppress_scenario_signal = false
+        var metadata: Variant = scenario_dropdown.get_item_metadata(scenario_dropdown.get_selected())
+        if metadata is Dictionary:
+            _selected_profile_id = String(metadata.get("id", _selected_profile_id))
+    _refresh_scenario_description()
+
+func _refresh_scenario_description() -> void:
+    if scenario_description_label == null:
+        return
+    var profile: Dictionary = _current_selected_profile()
+    if profile.is_empty():
+        scenario_description_label.text = "Select a start profile to see its description."
+        return
+    var title: String = String(profile.get("title", profile.get("id", "")))
+    var subtitle: String = String(profile.get("subtitle", "")).strip_edges()
+    var lines: Array = []
+    if title != "":
+        lines.append(title)
+    if subtitle != "":
+        lines.append(subtitle)
+
+    var detail_lines: Array = []
+    var units_variant: Variant = profile.get("starting_units", null)
+    if units_variant is Array:
+        var units_array: Array = (units_variant as Array)
+        var unit_summaries: Array = []
+        for unit in units_array:
+            if not (unit is Dictionary):
+                continue
+            var count: int = int(unit.get("count", 0))
+            var kind: String = String(unit.get("kind", "")).strip_edges()
+            if kind == "":
+                continue
+            var unit_label: String = "%dx %s" % [count, kind] if count > 0 else kind
+            unit_summaries.append(unit_label)
+        if unit_summaries.size() > 0:
+            detail_lines.append("Units: %s" % _join_profile_strings(unit_summaries))
+
+    var inventory_variant: Variant = profile.get("inventory", null)
+    if inventory_variant is Array:
+        var inventory_array: Array = (inventory_variant as Array)
+        var inventory_lines: Array = []
+        for entry in inventory_array:
+            if not (entry is Dictionary):
+                continue
+            var item: String = String(entry.get("item", "")).strip_edges()
+            if item == "":
+                continue
+            var quantity: int = int(entry.get("quantity", 0))
+            if quantity != 0:
+                inventory_lines.append("%d %s" % [quantity, item])
+            else:
+                inventory_lines.append(item)
+        if inventory_lines.size() > 0:
+            detail_lines.append("Inventory: %s" % _join_profile_strings(inventory_lines))
+
+    var knowledge_variant: Variant = profile.get("knowledge_tags", null)
+    if knowledge_variant is Array:
+        var knowledge_array: Array = (knowledge_variant as Array)
+        var tags: Array = []
+        for tag in knowledge_array:
+            var label := String(tag).strip_edges()
+            if label != "":
+                tags.append(label)
+        if tags.size() > 0:
+            detail_lines.append("Knowledge: %s" % _join_profile_strings(tags))
+
+    var fog_parts: Array = []
+    var fog_mode: String = String(profile.get("fog_mode", "")).strip_edges()
+    if fog_mode != "":
+        fog_parts.append(fog_mode.capitalize())
+    var survey_radius: int = int(profile.get("survey_radius", -1))
+    if survey_radius >= 0:
+        fog_parts.append("radius %d" % survey_radius)
+    if fog_parts.size() > 0:
+        detail_lines.append("Fog: %s" % _join_profile_strings(fog_parts))
+
+    if detail_lines.size() > 0:
+        if lines.size() > 0:
+            lines.append("")
+        for detail_line in detail_lines:
+            lines.append(detail_line)
+
+    if lines.size() == 0:
+        scenario_description_label.text = "Select a start profile to see its description."
+    else:
+        scenario_description_label.text = "\n".join(lines)
+
+func _current_selected_profile() -> Dictionary:
+    if scenario_dropdown == null:
+        return {}
+    var index := scenario_dropdown.get_selected()
+    if index < 0 or index >= scenario_dropdown.get_item_count():
+        return {}
+    var metadata: Variant = scenario_dropdown.get_item_metadata(index)
+    if metadata is Dictionary:
+        return metadata
+    return {}
+
+func _join_profile_strings(parts: Array, separator: String = ", ") -> String:
+    if parts.is_empty():
+        return ""
+    var packed := PackedStringArray()
+    for part in parts:
+        packed.append(String(part))
+    var buffer := ""
+    for idx in range(packed.size()):
+        if idx > 0:
+            buffer += separator
+        buffer += packed[idx]
+    return buffer
+
+func _scenario_profile_label(profile: Dictionary) -> String:
+    var id: String = String(profile.get("id", ""))
+    var title: String = String(profile.get("title", id))
+    var subtitle: String = String(profile.get("subtitle", "")).strip_edges()
+    if subtitle == "":
+        return title
+    return "%s — %s" % [title, subtitle]
+
+func _on_scenario_selected(index: int) -> void:
+    if _suppress_scenario_signal:
+        return
+    if scenario_dropdown == null:
+        return
+    var metadata: Variant = scenario_dropdown.get_item_metadata(index)
+    if metadata is Dictionary:
+        _selected_profile_id = String(metadata.get("id", _selected_profile_id))
+    _refresh_scenario_description()
+
+func _on_scenario_apply_pressed() -> void:
+    if _selected_profile_id == "":
+        _append_command_log("Select a start profile before applying.")
+        return
+    var profile: Dictionary = _current_selected_profile()
+    var display_name: String = _scenario_profile_label(profile)
+    var line := "start_profile %s" % _selected_profile_id
+    var message := "Start profile '%s' requested." % display_name
+    if _send_command(line, message):
+        if scenario_regen_toggle != null and scenario_regen_toggle.button_pressed:
+            _on_map_generate_button_pressed()
 
 func _custom_map_size_label(dimensions: Vector2i) -> String:
     if dimensions.x <= 0 or dimensions.y <= 0:
@@ -1355,6 +1588,10 @@ func _update_command_controls_enabled() -> void:
         map_size_dropdown.disabled = not connected
     if map_generate_button != null:
         map_generate_button.disabled = not connected
+    if scenario_apply_button != null:
+        scenario_apply_button.disabled = not connected
+    if scenario_regen_toggle != null:
+        scenario_regen_toggle.disabled = not connected
     if axis_apply_button != null:
         axis_apply_button.disabled = not connected
     if axis_reset_button != null:
@@ -2159,6 +2396,81 @@ func _store_crisis_annotations_from_variant(source: Variant) -> void:
         for entry in source:
             if entry is Dictionary:
                 _crisis_annotations.append((entry as Dictionary).duplicate(true))
+
+func _render_victory() -> void:
+    if victory_summary_text != null:
+        if _victory_state.is_empty():
+            victory_summary_text.text = "[b]Victory Progress[/b]\n[i]Awaiting telemetry.[/i]"
+        else:
+            var lines: Array[String] = ["[b]Victory Progress[/b]"]
+            var winner_variant: Variant = _victory_state.get("winner", {})
+            if winner_variant is Dictionary and not (winner_variant as Dictionary).is_empty():
+                var winner_dict: Dictionary = winner_variant
+                var label_text := String(winner_dict.get("label", winner_dict.get("mode", "Victory")))
+                var tick := int(winner_dict.get("tick", 0))
+                lines.append("[color=gold]Winner locked:[/color] %s · Tick %d" % [label_text, tick])
+            else:
+                lines.append("[color=gray]No faction has secured a victory yet.[/color]")
+            victory_summary_text.text = "\n".join(lines)
+    if victory_modes_list == null:
+        return
+    victory_modes_list.clear()
+    if _victory_state.is_empty():
+        victory_modes_list.add_item("Awaiting telemetry.")
+        return
+    var modes_variant: Variant = _victory_state.get("modes", [])
+    if not (modes_variant is Array) or (modes_variant as Array).is_empty():
+        victory_modes_list.add_item("No victory modes reported.")
+        return
+    var sorted_modes: Array = _sorted_victory_modes_array(modes_variant as Array)
+    for mode in sorted_modes:
+        if not (mode is Dictionary):
+            continue
+        var mode_dict: Dictionary = mode
+        var label_text := String(mode_dict.get("label", mode_dict.get("id", mode_dict.get("kind", "Mode"))))
+        if label_text.strip_edges() == "":
+            label_text = _format_victory_label_text(String(mode_dict.get("id", mode_dict.get("kind", "Mode"))))
+        var pct: float = clamp(float(mode_dict.get("progress_pct", 0.0)), 0.0, 1.0) * 100.0
+        var achieved := bool(mode_dict.get("achieved", false))
+        var row_text := "%s — %.1f%%" % [label_text, pct]
+        victory_modes_list.add_item(row_text)
+        var row_index := victory_modes_list.get_item_count() - 1
+        victory_modes_list.set_item_metadata(row_index, mode_dict)
+        var progress_raw := float(mode_dict.get("progress", 0.0))
+        var threshold := float(mode_dict.get("threshold", 0.0))
+        var tooltip := "%s\nProgress %.2f / %.2f" % [
+            ("Achieved" if achieved else "In progress"),
+            progress_raw,
+            threshold
+        ]
+        victory_modes_list.set_item_tooltip(row_index, tooltip)
+
+func _sorted_victory_modes_array(source: Array) -> Array:
+    var entries: Array = []
+    for entry in source:
+        if entry is Dictionary:
+            entries.append((entry as Dictionary).duplicate(true))
+    entries.sort_custom(Callable(self, "_victory_mode_sorter"))
+    return entries
+
+func _victory_mode_sorter(a: Dictionary, b: Dictionary) -> bool:
+    var pct_a := float(a.get("progress_pct", 0.0))
+    var pct_b := float(b.get("progress_pct", 0.0))
+    if is_equal_approx(pct_a, pct_b):
+        var label_a := _format_victory_label_text(String(a.get("label", a.get("id", ""))))
+        var label_b := _format_victory_label_text(String(b.get("label", b.get("id", ""))))
+        return label_a < label_b
+    return pct_a > pct_b
+
+func _format_victory_label_text(raw: String) -> String:
+    var trimmed := raw.strip_edges()
+    if trimmed == "":
+        return "Victory Mode"
+    var sanitized := trimmed.replace("_", " ").replace("-", " ").replace(".", " ")
+    var parts: Array = sanitized.split(" ", false)
+    for i in range(parts.size()):
+        parts[i] = String(parts[i]).capitalize()
+    return String(" ".join(parts)).strip_edges()
 
 func _compare_power_nodes(a: Dictionary, b: Dictionary) -> bool:
     var stability_a: float = float(a.get("stability", a.get("stability_raw", 0.0)))

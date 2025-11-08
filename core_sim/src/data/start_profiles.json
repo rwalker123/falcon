@@ -1,0 +1,40 @@
+{
+  "profiles": [
+    {
+      "id": "late_forager_tribe",
+      "manual_ref": "§2a, §3a",
+      "display_title": {
+        "text": "Trail Sovereigns",
+        "loc_key": "campaign.trail_sovereigns.title"
+      },
+      "display_subtitle": {
+        "text": "Nomadic strategy saga",
+        "loc_key": "campaign.trail_sovereigns.subtitle"
+      },
+      "starting_units": [
+        { "kind": "BandScout", "count": 2 },
+        { "kind": "BandCrafter", "count": 1 },
+        { "kind": "BandGuardian", "count": 1 }
+      ],
+      "starting_knowledge_tags": [
+        "nomadic_wayfinding",
+        "portable_forge"
+      ],
+      "inventory": [
+        { "item": "provisions", "quantity": 120 },
+        { "item": "trade_goods", "quantity": 40 }
+      ],
+      "survey_radius": 4,
+      "fog_mode": "shroud",
+      "victory_modes_enabled": [
+        "hegemony",
+        "stewardship",
+        "survival"
+      ],
+      "ai_profile_overrides": {
+        "scout_bias": 0.2,
+        "camp_rotation_period": 6
+      }
+    }
+  ]
+}

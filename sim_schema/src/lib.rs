@@ -9,6 +9,82 @@ use std::{
 
 type FbBuilder<'a> = FlatBufferBuilder<'a, DefaultAllocator>;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct CampaignLabel {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title_loc_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtitle_loc_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct CampaignProfileState {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title_loc_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtitle_loc_key: Option<String>,
+    #[serde(default)]
+    pub starting_units: Vec<CampaignStartingUnitState>,
+    #[serde(default)]
+    pub inventory: Vec<CampaignInventoryEntryState>,
+    #[serde(default)]
+    pub knowledge_tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub survey_radius: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fog_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct CampaignInventoryEntryState {
+    pub item: String,
+    pub quantity: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct CampaignStartingUnitState {
+    pub kind: String,
+    pub count: u32,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct VictoryModeSnapshotState {
+    pub id: String,
+    pub kind: String,
+    pub progress: f32,
+    pub threshold: f32,
+    pub achieved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct VictoryResultState {
+    pub mode: String,
+    pub faction: u32,
+    pub tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct VictorySnapshotState {
+    #[serde(default)]
+    pub modes: Vec<VictoryModeSnapshotState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub winner: Option<VictoryResultState>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SnapshotHeader {
     pub tick: u64,
@@ -19,6 +95,8 @@ pub struct SnapshotHeader {
     pub power_count: u32,
     pub influencer_count: u32,
     pub hash: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub campaign_label: Option<CampaignLabel>,
 }
 
 impl SnapshotHeader {
@@ -40,6 +118,7 @@ impl SnapshotHeader {
             power_count: power_count as u32,
             influencer_count: influencer_count as u32,
             hash: 0,
+            campaign_label: None,
         }
     }
 }
@@ -1108,6 +1187,9 @@ pub struct WorldSnapshot {
     pub knowledge_metrics: KnowledgeMetricsState,
     pub crisis_telemetry: CrisisTelemetryState,
     pub crisis_overlay: CrisisOverlayState,
+    pub victory: VictorySnapshotState,
+    #[serde(default)]
+    pub campaign_profiles: Vec<CampaignProfileState>,
     pub moisture_raster: FloatRasterState,
     pub hydrology_overlay: HydrologyOverlayState,
     pub elevation_overlay: ElevationOverlayState,
@@ -1150,6 +1232,7 @@ pub struct WorldDelta {
     pub knowledge_ledger: Vec<KnowledgeLedgerEntryState>,
     pub removed_knowledge_ledger: Vec<u64>,
     pub knowledge_metrics: Option<KnowledgeMetricsState>,
+    pub victory: Option<VictorySnapshotState>,
     pub knowledge_timeline: Vec<KnowledgeTimelineEventState>,
     pub crisis_telemetry: Option<CrisisTelemetryState>,
     pub crisis_overlay: Option<CrisisOverlayState>,
@@ -1238,6 +1321,13 @@ fn build_snapshot_flatbuffer<'a>(
     builder: &mut FbBuilder<'a>,
     snapshot: &WorldSnapshot,
 ) -> WIPOffset<fb::Envelope<'a>> {
+    let campaign_label_fb = snapshot
+        .header
+        .campaign_label
+        .as_ref()
+        .and_then(|label| create_campaign_label(builder, label));
+    let victory_state = create_victory_state(builder, &snapshot.victory);
+
     let header = fb::SnapshotHeader::create(
         builder,
         &fb::SnapshotHeaderArgs {
@@ -1249,6 +1339,8 @@ fn build_snapshot_flatbuffer<'a>(
             powerCount: snapshot.header.power_count,
             influencerCount: snapshot.header.influencer_count,
             hash: snapshot.header.hash,
+            campaignLabel: campaign_label_fb,
+            victory: Some(victory_state),
         },
     );
 
@@ -1270,6 +1362,8 @@ fn build_snapshot_flatbuffer<'a>(
     let knowledge_metrics = create_knowledge_metrics(builder, &snapshot.knowledge_metrics);
     let crisis_telemetry = create_crisis_telemetry(builder, &snapshot.crisis_telemetry);
     let crisis_overlay = create_crisis_overlay(builder, &snapshot.crisis_overlay);
+    let campaign_profiles_vec = create_campaign_profiles(builder, &snapshot.campaign_profiles);
+    let victory_state = create_victory_state(builder, &snapshot.victory);
     let hydrology_overlay = create_hydrology_overlay(builder, &snapshot.hydrology_overlay);
     let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
     let elevation_overlay = create_elevation_overlay(builder, &snapshot.elevation_overlay);
@@ -1320,6 +1414,8 @@ fn build_snapshot_flatbuffer<'a>(
             knowledgeMetrics: Some(knowledge_metrics),
             crisisTelemetry: Some(crisis_telemetry),
             crisisOverlay: Some(crisis_overlay),
+            victory: Some(victory_state),
+            campaignProfiles: Some(campaign_profiles_vec),
             moistureRaster: Some(moisture_raster),
             hydrologyOverlay: Some(hydrology_overlay),
             elevationOverlay: Some(elevation_overlay),
@@ -1355,6 +1451,16 @@ fn build_delta_flatbuffer<'a>(
     builder: &mut FbBuilder<'a>,
     delta: &WorldDelta,
 ) -> WIPOffset<fb::Envelope<'a>> {
+    let campaign_label_fb = delta
+        .header
+        .campaign_label
+        .as_ref()
+        .and_then(|label| create_campaign_label(builder, label));
+    let victory_state = delta
+        .victory
+        .as_ref()
+        .map(|state| create_victory_state(builder, state));
+
     let header = fb::SnapshotHeader::create(
         builder,
         &fb::SnapshotHeaderArgs {
@@ -1366,6 +1472,8 @@ fn build_delta_flatbuffer<'a>(
             powerCount: delta.header.power_count,
             influencerCount: delta.header.influencer_count,
             hash: delta.header.hash,
+            campaignLabel: campaign_label_fb,
+            victory: victory_state,
         },
     );
 
@@ -1504,6 +1612,7 @@ fn build_delta_flatbuffer<'a>(
             removedKnowledgeLedger: Some(removed_knowledge_vec),
             knowledgeTimeline: Some(knowledge_timeline_vec),
             knowledgeMetrics: knowledge_metrics,
+            victory: victory_state,
             crisisTelemetry: crisis_telemetry,
             crisisOverlay: crisis_overlay,
             moistureRaster: moisture_raster,
@@ -1600,6 +1709,201 @@ fn create_start_marker<'a>(
         &fb::StartMarkerArgs {
             x: marker.x,
             y: marker.y,
+        },
+    )
+}
+
+fn create_campaign_label<'a>(
+    builder: &mut FbBuilder<'a>,
+    label: &CampaignLabel,
+) -> Option<WIPOffset<fb::CampaignLabel<'a>>> {
+    let has_any = label.title.is_some()
+        || label.title_loc_key.is_some()
+        || label.subtitle.is_some()
+        || label.subtitle_loc_key.is_some()
+        || label.profile_id.is_some();
+    if !has_any {
+        return None;
+    }
+
+    let profile_id = label
+        .profile_id
+        .as_ref()
+        .map(|value| builder.create_string(value.as_str()));
+    let title = label
+        .title
+        .as_ref()
+        .map(|value| builder.create_string(value.as_str()));
+    let title_loc_key = label
+        .title_loc_key
+        .as_ref()
+        .map(|value| builder.create_string(value.as_str()));
+    let subtitle = label
+        .subtitle
+        .as_ref()
+        .map(|value| builder.create_string(value.as_str()));
+    let subtitle_loc_key = label
+        .subtitle_loc_key
+        .as_ref()
+        .map(|value| builder.create_string(value.as_str()));
+
+    Some(fb::CampaignLabel::create(
+        builder,
+        &fb::CampaignLabelArgs {
+            profileId: profile_id,
+            title,
+            titleLocKey: title_loc_key,
+            subtitle,
+            subtitleLocKey: subtitle_loc_key,
+        },
+    ))
+}
+
+fn create_campaign_profiles<'a>(
+    builder: &mut FbBuilder<'a>,
+    profiles: &[CampaignProfileState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::CampaignProfile<'a>>>> {
+    let mut entries = Vec::with_capacity(profiles.len());
+    for profile in profiles {
+        let id = profile
+            .id
+            .as_ref()
+            .map(|value| builder.create_string(value.as_str()));
+        let title = profile
+            .title
+            .as_ref()
+            .map(|value| builder.create_string(value.as_str()));
+        let title_loc_key = profile
+            .title_loc_key
+            .as_ref()
+            .map(|value| builder.create_string(value.as_str()));
+        let subtitle = profile
+            .subtitle
+            .as_ref()
+            .map(|value| builder.create_string(value.as_str()));
+        let subtitle_loc_key = profile
+            .subtitle_loc_key
+            .as_ref()
+            .map(|value| builder.create_string(value.as_str()));
+        let starting_units = if profile.starting_units.is_empty() {
+            None
+        } else {
+            let mut offsets = Vec::with_capacity(profile.starting_units.len());
+            for unit in &profile.starting_units {
+                let kind = builder.create_string(unit.kind.as_str());
+                let tags = if unit.tags.is_empty() {
+                    None
+                } else {
+                    let tag_offsets: Vec<_> = unit
+                        .tags
+                        .iter()
+                        .map(|tag| builder.create_string(tag.as_str()))
+                        .collect();
+                    Some(builder.create_vector(&tag_offsets))
+                };
+                let unit_entry = fb::CampaignStartingUnit::create(
+                    builder,
+                    &fb::CampaignStartingUnitArgs {
+                        kind: Some(kind),
+                        count: unit.count,
+                        tags,
+                    },
+                );
+                offsets.push(unit_entry);
+            }
+            Some(builder.create_vector(&offsets))
+        };
+        let inventory = if profile.inventory.is_empty() {
+            None
+        } else {
+            let mut offsets = Vec::with_capacity(profile.inventory.len());
+            for entry in &profile.inventory {
+                let item = builder.create_string(entry.item.as_str());
+                let inv_entry = fb::CampaignInventoryEntry::create(
+                    builder,
+                    &fb::CampaignInventoryEntryArgs {
+                        item: Some(item),
+                        quantity: entry.quantity,
+                    },
+                );
+                offsets.push(inv_entry);
+            }
+            Some(builder.create_vector(&offsets))
+        };
+        let knowledge_tags = if profile.knowledge_tags.is_empty() {
+            None
+        } else {
+            let offsets: Vec<_> = profile
+                .knowledge_tags
+                .iter()
+                .map(|tag| builder.create_string(tag.as_str()))
+                .collect();
+            Some(builder.create_vector(&offsets))
+        };
+        let fog_mode = profile
+            .fog_mode
+            .as_ref()
+            .map(|value| builder.create_string(value.as_str()));
+        let survey_radius = profile.survey_radius.unwrap_or(0);
+        let entry = fb::CampaignProfile::create(
+            builder,
+            &fb::CampaignProfileArgs {
+                id,
+                title,
+                titleLocKey: title_loc_key,
+                subtitle,
+                subtitleLocKey: subtitle_loc_key,
+                startingUnits: starting_units,
+                inventory,
+                knowledgeTags: knowledge_tags,
+                surveyRadius: survey_radius,
+                fogMode: fog_mode,
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+fn create_victory_state<'a>(
+    builder: &mut FbBuilder<'a>,
+    state: &VictorySnapshotState,
+) -> WIPOffset<fb::VictoryState<'a>> {
+    let mut mode_entries = Vec::with_capacity(state.modes.len());
+    for mode in &state.modes {
+        let id = builder.create_string(mode.id.as_str());
+        let kind = builder.create_string(mode.kind.as_str());
+        let entry = fb::VictoryModeState::create(
+            builder,
+            &fb::VictoryModeStateArgs {
+                id: Some(id),
+                kind: Some(kind),
+                progress: mode.progress,
+                threshold: mode.threshold,
+                achieved: mode.achieved,
+            },
+        );
+        mode_entries.push(entry);
+    }
+    let modes_vec = builder.create_vector(&mode_entries);
+
+    let winner = state.winner.as_ref().map(|winner| {
+        let mode = builder.create_string(winner.mode.as_str());
+        fb::VictoryResult::create(
+            builder,
+            &fb::VictoryResultArgs {
+                mode: Some(mode),
+                faction: winner.faction,
+                tick: winner.tick,
+            },
+        )
+    });
+
+    fb::VictoryState::create(
+        builder,
+        &fb::VictoryStateArgs {
+            modes: Some(modes_vec),
+            winner,
         },
     )
 }

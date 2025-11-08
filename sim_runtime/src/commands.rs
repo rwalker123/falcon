@@ -102,6 +102,9 @@ pub enum CommandPayload {
         faction_id: u32,
         archetype_id: String,
     },
+    SetStartProfile {
+        profile_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -336,6 +339,11 @@ impl CommandEnvelope {
                 faction: *faction_id,
                 archetype_id: archetype_id.clone(),
             }),
+            CommandPayload::SetStartProfile { profile_id } => {
+                pb::command_envelope::Command::SetStartProfile(pb::SetStartProfileCommand {
+                    profile_id: profile_id.clone(),
+                })
+            }
         });
 
         pb::CommandEnvelope {
@@ -499,6 +507,11 @@ impl CommandEnvelope {
                 faction_id: cmd.faction,
                 archetype_id: cmd.archetype_id,
             },
+            pb::command_envelope::Command::SetStartProfile(cmd) => {
+                CommandPayload::SetStartProfile {
+                    profile_id: cmd.profile_id,
+                }
+            }
         };
 
         Ok(CommandEnvelope {

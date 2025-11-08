@@ -27,10 +27,11 @@ use core_sim::{
     InfluentialRoster, MapPresetsHandle, PendingCrisisSpawns, QueueMissionError,
     QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, SimulationConfig,
     SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StoredSnapshot, SubmitError,
-    SubmitOutcome, SupportChannel, Tile, TurnPipelineConfig, TurnPipelineConfigHandle,
-    TurnPipelineConfigMetadata, TurnQueue,
+    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartProfileLookup,
+    StartProfilesHandle, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel, Tile,
+    TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
 };
+use core_sim::{resolve_active_profile, ActiveStartProfile, CampaignLabel, StartProfileOverrides};
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
     AxisBiasState, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
@@ -454,6 +455,9 @@ fn main() {
                     "crisis.spawn.enqueued"
                 );
             }
+            Command::SetStartProfile { profile_id } => {
+                handle_set_start_profile(&mut app, profile_id);
+            }
         }
     }
 }
@@ -531,6 +535,9 @@ enum Command {
     SpawnCrisis {
         faction: FactionId,
         archetype_id: String,
+    },
+    SetStartProfile {
+        profile_id: String,
     },
 }
 
@@ -953,6 +960,46 @@ fn handle_reload_config(
         ReloadConfigKind::CrisisArchetypes => handle_reload_crisis_archetypes_config(app, path),
         ReloadConfigKind::CrisisModifiers => handle_reload_crisis_modifiers_config(app, path),
         ReloadConfigKind::CrisisTelemetry => handle_reload_crisis_telemetry_config(app, path),
+    }
+}
+
+fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {
+    let handle = app.world.resource::<StartProfilesHandle>().clone();
+    let (profile, used_fallback) = resolve_active_profile(&handle, &profile_id);
+
+    {
+        let mut config = app.world.resource_mut::<SimulationConfig>();
+        config.start_profile_id = profile.id.clone();
+        config.start_profile_overrides = StartProfileOverrides::from_profile(&profile);
+    }
+    {
+        let mut lookup = app.world.resource_mut::<StartProfileLookup>();
+        lookup.id = profile.id.clone();
+    }
+    {
+        let mut active = app.world.resource_mut::<ActiveStartProfile>();
+        *active = ActiveStartProfile::new(profile.clone());
+    }
+    {
+        let mut label = app.world.resource_mut::<CampaignLabel>();
+        *label = CampaignLabel::from_profile(&profile);
+    }
+
+    info!(
+        target: "shadow_scale::campaign",
+        requested = %profile_id,
+        applied = %profile.id,
+        fallback = used_fallback,
+        "start_profile.updated"
+    );
+
+    if used_fallback {
+        warn!(
+            target: "shadow_scale::campaign",
+            requested = %profile_id,
+            applied = %profile.id,
+            "start_profile.fallback_applied"
+        );
     }
 }
 
@@ -1561,6 +1608,9 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             faction: FactionId(faction_id),
             archetype_id,
         }),
+        ProtoCommandPayload::SetStartProfile { profile_id } => {
+            Some(Command::SetStartProfile { profile_id })
+        }
     }
 }
 
