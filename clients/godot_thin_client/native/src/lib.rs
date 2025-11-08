@@ -602,6 +602,7 @@ fn snapshot_dict(
     campaign_label: Option<Dictionary>,
     campaign_profiles: Option<VariantArray>,
     victory_state: Option<Dictionary>,
+    faction_inventory: Option<VariantArray>,
 ) -> Dictionary {
     let mut dict = Dictionary::new();
     let _ = dict.insert("turn", tick as i64);
@@ -990,6 +991,11 @@ fn snapshot_dict(
     }
     if let Some(victory) = victory_state {
         let _ = dict.insert("victory", victory);
+    }
+    if let Some(inventory) = faction_inventory {
+        if !inventory.is_empty() {
+            let _ = dict.insert("faction_inventory", inventory);
+        }
     }
 
     dict
@@ -1725,6 +1731,7 @@ impl DeltaAggregator {
             None,
             None,
             None,
+            None,
         )
     }
 }
@@ -2408,6 +2415,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         }
     }
     let victory_dict = snapshot.victory().map(victory_state_to_dict);
+    let faction_inventory_array = snapshot.factionInventory().map(faction_inventory_to_array);
 
     let mut dict = snapshot_dict(
         header.tick(),
@@ -2440,6 +2448,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         campaign_label_dict,
         campaign_profiles_array,
         victory_dict,
+        faction_inventory_array,
     );
 
     if let Some(axis_bias) = snapshot.axisBias() {
@@ -2631,6 +2640,39 @@ fn campaign_inventory_to_array(
             let _ = dict.insert("item", item);
         }
         let _ = dict.insert("quantity", entry.quantity());
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn faction_inventory_entries_to_array(
+    entries: Vector<'_, ForwardsUOffset<fb::FactionInventoryEntry<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for entry in entries {
+        let mut dict = Dictionary::new();
+        if let Some(item) = entry.item() {
+            let _ = dict.insert("item", item);
+        }
+        let _ = dict.insert("quantity", entry.quantity());
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn faction_inventory_to_array(
+    inventory: Vector<'_, ForwardsUOffset<fb::FactionInventoryState<'_>>>,
+) -> VariantArray {
+    let mut array = VariantArray::new();
+    for state in inventory {
+        let mut dict = Dictionary::new();
+        let _ = dict.insert("faction", state.faction() as i64);
+        if let Some(entries) = state.inventory() {
+            let entry_array = faction_inventory_entries_to_array(entries);
+            if !entry_array.is_empty() {
+                let _ = dict.insert("inventory", entry_array);
+            }
+        }
         array.push(&dict.to_variant());
     }
     array

@@ -399,6 +399,7 @@ pub mod knowledge {
                 crisis_telemetry: CrisisTelemetryState::default(),
                 crisis_overlay: CrisisOverlayState::default(),
                 campaign_profiles: Vec::new(),
+                faction_inventory: Vec::new(),
                 moisture_raster: FloatRasterState::default(),
                 terrain: TerrainOverlayState::default(),
                 logistics_raster: ScalarRasterState::default(),

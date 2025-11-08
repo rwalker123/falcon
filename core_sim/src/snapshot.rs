@@ -10,16 +10,18 @@ use sim_runtime::{
     CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
-    CultureTraitEntry, DiscoveryProgressEntry, ElevationOverlayState, FloatRasterState,
-    GenerationState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
-    GreatDiscoveryState, GreatDiscoveryTelemetryState, HydrologyOverlayState,
-    InfluentialIndividualState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
-    KnowledgeTimelineEventState, LogisticsLinkState, MountainKind, PendingMigrationState,
-    PopulationCohortState, PowerIncidentSeverity, PowerIncidentState, PowerNodeState,
-    PowerTelemetryState, ScalarRasterState, SentimentAxisTelemetry, SentimentDriverCategory,
-    SentimentDriverState, SentimentTelemetryState, SnapshotHeader, StartMarkerState,
-    TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState,
-    VictoryModeSnapshotState, VictoryResultState, VictorySnapshotState, WorldDelta, WorldSnapshot,
+    CultureTraitEntry, DiscoveryProgressEntry, ElevationOverlayState,
+    FactionInventoryEntryState as SchemaFactionInventoryEntryState,
+    FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, GenerationState,
+    GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
+    GreatDiscoveryTelemetryState, HydrologyOverlayState, InfluentialIndividualState,
+    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
+    LogisticsLinkState, MountainKind, PendingMigrationState, PopulationCohortState,
+    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState,
+    ScalarRasterState, SentimentAxisTelemetry, SentimentDriverCategory, SentimentDriverState,
+    SentimentTelemetryState, SnapshotHeader, StartMarkerState, TerrainOverlayState, TerrainSample,
+    TileState, TradeLinkKnowledge, TradeLinkState, VictoryModeSnapshotState, VictoryResultState,
+    VictorySnapshotState, WorldDelta, WorldSnapshot,
 };
 
 use crate::{
@@ -53,8 +55,9 @@ use crate::{
     orders::FactionId,
     power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
     resources::{
-        CorruptionLedgers, CorruptionTelemetry, DiscoveryProgressLedger, MoistureRaster,
-        SentimentAxisBias, SimulationConfig, SimulationTick, StartLocation, TileRegistry,
+        CorruptionLedgers, CorruptionTelemetry, DiscoveryProgressLedger, FactionInventory,
+        MoistureRaster, SentimentAxisBias, SimulationConfig, SimulationTick, StartLocation,
+        TileRegistry,
     },
     scalar::Scalar,
     snapshot_overlays_config::{SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle},
@@ -98,6 +101,7 @@ pub struct SnapshotContext<'w> {
     pub campaign_label: Option<Res<'w, CampaignLabel>>,
     pub start_profiles: Res<'w, StartProfilesHandle>,
     pub victory: Res<'w, VictoryState>,
+    pub faction_inventory: Res<'w, FactionInventory>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -178,6 +182,7 @@ pub struct SnapshotHistory {
     elevation_overlay: ElevationOverlayState,
     corruption: CorruptionLedger,
     victory: VictorySnapshotState,
+    faction_inventory: Vec<SchemaFactionInventoryState>,
     history: VecDeque<StoredSnapshot>,
 }
 
@@ -232,6 +237,7 @@ impl SnapshotHistory {
             elevation_overlay: ElevationOverlayState::default(),
             corruption: CorruptionLedger::default(),
             victory: VictorySnapshotState::default(),
+            faction_inventory: Vec::new(),
             history: VecDeque::new(),
         }
     }
@@ -493,6 +499,12 @@ impl SnapshotHistory {
         } else {
             Some(victory_state.clone())
         };
+        let faction_inventory_state = snapshot.faction_inventory.clone();
+        let faction_inventory_delta = if self.faction_inventory == faction_inventory_state {
+            None
+        } else {
+            Some(faction_inventory_state.clone())
+        };
 
         let delta = WorldDelta {
             header: snapshot.header.clone(),
@@ -518,6 +530,7 @@ impl SnapshotHistory {
             removed_knowledge_ledger: diff_removed(&self.knowledge_ledger, &knowledge_ledger_index),
             knowledge_metrics: knowledge_metrics_delta.clone(),
             victory: victory_delta.clone(),
+            faction_inventory: faction_inventory_delta.clone(),
             knowledge_timeline: knowledge_timeline_delta.clone(),
             crisis_telemetry: crisis_telemetry_delta.clone(),
             crisis_overlay: crisis_overlay_delta.clone(),
@@ -584,6 +597,7 @@ impl SnapshotHistory {
         self.culture_tensions = culture_tensions_state;
         self.discovery_progress = discovery_index;
         self.victory = victory_state;
+        self.faction_inventory = faction_inventory_state;
         self.last_snapshot = Some(snapshot_arc);
         self.last_delta = Some(delta_arc);
         self.encoded_snapshot = Some(stored.encoded_snapshot.clone());
@@ -656,6 +670,7 @@ impl SnapshotHistory {
             .map(|state| ((state.faction, state.discovery), state.clone()))
             .collect();
         self.victory = entry.snapshot.victory.clone();
+        self.faction_inventory = entry.snapshot.faction_inventory.clone();
         self.great_discoveries = entry
             .snapshot
             .great_discoveries
@@ -738,6 +753,7 @@ impl SnapshotHistory {
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
             victory: None,
+            faction_inventory: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -843,6 +859,7 @@ impl SnapshotHistory {
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
             victory: None,
+            faction_inventory: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -942,6 +959,7 @@ impl SnapshotHistory {
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
             victory: None,
+            faction_inventory: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1044,6 +1062,7 @@ pub fn capture_snapshot(
         campaign_label,
         start_profiles,
         victory,
+        faction_inventory,
     } = ctx;
     let overlays_config = overlays.get();
     let presets = map_presets.get();
@@ -1331,6 +1350,7 @@ pub fn capture_snapshot(
         .into_iter()
         .map(|entry| entry.to_schema())
         .collect();
+    let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
     let victory_snapshot_state = victory_snapshot_from_resource(&victory);
 
     let snapshot = WorldSnapshot {
@@ -1354,6 +1374,7 @@ pub fn capture_snapshot(
         start_marker: start_marker_state.clone(),
         victory: victory_snapshot_state.clone(),
         campaign_profiles: campaign_profiles_state,
+        faction_inventory: faction_inventory_state.clone(),
         axis_bias: axis_bias_state,
         sentiment: sentiment_state,
         generations: generation_states,
@@ -3103,6 +3124,29 @@ fn generation_state(profile: &GenerationProfile) -> GenerationState {
     }
 }
 
+fn snapshot_faction_inventory(inventory: &FactionInventory) -> Vec<SchemaFactionInventoryState> {
+    let mut states = Vec::new();
+    for (faction, items) in inventory.iter() {
+        if items.is_empty() {
+            continue;
+        }
+        let mut entries: Vec<_> = items
+            .iter()
+            .map(|(item, quantity)| SchemaFactionInventoryEntryState {
+                item: item.clone(),
+                quantity: *quantity,
+            })
+            .collect();
+        entries.sort_by(|a, b| a.item.cmp(&b.item));
+        states.push(SchemaFactionInventoryState {
+            faction: faction.0,
+            inventory: entries,
+        });
+    }
+    states.sort_by(|a, b| a.faction.cmp(&b.faction));
+    states
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3163,6 +3207,7 @@ mod tests {
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
             campaign_profiles: Vec::new(),
+            faction_inventory: Vec::new(),
             terrain: overlay,
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
@@ -3212,6 +3257,7 @@ mod tests {
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
             campaign_profiles: Vec::new(),
+            faction_inventory: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
@@ -3256,6 +3302,7 @@ mod tests {
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
             campaign_profiles: Vec::new(),
+            faction_inventory: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),

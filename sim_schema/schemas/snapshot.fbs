@@ -560,6 +560,16 @@ table CampaignInventoryEntry {
   quantity:long;
 }
 
+table FactionInventoryEntry {
+  item:string;
+  quantity:long;
+}
+
+table FactionInventoryState {
+  faction:uint;
+  inventory:[FactionInventoryEntry];
+}
+
 table CampaignStartingUnit {
   kind:string;
   count:uint;
@@ -675,6 +685,7 @@ table WorldSnapshot {
   crisisTelemetry:CrisisTelemetryState;
   crisisOverlay:CrisisOverlayState;
   campaignProfiles:[CampaignProfile];
+  factionInventory:[FactionInventoryState];
   moistureRaster:FloatRaster;
   hydrologyOverlay:HydrologyOverlay; // rivers/streams polylines
   elevationOverlay:ElevationOverlay;
@@ -720,6 +731,7 @@ table WorldDelta {
   victory:VictoryState;
   crisisTelemetry:CrisisTelemetryState;
   crisisOverlay:CrisisOverlayState;
+  factionInventory:[FactionInventoryState];
   moistureRaster:FloatRaster;
   axisBias:AxisBiasState;
   sentiment:SentimentTelemetryState;

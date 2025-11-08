@@ -54,6 +54,18 @@ pub struct CampaignInventoryEntryState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct FactionInventoryEntryState {
+    pub item: String,
+    pub quantity: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct FactionInventoryState {
+    pub faction: u32,
+    pub inventory: Vec<FactionInventoryEntryState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct CampaignStartingUnitState {
     pub kind: String,
     pub count: u32,
@@ -1190,6 +1202,8 @@ pub struct WorldSnapshot {
     pub victory: VictorySnapshotState,
     #[serde(default)]
     pub campaign_profiles: Vec<CampaignProfileState>,
+    #[serde(default)]
+    pub faction_inventory: Vec<FactionInventoryState>,
     pub moisture_raster: FloatRasterState,
     pub hydrology_overlay: HydrologyOverlayState,
     pub elevation_overlay: ElevationOverlayState,
@@ -1236,6 +1250,7 @@ pub struct WorldDelta {
     pub knowledge_timeline: Vec<KnowledgeTimelineEventState>,
     pub crisis_telemetry: Option<CrisisTelemetryState>,
     pub crisis_overlay: Option<CrisisOverlayState>,
+    pub faction_inventory: Option<Vec<FactionInventoryState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub hydrology_overlay: Option<HydrologyOverlayState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
@@ -1363,6 +1378,7 @@ fn build_snapshot_flatbuffer<'a>(
     let crisis_telemetry = create_crisis_telemetry(builder, &snapshot.crisis_telemetry);
     let crisis_overlay = create_crisis_overlay(builder, &snapshot.crisis_overlay);
     let campaign_profiles_vec = create_campaign_profiles(builder, &snapshot.campaign_profiles);
+    let faction_inventory_vec = create_faction_inventory(builder, &snapshot.faction_inventory);
     let victory_state = create_victory_state(builder, &snapshot.victory);
     let hydrology_overlay = create_hydrology_overlay(builder, &snapshot.hydrology_overlay);
     let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
@@ -1416,6 +1432,7 @@ fn build_snapshot_flatbuffer<'a>(
             crisisOverlay: Some(crisis_overlay),
             victory: Some(victory_state),
             campaignProfiles: Some(campaign_profiles_vec),
+            factionInventory: Some(faction_inventory_vec),
             moistureRaster: Some(moisture_raster),
             hydrologyOverlay: Some(hydrology_overlay),
             elevationOverlay: Some(elevation_overlay),
@@ -1460,6 +1477,10 @@ fn build_delta_flatbuffer<'a>(
         .victory
         .as_ref()
         .map(|state| create_victory_state(builder, state));
+    let faction_inventory = delta
+        .faction_inventory
+        .as_ref()
+        .map(|entries| create_faction_inventory(builder, entries));
 
     let header = fb::SnapshotHeader::create(
         builder,
@@ -1615,6 +1636,7 @@ fn build_delta_flatbuffer<'a>(
             victory: victory_state,
             crisisTelemetry: crisis_telemetry,
             crisisOverlay: crisis_overlay,
+            factionInventory: faction_inventory,
             moistureRaster: moisture_raster,
             elevationOverlay: elevation_overlay,
             axisBias: axis_bias,
@@ -1861,6 +1883,37 @@ fn create_campaign_profiles<'a>(
             },
         );
         entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+fn create_faction_inventory<'a>(
+    builder: &mut FbBuilder<'a>,
+    factions: &[FactionInventoryState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::FactionInventoryState<'a>>>> {
+    let mut entries = Vec::with_capacity(factions.len());
+    for state in factions {
+        let mut inventory_offsets = Vec::with_capacity(state.inventory.len());
+        for entry in &state.inventory {
+            let item = builder.create_string(entry.item.as_str());
+            let entry_offset = fb::FactionInventoryEntry::create(
+                builder,
+                &fb::FactionInventoryEntryArgs {
+                    item: Some(item),
+                    quantity: entry.quantity,
+                },
+            );
+            inventory_offsets.push(entry_offset);
+        }
+        let inventory_vec = builder.create_vector(&inventory_offsets);
+        let faction_entry = fb::FactionInventoryState::create(
+            builder,
+            &fb::FactionInventoryStateArgs {
+                faction: state.faction,
+                inventory: Some(inventory_vec),
+            },
+        );
+        entries.push(faction_entry);
     }
     builder.create_vector(&entries)
 }

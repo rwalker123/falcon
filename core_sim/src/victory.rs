@@ -267,6 +267,15 @@ pub fn victory_tick(
                 tick = tick.0,
                 "campaign.victory"
             );
+            tracing::info!(
+                target: "shadow_scale::analytics",
+                event = "victory",
+                mode = %entry.id.0,
+                kind = %entry.kind.as_str(),
+                tick = tick.0,
+                faction = 0,
+                "analytics.victory"
+            );
         }
 
         next_modes.push(entry);

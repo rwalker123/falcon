@@ -162,6 +162,8 @@ var _sentiment: Dictionary = {}
 var _influencers: Dictionary = {}
 var _corruption: Dictionary = {}
 var _victory_state: Dictionary = {}
+var _faction_inventory_state: Array = []
+var _victory_log_signature: String = ""
 var _terrain_palette: Dictionary = {}
 var _terrain_tag_labels: Dictionary = {}
 var _tile_records: Dictionary = {}
@@ -456,6 +458,13 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
         var victory_variant: Variant = data["victory"]
         if victory_variant is Dictionary:
             _victory_state = (victory_variant as Dictionary).duplicate(true)
+            _log_victory_to_command_log()
+
+    if data.has("faction_inventory"):
+        var inventory_variant: Variant = data["faction_inventory"]
+        if inventory_variant is Array:
+            _faction_inventory_state = (inventory_variant as Array).duplicate(true)
+            _refresh_scenario_description()
 
     if data.has("grid"):
         var grid_variant: Variant = data["grid"]
@@ -1101,9 +1110,9 @@ func _refresh_scenario_description() -> void:
         if unit_summaries.size() > 0:
             detail_lines.append("Units: %s" % _join_profile_strings(unit_summaries))
 
-    var inventory_variant: Variant = profile.get("inventory", null)
-    if inventory_variant is Array:
-        var inventory_array: Array = (inventory_variant as Array)
+    var profile_inventory_variant: Variant = profile.get("inventory", null)
+    if profile_inventory_variant is Array:
+        var inventory_array: Array = (profile_inventory_variant as Array)
         var inventory_lines: Array = []
         for entry in inventory_array:
             if not (entry is Dictionary):
@@ -1140,6 +1149,35 @@ func _refresh_scenario_description() -> void:
     if fog_parts.size() > 0:
         detail_lines.append("Fog: %s" % _join_profile_strings(fog_parts))
 
+    if _faction_inventory_state.size() > 0:
+        var runtime_lines: Array = []
+        for faction_entry in _faction_inventory_state:
+            if not (faction_entry is Dictionary):
+                continue
+            var faction_inventory_variant: Variant = faction_entry.get("inventory", [])
+            if not (faction_inventory_variant is Array):
+                continue
+            var entries: Array = faction_inventory_variant
+            var rendered_entries: Array = []
+            for entry in entries:
+                if not (entry is Dictionary):
+                    continue
+                var item_name: String = String(entry.get("item", "")).strip_edges()
+                if item_name == "":
+                    continue
+                var quantity: int = int(entry.get("quantity", 0))
+                rendered_entries.append("%d %s" % [quantity, item_name])
+            if rendered_entries.is_empty():
+                continue
+            var faction_id: int = int(faction_entry.get("faction", 0))
+            runtime_lines.append("Faction %d: %s" % [faction_id, _join_profile_strings(rendered_entries)])
+        if runtime_lines.size() > 0:
+            if detail_lines.size() > 0:
+                detail_lines.append("")
+            detail_lines.append("Runtime stockpiles:")
+            for runtime_line in runtime_lines:
+                detail_lines.append(runtime_line)
+
     if detail_lines.size() > 0:
         if lines.size() > 0:
             lines.append("")
@@ -1161,6 +1199,27 @@ func _current_selected_profile() -> Dictionary:
     if metadata is Dictionary:
         return metadata
     return {}
+
+func _log_victory_to_command_log() -> void:
+    if _victory_state.is_empty():
+        _victory_log_signature = ""
+        return
+    var winner_variant: Variant = _victory_state.get("winner", {})
+    if not (winner_variant is Dictionary):
+        return
+    var winner: Dictionary = winner_variant
+    var mode: String = String(winner.get("mode", "")).strip_edges()
+    if mode == "":
+        return
+    var tick: int = int(winner.get("tick", -1))
+    var signature := "%s#%d" % [mode, tick]
+    if signature == _victory_log_signature:
+        return
+    _victory_log_signature = signature
+    var label: String = String(winner.get("label", mode)).strip_edges()
+    if label == "":
+        label = mode
+    _append_command_log("Victory achieved: %s (tick %d)." % [label, tick])
 
 func _join_profile_strings(parts: Array, separator: String = ", ") -> String:
     if parts.is_empty():

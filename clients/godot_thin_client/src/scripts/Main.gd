@@ -21,6 +21,7 @@ var script_host_manager: ScriptHostManager = null
 var ui_zoom: float = 1.0
 var localization_store: LocalizationStore = null
 var _campaign_label_signature: String = ""
+var _victory_analytics_signature: String = ""
 
 const MOCK_DATA_PATH = "res://src/data/mock_snapshots.json"
 const TURN_INTERVAL_SECONDS = 1.5
@@ -138,10 +139,12 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     var metrics_variant: Variant = map_view.call("display_snapshot", snapshot)
     var metrics: Dictionary = metrics_variant if metrics_variant is Dictionary else {}
     hud.call("update_overlay", snapshot.get("turn", 0), metrics)
-    if hud != null and hud.has_method("update_victory_state") and snapshot.has("victory"):
+    if snapshot.has("victory"):
         var victory_variant: Variant = snapshot["victory"]
         if victory_variant is Dictionary:
-            hud.call("update_victory_state", victory_variant)
+            if hud != null and hud.has_method("update_victory_state"):
+                hud.call("update_victory_state", victory_variant)
+            _emit_victory_analytics(victory_variant)
     if hud != null and hud.has_method("set_ui_zoom"):
         hud.call("set_ui_zoom", ui_zoom)
     if inspector != null:
@@ -165,6 +168,27 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
             script_host_manager.handle_delta(snapshot)
         else:
             script_host_manager.handle_snapshot(snapshot)
+
+func _emit_victory_analytics(data: Dictionary) -> void:
+    if data.is_empty():
+        return
+    var winner_variant: Variant = data.get("winner", {})
+    if not (winner_variant is Dictionary):
+        return
+    var winner: Dictionary = winner_variant
+    var mode: String = String(winner.get("mode", "")).strip_edges()
+    if mode == "":
+        return
+    var tick: int = int(winner.get("tick", -1))
+    var signature := "%s#%d" % [mode, tick]
+    if signature == _victory_analytics_signature:
+        return
+    _victory_analytics_signature = signature
+    var label: String = String(winner.get("label", mode)).strip_edges()
+    if label == "":
+        label = mode
+    var faction: int = int(winner.get("faction", -1))
+    print("[analytics] victory mode=\"%s\" label=\"%s\" faction=%d tick=%d" % [mode, label, faction, tick])
 
 func skip_to_next_turn() -> void:
     if streaming_mode:
