@@ -3254,9 +3254,6 @@ mod terrain_tag_tests {
         ));
         world.insert_resource(DiscoveryProgressLedger::default());
         world.insert_resource(FactionInventory::default());
-        world.insert_resource(StartProfileKnowledgeTagsHandle::new(
-            StartProfileKnowledgeTags::builtin(),
-        ));
 
         world.run_system_once(crate::systems::spawn_initial_world);
         hydrology::generate_hydrology(&mut world);

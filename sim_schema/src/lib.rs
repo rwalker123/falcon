@@ -1459,7 +1459,6 @@ fn build_snapshot_flatbuffer<'a>(
     let herds_vec = create_herds(builder, &snapshot.herds);
     let food_modules_vec = create_food_modules(builder, &snapshot.food_modules);
     let faction_inventory_vec = create_faction_inventory(builder, &snapshot.faction_inventory);
-    let victory_state = create_victory_state(builder, &snapshot.victory);
     let hydrology_overlay = create_hydrology_overlay(builder, &snapshot.hydrology_overlay);
     let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
     let elevation_overlay = create_elevation_overlay(builder, &snapshot.elevation_overlay);
