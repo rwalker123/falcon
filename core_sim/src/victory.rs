@@ -234,16 +234,14 @@ pub fn victory_tick(
     let mut next_modes = Vec::with_capacity(cfg.modes.len());
 
     for def in cfg.modes.iter().filter(|mode| mode.enabled) {
-        let mut entry = state
-            .modes
-            .iter()
-            .find(|mode| mode.id == def.id)
-            .cloned()
-            .unwrap_or_else(|| VictoryModeState::from_definition(def));
+        let (mut entry, existed) = match state.modes.iter().find(|mode| mode.id == def.id) {
+            Some(mode) => (mode.clone(), true),
+            None => (VictoryModeState::from_definition(def), false),
+        };
 
         entry.threshold = def.threshold.max(0.0001);
 
-        let evaluated = evaluate_mode_progress(&entry, def, &metrics);
+        let evaluated = evaluate_mode_progress(&entry, def, &metrics, !existed);
         entry.progress = evaluated.clamp(0.0, entry.threshold);
         entry.achieved = entry.progress >= entry.threshold;
 
@@ -288,12 +286,13 @@ fn evaluate_mode_progress(
     entry: &VictoryModeState,
     def: &VictoryModeDefinition,
     metrics: &SimulationMetrics,
+    fresh: bool,
 ) -> f32 {
     const HEGEMONY_POP_TARGET: f32 = 5_000.0;
     const ASCENSION_DISCOVERY_TARGET: f32 = 3.0;
     const RAMP_LEN: f32 = 12.0;
     let normalized_turn = (metrics.turn as f32).max(1.0);
-    let smoothing = 0.65;
+    let smoothing = if fresh { 0.0 } else { 0.65 };
 
     let candidate = match def.kind {
         VictoryModeKind::Hegemony => {
