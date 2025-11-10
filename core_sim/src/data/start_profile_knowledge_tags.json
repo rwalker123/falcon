@@ -1,0 +1,12 @@
+{
+  "nomadic_wayfinding": {
+    "discovery_id": 2001,
+    "progress": 0.65,
+    "fidelity": 0.9
+  },
+  "portable_forge": {
+    "discovery_id": 2002,
+    "progress": 0.55,
+    "fidelity": 0.85
+  }
+}

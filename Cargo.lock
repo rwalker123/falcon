@@ -1465,6 +1465,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sim_runtime",
+ "sim_schema",
  "thiserror",
  "tracing",
  "tracing-subscriber",

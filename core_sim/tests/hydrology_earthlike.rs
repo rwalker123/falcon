@@ -2,9 +2,10 @@ use bevy::app::App;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    generate_hydrology, spawn_initial_world, CultureManager, GenerationRegistry,
-    HydrologyOverrides, HydrologyState, MapPresets, MapPresetsHandle, SimulationConfig,
-    SimulationTick, StartLocation,
+    generate_hydrology, spawn_initial_world, CultureManager, DiscoveryProgressLedger,
+    FactionInventory, GenerationRegistry, HydrologyOverrides, HydrologyState, MapPresets,
+    MapPresetsHandle, SimulationConfig, SimulationTick, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle,
 };
 
 #[test]
@@ -37,6 +38,13 @@ fn earthlike_preset_generates_rivers() {
     app.world.insert_resource(SimulationTick::default());
     app.world.insert_resource(CultureManager::new());
     app.world.insert_resource(StartLocation::default());
+    app.world
+        .insert_resource(DiscoveryProgressLedger::default());
+    app.world.insert_resource(FactionInventory::default());
+    app.world
+        .insert_resource(StartProfileKnowledgeTagsHandle::new(
+            StartProfileKnowledgeTags::builtin(),
+        ));
 
     app.add_systems(bevy::app::Startup, spawn_initial_world);
     app.update();

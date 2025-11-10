@@ -1,0 +1,6 @@
+{
+  "travel": {
+    "tiles_per_turn": 3.0,
+    "max_preview_turns": 12
+  }
+}

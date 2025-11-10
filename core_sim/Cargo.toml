@@ -37,6 +37,7 @@ bevy_ecs = "0.13"
 bevy_utils = "0.13"
 rayon = "1.8"
 sim_runtime = { path = "../sim_runtime" }
+sim_schema = { path = "../sim_schema" }
 crossbeam-channel = "0.5"
 log = "0.4"
 env_logger = "0.11"

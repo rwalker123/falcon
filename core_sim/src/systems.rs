@@ -1,25 +1,27 @@
 use std::{
     cmp::max,
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
 };
 
 use bevy::{ecs::system::SystemParam, math::UVec2, prelude::*};
-use log::{debug, info};
+use log::{debug, info, warn};
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 use serde_json::json;
 
 use crate::map_preset::{MapPreset, MapPresetsHandle, TerrainClassifierConfig};
 use crate::{
     components::{
-        fragments_from_contract, fragments_to_contract, ElementKind, KnowledgeFragment,
-        LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort, PowerNode, Tile,
-        TradeLink,
+        fragments_from_contract, fragments_to_contract, ElementKind, HarvestAssignment,
+        KnowledgeFragment, LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort,
+        PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink,
     },
     culture::{
-        CultureEffectsCache, CultureManager, CultureSchismEvent, CultureTensionEvent,
-        CultureTensionKind, CultureTensionRecord, CultureTraitAxis, CULTURE_TRAIT_AXES,
+        CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
+        CultureTensionEvent, CultureTensionKind, CultureTensionRecord, CultureTraitAxis,
+        CULTURE_TRAIT_AXES,
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
+    food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     generations::GenerationRegistry,
     heightfield::build_elevation_field,
     hydrology::HydrologyState,
@@ -31,12 +33,18 @@ use crate::{
         PowerGridNodeTelemetry, PowerGridState, PowerIncident, PowerIncidentSeverity, PowerNodeId,
         PowerTopology,
     },
+    provinces::{ProvinceId, ProvinceMap},
     resources::{
-        CorruptionExposureRecord, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
-        DiscoveryProgressLedger, MoistureRaster, SentimentAxisBias, SimulationConfig,
+        CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionExposureRecord,
+        CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger,
+        FactionInventory, FogRevealLedger, MoistureRaster, SentimentAxisBias, SimulationConfig,
         SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
     },
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
+    start_profile::{
+        FoodModulePreference, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+        StartProfileOverrides, StartingUnitSpec,
+    },
     terrain::{terrain_definition, terrain_for_position_with_classifier},
     turn_pipeline_config::TurnPipelineConfigHandle,
 };
@@ -47,6 +55,17 @@ use sim_runtime::{
 
 const POLAR_LATITUDE_THRESHOLD: f32 =
     TerrainClassifierConfig::default_values().polar_latitude_cutoff;
+const PLAYER_FACTION: FactionId = FactionId(0);
+
+#[derive(Clone, Debug)]
+struct TilePrototype {
+    position: UVec2,
+    element: ElementKind,
+    terrain: sim_runtime::TerrainType,
+    tags: sim_runtime::TerrainTags,
+    mountain: Option<MountainMetadata>,
+    food_module: Option<FoodModule>,
+}
 
 #[derive(Event, Debug, Clone)]
 pub struct TradeDiffusionEvent {
@@ -122,20 +141,52 @@ fn corruption_multiplier(
 }
 
 /// Spawn initial grid of tiles, logistics links, power nodes, and population cohorts.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_initial_world(
     mut commands: Commands,
     mut config: ResMut<SimulationConfig>,
     map_presets: Res<MapPresetsHandle>,
     registry: Res<GenerationRegistry>,
+    knowledge_tags: Res<StartProfileKnowledgeTagsHandle>,
     tick: Res<SimulationTick>,
     mut culture: ResMut<CultureManager>,
+    mut discovery: ResMut<DiscoveryProgressLedger>,
+    mut faction_inventory: ResMut<FactionInventory>,
 ) {
     let width = config.grid_size.x as usize;
     let height = config.grid_size.y as usize;
-    let mut tiles = Vec::with_capacity(width * height);
+    let mut prototypes: Vec<TilePrototype> = Vec::with_capacity(width * height);
+    let mut tiles: Vec<Entity> = Vec::with_capacity(width * height);
+    let knowledge_catalog = knowledge_tags.get();
+    let knowledge_fragments =
+        starting_knowledge_fragments(&config.start_profile_overrides, knowledge_catalog.as_ref());
+    let inventory_summary = seed_starting_inventory(
+        PLAYER_FACTION,
+        &config.start_profile_overrides,
+        &mut faction_inventory,
+    );
+    let knowledge_seeded =
+        seed_starting_knowledge(PLAYER_FACTION, &knowledge_fragments, &mut discovery);
+
+    if let Some((entries, total_quantity)) = inventory_summary {
+        info!(
+            target: "shadow_scale::campaign",
+            "start_profile.inventory.seeded entries={} total_quantity={}",
+            entries,
+            total_quantity
+        );
+    }
+    if knowledge_seeded > 0 {
+        info!(
+            target: "shadow_scale::campaign",
+            "start_profile.knowledge.seeded grants={} tags={}",
+            knowledge_seeded,
+            config.start_profile_overrides.starting_knowledge_tags.len()
+        );
+    }
 
     let _global_id = culture.ensure_global();
-    let regional_id = culture.upsert_regional(0);
+    let fallback_region = culture.upsert_regional(0);
     if let Some(region_layer) = culture.regional_layer_mut_by_region(0) {
         let modifiers = region_layer.traits.modifier_mut();
         modifiers[CultureTraitAxis::OpenClosed.index()] = scalar_from_f32(0.12);
@@ -275,6 +326,7 @@ pub fn spawn_initial_world(
             } else {
                 (terrain, terrain_tags)
             };
+            let food_module = classify_food_module_from_traits(terrain, terrain_tags);
             let mountain = if matches!(
                 terrain,
                 sim_runtime::TerrainType::DeepOcean
@@ -286,46 +338,96 @@ pub fn spawn_initial_world(
                 mountain_meta
             };
             tags_grid.push(terrain_tags);
-            let (generation, demand, efficiency) = element.power_profile();
-            let base_mass = scalar_from_f32(1.0 + ((x + y) % 5) as f32 * 0.35);
-            let node_id = PowerNodeId(y as u32 * config.grid_size.x + x as u32);
-            let storage_capacity = (generation * scalar_from_f32(0.6) + scalar_from_f32(2.0))
-                .clamp(scalar_from_f32(1.0), scalar_from_f32(40.0));
-            let storage_level =
-                (storage_capacity * scalar_from_f32(0.5)).clamp(scalar_zero(), storage_capacity);
-            let tile_entity = commands
-                .spawn((
-                    Tile {
-                        position,
-                        element,
-                        mass: base_mass,
-                        temperature: config.ambient_temperature + element.thermal_bias(),
-                        terrain,
-                        terrain_tags,
-                        mountain,
-                    },
-                    PowerNode {
-                        id: node_id,
-                        base_generation: generation,
-                        base_demand: demand,
-                        generation,
-                        demand,
-                        efficiency,
-                        storage_capacity,
-                        storage_level,
-                        stability: scalar_from_f32(0.85),
-                        surplus: scalar_zero(),
-                        deficit: scalar_zero(),
-                        incident_count: 0,
-                    },
-                ))
-                .id();
-            tiles.push(tile_entity);
-
-            culture.attach_local(tile_entity, regional_id);
-            let modifiers = seeded_modifiers_for_position(position);
-            culture.apply_initial_modifiers(tile_entity, modifiers);
+            prototypes.push(TilePrototype {
+                position,
+                element,
+                terrain,
+                tags: terrain_tags,
+                mountain,
+                food_module,
+            });
         }
+    }
+
+    let province_map = ProvinceMap::generate(
+        config.grid_size.x,
+        config.grid_size.y,
+        &tags_grid,
+        world_seed,
+    );
+    tracing::info!(
+        target: "shadow_scale::mapgen",
+        provinces = province_map.province_count(),
+        land_tiles = province_map.land_tiles(),
+        "mapgen.provinces.generated"
+    );
+    commands.insert_resource(province_map.clone());
+
+    let food_module_grid: Vec<Option<FoodModule>> =
+        prototypes.iter().map(|proto| proto.food_module).collect();
+
+    // Choose a start center favoring freshwater + fertile tiles and profile food modules.
+    let (start_x, start_y) = best_start_tile(
+        width as u32,
+        height as u32,
+        &tags_grid,
+        &food_module_grid,
+        &config.start_profile_overrides.food_modules,
+    );
+
+    let mut province_region_layers: HashMap<ProvinceId, CultureLayerId> = HashMap::new();
+    for (idx, proto) in prototypes.iter().enumerate() {
+        let (generation, demand, efficiency) = proto.element.power_profile();
+        let sum = proto.position.x as usize + proto.position.y as usize;
+        let base_mass = scalar_from_f32(1.0 + (sum % 5) as f32 * 0.35);
+        let node_id = PowerNodeId(proto.position.y * config.grid_size.x + proto.position.x);
+        let storage_capacity = (generation * scalar_from_f32(0.6) + scalar_from_f32(2.0))
+            .clamp(scalar_from_f32(1.0), scalar_from_f32(40.0));
+        let storage_level =
+            (storage_capacity * scalar_from_f32(0.5)).clamp(scalar_zero(), storage_capacity);
+        let tile_component = Tile {
+            position: proto.position,
+            element: proto.element,
+            mass: base_mass,
+            temperature: config.ambient_temperature + proto.element.thermal_bias(),
+            terrain: proto.terrain,
+            terrain_tags: proto.tags,
+            mountain: proto.mountain,
+        };
+        let power_component = PowerNode {
+            id: node_id,
+            base_generation: generation,
+            base_demand: demand,
+            generation,
+            demand,
+            efficiency,
+            storage_capacity,
+            storage_level,
+            stability: scalar_from_f32(0.85),
+            surplus: scalar_zero(),
+            deficit: scalar_zero(),
+            incident_count: 0,
+        };
+        let mut entity_commands = commands.spawn((tile_component.clone(), power_component));
+        let module = proto
+            .food_module
+            .or_else(|| classify_food_module(&tile_component));
+        if let Some(module) = module {
+            entity_commands.insert(FoodModuleTag::new(module, 1.0));
+        }
+        let tile_entity = entity_commands.id();
+        tiles.push(tile_entity);
+
+        let parent_region = if let Some(province_id) = province_map.province_at_index(idx) {
+            *province_region_layers
+                .entry(province_id)
+                .or_insert_with(|| culture.upsert_regional(province_id))
+        } else {
+            fallback_region
+        };
+        culture.attach_local(tile_entity, parent_region);
+        let modifiers = seeded_modifiers_for_position(proto.position);
+        culture.apply_initial_modifiers(tile_entity, modifiers);
     }
 
     for y in 0..height {
@@ -377,40 +479,40 @@ pub fn spawn_initial_world(
         }
     }
 
-    // Choose a start center favoring freshwater + fertile tiles.
-    let (start_x, start_y) = best_start_tile(width as u32, height as u32, &tags_grid);
-
-    // Spawn population cohorts clustered around the chosen start center.
-    let stride = max(1, config.population_cluster_stride) as i32;
     let mut cohort_index = 0usize;
-    let radius: i32 = (stride * 3).max(3);
-    for dy in (-radius..=radius).step_by(stride as usize) {
-        for dx in (-radius..=radius).step_by(stride as usize) {
-            let x = start_x as i32 + dx;
-            let y = start_y as i32 + dy;
-            if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {
-                continue;
-            }
-            let idx = y as usize * width + x as usize;
-            let tile_entity = tiles[idx];
-            // Avoid water tiles for initial cohorts.
-            if tags_grid[idx].contains(sim_runtime::TerrainTags::WATER) {
-                continue;
-            }
-            commands.spawn(PopulationCohort {
-                home: tile_entity,
-                size: 1_000,
-                morale: scalar_from_f32(0.6),
-                generation: registry.assign_for_index(cohort_index),
-                faction: FactionId(0),
-                knowledge: Vec::new(),
-                migration: None,
-            });
-            cohort_index += 1;
-        }
+    if config.start_profile_overrides.starting_units.is_empty() {
+        spawn_default_population_clusters(
+            &mut commands,
+            &registry,
+            &tiles,
+            &tags_grid,
+            width,
+            height,
+            start_x,
+            start_y,
+            config.population_cluster_stride,
+            &mut cohort_index,
+            &knowledge_fragments,
+        );
+    } else {
+        spawn_profile_population(
+            &mut commands,
+            &registry,
+            &tiles,
+            &tags_grid,
+            width,
+            height,
+            (start_x, start_y),
+            &config.start_profile_overrides,
+            &mut cohort_index,
+            &knowledge_fragments,
+        );
     }
 
-    commands.insert_resource(StartLocation::new(Some(UVec2::new(start_x, start_y))));
+    commands.insert_resource(StartLocation::from_profile(
+        Some(UVec2::new(start_x, start_y)),
+        &config.start_profile_overrides,
+    ));
 
     // If we produced bands, use their restamped elevation field resource now
     if let Some(bands_res) = bands {
@@ -435,6 +537,88 @@ pub fn spawn_initial_world(
 
     culture.reconcile(&tick, &InfluencerCultureResonance::default());
     let _ = culture.take_tension_events();
+}
+
+/// Apply consumable inventory overrides (provisions, trade goods) to early-game systems.
+pub fn apply_starting_inventory_effects(
+    mut inventory: ResMut<FactionInventory>,
+    mut cohorts: Query<&mut PopulationCohort>,
+    mut trade_links: Query<&mut TradeLink>,
+) {
+    apply_provisions_bonus(&mut inventory, &mut cohorts);
+    apply_trade_goods_bonus(&mut inventory, &mut trade_links);
+}
+
+/// Drop expired fog-reveal pulses queued by scouting commands.
+pub fn decay_fog_reveals(mut reveals: ResMut<FogRevealLedger>, tick: Res<SimulationTick>) {
+    if reveals.is_empty() {
+        return;
+    }
+    reveals.prune_expired(tick.0);
+}
+
+fn apply_provisions_bonus(
+    inventory: &mut FactionInventory,
+    cohorts: &mut Query<&mut PopulationCohort>,
+) {
+    const PROVISIONS_TO_MORALE: f32 = 1.0 / 900.0;
+    const MORALE_CAP: f32 = 0.2;
+    let provisions = inventory.take_stockpile(PLAYER_FACTION, "provisions", i64::MAX);
+    if provisions <= 0 {
+        return;
+    }
+    let morale_delta =
+        Scalar::from_f32((provisions as f32 * PROVISIONS_TO_MORALE).clamp(0.0, MORALE_CAP));
+    if morale_delta <= Scalar::zero() {
+        return;
+    }
+    let mut affected = 0u32;
+    for mut cohort in cohorts.iter_mut() {
+        if cohort.faction != PLAYER_FACTION {
+            continue;
+        }
+        cohort.morale = (cohort.morale + morale_delta).clamp(Scalar::zero(), Scalar::one());
+        affected = affected.saturating_add(1);
+    }
+    info!(
+        target: "shadow_scale::campaign",
+        "start_profile.inventory.provisions_applied provisions={} morale_delta={} cohorts={}",
+        provisions,
+        morale_delta.to_f32(),
+        affected
+    );
+}
+
+fn apply_trade_goods_bonus(
+    inventory: &mut FactionInventory,
+    trade_links: &mut Query<&mut TradeLink>,
+) {
+    const TRADE_GOODS_TO_OPENNESS: f32 = 1.0 / 5000.0;
+    const OPENNESS_CAP: f32 = 0.12;
+    let trade_goods = inventory.take_stockpile(PLAYER_FACTION, "trade_goods", i64::MAX);
+    if trade_goods <= 0 {
+        return;
+    }
+    let openness_delta =
+        Scalar::from_f32((trade_goods as f32 * TRADE_GOODS_TO_OPENNESS).clamp(0.0, OPENNESS_CAP));
+    if openness_delta <= Scalar::zero() {
+        return;
+    }
+    let mut affected = 0u32;
+    for mut link in trade_links.iter_mut() {
+        if link.from_faction != PLAYER_FACTION {
+            continue;
+        }
+        link.openness = (link.openness + openness_delta).clamp(scalar_zero(), scalar_one());
+        affected = affected.saturating_add(1);
+    }
+    info!(
+        target: "shadow_scale::campaign",
+        "start_profile.inventory.trade_goods_applied trade_goods={} openness_delta={} links={}",
+        trade_goods,
+        openness_delta.to_f32(),
+        affected
+    );
 }
 
 fn tile_hash(position: UVec2) -> u32 {
@@ -1779,7 +1963,13 @@ fn seeded_modifiers_for_position(position: UVec2) -> [Scalar; CULTURE_TRAIT_AXES
     modifiers
 }
 
-fn best_start_tile(width: u32, height: u32, tags_grid: &[sim_runtime::TerrainTags]) -> (u32, u32) {
+fn best_start_tile(
+    width: u32,
+    height: u32,
+    tags_grid: &[sim_runtime::TerrainTags],
+    food_modules: &[Option<FoodModule>],
+    preference: &FoodModulePreference,
+) -> (u32, u32) {
     let mut best_score: i32 = i32::MIN;
     let mut best_pos: (u32, u32) = (width / 2, height / 2);
     let idx_of = |x: u32, y: u32| -> usize { (y * width + x) as usize };
@@ -1825,6 +2015,7 @@ fn best_start_tile(width: u32, height: u32, tags_grid: &[sim_runtime::TerrainTag
                     }
                 }
             }
+            score += module_preference_bonus(x, y, width, height, food_modules, preference);
             if score > best_score {
                 best_score = score;
                 best_pos = (x, y);
@@ -1832,6 +2023,331 @@ fn best_start_tile(width: u32, height: u32, tags_grid: &[sim_runtime::TerrainTag
         }
     }
     best_pos
+}
+
+fn module_preference_bonus(
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    food_modules: &[Option<FoodModule>],
+    preference: &FoodModulePreference,
+) -> i32 {
+    if food_modules.is_empty() || food_modules.len() != (width * height) as usize {
+        return 0;
+    }
+    let mut total = 0;
+    if let Some(primary) = preference.primary {
+        total += score_for_module(x, y, width, food_modules, primary, true);
+    }
+    if let Some(secondary) = preference.secondary {
+        total += score_for_module(x, y, width, food_modules, secondary, false);
+    }
+    total
+}
+
+fn score_for_module(
+    x: u32,
+    y: u32,
+    width: u32,
+    food_modules: &[Option<FoodModule>],
+    module: FoodModule,
+    is_primary: bool,
+) -> i32 {
+    match nearest_module_distance(x, y, width, food_modules, module) {
+        Some(distance) => module_distance_bonus(distance, is_primary),
+        None if is_primary => -35,
+        None => -12,
+    }
+}
+
+fn nearest_module_distance(
+    x: u32,
+    y: u32,
+    width: u32,
+    food_modules: &[Option<FoodModule>],
+    module: FoodModule,
+) -> Option<u32> {
+    let mut best: Option<u32> = None;
+    for (idx, entry) in food_modules.iter().enumerate() {
+        if *entry == Some(module) {
+            let px = (idx as u32) % width;
+            let py = (idx as u32) / width;
+            let distance = x.abs_diff(px) + y.abs_diff(py);
+            best = Some(match best {
+                Some(current) => current.min(distance),
+                None => distance,
+            });
+            if distance == 0 {
+                break;
+            }
+        }
+    }
+    best
+}
+
+fn module_distance_bonus(distance: u32, is_primary: bool) -> i32 {
+    let base = match distance {
+        0 => 32,
+        1 => 28,
+        2 => 24,
+        3 => 18,
+        4 => 12,
+        5 => 8,
+        6 => 4,
+        7..=10 => 2,
+        _ => -6,
+    };
+    if is_primary {
+        base
+    } else {
+        ((base as f32) * 0.6).round() as i32
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_default_population_clusters(
+    commands: &mut Commands,
+    registry: &GenerationRegistry,
+    tiles: &[Entity],
+    tags_grid: &[sim_runtime::TerrainTags],
+    width: usize,
+    height: usize,
+    start_x: u32,
+    start_y: u32,
+    stride_tiles: u32,
+    cohort_index: &mut usize,
+    knowledge: &[KnowledgeFragment],
+) {
+    let stride = max(1, stride_tiles) as i32;
+    let radius: i32 = (stride * 3).max(3);
+    for dy in (-radius..=radius).step_by(stride as usize) {
+        for dx in (-radius..=radius).step_by(stride as usize) {
+            let x = start_x as i32 + dx;
+            let y = start_y as i32 + dy;
+            if let Some(idx) = tile_index_from_coords(x, y, width, height) {
+                if tags_grid
+                    .get(idx)
+                    .copied()
+                    .unwrap_or_default()
+                    .contains(sim_runtime::TerrainTags::WATER)
+                {
+                    continue;
+                }
+                spawn_population_entity(
+                    commands,
+                    registry,
+                    tiles[idx],
+                    1_000,
+                    cohort_index,
+                    None,
+                    knowledge,
+                );
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_profile_population(
+    commands: &mut Commands,
+    registry: &GenerationRegistry,
+    tiles: &[Entity],
+    tags_grid: &[sim_runtime::TerrainTags],
+    width: usize,
+    height: usize,
+    start: (u32, u32),
+    overrides: &StartProfileOverrides,
+    cohort_index: &mut usize,
+    knowledge: &[KnowledgeFragment],
+) {
+    let mut spawned_total = 0u32;
+    for spec in &overrides.starting_units {
+        let count = spec.count.max(1);
+        for _ in 0..count {
+            if let Some((tx, ty)) =
+                resolve_starting_unit_tile(spec, start, width, height, tags_grid)
+            {
+                let idx = (ty as usize) * width + tx as usize;
+                let marker = StartingUnit::new(spec.kind.clone(), spec.tags.clone());
+                spawn_population_entity(
+                    commands,
+                    registry,
+                    tiles[idx],
+                    900,
+                    cohort_index,
+                    Some(marker),
+                    knowledge,
+                );
+                spawned_total += 1;
+            }
+        }
+    }
+    if spawned_total == 0 {
+        spawn_default_population_clusters(
+            commands,
+            registry,
+            tiles,
+            tags_grid,
+            width,
+            height,
+            start.0,
+            start.1,
+            1,
+            cohort_index,
+            knowledge,
+        );
+    } else {
+        info!(
+            target: "shadow_scale::campaign",
+            "start_profile.units.spawned units={}",
+            spawned_total
+        );
+    }
+}
+
+fn spawn_population_entity(
+    commands: &mut Commands,
+    registry: &GenerationRegistry,
+    tile_entity: Entity,
+    size: u32,
+    cohort_index: &mut usize,
+    marker: Option<StartingUnit>,
+    knowledge: &[KnowledgeFragment],
+) {
+    let generation = registry.assign_for_index(*cohort_index);
+    *cohort_index = cohort_index.saturating_add(1);
+    let mut entity = commands.spawn(PopulationCohort {
+        home: tile_entity,
+        size,
+        morale: scalar_from_f32(0.6),
+        generation,
+        faction: FactionId(0),
+        knowledge: knowledge.to_vec(),
+        migration: None,
+    });
+    if let Some(marker) = marker {
+        entity.insert(marker);
+    }
+}
+
+fn starting_knowledge_fragments(
+    overrides: &StartProfileOverrides,
+    knowledge_tags: &StartProfileKnowledgeTags,
+) -> Vec<KnowledgeFragment> {
+    let mut fragments = Vec::new();
+    for tag in &overrides.starting_knowledge_tags {
+        if let Some(definition) = knowledge_tags.get(tag.as_str()) {
+            fragments.push(KnowledgeFragment::new(
+                definition.discovery_id(),
+                scalar_from_f32(definition.progress()),
+                scalar_from_f32(definition.fidelity()),
+            ));
+        } else {
+            warn!(
+                target: "shadow_scale::campaign",
+                "start_profile.knowledge_tag.unknown tag={}",
+                tag
+            );
+        }
+    }
+    fragments
+}
+
+fn seed_starting_knowledge(
+    faction: FactionId,
+    fragments: &[KnowledgeFragment],
+    ledger: &mut DiscoveryProgressLedger,
+) -> usize {
+    for fragment in fragments {
+        ledger.add_progress(faction, fragment.discovery_id, fragment.progress);
+    }
+    fragments.len()
+}
+
+fn seed_starting_inventory(
+    faction: FactionId,
+    overrides: &StartProfileOverrides,
+    inventory: &mut FactionInventory,
+) -> Option<(usize, i64)> {
+    if overrides.inventory.is_empty() {
+        return None;
+    }
+    let mut total_quantity = 0i64;
+    for entry in &overrides.inventory {
+        inventory.add_stockpile(faction, entry.item.clone(), entry.quantity);
+        total_quantity += entry.quantity;
+    }
+    Some((overrides.inventory.len(), total_quantity))
+}
+
+fn resolve_starting_unit_tile(
+    spec: &StartingUnitSpec,
+    start: (u32, u32),
+    width: usize,
+    height: usize,
+    tags_grid: &[sim_runtime::TerrainTags],
+) -> Option<(u32, u32)> {
+    let base_x = start.0 as i32;
+    let base_y = start.1 as i32;
+    let (target_x, target_y) = if let Some([ox, oy]) = spec.position {
+        (base_x + ox, base_y + oy)
+    } else {
+        (base_x, base_y)
+    };
+    if let Some(idx) = tile_index_from_coords(target_x, target_y, width, height) {
+        if !tags_grid
+            .get(idx)
+            .copied()
+            .unwrap_or_default()
+            .contains(sim_runtime::TerrainTags::WATER)
+        {
+            return Some((target_x as u32, target_y as u32));
+        }
+    }
+    find_nearest_land_tile(target_x, target_y, width, height, tags_grid)
+}
+
+fn find_nearest_land_tile(
+    start_x: i32,
+    start_y: i32,
+    width: usize,
+    height: usize,
+    tags_grid: &[sim_runtime::TerrainTags],
+) -> Option<(u32, u32)> {
+    let mut queue = VecDeque::new();
+    let mut visited = vec![false; width * height];
+    if let Some(idx) = tile_index_from_coords(start_x, start_y, width, height) {
+        queue.push_back((start_x, start_y, idx));
+        visited[idx] = true;
+    } else {
+        return None;
+    }
+    const NEIGHBORS: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
+    while let Some((x, y, idx)) = queue.pop_front() {
+        let tags = tags_grid.get(idx).copied().unwrap_or_default();
+        if !tags.contains(sim_runtime::TerrainTags::WATER) {
+            return Some((x as u32, y as u32));
+        }
+        for (dx, dy) in NEIGHBORS {
+            let nx = x + dx;
+            let ny = y + dy;
+            if let Some(nidx) = tile_index_from_coords(nx, ny, width, height) {
+                if !visited[nidx] {
+                    visited[nidx] = true;
+                    queue.push_back((nx, ny, nidx));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn tile_index_from_coords(x: i32, y: i32, width: usize, height: usize) -> Option<usize> {
+    if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {
+        return None;
+    }
+    Some((y as usize) * width + x as usize)
 }
 
 /// Relax material temperatures and adjust masses using deterministic rules.
@@ -2136,6 +2652,130 @@ pub fn simulate_population(
                 cohort.migration = Some(migration);
             }
         }
+    }
+}
+
+pub fn advance_harvest_assignments(
+    mut commands: Commands,
+    mut inventory: ResMut<FactionInventory>,
+    mut event_log: ResMut<CommandEventLog>,
+    tick: Res<SimulationTick>,
+    mut cohorts: Query<(Entity, &mut PopulationCohort, &mut HarvestAssignment)>,
+) {
+    for (entity, mut cohort, mut assignment) in cohorts.iter_mut() {
+        if assignment.travel_remaining > 0 {
+            assignment.travel_remaining -= 1;
+            if assignment.travel_remaining == 0 {
+                cohort.home = assignment.target_tile;
+            }
+            continue;
+        }
+        if assignment.gather_remaining > 0 {
+            assignment.gather_remaining -= 1;
+            if assignment.gather_remaining > 0 {
+                continue;
+            }
+        } else {
+            continue;
+        }
+
+        if assignment.provisions_reward > 0 {
+            inventory.add_stockpile(
+                assignment.faction,
+                "provisions",
+                assignment.provisions_reward,
+            );
+        }
+        if assignment.trade_goods_reward > 0 {
+            inventory.add_stockpile(
+                assignment.faction,
+                "trade_goods",
+                assignment.trade_goods_reward,
+            );
+        }
+
+        let detail = format!(
+            "status=complete module={} provisions={} trade_goods={} travel_turns={} gather_turns={} started_tick={}",
+            assignment.module.as_str(),
+            assignment.provisions_reward.max(0),
+            assignment.trade_goods_reward.max(0),
+            assignment.travel_total,
+            assignment.gather_total,
+            assignment.started_tick
+        );
+
+        event_log.push(CommandEventEntry::new(
+            tick.0,
+            CommandEventKind::Forage,
+            assignment.faction,
+            format!(
+                "{} harvest -> ({}, {})",
+                assignment.band_label, assignment.target_coords.x, assignment.target_coords.y
+            ),
+            Some(detail),
+        ));
+
+        commands.entity(entity).remove::<HarvestAssignment>();
+    }
+}
+
+pub fn advance_scout_assignments(
+    mut commands: Commands,
+    mut fog: ResMut<FogRevealLedger>,
+    mut event_log: ResMut<CommandEventLog>,
+    tick: Res<SimulationTick>,
+    mut cohorts: Query<(Entity, &mut PopulationCohort, &mut ScoutAssignment)>,
+) {
+    for (entity, mut cohort, mut assignment) in cohorts.iter_mut() {
+        if assignment.travel_remaining > 0 {
+            assignment.travel_remaining -= 1;
+            if assignment.travel_remaining == 0 {
+                cohort.home = assignment.target_tile;
+            }
+            continue;
+        }
+
+        let expires_at = tick.0.saturating_add(assignment.reveal_duration);
+        fog.queue(
+            assignment.target_coords,
+            assignment.reveal_radius,
+            expires_at,
+        );
+
+        if assignment.morale_gain > 0.0 {
+            cohort.morale = (cohort.morale + Scalar::from_f32(assignment.morale_gain))
+                .clamp(Scalar::zero(), Scalar::one());
+        }
+
+        let detail = format!(
+            "status=complete radius={} morale_boost={:.2} travel_turns={} started_tick={}",
+            assignment.reveal_radius,
+            assignment.morale_gain,
+            assignment.travel_total,
+            assignment.started_tick
+        );
+
+        event_log.push(CommandEventEntry::new(
+            tick.0,
+            CommandEventKind::Scout,
+            assignment.faction,
+            format!(
+                "{} -> ({}, {})",
+                assignment.band_label, assignment.target_coords.x, assignment.target_coords.y
+            ),
+            Some(detail.clone()),
+        ));
+
+        info!(
+            "command.scout_area.completed faction={} band={} x={} y={} radius={}",
+            assignment.faction.0,
+            assignment.band_label,
+            assignment.target_coords.x,
+            assignment.target_coords.y,
+            assignment.reveal_radius
+        );
+
+        commands.entity(entity).remove::<ScoutAssignment>();
     }
 }
 
@@ -2562,6 +3202,7 @@ mod terrain_tag_tests {
         mapgen::MountainType,
         resources::{SimulationConfig, SimulationTick, TileRegistry},
         scalar::scalar_from_f32,
+        start_profile::{StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle},
     };
     use bevy::{
         ecs::system::SystemState,
@@ -2608,6 +3249,11 @@ mod terrain_tag_tests {
         world.insert_resource(CultureManager::default());
         world.insert_resource(GenerationRegistry::with_seed(0xFACE_FEED, 6));
         world.insert_resource(MapPresetsHandle::new(presets));
+        world.insert_resource(StartProfileKnowledgeTagsHandle::new(
+            StartProfileKnowledgeTags::builtin(),
+        ));
+        world.insert_resource(DiscoveryProgressLedger::default());
+        world.insert_resource(FactionInventory::default());
 
         world.run_system_once(crate::systems::spawn_initial_world);
         hydrology::generate_hydrology(&mut world);
@@ -2943,6 +3589,11 @@ mod terrain_tag_tests {
         world.insert_resource(CultureManager::default());
         world.insert_resource(GenerationRegistry::with_seed(0xFACE_FEED, 6));
         world.insert_resource(MapPresetsHandle::new(presets));
+        world.insert_resource(DiscoveryProgressLedger::default());
+        world.insert_resource(FactionInventory::default());
+        world.insert_resource(StartProfileKnowledgeTagsHandle::new(
+            StartProfileKnowledgeTags::builtin(),
+        ));
 
         world.run_system_once(crate::systems::spawn_initial_world);
         hydrology::generate_hydrology(&mut world);
@@ -3004,6 +3655,95 @@ mod terrain_tag_tests {
             let actual = ratios.get(name).copied().unwrap_or(0.0);
             println!("  {name}: actual {actual:.4}, target {target:.4}");
         }
+    }
+}
+
+#[cfg(test)]
+mod inventory_effect_tests {
+    use super::*;
+    use crate::{
+        components::PopulationCohort,
+        map_preset::{MapPresets, MapPresetsHandle},
+        resources::{SimulationConfig, SimulationTick},
+        start_profile::{
+            InventoryEntry, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+        },
+    };
+    use bevy::prelude::World;
+    use bevy_ecs::system::RunSystemOnce;
+
+    fn configured_world(provisions: i64, trade_goods: i64) -> World {
+        let mut config = SimulationConfig::builtin();
+        config.start_profile_overrides.inventory = vec![
+            InventoryEntry {
+                item: "provisions".to_string(),
+                quantity: provisions,
+            },
+            InventoryEntry {
+                item: "trade_goods".to_string(),
+                quantity: trade_goods,
+            },
+        ];
+        let mut world = World::default();
+        world.insert_resource(config);
+        world.insert_resource(SimulationTick::default());
+        world.insert_resource(CultureManager::default());
+        world.insert_resource(GenerationRegistry::with_seed(0xFACE_FEED, 6));
+        world.insert_resource(MapPresetsHandle::new(MapPresets::builtin()));
+        world.insert_resource(DiscoveryProgressLedger::default());
+        world.insert_resource(FactionInventory::default());
+        world.insert_resource(StartProfileKnowledgeTagsHandle::new(
+            StartProfileKnowledgeTags::builtin(),
+        ));
+        world
+    }
+
+    #[test]
+    fn provisions_boost_starting_morale() {
+        let mut world = configured_world(200, 0);
+        world.run_system_once(crate::systems::spawn_initial_world);
+        world.run_system_once(crate::systems::apply_starting_inventory_effects);
+        let mut query = world.query::<&PopulationCohort>();
+        let mut boosted = false;
+        for cohort in query.iter(&world) {
+            if cohort.faction != PLAYER_FACTION {
+                continue;
+            }
+            if cohort.morale > scalar_from_f32(0.6) {
+                boosted = true;
+                break;
+            }
+        }
+        assert!(boosted, "expected provisions to raise morale");
+    }
+
+    #[test]
+    fn trade_goods_raise_openness() {
+        let mut world = configured_world(0, 200);
+        world.run_system_once(crate::systems::spawn_initial_world);
+        let mut base_openness = Vec::new();
+        {
+            let mut query = world.query::<&TradeLink>();
+            for link in query.iter(&world) {
+                if link.from_faction == PLAYER_FACTION {
+                    base_openness.push(link.openness);
+                }
+            }
+        }
+        world.run_system_once(crate::systems::apply_starting_inventory_effects);
+        let mut query = world.query::<&TradeLink>();
+        let mut increased = false;
+        for (idx, link) in query
+            .iter(&world)
+            .filter(|link| link.from_faction == PLAYER_FACTION)
+            .enumerate()
+        {
+            if idx < base_openness.len() && link.openness > base_openness[idx] {
+                increased = true;
+                break;
+            }
+        }
+        assert!(increased, "expected trade goods to boost openness");
     }
 }
 

@@ -9,6 +9,19 @@
 - **Inspector Client (`clients/godot_thin_client`)**: Godot thin client that renders the map, streams snapshots, and exposes the tabbed inspector; the Logs tab subscribes to the tracing feed, offers level/target/text filters, and renders a per-turn duration sparkline alongside scrollback. A Bevy-native inspector is under evaluation (see `shadow_scale_strategy_game_concept_technical_plan_v_0.md` Option F) but would live in a separate binary to keep the headless core deterministic.
 - **Benchmark & Tests**: Criterion harness (`cargo bench -p core_sim --bench turn_bench`) and determinism tests ensure turn consistency.
 
+### Brand & Campaign Labels
+- Working marketing label: “Trail Sovereigns” for the late-forager nomadic campaign described in the manual (§2a). Engineering keeps `ShadowScale` identifiers in code/assets until a rename decision lands.
+- UI copy: surface “Trail Sovereigns” in client shells, campaign selection, and marketing strings loaded from localization tables; treat as data so alternating labels are possible without rebuilds.
+- Data hooks:
+  - Extend `StartProfile` schema (`core_sim/src/data/start_profiles.json`) with optional `display_title` and `display_subtitle` fields. Loader should fall back to legacy behaviour when the fields are absent so existing scenarios stay valid.
+  - Thread the resolved label through `StartProfileHandle`, include it in snapshot metadata (`WorldSnapshot::campaign_label`), and persist on save creation so client shells can display it without re-querying static data.
+  - Provide localization keys rather than raw strings once the localization pass lands; the loader should accept either literal text or `{ "loc_key": "campaign.trail_sovereigns.title" }` objects to future-proof against multi-language builds.
+- Implementation status: `core_sim` now loads `core_sim/src/data/start_profiles.json`, stores campaign label text/keys in a `CampaignLabel` resource, and serializes them via the new `SnapshotHeader.campaignLabel` FlatBuffer field consumed by `clients/godot_thin_client`.
+- Localization scope: when the localization system comes online, mirror the label fields into the string table (`clients/shared/localization/*.json`) and expose campaign-facing taglines/blurbs under the same namespace. Track formatting tokens (e.g., `{world_name}`) so marketing copy can remain dynamic.
+- Client wiring: the Godot HUD consumes `campaign_label` dictionaries, resolves their localization keys via `res://src/data/localization/en.json`, shows the title/subtitle above the turn readout, and logs `[analytics] campaign_label …` whenever the active label changes so telemetry streams can ingest the event.
+- Scenario picker: the inspector's Map tab surfaces `campaign_profiles` from snapshots, lets users choose a start profile, dispatches the `start_profile` command, and optionally regenerates the map to realize the new selection.
+- Telemetry: emit the active campaign label in session analytics and marketing beacons so external telemetry can map KPI trends back to campaign branding choices.
+
 ## World Generation (Map Builder)
 Implements the procedural map pipeline that produces terrain, coasts, rivers/lakes, climate bands, resources, and wildlife spawners. Player-facing framing lives in the manual (§3a World Bootstrapping, §3b Terrain Palette); this section defines the data and steps that feed snapshots and downstream systems.
 
@@ -82,6 +95,54 @@ After initial biome stamping, presets may optionally lock a subset of tag famili
 - Hydrology: moderate-to-high river density; deltas and floodplains common on large coasts.
 - Tag targets (example): `Water: 0.65`, `Coastal: 0.06`, `Wetland: 0.06`, `Fertile: 0.22`, `Arid: 0.12`, `Polar: 0.08`, `Highland: 0.10`, `Volcanic: 0.01`, `Hazardous: 0.03` (overlap permitted; solver aims for balanced coverage across overlapping tags).
 
+### Ecosystem Food Modules
+
+Pre-agricultural survival depends on diversified food portfolios. To keep early play resilient—and to support 6–12 simultaneous factions on the default 80×52 map—we model food availability as reusable “modules.” Each module maps to concrete worldgen tags, snapshot payloads, and client affordances.
+
+| Module / Biome        | Primary Inputs                                                | Secondary Inputs / Tactics                         | Storage / Seasonality Hooks                        |
+|-----------------------|---------------------------------------------------------------|----------------------------------------------------|----------------------------------------------------|
+| **Coastal Littoral**  | Shellfish beds, tidal fish runs, kelp/seaweed                 | Seabird eggs, drift scavenging, small seals        | Fish racks, kelp drying lines, shell middens       |
+| **Riverine / Delta**  | Freshwater fish, mussels, cattail/arrowroot gardens          | Salmon runs, floodplain tubers, reeds              | Smokehouses, earthen tuber pits                    |
+| **Savanna Grassland** | Herd shadowing, wild yams, agave hearts                      | Locust swarms, baobab nuts, scavenged kills        | Jerky racks, nut caches                            |
+| **Temperate Forest**  | Oak/chestnut groves, berries, small deer, mushrooms          | Maple sap, wild barley, honey, bird eggs           | Clay-lined nut pits, smoked fish/meat              |
+| **Boreal / Arctic**   | River/ice fishing, seals, stored fat                         | Caribou herds, ground-nesting birds                | Permafrost pits, blubber/pemmican stores           |
+| **Montane / Highland**| Alpine tubers, marmots, seed grasses                         | Meltwater fishing, highland berries                | Sun-dried meat, stone caches                       |
+| **Wetland / Swamp**   | Cattail rhizomes, lilies, amphibians/reptiles                | Migratory birds, insect larvae, crayfish           | Mud/cold storage pits, smoke curing                |
+| **Semi-Arid Scrub**   | Drought tubers, rodents, cactus fruits                       | Agave roasting, wild millet, scavenged carcasses   | Roasting pits, dried seed cakes                    |
+| **Coastal Upwelling** | Sardine/salmon surges, seaweed, seabirds                     | Driftwood fires, tidal pools                       | Large smokehouses, lattice drying frames           |
+| **Mixed Woodland**    | Mixed nuts/seeds, berries, edible greens, small game         | Bee larvae, wild grains, opportunistic scavenging  | Fermented greens, buried clam baskets              |
+
+Implementation beats:
+
+1. **Worldgen tags.** Stamp per-tile annotations (e.g., `ShellfishBed`, `RootGarden`, `NutGrove`, `TermiteMound`, `SalmonRun`) as `FoodModuleTag` components. Each tag carries: tile entity, module id, seasonal weight, and respawn timer. Persist them via snapshot overlays so the client can render markers.
+2. **Ledgers + commands.** Add a `ForageSiteLedger` resource tracking capacity per tag and per faction. Commands such as `gather_roots`, `harvest_shellfish`, `dry_fish`, and `follow_herd` consume capacity, adjust `FactionInventory`, and push `CommandEventLog` entries for HUD feedback.
+3. **Client affordances.** Reuse the HUD selection panel: when a unit stands on a tagged tile we show contextual buttons (Harvest, Gather, Dry). Herd markers remain globally visible—multiple factions are expected to exploit the same migration loops to encourage encounters rather than partitioning resources per faction.
+
+### Start Profiles ↔ Food Modules
+
+Even though only the Trail Sovereigns profile ships today, we target six archetypes long-term. Each profile declares a **primary** and **secondary** module so worldgen can bias start positions and early tasks.
+
+| Profile (planned)         | Primary Module       | Secondary Module      | Notes |
+|---------------------------|----------------------|-----------------------|-------|
+| Trail Sovereigns (current)| Savanna Herd Shadow  | Riverine / Tubers     | Keep migratory herds central but guarantee cattail beds within ≤2 tiles for redundancy. |
+| Tidal Foragers            | Coastal Littoral     | Coastal Upwelling     | Spawn along kelp/shellfish belts; tutorialize drying racks. |
+| River Lanterns            | Riverine / Delta     | Wetland / Swamp       | Focus on fish traps + amphibian harvest before herds unlock. |
+| High Mesa Branchers       | Montane / Highland   | Semi-Arid Scrub       | Mix marmot hunts with agave roasting pits. |
+| Deep Canopy Guild         | Temperate Forest     | Mixed Woodland        | Nut caches and snares; strong preservation loop. |
+| Dawn Ice Kin              | Boreal / Arctic      | Riverine / Delta      | Anchor near seal leads plus summer salmon runs. |
+
+Placement rules:
+
+- Primary module tiles must appear within two steps of each faction’s spawn; secondary modules within six steps.
+- When multiple factions share a module (e.g., herds), bias spawns toward the same migratory loops. Conflict is expected—no need to reserve one herd per faction.
+- Module metadata lives inside `start_profiles.json` so AI, tutorials, and worldgen can branch without hard-coding.
+
+Next steps:
+
+- Populate `start_profiles.json` with the additional archetypes and module metadata.
+- Extend `WorldSnapshot` with a `food_modules` overlay so clients can render markers and surface contextual commands.
+- Update tutorial/quest scaffolding to walk players through exploiting both primary and secondary modules before the farming tech tree unlocks.
+
 ### Snapshot & Client
 - Hydrology state is generated at startup and stored server-side. Exporting a dedicated hydrology overlay (raster/polylines) to clients requires a schema update; tracked in TASKS.md. For now, debug logs report river counts and generation details.
 
@@ -90,8 +151,15 @@ This section connects the headless simulation to a Civ-like playable loop: campa
 
 ### Start Flow (Nomadic Default → Organic Settlement)
 - Data: `StartProfile` records (JSON) loaded by `SimulationConfig` at worldgen. Fields: `id`, `manual_ref`, `starting_units`, `starting_knowledge_tags`, `inventory`, `survey_radius`, `fog_mode`, `ai_profile_overrides`, `victory_modes_enabled`.
+- Schema details: each profile entry uses `starting_units[{ kind, count, position?, tags[] }]`, `inventory[{ item, quantity }]`, and optional flags such as `fog_mode` (`standard`, `revealed`, `shroud`). The loader now materializes these fields into `SimulationConfig.start_profile_overrides`, so downstream systems can read deterministic overrides without reparsing JSON.
+- During worldgen `spawn_initial_world` consumes the overrides to seed the initial population bands—`starting_units` spawn targeted `PopulationCohort`s tagged with their role, `starting_knowledge_tags` now pre-fill `PopulationCohort.knowledge` and the `DiscoveryProgressLedger`, and `inventory` entries populate the new `FactionInventory` resource for each player faction. The fallback path still produces the legacy cluster when a profile omits data.
+- Knowledge tags are defined in `core_sim/src/data/start_profile_knowledge_tags.json` (env-overridable). Designers map each tag to a concrete `discovery_id`, default progress, and fidelity, and the loader caches the catalog so spawning cohorts instantly inherit the scripted tech fragments.
+- Inventory items now translate to immediate systemic nudges. `provisions` raise morale on every starting cohort (modeling surplus food/supplies) and `trade_goods` bump logistics/trade openness so early caravans hit the ground running. Both are consumed during startup, leaving `FactionInventory` free for future runtime stockpiles.
+- The inspector's scenario picker now surfaces the structured overrides it receives via snapshots—unit loadouts, inventory payloads, tagged knowledge, and fog settings—so scenario authors can sanity-check JSON edits without digging through logs.
+- Wildlife telemetry: `HerdRegistry` + `advance_herds` seed 2–6 migratory herds per world, march them along deterministic loops (biasing toward the starting province), and export their id/species/position/biomass via the new `herds` snapshot block. The inspector’s Fauna tab and the `FollowHerd` command now operate on these live herds instead of hashed coordinates, so scenario authors can track and command actual wildlife flows.
+- Fog wiring: `survey_radius`/`fog_mode` now drive the `StartLocation` resource and the snapshot fog raster. `fog_mode = revealed` clears the entire fog overlay, while `fog_mode = shroud` forces opaque fog everywhere except the guaranteed reveal radius around the start tile; the standard mode keeps blending global/local knowledge coverage. Runtime scouting pulses feed a new `FogRevealLedger`, so ad-hoc reveals (e.g., the `ScoutArea` command) can temporarily zero fog anywhere on the grid without mutating global knowledge.
 - Default profile: `late_forager_tribe` (manual §2a, §3a) with 2–3 bands and no permanent buildings.
-- Spawn: Worldgen seeds 2–3 bands (`UnitKind::BandScout`, `BandHunter`, `BandCrafter` or `BandGuardian`) and enables `FoundSeasonalCamp`, `SplitClan`, `MergeClan`, and `NegotiateRouteRights` commands.
+- Spawn: Worldgen seeds 2–3 bands (`UnitKind::BandScout`, `BandHunter`, `BandCrafter` or `BandGuardian`) and immediately unlocks the early interaction verbs: `ScoutArea`, `FollowHerd`, and `FoundCamp`. `ScoutArea` now injects a timed reveal pulse (3+ hex radius for eight turns, scaled by the profile’s `survey_radius`) via `FogRevealLedger`, letting UI clicks clear fog before we have full unit pathing. `FoundCamp` relocates the `StartLocation` marker and reapplies the profile’s survey radius so the knowledge halo follows the player’s chosen base. `FollowHerd` now targets the live fauna routes exposed by `HerdRegistry`, so nomadic commands chase actual migrations instead of hashed coordinates.
 - Camps: `Camp` entities are transient settlement-likes with `PortableBuildings`, `CampStorage`, `DecayOnAbandon`, and `TrailKnowledge` markers. They unlock a light construction queue; decay unless maintained.
 - Sedentarization: Add `SedentarizationScore` resource per faction computed each turn from local resource density, surplus stability, storage tech/spoilage modifiers, domestication progress, trade hub potential, travel fatigue, and security. When thresholds are crossed, the server emits `CampaignEvent::SedentarizationPrompt { level }` without forcing action.
 - Founding: `Command::FoundSettlement { q, r }` remains available (manual scenario: Founders), but for the nomadic path it is enabled after sedentarization ≥ threshold and a camp is upgraded in place.
@@ -105,15 +173,16 @@ This section connects the headless simulation to a Civ-like playable loop: campa
 
 ### Victory Engine
 - Resource: `VictoryState` with `modes: [VictoryModeState]`, per-mode progress meters, and a terminal `winner: Option<FactionId>`.
-- Config: `victory_config.json` enumerates available modes, thresholds, scaling policy (e.g., relative to world pop/production), and dependencies (e.g., requires `Power` capability).
-- Checkpoints: A `victory_tick` stage runs after end-of-turn accounting. It evaluates enabled modes:
-  - Hegemony: compute control shares over population and production; verify capital control and stability constraints.
-  - Ascension: verify required late-tier discoveries present, megaproject completion, and post-completion survival window.
-  - Economic: rolling average of global trade share and currency dominance; check emissions/impact bounds and unrest.
-  - Diplomatic: federation membership and cohesion votes; no critical secessions within window.
-  - Stewardship: biome recovery indices, pollution drawdown, biodiversity/chemistry harmony targets.
-  - Survival/Crises: per-crisis resolver reports eradication/containment/co-governed.
-- Emission: When a mode crosses its terminal threshold, set `winner`, emit `CampaignEvent::Victory { mode, faction, tick }`, and expose in the snapshot. Clients show a win screen and can continue in free-play.
+- Config: `victory_config.json` now exposes `continue_after_win` plus per-mode thresholds/kinds, so scenarios can decide whether the sim keeps evaluating progress after a winner is crowned.
+- Checkpoints: `victory_tick` runs after end-of-turn accounting and mixes real metrics instead of stubs:
+  - **Hegemony** blends total population, morale, logistics flow, and grid stability.
+  - **Ascension** rewards Great Discovery completions and cultural morale.
+  - **Economic** monitors trade openness, surplus margins, and throughput.
+  - **Diplomatic** looks at openness/morale and how long the campaign has run without collapse.
+  - **Stewardship** mirrors crisis grid-stress gauges plus cohesion.
+  - **Survival** tracks epidemiological gauges (`R0`) and sustained survival time.
+- Emission: When a mode crosses its terminal threshold, set `winner`, emit `CampaignEvent::Victory { mode, faction, tick }`, and (if `continue_after_win` is `false`) pause further evaluation so UI flows can transition to end-of-game without jitter. If scenarios opt in to free-play, progress meters keep updating even after a victory.
+- Snapshot surface: `core_sim/src/snapshot.rs` exports `VictoryState` into both full and delta snapshots (plus mirrors it into the FlatBuffer header) so remote tooling can render live progress meters or log the first winner tick without ingesting every other payload. Deltas only include the `victory` block when progress or the winner changes, keeping idle frames slim.
 
 ### Early Diplomacy & Route Network
 - Derived overlay (no parallel graph): `RouteNetwork` is computed from existing movement/logistics traversals (bands, convoys, boats). Each time a unit traverses between adjacent hexes, record a segment hit and maintain an exponentially decaying occupancy counter per segment (fixed-point). Visibility thresholds determine which segments appear in the overlay. Pathfinding remains owned by existing logistics; RouteNetwork is read-only telemetry + diplomacy keys.
@@ -340,6 +409,13 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 - **Runtime node adoption**: remove `_apply_font_override` loops in `Inspector.gd` in favor of attaching the shared theme or calling a single helper that tags each control with the correct style name. Ensure runtime-created controls (terrain legend rows, HUD labels, dropdown menu items) grab the themed font via `theme_type_variation` or `add_theme_font_size_override` using the shared constants.
 - **Layout healing**: swap the inspector’s absolute top offset (`offset_top = 96`) for a computed margin: read the HUD layer’s combined minimum size (post-theme) or add an API on `HudLayer` that returns the stacked label height + margin, then update `InspectorLayer._update_panel_layout()` and `Main.tscn` defaults to respect that value. While touching layout, replace hard-coded legend row heights (`LEGEND_ROW_HEIGHT`) with `Font.get_height()` derived sizing and audit panels that still assume fixed pixel counts, nudging them toward Containers + size flags.
 - **Rich text verification**: confirm `RichTextLabel` widgets honor the base font when fed via theme keys (`default_font_size` vs. `normal_font_size`) on the Godot 4 build we ship. If `RichTextLabel` ignores the theme default, extend the helper to set both keys so BBCode sections stay legible at larger scales. Capture any user-facing typography guidance in the game manual when we start messaging accessibility options.
+
+#### Inspector Script Distribution & Trust Model
+- **Package format**: inspector scripts ship as `.sscmod` bundles (zip archives) that contain a manifest (`manifest.json`), script payloads, optional assets, and a detached signature (`bundle.sig`). Manifests already follow `docs/scripting_manifest.schema.json`; we now add metadata for certificate fingerprint, target client build, and declared capabilities. Bundles must be signed with Ed25519 keys issued by the studio or trusted creators before the client will load them.
+- **Local install flow**: players drop a bundle into `mods/inspector/` or import via the UI. The host verifies the signature (certificate chain + revocation list), lints the manifest, and copies the unpacked payload into a versioned cache. Failed validation leaves the bundle quarantined with surfaced diagnostics so designers can fix manifests without guesswork.
+- **Workshop feeds**: curated “Workshop” endpoints expose a JSON index of bundle hashes + download URLs. The client polls the feed, fetches new bundles, validates signatures, and keeps only the most recent version of each mod id. Because bundles are still signed, the feed can be mirrored or operated offline without weakening trust.
+- **Load/unload**: enabling a script registers its capabilities, mounts the cached payload, and wires the sandbox to the snapshot/command buses. Disabling a script tears down UI nodes, rescinds capability tokens, and unloads the bundle from memory without deleting the cached files, so re‑enable is instant. Emergency unload (triggered by watchdogs) follows the same path but also flags the bundle until the next manual review.
+- See the player-facing summary in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §13 “Technology Stack Exploration” for the narrative framing and expectations.
 
 ### Culture Simulation Spine
 - **See Also**: `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §7c for player-facing framing of culture layers and trait axes.

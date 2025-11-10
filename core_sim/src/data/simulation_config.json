@@ -2,6 +2,7 @@
   "grid_size": { "x": 80, "y": 52 },
   "map_preset_id": "earthlike",
   "map_seed": 0,
+  "start_profile_id": "late_forager_tribe",
   "hydrology": {
     "river_density": 1.7,
     "river_min_count": 12,

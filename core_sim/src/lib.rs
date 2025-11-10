@@ -9,6 +9,8 @@ mod crisis_config;
 mod culture;
 mod culture_corruption_config;
 mod espionage;
+mod fauna;
+mod food;
 mod generations;
 mod great_discovery;
 mod heightfield;
@@ -22,22 +24,28 @@ pub mod metrics;
 pub mod network;
 mod orders;
 mod power;
+mod provinces;
 mod resources;
 mod scalar;
 mod snapshot;
 mod snapshot_overlays_config;
+mod start_profile;
 mod systems;
 mod terrain;
 mod turn_pipeline_config;
+mod victory;
 
 use std::sync::Arc;
 
 use crate::map_preset::load_map_presets_from_env;
+use crate::start_profile::{
+    load_start_profile_knowledge_tags_from_env, load_start_profiles_from_env,
+};
 use bevy::prelude::*;
 
 pub use components::{
-    ElementKind, KnowledgeFragment, LogisticsLink, PendingMigration, PopulationCohort, PowerNode,
-    Tile, TradeLink,
+    ElementKind, HarvestAssignment, KnowledgeFragment, LogisticsLink, PendingMigration,
+    PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink,
 };
 pub use crisis::{
     ActiveCrisisLedger, CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot,
@@ -68,6 +76,13 @@ pub use espionage::{
     EspionageMissionTemplate, EspionageRoster, FactionSecurityPolicies, QueueMissionError,
     QueueMissionParams, SecurityPolicy,
 };
+pub use fauna::{
+    advance_herds, spawn_initial_herds, HerdRegistry, HerdTelemetry, HerdTelemetryEntry,
+};
+pub use food::{
+    classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,
+    DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
+};
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use great_discovery::{
     ConstellationRequirement, GreatDiscoveryCandidateEvent, GreatDiscoveryDefinition,
@@ -91,10 +106,20 @@ pub use snapshot_overlays_config::{
     FogOverlayConfig, MilitaryOverlayConfig, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     SnapshotOverlaysConfigMetadata, BUILTIN_SNAPSHOT_OVERLAYS_CONFIG,
 };
+pub use start_profile::{
+    resolve_active_profile, snapshot_profiles, ActiveStartProfile, CampaignLabel, FogMode,
+    StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    StartProfileKnowledgeTagsMetadata, StartProfileLookup, StartProfileOverrides,
+    StartProfilesHandle, StartProfilesMetadata, StartingUnitSpec,
+};
 pub use turn_pipeline_config::{
     load_turn_pipeline_config_from_env, LogisticsPhaseConfig, PopulationPhaseConfig,
     PowerPhaseConfig, TradePhaseConfig, TurnPipelineConfig, TurnPipelineConfigHandle,
     TurnPipelineConfigMetadata, BUILTIN_TURN_PIPELINE_CONFIG,
+};
+pub use victory::{
+    load_victory_config_from_env, VictoryConfigHandle, VictoryModeId, VictoryModeKind,
+    VictoryModeState, VictoryState,
 };
 
 pub use metrics::SimulationMetrics;
@@ -105,14 +130,18 @@ pub use power::{
     PowerDiscoveryEffects, PowerGridNodeTelemetry, PowerGridState, PowerIncident,
     PowerIncidentSeverity, PowerNodeId, PowerTopology,
 };
+pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
-    CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger,
+    CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
+    DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FogRevealLedger,
     HydrologyOverrides, PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias,
     SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry,
     TradeDiffusionRecord, TradeTelemetry,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
-pub use snapshot::{restore_world_from_snapshot, SnapshotHistory, StoredSnapshot};
+pub use snapshot::{
+    command_events_to_state, restore_world_from_snapshot, SnapshotHistory, StoredSnapshot,
+};
 pub use systems::spawn_initial_world;
 pub use systems::{simulate_power, MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent};
 pub use terrain::{
@@ -129,6 +158,7 @@ pub enum TurnStage {
     Population,
     Crisis,
     Finalize,
+    Victory,
     Snapshot,
 }
 
@@ -136,8 +166,9 @@ pub enum TurnStage {
 pub fn build_headless_app() -> App {
     let mut app = App::new();
 
-    let (config, config_metadata) = resources::load_simulation_config_from_env();
+    let (mut config, config_metadata) = resources::load_simulation_config_from_env();
     let (map_presets, map_presets_metadata) = load_map_presets_from_env();
+    let victory_config = load_victory_config_from_env();
     let preset_count = map_presets.len();
     if let Some(path) = map_presets_metadata.path() {
         tracing::debug!(
@@ -153,6 +184,42 @@ pub fn build_headless_app() -> App {
             "map_presets.metadata.builtin"
         );
     }
+    let (start_profiles, start_profiles_metadata) = load_start_profiles_from_env();
+    let start_profiles_handle = StartProfilesHandle::new(start_profiles.clone());
+    let (knowledge_tags, knowledge_tags_metadata) = load_start_profile_knowledge_tags_from_env();
+    let knowledge_tags_handle = StartProfileKnowledgeTagsHandle::new(knowledge_tags.clone());
+
+    let profile_id = config.start_profile_id.clone();
+    let (active_profile, used_fallback) =
+        start_profile::resolve_active_profile(&start_profiles_handle, &profile_id);
+
+    config.start_profile_overrides =
+        start_profile::StartProfileOverrides::from_profile(&active_profile);
+
+    if used_fallback {
+        tracing::warn!(
+            target: "shadow_scale::campaign",
+            requested = %profile_id,
+            fallback = %active_profile.id,
+            "start_profiles.lookup.fallback"
+        );
+    }
+
+    let campaign_label = CampaignLabel::from_profile(&active_profile);
+    tracing::info!(
+        target: "shadow_scale::campaign",
+        profile = %active_profile.id,
+        title = campaign_label.title.text_as_str().unwrap_or(""),
+        title_loc_key = campaign_label.title.loc_key().unwrap_or(""),
+        subtitle = campaign_label.subtitle.text_as_str().unwrap_or(""),
+        subtitle_loc_key = campaign_label.subtitle.loc_key().unwrap_or(""),
+        fallback = used_fallback,
+        "campaign.label.active"
+    );
+
+    let active_profile_resource = ActiveStartProfile::new(active_profile.clone());
+    let profile_lookup = StartProfileLookup::new(active_profile.id.clone());
+
     let faction_registry = orders::FactionRegistry::default();
     let turn_queue = orders::TurnQueue::new(faction_registry.factions.clone());
     let snapshot_history = SnapshotHistory::with_capacity(config.snapshot_history_limit.max(1));
@@ -208,6 +275,15 @@ pub fn build_headless_app() -> App {
         .insert_resource(config_metadata)
         .insert_resource(MapPresetsHandle::new(map_presets.clone()))
         .insert_resource(map_presets_metadata)
+        .insert_resource(VictoryConfigHandle::new(victory_config.clone()))
+        .insert_resource(VictoryState::new(victory_config.continue_after_win))
+        .insert_resource(start_profiles_handle)
+        .insert_resource(start_profiles_metadata)
+        .insert_resource(knowledge_tags_handle)
+        .insert_resource(knowledge_tags_metadata)
+        .insert_resource(active_profile_resource)
+        .insert_resource(profile_lookup)
+        .insert_resource(campaign_label)
         .insert_resource(resources::StartLocation::default())
         .insert_resource(hydrology::HydrologyState::default())
         .insert_resource(PowerGridState::default())
@@ -234,6 +310,11 @@ pub fn build_headless_app() -> App {
         .insert_resource(CorruptionLedgers::default())
         .insert_resource(CorruptionTelemetry::default())
         .insert_resource(DiplomacyLeverage::default())
+        .insert_resource(FactionInventory::default())
+        .insert_resource(HerdRegistry::default())
+        .insert_resource(HerdTelemetry::default())
+        .insert_resource(FogRevealLedger::default())
+        .insert_resource(CommandEventLog::default())
         .insert_resource(snapshot_history)
         .insert_resource(generation_registry)
         .insert_resource(espionage_catalog)
@@ -278,6 +359,7 @@ pub fn build_headless_app() -> App {
                 TurnStage::Population,
                 TurnStage::Crisis,
                 TurnStage::Finalize,
+                TurnStage::Victory,
                 TurnStage::Snapshot,
             )
                 .chain(),
@@ -286,8 +368,10 @@ pub fn build_headless_app() -> App {
             Startup,
             (
                 systems::spawn_initial_world,
+                systems::apply_starting_inventory_effects,
                 hydrology::generate_hydrology,
                 systems::apply_tag_budget_solver,
+                spawn_initial_herds,
                 espionage::initialise_espionage_roster,
             )
                 .chain(),
@@ -307,6 +391,7 @@ pub fn build_headless_app() -> App {
             (
                 systems::simulate_materials,
                 systems::simulate_logistics,
+                advance_herds,
                 systems::trade_knowledge_diffusion,
             )
                 .chain()
@@ -341,6 +426,8 @@ pub fn build_headless_app() -> App {
             Update,
             (
                 systems::simulate_population,
+                systems::advance_harvest_assignments,
+                systems::advance_scout_assignments,
                 systems::publish_trade_telemetry,
             )
                 .chain()
@@ -352,7 +439,11 @@ pub fn build_headless_app() -> App {
         )
         .add_systems(
             Update,
-            (systems::simulate_power, systems::process_corruption)
+            (
+                systems::simulate_power,
+                systems::process_corruption,
+                systems::decay_fog_reveals,
+            )
                 .chain()
                 .in_set(TurnStage::Finalize),
         )
@@ -366,6 +457,8 @@ pub fn build_headless_app() -> App {
                 .chain()
                 .in_set(TurnStage::Snapshot),
         );
+
+    app.add_systems(Update, victory::victory_tick.in_set(TurnStage::Victory));
 
     {
         // Log chosen map preset id; worldgen consumes later.

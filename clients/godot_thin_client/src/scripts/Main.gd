@@ -3,6 +3,7 @@ extends Node2D
 const SnapshotLoader = preload("res://src/scripts/SnapshotLoader.gd")
 const CommandClient = preload("res://src/scripts/CommandClient.gd")
 const ScriptHostManager = preload("res://src/scripts/scripting/ScriptHostManager.gd")
+const LocalizationStore = preload("res://src/scripts/LocalizationStore.gd")
 
 @onready var map_view: Node2D = $MapLayer
 @onready var hud: CanvasLayer = $HUD
@@ -18,6 +19,9 @@ var _warned_stream_fallback: bool = false
 var _camera_initialized: bool = false
 var script_host_manager: ScriptHostManager = null
 var ui_zoom: float = 1.0
+var localization_store: LocalizationStore = null
+var _campaign_label_signature: String = ""
+var _victory_analytics_signature: String = ""
 
 const MOCK_DATA_PATH = "res://src/data/mock_snapshots.json"
 const TURN_INTERVAL_SECONDS = 1.5
@@ -35,6 +39,7 @@ const COMMAND_PROTO_PORT = 41001
 const UI_ZOOM_STEP = 0.1
 const UI_ZOOM_MIN = 0.5
 const UI_ZOOM_MAX = 2.0
+const PLAYER_FACTION_ID = 0
 const SNAPSHOT_DELTA_FIELDS := [
     "influencer_updates",
     "population_updates",
@@ -50,6 +55,8 @@ func _ready() -> void:
         push_warning("ShadowScale Godot extension not found; streaming disabled.")
     snapshot_loader = SnapshotLoader.new()
     snapshot_loader.load_mock_data(MOCK_DATA_PATH)
+    localization_store = LocalizationStore.new()
+    localization_store.load_default()
     var stream_enabled: bool = _determine_stream_enabled()
     var stream_host: String = _determine_stream_host()
     var stream_port: int = _determine_stream_port()
@@ -82,6 +89,9 @@ func _ready() -> void:
     script_host_manager.setup(command_client)
     if inspector != null and inspector.has_method("attach_script_host"):
         inspector.call("attach_script_host", script_host_manager)
+    if hud != null and hud.has_method("set_localization_store"):
+        hud.call("set_localization_store", localization_store)
+
     var initial: Dictionary = {}
     if streaming_mode and not snapshot_loader.last_stream_snapshot.is_empty():
         initial = snapshot_loader.last_stream_snapshot
@@ -96,10 +106,28 @@ func _ready() -> void:
             hud.connect("ui_zoom_delta", Callable(self, "_on_hud_zoom_delta"))
         if not hud.is_connected("ui_zoom_reset", Callable(self, "_on_hud_zoom_reset")):
             hud.connect("ui_zoom_reset", Callable(self, "_on_hud_zoom_reset"))
+        if hud.has_signal("unit_scout_requested") and not hud.is_connected("unit_scout_requested", Callable(self, "_on_hud_unit_scout")):
+            hud.connect("unit_scout_requested", Callable(self, "_on_hud_unit_scout"))
+        if hud.has_signal("unit_found_camp_requested") and not hud.is_connected("unit_found_camp_requested", Callable(self, "_on_hud_unit_found_camp")):
+            hud.connect("unit_found_camp_requested", Callable(self, "_on_hud_unit_found_camp"))
+        if hud.has_signal("herd_follow_requested") and not hud.is_connected("herd_follow_requested", Callable(self, "_on_hud_follow_herd")):
+            hud.connect("herd_follow_requested", Callable(self, "_on_hud_follow_herd"))
     if inspector != null and inspector.has_method("attach_map_view"):
         inspector.call("attach_map_view", map_view)
     if map_view != null and inspector != null and map_view.has_signal("hex_selected") and inspector.has_method("focus_tile_from_map"):
         map_view.connect("hex_selected", Callable(inspector, "focus_tile_from_map"))
+    if map_view != null:
+        if map_view.has_signal("unit_selected") and not map_view.is_connected("unit_selected", Callable(self, "_on_map_unit_selected")):
+            map_view.connect("unit_selected", Callable(self, "_on_map_unit_selected"))
+        if map_view.has_signal("herd_selected") and not map_view.is_connected("herd_selected", Callable(self, "_on_map_herd_selected")):
+            map_view.connect("herd_selected", Callable(self, "_on_map_herd_selected"))
+        if map_view.has_signal("selection_cleared") and not map_view.is_connected("selection_cleared", Callable(self, "_on_map_selection_cleared")):
+            map_view.connect("selection_cleared", Callable(self, "_on_map_selection_cleared"))
+        if map_view.has_signal("tile_selected"):
+            if hud != null and hud.has_method("show_tile_selection") and not map_view.is_connected("tile_selected", Callable(self, "_on_map_tile_selected")):
+                map_view.connect("tile_selected", Callable(self, "_on_map_tile_selected"))
+            if hud != null and hud.has_method("notify_hex_selected") and not map_view.is_connected("tile_selected", Callable(hud, "notify_hex_selected")):
+                map_view.connect("tile_selected", Callable(hud, "notify_hex_selected"))
     if map_view != null and map_view.has_signal("overlay_legend_changed") and hud != null and hud.has_method("update_overlay_legend"):
         map_view.connect("overlay_legend_changed", Callable(self, "_on_overlay_legend_changed"))
         map_view.call_deferred("refresh_overlay_legend")
@@ -126,9 +154,21 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     if snapshot.is_empty():
         return
     var is_delta := _snapshot_is_delta(snapshot)
+    _update_campaign_label(snapshot.get("campaign_label", {}))
     var metrics_variant: Variant = map_view.call("display_snapshot", snapshot)
     var metrics: Dictionary = metrics_variant if metrics_variant is Dictionary else {}
     hud.call("update_overlay", snapshot.get("turn", 0), metrics)
+    if hud != null:
+        if not is_delta and hud.has_method("reset_command_feed"):
+            hud.call("reset_command_feed")
+        if snapshot.has("command_events") and hud.has_method("ingest_command_events"):
+            hud.call("ingest_command_events", snapshot["command_events"])
+    if snapshot.has("victory"):
+        var victory_variant: Variant = snapshot["victory"]
+        if victory_variant is Dictionary:
+            if hud != null and hud.has_method("update_victory_state"):
+                hud.call("update_victory_state", victory_variant)
+            _emit_victory_analytics(victory_variant)
     if hud != null and hud.has_method("set_ui_zoom"):
         hud.call("set_ui_zoom", ui_zoom)
     if inspector != null:
@@ -153,6 +193,101 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         else:
             script_host_manager.handle_snapshot(snapshot)
 
+func _emit_victory_analytics(data: Dictionary) -> void:
+    if data.is_empty():
+        return
+    var winner_variant: Variant = data.get("winner", {})
+    if not (winner_variant is Dictionary):
+        return
+    var winner: Dictionary = winner_variant
+    var mode: String = String(winner.get("mode", "")).strip_edges()
+    if mode == "":
+        return
+    var tick: int = int(winner.get("tick", -1))
+    var signature := "%s#%d" % [mode, tick]
+    if signature == _victory_analytics_signature:
+        return
+    _victory_analytics_signature = signature
+    var label: String = String(winner.get("label", mode)).strip_edges()
+    if label == "":
+        label = mode
+    var faction: int = int(winner.get("faction", -1))
+    print("[analytics] victory mode=\"%s\" label=\"%s\" faction=%d tick=%d" % [mode, label, faction, tick])
+
+func _on_map_unit_selected(unit: Dictionary) -> void:
+    if hud != null and hud.has_method("show_unit_selection"):
+        hud.call("show_unit_selection", unit)
+        if hud.has_method("consume_pending_forage"):
+            var payload_variant: Variant = hud.call("consume_pending_forage", unit)
+            if payload_variant is Dictionary:
+                var payload: Dictionary = payload_variant
+                if not payload.is_empty():
+                    _issue_forage_command(payload)
+
+func _on_map_herd_selected(herd: Dictionary) -> void:
+    if hud != null and hud.has_method("show_herd_selection"):
+        hud.call("show_herd_selection", herd)
+
+func _on_map_selection_cleared() -> void:
+    if hud != null and hud.has_method("clear_selection"):
+        hud.call("clear_selection")
+
+func _on_map_tile_selected(tile_info: Dictionary) -> void:
+    if hud != null and hud.has_method("show_tile_selection"):
+        hud.call("show_tile_selection", tile_info)
+        if hud.has_method("notify_hex_selected"):
+            hud.call("notify_hex_selected", tile_info)
+
+func _on_hud_unit_scout(x: int, y: int, band_bits: int) -> void:
+    var parts: Array[String] = ["scout", str(PLAYER_FACTION_ID), str(x), str(y)]
+    if band_bits >= 0:
+        parts.append(str(band_bits))
+    var line := " ".join(parts)
+    _send_runtime_command(line, "Scout order queued at (%d, %d)." % [x, y])
+
+func _on_hud_unit_found_camp(x: int, y: int) -> void:
+    var line := "found_camp %d %d %d" % [PLAYER_FACTION_ID, x, y]
+    _send_runtime_command(line, "Found camp request at (%d, %d)." % [x, y])
+
+func _on_hud_follow_herd(herd_id: String) -> void:
+    if herd_id.is_empty():
+        return
+    var line := "follow_herd %d %s" % [PLAYER_FACTION_ID, herd_id]
+    _send_runtime_command(line, "Follow herd request for %s." % herd_id)
+
+func _issue_forage_command(payload: Dictionary) -> void:
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    var module_key := String(payload.get("module", "")).strip_edges()
+    if x < 0 or y < 0 or module_key == "":
+        return
+    var unit_label := String(payload.get("unit_label", "Band")).strip_edges()
+    if unit_label == "":
+        unit_label = "Band"
+    var parts: Array[String] = []
+    parts.append_array([
+        "forage",
+        str(PLAYER_FACTION_ID),
+        str(x),
+        str(y),
+        module_key.to_lower(),
+    ])
+    var bits_variant: Variant = payload.get("band_entity_bits", null)
+    if typeof(bits_variant) == TYPE_INT and int(bits_variant) >= 0:
+        parts.append(str(int(bits_variant)))
+    var line := " ".join(parts)
+    var message := "Harvest order: %s -> (%d, %d)." % [unit_label, x, y]
+    _send_runtime_command(line, message)
+
+func _send_runtime_command(line: String, message: String) -> void:
+    if inspector != null and inspector.has_method("send_runtime_command"):
+        var result: Variant = inspector.call("send_runtime_command", line, message)
+        if result is bool and result:
+            return
+        push_warning("Command pending or rejected: %s" % line)
+    else:
+        push_warning("Inspector unavailable; cannot send command: %s" % line)
+
 func skip_to_next_turn() -> void:
     if streaming_mode:
         return
@@ -164,6 +299,7 @@ func skip_to_previous_turn() -> void:
     _apply_snapshot(snapshot_loader.rewind())
 
 func _unhandled_input(event: InputEvent) -> void:
+    _ensure_ui_zoom_actions()
     if event.is_action_pressed("ui_right"):
         skip_to_next_turn()
     elif event.is_action_pressed("ui_left"):
@@ -198,6 +334,45 @@ func _toggle_legend_visibility() -> void:
         return
     if hud.has_method("toggle_legend"):
         hud.call("toggle_legend")
+
+func _update_campaign_label(raw_value: Variant) -> void:
+    var label_dict: Dictionary = {}
+    if raw_value is Dictionary:
+        label_dict = raw_value.duplicate(true)
+    if hud != null and hud.has_method("update_campaign_label"):
+        hud.call("update_campaign_label", label_dict)
+    var title_text: String = _resolve_campaign_field(label_dict, "title")
+    var subtitle_text: String = _resolve_campaign_field(label_dict, "subtitle")
+    var title_key := String(label_dict.get("title_loc_key", ""))
+    var subtitle_key := String(label_dict.get("subtitle_loc_key", ""))
+    var profile_id := String(label_dict.get("profile_id", ""))
+    var signature := "%s|%s|%s|%s|%s" % [
+        profile_id,
+        title_text,
+        subtitle_text,
+        title_key,
+        subtitle_key
+    ]
+    if signature == _campaign_label_signature:
+        return
+    _campaign_label_signature = signature
+    if title_text != "" or subtitle_text != "" or title_key != "" or subtitle_key != "":
+        print("[analytics] campaign_label title=\"%s\" subtitle=\"%s\" loc_title=\"%s\" loc_subtitle=\"%s\"" % [
+            title_text,
+            subtitle_text,
+            title_key,
+            subtitle_key
+        ])
+
+func _resolve_campaign_field(label_dict: Dictionary, field: String) -> String:
+    var raw_text := String(label_dict.get(field, ""))
+    var loc_key_field := "%s_loc_key" % field
+    var loc_key := String(label_dict.get(loc_key_field, ""))
+    if localization_store != null and loc_key != "":
+        var localized: String = localization_store.resolve(loc_key, raw_text)
+        if localized.strip_edges() != "":
+            return localized
+    return raw_text
 
 func _process(delta: float) -> void:
     if Input.is_action_just_pressed("toggle_inspector"):

@@ -102,6 +102,31 @@ pub enum CommandPayload {
         faction_id: u32,
         archetype_id: String,
     },
+    SetStartProfile {
+        profile_id: String,
+    },
+    ScoutArea {
+        faction_id: u32,
+        target_x: u32,
+        target_y: u32,
+        band_entity_bits: Option<u64>,
+    },
+    FollowHerd {
+        faction_id: u32,
+        herd_id: String,
+    },
+    FoundCamp {
+        faction_id: u32,
+        target_x: u32,
+        target_y: u32,
+    },
+    ForageTile {
+        faction_id: u32,
+        target_x: u32,
+        target_y: u32,
+        module: String,
+        band_entity_bits: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -336,6 +361,51 @@ impl CommandEnvelope {
                 faction: *faction_id,
                 archetype_id: archetype_id.clone(),
             }),
+            CommandPayload::SetStartProfile { profile_id } => {
+                pb::command_envelope::Command::SetStartProfile(pb::SetStartProfileCommand {
+                    profile_id: profile_id.clone(),
+                })
+            }
+            CommandPayload::ScoutArea {
+                faction_id,
+                target_x,
+                target_y,
+                band_entity_bits,
+            } => pb::command_envelope::Command::ScoutArea(pb::ScoutAreaCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+                band_entity_bits: *band_entity_bits,
+            }),
+            CommandPayload::FollowHerd {
+                faction_id,
+                herd_id,
+            } => pb::command_envelope::Command::FollowHerd(pb::FollowHerdCommand {
+                faction_id: *faction_id,
+                herd_id: herd_id.clone(),
+            }),
+            CommandPayload::FoundCamp {
+                faction_id,
+                target_x,
+                target_y,
+            } => pb::command_envelope::Command::FoundCamp(pb::FoundCampCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+            }),
+            CommandPayload::ForageTile {
+                faction_id,
+                target_x,
+                target_y,
+                module,
+                band_entity_bits,
+            } => pb::command_envelope::Command::ForageTile(pb::ForageTileCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+                module: module.clone(),
+                band_entity_bits: *band_entity_bits,
+            }),
         });
 
         pb::CommandEnvelope {
@@ -498,6 +568,33 @@ impl CommandEnvelope {
             pb::command_envelope::Command::SpawnCrisis(cmd) => CommandPayload::SpawnCrisis {
                 faction_id: cmd.faction,
                 archetype_id: cmd.archetype_id,
+            },
+            pb::command_envelope::Command::SetStartProfile(cmd) => {
+                CommandPayload::SetStartProfile {
+                    profile_id: cmd.profile_id,
+                }
+            }
+            pb::command_envelope::Command::ScoutArea(cmd) => CommandPayload::ScoutArea {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+                band_entity_bits: cmd.band_entity_bits,
+            },
+            pb::command_envelope::Command::FollowHerd(cmd) => CommandPayload::FollowHerd {
+                faction_id: cmd.faction_id,
+                herd_id: cmd.herd_id,
+            },
+            pb::command_envelope::Command::FoundCamp(cmd) => CommandPayload::FoundCamp {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+            },
+            pb::command_envelope::Command::ForageTile(cmd) => CommandPayload::ForageTile {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+                module: cmd.module,
+                band_entity_bits: cmd.band_entity_bits,
             },
         };
 

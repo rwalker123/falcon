@@ -2,7 +2,11 @@ extends Node2D
 class_name MapView
 
 signal hex_selected(col: int, row: int, terrain_id: int)
+signal tile_selected(info: Dictionary)
 signal overlay_legend_changed(legend: Dictionary)
+signal unit_selected(unit: Dictionary)
+signal herd_selected(herd: Dictionary)
+signal selection_cleared()
 
 const LOGISTICS_COLOR := Color(0.15, 0.45, 1.0, 1.0)
 const SENTIMENT_COLOR := Color(1.0, 0.35, 0.25, 1.0)
@@ -23,6 +27,7 @@ const MAX_ZOOM_FACTOR := 4.0
 const MOUSE_ZOOM_STEP := 0.2
 const KEYBOARD_ZOOM_SPEED := 0.8
 const KEYBOARD_PAN_SPEED := 600.0
+const PLAYER_FACTION_ID := 0
 
 const OVERLAY_COLORS := {
     "logistics": LOGISTICS_COLOR,
@@ -167,6 +172,50 @@ const TERRAIN_LABELS := {
     36: "Aquifer Ceiling",
 }
 
+const FOOD_MODULE_COLORS := {
+    "coastal_littoral": Color(0.98, 0.76, 0.48, 0.9),
+    "riverine_delta": Color(0.45, 0.78, 0.92, 0.9),
+    "savanna_grassland": Color(0.92, 0.8, 0.52, 0.9),
+    "temperate_forest": Color(0.64, 0.86, 0.58, 0.9),
+    "boreal_arctic": Color(0.8, 0.88, 0.98, 0.9),
+    "montane_highland": Color(0.78, 0.7, 0.9, 0.9),
+    "wetland_swamp": Color(0.56, 0.76, 0.64, 0.9),
+    "semi_arid_scrub": Color(0.95, 0.68, 0.44, 0.9),
+    "coastal_upwelling": Color(0.6, 0.85, 0.98, 0.9),
+    "mixed_woodland": Color(0.64, 0.82, 0.72, 0.9)
+}
+
+const FOOD_SITE_STYLE_DEFAULT := {
+    "color": Color(0.95, 0.82, 0.5, 0.9),
+    "shape": "diamond"
+}
+
+const FOOD_SITE_STYLES := {
+    "littoral": {"color": Color(0.95, 0.74, 0.32, 0.9), "shape": "diamond"},
+    "river_garden": {"color": Color(0.4, 0.75, 0.9, 0.9), "shape": "droplet"},
+    "savanna_track": {"color": Color(0.92, 0.78, 0.4, 0.9), "shape": "triangle"},
+    "forest_forage": {"color": Color(0.52, 0.78, 0.56, 0.9), "shape": "square"},
+    "arctic_fishing": {"color": Color(0.78, 0.88, 0.98, 0.9), "shape": "circle"},
+    "highland_grove": {"color": Color(0.78, 0.7, 0.9, 0.9), "shape": "diamond"},
+    "wetland_harvest": {"color": Color(0.42, 0.66, 0.52, 0.9), "shape": "square"},
+    "scrub_roots": {"color": Color(0.9, 0.6, 0.38, 0.9), "shape": "triangle"},
+    "upwelling_drying": {"color": Color(0.58, 0.84, 0.94, 0.9), "shape": "droplet"},
+    "woodland_cache": {"color": Color(0.6, 0.78, 0.66, 0.9), "shape": "circle"}
+}
+
+const FOOD_MODULE_LABELS := {
+    "coastal_littoral": "Coastal Littoral",
+    "riverine_delta": "Riverine / Delta",
+    "savanna_grassland": "Savanna Grassland",
+    "temperate_forest": "Temperate Forest",
+    "boreal_arctic": "Boreal / Arctic",
+    "montane_highland": "Montane Highland",
+    "wetland_swamp": "Wetland / Swamp",
+    "semi_arid_scrub": "Semi-Arid Scrub",
+    "coastal_upwelling": "Coastal Upwelling",
+    "mixed_woodland": "Mixed Woodland",
+}
+
 var grid_width: int = 0
 var grid_height: int = 0
 var overlay_channels: Dictionary = {}
@@ -182,6 +231,11 @@ var terrain_tags_overlay: PackedInt32Array = PackedInt32Array()
 var terrain_tag_labels: Dictionary = {}
 var units: Array = []
 var routes: Array = []
+var herds: Array = []
+var food_sites: Array = []
+var food_site_lookup: Dictionary = {}
+var harvest_sites: Dictionary = {}
+var scout_sites: Dictionary = {}
 var tile_lookup: Dictionary = {}
 var trade_links_overlay: Array = []
 var trade_overlay_enabled: bool = false
@@ -196,6 +250,7 @@ var highlighted_culture_layer_set: Dictionary = {}
 var highlighted_culture_context: String = ""
 
 var terrain_mode: bool = true
+var selected_tile: Vector2i = Vector2i(-1, -1)
 
 var last_hex_radius: float = 48.0
 var last_origin: Vector2 = Vector2.ZERO
@@ -212,8 +267,14 @@ var mouse_pan_button: int = -1
 var faction_colors: Dictionary = {
     "Aurora": Color(0.55, 0.85, 1.0, 1.0),
     "Obsidian": Color(0.95, 0.62, 0.2, 1.0),
-    "Verdant": Color(0.4, 0.9, 0.55, 1.0)
+    "Verdant": Color(0.4, 0.9, 0.55, 1.0),
+    0: Color(0.55, 0.85, 1.0, 1.0),
+    1: Color(0.95, 0.62, 0.2, 1.0),
+    2: Color(0.4, 0.9, 0.55, 1.0)
 }
+
+var selected_unit_id: int = -1
+var selected_herd_id: String = ""
 
 func _ready() -> void:
     set_process_unhandled_input(true)
@@ -256,8 +317,48 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
         start_marker = Vector2i(int(marker_dict.get("x", -1)), int(marker_dict.get("y", -1)))
     else:
         start_marker = Vector2i(-1, -1)
-    units = Array(snapshot.get("units", []))
     routes = Array(snapshot.get("orders", []))
+    food_sites = []
+    food_site_lookup.clear()
+    harvest_sites.clear()
+    var food_variant: Variant = snapshot.get("food_modules", [])
+    if food_variant is Array:
+        for entry in food_variant:
+            if not (entry is Dictionary):
+                continue
+            var site: Dictionary = (entry as Dictionary).duplicate(true)
+            food_sites.append(site)
+            var x_site: int = int(site.get("x", -1))
+            var y_site: int = int(site.get("y", -1))
+            if x_site >= 0 and y_site >= 0:
+                food_site_lookup[Vector2i(x_site, y_site)] = site
+    var population_variant: Variant = snapshot.get("populations", [])
+    if population_variant is Array:
+        for entry in population_variant:
+            if not (entry is Dictionary):
+                continue
+            var cohort: Dictionary = entry
+            var harvest_variant: Variant = cohort.get("harvest", {})
+            if harvest_variant is Dictionary:
+                var harvest: Dictionary = (harvest_variant as Dictionary).duplicate(true)
+                var hx := int(harvest.get("target_x", -1))
+                var hy := int(harvest.get("target_y", -1))
+                if hx >= 0 and hy >= 0:
+                    var key := Vector2i(hx, hy)
+                    harvest["module_label"] = _food_module_label(String(harvest.get("module", "")))
+                    var existing: Array = harvest_sites.get(key, [])
+                    existing.append(harvest)
+                    harvest_sites[key] = existing
+            var scout_variant: Variant = cohort.get("scout", {})
+            if scout_variant is Dictionary:
+                var scout: Dictionary = (scout_variant as Dictionary).duplicate(true)
+                var sx := int(scout.get("target_x", -1))
+                var sy := int(scout.get("target_y", -1))
+                if sx >= 0 and sy >= 0:
+                    var scout_key := Vector2i(sx, sy)
+                    var scout_existing: Array = scout_sites.get(scout_key, [])
+                    scout_existing.append(scout)
+                    scout_sites[scout_key] = scout_existing
 
     tile_lookup.clear()
     if grid_width > 0 and grid_height > 0:
@@ -283,6 +384,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
                         var index: int = y * grid_width + x
                         if index >= 0 and index < culture_layer_grid.size():
                             culture_layer_grid[index] = int(tile_dict.get("culture_layer", -1))
+    _rebuild_unit_markers(snapshot)
+    _rebuild_herd_markers(snapshot)
     # Removed snapshot ingest logging (noise in normal runs).
 
     if snapshot.has("trade_links"):
@@ -418,6 +521,15 @@ func _draw() -> void:
 
     for unit in units:
         _draw_unit(unit, radius, origin)
+
+    for herd in herds:
+        _draw_herd(herd, radius, origin)
+    for site in food_sites:
+        _draw_food_site(site, radius, origin)
+        _draw_food_highlight(site, radius, origin)
+
+    _draw_harvest_markers(radius, origin)
+    _draw_scout_markers(radius, origin)
 
     for order in routes:
         _draw_route(order, radius, origin)
@@ -613,6 +725,8 @@ func _unhandled_input(event: InputEvent) -> void:
                 return
             var terrain_id: int = _terrain_id_at(col, row)
             emit_signal("hex_selected", col, row, terrain_id)
+            _emit_tile_selection(col, row)
+            _handle_entity_selection(local_position, col, row)
             _mark_input_handled()
             return
     elif event is InputEventMouseMotion:
@@ -648,6 +762,157 @@ func _draw_unit(unit: Dictionary, radius: float, origin: Vector2) -> void:
         var font: Font = ThemeDB.fallback_font
         if font != null:
             draw_string(font, center + Vector2(-marker_radius, marker_radius * 0.1), label, HORIZONTAL_ALIGNMENT_LEFT, marker_radius * 2.0, 16, Color(0.05, 0.05, 0.05, 0.85))
+
+    if int(unit.get("entity", -1)) == selected_unit_id:
+        var highlight_color := Color(1.0, 1.0, 1.0, 0.9)
+        draw_arc(center, marker_radius + 4.0, 0, TAU, 24, highlight_color, 3.0)
+
+func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
+    var x: int = int(herd.get("x", -1))
+    var y: int = int(herd.get("y", -1))
+    if x < 0 or y < 0:
+        return
+    var center: Vector2 = _hex_center(x, y, radius, origin)
+    var marker_radius: float = radius * 0.35
+    var base_color := Color(0.95, 0.76, 0.35, 0.95)
+    var points := PackedVector2Array([
+        center + Vector2(0, -marker_radius),
+        center + Vector2(marker_radius * 0.85, 0),
+        center + Vector2(0, marker_radius),
+        center + Vector2(-marker_radius * 0.85, 0)
+    ])
+    draw_polygon(points, PackedColorArray([base_color, base_color, base_color, base_color]))
+    draw_polyline(points, Color(0, 0, 0, 0.4), 2.0, true)
+
+    var label: String = String(herd.get("label", herd.get("id", "Herd")))
+    if label != "":
+        var font: Font = ThemeDB.fallback_font
+        if font != null:
+            draw_string(font, center + Vector2(-marker_radius, marker_radius + 4.0), label, HORIZONTAL_ALIGNMENT_LEFT, marker_radius * 2.0, 14, Color(0.1, 0.1, 0.1, 0.85))
+
+    if String(herd.get("id", "")) == selected_herd_id:
+        draw_arc(center, marker_radius + 3.0, 0, TAU, 24, Color(1.0, 1.0, 1.0, 0.9), 2.5)
+
+func _draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
+    var x: int = int(site.get("x", -1))
+    var y: int = int(site.get("y", -1))
+    if x < 0 or y < 0:
+        return
+    var center: Vector2 = _hex_center(x, y, radius, origin)
+    var module_key := String(site.get("module", ""))
+    var kind := String(site.get("kind", ""))
+    var style: Dictionary = FOOD_SITE_STYLES.get(kind, FOOD_SITE_STYLE_DEFAULT)
+    var color: Color = style.get("color", FOOD_SITE_STYLE_DEFAULT["color"])
+    var weight: float = float(site.get("seasonal_weight", 1.0))
+    var marker_radius: float = radius * 0.2 + weight * 2.0
+    var shape := String(style.get("shape", FOOD_SITE_STYLE_DEFAULT["shape"]))
+    match shape:
+        "circle":
+            draw_circle(center, marker_radius * 0.9, color)
+        "triangle":
+            var tri := PackedVector2Array([
+                center + Vector2(0, -marker_radius),
+                center + Vector2(marker_radius, marker_radius),
+                center + Vector2(-marker_radius, marker_radius)
+            ])
+            draw_polygon(tri, PackedColorArray([color, color, color]))
+            draw_polyline(tri, Color(0, 0, 0, 0.4), 1.75, true)
+        "droplet":
+            draw_circle(center, marker_radius * 0.65, color)
+            var tip := PackedVector2Array([
+                center + Vector2(0, -marker_radius),
+                center + Vector2(marker_radius * 0.35, -marker_radius * 0.2),
+                center + Vector2(-marker_radius * 0.35, -marker_radius * 0.2)
+            ])
+            draw_polygon(tip, PackedColorArray([color, color, color]))
+            draw_polyline(tip, Color(0, 0, 0, 0.35), 1.25, true)
+        "square":
+            var square := PackedVector2Array([
+                center + Vector2(-marker_radius, -marker_radius),
+                center + Vector2(marker_radius, -marker_radius),
+                center + Vector2(marker_radius, marker_radius),
+                center + Vector2(-marker_radius, marker_radius)
+            ])
+            draw_polygon(square, PackedColorArray([color, color, color, color]))
+            draw_polyline(square, Color(0, 0, 0, 0.4), 1.5, true)
+        _:
+            var points := PackedVector2Array([
+                center + Vector2(0, -marker_radius),
+                center + Vector2(marker_radius, 0),
+                center + Vector2(0, marker_radius),
+                center + Vector2(-marker_radius, 0)
+            ])
+            draw_polygon(points, PackedColorArray([color, color, color, color]))
+            draw_polyline(points, Color(0, 0, 0, 0.4), 1.75, true)
+    if _food_harvest_active(int(site.get("x", -1)), int(site.get("y", -1))):
+        var halo_color := color
+        halo_color.a = 0.25
+        draw_circle(center, marker_radius * 1.8, halo_color)
+        var stroke_color := color
+        stroke_color.a = 0.95
+        draw_arc(center, marker_radius * 1.4, 0, TAU, 32, stroke_color, 2.0)
+
+func _draw_food_highlight(site: Dictionary, radius: float, origin: Vector2) -> void:
+    var x: int = int(site.get("x", -1))
+    var y: int = int(site.get("y", -1))
+    if x < 0 or y < 0:
+        return
+    var module_key := String(site.get("module", ""))
+    if module_key == "":
+        return
+    if _selected_tile_matches_food(x, y, module_key):
+        var center := _hex_center(x, y, radius, origin)
+        var highlight_color := Color(1.0, 1.0, 1.0, 0.85)
+        draw_arc(center, radius * 0.5, 0, TAU, 32, highlight_color, 2.0)
+
+func _draw_harvest_markers(radius: float, origin: Vector2) -> void:
+    if harvest_sites.is_empty():
+        return
+    for key in harvest_sites.keys():
+        var entries_variant: Variant = harvest_sites.get(key, null)
+        if not (entries_variant is Array):
+            continue
+        var entries: Array = entries_variant
+        if entries.is_empty():
+            continue
+        var center := _hex_center(key.x, key.y, radius, origin)
+        var module_key := String((entries[0] as Dictionary).get("module", ""))
+        var style: Dictionary = FOOD_SITE_STYLE_DEFAULT
+        var base_site: Variant = food_site_lookup.get(key, null)
+        if base_site is Dictionary:
+            var kind := String((base_site as Dictionary).get("kind", ""))
+            style = FOOD_SITE_STYLES.get(kind, FOOD_SITE_STYLE_DEFAULT)
+        var color: Color = style.get("color", FOOD_SITE_STYLE_DEFAULT["color"])
+        var glow_color := color
+        glow_color.a = 0.25
+        draw_circle(center, radius * 0.65, glow_color)
+        var stroke_color := color
+        stroke_color.a = 0.95
+        draw_arc(center, radius * 0.55, 0, TAU, 32, stroke_color, 3.0)
+        if entries.size() > 1:
+            var font: Font = ThemeDB.fallback_font
+            if font != null:
+                var label := "x%d" % entries.size()
+                draw_string(font, center + Vector2(-radius * 0.25, radius * 0.05), label, HORIZONTAL_ALIGNMENT_LEFT, radius * 0.6, int(radius * 0.4), Color(0, 0, 0, 0.85))
+        if not (base_site is Dictionary) and _selected_tile_matches_food(key.x, key.y, module_key):
+            var highlight_color := Color(1.0, 1.0, 1.0, 0.9)
+            draw_arc(center, radius * 0.45, 0, TAU, 32, highlight_color, 2.5)
+
+func _draw_scout_markers(radius: float, origin: Vector2) -> void:
+    if scout_sites.is_empty():
+        return
+    for key in scout_sites.keys():
+        var entries_variant: Variant = scout_sites.get(key, null)
+        if not (entries_variant is Array):
+            continue
+        var entries: Array = entries_variant
+        if entries.is_empty():
+            continue
+        var center := _hex_center(key.x, key.y, radius, origin)
+        var base_color := Color(0.8, 0.92, 1.0, 0.4)
+        draw_circle(center, radius * 0.4, base_color)
+        var stroke_color := Color(0.9, 0.97, 1.0, 0.95)
+        draw_arc(center, radius * 0.5, 0, TAU, 24, stroke_color, 2.0)
 
 func _draw_route(order: Dictionary, radius: float, origin: Vector2) -> void:
     var path: Array = order.get("path", [])
@@ -697,6 +962,256 @@ func _terrain_id_at(x: int, y: int) -> int:
     if index < 0 or index >= terrain_overlay.size():
         return -1
     return int(terrain_overlay[index])
+
+func _rebuild_unit_markers(snapshot: Dictionary) -> void:
+    units = []
+    var population_variant: Variant = snapshot.get("populations", [])
+    if not (population_variant is Array):
+        return
+    var counter := 1
+    var label_cache: Dictionary = {}
+    for entry_variant in population_variant:
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        var home_id: int = int(entry.get("home", -1))
+        if home_id < 0 or not tile_lookup.has(home_id):
+            continue
+        var coords: Vector2i = tile_lookup[home_id]
+        var label: String = String(entry.get("label", ""))
+        if label == "":
+            label = "Band %d" % counter
+        while label_cache.has(label):
+            counter += 1
+            label = "Band %d" % counter
+        label_cache[label] = true
+        var marker := {
+            "entity": int(entry.get("entity", home_id)),
+            "faction": entry.get("faction", PLAYER_FACTION_ID),
+            "pos": [coords.x, coords.y],
+            "size": int(entry.get("size", 0)),
+            "id": label
+        }
+        var harvest_variant: Variant = entry.get("harvest", {})
+        if harvest_variant is Dictionary:
+            marker["harvest"] = (harvest_variant as Dictionary).duplicate(true)
+        var scout_variant: Variant = entry.get("scout", {})
+        if scout_variant is Dictionary:
+            marker["scout"] = (scout_variant as Dictionary).duplicate(true)
+        units.append(marker)
+        counter += 1
+
+func _rebuild_herd_markers(snapshot: Dictionary) -> void:
+    herds = []
+    var herd_variant: Variant = snapshot.get("herds", [])
+    if not (herd_variant is Array):
+        return
+    for entry in herd_variant:
+        if entry is Dictionary:
+            herds.append((entry as Dictionary).duplicate(true))
+
+func _handle_entity_selection(local_position: Vector2, col: int, row: int) -> void:
+    var unit: Dictionary = _unit_at_point(local_position)
+    if not unit.is_empty():
+        selected_unit_id = int(unit.get("entity", -1))
+        selected_herd_id = ""
+        var unit_payload: Dictionary = (unit as Dictionary).duplicate(true)
+        var pos := Array(unit_payload.get("pos", []))
+        var unit_col := col
+        var unit_row := row
+        if pos.size() == 2:
+            unit_col = int(pos[0])
+            unit_row = int(pos[1])
+        unit_payload["tile_info"] = _tile_info_at(unit_col, unit_row)
+        emit_signal("unit_selected", unit_payload)
+        queue_redraw()
+        return
+    var herd: Dictionary = _herd_at_point(local_position)
+    if not herd.is_empty():
+        selected_unit_id = -1
+        selected_herd_id = String(herd.get("id", ""))
+        var herd_payload: Dictionary = (herd as Dictionary).duplicate(true)
+        var herd_col: int = int(herd_payload.get("x", col))
+        var herd_row: int = int(herd_payload.get("y", row))
+        herd_payload["tile_info"] = _tile_info_at(herd_col, herd_row)
+        emit_signal("herd_selected", herd_payload)
+        queue_redraw()
+        return
+    if selected_unit_id != -1 or selected_herd_id != "":
+        selected_unit_id = -1
+        selected_herd_id = ""
+        emit_signal("selection_cleared")
+        selected_tile = Vector2i(-1, -1)
+        queue_redraw()
+
+func _emit_tile_selection(col: int, row: int) -> void:
+    if col < 0 or row < 0 or col >= grid_width or row >= grid_height:
+        return
+    selected_tile = Vector2i(col, row)
+    var info := _tile_info_at(col, row)
+    emit_signal("tile_selected", info)
+    queue_redraw()
+
+func _unit_at_point(point: Vector2) -> Dictionary:
+    for unit in units:
+        var position: Array = Array(unit.get("pos", []))
+        if position.size() != 2:
+            continue
+        var center := _hex_center(int(position[0]), int(position[1]), last_hex_radius, last_origin)
+        if center.distance_to(point) <= last_hex_radius * 0.55:
+            return unit
+    return {}
+
+func _herd_at_point(point: Vector2) -> Dictionary:
+    for herd in herds:
+        var x := int(herd.get("x", -1))
+        var y := int(herd.get("y", -1))
+        if x < 0 or y < 0:
+            continue
+        var center := _hex_center(x, y, last_hex_radius, last_origin)
+        if center.distance_to(point) <= last_hex_radius * 0.45:
+            return herd
+    return {}
+
+func _tile_info_at(col: int, row: int) -> Dictionary:
+    var info: Dictionary = {
+        "x": col,
+        "y": row,
+    }
+    if col < 0 or row < 0 or col >= grid_width or row >= grid_height:
+        return info
+    var terrain_id := _terrain_id_at(col, row)
+    info["terrain_id"] = terrain_id
+    info["terrain_label"] = String(TERRAIN_LABELS.get(terrain_id, "Terrain %d" % terrain_id))
+    var mask := _tag_mask_at(col, row)
+    info["tags_mask"] = mask
+    var tag_labels := _tag_names_for_mask(mask)
+    info["tag_labels"] = tag_labels
+    var tags_text := "none"
+    if not tag_labels.is_empty():
+        tags_text = ", ".join(tag_labels)
+    info["tags_text"] = tags_text
+    var module_entry := _food_module_entry_at(col, row)
+    var module_key := ""
+    var module_weight := 0.0
+    if not module_entry.is_empty():
+        module_key = String(module_entry.get("module", ""))
+        module_weight = float(module_entry.get("seasonal_weight", 0.0))
+        var kind := String(module_entry.get("kind", ""))
+        if kind != "":
+            info["food_kind"] = kind
+    info["food_module"] = module_key
+    info["food_module_label"] = _food_module_label(module_key)
+    info["food_module_weight"] = module_weight
+    var units_here := _units_on_tile(col, row)
+    var herds_here := _herds_on_tile(col, row)
+    info["units"] = units_here
+    info["herds"] = herds_here
+    info["unit_count"] = units_here.size()
+    info["herd_count"] = herds_here.size()
+    var harvest_here: Variant = harvest_sites.get(Vector2i(col, row), null)
+    if harvest_here is Array and not harvest_here.is_empty():
+        var harvest_array: Array = []
+        for entry in harvest_here:
+            if entry is Dictionary:
+                harvest_array.append((entry as Dictionary).duplicate(true))
+        info["harvest_tasks"] = harvest_array
+        info["harvest_active"] = harvest_array.size()
+    var scout_here: Variant = scout_sites.get(Vector2i(col, row), null)
+    if scout_here is Array and not scout_here.is_empty():
+        var scout_array: Array = []
+        for entry in scout_here:
+            if entry is Dictionary:
+                scout_array.append((entry as Dictionary).duplicate(true))
+        info["scout_tasks"] = scout_array
+        info["scout_active"] = scout_array.size()
+    var nearest_unit := _nearest_unit_sample(col, row)
+    if not nearest_unit.is_empty():
+        info["nearest_unit_distance"] = nearest_unit.get("distance", -1)
+        info["nearest_unit_label"] = nearest_unit.get("label", "")
+        info["nearest_unit_id"] = nearest_unit.get("id", "")
+    return info
+
+func _units_on_tile(col: int, row: int) -> Array:
+    var matches: Array = []
+    for unit in units:
+        var position: Array = Array(unit.get("pos", []))
+        if position.size() != 2:
+            continue
+        if int(position[0]) == col and int(position[1]) == row:
+            matches.append((unit as Dictionary).duplicate(true))
+    return matches
+
+func _herds_on_tile(col: int, row: int) -> Array:
+    var matches: Array = []
+    for herd in herds:
+        var x := int(herd.get("x", -1))
+        var y := int(herd.get("y", -1))
+        if x == col and y == row:
+            matches.append((herd as Dictionary).duplicate(true))
+    return matches
+
+func _nearest_unit_sample(col: int, row: int) -> Dictionary:
+    if units.is_empty():
+        return {}
+    var best_distance: int = -1
+    var best_unit: Dictionary = {}
+    for entry in units:
+        if not (entry is Dictionary):
+            continue
+        var pos_array: Array = Array(entry.get("pos", []))
+        if pos_array.size() != 2:
+            continue
+        var ux := int(pos_array[0])
+        var uy := int(pos_array[1])
+        var distance: int = abs(col - ux) + abs(row - uy)
+        if distance < 0:
+            continue
+        if best_distance < 0 or distance < best_distance:
+            best_distance = distance
+            best_unit = entry
+    if best_distance < 0 or best_unit.is_empty():
+        return {}
+    var summary := {
+        "distance": best_distance,
+        "label": String(best_unit.get("id", best_unit.get("entity", "Band"))),
+        "id": best_unit.get("entity", best_unit.get("id", "")),
+    }
+    return summary
+
+func _food_module_entry_at(col: int, row: int) -> Dictionary:
+    var key := Vector2i(col, row)
+    if food_site_lookup.has(key):
+        return (food_site_lookup[key] as Dictionary).duplicate(true)
+    return {}
+
+func _food_harvest_active(col: int, row: int) -> bool:
+    return harvest_sites.has(Vector2i(col, row))
+
+func _selected_tile_matches_food(col: int, row: int, module_key: String) -> bool:
+    if module_key == "":
+        return false
+    return selected_tile.x == col and selected_tile.y == row
+
+func _tag_names_for_mask(mask: int) -> PackedStringArray:
+    var names := PackedStringArray()
+    if mask == 0:
+        return names
+    for raw_bit in TERRAIN_TAG_KEYS:
+        var bit: int = int(raw_bit)
+        if (mask & bit) == 0:
+            continue
+        var label_value: Variant = terrain_tag_labels.get(bit, "")
+        var label := String(label_value)
+        if label == "":
+            label = _tag_label_for_mask(bit)
+        names.append(label)
+    return names
+
+func _food_module_label(module_key: String) -> String:
+    if module_key == "":
+        return "None"
+    return String(FOOD_MODULE_LABELS.get(module_key, module_key.capitalize().replace("_", " ")))
 
 func _culture_layer_at(x: int, y: int) -> int:
     if culture_layer_grid.is_empty() or grid_width == 0:

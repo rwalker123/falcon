@@ -1,11 +1,12 @@
 use std::io::{self, BufReader, Read};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use bevy::{ecs::system::Resource, math::UVec2};
+use bevy::{ecs::system::Resource, math::UVec2, prelude::Entity};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tracing::{info, warn};
@@ -16,28 +17,43 @@ use core_sim::log_stream::start_log_stream_server;
 use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
-    build_headless_app, restore_world_from_snapshot, run_turn, scalar_from_f32, AgentAssignment,
+    build_headless_app, command_events_to_state, restore_world_from_snapshot, run_turn,
+    scalar_from_f32, AgentAssignment, CommandEventEntry, CommandEventKind, CommandEventLog,
     CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
     CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
     CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
     CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, EspionageAgentHandle,
     EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
-    EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
-    FactionSecurityPolicies, GenerationId, GenerationRegistry, InfluencerImpacts,
-    InfluentialRoster, MapPresetsHandle, PendingCrisisSpawns, QueueMissionError,
-    QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StoredSnapshot, SubmitError,
-    SubmitOutcome, SupportChannel, Tile, TurnPipelineConfig, TurnPipelineConfigHandle,
-    TurnPipelineConfigMetadata, TurnQueue,
+    EspionageMissionTemplate, EspionageRoster, FactionId, FactionInventory, FactionOrders,
+    FactionRegistry, FactionSecurityPolicies, FogRevealLedger, FoodModule, FoodModuleTag,
+    GenerationId, GenerationRegistry, HarvestAssignment, HerdRegistry, HerdTelemetry,
+    InfluencerImpacts, InfluentialRoster, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort,
+    QueueMissionError, QueueMissionParams, Scalar, ScoutAssignment, SecurityPolicy,
+    SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
+    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
+    SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry, TurnPipelineConfig,
+    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
+    DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
+use core_sim::{resolve_active_profile, ActiveStartProfile, CampaignLabel, StartProfileOverrides};
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
     AxisBiasState, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
     CorruptionEntry, CorruptionSubsystem, InfluenceScopeKind,
     OrdersDirective as ProtoOrdersDirective, SecurityPolicyKind,
-    SupportChannel as ProtoSupportChannel,
+    SupportChannel as ProtoSupportChannel, TerrainTags,
 };
+
+const MIN_SCOUT_REVEAL_RADIUS: u32 = 2;
+const DEFAULT_SCOUT_REVEAL_RADIUS: u32 = 3;
+const SCOUT_REVEAL_DURATION_TURNS: u64 = 8;
+const SCOUT_MORALE_GAIN: f32 = 0.02;
+const SCOUT_PROVISION_COST: i64 = 10;
+const HERD_CONSUMPTION_BIOMASS: f32 = 250.0;
+const CAMP_PROVISION_COST: i64 = 40;
+const HERD_PROVISIONS_YIELD_PER_BIOMASS: f32 = 0.02;
+const HERD_TRADE_GOODS_YIELD_PER_BIOMASS: f32 = 0.005;
 
 fn main() {
     let mut app = build_headless_app();
@@ -454,7 +470,46 @@ fn main() {
                     "crisis.spawn.enqueued"
                 );
             }
+            Command::SetStartProfile { profile_id } => {
+                handle_set_start_profile(&mut app, profile_id);
+            }
+            Command::ScoutArea {
+                faction,
+                target_x,
+                target_y,
+                band_entity_bits,
+            } => {
+                handle_scout_area(&mut app, faction, target_x, target_y, band_entity_bits);
+            }
+            Command::FollowHerd { faction, herd_id } => {
+                handle_follow_herd(&mut app, faction, herd_id);
+            }
+            Command::FoundCamp {
+                faction,
+                target_x,
+                target_y,
+            } => {
+                handle_found_camp(&mut app, faction, target_x, target_y);
+            }
+            Command::ForageTile {
+                faction,
+                target_x,
+                target_y,
+                module,
+                band_entity_bits,
+            } => {
+                handle_forage_tile(
+                    &mut app,
+                    faction,
+                    target_x,
+                    target_y,
+                    module,
+                    band_entity_bits,
+                );
+            }
         }
+
+        broadcast_command_events_if_needed(&mut app, bin_server, flat_server);
     }
 }
 
@@ -531,6 +586,31 @@ enum Command {
     SpawnCrisis {
         faction: FactionId,
         archetype_id: String,
+    },
+    SetStartProfile {
+        profile_id: String,
+    },
+    ScoutArea {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
+        band_entity_bits: Option<u64>,
+    },
+    FollowHerd {
+        faction: FactionId,
+        herd_id: String,
+    },
+    FoundCamp {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
+    },
+    ForageTile {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
+        module: String,
+        band_entity_bits: Option<u64>,
     },
 }
 
@@ -954,6 +1034,622 @@ fn handle_reload_config(
         ReloadConfigKind::CrisisModifiers => handle_reload_crisis_modifiers_config(app, path),
         ReloadConfigKind::CrisisTelemetry => handle_reload_crisis_telemetry_config(app, path),
     }
+}
+
+fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {
+    let handle = app.world.resource::<StartProfilesHandle>().clone();
+    let (profile, used_fallback) = resolve_active_profile(&handle, &profile_id);
+
+    {
+        let mut config = app.world.resource_mut::<SimulationConfig>();
+        config.start_profile_id = profile.id.clone();
+        config.start_profile_overrides = StartProfileOverrides::from_profile(&profile);
+    }
+    {
+        let mut lookup = app.world.resource_mut::<StartProfileLookup>();
+        lookup.id = profile.id.clone();
+    }
+    {
+        let mut active = app.world.resource_mut::<ActiveStartProfile>();
+        *active = ActiveStartProfile::new(profile.clone());
+    }
+    {
+        let mut label = app.world.resource_mut::<CampaignLabel>();
+        *label = CampaignLabel::from_profile(&profile);
+    }
+
+    info!(
+        target: "shadow_scale::campaign",
+        requested = %profile_id,
+        applied = %profile.id,
+        fallback = used_fallback,
+        "start_profile.updated"
+    );
+
+    if used_fallback {
+        warn!(
+            target: "shadow_scale::campaign",
+            requested = %profile_id,
+            applied = %profile.id,
+            "start_profile.fallback_applied"
+        );
+    }
+}
+
+fn handle_scout_area(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    target_x: u32,
+    target_y: u32,
+    band_entity_bits: Option<u64>,
+) {
+    let target = UVec2::new(target_x, target_y);
+    let Some(tile_entity) = ensure_land_tile(
+        app,
+        faction,
+        target,
+        "scout_area",
+        Some(CommandEventKind::Scout),
+    ) else {
+        return;
+    };
+
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        band_entity_bits,
+        "scout_area",
+        CommandEventKind::Scout,
+    ) else {
+        return;
+    };
+
+    if !consume_inventory_item(
+        app,
+        faction,
+        "provisions",
+        SCOUT_PROVISION_COST,
+        "scout_area",
+        CommandEventKind::Scout,
+    ) {
+        return;
+    }
+
+    if app.world.get::<HarvestAssignment>(band.entity).is_some()
+        || app.world.get::<ScoutAssignment>(band.entity).is_some()
+    {
+        warn!(
+            target: "shadow_scale::command",
+            command = "scout_area",
+            faction = %faction.0,
+            band = %band.label,
+            "command.scout_area.rejected=band_busy"
+        );
+        emit_command_failure(
+            app,
+            CommandEventKind::Scout,
+            faction,
+            format!("{} is already committed to another task.", band.label),
+        );
+        return;
+    }
+
+    let home_coords = {
+        let cohort = match app.world.get::<PopulationCohort>(band.entity) {
+            Some(cohort) => cohort,
+            None => {
+                warn!(
+                    target: "shadow_scale::command",
+                    command = "scout_area",
+                    faction = %faction.0,
+                    band = %band.label,
+                    "command.scout_area.rejected=band_missing"
+                );
+                return;
+            }
+        };
+        app.world
+            .get::<Tile>(cohort.home)
+            .map(|tile| tile.position)
+            .unwrap_or(target)
+    };
+
+    let radius_override = {
+        let config = app.world.resource::<SimulationConfig>();
+        config.start_profile_overrides.survey_radius
+    };
+    let reveal_radius = radius_override
+        .unwrap_or(DEFAULT_SCOUT_REVEAL_RADIUS)
+        .max(MIN_SCOUT_REVEAL_RADIUS);
+    let tick = app.world.resource::<SimulationTick>().0;
+    let distance = home_coords.x.abs_diff(target.x) + home_coords.y.abs_diff(target.y);
+    let travel_turns = estimate_travel_turns(distance);
+    let assignment = ScoutAssignment {
+        faction,
+        band_label: band.label.clone(),
+        target_tile: tile_entity,
+        target_coords: target,
+        travel_remaining: travel_turns,
+        travel_total: travel_turns,
+        reveal_radius,
+        reveal_duration: SCOUT_REVEAL_DURATION_TURNS,
+        morale_gain: SCOUT_MORALE_GAIN.max(0.0),
+        started_tick: tick,
+    };
+    app.world.entity_mut(band.entity).insert(assignment);
+    let detail = format!(
+        "band={} radius={} travel_turns={} morale_boost={:.2}",
+        band.label,
+        reveal_radius,
+        travel_turns,
+        SCOUT_MORALE_GAIN.max(0.0)
+    );
+
+    info!(
+        target: "shadow_scale::command",
+        command = "scout_area",
+        faction = %faction.0,
+        x = target_x,
+        y = target_y,
+        band = %band.label,
+        radius = reveal_radius,
+        travel_turns,
+        "command.scout_area.enqueued"
+    );
+
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Scout,
+        faction,
+        format!("{} -> ({}, {})", band.label, target_x, target_y),
+        Some(detail),
+    );
+}
+
+fn handle_follow_herd(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String) {
+    let (target, herd_label, route_length) = {
+        let registry = match app.world.get_resource::<HerdRegistry>() {
+            Some(res) => res,
+            None => {
+                warn!(
+                    target: "shadow_scale::command",
+                    command = "follow_herd",
+                    faction = %faction.0,
+                    herd = %herd_id,
+                    "command.follow_herd.rejected=no_herd_registry"
+                );
+                emit_command_failure(
+                    app,
+                    CommandEventKind::FollowHerd,
+                    faction,
+                    "Herd registry unavailable; cannot follow that herd.",
+                );
+                return;
+            }
+        };
+        match registry.find(&herd_id) {
+            Some(herd) => (
+                herd.position(),
+                herd.label.clone(),
+                herd.route_length() as u32,
+            ),
+            None => {
+                warn!(
+                    target: "shadow_scale::command",
+                    command = "follow_herd",
+                    faction = %faction.0,
+                    herd = %herd_id,
+                    "command.follow_herd.rejected=unknown_herd"
+                );
+                emit_command_failure(
+                    app,
+                    CommandEventKind::FollowHerd,
+                    faction,
+                    format!("Herd '{}' was not found.", herd_id),
+                );
+                return;
+            }
+        }
+    };
+
+    let Some(tile_entity) = ensure_land_tile(
+        app,
+        faction,
+        target,
+        "follow_herd",
+        Some(CommandEventKind::FollowHerd),
+    ) else {
+        return;
+    };
+
+    let mut moved = 0u32;
+    let mut band_labels: Vec<String> = Vec::new();
+    {
+        let mut query = app.world.query::<(&mut PopulationCohort, &StartingUnit)>();
+        for (mut cohort, unit) in query.iter_mut(&mut app.world) {
+            if cohort.faction != faction {
+                continue;
+            }
+            cohort.home = tile_entity;
+            moved = moved.saturating_add(1);
+            band_labels.push(unit.kind.clone());
+        }
+    }
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    if moved == 0 {
+        warn!(
+            target: "shadow_scale::command",
+            command = "follow_herd",
+            faction = %faction.0,
+            herd = %herd_id,
+            "command.follow_herd.rejected=no_starting_units"
+        );
+        emit_command_failure(
+            app,
+            CommandEventKind::FollowHerd,
+            faction,
+            "No available bands to follow the herd.",
+        );
+        return;
+    }
+
+    let (biomass_after, consumed) = {
+        let mut registry = match app.world.get_resource_mut::<HerdRegistry>() {
+            Some(res) => res,
+            None => {
+                warn!(
+                    target: "shadow_scale::command",
+                    command = "follow_herd",
+                    faction = %faction.0,
+                    herd = %herd_id,
+                    "command.follow_herd.rejected=no_herd_registry"
+                );
+                emit_command_failure(
+                    app,
+                    CommandEventKind::FollowHerd,
+                    faction,
+                    "Herd registry unavailable; cannot update herd state.",
+                );
+                return;
+            }
+        };
+        let Some(herd) = registry.herds.iter_mut().find(|herd| herd.id == herd_id) else {
+            warn!(
+                target: "shadow_scale::command",
+                command = "follow_herd",
+                faction = %faction.0,
+                herd = %herd_id,
+                "command.follow_herd.rejected=unknown_herd"
+            );
+            emit_command_failure(
+                app,
+                CommandEventKind::FollowHerd,
+                faction,
+                format!("Herd '{}' no longer exists.", herd_id),
+            );
+            return;
+        };
+        let consumed = herd.biomass.min(HERD_CONSUMPTION_BIOMASS);
+        herd.biomass -= consumed;
+        (herd.biomass, consumed)
+    };
+
+    refresh_herd_telemetry(app);
+    let (provisions_gain, trade_goods_gain) = apply_herd_rewards(app, faction, consumed);
+
+    let mut reveals = app.world.resource_mut::<FogRevealLedger>();
+    let radius = DEFAULT_SCOUT_REVEAL_RADIUS.saturating_add(1);
+    let expires_at = tick.saturating_add(SCOUT_REVEAL_DURATION_TURNS * 2);
+    reveals.queue(target, radius, expires_at);
+
+    let mut detail_parts = vec![format!(
+        "herd={} moved_units={} route_len={} biomass={:.0} consumed={:.0}",
+        herd_label, moved, route_length, biomass_after, consumed
+    )];
+    if provisions_gain > 0 || trade_goods_gain > 0 {
+        detail_parts.push(format!(
+            "rewards=provisions:{} trade_goods:{}",
+            provisions_gain, trade_goods_gain
+        ));
+    }
+    if !band_labels.is_empty() {
+        detail_parts.push(format!("bands={}", band_labels.join(", ")));
+    }
+    let detail = detail_parts.join(" | ");
+
+    info!(
+        target: "shadow_scale::command",
+        command = "follow_herd",
+        faction = %faction.0,
+        herd = %herd_id,
+        label = %herd_label,
+        x = target.x,
+        y = target.y,
+        moved_units = moved,
+        route_length,
+        consumed,
+        biomass = biomass_after,
+        provisions = provisions_gain,
+        trade_goods = trade_goods_gain,
+        radius,
+        expires_at,
+        "command.follow_herd.applied"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::FollowHerd,
+        faction,
+        format!("{} -> ({}, {})", herd_label, target.x, target.y),
+        Some(detail),
+    );
+}
+
+fn handle_found_camp(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    target_x: u32,
+    target_y: u32,
+) {
+    let target = UVec2::new(target_x, target_y);
+    let Some(_tile_entity) = ensure_land_tile(
+        app,
+        faction,
+        target,
+        "found_camp",
+        Some(CommandEventKind::FoundCamp),
+    ) else {
+        return;
+    };
+    if !consume_inventory_item(
+        app,
+        faction,
+        "provisions",
+        CAMP_PROVISION_COST,
+        "found_camp",
+        CommandEventKind::FoundCamp,
+    ) {
+        return;
+    }
+    let (survey_radius_override, fog_mode_override) = {
+        let config = app.world.resource::<SimulationConfig>();
+        (
+            config.start_profile_overrides.survey_radius,
+            config.start_profile_overrides.fog_mode,
+        )
+    };
+    let tick = app.world.resource::<SimulationTick>().0;
+    let applied_radius =
+        if let Some(mut start_location) = app.world.get_resource_mut::<StartLocation>() {
+            start_location.relocate(target);
+            if start_location.survey_radius().is_none() {
+                start_location.set_survey_radius(survey_radius_override);
+            }
+            if let Some(fog_mode) = fog_mode_override {
+                start_location.set_fog_mode(fog_mode);
+            }
+            info!(
+                target: "shadow_scale::command",
+                faction = %faction.0,
+                x = target_x,
+                y = target_y,
+                radius = ?start_location.survey_radius(),
+                "command.found_camp.applied"
+            );
+            start_location.survey_radius()
+        } else {
+            warn!(
+                target: "shadow_scale::command",
+                faction = %faction.0,
+                "command.found_camp.rejected=start_location_missing"
+            );
+            return;
+        };
+
+    if let Some(radius) = applied_radius {
+        let expires_at = tick.saturating_add(SCOUT_REVEAL_DURATION_TURNS * 2);
+        let mut reveals = app.world.resource_mut::<FogRevealLedger>();
+        reveals.queue(target, radius.max(MIN_SCOUT_REVEAL_RADIUS), expires_at);
+        push_command_event(
+            app,
+            tick,
+            CommandEventKind::FoundCamp,
+            faction,
+            format!("Camp -> ({}, {})", target_x, target_y),
+            Some(format!(
+                "radius={} expires={} cost={} provisions",
+                radius, expires_at, CAMP_PROVISION_COST
+            )),
+        );
+    } else {
+        push_command_event(
+            app,
+            tick,
+            CommandEventKind::FoundCamp,
+            faction,
+            format!("Camp -> ({}, {})", target_x, target_y),
+            Some(format!("cost={} provisions", CAMP_PROVISION_COST)),
+        );
+    }
+}
+
+fn handle_forage_tile(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    target_x: u32,
+    target_y: u32,
+    module_key: String,
+    band_entity_bits: Option<u64>,
+) {
+    let coords = UVec2::new(target_x, target_y);
+    let module = match FoodModule::from_str(module_key.trim()) {
+        Ok(module) => module,
+        Err(_) => {
+            warn!(
+                target: "shadow_scale::command",
+                command = "forage",
+                faction = %faction.0,
+                module = %module_key,
+                "command.forage.rejected=invalid_module"
+            );
+            emit_command_failure(
+                app,
+                CommandEventKind::Forage,
+                faction,
+                format!("Unknown food module '{}'.", module_key.trim()),
+            );
+            return;
+        }
+    };
+    let tile_entity = {
+        let registry = app.world.resource::<TileRegistry>();
+        registry.index(target_x, target_y)
+    };
+    let Some(tile_entity) = tile_entity else {
+        log_tile_rejection(
+            app,
+            faction,
+            coords,
+            "forage",
+            "out_of_bounds",
+            Some(CommandEventKind::Forage),
+        );
+        return;
+    };
+    let (tag_module, seasonal_weight) = {
+        let entity_ref = app.world.entity(tile_entity);
+        match entity_ref.get::<FoodModuleTag>() {
+            Some(tag) => (tag.module, tag.seasonal_weight.max(0.0)),
+            None => {
+                log_tile_rejection(
+                    app,
+                    faction,
+                    coords,
+                    "forage",
+                    "no_food_module",
+                    Some(CommandEventKind::Forage),
+                );
+                return;
+            }
+        }
+    };
+    if tag_module != module {
+        log_tile_rejection(
+            app,
+            faction,
+            coords,
+            "forage",
+            "module_mismatch",
+            Some(CommandEventKind::Forage),
+        );
+        return;
+    }
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        band_entity_bits,
+        "forage",
+        CommandEventKind::Forage,
+    ) else {
+        return;
+    };
+
+    if app.world.get::<HarvestAssignment>(band.entity).is_some() {
+        warn!(
+            target: "shadow_scale::command",
+            command = "forage",
+            faction = %faction.0,
+            band = %band.label,
+            "command.forage.rejected=band_busy"
+        );
+        emit_command_failure(
+            app,
+            CommandEventKind::Forage,
+            faction,
+            format!("{} is already assigned to a different task.", band.label),
+        );
+        return;
+    }
+
+    let home_coords = app
+        .world
+        .get::<PopulationCohort>(band.entity)
+        .and_then(|cohort| app.world.get::<Tile>(cohort.home).map(|tile| tile.position))
+        .unwrap_or(coords);
+    let distance = home_coords.x.abs_diff(coords.x) + home_coords.y.abs_diff(coords.y);
+    let travel_turns = estimate_travel_turns(distance);
+    let gather_turns = DEFAULT_HARVEST_WORK_TURNS.max(1);
+
+    let overlays_handle = app.world.resource::<SnapshotOverlaysConfigHandle>();
+    let food_config = overlays_handle.get();
+    let food_cfg = food_config.food();
+    let provisions_gain = (seasonal_weight * food_cfg.provisions_per_weight()).round() as i64;
+    let trade_weight = food_cfg.trade_goods_per_weight() + food_cfg.trade_bonus_for(&module);
+    let trade_goods_gain = (seasonal_weight * trade_weight).round() as i64;
+    if provisions_gain <= 0 && trade_goods_gain <= 0 {
+        log_tile_rejection(
+            app,
+            faction,
+            coords,
+            "forage",
+            "no_yield",
+            Some(CommandEventKind::Forage),
+        );
+        return;
+    }
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    let eta_turns = travel_turns + gather_turns;
+    {
+        let assignment = HarvestAssignment {
+            faction,
+            band_label: band.label.clone(),
+            module,
+            target_tile: tile_entity,
+            target_coords: coords,
+            travel_remaining: travel_turns,
+            travel_total: travel_turns,
+            gather_remaining: gather_turns,
+            gather_total: gather_turns,
+            provisions_reward: provisions_gain.max(0),
+            trade_goods_reward: trade_goods_gain.max(0),
+            started_tick: tick,
+        };
+        app.world.entity_mut(band.entity).insert(assignment);
+    }
+
+    let detail = format!(
+        "status=queued module={} band={} provisions={} trade_goods={} travel_turns={} gather_turns={}",
+        module.as_str(),
+        band.label,
+        provisions_gain.max(0),
+        trade_goods_gain.max(0),
+        travel_turns,
+        gather_turns
+    );
+    info!(
+        target: "shadow_scale::command",
+        command = "forage",
+        faction = %faction.0,
+        band = %band.label,
+        x = target_x,
+        y = target_y,
+        module = module.as_str(),
+        travel_turns,
+        gather_turns,
+        eta_turns,
+        "command.forage.queued"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Forage,
+        faction,
+        format!("Harvest -> ({}, {})", target_x, target_y),
+        Some(detail),
+    );
 }
 
 fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<String>) {
@@ -1561,6 +2257,49 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             faction: FactionId(faction_id),
             archetype_id,
         }),
+        ProtoCommandPayload::SetStartProfile { profile_id } => {
+            Some(Command::SetStartProfile { profile_id })
+        }
+        ProtoCommandPayload::ScoutArea {
+            faction_id,
+            target_x,
+            target_y,
+            band_entity_bits,
+        } => Some(Command::ScoutArea {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+            band_entity_bits,
+        }),
+        ProtoCommandPayload::FollowHerd {
+            faction_id,
+            herd_id,
+        } => Some(Command::FollowHerd {
+            faction: FactionId(faction_id),
+            herd_id,
+        }),
+        ProtoCommandPayload::FoundCamp {
+            faction_id,
+            target_x,
+            target_y,
+        } => Some(Command::FoundCamp {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+        }),
+        ProtoCommandPayload::ForageTile {
+            faction_id,
+            target_x,
+            target_y,
+            module,
+            band_entity_bits,
+        } => Some(Command::ForageTile {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+            module,
+            band_entity_bits,
+        }),
     }
 }
 
@@ -1596,6 +2335,352 @@ fn apply_heat(app: &mut bevy::prelude::App, entity_bits: u64, delta_raw: i64) {
     } else {
         warn!("Entity {} not found for heat command", entity_bits);
     }
+}
+
+fn ensure_land_tile(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    coords: UVec2,
+    command_label: &str,
+    event_kind: Option<CommandEventKind>,
+) -> Option<Entity> {
+    let tile_entity = {
+        let registry = app.world.resource::<TileRegistry>();
+        registry.index(coords.x, coords.y)
+    };
+    let Some(tile_entity) = tile_entity else {
+        log_tile_rejection(
+            app,
+            faction,
+            coords,
+            command_label,
+            "out_of_bounds",
+            event_kind,
+        );
+        return None;
+    };
+    let Some(tile) = app.world.get::<Tile>(tile_entity) else {
+        log_tile_rejection(
+            app,
+            faction,
+            coords,
+            command_label,
+            "tile_missing",
+            event_kind,
+        );
+        return None;
+    };
+    if tile.terrain_tags.contains(TerrainTags::WATER) {
+        log_tile_rejection(
+            app,
+            faction,
+            coords,
+            command_label,
+            "water_tile",
+            event_kind,
+        );
+        return None;
+    }
+    Some(tile_entity)
+}
+
+fn resolve_starting_unit_entity(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    entity_bits: u64,
+    command_label: &str,
+    event_kind: CommandEventKind,
+) -> Option<Entity> {
+    let Some(entity) = entity_from_bits(entity_bits) else {
+        warn!(
+            target: "shadow_scale::command",
+            command = command_label,
+            faction = %faction.0,
+            "command.starting_unit.rejected=invalid_entity_bits"
+        );
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("Unit id {} is invalid.", entity_bits),
+        );
+        return None;
+    };
+    if !app.world.entities().contains(entity) {
+        warn!(
+            target: "shadow_scale::command",
+            command = command_label,
+            faction = %faction.0,
+            entity_bits,
+            "command.starting_unit.rejected=entity_not_found"
+        );
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("Unit id {} does not exist in the simulation.", entity_bits),
+        );
+        return None;
+    }
+    if app.world.get::<StartingUnit>(entity).is_none() {
+        warn!(
+            target: "shadow_scale::command",
+            command = command_label,
+            faction = %faction.0,
+            entity_bits,
+            "command.starting_unit.rejected=entity_not_starting_unit"
+        );
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("Unit id {} is not a controllable band.", entity_bits),
+        );
+        return None;
+    }
+    Some(entity)
+}
+
+struct SelectedBand {
+    entity: Entity,
+    label: String,
+}
+
+fn select_starting_band(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_entity_bits: Option<u64>,
+    command_label: &str,
+    event_kind: CommandEventKind,
+) -> Option<SelectedBand> {
+    if let Some(bits) = band_entity_bits {
+        let entity = resolve_starting_unit_entity(app, faction, bits, command_label, event_kind)?;
+        return Some(SelectedBand {
+            entity,
+            label: starting_unit_label(app, entity),
+        });
+    }
+
+    let mut query = app
+        .world
+        .query::<(Entity, &PopulationCohort, &StartingUnit)>();
+    for (entity, cohort, unit) in query.iter(&app.world) {
+        if cohort.faction == faction {
+            return Some(SelectedBand {
+                entity,
+                label: unit.kind.clone(),
+            });
+        }
+    }
+
+    warn!(
+        target: "shadow_scale::command",
+        command = command_label,
+        faction = %faction.0,
+        "command.starting_unit.rejected=none_available"
+    );
+    emit_command_failure(
+        app,
+        event_kind,
+        faction,
+        "No available bands can accept this order right now.",
+    );
+    None
+}
+
+fn starting_unit_label(app: &bevy::prelude::App, entity: Entity) -> String {
+    app.world
+        .get::<StartingUnit>(entity)
+        .map(|unit| unit.kind.clone())
+        .unwrap_or_else(|| format!("starting_unit:{}", entity.index()))
+}
+
+fn consume_inventory_item(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    item: &str,
+    amount: i64,
+    command_label: &str,
+    event_kind: CommandEventKind,
+) -> bool {
+    if amount <= 0 {
+        return true;
+    }
+    let available = {
+        let inventory = app.world.resource::<FactionInventory>();
+        inventory
+            .stockpile(faction)
+            .and_then(|entries| entries.get(item))
+            .copied()
+            .unwrap_or(0)
+    };
+    if available < amount {
+        warn!(
+            target: "shadow_scale::command",
+            command = command_label,
+            faction = %faction.0,
+            item,
+            required = amount,
+            available,
+            "command.inventory.rejected=insufficient"
+        );
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!(
+                "{} {} required but only {} available.",
+                amount, item, available
+            ),
+        );
+        return false;
+    }
+    {
+        let mut inventory = app.world.resource_mut::<FactionInventory>();
+        inventory.take_stockpile(faction, item, amount);
+    }
+    true
+}
+
+fn refresh_herd_telemetry(app: &mut bevy::prelude::App) {
+    let entries = {
+        let registry = match app.world.get_resource::<HerdRegistry>() {
+            Some(res) => res,
+            None => return,
+        };
+        registry.snapshot_entries()
+    };
+    if let Some(mut telemetry) = app.world.get_resource_mut::<HerdTelemetry>() {
+        telemetry.entries = entries;
+    }
+}
+
+fn apply_herd_rewards(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    consumed_biomass: f32,
+) -> (i64, i64) {
+    if consumed_biomass <= f32::EPSILON {
+        return (0, 0);
+    }
+    let provisions_gain = (consumed_biomass * HERD_PROVISIONS_YIELD_PER_BIOMASS).round() as i64;
+    let trade_goods_gain = (consumed_biomass * HERD_TRADE_GOODS_YIELD_PER_BIOMASS).round() as i64;
+    if provisions_gain <= 0 && trade_goods_gain <= 0 {
+        return (0, 0);
+    }
+    let mut inventory = app.world.resource_mut::<FactionInventory>();
+    if provisions_gain > 0 {
+        inventory.add_stockpile(faction, "provisions", provisions_gain);
+    }
+    if trade_goods_gain > 0 {
+        inventory.add_stockpile(faction, "trade_goods", trade_goods_gain);
+    }
+    (provisions_gain, trade_goods_gain)
+}
+
+fn push_command_event(
+    app: &mut bevy::prelude::App,
+    tick: u64,
+    kind: CommandEventKind,
+    faction: FactionId,
+    label: String,
+    detail: Option<String>,
+) {
+    if let Some(mut log) = app.world.get_resource_mut::<CommandEventLog>() {
+        log.push(CommandEventEntry::new(tick, kind, faction, label, detail));
+    }
+}
+
+fn emit_command_failure(
+    app: &mut bevy::prelude::App,
+    kind: CommandEventKind,
+    faction: FactionId,
+    detail: impl Into<String>,
+) {
+    let tick = app.world.resource::<SimulationTick>().0;
+    let summary = format!("{} failed", command_kind_display(kind));
+    push_command_event(app, tick, kind, faction, summary, Some(detail.into()));
+}
+
+fn command_kind_display(kind: CommandEventKind) -> &'static str {
+    match kind {
+        CommandEventKind::Scout => "Scout",
+        CommandEventKind::FollowHerd => "Follow herd",
+        CommandEventKind::FoundCamp => "Found camp",
+        CommandEventKind::Forage => "Harvest",
+    }
+}
+
+fn entity_from_bits(bits: u64) -> Option<Entity> {
+    std::panic::catch_unwind(|| bevy::prelude::Entity::from_bits(bits)).ok()
+}
+
+fn log_tile_rejection(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    coords: UVec2,
+    command_label: &str,
+    reason: &str,
+    event_kind: Option<CommandEventKind>,
+) {
+    warn!(
+        target: "shadow_scale::command",
+        command = command_label,
+        faction = %faction.0,
+        x = coords.x,
+        y = coords.y,
+        reason,
+        "command.tile_validation.failed"
+    );
+    if let Some(kind) = event_kind {
+        let human_reason = describe_tile_rejection(reason);
+        let detail = format!(
+            "Tile ({}, {}): {} ({})",
+            coords.x, coords.y, human_reason, reason
+        );
+        emit_command_failure(app, kind, faction, detail);
+    }
+}
+
+fn describe_tile_rejection(reason: &str) -> &'static str {
+    match reason {
+        "out_of_bounds" => "Destination is outside the playable area",
+        "tile_missing" => "Tile data is unavailable",
+        "water_tile" => "Cannot perform this action on a water tile",
+        "no_food_module" => "Tile lacks a harvestable food source",
+        "module_mismatch" => "Food source does not match the requested type",
+        "no_yield" => "This site has no remaining seasonal yield",
+        _ => "Tile is not valid for this command",
+    }
+}
+
+fn broadcast_command_events_if_needed(
+    app: &mut bevy::prelude::App,
+    snapshot_server_bin: Option<&SnapshotServer>,
+    snapshot_server_flat: Option<&SnapshotServer>,
+) {
+    let events_state = {
+        let log = app.world.resource::<CommandEventLog>();
+        command_events_to_state(log)
+    };
+
+    let mut history = app.world.resource_mut::<SnapshotHistory>();
+    if let Some((binary, flat)) = history.update_command_events(events_state) {
+        if let Some(server) = snapshot_server_bin {
+            server.broadcast(binary.as_ref());
+        }
+        if let Some(server) = snapshot_server_flat {
+            server.broadcast(flat.as_ref());
+        }
+    }
+}
+
+fn estimate_travel_turns(distance: u32) -> u32 {
+    if distance == 0 {
+        return 0;
+    }
+    let speed = DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN.max(0.25);
+    ((distance as f32 / speed).ceil() as u32).max(1)
 }
 
 fn handle_order_submission(

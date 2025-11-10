@@ -1,4 +1,4 @@
-[gd_scene load_steps=7 format=3 uid="uid://sgc4dtgnqkbv"]
+[gd_scene load_steps=8 format=3 uid="uid://sgc4dtgnqkbv"]
 
 [ext_resource type="Script" uid="uid://boqelkrrb8mkn" path="res://src/scripts/Main.gd" id="1"]
 [ext_resource type="Script" uid="uid://xyeiriexdugg" path="res://src/scripts/MapView.gd" id="2"]
@@ -6,6 +6,7 @@
 [ext_resource type="Script" uid="uid://dgjdlxbpsrrw6" path="res://src/scripts/Inspector.gd" id="4"]
 [ext_resource type="Script" uid="uid://cq8j33gird4si" path="res://src/scripts/TickSparkline.gd" id="5"]
 [ext_resource type="Script" uid="uid://dnhxgwd0jtak5" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="6"]
+[ext_resource type="Script" path="res://src/scripts/ui/AutoSizingPanel.gd" id="7"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1")
@@ -31,11 +32,155 @@ offset_top = 48.0
 theme_override_colors/font_color = Color(0.8, 0.95, 1, 1)
 text = "Units: 0"
 
-[node name="InspectorFontLabel" type="Label" parent="HUD"]
+[node name="CampaignTitleLabel" type="Label" parent="HUD"]
 offset_left = 16.0
 offset_top = 80.0
-theme_override_colors/font_color = Color(0.95, 0.8, 0.4, 1)
-text = "UI zoom:"
+theme_override_colors/font_color = Color(0.95, 0.9, 0.75, 1)
+text = "Trail Sovereigns"
+
+[node name="CampaignSubtitleLabel" type="Label" parent="HUD"]
+offset_left = 16.0
+offset_top = 108.0
+theme_override_colors/font_color = Color(0.8, 0.9, 1, 1)
+text = "Nomadic strategy saga"
+
+[node name="VictoryLabel" type="RichTextLabel" parent="HUD"]
+offset_left = 16.0
+offset_top = 140.0
+offset_right = 360.0
+offset_bottom = 220.0
+bbcode_enabled = true
+scroll_active = false
+text = "[b]Victory[/b]\n[i]Awaiting telemetry.[/i]"
+
+
+[node name="SelectionPanel" type="PanelContainer" parent="HUD"]
+script = ExtResource("7")
+target_width = 320.0
+min_height = 140.0
+max_height = 420.0
+bottom_margin = 40.0
+custom_minimum_size = Vector2(320, 0)
+offset_left = 16.0
+offset_top = 230.0
+offset_right = 336.0
+offset_bottom = 360.0
+visible = false
+
+[node name="Margin" type="MarginContainer" parent="HUD/SelectionPanel"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
+
+[node name="Scroll" type="ScrollContainer" parent="HUD/SelectionPanel/Margin"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+vertical_scroll_mode = 2
+custom_minimum_size = Vector2(320, 0)
+
+[node name="VBox" type="VBoxContainer" parent="HUD/SelectionPanel/Margin/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+[node name="SelectionTitle" type="Label" parent="HUD/SelectionPanel/Margin/Scroll/VBox"]
+text = "Selection"
+
+[node name="SelectionDetail" type="Label" parent="HUD/SelectionPanel/Margin/Scroll/VBox"]
+text = ""
+autowrap_mode = 2
+
+[node name="UnitButtons" type="HBoxContainer" parent="HUD/SelectionPanel/Margin/Scroll/VBox"]
+size_flags_horizontal = 3
+visible = false
+
+[node name="UnitScoutButton" type="Button" parent="HUD/SelectionPanel/Margin/Scroll/VBox/UnitButtons"]
+text = "Scout Area"
+
+[node name="UnitCampButton" type="Button" parent="HUD/SelectionPanel/Margin/Scroll/VBox/UnitButtons"]
+text = "Found Camp"
+
+[node name="HerdButtons" type="HBoxContainer" parent="HUD/SelectionPanel/Margin/Scroll/VBox"]
+size_flags_horizontal = 3
+visible = false
+
+[node name="FollowHerdButton" type="Button" parent="HUD/SelectionPanel/Margin/Scroll/VBox/HerdButtons"]
+text = "Follow Herd"
+
+[node name="FoodButtons" type="HBoxContainer" parent="HUD/SelectionPanel/Margin/Scroll/VBox"]
+size_flags_horizontal = 3
+visible = false
+
+[node name="ForageButton" type="Button" parent="HUD/SelectionPanel/Margin/Scroll/VBox/FoodButtons"]
+text = "Harvest"
+
+
+[node name="CommandFeedPanel" type="Panel" parent="HUD"]
+script = ExtResource("7")
+target_width = 520.0
+min_height = 120.0
+max_height = 360.0
+bottom_margin = 24.0
+anchor_left = 1.0
+anchor_top = 0.0
+anchor_right = 1.0
+anchor_bottom = 0.0
+offset_left = -520.0
+offset_top = 20.0
+offset_right = -20.0
+offset_bottom = 220.0
+
+[node name="MarginContainer" type="MarginContainer" parent="HUD/CommandFeedPanel"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = 0.0
+offset_bottom = 0.0
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 8
+
+[node name="VBoxContainer" type="VBoxContainer" parent="HUD/CommandFeedPanel/MarginContainer"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = 0.0
+offset_bottom = 0.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="CommandFeedHeading" type="Label" parent="HUD/CommandFeedPanel/MarginContainer/VBoxContainer"]
+theme_override_font_sizes/font_size = 18
+theme_override_colors/font_color = Color(0.9, 0.95, 1, 1)
+text = "Command Feed"
+
+[node name="CommandFeedScroll" type="ScrollContainer" parent="HUD/CommandFeedPanel/MarginContainer/VBoxContainer"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = 0.0
+offset_bottom = 0.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+vertical_scroll_mode = 2
+
+[node name="CommandFeedLabel" type="RichTextLabel" parent="HUD/CommandFeedPanel/MarginContainer/VBoxContainer/CommandFeedScroll"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = 0.0
+offset_bottom = 0.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 3
+size_flags_vertical = 0
+bbcode_enabled = true
+scroll_active = false
+fit_content = true
+autowrap_mode = 2
+text = "[i]No command activity yet.[/i]"
 
 [node name="ZoomControls" type="HBoxContainer" parent="HUD"]
 offset_left = 129.0
@@ -300,6 +445,19 @@ size_flags_horizontal = 3
 bbcode_enabled = true
 fit_content = true
 
+[node name="TileActionRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/TileSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="TileScoutButton" type="Button" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileActionRow"]
+layout_mode = 2
+text = "Scout Tile"
+
+[node name="TileFoundCampButton" type="Button" parent="Inspector/RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileActionRow"]
+layout_mode = 2
+text = "Found Camp Here"
+
 [node name="Map" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
 visible = false
 layout_mode = 2
@@ -336,6 +494,42 @@ text = "Generate Map"
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Changing size resets the simulation. Press Enter to toggle terrain shading on/off."
+
+[node name="ScenarioSection" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Map/MapVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="ScenarioLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Map/MapVBox/ScenarioSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Start Profile"
+
+[node name="ScenarioDropdown" type="OptionButton" parent="Inspector/RootPanel/TabContainer/Map/MapVBox/ScenarioSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ScenarioDescription" type="Label" parent="Inspector/RootPanel/TabContainer/Map/MapVBox/ScenarioSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+autowrap_mode = 1
+text = "Select a start profile to see its description."
+
+[node name="ScenarioActions" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Map/MapVBox/ScenarioSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="ApplyScenarioButton" type="Button" parent="Inspector/RootPanel/TabContainer/Map/MapVBox/ScenarioSection/ScenarioActions"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Apply Profile"
+
+[node name="RegenerateToggle" type="CheckButton" parent="Inspector/RootPanel/TabContainer/Map/MapVBox/ScenarioSection/ScenarioActions"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Regenerate map"
+button_pressed = true
 
 [node name="LogisticsSection" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Map/MapVBox"]
 layout_mode = 2
@@ -476,6 +670,38 @@ size_flags_horizontal = 3
 bbcode_enabled = true
 text = "[i]No crisis alerts recorded.[/i]"
 fit_content = true
+
+[node name="Victory" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 10
+
+[node name="VictoryVBox" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Victory"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="VictorySummaryText" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Victory/VictoryVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+text = "[b]Victory Progress[/b]\n[i]Awaiting telemetry.[/i]"
+
+[node name="VictoryModesLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Victory/VictoryVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Victory Modes"
+
+[node name="VictoryModesList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Victory/VictoryVBox"]
+custom_minimum_size = Vector2(0, 160)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+allow_rmb_select = true
 
 [node name="Culture" type="ScrollContainer" parent="Inspector/RootPanel/TabContainer"]
 visible = false
@@ -1317,6 +1543,99 @@ value = 100000.0
 layout_mode = 2
 text = "Apply Heat"
 
+[node name="ScenarioCommands" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="ScenarioCommandLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands"]
+layout_mode = 2
+text = "Scenario Commands"
+
+[node name="ScenarioFactionRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="ScenarioFactionLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands/ScenarioFactionRow"]
+layout_mode = 2
+text = "Faction"
+
+[node name="ScenarioFactionSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands/ScenarioFactionRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+max_value = 16.0
+step = 1.0
+
+[node name="ScoutRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="ScoutLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow"]
+layout_mode = 2
+text = "Scout"
+
+[node name="ScoutXSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 512.0
+step = 1.0
+
+[node name="ScoutYSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 512.0
+step = 1.0
+
+[node name="ScoutExecuteButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow"]
+layout_mode = 2
+text = "Scout Hex"
+
+[node name="FollowRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="FollowLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow"]
+layout_mode = 2
+text = "Follow Herd"
+
+[node name="FollowHerdField" type="LineEdit" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "herd id (e.g. trail_herd_a)"
+
+[node name="FollowHerdButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow"]
+layout_mode = 2
+text = "Follow"
+
+[node name="CampRow" type="HBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="CampLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands/CampRow"]
+layout_mode = 2
+text = "Found Camp"
+
+[node name="CampXSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands/CampRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 512.0
+step = 1.0
+
+[node name="CampYSpin" type="SpinBox" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands/CampRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 512.0
+step = 1.0
+
+[node name="CampExecuteButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/ScenarioCommands/CampRow"]
+layout_mode = 2
+text = "Found"
+
 [node name="ConfigControls" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer/Commands"]
 layout_mode = 2
 size_flags_horizontal = 3
@@ -1341,6 +1660,36 @@ text = "Reload Turn Pipeline"
 [node name="SnapshotOverlaysReloadButton" type="Button" parent="Inspector/RootPanel/TabContainer/Commands/ConfigControls/ConfigRow"]
 layout_mode = 2
 text = "Reload Snapshot Overlays"
+
+[node name="Fauna" type="VBoxContainer" parent="Inspector/RootPanel/TabContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 6
+metadata/_tab_index = 13
+
+[node name="FaunaHeader" type="Label" parent="Inspector/RootPanel/TabContainer/Fauna"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Herd Telemetry"
+
+[node name="FaunaList" type="ItemList" parent="Inspector/RootPanel/TabContainer/Fauna"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+auto_height = true
+
+[node name="FaunaDetail" type="RichTextLabel" parent="Inspector/RootPanel/TabContainer/Fauna"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+text = "[i]Awaiting telemetry.[/i]"
+
+[node name="FaunaFollowButton" type="Button" parent="Inspector/RootPanel/TabContainer/Fauna"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Follow Selected Herd"
 
 [node name="ConfigHintLabel" type="Label" parent="Inspector/RootPanel/TabContainer/Commands/ConfigControls"]
 layout_mode = 2

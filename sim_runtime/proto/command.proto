@@ -158,6 +158,36 @@ message SpawnCrisisCommand {
   string archetype_id = 2;
 }
 
+message SetStartProfileCommand {
+  string profile_id = 1;
+}
+
+message ScoutAreaCommand {
+  uint32 faction_id = 1;
+  uint32 target_x = 2;
+  uint32 target_y = 3;
+  optional uint64 band_entity_bits = 4;
+}
+
+message FollowHerdCommand {
+  uint32 faction_id = 1;
+  string herd_id = 2;
+}
+
+message FoundCampCommand {
+  uint32 faction_id = 1;
+  uint32 target_x = 2;
+  uint32 target_y = 3;
+}
+
+message ForageTileCommand {
+  uint32 faction_id = 1;
+  uint32 target_x = 2;
+  uint32 target_y = 3;
+  string module = 4;
+  optional uint64 band_entity_bits = 5;
+}
+
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
@@ -181,5 +211,10 @@ message CommandEnvelope {
     ReloadConfigCommand reload_config = 16;
     SetCrisisAutoSeedCommand set_crisis_auto_seed = 19;
     SpawnCrisisCommand spawn_crisis = 20;
+    SetStartProfileCommand set_start_profile = 21;
+    ScoutAreaCommand scout_area = 22;
+    FollowHerdCommand follow_herd = 23;
+    FoundCampCommand found_camp = 24;
+    ForageTileCommand forage_tile = 25;
   }
 }

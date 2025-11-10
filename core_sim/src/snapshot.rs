@@ -1,37 +1,44 @@
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use bevy::{ecs::system::SystemParam, prelude::*};
 use log::warn;
 use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
-    AxisBiasState, CorruptionLedger, CorruptionSubsystem, CrisisGaugeState,
+    AxisBiasState, CommandEventState, CorruptionLedger, CorruptionSubsystem, CrisisGaugeState,
     CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
-    CultureTraitEntry, DiscoveryProgressEntry, ElevationOverlayState, FloatRasterState,
+    CultureTraitEntry, DiscoveryProgressEntry, ElevationOverlayState,
+    FactionInventoryEntryState as SchemaFactionInventoryEntryState,
+    FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FoodModuleState,
     GenerationState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
-    GreatDiscoveryState, GreatDiscoveryTelemetryState, HydrologyOverlayState,
-    InfluentialIndividualState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
-    KnowledgeTimelineEventState, LogisticsLinkState, MountainKind, PendingMigrationState,
-    PopulationCohortState, PowerIncidentSeverity, PowerIncidentState, PowerNodeState,
-    PowerTelemetryState, ScalarRasterState, SentimentAxisTelemetry, SentimentDriverCategory,
-    SentimentDriverState, SentimentTelemetryState, SnapshotHeader, StartMarkerState,
-    TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState, WorldDelta,
+    GreatDiscoveryState, GreatDiscoveryTelemetryState, HarvestTaskState, HerdTelemetryState,
+    HydrologyOverlayState, InfluentialIndividualState, KnowledgeLedgerEntryState,
+    KnowledgeMetricsState, KnowledgeTimelineEventState, LogisticsLinkState, MountainKind,
+    PendingMigrationState, PopulationCohortState, PowerIncidentSeverity, PowerIncidentState,
+    PowerNodeState, PowerTelemetryState, ScalarRasterState, ScoutTaskState, SentimentAxisTelemetry,
+    SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState, SnapshotHeader,
+    StartMarkerState, TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge,
+    TradeLinkState, VictoryModeSnapshotState, VictoryResultState, VictorySnapshotState, WorldDelta,
     WorldSnapshot,
 };
 
 use crate::{
     components::{
-        fragments_from_contract, fragments_to_contract, ElementKind, LogisticsLink,
-        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, Tile, TradeLink,
+        fragments_from_contract, fragments_to_contract, ElementKind, HarvestAssignment,
+        LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort, PowerNode,
+        ScoutAssignment, Tile, TradeLink,
     },
     culture::{
         CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
         CultureManager, CultureOwner, CultureTensionKind as SimCultureTensionKind,
         CultureTensionRecord, CultureTraitAxis as SimCultureTraitAxis,
     },
+    fauna::HerdTelemetry,
+    food::{FoodModule, FoodModuleTag},
     generations::{GenerationProfile, GenerationRegistry},
     great_discovery::{
         snapshot_definitions, snapshot_discoveries, snapshot_progress, snapshot_telemetry,
@@ -53,11 +60,14 @@ use crate::{
     orders::FactionId,
     power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
     resources::{
-        CorruptionLedgers, CorruptionTelemetry, DiscoveryProgressLedger, MoistureRaster,
-        SentimentAxisBias, SimulationConfig, SimulationTick, StartLocation, TileRegistry,
+        CommandEventLog, CorruptionLedgers, CorruptionTelemetry, DiscoveryProgressLedger,
+        FactionInventory, FogRevealLedger, MoistureRaster, SentimentAxisBias, SimulationConfig,
+        SimulationTick, StartLocation, TileRegistry,
     },
     scalar::Scalar,
     snapshot_overlays_config::{SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle},
+    start_profile::{snapshot_profiles, CampaignLabel, FogMode, StartProfilesHandle},
+    victory::VictoryState,
 };
 
 use crate::mapgen::MountainType;
@@ -89,10 +99,17 @@ pub struct SnapshotContext<'w> {
     pub metrics: Res<'w, SimulationMetrics>,
     pub crisis_overlay: Res<'w, CrisisOverlayCache>,
     pub start_location: Res<'w, StartLocation>,
+    pub herds: Res<'w, HerdTelemetry>,
+    pub fog_reveals: Res<'w, FogRevealLedger>,
     pub hydrology: Res<'w, HydrologyState>,
     pub elevation: Res<'w, ElevationField>,
     pub moisture: Option<Res<'w, MoistureRaster>>,
     pub map_presets: Res<'w, MapPresetsHandle>,
+    pub campaign_label: Option<Res<'w, CampaignLabel>>,
+    pub start_profiles: Res<'w, StartProfilesHandle>,
+    pub victory: Res<'w, VictoryState>,
+    pub faction_inventory: Res<'w, FactionInventory>,
+    pub command_events: Res<'w, CommandEventLog>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -172,6 +189,11 @@ pub struct SnapshotHistory {
     hydrology_overlay: HydrologyOverlayState,
     elevation_overlay: ElevationOverlayState,
     corruption: CorruptionLedger,
+    victory: VictorySnapshotState,
+    faction_inventory: Vec<SchemaFactionInventoryState>,
+    command_events: Vec<CommandEventState>,
+    herds: Vec<HerdTelemetryState>,
+    food_modules: Vec<FoodModuleState>,
     history: VecDeque<StoredSnapshot>,
 }
 
@@ -225,6 +247,11 @@ impl SnapshotHistory {
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
             corruption: CorruptionLedger::default(),
+            victory: VictorySnapshotState::default(),
+            faction_inventory: Vec::new(),
+            command_events: Vec::new(),
+            herds: Vec::new(),
+            food_modules: Vec::new(),
             history: VecDeque::new(),
         }
     }
@@ -480,6 +507,37 @@ impl SnapshotHistory {
             Some(crisis_overlay_state.clone())
         };
 
+        let victory_state = snapshot.victory.clone();
+        let victory_delta = if self.victory == victory_state {
+            None
+        } else {
+            Some(victory_state.clone())
+        };
+        let faction_inventory_state = snapshot.faction_inventory.clone();
+        let faction_inventory_delta = if self.faction_inventory == faction_inventory_state {
+            None
+        } else {
+            Some(faction_inventory_state.clone())
+        };
+        let command_events_state = snapshot.command_events.clone();
+        let command_events_delta = if self.command_events == command_events_state {
+            None
+        } else {
+            Some(command_events_state.clone())
+        };
+        let herd_state = snapshot.herds.clone();
+        let herds_delta = if self.herds == herd_state {
+            None
+        } else {
+            Some(herd_state.clone())
+        };
+        let food_modules_state = snapshot.food_modules.clone();
+        let food_modules_delta = if self.food_modules == food_modules_state {
+            None
+        } else {
+            Some(food_modules_state.clone())
+        };
+
         let delta = WorldDelta {
             header: snapshot.header.clone(),
             tiles: diff_new(&self.tiles, &tiles_index),
@@ -503,6 +561,11 @@ impl SnapshotHistory {
             knowledge_ledger: diff_new(&self.knowledge_ledger, &knowledge_ledger_index),
             removed_knowledge_ledger: diff_removed(&self.knowledge_ledger, &knowledge_ledger_index),
             knowledge_metrics: knowledge_metrics_delta.clone(),
+            victory: victory_delta.clone(),
+            command_events: command_events_delta.clone(),
+            faction_inventory: faction_inventory_delta.clone(),
+            herds: herds_delta.clone(),
+            food_modules: food_modules_delta.clone(),
             knowledge_timeline: knowledge_timeline_delta.clone(),
             crisis_telemetry: crisis_telemetry_delta.clone(),
             crisis_overlay: crisis_overlay_delta.clone(),
@@ -568,6 +631,11 @@ impl SnapshotHistory {
         self.corruption = corruption_state;
         self.culture_tensions = culture_tensions_state;
         self.discovery_progress = discovery_index;
+        self.victory = victory_state;
+        self.faction_inventory = faction_inventory_state;
+        self.command_events = command_events_state;
+        self.herds = herd_state;
+        self.food_modules = food_modules_state;
         self.last_snapshot = Some(snapshot_arc);
         self.last_delta = Some(delta_arc);
         self.encoded_snapshot = Some(stored.encoded_snapshot.clone());
@@ -639,6 +707,11 @@ impl SnapshotHistory {
             .iter()
             .map(|state| ((state.faction, state.discovery), state.clone()))
             .collect();
+        self.victory = entry.snapshot.victory.clone();
+        self.faction_inventory = entry.snapshot.faction_inventory.clone();
+        self.command_events = entry.snapshot.command_events.clone();
+        self.herds = entry.snapshot.herds.clone();
+        self.food_modules = entry.snapshot.food_modules.clone();
         self.great_discoveries = entry
             .snapshot
             .great_discoveries
@@ -720,6 +793,11 @@ impl SnapshotHistory {
             knowledge_ledger: Vec::new(),
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
+            victory: None,
+            command_events: None,
+            herds: None,
+            food_modules: None,
+            faction_inventory: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -781,6 +859,39 @@ impl SnapshotHistory {
 
         Some((encoded_delta, encoded_delta_flat))
     }
+
+    pub fn update_command_events(
+        &mut self,
+        events: Vec<CommandEventState>,
+    ) -> Option<EncodedBuffers> {
+        if self.command_events == events {
+            return None;
+        }
+
+        let last_snapshot = self.last_snapshot.as_ref()?;
+
+        self.command_events = events.clone();
+
+        let mut snapshot = (**last_snapshot).clone();
+        snapshot.command_events = events.clone();
+
+        let snapshot_arc = Arc::new(snapshot);
+        let encoded_snapshot = Arc::new(
+            encode_snapshot(snapshot_arc.as_ref()).expect("command event snapshot encoding failed"),
+        );
+        let encoded_snapshot_flat = Arc::new(encode_snapshot_flatbuffer(snapshot_arc.as_ref()));
+
+        self.last_snapshot = Some(snapshot_arc.clone());
+        self.encoded_snapshot = Some(encoded_snapshot.clone());
+        self.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
+        if let Some(back) = self.history.back_mut() {
+            back.snapshot = snapshot_arc.clone();
+            back.encoded_snapshot = encoded_snapshot.clone();
+            back.encoded_snapshot_flat = encoded_snapshot_flat.clone();
+        }
+
+        Some((encoded_snapshot, encoded_snapshot_flat))
+    }
     pub fn update_influencers(
         &mut self,
         states: Vec<InfluentialIndividualState>,
@@ -824,6 +935,11 @@ impl SnapshotHistory {
             knowledge_ledger: Vec::new(),
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
+            victory: None,
+            command_events: None,
+            herds: None,
+            food_modules: None,
+            faction_inventory: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -922,6 +1038,11 @@ impl SnapshotHistory {
             knowledge_ledger: Vec::new(),
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
+            victory: None,
+            command_events: None,
+            herds: None,
+            food_modules: None,
+            faction_inventory: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -994,9 +1115,14 @@ impl SnapshotHistory {
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn capture_snapshot(
     ctx: SnapshotContext,
-    tiles: Query<(Entity, &Tile)>,
+    tiles: Query<(Entity, &Tile, Option<&FoodModuleTag>)>,
     logistics_links: Query<(Entity, &LogisticsLink, &TradeLink)>,
-    populations: Query<(Entity, &PopulationCohort)>,
+    populations: Query<(
+        Entity,
+        &PopulationCohort,
+        Option<&HarvestAssignment>,
+        Option<&ScoutAssignment>,
+    )>,
     power_nodes: Query<(Entity, &PowerNode)>,
     power_grid: Res<PowerGridState>,
     knowledge_ledger: Res<KnowledgeLedger>,
@@ -1017,10 +1143,17 @@ pub fn capture_snapshot(
         metrics,
         crisis_overlay,
         start_location,
+        herds,
         hydrology,
+        fog_reveals,
         elevation,
         moisture,
         map_presets,
+        campaign_label,
+        start_profiles,
+        victory,
+        faction_inventory,
+        command_events,
     } = ctx;
     let overlays_config = overlays.get();
     let presets = map_presets.get();
@@ -1028,10 +1161,50 @@ pub fn capture_snapshot(
     let sea_level = preset_ref.map(|p| p.sea_level).unwrap_or(0.6);
     history.set_capacity(config.snapshot_history_limit.max(1));
 
-    let mut tile_states: Vec<TileState> = tiles
-        .iter()
-        .map(|(entity, tile)| tile_state(entity, tile))
-        .collect();
+    let mut tile_states: Vec<TileState> = Vec::new();
+    let mut food_module_states: Vec<FoodModuleState> = Vec::new();
+    let start_position = start_location.position();
+    let food_overlay = overlays_config.food();
+    let base_radius = start_location
+        .survey_radius()
+        .unwrap_or(food_overlay.default_radius());
+    let survey_radius = base_radius.saturating_add(food_overlay.radius_padding());
+    let preference = &config.start_profile_overrides.food_modules;
+    let enforce_module_match = preference.any();
+    let max_sites_per_module = food_overlay.max_sites_per_module();
+    let max_total_sites = food_overlay.max_total_sites();
+    let mut module_counts: HashMap<FoodModule, usize> = HashMap::new();
+    let mut total_food_sites = 0usize;
+    for (entity, tile, food_tag) in tiles.iter() {
+        tile_states.push(tile_state(entity, tile));
+        if let Some(tag) = food_tag {
+            if total_food_sites >= max_total_sites {
+                continue;
+            }
+            if enforce_module_match && !preference.matches(tag.module) {
+                continue;
+            }
+            if let Some(center) = start_position {
+                let distance = manhattan_distance(tile.position, center);
+                if distance > survey_radius {
+                    continue;
+                }
+            }
+            let count = module_counts.entry(tag.module).or_insert(0);
+            if *count >= max_sites_per_module {
+                continue;
+            }
+            *count += 1;
+            total_food_sites += 1;
+            food_module_states.push(FoodModuleState {
+                x: tile.position.x,
+                y: tile.position.y,
+                module: tag.module.as_str().to_string(),
+                kind: tag.module.site_kind().as_str().to_string(),
+                seasonal_weight: tag.seasonal_weight,
+            });
+        }
+    }
     for tile in tile_states.iter_mut() {
         let owner = CultureOwner(tile.entity);
         if let Some(layer) = culture.local_layer_by_owner(owner) {
@@ -1051,7 +1224,7 @@ pub fn capture_snapshot(
 
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
-        .map(|(entity, cohort)| population_state(entity, cohort))
+        .map(|(entity, cohort, harvest, scout)| population_state(entity, cohort, harvest, scout))
         .collect();
     population_states.sort_unstable_by_key(|state| state.entity);
 
@@ -1126,6 +1299,9 @@ pub fn capture_snapshot(
         &discovery_progress,
         config.grid_size,
         overlays_config.as_ref(),
+        start_location.as_ref(),
+        fog_reveals.as_ref(),
+        tick.0,
     );
     let culture_raster = culture_raster_from_layers(
         &tile_states,
@@ -1262,7 +1438,7 @@ pub fn capture_snapshot(
         annotations: crisis_overlay.annotations.clone(),
     };
 
-    let header = SnapshotHeader::new(
+    let mut header = SnapshotHeader::new(
         tick.0,
         tile_states.len(),
         logistics_states.len(),
@@ -1271,6 +1447,11 @@ pub fn capture_snapshot(
         power_states.len(),
         influencer_states.len(),
     );
+
+    if let Some(label_res) = campaign_label.as_ref() {
+        let label = label_res.as_ref();
+        header.campaign_label = Some(label.to_snapshot());
+    }
 
     let hydrology_overlay_state = HydrologyOverlayState {
         rivers: hydrology
@@ -1298,6 +1479,14 @@ pub fn capture_snapshot(
 
     let elevation_overlay_state =
         elevation_overlay_from_field(elevation.as_ref(), config.grid_size, sea_level);
+    let campaign_profiles_state: Vec<_> = snapshot_profiles(&start_profiles)
+        .into_iter()
+        .map(|entry| entry.to_schema())
+        .collect();
+    let herd_states = herd_snapshot_entries(&herds);
+    let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
+    let command_events_state = command_events_to_state(&command_events);
+    let victory_snapshot_state = victory_snapshot_from_resource(&victory);
 
     let snapshot = WorldSnapshot {
         header,
@@ -1318,6 +1507,12 @@ pub fn capture_snapshot(
         hydrology_overlay: hydrology_overlay_state,
         elevation_overlay: elevation_overlay_state.clone(),
         start_marker: start_marker_state.clone(),
+        victory: victory_snapshot_state.clone(),
+        herds: herd_states.clone(),
+        food_modules: food_module_states.clone(),
+        campaign_profiles: campaign_profiles_state,
+        faction_inventory: faction_inventory_state.clone(),
+        command_events: command_events_state.clone(),
         axis_bias: axis_bias_state,
         sentiment: sentiment_state,
         generations: generation_states,
@@ -1507,7 +1702,7 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             .migration
             .as_ref()
             .map(pending_migration_from_state);
-        world.spawn(PopulationCohort {
+        let mut spawned = world.spawn(PopulationCohort {
             home: home_entity,
             size: cohort_state.size,
             morale: Scalar::from_raw(cohort_state.morale),
@@ -1516,6 +1711,27 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             knowledge: fragments_from_contract(&cohort_state.knowledge_fragments),
             migration,
         });
+        if let Some(task_state) = cohort_state.harvest_task.as_ref() {
+            if let Some(&target_entity) = tile_entity_lookup.get(&task_state.target_tile) {
+                if let Some(assignment) = harvest_assignment_from_state(
+                    task_state,
+                    FactionId(cohort_state.faction),
+                    target_entity,
+                ) {
+                    spawned.insert(assignment);
+                }
+            }
+        }
+        if let Some(task_state) = cohort_state.scout_task.as_ref() {
+            if let Some(&target_entity) = tile_entity_lookup.get(&task_state.target_tile) {
+                let assignment = scout_assignment_from_state(
+                    task_state,
+                    FactionId(cohort_state.faction),
+                    target_entity,
+                );
+                spawned.insert(assignment);
+            }
+        }
     }
 
     // Update tile registry.
@@ -1705,6 +1921,28 @@ fn axis_bias_state_from_resource(bias: &SentimentAxisBias) -> AxisBiasState {
         equity: raw[2],
         agency: raw[3],
     }
+}
+
+fn victory_snapshot_from_resource(state: &VictoryState) -> VictorySnapshotState {
+    let modes = state
+        .modes
+        .iter()
+        .map(|mode| VictoryModeSnapshotState {
+            id: mode.id.0.clone(),
+            kind: mode.kind.as_str().to_string(),
+            progress: mode.progress,
+            threshold: mode.threshold,
+            achieved: mode.achieved,
+        })
+        .collect();
+
+    let winner = state.winner.as_ref().map(|winner| VictoryResultState {
+        mode: winner.mode.0.clone(),
+        faction: winner.faction.0,
+        tick: winner.tick,
+    });
+
+    VictorySnapshotState { modes, winner }
 }
 
 fn crisis_metric_kind_to_schema(kind: InternalCrisisMetricKind) -> SchemaCrisisMetricKind {
@@ -2415,12 +2653,16 @@ fn distribute_intensity(samples: &mut [i64], weights: &[i64], intensity_raw: i64
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fog_raster_from_discoveries(
     tiles: &[TileState],
     populations: &[PopulationCohortState],
     discovery: &DiscoveryProgressLedger,
     grid_size: UVec2,
     overlays: &SnapshotOverlaysConfig,
+    start_location: &StartLocation,
+    fog_reveals: &FogRevealLedger,
+    tick: u64,
 ) -> ScalarRasterState {
     let mut max_x = 0u32;
     let mut max_y = 0u32;
@@ -2433,136 +2675,205 @@ fn fog_raster_from_discoveries(
     let height = grid_size.y.max(max_y.saturating_add(1)).max(1);
     let total = (width as usize).saturating_mul(height as usize).max(1);
 
+    if matches!(start_location.fog_mode(), FogMode::Revealed) {
+        return ScalarRasterState {
+            width,
+            height,
+            samples: vec![Scalar::zero().raw(); total],
+        };
+    }
+
     let mut samples = vec![Scalar::one().raw(); total];
-    let mut tile_indices = HashMap::with_capacity(tiles.len());
-    for tile in tiles {
-        if tile.x < width && tile.y < height {
-            let idx = (tile.y as usize) * (width as usize) + tile.x as usize;
-            tile_indices.insert(tile.entity, idx);
-        }
-    }
+    let skip_coverage = matches!(start_location.fog_mode(), FogMode::Shroud);
 
-    let mut tile_faction_sizes: HashMap<u64, HashMap<u32, u64>> = HashMap::new();
-    let mut tile_local_weighted: HashMap<u64, (i128, i128)> = HashMap::new();
-
-    for cohort in populations {
-        let size = u64::from(cohort.size);
-        if size > 0 {
-            let faction_map = tile_faction_sizes.entry(cohort.home).or_default();
-            *faction_map.entry(cohort.faction).or_insert(0) += size;
-        }
-
-        if size == 0 {
-            continue;
-        }
-
-        let fragments = &cohort.knowledge_fragments;
-        let fragment_average_raw = if fragments.is_empty() {
-            0i64
-        } else {
-            let mut total = Scalar::zero();
-            for fragment in fragments {
-                total += Scalar::from_raw(fragment.progress).clamp(Scalar::zero(), Scalar::one());
+    if !skip_coverage {
+        let mut tile_indices = HashMap::with_capacity(tiles.len());
+        for tile in tiles {
+            if tile.x < width && tile.y < height {
+                let idx = (tile.y as usize) * (width as usize) + tile.x as usize;
+                tile_indices.insert(tile.entity, idx);
             }
-            let count = fragments.len() as u32;
-            (total / Scalar::from_u32(count))
-                .clamp(Scalar::zero(), Scalar::one())
-                .raw()
-        };
-
-        let weight = i128::from(size);
-        let entry = tile_local_weighted.entry(cohort.home).or_insert((0, 0));
-        entry.0 = entry
-            .0
-            .saturating_add(i128::from(fragment_average_raw) * weight);
-        entry.1 = entry.1.saturating_add(weight);
-    }
-
-    let mut tile_local_average: HashMap<u64, Scalar> = HashMap::new();
-    for (tile_entity, (weighted_sum, total_weight)) in tile_local_weighted {
-        if total_weight <= 0 {
-            continue;
         }
-        let mut average = weighted_sum / total_weight;
-        if average < 0 {
-            average = 0;
-        }
-        let scale = i128::from(Scalar::SCALE);
-        if average > scale {
-            average = scale;
-        }
-        tile_local_average.insert(tile_entity, Scalar::from_raw(average as i64));
-    }
 
-    let mut tile_controllers: HashMap<u64, u32> = HashMap::new();
-    for (tile_entity, faction_map) in &tile_faction_sizes {
-        let mut best: Option<(u32, u64)> = None;
-        for (&faction, &count) in faction_map.iter() {
-            best = match best {
-                None => Some((faction, count)),
-                Some((best_faction, best_count)) => {
-                    if count > best_count || (count == best_count && faction < best_faction) {
-                        Some((faction, count))
-                    } else {
-                        Some((best_faction, best_count))
-                    }
+        let mut tile_faction_sizes: HashMap<u64, HashMap<u32, u64>> = HashMap::new();
+        let mut tile_local_weighted: HashMap<u64, (i128, i128)> = HashMap::new();
+
+        for cohort in populations {
+            let size = u64::from(cohort.size);
+            if size > 0 {
+                let faction_map = tile_faction_sizes.entry(cohort.home).or_default();
+                *faction_map.entry(cohort.faction).or_insert(0) += size;
+            }
+
+            if size == 0 {
+                continue;
+            }
+
+            let fragments = &cohort.knowledge_fragments;
+            let fragment_average_raw = if fragments.is_empty() {
+                0i64
+            } else {
+                let mut total = Scalar::zero();
+                for fragment in fragments {
+                    total +=
+                        Scalar::from_raw(fragment.progress).clamp(Scalar::zero(), Scalar::one());
                 }
+                let count = fragments.len() as u32;
+                (total / Scalar::from_u32(count))
+                    .clamp(Scalar::zero(), Scalar::one())
+                    .raw()
             };
+
+            let weight = i128::from(size);
+            let entry = tile_local_weighted.entry(cohort.home).or_insert((0, 0));
+            entry.0 = entry
+                .0
+                .saturating_add(i128::from(fragment_average_raw) * weight);
+            entry.1 = entry.1.saturating_add(weight);
         }
-        if let Some((faction, _)) = best {
-            tile_controllers.insert(*tile_entity, faction);
+
+        let mut tile_local_average: HashMap<u64, Scalar> = HashMap::new();
+        for (tile_entity, (weighted_sum, total_weight)) in tile_local_weighted {
+            if total_weight <= 0 {
+                continue;
+            }
+            let mut average = weighted_sum / total_weight;
+            if average < 0 {
+                average = 0;
+            }
+            let scale = i128::from(Scalar::SCALE);
+            if average > scale {
+                average = scale;
+            }
+            tile_local_average.insert(tile_entity, Scalar::from_raw(average as i64));
         }
-    }
 
-    let blend_weight = overlays.fog().global_local_blend();
-
-    for tile in tiles {
-        let Some(&idx) = tile_indices.get(&tile.entity) else {
-            continue;
-        };
-
-        let global_cov = tile_controllers.get(&tile.entity).and_then(|&faction| {
-            discovery
-                .progress
-                .get(&FactionId(faction))
-                .and_then(|entries| {
-                    if entries.is_empty() {
-                        return None;
-                    }
-                    let mut total = Scalar::zero();
-                    let mut count = 0u32;
-                    for value in entries.values() {
-                        if value.raw() <= 0 {
-                            continue;
+        let mut tile_controllers: HashMap<u64, u32> = HashMap::new();
+        for (tile_entity, faction_map) in &tile_faction_sizes {
+            let mut best: Option<(u32, u64)> = None;
+            for (&faction, &count) in faction_map.iter() {
+                best = match best {
+                    None => Some((faction, count)),
+                    Some((best_faction, best_count)) => {
+                        if count > best_count || (count == best_count && faction < best_faction) {
+                            Some((faction, count))
+                        } else {
+                            Some((best_faction, best_count))
                         }
-                        total += (*value).clamp(Scalar::zero(), Scalar::one());
-                        count = count.saturating_add(1);
                     }
-                    if count == 0 {
-                        None
-                    } else {
-                        Some((total / Scalar::from_u32(count)).clamp(Scalar::zero(), Scalar::one()))
-                    }
-                })
-        });
+                };
+            }
+            if let Some((faction, _)) = best {
+                tile_controllers.insert(*tile_entity, faction);
+            }
+        }
 
-        let local_cov = tile_local_average.get(&tile.entity).copied();
+        let blend_weight = overlays.fog().global_local_blend();
 
-        let coverage = match (global_cov, local_cov) {
-            (Some(g), Some(l)) => ((g + l) * blend_weight).clamp(Scalar::zero(), Scalar::one()),
-            (Some(g), None) => g,
-            (None, Some(l)) => l,
-            (None, None) => Scalar::zero(),
-        };
+        for tile in tiles {
+            let Some(&idx) = tile_indices.get(&tile.entity) else {
+                continue;
+            };
 
-        let fog = (Scalar::one() - coverage).clamp(Scalar::zero(), Scalar::one());
-        samples[idx] = fog.raw();
+            let global_cov = tile_controllers.get(&tile.entity).and_then(|&faction| {
+                discovery
+                    .progress
+                    .get(&FactionId(faction))
+                    .and_then(|entries| {
+                        if entries.is_empty() {
+                            return None;
+                        }
+                        let mut total = Scalar::zero();
+                        let mut count = 0u32;
+                        for value in entries.values() {
+                            if value.raw() <= 0 {
+                                continue;
+                            }
+                            total += (*value).clamp(Scalar::zero(), Scalar::one());
+                            count = count.saturating_add(1);
+                        }
+                        if count == 0 {
+                            None
+                        } else {
+                            Some(
+                                (total / Scalar::from_u32(count))
+                                    .clamp(Scalar::zero(), Scalar::one()),
+                            )
+                        }
+                    })
+            });
+
+            let local_cov = tile_local_average.get(&tile.entity).copied();
+
+            let coverage = match (global_cov, local_cov) {
+                (Some(g), Some(l)) => ((g + l) * blend_weight).clamp(Scalar::zero(), Scalar::one()),
+                (Some(g), None) => g,
+                (None, Some(l)) => l,
+                (None, None) => Scalar::zero(),
+            };
+
+            let fog = (Scalar::one() - coverage).clamp(Scalar::zero(), Scalar::one());
+            samples[idx] = fog.raw();
+        }
     }
+
+    apply_start_location_reveal(&mut samples, width, height, start_location);
+    apply_scout_reveals(&mut samples, width, height, fog_reveals, tick);
 
     ScalarRasterState {
         width,
         height,
         samples,
+    }
+}
+
+fn apply_start_location_reveal(
+    samples: &mut [i64],
+    width: u32,
+    height: u32,
+    start_location: &StartLocation,
+) {
+    let Some(center) = start_location.position() else {
+        return;
+    };
+    let radius = start_location.survey_radius().unwrap_or(0);
+    clear_circle(samples, width, height, center, radius);
+}
+
+fn apply_scout_reveals(
+    samples: &mut [i64],
+    width: u32,
+    height: u32,
+    fog_reveals: &FogRevealLedger,
+    tick: u64,
+) {
+    if fog_reveals.is_empty() {
+        return;
+    }
+    for reveal in fog_reveals.iter_active(tick) {
+        clear_circle(samples, width, height, reveal.center, reveal.radius);
+    }
+}
+
+fn clear_circle(samples: &mut [i64], width: u32, height: u32, center: UVec2, radius: u32) {
+    if samples.is_empty() {
+        return;
+    }
+    let width = width.max(1) as usize;
+    let height = height.max(1) as usize;
+    let radius_i32 = radius.min(i32::MAX as u32) as i32;
+    let radius_sq = radius_i32.pow(2);
+    for y in 0..height {
+        for x in 0..width {
+            let dx = x as i32 - center.x as i32;
+            let dy = y as i32 - center.y as i32;
+            if dx * dx + dy * dy <= radius_sq {
+                let idx = y * width + x;
+                if idx < samples.len() {
+                    samples[idx] = 0;
+                }
+            }
+        }
     }
 }
 
@@ -2814,6 +3125,12 @@ fn tile_state(entity: Entity, tile: &Tile) -> TileState {
     }
 }
 
+fn manhattan_distance(a: UVec2, b: UVec2) -> u32 {
+    let dx = (a.x as i32 - b.x as i32).unsigned_abs();
+    let dy = (a.y as i32 - b.y as i32).unsigned_abs();
+    dx + dy
+}
+
 fn map_mountain_kind(kind: MountainType) -> MountainKind {
     match kind {
         MountainType::Fold => MountainKind::Fold,
@@ -2908,6 +3225,47 @@ fn pending_migration_from_state(state: &PendingMigrationState) -> PendingMigrati
     }
 }
 
+fn harvest_assignment_from_state(
+    state: &HarvestTaskState,
+    faction: FactionId,
+    target_tile: Entity,
+) -> Option<HarvestAssignment> {
+    let module = FoodModule::from_str(state.module.as_str()).ok()?;
+    Some(HarvestAssignment {
+        faction,
+        band_label: state.band_label.clone(),
+        module,
+        target_tile,
+        target_coords: UVec2::new(state.target_x, state.target_y),
+        travel_remaining: state.travel_remaining,
+        travel_total: state.travel_total.max(state.travel_remaining),
+        gather_remaining: state.gather_remaining,
+        gather_total: state.gather_total.max(state.gather_remaining),
+        provisions_reward: state.provisions_reward,
+        trade_goods_reward: state.trade_goods_reward,
+        started_tick: state.started_tick,
+    })
+}
+
+fn scout_assignment_from_state(
+    state: &ScoutTaskState,
+    faction: FactionId,
+    target_tile: Entity,
+) -> ScoutAssignment {
+    ScoutAssignment {
+        faction,
+        band_label: state.band_label.clone(),
+        target_tile,
+        target_coords: UVec2::new(state.target_x, state.target_y),
+        travel_remaining: state.travel_remaining,
+        travel_total: state.travel_total.max(state.travel_remaining),
+        reveal_radius: state.reveal_radius,
+        reveal_duration: state.reveal_duration.max(1),
+        morale_gain: state.morale_gain,
+        started_tick: state.started_tick,
+    }
+}
+
 fn discovery_progress_entries(ledger: &DiscoveryProgressLedger) -> Vec<DiscoveryProgressEntry> {
     let mut entries: Vec<DiscoveryProgressEntry> = Vec::new();
     for (faction_id, discoveries) in ledger.progress.iter() {
@@ -2927,7 +3285,12 @@ fn discovery_progress_entries(ledger: &DiscoveryProgressLedger) -> Vec<Discovery
     entries
 }
 
-fn population_state(entity: Entity, cohort: &PopulationCohort) -> PopulationCohortState {
+fn population_state(
+    entity: Entity,
+    cohort: &PopulationCohort,
+    harvest: Option<&HarvestAssignment>,
+    scout: Option<&ScoutAssignment>,
+) -> PopulationCohortState {
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     PopulationCohortState {
         entity: entity.to_bits(),
@@ -2938,6 +3301,40 @@ fn population_state(entity: Entity, cohort: &PopulationCohort) -> PopulationCoho
         faction: cohort.faction.0,
         knowledge_fragments: fragments_to_contract(&cohort.knowledge),
         migration,
+        harvest_task: harvest.map(harvest_assignment_to_state),
+        scout_task: scout.map(scout_assignment_to_state),
+    }
+}
+
+fn harvest_assignment_to_state(assignment: &HarvestAssignment) -> HarvestTaskState {
+    HarvestTaskState {
+        module: assignment.module.as_str().to_string(),
+        band_label: assignment.band_label.clone(),
+        target_tile: assignment.target_tile.to_bits(),
+        target_x: assignment.target_coords.x,
+        target_y: assignment.target_coords.y,
+        travel_remaining: assignment.travel_remaining,
+        travel_total: assignment.travel_total,
+        gather_remaining: assignment.gather_remaining,
+        gather_total: assignment.gather_total,
+        provisions_reward: assignment.provisions_reward,
+        trade_goods_reward: assignment.trade_goods_reward,
+        started_tick: assignment.started_tick,
+    }
+}
+
+fn scout_assignment_to_state(assignment: &ScoutAssignment) -> ScoutTaskState {
+    ScoutTaskState {
+        band_label: assignment.band_label.clone(),
+        target_tile: assignment.target_tile.to_bits(),
+        target_x: assignment.target_coords.x,
+        target_y: assignment.target_coords.y,
+        travel_remaining: assignment.travel_remaining,
+        travel_total: assignment.travel_total,
+        reveal_radius: assignment.reveal_radius,
+        reveal_duration: assignment.reveal_duration,
+        morale_gain: assignment.morale_gain,
+        started_tick: assignment.started_tick,
     }
 }
 
@@ -2995,6 +3392,57 @@ fn generation_state(profile: &GenerationProfile) -> GenerationState {
     }
 }
 
+fn snapshot_faction_inventory(inventory: &FactionInventory) -> Vec<SchemaFactionInventoryState> {
+    let mut states = Vec::new();
+    for (faction, items) in inventory.iter() {
+        if items.is_empty() {
+            continue;
+        }
+        let mut entries: Vec<_> = items
+            .iter()
+            .map(|(item, quantity)| SchemaFactionInventoryEntryState {
+                item: item.clone(),
+                quantity: *quantity,
+            })
+            .collect();
+        entries.sort_by(|a, b| a.item.cmp(&b.item));
+        states.push(SchemaFactionInventoryState {
+            faction: faction.0,
+            inventory: entries,
+        });
+    }
+    states.sort_by(|a, b| a.faction.cmp(&b.faction));
+    states
+}
+
+fn herd_snapshot_entries(telemetry: &HerdTelemetry) -> Vec<HerdTelemetryState> {
+    telemetry
+        .entries
+        .iter()
+        .map(|entry| HerdTelemetryState {
+            id: entry.id.clone(),
+            label: entry.label.clone(),
+            species: entry.species.clone(),
+            x: entry.position.x,
+            y: entry.position.y,
+            biomass: entry.biomass,
+            route_length: entry.route_length,
+        })
+        .collect()
+}
+
+pub fn command_events_to_state(log: &CommandEventLog) -> Vec<CommandEventState> {
+    log.iter()
+        .map(|entry| CommandEventState {
+            tick: entry.tick,
+            kind: entry.kind.as_str().to_string(),
+            faction: entry.faction.0,
+            label: entry.label.clone(),
+            detail: entry.detail.clone(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3003,6 +3451,7 @@ mod tests {
         power::PowerIncidentSeverity as GridIncidentSeverity,
         resources::{CorruptionTelemetry, DiscoveryProgressLedger},
         scalar::Scalar,
+        start_profile::StartProfileOverrides,
         PowerIncident,
     };
     use bevy::math::UVec2;
@@ -3050,8 +3499,14 @@ mod tests {
             knowledge_ledger: Vec::new(),
             knowledge_timeline: Vec::new(),
             knowledge_metrics: KnowledgeMetricsState::default(),
+            victory: VictorySnapshotState::default(),
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
+            campaign_profiles: Vec::new(),
+            command_events: Vec::new(),
+            herds: Vec::new(),
+            food_modules: Vec::new(),
+            faction_inventory: Vec::new(),
             terrain: overlay,
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
@@ -3097,8 +3552,14 @@ mod tests {
             knowledge_ledger: Vec::new(),
             knowledge_timeline: Vec::new(),
             knowledge_metrics: KnowledgeMetricsState::default(),
+            victory: VictorySnapshotState::default(),
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
+            campaign_profiles: Vec::new(),
+            command_events: Vec::new(),
+            herds: Vec::new(),
+            food_modules: Vec::new(),
+            faction_inventory: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
@@ -3139,8 +3600,14 @@ mod tests {
             knowledge_ledger: Vec::new(),
             knowledge_timeline: Vec::new(),
             knowledge_metrics: KnowledgeMetricsState::default(),
+            victory: VictorySnapshotState::default(),
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
+            campaign_profiles: Vec::new(),
+            command_events: Vec::new(),
+            herds: Vec::new(),
+            food_modules: Vec::new(),
+            faction_inventory: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
@@ -3438,6 +3905,8 @@ mod tests {
                 faction: 0,
                 knowledge_fragments: Vec::new(),
                 migration: None,
+                harvest_task: None,
+                scout_task: None,
             },
             PopulationCohortState {
                 entity: 101,
@@ -3448,6 +3917,8 @@ mod tests {
                 faction: 1,
                 knowledge_fragments: Vec::new(),
                 migration: None,
+                harvest_task: None,
+                scout_task: None,
             },
         ];
 
@@ -3535,6 +4006,8 @@ mod tests {
                     fidelity: Scalar::one().raw(),
                 }],
                 migration: None,
+                harvest_task: None,
+                scout_task: None,
             },
             PopulationCohortState {
                 entity: 201,
@@ -3545,6 +4018,8 @@ mod tests {
                 faction: 1,
                 knowledge_fragments: Vec::new(),
                 migration: None,
+                harvest_task: None,
+                scout_task: None,
             },
         ];
 
@@ -3553,17 +4028,81 @@ mod tests {
         discovery.add_progress(FactionId(0), 2, Scalar::from_f32(0.4));
 
         let overlays_config = SnapshotOverlaysConfig::default();
+        let start_location = StartLocation::default();
+        let fog_reveals = FogRevealLedger::default();
         let fog = fog_raster_from_discoveries(
             &tiles,
             &populations,
             &discovery,
             UVec2::new(2, 1),
             &overlays_config,
+            &start_location,
+            &fog_reveals,
+            0,
         );
 
         assert_eq!(fog.width, 2);
         assert_eq!(fog.height, 1);
         assert!(fog.samples[0] < Scalar::one().raw());
+        assert_eq!(fog.samples[1], Scalar::one().raw());
+    }
+
+    #[test]
+    fn fog_raster_revealed_mode_clears_samples() {
+        let tiles = vec![tile(1, 0, 0), tile(2, 1, 0)];
+        let populations = Vec::new();
+        let discovery = DiscoveryProgressLedger::default();
+        let overlays_config = SnapshotOverlaysConfig::default();
+        let overrides = StartProfileOverrides {
+            fog_mode: Some(FogMode::Revealed),
+            ..Default::default()
+        };
+        let start_location = StartLocation::from_profile(Some(UVec2::new(0, 0)), &overrides);
+        let fog_reveals = FogRevealLedger::default();
+
+        let fog = fog_raster_from_discoveries(
+            &tiles,
+            &populations,
+            &discovery,
+            UVec2::new(2, 1),
+            &overlays_config,
+            &start_location,
+            &fog_reveals,
+            0,
+        );
+
+        assert!(fog
+            .samples
+            .iter()
+            .all(|sample| *sample == Scalar::zero().raw()));
+    }
+
+    #[test]
+    fn fog_raster_shroud_only_reveals_radius() {
+        let tiles = vec![tile(1, 0, 0), tile(2, 1, 0)];
+        let populations = Vec::new();
+        let discovery = DiscoveryProgressLedger::default();
+        let overlays_config = SnapshotOverlaysConfig::default();
+        let overrides = StartProfileOverrides {
+            fog_mode: Some(FogMode::Shroud),
+            survey_radius: Some(0),
+            ..Default::default()
+        };
+        let start_location = StartLocation::from_profile(Some(UVec2::new(0, 0)), &overrides);
+        let fog_reveals = FogRevealLedger::default();
+
+        let fog = fog_raster_from_discoveries(
+            &tiles,
+            &populations,
+            &discovery,
+            UVec2::new(2, 1),
+            &overlays_config,
+            &start_location,
+            &fog_reveals,
+            0,
+        );
+
+        assert_eq!(fog.samples[0], Scalar::zero().raw());
         assert_eq!(fog.samples[1], Scalar::one().raw());
     }
 }

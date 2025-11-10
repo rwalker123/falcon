@@ -181,9 +181,17 @@
 - [ ] Expose victory progress and winner in snapshots; add continue-after-win toggle (Owner: TBD, Estimate: 1d; Deps: `VictoryState`).
 
 ### Client/UI
-- [ ] Scenario picker UI and Start Profile selection (Owner: TBD, Estimate: 1.5d; Deps: start profile loader). Description: Godot UI to choose scenario; pass id to server.
+- [x] Scenario picker UI and Start Profile selection (Owner: TBD, Estimate: 1.5d; Deps: start profile loader). Description: Godot UI to choose scenario; pass id to server. _Status_: Inspector map tab now includes a Scenario picker tied to the new `start_profile` command; UI lists localized campaign profiles from snapshot telemetry, applies a selection, and optionally triggers map regeneration (`clients/godot_thin_client/src/scripts/Inspector.gd`, `Main.tscn`).
 - [ ] Lock/disable UI tabs by `CapabilityFlags` until unlocked (Owner: TBD, Estimate: 1d; Deps: capability telemetry). Description: Gray out Power/Air/Naval/Spy tier 2 tabs until flags present; show tooltips linking to manual §2a.
 - [ ] Victory panel rendering progress per mode + win screen flow (Owner: TBD, Estimate: 2d; Deps: `VictoryState` telemetry). Description: Allow enable/disable of modes per scenario.
+
+### Campaign Labeling & Localization
+- [x] Extend `StartProfile` schema with optional `display_title`/`display_subtitle` and propagate to `WorldSnapshot`/save metadata (Owner: Systems Team — TBD, Estimate: 1d; Deps: start profile loader). Description: Fallback when fields missing; expose via telemetry so clients can show “Trail Sovereigns” in chrome. _Status_: `core_sim` now loads `core_sim/src/data/start_profiles.json`, threads campaign labels through `SimulationConfig` → `CampaignLabel` resource → snapshot header/FlatBuffer field `SnapshotHeader.campaignLabel` (see `core_sim/src/start_profile.rs`, `core_sim/src/snapshot.rs`, `sim_schema/*`).
+- [x] Client shell + localization wiring for campaign labels/taglines (Owner: Client Team — TBD, Estimate: 1d; Deps: schema extension). Description: Read localization keys for campaign title/subtitle, provide fallback strings, and emit label in analytics events per `docs/architecture.md` Brand section. _Status_: Godot HUD now loads `res://src/data/localization/en.json`, resolves `campaign_label` entries, displays them above the turn readout, and logs `[analytics] campaign_label …` when values change (`Main.gd`, `Hud.gd`, `LocalizationStore.gd`).
+
+### Marketing & Narrative Support
+- [ ] Lock primary marketing tagline for “Trail Sovereigns” and feed localization keys (Owner: Narrative Team — TBD, Estimate: 0.5d; Deps: campaign label schema). Description: Select from manual §Messaging Exploration, register `campaign.trail_sovereigns.tagline_primary` in string tables.
+- [ ] Produce key art brief covering bands, portable hearth, and treaty visuals (Owner: Art Team — TBD, Estimate: 1d; Deps: messaging exploration). Description: Hand off manual cues to concept art with references for seasonal circuits, assay kits, and totemic route markers.
 
 ### Nomadic Start Prototype
 - [ ] Define default `late_forager_tribe` StartProfile (Owner: TBD, Estimate: 0.5d; Deps: StartProfile loader). Description: 2–3 bands, no permanent buildings, enable Nomadic commands; victory modes enabled: Hegemony, Cultural Diffusion, Stewardship, Survival.
