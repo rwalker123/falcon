@@ -39,6 +39,7 @@ const COMMAND_PROTO_PORT = 41001
 const UI_ZOOM_STEP = 0.1
 const UI_ZOOM_MIN = 0.5
 const UI_ZOOM_MAX = 2.0
+const PLAYER_FACTION_ID = 0
 const SNAPSHOT_DELTA_FIELDS := [
     "influencer_updates",
     "population_updates",
@@ -105,10 +106,28 @@ func _ready() -> void:
             hud.connect("ui_zoom_delta", Callable(self, "_on_hud_zoom_delta"))
         if not hud.is_connected("ui_zoom_reset", Callable(self, "_on_hud_zoom_reset")):
             hud.connect("ui_zoom_reset", Callable(self, "_on_hud_zoom_reset"))
+        if hud.has_signal("unit_scout_requested") and not hud.is_connected("unit_scout_requested", Callable(self, "_on_hud_unit_scout")):
+            hud.connect("unit_scout_requested", Callable(self, "_on_hud_unit_scout"))
+        if hud.has_signal("unit_found_camp_requested") and not hud.is_connected("unit_found_camp_requested", Callable(self, "_on_hud_unit_found_camp")):
+            hud.connect("unit_found_camp_requested", Callable(self, "_on_hud_unit_found_camp"))
+        if hud.has_signal("herd_follow_requested") and not hud.is_connected("herd_follow_requested", Callable(self, "_on_hud_follow_herd")):
+            hud.connect("herd_follow_requested", Callable(self, "_on_hud_follow_herd"))
     if inspector != null and inspector.has_method("attach_map_view"):
         inspector.call("attach_map_view", map_view)
     if map_view != null and inspector != null and map_view.has_signal("hex_selected") and inspector.has_method("focus_tile_from_map"):
         map_view.connect("hex_selected", Callable(inspector, "focus_tile_from_map"))
+    if map_view != null:
+        if map_view.has_signal("unit_selected") and not map_view.is_connected("unit_selected", Callable(self, "_on_map_unit_selected")):
+            map_view.connect("unit_selected", Callable(self, "_on_map_unit_selected"))
+        if map_view.has_signal("herd_selected") and not map_view.is_connected("herd_selected", Callable(self, "_on_map_herd_selected")):
+            map_view.connect("herd_selected", Callable(self, "_on_map_herd_selected"))
+        if map_view.has_signal("selection_cleared") and not map_view.is_connected("selection_cleared", Callable(self, "_on_map_selection_cleared")):
+            map_view.connect("selection_cleared", Callable(self, "_on_map_selection_cleared"))
+        if map_view.has_signal("tile_selected"):
+            if hud != null and hud.has_method("show_tile_selection") and not map_view.is_connected("tile_selected", Callable(self, "_on_map_tile_selected")):
+                map_view.connect("tile_selected", Callable(self, "_on_map_tile_selected"))
+            if hud != null and hud.has_method("notify_hex_selected") and not map_view.is_connected("tile_selected", Callable(hud, "notify_hex_selected")):
+                map_view.connect("tile_selected", Callable(hud, "notify_hex_selected"))
     if map_view != null and map_view.has_signal("overlay_legend_changed") and hud != null and hud.has_method("update_overlay_legend"):
         map_view.connect("overlay_legend_changed", Callable(self, "_on_overlay_legend_changed"))
         map_view.call_deferred("refresh_overlay_legend")
@@ -139,6 +158,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     var metrics_variant: Variant = map_view.call("display_snapshot", snapshot)
     var metrics: Dictionary = metrics_variant if metrics_variant is Dictionary else {}
     hud.call("update_overlay", snapshot.get("turn", 0), metrics)
+    if hud != null:
+        if not is_delta and hud.has_method("reset_command_feed"):
+            hud.call("reset_command_feed")
+        if snapshot.has("command_events") and hud.has_method("ingest_command_events"):
+            hud.call("ingest_command_events", snapshot["command_events"])
     if snapshot.has("victory"):
         var victory_variant: Variant = snapshot["victory"]
         if victory_variant is Dictionary:
@@ -189,6 +213,80 @@ func _emit_victory_analytics(data: Dictionary) -> void:
         label = mode
     var faction: int = int(winner.get("faction", -1))
     print("[analytics] victory mode=\"%s\" label=\"%s\" faction=%d tick=%d" % [mode, label, faction, tick])
+
+func _on_map_unit_selected(unit: Dictionary) -> void:
+    if hud != null and hud.has_method("show_unit_selection"):
+        hud.call("show_unit_selection", unit)
+        if hud.has_method("consume_pending_forage"):
+            var payload_variant: Variant = hud.call("consume_pending_forage", unit)
+            if payload_variant is Dictionary:
+                var payload: Dictionary = payload_variant
+                if not payload.is_empty():
+                    _issue_forage_command(payload)
+
+func _on_map_herd_selected(herd: Dictionary) -> void:
+    if hud != null and hud.has_method("show_herd_selection"):
+        hud.call("show_herd_selection", herd)
+
+func _on_map_selection_cleared() -> void:
+    if hud != null and hud.has_method("clear_selection"):
+        hud.call("clear_selection")
+
+func _on_map_tile_selected(tile_info: Dictionary) -> void:
+    if hud != null and hud.has_method("show_tile_selection"):
+        hud.call("show_tile_selection", tile_info)
+        if hud.has_method("notify_hex_selected"):
+            hud.call("notify_hex_selected", tile_info)
+
+func _on_hud_unit_scout(x: int, y: int, band_bits: int) -> void:
+    var parts: Array[String] = ["scout", str(PLAYER_FACTION_ID), str(x), str(y)]
+    if band_bits >= 0:
+        parts.append(str(band_bits))
+    var line := " ".join(parts)
+    _send_runtime_command(line, "Scout order queued at (%d, %d)." % [x, y])
+
+func _on_hud_unit_found_camp(x: int, y: int) -> void:
+    var line := "found_camp %d %d %d" % [PLAYER_FACTION_ID, x, y]
+    _send_runtime_command(line, "Found camp request at (%d, %d)." % [x, y])
+
+func _on_hud_follow_herd(herd_id: String) -> void:
+    if herd_id.is_empty():
+        return
+    var line := "follow_herd %d %s" % [PLAYER_FACTION_ID, herd_id]
+    _send_runtime_command(line, "Follow herd request for %s." % herd_id)
+
+func _issue_forage_command(payload: Dictionary) -> void:
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    var module_key := String(payload.get("module", "")).strip_edges()
+    if x < 0 or y < 0 or module_key == "":
+        return
+    var unit_label := String(payload.get("unit_label", "Band")).strip_edges()
+    if unit_label == "":
+        unit_label = "Band"
+    var parts: Array[String] = []
+    parts.append_array([
+        "forage",
+        str(PLAYER_FACTION_ID),
+        str(x),
+        str(y),
+        module_key.to_lower(),
+    ])
+    var bits_variant: Variant = payload.get("band_entity_bits", null)
+    if typeof(bits_variant) == TYPE_INT and int(bits_variant) >= 0:
+        parts.append(str(int(bits_variant)))
+    var line := " ".join(parts)
+    var message := "Harvest order: %s -> (%d, %d)." % [unit_label, x, y]
+    _send_runtime_command(line, message)
+
+func _send_runtime_command(line: String, message: String) -> void:
+    if inspector != null and inspector.has_method("send_runtime_command"):
+        var result: Variant = inspector.call("send_runtime_command", line, message)
+        if result is bool and result:
+            return
+        push_warning("Command pending or rejected: %s" % line)
+    else:
+        push_warning("Inspector unavailable; cannot send command: %s" % line)
 
 func skip_to_next_turn() -> void:
     if streaming_mode:

@@ -11,9 +11,9 @@ use serde_json::json;
 use crate::map_preset::{MapPreset, MapPresetsHandle, TerrainClassifierConfig};
 use crate::{
     components::{
-        fragments_from_contract, fragments_to_contract, ElementKind, KnowledgeFragment,
-        LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort, PowerNode,
-        StartingUnit, Tile, TradeLink,
+        fragments_from_contract, fragments_to_contract, ElementKind, HarvestAssignment,
+        KnowledgeFragment, LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort,
+        PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink,
     },
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
@@ -21,6 +21,7 @@ use crate::{
         CULTURE_TRAIT_AXES,
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
+    food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     generations::GenerationRegistry,
     heightfield::build_elevation_field,
     hydrology::HydrologyState,
@@ -34,15 +35,15 @@ use crate::{
     },
     provinces::{ProvinceId, ProvinceMap},
     resources::{
-        CorruptionExposureRecord, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
-        DiscoveryProgressLedger, FactionInventory, MoistureRaster, SentimentAxisBias,
-        SimulationConfig, SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord,
-        TradeTelemetry,
+        CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionExposureRecord,
+        CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger,
+        FactionInventory, FogRevealLedger, MoistureRaster, SentimentAxisBias, SimulationConfig,
+        SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
     },
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
     start_profile::{
-        StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartProfileOverrides,
-        StartingUnitSpec,
+        FoodModulePreference, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+        StartProfileOverrides, StartingUnitSpec,
     },
     terrain::{terrain_definition, terrain_for_position_with_classifier},
     turn_pipeline_config::TurnPipelineConfigHandle,
@@ -63,6 +64,7 @@ struct TilePrototype {
     terrain: sim_runtime::TerrainType,
     tags: sim_runtime::TerrainTags,
     mountain: Option<MountainMetadata>,
+    food_module: Option<FoodModule>,
 }
 
 #[derive(Event, Debug, Clone)]
@@ -324,6 +326,7 @@ pub fn spawn_initial_world(
             } else {
                 (terrain, terrain_tags)
             };
+            let food_module = classify_food_module_from_traits(terrain, terrain_tags);
             let mountain = if matches!(
                 terrain,
                 sim_runtime::TerrainType::DeepOcean
@@ -341,6 +344,7 @@ pub fn spawn_initial_world(
                 terrain,
                 tags: terrain_tags,
                 mountain,
+                food_module,
             });
         }
     }
@@ -359,8 +363,17 @@ pub fn spawn_initial_world(
     );
     commands.insert_resource(province_map.clone());
 
-    // Choose a start center favoring freshwater + fertile tiles.
-    let (start_x, start_y) = best_start_tile(width as u32, height as u32, &tags_grid);
+    let food_module_grid: Vec<Option<FoodModule>> =
+        prototypes.iter().map(|proto| proto.food_module).collect();
+
+    // Choose a start center favoring freshwater + fertile tiles and profile food modules.
+    let (start_x, start_y) = best_start_tile(
+        width as u32,
+        height as u32,
+        &tags_grid,
+        &food_module_grid,
+        &config.start_profile_overrides.food_modules,
+    );
 
     let mut province_region_layers: HashMap<ProvinceId, CultureLayerId> = HashMap::new();
     for (idx, proto) in prototypes.iter().enumerate() {
@@ -372,33 +385,37 @@ pub fn spawn_initial_world(
             .clamp(scalar_from_f32(1.0), scalar_from_f32(40.0));
         let storage_level =
             (storage_capacity * scalar_from_f32(0.5)).clamp(scalar_zero(), storage_capacity);
-        let tile_entity = commands
-            .spawn((
-                Tile {
-                    position: proto.position,
-                    element: proto.element,
-                    mass: base_mass,
-                    temperature: config.ambient_temperature + proto.element.thermal_bias(),
-                    terrain: proto.terrain,
-                    terrain_tags: proto.tags,
-                    mountain: proto.mountain,
-                },
-                PowerNode {
-                    id: node_id,
-                    base_generation: generation,
-                    base_demand: demand,
-                    generation,
-                    demand,
-                    efficiency,
-                    storage_capacity,
-                    storage_level,
-                    stability: scalar_from_f32(0.85),
-                    surplus: scalar_zero(),
-                    deficit: scalar_zero(),
-                    incident_count: 0,
-                },
-            ))
-            .id();
+        let tile_component = Tile {
+            position: proto.position,
+            element: proto.element,
+            mass: base_mass,
+            temperature: config.ambient_temperature + proto.element.thermal_bias(),
+            terrain: proto.terrain,
+            terrain_tags: proto.tags,
+            mountain: proto.mountain,
+        };
+        let power_component = PowerNode {
+            id: node_id,
+            base_generation: generation,
+            base_demand: demand,
+            generation,
+            demand,
+            efficiency,
+            storage_capacity,
+            storage_level,
+            stability: scalar_from_f32(0.85),
+            surplus: scalar_zero(),
+            deficit: scalar_zero(),
+            incident_count: 0,
+        };
+        let mut entity_commands = commands.spawn((tile_component.clone(), power_component));
+        let module = proto
+            .food_module
+            .or_else(|| classify_food_module(&tile_component));
+        if let Some(module) = module {
+            entity_commands.insert(FoodModuleTag::new(module, 1.0));
+        }
+        let tile_entity = entity_commands.id();
         tiles.push(tile_entity);
 
         let parent_region = if let Some(province_id) = province_map.province_at_index(idx) {
@@ -530,6 +547,14 @@ pub fn apply_starting_inventory_effects(
 ) {
     apply_provisions_bonus(&mut inventory, &mut cohorts);
     apply_trade_goods_bonus(&mut inventory, &mut trade_links);
+}
+
+/// Drop expired fog-reveal pulses queued by scouting commands.
+pub fn decay_fog_reveals(mut reveals: ResMut<FogRevealLedger>, tick: Res<SimulationTick>) {
+    if reveals.is_empty() {
+        return;
+    }
+    reveals.prune_expired(tick.0);
 }
 
 fn apply_provisions_bonus(
@@ -1938,7 +1963,13 @@ fn seeded_modifiers_for_position(position: UVec2) -> [Scalar; CULTURE_TRAIT_AXES
     modifiers
 }
 
-fn best_start_tile(width: u32, height: u32, tags_grid: &[sim_runtime::TerrainTags]) -> (u32, u32) {
+fn best_start_tile(
+    width: u32,
+    height: u32,
+    tags_grid: &[sim_runtime::TerrainTags],
+    food_modules: &[Option<FoodModule>],
+    preference: &FoodModulePreference,
+) -> (u32, u32) {
     let mut best_score: i32 = i32::MIN;
     let mut best_pos: (u32, u32) = (width / 2, height / 2);
     let idx_of = |x: u32, y: u32| -> usize { (y * width + x) as usize };
@@ -1984,6 +2015,7 @@ fn best_start_tile(width: u32, height: u32, tags_grid: &[sim_runtime::TerrainTag
                     }
                 }
             }
+            score += module_preference_bonus(x, y, width, height, food_modules, preference);
             if score > best_score {
                 best_score = score;
                 best_pos = (x, y);
@@ -1991,6 +2023,86 @@ fn best_start_tile(width: u32, height: u32, tags_grid: &[sim_runtime::TerrainTag
         }
     }
     best_pos
+}
+
+fn module_preference_bonus(
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    food_modules: &[Option<FoodModule>],
+    preference: &FoodModulePreference,
+) -> i32 {
+    if food_modules.is_empty() || food_modules.len() != (width * height) as usize {
+        return 0;
+    }
+    let mut total = 0;
+    if let Some(primary) = preference.primary {
+        total += score_for_module(x, y, width, food_modules, primary, true);
+    }
+    if let Some(secondary) = preference.secondary {
+        total += score_for_module(x, y, width, food_modules, secondary, false);
+    }
+    total
+}
+
+fn score_for_module(
+    x: u32,
+    y: u32,
+    width: u32,
+    food_modules: &[Option<FoodModule>],
+    module: FoodModule,
+    is_primary: bool,
+) -> i32 {
+    match nearest_module_distance(x, y, width, food_modules, module) {
+        Some(distance) => module_distance_bonus(distance, is_primary),
+        None if is_primary => -35,
+        None => -12,
+    }
+}
+
+fn nearest_module_distance(
+    x: u32,
+    y: u32,
+    width: u32,
+    food_modules: &[Option<FoodModule>],
+    module: FoodModule,
+) -> Option<u32> {
+    let mut best: Option<u32> = None;
+    for (idx, entry) in food_modules.iter().enumerate() {
+        if *entry == Some(module) {
+            let px = (idx as u32) % width;
+            let py = (idx as u32) / width;
+            let distance = x.abs_diff(px) + y.abs_diff(py);
+            best = Some(match best {
+                Some(current) => current.min(distance),
+                None => distance,
+            });
+            if distance == 0 {
+                break;
+            }
+        }
+    }
+    best
+}
+
+fn module_distance_bonus(distance: u32, is_primary: bool) -> i32 {
+    let base = match distance {
+        0 => 32,
+        1 => 28,
+        2 => 24,
+        3 => 18,
+        4 => 12,
+        5 => 8,
+        6 => 4,
+        7..=10 => 2,
+        _ => -6,
+    };
+    if is_primary {
+        base
+    } else {
+        ((base as f32) * 0.6).round() as i32
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2540,6 +2652,130 @@ pub fn simulate_population(
                 cohort.migration = Some(migration);
             }
         }
+    }
+}
+
+pub fn advance_harvest_assignments(
+    mut commands: Commands,
+    mut inventory: ResMut<FactionInventory>,
+    mut event_log: ResMut<CommandEventLog>,
+    tick: Res<SimulationTick>,
+    mut cohorts: Query<(Entity, &mut PopulationCohort, &mut HarvestAssignment)>,
+) {
+    for (entity, mut cohort, mut assignment) in cohorts.iter_mut() {
+        if assignment.travel_remaining > 0 {
+            assignment.travel_remaining -= 1;
+            if assignment.travel_remaining == 0 {
+                cohort.home = assignment.target_tile;
+            }
+            continue;
+        }
+        if assignment.gather_remaining > 0 {
+            assignment.gather_remaining -= 1;
+            if assignment.gather_remaining > 0 {
+                continue;
+            }
+        } else {
+            continue;
+        }
+
+        if assignment.provisions_reward > 0 {
+            inventory.add_stockpile(
+                assignment.faction,
+                "provisions",
+                assignment.provisions_reward,
+            );
+        }
+        if assignment.trade_goods_reward > 0 {
+            inventory.add_stockpile(
+                assignment.faction,
+                "trade_goods",
+                assignment.trade_goods_reward,
+            );
+        }
+
+        let detail = format!(
+            "status=complete module={} provisions={} trade_goods={} travel_turns={} gather_turns={} started_tick={}",
+            assignment.module.as_str(),
+            assignment.provisions_reward.max(0),
+            assignment.trade_goods_reward.max(0),
+            assignment.travel_total,
+            assignment.gather_total,
+            assignment.started_tick
+        );
+
+        event_log.push(CommandEventEntry::new(
+            tick.0,
+            CommandEventKind::Forage,
+            assignment.faction,
+            format!(
+                "{} harvest -> ({}, {})",
+                assignment.band_label, assignment.target_coords.x, assignment.target_coords.y
+            ),
+            Some(detail),
+        ));
+
+        commands.entity(entity).remove::<HarvestAssignment>();
+    }
+}
+
+pub fn advance_scout_assignments(
+    mut commands: Commands,
+    mut fog: ResMut<FogRevealLedger>,
+    mut event_log: ResMut<CommandEventLog>,
+    tick: Res<SimulationTick>,
+    mut cohorts: Query<(Entity, &mut PopulationCohort, &mut ScoutAssignment)>,
+) {
+    for (entity, mut cohort, mut assignment) in cohorts.iter_mut() {
+        if assignment.travel_remaining > 0 {
+            assignment.travel_remaining -= 1;
+            if assignment.travel_remaining == 0 {
+                cohort.home = assignment.target_tile;
+            }
+            continue;
+        }
+
+        let expires_at = tick.0.saturating_add(assignment.reveal_duration);
+        fog.queue(
+            assignment.target_coords,
+            assignment.reveal_radius,
+            expires_at,
+        );
+
+        if assignment.morale_gain > 0.0 {
+            cohort.morale = (cohort.morale + Scalar::from_f32(assignment.morale_gain))
+                .clamp(Scalar::zero(), Scalar::one());
+        }
+
+        let detail = format!(
+            "status=complete radius={} morale_boost={:.2} travel_turns={} started_tick={}",
+            assignment.reveal_radius,
+            assignment.morale_gain,
+            assignment.travel_total,
+            assignment.started_tick
+        );
+
+        event_log.push(CommandEventEntry::new(
+            tick.0,
+            CommandEventKind::Scout,
+            assignment.faction,
+            format!(
+                "{} -> ({}, {})",
+                assignment.band_label, assignment.target_coords.x, assignment.target_coords.y
+            ),
+            Some(detail.clone()),
+        ));
+
+        info!(
+            "command.scout_area.completed faction={} band={} x={} y={} radius={}",
+            assignment.faction.0,
+            assignment.band_label,
+            assignment.target_coords.x,
+            assignment.target_coords.y,
+            assignment.reveal_radius
+        );
+
+        commands.entity(entity).remove::<ScoutAssignment>();
     }
 }
 

@@ -424,12 +424,42 @@ table PopulationCohortState {
   faction:uint;
   knowledgeFragments:[KnownTechFragment];
   migration:PendingMigration;
+  harvestTask:HarvestTask;
+  scoutTask:ScoutTask;
 }
 
 table PendingMigration {
   destination:uint;
   eta:ushort;
   fragments:[KnownTechFragment];
+}
+
+table HarvestTask {
+  module:string;
+  bandLabel:string;
+  targetTile:ulong;
+  targetX:uint;
+  targetY:uint;
+  travelRemaining:uint;
+  travelTotal:uint;
+  gatherRemaining:uint;
+  gatherTotal:uint;
+  provisionsReward:long;
+  tradeGoodsReward:long;
+  startedTick:ulong;
+}
+
+table ScoutTask {
+  bandLabel:string;
+  targetTile:ulong;
+  targetX:uint;
+  targetY:uint;
+  travelRemaining:uint;
+  travelTotal:uint;
+  revealRadius:uint;
+  revealDuration:ulong;
+  moraleGain:float;
+  startedTick:ulong;
 }
 
 table PowerNodeState {
@@ -553,11 +583,21 @@ table CampaignProfile {
   knowledgeTags:[string];
   surveyRadius:uint;
   fogMode:string;
+  primaryFoodModule:string;
+  secondaryFoodModule:string;
 }
 
 table CampaignInventoryEntry {
   item:string;
   quantity:long;
+}
+
+table FoodModuleState {
+  x:uint;
+  y:uint;
+  module:string;
+  seasonalWeight:float = 1.0;
+  kind:string;
 }
 
 table FactionInventoryEntry {
@@ -568,6 +608,24 @@ table FactionInventoryEntry {
 table FactionInventoryState {
   faction:uint;
   inventory:[FactionInventoryEntry];
+}
+
+table HerdTelemetryState {
+  id:string;
+  label:string;
+  species:string;
+  x:uint;
+  y:uint;
+  biomass:float;
+  routeLength:uint;
+}
+
+table CommandEventState {
+  tick:ulong;
+  kind:string;
+  faction:uint;
+  label:string;
+  detail:string;
 }
 
 table CampaignStartingUnit {
@@ -685,6 +743,9 @@ table WorldSnapshot {
   crisisTelemetry:CrisisTelemetryState;
   crisisOverlay:CrisisOverlayState;
   campaignProfiles:[CampaignProfile];
+  commandEvents:[CommandEventState];
+  herds:[HerdTelemetryState];
+  foodModules:[FoodModuleState];
   factionInventory:[FactionInventoryState];
   moistureRaster:FloatRaster;
   hydrologyOverlay:HydrologyOverlay; // rivers/streams polylines
@@ -731,6 +792,9 @@ table WorldDelta {
   victory:VictoryState;
   crisisTelemetry:CrisisTelemetryState;
   crisisOverlay:CrisisOverlayState;
+  commandEvents:[CommandEventState];
+  herds:[HerdTelemetryState];
+  foodModules:[FoodModuleState];
   factionInventory:[FactionInventoryState];
   moistureRaster:FloatRaster;
   axisBias:AxisBiasState;

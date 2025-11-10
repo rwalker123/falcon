@@ -14,6 +14,8 @@ use sim_schema::{
 };
 use thiserror::Error;
 
+use crate::food::FoodModule;
+
 pub const BUILTIN_START_PROFILES: &str = include_str!("data/start_profiles.json");
 pub const BUILTIN_START_PROFILE_KNOWLEDGE_TAGS: &str =
     include_str!("data/start_profile_knowledge_tags.json");
@@ -57,6 +59,23 @@ impl DisplayText {
             },
             DisplayText::Record(record) => record.clone(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct FoodModulePreference {
+    pub primary: Option<FoodModule>,
+    pub secondary: Option<FoodModule>,
+}
+
+impl FoodModulePreference {
+    pub fn matches(&self, module: FoodModule) -> bool {
+        self.primary == Some(module) || self.secondary == Some(module)
+    }
+
+    pub fn any(&self) -> bool {
+        self.primary.is_some() || self.secondary.is_some()
     }
 }
 
@@ -105,6 +124,8 @@ pub struct StartProfileOverrides {
     pub ai_profile_overrides: HashMap<String, Value>,
     #[serde(default)]
     pub victory_modes_enabled: Vec<String>,
+    #[serde(default)]
+    pub food_modules: FoodModulePreference,
 }
 
 impl StartProfileOverrides {
@@ -580,6 +601,16 @@ impl CampaignProfileSnapshot {
                 .overrides
                 .fog_mode
                 .map(|mode| mode.as_str().to_string()),
+            primary_food_module: self
+                .overrides
+                .food_modules
+                .primary
+                .map(|module| module.as_str().to_string()),
+            secondary_food_module: self
+                .overrides
+                .food_modules
+                .secondary
+                .map(|module| module.as_str().to_string()),
         }
     }
 }

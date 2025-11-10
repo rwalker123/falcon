@@ -458,6 +458,55 @@ impl StartLocation {
     pub fn fog_mode(&self) -> FogMode {
         self.fog_mode
     }
+
+    pub fn relocate(&mut self, position: UVec2) {
+        self.position = Some(position);
+    }
+
+    pub fn set_survey_radius(&mut self, radius: Option<u32>) {
+        self.survey_radius = radius;
+    }
+
+    pub fn set_fog_mode(&mut self, mode: FogMode) {
+        self.fog_mode = mode;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FogReveal {
+    pub center: UVec2,
+    pub radius: u32,
+    pub expires_at: u64,
+}
+
+#[derive(Resource, Debug, Clone, Default)]
+pub struct FogRevealLedger {
+    reveals: Vec<FogReveal>,
+}
+
+impl FogRevealLedger {
+    pub fn queue(&mut self, center: UVec2, radius: u32, expires_at: u64) {
+        let radius = radius.max(1);
+        self.reveals.push(FogReveal {
+            center,
+            radius,
+            expires_at,
+        });
+    }
+
+    pub fn iter_active(&self, tick: u64) -> impl Iterator<Item = &FogReveal> {
+        self.reveals
+            .iter()
+            .filter(move |reveal| reveal.expires_at >= tick)
+    }
+
+    pub fn prune_expired(&mut self, tick: u64) {
+        self.reveals.retain(|reveal| reveal.expires_at >= tick);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.reveals.is_empty()
+    }
 }
 
 /// Authoritative sentiment axis bias values applied across factions.
@@ -788,5 +837,80 @@ impl FactionInventory {
 
     pub fn iter(&self) -> impl Iterator<Item = (&FactionId, &HashMap<String, i64>)> {
         self.stockpiles.iter()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandEventKind {
+    Scout,
+    FollowHerd,
+    FoundCamp,
+    Forage,
+}
+
+impl CommandEventKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CommandEventKind::Scout => "scout",
+            CommandEventKind::FollowHerd => "follow_herd",
+            CommandEventKind::FoundCamp => "found_camp",
+            CommandEventKind::Forage => "forage",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CommandEventEntry {
+    pub tick: u64,
+    pub kind: CommandEventKind,
+    pub faction: FactionId,
+    pub label: String,
+    pub detail: Option<String>,
+}
+
+impl CommandEventEntry {
+    pub fn new<S: Into<String>>(
+        tick: u64,
+        kind: CommandEventKind,
+        faction: FactionId,
+        label: S,
+        detail: Option<String>,
+    ) -> Self {
+        Self {
+            tick,
+            kind,
+            faction,
+            label: label.into(),
+            detail,
+        }
+    }
+}
+
+#[derive(Resource, Debug, Clone)]
+pub struct CommandEventLog {
+    entries: Vec<CommandEventEntry>,
+    max_entries: usize,
+}
+
+impl Default for CommandEventLog {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            max_entries: 32,
+        }
+    }
+}
+
+impl CommandEventLog {
+    pub fn push(&mut self, entry: CommandEventEntry) {
+        if self.entries.len() >= self.max_entries {
+            let overflow = self.entries.len() + 1 - self.max_entries;
+            self.entries.drain(0..overflow);
+        }
+        self.entries.push(entry);
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &CommandEventEntry> {
+        self.entries.iter()
     }
 }

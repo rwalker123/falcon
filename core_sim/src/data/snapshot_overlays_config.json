@@ -28,5 +28,18 @@
   },
   "fog": {
     "global_local_blend": 0.5
+  },
+  "food": {
+    "max_sites_per_module": 6,
+    "max_total_sites": 40,
+    "default_radius": 6,
+    "radius_padding": 2,
+    "provisions_per_weight": 120.0,
+    "trade_goods_per_weight": 35.0,
+    "trade_bonus_modules": {
+      "coastal_littoral": 25.0,
+      "riverine_delta": 15.0,
+      "coastal_upwelling": 30.0
+    }
   }
 }

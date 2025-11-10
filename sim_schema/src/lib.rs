@@ -45,6 +45,10 @@ pub struct CampaignProfileState {
     pub survey_radius: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fog_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_food_module: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secondary_food_module: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -63,6 +67,36 @@ pub struct FactionInventoryEntryState {
 pub struct FactionInventoryState {
     pub faction: u32,
     pub inventory: Vec<FactionInventoryEntryState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct HerdTelemetryState {
+    pub id: String,
+    pub label: String,
+    pub species: String,
+    pub x: u32,
+    pub y: u32,
+    pub biomass: f32,
+    pub route_length: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct FoodModuleState {
+    pub x: u32,
+    pub y: u32,
+    pub module: String,
+    pub seasonal_weight: f32,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct CommandEventState {
+    pub tick: u64,
+    pub kind: String,
+    pub faction: u32,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -803,6 +837,10 @@ pub struct PopulationCohortState {
     pub knowledge_fragments: Vec<KnownTechFragment>,
     #[serde(default)]
     pub migration: Option<PendingMigrationState>,
+    #[serde(default)]
+    pub harvest_task: Option<HarvestTaskState>,
+    #[serde(default)]
+    pub scout_task: Option<ScoutTaskState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -811,6 +849,36 @@ pub struct PendingMigrationState {
     pub eta: u16,
     #[serde(default)]
     pub fragments: Vec<KnownTechFragment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct HarvestTaskState {
+    pub module: String,
+    pub band_label: String,
+    pub target_tile: u64,
+    pub target_x: u32,
+    pub target_y: u32,
+    pub travel_remaining: u32,
+    pub travel_total: u32,
+    pub gather_remaining: u32,
+    pub gather_total: u32,
+    pub provisions_reward: i64,
+    pub trade_goods_reward: i64,
+    pub started_tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ScoutTaskState {
+    pub band_label: String,
+    pub target_tile: u64,
+    pub target_x: u32,
+    pub target_y: u32,
+    pub travel_remaining: u32,
+    pub travel_total: u32,
+    pub reveal_radius: u32,
+    pub reveal_duration: u64,
+    pub morale_gain: f32,
+    pub started_tick: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -1203,6 +1271,12 @@ pub struct WorldSnapshot {
     #[serde(default)]
     pub campaign_profiles: Vec<CampaignProfileState>,
     #[serde(default)]
+    pub command_events: Vec<CommandEventState>,
+    #[serde(default)]
+    pub herds: Vec<HerdTelemetryState>,
+    #[serde(default)]
+    pub food_modules: Vec<FoodModuleState>,
+    #[serde(default)]
     pub faction_inventory: Vec<FactionInventoryState>,
     pub moisture_raster: FloatRasterState,
     pub hydrology_overlay: HydrologyOverlayState,
@@ -1247,9 +1321,12 @@ pub struct WorldDelta {
     pub removed_knowledge_ledger: Vec<u64>,
     pub knowledge_metrics: Option<KnowledgeMetricsState>,
     pub victory: Option<VictorySnapshotState>,
+    pub command_events: Option<Vec<CommandEventState>>,
     pub knowledge_timeline: Vec<KnowledgeTimelineEventState>,
     pub crisis_telemetry: Option<CrisisTelemetryState>,
     pub crisis_overlay: Option<CrisisOverlayState>,
+    pub herds: Option<Vec<HerdTelemetryState>>,
+    pub food_modules: Option<Vec<FoodModuleState>>,
     pub faction_inventory: Option<Vec<FactionInventoryState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub hydrology_overlay: Option<HydrologyOverlayState>,
@@ -1378,6 +1455,9 @@ fn build_snapshot_flatbuffer<'a>(
     let crisis_telemetry = create_crisis_telemetry(builder, &snapshot.crisis_telemetry);
     let crisis_overlay = create_crisis_overlay(builder, &snapshot.crisis_overlay);
     let campaign_profiles_vec = create_campaign_profiles(builder, &snapshot.campaign_profiles);
+    let command_events_vec = create_command_events(builder, &snapshot.command_events);
+    let herds_vec = create_herds(builder, &snapshot.herds);
+    let food_modules_vec = create_food_modules(builder, &snapshot.food_modules);
     let faction_inventory_vec = create_faction_inventory(builder, &snapshot.faction_inventory);
     let victory_state = create_victory_state(builder, &snapshot.victory);
     let hydrology_overlay = create_hydrology_overlay(builder, &snapshot.hydrology_overlay);
@@ -1432,6 +1512,9 @@ fn build_snapshot_flatbuffer<'a>(
             crisisOverlay: Some(crisis_overlay),
             victory: Some(victory_state),
             campaignProfiles: Some(campaign_profiles_vec),
+            commandEvents: Some(command_events_vec),
+            herds: Some(herds_vec),
+            foodModules: Some(food_modules_vec),
             factionInventory: Some(faction_inventory_vec),
             moistureRaster: Some(moisture_raster),
             hydrologyOverlay: Some(hydrology_overlay),
@@ -1477,10 +1560,22 @@ fn build_delta_flatbuffer<'a>(
         .victory
         .as_ref()
         .map(|state| create_victory_state(builder, state));
+    let herds = delta
+        .herds
+        .as_ref()
+        .map(|entries| create_herds(builder, entries));
     let faction_inventory = delta
         .faction_inventory
         .as_ref()
         .map(|entries| create_faction_inventory(builder, entries));
+    let command_events = delta
+        .command_events
+        .as_ref()
+        .map(|entries| create_command_events(builder, entries));
+    let food_modules = delta
+        .food_modules
+        .as_ref()
+        .map(|entries| create_food_modules(builder, entries));
 
     let header = fb::SnapshotHeader::create(
         builder,
@@ -1634,8 +1729,11 @@ fn build_delta_flatbuffer<'a>(
             knowledgeTimeline: Some(knowledge_timeline_vec),
             knowledgeMetrics: knowledge_metrics,
             victory: victory_state,
+            commandEvents: command_events,
             crisisTelemetry: crisis_telemetry,
             crisisOverlay: crisis_overlay,
+            herds,
+            foodModules: food_modules,
             factionInventory: faction_inventory,
             moistureRaster: moisture_raster,
             elevationOverlay: elevation_overlay,
@@ -1866,6 +1964,14 @@ fn create_campaign_profiles<'a>(
             .fog_mode
             .as_ref()
             .map(|value| builder.create_string(value.as_str()));
+        let primary_food_module = profile
+            .primary_food_module
+            .as_ref()
+            .map(|value| builder.create_string(value.as_str()));
+        let secondary_food_module = profile
+            .secondary_food_module
+            .as_ref()
+            .map(|value| builder.create_string(value.as_str()));
         let survey_radius = profile.survey_radius.unwrap_or(0);
         let entry = fb::CampaignProfile::create(
             builder,
@@ -1880,6 +1986,8 @@ fn create_campaign_profiles<'a>(
                 knowledgeTags: knowledge_tags,
                 surveyRadius: survey_radius,
                 fogMode: fog_mode,
+                primaryFoodModule: primary_food_module,
+                secondaryFoodModule: secondary_food_module,
             },
         );
         entries.push(entry);
@@ -1914,6 +2022,82 @@ fn create_faction_inventory<'a>(
             },
         );
         entries.push(faction_entry);
+    }
+    builder.create_vector(&entries)
+}
+
+fn create_herds<'a>(
+    builder: &mut FbBuilder<'a>,
+    herds: &[HerdTelemetryState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::HerdTelemetryState<'a>>>> {
+    let mut entries = Vec::with_capacity(herds.len());
+    for herd in herds {
+        let id = builder.create_string(herd.id.as_str());
+        let label = builder.create_string(herd.label.as_str());
+        let species = builder.create_string(herd.species.as_str());
+        let entry = fb::HerdTelemetryState::create(
+            builder,
+            &fb::HerdTelemetryStateArgs {
+                id: Some(id),
+                label: Some(label),
+                species: Some(species),
+                x: herd.x,
+                y: herd.y,
+                biomass: herd.biomass,
+                routeLength: herd.route_length,
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+fn create_food_modules<'a>(
+    builder: &mut FbBuilder<'a>,
+    modules: &[FoodModuleState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::FoodModuleState<'a>>>> {
+    let mut entries = Vec::with_capacity(modules.len());
+    for module in modules {
+        let module_label = builder.create_string(module.module.as_str());
+        let kind_label = builder.create_string(module.kind.as_str());
+        let entry = fb::FoodModuleState::create(
+            builder,
+            &fb::FoodModuleStateArgs {
+                x: module.x,
+                y: module.y,
+                module: Some(module_label),
+                seasonalWeight: module.seasonal_weight,
+                kind: Some(kind_label),
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+fn create_command_events<'a>(
+    builder: &mut FbBuilder<'a>,
+    events: &[CommandEventState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::CommandEventState<'a>>>> {
+    let mut entries = Vec::with_capacity(events.len());
+    for event in events {
+        let kind = builder.create_string(event.kind.as_str());
+        let label = builder.create_string(event.label.as_str());
+        let detail = event
+            .detail
+            .as_ref()
+            .map(|value| builder.create_string(value.as_str()));
+        let entry = fb::CommandEventState::create(
+            builder,
+            &fb::CommandEventStateArgs {
+                tick: event.tick,
+                kind: Some(kind),
+                faction: event.faction,
+                label: Some(label),
+                detail,
+            },
+        );
+        entries.push(entry);
     }
     builder.create_vector(&entries)
 }
@@ -2078,6 +2262,45 @@ fn create_populations<'a>(
                     },
                 )
             });
+            let harvest = cohort.harvest_task.as_ref().map(|task| {
+                let module = builder.create_string(&task.module);
+                let band_label = builder.create_string(&task.band_label);
+                fb::HarvestTask::create(
+                    builder,
+                    &fb::HarvestTaskArgs {
+                        module: Some(module),
+                        bandLabel: Some(band_label),
+                        targetTile: task.target_tile,
+                        targetX: task.target_x,
+                        targetY: task.target_y,
+                        travelRemaining: task.travel_remaining,
+                        travelTotal: task.travel_total,
+                        gatherRemaining: task.gather_remaining,
+                        gatherTotal: task.gather_total,
+                        provisionsReward: task.provisions_reward,
+                        tradeGoodsReward: task.trade_goods_reward,
+                        startedTick: task.started_tick,
+                    },
+                )
+            });
+            let scout = cohort.scout_task.as_ref().map(|task| {
+                let band_label = builder.create_string(&task.band_label);
+                fb::ScoutTask::create(
+                    builder,
+                    &fb::ScoutTaskArgs {
+                        bandLabel: Some(band_label),
+                        targetTile: task.target_tile,
+                        targetX: task.target_x,
+                        targetY: task.target_y,
+                        travelRemaining: task.travel_remaining,
+                        travelTotal: task.travel_total,
+                        revealRadius: task.reveal_radius,
+                        revealDuration: task.reveal_duration,
+                        moraleGain: task.morale_gain,
+                        startedTick: task.started_tick,
+                    },
+                )
+            });
             fb::PopulationCohortState::create(
                 builder,
                 &fb::PopulationCohortStateArgs {
@@ -2089,6 +2312,8 @@ fn create_populations<'a>(
                     faction: cohort.faction,
                     knowledgeFragments: knowledge,
                     migration,
+                    harvestTask: harvest,
+                    scoutTask: scout,
                 },
             )
         })

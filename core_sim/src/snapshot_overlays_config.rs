@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     env, fs, io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -8,7 +9,10 @@ use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::scalar::{scalar_from_f32, Scalar};
+use crate::{
+    food::FoodModule,
+    scalar::{scalar_from_f32, Scalar},
+};
 
 pub const BUILTIN_SNAPSHOT_OVERLAYS_CONFIG: &str =
     include_str!("data/snapshot_overlays_config.json");
@@ -20,6 +24,7 @@ pub struct SnapshotOverlaysConfig {
     culture: CultureOverlayConfig,
     military: MilitaryOverlayConfig,
     fog: FogOverlayConfig,
+    food: FoodOverlayConfig,
 }
 
 impl SnapshotOverlaysConfig {
@@ -58,6 +63,10 @@ impl SnapshotOverlaysConfig {
 
     pub fn fog(&self) -> &FogOverlayConfig {
         &self.fog
+    }
+
+    pub fn food(&self) -> &FoodOverlayConfig {
+        &self.food
     }
 }
 
@@ -257,6 +266,69 @@ impl Default for FogOverlayConfig {
     fn default() -> Self {
         Self {
             global_local_blend: 0.5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct FoodOverlayConfig {
+    max_sites_per_module: usize,
+    max_total_sites: usize,
+    default_radius: u32,
+    radius_padding: u32,
+    provisions_per_weight: f32,
+    trade_goods_per_weight: f32,
+    trade_bonus_modules: HashMap<String, f32>,
+}
+
+impl FoodOverlayConfig {
+    pub fn max_sites_per_module(&self) -> usize {
+        self.max_sites_per_module.max(1)
+    }
+
+    pub fn max_total_sites(&self) -> usize {
+        self.max_total_sites.max(1)
+    }
+
+    pub fn default_radius(&self) -> u32 {
+        self.default_radius
+    }
+
+    pub fn radius_padding(&self) -> u32 {
+        self.radius_padding
+    }
+
+    pub fn provisions_per_weight(&self) -> f32 {
+        self.provisions_per_weight.max(0.0)
+    }
+
+    pub fn trade_goods_per_weight(&self) -> f32 {
+        self.trade_goods_per_weight.max(0.0)
+    }
+
+    pub fn trade_bonus_for(&self, module: &FoodModule) -> f32 {
+        self.trade_bonus_modules
+            .get(module.as_str())
+            .copied()
+            .unwrap_or(0.0)
+    }
+}
+
+impl Default for FoodOverlayConfig {
+    fn default() -> Self {
+        Self {
+            max_sites_per_module: 6,
+            max_total_sites: 40,
+            default_radius: 6,
+            radius_padding: 2,
+            provisions_per_weight: 120.0,
+            trade_goods_per_weight: 35.0,
+            trade_bonus_modules: HashMap::from([
+                ("coastal_littoral".to_string(), 25.0),
+                ("riverine_delta".to_string(), 15.0),
+                ("coastal_upwelling".to_string(), 30.0),
+            ]),
         }
     }
 }

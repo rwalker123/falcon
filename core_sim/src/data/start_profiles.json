@@ -24,6 +24,10 @@
         { "item": "provisions", "quantity": 120 },
         { "item": "trade_goods", "quantity": 40 }
       ],
+      "food_modules": {
+        "primary": "savanna_grassland",
+        "secondary": "riverine_delta"
+      },
       "survey_radius": 4,
       "fog_mode": "shroud",
       "victory_modes_enabled": [

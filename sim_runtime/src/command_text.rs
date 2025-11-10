@@ -121,6 +121,30 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         summary: "Select the active start profile/scenario id.",
         usage: "start_profile <profile_id>",
     },
+    CommandVerbHelp {
+        verb: "scout",
+        aliases: &[],
+        summary: "Queue a scouting order targeting the specified tile.",
+        usage: "scout <faction_id> <x> <y> [band_entity_bits]",
+    },
+    CommandVerbHelp {
+        verb: "follow_herd",
+        aliases: &[],
+        summary: "Queue a herd-following order for the given faction and herd id.",
+        usage: "follow_herd <faction_id> <herd_id>",
+    },
+    CommandVerbHelp {
+        verb: "found_camp",
+        aliases: &[],
+        summary: "Queue a request to found a seasonal camp at the specified tile.",
+        usage: "found_camp <faction_id> <x> <y>",
+    },
+    CommandVerbHelp {
+        verb: "forage",
+        aliases: &[],
+        summary: "Harvest food from a tile using the specified module key.",
+        usage: "forage <faction_id> <x> <y> <module_key> [band_entity_bits]",
+    },
 ];
 
 use crate::{
@@ -510,6 +534,80 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 profile_id: profile_id.to_string(),
             })
         }
+        "scout" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            let band_bits = match parts.next() {
+                Some(raw) => Some(parse_u64(raw, "band_entity_bits")?),
+                None => None,
+            };
+            Ok(CommandPayload::ScoutArea {
+                faction_id: parse_u32(faction_str, "scout faction")?,
+                target_x: parse_u32(x_str, "scout target_x")?,
+                target_y: parse_u32(y_str, "scout target_y")?,
+                band_entity_bits: band_bits,
+            })
+        }
+        "follow_herd" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let herd_id = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("herd_id"))?;
+            Ok(CommandPayload::FollowHerd {
+                faction_id: parse_u32(faction_str, "follow_herd faction")?,
+                herd_id: herd_id.to_string(),
+            })
+        }
+        "found_camp" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            Ok(CommandPayload::FoundCamp {
+                faction_id: parse_u32(faction_str, "found_camp faction")?,
+                target_x: parse_u32(x_str, "found_camp target_x")?,
+                target_y: parse_u32(y_str, "found_camp target_y")?,
+            })
+        }
+        "forage" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            let module_key = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("module_key"))?;
+            let band_bits = parts.next();
+            Ok(CommandPayload::ForageTile {
+                faction_id: parse_u32(faction_str, "forage faction")?,
+                target_x: parse_u32(x_str, "forage target_x")?,
+                target_y: parse_u32(y_str, "forage target_y")?,
+                module: module_key.to_ascii_lowercase(),
+                band_entity_bits: match band_bits {
+                    Some(raw) => Some(parse_u64(raw, "forage band_entity_bits")?),
+                    None => None,
+                },
+            })
+        }
         other => Err(CommandParseError::UnknownCommand(other.to_string())),
     }
 }
@@ -534,9 +632,9 @@ fn parse_u16(value: &str, context: &'static str) -> Result<u16, CommandParseErro
         })
 }
 
-fn parse_u8(value: &str, context: &'static str) -> Result<u8, CommandParseError> {
+fn parse_u64(value: &str, context: &'static str) -> Result<u64, CommandParseError> {
     value
-        .parse::<u8>()
+        .parse::<u64>()
         .map_err(|source| CommandParseError::InvalidInteger {
             value: value.to_string(),
             context,
@@ -544,9 +642,9 @@ fn parse_u8(value: &str, context: &'static str) -> Result<u8, CommandParseError>
         })
 }
 
-fn parse_u64(value: &str, context: &'static str) -> Result<u64, CommandParseError> {
+fn parse_u8(value: &str, context: &'static str) -> Result<u8, CommandParseError> {
     value
-        .parse::<u64>()
+        .parse::<u8>()
         .map_err(|source| CommandParseError::InvalidInteger {
             value: value.to_string(),
             context,

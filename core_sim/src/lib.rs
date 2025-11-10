@@ -9,6 +9,8 @@ mod crisis_config;
 mod culture;
 mod culture_corruption_config;
 mod espionage;
+mod fauna;
+mod food;
 mod generations;
 mod great_discovery;
 mod heightfield;
@@ -42,8 +44,8 @@ use crate::start_profile::{
 use bevy::prelude::*;
 
 pub use components::{
-    ElementKind, KnowledgeFragment, LogisticsLink, PendingMigration, PopulationCohort, PowerNode,
-    StartingUnit, Tile, TradeLink,
+    ElementKind, HarvestAssignment, KnowledgeFragment, LogisticsLink, PendingMigration,
+    PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink,
 };
 pub use crisis::{
     ActiveCrisisLedger, CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot,
@@ -73,6 +75,13 @@ pub use espionage::{
     EspionageMissionId, EspionageMissionInstanceId, EspionageMissionKind, EspionageMissionState,
     EspionageMissionTemplate, EspionageRoster, FactionSecurityPolicies, QueueMissionError,
     QueueMissionParams, SecurityPolicy,
+};
+pub use fauna::{
+    advance_herds, spawn_initial_herds, HerdRegistry, HerdTelemetry, HerdTelemetryEntry,
+};
+pub use food::{
+    classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,
+    DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use great_discovery::{
@@ -123,13 +132,16 @@ pub use power::{
 };
 pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
-    CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger,
-    FactionInventory, HydrologyOverrides, PendingCrisisSeeds, PendingCrisisSpawns,
-    SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation,
-    TileRegistry, TradeDiffusionRecord, TradeTelemetry,
+    CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
+    DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FogRevealLedger,
+    HydrologyOverrides, PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias,
+    SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry,
+    TradeDiffusionRecord, TradeTelemetry,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
-pub use snapshot::{restore_world_from_snapshot, SnapshotHistory, StoredSnapshot};
+pub use snapshot::{
+    command_events_to_state, restore_world_from_snapshot, SnapshotHistory, StoredSnapshot,
+};
 pub use systems::spawn_initial_world;
 pub use systems::{simulate_power, MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent};
 pub use terrain::{
@@ -299,6 +311,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(CorruptionTelemetry::default())
         .insert_resource(DiplomacyLeverage::default())
         .insert_resource(FactionInventory::default())
+        .insert_resource(HerdRegistry::default())
+        .insert_resource(HerdTelemetry::default())
+        .insert_resource(FogRevealLedger::default())
+        .insert_resource(CommandEventLog::default())
         .insert_resource(snapshot_history)
         .insert_resource(generation_registry)
         .insert_resource(espionage_catalog)
@@ -355,6 +371,7 @@ pub fn build_headless_app() -> App {
                 systems::apply_starting_inventory_effects,
                 hydrology::generate_hydrology,
                 systems::apply_tag_budget_solver,
+                spawn_initial_herds,
                 espionage::initialise_espionage_roster,
             )
                 .chain(),
@@ -374,6 +391,7 @@ pub fn build_headless_app() -> App {
             (
                 systems::simulate_materials,
                 systems::simulate_logistics,
+                advance_herds,
                 systems::trade_knowledge_diffusion,
             )
                 .chain()
@@ -408,6 +426,8 @@ pub fn build_headless_app() -> App {
             Update,
             (
                 systems::simulate_population,
+                systems::advance_harvest_assignments,
+                systems::advance_scout_assignments,
                 systems::publish_trade_telemetry,
             )
                 .chain()
@@ -419,7 +439,11 @@ pub fn build_headless_app() -> App {
         )
         .add_systems(
             Update,
-            (systems::simulate_power, systems::process_corruption)
+            (
+                systems::simulate_power,
+                systems::process_corruption,
+                systems::decay_fog_reveals,
+            )
                 .chain()
                 .in_set(TurnStage::Finalize),
         )

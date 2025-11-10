@@ -2,6 +2,7 @@ use bevy::{math::UVec2, prelude::*};
 use sim_runtime::{KnownTechFragment as ContractKnowledgeFragment, TerrainTags, TerrainType};
 
 use crate::{
+    food::FoodModule,
     generations::GenerationId,
     mapgen::MountainType,
     orders::FactionId,
@@ -165,6 +166,36 @@ impl StartingUnit {
     pub fn new(kind: String, tags: Vec<String>) -> Self {
         Self { kind, tags }
     }
+}
+
+#[derive(Component, Debug, Clone)]
+pub struct HarvestAssignment {
+    pub faction: FactionId,
+    pub band_label: String,
+    pub module: FoodModule,
+    pub target_tile: Entity,
+    pub target_coords: UVec2,
+    pub travel_remaining: u32,
+    pub travel_total: u32,
+    pub gather_remaining: u32,
+    pub gather_total: u32,
+    pub provisions_reward: i64,
+    pub trade_goods_reward: i64,
+    pub started_tick: u64,
+}
+
+#[derive(Component, Debug, Clone)]
+pub struct ScoutAssignment {
+    pub faction: FactionId,
+    pub band_label: String,
+    pub target_tile: Entity,
+    pub target_coords: UVec2,
+    pub travel_remaining: u32,
+    pub travel_total: u32,
+    pub reveal_radius: u32,
+    pub reveal_duration: u64,
+    pub morale_gain: f32,
+    pub started_tick: u64,
 }
 
 impl Default for PowerNode {

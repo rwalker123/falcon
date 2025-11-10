@@ -30,6 +30,19 @@ const MOUNTAIN_KIND_LABELS := {
     4: "Dome Plateau",
 }
 
+const FOOD_MODULE_LABELS := {
+    "coastal_littoral": "Coastal Littoral",
+    "riverine_delta": "Riverine / Delta",
+    "savanna_grassland": "Savanna Grassland",
+    "temperate_forest": "Temperate Forest",
+    "boreal_arctic": "Boreal / Arctic",
+    "montane_highland": "Montane Highland",
+    "wetland_swamp": "Wetland / Swamp",
+    "semi_arid_scrub": "Semi-Arid Scrub",
+    "coastal_upwelling": "Coastal Upwelling",
+    "mixed_woodland": "Mixed Woodland",
+}
+
 @onready var sentiment_text: RichTextLabel = $RootPanel/TabContainer/Sentiment/SentimentText
 @onready var terrain_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TerrainText
 @onready var terrain_biome_section_label: Label = $RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection/BiomeSectionLabel
@@ -38,6 +51,8 @@ const MOUNTAIN_KIND_LABELS := {
 @onready var terrain_tile_section_label: Label = $RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileSectionLabel
 @onready var terrain_tile_list: ItemList = $RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileList
 @onready var terrain_tile_detail_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileDetailText
+@onready var tile_scout_button: Button = $RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileActionRow/TileScoutButton
+@onready var tile_found_camp_button: Button = $RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileActionRow/TileFoundCampButton
 @onready var map_size_label: Label = $RootPanel/TabContainer/Map/MapVBox/MapSizeSection/MapSizeLabel
 @onready var map_size_dropdown: OptionButton = $RootPanel/TabContainer/Map/MapVBox/MapSizeSection/MapSizeDropdown
 @onready var map_generate_button: Button = $RootPanel/TabContainer/Map/MapVBox/MapSizeSection/GenerateMapButton
@@ -121,6 +136,18 @@ const MOUNTAIN_KIND_LABELS := {
 @onready var root_panel: Panel = $RootPanel
 @onready var tab_container: TabContainer = $RootPanel/TabContainer
 @onready var command_status_label: Label = $RootPanel/TabContainer/Commands/StatusLabel
+@onready var scenario_faction_spin: SpinBox = $RootPanel/TabContainer/Commands/ScenarioCommands/ScenarioFactionRow/ScenarioFactionSpin
+@onready var scout_x_spin: SpinBox = $RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow/ScoutXSpin
+@onready var scout_y_spin: SpinBox = $RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow/ScoutYSpin
+@onready var scout_execute_button: Button = $RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow/ScoutExecuteButton
+@onready var follow_herd_field: LineEdit = $RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow/FollowHerdField
+@onready var follow_herd_button: Button = $RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow/FollowHerdButton
+@onready var camp_x_spin: SpinBox = $RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampXSpin
+@onready var camp_y_spin: SpinBox = $RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampYSpin
+@onready var camp_execute_button: Button = $RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampExecuteButton
+@onready var fauna_list: ItemList = $RootPanel/TabContainer/Fauna/FaunaList
+@onready var fauna_detail_text: RichTextLabel = $RootPanel/TabContainer/Fauna/FaunaDetail
+@onready var fauna_follow_button: Button = $RootPanel/TabContainer/Fauna/FaunaFollowButton
 @onready var rollback_ten_button: Button = $RootPanel/CommandToolbar/RollbackTenButton
 @onready var rollback_button: Button = $RootPanel/CommandToolbar/RollbackButton
 @onready var play_pause_button: Button = $RootPanel/CommandToolbar/PlayPauseButton
@@ -163,6 +190,8 @@ var _influencers: Dictionary = {}
 var _corruption: Dictionary = {}
 var _victory_state: Dictionary = {}
 var _faction_inventory_state: Array = []
+var _fauna_entries: Array = []
+var _selected_herd_id: String = ""
 var _victory_log_signature: String = ""
 var _terrain_palette: Dictionary = {}
 var _terrain_tag_labels: Dictionary = {}
@@ -170,11 +199,14 @@ var _tile_records: Dictionary = {}
 var _terrain_counts: Dictionary = {}
 var _terrain_tag_counts: Dictionary = {}
 var _tile_total: int = 0
+var _food_modules: Array = []
+var _food_module_lookup: Dictionary = {}
 var _biome_entries: Array[Dictionary] = []
 var _biome_tile_lookup: Dictionary = {}
 var _biome_index_lookup: Dictionary = {}
 var _selected_biome_id: int = -1
 var _selected_tile_entity: int = -1
+var _selected_tile_coords: Vector2i = Vector2i(-1, -1)
 var _hovered_tile_entity: int = -1
 var _tile_coord_lookup: Dictionary = {}
 var _selected_culture_layer_id: int = -1
@@ -214,6 +246,7 @@ var _map_size_custom_index: int = -1
 var _suppress_map_size_signal: bool = false
 var _panel_visible: bool = true
 var _selected_trade_entity: int = -1
+var _seen_command_events: Dictionary = {}
 var _log_entries: Array = []
 var _log_filtered_records: Array = []
 var _log_render_dirty: bool = true
@@ -367,6 +400,8 @@ func _ready() -> void:
             power_node_list.item_selected.connect(_on_power_node_selected)
         if not power_node_list.is_connected("item_activated", power_select_callable):
             power_node_list.item_activated.connect(_on_power_node_selected)
+    if fauna_list != null and not fauna_list.is_connected("item_selected", Callable(self, "_on_fauna_list_item_selected")):
+        fauna_list.item_selected.connect(_on_fauna_list_item_selected)
     if great_discovery_ledger_list != null:
         var ledger_select_callable = Callable(self, "_on_great_discovery_ledger_selected")
         if not great_discovery_ledger_list.is_connected("item_selected", ledger_select_callable):
@@ -419,7 +454,6 @@ func set_panel_visible(visible: bool) -> void:
         root_panel.visible = visible
     set_process(visible)
     set_process_input(visible)
-    push_warning("Inspector panel visibility -> %s" % str(visible))
 
 func toggle_panel_visibility() -> void:
     set_panel_visible(not _panel_visible)
@@ -465,6 +499,15 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
         if inventory_variant is Array:
             _faction_inventory_state = (inventory_variant as Array).duplicate(true)
             _refresh_scenario_description()
+    if data.has("herds"):
+        var herds_variant: Variant = data["herds"]
+        if herds_variant is Array:
+            _fauna_entries = (herds_variant as Array).duplicate(true)
+            _render_fauna()
+    if data.has("command_events"):
+        _ingest_command_events(data["command_events"])
+    if data.has("food_modules"):
+        _ingest_food_modules(data["food_modules"])
 
     if data.has("grid"):
         var grid_variant: Variant = data["grid"]
@@ -708,6 +751,7 @@ func _render_dynamic_sections() -> void:
     _render_corruption()
     _render_trade()
     _render_power()
+    _render_fauna()
     _render_crisis()
     _render_victory()
     _render_great_discoveries()
@@ -727,12 +771,20 @@ func _render_static_sections() -> void:
     _culture_tensions.clear()
     _culture_tension_tracker.clear()
     _selected_culture_layer_id = -1
+    _selected_tile_entity = -1
+    _selected_tile_coords = Vector2i(-1, -1)
     _trade_links.clear()
     _trade_metrics.clear()
     _trade_history.clear()
     _power_nodes.clear()
     _power_metrics.clear()
     _selected_power_node_id = -1
+    _fauna_entries.clear()
+    _selected_herd_id = ""
+    if fauna_list != null:
+        fauna_list.clear()
+    if fauna_detail_text != null:
+        fauna_detail_text.text = "[i]Awaiting telemetry.[/i]"
     _discovery_progress.clear()
     _knowledge_events.clear()
     _knowledge_timeline_events.clear()
@@ -746,6 +798,7 @@ func _render_static_sections() -> void:
     _selected_great_discovery_key = ""
     _selected_great_discovery_progress_key = ""
     _selected_trade_entity = -1
+    _seen_command_events.clear()
     _clear_terrain_ui()
     _mark_logs_dirty()
     _render_terrain()
@@ -1426,6 +1479,18 @@ func _setup_command_controls() -> void:
     autoplay_timer.wait_time = float(autoplay_spin.value)
     add_child(autoplay_timer)
     autoplay_timer.timeout.connect(_on_autoplay_timeout)
+    if scout_execute_button != null:
+        scout_execute_button.pressed.connect(_on_scout_command_pressed)
+    if follow_herd_button != null:
+        follow_herd_button.pressed.connect(_on_follow_herd_button_pressed)
+    if camp_execute_button != null:
+        camp_execute_button.pressed.connect(_on_camp_command_pressed)
+    if tile_scout_button != null:
+        tile_scout_button.pressed.connect(_on_tile_scout_button_pressed)
+    if tile_found_camp_button != null:
+        tile_found_camp_button.pressed.connect(_on_tile_found_button_pressed)
+    if fauna_follow_button != null:
+        fauna_follow_button.pressed.connect(_on_fauna_follow_button_pressed)
     _update_command_status()
     _append_command_log("Command console ready.")
 
@@ -1687,6 +1752,31 @@ func _update_command_controls_enabled() -> void:
         heat_entity_spin.editable = connected
     if heat_delta_spin != null:
         heat_delta_spin.editable = connected
+    if scenario_faction_spin != null:
+        scenario_faction_spin.editable = connected
+    if scout_x_spin != null:
+        scout_x_spin.editable = connected
+    if scout_y_spin != null:
+        scout_y_spin.editable = connected
+    if scout_execute_button != null:
+        scout_execute_button.disabled = not connected
+    if follow_herd_field != null:
+        follow_herd_field.editable = connected
+    if follow_herd_button != null:
+        follow_herd_button.disabled = not connected
+    if camp_x_spin != null:
+        camp_x_spin.editable = connected
+    if camp_y_spin != null:
+        camp_y_spin.editable = connected
+    if camp_execute_button != null:
+        camp_execute_button.disabled = not connected
+    var has_tile_target := _selected_tile_coords.x >= 0 and _selected_tile_coords.y >= 0
+    if tile_scout_button != null:
+        tile_scout_button.disabled = not (connected and has_tile_target)
+    if tile_found_camp_button != null:
+        tile_found_camp_button.disabled = not (connected and has_tile_target)
+    if fauna_follow_button != null:
+        fauna_follow_button.disabled = not (connected and _selected_herd_id != "")
     if turn_pipeline_reload_button != null:
         turn_pipeline_reload_button.disabled = not connected
     if snapshot_overlays_reload_button != null:
@@ -1767,6 +1857,9 @@ func _send_command(line: String, success_message: String) -> bool:
     _append_command_log(success_message)
     _update_command_status()
     return true
+
+func send_runtime_command(line: String, success_message: String) -> bool:
+    return _send_command(line, success_message)
 
 func _on_crisis_auto_seed_toggled(pressed: bool) -> void:
     var line := "crisis_autoseed %s" % ("on" if pressed else "off")
@@ -2321,6 +2414,28 @@ func _render_power() -> void:
                 _selected_power_node_id = int((first_meta as Dictionary).get("node_id", (first_meta as Dictionary).get("entity", -1)))
     _update_power_node_detail()
 
+func _render_fauna() -> void:
+    if fauna_list == null or fauna_detail_text == null:
+        return
+    fauna_list.clear()
+    _selected_herd_id = ""
+    if _fauna_entries.is_empty():
+        fauna_detail_text.text = "[i]Awaiting telemetry.[/i]"
+        return
+    for herd_variant in _fauna_entries:
+        if not (herd_variant is Dictionary):
+            continue
+        var herd: Dictionary = herd_variant
+        var label := String(herd.get("label", herd.get("id", "Herd")))
+        var x := int(herd.get("x", 0))
+        var y := int(herd.get("y", 0))
+        var biomass := float(herd.get("biomass", 0.0))
+        var entry_label := "%s — (%d,%d) · %.0f" % [label, x, y, biomass]
+        var item_index := fauna_list.add_item(entry_label)
+        fauna_list.set_item_metadata(item_index, herd)
+    fauna_detail_text.text = "[i]Select a herd to view details.[/i]"
+    _update_command_controls_enabled()
+
 func _render_crisis() -> void:
     if crisis_summary_text != null:
         if _crisis_telemetry.is_empty():
@@ -2601,6 +2716,35 @@ func _on_power_node_selected(index: int) -> void:
     else:
         _selected_power_node_id = -1
     _update_power_node_detail()
+
+func _on_fauna_list_item_selected(index: int) -> void:
+    if fauna_list == null or fauna_detail_text == null:
+        return
+    var meta: Variant = fauna_list.get_item_metadata(index)
+    if not (meta is Dictionary):
+        fauna_detail_text.text = "[i]No herd details available.[/i]"
+        _selected_herd_id = ""
+        _update_command_controls_enabled()
+        return
+    var info: Dictionary = meta
+    _selected_herd_id = String(info.get("id", ""))
+    var label := String(info.get("label", info.get("id", "Herd")))
+    var species := String(info.get("species", ""))
+    var x := int(info.get("x", 0))
+    var y := int(info.get("y", 0))
+    var biomass := float(info.get("biomass", 0.0))
+    var route_length := int(info.get("route_length", 0))
+    var lines: Array[String] = []
+    lines.append("[b]%s[/b]" % label)
+    if species != "":
+        lines.append(species)
+    lines.append("Position (%d, %d)" % [x, y])
+    lines.append("Biomass %.0f" % biomass)
+    lines.append("Route length %d" % route_length)
+    fauna_detail_text.text = "\n".join(lines)
+    if follow_herd_field != null:
+        follow_herd_field.text = String(info.get("id", ""))
+    _update_command_controls_enabled()
 
 func _render_great_discoveries() -> void:
     if great_discovery_summary_text == null:
@@ -4547,6 +4691,9 @@ func _format_tile_list_entry(entity_id: int, record: Dictionary) -> String:
         parts.append(_label_for_mountain_kind(mountain_kind))
     if not preview_tags.is_empty():
         parts.append(_join_strings_with_separator(preview_tags, ", "))
+    var module_key: String = String(record.get("food_module", "")).strip_edges()
+    if module_key != "":
+        parts.append(_label_for_food_module(module_key))
     return _join_strings_with_separator(parts, " • ")
 
 func _format_tile_coords(record: Dictionary) -> String:
@@ -4558,14 +4705,22 @@ func _render_tile_detail(entity_id: int, preview: bool = false) -> void:
     if terrain_tile_detail_text == null:
         return
     if entity_id < 0 or not _tile_records.has(entity_id):
+        _selected_tile_coords = Vector2i(-1, -1)
+        _update_command_controls_enabled()
         terrain_tile_detail_text.text = """[b]Tile Inspection[/b]
 Hover or select a tile to inspect biome tags and conditions."""
         return
     var record_variant: Variant = _tile_records.get(entity_id, {})
     if not (record_variant is Dictionary):
+        _selected_tile_coords = Vector2i(-1, -1)
+        _update_command_controls_enabled()
         terrain_tile_detail_text.text = "No data for tile %d." % entity_id
         return
     var record: Dictionary = record_variant
+    _selected_tile_coords = Vector2i(
+        int(record.get("x", -1)),
+        int(record.get("y", -1))
+    )
     var lines: Array[String] = []
     lines.append("[b]Tile %d[/b]" % entity_id)
     lines.append("Location: %s" % _format_tile_coords(record))
@@ -4575,6 +4730,16 @@ Hover or select a tile to inspect biome tags and conditions."""
     if not tags.is_empty():
         tags_text = _join_strings_with_separator(tags, ", ")
     lines.append("Tags: %s" % tags_text)
+    var module_key: String = String(record.get("food_module", "")).strip_edges()
+    if module_key != "":
+        var module_label: String = _label_for_food_module(module_key)
+        var seasonal_weight: float = float(record.get("food_module_weight", 0.0))
+        if seasonal_weight > 0.0:
+            lines.append("Food Module: %s (seasonal weight %.2f)" % [module_label, seasonal_weight])
+        else:
+            lines.append("Food Module: %s" % module_label)
+    else:
+        lines.append("Food Module: none")
     lines.append("Temperature: %.1f" % float(record.get("temperature", 0.0)))
     lines.append("Mass: %.1f" % float(record.get("mass", 0.0)))
     lines.append("Element ID: %d" % int(record.get("element", -1)))
@@ -4588,6 +4753,7 @@ Hover or select a tile to inspect biome tags and conditions."""
         lines.append("")
         lines.append("[i]Hover preview[/i]")
     terrain_tile_detail_text.text = "\n".join(lines)
+    _update_command_controls_enabled()
 
 func _tag_labels_from_mask(mask: int) -> Array[String]:
     var labels: Array[String] = []
@@ -4602,6 +4768,11 @@ func _tag_labels_from_mask(mask: int) -> Array[String]:
 func _label_for_mountain_kind(kind: int) -> String:
     var value: Variant = MOUNTAIN_KIND_LABELS.get(kind, "Unknown")
     return str(value)
+
+func _label_for_food_module(key: String) -> String:
+    if key == "":
+        return "Unknown"
+    return String(FOOD_MODULE_LABELS.get(key, key.capitalize().replace("_", " ")))
 
 func focus_tile_from_map(col: int, row: int, terrain_id: int) -> void:
     if terrain_biome_list == null:
@@ -5531,6 +5702,22 @@ func _remove_tiles(ids) -> void:
             _forget_tile(int(idx))
     _tile_total = max(_tile_records.size(), 0)
 
+func _ingest_food_modules(entries) -> void:
+    _food_modules.clear()
+    _food_module_lookup.clear()
+    if not (entries is Array):
+        return
+    for entry in entries:
+        if not (entry is Dictionary):
+            continue
+        var record: Dictionary = (entry as Dictionary).duplicate(true)
+        _food_modules.append(record)
+        var x: int = int(record.get("x", -1))
+        var y: int = int(record.get("y", -1))
+        if x < 0 or y < 0:
+            continue
+        _food_module_lookup[Vector2i(x, y)] = record
+
 func _rebuild_culture_layers(array_data) -> void:
     var prev_selected: int = _selected_culture_layer_id
     _culture_layers.clear()
@@ -5632,19 +5819,27 @@ func _store_tile(entry) -> void:
     var tags_mask = int(info.get("terrain_tags", 0))
     var mountain_kind = int(info.get("mountain_kind", 0))
     var mountain_relief = float(info.get("mountain_relief", 1.0))
+    var coord := Vector2i(int(info.get("x", -1)), int(info.get("y", -1)))
+    var module_key: String = ""
+    var module_weight: float = 0.0
+    if coord.x >= 0 and coord.y >= 0 and _food_module_lookup.has(coord):
+        var module_entry: Dictionary = _food_module_lookup[coord]
+        module_key = String(module_entry.get("module", "")).strip_edges()
+        module_weight = float(module_entry.get("seasonal_weight", 0.0))
     var record = {
         "terrain": terrain_id,
         "tags": tags_mask,
-        "x": int(info.get("x", -1)),
-        "y": int(info.get("y", -1)),
+        "x": coord.x,
+        "y": coord.y,
         "element": int(info.get("element", -1)),
         "temperature": float(info.get("temperature", 0.0)),
         "mass": float(info.get("mass", 0.0)),
         "mountain_kind": mountain_kind,
         "mountain_relief": mountain_relief,
+        "food_module": module_key,
+        "food_module_weight": module_weight,
     }
     _tile_records[entity] = record
-    var coord := Vector2i(int(record.get("x", -1)), int(record.get("y", -1)))
     if coord.x >= 0 and coord.y >= 0:
         _tile_coord_lookup[coord] = entity
     _tile_total = max(_tile_records.size(), _tile_total + 1)
@@ -5920,6 +6115,89 @@ func _on_snapshot_overlays_reload_button_pressed() -> void:
         command_line += " %s" % path
         summary = "Snapshot overlays config reload requested (%s)." % path
     _send_command(command_line, summary)
+
+func _scenario_command_faction() -> int:
+    return int(scenario_faction_spin.value) if scenario_faction_spin != null else 0
+
+func _on_scout_command_pressed() -> void:
+    if scout_x_spin == null or scout_y_spin == null:
+        return
+    var x := int(scout_x_spin.value)
+    var y := int(scout_y_spin.value)
+    var faction := _scenario_command_faction()
+    var message := "Scout order queued for faction %d at (%d, %d)." % [faction, x, y]
+    _send_command("scout %d %d %d" % [faction, x, y], message)
+
+func _on_follow_herd_button_pressed() -> void:
+    if follow_herd_field == null:
+        return
+    var herd_id := follow_herd_field.text.strip_edges()
+    if herd_id.is_empty():
+        _append_command_log("Provide a herd id before issuing Follow Herd.")
+        return
+    var normalized := herd_id.to_lower().replace(" ", "_")
+    var faction := _scenario_command_faction()
+    var message := "Follow herd '%s' requested for faction %d." % [herd_id, faction]
+    _send_command("follow_herd %d %s" % [faction, normalized], message)
+
+func _on_camp_command_pressed() -> void:
+    if camp_x_spin == null or camp_y_spin == null:
+        return
+    var x := int(camp_x_spin.value)
+    var y := int(camp_y_spin.value)
+    var faction := _scenario_command_faction()
+    var message := "Found camp request for faction %d at (%d, %d)." % [faction, x, y]
+    _send_command("found_camp %d %d %d" % [faction, x, y], message)
+
+func _on_tile_scout_button_pressed() -> void:
+    if _selected_tile_coords.x < 0 or _selected_tile_coords.y < 0:
+        _append_command_log("Select a tile before issuing a scout order.")
+        return
+    var faction := _scenario_command_faction()
+    var x := _selected_tile_coords.x
+    var y := _selected_tile_coords.y
+    var message := "Scout order queued for faction %d at (%d, %d)." % [faction, x, y]
+    _send_command("scout %d %d %d" % [faction, x, y], message)
+
+func _on_tile_found_button_pressed() -> void:
+    if _selected_tile_coords.x < 0 or _selected_tile_coords.y < 0:
+        _append_command_log("Select a tile before founding a camp.")
+        return
+    var faction := _scenario_command_faction()
+    var x := _selected_tile_coords.x
+    var y := _selected_tile_coords.y
+    var message := "Found camp request for faction %d at (%d, %d)." % [faction, x, y]
+    _send_command("found_camp %d %d %d" % [faction, x, y], message)
+
+func _on_fauna_follow_button_pressed() -> void:
+    if _selected_herd_id == "":
+        _append_command_log("Select a herd from the Fauna tab before following.")
+        return
+    var faction := _scenario_command_faction()
+    var message := "Follow herd '%s' requested for faction %d." % [_selected_herd_id, faction]
+    _send_command("follow_herd %d %s" % [faction, _selected_herd_id], message)
+
+func _ingest_command_events(events_variant: Variant) -> void:
+    if not (events_variant is Array):
+        return
+    var events_array: Array = events_variant
+    for entry_variant in events_array:
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        var tick: int = int(entry.get("tick", -1))
+        var kind: String = String(entry.get("kind", "")).strip_edges()
+        var label: String = String(entry.get("label", "")).strip_edges()
+        var detail: String = String(entry.get("detail", "")).strip_edges()
+        var signature := "%d|%s|%s|%s" % [tick, kind, label, detail]
+        if _seen_command_events.has(signature):
+            continue
+        _seen_command_events[signature] = true
+        var prefix := kind.capitalize() if kind != "" else "Command"
+        var message := "[SIM] %s: %s" % [prefix, label]
+        if detail != "":
+            message += " (%s)" % detail
+        _append_command_log(message)
 
 func _on_heat_apply_button_pressed() -> void:
     var entity_id: int = int(heat_entity_spin.value) if heat_entity_spin != null else 0

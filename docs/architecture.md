@@ -95,6 +95,54 @@ After initial biome stamping, presets may optionally lock a subset of tag famili
 - Hydrology: moderate-to-high river density; deltas and floodplains common on large coasts.
 - Tag targets (example): `Water: 0.65`, `Coastal: 0.06`, `Wetland: 0.06`, `Fertile: 0.22`, `Arid: 0.12`, `Polar: 0.08`, `Highland: 0.10`, `Volcanic: 0.01`, `Hazardous: 0.03` (overlap permitted; solver aims for balanced coverage across overlapping tags).
 
+### Ecosystem Food Modules
+
+Pre-agricultural survival depends on diversified food portfolios. To keep early play resilient—and to support 6–12 simultaneous factions on the default 80×52 map—we model food availability as reusable “modules.” Each module maps to concrete worldgen tags, snapshot payloads, and client affordances.
+
+| Module / Biome        | Primary Inputs                                                | Secondary Inputs / Tactics                         | Storage / Seasonality Hooks                        |
+|-----------------------|---------------------------------------------------------------|----------------------------------------------------|----------------------------------------------------|
+| **Coastal Littoral**  | Shellfish beds, tidal fish runs, kelp/seaweed                 | Seabird eggs, drift scavenging, small seals        | Fish racks, kelp drying lines, shell middens       |
+| **Riverine / Delta**  | Freshwater fish, mussels, cattail/arrowroot gardens          | Salmon runs, floodplain tubers, reeds              | Smokehouses, earthen tuber pits                    |
+| **Savanna Grassland** | Herd shadowing, wild yams, agave hearts                      | Locust swarms, baobab nuts, scavenged kills        | Jerky racks, nut caches                            |
+| **Temperate Forest**  | Oak/chestnut groves, berries, small deer, mushrooms          | Maple sap, wild barley, honey, bird eggs           | Clay-lined nut pits, smoked fish/meat              |
+| **Boreal / Arctic**   | River/ice fishing, seals, stored fat                         | Caribou herds, ground-nesting birds                | Permafrost pits, blubber/pemmican stores           |
+| **Montane / Highland**| Alpine tubers, marmots, seed grasses                         | Meltwater fishing, highland berries                | Sun-dried meat, stone caches                       |
+| **Wetland / Swamp**   | Cattail rhizomes, lilies, amphibians/reptiles                | Migratory birds, insect larvae, crayfish           | Mud/cold storage pits, smoke curing                |
+| **Semi-Arid Scrub**   | Drought tubers, rodents, cactus fruits                       | Agave roasting, wild millet, scavenged carcasses   | Roasting pits, dried seed cakes                    |
+| **Coastal Upwelling** | Sardine/salmon surges, seaweed, seabirds                     | Driftwood fires, tidal pools                       | Large smokehouses, lattice drying frames           |
+| **Mixed Woodland**    | Mixed nuts/seeds, berries, edible greens, small game         | Bee larvae, wild grains, opportunistic scavenging  | Fermented greens, buried clam baskets              |
+
+Implementation beats:
+
+1. **Worldgen tags.** Stamp per-tile annotations (e.g., `ShellfishBed`, `RootGarden`, `NutGrove`, `TermiteMound`, `SalmonRun`) as `FoodModuleTag` components. Each tag carries: tile entity, module id, seasonal weight, and respawn timer. Persist them via snapshot overlays so the client can render markers.
+2. **Ledgers + commands.** Add a `ForageSiteLedger` resource tracking capacity per tag and per faction. Commands such as `gather_roots`, `harvest_shellfish`, `dry_fish`, and `follow_herd` consume capacity, adjust `FactionInventory`, and push `CommandEventLog` entries for HUD feedback.
+3. **Client affordances.** Reuse the HUD selection panel: when a unit stands on a tagged tile we show contextual buttons (Harvest, Gather, Dry). Herd markers remain globally visible—multiple factions are expected to exploit the same migration loops to encourage encounters rather than partitioning resources per faction.
+
+### Start Profiles ↔ Food Modules
+
+Even though only the Trail Sovereigns profile ships today, we target six archetypes long-term. Each profile declares a **primary** and **secondary** module so worldgen can bias start positions and early tasks.
+
+| Profile (planned)         | Primary Module       | Secondary Module      | Notes |
+|---------------------------|----------------------|-----------------------|-------|
+| Trail Sovereigns (current)| Savanna Herd Shadow  | Riverine / Tubers     | Keep migratory herds central but guarantee cattail beds within ≤2 tiles for redundancy. |
+| Tidal Foragers            | Coastal Littoral     | Coastal Upwelling     | Spawn along kelp/shellfish belts; tutorialize drying racks. |
+| River Lanterns            | Riverine / Delta     | Wetland / Swamp       | Focus on fish traps + amphibian harvest before herds unlock. |
+| High Mesa Branchers       | Montane / Highland   | Semi-Arid Scrub       | Mix marmot hunts with agave roasting pits. |
+| Deep Canopy Guild         | Temperate Forest     | Mixed Woodland        | Nut caches and snares; strong preservation loop. |
+| Dawn Ice Kin              | Boreal / Arctic      | Riverine / Delta      | Anchor near seal leads plus summer salmon runs. |
+
+Placement rules:
+
+- Primary module tiles must appear within two steps of each faction’s spawn; secondary modules within six steps.
+- When multiple factions share a module (e.g., herds), bias spawns toward the same migratory loops. Conflict is expected—no need to reserve one herd per faction.
+- Module metadata lives inside `start_profiles.json` so AI, tutorials, and worldgen can branch without hard-coding.
+
+Next steps:
+
+- Populate `start_profiles.json` with the additional archetypes and module metadata.
+- Extend `WorldSnapshot` with a `food_modules` overlay so clients can render markers and surface contextual commands.
+- Update tutorial/quest scaffolding to walk players through exploiting both primary and secondary modules before the farming tech tree unlocks.
+
 ### Snapshot & Client
 - Hydrology state is generated at startup and stored server-side. Exporting a dedicated hydrology overlay (raster/polylines) to clients requires a schema update; tracked in TASKS.md. For now, debug logs report river counts and generation details.
 
@@ -108,9 +156,10 @@ This section connects the headless simulation to a Civ-like playable loop: campa
 - Knowledge tags are defined in `core_sim/src/data/start_profile_knowledge_tags.json` (env-overridable). Designers map each tag to a concrete `discovery_id`, default progress, and fidelity, and the loader caches the catalog so spawning cohorts instantly inherit the scripted tech fragments.
 - Inventory items now translate to immediate systemic nudges. `provisions` raise morale on every starting cohort (modeling surplus food/supplies) and `trade_goods` bump logistics/trade openness so early caravans hit the ground running. Both are consumed during startup, leaving `FactionInventory` free for future runtime stockpiles.
 - The inspector's scenario picker now surfaces the structured overrides it receives via snapshots—unit loadouts, inventory payloads, tagged knowledge, and fog settings—so scenario authors can sanity-check JSON edits without digging through logs.
-- Fog wiring: `survey_radius`/`fog_mode` now drive the `StartLocation` resource and the snapshot fog raster. `fog_mode = revealed` clears the entire fog overlay, while `fog_mode = shroud` forces opaque fog everywhere except the guaranteed reveal radius around the start tile; the standard mode keeps blending global/local knowledge coverage.
+- Wildlife telemetry: `HerdRegistry` + `advance_herds` seed 2–6 migratory herds per world, march them along deterministic loops (biasing toward the starting province), and export their id/species/position/biomass via the new `herds` snapshot block. The inspector’s Fauna tab and the `FollowHerd` command now operate on these live herds instead of hashed coordinates, so scenario authors can track and command actual wildlife flows.
+- Fog wiring: `survey_radius`/`fog_mode` now drive the `StartLocation` resource and the snapshot fog raster. `fog_mode = revealed` clears the entire fog overlay, while `fog_mode = shroud` forces opaque fog everywhere except the guaranteed reveal radius around the start tile; the standard mode keeps blending global/local knowledge coverage. Runtime scouting pulses feed a new `FogRevealLedger`, so ad-hoc reveals (e.g., the `ScoutArea` command) can temporarily zero fog anywhere on the grid without mutating global knowledge.
 - Default profile: `late_forager_tribe` (manual §2a, §3a) with 2–3 bands and no permanent buildings.
-- Spawn: Worldgen seeds 2–3 bands (`UnitKind::BandScout`, `BandHunter`, `BandCrafter` or `BandGuardian`) and enables `FoundSeasonalCamp`, `SplitClan`, `MergeClan`, and `NegotiateRouteRights` commands.
+- Spawn: Worldgen seeds 2–3 bands (`UnitKind::BandScout`, `BandHunter`, `BandCrafter` or `BandGuardian`) and immediately unlocks the early interaction verbs: `ScoutArea`, `FollowHerd`, and `FoundCamp`. `ScoutArea` now injects a timed reveal pulse (3+ hex radius for eight turns, scaled by the profile’s `survey_radius`) via `FogRevealLedger`, letting UI clicks clear fog before we have full unit pathing. `FoundCamp` relocates the `StartLocation` marker and reapplies the profile’s survey radius so the knowledge halo follows the player’s chosen base. `FollowHerd` now targets the live fauna routes exposed by `HerdRegistry`, so nomadic commands chase actual migrations instead of hashed coordinates.
 - Camps: `Camp` entities are transient settlement-likes with `PortableBuildings`, `CampStorage`, `DecayOnAbandon`, and `TrailKnowledge` markers. They unlock a light construction queue; decay unless maintained.
 - Sedentarization: Add `SedentarizationScore` resource per faction computed each turn from local resource density, surplus stability, storage tech/spoilage modifiers, domestication progress, trade hub potential, travel fatigue, and security. When thresholds are crossed, the server emits `CampaignEvent::SedentarizationPrompt { level }` without forcing action.
 - Founding: `Command::FoundSettlement { q, r }` remains available (manual scenario: Founders), but for the nomadic path it is enabled after sedentarization ≥ threshold and a camp is upgraded in place.
