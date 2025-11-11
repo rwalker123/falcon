@@ -198,7 +198,10 @@ table FloatRaster {
 table ElevationOverlay {
   width:uint;
   height:uint;
-  samples:[ubyte];
+  minValue:float;
+  maxValue:float;
+  samples:[ushort];
+  normals:[uint];
 }
 
 table InfluentialIndividualState {
@@ -426,6 +429,7 @@ table PopulationCohortState {
   migration:PendingMigration;
   harvestTask:HarvestTask;
   scoutTask:ScoutTask;
+  accessibleStockpile:AccessibleStockpile;
 }
 
 table PendingMigration {
@@ -435,6 +439,7 @@ table PendingMigration {
 }
 
 table HarvestTask {
+  kind:string;
   module:string;
   bandLabel:string;
   targetTile:ulong;
@@ -460,6 +465,16 @@ table ScoutTask {
   revealDuration:ulong;
   moraleGain:float;
   startedTick:ulong;
+}
+
+table AccessibleStockpileEntry {
+  item:string;
+  quantity:long;
+}
+
+table AccessibleStockpile {
+  radius:uint;
+  entries:[AccessibleStockpileEntry];
 }
 
 table PowerNodeState {
@@ -618,6 +633,8 @@ table HerdTelemetryState {
   y:uint;
   biomass:float;
   routeLength:uint;
+  nextX:int = -1;
+  nextY:int = -1;
 }
 
 table CommandEventState {

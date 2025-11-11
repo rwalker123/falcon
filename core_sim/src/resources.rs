@@ -771,6 +771,7 @@ pub struct TradeDiffusionRecord {
     pub discovery_id: u32,
     pub delta: Scalar,
     pub via_migration: bool,
+    pub herd_density: f32,
 }
 
 #[derive(Resource, Debug, Clone, Default)]
@@ -846,6 +847,7 @@ pub enum CommandEventKind {
     FollowHerd,
     FoundCamp,
     Forage,
+    Hunt,
 }
 
 impl CommandEventKind {
@@ -855,6 +857,7 @@ impl CommandEventKind {
             CommandEventKind::FollowHerd => "follow_herd",
             CommandEventKind::FoundCamp => "found_camp",
             CommandEventKind::Forage => "forage",
+            CommandEventKind::Hunt => "hunt",
         }
     }
 }

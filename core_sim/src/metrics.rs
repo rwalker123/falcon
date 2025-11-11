@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::{
     components::{LogisticsLink, PopulationCohort, Tile, TradeLink},
     crisis::CrisisTelemetry,
+    fauna::HerdDensityMap,
     power::PowerGridState,
     resources::{SimulationConfig, SimulationTick},
     scalar::{scalar_from_u32, Scalar},
@@ -30,6 +31,9 @@ pub struct SimulationMetrics {
     pub population_morale_avg: f32,
     pub trade_openness_avg: f32,
     pub logistics_flow_avg: f32,
+    pub herd_density_avg: f32,
+    pub herd_density_peak: f32,
+    pub herd_density_ratio: f32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -43,6 +47,7 @@ pub fn collect_metrics(
     populations: Query<&PopulationCohort>,
     trade_links: Query<&TradeLink>,
     logistics_links: Query<&LogisticsLink>,
+    herd_density: Res<HerdDensityMap>,
 ) {
     metrics.turn += 1;
     let mut total_mass = 0i128;
@@ -120,4 +125,8 @@ pub fn collect_metrics(
     } else {
         0.0
     };
+
+    metrics.herd_density_avg = herd_density.average_density();
+    metrics.herd_density_peak = herd_density.max_density();
+    metrics.herd_density_ratio = herd_density.normalized_average();
 }

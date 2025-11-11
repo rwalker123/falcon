@@ -22,21 +22,25 @@ use core_sim::{
     CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
     CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
     CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
-    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, EspionageAgentHandle,
-    EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
-    EspionageMissionTemplate, EspionageRoster, FactionId, FactionInventory, FactionOrders,
-    FactionRegistry, FactionSecurityPolicies, FogRevealLedger, FoodModule, FoodModuleTag,
-    GenerationId, GenerationRegistry, HarvestAssignment, HerdRegistry, HerdTelemetry,
-    InfluencerImpacts, InfluentialRoster, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort,
-    QueueMissionError, QueueMissionParams, Scalar, ScoutAssignment, SecurityPolicy,
-    SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
+    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
+    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
+    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionInventory,
+    FactionOrders, FactionRegistry, FactionSecurityPolicies, FogRevealLedger, FoodModule,
+    FoodModuleTag, FoodSiteKind, GenerationId, GenerationRegistry, HarvestAssignment,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, InfluencerImpacts, InfluentialRoster,
+    KnowledgeFragment, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
+    QueueMissionParams, Scalar, ScoutAssignment, SecurityPolicy, SentimentAxisBias,
+    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
     StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
     SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry, TurnPipelineConfig,
     TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
     DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
-use core_sim::{resolve_active_profile, ActiveStartProfile, CampaignLabel, StartProfileOverrides};
+use core_sim::{
+    resolve_active_profile, ActiveStartProfile, CampaignLabel, HarvestTaskKind,
+    StartProfileOverrides,
+};
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
     AxisBiasState, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
@@ -54,6 +58,11 @@ const HERD_CONSUMPTION_BIOMASS: f32 = 250.0;
 const CAMP_PROVISION_COST: i64 = 40;
 const HERD_PROVISIONS_YIELD_PER_BIOMASS: f32 = 0.02;
 const HERD_TRADE_GOODS_YIELD_PER_BIOMASS: f32 = 0.005;
+const HERD_FOLLOW_MORALE_GAIN: f32 = 0.03;
+const HERD_KNOWLEDGE_DISCOVERY_ID: u32 = 2003;
+const HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS: f32 = 0.0004;
+const HERD_KNOWLEDGE_PROGRESS_CAP: f32 = 0.25;
+const HERD_KNOWLEDGE_FIDELITY: f32 = 0.7;
 
 fn main() {
     let mut app = build_headless_app();
@@ -507,6 +516,14 @@ fn main() {
                     band_entity_bits,
                 );
             }
+            Command::HuntGame {
+                faction,
+                target_x,
+                target_y,
+                band_entity_bits,
+            } => {
+                handle_hunt_game(&mut app, faction, target_x, target_y, band_entity_bits);
+            }
         }
 
         broadcast_command_events_if_needed(&mut app, bin_server, flat_server);
@@ -610,6 +627,12 @@ enum Command {
         target_x: u32,
         target_y: u32,
         module: String,
+        band_entity_bits: Option<u64>,
+    },
+    HuntGame {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
         band_entity_bits: Option<u64>,
     },
 }
@@ -1265,15 +1288,21 @@ fn handle_follow_herd(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
 
     let mut moved = 0u32;
     let mut band_labels: Vec<String> = Vec::new();
+    let mut moved_entities: Vec<Entity> = Vec::new();
     {
-        let mut query = app.world.query::<(&mut PopulationCohort, &StartingUnit)>();
-        for (mut cohort, unit) in query.iter_mut(&mut app.world) {
+        let mut query = app
+            .world
+            .query::<(Entity, &mut PopulationCohort, &StartingUnit)>();
+        for (entity, mut cohort, unit) in query.iter_mut(&mut app.world) {
             if cohort.faction != faction {
                 continue;
             }
             cohort.home = tile_entity;
+            cohort.morale = (cohort.morale + Scalar::from_f32(HERD_FOLLOW_MORALE_GAIN))
+                .clamp(Scalar::zero(), Scalar::one());
             moved = moved.saturating_add(1);
             band_labels.push(unit.kind.clone());
+            moved_entities.push(entity);
         }
     }
 
@@ -1338,6 +1367,7 @@ fn handle_follow_herd(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
 
     refresh_herd_telemetry(app);
     let (provisions_gain, trade_goods_gain) = apply_herd_rewards(app, faction, consumed);
+    let knowledge_gain = apply_herd_knowledge(app, faction, consumed, &moved_entities);
 
     let mut reveals = app.world.resource_mut::<FogRevealLedger>();
     let radius = DEFAULT_SCOUT_REVEAL_RADIUS.saturating_add(1);
@@ -1353,6 +1383,9 @@ fn handle_follow_herd(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
             "rewards=provisions:{} trade_goods:{}",
             provisions_gain, trade_goods_gain
         ));
+    }
+    if knowledge_gain > 0.0 {
+        detail_parts.push(format!("knowledge={:.3}", knowledge_gain));
     }
     if !band_labels.is_empty() {
         detail_parts.push(format!("bands={}", band_labels.join(", ")));
@@ -1373,9 +1406,24 @@ fn handle_follow_herd(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
         biomass = biomass_after,
         provisions = provisions_gain,
         trade_goods = trade_goods_gain,
+        knowledge = knowledge_gain,
         radius,
         expires_at,
         "command.follow_herd.applied"
+    );
+    info!(
+        target: "shadow_scale::analytics",
+        event = "herd_follow",
+        faction = %faction.0,
+        herd = %herd_id,
+        label = %herd_label,
+        x = target.x,
+        y = target.y,
+        consumed,
+        biomass = biomass_after,
+        provisions = provisions_gain,
+        trade_goods = trade_goods_gain,
+        knowledge = knowledge_gain,
     );
     push_command_event(
         app,
@@ -1546,27 +1594,122 @@ fn handle_forage_tile(
         );
         return;
     }
-    let Some(band) = select_starting_band(
+    queue_food_assignment(
         app,
         faction,
+        target_x,
+        target_y,
+        tile_entity,
+        module,
+        seasonal_weight,
         band_entity_bits,
         "forage",
+        "Harvest",
         CommandEventKind::Forage,
+        HarvestTaskKind::Harvest,
+    );
+}
+
+fn handle_hunt_game(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    target_x: u32,
+    target_y: u32,
+    band_entity_bits: Option<u64>,
+) {
+    let coords = UVec2::new(target_x, target_y);
+    let Some(tile_entity) = ensure_land_tile(
+        app,
+        faction,
+        coords,
+        "hunt_game",
+        Some(CommandEventKind::Hunt),
     ) else {
+        return;
+    };
+    let tag = {
+        let entity_ref = app.world.entity(tile_entity);
+        match entity_ref.get::<FoodModuleTag>() {
+            Some(tag) => tag.clone(),
+            None => {
+                log_tile_rejection(
+                    app,
+                    faction,
+                    coords,
+                    "hunt_game",
+                    "no_food_module",
+                    Some(CommandEventKind::Hunt),
+                );
+                return;
+            }
+        }
+    };
+    if tag.kind != FoodSiteKind::GameTrail {
+        warn!(
+            target: "shadow_scale::command",
+            command = "hunt_game",
+            faction = %faction.0,
+            kind = ?tag.kind,
+            "command.hunt_game.rejected=not_game_trail"
+        );
+        emit_command_failure(
+            app,
+            CommandEventKind::Hunt,
+            faction,
+            "Hunt commands must target a game trail tile.",
+        );
+        return;
+    }
+    queue_food_assignment(
+        app,
+        faction,
+        target_x,
+        target_y,
+        tile_entity,
+        tag.module,
+        tag.seasonal_weight,
+        band_entity_bits,
+        "hunt_game",
+        "Hunt",
+        CommandEventKind::Hunt,
+        HarvestTaskKind::Hunt,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn queue_food_assignment(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    target_x: u32,
+    target_y: u32,
+    tile_entity: Entity,
+    module: FoodModule,
+    raw_weight: f32,
+    band_entity_bits: Option<u64>,
+    command_label: &str,
+    label_prefix: &str,
+    event_kind: CommandEventKind,
+    task_kind: HarvestTaskKind,
+) {
+    let coords = UVec2::new(target_x, target_y);
+    let seasonal_weight = raw_weight.max(0.0);
+    let Some(band) =
+        select_starting_band(app, faction, band_entity_bits, command_label, event_kind)
+    else {
         return;
     };
 
     if app.world.get::<HarvestAssignment>(band.entity).is_some() {
         warn!(
             target: "shadow_scale::command",
-            command = "forage",
+            command = command_label,
             faction = %faction.0,
             band = %band.label,
-            "command.forage.rejected=band_busy"
+            "command.food.rejected=band_busy"
         );
         emit_command_failure(
             app,
-            CommandEventKind::Forage,
+            event_kind,
             faction,
             format!("{} is already assigned to a different task.", band.label),
         );
@@ -1593,9 +1736,9 @@ fn handle_forage_tile(
             app,
             faction,
             coords,
-            "forage",
+            command_label,
             "no_yield",
-            Some(CommandEventKind::Forage),
+            Some(event_kind),
         );
         return;
     }
@@ -1616,12 +1759,14 @@ fn handle_forage_tile(
             provisions_reward: provisions_gain.max(0),
             trade_goods_reward: trade_goods_gain.max(0),
             started_tick: tick,
+            kind: task_kind,
         };
         app.world.entity_mut(band.entity).insert(assignment);
     }
 
     let detail = format!(
-        "status=queued module={} band={} provisions={} trade_goods={} travel_turns={} gather_turns={}",
+        "status=queued action={} module={} band={} provisions={} trade_goods={} travel_turns={} gather_turns={}",
+        task_kind.as_str(),
         module.as_str(),
         band.label,
         provisions_gain.max(0),
@@ -1631,7 +1776,7 @@ fn handle_forage_tile(
     );
     info!(
         target: "shadow_scale::command",
-        command = "forage",
+        command = command_label,
         faction = %faction.0,
         band = %band.label,
         x = target_x,
@@ -1640,14 +1785,14 @@ fn handle_forage_tile(
         travel_turns,
         gather_turns,
         eta_turns,
-        "command.forage.queued"
+        "command.food.queued"
     );
     push_command_event(
         app,
         tick,
-        CommandEventKind::Forage,
+        event_kind,
         faction,
-        format!("Harvest -> ({}, {})", target_x, target_y),
+        format!("{} -> ({}, {})", label_prefix, target_x, target_y),
         Some(detail),
     );
 }
@@ -2300,6 +2445,17 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             module,
             band_entity_bits,
         }),
+        ProtoCommandPayload::HuntGame {
+            faction_id,
+            target_x,
+            target_y,
+            band_entity_bits,
+        } => Some(Command::HuntGame {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+            band_entity_bits,
+        }),
     }
 }
 
@@ -2543,15 +2699,24 @@ fn consume_inventory_item(
 }
 
 fn refresh_herd_telemetry(app: &mut bevy::prelude::App) {
-    let entries = {
+    let (entries, density_samples) = {
         let registry = match app.world.get_resource::<HerdRegistry>() {
             Some(res) => res,
             None => return,
         };
-        registry.snapshot_entries()
+        let density_samples: Vec<(UVec2, f32)> = registry
+            .herds
+            .iter()
+            .map(|herd| (herd.position(), herd.biomass))
+            .collect();
+        (registry.snapshot_entries(), density_samples)
     };
     if let Some(mut telemetry) = app.world.get_resource_mut::<HerdTelemetry>() {
         telemetry.entries = entries;
+    }
+    let grid = app.world.resource::<SimulationConfig>().grid_size;
+    if let Some(mut density) = app.world.get_resource_mut::<HerdDensityMap>() {
+        density.rebuild_from_samples(grid, &density_samples);
     }
 }
 
@@ -2576,6 +2741,56 @@ fn apply_herd_rewards(
         inventory.add_stockpile(faction, "trade_goods", trade_goods_gain);
     }
     (provisions_gain, trade_goods_gain)
+}
+
+fn apply_herd_knowledge(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    consumed_biomass: f32,
+    moved_entities: &[Entity],
+) -> f32 {
+    if consumed_biomass <= f32::EPSILON {
+        return 0.0;
+    }
+    let mut progress = consumed_biomass * HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS;
+    progress = progress.clamp(0.0, HERD_KNOWLEDGE_PROGRESS_CAP);
+    if progress <= 0.0 {
+        return 0.0;
+    }
+    let progress_scalar = scalar_from_f32(progress);
+    {
+        let mut ledger = app.world.resource_mut::<DiscoveryProgressLedger>();
+        ledger.add_progress(faction, HERD_KNOWLEDGE_DISCOVERY_ID, progress_scalar);
+    }
+    if moved_entities.is_empty() {
+        return progress;
+    }
+    let fragment = KnowledgeFragment::new(
+        HERD_KNOWLEDGE_DISCOVERY_ID,
+        progress_scalar,
+        scalar_from_f32(HERD_KNOWLEDGE_FIDELITY),
+    );
+    let mut query = app.world.query::<(Entity, &mut PopulationCohort)>();
+    for (entity, mut cohort) in query.iter_mut(&mut app.world) {
+        if !moved_entities.contains(&entity) {
+            continue;
+        }
+        merge_fragment(&mut cohort.knowledge, fragment.clone());
+    }
+    progress
+}
+
+fn merge_fragment(fragments: &mut Vec<KnowledgeFragment>, payload: KnowledgeFragment) {
+    if let Some(existing) = fragments
+        .iter_mut()
+        .find(|fragment| fragment.discovery_id == payload.discovery_id)
+    {
+        existing.progress =
+            (existing.progress + payload.progress).clamp(Scalar::zero(), Scalar::one());
+        existing.fidelity = existing.fidelity.max(payload.fidelity);
+    } else {
+        fragments.push(payload);
+    }
 }
 
 fn push_command_event(
@@ -2608,6 +2823,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::FollowHerd => "Follow herd",
         CommandEventKind::FoundCamp => "Found camp",
         CommandEventKind::Forage => "Harvest",
+        CommandEventKind::Hunt => "Hunt",
     }
 }
 

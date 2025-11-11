@@ -69,7 +69,7 @@ pub struct FactionInventoryState {
     pub inventory: Vec<FactionInventoryEntryState>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HerdTelemetryState {
     pub id: String,
     pub label: String,
@@ -78,6 +78,24 @@ pub struct HerdTelemetryState {
     pub y: u32,
     pub biomass: f32,
     pub route_length: u32,
+    pub next_x: i32,
+    pub next_y: i32,
+}
+
+impl Default for HerdTelemetryState {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            label: String::new(),
+            species: String::new(),
+            x: 0,
+            y: 0,
+            biomass: 0.0,
+            route_length: 0,
+            next_x: -1,
+            next_y: -1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -742,12 +760,18 @@ pub struct HydrologyOverlayState {
     pub rivers: Vec<RiverSegmentState>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ElevationOverlayState {
     pub width: u32,
     pub height: u32,
     #[serde(default)]
-    pub samples: Vec<u8>,
+    pub min_value: f32,
+    #[serde(default)]
+    pub max_value: f32,
+    #[serde(default)]
+    pub samples: Vec<u16>,
+    #[serde(default)]
+    pub normals: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -841,6 +865,8 @@ pub struct PopulationCohortState {
     pub harvest_task: Option<HarvestTaskState>,
     #[serde(default)]
     pub scout_task: Option<ScoutTaskState>,
+    #[serde(default)]
+    pub accessible_stockpile: Option<AccessibleStockpileState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -851,8 +877,14 @@ pub struct PendingMigrationState {
     pub fragments: Vec<KnownTechFragment>,
 }
 
+fn default_harvest_task_kind() -> String {
+    "harvest".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct HarvestTaskState {
+    #[serde(default = "default_harvest_task_kind")]
+    pub kind: String,
     pub module: String,
     pub band_label: String,
     pub target_tile: u64,
@@ -879,6 +911,19 @@ pub struct ScoutTaskState {
     pub reveal_duration: u64,
     pub morale_gain: f32,
     pub started_tick: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AccessibleStockpileEntryState {
+    pub item: String,
+    pub quantity: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AccessibleStockpileState {
+    pub radius: u32,
+    #[serde(default)]
+    pub entries: Vec<AccessibleStockpileEntryState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -1809,12 +1854,20 @@ fn create_elevation_overlay<'a>(
     overlay: &ElevationOverlayState,
 ) -> WIPOffset<fb::ElevationOverlay<'a>> {
     let samples_vec = builder.create_vector(&overlay.samples);
+    let normals_vec = if overlay.normals.is_empty() {
+        None
+    } else {
+        Some(builder.create_vector(&overlay.normals))
+    };
     fb::ElevationOverlay::create(
         builder,
         &fb::ElevationOverlayArgs {
             width: overlay.width,
             height: overlay.height,
+            minValue: overlay.min_value,
+            maxValue: overlay.max_value,
             samples: Some(samples_vec),
+            normals: normals_vec,
         },
     )
 }
@@ -2044,6 +2097,8 @@ fn create_herds<'a>(
                 y: herd.y,
                 biomass: herd.biomass,
                 routeLength: herd.route_length,
+                nextX: herd.next_x,
+                nextY: herd.next_y,
             },
         );
         entries.push(entry);
@@ -2264,9 +2319,11 @@ fn create_populations<'a>(
             let harvest = cohort.harvest_task.as_ref().map(|task| {
                 let module = builder.create_string(&task.module);
                 let band_label = builder.create_string(&task.band_label);
+                let kind = builder.create_string(&task.kind);
                 fb::HarvestTask::create(
                     builder,
                     &fb::HarvestTaskArgs {
+                        kind: Some(kind),
                         module: Some(module),
                         bandLabel: Some(band_label),
                         targetTile: task.target_tile,
@@ -2300,6 +2357,23 @@ fn create_populations<'a>(
                     },
                 )
             });
+            let accessible_stockpile_fb = cohort.accessible_stockpile.as_ref().map(|stockpile| {
+                let entries = if stockpile.entries.is_empty() {
+                    None
+                } else {
+                    Some(create_accessible_stockpile_entries(
+                        builder,
+                        &stockpile.entries,
+                    ))
+                };
+                fb::AccessibleStockpile::create(
+                    builder,
+                    &fb::AccessibleStockpileArgs {
+                        radius: stockpile.radius,
+                        entries,
+                    },
+                )
+            });
             fb::PopulationCohortState::create(
                 builder,
                 &fb::PopulationCohortStateArgs {
@@ -2313,6 +2387,7 @@ fn create_populations<'a>(
                     migration,
                     harvestTask: harvest,
                     scoutTask: scout,
+                    accessibleStockpile: accessible_stockpile_fb,
                 },
             )
         })
@@ -2333,6 +2408,26 @@ fn create_known_fragments<'a>(
                     discoveryId: fragment.discovery_id,
                     progress: fragment.progress,
                     fidelity: fragment.fidelity,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&offsets)
+}
+
+fn create_accessible_stockpile_entries<'a>(
+    builder: &mut FbBuilder<'a>,
+    entries: &[AccessibleStockpileEntryState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::AccessibleStockpileEntry<'a>>>> {
+    let offsets: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            let item = builder.create_string(&entry.item);
+            fb::AccessibleStockpileEntry::create(
+                builder,
+                &fb::AccessibleStockpileEntryArgs {
+                    item: Some(item),
+                    quantity: entry.quantity,
                 },
             )
         })

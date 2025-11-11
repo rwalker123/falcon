@@ -145,6 +145,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         summary: "Harvest food from a tile using the specified module key.",
         usage: "forage <faction_id> <x> <y> <module_key> [band_entity_bits]",
     },
+    CommandVerbHelp {
+        verb: "hunt_game",
+        aliases: &["hunt"],
+        summary: "Hunt localized wild game at a tile.",
+        usage: "hunt_game <faction_id> <x> <y> [band_entity_bits]",
+    },
 ];
 
 use crate::{
@@ -604,6 +610,27 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 module: module_key.to_ascii_lowercase(),
                 band_entity_bits: match band_bits {
                     Some(raw) => Some(parse_u64(raw, "forage band_entity_bits")?),
+                    None => None,
+                },
+            })
+        }
+        "hunt" | "hunt_game" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            let band_bits = parts.next();
+            Ok(CommandPayload::HuntGame {
+                faction_id: parse_u32(faction_str, "hunt_game faction")?,
+                target_x: parse_u32(x_str, "hunt_game target_x")?,
+                target_y: parse_u32(y_str, "hunt_game target_y")?,
+                band_entity_bits: match band_bits {
+                    Some(raw) => Some(parse_u64(raw, "hunt band_entity_bits")?),
                     None => None,
                 },
             })

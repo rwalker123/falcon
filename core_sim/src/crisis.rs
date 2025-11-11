@@ -15,6 +15,7 @@ use crate::{
         CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisTelemetryConfig,
         CrisisTelemetryConfigHandle, CrisisTelemetryThreshold,
     },
+    fauna::HerdDensityMap,
     orders::FactionId,
     resources::{PendingCrisisSeeds, PendingCrisisSpawns, SimulationConfig, SimulationTick},
     scalar::Scalar,
@@ -24,6 +25,7 @@ use sim_runtime::{
 };
 
 const MIN_GRID_DIMENSION: u32 = 1;
+const HERD_DENSITY_CRISIS_WEIGHT: f32 = 0.35;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrisisSeverityBand {
@@ -1069,6 +1071,7 @@ fn rebuild_overlay(
 pub fn advance_crisis_system(
     config: Res<SimulationConfig>,
     tick: Res<SimulationTick>,
+    herd_density: Res<HerdDensityMap>,
     mut pending_seeds: ResMut<PendingCrisisSeeds>,
     mut pending_spawns: ResMut<PendingCrisisSpawns>,
     archetypes: Res<CrisisArchetypeCatalogHandle>,
@@ -1167,6 +1170,8 @@ pub fn advance_crisis_system(
         }
     }
 
+    let herd_density_signal = herd_density.normalized_average();
+
     if ledger.entries().is_empty() {
         overlay.reset(
             grid_size.x.max(MIN_GRID_DIMENSION),
@@ -1179,7 +1184,7 @@ pub fn advance_crisis_system(
                 grid_stress_pct: Some(0.0),
                 unauthorized_queue_pct: Some(0.0),
                 swarms_active: Some(0.0),
-                phage_density: Some(0.0),
+                phage_density: Some(herd_density_signal),
                 modifiers_active: Some(0),
                 foreshock_incidents: Some(0),
                 containment_incidents: Some(0),
@@ -1218,7 +1223,9 @@ pub fn advance_crisis_system(
         grid_stress_pct: Some(total_grid / crisis_count),
         unauthorized_queue_pct: Some(total_queue / crisis_count),
         swarms_active: Some(total_swarms),
-        phage_density: Some(total_phage / crisis_count),
+        phage_density: Some(
+            (total_phage / crisis_count) + herd_density_signal * HERD_DENSITY_CRISIS_WEIGHT,
+        ),
         modifiers_active: Some(ledger.total_modifiers() as u32),
         foreshock_incidents: Some(warn_events),
         containment_incidents: Some(critical_events),

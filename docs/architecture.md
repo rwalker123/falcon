@@ -114,7 +114,7 @@ Pre-agricultural survival depends on diversified food portfolios. To keep early 
 
 Implementation beats:
 
-1. **Worldgen tags.** Stamp per-tile annotations (e.g., `ShellfishBed`, `RootGarden`, `NutGrove`, `TermiteMound`, `SalmonRun`) as `FoodModuleTag` components. Each tag carries: tile entity, module id, seasonal weight, and respawn timer. Persist them via snapshot overlays so the client can render markers.
+1. **Worldgen tags.** Stamp per-tile annotations (e.g., `ShellfishBed`, `RootGarden`, `NutGrove`, `TermiteMound`, `SalmonRun`) as `FoodModuleTag` components. Each tag carries: tile entity, module id, seasonal weight, and a **site kind** (littoral, grove, *or* the new `game_trail` flag for localized deer/rabbit camps seeded near the start focus). Persist them via snapshot overlays so the client can render markers.
 2. **Ledgers + commands.** Add a `ForageSiteLedger` resource tracking capacity per tag and per faction. Commands such as `gather_roots`, `harvest_shellfish`, `dry_fish`, and `follow_herd` consume capacity, adjust `FactionInventory`, and push `CommandEventLog` entries for HUD feedback.
 3. **Client affordances.** Reuse the HUD selection panel: when a unit stands on a tagged tile we show contextual buttons (Harvest, Gather, Dry). Herd markers remain globally visible—multiple factions are expected to exploit the same migration loops to encourage encounters rather than partitioning resources per faction.
 
@@ -164,6 +164,19 @@ This section connects the headless simulation to a Civ-like playable loop: campa
 - Sedentarization: Add `SedentarizationScore` resource per faction computed each turn from local resource density, surplus stability, storage tech/spoilage modifiers, domestication progress, trade hub potential, travel fatigue, and security. When thresholds are crossed, the server emits `CampaignEvent::SedentarizationPrompt { level }` without forcing action.
 - Founding: `Command::FoundSettlement { q, r }` remains available (manual scenario: Founders), but for the nomadic path it is enabled after sedentarization ≥ threshold and a camp is upgraded in place.
 - Persistence/Network: Emissions include `CampaignEvent::{Founded, SeasonalCampFounded, SeasonalCampAbandoned, SedentarizationPrompt}`.
+
+### Fauna Effects & Density Coupling
+- Runtime resources: `HerdRegistry` now feeds a paired `HerdTelemetry` (for UI display) and `HerdDensityMap` raster that tracks biomass-per-tile every tick. The density map is rebuilt during worldgen, herd advancement, and any manual herd mutations (e.g., `FollowHerd` consumption) so other systems can query nearby biomass without re-walking herd routes.
+- Follow Herd rewards: executing `Command::FollowHerd { faction, herd_id }` now does more than teleport cohorts. We drain up to `HERD_CONSUMPTION_BIOMASS` from the herd, add stockpiles via `HERD_PROVISIONS_YIELD_PER_BIOMASS` / `HERD_TRADE_GOODS_YIELD_PER_BIOMASS`, pulse `FogRevealLedger` with a `DEFAULT_SCOUT_REVEAL_RADIUS + 1` reveal, and apply the new morale/knowledge hooks:
+  - Each band tagged as a `StartingUnit` receives a `HERD_FOLLOW_MORALE_GAIN` bump (clamped to `[0,1]`).
+  - Consumed biomass converts into a `Fauna Lore` fragment (`HERD_KNOWLEDGE_DISCOVERY_ID`, progress capped by `HERD_KNOWLEDGE_PROGRESS_CAP`, fidelity `HERD_KNOWLEDGE_FIDELITY`). The fragment is merged onto the moved cohorts *and* applied to the faction’s `DiscoveryProgressLedger`, satisfying the manual’s “knowledge fragment” promise (§2a Start Flow).
+- Cross-system consumers:
+  - `SimulationMetrics` exports `herd_density_avg`, `herd_density_peak`, and a normalized ratio so the upcoming `SedentarizationScore` resource can source “local resource density” without recomputing fauna overlays.
+  - `systems::trade_knowledge_diffusion` samples density between each logistics link’s endpoints (`HerdDensityMap::normalized_pair_average`) and scales leak progress by up to `HERD_TRADE_DIFFUSION_BONUS`, while telemetry records the sampled density for designers.
+  - `advance_crisis_system` blends the normalized herd-density signal into `CrisisTelemetrySample.phage_density` (`HERD_DENSITY_CRISIS_WEIGHT`), enabling crisis designers to raise/lower baseline risk when wildlife pressure spikes, even if no crises are currently seeded.
+- Analytics: `shadow_scale::analytics` now emits `herd_spawn`, `herd_migrate`, and `herd_follow` events with herd id, position, biomass, and reward payloads. The log stream can pipe this into campaign logs/telemetry dashboards so “followed herd to X” moments show up in BI without having to scrape command logs.
+- Clients: the Fauna tab and HUD reuse `HerdTelemetry.entries` as before, but the Godot inspector can now read aggregate density via the telemetry payload to validate sedentarization prompts. Future UI work can expose the raster directly once `overlays.game_density` lands (tracked below).
+- Client map affordances: the Godot map view now renders herd trails (using the observed loop up to the route length) plus a next-waypoint arrow sourced from the telemetry’s `next_x`/`next_y` fields. Designers can double-click a herd directly on the map to issue `FollowHerd`, or Shift+double-click to queue a `ScoutArea` order centered on that herd’s tile, bypassing the inspector tab entirely.
 
 ### Capability Flags (System Gating)
 - Resource: `CapabilityFlags` (bitflags) lives in `core_sim` as a `Resource` and is persisted in `WorldSnapshot`. Example flags: `AlwaysOn`, `Construction`, `IndustryT1`, `IndustryT2`, `Power`, `NavalOps`, `AirOps`, `EspionageT2`, `Megaprojects`.
@@ -239,6 +252,33 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
   - Runtime controls: the thin client binds `ui_accept` to toggle between logistics/sentiment composites and terrain palette mode, aiding QA comparisons of colour accuracy against the documented swatches.
 - Inspector migration: see `docs/godot_inspector_plan.md` for the roadmap and progress checkpoints; cross-link new UX notes into the manual when player-facing explanations change. If the Bevy inspector option graduates from evaluation (manual §13 Option F), capture the delta plan here and spin tasks into `TASKS.md`.
   - Logistics/sentiment raster exports now share the terrain grid so overlays blend consistently across clients.
+
+#### Terrain Visualization Upgrade (Heightfield Rendering Plan)
+- **Player-Facing Intent** (`shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b): the terrain palette should “lift off” the hex board, letting designers and players read relief, basins, and escarpments without switching overlays. A believable elevation read also keeps future fog-of-war silhouettes and cinematic flyovers grounded.
+- **Authoritative Data**:
+  - Extend `SnapshotOverlay` with `heightfield` (u16 grid matching the current world dimensions) plus an optional `normal_raster` (packed XYZ encoded as signed 10-10-10). Serialization mirrors the existing raster channels so diff/stream code stays unchanged.
+  - Expose the raw `ElevationField` and per-hex `elevation_m` inside the exporter so both coarse (per-hex) and fine (per-pixel) queries share a single normalization contract (store global min/max in the overlay header for shader use).
+  - Precompute biome weight masks per hex (4–6 dominant biome IDs with blend weights) and ship them alongside the raster; Godot can then tint or decal the 3D surface without seams.
+- **Godot Client Architecture**:
+  - Introduce a `HeightfieldLayer3D` node that owns chunked `ArrayMesh` instances (e.g., 64×64 quads) displaced in a custom `ShaderMaterial`. Chunking lets us rebuild only the tiles touched by new snapshots instead of regenerating the full mesh.
+  - Keep the existing 2D `MapView` camera for UI, but parent the mesh under a `SubViewport`/`ViewportTexture` so we can composite it back into the HUD without rewriting the inspector. An alternative path is to migrate the main scene to `Node3D` and render the HUD via `CanvasLayer`; prototype both and log perf numbers before committing.
+  - Shader inputs: grayscale height texture, normal map (optional), biome weight texture array, and LUTs for ambient occlusion and curvature. The shader handles Lambertian lighting with a baked sun vector and supports contour colouring (blend between palette colours + slope tint).
+- **Hex & Overlay Integration**:
+  - Keep selection/hover feedback in screen space via `ImmediateMesh` or `MultiMeshInstance3D` projected slightly above the terrain. Feed the picking code by ray-casting into the height mesh; reuse axial-to-world conversion so hex IDs stay deterministic.
+  - Hex art stays seamless by sampling the biome weight masks inside the shader (tri-planar or UV-projection). Texture arrays avoid re-uploading many PNGs while supporting future biome variants (seasonal snowcaps, volcanic glow, etc.).
+  - Existing heatmap overlays (logistics, sentiment, etc.) render as additive projected quads that follow the same height texture so designers can compare relief vs. telemetry without parallax errors.
+- **Implementation Phases**:
+  1. **Data plumbing** — add `heightfield` + `normal_raster` to the FlatBuffers schema, exporter, and snapshot diffing; surface normalization metadata.
+  2. **Client spike** — prototype `HeightfieldLayer3D` fed by mock rasters to validate mesh chunking, shader cost, and compositing with the current UI. Record findings in `docs/godot_inspector_plan.md`.
+  3. **Integration** — hook live snapshot data, replace the flat terrain quad, and reroute picking/selection through ray casts. Ensure legacy 2D mode stays available behind a flag for low-spec hardware.
+  4. **Biome blending polish** — ingest the weight masks, author texture arrays, and tune shader parameters so seams disappear. Add LUT-driven lighting presets (dawn/noon/dusk) for UX testing.
+- **Fallback/Pseudo-3D Path**:
+  - If full 3D slips, implement a lightweight CanvasItem shader that extrudes the existing terrain quad using the height raster (parallax mapping + fake rim light). This uses the same data export work but retains the Node2D scene, letting us ship intermediate relief without blocking on mesh picking.
+  - Keep both modes behind a toggle so QA can compare perf/legibility; the manual references this as “2.5D relief view.”
+- **Open Questions**:
+  - Do we stream multi-resolution heightfields for massive worlds or rely on the existing map sizes? Decision gates whether we need LOD tiles and asynchronous mesh rebuilds.
+  - Should rivers/coasts carve into the mesh or remain decals? If carved, hydrology masks must ship alongside elevation to avoid re-simulating erosion on the client.
+  - Capture answers in `docs/godot_inspector_plan.md` and spin concrete backlog entries into `TASKS.md` once feasibility spikes land.
 
 ### Frontend Client Strategy
 - **Goal**: Select a graphical client stack capable of rendering the live strategy map (zoom/pan, unit animation, layered overlays) while consuming headless snapshots and dogfooding the scripting API.

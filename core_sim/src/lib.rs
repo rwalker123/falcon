@@ -44,8 +44,8 @@ use crate::start_profile::{
 use bevy::prelude::*;
 
 pub use components::{
-    ElementKind, HarvestAssignment, KnowledgeFragment, LogisticsLink, PendingMigration,
-    PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink,
+    ElementKind, HarvestAssignment, HarvestTaskKind, KnowledgeFragment, LogisticsLink,
+    PendingMigration, PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink,
 };
 pub use crisis::{
     ActiveCrisisLedger, CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot,
@@ -77,11 +77,12 @@ pub use espionage::{
     QueueMissionParams, SecurityPolicy,
 };
 pub use fauna::{
-    advance_herds, spawn_initial_herds, HerdRegistry, HerdTelemetry, HerdTelemetryEntry,
+    advance_herds, spawn_initial_herds, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    HerdTelemetryEntry,
 };
 pub use food::{
     classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,
-    DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
+    FoodSiteKind, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use great_discovery::{
@@ -313,6 +314,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(FactionInventory::default())
         .insert_resource(HerdRegistry::default())
         .insert_resource(HerdTelemetry::default())
+        .insert_resource(HerdDensityMap::default())
         .insert_resource(FogRevealLedger::default())
         .insert_resource(CommandEventLog::default())
         .insert_resource(snapshot_history)

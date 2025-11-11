@@ -119,6 +119,8 @@ pub struct StartProfileOverrides {
     #[serde(default)]
     pub survey_radius: Option<u32>,
     #[serde(default)]
+    pub stockpile_access_radius: Option<u32>,
+    #[serde(default)]
     pub fog_mode: Option<FogMode>,
     #[serde(default)]
     pub ai_profile_overrides: HashMap<String, Value>,

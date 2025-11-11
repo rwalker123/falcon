@@ -3,12 +3,15 @@ use std::f32::consts::TAU;
 use bevy::prelude::*;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 use sim_runtime::TerrainTags;
+use tracing::info;
 
 use crate::{
     components::Tile,
     mapgen::WorldGenSeed,
     resources::{SimulationConfig, StartLocation, TileRegistry},
 };
+
+pub const HERD_DENSITY_REFERENCE_BIOMASS: f32 = 8_000.0;
 
 #[derive(Debug, Clone)]
 pub struct Herd {
@@ -50,6 +53,14 @@ impl Herd {
     pub fn route_length(&self) -> usize {
         self.route.len()
     }
+
+    pub fn next_position(&self) -> Option<UVec2> {
+        if self.route.is_empty() {
+            return None;
+        }
+        let next_index = (self.step_index + 1) % self.route.len();
+        self.route.get(next_index).copied()
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -85,6 +96,7 @@ pub struct HerdTelemetryEntry {
     pub position: UVec2,
     pub biomass: f32,
     pub route_length: u32,
+    pub next_position: Option<UVec2>,
 }
 
 #[derive(Resource, Debug, Clone, Default)]
@@ -115,9 +127,94 @@ pub struct HerdTelemetry {
     pub entries: Vec<HerdTelemetryEntry>,
 }
 
+#[derive(Resource, Debug, Clone, Default)]
+pub struct HerdDensityMap {
+    pub width: u32,
+    pub height: u32,
+    samples: Vec<f32>,
+}
+
+impl HerdDensityMap {
+    pub fn rebuild(&mut self, grid_size: UVec2, registry: &HerdRegistry) {
+        let samples: Vec<(UVec2, f32)> = registry
+            .herds
+            .iter()
+            .map(|herd| (herd.position(), herd.biomass))
+            .collect();
+        self.rebuild_from_samples(grid_size, &samples);
+    }
+
+    pub fn rebuild_from_samples(&mut self, grid_size: UVec2, herds: &[(UVec2, f32)]) {
+        let width = grid_size.x.max(1);
+        let height = grid_size.y.max(1);
+        let total = width.saturating_mul(height).max(1);
+        if self.width != width || self.height != height || self.samples.len() != total as usize {
+            self.width = width;
+            self.height = height;
+            self.samples = vec![0.0; total as usize];
+        } else {
+            self.samples.fill(0.0);
+        }
+
+        for (pos, biomass) in herds {
+            if pos.x >= self.width || pos.y >= self.height {
+                continue;
+            }
+            let idx = (pos.y as usize) * self.width as usize + pos.x as usize;
+            self.samples[idx] += *biomass;
+        }
+    }
+
+    pub fn density_at(&self, pos: UVec2) -> f32 {
+        if self.samples.is_empty() || pos.x >= self.width || pos.y >= self.height {
+            return 0.0;
+        }
+        let idx = (pos.y as usize) * self.width as usize + pos.x as usize;
+        self.samples.get(idx).copied().unwrap_or(0.0)
+    }
+
+    pub fn normalized_density_at(&self, pos: UVec2) -> f32 {
+        normalize_density(self.density_at(pos))
+    }
+
+    pub fn normalized_pair_average(&self, a: UVec2, b: UVec2) -> f32 {
+        let avg = 0.5 * (self.density_at(a) + self.density_at(b));
+        normalize_density(avg)
+    }
+
+    pub fn normalized_average(&self) -> f32 {
+        normalize_density(self.average_density())
+    }
+
+    pub fn average_density(&self) -> f32 {
+        if self.samples.is_empty() {
+            return 0.0;
+        }
+        let total: f32 = self.samples.iter().copied().sum();
+        total / (self.samples.len() as f32)
+    }
+
+    pub fn max_density(&self) -> f32 {
+        self.samples
+            .iter()
+            .copied()
+            .fold(0.0f32, |acc, value| acc.max(value))
+    }
+}
+
+fn normalize_density(value: f32) -> f32 {
+    if value <= 0.0 {
+        0.0
+    } else {
+        (value / HERD_DENSITY_REFERENCE_BIOMASS).clamp(0.0, 1.0)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_initial_herds(
     mut registry: ResMut<HerdRegistry>,
     mut telemetry: ResMut<HerdTelemetry>,
+    mut density: ResMut<HerdDensityMap>,
     config: Res<SimulationConfig>,
     start_location: Res<StartLocation>,
     tile_registry: Res<TileRegistry>,
@@ -126,6 +223,7 @@ pub fn spawn_initial_herds(
 ) {
     if !registry.herds.is_empty() {
         telemetry.entries = registry.herds.iter().map(to_entry).collect();
+        density.rebuild(config.grid_size, &registry);
         return;
     }
 
@@ -151,22 +249,57 @@ pub fn spawn_initial_herds(
             let species = HerdSpecies::sample(&mut rng);
             let id = format!("trail_herd_{:02}", idx);
             let biomass = rng.gen_range(4000.0..12000.0);
-            herds.push(Herd::new(id, species, route, biomass));
+            let herd = Herd::new(id, species, route, biomass);
+            let position = herd.position();
+            info!(
+                target: "shadow_scale::analytics",
+                event = "herd_spawn",
+                herd = %herd.id,
+                label = %herd.label,
+                species = %herd.species.display_label(),
+                x = position.x,
+                y = position.y,
+                biomass = herd.biomass,
+                route_length = herd.route_length(),
+            );
+            herds.push(herd);
         }
     }
     registry.herds = herds;
     telemetry.entries = registry.snapshot_entries();
+    density.rebuild(config.grid_size, &registry);
 }
 
-pub fn advance_herds(mut registry: ResMut<HerdRegistry>, mut telemetry: ResMut<HerdTelemetry>) {
+pub fn advance_herds(
+    mut registry: ResMut<HerdRegistry>,
+    mut telemetry: ResMut<HerdTelemetry>,
+    mut density: ResMut<HerdDensityMap>,
+    config: Res<SimulationConfig>,
+) {
     if registry.herds.is_empty() {
         telemetry.entries.clear();
+        density.width = 0;
+        density.height = 0;
+        density.samples.clear();
         return;
     }
     for herd in registry.herds.iter_mut() {
         herd.advance();
+        let position = herd.position();
+        info!(
+            target: "shadow_scale::analytics",
+            event = "herd_migrate",
+            herd = %herd.id,
+            label = %herd.label,
+            x = position.x,
+            y = position.y,
+            step_index = herd.step_index,
+            route_length = herd.route_length(),
+            biomass = herd.biomass,
+        );
     }
     telemetry.entries = registry.snapshot_entries();
+    density.rebuild(config.grid_size, &registry);
 }
 
 fn to_entry(herd: &Herd) -> HerdTelemetryEntry {
@@ -177,6 +310,7 @@ fn to_entry(herd: &Herd) -> HerdTelemetryEntry {
         position: herd.position(),
         biomass: herd.biomass,
         route_length: herd.route_length() as u32,
+        next_position: herd.next_position(),
     }
 }
 

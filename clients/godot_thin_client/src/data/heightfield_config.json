@@ -1,0 +1,32 @@
+{
+  "default_height_exaggeration": 15.0,
+  "per_map_dimensions": {
+    "80x52": 3.0,
+    "104x64": 10.0
+  },
+  "camera": {
+    "default_distance_ratio": 0.6,
+    "per_map_distance_ratio": {
+      "80x52": 0.3
+    },
+    "default_tilt": 55.0,
+    "zoom": {
+      "min_multiplier": 0.08,
+      "max_multiplier": 2.6,
+      "default_multiplier": 0.45,
+      "strategic_threshold": 1.6,
+      "per_map_default_multiplier": {
+        "80x52": 0.25,
+        "104x64": 0.35
+      }
+    }
+  },
+  "visualization": {
+    "debug_visualize_height": false,
+    "debug_visualize_axes": false,
+    "show_hex_grid": true,
+    "hex_color": [1.0, 0.0, 0.0, 1.0],
+    "hex_width_scale": 0.08,
+    "hex_min_width_world": 0.05
+  }
+}

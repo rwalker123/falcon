@@ -188,6 +188,13 @@ message ForageTileCommand {
   optional uint64 band_entity_bits = 5;
 }
 
+message HuntGameCommand {
+  uint32 faction_id = 1;
+  uint32 target_x = 2;
+  uint32 target_y = 3;
+  optional uint64 band_entity_bits = 4;
+}
+
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
@@ -216,5 +223,6 @@ message CommandEnvelope {
     FollowHerdCommand follow_herd = 23;
     FoundCampCommand found_camp = 24;
     ForageTileCommand forage_tile = 25;
+    HuntGameCommand hunt_game = 26;
   }
 }

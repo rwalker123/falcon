@@ -57,10 +57,11 @@ This section translates the sandbox into a concrete, Civ-like campaign loop whil
 - Initial kit: food rations, simple tools, portable camp gear (tents, drying racks), and a knowledge kit enabling basic assays (kiln/burn/solvent tests). No permanent buildings exist yet.
 - Camps, not cities: you can place a Seasonal Camp (temporary, decays if abandoned) that provides limited storage, healing, and crafting. Camps leave “trail knowledge” that improves movement/attrition when revisiting.
 - Seasonal routes: biomes regenerate and herds migrate; a seasonal viability overlay highlights promising circuits that shift with climate and depletion.
+- Follow Herd (new tangible action): selecting any tracked herd (via the Fauna tab or HUD quick action) immediately reassigns every band to the herd’s current tile, consumes a chunk of biomass for fresh provisions/trade goods, grants a temporary morale lift, pulses fog reveal along the herd’s path, and injects a **Fauna Lore** knowledge fragment (tied to discovery id `fauna.lore`) into both the cohorts and the global ledger. These rewards scale with herd biomass so designers can tune provisioning and lore pacing. (`docs/architecture.md#fauna-effects` details the implementation contract.) On the tactical map, a double-click on a herd issues `FollowHerd` directly (Shift+double-click dispatches a `ScoutArea` order to that tile) so playtesters can react in place without bouncing over to the inspector tab.
 - Loose territory: project soft “roaming rights” via patrols/totems; early conflicts are skirmishes/raids, not sieges. Encounters with other tribes can lead to parley, exchange, intermarriage/adoption, or feud.
 
 ### Organic Settlement — Sedentarization (When/Why to Found)
-- Sedentarization Score (0–100): emergent pressure to root in place. Inputs: local resource density, food stability, storage/spoilage reductions, domestication progress, trade hub potential, travel fatigue, security.
+- Sedentarization Score (0–100): emergent pressure to root in place. Inputs: local resource density (now including the live herd-density overlay), food stability, storage/spoilage reductions, domestication progress, trade hub potential, travel fatigue, security.
 - Soft prompt at ~40 (“establish seasonal base?”); hard opportunity at ~70 (“invest in storehouses/fields and settle?”). You can ignore prompts and remain nomadic.
 - Multiple settlement on-ramps:
   - Farming path: tending patches → seed selection → fields, coupled with storage breakthroughs (sealed pottery/pits).
@@ -74,6 +75,7 @@ This section translates the sandbox into a concrete, Civ-like campaign loop whil
 
 ### Early Loop (Turn 5 → 30)
 - Nomadic stabilization: place/relocate Seasonal Camps; craft storage (drying/smoking, early pottery); build rafts/small boats; map seasonal circuits.
+- Herd-density telemetry: the Fauna tab now emits a density overlay derived from live herd biomass. Designers (and future AI scripts) can read this to time sedentarization prompts, boost trade routes through wildlife-rich corridors, or increase crisis pressure when overgrazing pushes herds through infected ground. See `docs/architecture.md#fauna-effects` for the systems contract.
 - Discovery: run guided experiments (kiln/smelt/solvent tests) to label unknowns; establish a soft metal path if viable; identify at least one fuel.
 - Diplomacy & skirmish: parley/route-rights treaties, intermarriage/adoption, or raids/feuds; no sieges before settlements exist.
 - Objective: reach a self-sustaining surplus, resolve 1–2 early Great Discoveries, and approach a sedentarization decision organically (or lean into Nomadic ascendancy).
@@ -261,6 +263,14 @@ Raw terrain defines movement, habitability, and discovery potential before facti
 | 34 | Karst Cavern Entrances | `#2E4F5C` |
 | 35 | Sinkholes/Collapse Zones | `#4F4B33` |
 | 36 | Subterranean Aquifer Ceilings | `#2F8FB2` |
+
+#### Elevation Presentation Roadmap
+- The map will graduate from a flat board to a shallow 3D relief that mirrors the underlying `ElevationField`. Expect ridgelines, basins, and escarpments to rise out of the palette while keeping the same camera controls designers already rely on.
+- Initial pass: render the world-height raster in greyscale with soft rim lighting so teams can validate data fidelity before colour is reintroduced. Designers can flip between pure greyscale, height-tinted palette, and the legacy flat view via a HUD toggle.
+- Biome visuals ride on top of the relief. Each hex still owns its palette ID, but the client blends seamless biome textures (tri-planar decals or texture arrays) using the same weights that drive adjacency rules. This keeps coastlines, riverbanks, and mountain seams from “tiling” visibly when stretched over relief.
+- Overlay integration: logistics/sentiment/culture heatmaps will project onto the same relief so colour ramps hug hillsides instead of floating in screen space. Selection/hover rings sit slightly above the mesh to remain legible.
+- Accessibility defaults: camera pitch stays shallow (no full free-look) to preserve the strategic blueprint feel, and the relief exaggeration slider lets QA tune readability for screenshots, low-contrast monitors, and future fog-of-war silhouettes.
+- Engineering hooks live in `docs/architecture.md` (“Terrain Visualization Upgrade”), which lays out the added snapshot payloads (heightfield + normals), Godot mesh chunking strategy, and fallback pseudo-3D shader path. Update both documents in lockstep as the spike matures.
 
 - **Open Water & Shelf Biomes**
   - **Deep Ocean**: abyssal plains/trenches with crushing pressure; logistics limited to specialized hulls and submersibles; harbors exotic vents/resources.

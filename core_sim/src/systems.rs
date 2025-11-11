@@ -9,11 +9,13 @@ use rand::{rngs::SmallRng, Rng, SeedableRng};
 use serde_json::json;
 
 use crate::map_preset::{MapPreset, MapPresetsHandle, TerrainClassifierConfig};
+#[cfg(test)]
+use crate::snapshot_overlays_config::SnapshotOverlaysConfig;
 use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, HarvestAssignment,
-        KnowledgeFragment, LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort,
-        PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink,
+        HarvestTaskKind, KnowledgeFragment, LogisticsLink, MountainMetadata, PendingMigration,
+        PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink,
     },
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
@@ -21,7 +23,11 @@ use crate::{
         CULTURE_TRAIT_AXES,
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
-    food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
+    fauna::HerdDensityMap,
+    food::{
+        classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,
+        FoodSiteKind,
+    },
     generations::GenerationRegistry,
     heightfield::build_elevation_field,
     hydrology::HydrologyState,
@@ -41,6 +47,7 @@ use crate::{
         SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
     },
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
+    snapshot_overlays_config::SnapshotOverlaysConfigHandle,
     start_profile::{
         FoodModulePreference, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
         StartProfileOverrides, StartingUnitSpec,
@@ -55,6 +62,7 @@ use sim_runtime::{
 
 const POLAR_LATITUDE_THRESHOLD: f32 =
     TerrainClassifierConfig::default_values().polar_latitude_cutoff;
+const HERD_TRADE_DIFFUSION_BONUS: f32 = 0.25;
 const PLAYER_FACTION: FactionId = FactionId(0);
 
 #[derive(Clone, Debug)]
@@ -109,6 +117,8 @@ pub struct TradeDiffusionParams<'w, 's> {
     pub tick: Res<'w, SimulationTick>,
     pub events: EventWriter<'w, TradeDiffusionEvent>,
     pub links: Query<'w, 's, (&'static LogisticsLink, &'static mut TradeLink)>,
+    pub tiles: Query<'w, 's, &'static Tile>,
+    pub herd_density: Res<'w, HerdDensityMap>,
 }
 
 #[derive(SystemParam)]
@@ -152,6 +162,7 @@ pub fn spawn_initial_world(
     mut culture: ResMut<CultureManager>,
     mut discovery: ResMut<DiscoveryProgressLedger>,
     mut faction_inventory: ResMut<FactionInventory>,
+    snapshot_overlays: Res<SnapshotOverlaysConfigHandle>,
 ) {
     let width = config.grid_size.x as usize;
     let height = config.grid_size.y as usize;
@@ -375,6 +386,26 @@ pub fn spawn_initial_world(
         &config.start_profile_overrides.food_modules,
     );
 
+    let overlays_cfg = snapshot_overlays.get();
+    let food_overlay_cfg = overlays_cfg.food();
+    let wild_module_set: HashSet<FoodModule> = food_overlay_cfg
+        .wild_game_modules()
+        .iter()
+        .copied()
+        .collect();
+    let wild_game_active = !wild_module_set.is_empty()
+        && food_overlay_cfg.wild_game_probability() > 0.0
+        && food_overlay_cfg.wild_game_max_total() > 0;
+    let wild_game_radius = food_overlay_cfg.wild_game_radius();
+    let wild_game_weight_scale = food_overlay_cfg.wild_game_weight_scale();
+    let wild_game_max_per_module = food_overlay_cfg.wild_game_max_per_module();
+    let wild_game_max_total = food_overlay_cfg.wild_game_max_total();
+    let wild_game_probability = food_overlay_cfg.wild_game_probability();
+    let start_center = UVec2::new(start_x, start_y);
+    let mut wild_game_counts: HashMap<FoodModule, usize> = HashMap::new();
+    let mut wild_game_total = 0usize;
+    let mut wild_rng = SmallRng::seed_from_u64(world_seed ^ 0xC0FA_BEEF);
+
     let mut province_region_layers: HashMap<ProvinceId, CultureLayerId> = HashMap::new();
     for (idx, proto) in prototypes.iter().enumerate() {
         let (generation, demand, efficiency) = proto.element.power_profile();
@@ -413,7 +444,32 @@ pub fn spawn_initial_world(
             .food_module
             .or_else(|| classify_food_module(&tile_component));
         if let Some(module) = module {
-            entity_commands.insert(FoodModuleTag::new(module, 1.0));
+            let mut site_kind = module.site_kind();
+            let mut seasonal_weight = 1.0;
+            if wild_game_active
+                && wild_game_total < wild_game_max_total
+                && wild_module_set.contains(&module)
+            {
+                let within_radius = if wild_game_radius == 0 {
+                    true
+                } else {
+                    let dx = start_center.x.abs_diff(proto.position.x);
+                    let dy = start_center.y.abs_diff(proto.position.y);
+                    dx + dy <= wild_game_radius
+                };
+                if within_radius {
+                    let entry = wild_game_counts.entry(module).or_insert(0);
+                    if *entry < wild_game_max_per_module
+                        && wild_rng.gen::<f32>() < wild_game_probability
+                    {
+                        site_kind = FoodSiteKind::GameTrail;
+                        seasonal_weight *= wild_game_weight_scale;
+                        *entry += 1;
+                        wild_game_total += 1;
+                    }
+                }
+            }
+            entity_commands.insert(FoodModuleTag::new(module, seasonal_weight, site_kind));
         }
         let tile_entity = entity_commands.id();
         tiles.push(tile_entity);
@@ -2438,6 +2494,16 @@ pub fn trade_knowledge_diffusion(mut params: TradeDiffusionParams) {
             trade.leak_timer = trade.leak_timer.saturating_sub(1);
         }
 
+        let density_hint = match (
+            params.tiles.get(logistics.from),
+            params.tiles.get(logistics.to),
+        ) {
+            (Ok(from_tile), Ok(to_tile)) => params
+                .herd_density
+                .normalized_pair_average(from_tile.position, to_tile.position),
+            _ => params.herd_density.normalized_average(),
+        };
+
         if trade.leak_timer == 0 {
             let fragment = if !trade.pending_fragments.is_empty() {
                 trade.pending_fragments.remove(0)
@@ -2455,9 +2521,14 @@ pub fn trade_knowledge_diffusion(mut params: TradeDiffusionParams) {
             let delta = fragment.progress;
             if delta > scalar_zero() {
                 let discovery_id = fragment.discovery_id;
-                let _ = params
-                    .discovery
-                    .add_progress(trade.to_faction, discovery_id, delta);
+                let density_multiplier =
+                    scalar_from_f32(1.0 + density_hint * HERD_TRADE_DIFFUSION_BONUS);
+                let adjusted_delta =
+                    (delta * density_multiplier).clamp(Scalar::zero(), Scalar::one());
+                let _ =
+                    params
+                        .discovery
+                        .add_progress(trade.to_faction, discovery_id, adjusted_delta);
                 params.telemetry.tech_diffusion_applied =
                     params.telemetry.tech_diffusion_applied.saturating_add(1);
                 params.telemetry.push_record(TradeDiffusionRecord {
@@ -2465,15 +2536,16 @@ pub fn trade_knowledge_diffusion(mut params: TradeDiffusionParams) {
                     from: trade.from_faction,
                     to: trade.to_faction,
                     discovery_id,
-                    delta,
+                    delta: adjusted_delta,
                     via_migration: false,
+                    herd_density: density_hint,
                 });
                 params.events.send(TradeDiffusionEvent {
                     tick: params.tick.0,
                     from: trade.from_faction,
                     to: trade.to_faction,
                     discovery_id,
-                    delta,
+                    delta: adjusted_delta,
                     via_migration: false,
                 });
                 trade.last_discovery = Some(discovery_id);
@@ -2498,13 +2570,14 @@ pub fn publish_trade_telemetry(telemetry: Res<TradeTelemetry>, tick: Res<Simulat
             .iter()
             .take(24)
             .map(|record| {
-                json!({
-                    "from": record.from.0,
-                    "to": record.to.0,
-                    "discovery": record.discovery_id,
-                    "delta": record.delta.to_f32(),
-                    "via_migration": record.via_migration,
-                })
+                    json!({
+                        "from": record.from.0,
+                        "to": record.to.0,
+                        "discovery": record.discovery_id,
+                        "delta": record.delta.to_f32(),
+                        "via_migration": record.via_migration,
+                        "herd_density": record.herd_density,
+                    })
             })
             .collect::<Vec<_>>(),
         "records_truncated": telemetry.records.len().saturating_sub(24),
@@ -2621,6 +2694,7 @@ pub fn simulate_population(
                         discovery_id: fragment.discovery_id,
                         delta,
                         via_migration: true,
+                        herd_density: 0.0,
                     });
                     trade_events.send(TradeDiffusionEvent {
                         tick: tick.0,
@@ -2694,8 +2768,13 @@ pub fn advance_harvest_assignments(
             );
         }
 
+        let (event_kind, label_display) = match assignment.kind {
+            HarvestTaskKind::Harvest => (CommandEventKind::Forage, "Harvest"),
+            HarvestTaskKind::Hunt => (CommandEventKind::Hunt, "Hunt"),
+        };
         let detail = format!(
-            "status=complete module={} provisions={} trade_goods={} travel_turns={} gather_turns={} started_tick={}",
+            "status=complete action={} module={} provisions={} trade_goods={} travel_turns={} gather_turns={} started_tick={}",
+            assignment.kind.as_str(),
             assignment.module.as_str(),
             assignment.provisions_reward.max(0),
             assignment.trade_goods_reward.max(0),
@@ -2706,11 +2785,14 @@ pub fn advance_harvest_assignments(
 
         event_log.push(CommandEventEntry::new(
             tick.0,
-            CommandEventKind::Forage,
+            event_kind,
             assignment.faction,
             format!(
-                "{} harvest -> ({}, {})",
-                assignment.band_label, assignment.target_coords.x, assignment.target_coords.y
+                "{} {} -> ({}, {})",
+                assignment.band_label,
+                label_display.to_lowercase(),
+                assignment.target_coords.x,
+                assignment.target_coords.y
             ),
             Some(detail),
         ));
@@ -3254,6 +3336,9 @@ mod terrain_tag_tests {
         ));
         world.insert_resource(DiscoveryProgressLedger::default());
         world.insert_resource(FactionInventory::default());
+        world.insert_resource(SnapshotOverlaysConfigHandle::new(
+            SnapshotOverlaysConfig::builtin(),
+        ));
 
         world.run_system_once(crate::systems::spawn_initial_world);
         hydrology::generate_hydrology(&mut world);
@@ -3594,6 +3679,9 @@ mod terrain_tag_tests {
         world.insert_resource(StartProfileKnowledgeTagsHandle::new(
             StartProfileKnowledgeTags::builtin(),
         ));
+        world.insert_resource(SnapshotOverlaysConfigHandle::new(
+            SnapshotOverlaysConfig::builtin(),
+        ));
 
         world.run_system_once(crate::systems::spawn_initial_world);
         hydrology::generate_hydrology(&mut world);
@@ -3656,6 +3744,69 @@ mod terrain_tag_tests {
             println!("  {name}: actual {actual:.4}, target {target:.4}");
         }
     }
+
+    #[test]
+    fn wild_game_sites_spawn_with_overrides() {
+        let mut world = World::default();
+        let presets = MapPresets::builtin();
+        let overlays_cfg = SnapshotOverlaysConfig::from_json_str(
+            r#"{
+                "food": {
+                    "wild_game_modules": [
+                        "coastal_littoral",
+                        "riverine_delta",
+                        "savanna_grassland",
+                        "temperate_forest",
+                        "boreal_arctic",
+                        "montane_highland",
+                        "wetland_swamp",
+                        "semi_arid_scrub",
+                        "coastal_upwelling",
+                        "mixed_woodland"
+                    ],
+                    "wild_game_probability": 1.0,
+                    "wild_game_weight_scale": 1.0,
+                    "wild_game_max_per_module": 32,
+                    "wild_game_max_total": 128,
+                    "wild_game_radius": 128
+                }
+            }"#,
+        )
+        .expect("overlay config");
+
+        world.insert_resource(SimulationConfig::builtin());
+        world.insert_resource(SimulationTick::default());
+        world.insert_resource(CultureManager::default());
+        world.insert_resource(GenerationRegistry::with_seed(0xFACE_FEED, 6));
+        world.insert_resource(MapPresetsHandle::new(presets));
+        world.insert_resource(DiscoveryProgressLedger::default());
+        world.insert_resource(FactionInventory::default());
+        world.insert_resource(StartProfileKnowledgeTagsHandle::new(
+            StartProfileKnowledgeTags::builtin(),
+        ));
+        world.insert_resource(SnapshotOverlaysConfigHandle::new(Arc::new(overlays_cfg)));
+
+        world.run_system_once(crate::systems::spawn_initial_world);
+
+        let mut query = world.query::<&FoodModuleTag>();
+        let mut total_tags = 0usize;
+        let mut wild_sites = 0usize;
+        for tag in query.iter(&world) {
+            total_tags += 1;
+            if matches!(tag.kind, FoodSiteKind::GameTrail) {
+                wild_sites += 1;
+            }
+        }
+
+        assert!(
+            total_tags > 0,
+            "expected some food modules to exist after worldgen"
+        );
+        assert!(
+            wild_sites > 0,
+            "expected at least one wild game site (found 0 / {total_tags})"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -3694,6 +3845,9 @@ mod inventory_effect_tests {
         world.insert_resource(FactionInventory::default());
         world.insert_resource(StartProfileKnowledgeTagsHandle::new(
             StartProfileKnowledgeTags::builtin(),
+        ));
+        world.insert_resource(SnapshotOverlaysConfigHandle::new(
+            SnapshotOverlaysConfig::builtin(),
         ));
         world
     }

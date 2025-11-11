@@ -42,6 +42,13 @@ const FOOD_MODULE_LABELS := {
     "coastal_upwelling": "Coastal Upwelling",
     "mixed_woodland": "Mixed Woodland",
 }
+const HERD_CONSUMPTION_BIOMASS := 250.0
+const HERD_PROVISIONS_YIELD_PER_BIOMASS := 0.02
+const HERD_TRADE_GOODS_YIELD_PER_BIOMASS := 0.005
+const HERD_FOLLOW_MORALE_GAIN := 0.03
+const HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS := 0.0004
+const HERD_KNOWLEDGE_PROGRESS_CAP := 0.25
+const HERD_TRADE_DIFFUSION_BONUS := 0.25
 
 @onready var sentiment_text: RichTextLabel = $RootPanel/TabContainer/Sentiment/SentimentText
 @onready var terrain_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TerrainText
@@ -1483,6 +1490,7 @@ func _setup_command_controls() -> void:
         scout_execute_button.pressed.connect(_on_scout_command_pressed)
     if follow_herd_button != null:
         follow_herd_button.pressed.connect(_on_follow_herd_button_pressed)
+        follow_herd_button.tooltip_text = "Teleport bands to the selected herd and gain morale, supplies, fauna lore, and a fog reveal pulse."
     if camp_execute_button != null:
         camp_execute_button.pressed.connect(_on_camp_command_pressed)
     if tile_scout_button != null:
@@ -2741,6 +2749,15 @@ func _on_fauna_list_item_selected(index: int) -> void:
     lines.append("Position (%d, %d)" % [x, y])
     lines.append("Biomass %.0f" % biomass)
     lines.append("Route length %d" % route_length)
+    var reward_lines := _herd_reward_summary_lines(biomass)
+    if not reward_lines.is_empty():
+        lines.append("")
+        lines.append_array(reward_lines)
+    var next_x := int(info.get("next_x", -1))
+    var next_y := int(info.get("next_y", -1))
+    if next_x >= 0 and next_y >= 0:
+        lines.append("")
+        lines.append("Next waypoint (%d, %d)" % [next_x, next_y])
     fauna_detail_text.text = "\n".join(lines)
     if follow_herd_field != null:
         follow_herd_field.text = String(info.get("id", ""))
@@ -3309,6 +3326,9 @@ func _render_trade() -> void:
     var avg_open: float = total_open / max(1, _trade_links.size())
     var avg_flow: float = total_flow / max(1, _trade_links.size())
     lines.append("Avg openness %.2f | avg flow %.2f" % [avg_open, avg_flow])
+    var wildlife_line := _wildlife_trade_summary_line()
+    if wildlife_line != "":
+        lines.append(wildlife_line)
 
     trade_summary_text.text = "\n".join(lines)
 
@@ -3906,13 +3926,19 @@ func _format_trade_event_line(record: Dictionary) -> String:
     var delta_percent: float = float(record.get("delta", 0.0)) * 100.0
     var via_migration: bool = bool(record.get("via_migration", false))
     var tag: String = "migration" if via_migration else "trade"
-    return "[%03d] F%d→F%d discovery %d +%.2f%% (%s)" % [
+    var herd_density: float = float(record.get("herd_density", 0.0))
+    var wildlife_suffix := ""
+    if herd_density > 0.0:
+        var bonus_pct := herd_density * HERD_TRADE_DIFFUSION_BONUS * 100.0
+        wildlife_suffix = " ρ=%.2f (+%.1f%%)" % [herd_density, bonus_pct]
+    return "[%03d] F%d→F%d discovery %d +%.2f%% (%s)%s" % [
         tick,
         from_faction,
         to_faction,
         discovery,
         delta_percent,
-        tag
+        tag,
+        wildlife_suffix
     ]
 
 func _format_knowledge_event_line(record: Dictionary) -> String:
@@ -4205,6 +4231,41 @@ func _maybe_ingest_trade_telemetry(entry: Dictionary) -> bool:
     _render_trade()
     _render_knowledge()
     return true
+
+func _herd_reward_summary_lines(biomass: float) -> Array[String]:
+    var lines: Array[String] = []
+    if biomass <= 0.0:
+        return lines
+    var consumption: float = min(biomass, HERD_CONSUMPTION_BIOMASS)
+    if consumption <= 0.0:
+        return lines
+    var provisions: float = round(consumption * HERD_PROVISIONS_YIELD_PER_BIOMASS)
+    var trade_goods: float = round(consumption * HERD_TRADE_GOODS_YIELD_PER_BIOMASS)
+    var lore_progress: float = min(
+        consumption * HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS,
+        HERD_KNOWLEDGE_PROGRESS_CAP
+    )
+    lines.append("[b]Follow Herd rewards[/b]")
+    lines.append("• Morale +%.2f per band" % HERD_FOLLOW_MORALE_GAIN)
+    if provisions > 0 or trade_goods > 0:
+        lines.append("• Supplies: +%d provisions, +%d trade goods" % [int(provisions), int(trade_goods)])
+    if lore_progress > 0.0:
+        lines.append("• Fauna lore +%.1f%% progress" % (lore_progress * 100.0))
+    lines.append("• Fog pulse reveals nearby tiles")
+    return lines
+
+func _wildlife_trade_summary_line() -> String:
+    if _trade_history.is_empty():
+        return ""
+    var last_index := _trade_history.size() - 1
+    if last_index < 0:
+        return ""
+    var record: Dictionary = _trade_history[last_index]
+    var herd_density: float = float(record.get("herd_density", 0.0))
+    if herd_density <= 0.0:
+        return ""
+    var bonus_pct := herd_density * HERD_TRADE_DIFFUSION_BONUS * 100.0
+    return "Wildlife density %.0f%% → +%.1f%% leak bonus" % [herd_density * 100.0, bonus_pct]
 
 func _update_culture_divergence_detail() -> void:
     if culture_divergence_detail == null:

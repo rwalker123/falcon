@@ -70,12 +70,12 @@ cleanup() {
 
 if [[ "$RUN_SERVER" == true && "$RUN_CLIENT" == false && "$RUN_GODOT" != true ]]; then
   echo "[run_stack] Starting core simulation server..."
-  exec env RUST_LOG=debug cargo run -p core_sim --bin server
+  exec env RUST_LOG=info cargo run -p core_sim --bin server
 fi
 
 if [[ "$RUN_SERVER" == true && "$RUN_CLIENT" == true ]]; then
   echo "[run_stack] Starting core simulation server..."
-  RUST_LOG=debug cargo run -p core_sim --bin server &
+  RUST_LOG=info cargo run -p core_sim --bin server &
   SERVER_PID=$!
   trap cleanup EXIT INT TERM
 fi

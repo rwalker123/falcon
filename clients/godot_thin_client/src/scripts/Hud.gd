@@ -7,39 +7,47 @@ signal unit_scout_requested(x: int, y: int, band_entity_bits: int)
 signal unit_found_camp_requested(x: int, y: int)
 signal herd_follow_requested(herd_id: String)
 signal forage_requested(x: int, y: int, module_key: String)
+signal next_turn_requested(steps: int)
 
-@onready var campaign_title_label: Label = $CampaignTitleLabel
-@onready var campaign_subtitle_label: Label = $CampaignSubtitleLabel
-@onready var turn_label: Label = $TurnLabel
-@onready var metrics_label: Label = $MetricsLabel
-@onready var zoom_controls: HBoxContainer = $ZoomControls
-@onready var zoom_out_button: Button = $ZoomControls/ZoomOutButton
-@onready var zoom_reset_button: Button = $ZoomControls/ZoomResetButton
-@onready var zoom_in_button: Button = $ZoomControls/ZoomInButton
-@onready var terrain_legend_panel: Panel = $TerrainLegendPanel
-@onready var terrain_legend_container: VBoxContainer = $TerrainLegendPanel/LegendContainer
-@onready var terrain_legend_scroll: ScrollContainer = $TerrainLegendPanel/LegendContainer/LegendScroll
-@onready var terrain_legend_list: VBoxContainer = $TerrainLegendPanel/LegendContainer/LegendScroll/LegendList
-@onready var terrain_legend_title: Label = $TerrainLegendPanel/LegendContainer/LegendTitle
-@onready var terrain_legend_description: Label = $TerrainLegendPanel/LegendContainer/LegendDescription
-@onready var victory_status_label: RichTextLabel = $VictoryLabel
-@onready var command_feed_panel: Panel = $CommandFeedPanel
-@onready var command_feed_heading: Label = $CommandFeedPanel/MarginContainer/VBoxContainer/CommandFeedHeading
-@onready var command_feed_scroll: ScrollContainer = $CommandFeedPanel/MarginContainer/VBoxContainer/CommandFeedScroll
-@onready var command_feed_label: RichTextLabel = $CommandFeedPanel/MarginContainer/VBoxContainer/CommandFeedScroll/CommandFeedLabel
-@onready var selection_panel: PanelContainer = $SelectionPanel as PanelContainer
-@onready var selection_margin: MarginContainer = $SelectionPanel/Margin
-@onready var selection_scroll: ScrollContainer = $SelectionPanel/Margin/Scroll
-@onready var selection_content: VBoxContainer = $SelectionPanel/Margin/Scroll/VBox
-@onready var selection_title: Label = $SelectionPanel/Margin/Scroll/VBox/SelectionTitle
-@onready var selection_detail: Label = $SelectionPanel/Margin/Scroll/VBox/SelectionDetail
-@onready var unit_buttons: HBoxContainer = $SelectionPanel/Margin/Scroll/VBox/UnitButtons
-@onready var unit_scout_button: Button = $SelectionPanel/Margin/Scroll/VBox/UnitButtons/UnitScoutButton
-@onready var unit_camp_button: Button = $SelectionPanel/Margin/Scroll/VBox/UnitButtons/UnitCampButton
-@onready var herd_buttons: HBoxContainer = $SelectionPanel/Margin/Scroll/VBox/HerdButtons
-@onready var follow_herd_button: Button = $SelectionPanel/Margin/Scroll/VBox/HerdButtons/FollowHerdButton
-@onready var food_buttons: HBoxContainer = $SelectionPanel/Margin/Scroll/VBox/FoodButtons
-@onready var forage_button: Button = $SelectionPanel/Margin/Scroll/VBox/FoodButtons/ForageButton
+@onready var campaign_title_label: Label = $LayoutRoot/RootColumn/TopBar/CampaignBlock/CampaignTitleLabel
+@onready var campaign_subtitle_label: Label = $LayoutRoot/RootColumn/TopBar/CampaignBlock/CampaignSubtitleLabel
+@onready var turn_label: Label = $LayoutRoot/RootColumn/TopBar/TurnBlock/TurnLabel
+@onready var metrics_label: Label = $LayoutRoot/RootColumn/TopBar/TurnBlock/MetricsLabel
+@onready var zoom_controls: HBoxContainer = $LayoutRoot/RootColumn/TopBar/ZoomControls
+@onready var zoom_out_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomOutButton
+@onready var zoom_reset_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomResetButton
+@onready var zoom_in_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomInButton
+@onready var terrain_legend_panel: Panel = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel
+@onready var terrain_legend_container: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/LegendContainer
+@onready var terrain_legend_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/LegendContainer/LegendScroll
+@onready var terrain_legend_list: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/LegendContainer/LegendScroll/LegendList
+@onready var terrain_legend_title: Label = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/LegendContainer/LegendTitle
+@onready var terrain_legend_description: Label = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/LegendContainer/LegendDescription
+@onready var victory_panel: PanelContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/VictoryPanel
+@onready var victory_status_label: RichTextLabel = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/VictoryPanel/Margin/VictoryLabel
+@onready var command_feed_panel: Panel = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel
+@onready var command_feed_heading: Label = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/MarginContainer/VBoxContainer/CommandFeedHeading
+@onready var command_feed_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/MarginContainer/VBoxContainer/CommandFeedScroll
+@onready var command_feed_label: RichTextLabel = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/MarginContainer/VBoxContainer/CommandFeedScroll/CommandFeedLabel
+@onready var selection_panel: PanelContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel as PanelContainer
+@onready var selection_margin: MarginContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin
+@onready var selection_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll
+@onready var selection_content: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox
+@onready var selection_title: Label = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/SelectionTitle
+@onready var selection_detail: Label = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/SelectionDetail
+@onready var unit_buttons: HBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/UnitButtons
+@onready var unit_scout_button: Button = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/UnitButtons/UnitScoutButton
+@onready var unit_camp_button: Button = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/UnitButtons/UnitCampButton
+@onready var herd_buttons: HBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/HerdButtons
+@onready var follow_herd_button: Button = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/HerdButtons/FollowHerdButton
+@onready var food_buttons: HBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/FoodButtons
+@onready var forage_button: Button = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/FoodButtons/ForageButton
+@onready var stockpile_panel: PanelContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel
+@onready var stockpile_title: Label = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin/StockpileVBox/StockpileTitle
+@onready var stockpile_list: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin/StockpileVBox/StockpileList
+@onready var left_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack
+@onready var right_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack
+@onready var next_turn_button: Button = $LayoutRoot/RootColumn/BottomBar/NextTurnButton
 
 const LEGEND_SWATCH_FRACTION := 0.75
 const LEGEND_MIN_ROW_HEIGHT := 20.0
@@ -59,6 +67,13 @@ const SELECTION_PANEL_WIDTH := 320.0
 const SELECTION_PANEL_MIN_HEIGHT := 140.0
 const SELECTION_PANEL_MAX_HEIGHT := 420.0
 const SELECTION_PANEL_BOTTOM_MARGIN := 40.0
+const PLAYER_FACTION_ID := 0
+const HERD_CONSUMPTION_BIOMASS := 250.0
+const HERD_PROVISIONS_YIELD_PER_BIOMASS := 0.02
+const HERD_TRADE_GOODS_YIELD_PER_BIOMASS := 0.005
+const HERD_FOLLOW_MORALE_GAIN := 0.03
+const HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS := 0.0004
+const HERD_KNOWLEDGE_PROGRESS_CAP := 0.25
 const FOOD_MODULE_LABELS := {
     "coastal_littoral": "Coastal Littoral",
     "riverine_delta": "Riverine Delta",
@@ -71,6 +86,8 @@ const FOOD_MODULE_LABELS := {
     "coastal_upwelling": "Coastal Upwelling",
     "mixed_woodland": "Mixed Woodland",
 }
+const FOOD_ACTION_FORAGE := "forage"
+const FOOD_ACTION_HUNT := "hunt"
 const UI_BALANCE_CONFIG_PATH := "res://src/config/ui_balance.json"
 const DEFAULT_TRAVEL_SPEED := 3.0
 const DEFAULT_TRAVEL_PREVIEW_LIMIT := 12
@@ -85,10 +102,16 @@ var _selected_tile_info: Dictionary = {}
 var _selected_unit: Dictionary = {}
 var _selected_herd: Dictionary = {}
 var _selected_food_module: String = ""
+var _selected_food_is_hunt: bool = false
 var _pending_forage: Dictionary = {}
 var _pending_scout_unit: Dictionary = {}
+var _stockpile_totals: Dictionary = {}
 var travel_tiles_per_turn: float = DEFAULT_TRAVEL_SPEED
 var travel_preview_turn_cap: int = DEFAULT_TRAVEL_PREVIEW_LIMIT
+var dock_registry := {
+    "left": [],
+    "right": [],
+}
 
 func _ready() -> void:
     _load_ui_balance_config()
@@ -100,6 +123,16 @@ func _ready() -> void:
     _refresh_victory_status()
     _render_command_feed()
     _connect_selection_buttons()
+    _connect_control_buttons()
+    register_dock_panel(selection_panel, "left", 10)
+    register_dock_panel(stockpile_panel, "left", 20)
+    register_dock_panel(command_feed_panel, "left", 30)
+    register_dock_panel(victory_panel, "right", 10)
+    register_dock_panel(terrain_legend_panel, "right", 20)
+    if stockpile_panel != null:
+        stockpile_panel.visible = false
+    if stockpile_title != null:
+        stockpile_title.text = "Stockpiles"
 
 func set_localization_store(store) -> void:
     localization_store = store
@@ -120,6 +153,59 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
     var avg_sentiment: float = float(metrics.get("avg_sentiment", 0.0))
     metrics_label.text = "Units: %d | Logistics: %.2f | Sentiment: %.2f" % [unit_count, avg_logistics, avg_sentiment]
 
+func update_stockpiles(faction_inventory_variant: Variant) -> void:
+    if stockpile_panel == null:
+        return
+    var faction_array: Array = faction_inventory_variant if faction_inventory_variant is Array else []
+    var next_totals: Dictionary = {}
+    for faction_entry in faction_array:
+        if not (faction_entry is Dictionary):
+            continue
+        if int(faction_entry.get("faction", -1)) != PLAYER_FACTION_ID:
+            continue
+        var inventory_variant: Variant = faction_entry.get("inventory", [])
+        if inventory_variant is Array:
+            var inventory_entries: Array = inventory_variant
+            for stock_entry in inventory_entries:
+                if not (stock_entry is Dictionary):
+                    continue
+                var item_name := String(stock_entry.get("item", "")).strip_edges()
+                if item_name == "":
+                    continue
+                next_totals[item_name] = int(stock_entry.get("quantity", 0))
+        break
+    var combined_keys: Array = []
+    for key in _stockpile_totals.keys():
+        if not combined_keys.has(key):
+            combined_keys.append(key)
+    for key in next_totals.keys():
+        if not combined_keys.has(key):
+            combined_keys.append(key)
+    combined_keys.sort()
+    var panel_entries: Array = []
+    for key in combined_keys:
+        var amount := int(next_totals.get(key, 0))
+        var previous := int(_stockpile_totals.get(key, 0))
+        if amount == 0 and previous == 0:
+            continue
+        var delta := float(amount - previous)
+        panel_entries.append({
+            "label": _format_stockpile_label(key),
+            "amount": amount,
+            "delta": delta,
+        })
+    _stockpile_totals = next_totals
+    if stockpile_list == null or stockpile_panel == null:
+        return
+    for child in stockpile_list.get_children():
+        child.queue_free()
+    if panel_entries.is_empty():
+        stockpile_panel.visible = false
+        return
+    stockpile_panel.visible = true
+    for entry in panel_entries:
+        stockpile_list.add_child(_build_stockpile_row(entry))
+
 func set_ui_zoom(scale: float) -> void:
     if zoom_reset_button != null:
         zoom_reset_button.text = "%.0f%%" % (scale * 100.0)
@@ -139,8 +225,53 @@ func _connect_selection_buttons() -> void:
         unit_camp_button.pressed.connect(_on_unit_camp_pressed)
     if follow_herd_button != null and not follow_herd_button.is_connected("pressed", Callable(self, "_on_follow_herd_pressed")):
         follow_herd_button.pressed.connect(_on_follow_herd_pressed)
+        follow_herd_button.tooltip_text = "Follow the selected herd to gain morale, supplies, fauna lore, and a fog reveal pulse."
     if forage_button != null and not forage_button.is_connected("pressed", Callable(self, "_on_forage_pressed")):
         forage_button.pressed.connect(_on_forage_pressed)
+
+func _connect_control_buttons() -> void:
+    if next_turn_button != null and not next_turn_button.is_connected("pressed", Callable(self, "_on_next_turn_pressed")):
+        next_turn_button.pressed.connect(_on_next_turn_pressed)
+
+func register_dock_panel(panel: Control, slot: String, priority: int) -> void:
+    if panel == null or not dock_registry.has(slot):
+        return
+    var bucket: Array = dock_registry[slot]
+    var found := false
+    for entry in bucket:
+        if entry.get("panel") == panel:
+            entry["priority"] = priority
+            found = true
+            break
+    if not found:
+        bucket.append({"panel": panel, "priority": priority})
+    bucket.sort_custom(Callable(self, "_dock_sort"))
+    _apply_dock_order(slot)
+
+func _dock_sort(a: Dictionary, b: Dictionary) -> bool:
+    return int(a.get("priority", 0)) < int(b.get("priority", 0))
+
+func _dock_container(slot: String) -> VBoxContainer:
+    match slot:
+        "left":
+            return left_stack
+        "right":
+            return right_stack
+        _:
+            return null
+
+func _apply_dock_order(slot: String) -> void:
+    var container := _dock_container(slot)
+    if container == null:
+        return
+    var bucket: Array = dock_registry.get(slot, [])
+    for idx in range(bucket.size()):
+        var panel: Control = bucket[idx].get("panel")
+        if panel == null:
+            continue
+        if panel.get_parent() != container:
+            container.add_child(panel)
+        container.move_child(panel, idx)
 
 func _on_zoom_out_pressed() -> void:
     emit_signal("ui_zoom_delta", -1.0)
@@ -150,6 +281,9 @@ func _on_zoom_reset_pressed() -> void:
 
 func _on_zoom_in_pressed() -> void:
     emit_signal("ui_zoom_delta", 1.0)
+
+func _on_next_turn_pressed() -> void:
+    emit_signal("next_turn_requested", 1)
 
 func _on_unit_scout_pressed() -> void:
     if _selected_unit.is_empty():
@@ -189,10 +323,14 @@ func _on_forage_pressed() -> void:
     if x < 0 or y < 0:
         return
     var module_key := _selected_food_module
+    var action := FOOD_ACTION_HUNT if _selected_food_is_hunt else FOOD_ACTION_FORAGE
     if _pending_forage_matches_coords(x, y, module_key):
-        _cancel_pending_forage(true)
+        if _pending_forage_action() == action:
+            _cancel_pending_forage(true)
+        else:
+            _begin_pending_forage(x, y, module_key, action)
     else:
-        _begin_pending_forage(x, y, module_key)
+        _begin_pending_forage(x, y, module_key, action)
 
 
 func update_overlay_legend(legend: Dictionary) -> void:
@@ -351,6 +489,10 @@ func _render_selection_panel(tile_info: Dictionary, unit_data: Dictionary, herd_
         var y := int(tile_info.get("y", -1))
         title_text = "Tile (%d, %d)" % [x, y]
     selection_title.text = title_text
+    var food_kind_value := ""
+    if not tile_info.is_empty():
+        food_kind_value = String(tile_info.get("food_kind", "")).strip_edges()
+    _selected_food_is_hunt = food_kind_value == "game_trail"
     var detail_lines: Array[String] = _tile_summary_lines(tile_info)
     if not unit_data.is_empty():
         if not detail_lines.is_empty():
@@ -387,7 +529,7 @@ func _tile_summary_lines(tile_info: Dictionary) -> Array[String]:
     var food_kind := String(tile_info.get("food_kind", "")).strip_edges()
     var food_line := "Food: %s" % food_label
     if food_kind != "":
-        food_line = "%s — %s" % [food_line, food_kind.capitalize()]
+        food_line = "%s — %s" % [food_line, _format_food_kind_label(food_kind)]
     if weight > 0.0:
         food_line += " (weight %.2f)" % weight
     lines.append(food_line)
@@ -411,7 +553,12 @@ func _tile_summary_lines(tile_info: Dictionary) -> Array[String]:
                     continue
                 var entry_dict: Dictionary = entry
                 var module_key := String(entry_dict.get("module", ""))
-                labels.append(_format_food_module_label(module_key))
+                var module_label := _format_food_module_label(module_key)
+                var action := String(entry_dict.get("action", "harvest")).strip_edges()
+                if action == FOOD_ACTION_HUNT:
+                    labels.append("%s (Hunt)" % module_label)
+                else:
+                    labels.append(module_label)
             if not labels.is_empty():
                 lines.append("Harvesters (%d): %s" % [labels.size(), ", ".join(labels)])
     var scout_entries_variant: Variant = tile_info.get("scout_tasks", [])
@@ -420,7 +567,9 @@ func _tile_summary_lines(tile_info: Dictionary) -> Array[String]:
         if not scout_entries.is_empty():
             lines.append("Scouts (%d)" % scout_entries.size())
     if _pending_forage_matches_tile(tile_info):
-        lines.append("Harvest pending: select a band to gather here.")
+        var pending_action := _pending_forage_action()
+        var verb := "Hunt" if pending_action == FOOD_ACTION_HUNT else "Harvest"
+        lines.append("%s pending: select a band to send here." % verb)
     if _pending_scout_active():
         lines.append("Scout pending: choose a tile to survey.")
     var travel_line := _travel_eta_line(tile_info)
@@ -448,13 +597,21 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
     if scout_variant is Dictionary and not (scout_variant as Dictionary).is_empty():
         lines.append("")
         lines.append_array(_scout_summary_lines(scout_variant))
+    var stockpile_variant: Variant = unit_data.get("accessible_stockpile", {})
+    if stockpile_variant is Dictionary:
+        var stockpile_lines := _accessible_stockpile_lines(stockpile_variant)
+        if not stockpile_lines.is_empty():
+            lines.append("")
+            lines.append_array(stockpile_lines)
     return lines
 
 func _harvest_summary_lines(harvest: Dictionary) -> Array[String]:
     var lines: Array[String] = []
     var module_key := String(harvest.get("module", "")).strip_edges()
     var module_label := _format_food_module_label(module_key)
-    var status := "Harvest"
+    var action := String(harvest.get("action", FOOD_ACTION_FORAGE)).strip_edges()
+    var action_label := "Harvest" if action != FOOD_ACTION_HUNT else "Hunt"
+    var status := action_label
     var travel_remaining := int(harvest.get("travel_remaining", 0))
     var travel_total: int = max(int(harvest.get("travel_total", 0)), travel_remaining)
     var gather_remaining := int(harvest.get("gather_remaining", 0))
@@ -462,7 +619,7 @@ func _harvest_summary_lines(harvest: Dictionary) -> Array[String]:
     if travel_remaining > 0:
         status = "Traveling"
     elif gather_remaining > 0:
-        status = "Gathering"
+        status = action_label
     else:
         status = "Finishing"
     lines.append("%s: %s" % [status, module_label])
@@ -488,6 +645,90 @@ func _format_food_module_label(module_key: String) -> String:
     if module_key == "":
         return "Unknown"
     return String(FOOD_MODULE_LABELS.get(module_key, module_key.capitalize().replace("_", " ")))
+
+func _format_stockpile_label(raw_value: String) -> String:
+    var trimmed := raw_value.strip_edges()
+    if trimmed == "":
+        return "Stockpile"
+    var tokens: PackedStringArray = trimmed.split("_", false)
+    if tokens.is_empty():
+        return trimmed.capitalize()
+    var parts: Array[String] = []
+    for token in tokens:
+        if token == "":
+            continue
+        var head := token.substr(0, 1).to_upper()
+        var tail := ""
+        if token.length() > 1:
+            tail = token.substr(1, token.length() - 1)
+        parts.append(head + tail)
+    if parts.is_empty():
+        return trimmed.capitalize()
+    return " ".join(parts)
+
+func _build_stockpile_row(entry: Dictionary) -> Control:
+    var row := HBoxContainer.new()
+    row.custom_minimum_size = Vector2(0, 24)
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    var label := Label.new()
+    label.text = String(entry.get("label", "Stockpile"))
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_child(label)
+    var amount_label := Label.new()
+    amount_label.text = str(entry.get("amount", 0))
+    amount_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+    amount_label.custom_minimum_size = Vector2(60, 0)
+    row.add_child(amount_label)
+    var delta := float(entry.get("delta", 0.0))
+    if not is_equal_approx(delta, 0.0):
+        var delta_label := Label.new()
+        delta_label.text = ("+%.0f" % delta) if delta > 0.0 else ("%.0f" % delta)
+        delta_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+        delta_label.custom_minimum_size = Vector2(60, 0)
+        delta_label.modulate = Color(0.6, 0.9, 0.6) if delta > 0.0 else Color(0.95, 0.6, 0.5)
+        row.add_child(delta_label)
+    return row
+
+func _accessible_stockpile_lines(stockpile: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    var radius := int(stockpile.get("radius", 0))
+    var entries_variant: Variant = stockpile.get("entries", [])
+    var entries: Array = entries_variant if entries_variant is Array else []
+    if entries.is_empty():
+        return lines
+    var formatted: Array[String] = []
+    for entry in entries:
+        if not (entry is Dictionary):
+            continue
+        var item := String(entry.get("item", ""))
+        var qty := int(entry.get("quantity", 0))
+        if item == "" and qty == 0:
+            continue
+        formatted.append("%d %s" % [qty, _format_stockpile_label(item)])
+    if formatted.is_empty():
+        return lines
+    lines.append("Stockpile: radius %d" % radius)
+    lines.append("Available: %s" % ", ".join(formatted))
+    return lines
+
+func _format_food_kind_label(kind_value: String) -> String:
+    if kind_value == "":
+        return ""
+    var tokens: PackedStringArray = kind_value.split("_", false)
+    if tokens.is_empty():
+        return kind_value.capitalize()
+    var parts: Array[String] = []
+    for token in tokens:
+        if token == "":
+            continue
+        var head := token.substr(0, 1).to_upper()
+        var tail := ""
+        if token.length() > 1:
+            tail = token.substr(1, token.length() - 1)
+        parts.append(head + tail)
+    if parts.is_empty():
+        return kind_value.capitalize()
+    return " ".join(parts)
 
 func _scout_summary_lines(task: Dictionary) -> Array[String]:
     var lines: Array[String] = []
@@ -516,10 +757,38 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     var biomass: float = float(herd_data.get("biomass", 0.0))
     if biomass > 0.0:
         lines.append("Biomass: %.0f" % biomass)
+        lines.append_array(_follow_herd_reward_lines(biomass))
     var x := int(herd_data.get("x", -1))
     var y := int(herd_data.get("y", -1))
     if x >= 0 and y >= 0:
         lines.append("Position: (%d, %d)" % [x, y])
+    var next_x := int(herd_data.get("next_x", -1))
+    var next_y := int(herd_data.get("next_y", -1))
+    if next_x >= 0 and next_y >= 0:
+        lines.append("Next waypoint: (%d, %d)" % [next_x, next_y])
+    return lines
+
+func _follow_herd_reward_lines(biomass: float) -> Array[String]:
+    var lines: Array[String] = []
+    if biomass <= 0.0:
+        return lines
+    var consumption: float = min(biomass, HERD_CONSUMPTION_BIOMASS)
+    if consumption <= 0.0:
+        return lines
+    var provisions: float = round(consumption * HERD_PROVISIONS_YIELD_PER_BIOMASS)
+    var trade_goods: float = round(consumption * HERD_TRADE_GOODS_YIELD_PER_BIOMASS)
+    var lore_progress: float = min(
+        consumption * HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS,
+        HERD_KNOWLEDGE_PROGRESS_CAP
+    )
+    if lines.is_empty():
+        lines.append("Follow Herd rewards:")
+    lines.append("  - Morale +%.2f per band" % HERD_FOLLOW_MORALE_GAIN)
+    if provisions > 0 or trade_goods > 0:
+        lines.append("  - Supplies: +%d provisions, +%d trade goods" % [int(provisions), int(trade_goods)])
+    if lore_progress > 0.0:
+        lines.append("  - Fauna lore +%.1f%% progress" % (lore_progress * 100.0))
+    lines.append("  - Reveals nearby fog (scouting pulse)")
     return lines
 
 func _format_unit_list(entries: Array) -> String:
@@ -600,24 +869,40 @@ func _update_food_buttons(tile_info: Dictionary, has_unit: bool) -> void:
     if module_key == "":
         food_buttons.visible = false
         _selected_food_module = ""
+        _selected_food_is_hunt = false
         return
     _selected_food_module = module_key
+    var food_kind_value := String(tile_info.get("food_kind", "")).strip_edges()
+    var is_game_trail := food_kind_value == "game_trail"
+    _selected_food_is_hunt = is_game_trail
     var label := String(tile_info.get("food_module_label", "Harvest")).strip_edges()
     if label == "":
         label = module_key.capitalize()
     var pending_active := _pending_forage_matches_tile(tile_info)
     if pending_active:
-        forage_button.text = "Cancel Harvest"
-        forage_button.tooltip_text = "Cancel the pending harvest assignment for this tile."
+        var pending_action := _pending_forage_action()
+        if pending_action == FOOD_ACTION_HUNT:
+            forage_button.text = "Cancel Hunt"
+            forage_button.tooltip_text = "Cancel the pending hunt assignment for this tile."
+        else:
+            forage_button.text = "Cancel Harvest"
+            forage_button.tooltip_text = "Cancel the pending harvest assignment for this tile."
     else:
         var turns := _travel_turns_for_tile(tile_info)
-        var button_text := "Harvest %s" % label
-        if turns > 0:
-            button_text += " (~%d turns)" % turns
+        var button_text := ""
+        if is_game_trail:
+            button_text = "Hunt Game"
+        else:
+            button_text = "Harvest %s" % label
+            if turns > 0:
+                button_text += " (~%d turns)" % turns
         forage_button.text = button_text
         var hint := _travel_eta_hint(tile_info)
         if hint == "":
-            hint = "Select a band after clicking to send them here."
+            if is_game_trail:
+                hint = "Select a band after clicking to send them on a hunt here."
+            else:
+                hint = "Select a band after clicking to send them here."
         forage_button.tooltip_text = hint
     forage_button.disabled = false
     food_buttons.visible = true
@@ -626,6 +911,7 @@ func clear_selection() -> void:
     _selected_unit.clear()
     _selected_herd.clear()
     _selected_food_module = ""
+    _selected_food_is_hunt = false
     if not _pending_forage.is_empty():
         _cancel_pending_forage(false)
     # keep pending scout so user can still choose a tile after deselecting
@@ -850,11 +1136,13 @@ func consume_pending_forage(unit_data: Dictionary) -> Dictionary:
     var x := int(_pending_forage.get("x", -1))
     var y := int(_pending_forage.get("y", -1))
     var module_key := String(_pending_forage.get("module", "")).strip_edges()
-    if x < 0 or y < 0 or module_key == "":
+    var action := String(_pending_forage.get("action", FOOD_ACTION_FORAGE))
+    if x < 0 or y < 0 or (module_key == "" and action != FOOD_ACTION_HUNT):
         _pending_forage.clear()
         _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
         return {}
     var payload := _pending_forage.duplicate(true)
+    payload["action"] = action
     var unit_label := String(unit_data.get("id", unit_data.get("entity", "Band")))
     payload["unit_label"] = unit_label
     var entity_bits_variant: Variant = unit_data.get("entity", -1)
@@ -885,6 +1173,11 @@ func _pending_forage_matches_coords(x: int, y: int, module_key: String) -> bool:
         return true
     return module_key == pending_module
 
+func _pending_forage_action() -> String:
+    if _pending_forage.is_empty():
+        return FOOD_ACTION_FORAGE
+    return String(_pending_forage.get("action", FOOD_ACTION_FORAGE))
+
 func _pending_scout_active() -> bool:
     return not _pending_scout_unit.is_empty()
 
@@ -914,7 +1207,7 @@ func _try_dispatch_pending_scout(tile_info: Dictionary) -> void:
     emit_signal("unit_scout_requested", target_x, target_y, band_bits)
     _pending_scout_unit.clear()
 
-func _begin_pending_forage(x: int, y: int, module_key: String) -> void:
+func _begin_pending_forage(x: int, y: int, module_key: String, action: String) -> void:
     var module_label := String(_selected_tile_info.get("food_module_label", module_key)).strip_edges()
     if module_label == "":
         module_label = module_key.capitalize()
@@ -923,6 +1216,7 @@ func _begin_pending_forage(x: int, y: int, module_key: String) -> void:
         "y": y,
         "module": module_key,
         "module_label": module_label,
+        "action": action if action != "" else FOOD_ACTION_FORAGE,
     }
     _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
 

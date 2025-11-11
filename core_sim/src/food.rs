@@ -121,6 +121,7 @@ pub enum FoodSiteKind {
     ScrubRoots,
     UpwellingDrying,
     WoodlandCache,
+    GameTrail,
 }
 
 impl FoodSiteKind {
@@ -136,6 +137,7 @@ impl FoodSiteKind {
             FoodSiteKind::ScrubRoots => "scrub_roots",
             FoodSiteKind::UpwellingDrying => "upwelling_drying",
             FoodSiteKind::WoodlandCache => "woodland_cache",
+            FoodSiteKind::GameTrail => "game_trail",
         }
     }
 }
@@ -144,13 +146,15 @@ impl FoodSiteKind {
 pub struct FoodModuleTag {
     pub module: FoodModule,
     pub seasonal_weight: f32,
+    pub kind: FoodSiteKind,
 }
 
 impl FoodModuleTag {
-    pub fn new(module: FoodModule, seasonal_weight: f32) -> Self {
+    pub fn new(module: FoodModule, seasonal_weight: f32, kind: FoodSiteKind) -> Self {
         Self {
             module,
             seasonal_weight,
+            kind,
         }
     }
 }
