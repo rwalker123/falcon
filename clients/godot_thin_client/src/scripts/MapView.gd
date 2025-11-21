@@ -219,7 +219,7 @@ const FOOD_MODULE_LABELS := {
     "mixed_woodland": "Mixed Woodland",
 }
 
-const HeightfieldPreviewScene := preload("res://src/scripts/HeightfieldPreview.gd")
+const HeightfieldPreviewScene := preload("res://src/ui/HeightfieldPreview.tscn")
 
 var grid_width: int = 0
 var grid_height: int = 0
@@ -1389,12 +1389,21 @@ func _update_biome_color_buffer() -> void:
 
 func _ensure_heightfield_preview() -> Window:
     if heightfield_preview == null or not is_instance_valid(heightfield_preview):
-        heightfield_preview = HeightfieldPreviewScene.new()
+        heightfield_preview = HeightfieldPreviewScene.instantiate()
         heightfield_preview.hide()
         get_tree().root.add_child(heightfield_preview)
         if heightfield_preview.has_signal("strategic_view_requested"):
             heightfield_preview.strategic_view_requested.connect(_on_heightfield_strategic_view_requested)
+        var main_node := get_tree().root.get_node_or_null("Main")
+        if main_node != null and heightfield_preview.has_method("apply_hud_state") and main_node.has_method("export_hud_state"):
+            var state: Dictionary = main_node.call("export_hud_state")
+            heightfield_preview.call("apply_hud_state", state)
     return heightfield_preview
+
+func relay_hud_call(method: String, args: Array = []) -> void:
+    if heightfield_preview != null and is_instance_valid(heightfield_preview):
+        if heightfield_preview.has_method("relay_hud_call"):
+            heightfield_preview.call("relay_hud_call", method, args)
 
 func _push_heightfield_preview() -> void:
     if heightfield_data.is_empty():

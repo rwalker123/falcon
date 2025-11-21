@@ -22,6 +22,7 @@ var ui_zoom: float = 1.0
 var localization_store: LocalizationStore = null
 var _campaign_label_signature: String = ""
 var _victory_analytics_signature: String = ""
+var _hud_state_latest: Dictionary = {}
 
 const MOCK_DATA_PATH = "res://src/data/mock_snapshots.json"
 const TURN_INTERVAL_SECONDS = 1.5
@@ -50,6 +51,10 @@ const SNAPSHOT_DELTA_FIELDS := [
 ]
 
 func _ready() -> void:
+    # Force content scale mode to handle high DPI and ultrawide monitors
+    get_window().content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+    get_window().content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND
+
     var ext: Resource = load("res://native/shadow_scale_godot.gdextension")
     if ext == null:
         push_warning("ShadowScale Godot extension not found; streaming disabled.")
@@ -89,8 +94,7 @@ func _ready() -> void:
     script_host_manager.setup(command_client)
     if inspector != null and inspector.has_method("attach_script_host"):
         inspector.call("attach_script_host", script_host_manager)
-    if hud != null and hud.has_method("set_localization_store"):
-        hud.call("set_localization_store", localization_store)
+    _hud_invoke("set_localization_store", [localization_store])
 
     var initial: Dictionary = {}
     if streaming_mode and not snapshot_loader.last_stream_snapshot.is_empty():
@@ -163,22 +167,19 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     _update_campaign_label(snapshot.get("campaign_label", {}))
     var metrics_variant: Variant = map_view.call("display_snapshot", snapshot)
     var metrics: Dictionary = metrics_variant if metrics_variant is Dictionary else {}
-    hud.call("update_overlay", snapshot.get("turn", 0), metrics)
-    if hud != null:
-        if snapshot.has("faction_inventory") and hud.has_method("update_stockpiles"):
-            hud.call("update_stockpiles", snapshot["faction_inventory"])
-        if not is_delta and hud.has_method("reset_command_feed"):
-            hud.call("reset_command_feed")
-        if snapshot.has("command_events") and hud.has_method("ingest_command_events"):
-            hud.call("ingest_command_events", snapshot["command_events"])
+    _hud_invoke("update_overlay", [snapshot.get("turn", 0), metrics])
+    if snapshot.has("faction_inventory"):
+        _hud_invoke("update_stockpiles", [snapshot["faction_inventory"]])
+    if not is_delta:
+        _hud_invoke("reset_command_feed")
+    if snapshot.has("command_events"):
+        _hud_invoke("ingest_command_events", [snapshot["command_events"]])
     if snapshot.has("victory"):
         var victory_variant: Variant = snapshot["victory"]
         if victory_variant is Dictionary:
-            if hud != null and hud.has_method("update_victory_state"):
-                hud.call("update_victory_state", victory_variant)
+            _hud_invoke("update_victory_state", [victory_variant])
             _emit_victory_analytics(victory_variant)
-    if hud != null and hud.has_method("set_ui_zoom"):
-        hud.call("set_ui_zoom", ui_zoom)
+    _hud_invoke("set_ui_zoom", [ui_zoom])
     if inspector != null:
         if is_delta:
             if inspector.has_method("update_delta"):
@@ -223,18 +224,15 @@ func _emit_victory_analytics(data: Dictionary) -> void:
     print("[analytics] victory mode=\"%s\" label=\"%s\" faction=%d tick=%d" % [mode, label, faction, tick])
 
 func _on_map_unit_selected(unit: Dictionary) -> void:
-    if hud != null and hud.has_method("show_unit_selection"):
-        hud.call("show_unit_selection", unit)
-        if hud.has_method("consume_pending_forage"):
-            var payload_variant: Variant = hud.call("consume_pending_forage", unit)
-            if payload_variant is Dictionary:
-                var payload: Dictionary = payload_variant
-                if not payload.is_empty():
-                    _issue_forage_command(payload)
+    _hud_invoke("show_unit_selection", [unit])
+    var payload_variant: Variant = _hud_invoke("consume_pending_forage", [unit])
+    if payload_variant is Dictionary:
+        var payload: Dictionary = payload_variant
+        if not payload.is_empty():
+            _issue_forage_command(payload)
 
 func _on_map_herd_selected(herd: Dictionary) -> void:
-    if hud != null and hud.has_method("show_herd_selection"):
-        hud.call("show_herd_selection", herd)
+    _hud_invoke("show_herd_selection", [herd])
 
 func _on_map_herd_follow_shortcut(herd_id: String) -> void:
     _on_hud_follow_herd(herd_id)
@@ -244,14 +242,11 @@ func _on_map_herd_scout_shortcut(herd_id: String, x: int, y: int) -> void:
     _send_runtime_command(line, "Scout herd '%s' at (%d, %d)." % [herd_id, x, y])
 
 func _on_map_selection_cleared() -> void:
-    if hud != null and hud.has_method("clear_selection"):
-        hud.call("clear_selection")
+    _hud_invoke("clear_selection")
 
 func _on_map_tile_selected(tile_info: Dictionary) -> void:
-    if hud != null and hud.has_method("show_tile_selection"):
-        hud.call("show_tile_selection", tile_info)
-        if hud.has_method("notify_hex_selected"):
-            hud.call("notify_hex_selected", tile_info)
+    _hud_invoke("show_tile_selection", [tile_info])
+    _hud_invoke("notify_hex_selected", [tile_info])
 
 func _on_hud_unit_scout(x: int, y: int, band_bits: int) -> void:
     var parts: Array[String] = ["scout", str(PLAYER_FACTION_ID), str(x), str(y)]
@@ -367,14 +362,14 @@ func _toggle_legend_visibility() -> void:
     if hud == null:
         return
     if hud.has_method("toggle_legend"):
-        hud.call("toggle_legend")
+        _hud_invoke("toggle_legend")
 
 func _update_campaign_label(raw_value: Variant) -> void:
     var label_dict: Dictionary = {}
     if raw_value is Dictionary:
         label_dict = raw_value.duplicate(true)
     if hud != null and hud.has_method("update_campaign_label"):
-        hud.call("update_campaign_label", label_dict)
+        _hud_invoke("update_campaign_label", [label_dict])
     var title_text: String = _resolve_campaign_field(label_dict, "title")
     var subtitle_text: String = _resolve_campaign_field(label_dict, "subtitle")
     var title_key := String(label_dict.get("title_loc_key", ""))
@@ -450,7 +445,7 @@ func _process(delta: float) -> void:
 
 func _on_overlay_legend_changed(legend: Dictionary) -> void:
     if hud != null and hud.has_method("update_overlay_legend"):
-        hud.call("update_overlay_legend", legend)
+        _hud_invoke("update_overlay_legend", [legend])
 
 func _ensure_action_binding(action_name: String, keycode: Key) -> void:
     if not InputMap.has_action(action_name):
@@ -488,7 +483,7 @@ func _apply_ui_zoom() -> void:
     if root != null:
         root.content_scale_factor = ui_zoom
     if hud != null and hud.has_method("set_ui_zoom"):
-        hud.call("set_ui_zoom", ui_zoom)
+        _hud_invoke("set_ui_zoom", [ui_zoom])
 
 func _on_hud_zoom_delta(step: float) -> void:
     _adjust_ui_zoom(step * UI_ZOOM_STEP)
@@ -524,6 +519,39 @@ func _ensure_ui_zoom_actions() -> void:
             key_event.keycode = keycode
             key_event.physical_keycode = keycode
             InputMap.action_add_event(action, key_event)
+
+func _hud_invoke(method: String, args: Array = []) -> Variant:
+    var result: Variant = null
+    if hud != null and hud.has_method(method):
+        print("[HUD->Main]", method, args)
+        result = hud.callv(method, args)
+    _cache_hud_state(method, args)
+    if map_view != null and map_view.has_method("relay_hud_call"):
+        map_view.call("relay_hud_call", method, args)
+    return result
+
+func _cache_hud_state(method: String, args: Array) -> void:
+    var cacheable := {
+        "set_localization_store": true,
+        "update_campaign_label": true,
+        "update_overlay": true,
+        "update_stockpiles": true,
+        "reset_command_feed": true,
+        "ingest_command_events": true,
+        "update_victory_state": true,
+        "set_ui_zoom": true,
+        "update_overlay_legend": true,
+        "show_unit_selection": true,
+        "show_herd_selection": true,
+        "show_tile_selection": true,
+        "clear_selection": true,
+    }
+    if not cacheable.has(method):
+        return
+    _hud_state_latest[method] = args.duplicate(true)
+
+func export_hud_state() -> Dictionary:
+    return _hud_state_latest.duplicate(true)
 
 func _determine_stream_enabled() -> bool:
     var env_flag: String = OS.get_environment("STREAM_ENABLED")

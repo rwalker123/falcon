@@ -143,6 +143,7 @@ func update_campaign_label(label: Dictionary) -> void:
     _refresh_campaign_label()
 
 func update_victory_state(state: Dictionary) -> void:
+    print("[HUD] update_victory_state: ", state.keys())
     victory_state = state.duplicate(true) if state is Dictionary else {}
     _refresh_victory_status()
 
@@ -235,7 +236,9 @@ func _connect_control_buttons() -> void:
 
 func register_dock_panel(panel: Control, slot: String, priority: int) -> void:
     if panel == null or not dock_registry.has(slot):
+        print("[HUD] register_dock_panel: Invalid panel or slot: ", slot)
         return
+    print("[HUD] register_dock_panel: slot=", slot, " priority=", priority, " panel=", panel.name)
     var bucket: Array = dock_registry[slot]
     var found := false
     for entry in bucket:
@@ -252,13 +255,12 @@ func _dock_sort(a: Dictionary, b: Dictionary) -> bool:
     return int(a.get("priority", 0)) < int(b.get("priority", 0))
 
 func _dock_container(slot: String) -> VBoxContainer:
-    match slot:
-        "left":
-            return left_stack
-        "right":
-            return right_stack
-        _:
-            return null
+    if slot == "left":
+        return left_stack
+    if slot == "right":
+        return right_stack
+    print("[HUD] _dock_container: Unknown slot: ", slot)
+    return null
 
 func _apply_dock_order(slot: String) -> void:
     var container := _dock_container(slot)
@@ -334,6 +336,7 @@ func _on_forage_pressed() -> void:
 
 
 func update_overlay_legend(legend: Dictionary) -> void:
+    print("[HUD] update_overlay_legend: ", legend.keys())
     overlay_legend = legend.duplicate(true) if legend is Dictionary else {}
     if legend_suppressed:
         _hide_legend_panel()

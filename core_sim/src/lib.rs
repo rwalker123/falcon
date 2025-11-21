@@ -134,10 +134,10 @@ pub use power::{
 pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
     CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
-    DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FogRevealLedger,
-    HydrologyOverrides, PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias,
-    SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry,
-    TradeDiffusionRecord, TradeTelemetry,
+    DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FogRevealLedger, FoodSiteEntry,
+    FoodSiteRegistry, HydrologyOverrides, PendingCrisisSeeds, PendingCrisisSpawns,
+    SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation,
+    TileRegistry, TradeDiffusionRecord, TradeTelemetry,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{
@@ -317,6 +317,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(HerdDensityMap::default())
         .insert_resource(FogRevealLedger::default())
         .insert_resource(CommandEventLog::default())
+        .insert_resource(FoodSiteRegistry::default())
         .insert_resource(snapshot_history)
         .insert_resource(generation_registry)
         .insert_resource(espionage_catalog)

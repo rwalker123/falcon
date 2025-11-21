@@ -16,6 +16,7 @@ use crate::{
     orders::FactionId,
     scalar::{scalar_from_f32, Scalar},
     start_profile::{FogMode, StartProfileOverrides},
+    FoodModule, FoodSiteKind,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -797,6 +798,37 @@ impl TradeTelemetry {
 #[derive(Resource, Debug, Clone, Default)]
 pub struct FactionInventory {
     stockpiles: HashMap<FactionId, HashMap<String, i64>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct FoodSiteEntry {
+    pub position: UVec2,
+    pub module: FoodModule,
+    pub kind: FoodSiteKind,
+    pub seasonal_weight: f32,
+}
+
+#[derive(Resource, Debug, Clone, Default)]
+pub struct FoodSiteRegistry {
+    sites: Vec<FoodSiteEntry>,
+}
+
+impl FoodSiteRegistry {
+    pub fn new(entries: Vec<FoodSiteEntry>) -> Self {
+        Self { sites: entries }
+    }
+
+    pub fn set_sites(&mut self, entries: Vec<FoodSiteEntry>) {
+        self.sites = entries;
+    }
+
+    pub fn sites(&self) -> &[FoodSiteEntry] {
+        &self.sites
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &FoodSiteEntry> {
+        self.sites.iter()
+    }
 }
 
 impl FactionInventory {

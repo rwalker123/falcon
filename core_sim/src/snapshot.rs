@@ -60,6 +60,7 @@ use crate::{
     metrics::SimulationMetrics,
     orders::FactionId,
     power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
+    resources::FoodSiteRegistry,
     resources::{
         CommandEventLog, CorruptionLedgers, CorruptionTelemetry, DiscoveryProgressLedger,
         FactionInventory, FogRevealLedger, MoistureRaster, SentimentAxisBias, SimulationConfig,
@@ -111,6 +112,7 @@ pub struct SnapshotContext<'w> {
     pub start_profiles: Res<'w, StartProfilesHandle>,
     pub victory: Res<'w, VictoryState>,
     pub faction_inventory: Res<'w, FactionInventory>,
+    pub food_sites: Res<'w, FoodSiteRegistry>,
     pub command_events: Res<'w, CommandEventLog>,
 }
 
@@ -1156,6 +1158,7 @@ pub fn capture_snapshot(
         start_profiles,
         victory,
         faction_inventory,
+        food_sites,
         command_events,
     } = ctx;
     let overlays_config = overlays.get();
@@ -1168,46 +1171,17 @@ pub fn capture_snapshot(
         .start_profile_overrides
         .stockpile_access_radius
         .unwrap_or(DEFAULT_STOCKPILE_ACCESS_RADIUS);
-    let food_overlay = overlays_config.food();
-    let base_radius = start_location
-        .survey_radius()
-        .unwrap_or(food_overlay.default_radius());
-    let survey_radius = base_radius.saturating_add(food_overlay.radius_padding());
-    let preference = &config.start_profile_overrides.food_modules;
-    let enforce_module_match = preference.any();
-    let max_sites_per_module = food_overlay.max_sites_per_module();
-    let max_total_sites = food_overlay.max_total_sites();
-    let mut module_counts: HashMap<FoodModule, usize> = HashMap::new();
-    let mut total_food_sites = 0usize;
-    for (entity, tile, food_tag) in tiles.iter() {
+    for (entity, tile, _) in tiles.iter() {
         tile_states.push(tile_state(entity, tile));
-        if let Some(tag) = food_tag {
-            if total_food_sites >= max_total_sites {
-                continue;
-            }
-            if enforce_module_match && !preference.matches(tag.module) {
-                continue;
-            }
-            if let Some(center) = start_position {
-                let distance = manhattan_distance(tile.position, center);
-                if distance > survey_radius {
-                    continue;
-                }
-            }
-            let count = module_counts.entry(tag.module).or_insert(0);
-            if *count >= max_sites_per_module {
-                continue;
-            }
-            *count += 1;
-            total_food_sites += 1;
-            food_module_states.push(FoodModuleState {
-                x: tile.position.x,
-                y: tile.position.y,
-                module: tag.module.as_str().to_string(),
-                kind: tag.kind.as_str().to_string(),
-                seasonal_weight: tag.seasonal_weight,
-            });
-        }
+    }
+    for site in food_sites.sites() {
+        food_module_states.push(FoodModuleState {
+            x: site.position.x,
+            y: site.position.y,
+            module: site.module.as_str().to_string(),
+            kind: site.kind.as_str().to_string(),
+            seasonal_weight: site.seasonal_weight,
+        });
     }
     for tile in tile_states.iter_mut() {
         let owner = CultureOwner(tile.entity);
@@ -3180,12 +3154,6 @@ fn tile_state(entity: Entity, tile: &Tile) -> TileState {
         mountain_kind,
         mountain_relief,
     }
-}
-
-fn manhattan_distance(a: UVec2, b: UVec2) -> u32 {
-    let dx = (a.x as i32 - b.x as i32).unsigned_abs();
-    let dy = (a.y as i32 - b.y as i32).unsigned_abs();
-    dx + dy
 }
 
 fn map_mountain_kind(kind: MountainType) -> MountainKind {

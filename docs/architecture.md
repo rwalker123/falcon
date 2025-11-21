@@ -145,6 +145,7 @@ Next steps:
 
 ### Snapshot & Client
 - Hydrology state is generated at startup and stored server-side. Exporting a dedicated hydrology overlay (raster/polylines) to clients requires a schema update; tracked in TASKS.md. For now, debug logs report river counts and generation details.
+- Food modules: worldgen now builds a `FoodSiteRegistry` that samples a handful of tiles per module across the entire map (still ensuring the start profile’s preferred modules appear where available). The snapshot phase simply serializes these `FoodSiteEntry` records into the `food_modules` block, and the Godot client renders their `kind`-specific icons so static food sources remain visually distinct from herd markers.
 
 ## Campaign Loop & System Activation
 This section connects the headless simulation to a Civ-like playable loop: campaign start, capability gating, and win detection. It mirrors player-facing details in `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §2a.
