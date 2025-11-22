@@ -14,16 +14,14 @@ signal inspector_toggle_requested
 signal legend_toggle_requested
 
 const HeightfieldLayer3D := preload("res://src/scripts/HeightfieldLayer3D.gd")
-const HudLayerScene := preload("res://src/ui/HudLayer.tscn")
-const InspectorLayerScene := preload("res://src/ui/InspectorLayer.tscn")
+# Removed HudLayerScene and InspectorLayerScene preloads
 
 var _viewport: SubViewport
 var _container: SubViewportContainer
 var _camera: Camera3D
 var _light: DirectionalLight3D
 var _heightfield: HeightfieldLayer3D
-var _hud_layer: CanvasLayer
-var _inspector_layer: CanvasLayer
+# Removed _hud_layer and _inspector_layer variables
 var _tools_layer: CanvasLayer
 var _orbit_drag_active := false
 var _pan_drag_active := false
@@ -69,31 +67,8 @@ func _ready() -> void:
     _viewport.add_child(_heightfield)
     _heightfield.strategic_view_requested.connect(_on_heightfield_strategic_view_requested)
     
-    _hud_layer = HudLayerScene.instantiate()
-    _hud_layer.layer = 101 # Above HeightfieldPreviewLayer (100)
-    _hud_layer.visible = true
-    add_child(_hud_layer)
+    # Removed internal HUD and Inspector instantiation
     
-    _connect_hud_controls()
-    
-    _inspector_layer = InspectorLayerScene.instantiate()
-    _inspector_layer.layer = 102 # Above HUD
-    add_child(_inspector_layer)
-    
-    # Inject dependencies into Inspector
-    var main_node = root_window.get_node_or_null("Main")
-    if main_node:
-        if _inspector_layer.has_method("set_command_client") and main_node.get("command_client"):
-            var client = main_node.command_client
-            var connected = client.is_connection_active() if client.has_method("is_connection_active") else false
-            _inspector_layer.call("set_command_client", client, connected)
-            
-        if _inspector_layer.has_method("set_hud_layer"):
-            _inspector_layer.call("set_hud_layer", _hud_layer)
-            
-        if _inspector_layer.has_method("attach_script_host") and main_node.get("script_host_manager"):
-            _inspector_layer.call("attach_script_host", main_node.script_host_manager)
-
     _setup_tools_layer()
     
     # Remove debug markers
@@ -118,44 +93,16 @@ func _process(delta: float) -> void:
     pass
 
 func relay_hud_call(method_name: String, args: Array = []) -> void:
-    if _hud_layer == null or method_name == "":
-        return
-    if _hud_layer.has_method(method_name):
-        print("[HUD->Preview] relay_hud_call: ", method_name, " args: ", args)
-        _hud_layer.callv(method_name, args)
-    else:
-        print("[HUD->Preview] relay_hud_call: Method not found: ", method_name)
+    # No internal HUD to relay to
+    pass
 
 func apply_hud_state(state: Dictionary) -> void:
-    if _hud_layer == null or state.is_empty():
-        return
-    print("[HUD->Preview] applying cached state: ", state.keys())
-    for method_name in state.keys():
-        var args: Array = state[method_name] if state[method_name] is Array else [state[method_name]]
-        relay_hud_call(method_name, args)
-    _log_hud_panel_state("cached_state")
+    # No internal HUD to apply state to
+    pass
 
 func update_selection(tile_info: Dictionary, unit_data: Dictionary, herd_data: Dictionary) -> void:
-    if _hud_layer == null:
-        return
-    
-    if not unit_data.is_empty():
-        if _hud_layer.has_method("show_unit_selection"):
-            # Inject tile info if missing, as MapView does
-            var data_copy = unit_data.duplicate(true)
-            if not data_copy.has("tile_info") and not tile_info.is_empty():
-                data_copy["tile_info"] = tile_info
-            _hud_layer.show_unit_selection(data_copy)
-    elif not herd_data.is_empty():
-        if _hud_layer.has_method("show_herd_selection"):
-             # Inject tile info if missing
-            var data_copy = herd_data.duplicate(true)
-            if not data_copy.has("tile_info") and not tile_info.is_empty():
-                data_copy["tile_info"] = tile_info
-            _hud_layer.show_herd_selection(data_copy)
-    else:
-        if _hud_layer.has_method("show_tile_selection"):
-            _hud_layer.show_tile_selection(tile_info)
+    # Main HUD handles selection display
+    pass
 
 func update_snapshot(
     heightfield: Dictionary,
@@ -170,7 +117,7 @@ func update_snapshot(
         return
     _heightfield.set_heightfield_data(heightfield)
     _heightfield.reset_camera_controls()
-    _update_hud_zoom_label()
+    # _update_hud_zoom_label() - Main HUD handles this
     if not terrain_colors.is_empty():
         _heightfield.set_biome_colors(terrain_colors, grid_width, grid_height)
     var overlay_enabled := overlay_key != "" and not overlay_values.is_empty()
@@ -184,7 +131,7 @@ func update_snapshot(
         wait_frames -= 1
     _heightfield.fit_camera(_camera)
     _log_camera_state(_camera)
-    _log_hud_panel_state("update_snapshot")
+    # _log_hud_panel_state("update_snapshot")
 
 func _on_view_resized() -> void:
     if _viewport != null:
@@ -292,39 +239,15 @@ func _log_camera_state(camera: Camera3D) -> void:
     _camera_logged = true
 
 func _connect_hud_controls() -> void:
-    if _hud_layer == null:
-        return
-    if not _hud_layer.is_connected("ui_zoom_delta", Callable(self, "_on_hud_zoom_delta")):
-        _hud_layer.ui_zoom_delta.connect(_on_hud_zoom_delta)
-    if not _hud_layer.is_connected("ui_zoom_reset", Callable(self, "_on_hud_zoom_reset")):
-        _hud_layer.ui_zoom_reset.connect(_on_hud_zoom_reset)
-    
-    # Relay HUD signals
-    if _hud_layer.has_signal("next_turn_requested"):
-        _hud_layer.next_turn_requested.connect(func(steps): emit_signal("next_turn_requested", steps))
-    if _hud_layer.has_signal("unit_scout_requested"):
-        _hud_layer.unit_scout_requested.connect(func(x, y, bits): emit_signal("unit_scout_requested", x, y, bits))
-    if _hud_layer.has_signal("unit_found_camp_requested"):
-        _hud_layer.unit_found_camp_requested.connect(func(x, y): emit_signal("unit_found_camp_requested", x, y))
-    if _hud_layer.has_signal("herd_follow_requested"):
-        _hud_layer.herd_follow_requested.connect(func(id): emit_signal("herd_follow_requested", id))
-    if _hud_layer.has_signal("forage_requested"):
-        _hud_layer.forage_requested.connect(func(x, y, key): emit_signal("forage_requested", x, y, key))
-
-    var next_turn_button := _hud_node("LayoutRoot/RootColumn/BottomBar/NextTurnButton") as Button
-    if next_turn_button != null:
-        next_turn_button.disabled = false
+    # Main HUD connections handled by Main.gd
+    pass
 
 func _hud_node(path: String) -> Node:
-    if _hud_layer == null:
-        return null
-    return _hud_layer.get_node_or_null(path)
+    return null
 
 func _update_hud_zoom_label() -> void:
-    if _hud_layer == null or _heightfield == null:
-        return
-    if _hud_layer.has_method("set_ui_zoom"):
-        _hud_layer.set_ui_zoom(_heightfield.get_user_zoom_multiplier())
+    # Main HUD handles this
+    pass
 
 func _on_hud_zoom_delta(step: float) -> void:
     _nudge_zoom(step * HUD_ZOOM_STEP)
@@ -333,7 +256,7 @@ func _on_hud_zoom_reset() -> void:
     if _heightfield == null:
         return
     _heightfield.reset_camera_controls()
-    _update_hud_zoom_label()
+    # _update_hud_zoom_label()
 
 func _mark_input_handled() -> void:
     var viewport := get_viewport()
@@ -344,31 +267,7 @@ func _on_heightfield_strategic_view_requested() -> void:
     _request_strategic_exit()
 
 func _log_hud_panel_state(context: String) -> void:
-    if _hud_layer == null:
-        return
-    var panels: Dictionary = {
-        "campaign_block": _hud_node("LayoutRoot/RootColumn/TopBar/CampaignBlock"),
-        "turn_block": _hud_node("LayoutRoot/RootColumn/TopBar/TurnBlock"),
-        "command_feed": _hud_node("LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel"),
-        "victory_panel": _hud_node("LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/VictoryPanel"),
-        "terrain_legend": _hud_node("LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel"),
-        "right_dock": _hud_node("LayoutRoot/RootColumn/ContentRow/RightDock"),
-        "layout_root": _hud_node("LayoutRoot"),
-        "root_column": _hud_node("LayoutRoot/RootColumn"),
-        "content_row": _hud_node("LayoutRoot/RootColumn/ContentRow"),
-        "center_spacer": _hud_node("LayoutRoot/RootColumn/ContentRow/CenterSpacer"),
-        "next_turn": _hud_node("LayoutRoot/RootColumn/BottomBar/NextTurnButton")
-    }
-    var visibility: Array[String] = []
-    for key in panels.keys():
-        var node: Node = panels[key]
-        var visible: bool = node != null and node.is_visible_in_tree()
-        var rect: String = ""
-        if node is Control:
-            rect = " rect=" + str(node.get_global_rect())
-            rect += " size=" + str(node.size)
-        visibility.append("%s=%s%s" % [key, visible, rect])
-    print("[HUD->Preview] panels(%s): %s" % [context, ", ".join(visibility)])
+    pass
 
 # --- New Overlay Tools Implementation ---
 

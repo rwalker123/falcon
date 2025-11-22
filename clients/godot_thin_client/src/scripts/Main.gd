@@ -55,6 +55,12 @@ func _ready() -> void:
     # Force content scale mode to handle high DPI and ultrawide monitors
     get_window().content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
     get_window().content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND
+    
+    # Ensure HUD and Inspector are above the 3D view (Layer 100)
+    if hud != null:
+        hud.layer = 101
+    if inspector != null:
+        inspector.layer = 102
 
     var ext: Resource = load("res://native/shadow_scale_godot.gdextension")
     if ext == null:
