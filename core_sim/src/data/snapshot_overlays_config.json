@@ -40,6 +40,18 @@
       "coastal_littoral": 25.0,
       "riverine_delta": 15.0,
       "coastal_upwelling": 30.0
-    }
+    },
+    "wild_game_modules": [
+      "temperate_forest",
+      "mixed_woodland",
+      "savanna_grassland",
+      "montane_highland",
+      "wetland_swamp"
+    ],
+    "wild_game_probability": 0.55,
+    "wild_game_weight_scale": 0.75,
+    "wild_game_max_per_module": 5,
+    "wild_game_max_total": 24,
+    "wild_game_radius": 12
   }
 }

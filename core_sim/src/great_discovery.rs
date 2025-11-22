@@ -1,9 +1,10 @@
-use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use bevy::prelude::*;
 
 use crate::{
+    hashing::FnvHasher,
     metrics::SimulationMetrics,
     orders::FactionId,
     power::PowerDiscoveryEffects,
@@ -140,7 +141,7 @@ fn default_requirement_weight() -> NumericBand<f32> {
     NumericBand::Scalar(1.0)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct GreatDiscoveryId(pub u16);
 
 impl GreatDiscoveryId {
@@ -330,7 +331,7 @@ fn resolve_catalog_entry(
 }
 
 fn hash_identifier<T: Hash>(identifier: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = FnvHasher::new();
     identifier.hash(&mut hasher);
     hasher.finish()
 }
@@ -808,16 +809,24 @@ pub fn screen_great_discovery_candidates(
     mut events: EventWriter<GreatDiscoveryCandidateEvent>,
 ) {
     let mut pending = 0u32;
-    for (faction, entries) in readiness.iter() {
-        for (id, progress) in entries {
-            let Some(_definition) = registry.definition(id) else {
+    let mut factions: Vec<_> = readiness.per_faction.keys().copied().collect();
+    factions.sort();
+
+    for faction in factions {
+        let entries = &readiness.per_faction[&faction];
+        let mut discoveries: Vec<_> = entries.keys().copied().collect();
+        discoveries.sort();
+
+        for id in discoveries {
+            let progress = &entries[&id];
+            let Some(_definition) = registry.definition(&id) else {
                 continue;
             };
             if progress.resolved
                 || progress.cooldown_remaining > 0
                 || progress.observation_deficit > 0
                 || progress.progress < scalar_one()
-                || ledger.contains(faction, *id)
+                || ledger.contains(faction, id)
             {
                 continue;
             }
@@ -825,7 +834,7 @@ pub fn screen_great_discovery_candidates(
             pending = pending.saturating_add(1);
             events.send(GreatDiscoveryCandidateEvent {
                 faction,
-                discovery: *id,
+                discovery: id,
             });
         }
     }

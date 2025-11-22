@@ -237,3 +237,11 @@
   - Coastal: promote land adjacent to water to `TidalFlat` to raise `Coastal` coverage.
 - [x] Hydrology overlay export: extended schema (FlatBuffers) with `HydrologyOverlay` and wired server snapshot + Godot decoder to render polylines.
 - [ ] Godot preset selector (Owner: TBD, Estimate: 1d; Deps: loader). Description: UI to choose `map_preset_id`, pass through to server, display preset summary.
+
+
+
+
+3. Once that lands, layer in the module-specific commands.
+That second step will touch the protobuf/command parser, server handlers, inventory rewards, HUD buttons, and command log, so it’s best tackled after the overlay/schema change is merged.
+
+scouting to expose terrain/food

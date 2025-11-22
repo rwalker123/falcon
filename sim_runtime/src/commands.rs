@@ -127,6 +127,12 @@ pub enum CommandPayload {
         module: String,
         band_entity_bits: Option<u64>,
     },
+    HuntGame {
+        faction_id: u32,
+        target_x: u32,
+        target_y: u32,
+        band_entity_bits: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -406,6 +412,17 @@ impl CommandEnvelope {
                 module: module.clone(),
                 band_entity_bits: *band_entity_bits,
             }),
+            CommandPayload::HuntGame {
+                faction_id,
+                target_x,
+                target_y,
+                band_entity_bits,
+            } => pb::command_envelope::Command::HuntGame(pb::HuntGameCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+                band_entity_bits: *band_entity_bits,
+            }),
         });
 
         pb::CommandEnvelope {
@@ -594,6 +611,12 @@ impl CommandEnvelope {
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
                 module: cmd.module,
+                band_entity_bits: cmd.band_entity_bits,
+            },
+            pb::command_envelope::Command::HuntGame(cmd) => CommandPayload::HuntGame {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
                 band_entity_bits: cmd.band_entity_bits,
             },
         };

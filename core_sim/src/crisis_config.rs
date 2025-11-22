@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::DefaultHasher, BTreeMap, HashSet},
+    collections::{BTreeMap, HashSet},
     env, fs,
     hash::{Hash, Hasher},
     io,
@@ -14,6 +14,8 @@ use rand::{Rng, SeedableRng};
 use serde::Deserialize;
 use serde_json::{Map as JsonMap, Number, Value};
 use thiserror::Error;
+
+use crate::hashing::FnvHasher;
 
 pub const BUILTIN_CRISIS_ARCHETYPES: &str = include_str!("data/crisis_archetypes.json");
 pub const BUILTIN_CRISIS_MODIFIERS: &str = include_str!("data/crisis_modifiers.json");
@@ -693,7 +695,7 @@ const fn default_true() -> bool {
 }
 
 fn hash_identifier(identifier: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = FnvHasher::new();
     identifier.hash(&mut hasher);
     hasher.finish()
 }

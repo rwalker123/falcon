@@ -1,19 +1,21 @@
 use std::{
-    cmp::max,
+    cmp::{max, Ordering},
     collections::{HashMap, HashSet, VecDeque},
 };
 
 use bevy::{ecs::system::SystemParam, math::UVec2, prelude::*};
 use log::{debug, info, warn};
-use rand::{rngs::SmallRng, Rng, SeedableRng};
+use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 use serde_json::json;
 
 use crate::map_preset::{MapPreset, MapPresetsHandle, TerrainClassifierConfig};
+#[cfg(test)]
+use crate::snapshot_overlays_config::SnapshotOverlaysConfig;
 use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, HarvestAssignment,
-        KnowledgeFragment, LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort,
-        PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink,
+        HarvestTaskKind, KnowledgeFragment, LogisticsLink, MountainMetadata, PendingMigration,
+        PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink,
     },
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
@@ -21,7 +23,11 @@ use crate::{
         CULTURE_TRAIT_AXES,
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
-    food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
+    fauna::HerdDensityMap,
+    food::{
+        classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,
+        FoodSiteKind,
+    },
     generations::GenerationRegistry,
     heightfield::build_elevation_field,
     hydrology::HydrologyState,
@@ -37,10 +43,12 @@ use crate::{
     resources::{
         CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionExposureRecord,
         CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger,
-        FactionInventory, FogRevealLedger, MoistureRaster, SentimentAxisBias, SimulationConfig,
-        SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
+        FactionInventory, FogRevealLedger, FoodSiteEntry, FoodSiteRegistry, MoistureRaster,
+        SentimentAxisBias, SimulationConfig, SimulationTick, StartLocation, TileRegistry,
+        TradeDiffusionRecord, TradeTelemetry,
     },
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
+    snapshot_overlays_config::SnapshotOverlaysConfigHandle,
     start_profile::{
         FoodModulePreference, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
         StartProfileOverrides, StartingUnitSpec,
@@ -55,7 +63,13 @@ use sim_runtime::{
 
 const POLAR_LATITUDE_THRESHOLD: f32 =
     TerrainClassifierConfig::default_values().polar_latitude_cutoff;
+const HERD_TRADE_DIFFUSION_BONUS: f32 = 0.25;
 const PLAYER_FACTION: FactionId = FactionId(0);
+const BUCKET_COLS: u32 = 6;
+const BUCKET_ROWS: u32 = 4;
+const MIN_NEARBY_CURATED_SITES: usize = 2;
+const NO_FOOD_SITE_PENALTY: i32 = 18;
+const LOW_FOOD_SITE_PENALTY: i32 = 6;
 
 #[derive(Clone, Debug)]
 struct TilePrototype {
@@ -75,6 +89,26 @@ pub struct TradeDiffusionEvent {
     pub discovery_id: u32,
     pub delta: Scalar,
     pub via_migration: bool,
+}
+
+#[derive(Clone)]
+struct FoodSiteCandidate {
+    entry: FoodSiteEntry,
+    seasonal_weight: f32,
+    preferred: bool,
+}
+
+#[derive(Clone, Default)]
+struct GridBucketStats {
+    candidates: usize,
+    selected: usize,
+}
+
+fn compare_food_site(a: &FoodSiteCandidate, b: &FoodSiteCandidate) -> Ordering {
+    b.seasonal_weight
+        .partial_cmp(&a.seasonal_weight)
+        .unwrap_or(Ordering::Equal)
+        .then_with(|| b.preferred.cmp(&a.preferred))
 }
 
 #[derive(Event, Debug, Clone)]
@@ -109,6 +143,8 @@ pub struct TradeDiffusionParams<'w, 's> {
     pub tick: Res<'w, SimulationTick>,
     pub events: EventWriter<'w, TradeDiffusionEvent>,
     pub links: Query<'w, 's, (&'static LogisticsLink, &'static mut TradeLink)>,
+    pub tiles: Query<'w, 's, &'static Tile>,
+    pub herd_density: Res<'w, HerdDensityMap>,
 }
 
 #[derive(SystemParam)]
@@ -152,6 +188,7 @@ pub fn spawn_initial_world(
     mut culture: ResMut<CultureManager>,
     mut discovery: ResMut<DiscoveryProgressLedger>,
     mut faction_inventory: ResMut<FactionInventory>,
+    snapshot_overlays: Res<SnapshotOverlaysConfigHandle>,
 ) {
     let width = config.grid_size.x as usize;
     let height = config.grid_size.y as usize;
@@ -366,14 +403,30 @@ pub fn spawn_initial_world(
     let food_module_grid: Vec<Option<FoodModule>> =
         prototypes.iter().map(|proto| proto.food_module).collect();
 
-    // Choose a start center favoring freshwater + fertile tiles and profile food modules.
-    let (start_x, start_y) = best_start_tile(
-        width as u32,
-        height as u32,
-        &tags_grid,
-        &food_module_grid,
-        &config.start_profile_overrides.food_modules,
-    );
+    let overlays_cfg = snapshot_overlays.get();
+    let food_overlay_cfg = overlays_cfg.food();
+    let preference = &config.start_profile_overrides.food_modules;
+    let wild_module_set: HashSet<FoodModule> = food_overlay_cfg
+        .wild_game_modules()
+        .iter()
+        .copied()
+        .collect();
+    let wild_game_active = !wild_module_set.is_empty()
+        && food_overlay_cfg.wild_game_probability() > 0.0
+        && food_overlay_cfg.wild_game_max_total() > 0;
+    let wild_game_weight_scale = food_overlay_cfg.wild_game_weight_scale();
+    let wild_game_max_per_module = food_overlay_cfg.wild_game_max_per_module();
+    let wild_game_max_total = food_overlay_cfg.wild_game_max_total();
+    let wild_game_probability = food_overlay_cfg.wild_game_probability();
+    let mut wild_game_counts: HashMap<FoodModule, usize> = HashMap::new();
+    let mut wild_game_total = 0usize;
+    let mut wild_rng = SmallRng::seed_from_u64(world_seed ^ 0xC0FA_BEEF);
+    let land_tiles = province_map.land_tiles().max(1);
+    let baseline_total = food_overlay_cfg.max_total_sites();
+    let scaled_total = (land_tiles / 120).max(24);
+    let target_total = scaled_total.max(baseline_total).min(land_tiles);
+    let mut module_candidates: std::collections::BTreeMap<FoodModule, Vec<FoodSiteCandidate>> =
+        std::collections::BTreeMap::new();
 
     let mut province_region_layers: HashMap<ProvinceId, CultureLayerId> = HashMap::new();
     for (idx, proto) in prototypes.iter().enumerate() {
@@ -413,7 +466,36 @@ pub fn spawn_initial_world(
             .food_module
             .or_else(|| classify_food_module(&tile_component));
         if let Some(module) = module {
-            entity_commands.insert(FoodModuleTag::new(module, 1.0));
+            let mut site_kind = module.site_kind();
+            let mut seasonal_weight = 1.0;
+            if wild_game_active
+                && wild_game_total < wild_game_max_total
+                && wild_module_set.contains(&module)
+            {
+                let entry = wild_game_counts.entry(module).or_insert(0);
+                if *entry < wild_game_max_per_module
+                    && wild_rng.gen::<f32>() < wild_game_probability
+                {
+                    site_kind = FoodSiteKind::GameTrail;
+                    seasonal_weight *= wild_game_weight_scale;
+                    *entry += 1;
+                    wild_game_total += 1;
+                }
+            }
+            entity_commands.insert(FoodModuleTag::new(module, seasonal_weight, site_kind));
+            module_candidates
+                .entry(module)
+                .or_default()
+                .push(FoodSiteCandidate {
+                    entry: FoodSiteEntry {
+                        position: proto.position,
+                        module,
+                        kind: site_kind,
+                        seasonal_weight,
+                    },
+                    seasonal_weight,
+                    preferred: preference.matches(module),
+                });
         }
         let tile_entity = entity_commands.id();
         tiles.push(tile_entity);
@@ -479,6 +561,131 @@ pub fn spawn_initial_world(
         }
     }
 
+    let module_count = module_candidates.len().max(1);
+    let per_module_cap = food_overlay_cfg
+        .max_sites_per_module()
+        .max(target_total / module_count)
+        .max(1);
+    let mut filtered_candidates: Vec<FoodSiteCandidate> = Vec::new();
+    for mut candidates in module_candidates.into_values() {
+        candidates.sort_by(compare_food_site);
+        let take = per_module_cap.min(candidates.len());
+        filtered_candidates.extend(candidates.into_iter().take(take));
+    }
+
+    let bucket_cols = BUCKET_COLS.max(1);
+    let bucket_rows = BUCKET_ROWS.max(1);
+    let bucket_count = (bucket_cols * bucket_rows) as usize;
+    let mut bucket_lists = vec![VecDeque::new(); bucket_count];
+    let mut bucket_stats = vec![GridBucketStats::default(); bucket_count];
+    let width_u32 = width.max(1) as u32;
+    let height_u32 = height.max(1) as u32;
+    for candidate in filtered_candidates {
+        let bx = ((candidate.entry.position.x * bucket_cols) / width_u32).min(bucket_cols - 1);
+        let by = ((candidate.entry.position.y * bucket_rows) / height_u32).min(bucket_rows - 1);
+        let bucket_idx = (by * bucket_cols + bx) as usize;
+        if let Some(bucket) = bucket_lists.get_mut(bucket_idx) {
+            bucket.push_back(candidate);
+        }
+    }
+    for bucket in bucket_lists.iter_mut() {
+        bucket.make_contiguous().sort_by(compare_food_site);
+    }
+    for (idx, bucket) in bucket_lists.iter().enumerate() {
+        bucket_stats[idx].candidates = bucket.len();
+    }
+
+    let mut order: Vec<usize> = (0..bucket_count).collect();
+    let mut bucket_rng = SmallRng::seed_from_u64(world_seed ^ 0xF00D_CAFE);
+    order.shuffle(&mut bucket_rng);
+
+    let mut curated_entries: Vec<FoodSiteEntry> = Vec::new();
+    if bucket_count > 0 {
+        loop {
+            if curated_entries.len() >= target_total {
+                break;
+            }
+            let mut progressed = false;
+            for idx in order.iter() {
+                if curated_entries.len() >= target_total {
+                    break;
+                }
+                if let Some(candidate) = bucket_lists[*idx].pop_front() {
+                    curated_entries.push(candidate.entry);
+                    bucket_stats[*idx].selected += 1;
+                    progressed = true;
+                }
+            }
+            if !progressed {
+                break;
+            }
+            order.rotate_left(1);
+        }
+    }
+
+    if curated_entries.len() < target_total {
+        for (idx, bucket) in bucket_lists.iter_mut().enumerate() {
+            while curated_entries.len() < target_total {
+                if let Some(candidate) = bucket.pop_front() {
+                    curated_entries.push(candidate.entry);
+                    bucket_stats[idx].selected += 1;
+                } else {
+                    break;
+                }
+            }
+            if curated_entries.len() >= target_total {
+                break;
+            }
+        }
+    }
+
+    let mut row_totals = [0usize; 3];
+    for entry in &curated_entries {
+        let row = ((entry.position.y.min(height_u32 - 1)) * 3 / height_u32) as usize;
+        row_totals[row.min(2)] += 1;
+    }
+    let total_candidates: usize = bucket_stats.iter().map(|s| s.candidates).sum();
+    info!(
+        target: "shadow_scale::mapgen",
+        "mapgen.food_sites.curated_summary grid={}x{} target={} curated={} candidates={} north={} mid={} south={}",
+        bucket_cols,
+        bucket_rows,
+        target_total,
+        curated_entries.len(),
+        total_candidates,
+        row_totals[0],
+        row_totals[1],
+        row_totals[2]
+    );
+    for (idx, stats) in bucket_stats.iter().enumerate() {
+        if stats.candidates == 0 {
+            continue;
+        }
+        let bucket_row = idx as u32 / bucket_cols;
+        let bucket_col = idx as u32 % bucket_cols;
+        info!(
+            target: "shadow_scale::mapgen",
+            "mapgen.food_sites.bucket_detail bucket={} row={} col={} available={} selected={} leftover={}",
+            idx,
+            bucket_row,
+            bucket_col,
+            stats.candidates,
+            stats.selected,
+            stats.candidates.saturating_sub(stats.selected)
+        );
+    }
+
+    let food_radius = food_overlay_cfg.default_radius().max(4);
+    let (start_x, start_y) = best_start_tile(
+        width as u32,
+        height as u32,
+        &tags_grid,
+        &food_module_grid,
+        &config.start_profile_overrides.food_modules,
+        &curated_entries,
+        food_radius,
+    );
+
     let mut cohort_index = 0usize;
     if config.start_profile_overrides.starting_units.is_empty() {
         spawn_default_population_clusters(
@@ -513,6 +720,7 @@ pub fn spawn_initial_world(
         Some(UVec2::new(start_x, start_y)),
         &config.start_profile_overrides,
     ));
+    commands.insert_resource(FoodSiteRegistry::new(curated_entries));
 
     // If we produced bands, use their restamped elevation field resource now
     if let Some(bands_res) = bands {
@@ -1969,6 +2177,8 @@ fn best_start_tile(
     tags_grid: &[sim_runtime::TerrainTags],
     food_modules: &[Option<FoodModule>],
     preference: &FoodModulePreference,
+    food_sites: &[FoodSiteEntry],
+    food_radius: u32,
 ) -> (u32, u32) {
     let mut best_score: i32 = i32::MIN;
     let mut best_pos: (u32, u32) = (width / 2, height / 2);
@@ -2015,6 +2225,26 @@ fn best_start_tile(
                     }
                 }
             }
+            let center = UVec2::new(x, y);
+            let mut food_score = 0.0;
+            let mut nearby_sites = 0usize;
+            for site in food_sites {
+                if manhattan_distance(site.position, center) <= food_radius {
+                    nearby_sites += 1;
+                    let pref_bonus = if preference.matches(site.module) {
+                        0.75
+                    } else {
+                        0.0
+                    };
+                    food_score += site.seasonal_weight + pref_bonus;
+                }
+            }
+            if nearby_sites == 0 {
+                score -= NO_FOOD_SITE_PENALTY;
+            } else if nearby_sites < MIN_NEARBY_CURATED_SITES {
+                score -= LOW_FOOD_SITE_PENALTY;
+            }
+            score += (food_score * 2.5).round() as i32;
             score += module_preference_bonus(x, y, width, height, food_modules, preference);
             if score > best_score {
                 best_score = score;
@@ -2044,6 +2274,10 @@ fn module_preference_bonus(
         total += score_for_module(x, y, width, food_modules, secondary, false);
     }
     total
+}
+
+fn manhattan_distance(a: UVec2, b: UVec2) -> u32 {
+    a.x.abs_diff(b.x) + a.y.abs_diff(b.y)
 }
 
 fn score_for_module(
@@ -2438,6 +2672,16 @@ pub fn trade_knowledge_diffusion(mut params: TradeDiffusionParams) {
             trade.leak_timer = trade.leak_timer.saturating_sub(1);
         }
 
+        let density_hint = match (
+            params.tiles.get(logistics.from),
+            params.tiles.get(logistics.to),
+        ) {
+            (Ok(from_tile), Ok(to_tile)) => params
+                .herd_density
+                .normalized_pair_average(from_tile.position, to_tile.position),
+            _ => params.herd_density.normalized_average(),
+        };
+
         if trade.leak_timer == 0 {
             let fragment = if !trade.pending_fragments.is_empty() {
                 trade.pending_fragments.remove(0)
@@ -2455,9 +2699,14 @@ pub fn trade_knowledge_diffusion(mut params: TradeDiffusionParams) {
             let delta = fragment.progress;
             if delta > scalar_zero() {
                 let discovery_id = fragment.discovery_id;
-                let _ = params
-                    .discovery
-                    .add_progress(trade.to_faction, discovery_id, delta);
+                let density_multiplier =
+                    scalar_from_f32(1.0 + density_hint * HERD_TRADE_DIFFUSION_BONUS);
+                let adjusted_delta =
+                    (delta * density_multiplier).clamp(Scalar::zero(), Scalar::one());
+                let _ =
+                    params
+                        .discovery
+                        .add_progress(trade.to_faction, discovery_id, adjusted_delta);
                 params.telemetry.tech_diffusion_applied =
                     params.telemetry.tech_diffusion_applied.saturating_add(1);
                 params.telemetry.push_record(TradeDiffusionRecord {
@@ -2465,15 +2714,16 @@ pub fn trade_knowledge_diffusion(mut params: TradeDiffusionParams) {
                     from: trade.from_faction,
                     to: trade.to_faction,
                     discovery_id,
-                    delta,
+                    delta: adjusted_delta,
                     via_migration: false,
+                    herd_density: density_hint,
                 });
                 params.events.send(TradeDiffusionEvent {
                     tick: params.tick.0,
                     from: trade.from_faction,
                     to: trade.to_faction,
                     discovery_id,
-                    delta,
+                    delta: adjusted_delta,
                     via_migration: false,
                 });
                 trade.last_discovery = Some(discovery_id);
@@ -2498,13 +2748,14 @@ pub fn publish_trade_telemetry(telemetry: Res<TradeTelemetry>, tick: Res<Simulat
             .iter()
             .take(24)
             .map(|record| {
-                json!({
-                    "from": record.from.0,
-                    "to": record.to.0,
-                    "discovery": record.discovery_id,
-                    "delta": record.delta.to_f32(),
-                    "via_migration": record.via_migration,
-                })
+                    json!({
+                        "from": record.from.0,
+                        "to": record.to.0,
+                        "discovery": record.discovery_id,
+                        "delta": record.delta.to_f32(),
+                        "via_migration": record.via_migration,
+                        "herd_density": record.herd_density,
+                    })
             })
             .collect::<Vec<_>>(),
         "records_truncated": telemetry.records.len().saturating_sub(24),
@@ -2621,6 +2872,7 @@ pub fn simulate_population(
                         discovery_id: fragment.discovery_id,
                         delta,
                         via_migration: true,
+                        herd_density: 0.0,
                     });
                     trade_events.send(TradeDiffusionEvent {
                         tick: tick.0,
@@ -2694,8 +2946,13 @@ pub fn advance_harvest_assignments(
             );
         }
 
+        let (event_kind, label_display) = match assignment.kind {
+            HarvestTaskKind::Harvest => (CommandEventKind::Forage, "Harvest"),
+            HarvestTaskKind::Hunt => (CommandEventKind::Hunt, "Hunt"),
+        };
         let detail = format!(
-            "status=complete module={} provisions={} trade_goods={} travel_turns={} gather_turns={} started_tick={}",
+            "status=complete action={} module={} provisions={} trade_goods={} travel_turns={} gather_turns={} started_tick={}",
+            assignment.kind.as_str(),
             assignment.module.as_str(),
             assignment.provisions_reward.max(0),
             assignment.trade_goods_reward.max(0),
@@ -2706,11 +2963,14 @@ pub fn advance_harvest_assignments(
 
         event_log.push(CommandEventEntry::new(
             tick.0,
-            CommandEventKind::Forage,
+            event_kind,
             assignment.faction,
             format!(
-                "{} harvest -> ({}, {})",
-                assignment.band_label, assignment.target_coords.x, assignment.target_coords.y
+                "{} {} -> ({}, {})",
+                assignment.band_label,
+                label_display.to_lowercase(),
+                assignment.target_coords.x,
+                assignment.target_coords.y
             ),
             Some(detail),
         ));
@@ -3254,6 +3514,9 @@ mod terrain_tag_tests {
         ));
         world.insert_resource(DiscoveryProgressLedger::default());
         world.insert_resource(FactionInventory::default());
+        world.insert_resource(SnapshotOverlaysConfigHandle::new(
+            SnapshotOverlaysConfig::builtin(),
+        ));
 
         world.run_system_once(crate::systems::spawn_initial_world);
         hydrology::generate_hydrology(&mut world);
@@ -3594,6 +3857,9 @@ mod terrain_tag_tests {
         world.insert_resource(StartProfileKnowledgeTagsHandle::new(
             StartProfileKnowledgeTags::builtin(),
         ));
+        world.insert_resource(SnapshotOverlaysConfigHandle::new(
+            SnapshotOverlaysConfig::builtin(),
+        ));
 
         world.run_system_once(crate::systems::spawn_initial_world);
         hydrology::generate_hydrology(&mut world);
@@ -3656,6 +3922,69 @@ mod terrain_tag_tests {
             println!("  {name}: actual {actual:.4}, target {target:.4}");
         }
     }
+
+    #[test]
+    fn wild_game_sites_spawn_with_overrides() {
+        let mut world = World::default();
+        let presets = MapPresets::builtin();
+        let overlays_cfg = SnapshotOverlaysConfig::from_json_str(
+            r#"{
+                "food": {
+                    "wild_game_modules": [
+                        "coastal_littoral",
+                        "riverine_delta",
+                        "savanna_grassland",
+                        "temperate_forest",
+                        "boreal_arctic",
+                        "montane_highland",
+                        "wetland_swamp",
+                        "semi_arid_scrub",
+                        "coastal_upwelling",
+                        "mixed_woodland"
+                    ],
+                    "wild_game_probability": 1.0,
+                    "wild_game_weight_scale": 1.0,
+                    "wild_game_max_per_module": 32,
+                    "wild_game_max_total": 128,
+                    "wild_game_radius": 128
+                }
+            }"#,
+        )
+        .expect("overlay config");
+
+        world.insert_resource(SimulationConfig::builtin());
+        world.insert_resource(SimulationTick::default());
+        world.insert_resource(CultureManager::default());
+        world.insert_resource(GenerationRegistry::with_seed(0xFACE_FEED, 6));
+        world.insert_resource(MapPresetsHandle::new(presets));
+        world.insert_resource(DiscoveryProgressLedger::default());
+        world.insert_resource(FactionInventory::default());
+        world.insert_resource(StartProfileKnowledgeTagsHandle::new(
+            StartProfileKnowledgeTags::builtin(),
+        ));
+        world.insert_resource(SnapshotOverlaysConfigHandle::new(Arc::new(overlays_cfg)));
+
+        world.run_system_once(crate::systems::spawn_initial_world);
+
+        let mut query = world.query::<&FoodModuleTag>();
+        let mut total_tags = 0usize;
+        let mut wild_sites = 0usize;
+        for tag in query.iter(&world) {
+            total_tags += 1;
+            if matches!(tag.kind, FoodSiteKind::GameTrail) {
+                wild_sites += 1;
+            }
+        }
+
+        assert!(
+            total_tags > 0,
+            "expected some food modules to exist after worldgen"
+        );
+        assert!(
+            wild_sites > 0,
+            "expected at least one wild game site (found 0 / {total_tags})"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -3694,6 +4023,9 @@ mod inventory_effect_tests {
         world.insert_resource(FactionInventory::default());
         world.insert_resource(StartProfileKnowledgeTagsHandle::new(
             StartProfileKnowledgeTags::builtin(),
+        ));
+        world.insert_resource(SnapshotOverlaysConfigHandle::new(
+            SnapshotOverlaysConfig::builtin(),
         ));
         world
     }

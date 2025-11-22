@@ -9,7 +9,7 @@ use crate::components::Tile;
 pub const DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN: f32 = 3.0;
 pub const DEFAULT_HARVEST_WORK_TURNS: u32 = 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum FoodModule {
     CoastalLittoral,
@@ -108,7 +108,7 @@ impl FromStr for FoodModule {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum FoodSiteKind {
     LittoralGathering,
@@ -121,6 +121,7 @@ pub enum FoodSiteKind {
     ScrubRoots,
     UpwellingDrying,
     WoodlandCache,
+    GameTrail,
 }
 
 impl FoodSiteKind {
@@ -136,6 +137,7 @@ impl FoodSiteKind {
             FoodSiteKind::ScrubRoots => "scrub_roots",
             FoodSiteKind::UpwellingDrying => "upwelling_drying",
             FoodSiteKind::WoodlandCache => "woodland_cache",
+            FoodSiteKind::GameTrail => "game_trail",
         }
     }
 }
@@ -144,13 +146,15 @@ impl FoodSiteKind {
 pub struct FoodModuleTag {
     pub module: FoodModule,
     pub seasonal_weight: f32,
+    pub kind: FoodSiteKind,
 }
 
 impl FoodModuleTag {
-    pub fn new(module: FoodModule, seasonal_weight: f32) -> Self {
+    pub fn new(module: FoodModule, seasonal_weight: f32, kind: FoodSiteKind) -> Self {
         Self {
             module,
             seasonal_weight,
+            kind,
         }
     }
 }

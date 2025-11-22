@@ -280,6 +280,12 @@ pub struct FoodOverlayConfig {
     provisions_per_weight: f32,
     trade_goods_per_weight: f32,
     trade_bonus_modules: HashMap<String, f32>,
+    wild_game_modules: Vec<FoodModule>,
+    wild_game_probability: f32,
+    wild_game_weight_scale: f32,
+    wild_game_max_per_module: usize,
+    wild_game_max_total: usize,
+    wild_game_radius: u32,
 }
 
 impl FoodOverlayConfig {
@@ -313,6 +319,34 @@ impl FoodOverlayConfig {
             .copied()
             .unwrap_or(0.0)
     }
+
+    pub fn wild_game_modules(&self) -> &[FoodModule] {
+        &self.wild_game_modules
+    }
+
+    pub fn wild_game_probability(&self) -> f32 {
+        self.wild_game_probability.clamp(0.0, 1.0)
+    }
+
+    pub fn wild_game_weight_scale(&self) -> f32 {
+        if self.wild_game_weight_scale <= 0.0 {
+            1.0
+        } else {
+            self.wild_game_weight_scale
+        }
+    }
+
+    pub fn wild_game_max_per_module(&self) -> usize {
+        self.wild_game_max_per_module
+    }
+
+    pub fn wild_game_max_total(&self) -> usize {
+        self.wild_game_max_total
+    }
+
+    pub fn wild_game_radius(&self) -> u32 {
+        self.wild_game_radius
+    }
 }
 
 impl Default for FoodOverlayConfig {
@@ -329,6 +363,18 @@ impl Default for FoodOverlayConfig {
                 ("riverine_delta".to_string(), 15.0),
                 ("coastal_upwelling".to_string(), 30.0),
             ]),
+            wild_game_modules: vec![
+                FoodModule::TemperateForest,
+                FoodModule::MixedWoodland,
+                FoodModule::SavannaGrassland,
+                FoodModule::MontaneHighland,
+                FoodModule::WetlandSwamp,
+            ],
+            wild_game_probability: 0.35,
+            wild_game_weight_scale: 0.65,
+            wild_game_max_per_module: 3,
+            wild_game_max_total: 12,
+            wild_game_radius: 8,
         }
     }
 }

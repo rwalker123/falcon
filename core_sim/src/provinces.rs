@@ -13,6 +13,7 @@ pub struct ProvinceMap {
     assignments: Vec<Option<ProvinceId>>,
     land_tiles: usize,
     province_count: ProvinceId,
+    province_tiles: Vec<usize>,
 }
 
 impl ProvinceMap {
@@ -101,12 +102,20 @@ impl ProvinceMap {
         }
 
         let province_count = next_province.saturating_sub(1);
+        let mut province_tiles = vec![0usize; (province_count.saturating_add(1)) as usize];
+        for assignment in assignments.iter().flatten() {
+            let idx = *assignment as usize;
+            if idx < province_tiles.len() {
+                province_tiles[idx] += 1;
+            }
+        }
         ProvinceMap {
             width,
             height,
             assignments,
             land_tiles,
             province_count,
+            province_tiles,
         }
     }
 
@@ -128,5 +137,15 @@ impl ProvinceMap {
 
     pub fn land_tiles(&self) -> usize {
         self.land_tiles
+    }
+
+    pub fn province_tile_count(&self, province_id: ProvinceId) -> usize {
+        if province_id == 0 {
+            return 0;
+        }
+        self.province_tiles
+            .get(province_id as usize)
+            .copied()
+            .unwrap_or(0)
     }
 }

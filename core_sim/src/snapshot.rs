@@ -7,7 +7,8 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use log::warn;
 use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
-    AxisBiasState, CommandEventState, CorruptionLedger, CorruptionSubsystem, CrisisGaugeState,
+    AccessibleStockpileEntryState, AccessibleStockpileState, AxisBiasState, CommandEventState,
+    CorruptionLedger, CorruptionSubsystem, CrisisGaugeState,
     CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
@@ -29,8 +30,8 @@ use sim_runtime::{
 use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, HarvestAssignment,
-        LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort, PowerNode,
-        ScoutAssignment, Tile, TradeLink,
+        HarvestTaskKind, LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort,
+        PowerNode, ScoutAssignment, Tile, TradeLink,
     },
     culture::{
         CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
@@ -59,6 +60,7 @@ use crate::{
     metrics::SimulationMetrics,
     orders::FactionId,
     power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
+    resources::FoodSiteRegistry,
     resources::{
         CommandEventLog, CorruptionLedgers, CorruptionTelemetry, DiscoveryProgressLedger,
         FactionInventory, FogRevealLedger, MoistureRaster, SentimentAxisBias, SimulationConfig,
@@ -104,16 +106,19 @@ pub struct SnapshotContext<'w> {
     pub hydrology: Res<'w, HydrologyState>,
     pub elevation: Res<'w, ElevationField>,
     pub moisture: Option<Res<'w, MoistureRaster>>,
+    #[allow(dead_code)]
     pub map_presets: Res<'w, MapPresetsHandle>,
     pub campaign_label: Option<Res<'w, CampaignLabel>>,
     pub start_profiles: Res<'w, StartProfilesHandle>,
     pub victory: Res<'w, VictoryState>,
     pub faction_inventory: Res<'w, FactionInventory>,
+    pub food_sites: Res<'w, FoodSiteRegistry>,
     pub command_events: Res<'w, CommandEventLog>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
 const CHANNEL_LABELS: [&str; 4] = ["Popular", "Peer", "Institutional", "Humanitarian"];
+const DEFAULT_STOCKPILE_ACCESS_RADIUS: u32 = 0;
 
 #[derive(Clone)]
 pub struct StoredSnapshot {
@@ -1148,62 +1153,35 @@ pub fn capture_snapshot(
         fog_reveals,
         elevation,
         moisture,
-        map_presets,
+        map_presets: _,
         campaign_label,
         start_profiles,
         victory,
         faction_inventory,
+        food_sites,
         command_events,
     } = ctx;
     let overlays_config = overlays.get();
-    let presets = map_presets.get();
-    let preset_ref = presets.get(&config.map_preset_id);
-    let sea_level = preset_ref.map(|p| p.sea_level).unwrap_or(0.6);
     history.set_capacity(config.snapshot_history_limit.max(1));
 
     let mut tile_states: Vec<TileState> = Vec::new();
     let mut food_module_states: Vec<FoodModuleState> = Vec::new();
     let start_position = start_location.position();
-    let food_overlay = overlays_config.food();
-    let base_radius = start_location
-        .survey_radius()
-        .unwrap_or(food_overlay.default_radius());
-    let survey_radius = base_radius.saturating_add(food_overlay.radius_padding());
-    let preference = &config.start_profile_overrides.food_modules;
-    let enforce_module_match = preference.any();
-    let max_sites_per_module = food_overlay.max_sites_per_module();
-    let max_total_sites = food_overlay.max_total_sites();
-    let mut module_counts: HashMap<FoodModule, usize> = HashMap::new();
-    let mut total_food_sites = 0usize;
-    for (entity, tile, food_tag) in tiles.iter() {
+    let stockpile_radius = config
+        .start_profile_overrides
+        .stockpile_access_radius
+        .unwrap_or(DEFAULT_STOCKPILE_ACCESS_RADIUS);
+    for (entity, tile, _) in tiles.iter() {
         tile_states.push(tile_state(entity, tile));
-        if let Some(tag) = food_tag {
-            if total_food_sites >= max_total_sites {
-                continue;
-            }
-            if enforce_module_match && !preference.matches(tag.module) {
-                continue;
-            }
-            if let Some(center) = start_position {
-                let distance = manhattan_distance(tile.position, center);
-                if distance > survey_radius {
-                    continue;
-                }
-            }
-            let count = module_counts.entry(tag.module).or_insert(0);
-            if *count >= max_sites_per_module {
-                continue;
-            }
-            *count += 1;
-            total_food_sites += 1;
-            food_module_states.push(FoodModuleState {
-                x: tile.position.x,
-                y: tile.position.y,
-                module: tag.module.as_str().to_string(),
-                kind: tag.module.site_kind().as_str().to_string(),
-                seasonal_weight: tag.seasonal_weight,
-            });
-        }
+    }
+    for site in food_sites.sites() {
+        food_module_states.push(FoodModuleState {
+            x: site.position.x,
+            y: site.position.y,
+            module: site.module.as_str().to_string(),
+            kind: site.kind.as_str().to_string(),
+            seasonal_weight: site.seasonal_weight,
+        });
     }
     for tile in tile_states.iter_mut() {
         let owner = CultureOwner(tile.entity);
@@ -1212,6 +1190,10 @@ pub fn capture_snapshot(
         }
     }
     tile_states.sort_unstable_by_key(|state| state.entity);
+    let tile_positions: HashMap<u64, UVec2> = tile_states
+        .iter()
+        .map(|state| (state.entity, UVec2::new(state.x, state.y)))
+        .collect();
 
     let mut logistics_states: Vec<LogisticsLinkState> = Vec::new();
     let mut trade_states: Vec<TradeLinkState> = Vec::new();
@@ -1224,7 +1206,19 @@ pub fn capture_snapshot(
 
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
-        .map(|(entity, cohort, harvest, scout)| population_state(entity, cohort, harvest, scout))
+        .map(|(entity, cohort, harvest, scout)| {
+            let home_pos = tile_positions.get(&cohort.home.to_bits()).copied();
+            population_state(
+                entity,
+                cohort,
+                harvest,
+                scout,
+                home_pos,
+                stockpile_radius,
+                start_position,
+                &faction_inventory,
+            )
+        })
         .collect();
     population_states.sort_unstable_by_key(|state| state.entity);
 
@@ -1478,7 +1472,7 @@ pub fn capture_snapshot(
         moisture_overlay_from_resource(moisture.as_ref().map(|res| res.as_ref()), config.grid_size);
 
     let elevation_overlay_state =
-        elevation_overlay_from_field(elevation.as_ref(), config.grid_size, sea_level);
+        elevation_overlay_from_field(elevation.as_ref(), config.grid_size);
     let campaign_profiles_state: Vec<_> = snapshot_profiles(&start_profiles)
         .into_iter()
         .map(|entry| entry.to_schema())
@@ -2219,45 +2213,39 @@ fn terrain_overlay_from_tiles(tiles: &[TileState], grid_size: UVec2) -> TerrainO
     }
 }
 
-fn elevation_overlay_from_field(
-    field: &ElevationField,
-    grid_size: UVec2,
-    sea_level: f32,
-) -> ElevationOverlayState {
+fn elevation_overlay_from_field(field: &ElevationField, grid_size: UVec2) -> ElevationOverlayState {
     let width = grid_size.x.max(field.width).max(1);
     let height = grid_size.y.max(field.height).max(1);
     let total = (width as usize).saturating_mul(height as usize).max(1);
-    let mut samples = vec![0u8; total];
+    let mut samples = vec![0u16; total];
+    let mut normals = vec![pack_snorm_3x10([0.0, 1.0, 0.0]); total];
 
-    let mut max_land = sea_level;
-    for y in 0..field.height.min(height) {
-        for x in 0..field.width.min(width) {
+    let mut min_value = f32::MAX;
+    let mut max_value = f32::MIN;
+    let max_y = field.height.min(height);
+    let max_x = field.width.min(width);
+    for y in 0..max_y {
+        for x in 0..max_x {
             let value = field.sample(x, y);
-            if value > sea_level {
-                max_land = max_land.max(value);
-            }
+            min_value = min_value.min(value);
+            max_value = max_value.max(value);
         }
     }
+    if min_value >= max_value {
+        max_value = min_value + f32::EPSILON;
+    }
+    let range = (max_value - min_value).max(f32::EPSILON);
 
-    let scale = if max_land > sea_level {
-        1.0 / (max_land - sea_level)
-    } else {
-        0.0
-    };
-
-    for y in 0..field.height.min(height) {
-        for x in 0..field.width.min(width) {
+    for y in 0..max_y {
+        for x in 0..max_x {
             let idx = (y as usize) * (width as usize) + x as usize;
             if idx >= samples.len() {
                 continue;
             }
             let value = field.sample(x, y);
-            if value <= sea_level || scale == 0.0 {
-                samples[idx] = 0;
-            } else {
-                let normalised = ((value - sea_level) * scale).clamp(0.0, 1.0);
-                samples[idx] = (normalised * 255.0).round().clamp(0.0, 255.0) as u8;
-            }
+            let normalised = ((value - min_value) / range).clamp(0.0, 1.0);
+            samples[idx] = (normalised * 65535.0).round().clamp(0.0, 65535.0) as u16;
+            normals[idx] = pack_snorm_3x10(sample_normal(field, x, y));
         }
     }
 
@@ -2265,7 +2253,50 @@ fn elevation_overlay_from_field(
         width,
         height,
         samples,
+        min_value,
+        max_value,
+        normals,
     }
+}
+
+fn sample_normal(field: &ElevationField, x: u32, y: u32) -> [f32; 3] {
+    fn sample_clamped(field: &ElevationField, x: i32, y: i32) -> f32 {
+        let max_x = field.width.saturating_sub(1) as i32;
+        let max_y = field.height.saturating_sub(1) as i32;
+        let clamped_x = x.clamp(0, max_x) as u32;
+        let clamped_y = y.clamp(0, max_y) as u32;
+        field.sample(clamped_x, clamped_y)
+    }
+
+    let xi = x as i32;
+    let yi = y as i32;
+    let left = sample_clamped(field, xi - 1, yi);
+    let right = sample_clamped(field, xi + 1, yi);
+    let down = sample_clamped(field, xi, yi - 1);
+    let up = sample_clamped(field, xi, yi + 1);
+    let dx = right - left;
+    let dz = up - down;
+    let mut normal = [-dx, 2.0, -dz];
+    let length = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+    if length > f32::EPSILON {
+        normal[0] /= length;
+        normal[1] /= length;
+        normal[2] /= length;
+    } else {
+        normal = [0.0, 1.0, 0.0];
+    }
+    normal
+}
+
+fn pack_snorm_3x10(normal: [f32; 3]) -> u32 {
+    fn encode_component(value: f32) -> u32 {
+        let scaled = (value.clamp(-1.0, 1.0) * 511.0).round() as i32;
+        (scaled as u32) & 0x3FF
+    }
+    let x = encode_component(normal[0]);
+    let y = encode_component(normal[1]);
+    let z = encode_component(normal[2]);
+    x | (y << 10) | (z << 20)
 }
 
 fn moisture_overlay_from_resource(
@@ -3125,12 +3156,6 @@ fn tile_state(entity: Entity, tile: &Tile) -> TileState {
     }
 }
 
-fn manhattan_distance(a: UVec2, b: UVec2) -> u32 {
-    let dx = (a.x as i32 - b.x as i32).unsigned_abs();
-    let dy = (a.y as i32 - b.y as i32).unsigned_abs();
-    dx + dy
-}
-
 fn map_mountain_kind(kind: MountainType) -> MountainKind {
     match kind {
         MountainType::Fold => MountainKind::Fold,
@@ -3231,6 +3256,7 @@ fn harvest_assignment_from_state(
     target_tile: Entity,
 ) -> Option<HarvestAssignment> {
     let module = FoodModule::from_str(state.module.as_str()).ok()?;
+    let kind = HarvestTaskKind::from_str(state.kind.as_str()).unwrap_or(HarvestTaskKind::Harvest);
     Some(HarvestAssignment {
         faction,
         band_label: state.band_label.clone(),
@@ -3244,6 +3270,7 @@ fn harvest_assignment_from_state(
         provisions_reward: state.provisions_reward,
         trade_goods_reward: state.trade_goods_reward,
         started_tick: state.started_tick,
+        kind,
     })
 }
 
@@ -3285,11 +3312,16 @@ fn discovery_progress_entries(ledger: &DiscoveryProgressLedger) -> Vec<Discovery
     entries
 }
 
+#[allow(clippy::too_many_arguments)]
 fn population_state(
     entity: Entity,
     cohort: &PopulationCohort,
     harvest: Option<&HarvestAssignment>,
     scout: Option<&ScoutAssignment>,
+    home_position: Option<UVec2>,
+    stockpile_radius: u32,
+    start_position: Option<UVec2>,
+    inventory: &FactionInventory,
 ) -> PopulationCohortState {
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     PopulationCohortState {
@@ -3303,11 +3335,19 @@ fn population_state(
         migration,
         harvest_task: harvest.map(harvest_assignment_to_state),
         scout_task: scout.map(scout_assignment_to_state),
+        accessible_stockpile: accessible_stockpile_state(
+            inventory,
+            cohort.faction,
+            home_position,
+            start_position,
+            stockpile_radius,
+        ),
     }
 }
 
 fn harvest_assignment_to_state(assignment: &HarvestAssignment) -> HarvestTaskState {
     HarvestTaskState {
+        kind: assignment.kind.as_str().to_string(),
         module: assignment.module.as_str().to_string(),
         band_label: assignment.band_label.clone(),
         target_tile: assignment.target_tile.to_bits(),
@@ -3321,6 +3361,36 @@ fn harvest_assignment_to_state(assignment: &HarvestAssignment) -> HarvestTaskSta
         trade_goods_reward: assignment.trade_goods_reward,
         started_tick: assignment.started_tick,
     }
+}
+
+fn accessible_stockpile_state(
+    inventory: &FactionInventory,
+    faction: FactionId,
+    home_position: Option<UVec2>,
+    start_position: Option<UVec2>,
+    radius: u32,
+) -> Option<AccessibleStockpileState> {
+    let home = home_position?;
+    let origin = start_position?;
+    let distance = home.x.abs_diff(origin.x) + home.y.abs_diff(origin.y);
+    if (radius == 0 && distance > 0) || (radius > 0 && distance > radius) {
+        return None;
+    }
+    let stockpile = inventory.stockpile(faction)?;
+    let mut entries: Vec<AccessibleStockpileEntryState> = Vec::new();
+    for (item, quantity) in stockpile.iter() {
+        if *quantity == 0 {
+            continue;
+        }
+        entries.push(AccessibleStockpileEntryState {
+            item: item.clone(),
+            quantity: *quantity,
+        });
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    Some(AccessibleStockpileState { radius, entries })
 }
 
 fn scout_assignment_to_state(assignment: &ScoutAssignment) -> ScoutTaskState {
@@ -3427,6 +3497,8 @@ fn herd_snapshot_entries(telemetry: &HerdTelemetry) -> Vec<HerdTelemetryState> {
             y: entry.position.y,
             biomass: entry.biomass,
             route_length: entry.route_length,
+            next_x: entry.next_position.map(|pos| pos.x as i32).unwrap_or(-1),
+            next_y: entry.next_position.map(|pos| pos.y as i32).unwrap_or(-1),
         })
         .collect()
 }
@@ -3907,6 +3979,7 @@ mod tests {
                 migration: None,
                 harvest_task: None,
                 scout_task: None,
+                accessible_stockpile: None,
             },
             PopulationCohortState {
                 entity: 101,
@@ -3919,6 +3992,7 @@ mod tests {
                 migration: None,
                 harvest_task: None,
                 scout_task: None,
+                accessible_stockpile: None,
             },
         ];
 
@@ -4008,6 +4082,7 @@ mod tests {
                 migration: None,
                 harvest_task: None,
                 scout_task: None,
+                accessible_stockpile: None,
             },
             PopulationCohortState {
                 entity: 201,
@@ -4020,6 +4095,7 @@ mod tests {
                 migration: None,
                 harvest_task: None,
                 scout_task: None,
+                accessible_stockpile: None,
             },
         ];
 

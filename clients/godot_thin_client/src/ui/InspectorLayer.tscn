@@ -1,0 +1,1060 @@
+[gd_scene load_steps=4 format=3 uid="uid://b8x7k2q5j4l3n"]
+
+[ext_resource type="Script" uid="uid://dgjdlxbpsrrw6" path="res://src/scripts/Inspector.gd" id="1"]
+[ext_resource type="Script" uid="uid://dnhxgwd0jtak5" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="2"]
+[ext_resource type="Script" path="res://src/scripts/ui/AutoSizingPanel.gd" id="3"]
+
+[node name="Inspector" type="CanvasLayer"]
+script = ExtResource("1")
+
+[node name="RootPanel" type="Panel" parent="."]
+custom_minimum_size = Vector2(320, 0)
+anchors_preset = 9
+anchor_bottom = 1.0
+offset_left = 6.0
+offset_top = 135.0
+offset_right = 627.0
+offset_bottom = 23.0
+grow_vertical = 2
+
+[node name="CommandToolbar" type="HBoxContainer" parent="RootPanel"]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 0.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = 48.0
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="RollbackTenButton" type="Button" parent="RootPanel/CommandToolbar"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "<<"
+tooltip_text = "Rollback 10 turns"
+
+[node name="RollbackButton" type="Button" parent="RootPanel/CommandToolbar"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "<"
+tooltip_text = "Rollback 1 turn"
+
+[node name="PlayPauseButton" type="Button" parent="RootPanel/CommandToolbar"]
+layout_mode = 2
+size_flags_horizontal = 3
+toggle_mode = true
+text = "[]"
+tooltip_text = "Toggle auto-play"
+
+[node name="StepOneButton" type="Button" parent="RootPanel/CommandToolbar"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = ">"
+tooltip_text = "Advance 1 turn"
+
+[node name="StepTenButton" type="Button" parent="RootPanel/CommandToolbar"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = ">>"
+tooltip_text = "Advance 10 turns"
+
+[node name="TabContainer" type="TabContainer" parent="RootPanel"]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = 56.0
+offset_right = -8.0
+offset_bottom = -8.0
+current_tab = 9
+
+[node name="Scripts" type="VBoxContainer" parent="RootPanel/TabContainer"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 6
+script = ExtResource("2")
+metadata/_tab_index = 0
+
+[node name="Header" type="HBoxContainer" parent="RootPanel/TabContainer/Scripts"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 0
+theme_override_constants/separation = 8
+
+[node name="ScriptsLabel" type="Label" parent="RootPanel/TabContainer/Scripts/Header"]
+layout_mode = 2
+text = "Shared Scripts"
+
+[node name="RefreshButton" type="Button" parent="RootPanel/TabContainer/Scripts/Header"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Refresh"
+
+[node name="PackageList" type="ItemList" parent="RootPanel/TabContainer/Scripts"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 180)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="Controls" type="HBoxContainer" parent="RootPanel/TabContainer/Scripts"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="EnableButton" type="Button" parent="RootPanel/TabContainer/Scripts/Controls"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Enable"
+
+[node name="DisableButton" type="Button" parent="RootPanel/TabContainer/Scripts/Controls"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Disable"
+
+[node name="ReloadButton" type="Button" parent="RootPanel/TabContainer/Scripts/Controls"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Reload"
+
+[node name="DetailsText" type="RichTextLabel" parent="RootPanel/TabContainer/Scripts"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+
+[node name="Sentiment" type="ScrollContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 1
+
+[node name="SentimentText" type="RichTextLabel" parent="RootPanel/TabContainer/Sentiment"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="Terrain" type="ScrollContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 2
+
+[node name="TerrainVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Terrain"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="TerrainText" type="RichTextLabel" parent="RootPanel/TabContainer/Terrain/TerrainVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="BiomeSection" type="VBoxContainer" parent="RootPanel/TabContainer/Terrain/TerrainVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="BiomeSectionLabel" type="Label" parent="RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Biome Drill-down"
+
+[node name="BiomeList" type="ItemList" parent="RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection"]
+custom_minimum_size = Vector2(0, 180)
+layout_mode = 2
+size_flags_horizontal = 3
+allow_rmb_select = true
+same_column_width = true
+
+[node name="BiomeDetailText" type="RichTextLabel" parent="RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="TileSection" type="VBoxContainer" parent="RootPanel/TabContainer/Terrain/TerrainVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="TileSectionLabel" type="Label" parent="RootPanel/TabContainer/Terrain/TerrainVBox/TileSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Tile Inspection"
+
+[node name="TileList" type="ItemList" parent="RootPanel/TabContainer/Terrain/TerrainVBox/TileSection"]
+custom_minimum_size = Vector2(0, 160)
+layout_mode = 2
+size_flags_horizontal = 3
+allow_rmb_select = true
+
+[node name="TileDetailText" type="RichTextLabel" parent="RootPanel/TabContainer/Terrain/TerrainVBox/TileSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="TileActionRow" type="HBoxContainer" parent="RootPanel/TabContainer/Terrain/TerrainVBox/TileSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="TileScoutButton" type="Button" parent="RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileActionRow"]
+layout_mode = 2
+text = "Scout Tile"
+
+[node name="TileFoundCampButton" type="Button" parent="RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileActionRow"]
+layout_mode = 2
+text = "Found Camp Here"
+
+[node name="Map" type="ScrollContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 3
+
+[node name="MapVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Map"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="MapSizeSection" type="VBoxContainer" parent="RootPanel/TabContainer/Map/MapVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="MapSizeLabel" type="Label" parent="RootPanel/TabContainer/Map/MapVBox/MapSizeSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Map Size"
+
+[node name="MapSizeDropdown" type="OptionButton" parent="RootPanel/TabContainer/Map/MapVBox/MapSizeSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="GenerateMapButton" type="Button" parent="RootPanel/TabContainer/Map/MapVBox/MapSizeSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Generate Map"
+
+[node name="MapTerrainHint" type="Label" parent="RootPanel/TabContainer/Map/MapVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Changing size resets the simulation. Press Enter to toggle terrain shading on/off."
+
+[node name="ScenarioSection" type="VBoxContainer" parent="RootPanel/TabContainer/Map/MapVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="ScenarioLabel" type="Label" parent="RootPanel/TabContainer/Map/MapVBox/ScenarioSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Start Profile"
+
+[node name="ScenarioDropdown" type="OptionButton" parent="RootPanel/TabContainer/Map/MapVBox/ScenarioSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ScenarioDescription" type="Label" parent="RootPanel/TabContainer/Map/MapVBox/ScenarioSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+autowrap_mode = 1
+text = "Select a start profile to see its description."
+
+[node name="ScenarioActions" type="HBoxContainer" parent="RootPanel/TabContainer/Map/MapVBox/ScenarioSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="ApplyScenarioButton" type="Button" parent="RootPanel/TabContainer/Map/MapVBox/ScenarioSection/ScenarioActions"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Apply Profile"
+
+[node name="RegenerateToggle" type="CheckButton" parent="RootPanel/TabContainer/Map/MapVBox/ScenarioSection/ScenarioActions"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Regenerate map"
+button_pressed = true
+
+[node name="LogisticsSection" type="HBoxContainer" parent="RootPanel/TabContainer/Map/MapVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="LogisticsOverlayToggle" type="CheckButton" parent="RootPanel/TabContainer/Map/MapVBox/LogisticsSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Show logistics overlay"
+
+[node name="HydrologySection" type="HBoxContainer" parent="RootPanel/TabContainer/Map/MapVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="HighlightRiversToggle" type="CheckButton" parent="RootPanel/TabContainer/Map/MapVBox/HydrologySection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Highlight rivers"
+
+[node name="OverlaySection" type="VBoxContainer" parent="RootPanel/TabContainer/Map/MapVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="OverlaySectionLabel" type="Label" parent="RootPanel/TabContainer/Map/MapVBox/OverlaySection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Map Overlays"
+
+[node name="OverlayTabs" type="TabContainer" parent="RootPanel/TabContainer/Map/MapVBox/OverlaySection"]
+layout_mode = 2
+size_flags_horizontal = 3
+current_tab = 0
+
+[node name="Culture" type="VBoxContainer" parent="RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlayTabs"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 4
+metadata/_tab_index = 0
+
+[node name="CulturePlaceholder" type="RichTextLabel" parent="RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlayTabs/Culture"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+text = "[i]Awaiting overlay telemetry...[/i]"
+fit_content = true
+
+[node name="Military" type="VBoxContainer" parent="RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlayTabs"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 4
+metadata/_tab_index = 1
+
+[node name="MilitaryPlaceholder" type="RichTextLabel" parent="RootPanel/TabContainer/Map/MapVBox/OverlaySection/OverlayTabs/Military"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+text = "[i]Awaiting overlay telemetry...[/i]"
+fit_content = true
+
+[node name="Crisis" type="ScrollContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 4
+
+[node name="CrisisVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Crisis"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="CrisisControls" type="HBoxContainer" parent="RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 12
+
+[node name="CrisisAutoSeedCheck" type="CheckButton" parent="RootPanel/TabContainer/Crisis/CrisisVBox/CrisisControls"]
+layout_mode = 2
+toggle_mode = true
+text = "Auto-seed when idle"
+
+[node name="CrisisControlsSpacer" type="Control" parent="RootPanel/TabContainer/Crisis/CrisisVBox/CrisisControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="CrisisSpawnControls" type="HBoxContainer" parent="RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="CrisisSpawnLabel" type="Label" parent="RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls"]
+layout_mode = 2
+text = "Spawn crisis ID"
+
+[node name="CrisisArchetypeField" type="LineEdit" parent="RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "e.g. plague_bloom"
+
+[node name="CrisisFactionSpin" type="SpinBox" parent="RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls"]
+layout_mode = 2
+min_value = 0.0
+step = 1.0
+allow_greater = true
+custom_arrow_step = 1.0
+size_flags_horizontal = 1
+
+[node name="CrisisSpawnButton" type="Button" parent="RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls"]
+layout_mode = 2
+text = "Spawn"
+
+[node name="CrisisSummaryLabel" type="Label" parent="RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Gauge Summary"
+
+[node name="CrisisSummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+text = "[b]Crisis Telemetry[/b]\nAwaiting crisis telemetry."
+fit_content = true
+
+[node name="CrisisAlertsLabel" type="Label" parent="RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Alert Summary"
+
+[node name="CrisisAlertsText" type="RichTextLabel" parent="RootPanel/TabContainer/Crisis/CrisisVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+text = "[i]No crisis alerts recorded.[/i]"
+fit_content = true
+
+[node name="Victory" type="ScrollContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 10
+
+[node name="VictoryVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Victory"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="VictorySummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/Victory/VictoryVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+text = "[b]Victory Progress[/b]\n[i]Awaiting telemetry.[/i]"
+
+[node name="VictoryModesLabel" type="Label" parent="RootPanel/TabContainer/Victory/VictoryVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Victory Modes"
+
+[node name="VictoryModesList" type="ItemList" parent="RootPanel/TabContainer/Victory/VictoryVBox"]
+custom_minimum_size = Vector2(0, 160)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+allow_rmb_select = true
+
+[node name="Culture" type="ScrollContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 13
+
+[node name="CultureVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Culture"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="CultureSummarySection" type="VBoxContainer" parent="RootPanel/TabContainer/Culture/CultureVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="CultureSummaryLabel" type="Label" parent="RootPanel/TabContainer/Culture/CultureVBox/CultureSummarySection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Global Identity"
+
+[node name="CultureSummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/Culture/CultureVBox/CultureSummarySection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="CultureDivergenceSection" type="VBoxContainer" parent="RootPanel/TabContainer/Culture/CultureVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="CultureDivergenceLabel" type="Label" parent="RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Regional & Local Divergence"
+
+[node name="CultureDivergenceList" type="ItemList" parent="RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection"]
+custom_minimum_size = Vector2(0, 180)
+layout_mode = 2
+size_flags_horizontal = 3
+allow_rmb_select = true
+same_column_width = true
+
+[node name="CultureDivergenceDetail" type="RichTextLabel" parent="RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="CultureTensionSection" type="VBoxContainer" parent="RootPanel/TabContainer/Culture/CultureVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="CultureTensionLabel" type="Label" parent="RootPanel/TabContainer/Culture/CultureVBox/CultureTensionSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Active Tensions"
+
+[node name="CultureTensionText" type="RichTextLabel" parent="RootPanel/TabContainer/Culture/CultureVBox/CultureTensionSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="Influencers" type="ScrollContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 5
+
+[node name="InfluencersText" type="RichTextLabel" parent="RootPanel/TabContainer/Influencers"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="Corruption" type="ScrollContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 6
+
+[node name="CorruptionText" type="RichTextLabel" parent="RootPanel/TabContainer/Corruption"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="Trade" type="ScrollContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 7
+
+[node name="TradeVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Trade"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="TradeSummarySection" type="VBoxContainer" parent="RootPanel/TabContainer/Trade/TradeVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="TradeSummaryLabel" type="Label" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Trade Diffusion"
+
+[node name="TradeSummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="TradeLinksSection" type="VBoxContainer" parent="RootPanel/TabContainer/Trade/TradeVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="TradeLinksLabel" type="Label" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Top Trade Links"
+
+[node name="TradeLinksList" type="ItemList" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection"]
+custom_minimum_size = Vector2(0, 200)
+layout_mode = 2
+size_flags_horizontal = 3
+allow_rmb_select = true
+same_column_width = true
+
+[node name="TradeEventsSection" type="VBoxContainer" parent="RootPanel/TabContainer/Trade/TradeVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="TradeEventsLabel" type="Label" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Recent Trade Events"
+
+[node name="TradeEventsText" type="RichTextLabel" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="Power" type="ScrollContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 8
+
+[node name="PowerVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Power"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="PowerSummarySection" type="VBoxContainer" parent="RootPanel/TabContainer/Power/PowerVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="PowerSummaryLabel" type="Label" parent="RootPanel/TabContainer/Power/PowerVBox/PowerSummarySection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Grid Metrics"
+
+[node name="PowerSummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/Power/PowerVBox/PowerSummarySection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="PowerNodeSection" type="VBoxContainer" parent="RootPanel/TabContainer/Power/PowerVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="PowerNodeLabel" type="Label" parent="RootPanel/TabContainer/Power/PowerVBox/PowerNodeSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Power Nodes"
+
+[node name="PowerNodeList" type="ItemList" parent="RootPanel/TabContainer/Power/PowerVBox/PowerNodeSection"]
+custom_minimum_size = Vector2(0, 220)
+layout_mode = 2
+size_flags_horizontal = 3
+allow_rmb_select = true
+same_column_width = true
+
+[node name="PowerNodeDetailText" type="RichTextLabel" parent="RootPanel/TabContainer/Power/PowerVBox/PowerNodeSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="Knowledge" type="ScrollContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 9
+
+[node name="KnowledgeVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Knowledge"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="KnowledgeSummaryLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Knowledge Diffusion"
+
+[node name="KnowledgeSummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="DiscoveryProgressSection" type="VBoxContainer" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="DiscoveryProgressLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Discovery Progress"
+
+[node name="DiscoveryProgressList" type="ItemList" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection"]
+custom_minimum_size = Vector2(0, 200)
+layout_mode = 2
+size_flags_horizontal = 3
+allow_rmb_select = true
+same_column_width = true
+
+[node name="KnowledgeEventsSection" type="VBoxContainer" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="KnowledgeEventsLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Recent Events"
+
+[node name="KnowledgeEventsText" type="RichTextLabel" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="KnowledgeCounterintelSection" type="VBoxContainer" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="KnowledgeCounterintelLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Counter-Intelligence"
+
+[node name="KnowledgeCounterintelGrid" type="GridContainer" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+columns = 2
+theme_override_constants/separation = 8
+
+[node name="KnowledgeCounterFactionLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Target Faction"
+
+[node name="KnowledgeCounterFactionSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+step = 1.0
+
+[node name="KnowledgePolicyLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Policy"
+
+[node name="KnowledgePolicyDropdown" type="OptionButton" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="KnowledgePolicyApplyButton" type="Button" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Apply Policy"
+
+[node name="KnowledgeBudgetReserveLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Budget Reserve"
+
+[node name="KnowledgeBudgetReserveSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+max_value = 100000.0
+step = 1.0
+
+[node name="KnowledgeBudgetSetButton" type="Button" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Set Reserve"
+
+[node name="KnowledgeBudgetDeltaLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Budget Delta"
+
+[node name="KnowledgeBudgetDeltaSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -10000.0
+max_value = 10000.0
+step = 1.0
+
+[node name="KnowledgeBudgetAdjustButton" type="Button" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Adjust Budget"
+
+[node name="KnowledgeCounterintelStatusText" type="RichTextLabel" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection"]
+layout_mode = 2
+fit_content = true
+
+[node name="KnowledgeToolsSection" type="VBoxContainer" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="KnowledgeToolsLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Testing Controls"
+
+[node name="KnowledgeToolsGrid" type="GridContainer" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+columns = 2
+theme_override_constants/separation = 8
+
+[node name="KnowledgeMissionLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+size_flags_horizontal = 1
+text = "Mission"
+
+[node name="KnowledgeMissionDropdown" type="OptionButton" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="KnowledgeOwnerLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+text = "Attacker Faction"
+
+[node name="KnowledgeOwnerSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+step = 1.0
+
+[node name="KnowledgeTargetLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+text = "Target Faction"
+
+[node name="KnowledgeTargetSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+step = 1.0
+
+[node name="KnowledgeDiscoveryLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+text = "Discovery ID"
+
+[node name="KnowledgeDiscoverySpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+step = 1.0
+
+[node name="KnowledgeTierLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+text = "Target Tier"
+
+[node name="KnowledgeTierSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -1.0
+max_value = 10.0
+value = -1.0
+step = 1.0
+
+[node name="KnowledgeAgentLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+text = "Agent ID"
+
+[node name="KnowledgeAgentContainer" type="HBoxContainer" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="KnowledgeAgentAutoToggle" type="CheckButton" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeAgentContainer"]
+layout_mode = 2
+text = "Auto"
+
+[node name="KnowledgeAgentSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeAgentContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -1.0
+max_value = 100000.0
+value = -1.0
+step = 1.0
+
+[node name="KnowledgeScheduleLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+text = "Schedule Turn"
+
+[node name="KnowledgeScheduleSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+max_value = 100000.0
+step = 1.0
+
+[node name="KnowledgeQueueMissionButton" type="Button" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection"]
+layout_mode = 2
+text = "Queue Mission"
+
+[node name="KnowledgeMissionDetailsText" type="RichTextLabel" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection"]
+layout_mode = 2
+fit_content = true
+
+[node name="KnowledgeQueueSection" type="VBoxContainer" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="KnowledgeQueueLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeQueueSection"]
+layout_mode = 2
+text = "Mission Queue"
+
+[node name="KnowledgeQueueList" type="ItemList" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeQueueSection"]
+layout_mode = 2
+auto_height = true
+
+[node name="Logs" type="VBoxContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+metadata/_tab_index = 11
+
+[node name="SparklineContainer" type="HBoxContainer" parent="RootPanel/TabContainer/Logs"]
+layout_mode = 2
+
+[node name="SparklineStatusLabel" type="Label" parent="RootPanel/TabContainer/Logs/SparklineContainer"]
+layout_mode = 2
+text = "Status"
+
+[node name="SparklineGraph" type="Control" parent="RootPanel/TabContainer/Logs/SparklineContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SparklineStatsLabel" type="Label" parent="RootPanel/TabContainer/Logs/SparklineContainer"]
+layout_mode = 2
+text = "Stats"
+
+[node name="FilterControls" type="HBoxContainer" parent="RootPanel/TabContainer/Logs"]
+layout_mode = 2
+
+[node name="LevelLabel" type="Label" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+text = "Level"
+
+[node name="LogLevelDropdown" type="OptionButton" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+
+[node name="TargetLabel" type="Label" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+text = "Target"
+
+[node name="LogTargetDropdown" type="OptionButton" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+
+[node name="FilterLabel" type="Label" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+text = "Filter"
+
+[node name="LogFilterLine" type="LineEdit" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ClearButton" type="Button" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+text = "Clear"
+
+[node name="CopyButton" type="Button" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+text = "Copy"
+
+[node name="LogScroll" type="ScrollContainer" parent="RootPanel/TabContainer/Logs"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="LogsText" type="RichTextLabel" parent="RootPanel/TabContainer/Logs/LogScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="Fauna" type="VBoxContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+metadata/_tab_index = 12
+
+[node name="FaunaList" type="ItemList" parent="RootPanel/TabContainer/Fauna"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="FaunaDetail" type="RichTextLabel" parent="RootPanel/TabContainer/Fauna"]
+layout_mode = 2
+size_flags_vertical = 3
+bbcode_enabled = true
+
+[node name="FaunaFollowButton" type="Button" parent="RootPanel/TabContainer/Fauna"]
+layout_mode = 2
+text = "Follow Herd"
+
+[node name="GreatDiscoveries" type="ScrollContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+metadata/_tab_index = 13
+
+[node name="GreatDiscoveryVBox" type="VBoxContainer" parent="RootPanel/TabContainer/GreatDiscoveries"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="GreatDiscoverySummaryLabel" type="Label" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+text = "Summary"
+
+[node name="GreatDiscoverySummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+fit_content = true
+
+[node name="GreatDiscoveryDefinitionsSection" type="VBoxContainer" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+
+[node name="GreatDiscoveryDefinitionsList" type="ItemList" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryDefinitionsSection"]
+layout_mode = 2
+auto_height = true
+
+[node name="GreatDiscoveryLedgerSection" type="VBoxContainer" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+
+[node name="GreatDiscoveryLedgerLabel" type="Label" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection"]
+layout_mode = 2
+text = "Ledger"
+
+[node name="GreatDiscoveryLedgerList" type="ItemList" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection"]
+layout_mode = 2
+auto_height = true
+
+[node name="GreatDiscoveryLedgerDetail" type="RichTextLabel" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection"]
+layout_mode = 2
+fit_content = true
+
+[node name="GreatDiscoveryProgressSection" type="VBoxContainer" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+
+[node name="GreatDiscoveryProgressLabel" type="Label" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection"]
+layout_mode = 2
+text = "Progress"
+
+[node name="GreatDiscoveryProgressList" type="ItemList" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection"]
+layout_mode = 2
+auto_height = true
+
+[node name="GreatDiscoveryProgressDetail" type="RichTextLabel" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection"]
+layout_mode = 2
+fit_content = true

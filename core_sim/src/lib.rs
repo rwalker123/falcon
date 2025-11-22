@@ -13,6 +13,7 @@ mod fauna;
 mod food;
 mod generations;
 mod great_discovery;
+pub mod hashing;
 mod heightfield;
 mod hydrology;
 mod influencers;
@@ -44,8 +45,8 @@ use crate::start_profile::{
 use bevy::prelude::*;
 
 pub use components::{
-    ElementKind, HarvestAssignment, KnowledgeFragment, LogisticsLink, PendingMigration,
-    PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink,
+    ElementKind, HarvestAssignment, HarvestTaskKind, KnowledgeFragment, LogisticsLink,
+    PendingMigration, PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink,
 };
 pub use crisis::{
     ActiveCrisisLedger, CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot,
@@ -77,11 +78,12 @@ pub use espionage::{
     QueueMissionParams, SecurityPolicy,
 };
 pub use fauna::{
-    advance_herds, spawn_initial_herds, HerdRegistry, HerdTelemetry, HerdTelemetryEntry,
+    advance_herds, spawn_initial_herds, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    HerdTelemetryEntry,
 };
 pub use food::{
     classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,
-    DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
+    FoodSiteKind, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use great_discovery::{
@@ -133,10 +135,10 @@ pub use power::{
 pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
     CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
-    DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FogRevealLedger,
-    HydrologyOverrides, PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias,
-    SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry,
-    TradeDiffusionRecord, TradeTelemetry,
+    DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FogRevealLedger, FoodSiteEntry,
+    FoodSiteRegistry, HydrologyOverrides, PendingCrisisSeeds, PendingCrisisSpawns,
+    SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation,
+    TileRegistry, TradeDiffusionRecord, TradeTelemetry,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{
@@ -313,8 +315,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(FactionInventory::default())
         .insert_resource(HerdRegistry::default())
         .insert_resource(HerdTelemetry::default())
+        .insert_resource(HerdDensityMap::default())
         .insert_resource(FogRevealLedger::default())
         .insert_resource(CommandEventLog::default())
+        .insert_resource(FoodSiteRegistry::default())
         .insert_resource(snapshot_history)
         .insert_resource(generation_registry)
         .insert_resource(espionage_catalog)

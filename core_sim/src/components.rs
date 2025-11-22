@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use bevy::{math::UVec2, prelude::*};
 use sim_runtime::{KnownTechFragment as ContractKnowledgeFragment, TerrainTags, TerrainType};
 
@@ -168,6 +170,33 @@ impl StartingUnit {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HarvestTaskKind {
+    #[default]
+    Harvest,
+    Hunt,
+}
+
+impl HarvestTaskKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HarvestTaskKind::Harvest => "harvest",
+            HarvestTaskKind::Hunt => "hunt",
+        }
+    }
+}
+
+impl FromStr for HarvestTaskKind {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "hunt" | "hunt_game" => Ok(HarvestTaskKind::Hunt),
+            _ => Ok(HarvestTaskKind::Harvest),
+        }
+    }
+}
+
 #[derive(Component, Debug, Clone)]
 pub struct HarvestAssignment {
     pub faction: FactionId,
@@ -182,6 +211,7 @@ pub struct HarvestAssignment {
     pub provisions_reward: i64,
     pub trade_goods_reward: i64,
     pub started_tick: u64,
+    pub kind: HarvestTaskKind,
 }
 
 #[derive(Component, Debug, Clone)]

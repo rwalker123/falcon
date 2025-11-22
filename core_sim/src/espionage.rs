@@ -1,4 +1,3 @@
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -7,6 +6,7 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::hashing::FnvHasher;
 use crate::{
     knowledge_ledger::{
         CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
@@ -1418,7 +1418,7 @@ fn resolve_u8_range(
 }
 
 fn hash_identifier(identifier: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = FnvHasher::new();
     identifier.hash(&mut hasher);
     hasher.finish()
 }

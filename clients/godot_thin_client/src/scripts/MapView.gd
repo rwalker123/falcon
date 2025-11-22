@@ -6,7 +6,14 @@ signal tile_selected(info: Dictionary)
 signal overlay_legend_changed(legend: Dictionary)
 signal unit_selected(unit: Dictionary)
 signal herd_selected(herd: Dictionary)
+signal herd_follow_shortcut(herd_id: String)
+signal herd_scout_shortcut(herd_id: String, x: int, y: int)
 signal selection_cleared()
+signal next_turn_requested(steps: int)
+signal unit_scout_requested(x: int, y: int, band_entity_bits: int)
+signal unit_found_camp_requested(x: int, y: int)
+signal herd_follow_requested(herd_id: String)
+signal forage_requested(x: int, y: int, module_key: String)
 
 const LOGISTICS_COLOR := Color(0.15, 0.45, 1.0, 1.0)
 const SENTIMENT_COLOR := Color(1.0, 0.35, 0.25, 1.0)
@@ -200,7 +207,8 @@ const FOOD_SITE_STYLES := {
     "wetland_harvest": {"color": Color(0.42, 0.66, 0.52, 0.9), "shape": "square"},
     "scrub_roots": {"color": Color(0.9, 0.6, 0.38, 0.9), "shape": "triangle"},
     "upwelling_drying": {"color": Color(0.58, 0.84, 0.94, 0.9), "shape": "droplet"},
-    "woodland_cache": {"color": Color(0.6, 0.78, 0.66, 0.9), "shape": "circle"}
+    "woodland_cache": {"color": Color(0.6, 0.78, 0.66, 0.9), "shape": "circle"},
+    "game_trail": {"color": Color(0.85, 0.5, 0.35, 0.95), "shape": "circle"}
 }
 
 const FOOD_MODULE_LABELS := {
@@ -215,6 +223,8 @@ const FOOD_MODULE_LABELS := {
     "coastal_upwelling": "Coastal Upwelling",
     "mixed_woodland": "Mixed Woodland",
 }
+
+const HeightfieldPreviewScene := preload("res://src/ui/HeightfieldPreview.tscn")
 
 var grid_width: int = 0
 var grid_height: int = 0
@@ -232,6 +242,7 @@ var terrain_tag_labels: Dictionary = {}
 var units: Array = []
 var routes: Array = []
 var herds: Array = []
+var herd_trails: Dictionary = {}
 var food_sites: Array = []
 var food_site_lookup: Dictionary = {}
 var harvest_sites: Dictionary = {}
@@ -275,6 +286,9 @@ var faction_colors: Dictionary = {
 
 var selected_unit_id: int = -1
 var selected_herd_id: String = ""
+var heightfield_data: Dictionary = {}
+var biome_color_buffer: PackedColorArray = PackedColorArray()
+var heightfield_preview: Control = null
 
 func _ready() -> void:
     set_process_unhandled_input(true)
@@ -282,6 +296,9 @@ func _ready() -> void:
     _ensure_input_actions()
 
 func display_snapshot(snapshot: Dictionary) -> Dictionary:
+    print("[MapView] display_snapshot called. Keys: ", snapshot.keys())
+    if snapshot.is_empty():
+        return {}
     var previous_width: int = grid_width
     var previous_height: int = grid_height
     var grid: Dictionary = snapshot.get("grid", {})
@@ -294,6 +311,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
     var overlays: Dictionary = snapshot.get("overlays", {})
     _ingest_overlay_channels(overlays)
     terrain_overlay = PackedInt32Array(overlays.get("terrain", []))
+    _update_biome_color_buffer()
     var palette_raw: Variant = overlays.get("terrain_palette", {})
     terrain_palette = palette_raw if typeof(palette_raw) == TYPE_DICTIONARY else {}
     terrain_tags_overlay = PackedInt32Array(overlays.get("terrain_tags", []))
@@ -317,6 +335,11 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
         start_marker = Vector2i(int(marker_dict.get("x", -1)), int(marker_dict.get("y", -1)))
     else:
         start_marker = Vector2i(-1, -1)
+    var heightfield_variant: Variant = overlays.get("heightfield", {})
+    if heightfield_variant is Dictionary:
+        heightfield_data = (heightfield_variant as Dictionary).duplicate(true)
+    else:
+        heightfield_data = {}
     routes = Array(snapshot.get("orders", []))
     food_sites = []
     food_site_lookup.clear()
@@ -403,6 +426,9 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
     _update_layout_metrics()
     queue_redraw()
     _emit_overlay_legend()
+
+    if _is_heightfield_visible():
+        _push_heightfield_preview()
 
     return {
         "unit_count": units.size(),
@@ -581,6 +607,8 @@ func set_overlay_channel(key: String) -> void:
     active_overlay_key = key
     queue_redraw()
     _emit_overlay_legend()
+    if _is_heightfield_visible():
+        _push_heightfield_preview()
 
 func _draw_crisis_annotations(radius: float, origin: Vector2) -> void:
     if active_overlay_key != "crisis":
@@ -698,6 +726,16 @@ func _draw_trade_overlay(radius: float, origin: Vector2) -> void:
 func _unhandled_input(event: InputEvent) -> void:
     if grid_width == 0 or grid_height == 0:
         return
+    if event.is_action_pressed("map_toggle_relief"):
+        _toggle_heightfield_preview()
+        _mark_input_handled()
+        return
+    if event.is_action_pressed("map_switch_strategic_view"):
+        if _is_heightfield_visible():
+            var preview := _ensure_heightfield_preview()
+            preview.hide()
+            _mark_input_handled()
+        return
     if event is InputEventMouseButton:
         var mouse_event: InputEventMouseButton = event
         if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP and mouse_event.pressed:
@@ -726,7 +764,17 @@ func _unhandled_input(event: InputEvent) -> void:
             var terrain_id: int = _terrain_id_at(col, row)
             emit_signal("hex_selected", col, row, terrain_id)
             _emit_tile_selection(col, row)
+            var herd_hit: Dictionary = _herd_at_point(local_position)
             _handle_entity_selection(local_position, col, row)
+            if mouse_event.double_click and not herd_hit.is_empty():
+                var shortcut_id := String(herd_hit.get("id", ""))
+                var herd_col := int(herd_hit.get("x", col))
+                var herd_row := int(herd_hit.get("y", row))
+                if shortcut_id != "":
+                    if mouse_event.shift_pressed:
+                        emit_signal("herd_scout_shortcut", shortcut_id, herd_col, herd_row)
+                    else:
+                        emit_signal("herd_follow_shortcut", shortcut_id)
             _mark_input_handled()
             return
     elif event is InputEventMouseMotion:
@@ -768,11 +816,13 @@ func _draw_unit(unit: Dictionary, radius: float, origin: Vector2) -> void:
         draw_arc(center, marker_radius + 4.0, 0, TAU, 24, highlight_color, 3.0)
 
 func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
+    var herd_id := String(herd.get("id", ""))
     var x: int = int(herd.get("x", -1))
     var y: int = int(herd.get("y", -1))
     if x < 0 or y < 0:
         return
     var center: Vector2 = _hex_center(x, y, radius, origin)
+    _draw_herd_trail(herd_id, radius, origin)
     var marker_radius: float = radius * 0.35
     var base_color := Color(0.95, 0.76, 0.35, 0.95)
     var points := PackedVector2Array([
@@ -790,7 +840,14 @@ func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
         if font != null:
             draw_string(font, center + Vector2(-marker_radius, marker_radius + 4.0), label, HORIZONTAL_ALIGNMENT_LEFT, marker_radius * 2.0, 14, Color(0.1, 0.1, 0.1, 0.85))
 
-    if String(herd.get("id", "")) == selected_herd_id:
+    var next_x := int(herd.get("next_x", -1))
+    var next_y := int(herd.get("next_y", -1))
+    if next_x >= 0 and next_y >= 0:
+        var next_center := _hex_center(next_x, next_y, radius, origin)
+        draw_line(center, next_center, Color(0.98, 0.58, 0.18, 0.85), 3.0)
+        _draw_arrowhead(center, next_center, Color(0.98, 0.58, 0.18, 0.85))
+
+    if herd_id == selected_herd_id:
         draw_arc(center, marker_radius + 3.0, 0, TAU, 24, Color(1.0, 1.0, 1.0, 0.9), 2.5)
 
 func _draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
@@ -998,6 +1055,9 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
         var scout_variant: Variant = entry.get("scout", {})
         if scout_variant is Dictionary:
             marker["scout"] = (scout_variant as Dictionary).duplicate(true)
+        var stockpile_variant: Variant = entry.get("accessible_stockpile", {})
+        if stockpile_variant is Dictionary:
+            marker["accessible_stockpile"] = (stockpile_variant as Dictionary).duplicate(true)
         units.append(marker)
         counter += 1
 
@@ -1005,10 +1065,21 @@ func _rebuild_herd_markers(snapshot: Dictionary) -> void:
     herds = []
     var herd_variant: Variant = snapshot.get("herds", [])
     if not (herd_variant is Array):
+        herd_trails.clear()
         return
+    var active_ids := {}
     for entry in herd_variant:
         if entry is Dictionary:
-            herds.append((entry as Dictionary).duplicate(true))
+            var herd_dict: Dictionary = (entry as Dictionary).duplicate(true)
+            herds.append(herd_dict)
+            var herd_id := String(herd_dict.get("id", ""))
+            if herd_id != "":
+                active_ids[herd_id] = true
+                _update_herd_trail(herd_id, herd_dict)
+    var stale_ids := herd_trails.keys()
+    for herd_id in stale_ids:
+        if not active_ids.has(herd_id):
+            herd_trails.erase(herd_id)
 
 func _handle_entity_selection(local_position: Vector2, col: int, row: int) -> void:
     var unit: Dictionary = _unit_at_point(local_position)
@@ -1025,6 +1096,8 @@ func _handle_entity_selection(local_position: Vector2, col: int, row: int) -> vo
         unit_payload["tile_info"] = _tile_info_at(unit_col, unit_row)
         emit_signal("unit_selected", unit_payload)
         queue_redraw()
+        if _is_heightfield_visible():
+            heightfield_preview.call("update_selection", unit_payload.get("tile_info", {}), unit_payload, {})
         return
     var herd: Dictionary = _herd_at_point(local_position)
     if not herd.is_empty():
@@ -1036,6 +1109,8 @@ func _handle_entity_selection(local_position: Vector2, col: int, row: int) -> vo
         herd_payload["tile_info"] = _tile_info_at(herd_col, herd_row)
         emit_signal("herd_selected", herd_payload)
         queue_redraw()
+        if _is_heightfield_visible():
+            heightfield_preview.call("update_selection", herd_payload.get("tile_info", {}), {}, herd_payload)
         return
     if selected_unit_id != -1 or selected_herd_id != "":
         selected_unit_id = -1
@@ -1043,6 +1118,53 @@ func _handle_entity_selection(local_position: Vector2, col: int, row: int) -> vo
         emit_signal("selection_cleared")
         selected_tile = Vector2i(-1, -1)
         queue_redraw()
+        if _is_heightfield_visible():
+            heightfield_preview.call("update_selection", {}, {}, {})
+
+func _update_herd_trail(herd_id: String, herd: Dictionary) -> void:
+    if herd_id == "":
+        return
+    var x := int(herd.get("x", -1))
+    var y := int(herd.get("y", -1))
+    if x < 0 or y < 0:
+        return
+    var current := Vector2i(x, y)
+    var trail: Array = herd_trails.get(herd_id, [])
+    if trail.is_empty() or trail[trail.size() - 1] != current:
+        trail.append(current)
+    var max_len := int(herd.get("route_length", trail.size()))
+    if max_len > 0:
+        while trail.size() > max_len:
+            trail.remove_at(0)
+    herd_trails[herd_id] = trail
+
+func _draw_herd_trail(herd_id: String, radius: float, origin: Vector2) -> void:
+    if herd_id == "":
+        return
+    if not herd_trails.has(herd_id):
+        return
+    var trail: Array = herd_trails[herd_id]
+    if trail.size() < 2:
+        return
+    var points := PackedVector2Array()
+    for tile in trail:
+        if tile is Vector2i:
+            points.append(_hex_center(tile.x, tile.y, radius, origin))
+    if points.size() >= 2:
+        draw_polyline(points, Color(0.97, 0.69, 0.25, 0.6), 2.0)
+
+func _draw_arrowhead(start: Vector2, end: Vector2, color: Color, size: float = 8.0) -> void:
+    var direction := end - start
+    if direction.length() <= 0.1:
+        return
+    var norm := direction.normalized()
+    var ortho := Vector2(-norm.y, norm.x)
+    var tip := end
+    var base_point := tip - norm * size
+    var left := base_point + ortho * (size * 0.5)
+    var right := base_point - ortho * (size * 0.5)
+    var pts := PackedVector2Array([tip, left, right])
+    draw_polygon(pts, PackedColorArray([color, color, color]))
 
 func _emit_tile_selection(col: int, row: int) -> void:
     if col < 0 or row < 0 or col >= grid_width or row >= grid_height:
@@ -1051,6 +1173,8 @@ func _emit_tile_selection(col: int, row: int) -> void:
     var info := _tile_info_at(col, row)
     emit_signal("tile_selected", info)
     queue_redraw()
+    if _is_heightfield_visible():
+        heightfield_preview.call("update_selection", info, {}, {})
 
 func _unit_at_point(point: Vector2) -> Dictionary:
     for unit in units:
@@ -1265,6 +1389,133 @@ func _terrain_color_for_id(terrain_id: int) -> Color:
     if TERRAIN_COLORS.has(terrain_id):
         return TERRAIN_COLORS[terrain_id]
     return Color(0.2, 0.2, 0.2, 1.0)
+
+func _update_biome_color_buffer() -> void:
+    if grid_width <= 0 or grid_height <= 0 or terrain_overlay.is_empty():
+        biome_color_buffer = PackedColorArray()
+        return
+    var total: int = grid_width * grid_height
+    biome_color_buffer = PackedColorArray()
+    biome_color_buffer.resize(total)
+    for idx in range(total):
+        var terrain_id := 0
+        if idx < terrain_overlay.size():
+            terrain_id = int(terrain_overlay[idx])
+        biome_color_buffer[idx] = _terrain_color_for_id(terrain_id)
+
+func _ensure_heightfield_preview() -> Control:
+    if heightfield_preview == null or not is_instance_valid(heightfield_preview):
+        # Create a CanvasLayer to hold the preview overlay
+        var layer = CanvasLayer.new()
+        layer.layer = 100 # High layer to be on top
+        layer.name = "HeightfieldPreviewLayer"
+        get_tree().root.add_child(layer)
+
+        heightfield_preview = HeightfieldPreviewScene.instantiate()
+        heightfield_preview.hide()
+        layer.add_child(heightfield_preview)
+        if heightfield_preview.has_signal("strategic_view_requested"):
+            heightfield_preview.strategic_view_requested.connect(_on_heightfield_strategic_view_requested)
+        
+        # Connect relayed HUD signals
+        if heightfield_preview.has_signal("next_turn_requested"):
+            heightfield_preview.next_turn_requested.connect(func(steps): emit_signal("next_turn_requested", steps))
+        if heightfield_preview.has_signal("unit_scout_requested"):
+            heightfield_preview.unit_scout_requested.connect(func(x, y, bits): emit_signal("unit_scout_requested", x, y, bits))
+        if heightfield_preview.has_signal("unit_found_camp_requested"):
+            heightfield_preview.unit_found_camp_requested.connect(func(x, y): emit_signal("unit_found_camp_requested", x, y))
+        if heightfield_preview.has_signal("herd_follow_requested"):
+            heightfield_preview.herd_follow_requested.connect(func(id): emit_signal("herd_follow_requested", id))
+        if heightfield_preview.has_signal("forage_requested"):
+            heightfield_preview.forage_requested.connect(func(x, y, key): emit_signal("forage_requested", x, y, key))
+        
+        # Connect 3D-specific control signals
+        if heightfield_preview.has_signal("overlay_changed"):
+            heightfield_preview.overlay_changed.connect(_on_heightfield_overlay_changed)
+        if heightfield_preview.has_signal("inspector_toggle_requested"):
+            heightfield_preview.inspector_toggle_requested.connect(_on_heightfield_inspector_toggle)
+        if heightfield_preview.has_signal("legend_toggle_requested"):
+            heightfield_preview.legend_toggle_requested.connect(_on_heightfield_legend_toggle)
+
+        var main_node := get_tree().root.get_node_or_null("Main")
+        if main_node != null and heightfield_preview.has_method("apply_hud_state") and main_node.has_method("export_hud_state"):
+            var state: Dictionary = main_node.call("export_hud_state")
+            heightfield_preview.call("apply_hud_state", state)
+    return heightfield_preview
+
+func relay_hud_call(method: String, args: Array = []) -> void:
+    if heightfield_preview != null and is_instance_valid(heightfield_preview):
+        if heightfield_preview.has_method("relay_hud_call"):
+            heightfield_preview.call("relay_hud_call", method, args)
+
+
+
+func _on_heightfield_overlay_changed(key: String) -> void:
+    set_overlay_channel(key)
+    _push_heightfield_preview()
+
+func _on_heightfield_inspector_toggle() -> void:
+    var main_node := get_tree().root.get_node_or_null("Main")
+    if main_node != null and main_node.has_method("_on_toggle_inspector"):
+        main_node.call("_on_toggle_inspector")
+
+func _on_heightfield_legend_toggle() -> void:
+    var main_node := get_tree().root.get_node_or_null("Main")
+    if main_node != null and main_node.has_method("_on_toggle_legend"):
+        main_node.call("_on_toggle_legend")
+
+func _push_heightfield_preview() -> void:
+    if heightfield_preview == null:
+        print("[MapView] _push_heightfield_preview: heightfield_preview is null")
+        return
+    if not heightfield_preview.visible:
+        print("[MapView] _push_heightfield_preview: heightfield_preview is not visible")
+        return
+    print("[MapView] _push_heightfield_preview: Pushing data...")
+    
+    var heightfield: Dictionary = heightfield_data
+    _update_biome_color_buffer()
+    
+    var overlay_values: PackedFloat32Array = PackedFloat32Array()
+    var overlay_color: Color = Color.WHITE
+    if active_overlay_key != "":
+        overlay_values = _overlay_array(active_overlay_key) # Changed from _get_overlay_values to _overlay_array
+        overlay_color = OVERLAY_COLORS.get(active_overlay_key, LOGISTICS_COLOR)
+    
+    heightfield_preview.call("update_snapshot", 
+        heightfield, 
+        biome_color_buffer,
+        overlay_values,
+        overlay_color,
+        active_overlay_key,
+        grid_width, 
+        grid_height
+    )
+
+func _toggle_heightfield_preview() -> void:
+    var preview := _ensure_heightfield_preview()
+    if preview.visible:
+        preview.hide()
+        return
+    if heightfield_data.is_empty():
+        push_warning("Relief view not available yet; wait for the next snapshot.")
+        return
+    preview.show()
+    if preview.has_method("move_to_front"):
+        preview.call("move_to_front")
+    if preview.has_method("_resize_to_display"):
+        preview.call_deferred("_resize_to_display")
+    print("[MapView] _toggle_heightfield_preview: showing window, calling push")
+    _push_heightfield_preview()
+
+func _is_heightfield_visible() -> bool:
+    var vis := heightfield_preview != null and is_instance_valid(heightfield_preview) and heightfield_preview.visible
+    # print("[MapView] _is_heightfield_visible: ", vis) # Commented out to avoid spam
+    return vis
+
+func _on_heightfield_strategic_view_requested() -> void:
+    if heightfield_preview != null and is_instance_valid(heightfield_preview):
+        heightfield_preview.hide()
 
 func _tag_mask_at(x: int, y: int) -> int:
     if terrain_tags_overlay.is_empty() or grid_width == 0:
@@ -1865,6 +2116,8 @@ func _ensure_input_actions() -> void:
         "map_pan_down": KEY_S,
         "map_zoom_in": KEY_E,
         "map_zoom_out": KEY_Q,
+        "map_toggle_relief": KEY_R,
+        "map_switch_strategic_view": KEY_V,
     }
     for action in action_keys.keys():
         if not InputMap.has_action(action):
