@@ -1389,6 +1389,7 @@ mod tests {
         app.insert_resource(PendingCrisisSpawns::default());
         app.insert_resource(ActiveCrisisLedger::default());
         app.insert_resource(CrisisOverlayCache::default());
+        app.insert_resource(HerdDensityMap::default());
 
         let archetypes = CrisisArchetypeCatalog::builtin();
         let modifiers = CrisisModifierCatalog::builtin();
@@ -1433,6 +1434,7 @@ mod tests {
         app.insert_resource(PendingCrisisSpawns::default());
         app.insert_resource(ActiveCrisisLedger::default());
         app.insert_resource(CrisisOverlayCache::default());
+        app.insert_resource(HerdDensityMap::default());
 
         let archetypes = CrisisArchetypeCatalog::builtin();
         let modifiers = CrisisModifierCatalog::builtin();
