@@ -283,7 +283,7 @@ var selected_unit_id: int = -1
 var selected_herd_id: String = ""
 var heightfield_data: Dictionary = {}
 var biome_color_buffer: PackedColorArray = PackedColorArray()
-var heightfield_preview: Window = null
+var heightfield_preview: Control = null
 
 func _ready() -> void:
     set_process_unhandled_input(true)
@@ -291,6 +291,9 @@ func _ready() -> void:
     _ensure_input_actions()
 
 func display_snapshot(snapshot: Dictionary) -> Dictionary:
+    print("[MapView] display_snapshot called. Keys: ", snapshot.keys())
+    if snapshot.is_empty():
+        return {}
     var previous_width: int = grid_width
     var previous_height: int = grid_height
     var grid: Dictionary = snapshot.get("grid", {})
@@ -1088,6 +1091,8 @@ func _handle_entity_selection(local_position: Vector2, col: int, row: int) -> vo
         unit_payload["tile_info"] = _tile_info_at(unit_col, unit_row)
         emit_signal("unit_selected", unit_payload)
         queue_redraw()
+        if _is_heightfield_visible():
+            heightfield_preview.call("update_selection", unit_payload.get("tile_info", {}), unit_payload, {})
         return
     var herd: Dictionary = _herd_at_point(local_position)
     if not herd.is_empty():
@@ -1099,6 +1104,8 @@ func _handle_entity_selection(local_position: Vector2, col: int, row: int) -> vo
         herd_payload["tile_info"] = _tile_info_at(herd_col, herd_row)
         emit_signal("herd_selected", herd_payload)
         queue_redraw()
+        if _is_heightfield_visible():
+            heightfield_preview.call("update_selection", herd_payload.get("tile_info", {}), {}, herd_payload)
         return
     if selected_unit_id != -1 or selected_herd_id != "":
         selected_unit_id = -1
@@ -1106,6 +1113,8 @@ func _handle_entity_selection(local_position: Vector2, col: int, row: int) -> vo
         emit_signal("selection_cleared")
         selected_tile = Vector2i(-1, -1)
         queue_redraw()
+        if _is_heightfield_visible():
+            heightfield_preview.call("update_selection", {}, {}, {})
 
 func _update_herd_trail(herd_id: String, herd: Dictionary) -> void:
     if herd_id == "":
@@ -1159,6 +1168,8 @@ func _emit_tile_selection(col: int, row: int) -> void:
     var info := _tile_info_at(col, row)
     emit_signal("tile_selected", info)
     queue_redraw()
+    if _is_heightfield_visible():
+        heightfield_preview.call("update_selection", info, {}, {})
 
 func _unit_at_point(point: Vector2) -> Dictionary:
     for unit in units:
@@ -1387,13 +1398,40 @@ func _update_biome_color_buffer() -> void:
             terrain_id = int(terrain_overlay[idx])
         biome_color_buffer[idx] = _terrain_color_for_id(terrain_id)
 
-func _ensure_heightfield_preview() -> Window:
+func _ensure_heightfield_preview() -> Control:
     if heightfield_preview == null or not is_instance_valid(heightfield_preview):
+        # Create a CanvasLayer to hold the preview overlay
+        var layer = CanvasLayer.new()
+        layer.layer = 100 # High layer to be on top
+        layer.name = "HeightfieldPreviewLayer"
+        get_tree().root.add_child(layer)
+
         heightfield_preview = HeightfieldPreviewScene.instantiate()
         heightfield_preview.hide()
-        get_tree().root.add_child(heightfield_preview)
+        layer.add_child(heightfield_preview)
         if heightfield_preview.has_signal("strategic_view_requested"):
             heightfield_preview.strategic_view_requested.connect(_on_heightfield_strategic_view_requested)
+        
+        # Connect relayed HUD signals
+        if heightfield_preview.has_signal("next_turn_requested"):
+            heightfield_preview.next_turn_requested.connect(func(steps): emit_signal("next_turn_requested", steps))
+        if heightfield_preview.has_signal("unit_scout_requested"):
+            heightfield_preview.unit_scout_requested.connect(func(x, y, bits): emit_signal("unit_scout_requested", x, y, bits))
+        if heightfield_preview.has_signal("unit_found_camp_requested"):
+            heightfield_preview.unit_found_camp_requested.connect(func(x, y): emit_signal("unit_found_camp_requested", x, y))
+        if heightfield_preview.has_signal("herd_follow_requested"):
+            heightfield_preview.herd_follow_requested.connect(func(id): emit_signal("herd_follow_requested", id))
+        if heightfield_preview.has_signal("forage_requested"):
+            heightfield_preview.forage_requested.connect(func(x, y, key): emit_signal("forage_requested", x, y, key))
+        
+        # Connect 3D-specific control signals
+        if heightfield_preview.has_signal("overlay_changed"):
+            heightfield_preview.overlay_changed.connect(_on_heightfield_overlay_changed)
+        if heightfield_preview.has_signal("inspector_toggle_requested"):
+            heightfield_preview.inspector_toggle_requested.connect(_on_heightfield_inspector_toggle)
+        if heightfield_preview.has_signal("legend_toggle_requested"):
+            heightfield_preview.legend_toggle_requested.connect(_on_heightfield_legend_toggle)
+
         var main_node := get_tree().root.get_node_or_null("Main")
         if main_node != null and heightfield_preview.has_method("apply_hud_state") and main_node.has_method("export_hud_state"):
             var state: Dictionary = main_node.call("export_hud_state")
@@ -1405,23 +1443,47 @@ func relay_hud_call(method: String, args: Array = []) -> void:
         if heightfield_preview.has_method("relay_hud_call"):
             heightfield_preview.call("relay_hud_call", method, args)
 
+
+
+func _on_heightfield_overlay_changed(key: String) -> void:
+    set_overlay_channel(key)
+    _push_heightfield_preview()
+
+func _on_heightfield_inspector_toggle() -> void:
+    var main_node := get_tree().root.get_node_or_null("Main")
+    if main_node != null and main_node.has_method("_on_toggle_inspector"):
+        main_node.call("_on_toggle_inspector")
+
+func _on_heightfield_legend_toggle() -> void:
+    var main_node := get_tree().root.get_node_or_null("Main")
+    if main_node != null and main_node.has_method("_on_toggle_legend"):
+        main_node.call("_on_toggle_legend")
+
 func _push_heightfield_preview() -> void:
-    if heightfield_data.is_empty():
+    if heightfield_preview == null:
+        print("[MapView] _push_heightfield_preview: heightfield_preview is null")
         return
-    if heightfield_preview == null or not is_instance_valid(heightfield_preview):
+    if not heightfield_preview.visible:
+        print("[MapView] _push_heightfield_preview: heightfield_preview is not visible")
         return
-    var overlay_values := PackedFloat32Array()
-    var overlay_color := LOGISTICS_COLOR
+    print("[MapView] _push_heightfield_preview: Pushing data...")
+    
+    var heightfield: Dictionary = heightfield_data
+    _update_biome_color_buffer()
+    
+    var overlay_values: PackedFloat32Array = PackedFloat32Array()
+    var overlay_color: Color = Color.WHITE
     if active_overlay_key != "":
-        overlay_values = _overlay_array(active_overlay_key)
+        overlay_values = _overlay_array(active_overlay_key) # Changed from _get_overlay_values to _overlay_array
         overlay_color = OVERLAY_COLORS.get(active_overlay_key, LOGISTICS_COLOR)
-    heightfield_preview.update_snapshot(
-        heightfield_data,
+    
+    heightfield_preview.call("update_snapshot", 
+        heightfield, 
         biome_color_buffer,
         overlay_values,
         overlay_color,
         active_overlay_key,
-        grid_width,
+        grid_width, 
         grid_height
     )
 
@@ -1438,10 +1500,13 @@ func _toggle_heightfield_preview() -> void:
         preview.call("move_to_front")
     if preview.has_method("_resize_to_display"):
         preview.call_deferred("_resize_to_display")
+    print("[MapView] _toggle_heightfield_preview: showing window, calling push")
     _push_heightfield_preview()
 
 func _is_heightfield_visible() -> bool:
-    return heightfield_preview != null and is_instance_valid(heightfield_preview) and heightfield_preview.visible
+    var vis := heightfield_preview != null and is_instance_valid(heightfield_preview) and heightfield_preview.visible
+    # print("[MapView] _is_heightfield_visible: ", vis) # Commented out to avoid spam
+    return vis
 
 func _on_heightfield_strategic_view_requested() -> void:
     if heightfield_preview != null and is_instance_valid(heightfield_preview):

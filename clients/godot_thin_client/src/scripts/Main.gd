@@ -16,6 +16,7 @@ var streaming_mode: bool = false
 var stream_connection_timer: float = 0.0
 var command_client: CommandClient
 var _warned_stream_fallback: bool = false
+var _warned_missing_map_view_method: bool = false
 var _camera_initialized: bool = false
 var script_host_manager: ScriptHostManager = null
 var ui_zoom: float = 1.0
@@ -140,7 +141,8 @@ func _ready() -> void:
                 map_view.connect("tile_selected", Callable(hud, "notify_hex_selected"))
     if map_view != null and map_view.has_signal("overlay_legend_changed") and hud != null and hud.has_method("update_overlay_legend"):
         map_view.connect("overlay_legend_changed", Callable(self, "_on_overlay_legend_changed"))
-        map_view.call_deferred("refresh_overlay_legend")
+        if map_view.has_method("refresh_overlay_legend"):
+            map_view.call_deferred("refresh_overlay_legend")
     if inspector != null and inspector.has_method("set_streaming_active"):
         inspector.call("set_streaming_active", streaming_mode)
     _ensure_action_binding("toggle_inspector", Key.KEY_I)
@@ -165,8 +167,13 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         return
     var is_delta := _snapshot_is_delta(snapshot)
     _update_campaign_label(snapshot.get("campaign_label", {}))
-    var metrics_variant: Variant = map_view.call("display_snapshot", snapshot)
-    var metrics: Dictionary = metrics_variant if metrics_variant is Dictionary else {}
+    var metrics: Dictionary = {}
+    if map_view != null and map_view.has_method("display_snapshot"):
+        var metrics_variant: Variant = map_view.call("display_snapshot", snapshot)
+        metrics = metrics_variant if metrics_variant is Dictionary else {}
+    elif not _warned_missing_map_view_method:
+        push_warning("Map view missing display_snapshot(); skipping map render.")
+        _warned_missing_map_view_method = true
     _hud_invoke("update_overlay", [snapshot.get("turn", 0), metrics])
     if snapshot.has("faction_inventory"):
         _hud_invoke("update_stockpiles", [snapshot["faction_inventory"]])
@@ -192,7 +199,9 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     var recenter: bool = false
     if metrics.has("dimensions_changed"):
         recenter = bool(metrics["dimensions_changed"])
-    var center_variant: Variant = map_view.call("get_world_center")
+    var center_variant: Variant = null
+    if map_view != null and map_view.has_method("get_world_center"):
+        center_variant = map_view.call("get_world_center")
     if center_variant is Vector2 and (recenter or not _camera_initialized):
         camera.position = center_variant
         _camera_initialized = true
@@ -334,7 +343,7 @@ func _unhandled_input(event: InputEvent) -> void:
     elif event.is_action_pressed("ui_left"):
         skip_to_previous_turn()
     elif event.is_action_pressed("ui_accept"):
-        if map_view != null:
+        if map_view != null and map_view.has_method("toggle_terrain_mode"):
             map_view.call("toggle_terrain_mode")
     elif event.is_action_pressed("ui_zoom_in"):
         _adjust_ui_zoom(UI_ZOOM_STEP)

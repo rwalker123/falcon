@@ -2,5 +2,5 @@
 
 [ext_resource type="Script" path="res://src/scripts/HeightfieldPreview.gd" id="1"]
 
-[node name="HeightfieldPreview" type="Window"]
+[node name="HeightfieldPreview" type="PanelContainer"]
 script = ExtResource("1")

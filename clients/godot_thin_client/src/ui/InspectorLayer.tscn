@@ -715,6 +715,94 @@ size_flags_horizontal = 3
 allow_rmb_select = true
 same_column_width = true
 
+[node name="KnowledgeEventsSection" type="VBoxContainer" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="KnowledgeEventsLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Recent Events"
+
+[node name="KnowledgeEventsText" type="RichTextLabel" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="KnowledgeCounterintelSection" type="VBoxContainer" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="KnowledgeCounterintelLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Counter-Intelligence"
+
+[node name="KnowledgeCounterintelGrid" type="GridContainer" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection"]
+layout_mode = 2
+size_flags_horizontal = 3
+columns = 2
+theme_override_constants/separation = 8
+
+[node name="KnowledgeCounterFactionLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Target Faction"
+
+[node name="KnowledgeCounterFactionSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+step = 1.0
+
+[node name="KnowledgePolicyLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Policy"
+
+[node name="KnowledgePolicyDropdown" type="OptionButton" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="KnowledgePolicyApplyButton" type="Button" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Apply Policy"
+
+[node name="KnowledgeBudgetReserveLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Budget Reserve"
+
+[node name="KnowledgeBudgetReserveSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+max_value = 100000.0
+step = 1.0
+
+[node name="KnowledgeBudgetSetButton" type="Button" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Set Reserve"
+
+[node name="KnowledgeBudgetDeltaLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Budget Delta"
+
+[node name="KnowledgeBudgetDeltaSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -10000.0
+max_value = 10000.0
+step = 1.0
+
+[node name="KnowledgeBudgetAdjustButton" type="Button" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+layout_mode = 2
+text = "Adjust Budget"
+
+[node name="KnowledgeCounterintelStatusText" type="RichTextLabel" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection"]
+layout_mode = 2
+fit_content = true
+
 [node name="KnowledgeToolsSection" type="VBoxContainer" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
 layout_mode = 2
 size_flags_horizontal = 3
@@ -781,3 +869,192 @@ min_value = -1.0
 max_value = 10.0
 value = -1.0
 step = 1.0
+
+[node name="KnowledgeAgentLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+text = "Agent ID"
+
+[node name="KnowledgeAgentContainer" type="HBoxContainer" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="KnowledgeAgentAutoToggle" type="CheckButton" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeAgentContainer"]
+layout_mode = 2
+text = "Auto"
+
+[node name="KnowledgeAgentSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeAgentContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -1.0
+max_value = 100000.0
+value = -1.0
+step = 1.0
+
+[node name="KnowledgeScheduleLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+text = "Schedule Turn"
+
+[node name="KnowledgeScheduleSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+max_value = 100000.0
+step = 1.0
+
+[node name="KnowledgeQueueMissionButton" type="Button" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection"]
+layout_mode = 2
+text = "Queue Mission"
+
+[node name="KnowledgeMissionDetailsText" type="RichTextLabel" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection"]
+layout_mode = 2
+fit_content = true
+
+[node name="KnowledgeQueueSection" type="VBoxContainer" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="KnowledgeQueueLabel" type="Label" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeQueueSection"]
+layout_mode = 2
+text = "Mission Queue"
+
+[node name="KnowledgeQueueList" type="ItemList" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeQueueSection"]
+layout_mode = 2
+auto_height = true
+
+[node name="Logs" type="VBoxContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+metadata/_tab_index = 11
+
+[node name="SparklineContainer" type="HBoxContainer" parent="RootPanel/TabContainer/Logs"]
+layout_mode = 2
+
+[node name="SparklineStatusLabel" type="Label" parent="RootPanel/TabContainer/Logs/SparklineContainer"]
+layout_mode = 2
+text = "Status"
+
+[node name="SparklineGraph" type="Control" parent="RootPanel/TabContainer/Logs/SparklineContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SparklineStatsLabel" type="Label" parent="RootPanel/TabContainer/Logs/SparklineContainer"]
+layout_mode = 2
+text = "Stats"
+
+[node name="FilterControls" type="HBoxContainer" parent="RootPanel/TabContainer/Logs"]
+layout_mode = 2
+
+[node name="LevelLabel" type="Label" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+text = "Level"
+
+[node name="LogLevelDropdown" type="OptionButton" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+
+[node name="TargetLabel" type="Label" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+text = "Target"
+
+[node name="LogTargetDropdown" type="OptionButton" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+
+[node name="FilterLabel" type="Label" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+text = "Filter"
+
+[node name="LogFilterLine" type="LineEdit" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ClearButton" type="Button" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+text = "Clear"
+
+[node name="CopyButton" type="Button" parent="RootPanel/TabContainer/Logs/FilterControls"]
+layout_mode = 2
+text = "Copy"
+
+[node name="LogScroll" type="ScrollContainer" parent="RootPanel/TabContainer/Logs"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="LogsText" type="RichTextLabel" parent="RootPanel/TabContainer/Logs/LogScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+fit_content = true
+
+[node name="Fauna" type="VBoxContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+metadata/_tab_index = 12
+
+[node name="FaunaList" type="ItemList" parent="RootPanel/TabContainer/Fauna"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="FaunaDetail" type="RichTextLabel" parent="RootPanel/TabContainer/Fauna"]
+layout_mode = 2
+size_flags_vertical = 3
+bbcode_enabled = true
+
+[node name="FaunaFollowButton" type="Button" parent="RootPanel/TabContainer/Fauna"]
+layout_mode = 2
+text = "Follow Herd"
+
+[node name="GreatDiscoveries" type="ScrollContainer" parent="RootPanel/TabContainer"]
+visible = false
+layout_mode = 2
+metadata/_tab_index = 13
+
+[node name="GreatDiscoveryVBox" type="VBoxContainer" parent="RootPanel/TabContainer/GreatDiscoveries"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="GreatDiscoverySummaryLabel" type="Label" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+text = "Summary"
+
+[node name="GreatDiscoverySummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+fit_content = true
+
+[node name="GreatDiscoveryDefinitionsSection" type="VBoxContainer" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+
+[node name="GreatDiscoveryDefinitionsList" type="ItemList" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryDefinitionsSection"]
+layout_mode = 2
+auto_height = true
+
+[node name="GreatDiscoveryLedgerSection" type="VBoxContainer" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+
+[node name="GreatDiscoveryLedgerLabel" type="Label" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection"]
+layout_mode = 2
+text = "Ledger"
+
+[node name="GreatDiscoveryLedgerList" type="ItemList" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection"]
+layout_mode = 2
+auto_height = true
+
+[node name="GreatDiscoveryLedgerDetail" type="RichTextLabel" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection"]
+layout_mode = 2
+fit_content = true
+
+[node name="GreatDiscoveryProgressSection" type="VBoxContainer" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+layout_mode = 2
+
+[node name="GreatDiscoveryProgressLabel" type="Label" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection"]
+layout_mode = 2
+text = "Progress"
+
+[node name="GreatDiscoveryProgressList" type="ItemList" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection"]
+layout_mode = 2
+auto_height = true
+
+[node name="GreatDiscoveryProgressDetail" type="RichTextLabel" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection"]
+layout_mode = 2
+fit_content = true

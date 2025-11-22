@@ -80,6 +80,7 @@ func _ready() -> void:
     _update_shader_debug_flags()
 
 func set_heightfield_data(data: Dictionary) -> void:
+    print("[HeightfieldLayer3D] set_heightfield_data called. Keys: ", data.keys())
     if data.is_empty():
         return
     var width: int = int(data.get("width", 0))
@@ -153,6 +154,7 @@ func fit_camera(camera: Camera3D, tilt_degrees: float = -1.0) -> void:
     camera.look_at_from_position(position, look_target, Vector3.UP)
     camera.near = 0.1
     camera.far = distance + highest * 2.0 + 100.0
+    print("[HeightfieldLayer3D] fit_camera: pos=", position, " target=", look_target, " far=", camera.far)
 
 func _clear_mesh(reset_dims: bool = true) -> void:
     if _mesh_root == null:
@@ -201,6 +203,7 @@ func _rebuild_chunks() -> void:
             instance.material_override = _material
             instance.transform = Transform3D(Basis(), Vector3(start_x * tile_scale, 0.0, start_y * tile_scale))
             _mesh_root.add_child(instance)
+            print("[HeightfieldLayer3D] Added chunk mesh at ", instance.transform.origin, " with ", mesh.get_surface_count(), " surfaces")
     if _material != null:
         _material.set_shader_parameter("overlay_mix", overlay_strength)
 

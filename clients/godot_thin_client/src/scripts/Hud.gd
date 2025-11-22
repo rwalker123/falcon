@@ -1267,10 +1267,11 @@ func _resize_legend_panel(list_size: Vector2) -> void:
     var available_for_rows: float = clamped_height - header_and_padding
     var scroll_height: float = clamp(available_for_rows, LEGEND_MIN_ROW_HEIGHT, LEGEND_MAX_HEIGHT - header_and_padding)
 
-    var offset_right: float = -LEGEND_RIGHT_MARGIN
-    terrain_legend_panel.offset_right = offset_right
-    terrain_legend_panel.offset_left = offset_right - padded_width
-    terrain_legend_panel.offset_bottom = terrain_legend_panel.offset_top + clamped_height
+    terrain_legend_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+    terrain_legend_panel.offset_left = -padded_width - LEGEND_RIGHT_MARGIN
+    terrain_legend_panel.offset_right = -LEGEND_RIGHT_MARGIN
+    terrain_legend_panel.offset_top = 0
+    terrain_legend_panel.offset_bottom = clamped_height
     terrain_legend_panel.custom_minimum_size = Vector2(padded_width, clamped_height)
 
     var scroll_width: float = max(padded_width - (LEGEND_WIDTH_PADDING * 0.5), LEGEND_MIN_WIDTH - LEGEND_RIGHT_MARGIN)

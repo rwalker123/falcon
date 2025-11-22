@@ -142,16 +142,16 @@ const HERD_TRADE_DIFFUSION_BONUS := 0.25
 @onready var log_copy_button: Button = $RootPanel/TabContainer/Logs/FilterControls/CopyButton
 @onready var root_panel: Panel = $RootPanel
 @onready var tab_container: TabContainer = $RootPanel/TabContainer
-@onready var command_status_label: Label = $RootPanel/TabContainer/Commands/StatusLabel
-@onready var scenario_faction_spin: SpinBox = $RootPanel/TabContainer/Commands/ScenarioCommands/ScenarioFactionRow/ScenarioFactionSpin
-@onready var scout_x_spin: SpinBox = $RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow/ScoutXSpin
-@onready var scout_y_spin: SpinBox = $RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow/ScoutYSpin
-@onready var scout_execute_button: Button = $RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow/ScoutExecuteButton
-@onready var follow_herd_field: LineEdit = $RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow/FollowHerdField
-@onready var follow_herd_button: Button = $RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow/FollowHerdButton
-@onready var camp_x_spin: SpinBox = $RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampXSpin
-@onready var camp_y_spin: SpinBox = $RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampYSpin
-@onready var camp_execute_button: Button = $RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampExecuteButton
+@onready var command_status_label: Label = get_node_or_null("RootPanel/TabContainer/Commands/StatusLabel")
+@onready var scenario_faction_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/ScenarioFactionRow/ScenarioFactionSpin")
+@onready var scout_x_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow/ScoutXSpin")
+@onready var scout_y_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow/ScoutYSpin")
+@onready var scout_execute_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow/ScoutExecuteButton")
+@onready var follow_herd_field: LineEdit = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow/FollowHerdField")
+@onready var follow_herd_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow/FollowHerdButton")
+@onready var camp_x_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampXSpin")
+@onready var camp_y_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampYSpin")
+@onready var camp_execute_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampExecuteButton")
 @onready var fauna_list: ItemList = $RootPanel/TabContainer/Fauna/FaunaList
 @onready var fauna_detail_text: RichTextLabel = $RootPanel/TabContainer/Fauna/FaunaDetail
 @onready var fauna_follow_button: Button = $RootPanel/TabContainer/Fauna/FaunaFollowButton
@@ -160,36 +160,36 @@ const HERD_TRADE_DIFFUSION_BONUS := 0.25
 @onready var play_pause_button: Button = $RootPanel/CommandToolbar/PlayPauseButton
 @onready var step_one_button: Button = $RootPanel/CommandToolbar/StepOneButton
 @onready var step_ten_button: Button = $RootPanel/CommandToolbar/StepTenButton
-@onready var autoplay_toggle: CheckButton = $RootPanel/TabContainer/Commands/AutoplayRow/AutoplayToggle
-@onready var autoplay_spin: SpinBox = $RootPanel/TabContainer/Commands/AutoplayRow/AutoplayIntervalSpin
-@onready var autoplay_label: Label = $RootPanel/TabContainer/Commands/AutoplayRow/AutoplayIntervalLabel
-@onready var command_log_text: RichTextLabel = $RootPanel/TabContainer/Commands/LogPanel/LogScroll/LogText
+@onready var autoplay_toggle: CheckButton = get_node_or_null("RootPanel/TabContainer/Commands/AutoplayRow/AutoplayToggle")
+@onready var autoplay_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/AutoplayRow/AutoplayIntervalSpin")
+@onready var autoplay_label: Label = get_node_or_null("RootPanel/TabContainer/Commands/AutoplayRow/AutoplayIntervalLabel")
+@onready var command_log_text: RichTextLabel = get_node_or_null("RootPanel/TabContainer/Commands/LogPanel/LogScroll/LogText")
 @onready var scripts_panel: ScriptManagerPanel = $RootPanel/TabContainer/Scripts
-@onready var axis_dropdown: OptionButton = $RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisDropdown
-@onready var axis_value_spin: SpinBox = $RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisValueSpin
-@onready var axis_apply_button: Button = $RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisApplyButton
-@onready var axis_reset_button: Button = $RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisResetButton
-@onready var axis_reset_all_button: Button = $RootPanel/TabContainer/Commands/AxisControls/AxisResetAllButton
-@onready var influencer_dropdown: OptionButton = $RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow/InfluencerDropdown
-@onready var influencer_magnitude_spin: SpinBox = $RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow/InfluencerMagnitudeSpin
-@onready var influencer_support_button: Button = $RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow/InfluencerSupportButton
-@onready var influencer_suppress_button: Button = $RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow/InfluencerSuppressButton
-@onready var channel_dropdown: OptionButton = $RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow/ChannelDropdown
-@onready var channel_magnitude_spin: SpinBox = $RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow/ChannelMagnitudeSpin
-@onready var channel_boost_button: Button = $RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow/ChannelBoostButton
-@onready var spawn_scope_dropdown: OptionButton = $RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow/SpawnScopeDropdown
-@onready var spawn_generation_spin: SpinBox = $RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow/SpawnGenerationSpin
-@onready var spawn_button: Button = $RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow/SpawnButton
-@onready var corruption_dropdown: OptionButton = $RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow/CorruptionSubsystemDropdown
-@onready var corruption_intensity_spin: SpinBox = $RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow/CorruptionIntensitySpin
-@onready var corruption_exposure_spin: SpinBox = $RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow/CorruptionExposureSpin
-@onready var corruption_inject_button: Button = $RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow/CorruptionInjectButton
-@onready var heat_entity_spin: SpinBox = $RootPanel/TabContainer/Commands/HeatControls/HeatRow/HeatEntitySpin
-@onready var heat_delta_spin: SpinBox = $RootPanel/TabContainer/Commands/HeatControls/HeatRow/HeatDeltaSpin
-@onready var heat_apply_button: Button = $RootPanel/TabContainer/Commands/HeatControls/HeatRow/HeatApplyButton
-@onready var config_path_edit: LineEdit = $RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/ConfigPathEdit
-@onready var turn_pipeline_reload_button: Button = $RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/TurnPipelineReloadButton
-@onready var snapshot_overlays_reload_button: Button = $RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/SnapshotOverlaysReloadButton
+@onready var axis_dropdown: OptionButton = get_node_or_null("RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisDropdown")
+@onready var axis_value_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisValueSpin")
+@onready var axis_apply_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisApplyButton")
+@onready var axis_reset_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisResetButton")
+@onready var axis_reset_all_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/AxisControls/AxisResetAllButton")
+@onready var influencer_dropdown: OptionButton = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow/InfluencerDropdown")
+@onready var influencer_magnitude_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow/InfluencerMagnitudeSpin")
+@onready var influencer_support_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow/InfluencerSupportButton")
+@onready var influencer_suppress_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow/InfluencerSuppressButton")
+@onready var channel_dropdown: OptionButton = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow/ChannelDropdown")
+@onready var channel_magnitude_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow/ChannelMagnitudeSpin")
+@onready var channel_boost_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow/ChannelBoostButton")
+@onready var spawn_scope_dropdown: OptionButton = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow/SpawnScopeDropdown")
+@onready var spawn_generation_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow/SpawnGenerationSpin")
+@onready var spawn_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow/SpawnButton")
+@onready var corruption_dropdown: OptionButton = get_node_or_null("RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow/CorruptionSubsystemDropdown")
+@onready var corruption_intensity_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow/CorruptionIntensitySpin")
+@onready var corruption_exposure_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow/CorruptionExposureSpin")
+@onready var corruption_inject_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow/CorruptionInjectButton")
+@onready var heat_entity_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/HeatControls/HeatRow/HeatEntitySpin")
+@onready var heat_delta_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/HeatControls/HeatRow/HeatDeltaSpin")
+@onready var heat_apply_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/HeatControls/HeatRow/HeatApplyButton")
+@onready var config_path_edit: LineEdit = get_node_or_null("RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/ConfigPathEdit")
+@onready var turn_pipeline_reload_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/TurnPipelineReloadButton")
+@onready var snapshot_overlays_reload_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/SnapshotOverlaysReloadButton")
 
 var _axis_bias: Dictionary = {}
 var _sentiment: Dictionary = {}
@@ -812,8 +812,10 @@ func _render_static_sections() -> void:
     _render_culture()
     _render_power()
     _render_logs()
-    command_status_label.text = "Commands: disconnected."
-    command_log_text.text = ""
+    if command_status_label != null:
+        command_status_label.text = "Commands: disconnected."
+    if command_log_text != null:
+        command_log_text.text = ""
     _panel_width = PANEL_WIDTH_DEFAULT
     _refresh_axis_controls()
     _refresh_influencer_dropdown()
@@ -1467,23 +1469,32 @@ func _ensure_overlay_selector() -> void:
     _overlay_selector.visible = false
 
 func _setup_command_controls() -> void:
-    rollback_ten_button.pressed.connect(_on_rollback_ten_button_pressed)
-    rollback_button.pressed.connect(_on_rollback_button_pressed)
-    play_pause_button.pressed.connect(_on_play_pause_button_pressed)
-    step_one_button.pressed.connect(_on_step_one_button_pressed)
-    step_ten_button.pressed.connect(_on_step_ten_button_pressed)
-    autoplay_toggle.toggled.connect(_on_autoplay_toggled)
-    autoplay_spin.value_changed.connect(_on_autoplay_interval_changed)
-    autoplay_spin.min_value = 0.2
-    autoplay_spin.max_value = 5.0
-    autoplay_spin.step = 0.1
-    if autoplay_spin.value < 0.2:
-        autoplay_spin.value = 0.5
-    autoplay_toggle.button_pressed = false
-    play_pause_button.button_pressed = false
+    if rollback_ten_button != null:
+        rollback_ten_button.pressed.connect(_on_rollback_ten_button_pressed)
+    if rollback_button != null:
+        rollback_button.pressed.connect(_on_rollback_button_pressed)
+    if play_pause_button != null:
+        play_pause_button.pressed.connect(_on_play_pause_button_pressed)
+        play_pause_button.button_pressed = false
+    if step_one_button != null:
+        step_one_button.pressed.connect(_on_step_one_button_pressed)
+    if step_ten_button != null:
+        step_ten_button.pressed.connect(_on_step_ten_button_pressed)
+    if autoplay_toggle != null:
+        autoplay_toggle.toggled.connect(_on_autoplay_toggled)
+        autoplay_toggle.button_pressed = false
+    var autoplay_interval := 0.5
+    if autoplay_spin != null:
+        autoplay_spin.value_changed.connect(_on_autoplay_interval_changed)
+        autoplay_spin.min_value = 0.2
+        autoplay_spin.max_value = 5.0
+        autoplay_spin.step = 0.1
+        if autoplay_spin.value < 0.2:
+            autoplay_spin.value = 0.5
+        autoplay_interval = float(autoplay_spin.value)
     autoplay_timer = Timer.new()
     autoplay_timer.one_shot = false
-    autoplay_timer.wait_time = float(autoplay_spin.value)
+    autoplay_timer.wait_time = autoplay_interval
     add_child(autoplay_timer)
     autoplay_timer.timeout.connect(_on_autoplay_timeout)
     if scout_execute_button != null:
@@ -1664,7 +1675,7 @@ func set_streaming_active(active: bool) -> void:
         _append_command_log("Streaming snapshots active.")
     else:
         _append_command_log("Streaming unavailable; using mock playback.")
-        if autoplay_toggle.button_pressed:
+        if autoplay_toggle != null and autoplay_toggle.button_pressed:
             _disable_autoplay(true)
     _update_command_status()
 
@@ -1702,16 +1713,18 @@ func _update_command_status() -> void:
         status_text += " Streaming: active."
     else:
         status_text += " Streaming: paused."
-    command_status_label.text = status_text
+    if command_status_label != null:
+        command_status_label.text = status_text
     _update_command_controls_enabled()
 
 func _append_command_log(entry: String) -> void:
     command_log.append(entry)
     while command_log.size() > COMMAND_LOG_LIMIT:
         command_log.pop_front()
-    command_log_text.text = "\n".join(command_log)
-    if command_log_text.get_line_count() > 0:
-        command_log_text.scroll_to_line(command_log_text.get_line_count() - 1)
+    if command_log_text != null:
+        command_log_text.text = "\n".join(command_log)
+        if command_log_text.get_line_count() > 0:
+            command_log_text.scroll_to_line(command_log_text.get_line_count() - 1)
     _append_log_entry("[CMD] %s" % entry, "COMMAND", "inspector.command")
 
 func _update_command_controls_enabled() -> void:
@@ -1931,14 +1944,19 @@ func _on_autoplay_toggled(pressed: bool) -> void:
         play_pause_button.button_pressed = pressed
     if pressed:
         if not _ensure_command_connection():
-            autoplay_toggle.button_pressed = false
+            if autoplay_toggle != null:
+                autoplay_toggle.button_pressed = false
             if play_pause_button != null:
                 play_pause_button.button_pressed = false
             _append_command_log("Auto-play requires an active command connection.")
             return
-        autoplay_timer.wait_time = float(autoplay_spin.value)
-        autoplay_timer.start()
-        _append_command_log("Auto-play enabled (%.2fs)." % autoplay_timer.wait_time)
+        var interval := autoplay_timer.wait_time if autoplay_timer != null else 0.5
+        if autoplay_spin != null:
+            interval = float(autoplay_spin.value)
+        if autoplay_timer != null:
+            autoplay_timer.wait_time = interval
+            autoplay_timer.start()
+        _append_command_log("Auto-play enabled (%.2fs)." % interval)
     else:
         _disable_autoplay(false)
 
@@ -1956,7 +1974,7 @@ func _disable_autoplay(log_message: bool) -> void:
         autoplay_timer.stop()
         if log_message:
             _append_command_log("Auto-play paused.")
-    if autoplay_toggle.button_pressed:
+    if autoplay_toggle != null and autoplay_toggle.button_pressed:
         autoplay_toggle.button_pressed = false
 
 func _render_sentiment() -> void:
@@ -5437,7 +5455,10 @@ func _on_viewport_resized() -> void:
     _update_panel_layout()
 
 func _max_panel_width() -> float:
-    var viewport_size = get_viewport().get_visible_rect().size
+    var target_viewport = _viewport if _viewport != null else get_viewport()
+    if target_viewport == null:
+        return PANEL_WIDTH_DEFAULT
+    var viewport_size = target_viewport.get_visible_rect().size
     var max_allowed = viewport_size.x - (PANEL_MARGIN * 2.0)
     return max(max_allowed, PANEL_WIDTH_MIN)
 
