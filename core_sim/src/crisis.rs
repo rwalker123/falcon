@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap, VecDeque},
+    collections::{HashMap, VecDeque},
     f32::consts::PI,
     hash::{Hash, Hasher},
 };
@@ -16,6 +16,7 @@ use crate::{
         CrisisTelemetryConfigHandle, CrisisTelemetryThreshold,
     },
     fauna::HerdDensityMap,
+    hashing::FnvHasher,
     orders::FactionId,
     resources::{PendingCrisisSeeds, PendingCrisisSpawns, SimulationConfig, SimulationTick},
     scalar::Scalar,
@@ -931,7 +932,7 @@ fn compose_seed(faction: FactionId, discovery_id: u16, tick: u64) -> u64 {
 }
 
 fn hash_identifier(identifier: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = FnvHasher::new();
     identifier.hash(&mut hasher);
     hasher.finish()
 }
@@ -1277,23 +1278,13 @@ fn severity_to_schema(band: CrisisSeverityBand) -> SchemaCrisisSeverityBand {
 }
 
 fn hash_telemetry_config(config: &CrisisTelemetryConfig) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    config.ema_alpha.to_bits().hash(&mut hasher);
-    config.history_depth.hash(&mut hasher);
-    config.trend_window.hash(&mut hasher);
-    config.stale_tick_warning.hash(&mut hasher);
-    config.stale_tick_critical.hash(&mut hasher);
-    config.alert_cooldown_ticks.hash(&mut hasher);
-
+    let mut hasher = FnvHasher::new();
+    // We only hash the gauges as they drive the telemetry structure
     for (key, threshold) in &config.gauges {
         key.hash(&mut hasher);
         threshold.warn.to_bits().hash(&mut hasher);
         threshold.critical.to_bits().hash(&mut hasher);
-        if let Some(delta) = threshold.escalation_delta {
-            delta.to_bits().hash(&mut hasher);
-        }
     }
-
     hasher.finish()
 }
 

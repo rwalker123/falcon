@@ -425,7 +425,8 @@ pub fn spawn_initial_world(
     let baseline_total = food_overlay_cfg.max_total_sites();
     let scaled_total = (land_tiles / 120).max(24);
     let target_total = scaled_total.max(baseline_total).min(land_tiles);
-    let mut module_candidates: HashMap<FoodModule, Vec<FoodSiteCandidate>> = HashMap::new();
+    let mut module_candidates: std::collections::BTreeMap<FoodModule, Vec<FoodSiteCandidate>> =
+        std::collections::BTreeMap::new();
 
     let mut province_region_layers: HashMap<ProvinceId, CultureLayerId> = HashMap::new();
     for (idx, proto) in prototypes.iter().enumerate() {

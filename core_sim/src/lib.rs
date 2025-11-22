@@ -13,6 +13,7 @@ mod fauna;
 mod food;
 mod generations;
 mod great_discovery;
+pub mod hashing;
 mod heightfield;
 mod hydrology;
 mod influencers;

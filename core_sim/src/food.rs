@@ -9,7 +9,7 @@ use crate::components::Tile;
 pub const DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN: f32 = 3.0;
 pub const DEFAULT_HARVEST_WORK_TURNS: u32 = 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum FoodModule {
     CoastalLittoral,
@@ -108,7 +108,7 @@ impl FromStr for FoodModule {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum FoodSiteKind {
     LittoralGathering,
