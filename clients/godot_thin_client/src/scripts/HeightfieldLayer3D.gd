@@ -12,7 +12,7 @@ const SQRT3 := 1.7320508075688772
 @export var tile_scale := 1.0
 @export var height_exaggeration_default := 80.0
 @export var overlay_strength := 0.75
-@export var camera_distance_ratio_default := 0.8
+@export var camera_distance_ratio_default := 1.0
 @export var debug_visualize_height := true
 @export var debug_visualize_axes := false
 @export var debug_print_chunks := true
@@ -46,6 +46,7 @@ var _layout_scale_x: float = 1.0
 var _layout_scale_z: float = 1.0
 var _layout_offset: Vector2 = Vector2.ZERO
 const HEX_LAYOUT_RADIUS := 1.0
+var _hex_centers: Dictionary = {}  # Stores Vector3(x,y,z) centers by "col,row" key
 var _min_zoom_multiplier: float = 0.3
 var _max_zoom_multiplier: float = 1.8
 var _default_zoom_multiplier: float = 0.8
@@ -65,9 +66,11 @@ func _ready() -> void:
     add_child(_mesh_root)
     _hex_grid_instance = MeshInstance3D.new()
     _hex_grid_instance.name = "HexGridOverlay"
-    var hex_material := ShaderMaterial.new()
-    hex_material.shader = HEX_GRID_SHADER
-    hex_material.set_shader_parameter("line_color", _hex_grid_color)
+    # Use a simple material that respects vertex colors instead of shader
+    var hex_material := StandardMaterial3D.new()
+    hex_material.vertex_color_use_as_albedo = true
+    hex_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    hex_material.cull_mode = BaseMaterial3D.CULL_DISABLED
     _hex_grid_instance.material_override = hex_material
     _hex_grid_instance.visible = show_hex_grid
     _hex_grid_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -78,6 +81,8 @@ func _ready() -> void:
     _material.set_shader_parameter("overlay_enabled", false)
     _material.set_shader_parameter("ambient_strength", 0.35)
     _update_shader_debug_flags()
+    
+
 
 func set_heightfield_data(data: Dictionary) -> void:
     print("[HeightfieldLayer3D] set_heightfield_data called. Keys: ", data.keys())
@@ -130,14 +135,23 @@ func set_overlay_values(values: PackedFloat32Array, width: int, height: int, col
     _material.set_shader_parameter("overlay_texture", _overlay_texture)
     _material.set_shader_parameter("overlay_color", color)
     _material.set_shader_parameter("overlay_enabled", true)
+    _material.set_shader_parameter("overlay_enabled", true)
     _update_shader_debug_flags()
+
+func fit_to_view() -> void:
+    _tilt_degrees = 90.0
+    _orbit_azimuth_radians = 0.0
+    _pan_offset_world = Vector2.ZERO
+    _user_zoom_multiplier = 1.0
+    if _last_camera != null:
+        fit_camera(_last_camera, 90.0)
 
 func fit_camera(camera: Camera3D, tilt_degrees: float = -1.0) -> void:
     if camera == null or _width <= 0 or _height <= 0:
         return
     _last_camera = camera
     if tilt_degrees >= 0.0:
-        _tilt_degrees = clamp(tilt_degrees, 20.0, 80.0)
+        _tilt_degrees = clamp(tilt_degrees, 20.0, 90.0)
         _tilt_degrees_default = _tilt_degrees
     var dims := _map_dimensions_world()
     var base_center := Vector3(dims.x * 0.5, 0.0, dims.y * 0.5)
@@ -145,16 +159,29 @@ func fit_camera(camera: Camera3D, tilt_degrees: float = -1.0) -> void:
     var radius: float = max(dims.x, dims.y)
     var highest: float = max(_max_height_world, _current_height_exaggeration * 0.25)
     var distance: float = (radius * _current_camera_distance_ratio + highest + 30.0) * _user_zoom_multiplier
-    var tilt_radians: float = deg_to_rad(clampf(_tilt_degrees, 15.0, 80.0))
+    var tilt_radians: float = deg_to_rad(clampf(_tilt_degrees, 15.0, 90.0))
     var offset := Vector3(0.0, distance * sin(tilt_radians), distance * cos(tilt_radians))
     var orbit_basis := Basis(Vector3.UP, _orbit_azimuth_radians)
     offset = orbit_basis * offset
     var position := center + offset
     var look_target := center + Vector3(0.0, highest * 0.4, 0.0)
-    camera.look_at_from_position(position, look_target, Vector3.UP)
+    
+    var up_vector := Vector3.UP
+    if abs(_tilt_degrees - 90.0) < 0.1:
+        # When looking straight down, UP is degenerate. Use -Z (North) as up.
+        up_vector = Vector3(0, 0, -1)
+        
+    camera.look_at_from_position(position, look_target, up_vector)
     camera.near = 0.1
-    camera.far = distance + highest * 2.0 + 100.0
-    print("[HeightfieldLayer3D] fit_camera: pos=", position, " target=", look_target, " far=", camera.far)
+
+func sync_from_2d(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float) -> void:
+    _user_zoom_multiplier = 1.0 / max(zoom_2d, 0.001)
+    var scale_ratio = tile_scale / max(hex_radius_2d, 1.0)
+    _pan_offset_world = -pan_2d * scale_ratio
+    _tilt_degrees = 90.0
+    _orbit_azimuth_radians = 0.0
+    if _last_camera != null:
+        fit_camera(_last_camera, 90.0)
 
 func _clear_mesh(reset_dims: bool = true) -> void:
     if _mesh_root == null:
@@ -202,6 +229,7 @@ func _rebuild_chunks() -> void:
             instance.mesh = mesh
             instance.material_override = _material
             instance.transform = Transform3D(Basis(), Vector3(start_x * tile_scale, 0.0, start_y * tile_scale))
+            instance.create_trimesh_collision()
             _mesh_root.add_child(instance)
             print("[HeightfieldLayer3D] Added chunk mesh at ", instance.transform.origin, " with ", mesh.get_surface_count(), " surfaces")
     if _material != null:
@@ -447,7 +475,7 @@ func adjust_orbit(delta_degrees: float) -> void:
 func adjust_tilt(delta_degrees: float) -> void:
     if is_zero_approx(delta_degrees):
         return
-    _tilt_degrees = clamp(_tilt_degrees + delta_degrees, 20.0, 80.0)
+    _tilt_degrees = clamp(_tilt_degrees + delta_degrees, 20.0, 90.0)
     _refit_camera()
 
 func adjust_pan(delta_world: Vector2) -> void:
@@ -561,16 +589,28 @@ func _update_hex_overlay() -> void:
     for offset in layout_corner_offsets:
         var world_offset := _layout_offset_to_world(offset)
         world_corner_offsets.append(Vector2(world_offset.x, world_offset.z))
+    
+    # Clear and rebuild hex centers
+    _hex_centers.clear()
+    
     for row in range(_height):
         for col in range(_width):
             var axial := _offset_to_axial(col, row)
             var axial_center := _axial_to_world(axial.x, axial.y)
+            
+            # Store the center for this hex WITH the terrain height
+            var center_y := _height_at_world(axial_center.x, axial_center.z)
+            var center_key := "%d,%d" % [col, row]
+            _hex_centers[center_key] = Vector3(axial_center.x, center_y, axial_center.z)
+            
             var corners: Array[Vector3] = []
             for offset in world_corner_offsets:
                 var corner_x := axial_center.x + offset.x
                 var corner_z := axial_center.z + offset.y
                 var corner_y := _height_at_world(corner_x, corner_z) + surface_offset
                 corners.append(Vector3(corner_x, corner_y, corner_z))
+            
+            # Draw hex edges
             for i in range(6):
                 var p0: Vector3 = corners[i]
                 var p1: Vector3 = corners[(i + 1) % 6]
@@ -584,6 +624,7 @@ func _update_hex_overlay() -> void:
                 colors.append_array([grid_color, grid_color, grid_color, grid_color])
                 indices.append_array([vert_index, vert_index + 1, vert_index + 2, vert_index, vert_index + 2, vert_index + 3])
                 vert_index += 4
+            
     if vertices.is_empty():
         _hex_grid_instance.mesh = null
         return
@@ -595,9 +636,6 @@ func _update_hex_overlay() -> void:
     var mesh := ArrayMesh.new()
     mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
     _hex_grid_instance.mesh = mesh
-    if _hex_grid_instance.material_override is ShaderMaterial:
-        var shader_mat: ShaderMaterial = _hex_grid_instance.material_override
-        shader_mat.set_shader_parameter("line_color", grid_color)
     var aabb := mesh.get_aabb()
     print("[HexGrid] vertices=", vertices.size(), " tris=", indices.size() / 3, " aabb=", aabb)
 
@@ -727,3 +765,52 @@ func _build_overlay_texture(values: PackedFloat32Array, width: int, height: int)
             var y2: int = idx / tex_width
             image.set_pixel(x2, y2, filler_color)
     return ImageTexture.create_from_image(image)
+
+func get_hex_center(col: int, row: int) -> Vector3:
+    var key := "%d,%d" % [col, row]
+    if _hex_centers.has(key):
+        return _hex_centers[key]
+    # Fallback: calculate on the fly if not found
+    var axial := _offset_to_axial(col, row)
+    return _axial_to_world(axial.x, axial.y)
+
+
+func world_to_hex(world_pos: Vector3) -> Vector2i:
+    # Inverse of _layout_to_world
+    var layout_x: float = 0.0
+    var layout_z: float = 0.0
+    
+    if _layout_scale_x != 0.0:
+        layout_x = world_pos.x / _layout_scale_x + _layout_offset.x
+    if _layout_scale_z != 0.0:
+        layout_z = world_pos.z / _layout_scale_z + _layout_offset.y
+        
+    var R := HEX_LAYOUT_RADIUS
+    # Inverse of _axial_center (Pointy Top)
+    # z = R * 1.5 * r  ->  r = z / (1.5 * R)
+    # x = R * sqrt(3) * (q + r/2)  ->  q = x / (R * sqrt(3)) - r/2
+    
+    var r_float: float = layout_z / (1.5 * R)
+    var q_float: float = layout_x / (SQRT3 * R) - r_float / 2.0
+    var s_float: float = -q_float - r_float
+    
+    var q := roundi(q_float)
+    var r := roundi(r_float)
+    var s := roundi(s_float)
+    
+    var q_diff := absf(q - q_float)
+    var r_diff := absf(r - r_float)
+    var s_diff := absf(s - s_float)
+    
+    if q_diff > r_diff and q_diff > s_diff:
+        q = -r - s
+    elif r_diff > s_diff:
+        r = -q - s
+    else:
+        s = -q - r
+        
+    # Convert axial (q, r) to offset (col, row)
+    # Inverse of: q = col - ((row - (row & 1)) >> 1)
+    var col := q + ((r - (r & 1)) >> 1)
+    var row := r
+    return Vector2i(col, row)

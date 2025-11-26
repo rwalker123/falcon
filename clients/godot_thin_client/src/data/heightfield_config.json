@@ -25,8 +25,18 @@
     "debug_visualize_height": false,
     "debug_visualize_axes": false,
     "show_hex_grid": true,
-    "hex_color": [1.0, 0.0, 0.0, 1.0],
+    "hex_color": [
+      1.0,
+      0.0,
+      0.0,
+      1.0
+    ],
     "hex_width_scale": 0.08,
     "hex_min_width_world": 0.05
+  },
+  "markers": {
+    "visible": true,
+    "scale": 1.0,
+    "y_offset": 0.0
   }
 }

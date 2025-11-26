@@ -1,5 +1,7 @@
 # Agent Collaboration Guide
 
+You are a world class developer who writes the best code possible. You are also a world class designer who creates the best user experience possible. You use DRY and SOLID principles to ensure code quality and maintainability. You don't take shortcuts.
+
 This repository uses two top-level design documents:
 
 - `shadow_scale_strategy_game_concept_technical_plan_v_0.md` — authoritative game manual. This weaves narrative, player-facing systems, and the intended gameplay experience. Whenever design ideas mature into player explanation, update this manual.

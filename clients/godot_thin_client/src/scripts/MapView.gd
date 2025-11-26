@@ -736,6 +736,10 @@ func _unhandled_input(event: InputEvent) -> void:
             preview.hide()
             _mark_input_handled()
         return
+    if event is InputEventKey and event.pressed and event.keycode == KEY_C:
+        _fit_map_to_view()
+        _mark_input_handled()
+        return
     if event is InputEventMouseButton:
         var mouse_event: InputEventMouseButton = event
         if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP and mouse_event.pressed:
@@ -759,13 +763,8 @@ func _unhandled_input(event: InputEvent) -> void:
             var offset := _point_to_offset(local_position)
             var col: int = offset.x
             var row: int = offset.y
-            if col < 0 or col >= grid_width or row < 0 or row >= grid_height:
-                return
-            var terrain_id: int = _terrain_id_at(col, row)
-            emit_signal("hex_selected", col, row, terrain_id)
-            _emit_tile_selection(col, row)
+            handle_hex_click(col, row, mouse_event.button_index)
             var herd_hit: Dictionary = _herd_at_point(local_position)
-            _handle_entity_selection(local_position, col, row)
             if mouse_event.double_click and not herd_hit.is_empty():
                 var shortcut_id := String(herd_hit.get("id", ""))
                 var herd_col := int(herd_hit.get("x", col))
@@ -1081,9 +1080,11 @@ func _rebuild_herd_markers(snapshot: Dictionary) -> void:
         if not active_ids.has(herd_id):
             herd_trails.erase(herd_id)
 
-func _handle_entity_selection(local_position: Vector2, col: int, row: int) -> void:
-    var unit: Dictionary = _unit_at_point(local_position)
-    if not unit.is_empty():
+func _handle_entity_selection(col: int, row: int) -> void:
+    # Check for units on this tile
+    var units_here := _units_on_tile(col, row)
+    if not units_here.is_empty():
+        var unit: Dictionary = units_here[0]
         selected_unit_id = int(unit.get("entity", -1))
         selected_herd_id = ""
         var unit_payload: Dictionary = (unit as Dictionary).duplicate(true)
@@ -1099,8 +1100,11 @@ func _handle_entity_selection(local_position: Vector2, col: int, row: int) -> vo
         if _is_heightfield_visible():
             heightfield_preview.call("update_selection", unit_payload.get("tile_info", {}), unit_payload, {})
         return
-    var herd: Dictionary = _herd_at_point(local_position)
-    if not herd.is_empty():
+
+    # Check for herds on this tile
+    var herds_here := _herds_on_tile(col, row)
+    if not herds_here.is_empty():
+        var herd: Dictionary = herds_here[0]
         selected_unit_id = -1
         selected_herd_id = String(herd.get("id", ""))
         var herd_payload: Dictionary = (herd as Dictionary).duplicate(true)
@@ -1427,7 +1431,9 @@ func _ensure_heightfield_preview() -> Control:
         if heightfield_preview.has_signal("herd_follow_requested"):
             heightfield_preview.herd_follow_requested.connect(func(id): emit_signal("herd_follow_requested", id))
         if heightfield_preview.has_signal("forage_requested"):
-            heightfield_preview.forage_requested.connect(func(x, y, key): emit_signal("forage_requested", x, y, key))
+            heightfield_preview.forage_requested.connect(func(x, y, mod): emit_signal("forage_requested", x, y, mod))
+        if heightfield_preview.has_signal("hex_clicked"):
+            heightfield_preview.hex_clicked.connect(handle_hex_click)
         
         # Connect 3D-specific control signals
         if heightfield_preview.has_signal("overlay_changed"):
@@ -1482,14 +1488,21 @@ func _push_heightfield_preview() -> void:
         overlay_values = _overlay_array(active_overlay_key) # Changed from _get_overlay_values to _overlay_array
         overlay_color = OVERLAY_COLORS.get(active_overlay_key, LOGISTICS_COLOR)
     
-    heightfield_preview.call("update_snapshot", 
+    if not heightfield_preview.has_method("update_snapshot"):
+        push_error("[MapView] HeightfieldPreview missing update_snapshot method!")
+        return
+    
+    heightfield_preview.update_snapshot(
         heightfield, 
         biome_color_buffer,
         overlay_values,
         overlay_color,
         active_overlay_key,
         grid_width, 
-        grid_height
+        grid_height,
+        units,
+        herds,
+        food_sites
     )
 
 func _toggle_heightfield_preview() -> void:
@@ -1507,6 +1520,8 @@ func _toggle_heightfield_preview() -> void:
         preview.call_deferred("_resize_to_display")
     print("[MapView] _toggle_heightfield_preview: showing window, calling push")
     _push_heightfield_preview()
+    if preview.has_method("sync_view_state"):
+        preview.sync_view_state(zoom_factor, pan_offset, last_hex_radius)
 
 func _is_heightfield_visible() -> bool:
     var vis := heightfield_preview != null and is_instance_valid(heightfield_preview) and heightfield_preview.visible
@@ -2133,3 +2148,21 @@ func _ensure_input_actions() -> void:
             key_event.keycode = keycode
             key_event.physical_keycode = keycode
             InputMap.action_add_event(action, key_event)
+
+func _fit_map_to_view() -> void:
+    zoom_factor = 1.0
+    pan_offset = Vector2.ZERO
+    queue_redraw()
+
+func handle_hex_click(col: int, row: int, button_index: int) -> void:
+    print("[MapView] handle_hex_click called: col=", col, " row=", row, " button=", button_index)
+    
+    if col < 0 or col >= grid_width or row < 0 or row >= grid_height:
+        return
+
+    if button_index == MOUSE_BUTTON_LEFT:
+        var terrain_id: int = _terrain_id_at(col, row)
+        emit_signal("hex_selected", col, row, terrain_id)
+        _emit_tile_selection(col, row)
+        
+        _handle_entity_selection(col, row)

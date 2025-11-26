@@ -336,7 +336,7 @@ func _on_forage_pressed() -> void:
 
 
 func update_overlay_legend(legend: Dictionary) -> void:
-    print("[HUD] update_overlay_legend: ", legend.keys())
+    # print("[HUD] update_overlay_legend: ", legend.keys())  # Commented out to reduce log spam
     overlay_legend = legend.duplicate(true) if legend is Dictionary else {}
     if legend_suppressed:
         _hide_legend_panel()
