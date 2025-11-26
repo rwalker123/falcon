@@ -23,15 +23,19 @@ mouse_filter = 2
 [node name="TopBar" type="HBoxContainer" parent="LayoutRoot/RootColumn"]
 size_flags_horizontal = 3
 custom_minimum_size = Vector2(0, 96)
+mouse_filter = 2
 
 [node name="CampaignBlock" type="VBoxContainer" parent="LayoutRoot/RootColumn/TopBar"]
 size_flags_horizontal = 1
+mouse_filter = 2
 
 [node name="TopSpacer" type="Control" parent="LayoutRoot/RootColumn/TopBar"]
 size_flags_horizontal = 3
+mouse_filter = 2
 
 [node name="TurnBlock" type="VBoxContainer" parent="LayoutRoot/RootColumn/TopBar"]
 size_flags_horizontal = 1
+mouse_filter = 2
 
 [node name="ContentRow" type="HBoxContainer" parent="LayoutRoot/RootColumn"]
 size_flags_horizontal = 3

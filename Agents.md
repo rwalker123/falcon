@@ -1,5 +1,7 @@
 # Agent Collaboration Guide
 
+Contributors are expected to follow DRY and SOLID principles to ensure code quality, maintainability, and a strong user experience. Avoid shortcuts and prioritize best practices in both development and design.
+
 This repository uses two top-level design documents:
 
 - `shadow_scale_strategy_game_concept_technical_plan_v_0.md` — authoritative game manual. This weaves narrative, player-facing systems, and the intended gameplay experience. Whenever design ideas mature into player explanation, update this manual.

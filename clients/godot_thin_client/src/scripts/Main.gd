@@ -538,7 +538,7 @@ func _ensure_ui_zoom_actions() -> void:
 func _hud_invoke(method: String, args: Array = []) -> Variant:
     var result: Variant = null
     if hud != null and hud.has_method(method):
-        print("[HUD->Main]", method, args)
+        # print("[HUD->Main]", method, args)  # Commented out to reduce log spam
         result = hud.callv(method, args)
     _cache_hud_state(method, args)
     if map_view != null and map_view.has_method("relay_hud_call"):

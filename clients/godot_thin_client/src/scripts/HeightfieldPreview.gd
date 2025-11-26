@@ -12,8 +12,10 @@ signal next_turn_requested(steps: int)
 signal overlay_changed(key: String)
 signal inspector_toggle_requested
 signal legend_toggle_requested
+signal hex_clicked(col: int, row: int, button_index: int)
 
 const HeightfieldLayer3D := preload("res://src/scripts/HeightfieldLayer3D.gd")
+const UnitOverlay3D := preload("res://src/scripts/UnitOverlay3D.gd")
 # Removed HudLayerScene and InspectorLayerScene preloads
 
 var _viewport: SubViewport
@@ -21,6 +23,7 @@ var _container: SubViewportContainer
 var _camera: Camera3D
 var _light: DirectionalLight3D
 var _heightfield: HeightfieldLayer3D
+var _unit_overlay: UnitOverlay3D
 # Removed _hud_layer and _inspector_layer variables
 var _tools_layer: CanvasLayer
 var _orbit_drag_active := false
@@ -35,6 +38,7 @@ const HUD_ZOOM_STEP := 0.05
 func _ready() -> void:
     # Ensure we fill the parent
     set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    mouse_filter = Control.MOUSE_FILTER_STOP
     
     var root_window := get_tree().root
     # No need to listen to root size changes, anchors handle it.
@@ -48,11 +52,14 @@ func _ready() -> void:
     _container.anchor_right = 1.0
     _container.anchor_bottom = 1.0
     _container.stretch = true
+    _container.mouse_filter = Control.MOUSE_FILTER_PASS
     add_child(_container)
     
     _viewport = SubViewport.new()
-    _viewport.own_world_3d = true
+    _viewport.own_world_3d = true  # Re-enabled - needed for independent 3D world
+    _viewport.size = Vector2i(1920, 1080)  # Set initial size explicitly
     _viewport.handle_input_locally = true
+    _viewport.physics_object_picking = false  # Disable to ensure _gui_input works
     _viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
     _container.add_child(_viewport)
     
@@ -66,6 +73,10 @@ func _ready() -> void:
     _heightfield = HeightfieldLayer3D.new()
     _viewport.add_child(_heightfield)
     _heightfield.strategic_view_requested.connect(_on_heightfield_strategic_view_requested)
+    
+    _unit_overlay = UnitOverlay3D.new()
+    _viewport.add_child(_unit_overlay)
+    _load_and_apply_overlay_config()
     
     # Removed internal HUD and Inspector instantiation
     
@@ -88,9 +99,29 @@ func _ready() -> void:
     
     # Initial resize handled by anchors
     print("[HUD->Preview] _ready complete. Mode: Control Overlay")
+    print("[HUD->Preview] update_snapshot method exists: ", has_method("update_snapshot"))
 
 func _process(delta: float) -> void:
-    pass
+    if not visible or _heightfield == null:
+        return
+        
+    var pan_vec := Vector2.ZERO
+    if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
+        pan_vec.y -= 1.0
+    if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+        pan_vec.y += 1.0
+    if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+        pan_vec.x -= 1.0
+    if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+        pan_vec.x += 1.0
+        
+    if pan_vec != Vector2.ZERO:
+        var tile_scale := _heightfield.get_tile_scale_value()
+        # Adjust speed as needed, using PAN_SENSITIVITY and delta
+        # PAN_SENSITIVITY is 0.05, which is for mouse motion (pixels). 
+        # For keyboard (continuous), we need a speed factor.
+        var speed := 20.0 * tile_scale # Arbitrary speed factor
+        _heightfield.adjust_pan(pan_vec.normalized() * speed * delta)
 
 func relay_hud_call(method_name: String, args: Array = []) -> void:
     # No internal HUD to relay to
@@ -111,7 +142,10 @@ func update_snapshot(
     overlay_color: Color,
     overlay_key: String,
     grid_width: int,
-    grid_height: int
+    grid_height: int,
+    units: Array = [],
+    herds: Array = [],
+    food_sites: Array = []
 ) -> void:
     if heightfield.is_empty():
         return
@@ -122,6 +156,14 @@ func update_snapshot(
         _heightfield.set_biome_colors(terrain_colors, grid_width, grid_height)
     var overlay_enabled := overlay_key != "" and not overlay_values.is_empty()
     _heightfield.set_overlay_values(overlay_values, grid_width, grid_height, overlay_color, overlay_enabled)
+    
+    # Create a synthetic snapshot for the overlay
+    var snapshot_subset = {
+        "units": units,
+        "herds": herds,
+        "food_modules": food_sites
+    }
+    _unit_overlay.update_markers(snapshot_subset, _heightfield)
     
     _update_active_overlay_button(overlay_key)
     var wait_frames := 2
@@ -170,6 +212,17 @@ func _input(event: InputEvent) -> void:
             return
         if event.keycode == KEY_L:
             emit_signal("legend_toggle_requested")
+            _mark_input_handled()
+            return
+        if event.keycode == KEY_T:
+            # Set camera to top-down view
+            _set_top_down_view()
+            _mark_input_handled()
+            return
+        if event.keycode == KEY_C:
+            # Fit map to window (top-down + fit)
+            if _heightfield != null:
+                _heightfield.fit_to_view()
             _mark_input_handled()
             return
         # Overlay hotkeys 1-9
@@ -264,7 +317,11 @@ func _mark_input_handled() -> void:
         viewport.set_input_as_handled()
 
 func _on_heightfield_strategic_view_requested() -> void:
-    _request_strategic_exit()
+    strategic_view_requested.emit()
+
+func sync_view_state(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float) -> void:
+    if _heightfield != null:
+        _heightfield.sync_from_2d(zoom_2d, pan_2d, hex_radius_2d)
 
 func _log_hud_panel_state(context: String) -> void:
     pass
@@ -411,3 +468,80 @@ func _add_screen_width_markers() -> void:
     zero_marker.add_child(zero_lbl)
     debug_layer.add_child(zero_marker)
 
+
+func _set_top_down_view() -> void:
+    if _heightfield == null:
+        return
+    # Set tilt to 90 degrees (straight down)
+    _heightfield.adjust_tilt(90.0 - _heightfield.get_tilt_degrees())
+    print("[HeightfieldPreview] Set to top-down view")
+
+func _load_and_apply_overlay_config() -> void:
+    var config_path = "res://src/data/heightfield_config.json"
+    if not FileAccess.file_exists(config_path):
+        return
+    var file = FileAccess.open(config_path, FileAccess.READ)
+    if file == null:
+        return
+    var text = file.get_as_text()
+    var json = JSON.parse_string(text)
+    if json is Dictionary:
+        _unit_overlay.apply_config(json)
+
+func _gui_input(event: InputEvent) -> void:
+    if event is InputEventMouseButton and event.pressed:
+        if event.button_index == MOUSE_BUTTON_LEFT or event.button_index == MOUSE_BUTTON_RIGHT:
+            _handle_click(event.position, event.button_index)
+
+func _handle_click(screen_pos: Vector2, button_index: int) -> void:
+    if _viewport == null or _heightfield == null:
+        return
+        
+    var camera := _viewport.get_camera_3d()
+    if camera == null:
+        return
+    
+    var world: World3D = _viewport.world_3d
+    if world == null:
+        world = _viewport.get_world_3d()
+        
+    var cam_world = camera.get_world_3d()
+    var hf_world = _heightfield.get_world_3d()
+    
+    if world == null and cam_world != null:
+        world = cam_world
+        
+    if world == null:
+        print("[HeightfieldPreview] No world_3d available")
+        return
+        
+    if world == null:
+        return
+        
+    # Convert screen position to local coordinates relative to the SubViewportContainer
+    # This handles the case where the viewport is stretched or offset
+    var local_pos := screen_pos
+    if _container != null:
+        local_pos = screen_pos - _container.global_position
+        
+        # Scale coordinates to match the SubViewport's internal resolution
+        var viewport_size := Vector2(_viewport.size)
+        var container_size := _container.size
+        if container_size.x > 0 and container_size.y > 0:
+            local_pos.x = local_pos.x * (viewport_size.x / container_size.x)
+            local_pos.y = local_pos.y * (viewport_size.y / container_size.y)
+        
+    var from := camera.project_ray_origin(local_pos)
+    var to := from + camera.project_ray_normal(local_pos) * 1000.0
+    
+    var space_state := world.direct_space_state
+    if space_state == null:
+        return
+        
+    var query := PhysicsRayQueryParameters3D.create(from, to)
+    var result: Dictionary = space_state.intersect_ray(query)
+    
+    if not result.is_empty():
+        var position: Vector3 = result.position
+        var hex := _heightfield.world_to_hex(position)
+        hex_clicked.emit(hex.x, hex.y, button_index)
