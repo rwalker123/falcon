@@ -49,6 +49,9 @@ signal next_turn_requested(steps: int)
 @onready var right_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack
 @onready var next_turn_button: Button = $LayoutRoot/RootColumn/BottomBar/NextTurnButton
 
+var tooltip_panel: PanelContainer
+var tooltip_label: Label
+
 const LEGEND_SWATCH_FRACTION := 0.75
 const LEGEND_MIN_ROW_HEIGHT := 20.0
 const LEGEND_ROW_PADDING := 6.0
@@ -117,6 +120,7 @@ func _ready() -> void:
     _load_ui_balance_config()
     set_ui_zoom(1.0)
     _connect_zoom_controls()
+    _setup_tooltip()
     _refresh_existing_legend_rows()
     _resize_legend_panel(_legend_list_size())
     _refresh_campaign_label()
@@ -1292,3 +1296,89 @@ func _hide_legend_panel() -> void:
     if terrain_legend_description != null:
         terrain_legend_description.visible = false
         terrain_legend_description.text = ""
+func _setup_tooltip() -> void:
+    tooltip_panel = PanelContainer.new()
+    tooltip_panel.visible = false
+    tooltip_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    tooltip_panel.z_index = 100 # Ensure on top
+    
+    var style := StyleBoxFlat.new()
+    style.bg_color = Color(0.1, 0.1, 0.1, 0.9)
+    style.border_width_left = 1
+    style.border_width_top = 1
+    style.border_width_right = 1
+    style.border_width_bottom = 1
+    style.border_color = Color(0.4, 0.4, 0.4, 0.8)
+    style.corner_radius_top_left = 4
+    style.corner_radius_top_right = 4
+    style.corner_radius_bottom_right = 4
+    style.corner_radius_bottom_left = 4
+    style.content_margin_left = 8
+    style.content_margin_top = 4
+    style.content_margin_right = 8
+    style.content_margin_bottom = 4
+    tooltip_panel.add_theme_stylebox_override("panel", style)
+    
+    tooltip_label = Label.new()
+    tooltip_label.add_theme_color_override("font_color", Color(0.9, 0.9, 0.9))
+    tooltip_panel.add_child(tooltip_label)
+    
+    add_child(tooltip_panel)
+
+func show_tooltip(info: Dictionary) -> void:
+    if tooltip_panel == null:
+        return
+        
+    if info.is_empty():
+        tooltip_panel.visible = false
+        return
+        
+    var lines: PackedStringArray = []
+    
+    # Coordinates
+    var x := int(info.get("x", -1))
+    var y := int(info.get("y", -1))
+    if x >= 0 and y >= 0:
+        lines.append("Hex: %d, %d" % [x, y])
+        
+    # Terrain
+    var terrain := String(info.get("terrain_label", ""))
+    if terrain != "":
+        lines.append("Terrain: %s" % terrain)
+        
+    # Food
+    var food := String(info.get("food_module_label", ""))
+    if food != "" and food != "None":
+        lines.append("Food: %s" % food)
+        
+    # Units
+    var unit_count := int(info.get("unit_count", 0))
+    if unit_count > 0:
+        lines.append("Units: %d" % unit_count)
+        
+    # Herds
+    var herd_count := int(info.get("herd_count", 0))
+    if herd_count > 0:
+        lines.append("Herds: %d" % herd_count)
+        
+    if lines.is_empty():
+        tooltip_panel.visible = false
+        return
+        
+    tooltip_label.text = "\n".join(lines)
+    tooltip_panel.visible = true
+    
+    # Position near mouse
+    var mouse_pos := get_viewport().get_mouse_position()
+    var viewport_size := get_viewport().get_visible_rect().size
+    var panel_size := tooltip_panel.get_size()
+    
+    var pos := mouse_pos + Vector2(16, 16)
+    
+    # Keep within bounds
+    if pos.x + panel_size.x > viewport_size.x:
+        pos.x = mouse_pos.x - panel_size.x - 16
+    if pos.y + panel_size.y > viewport_size.y:
+        pos.y = mouse_pos.y - panel_size.y - 16
+        
+    tooltip_panel.position = pos

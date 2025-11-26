@@ -13,6 +13,7 @@ signal overlay_changed(key: String)
 signal inspector_toggle_requested
 signal legend_toggle_requested
 signal hex_clicked(col: int, row: int, button_index: int)
+signal hex_hovered(col: int, row: int)
 
 const HeightfieldLayer3D := preload("res://src/scripts/HeightfieldLayer3D.gd")
 const UnitOverlay3D := preload("res://src/scripts/UnitOverlay3D.gd")
@@ -24,6 +25,7 @@ var _camera: Camera3D
 var _light: DirectionalLight3D
 var _heightfield: HeightfieldLayer3D
 var _unit_overlay: UnitOverlay3D
+var _hover_marker: MeshInstance3D
 # Removed _hud_layer and _inspector_layer variables
 var _tools_layer: CanvasLayer
 var _orbit_drag_active := false
@@ -76,6 +78,9 @@ func _ready() -> void:
     
     _unit_overlay = UnitOverlay3D.new()
     _viewport.add_child(_unit_overlay)
+    
+    _setup_hover_marker()
+    
     _load_and_apply_overlay_config()
     
     # Removed internal HUD and Inspector instantiation
@@ -270,6 +275,7 @@ func _input(event: InputEvent) -> void:
                 return
     elif event is InputEventMouseMotion:
         var motion: InputEventMouseMotion = event
+        _handle_hover(motion.position)
         if _orbit_drag_active:
             _heightfield.adjust_orbit(motion.relative.x * ORBIT_SENSITIVITY)
             _heightfield.adjust_tilt(-motion.relative.y * TILT_SENSITIVITY)
@@ -325,6 +331,22 @@ func sync_view_state(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float) -> v
 
 func _log_hud_panel_state(context: String) -> void:
     pass
+
+func _setup_hover_marker() -> void:
+    _hover_marker = MeshInstance3D.new()
+    
+    # Initialize with empty mesh, will be updated dynamically
+    _hover_marker.mesh = ArrayMesh.new()
+    
+    var material := StandardMaterial3D.new()
+    material.albedo_color = Color(0.0, 0.0, 0.0, 0.3)
+    material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    material.cull_mode = BaseMaterial3D.CULL_DISABLED
+    material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    _hover_marker.material_override = material
+    
+    _hover_marker.visible = false
+    _viewport.add_child(_hover_marker)
 
 # --- New Overlay Tools Implementation ---
 
@@ -529,3 +551,81 @@ func _handle_click(screen_pos: Vector2, button_index: int) -> void:
         var position: Vector3 = result.position
         var hex := _heightfield.world_to_hex(position)
         hex_clicked.emit(hex.x, hex.y, button_index)
+
+func _handle_hover(screen_pos: Vector2) -> void:
+    if _viewport == null or _heightfield == null:
+        return
+        
+    var camera := _viewport.get_camera_3d()
+    if camera == null:
+        return
+    
+    var world: World3D = _viewport.world_3d
+    if world == null:
+        world = _viewport.get_world_3d()
+        
+    var cam_world = camera.get_world_3d()
+    if world == null and cam_world != null:
+        world = cam_world
+        
+    if world == null:
+        return
+        
+    var from := camera.project_ray_origin(screen_pos)
+    var to := from + camera.project_ray_normal(screen_pos) * 1000.0
+    
+    var space_state := world.direct_space_state
+    if space_state == null:
+        return
+        
+    var query := PhysicsRayQueryParameters3D.create(from, to)
+    var result: Dictionary = space_state.intersect_ray(query)
+    
+    if not result.is_empty():
+        var position: Vector3 = result.position
+        var hex := _heightfield.world_to_hex(position)
+        
+        if _hover_marker != null:
+            if _heightfield.has_method("get_hex_corners"):
+                var corners: PackedVector3Array = _heightfield.get_hex_corners(hex.x, hex.y)
+                if corners.size() == 6:
+                    var center := _heightfield.get_hex_center(hex.x, hex.y)
+                    # Lift slightly above terrain to avoid z-fighting
+                    center.y += 0.5
+                    
+                    # Build mesh in local space relative to center
+                    var vertices := PackedVector3Array()
+                    vertices.append(Vector3.ZERO) # Center relative to itself
+                    
+                    for corner in corners:
+                        vertices.append(corner - center)
+                        
+                    var indices := PackedInt32Array()
+                    for i in range(6):
+                        indices.append(0)
+                        indices.append(i + 1)
+                        indices.append(((i + 1) % 6) + 1)
+                        
+                    var arrays: Array = []
+                    arrays.resize(Mesh.ARRAY_MAX)
+                    arrays[Mesh.ARRAY_VERTEX] = vertices
+                    arrays[Mesh.ARRAY_INDEX] = indices
+                    
+                    var mesh := ArrayMesh.new()
+                    mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+                    _hover_marker.mesh = mesh
+                    _hover_marker.position = center
+                    _hover_marker.scale = Vector3.ONE # Reset scale as we use world coords
+                    _hover_marker.visible = true
+            else:
+                # Fallback to simple positioning if method missing
+                var center := _heightfield.get_hex_center(hex.x, hex.y)
+                center.y += 0.5
+                _hover_marker.position = center
+                _hover_marker.visible = true
+            
+        hex_hovered.emit(hex.x, hex.y)
+    else:
+        if _hover_marker != null:
+            _hover_marker.visible = false
+        hex_hovered.emit(-1, -1)
