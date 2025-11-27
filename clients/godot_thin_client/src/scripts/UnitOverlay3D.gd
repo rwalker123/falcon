@@ -153,10 +153,7 @@ func _place_marker(grid_x: int, grid_y: int, color: Color, height_layer: Node, s
 	var final_scale = marker_scale * scale_mod
 	marker.scale = Vector3(final_scale, final_scale, final_scale)
 	
-	# Clone material to set unique color
-	if marker.material_override == null:
-		marker.material_override = _marker_material.duplicate()
-	
+	# Update color (material already duplicated in _get_marker_instance)
 	(marker.material_override as StandardMaterial3D).albedo_color = color
 
 func _get_marker_instance() -> MeshInstance3D:
@@ -168,6 +165,8 @@ func _get_marker_instance() -> MeshInstance3D:
 		var m = MeshInstance3D.new()
 		m.mesh = _marker_mesh
 		m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		# Duplicate material once when creating the marker
+		m.material_override = _marker_material.duplicate()
 		add_child(m)
 		_markers.append(m)
 		_active_marker_count += 1

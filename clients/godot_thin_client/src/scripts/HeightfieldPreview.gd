@@ -13,9 +13,10 @@ signal overlay_changed(key: String)
 signal inspector_toggle_requested
 signal legend_toggle_requested
 signal hex_clicked(col: int, row: int, button_index: int)
+signal hex_hovered(col: int, row: int)
 
-const HeightfieldLayer3D := preload("res://src/scripts/HeightfieldLayer3D.gd")
-const UnitOverlay3D := preload("res://src/scripts/UnitOverlay3D.gd")
+const HeightfieldLayer3D: GDScript = preload("res://src/scripts/HeightfieldLayer3D.gd")
+const UnitOverlay3D: GDScript = preload("res://src/scripts/UnitOverlay3D.gd")
 # Removed HudLayerScene and InspectorLayerScene preloads
 
 var _viewport: SubViewport
@@ -24,11 +25,13 @@ var _camera: Camera3D
 var _light: DirectionalLight3D
 var _heightfield: HeightfieldLayer3D
 var _unit_overlay: UnitOverlay3D
+var _hover_marker: MeshInstance3D
 # Removed _hud_layer and _inspector_layer variables
 var _tools_layer: CanvasLayer
 var _orbit_drag_active := false
 var _pan_drag_active := false
 var _last_mouse_position := Vector2.ZERO
+var _last_hovered_hex := Vector2i(-1, -1)
 const ORBIT_SENSITIVITY := 0.25
 const TILT_SENSITIVITY := 0.18
 const PAN_SENSITIVITY := 0.05
@@ -76,6 +79,9 @@ func _ready() -> void:
     
     _unit_overlay = UnitOverlay3D.new()
     _viewport.add_child(_unit_overlay)
+    
+    _setup_hover_marker()
+    
     _load_and_apply_overlay_config()
     
     # Removed internal HUD and Inspector instantiation
@@ -116,11 +122,11 @@ func _process(delta: float) -> void:
         pan_vec.x += 1.0
         
     if pan_vec != Vector2.ZERO:
-        var tile_scale := _heightfield.get_tile_scale_value()
+        var tile_scale: float = _heightfield.get_tile_scale_value()
         # Adjust speed as needed, using PAN_SENSITIVITY and delta
         # PAN_SENSITIVITY is 0.05, which is for mouse motion (pixels). 
         # For keyboard (continuous), we need a speed factor.
-        var speed := 20.0 * tile_scale # Arbitrary speed factor
+        var speed: float = 20.0 * tile_scale # Arbitrary speed factor
         _heightfield.adjust_pan(pan_vec.normalized() * speed * delta)
 
 func relay_hud_call(method_name: String, args: Array = []) -> void:
@@ -192,7 +198,7 @@ func _request_strategic_exit() -> void:
 func _nudge_zoom(delta: float) -> void:
     if _heightfield == null:
         return
-    var current := _heightfield.get_user_zoom_multiplier()
+    var current: float = _heightfield.get_user_zoom_multiplier()
     _heightfield.set_user_zoom_multiplier(current + delta)
     _update_hud_zoom_label()
 
@@ -270,13 +276,14 @@ func _input(event: InputEvent) -> void:
                 return
     elif event is InputEventMouseMotion:
         var motion: InputEventMouseMotion = event
+        _handle_hover(motion.position)
         if _orbit_drag_active:
             _heightfield.adjust_orbit(motion.relative.x * ORBIT_SENSITIVITY)
             _heightfield.adjust_tilt(-motion.relative.y * TILT_SENSITIVITY)
             _mark_input_handled()
         elif _pan_drag_active:
-            var tile_scale := _heightfield.get_tile_scale_value()
-            var pan_delta := Vector2(-motion.relative.x, motion.relative.y) * tile_scale * PAN_SENSITIVITY
+            var tile_scale: float = _heightfield.get_tile_scale_value()
+            var pan_delta: Vector2 = Vector2(-motion.relative.x, motion.relative.y) * tile_scale * PAN_SENSITIVITY
             _heightfield.adjust_pan(pan_delta)
             _mark_input_handled()
 
@@ -325,6 +332,22 @@ func sync_view_state(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float) -> v
 
 func _log_hud_panel_state(context: String) -> void:
     pass
+
+func _setup_hover_marker() -> void:
+    _hover_marker = MeshInstance3D.new()
+    
+    # Initialize with empty mesh, will be updated dynamically
+    _hover_marker.mesh = ArrayMesh.new()
+    
+    var material := StandardMaterial3D.new()
+    material.albedo_color = Color(0.0, 0.0, 0.0, 0.3)
+    material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    material.cull_mode = BaseMaterial3D.CULL_DISABLED
+    material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    _hover_marker.material_override = material
+    
+    _hover_marker.visible = false
+    _viewport.add_child(_hover_marker)
 
 # --- New Overlay Tools Implementation ---
 
@@ -493,38 +516,29 @@ func _gui_input(event: InputEvent) -> void:
         if event.button_index == MOUSE_BUTTON_LEFT or event.button_index == MOUSE_BUTTON_RIGHT:
             _handle_click(event.position, event.button_index)
 
-func _handle_click(screen_pos: Vector2, button_index: int) -> void:
+func _raycast_to_hex(screen_pos: Vector2) -> Vector2i:
     if _viewport == null or _heightfield == null:
-        return
+        return Vector2i(-1, -1)
         
     var camera := _viewport.get_camera_3d()
     if camera == null:
-        return
+        return Vector2i(-1, -1)
     
     var world: World3D = _viewport.world_3d
     if world == null:
         world = _viewport.get_world_3d()
         
-    var cam_world = camera.get_world_3d()
-    var hf_world = _heightfield.get_world_3d()
+    if world == null and camera.get_world_3d() != null:
+        world = camera.get_world_3d()
+        
+    if world == null:
+        return Vector2i(-1, -1)
     
-    if world == null and cam_world != null:
-        world = cam_world
-        
-    if world == null:
-        print("[HeightfieldPreview] No world_3d available")
-        return
-        
-    if world == null:
-        return
-        
-    # Convert screen position to local coordinates relative to the SubViewportContainer
-    # This handles the case where the viewport is stretched or offset
+    # Scale screen position to match the SubViewport's internal resolution
     var local_pos := screen_pos
     if _container != null:
         local_pos = screen_pos - _container.global_position
         
-        # Scale coordinates to match the SubViewport's internal resolution
         var viewport_size := Vector2(_viewport.size)
         var container_size := _container.size
         if container_size.x > 0 and container_size.y > 0:
@@ -536,12 +550,77 @@ func _handle_click(screen_pos: Vector2, button_index: int) -> void:
     
     var space_state := world.direct_space_state
     if space_state == null:
-        return
+        return Vector2i(-1, -1)
         
     var query := PhysicsRayQueryParameters3D.create(from, to)
     var result: Dictionary = space_state.intersect_ray(query)
     
     if not result.is_empty():
         var position: Vector3 = result.position
-        var hex := _heightfield.world_to_hex(position)
+        return _heightfield.world_to_hex(position)
+    
+    return Vector2i(-1, -1)
+
+func _handle_click(screen_pos: Vector2, button_index: int) -> void:
+    var hex := _raycast_to_hex(screen_pos)
+    if hex.x >= 0 and hex.y >= 0:
         hex_clicked.emit(hex.x, hex.y, button_index)
+
+func _handle_hover(screen_pos: Vector2) -> void:
+    var hex := _raycast_to_hex(screen_pos)
+    
+    if hex.x < 0 or hex.y < 0:
+        if _hover_marker != null:
+            _hover_marker.visible = false
+        _last_hovered_hex = Vector2i(-1, -1)
+        hex_hovered.emit(-1, -1)
+        return
+    
+    # Only rebuild mesh if we're hovering over a different hex
+    if hex != _last_hovered_hex:
+        _last_hovered_hex = hex
+        
+        if _hover_marker != null:
+            if _heightfield.has_method("get_hex_corners"):
+                var corners: PackedVector3Array = _heightfield.get_hex_corners(hex.x, hex.y)
+                if corners.size() == 6:
+                    var center: Vector3 = _heightfield.get_hex_center(hex.x, hex.y)
+                    # Lift slightly above terrain to avoid z-fighting
+                    center.y += 0.5
+                    
+                    # Build mesh in local space relative to center
+                    var vertices := PackedVector3Array()
+                    vertices.append(Vector3.ZERO) # Center relative to itself
+                    
+                    for corner in corners:
+                        vertices.append(corner - center)
+                        
+                    var indices := PackedInt32Array()
+                    for i in range(6):
+                        indices.append(0)
+                        indices.append(i + 1)
+                        indices.append(((i + 1) % 6) + 1)
+                        
+                    var arrays: Array = []
+                    arrays.resize(Mesh.ARRAY_MAX)
+                    arrays[Mesh.ARRAY_VERTEX] = vertices
+                    arrays[Mesh.ARRAY_INDEX] = indices
+                    
+                    var mesh := ArrayMesh.new()
+                    mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+                    _hover_marker.mesh = mesh
+                    _hover_marker.position = center
+                    _hover_marker.scale = Vector3.ONE # Reset scale as we use world coords
+                    _hover_marker.visible = true
+            else:
+                # Fallback to simple positioning if method missing
+                var center: Vector3 = _heightfield.get_hex_center(hex.x, hex.y)
+                center.y += 0.5
+                _hover_marker.position = center
+                _hover_marker.visible = true
+        
+        hex_hovered.emit(hex.x, hex.y)
+    else:
+        # Keep marker visible while the cursor stays on the same hex
+        if _hover_marker != null and _hover_marker.visible:
+            hex_hovered.emit(hex.x, hex.y)

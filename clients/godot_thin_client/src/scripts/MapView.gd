@@ -7,7 +7,8 @@ signal overlay_legend_changed(legend: Dictionary)
 signal unit_selected(unit: Dictionary)
 signal herd_selected(herd: Dictionary)
 signal herd_follow_shortcut(herd_id: String)
-signal herd_scout_shortcut(herd_id: String, x: int, y: int)
+signal herd_scout_shortcut(herd_id: String, col: int, row: int)
+signal tile_hovered(info: Dictionary)
 signal selection_cleared()
 signal next_turn_requested(steps: int)
 signal unit_scout_requested(x: int, y: int, band_entity_bits: int)
@@ -1442,6 +1443,8 @@ func _ensure_heightfield_preview() -> Control:
             heightfield_preview.inspector_toggle_requested.connect(_on_heightfield_inspector_toggle)
         if heightfield_preview.has_signal("legend_toggle_requested"):
             heightfield_preview.legend_toggle_requested.connect(_on_heightfield_legend_toggle)
+        if heightfield_preview.has_signal("hex_hovered"):
+            heightfield_preview.hex_hovered.connect(_on_heightfield_hex_hovered)
 
         var main_node := get_tree().root.get_node_or_null("Main")
         if main_node != null and heightfield_preview.has_method("apply_hud_state") and main_node.has_method("export_hud_state"):
@@ -1469,6 +1472,13 @@ func _on_heightfield_legend_toggle() -> void:
     var main_node := get_tree().root.get_node_or_null("Main")
     if main_node != null and main_node.has_method("_on_toggle_legend"):
         main_node.call("_on_toggle_legend")
+
+func _on_heightfield_hex_hovered(col: int, row: int) -> void:
+    if col < 0 or row < 0:
+        emit_signal("tile_hovered", {})
+        return
+    var info := _tile_info_at(col, row)
+    emit_signal("tile_hovered", info)
 
 func _push_heightfield_preview() -> void:
     if heightfield_preview == null:
@@ -2155,14 +2165,15 @@ func _fit_map_to_view() -> void:
     queue_redraw()
 
 func handle_hex_click(col: int, row: int, button_index: int) -> void:
-    print("[MapView] handle_hex_click called: col=", col, " row=", row, " button=", button_index)
+    # Only handle left mouse button clicks. Right-clicks and other buttons are intentionally ignored.
+    if button_index != MOUSE_BUTTON_LEFT:
+        return
     
     if col < 0 or col >= grid_width or row < 0 or row >= grid_height:
         return
 
-    if button_index == MOUSE_BUTTON_LEFT:
-        var terrain_id: int = _terrain_id_at(col, row)
-        emit_signal("hex_selected", col, row, terrain_id)
-        _emit_tile_selection(col, row)
-        
-        _handle_entity_selection(col, row)
+    var terrain_id: int = _terrain_id_at(col, row)
+    emit_signal("hex_selected", col, row, terrain_id)
+    _emit_tile_selection(col, row)
+    
+    _handle_entity_selection(col, row)

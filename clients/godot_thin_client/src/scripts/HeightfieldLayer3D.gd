@@ -781,6 +781,29 @@ func get_hex_center(col: int, row: int) -> Vector3:
     var world_pos := _axial_to_world(axial.x, axial.y)
     return Vector3(world_pos.x, _height_at_world(world_pos.x, world_pos.z), world_pos.z)
 
+func get_hex_corners(col: int, row: int) -> PackedVector3Array:
+    var corners := PackedVector3Array()
+    var axial := _offset_to_axial(col, row)
+    var center := _axial_to_world(axial.x, axial.y)
+    
+    var layout_corners: Array[Vector2] = []
+    for i in range(6):
+        var angle := deg_to_rad(60.0 * float(i) + 30.0)
+        var offset := Vector2(cos(angle), sin(angle)) * HEX_LAYOUT_RADIUS
+        layout_corners.append(offset)
+        
+    var base_scale: float = min(_layout_scale_x, _layout_scale_z)
+    var line_width: float = max(base_scale * _hex_width_scale, _hex_min_width)
+    var surface_offset: float = max(line_width * 0.35, 0.1)
+    
+    for offset in layout_corners:
+        var world_offset := _layout_offset_to_world(offset)
+        var corner_x := center.x + world_offset.x
+        var corner_z := center.z + world_offset.z
+        var corner_y := _height_at_world(corner_x, corner_z) + surface_offset
+        corners.append(Vector3(corner_x, corner_y, corner_z))
+        
+    return corners
 
 func world_to_hex(world_pos: Vector3) -> Vector2i:
     # Inverse of _layout_to_world

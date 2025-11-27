@@ -145,6 +145,9 @@ func _ready() -> void:
                 map_view.connect("tile_selected", Callable(self, "_on_map_tile_selected"))
             if hud != null and hud.has_method("notify_hex_selected") and not map_view.is_connected("tile_selected", Callable(hud, "notify_hex_selected")):
                 map_view.connect("tile_selected", Callable(hud, "notify_hex_selected"))
+        if map_view.has_signal("tile_hovered") and hud != null and hud.has_method("show_tooltip"):
+            if not map_view.is_connected("tile_hovered", Callable(hud, "show_tooltip")):
+                map_view.connect("tile_hovered", Callable(hud, "show_tooltip"))
     if map_view != null and map_view.has_signal("overlay_legend_changed") and hud != null and hud.has_method("update_overlay_legend"):
         map_view.connect("overlay_legend_changed", Callable(self, "_on_overlay_legend_changed"))
         if map_view.has_method("refresh_overlay_legend"):

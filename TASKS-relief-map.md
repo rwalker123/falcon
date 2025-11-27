@@ -33,8 +33,8 @@ Transform the Heightfield preview into a full gameplay viewport with in-scene HU
      - [x] Fix clipping by disabling `embed_subwindows` <!-- id: 8 -->
    - [x] Fix 2D Window width on ultrawide screens <!-- id: 9 -->
    - [x] Add Inspector HUD to 3D view <!-- id: 10 -->
-   - [ ] Add HUD buttons/hotkeys for switching overlays, issuing commands, and opening inspectors directly from the 3D view.
-   - [ ] Implement tooltip/highlight feedback when hovering units/hexes with raycasts from the relief camera.
+   - [x] Add HUD buttons/hotkeys for switching overlays, issuing commands, and opening inspectors directly from the 3D view.
+   - [x] Implement tooltip/highlight feedback when hovering units/hexes with raycasts from the relief camera.
    - [ ] Polish transitions between relief and strategic views (animations, saved camera states, etc.).
 
 ## Dependencies / Notes
