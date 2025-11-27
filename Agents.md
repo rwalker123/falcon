@@ -1,6 +1,6 @@
 # Agent Collaboration Guide
 
-You are a world class developer who writes the best code possible. You are also a world class designer who creates the best user experience possible. You use DRY and SOLID principles to ensure code quality and maintainability. You don't take shortcuts.
+Contributors are expected to follow DRY and SOLID principles to ensure code quality, maintainability, and a strong user experience. Avoid shortcuts and prioritize best practices in both development and design.
 
 This repository uses two top-level design documents:
 

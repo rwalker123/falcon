@@ -172,6 +172,7 @@ func fit_camera(camera: Camera3D, tilt_degrees: float = -1.0) -> void:
         
     camera.look_at_from_position(position, look_target, up_vector)
     camera.near = 0.1
+    camera.far = distance + highest * 2.0 + 100.0
 
 func sync_from_2d(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float) -> void:
     _user_zoom_multiplier = 1.0 / max(zoom_2d, 0.001)
@@ -455,6 +456,12 @@ func set_user_zoom_multiplier(value: float) -> void:
 
 func get_user_zoom_multiplier() -> float:
     return _user_zoom_multiplier
+
+func get_hex_layout_scale() -> Vector2:
+    return Vector2(_layout_scale_x, _layout_scale_z)
+
+func get_tilt_degrees() -> float:
+    return _tilt_degrees
 
 func get_zoom_bounds() -> Vector2:
     return Vector2(_min_zoom_multiplier, _max_zoom_multiplier)
@@ -774,7 +781,8 @@ func get_hex_center(col: int, row: int) -> Vector3:
         return _hex_centers[key]
     # Fallback: calculate on the fly if not found
     var axial := _offset_to_axial(col, row)
-    return _axial_to_world(axial.x, axial.y)
+    var world_pos := _axial_to_world(axial.x, axial.y)
+    return Vector3(world_pos.x, _height_at_world(world_pos.x, world_pos.z), world_pos.z)
 
 func get_hex_corners(col: int, row: int) -> PackedVector3Array:
     var corners := PackedVector3Array()

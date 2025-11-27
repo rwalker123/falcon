@@ -62,7 +62,7 @@ func _ready() -> void:
     _viewport.own_world_3d = true  # Re-enabled - needed for independent 3D world
     _viewport.size = Vector2i(1920, 1080)  # Set initial size explicitly
     _viewport.handle_input_locally = true
-    _viewport.physics_object_picking = false # Disable to ensure _gui_input works
+    _viewport.physics_object_picking = false  # Disable to ensure _gui_input works
     _viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
     _container.add_child(_viewport)
     
@@ -496,7 +496,7 @@ func _set_top_down_view() -> void:
     if _heightfield == null:
         return
     # Set tilt to 90 degrees (straight down)
-    _heightfield.adjust_tilt(90.0 - _heightfield._tilt_degrees)
+    _heightfield.adjust_tilt(90.0 - _heightfield.get_tilt_degrees())
     print("[HeightfieldPreview] Set to top-down view")
 
 func _load_and_apply_overlay_config() -> void:
@@ -539,6 +539,22 @@ func _raycast_to_hex(screen_pos: Vector2) -> Vector2i:
     if _container != null:
         local_pos = screen_pos - _container.global_position
         
+        var viewport_size := Vector2(_viewport.size)
+        var container_size := _container.size
+        if container_size.x > 0 and container_size.y > 0:
+            local_pos.x = local_pos.x * (viewport_size.x / container_size.x)
+            local_pos.y = local_pos.y * (viewport_size.y / container_size.y)
+        
+    if world == null:
+        return
+        
+    # Convert screen position to local coordinates relative to the SubViewportContainer
+    # This handles the case where the viewport is stretched or offset
+    var local_pos := screen_pos
+    if _container != null:
+        local_pos = screen_pos - _container.global_position
+        
+        # Scale coordinates to match the SubViewport's internal resolution
         var viewport_size := Vector2(_viewport.size)
         var container_size := _container.size
         if container_size.x > 0 and container_size.y > 0:

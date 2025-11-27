@@ -177,11 +177,3 @@ func _hide_all_markers() -> void:
 		m.visible = false
 	_active_marker_count = 0
 
-func _add_debug_marker(height_layer: Node) -> void:
-	# Place a marker at 10,10 to verify visibility
-	var x = 10
-	var y = 10
-	var color = Color(1.0, 0.0, 1.0) # Magenta for high visibility
-	
-	print("[UnitOverlay3D] Adding manual debug marker at %d,%d" % [x, y])
-	_place_marker(x, y, color, height_layer, 2.0)
