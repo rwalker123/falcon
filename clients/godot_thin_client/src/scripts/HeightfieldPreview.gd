@@ -14,6 +14,7 @@ signal inspector_toggle_requested
 signal legend_toggle_requested
 signal hex_clicked(col: int, row: int, button_index: int)
 signal hex_hovered(col: int, row: int)
+signal view_state_changed(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float)
 
 const HeightfieldLayer3D: GDScript = preload("res://src/scripts/HeightfieldLayer3D.gd")
 const UnitOverlay3D: GDScript = preload("res://src/scripts/UnitOverlay3D.gd")
@@ -26,12 +27,15 @@ var _light: DirectionalLight3D
 var _heightfield: HeightfieldLayer3D
 var _unit_overlay: UnitOverlay3D
 var _hover_marker: MeshInstance3D
+var _saved_camera_state: Dictionary = {}
+var _last_grid_size: Vector2i = Vector2i.ZERO
 # Removed _hud_layer and _inspector_layer variables
 var _tools_layer: CanvasLayer
 var _orbit_drag_active := false
 var _pan_drag_active := false
 var _last_mouse_position := Vector2.ZERO
 var _last_hovered_hex := Vector2i(-1, -1)
+var _fade_tween: Tween
 const ORBIT_SENSITIVITY := 0.25
 const TILT_SENSITIVITY := 0.18
 const PAN_SENSITIVITY := 0.05
@@ -60,7 +64,7 @@ func _ready() -> void:
     
     _viewport = SubViewport.new()
     _viewport.own_world_3d = true  # Re-enabled - needed for independent 3D world
-    _viewport.size = Vector2i(1920, 1080)  # Set initial size explicitly
+    _viewport.size = Vector2i(size.x, size.y)
     _viewport.handle_input_locally = true
     _viewport.physics_object_picking = false  # Disable to ensure _gui_input works
     _viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
@@ -76,6 +80,7 @@ func _ready() -> void:
     _heightfield = HeightfieldLayer3D.new()
     _viewport.add_child(_heightfield)
     _heightfield.strategic_view_requested.connect(_on_heightfield_strategic_view_requested)
+    _heightfield.zoom_multiplier_changed.connect(func(_mult): _emit_view_state())
     
     _unit_overlay = UnitOverlay3D.new()
     _viewport.add_child(_unit_overlay)
@@ -103,6 +108,7 @@ func _ready() -> void:
     _light.rotation_degrees = Vector3(-60.0, 35.0, 0.0)
     _viewport.add_child(_light)
     
+    _resize_viewport()
     # Initial resize handled by anchors
     print("[HUD->Preview] _ready complete. Mode: Control Overlay")
     print("[HUD->Preview] update_snapshot method exists: ", has_method("update_snapshot"))
@@ -128,6 +134,7 @@ func _process(delta: float) -> void:
         # For keyboard (continuous), we need a speed factor.
         var speed: float = 20.0 * tile_scale # Arbitrary speed factor
         _heightfield.adjust_pan(pan_vec.normalized() * speed * delta)
+        _emit_view_state()
 
 func relay_hud_call(method_name: String, args: Array = []) -> void:
     # No internal HUD to relay to
@@ -155,8 +162,20 @@ func update_snapshot(
 ) -> void:
     if heightfield.is_empty():
         return
+    var prior_camera_state: Dictionary = {}
+    if _heightfield != null:
+        prior_camera_state = _heightfield.capture_camera_state()
+    var incoming_size := Vector2i(grid_width, grid_height)
+    var dimensions_changed := incoming_size != _last_grid_size
     _heightfield.set_heightfield_data(heightfield)
-    _heightfield.reset_camera_controls()
+    if dimensions_changed:
+        _heightfield.reset_camera_controls()
+        _saved_camera_state = {}
+        _last_grid_size = incoming_size
+    else:
+        var state_to_restore := _saved_camera_state if not _saved_camera_state.is_empty() else prior_camera_state
+        if not state_to_restore.is_empty():
+            _heightfield.apply_camera_state(state_to_restore)
     # _update_hud_zoom_label() - Main HUD handles this
     if not terrain_colors.is_empty():
         _heightfield.set_biome_colors(terrain_colors, grid_width, grid_height)
@@ -179,21 +198,29 @@ func update_snapshot(
         wait_frames -= 1
     _heightfield.fit_camera(_camera)
     _log_camera_state(_camera)
+    _emit_view_state()
     # _log_hud_panel_state("update_snapshot")
 
 func _on_view_resized() -> void:
-    if _viewport != null:
-        # _viewport.size handled by stretch=true
-        pass
+    _resize_viewport()
+
+func _resize_viewport() -> void:
+    if _viewport == null or _container == null:
+        return
+    var target_size: Vector2i = Vector2i(_container.size)
+    if target_size.x <= 0 or target_size.y <= 0:
+        return
+    if _viewport.size != target_size:
+        _viewport.size = target_size
+        print("[HeightfieldPreview] resized viewport to ", _viewport.size, " container=", _container.size)
 
 func _on_close_requested() -> void:
-    hide()
+    hide_preview()
 
 func _request_strategic_exit() -> void:
     print("[HUD->Preview] _request_strategic_exit called")
-    hide()
+    hide_preview()
     emit_signal("strategic_view_requested")
-    hide()
 
 func _nudge_zoom(delta: float) -> void:
     if _heightfield == null:
@@ -258,11 +285,13 @@ func _input(event: InputEvent) -> void:
                 if mouse_event.pressed:
                     _nudge_zoom(-SCROLL_ZOOM_STEP)
                     _mark_input_handled()
+                    _emit_view_state()
                 return
             MOUSE_BUTTON_WHEEL_DOWN:
                 if mouse_event.pressed:
                     _nudge_zoom(SCROLL_ZOOM_STEP)
                     _mark_input_handled()
+                    _emit_view_state()
                 return
             MOUSE_BUTTON_RIGHT:
                 _orbit_drag_active = mouse_event.pressed
@@ -286,6 +315,7 @@ func _input(event: InputEvent) -> void:
             var pan_delta: Vector2 = Vector2(-motion.relative.x, motion.relative.y) * tile_scale * PAN_SENSITIVITY
             _heightfield.adjust_pan(pan_delta)
             _mark_input_handled()
+            _emit_view_state()
 
 var _camera_logged := false
 func _log_camera_state(camera: Camera3D) -> void:
@@ -327,8 +357,17 @@ func _on_heightfield_strategic_view_requested() -> void:
     strategic_view_requested.emit()
 
 func sync_view_state(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float) -> void:
-    if _heightfield != null:
+    restore_or_sync_view_state(zoom_2d, pan_2d, hex_radius_2d)
+
+func restore_or_sync_view_state(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float) -> void:
+    if _heightfield == null:
+        return
+    if _saved_camera_state.is_empty():
         _heightfield.sync_from_2d(zoom_2d, pan_2d, hex_radius_2d)
+    else:
+        _heightfield.apply_camera_state(_saved_camera_state)
+    if _camera != null:
+        _heightfield.fit_camera(_camera)
 
 func _log_hud_panel_state(context: String) -> void:
     pass
@@ -570,8 +609,7 @@ func _handle_hover(screen_pos: Vector2) -> void:
     var hex := _raycast_to_hex(screen_pos)
     
     if hex.x < 0 or hex.y < 0:
-        if _hover_marker != null:
-            _hover_marker.visible = false
+        _clear_hover_marker()
         _last_hovered_hex = Vector2i(-1, -1)
         hex_hovered.emit(-1, -1)
         return
@@ -624,3 +662,47 @@ func _handle_hover(screen_pos: Vector2) -> void:
         # Keep marker visible while the cursor stays on the same hex
         if _hover_marker != null and _hover_marker.visible:
             hex_hovered.emit(hex.x, hex.y)
+
+func _clear_hover_marker() -> void:
+    if _hover_marker != null:
+        _hover_marker.visible = false
+
+func _capture_camera_state() -> void:
+    if _heightfield == null:
+        return
+    _saved_camera_state = _heightfield.capture_camera_state()
+
+func _animate_visibility(target_visible: bool) -> void:
+    if _fade_tween != null:
+        _fade_tween.kill()
+    if target_visible:
+        modulate.a = 0.0
+        show()
+    var target_alpha := 1.0 if target_visible else 0.0
+    _fade_tween = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+    _fade_tween.tween_property(self, "modulate:a", target_alpha, 0.18)
+    if not target_visible:
+        _fade_tween.tween_callback(func():
+            hide()
+            modulate.a = 1.0
+        )
+
+func show_preview() -> void:
+    _animate_visibility(true)
+
+func hide_preview() -> void:
+    _capture_camera_state()
+    _emit_view_state()
+    _clear_hover_marker()
+    hex_hovered.emit(-1, -1)
+    _animate_visibility(false)
+
+func _emit_view_state() -> void:
+    if _heightfield == null:
+        return
+    if not has_signal("view_state_changed"):
+        return
+    if _heightfield.has_method("export_to_2d_state"):
+        var state: Dictionary = _heightfield.export_to_2d_state()
+        if state.has("zoom_2d") and state.has("pan_2d") and state.has("hex_radius_2d"):
+            view_state_changed.emit(state["zoom_2d"], state["pan_2d"], state["hex_radius_2d"])
