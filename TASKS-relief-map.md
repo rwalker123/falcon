@@ -21,9 +21,9 @@ Transform the Heightfield preview into a full gameplay viewport with in-scene HU
    - [ ] Keep the minimap camera bounds aligned with the current map extents & overlays.
 
 4. **Overlay & Unit Markers**
-   - [ ] Introduce a `UnitOverlay3D` (or similar) that places mesh/billboard markers at hex centers using `_height_at_world` to rest on the terrain.
-   - [ ] Sync colors/icons with 2D overlay legend (e.g., logistic flows, cultural highlights) and keep shader uniforms consistent.
-   - [ ] Provide config toggles in `heightfield_config.json` for marker visibility, scale, and shading.
+   - [x] Introduce a `UnitOverlay3D` (or similar) that places mesh/billboard markers at hex centers using `_height_at_world` to rest on the terrain.
+   - [x] Sync colors/icons with 2D overlay legend (e.g., logistic flows, cultural highlights) and keep shader uniforms consistent.
+   - [x] Provide config toggles in `heightfield_config.json` for marker visibility, scale, and shading.
 
 5. **Interaction Refinements**
    - [x] Debug HUD visibility in 3D view <!-- id: 4 -->

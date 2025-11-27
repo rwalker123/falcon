@@ -5,6 +5,7 @@ class_name UnitOverlay3D
 var marker_scale: float = 1.0
 var marker_y_offset: float = 2.0
 var visible_markers: bool = true
+var marker_shaded: bool = false
 
 # Resources
 var _marker_mesh: Mesh
@@ -93,6 +94,17 @@ func apply_config(config: Dictionary) -> void:
 			marker_scale = float(m_config["scale"])
 		if m_config.has("y_offset"):
 			marker_y_offset = float(m_config["y_offset"])
+		if m_config.has("shaded"):
+			_set_shading_mode(bool(m_config["shaded"]))
+
+func _set_shading_mode(enabled: bool) -> void:
+	marker_shaded = enabled
+	var mode := BaseMaterial3D.SHADING_MODE_PER_PIXEL if enabled else BaseMaterial3D.SHADING_MODE_UNSHADED
+	if _marker_material != null:
+		_marker_material.shading_mode = mode
+	for m in _markers:
+		if m.material_override is StandardMaterial3D:
+			(m.material_override as StandardMaterial3D).shading_mode = mode
 
 func _add_unit_marker(unit: Dictionary, height_layer: Node) -> void:
 	var pos_arr = unit.get("pos", [])
@@ -176,4 +188,3 @@ func _hide_all_markers() -> void:
 	for m in _markers:
 		m.visible = false
 	_active_marker_count = 0
-
