@@ -16,9 +16,9 @@ Transform the Heightfield preview into a full gameplay viewport with in-scene HU
    - [x] Expose a preview HUD API so existing `Hud.gd` / `Inspector.gd` logic can render in the 3D overlay without duplication.
 
 3. **Minimap Integration**
-   - [ ] Add a secondary top-down Viewport/Cam that renders the relief mesh to a `ViewportTexture` for the minimap panel.
-   - [ ] Support click/drag on the minimap to pan the main relief camera, matching MapView behavior.
-   - [ ] Keep the minimap camera bounds aligned with the current map extents & overlays.
+   - [x] Add a secondary top-down Viewport/Cam that renders the relief mesh to a `ViewportTexture` for the minimap panel.
+   - [x] Support click/drag on the minimap to pan the main relief camera, matching MapView behavior.
+   - [x] Keep the minimap camera bounds aligned with the current map extents & overlays.
 
 4. **Overlay & Unit Markers**
    - [x] Introduce a `UnitOverlay3D` (or similar) that places mesh/billboard markers at hex centers using `_height_at_world` to rest on the terrain.
