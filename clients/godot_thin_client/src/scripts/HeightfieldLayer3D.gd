@@ -56,6 +56,9 @@ var _orbit_azimuth_radians: float = 0.0
 var _pan_offset_world: Vector2 = Vector2.ZERO
 var _tilt_degrees: float = 55.0
 var _tilt_degrees_default: float = 55.0
+var _fit_logged_once: bool = false
+var _last_hex_radius_2d: float = 1.0
+var _last_zoom_2d_at_sync: float = 1.0
 
 func _ready() -> void:
     tile_scale = max(tile_scale, 0.1)
@@ -88,11 +91,15 @@ func set_heightfield_data(data: Dictionary) -> void:
     print("[HeightfieldLayer3D] set_heightfield_data called. Keys: ", data.keys())
     if data.is_empty():
         return
+    var preserved_state: Dictionary = {}
+    if _last_camera != null:
+        preserved_state = capture_camera_state()
     var width: int = int(data.get("width", 0))
     var height: int = int(data.get("height", 0))
     if width <= 0 or height <= 0:
         _clear_mesh()
         return
+    var dimensions_changed := width != _width or height != _height
     var samples: PackedFloat32Array = PackedFloat32Array(data.get("samples", PackedFloat32Array()))
     if samples.is_empty():
         _clear_mesh()
@@ -103,9 +110,17 @@ func set_heightfield_data(data: Dictionary) -> void:
     _width = width
     _height = height
     _invalidate_layout_metrics()
-    _reset_camera_state()
+    if dimensions_changed:
+        _reset_camera_state()
+        _fit_logged_once = false
+    else:
+        _strategic_request_emitted = false
+        if not preserved_state.is_empty():
+            apply_camera_state(preserved_state)
     _rebuild_chunks()
     _update_hex_overlay()
+    if _last_camera != null:
+        fit_camera(_last_camera)
 
 func set_biome_colors(colors: PackedColorArray, width: int, height: int) -> void:
     if _material == null:
@@ -152,31 +167,53 @@ func fit_camera(camera: Camera3D, tilt_degrees: float = -1.0) -> void:
     if tilt_degrees >= 0.0:
         _tilt_degrees = clamp(tilt_degrees, 20.0, 90.0)
         _tilt_degrees_default = _tilt_degrees
-    var dims := _map_dimensions_world()
+    _apply_camera_transform(camera)
+
+func _apply_camera_transform(camera: Camera3D) -> void:
+    var dims: Vector2 = _map_dimensions_world()
     var base_center := Vector3(dims.x * 0.5, 0.0, dims.y * 0.5)
     var center := base_center + Vector3(_pan_offset_world.x, 0.0, _pan_offset_world.y)
-    var radius: float = max(dims.x, dims.y)
+    var vp_size: Vector2 = Vector2.ONE
+    var viewport := camera.get_viewport()
+    if viewport != null:
+        vp_size = viewport.get_visible_rect().size
+    var aspect: float = vp_size.x / max(vp_size.y, 0.001)
     var highest: float = max(_max_height_world, _current_height_exaggeration * 0.25)
-    var distance: float = (radius * _current_camera_distance_ratio + highest + 30.0) * _user_zoom_multiplier
+    var vfov_rad: float = deg_to_rad(clampf(camera.fov, 1.0, 175.0))
+    var hfov_rad: float = 2.0 * atan(aspect * tan(vfov_rad * 0.5))
+    var half_width: float = max(dims.x * 0.5, 0.1)
+    var half_height: float = max(dims.y * 0.5, 0.1)
+    var dist_w: float = half_width / max(tan(hfov_rad * 0.5), 0.001)
+    var dist_h: float = half_height / max(tan(vfov_rad * 0.5), 0.001)
+    # Prioritize filling the width even if height clips (user can scroll vertically); longer side may run offscreen.
+    var base_distance: float = dist_w
+    var margin: float = highest + 5.0
+    var zoom: float = max(_user_zoom_multiplier, 1.0)
+    var distance: float = (base_distance * _current_camera_distance_ratio + margin) * zoom
     var tilt_radians: float = deg_to_rad(clampf(_tilt_degrees, 15.0, 90.0))
     var offset := Vector3(0.0, distance * sin(tilt_radians), distance * cos(tilt_radians))
     var orbit_basis := Basis(Vector3.UP, _orbit_azimuth_radians)
     offset = orbit_basis * offset
     var position := center + offset
     var look_target := center + Vector3(0.0, highest * 0.4, 0.0)
-    
     var up_vector := Vector3.UP
     if abs(_tilt_degrees - 90.0) < 0.1:
-        # When looking straight down, UP is degenerate. Use -Z (North) as up.
         up_vector = Vector3(0, 0, -1)
-        
     camera.look_at_from_position(position, look_target, up_vector)
     camera.near = 0.1
     camera.far = distance + highest * 2.0 + 100.0
+    if not _fit_logged_once:
+        _fit_logged_once = true
+        print("[HeightfieldLayer3D fit] vp_size=", vp_size, " aspect=", aspect, " vfov_deg=", camera.fov, " hfov_rad=", hfov_rad,
+            " dims=", dims, " half_width=", half_width, " half_height=", half_height,
+            " dist_w=", dist_w, " dist_h=", dist_h, " base_distance=", base_distance, " margin=", margin, " zoom=", zoom, " final_distance=", distance,
+            " tilt_deg=", _tilt_degrees, " camera_pos=", position, " center=", center)
 
 func sync_from_2d(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float) -> void:
     _user_zoom_multiplier = 1.0 / max(zoom_2d, 0.001)
-    var scale_ratio = tile_scale / max(hex_radius_2d, 1.0)
+    _last_hex_radius_2d = max(hex_radius_2d, 0.001)
+    _last_zoom_2d_at_sync = max(zoom_2d, 0.001)
+    var scale_ratio: float = tile_scale / _last_hex_radius_2d
     _pan_offset_world = -pan_2d * scale_ratio
     _tilt_degrees = 90.0
     _orbit_azimuth_radians = 0.0
@@ -231,7 +268,6 @@ func _rebuild_chunks() -> void:
             instance.transform = Transform3D(Basis(), Vector3(start_x * tile_scale, 0.0, start_y * tile_scale))
             instance.create_trimesh_collision()
             _mesh_root.add_child(instance)
-            print("[HeightfieldLayer3D] Added chunk mesh at ", instance.transform.origin, " with ", mesh.get_surface_count(), " surfaces")
     if _material != null:
         _material.set_shader_parameter("overlay_mix", overlay_strength)
 
@@ -367,10 +403,6 @@ func _debug_log_chunk(start_x: int, start_y: int, local_w: int, local_h: int) ->
     var world_max_x := (start_x + local_w) * tile_scale
     var world_min_z := start_y * tile_scale
     var world_max_z := (start_y + local_h) * tile_scale
-    print("[HeightfieldChunk] origin=(%d,%d) size=%dx%d worldX=[%.1f, %.1f] worldZ=[%.1f, %.1f] minY=%.2f maxY=%.2f avgY=%.2f row0=%s" % [
-        start_x, start_y, local_w, local_h, world_min_x, world_max_x, world_min_z, world_max_z,
-        min_h, max_h, avg_h, ", ".join(samples)
-    ])
 
 func _update_shader_debug_flags() -> void:
     if _material == null:
@@ -472,6 +504,44 @@ func get_zoom_threshold() -> float:
 func get_tile_scale_value() -> float:
     return tile_scale
 
+func capture_camera_state() -> Dictionary:
+    return {
+        "orbit": _orbit_azimuth_radians,
+        "pan": _pan_offset_world,
+        "tilt": _tilt_degrees,
+        "zoom": _user_zoom_multiplier,
+        "hex_radius_2d": _last_hex_radius_2d
+    }
+
+func apply_camera_state(state: Dictionary) -> void:
+    if state.is_empty():
+        return
+    if state.has("orbit"):
+        _orbit_azimuth_radians = float(state["orbit"])
+    if state.has("pan") and state["pan"] is Vector2:
+        _pan_offset_world = state["pan"]
+    if state.has("tilt"):
+        _tilt_degrees = clamp(float(state["tilt"]), 20.0, 90.0)
+    if state.has("zoom"):
+        _user_zoom_multiplier = clamp(float(state["zoom"]), _min_zoom_multiplier, _max_zoom_multiplier)
+    if state.has("hex_radius_2d"):
+        _last_hex_radius_2d = max(float(state["hex_radius_2d"]), 0.001)
+    _refit_camera()
+
+func export_to_2d_state() -> Dictionary:
+    var zoom_2d: float = 1.0 / max(_user_zoom_multiplier, 0.001)
+    var base_hex_radius: float = _last_hex_radius_2d
+    if _last_zoom_2d_at_sync > 0.0:
+        base_hex_radius = _last_hex_radius_2d / _last_zoom_2d_at_sync
+    var hex_radius_2d: float = base_hex_radius * zoom_2d
+    var scale_ratio: float = tile_scale / max(hex_radius_2d, 0.001)
+    var pan_2d: Vector2 = -_pan_offset_world / max(scale_ratio, 0.0001)
+    return {
+        "zoom_2d": zoom_2d,
+        "pan_2d": pan_2d,
+        "hex_radius_2d": hex_radius_2d
+    }
+
 func adjust_orbit(delta_degrees: float) -> void:
     if is_zero_approx(delta_degrees):
         return
@@ -553,9 +623,6 @@ func _debug_dump_vertices(mesh: ArrayMesh, start_x: int, start_y: int) -> void:
     for i in range(max_print):
         var v: Vector3 = vertices[i]
         segments.append("(%.2f, %.2f, %.2f)" % [v.x, v.y, v.z])
-    print("[HeightfieldVertices] chunk=(%d,%d) count=%d samples=%s" % [
-        start_x, start_y, max_print, "; ".join(segments)
-    ])
 
 func _map_dimensions_world() -> Vector2:
     var map_width := float(max(_width - 1, 1)) * tile_scale

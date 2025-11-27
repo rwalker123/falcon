@@ -290,6 +290,8 @@ var selected_herd_id: String = ""
 var heightfield_data: Dictionary = {}
 var biome_color_buffer: PackedColorArray = PackedColorArray()
 var heightfield_preview: Control = null
+var _heightfield_boot_shown: bool = false
+var _hovered_tile: Vector2i = Vector2i(-1, -1)
 
 func _ready() -> void:
     set_process_unhandled_input(true)
@@ -430,6 +432,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 
     if _is_heightfield_visible():
         _push_heightfield_preview()
+    else:
+        _maybe_auto_show_heightfield()
 
     return {
         "unit_count": units.size(),
@@ -536,6 +540,8 @@ func _draw() -> void:
         for x in range(grid_width):
             var center: Vector2 = _hex_center(x, y, radius, origin)
             var final_color: Color = _tile_color(x, y)
+            if _hovered_tile == Vector2i(x, y):
+                final_color = final_color.darkened(0.18)
             var polygon_points := _hex_points(center, radius)
             draw_polygon(polygon_points, PackedColorArray([final_color, final_color, final_color, final_color, final_color, final_color]))
             draw_polyline(_hex_points(center, radius, true), GRID_LINE_COLOR, 2.0, true)
@@ -734,7 +740,10 @@ func _unhandled_input(event: InputEvent) -> void:
     if event.is_action_pressed("map_switch_strategic_view"):
         if _is_heightfield_visible():
             var preview := _ensure_heightfield_preview()
-            preview.hide()
+            if preview.has_method("hide_preview"):
+                preview.call("hide_preview")
+            else:
+                preview.hide()
             _mark_input_handled()
         return
     if event is InputEventKey and event.pressed and event.keycode == KEY_C:
@@ -782,6 +791,18 @@ func _unhandled_input(event: InputEvent) -> void:
         if mouse_pan_active:
             _apply_pan(motion.relative)
             _mark_input_handled()
+        else:
+            var local_pos: Vector2 = get_local_mouse_position()
+            _update_layout_metrics()
+            var offset := _point_to_offset(local_pos)
+            if offset != _hovered_tile:
+                _hovered_tile = offset
+                if offset.x < 0 or offset.y < 0:
+                    emit_signal("tile_hovered", {})
+                else:
+                    var info := _tile_info_at(offset.x, offset.y)
+                    emit_signal("tile_hovered", info)
+                queue_redraw()
     elif event is InputEventPanGesture:
         var gesture: InputEventPanGesture = event
         if gesture.alt_pressed:
@@ -1445,12 +1466,35 @@ func _ensure_heightfield_preview() -> Control:
             heightfield_preview.legend_toggle_requested.connect(_on_heightfield_legend_toggle)
         if heightfield_preview.has_signal("hex_hovered"):
             heightfield_preview.hex_hovered.connect(_on_heightfield_hex_hovered)
+        if heightfield_preview.has_signal("view_state_changed"):
+            heightfield_preview.view_state_changed.connect(_on_heightfield_view_state_changed)
 
         var main_node := get_tree().root.get_node_or_null("Main")
         if main_node != null and heightfield_preview.has_method("apply_hud_state") and main_node.has_method("export_hud_state"):
             var state: Dictionary = main_node.call("export_hud_state")
             heightfield_preview.call("apply_hud_state", state)
     return heightfield_preview
+
+func _maybe_auto_show_heightfield() -> void:
+    if _heightfield_boot_shown:
+        return
+    if heightfield_data.is_empty() or grid_width == 0 or grid_height == 0:
+        return
+    var preview := _ensure_heightfield_preview()
+    if preview.has_method("show_preview"):
+        preview.call("show_preview")
+    else:
+        preview.show()
+    _heightfield_boot_shown = true
+    if preview.has_method("move_to_front"):
+        preview.call("move_to_front")
+    if preview.has_method("_resize_to_display"):
+        preview.call_deferred("_resize_to_display")
+    _push_heightfield_preview()
+    if preview.has_method("restore_or_sync_view_state"):
+        preview.call("restore_or_sync_view_state", zoom_factor, pan_offset, last_hex_radius)
+    elif preview.has_method("sync_view_state"):
+        preview.sync_view_state(zoom_factor, pan_offset, last_hex_radius)
 
 func relay_hud_call(method: String, args: Array = []) -> void:
     if heightfield_preview != null and is_instance_valid(heightfield_preview):
@@ -1475,10 +1519,24 @@ func _on_heightfield_legend_toggle() -> void:
 
 func _on_heightfield_hex_hovered(col: int, row: int) -> void:
     if col < 0 or row < 0:
+        if _hovered_tile != Vector2i(-1, -1):
+            _hovered_tile = Vector2i(-1, -1)
+            queue_redraw()
         emit_signal("tile_hovered", {})
         return
+    var incoming := Vector2i(col, row)
+    if _hovered_tile != incoming:
+        _hovered_tile = incoming
+        queue_redraw()
     var info := _tile_info_at(col, row)
     emit_signal("tile_hovered", info)
+
+func _on_heightfield_view_state_changed(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float) -> void:
+    zoom_factor = zoom_2d
+    pan_offset = pan_2d
+    last_hex_radius = hex_radius_2d
+    _update_layout_metrics()
+    queue_redraw()
 
 func _push_heightfield_preview() -> void:
     if heightfield_preview == null:
@@ -1518,19 +1576,27 @@ func _push_heightfield_preview() -> void:
 func _toggle_heightfield_preview() -> void:
     var preview := _ensure_heightfield_preview()
     if preview.visible:
-        preview.hide()
+        if preview.has_method("hide_preview"):
+            preview.call("hide_preview")
+        else:
+            preview.hide()
         return
     if heightfield_data.is_empty():
         push_warning("Relief view not available yet; wait for the next snapshot.")
         return
-    preview.show()
+    if preview.has_method("show_preview"):
+        preview.call("show_preview")
+    else:
+        preview.show()
     if preview.has_method("move_to_front"):
         preview.call("move_to_front")
     if preview.has_method("_resize_to_display"):
         preview.call_deferred("_resize_to_display")
     print("[MapView] _toggle_heightfield_preview: showing window, calling push")
     _push_heightfield_preview()
-    if preview.has_method("sync_view_state"):
+    if preview.has_method("restore_or_sync_view_state"):
+        preview.call("restore_or_sync_view_state", zoom_factor, pan_offset, last_hex_radius)
+    elif preview.has_method("sync_view_state"):
         preview.sync_view_state(zoom_factor, pan_offset, last_hex_radius)
 
 func _is_heightfield_visible() -> bool:
