@@ -565,9 +565,6 @@ func _map_dimensions_world() -> Vector2:
 func get_map_dimensions_world() -> Vector2:
     return _map_dimensions_world()
 
-func get_hex_layout_scale() -> Vector2:
-    return Vector2(_layout_scale_x, _layout_scale_z)
-
 func _update_hex_overlay() -> void:
     if _hex_grid_instance == null:
         return

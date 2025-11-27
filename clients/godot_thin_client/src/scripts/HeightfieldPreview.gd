@@ -15,8 +15,8 @@ signal legend_toggle_requested
 signal hex_clicked(col: int, row: int, button_index: int)
 signal hex_hovered(col: int, row: int)
 
-const HeightfieldLayer3D := preload("res://src/scripts/HeightfieldLayer3D.gd")
-const UnitOverlay3D := preload("res://src/scripts/UnitOverlay3D.gd")
+const HeightfieldLayer3D: GDScript = preload("res://src/scripts/HeightfieldLayer3D.gd")
+const UnitOverlay3D: GDScript = preload("res://src/scripts/UnitOverlay3D.gd")
 # Removed HudLayerScene and InspectorLayerScene preloads
 
 var _viewport: SubViewport
@@ -122,11 +122,11 @@ func _process(delta: float) -> void:
         pan_vec.x += 1.0
         
     if pan_vec != Vector2.ZERO:
-        var tile_scale := _heightfield.get_tile_scale_value()
+        var tile_scale: float = _heightfield.get_tile_scale_value()
         # Adjust speed as needed, using PAN_SENSITIVITY and delta
         # PAN_SENSITIVITY is 0.05, which is for mouse motion (pixels). 
         # For keyboard (continuous), we need a speed factor.
-        var speed := 20.0 * tile_scale # Arbitrary speed factor
+        var speed: float = 20.0 * tile_scale # Arbitrary speed factor
         _heightfield.adjust_pan(pan_vec.normalized() * speed * delta)
 
 func relay_hud_call(method_name: String, args: Array = []) -> void:
@@ -198,7 +198,7 @@ func _request_strategic_exit() -> void:
 func _nudge_zoom(delta: float) -> void:
     if _heightfield == null:
         return
-    var current := _heightfield.get_user_zoom_multiplier()
+    var current: float = _heightfield.get_user_zoom_multiplier()
     _heightfield.set_user_zoom_multiplier(current + delta)
     _update_hud_zoom_label()
 
@@ -282,8 +282,8 @@ func _input(event: InputEvent) -> void:
             _heightfield.adjust_tilt(-motion.relative.y * TILT_SENSITIVITY)
             _mark_input_handled()
         elif _pan_drag_active:
-            var tile_scale := _heightfield.get_tile_scale_value()
-            var pan_delta := Vector2(-motion.relative.x, motion.relative.y) * tile_scale * PAN_SENSITIVITY
+            var tile_scale: float = _heightfield.get_tile_scale_value()
+            var pan_delta: Vector2 = Vector2(-motion.relative.x, motion.relative.y) * tile_scale * PAN_SENSITIVITY
             _heightfield.adjust_pan(pan_delta)
             _mark_input_handled()
 
@@ -545,22 +545,6 @@ func _raycast_to_hex(screen_pos: Vector2) -> Vector2i:
             local_pos.x = local_pos.x * (viewport_size.x / container_size.x)
             local_pos.y = local_pos.y * (viewport_size.y / container_size.y)
         
-    if world == null:
-        return
-      
-    # Convert screen position to local coordinates relative to the SubViewportContainer
-    # This handles the case where the viewport is stretched or offset
-    var local_pos := screen_pos
-    if _container != null:
-        local_pos = screen_pos - _container.global_position
-        
-        # Scale coordinates to match the SubViewport's internal resolution
-        var viewport_size := Vector2(_viewport.size)
-        var container_size := _container.size
-        if container_size.x > 0 and container_size.y > 0:
-            local_pos.x = local_pos.x * (viewport_size.x / container_size.x)
-            local_pos.y = local_pos.y * (viewport_size.y / container_size.y)
-        
     var from := camera.project_ray_origin(local_pos)
     var to := from + camera.project_ray_normal(local_pos) * 1000.0
     
@@ -600,7 +584,7 @@ func _handle_hover(screen_pos: Vector2) -> void:
             if _heightfield.has_method("get_hex_corners"):
                 var corners: PackedVector3Array = _heightfield.get_hex_corners(hex.x, hex.y)
                 if corners.size() == 6:
-                    var center := _heightfield.get_hex_center(hex.x, hex.y)
+                    var center: Vector3 = _heightfield.get_hex_center(hex.x, hex.y)
                     # Lift slightly above terrain to avoid z-fighting
                     center.y += 0.5
                     
@@ -630,13 +614,13 @@ func _handle_hover(screen_pos: Vector2) -> void:
                     _hover_marker.visible = true
             else:
                 # Fallback to simple positioning if method missing
-                var center := _heightfield.get_hex_center(hex.x, hex.y)
+                var center: Vector3 = _heightfield.get_hex_center(hex.x, hex.y)
                 center.y += 0.5
                 _hover_marker.position = center
                 _hover_marker.visible = true
         
         hex_hovered.emit(hex.x, hex.y)
     else:
-        if _hover_marker != null:
-            _hover_marker.visible = false
-        hex_hovered.emit(-1, -1)
+        # Keep marker visible while the cursor stays on the same hex
+        if _hover_marker != null and _hover_marker.visible:
+            hex_hovered.emit(hex.x, hex.y)
