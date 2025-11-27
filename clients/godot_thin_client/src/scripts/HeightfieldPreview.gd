@@ -19,6 +19,9 @@ signal view_state_changed(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float)
 const HeightfieldLayer3D: GDScript = preload("res://src/scripts/HeightfieldLayer3D.gd")
 const UnitOverlay3D: GDScript = preload("res://src/scripts/UnitOverlay3D.gd")
 const AutoSizingPanel: GDScript = preload("res://src/scripts/ui/AutoSizingPanel.gd")
+const MINIMAP_BASE_HEIGHT := 220
+const MINIMAP_MIN_WIDTH := 140.0
+const MINIMAP_MAX_WIDTH := 520.0
 # Removed HudLayerScene and InspectorLayerScene preloads
 
 var _viewport: SubViewport
@@ -492,12 +495,12 @@ func _setup_minimap() -> void:
 
     _minimap_camera = Camera3D.new()
     _minimap_camera.name = "MinimapCamera"
-    _minimap_camera.current = true
     _minimap_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
     _minimap_camera.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
     _minimap_camera.near = 0.1
     _minimap_camera.far = 2000.0
     _minimap_viewport.add_child(_minimap_camera)
+    _minimap_camera.make_current()
 
     _minimap_layer = CanvasLayer.new()
     _minimap_layer.layer = 102
@@ -549,6 +552,7 @@ func _setup_minimap() -> void:
     _minimap_panel.add_child(_minimap_texture)
 
     _sync_minimap_viewport_size()
+    call_deferred("_sync_minimap_viewport_size")
     _resize_minimap_panel()
 
 func _on_overlay_button_pressed(key: String) -> void:
@@ -568,16 +572,10 @@ func _update_active_overlay_button(active_key: String) -> void:
 func _sync_minimap_viewport_size() -> void:
     if _minimap_texture == null or _minimap_viewport == null:
         return
-    var map_aspect: float = 1.0
-    if _heightfield != null:
-        var map_dims: Vector2 = _heightfield.get_map_dimensions_world()
-        if map_dims.x > 0.01 and map_dims.y > 0.01:
-            map_aspect = map_dims.x / map_dims.y
-        elif _last_grid_size.x > 0 and _last_grid_size.y > 0:
-            map_aspect = float(_last_grid_size.x) / float(_last_grid_size.y)
-    var base_height: int = 220
+    var map_aspect: float = _minimap_aspect_ratio()
+    var base_height: int = MINIMAP_BASE_HEIGHT
     var target_height: int = base_height
-    var target_width: int = int(clamp(base_height * map_aspect, 140.0, 520.0))
+    var target_width: int = int(clamp(base_height * map_aspect, MINIMAP_MIN_WIDTH, MINIMAP_MAX_WIDTH))
     var target: Vector2i = Vector2i(max(target_width, 64), max(target_height, 64))
     if _minimap_viewport.size != target:
         _minimap_viewport.size = target
@@ -596,9 +594,7 @@ func _update_minimap_camera_bounds() -> void:
     if dims == Vector2.ZERO:
         return
     var center: Vector2 = _heightfield.get_map_center_world()
-    var aspect: float = 1.0
-    if _minimap_viewport.size.y > 0.001:
-        aspect = _minimap_viewport.size.x / _minimap_viewport.size.y
+    var aspect: float = _minimap_viewport.size.x / max(_minimap_viewport.size.y, 0.001)
     var half_height: float = dims.y * 0.5
     var half_width: float = dims.x * 0.5
     var ortho_size: float = max(half_height, half_width / max(aspect, 0.001))
@@ -606,7 +602,7 @@ func _update_minimap_camera_bounds() -> void:
     _minimap_camera.size = ortho_size
     _minimap_camera.position = Vector3(center.x, altitude, center.y)
     _minimap_camera.far = altitude + max(dims.x, dims.y) + 200.0
-    _minimap_camera.look_at(Vector3(center.x, 0.0, center.y), Vector3.FORWARD)
+    _minimap_camera.look_at(Vector3(center.x, 0.0, center.y), Vector3.BACK)
     _minimap_camera.make_current()
 
 func _minimap_to_world(local_pos: Vector2) -> Vector2:
@@ -648,13 +644,7 @@ func _on_minimap_gui_input(event: InputEvent) -> void:
 func _resize_minimap_panel() -> void:
     if _minimap_panel == null or _minimap_texture == null or _minimap_viewport == null:
         return
-    var map_aspect: float = 1.0
-    if _heightfield != null:
-        var map_dims: Vector2 = _heightfield.get_map_dimensions_world()
-        if map_dims.x > 0.01 and map_dims.y > 0.01:
-            map_aspect = map_dims.x / map_dims.y
-        elif _last_grid_size.x > 0 and _last_grid_size.y > 0:
-            map_aspect = float(_last_grid_size.x) / float(_last_grid_size.y)
+    var map_aspect: float = _minimap_aspect_ratio()
     var tex_size: Vector2 = _minimap_viewport.size
     var padded_height: float = tex_size.y
     var target_width: float = tex_size.x
@@ -665,7 +655,20 @@ func _resize_minimap_panel() -> void:
     auto_panel.set_deferred("size", tex_size)
     _minimap_panel.queue_redraw()
     _minimap_texture.queue_redraw()
-    print("[Minimap] viewport_size=", tex_size, " panel_size=", auto_panel.size, " texture_size=", _minimap_texture.size, " map_aspect=", map_aspect)
+    if OS.is_debug_build():
+        print("[Minimap] viewport_size=", tex_size, " panel_size=", auto_panel.size, " texture_size=", _minimap_texture.size, " map_aspect=", map_aspect)
+
+func _minimap_aspect_ratio() -> float:
+    var map_aspect: float = 1.0
+    if _heightfield != null:
+        var map_dims: Vector2 = _heightfield.get_map_dimensions_world()
+        if map_dims.x > 0.01 and map_dims.y > 0.01:
+            map_aspect = map_dims.x / map_dims.y
+        elif _last_grid_size.x > 0 and _last_grid_size.y > 0:
+            map_aspect = float(_last_grid_size.x) / float(_last_grid_size.y)
+    elif _last_grid_size.x > 0 and _last_grid_size.y > 0:
+        map_aspect = float(_last_grid_size.x) / float(_last_grid_size.y)
+    return map_aspect
 
 func _add_screen_width_markers() -> void:
     var debug_layer = CanvasLayer.new()
