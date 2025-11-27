@@ -632,6 +632,22 @@ func _map_dimensions_world() -> Vector2:
 func get_map_dimensions_world() -> Vector2:
     return _map_dimensions_world()
 
+func get_map_center_world() -> Vector2:
+    var dims := _map_dimensions_world()
+    return Vector2(dims.x * 0.5, dims.y * 0.5)
+
+func center_on_world(world_pos: Vector2) -> void:
+    var dims := _map_dimensions_world()
+    if dims == Vector2.ZERO:
+        return
+    var base_center := get_map_center_world()
+    var target_offset := world_pos - base_center
+    var limit_x := dims.x * 0.5
+    var limit_z := dims.y * 0.5
+    _pan_offset_world.x = clamp(target_offset.x, -limit_x, limit_x)
+    _pan_offset_world.y = clamp(target_offset.y, -limit_z, limit_z)
+    _refit_camera()
+
 func _update_hex_overlay() -> void:
     if _hex_grid_instance == null:
         return

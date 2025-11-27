@@ -18,6 +18,7 @@ signal view_state_changed(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float)
 
 const HeightfieldLayer3D: GDScript = preload("res://src/scripts/HeightfieldLayer3D.gd")
 const UnitOverlay3D: GDScript = preload("res://src/scripts/UnitOverlay3D.gd")
+const AutoSizingPanel: GDScript = preload("res://src/scripts/ui/AutoSizingPanel.gd")
 # Removed HudLayerScene and InspectorLayerScene preloads
 
 var _viewport: SubViewport
@@ -31,6 +32,12 @@ var _saved_camera_state: Dictionary = {}
 var _last_grid_size: Vector2i = Vector2i.ZERO
 # Removed _hud_layer and _inspector_layer variables
 var _tools_layer: CanvasLayer
+var _minimap_layer: CanvasLayer
+var _minimap_panel: AutoSizingPanel
+var _minimap_texture: TextureRect
+var _minimap_viewport: SubViewport
+var _minimap_camera: Camera3D
+var _minimap_drag_active := false
 var _orbit_drag_active := false
 var _pan_drag_active := false
 var _last_mouse_position := Vector2.ZERO
@@ -92,6 +99,7 @@ func _ready() -> void:
     # Removed internal HUD and Inspector instantiation
     
     _setup_tools_layer()
+    _setup_minimap()
     
     # Remove debug markers
     # _add_screen_width_markers()
@@ -196,6 +204,8 @@ func update_snapshot(
     while wait_frames > 0:
         await get_tree().process_frame
         wait_frames -= 1
+    _update_minimap_camera_bounds()
+    _sync_minimap_viewport_size()
     _heightfield.fit_camera(_camera)
     _log_camera_state(_camera)
     _emit_view_state()
@@ -466,6 +476,81 @@ func _setup_tools_layer() -> void:
     right_pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
     row.add_child(right_pad)
 
+func _setup_minimap() -> void:
+    if _viewport == null:
+        return
+    _minimap_viewport = SubViewport.new()
+    _minimap_viewport.disable_3d = false
+    _minimap_viewport.own_world_3d = false
+    _minimap_viewport.world_3d = _viewport.get_world_3d()
+    _minimap_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+    _minimap_viewport.render_target_clear_mode = SubViewport.CLEAR_MODE_ALWAYS
+    _minimap_viewport.transparent_bg = false
+    _minimap_viewport.size = Vector2i(220, 220)
+    _minimap_viewport.process_mode = SubViewport.PROCESS_MODE_ALWAYS
+    add_child(_minimap_viewport)
+
+    _minimap_camera = Camera3D.new()
+    _minimap_camera.name = "MinimapCamera"
+    _minimap_camera.current = true
+    _minimap_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+    _minimap_camera.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+    _minimap_camera.near = 0.1
+    _minimap_camera.far = 2000.0
+    _minimap_viewport.add_child(_minimap_camera)
+
+    _minimap_layer = CanvasLayer.new()
+    _minimap_layer.layer = 102
+    add_child(_minimap_layer)
+
+    var anchor := Control.new()
+    anchor.anchor_left = 1.0
+    anchor.anchor_right = 1.0
+    anchor.anchor_top = 1.0
+    anchor.anchor_bottom = 1.0
+    anchor.offset_left = -300.0
+    anchor.offset_right = -16.0
+    anchor.offset_top = -300.0
+    anchor.offset_bottom = -16.0
+    _minimap_layer.add_child(anchor)
+
+    _minimap_panel = AutoSizingPanel.new()
+    _minimap_panel.name = "MinimapPanel"
+    _minimap_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+    _minimap_panel.min_height = 0.0
+    _minimap_panel.max_height = 2048.0
+    _minimap_panel.bottom_margin = 0.0
+    _minimap_panel.add_theme_constant_override("margin_left", 0)
+    _minimap_panel.add_theme_constant_override("margin_top", 0)
+    _minimap_panel.add_theme_constant_override("margin_right", 0)
+    _minimap_panel.add_theme_constant_override("margin_bottom", 0)
+    var flat := StyleBoxFlat.new()
+    flat.bg_color = Color(0, 0, 0, 0) # transparent
+    flat.content_margin_left = 0
+    flat.content_margin_top = 0
+    flat.content_margin_right = 0
+    flat.content_margin_bottom = 0
+    _minimap_panel.add_theme_stylebox_override("panel", flat)
+    anchor.add_child(_minimap_panel)
+
+    _minimap_texture = TextureRect.new()
+    _minimap_texture.texture = _minimap_viewport.get_texture()
+    _minimap_texture.stretch_mode = TextureRect.STRETCH_SCALE
+    _minimap_texture.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    _minimap_texture.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    _minimap_texture.set_anchors_preset(Control.PRESET_FULL_RECT)
+    _minimap_texture.offset_left = 0
+    _minimap_texture.offset_top = 0
+    _minimap_texture.offset_right = 0
+    _minimap_texture.offset_bottom = 0
+    _minimap_texture.mouse_filter = Control.MOUSE_FILTER_STOP
+    _minimap_texture.gui_input.connect(_on_minimap_gui_input)
+    _minimap_texture.resized.connect(_sync_minimap_viewport_size)
+    _minimap_panel.add_child(_minimap_texture)
+
+    _sync_minimap_viewport_size()
+    _resize_minimap_panel()
+
 func _on_overlay_button_pressed(key: String) -> void:
     emit_signal("overlay_changed", key)
     _update_active_overlay_button(key)
@@ -479,6 +564,108 @@ func _update_active_overlay_button(active_key: String) -> void:
     for key in _overlay_buttons.keys():
         var btn: Button = _overlay_buttons[key]
         btn.set_pressed_no_signal(key == active_key)
+
+func _sync_minimap_viewport_size() -> void:
+    if _minimap_texture == null or _minimap_viewport == null:
+        return
+    var map_aspect: float = 1.0
+    if _heightfield != null:
+        var map_dims: Vector2 = _heightfield.get_map_dimensions_world()
+        if map_dims.x > 0.01 and map_dims.y > 0.01:
+            map_aspect = map_dims.x / map_dims.y
+        elif _last_grid_size.x > 0 and _last_grid_size.y > 0:
+            map_aspect = float(_last_grid_size.x) / float(_last_grid_size.y)
+    var base_height: int = 220
+    var target_height: int = base_height
+    var target_width: int = int(clamp(base_height * map_aspect, 140.0, 520.0))
+    var target: Vector2i = Vector2i(max(target_width, 64), max(target_height, 64))
+    if _minimap_viewport.size != target:
+        _minimap_viewport.size = target
+    _minimap_texture.set_deferred("custom_minimum_size", Vector2(target))
+    _minimap_texture.set_deferred("size", Vector2(target))
+    _resize_minimap_panel()
+
+func _update_minimap_camera_bounds() -> void:
+    if _minimap_camera == null or _heightfield == null or _minimap_viewport == null:
+        return
+    if _viewport != null and _minimap_viewport.world_3d != _viewport.get_world_3d():
+        _minimap_viewport.world_3d = _viewport.get_world_3d()
+    if _minimap_viewport.world_3d == null and _heightfield.get_world_3d() != null:
+        _minimap_viewport.world_3d = _heightfield.get_world_3d()
+    var dims := _heightfield.get_map_dimensions_world()
+    if dims == Vector2.ZERO:
+        return
+    var center: Vector2 = _heightfield.get_map_center_world()
+    var aspect: float = 1.0
+    if _minimap_viewport.size.y > 0.001:
+        aspect = _minimap_viewport.size.x / _minimap_viewport.size.y
+    var half_height: float = dims.y * 0.5
+    var half_width: float = dims.x * 0.5
+    var ortho_size: float = max(half_height, half_width / max(aspect, 0.001))
+    var altitude: float = max(dims.x, dims.y) * 0.6 + 40.0
+    _minimap_camera.size = ortho_size
+    _minimap_camera.position = Vector3(center.x, altitude, center.y)
+    _minimap_camera.far = altitude + max(dims.x, dims.y) + 200.0
+    _minimap_camera.look_at(Vector3(center.x, 0.0, center.y), Vector3.FORWARD)
+    _minimap_camera.make_current()
+
+func _minimap_to_world(local_pos: Vector2) -> Vector2:
+    if _minimap_texture == null or _heightfield == null:
+        return Vector2.ZERO
+    var tex_size := _minimap_texture.size
+    if tex_size.x <= 1.0 or tex_size.y <= 1.0:
+        return _heightfield.get_map_center_world()
+    var normalized := Vector2(
+        clamp(local_pos.x / tex_size.x, 0.0, 1.0),
+        clamp(local_pos.y / tex_size.y, 0.0, 1.0)
+    )
+    var dims := _heightfield.get_map_dimensions_world()
+    if dims == Vector2.ZERO:
+        return Vector2.ZERO
+    return Vector2(normalized.x * dims.x, normalized.y * dims.y)
+
+func _pan_main_camera_from_minimap(local_pos: Vector2) -> void:
+    if _heightfield == null:
+        return
+    var world_target := _minimap_to_world(local_pos)
+    _heightfield.center_on_world(world_target)
+    _heightfield.fit_camera(_camera)
+    _emit_view_state()
+
+func _on_minimap_gui_input(event: InputEvent) -> void:
+    if event is InputEventMouseButton:
+        var mb: InputEventMouseButton = event
+        if mb.button_index == MOUSE_BUTTON_LEFT:
+            if mb.pressed:
+                _minimap_drag_active = true
+                _pan_main_camera_from_minimap(mb.position)
+            else:
+                _minimap_drag_active = false
+    elif event is InputEventMouseMotion and _minimap_drag_active:
+        var motion: InputEventMouseMotion = event
+        _pan_main_camera_from_minimap(motion.position)
+
+func _resize_minimap_panel() -> void:
+    if _minimap_panel == null or _minimap_texture == null or _minimap_viewport == null:
+        return
+    var map_aspect: float = 1.0
+    if _heightfield != null:
+        var map_dims: Vector2 = _heightfield.get_map_dimensions_world()
+        if map_dims.x > 0.01 and map_dims.y > 0.01:
+            map_aspect = map_dims.x / map_dims.y
+        elif _last_grid_size.x > 0 and _last_grid_size.y > 0:
+            map_aspect = float(_last_grid_size.x) / float(_last_grid_size.y)
+    var tex_size: Vector2 = _minimap_viewport.size
+    var padded_height: float = tex_size.y
+    var target_width: float = tex_size.x
+    var auto_panel: AutoSizingPanel = _minimap_panel
+    auto_panel.target_width = target_width
+    auto_panel.fit_to_content(padded_height, 0.0, null)
+    auto_panel.set_deferred("custom_minimum_size", tex_size)
+    auto_panel.set_deferred("size", tex_size)
+    _minimap_panel.queue_redraw()
+    _minimap_texture.queue_redraw()
+    print("[Minimap] viewport_size=", tex_size, " panel_size=", auto_panel.size, " texture_size=", _minimap_texture.size, " map_aspect=", map_aspect)
 
 func _add_screen_width_markers() -> void:
     var debug_layer = CanvasLayer.new()
@@ -573,16 +760,15 @@ func _raycast_to_hex(screen_pos: Vector2) -> Vector2i:
     if world == null:
         return Vector2i(-1, -1)
     
-    # Scale screen position to match the SubViewport's internal resolution
-    var local_pos := screen_pos
-    if _container != null:
-        local_pos = screen_pos - _container.global_position
-        
-        var viewport_size := Vector2(_viewport.size)
-        var container_size := _container.size
-        if container_size.x > 0 and container_size.y > 0:
-            local_pos.x = local_pos.x * (viewport_size.x / container_size.x)
-            local_pos.y = local_pos.y * (viewport_size.y / container_size.y)
+    # Scale local Control coordinates to the SubViewport's resolution
+    var local_pos: Vector2 = screen_pos
+    var viewport_size := Vector2(_viewport.size)
+    var container_size := _container.size if _container != null else viewport_size
+    if container_size.x > 0.0 and container_size.y > 0.0:
+        local_pos.x = clamp(local_pos.x, 0.0, container_size.x)
+        local_pos.y = clamp(local_pos.y, 0.0, container_size.y)
+        local_pos.x *= viewport_size.x / container_size.x
+        local_pos.y *= viewport_size.y / container_size.y
         
     var from := camera.project_ray_origin(local_pos)
     var to := from + camera.project_ray_normal(local_pos) * 1000.0
@@ -695,6 +881,7 @@ func hide_preview() -> void:
     _emit_view_state()
     _clear_hover_marker()
     hex_hovered.emit(-1, -1)
+    _minimap_drag_active = false
     _animate_visibility(false)
 
 func _emit_view_state() -> void:

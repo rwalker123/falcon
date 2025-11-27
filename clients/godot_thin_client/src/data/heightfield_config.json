@@ -26,10 +26,10 @@
     "debug_visualize_axes": false,
     "show_hex_grid": true,
     "hex_color": [
-      1.0,
-      0.0,
-      0.0,
-      1.0
+      0.16,
+      0.17,
+      0.2,
+      0.65
     ],
     "hex_width_scale": 0.08,
     "hex_min_width_world": 0.05
