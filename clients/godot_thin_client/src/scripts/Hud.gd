@@ -1296,6 +1296,7 @@ func _hide_legend_panel() -> void:
     if terrain_legend_description != null:
         terrain_legend_description.visible = false
         terrain_legend_description.text = ""
+
 func _setup_tooltip() -> void:
     tooltip_panel = PanelContainer.new()
     tooltip_panel.visible = false
@@ -1371,7 +1372,7 @@ func show_tooltip(info: Dictionary) -> void:
     # Position near mouse
     var mouse_pos := get_viewport().get_mouse_position()
     var viewport_size := get_viewport().get_visible_rect().size
-    var panel_size := tooltip_panel.get_size()
+    var panel_size := tooltip_panel.get_combined_minimum_size()
     
     var pos := mouse_pos + Vector2(16, 16)
     

@@ -31,6 +31,7 @@ var _tools_layer: CanvasLayer
 var _orbit_drag_active := false
 var _pan_drag_active := false
 var _last_mouse_position := Vector2.ZERO
+var _last_hovered_hex := Vector2i(-1, -1)
 const ORBIT_SENSITIVITY := 0.25
 const TILT_SENSITIVITY := 0.18
 const PAN_SENSITIVITY := 0.05
@@ -515,75 +516,69 @@ func _gui_input(event: InputEvent) -> void:
         if event.button_index == MOUSE_BUTTON_LEFT or event.button_index == MOUSE_BUTTON_RIGHT:
             _handle_click(event.position, event.button_index)
 
-func _handle_click(screen_pos: Vector2, button_index: int) -> void:
+func _raycast_to_hex(screen_pos: Vector2) -> Vector2i:
     if _viewport == null or _heightfield == null:
-        return
+        return Vector2i(-1, -1)
         
     var camera := _viewport.get_camera_3d()
     if camera == null:
-        return
+        return Vector2i(-1, -1)
     
     var world: World3D = _viewport.world_3d
     if world == null:
         world = _viewport.get_world_3d()
         
-    var cam_world = camera.get_world_3d()
-    var hf_world = _heightfield.get_world_3d()
-    
-    if world == null and cam_world != null:
-        world = cam_world
+    if world == null and camera.get_world_3d() != null:
+        world = camera.get_world_3d()
         
     if world == null:
-        print("[HeightfieldPreview] No world_3d available")
-        return
+        return Vector2i(-1, -1)
+    
+    # Scale screen position to match the SubViewport's internal resolution
+    var local_pos := screen_pos
+    if _container != null:
+        local_pos = screen_pos - _container.global_position
         
-    var from := camera.project_ray_origin(screen_pos)
-    var to := from + camera.project_ray_normal(screen_pos) * 1000.0
+        var viewport_size := Vector2(_viewport.size)
+        var container_size := _container.size
+        if container_size.x > 0 and container_size.y > 0:
+            local_pos.x = local_pos.x * (viewport_size.x / container_size.x)
+            local_pos.y = local_pos.y * (viewport_size.y / container_size.y)
+        
+    var from := camera.project_ray_origin(local_pos)
+    var to := from + camera.project_ray_normal(local_pos) * 1000.0
     
     var space_state := world.direct_space_state
     if space_state == null:
-        return
+        return Vector2i(-1, -1)
         
     var query := PhysicsRayQueryParameters3D.create(from, to)
     var result: Dictionary = space_state.intersect_ray(query)
     
     if not result.is_empty():
         var position: Vector3 = result.position
-        var hex := _heightfield.world_to_hex(position)
+        return _heightfield.world_to_hex(position)
+    
+    return Vector2i(-1, -1)
+
+func _handle_click(screen_pos: Vector2, button_index: int) -> void:
+    var hex := _raycast_to_hex(screen_pos)
+    if hex.x >= 0 and hex.y >= 0:
         hex_clicked.emit(hex.x, hex.y, button_index)
 
 func _handle_hover(screen_pos: Vector2) -> void:
-    if _viewport == null or _heightfield == null:
-        return
-        
-    var camera := _viewport.get_camera_3d()
-    if camera == null:
+    var hex := _raycast_to_hex(screen_pos)
+    
+    if hex.x < 0 or hex.y < 0:
+        if _hover_marker != null:
+            _hover_marker.visible = false
+        _last_hovered_hex = Vector2i(-1, -1)
+        hex_hovered.emit(-1, -1)
         return
     
-    var world: World3D = _viewport.world_3d
-    if world == null:
-        world = _viewport.get_world_3d()
-        
-    var cam_world = camera.get_world_3d()
-    if world == null and cam_world != null:
-        world = cam_world
-        
-    if world == null:
-        return
-        
-    var from := camera.project_ray_origin(screen_pos)
-    var to := from + camera.project_ray_normal(screen_pos) * 1000.0
-    
-    var space_state := world.direct_space_state
-    if space_state == null:
-        return
-        
-    var query := PhysicsRayQueryParameters3D.create(from, to)
-    var result: Dictionary = space_state.intersect_ray(query)
-    
-    if not result.is_empty():
-        var position: Vector3 = result.position
-        var hex := _heightfield.world_to_hex(position)
+    # Only rebuild mesh if we're hovering over a different hex
+    if hex != _last_hovered_hex:
+        _last_hovered_hex = hex
         
         if _hover_marker != null:
             if _heightfield.has_method("get_hex_corners"):
@@ -623,7 +618,7 @@ func _handle_hover(screen_pos: Vector2) -> void:
                 center.y += 0.5
                 _hover_marker.position = center
                 _hover_marker.visible = true
-            
+        
         hex_hovered.emit(hex.x, hex.y)
     else:
         if _hover_marker != null:

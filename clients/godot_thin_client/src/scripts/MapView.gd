@@ -2165,14 +2165,15 @@ func _fit_map_to_view() -> void:
     queue_redraw()
 
 func handle_hex_click(col: int, row: int, button_index: int) -> void:
-    print("[MapView] handle_hex_click called: col=", col, " row=", row, " button=", button_index)
+    # Only handle left mouse button clicks. Right-clicks and other buttons are intentionally ignored.
+    if button_index != MOUSE_BUTTON_LEFT:
+        return
     
     if col < 0 or col >= grid_width or row < 0 or row >= grid_height:
         return
 
-    if button_index == MOUSE_BUTTON_LEFT:
-        var terrain_id: int = _terrain_id_at(col, row)
-        emit_signal("hex_selected", col, row, terrain_id)
-        _emit_tile_selection(col, row)
-        
-        _handle_entity_selection(col, row)
+    var terrain_id: int = _terrain_id_at(col, row)
+    emit_signal("hex_selected", col, row, terrain_id)
+    _emit_tile_selection(col, row)
+    
+    _handle_entity_selection(col, row)

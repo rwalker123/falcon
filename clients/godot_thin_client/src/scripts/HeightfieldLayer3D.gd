@@ -135,7 +135,6 @@ func set_overlay_values(values: PackedFloat32Array, width: int, height: int, col
     _material.set_shader_parameter("overlay_texture", _overlay_texture)
     _material.set_shader_parameter("overlay_color", color)
     _material.set_shader_parameter("overlay_enabled", true)
-    _material.set_shader_parameter("overlay_enabled", true)
     _update_shader_debug_flags()
 
 func fit_to_view() -> void:
