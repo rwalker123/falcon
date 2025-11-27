@@ -547,10 +547,7 @@ func _raycast_to_hex(screen_pos: Vector2) -> Vector2i:
         
     if world == null:
         return
-        
-    if world == null:
-        return
-        
+      
     # Convert screen position to local coordinates relative to the SubViewportContainer
     # This handles the case where the viewport is stretched or offset
     var local_pos := screen_pos
