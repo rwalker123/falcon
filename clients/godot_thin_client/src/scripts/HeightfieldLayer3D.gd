@@ -58,6 +58,7 @@ var _tilt_degrees: float = 55.0
 var _tilt_degrees_default: float = 55.0
 var _fit_logged_once: bool = false
 var _last_hex_radius_2d: float = 1.0
+var _last_zoom_2d_at_sync: float = 1.0
 
 func _ready() -> void:
     tile_scale = max(tile_scale, 0.1)
@@ -184,7 +185,7 @@ func _apply_camera_transform(camera: Camera3D) -> void:
     var half_height: float = max(dims.y * 0.5, 0.1)
     var dist_w: float = half_width / max(tan(hfov_rad * 0.5), 0.001)
     var dist_h: float = half_height / max(tan(vfov_rad * 0.5), 0.001)
-    # Prioritize filling the width even if height clips (user can scroll vertically).
+    # Prioritize filling the width even if height clips (user can scroll vertically); longer side may run offscreen.
     var base_distance: float = dist_w
     var margin: float = highest + 5.0
     var zoom: float = max(_user_zoom_multiplier, 1.0)
@@ -211,6 +212,7 @@ func _apply_camera_transform(camera: Camera3D) -> void:
 func sync_from_2d(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float) -> void:
     _user_zoom_multiplier = 1.0 / max(zoom_2d, 0.001)
     _last_hex_radius_2d = max(hex_radius_2d, 0.001)
+    _last_zoom_2d_at_sync = max(zoom_2d, 0.001)
     var scale_ratio: float = tile_scale / _last_hex_radius_2d
     _pan_offset_world = -pan_2d * scale_ratio
     _tilt_degrees = 90.0
@@ -528,7 +530,10 @@ func apply_camera_state(state: Dictionary) -> void:
 
 func export_to_2d_state() -> Dictionary:
     var zoom_2d: float = 1.0 / max(_user_zoom_multiplier, 0.001)
-    var hex_radius_2d: float = _last_hex_radius_2d
+    var base_hex_radius: float = _last_hex_radius_2d
+    if _last_zoom_2d_at_sync > 0.0:
+        base_hex_radius = _last_hex_radius_2d / _last_zoom_2d_at_sync
+    var hex_radius_2d: float = base_hex_radius * zoom_2d
     var scale_ratio: float = tile_scale / max(hex_radius_2d, 0.001)
     var pan_2d: Vector2 = -_pan_offset_world / max(scale_ratio, 0.0001)
     return {

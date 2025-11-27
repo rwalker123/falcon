@@ -1481,7 +1481,6 @@ func _maybe_auto_show_heightfield() -> void:
     if heightfield_data.is_empty() or grid_width == 0 or grid_height == 0:
         return
     var preview := _ensure_heightfield_preview()
-    _heightfield_boot_shown = true
     if preview.has_method("show_preview"):
         preview.call("show_preview")
     else:
@@ -1520,11 +1519,15 @@ func _on_heightfield_legend_toggle() -> void:
 
 func _on_heightfield_hex_hovered(col: int, row: int) -> void:
     if col < 0 or row < 0:
-        _hovered_tile = Vector2i(-1, -1)
-        queue_redraw()
+        if _hovered_tile != Vector2i(-1, -1):
+            _hovered_tile = Vector2i(-1, -1)
+            queue_redraw()
         emit_signal("tile_hovered", {})
         return
-    _hovered_tile = Vector2i(col, row)
+    var incoming := Vector2i(col, row)
+    if _hovered_tile != incoming:
+        _hovered_tile = incoming
+        queue_redraw()
     var info := _tile_info_at(col, row)
     emit_signal("tile_hovered", info)
 

@@ -256,7 +256,7 @@ See `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b for the play
 
 #### Terrain Visualization Upgrade (Heightfield Rendering Plan)
 - **Player-Facing Intent** (`shadow_scale_strategy_game_concept_technical_plan_v_0.md` §3b): the terrain palette should “lift off” the hex board, letting designers and players read relief, basins, and escarpments without switching overlays. A believable elevation read also keeps future fog-of-war silhouettes and cinematic flyovers grounded.
-- **Relief UX defaults**: the client now boots directly into the 3D relief view, fading from the strategic board while retaining the last 3D camera state between toggles. Camera framing uses the shortest map side as the fit basis so the relief fills the viewport (the longer edge intentionally runs offscreen instead of exposing map borders).
+  - **Relief UX defaults**: the client now boots directly into the 3D relief view, fading from the strategic board while retaining the last 3D camera state between toggles. Camera framing fits the map width to the viewport so no side gaps are visible; the longer edge may run offscreen, and users can scroll vertically.
 - **Authoritative Data**:
   - Extend `SnapshotOverlay` with `heightfield` (u16 grid matching the current world dimensions) plus an optional `normal_raster` (packed XYZ encoded as signed 10-10-10). Serialization mirrors the existing raster channels so diff/stream code stays unchanged.
   - Expose the raw `ElevationField` and per-hex `elevation_m` inside the exporter so both coarse (per-hex) and fine (per-pixel) queries share a single normalization contract (store global min/max in the overlay header for shader use).

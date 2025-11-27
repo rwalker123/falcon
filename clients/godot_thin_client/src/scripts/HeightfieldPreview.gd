@@ -700,8 +700,6 @@ func hide_preview() -> void:
 func _emit_view_state() -> void:
     if _heightfield == null:
         return
-    if not has_signal("view_state_changed"):
-        return
     if _heightfield.has_method("export_to_2d_state"):
         var state: Dictionary = _heightfield.export_to_2d_state()
         if state.has("zoom_2d") and state.has("pan_2d") and state.has("hex_radius_2d"):
