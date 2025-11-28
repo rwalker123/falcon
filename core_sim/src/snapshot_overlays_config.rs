@@ -273,7 +273,6 @@ impl Default for FogOverlayConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct FoodOverlayConfig {
-    max_sites_per_module: usize,
     max_total_sites: usize,
     default_radius: u32,
     radius_padding: u32,
@@ -290,10 +289,6 @@ pub struct FoodOverlayConfig {
 }
 
 impl FoodOverlayConfig {
-    pub fn max_sites_per_module(&self) -> usize {
-        self.max_sites_per_module.max(1)
-    }
-
     pub fn max_total_sites(&self) -> usize {
         self.max_total_sites.max(1)
     }
@@ -357,7 +352,6 @@ impl FoodOverlayConfig {
 impl Default for FoodOverlayConfig {
     fn default() -> Self {
         Self {
-            max_sites_per_module: 6,
             max_total_sites: 40,
             default_radius: 6,
             radius_padding: 2,

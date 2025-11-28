@@ -67,6 +67,7 @@ const HERD_TRADE_DIFFUSION_BONUS: f32 = 0.25;
 const PLAYER_FACTION: FactionId = FactionId(0);
 const BUCKET_COLS: u32 = 6;
 const BUCKET_ROWS: u32 = 6;
+const LATITUDE_BANDS: usize = 3;
 const MIN_NEARBY_CURATED_SITES: usize = 2;
 const NO_FOOD_SITE_PENALTY: i32 = 18;
 const LOW_FOOD_SITE_PENALTY: i32 = 6;
@@ -578,7 +579,7 @@ pub fn spawn_initial_world(
 
     // Phase 1: Distribute candidates into buckets and count viable tiles per bucket
     let mut bucket_viable_counts = vec![0usize; bucket_count];
-    let mut latitude_viable_counts = [0usize; 3]; // north, mid, south
+    let mut latitude_viable_counts = [0usize; LATITUDE_BANDS]; // north, mid, south
     for proto in prototypes.iter() {
         let bx = ((proto.position.x * bucket_cols) / width_u32).min(bucket_cols - 1);
         let by = ((proto.position.y * bucket_rows) / height_u32).min(bucket_rows - 1);
@@ -588,9 +589,9 @@ pub fn spawn_initial_world(
         if proto.food_module.is_some() {
             bucket_viable_counts[bucket_idx] += 1;
 
-            // Track by latitude band
-            let lat_band = ((proto.position.y.min(height_u32 - 1)) * 3 / height_u32) as usize;
-            latitude_viable_counts[lat_band.min(2)] += 1;
+            // Approximate latitude band for diagnostic logging
+            let lat_band = (proto.position.y * LATITUDE_BANDS as u32) / height_u32;
+            latitude_viable_counts[lat_band.min((LATITUDE_BANDS - 1) as u32) as usize] += 1;
         }
     }
 
@@ -626,24 +627,6 @@ pub fn spawn_initial_world(
         bucket_stats[idx].candidates = bucket.len();
     }
 
-    // Phase 2: Calculate latitude-band quotas (force even distribution)
-    let latitude_band_quota = target_total / 3; // Equal distribution across north/mid/south
-    let mut latitude_targets = [latitude_band_quota; 3];
-
-    // Distribute any remainder
-    let remainder = target_total % 3;
-    for target in latitude_targets.iter_mut().take(remainder) {
-        *target += 1;
-    }
-
-    info!(
-        target: "shadow_scale::mapgen",
-        "mapgen.food_sites.latitude_quotas north={} mid={} south={}",
-        latitude_targets[0],
-        latitude_targets[1],
-        latitude_targets[2]
-    );
-
     // Calculate bucket targets within each latitude band
     let mut bucket_targets = vec![0usize; bucket_count];
 
@@ -658,9 +641,10 @@ pub fn spawn_initial_world(
             let bucket_y_center = (bucket_y_start + bucket_y_end) / 2;
 
             // Assign to latitude band based on Y coordinate
-            let lat_band = if bucket_y_center < height_u32 / 3 {
+            // We assume 3 bands: North, Mid, South
+            let lat_band = if bucket_y_center < height_u32 / LATITUDE_BANDS as u32 {
                 0 // North
-            } else if bucket_y_center < (height_u32 * 2) / 3 {
+            } else if bucket_y_center < (height_u32 * 2) / LATITUDE_BANDS as u32 {
                 1 // Mid
             } else {
                 2 // South
@@ -670,7 +654,7 @@ pub fn spawn_initial_world(
     }
 
     // Group buckets by latitude band
-    let mut band_buckets_vec: Vec<Vec<usize>> = vec![Vec::new(); 3];
+    let mut band_buckets_vec: Vec<Vec<usize>> = vec![Vec::new(); LATITUDE_BANDS];
     for (bucket_idx, &band) in bucket_to_band.iter().enumerate().take(bucket_count) {
         band_buckets_vec[band].push(bucket_idx);
     }
@@ -683,18 +667,55 @@ pub fn spawn_initial_world(
         band_buckets_vec[2]
     );
 
-    for lat_band in 0..3 {
+    // Calculate total viable tiles per band first
+    let mut band_viable_counts = [0usize; LATITUDE_BANDS];
+    let mut active_bands = 0;
+    for lat_band in 0..LATITUDE_BANDS {
         let band_buckets = &band_buckets_vec[lat_band];
-
-        // Calculate total viable tiles in this band
-        let band_viable: usize = band_buckets
+        let viable: usize = band_buckets
             .iter()
             .map(|&idx| bucket_viable_counts[idx])
             .sum();
+        band_viable_counts[lat_band] = viable;
+        if viable > 0 {
+            active_bands += 1;
+        }
+    }
 
+    // Calculate quotas based on active bands
+    let mut latitude_targets = [0usize; LATITUDE_BANDS];
+    if active_bands > 0 {
+        let base_quota = target_total / active_bands;
+        let remainder = target_total % active_bands;
+        let mut distributed_remainder = 0;
+
+        for (lat_band, &viable) in band_viable_counts.iter().enumerate() {
+            if viable > 0 {
+                latitude_targets[lat_band] = base_quota;
+                if distributed_remainder < remainder {
+                    latitude_targets[lat_band] += 1;
+                    distributed_remainder += 1;
+                }
+            }
+        }
+    }
+
+    info!(
+        target: "shadow_scale::mapgen",
+        "mapgen.food_sites.latitude_quotas north={} mid={} south={} active_bands={}",
+        latitude_targets[0],
+        latitude_targets[1],
+        latitude_targets[2],
+        active_bands
+    );
+
+    for lat_band in 0..LATITUDE_BANDS {
+        let band_viable = band_viable_counts[lat_band];
         if band_viable == 0 {
             continue; // Skip bands with no viable tiles
         }
+
+        let band_buckets = &band_buckets_vec[lat_band];
 
         // Distribute band quota proportionally to viable tiles within band
         let band_quota = latitude_targets[lat_band];
@@ -733,6 +754,13 @@ pub fn spawn_initial_world(
     let min_spacing = food_overlay_cfg.min_site_spacing().max(1);
     let min_spacing_sq = min_spacing * min_spacing;
 
+    // Spatial grid for O(1) proximity checks
+    // Cell size equals min_spacing, so we only need to check 3x3 neighborhood
+    let grid_cell_size = min_spacing;
+    let grid_cols = width_u32.div_ceil(grid_cell_size);
+    let grid_rows = height_u32.div_ceil(grid_cell_size);
+    let mut spatial_grid: Vec<Vec<UVec2>> = vec![Vec::new(); (grid_cols * grid_rows) as usize];
+
     let mut curated_entries: Vec<FoodSiteEntry> = Vec::new();
     let mut bucket_rng = SmallRng::seed_from_u64(world_seed ^ 0xF00D_CAFE);
 
@@ -765,17 +793,43 @@ pub fn spawn_initial_world(
             // Try to select one site from this bucket
             while bucket_stats[bucket_idx].selected < bucket_targets[bucket_idx] {
                 if let Some(candidate) = bucket.pop_front() {
-                    // Check minimum spacing against already selected sites
                     let pos = candidate.entry.position;
-                    let too_close = curated_entries.iter().any(|existing| {
-                        let dx = (pos.x as i32 - existing.position.x as i32).unsigned_abs();
-                        let dy = (pos.y as i32 - existing.position.y as i32).unsigned_abs();
-                        (dx * dx + dy * dy) < min_spacing_sq
-                    });
+
+                    // Check proximity using spatial grid
+                    let gx = pos.x / grid_cell_size;
+                    let gy = pos.y / grid_cell_size;
+                    let mut too_close = false;
+
+                    'neighbor_check: for dy in -1..=1 {
+                        for dx in -1..=1 {
+                            let ny = gy as i32 + dy;
+                            let nx = gx as i32 + dx;
+
+                            if nx >= 0 && nx < grid_cols as i32 && ny >= 0 && ny < grid_rows as i32
+                            {
+                                let cell_idx = (ny as u32 * grid_cols + nx as u32) as usize;
+                                for &existing_pos in &spatial_grid[cell_idx] {
+                                    let dist_x =
+                                        (pos.x as i32 - existing_pos.x as i32).unsigned_abs();
+                                    let dist_y =
+                                        (pos.y as i32 - existing_pos.y as i32).unsigned_abs();
+                                    if dist_x * dist_x + dist_y * dist_y < min_spacing_sq {
+                                        too_close = true;
+                                        break 'neighbor_check;
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     if !too_close {
                         curated_entries.push(candidate.entry);
                         bucket_stats[bucket_idx].selected += 1;
+
+                        // Add to spatial grid
+                        let cell_idx = (gy * grid_cols + gx) as usize;
+                        spatial_grid[cell_idx].push(pos);
+
                         any_progress = true;
                         break; // Move to next bucket
                     }

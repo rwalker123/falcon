@@ -30,7 +30,6 @@
     "global_local_blend": 0.5
   },
   "food": {
-    "max_sites_per_module": 16,
     "max_total_sites": 90,
     "default_radius": 4,
     "radius_padding": 2,

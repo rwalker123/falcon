@@ -5614,12 +5614,6 @@ func _update_overlay_channels(overlay_dict: Dictionary) -> void:
     if _overlay_channel_order.find("") == -1:
         _overlay_channel_order.push_front("")
 
-    if _overlay_channel_labels.is_empty():
-        _selected_overlay_key = ""
-        _refresh_overlay_selector()
-        _update_overlay_section_text()
-        return
-
     var default_variant: Variant = overlay_dict.get("default_channel", _selected_overlay_key)
     var default_key: String = String(default_variant)
     if not _overlay_channel_labels.has(_selected_overlay_key):

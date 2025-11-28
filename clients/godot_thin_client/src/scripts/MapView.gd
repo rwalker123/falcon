@@ -2078,8 +2078,6 @@ func _ensure_default_overlay_channel() -> void:
     zeros.resize(total)
     zeros.fill(0.0)
     _add_overlay_channel("", zeros, zeros, "No Overlay", "Base map without overlays")
-    if active_overlay_key == "":
-        active_overlay_key = ""
 
 func _format_legend_value(value: float) -> String:
     return "%0.3f" % value
