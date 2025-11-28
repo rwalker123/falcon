@@ -180,6 +180,12 @@ message FoundCampCommand {
   uint32 target_y = 3;
 }
 
+message FoundSettlementCommand {
+  uint32 faction_id = 1;
+  uint32 target_x = 2;
+  uint32 target_y = 3;
+}
+
 message ForageTileCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
@@ -224,5 +230,6 @@ message CommandEnvelope {
     FoundCampCommand found_camp = 24;
     ForageTileCommand forage_tile = 25;
     HuntGameCommand hunt_game = 26;
+    FoundSettlementCommand found_settlement = 27;
   }
 }

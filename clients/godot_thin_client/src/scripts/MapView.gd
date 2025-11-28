@@ -2165,6 +2165,10 @@ func _update_layout_metrics() -> void:
     if grid_width <= 0 or grid_height <= 0:
         return
     var viewport_size: Vector2 = get_viewport_rect().size
+    var canvas_scale := get_viewport().get_canvas_transform().get_scale()
+    if canvas_scale.x != 0.0 and canvas_scale.y != 0.0:
+        # Account for global canvas (camera) scaling so hit-testing matches the drawn map
+        viewport_size /= canvas_scale
     if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
         return
     if bounds_dirty:

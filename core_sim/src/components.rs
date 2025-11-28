@@ -170,6 +170,20 @@ impl StartingUnit {
     }
 }
 
+/// Permanent settlement seeded by a founding action.
+#[derive(Component, Debug, Clone)]
+pub struct Settlement {
+    pub faction: FactionId,
+    pub position: UVec2,
+}
+
+/// Anchor component for the initial hub within a settlement.
+#[derive(Component, Debug, Clone)]
+pub struct TownCenter {
+    pub construction_radius: u32,
+    pub logistics_radius: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HarvestTaskKind {
     #[default]

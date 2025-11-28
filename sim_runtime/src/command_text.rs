@@ -589,6 +589,22 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 target_y: parse_u32(y_str, "found_camp target_y")?,
             })
         }
+        "found_settlement" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            Ok(CommandPayload::FoundSettlement {
+                faction_id: parse_u32(faction_str, "found_settlement faction")?,
+                target_x: parse_u32(x_str, "found_settlement target_x")?,
+                target_y: parse_u32(y_str, "found_settlement target_y")?,
+            })
+        }
         "forage" => {
             let faction_str = parts
                 .next()
