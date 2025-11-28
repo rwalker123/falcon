@@ -46,7 +46,8 @@ use bevy::prelude::*;
 
 pub use components::{
     ElementKind, HarvestAssignment, HarvestTaskKind, KnowledgeFragment, LogisticsLink,
-    PendingMigration, PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink,
+    PendingMigration, PopulationCohort, PowerNode, ScoutAssignment, Settlement, StartingUnit, Tile,
+    TownCenter, TradeLink,
 };
 pub use crisis::{
     ActiveCrisisLedger, CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot,

@@ -363,7 +363,7 @@ var _overlay_channel_labels: Dictionary = {}
 var _overlay_channel_descriptions: Dictionary = {}
 var _overlay_channel_order: Array = []
 var _overlay_placeholder_flags: Dictionary = {}
-var _selected_overlay_key: String = "logistics"
+var _selected_overlay_key: String = ""
 var _campaign_profiles: Array = []
 var _active_profile_id: String = ""
 var _selected_profile_id: String = ""
@@ -5607,11 +5607,12 @@ func _update_overlay_channels(overlay_dict: Dictionary) -> void:
         if not has_tag_channel:
             _overlay_channel_order.append("terrain_tags")
 
-    if _overlay_channel_labels.is_empty():
-        _selected_overlay_key = "logistics"
-        _refresh_overlay_selector()
-        _update_overlay_section_text()
-        return
+    # Always provide a "No Overlay" entry so users can clear overlays without special keys.
+    _overlay_channel_labels[""] = "No Overlay"
+    _overlay_channel_descriptions[""] = "Base map without overlays."
+    _overlay_placeholder_flags[""] = false
+    if _overlay_channel_order.find("") == -1:
+        _overlay_channel_order.push_front("")
 
     var default_variant: Variant = overlay_dict.get("default_channel", _selected_overlay_key)
     var default_key: String = String(default_variant)
@@ -5659,13 +5660,24 @@ func _refresh_overlay_selector() -> void:
         _overlay_selector.hide()
         return
     if not selected:
-        if _overlay_selector.get_item_count() > 0:
-            _overlay_selector.select(0)
-            var metadata: Variant = _overlay_selector.get_item_metadata(0)
+        var fallback_index := -1
+        var index_empty := -1
+        for i in range(_overlay_selector.get_item_count()):
+            var metadata: Variant = _overlay_selector.get_item_metadata(i)
+            var key := String(metadata)
+            if key == "":
+                index_empty = i
+                break
+            if fallback_index == -1:
+                fallback_index = i
+        var choose_index := index_empty if index_empty >= 0 else fallback_index
+        if choose_index >= 0:
+            _overlay_selector.select(choose_index)
+            var metadata: Variant = _overlay_selector.get_item_metadata(choose_index)
             _selected_overlay_key = String(metadata)
 
 func _apply_overlay_selection_to_map() -> void:
-    if _map_view == null or _selected_overlay_key == "":
+    if _map_view == null:
         return
     if _map_view.has_method("set_overlay_channel"):
         _map_view.call("set_overlay_channel", _selected_overlay_key)
@@ -5693,7 +5705,7 @@ func _on_overlay_channel_selected(index: int) -> void:
         return
     var metadata: Variant = _overlay_selector.get_item_metadata(index)
     var key := String(metadata)
-    if key == "" or key == _selected_overlay_key:
+    if key == _selected_overlay_key:
         return
     _selected_overlay_key = key
     _update_overlay_section_text()

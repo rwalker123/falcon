@@ -30,10 +30,10 @@
     "global_local_blend": 0.5
   },
   "food": {
-    "max_sites_per_module": 6,
-    "max_total_sites": 40,
-    "default_radius": 6,
+    "max_total_sites": 90,
+    "default_radius": 4,
     "radius_padding": 2,
+    "min_site_spacing": 2,
     "provisions_per_weight": 120.0,
     "trade_goods_per_weight": 35.0,
     "trade_bonus_modules": {
@@ -48,10 +48,10 @@
       "montane_highland",
       "wetland_swamp"
     ],
-    "wild_game_probability": 0.55,
+    "wild_game_probability": 0.75,
     "wild_game_weight_scale": 0.75,
     "wild_game_max_per_module": 5,
     "wild_game_max_total": 24,
-    "wild_game_radius": 12
+    "wild_game_radius": 6
   }
 }

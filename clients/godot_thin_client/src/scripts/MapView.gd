@@ -47,6 +47,7 @@ const OVERLAY_COLORS := {
     "crisis": CRISIS_COLOR,
     "elevation": ELEVATION_HIGH_COLOR,
     "moisture": Color(0.2, 0.65, 0.95, 1.0),
+    "province": Color(0.52, 0.64, 0.78, 1.0),
 }
 
 const TERRAIN_TAG_KEYS := [
@@ -235,7 +236,8 @@ var overlay_channel_labels: Dictionary = {}
 var overlay_channel_descriptions: Dictionary = {}
 var overlay_placeholder_flags: Dictionary = {}
 var overlay_channel_order: PackedStringArray = PackedStringArray()
-var active_overlay_key: String = "logistics"
+var culture_layer_map: Dictionary = {}
+var active_overlay_key: String = ""
 var terrain_overlay: PackedInt32Array = PackedInt32Array()
 var terrain_palette: Dictionary = {}
 var terrain_tags_overlay: PackedInt32Array = PackedInt32Array()
@@ -261,7 +263,6 @@ var highlighted_culture_layer_ids: PackedInt32Array = PackedInt32Array()
 var highlighted_culture_layer_set: Dictionary = {}
 var highlighted_culture_context: String = ""
 
-var terrain_mode: bool = true
 var selected_tile: Vector2i = Vector2i(-1, -1)
 
 var last_hex_radius: float = 48.0
@@ -320,6 +321,20 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
     terrain_tags_overlay = PackedInt32Array(overlays.get("terrain_tags", []))
     var tag_labels_raw: Variant = overlays.get("terrain_tag_labels", {})
     terrain_tag_labels = tag_labels_raw if typeof(tag_labels_raw) == TYPE_DICTIONARY else {}
+    var culture_layers_variant: Variant = snapshot.get("culture_layers", null)
+    if culture_layers_variant is Array:
+        for layer_variant in culture_layers_variant:
+            if layer_variant is Dictionary:
+                var layer: Dictionary = layer_variant
+                var id: int = int(layer.get("id", -1))
+                if id >= 0:
+                    culture_layer_map[id] = layer.duplicate(true)
+    var removed_layers_variant: Variant = snapshot.get("culture_layer_removed", null)
+    if removed_layers_variant is Array:
+        for raw_id in removed_layers_variant:
+            var id := int(raw_id)
+            if culture_layer_map.has(id):
+                culture_layer_map.erase(id)
     crisis_annotations = []
     var crisis_annotations_variant: Variant = overlays.get("crisis_annotations", [])
     if crisis_annotations_variant is Array:
@@ -410,6 +425,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
                         var index: int = y * grid_width + x
                         if index >= 0 and index < culture_layer_grid.size():
                             culture_layer_grid[index] = int(tile_dict.get("culture_layer", -1))
+    _install_province_overlay()
     _rebuild_unit_markers(snapshot)
     _rebuild_herd_markers(snapshot)
     # Removed snapshot ingest logging (noise in normal runs).
@@ -457,12 +473,7 @@ func _ingest_overlay_channels(overlays: Variant) -> void:
     overlay_placeholder_flags.clear()
     overlay_channel_order = PackedStringArray()
 
-    if not (overlays is Dictionary):
-        if overlay_channels.is_empty():
-            active_overlay_key = ""
-        return
-
-    var overlay_dict: Dictionary = overlays
+    var overlay_dict: Dictionary = overlays if overlays is Dictionary else {}
     if overlay_dict.has("channels"):
         var channel_variant: Variant = overlay_dict["channels"]
         if channel_variant is Dictionary:
@@ -502,31 +513,16 @@ func _ingest_overlay_channels(overlays: Variant) -> void:
     if overlays is Dictionary:
         tag_channel_available = overlays.has("terrain_tags")
 
+    _ensure_default_overlay_channel()
+
     if overlay_channels.is_empty():
-        if preserve_tag_overlay and tag_channel_available:
-            active_overlay_key = "terrain_tags"
-        else:
-            active_overlay_key = ""
+        active_overlay_key = ""
         return
 
-    var default_variant: Variant = overlay_dict.get("default_channel", active_overlay_key)
-    var default_key: String = String(default_variant)
-    if overlay_channels.has(active_overlay_key):
-        if preserve_tag_overlay and tag_channel_available:
-            active_overlay_key = "terrain_tags"
-        return
-    if overlay_channels.has(default_key):
-        active_overlay_key = default_key
-    elif overlay_channel_order.size() > 0:
-        active_overlay_key = String(overlay_channel_order[0])
-    else:
-        var keys_list: Array = overlay_channels.keys()
-        if keys_list.size() > 0:
-            active_overlay_key = String(keys_list[0])
-        else:
-            active_overlay_key = ""
     if preserve_tag_overlay and tag_channel_available:
         active_overlay_key = "terrain_tags"
+    else:
+        active_overlay_key = ""
 func _draw() -> void:
     if grid_width == 0 or grid_height == 0:
         return
@@ -606,6 +602,13 @@ func set_overlay_channel(key: String) -> void:
         active_overlay_key = key
         queue_redraw()
         _emit_overlay_legend()
+        return
+    if key == "":
+        active_overlay_key = ""
+        queue_redraw()
+        _emit_overlay_legend()
+        if _is_heightfield_visible():
+            _push_heightfield_preview()
         return
     if not overlay_channels.has(key):
         return
@@ -1383,11 +1386,10 @@ func _elevation_color(value: float) -> Color:
     return ELEVATION_MID_COLOR.lerp(ELEVATION_HIGH_COLOR, (t - 0.5) * 2.0)
 
 func _tile_color(x: int, y: int) -> Color:
-    if terrain_mode:
+    if active_overlay_key == "":
         var terrain_id := _terrain_id_at(x, y)
         if terrain_id >= 0:
             return _terrain_color_for_id(terrain_id)
-    if active_overlay_key == "":
         return GRID_COLOR
     if active_overlay_key == "terrain_tags":
         var mask := _tag_mask_at(x, y)
@@ -1764,10 +1766,8 @@ func overlay_stats_for_key(key: String) -> Dictionary:
     return _overlay_stats(normalized, raw)
 
 func _legend_for_current_view() -> Dictionary:
-    if terrain_mode:
-        return _build_terrain_legend()
     if active_overlay_key == "":
-        return {}
+        return _build_terrain_legend()
     if active_overlay_key == "terrain_tags":
         return _build_tag_legend()
     if not overlay_channels.has(active_overlay_key):
@@ -1984,12 +1984,106 @@ func _culture_selection_data() -> Dictionary:
         "stats": stats,
     }
 
+func _install_province_overlay() -> void:
+    if overlay_channels.has("province"):
+        return
+    if grid_width <= 0 or grid_height <= 0:
+        return
+    if culture_layer_map.is_empty() or culture_layer_grid.is_empty():
+        return
+    var province_raw := PackedFloat32Array()
+    var total: int = grid_width * grid_height
+    province_raw.resize(total)
+    province_raw.fill(-1.0)
+    var regional_owner: Dictionary = {}
+    for layer_dict in culture_layer_map.values():
+        if not (layer_dict is Dictionary):
+            continue
+        var scope := String(layer_dict.get("scope", ""))
+        if scope == "Regional":
+            var id: int = int(layer_dict.get("id", -1))
+            var owner: int = int(layer_dict.get("owner", -1))
+            if id >= 0:
+                regional_owner[id] = owner
+    if regional_owner.is_empty():
+        return
+    var layer_to_province: Dictionary = {}
+    for idx in range(total):
+        var layer_id: int = int(culture_layer_grid[idx])
+        if layer_id < 0:
+            continue
+        if layer_to_province.has(layer_id):
+            province_raw[idx] = float(layer_to_province[layer_id])
+            continue
+        var province_id: int = _resolve_province_for_layer(layer_id, regional_owner)
+        layer_to_province[layer_id] = province_id
+        province_raw[idx] = float(province_id)
+    var province_seq: Dictionary = {}
+    var seq: int = 0
+    for value in province_raw:
+        var pid := int(value)
+        if pid < 0:
+            continue
+        if province_seq.has(pid):
+            continue
+        province_seq[pid] = seq
+        seq += 1
+    var province_norm := PackedFloat32Array()
+    province_norm.resize(total)
+    var denom: float = max(float(seq - 1), 1.0)
+    for i in range(total):
+        var pid := int(province_raw[i])
+        if pid < 0 or seq <= 0:
+            province_norm[i] = 0.0
+        elif seq == 1:
+            province_norm[i] = 0.5
+        else:
+            var idx_val: int = int(province_seq.get(pid, 0))
+            province_norm[i] = float(idx_val) / denom
+    _add_overlay_channel(
+        "province",
+        province_norm,
+        province_raw,
+        "Provinces",
+        "Province/territory partitions"
+    )
+
+func _resolve_province_for_layer(layer_id: int, regional_owner: Dictionary) -> int:
+    var guard := 0
+    var current := layer_id
+    while current > 0 and guard < 32:
+        if regional_owner.has(current):
+            return int(regional_owner[current])
+        if not culture_layer_map.has(current):
+            break
+        var layer: Dictionary = culture_layer_map[current]
+        current = int(layer.get("parent", -1))
+        guard += 1
+    return -1
+
+func _add_overlay_channel(key: String, normalized: PackedFloat32Array, raw: PackedFloat32Array, label: String, description: String = "") -> void:
+    overlay_channels[key] = normalized
+    overlay_raw_channels[key] = raw
+    overlay_channel_labels[key] = label
+    overlay_channel_descriptions[key] = description
+    overlay_placeholder_flags[key] = false
+    if overlay_channel_order.find(key) == -1:
+        overlay_channel_order.append(key)
+
+func _ensure_default_overlay_channel() -> void:
+    if grid_width <= 0 or grid_height <= 0:
+        return
+    var total: int = grid_width * grid_height
+    var zeros := PackedFloat32Array()
+    zeros.resize(total)
+    zeros.fill(0.0)
+    _add_overlay_channel("", zeros, zeros, "No Overlay", "Base map without overlays")
+
 func _format_legend_value(value: float) -> String:
     return "%0.3f" % value
 
-func set_terrain_mode(enabled: bool) -> void:
-    terrain_mode = enabled
-    queue_redraw()
+func set_terrain_mode(_enabled: bool) -> void:
+    set_overlay_channel("")
 
 func _draw_hydrology(radius: float, origin: Vector2) -> void:
     if hydrology_rivers.is_empty():
@@ -2027,9 +2121,7 @@ func _draw_start_marker(radius: float, origin: Vector2) -> void:
     _emit_overlay_legend()
 
 func toggle_terrain_mode() -> void:
-    terrain_mode = not terrain_mode
-    queue_redraw()
-    _emit_overlay_legend()
+    set_overlay_channel("")
 
 func _average(data: PackedFloat32Array) -> float:
     if data.is_empty():
@@ -2073,6 +2165,10 @@ func _update_layout_metrics() -> void:
     if grid_width <= 0 or grid_height <= 0:
         return
     var viewport_size: Vector2 = get_viewport_rect().size
+    var canvas_scale := get_viewport().get_canvas_transform().get_scale()
+    if canvas_scale.x != 0.0 and canvas_scale.y != 0.0:
+        # Account for global canvas (camera) scaling so hit-testing matches the drawn map
+        viewport_size /= canvas_scale
     if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
         return
     if bounds_dirty:

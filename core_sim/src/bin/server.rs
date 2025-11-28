@@ -29,11 +29,11 @@ use core_sim::{
     FoodModuleTag, FoodSiteKind, GenerationId, GenerationRegistry, HarvestAssignment,
     HerdDensityMap, HerdRegistry, HerdTelemetry, InfluencerImpacts, InfluentialRoster,
     KnowledgeFragment, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
-    QueueMissionParams, Scalar, ScoutAssignment, SecurityPolicy, SentimentAxisBias,
+    QueueMissionParams, Scalar, ScoutAssignment, SecurityPolicy, SentimentAxisBias, Settlement,
     SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
     StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
-    SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry, TurnPipelineConfig,
+    SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
     TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
     DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
@@ -56,6 +56,9 @@ const SCOUT_MORALE_GAIN: f32 = 0.02;
 const SCOUT_PROVISION_COST: i64 = 10;
 const HERD_CONSUMPTION_BIOMASS: f32 = 250.0;
 const CAMP_PROVISION_COST: i64 = 40;
+const SETTLEMENT_PROVISION_COST: i64 = 80;
+const SETTLEMENT_CONSTRUCTION_RADIUS: u32 = 3;
+const SETTLEMENT_LOGISTICS_RADIUS: u32 = 4;
 const HERD_PROVISIONS_YIELD_PER_BIOMASS: f32 = 0.02;
 const HERD_TRADE_GOODS_YIELD_PER_BIOMASS: f32 = 0.005;
 const HERD_FOLLOW_MORALE_GAIN: f32 = 0.03;
@@ -500,6 +503,13 @@ fn main() {
             } => {
                 handle_found_camp(&mut app, faction, target_x, target_y);
             }
+            Command::FoundSettlement {
+                faction,
+                target_x,
+                target_y,
+            } => {
+                handle_found_settlement(&mut app, faction, target_x, target_y);
+            }
             Command::ForageTile {
                 faction,
                 target_x,
@@ -618,6 +628,11 @@ enum Command {
         herd_id: String,
     },
     FoundCamp {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
+    },
+    FoundSettlement {
         faction: FactionId,
         target_x: u32,
         target_y: u32,
@@ -1521,6 +1536,139 @@ fn handle_found_camp(
             Some(format!("cost={} provisions", CAMP_PROVISION_COST)),
         );
     }
+}
+
+fn handle_found_settlement(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    target_x: u32,
+    target_y: u32,
+) {
+    let target = UVec2::new(target_x, target_y);
+    let Some(_tile_entity) = ensure_land_tile(
+        app,
+        faction,
+        target,
+        "found_settlement",
+        Some(CommandEventKind::FoundSettlement),
+    ) else {
+        return;
+    };
+
+    // Reject if a settlement already exists on this tile.
+    {
+        let mut query = app.world.query::<&Settlement>();
+        if query
+            .iter(&app.world)
+            .any(|settlement| settlement.position == target)
+        {
+            emit_command_failure(
+                app,
+                CommandEventKind::FoundSettlement,
+                faction,
+                "A settlement already exists at that location.",
+            );
+            return;
+        }
+    }
+
+    // Require a Founders band to be present and consume it.
+    let Some(founders) = select_founder_band(app, faction, CommandEventKind::FoundSettlement)
+    else {
+        return;
+    };
+
+    if !consume_inventory_item(
+        app,
+        faction,
+        "provisions",
+        SETTLEMENT_PROVISION_COST,
+        "found_settlement",
+        CommandEventKind::FoundSettlement,
+    ) {
+        return;
+    }
+
+    let removed = app.world.despawn(founders.entity);
+    if !removed {
+        warn!(
+            target: "shadow_scale::command",
+            command = "found_settlement",
+            faction = %faction.0,
+            entity_bits = founders.entity.to_bits(),
+            "command.found_settlement.rejected=despawn_failed"
+        );
+        emit_command_failure(
+            app,
+            CommandEventKind::FoundSettlement,
+            faction,
+            "Failed to consume the Founders unit.",
+        );
+        return;
+    }
+
+    let construction_radius = SETTLEMENT_CONSTRUCTION_RADIUS;
+    let logistics_radius = SETTLEMENT_LOGISTICS_RADIUS;
+
+    let settlement_entity = app.world.spawn((
+        Settlement {
+            faction,
+            position: target,
+        },
+        TownCenter {
+            construction_radius,
+            logistics_radius,
+        },
+    ));
+    let settlement_id = settlement_entity.id();
+
+    // Update start location and fog reveal based on the new hub.
+    let tick = app.world.resource::<SimulationTick>().0;
+    let applied_radius = {
+        let survey_override = app
+            .world
+            .resource::<SimulationConfig>()
+            .start_profile_overrides
+            .survey_radius;
+        let mut start_location = match app.world.get_resource_mut::<StartLocation>() {
+            Some(res) => res,
+            None => {
+                warn!(
+                    target: "shadow_scale::command",
+                    command = "found_settlement",
+                    faction = %faction.0,
+                    "command.found_settlement.rejected=start_location_missing"
+                );
+                return;
+            }
+        };
+        start_location.relocate(target);
+        start_location
+            .survey_radius()
+            .or(survey_override)
+            .or(Some(logistics_radius))
+    };
+
+    if let Some(radius) = applied_radius {
+        let expires_at = tick.saturating_add(SCOUT_REVEAL_DURATION_TURNS * 2);
+        let mut reveals = app.world.resource_mut::<FogRevealLedger>();
+        reveals.queue(target, radius.max(MIN_SCOUT_REVEAL_RADIUS), expires_at);
+    }
+
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::CampaignFounded,
+        faction,
+        format!("Settlement -> ({}, {})", target_x, target_y),
+        Some(format!(
+            "construction_radius={} logistics_radius={} cost={} provisions founders_entity={}",
+            construction_radius,
+            logistics_radius,
+            SETTLEMENT_PROVISION_COST,
+            settlement_id.to_bits()
+        )),
+    );
 }
 
 fn handle_forage_tile(
@@ -2432,6 +2580,15 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             target_x,
             target_y,
         }),
+        ProtoCommandPayload::FoundSettlement {
+            faction_id,
+            target_x,
+            target_y,
+        } => Some(Command::FoundSettlement {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+        }),
         ProtoCommandPayload::ForageTile {
             faction_id,
             target_x,
@@ -2644,6 +2801,32 @@ fn select_starting_band(
     None
 }
 
+fn select_founder_band(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    event_kind: CommandEventKind,
+) -> Option<SelectedBand> {
+    let mut query = app
+        .world
+        .query::<(Entity, &PopulationCohort, &StartingUnit)>();
+    for (entity, cohort, unit) in query.iter(&app.world) {
+        if cohort.faction == faction && unit.kind.eq_ignore_ascii_case("founders") {
+            return Some(SelectedBand {
+                entity,
+                label: unit.kind.clone(),
+            });
+        }
+    }
+
+    emit_command_failure(
+        app,
+        event_kind,
+        faction,
+        "No Founders unit is available to found a settlement.",
+    );
+    None
+}
+
 fn starting_unit_label(app: &bevy::prelude::App, entity: Entity) -> String {
     app.world
         .get::<StartingUnit>(entity)
@@ -2822,6 +3005,10 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Scout => "Scout",
         CommandEventKind::FollowHerd => "Follow herd",
         CommandEventKind::FoundCamp => "Found camp",
+        CommandEventKind::FoundSettlement => "Found settlement",
+        CommandEventKind::CampaignFounded => "Campaign founded",
+        CommandEventKind::CampaignMilestone => "Campaign milestone",
+        CommandEventKind::CampaignVictory => "Campaign victory",
         CommandEventKind::Forage => "Harvest",
         CommandEventKind::Hunt => "Hunt",
     }

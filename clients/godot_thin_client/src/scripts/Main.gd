@@ -351,9 +351,6 @@ func _unhandled_input(event: InputEvent) -> void:
         skip_to_next_turn()
     elif event.is_action_pressed("ui_left"):
         skip_to_previous_turn()
-    elif event.is_action_pressed("ui_accept"):
-        if map_view != null and map_view.has_method("toggle_terrain_mode"):
-            map_view.call("toggle_terrain_mode")
     elif event.is_action_pressed("ui_zoom_in"):
         _adjust_ui_zoom(UI_ZOOM_STEP)
     elif event.is_action_pressed("ui_zoom_out"):

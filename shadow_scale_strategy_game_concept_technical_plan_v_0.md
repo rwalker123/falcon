@@ -72,6 +72,7 @@ This section translates the sandbox into a concrete, Civ-like campaign loop whil
 
 ### Optional Scenario — Settler Start (Founders)
 - Some scenarios (e.g., Early Agrarian bias or Frontier Colony) begin with a single expedition unit, the Founders, and a `Found Settlement` action. This mirrors classic 4X starts. See Alternative Start Profiles (§3a).
+- Implementation: the prototype now exposes `found_settlement` as a command that requires an on-map `Founders` band, consumes provisions, converts the band into a `Settlement` with a Town Center radius, and recenters the fog/survey reveal.
 
 ### Early Loop (Turn 5 → 30)
 - Nomadic stabilization: place/relocate Seasonal Camps; craft storage (drying/smoking, early pottery); build rafts/small boats; map seasonal circuits.

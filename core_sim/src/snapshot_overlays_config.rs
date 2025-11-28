@@ -273,10 +273,10 @@ impl Default for FogOverlayConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct FoodOverlayConfig {
-    max_sites_per_module: usize,
     max_total_sites: usize,
     default_radius: u32,
     radius_padding: u32,
+    min_site_spacing: u32,
     provisions_per_weight: f32,
     trade_goods_per_weight: f32,
     trade_bonus_modules: HashMap<String, f32>,
@@ -289,10 +289,6 @@ pub struct FoodOverlayConfig {
 }
 
 impl FoodOverlayConfig {
-    pub fn max_sites_per_module(&self) -> usize {
-        self.max_sites_per_module.max(1)
-    }
-
     pub fn max_total_sites(&self) -> usize {
         self.max_total_sites.max(1)
     }
@@ -347,15 +343,19 @@ impl FoodOverlayConfig {
     pub fn wild_game_radius(&self) -> u32 {
         self.wild_game_radius
     }
+
+    pub fn min_site_spacing(&self) -> u32 {
+        self.min_site_spacing.max(1)
+    }
 }
 
 impl Default for FoodOverlayConfig {
     fn default() -> Self {
         Self {
-            max_sites_per_module: 6,
             max_total_sites: 40,
             default_radius: 6,
             radius_padding: 2,
+            min_site_spacing: 4,
             provisions_per_weight: 120.0,
             trade_goods_per_weight: 35.0,
             trade_bonus_modules: HashMap::from([

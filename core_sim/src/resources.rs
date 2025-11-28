@@ -878,6 +878,10 @@ pub enum CommandEventKind {
     Scout,
     FollowHerd,
     FoundCamp,
+    FoundSettlement,
+    CampaignFounded,
+    CampaignMilestone,
+    CampaignVictory,
     Forage,
     Hunt,
 }
@@ -888,6 +892,10 @@ impl CommandEventKind {
             CommandEventKind::Scout => "scout",
             CommandEventKind::FollowHerd => "follow_herd",
             CommandEventKind::FoundCamp => "found_camp",
+            CommandEventKind::FoundSettlement => "found_settlement",
+            CommandEventKind::CampaignFounded => "campaign_founded",
+            CommandEventKind::CampaignMilestone => "campaign_milestone",
+            CommandEventKind::CampaignVictory => "campaign_victory",
             CommandEventKind::Forage => "forage",
             CommandEventKind::Hunt => "hunt",
         }
