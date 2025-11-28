@@ -405,8 +405,8 @@ func _setup_hover_marker() -> void:
 
 var _overlay_buttons: Dictionary = {}
 var _overlay_keys: Array[String] = [
-    "logistics", "sentiment", "corruption", "fog", 
-    "culture", "military", "crisis", "elevation", "moisture"
+    "", "logistics", "sentiment", "corruption", "fog", 
+    "culture", "military", "crisis", "elevation", "moisture", "province"
 ]
 
 func _setup_tools_layer() -> void:
@@ -452,7 +452,7 @@ func _setup_tools_layer() -> void:
     
     for key in _overlay_keys:
         var btn := Button.new()
-        btn.text = key.capitalize()
+        btn.text = "No Overlay" if key == "" else key.capitalize()
         btn.toggle_mode = true
         btn.focus_mode = Control.FOCUS_NONE
         btn.pressed.connect(func(): _on_overlay_button_pressed(key))
@@ -580,7 +580,6 @@ func _sync_minimap_viewport_size() -> void:
     if _minimap_viewport.size != target:
         _minimap_viewport.size = target
     _minimap_texture.set_deferred("custom_minimum_size", Vector2(target))
-    _minimap_texture.set_deferred("size", Vector2(target))
     _resize_minimap_panel()
 
 func _update_minimap_camera_bounds() -> void:
@@ -652,7 +651,6 @@ func _resize_minimap_panel() -> void:
     auto_panel.target_width = target_width
     auto_panel.fit_to_content(padded_height, 0.0, null)
     auto_panel.set_deferred("custom_minimum_size", tex_size)
-    auto_panel.set_deferred("size", tex_size)
     _minimap_panel.queue_redraw()
     _minimap_texture.queue_redraw()
     if OS.is_debug_build():

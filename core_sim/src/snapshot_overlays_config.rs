@@ -277,6 +277,7 @@ pub struct FoodOverlayConfig {
     max_total_sites: usize,
     default_radius: u32,
     radius_padding: u32,
+    min_site_spacing: u32,
     provisions_per_weight: f32,
     trade_goods_per_weight: f32,
     trade_bonus_modules: HashMap<String, f32>,
@@ -347,6 +348,10 @@ impl FoodOverlayConfig {
     pub fn wild_game_radius(&self) -> u32 {
         self.wild_game_radius
     }
+
+    pub fn min_site_spacing(&self) -> u32 {
+        self.min_site_spacing.max(1)
+    }
 }
 
 impl Default for FoodOverlayConfig {
@@ -356,6 +361,7 @@ impl Default for FoodOverlayConfig {
             max_total_sites: 40,
             default_radius: 6,
             radius_padding: 2,
+            min_site_spacing: 4,
             provisions_per_weight: 120.0,
             trade_goods_per_weight: 35.0,
             trade_bonus_modules: HashMap::from([
