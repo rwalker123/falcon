@@ -51,10 +51,10 @@ func apply_config(config: Dictionary) -> void:
 func update_water_level(sea_level: float, exaggeration: float) -> void:
 	_sea_level = sea_level
 	_exaggeration = exaggeration
-	# If we already have a mesh, we might need to rebuild it if we want to be perfect,
-	# but for now, let's assume update_water is called after this or frequently enough.
-	# Actually, if we just change the level, we should probably trigger a rebuild if we have data.
-	# But simpler to just rely on the next update_water call for now, or just store values.
+	# Note: We intentionally do not rebuild the mesh here.
+	# Water geometry is regenerated only when `update_water` is called, which is
+	# expected to happen after any sea-level or exaggeration change.
+	# This keeps `update_water_level` cheap and avoids rebuilding the mesh twice.
 
 func update_water(width: int, height: int, tags: PackedInt32Array, terrain_ids: PackedInt32Array, heightfield_data: Dictionary) -> void:
 	if width <= 0 or height <= 0:
@@ -71,9 +71,6 @@ func update_water(width: int, height: int, tags: PackedInt32Array, terrain_ids: 
 	# For water, we just need a flat quad at sea level for each water tile.
 	
 	var water_count := 0
-	var debug_printed := 0
-	
-	print("[WaterLayer3D] update_water: w=%d h=%d tags_len=%d ids_len=%d" % [width, height, tags.size(), terrain_ids.size()])
 
 	for y in range(height):
 		for x in range(width):
@@ -91,20 +88,10 @@ func update_water(width: int, height: int, tags: PackedInt32Array, terrain_ids: 
 				tid = terrain_ids[idx]
 
 			if not is_water:
+				# Treat specific terrain IDs as water tiles:
 				# 0: Deep Ocean, 1: Continental Shelf, 2: Inland Sea, 3: Coral Shelf
-				# Reverting the <= 0 check to strictly check 0 for debugging purposes as requested
 				if tid == 0 or tid == 1 or tid == 2 or tid == 3:
 					is_water = true
-			
-			# Debug logging for suspicious tiles (e.g. Deep Ocean but not water)
-			if tid == 0 and not is_water:
-				if debug_printed < 10:
-					print("[WaterLayer3D] FAIL: x=%d y=%d idx=%d tag_mask=%d tid=%d is_water=%s" % [x, y, idx, tag_mask, tid, is_water])
-					debug_printed += 1
-			elif tid == 0 and is_water and debug_printed < 5:
-				# Print a few successes too
-				print("[WaterLayer3D] OK: x=%d y=%d idx=%d tag_mask=%d tid=%d is_water=%s" % [x, y, idx, tag_mask, tid, is_water])
-				debug_printed += 1
 
 			if is_water:
 				_add_water_quad(st, x, y, tag_mask)
@@ -114,10 +101,8 @@ func update_water(width: int, height: int, tags: PackedInt32Array, terrain_ids: 
 		st.generate_normals()
 		st.generate_tangents()
 		_mesh_instance.mesh = st.commit()
-		print("[WaterLayer3D] Generated mesh with %d water tiles." % water_count)
 	else:
 		_clear_mesh()
-		print("[WaterLayer3D] No water tiles found. Cleared mesh.")
 
 func _add_water_quad(st: SurfaceTool, x: int, y: int, tag_mask: int) -> void:
 	var fx := float(x)
