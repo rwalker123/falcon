@@ -1572,7 +1572,9 @@ func _push_heightfield_preview() -> void:
         grid_height,
         units,
         herds,
-        food_sites
+        food_sites,
+        terrain_tags_overlay,
+        terrain_overlay
     )
 
 func _toggle_heightfield_preview() -> void:

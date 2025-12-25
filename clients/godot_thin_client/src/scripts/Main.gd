@@ -203,6 +203,9 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         else:
             if inspector.has_method("update_snapshot"):
                 inspector.call("update_snapshot", snapshot)
+        if snapshot.has("capability_flags"):
+            if inspector.has_method("update_capability_flags"):
+                inspector.call("update_capability_flags", int(snapshot["capability_flags"]))
         if inspector.has_method("set_streaming_active"):
             inspector.call("set_streaming_active", streaming_mode)
     var recenter: bool = false

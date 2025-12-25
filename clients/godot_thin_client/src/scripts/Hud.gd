@@ -215,6 +215,7 @@ func set_ui_zoom(scale: float) -> void:
     if zoom_reset_button != null:
         zoom_reset_button.text = "%.0f%%" % (scale * 100.0)
 
+
 func _connect_zoom_controls() -> void:
     if zoom_out_button != null and not zoom_out_button.is_connected("pressed", Callable(self, "_on_zoom_out_pressed")):
         zoom_out_button.pressed.connect(_on_zoom_out_pressed)

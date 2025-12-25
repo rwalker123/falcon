@@ -38,6 +38,28 @@
     "visible": true,
     "scale": 1.0,
     "y_offset": 0.0,
-    "shaded": false
+  },
+  "water": {
+    "visible": true,
+    "sea_level_offset": 0.5,
+    "sea_level_override": -1.0,
+    "color_deep": [
+      0.04,
+      0.12,
+      0.24,
+      0.9
+    ],
+    "color_coastal": [
+      0.08,
+      0.25,
+      0.37,
+      0.85
+    ],
+    "color_fresh": [
+      0.11,
+      0.35,
+      0.45,
+      0.8
+    ]
   }
 }

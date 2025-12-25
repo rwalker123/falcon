@@ -17,6 +17,7 @@ signal hex_hovered(col: int, row: int)
 signal view_state_changed(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float)
 
 const HeightfieldLayer3D: GDScript = preload("res://src/scripts/HeightfieldLayer3D.gd")
+const WaterLayer3D: GDScript = preload("res://src/scripts/WaterLayer3D.gd")
 const UnitOverlay3D: GDScript = preload("res://src/scripts/UnitOverlay3D.gd")
 const AutoSizingPanel: GDScript = preload("res://src/scripts/ui/AutoSizingPanel.gd")
 const MINIMAP_BASE_HEIGHT := 220
@@ -29,6 +30,7 @@ var _container: SubViewportContainer
 var _camera: Camera3D
 var _light: DirectionalLight3D
 var _heightfield: HeightfieldLayer3D
+var _water_layer: WaterLayer3D
 var _unit_overlay: UnitOverlay3D
 var _hover_marker: MeshInstance3D
 var _saved_camera_state: Dictionary = {}
@@ -91,6 +93,9 @@ func _ready() -> void:
     _viewport.add_child(_heightfield)
     _heightfield.strategic_view_requested.connect(_on_heightfield_strategic_view_requested)
     _heightfield.zoom_multiplier_changed.connect(func(_mult): _emit_view_state())
+    
+    _water_layer = WaterLayer3D.new()
+    _viewport.add_child(_water_layer)
     
     _unit_overlay = UnitOverlay3D.new()
     _viewport.add_child(_unit_overlay)
@@ -169,7 +174,9 @@ func update_snapshot(
     grid_height: int,
     units: Array = [],
     herds: Array = [],
-    food_sites: Array = []
+    food_sites: Array = [],
+    terrain_tags: PackedInt32Array = PackedInt32Array(),
+    terrain_ids: PackedInt32Array = PackedInt32Array()
 ) -> void:
     if heightfield.is_empty():
         return
@@ -192,6 +199,18 @@ func update_snapshot(
         _heightfield.set_biome_colors(terrain_colors, grid_width, grid_height)
     var overlay_enabled := overlay_key != "" and not overlay_values.is_empty()
     _heightfield.set_overlay_values(overlay_values, grid_width, grid_height, overlay_color, overlay_enabled)
+    
+    if _water_layer != null:
+        var sea_level: float = 0.6
+        if heightfield.has("sea_level"):
+             sea_level = float(heightfield["sea_level"])
+        
+        var exaggeration: float = 80.0
+        if _heightfield.has_method("get_height_exaggeration"):
+            exaggeration = _heightfield.get_height_exaggeration()
+            
+        _water_layer.update_water_level(sea_level, exaggeration)
+        _water_layer.update_water(grid_width, grid_height, terrain_tags, terrain_ids, heightfield)
     
     # Create a synthetic snapshot for the overlay
     var snapshot_subset = {
@@ -737,6 +756,8 @@ func _load_and_apply_overlay_config() -> void:
     var json = JSON.parse_string(text)
     if json is Dictionary:
         _unit_overlay.apply_config(json)
+        if _water_layer != null and json.has("water"):
+            _water_layer.apply_config(json["water"])
 
 func _gui_input(event: InputEvent) -> void:
     if event is InputEventMouseButton and event.pressed:

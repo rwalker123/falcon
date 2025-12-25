@@ -62,9 +62,9 @@ use crate::{
     power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
     resources::FoodSiteRegistry,
     resources::{
-        CommandEventLog, CorruptionLedgers, CorruptionTelemetry, DiscoveryProgressLedger,
-        FactionInventory, FogRevealLedger, MoistureRaster, SentimentAxisBias, SimulationConfig,
-        SimulationTick, StartLocation, TileRegistry,
+        CapabilityFlags, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
+        DiscoveryProgressLedger, FactionInventory, FogRevealLedger, MoistureRaster,
+        SentimentAxisBias, SimulationConfig, SimulationTick, StartLocation, TileRegistry,
     },
     scalar::Scalar,
     snapshot_overlays_config::{SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle},
@@ -114,6 +114,7 @@ pub struct SnapshotContext<'w> {
     pub faction_inventory: Res<'w, FactionInventory>,
     pub food_sites: Res<'w, FoodSiteRegistry>,
     pub command_events: Res<'w, CommandEventLog>,
+    pub capability_flags: Res<'w, CapabilityFlags>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -195,6 +196,7 @@ pub struct SnapshotHistory {
     elevation_overlay: ElevationOverlayState,
     corruption: CorruptionLedger,
     victory: VictorySnapshotState,
+    capability_flags: u32,
     faction_inventory: Vec<SchemaFactionInventoryState>,
     command_events: Vec<CommandEventState>,
     herds: Vec<HerdTelemetryState>,
@@ -253,6 +255,7 @@ impl SnapshotHistory {
             elevation_overlay: ElevationOverlayState::default(),
             corruption: CorruptionLedger::default(),
             victory: VictorySnapshotState::default(),
+            capability_flags: 0,
             faction_inventory: Vec::new(),
             command_events: Vec::new(),
             herds: Vec::new(),
@@ -530,6 +533,12 @@ impl SnapshotHistory {
         } else {
             Some(command_events_state.clone())
         };
+        let capability_flags_state = snapshot.capability_flags;
+        let capability_flags_delta = if self.capability_flags == capability_flags_state {
+            None
+        } else {
+            Some(capability_flags_state)
+        };
         let herd_state = snapshot.herds.clone();
         let herds_delta = if self.herds == herd_state {
             None
@@ -567,6 +576,7 @@ impl SnapshotHistory {
             removed_knowledge_ledger: diff_removed(&self.knowledge_ledger, &knowledge_ledger_index),
             knowledge_metrics: knowledge_metrics_delta.clone(),
             victory: victory_delta.clone(),
+            capability_flags: capability_flags_delta,
             command_events: command_events_delta.clone(),
             faction_inventory: faction_inventory_delta.clone(),
             herds: herds_delta.clone(),
@@ -637,6 +647,7 @@ impl SnapshotHistory {
         self.culture_tensions = culture_tensions_state;
         self.discovery_progress = discovery_index;
         self.victory = victory_state;
+        self.capability_flags = capability_flags_state;
         self.faction_inventory = faction_inventory_state;
         self.command_events = command_events_state;
         self.herds = herd_state;
@@ -748,6 +759,7 @@ impl SnapshotHistory {
         self.hydrology_overlay = entry.snapshot.hydrology_overlay.clone();
         self.elevation_overlay = entry.snapshot.elevation_overlay.clone();
         self.start_marker = entry.snapshot.start_marker.clone();
+        self.capability_flags = entry.snapshot.capability_flags;
 
         self.last_snapshot = Some(entry.snapshot.clone());
         self.last_delta = Some(entry.delta.clone());
@@ -799,6 +811,7 @@ impl SnapshotHistory {
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
             victory: None,
+            capability_flags: None,
             command_events: None,
             herds: None,
             food_modules: None,
@@ -941,6 +954,7 @@ impl SnapshotHistory {
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
             victory: None,
+            capability_flags: None,
             command_events: None,
             herds: None,
             food_modules: None,
@@ -1044,6 +1058,7 @@ impl SnapshotHistory {
             removed_knowledge_ledger: Vec::new(),
             knowledge_metrics: None,
             victory: None,
+            capability_flags: None,
             command_events: None,
             herds: None,
             food_modules: None,
@@ -1160,6 +1175,7 @@ pub fn capture_snapshot(
         faction_inventory,
         food_sites,
         command_events,
+        capability_flags,
     } = ctx;
     let overlays_config = overlays.get();
     history.set_capacity(config.snapshot_history_limit.max(1));
@@ -1481,6 +1497,7 @@ pub fn capture_snapshot(
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
     let command_events_state = command_events_to_state(&command_events);
     let victory_snapshot_state = victory_snapshot_from_resource(&victory);
+    let capability_bits = capability_flags.bits();
 
     let snapshot = WorldSnapshot {
         header,
@@ -1507,6 +1524,7 @@ pub fn capture_snapshot(
         campaign_profiles: campaign_profiles_state,
         faction_inventory: faction_inventory_state.clone(),
         command_events: command_events_state.clone(),
+        capability_flags: capability_bits,
         axis_bias: axis_bias_state,
         sentiment: sentiment_state,
         generations: generation_states,
@@ -1560,6 +1578,13 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         *start_loc = StartLocation::new(start_marker_position);
     } else {
         world.insert_resource(StartLocation::new(start_marker_position));
+    }
+
+    let capability_flags = CapabilityFlags::from_bits_truncate(snapshot.capability_flags);
+    if let Some(mut flags) = world.get_resource_mut::<CapabilityFlags>() {
+        *flags = capability_flags;
+    } else {
+        world.insert_resource(capability_flags);
     }
 
     let moisture_raster = MoistureRaster::from_state(&snapshot.moisture_raster);
@@ -3574,6 +3599,7 @@ mod tests {
             victory: VictorySnapshotState::default(),
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
+            capability_flags: 0,
             campaign_profiles: Vec::new(),
             command_events: Vec::new(),
             herds: Vec::new(),
@@ -3627,6 +3653,7 @@ mod tests {
             victory: VictorySnapshotState::default(),
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
+            capability_flags: 0,
             campaign_profiles: Vec::new(),
             command_events: Vec::new(),
             herds: Vec::new(),
@@ -3675,6 +3702,7 @@ mod tests {
             victory: VictorySnapshotState::default(),
             crisis_telemetry: CrisisTelemetryState::default(),
             crisis_overlay: CrisisOverlayState::default(),
+            capability_flags: 0,
             campaign_profiles: Vec::new(),
             command_events: Vec::new(),
             herds: Vec::new(),

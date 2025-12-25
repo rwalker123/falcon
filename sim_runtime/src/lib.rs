@@ -398,6 +398,7 @@ pub mod knowledge {
                 victory: VictorySnapshotState::default(),
                 crisis_telemetry: CrisisTelemetryState::default(),
                 crisis_overlay: CrisisOverlayState::default(),
+                capability_flags: 0,
                 campaign_profiles: Vec::new(),
                 command_events: Vec::new(),
                 herds: Vec::new(),
