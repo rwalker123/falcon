@@ -10,6 +10,7 @@ use crate::{
     power::PowerDiscoveryEffects,
     resources::{DiplomacyLeverage, DiscoveryProgressLedger, PendingCrisisSeeds, SimulationTick},
     scalar::{scalar_one, scalar_zero, Scalar},
+    CapabilityFlags,
 };
 
 use rand::{distributions::uniform::SampleUniform, rngs::SmallRng, Rng, SeedableRng};
@@ -738,6 +739,24 @@ pub struct GreatDiscoveryEffectEvent {
     pub record: GreatDiscoveryRecord,
 }
 
+pub fn apply_capability_effects(
+    mut flags: ResMut<CapabilityFlags>,
+    mut effects: EventReader<GreatDiscoveryEffectEvent>,
+) {
+    for event in effects.read() {
+        match event.kind {
+            GreatDiscoveryEffectKind::Power => {
+                flags.insert(CapabilityFlags::POWER);
+            }
+            GreatDiscoveryEffectKind::Crisis => {
+                flags.insert(CapabilityFlags::MEGAPROJECTS);
+            }
+            GreatDiscoveryEffectKind::Diplomacy => {
+                flags.insert(CapabilityFlags::ESPIONAGE_T2);
+            }
+        }
+    }
+}
 pub fn collect_observation_signals(
     mut readiness: ResMut<GreatDiscoveryReadiness>,
     registry: Res<GreatDiscoveryRegistry>,

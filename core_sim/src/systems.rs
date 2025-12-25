@@ -743,7 +743,6 @@ pub fn spawn_initial_world(
                         - bucket_targets[bucket_idx])
                         .min(remaining);
                     bucket_targets[bucket_idx] += can_add;
-                    allocated += can_add;
                     remaining -= can_add;
                 }
             }

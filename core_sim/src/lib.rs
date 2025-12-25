@@ -135,11 +135,11 @@ pub use power::{
 };
 pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
-    CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
-    DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FogRevealLedger, FoodSiteEntry,
-    FoodSiteRegistry, HydrologyOverrides, PendingCrisisSeeds, PendingCrisisSpawns,
-    SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation,
-    TileRegistry, TradeDiffusionRecord, TradeTelemetry,
+    CapabilityFlags, CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers,
+    CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory,
+    FogRevealLedger, FoodSiteEntry, FoodSiteRegistry, HydrologyOverrides, PendingCrisisSeeds,
+    PendingCrisisSpawns, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata,
+    SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{
@@ -292,6 +292,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(PowerGridState::default())
         .insert_resource(PowerTopology::default())
         .insert_resource(SimulationTick::default())
+        .insert_resource(CapabilityFlags::default())
         .insert_resource(SimulationMetrics::default())
         .insert_resource(crisis_telemetry_resource)
         .insert_resource(SentimentAxisBias::default())
@@ -389,7 +390,8 @@ pub fn build_headless_app() -> App {
                 systems::process_culture_events,
             )
                 .chain()
-                .in_set(TurnStage::Influence),
+                .in_set(TurnStage::Influence)
+                .run_if(capability_enabled(CapabilityFlags::ALWAYS_ON)),
         )
         .add_systems(
             Update,
@@ -400,7 +402,13 @@ pub fn build_headless_app() -> App {
                 systems::trade_knowledge_diffusion,
             )
                 .chain()
-                .in_set(TurnStage::Logistics),
+                .in_set(TurnStage::Logistics)
+                .run_if(capability_enabled(
+                    CapabilityFlags::CONSTRUCTION
+                        | CapabilityFlags::INDUSTRY_T1
+                        | CapabilityFlags::INDUSTRY_T2
+                        | CapabilityFlags::ALWAYS_ON,
+                )),
         )
         .add_systems(
             Update,
@@ -412,7 +420,10 @@ pub fn build_headless_app() -> App {
                 knowledge_ledger::knowledge_ledger_tick,
             )
                 .chain()
-                .in_set(TurnStage::Knowledge),
+                .in_set(TurnStage::Knowledge)
+                .run_if(capability_enabled(
+                    CapabilityFlags::ESPIONAGE_T2 | CapabilityFlags::ALWAYS_ON,
+                )),
         )
         .add_systems(
             Update,
@@ -423,9 +434,13 @@ pub fn build_headless_app() -> App {
                 great_discovery::resolve_great_discovery,
                 great_discovery::propagate_diffusion_impacts,
                 great_discovery::export_great_discovery_metrics,
+                great_discovery::apply_capability_effects,
             )
                 .chain()
-                .in_set(TurnStage::GreatDiscovery),
+                .in_set(TurnStage::GreatDiscovery)
+                .run_if(capability_enabled(
+                    CapabilityFlags::MEGAPROJECTS | CapabilityFlags::ALWAYS_ON,
+                )),
         )
         .add_systems(
             Update,
@@ -436,7 +451,13 @@ pub fn build_headless_app() -> App {
                 systems::publish_trade_telemetry,
             )
                 .chain()
-                .in_set(TurnStage::Population),
+                .in_set(TurnStage::Population)
+                .run_if(capability_enabled(
+                    CapabilityFlags::CONSTRUCTION
+                        | CapabilityFlags::INDUSTRY_T1
+                        | CapabilityFlags::INDUSTRY_T2
+                        | CapabilityFlags::ALWAYS_ON,
+                )),
         )
         .add_systems(
             Update,
@@ -450,7 +471,10 @@ pub fn build_headless_app() -> App {
                 systems::decay_fog_reveals,
             )
                 .chain()
-                .in_set(TurnStage::Finalize),
+                .in_set(TurnStage::Finalize)
+                .run_if(capability_enabled(
+                    CapabilityFlags::POWER | CapabilityFlags::ALWAYS_ON,
+                )),
         )
         .add_systems(
             Update,
@@ -506,4 +530,8 @@ pub fn build_headless_app() -> App {
 /// Callers are responsible for snapshot broadcasting and command handling.
 pub fn run_turn(app: &mut App) {
     app.update();
+}
+
+fn capability_enabled(flags: CapabilityFlags) -> impl FnMut(Res<CapabilityFlags>) -> bool {
+    move |current: Res<CapabilityFlags>| current.intersects(flags)
 }

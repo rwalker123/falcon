@@ -49,6 +49,16 @@ const HERD_FOLLOW_MORALE_GAIN := 0.03
 const HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS := 0.0004
 const HERD_KNOWLEDGE_PROGRESS_CAP := 0.25
 const HERD_TRADE_DIFFUSION_BONUS := 0.25
+const CAP_CONSTRUCTION := 1 << 1
+const CAP_INDUSTRY_T1 := 1 << 2
+const CAP_INDUSTRY_T2 := 1 << 3
+const CAP_POWER := 1 << 4
+const CAP_NAVAL_OPS := 1 << 5
+const CAP_AIR_OPS := 1 << 6
+const CAP_ESPIONAGE_T2 := 1 << 7
+const CAP_MEGAPROJECTS := 1 << 8
+
+var capability_flags: int = 0
 
 @onready var sentiment_text: RichTextLabel = $RootPanel/TabContainer/Sentiment/SentimentText
 @onready var terrain_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TerrainText
@@ -386,6 +396,7 @@ func _ready() -> void:
     _initialize_config_controls()
     _initialize_map_controls()
     _initialize_scenario_controls()
+    _apply_capability_gating()
     _ensure_overlay_selector()
     apply_typography()
     _connect_terrain_ui()
@@ -471,14 +482,20 @@ func _process(delta: float) -> void:
 func update_snapshot(snapshot: Dictionary) -> void:
     _apply_update(snapshot, true)
     _render_dynamic_sections()
+    if snapshot.has("capability_flags"):
+        update_capability_flags(int(snapshot["capability_flags"]))
 
 func update_delta(delta: Dictionary) -> void:
     _apply_update(delta, false)
     _render_dynamic_sections()
+    if delta.has("capability_flags"):
+        update_capability_flags(int(delta["capability_flags"]))
 
 func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
     if data.has("turn"):
         _last_turn = int(data.get("turn", _last_turn))
+    if data.has("capability_flags"):
+        capability_flags = int(data["capability_flags"])
 
     if data.has("campaign_profiles"):
         var profiles_variant: Variant = data["campaign_profiles"]
@@ -6342,3 +6359,30 @@ func _append_log_entry(entry: String, level: String = "INFO", target: String = "
     var normalized_level: String = _normalize_log_level(level)
     var formatted: String = "[%s] %s" % [_format_timestamp(resolved_timestamp), trimmed]
     _record_log(formatted, normalized_level, target, trimmed, resolved_timestamp, {}, true)
+
+# Capability gating
+func update_capability_flags(flags: int) -> void:
+    capability_flags = flags
+    _apply_capability_gating()
+
+func _apply_capability_gating() -> void:
+    _set_tab_enabled("Power", _has_flag(CAP_POWER))
+    _set_tab_enabled("GreatDiscoveries", _has_flag(CAP_MEGAPROJECTS))
+    _set_tab_enabled("Knowledge", _has_flag(CAP_ESPIONAGE_T2))
+    _set_tab_enabled("Trade", _has_flag(CAP_INDUSTRY_T1) or _has_flag(CAP_INDUSTRY_T2))
+    _set_tab_enabled("Terrain", _has_flag(CAP_CONSTRUCTION))
+    _set_tab_enabled("Crisis", _has_flag(CAP_MEGAPROJECTS))
+    _set_tab_enabled("Influencers", _has_flag(CAP_INDUSTRY_T1) or _has_flag(CAP_INDUSTRY_T2))
+    if tile_found_camp_button != null:
+        tile_found_camp_button.disabled = not _has_flag(CAP_CONSTRUCTION)
+
+func _set_tab_enabled(name: String, enabled: bool) -> void:
+    if tab_container == null:
+        return
+    for i in range(tab_container.get_tab_count()):
+        if tab_container.get_tab_title(i) == name:
+            tab_container.set_tab_disabled(i, not enabled)
+            break
+
+func _has_flag(bit: int) -> bool:
+    return (capability_flags & bit) != 0

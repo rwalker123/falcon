@@ -7,7 +7,7 @@ use std::{
 };
 
 use bevy::{math::UVec2, prelude::*};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sim_runtime::{CorruptionLedger, CorruptionSubsystem, FloatRasterState};
 use thiserror::Error;
 
@@ -18,6 +18,7 @@ use crate::{
     start_profile::{FogMode, StartProfileOverrides},
     FoodModule, FoodSiteKind,
 };
+use bitflags::bitflags;
 
 #[derive(Debug, Clone, Default)]
 pub struct HydrologyOverrides {
@@ -413,6 +414,27 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
 /// Tracks total simulation ticks elapsed.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SimulationTick(pub u64);
+
+bitflags! {
+    #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct CapabilityFlags: u32 {
+        const ALWAYS_ON = 1 << 0;
+        const CONSTRUCTION = 1 << 1;
+        const INDUSTRY_T1 = 1 << 2;
+        const INDUSTRY_T2 = 1 << 3;
+        const POWER = 1 << 4;
+        const NAVAL_OPS = 1 << 5;
+        const AIR_OPS = 1 << 6;
+        const ESPIONAGE_T2 = 1 << 7;
+        const MEGAPROJECTS = 1 << 8;
+    }
+}
+
+impl Default for CapabilityFlags {
+    fn default() -> Self {
+        CapabilityFlags::ALWAYS_ON
+    }
+}
 
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct StartLocation {

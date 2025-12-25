@@ -1314,6 +1314,8 @@ pub struct WorldSnapshot {
     pub crisis_overlay: CrisisOverlayState,
     pub victory: VictorySnapshotState,
     #[serde(default)]
+    pub capability_flags: u32,
+    #[serde(default)]
     pub campaign_profiles: Vec<CampaignProfileState>,
     #[serde(default)]
     pub command_events: Vec<CommandEventState>,
@@ -1366,6 +1368,7 @@ pub struct WorldDelta {
     pub removed_knowledge_ledger: Vec<u64>,
     pub knowledge_metrics: Option<KnowledgeMetricsState>,
     pub victory: Option<VictorySnapshotState>,
+    pub capability_flags: Option<u32>,
     pub command_events: Option<Vec<CommandEventState>>,
     pub knowledge_timeline: Vec<KnowledgeTimelineEventState>,
     pub crisis_telemetry: Option<CrisisTelemetryState>,
@@ -1555,6 +1558,7 @@ fn build_snapshot_flatbuffer<'a>(
             crisisTelemetry: Some(crisis_telemetry),
             crisisOverlay: Some(crisis_overlay),
             victory: Some(victory_state),
+            capabilityFlags: snapshot.capability_flags,
             campaignProfiles: Some(campaign_profiles_vec),
             commandEvents: Some(command_events_vec),
             herds: Some(herds_vec),
@@ -1773,6 +1777,7 @@ fn build_delta_flatbuffer<'a>(
             knowledgeTimeline: Some(knowledge_timeline_vec),
             knowledgeMetrics: knowledge_metrics,
             victory: victory_state,
+            capabilityFlags: delta.capability_flags.unwrap_or(0),
             commandEvents: command_events,
             crisisTelemetry: crisis_telemetry,
             crisisOverlay: crisis_overlay,

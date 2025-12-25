@@ -757,6 +757,7 @@ table WorldSnapshot {
   knowledgeTimeline:[KnowledgeTimelineEventState];
   knowledgeMetrics:KnowledgeMetricsState;
   victory:VictoryState;
+  capabilityFlags:uint;
   crisisTelemetry:CrisisTelemetryState;
   crisisOverlay:CrisisOverlayState;
   campaignProfiles:[CampaignProfile];
@@ -807,6 +808,7 @@ table WorldDelta {
   knowledgeTimeline:[KnowledgeTimelineEventState];
   knowledgeMetrics:KnowledgeMetricsState;
   victory:VictoryState;
+  capabilityFlags:uint;
   crisisTelemetry:CrisisTelemetryState;
   crisisOverlay:CrisisOverlayState;
   commandEvents:[CommandEventState];

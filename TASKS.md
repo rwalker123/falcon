@@ -171,9 +171,9 @@
 - [x] Telemetry and log frames for campaign events (Owner: TBD, Estimate: 1d; Deps: snapshot delta wiring). Description: Stream `CampaignEvent` frames (Founded, Milestone, Victory) for client narration. _Status_: Added campaign event kinds to the command event stream (including `campaign_founded` used by `found_settlement`), so snapshot/log frames now carry campaign narrations for client display.
 
 ### Capability Flags & System Gating
-- [ ] Add `CapabilityFlags` resource and snapshot field (Owner: TBD, Estimate: 1.5d; Deps: schedule registry). Description: Define bitflags for `Construction`, `IndustryT1`, `IndustryT2`, `Power`, `NavalOps`, `AirOps`, `EspionageT2`, `Megaprojects`.
-- [ ] Gate system schedules via run criteria (Owner: TBD, Estimate: 1.5d; Deps: `CapabilityFlags`). Description: Skip `power_tick`, `air_ops_tick`, etc., when flags are unset; ensure determinism unaffected.
-- [ ] Hook Great Discovery effects to flip capability flags (Owner: TBD, Estimate: 1d; Deps: Great Discovery resolver). Description: Register effect lambdas mapping discoveries → flags; allow scenarios to preflip.
+- [x] Add `CapabilityFlags` resource and snapshot field (Owner: TBD, Estimate: 1.5d; Deps: schedule registry). Description: Define bitflags for `Construction`, `IndustryT1`, `IndustryT2`, `Power`, `NavalOps`, `AirOps`, `EspionageT2`, `Megaprojects`. _Status_: Added `CapabilityFlags` resource (bitflags), inserted into app defaults, exported in snapshots/deltas (bincode + FlatBuffers), restored with snapshots, and surfaced via `sim_schema`/client payloads for UI gating.
+- [x] Gate system schedules via run criteria (Owner: TBD, Estimate: 1.5d; Deps: `CapabilityFlags`). Description: Skip `power_tick`, `air_ops_tick`, etc., when flags are unset; ensure determinism unaffected. _Status_: Added run-if gating on stage chains (logistics, knowledge, great discovery, population, finalize/power) driven by `CapabilityFlags`.
+- [x] Hook Great Discovery effects to flip capability flags (Owner: TBD, Estimate: 1d; Deps: Great Discovery resolver). Description: Register effect lambdas mapping discoveries → flags; allow scenarios to preflip. _Status_: Great Discovery effects now set Power/Megaprojects/EspionageT2 flags and drive schedule gating + UI locks.
 
 ### Victory Engine
 - [ ] Add `victory_config.json` and `VictoryState` resource (Owner: TBD, Estimate: 2d; Deps: snapshot plumb). Description: Enumerate enabled modes, thresholds, scaling policy, dependencies.

@@ -60,6 +60,9 @@ var _fit_logged_once: bool = false
 var _last_hex_radius_2d: float = 1.0
 var _last_zoom_2d_at_sync: float = 1.0
 
+func get_height_exaggeration() -> float:
+    return _current_height_exaggeration
+
 func _ready() -> void:
     tile_scale = max(tile_scale, 0.1)
     _current_height_exaggeration = height_exaggeration_default

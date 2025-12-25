@@ -1453,6 +1453,7 @@ dependencies = [
  "bevy_reflect",
  "bevy_utils",
  "bincode",
+ "bitflags 2.9.4",
  "criterion",
  "crossbeam-channel",
  "env_logger",
