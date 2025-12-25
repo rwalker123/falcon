@@ -291,7 +291,7 @@ var selected_herd_id: String = ""
 var heightfield_data: Dictionary = {}
 var biome_color_buffer: PackedColorArray = PackedColorArray()
 var heightfield_preview: Control = null
-var _heightfield_boot_shown: bool = false
+var _heightfield_boot_shown: bool = true  # Default to 2D view; user can press R for 3D
 var _hovered_tile: Vector2i = Vector2i(-1, -1)
 
 func _ready() -> void:

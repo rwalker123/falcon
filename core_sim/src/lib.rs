@@ -391,17 +391,7 @@ pub fn build_headless_app() -> App {
             )
                 .chain()
                 .in_set(TurnStage::Influence)
-                .run_if(capability_enabled(
-                    CapabilityFlags::ALWAYS_ON
-                        | CapabilityFlags::CONSTRUCTION
-                        | CapabilityFlags::INDUSTRY_T1
-                        | CapabilityFlags::INDUSTRY_T2
-                        | CapabilityFlags::POWER
-                        | CapabilityFlags::NAVAL_OPS
-                        | CapabilityFlags::AIR_OPS
-                        | CapabilityFlags::ESPIONAGE_T2
-                        | CapabilityFlags::MEGAPROJECTS,
-                )),
+                .run_if(capability_enabled(CapabilityFlags::ALWAYS_ON)),
         )
         .add_systems(
             Update,
