@@ -197,6 +197,11 @@ func update_snapshot(
     # _update_hud_zoom_label() - Main HUD handles this
     if not terrain_colors.is_empty():
         _heightfield.set_biome_colors(terrain_colors, grid_width, grid_height)
+
+    # Set terrain overlay for texture sampling
+    if not terrain_ids.is_empty():
+        _heightfield.set_terrain_overlay(terrain_ids, grid_width, grid_height)
+
     var overlay_enabled := overlay_key != "" and not overlay_values.is_empty()
     _heightfield.set_overlay_values(overlay_values, grid_width, grid_height, overlay_color, overlay_enabled)
     

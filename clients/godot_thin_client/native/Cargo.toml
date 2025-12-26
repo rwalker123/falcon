@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-godot = { version = "0.4" }
+godot = { version = "0.4.3" }
 shadow_scale_flatbuffers = { path = "../../../shadow_scale_flatbuffers" }
 flatbuffers = "25.9.23"
 quick-js = "0.4"
