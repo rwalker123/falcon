@@ -1,0 +1,98 @@
+# Terrain Texture Generation Prompts
+#
+# These prompts are for use with AI image generation tools:
+#   - Midjourney (add --tile flag for seamless textures)
+#   - DALL-E 3 (via ChatGPT Plus or OpenAI API)
+#   - Stable Diffusion (enable "Tiling" option in settings)
+#   - Adobe Firefly
+#   - Leonardo.ai, Runway, or similar services
+#
+# After generating:
+#   1. Ensure textures are seamless/tileable (use Photoshop/GIMP offset filter if needed)
+#   2. Resize to 512x512 PNG
+#   3. Save to assets/terrain/textures/base/ with naming format: XX_terrain_name.png
+#   4. Restart Godot - textures load automatically
+#
+# ============================================================================
+
+# Water (0-4)
+00_deep_ocean: Seamless tileable deep ocean water texture, top-down view, dark blue-black depths, subtle caustic patterns, painterly style, muted colors, 512x512 game asset
+
+01_continental_shelf: Seamless tileable continental shelf underwater texture, top-down view, turquoise shallow water, sandy bottom visible, painterly style, 512x512 game asset
+
+02_inland_sea: Seamless tileable inland sea texture, top-down view, calm grey-blue water, subtle ripples, painterly style, muted colors, 512x512 game asset
+
+03_coral_shelf: Seamless tileable coral reef texture, top-down view, colorful coral formations underwater, tropical turquoise, painterly style, 512x512 game asset
+
+04_hydrothermal_vent_field: Seamless tileable hydrothermal vent field texture, top-down view, dark volcanic rock, mineral deposits, orange-yellow sulfur stains, painterly style, 512x512 game asset
+
+# Coastal/Wetland (5-10)
+05_tidal_flat: Seamless tileable tidal flat texture, top-down view, wet sand and mud, shallow water channels, painterly style, muted browns and greys, 512x512 game asset
+
+06_river_delta: Seamless tileable river delta texture, top-down view, braided water channels, sediment patterns, lush green edges, painterly style, 512x512 game asset
+
+07_mangrove_swamp: Seamless tileable mangrove swamp texture, top-down view, tangled roots in murky water, dark green foliage, painterly style, 512x512 game asset
+
+08_freshwater_marsh: Seamless tileable freshwater marsh texture, top-down view, reeds and cattails, shallow water, vibrant greens, painterly style, 512x512 game asset
+
+09_floodplain: Seamless tileable floodplain texture, top-down view, fertile silty soil, seasonal water marks, rich brown earth, painterly style, 512x512 game asset
+
+10_alluvial_plain: Seamless tileable alluvial plain texture, top-down view, layered sediment deposits, fertile farmland soil, muted earth tones, painterly style, 512x512 game asset
+
+# Temperate (11-14)
+11_prairie_steppe: Seamless tileable prairie steppe texture, top-down view, tall golden grass, windswept patterns, painterly style, warm yellows and tans, 512x512 game asset
+
+12_mixed_woodland: Seamless tileable mixed woodland texture, top-down view, deciduous tree canopy, dappled light, greens and browns, painterly style, 512x512 game asset
+
+13_boreal_taiga: Seamless tileable boreal taiga texture, top-down view, conifer forest canopy, dark green spruce, painterly style, muted colors, 512x512 game asset
+
+14_peat_heath: Seamless tileable peat heath texture, top-down view, boggy moorland, heather and moss, purple and brown tones, painterly style, 512x512 game asset
+
+# Arid (15-19)
+15_hot_desert_erg: Seamless tileable sand dune desert texture, top-down view, golden sand waves, erg patterns, painterly style, warm orange-yellow, 512x512 game asset
+
+16_rocky_reg: Seamless tileable rocky desert reg texture, top-down view, gravel and stone pavement, sparse rocks, painterly style, grey-brown tones, 512x512 game asset
+
+17_semi_arid_scrub: Seamless tileable semi-arid scrubland texture, top-down view, scattered dry bushes, cracked earth, painterly style, tan and olive, 512x512 game asset
+
+18_salt_flat: Seamless tileable salt flat texture, top-down view, white crystalline salt crust, hexagonal patterns, painterly style, bright white, 512x512 game asset
+
+19_oasis_basin: Seamless tileable desert oasis texture, top-down view, palm trees around water, lush green amid sand, painterly style, 512x512 game asset
+
+# Polar (20-23)
+20_tundra: Seamless tileable arctic tundra texture, top-down view, frozen moss and lichen, permafrost patterns, painterly style, grey-green, 512x512 game asset
+
+21_periglacial_steppe: Seamless tileable periglacial steppe texture, top-down view, frost-heaved ground, polygon patterns, sparse vegetation, painterly style, 512x512 game asset
+
+22_glacier: Seamless tileable glacier ice texture, top-down view, blue-white ice, crevasse patterns, painterly style, cold blues and whites, 512x512 game asset
+
+23_seasonal_snowfield: Seamless tileable seasonal snowfield texture, top-down view, patchy snow on ground, melting edges, painterly style, white and brown, 512x512 game asset
+
+# Highland (24-28)
+24_rolling_hills: Seamless tileable rolling hills texture, top-down view, gentle grassy slopes, pastoral green, painterly style, soft greens, 512x512 game asset
+
+25_high_plateau: Seamless tileable high plateau texture, top-down view, flat rocky highland, sparse grass, painterly style, muted brown-green, 512x512 game asset
+
+26_alpine_mountain: Seamless tileable alpine mountain texture, top-down view, rocky peaks, snow patches, grey granite, painterly style, 512x512 game asset
+
+27_karst_highland: Seamless tileable karst highland texture, top-down view, limestone formations, sinkholes, grey-white rock, painterly style, 512x512 game asset
+
+28_canyon_badlands: Seamless tileable canyon badlands texture, top-down view, eroded rock layers, red and orange striations, painterly style, 512x512 game asset
+
+# Volcanic (29-32)
+29_active_volcano_slope: Seamless tileable active volcano slope texture, top-down view, dark lava rock, glowing cracks, smoke wisps, painterly style, 512x512 game asset
+
+30_basaltic_lava_field: Seamless tileable basalt lava field texture, top-down view, cooled black lava flows, rope patterns, painterly style, dark grey-black, 512x512 game asset
+
+31_ash_plain: Seamless tileable volcanic ash plain texture, top-down view, grey ash deposits, sparse vegetation, painterly style, muted greys, 512x512 game asset
+
+32_fumarole_basin: Seamless tileable fumarole basin texture, top-down view, steaming vents, mineral stains, yellow sulfur deposits, painterly style, 512x512 game asset
+
+# Special (33-36)
+33_impact_crater_field: Seamless tileable meteor impact crater texture, top-down view, shattered rock, radiating fractures, painterly style, dark grey, 512x512 game asset
+
+34_karst_cavern_mouth: Seamless tileable karst cavern entrance texture, top-down view, limestone cave opening, shadows, rocky edges, painterly style, 512x512 game asset
+
+35_sinkhole_field: Seamless tileable sinkhole field texture, top-down view, collapsed terrain, circular depressions, exposed rock, painterly style, 512x512 game asset
+
+36_aquifer_ceiling: Seamless tileable underground aquifer ceiling texture, top-down view, wet limestone, stalactites, water drips, painterly style, 512x512 game asset
