@@ -5,7 +5,7 @@ extends SceneTree
 
 const TerrainDefinitions := preload("res://assets/terrain/TerrainDefinitions.gd")
 const BASE_TEXTURES_PATH := "res://assets/terrain/textures/base/"
-const OUTPUT_PATH := "res://assets/terrain/textures/terrain_atlas.res"
+const OUTPUT_PATH := "res://assets/terrain/textures/terrain_atlas.tres"
 
 func _init() -> void:
 	print("Building Texture2DArray from terrain textures...")
@@ -72,9 +72,12 @@ func _init() -> void:
 		quit(1)
 		return
 
-	# Save the resource
-	var save_path := ProjectSettings.globalize_path(OUTPUT_PATH)
-	var save_err := ResourceSaver.save(array_tex, OUTPUT_PATH)
+	# Explicitly set _images so they get serialized (create_from_images uploads to GPU but doesn't store)
+	array_tex.set("_images", images)
+
+	# Save the resource with bundled image data
+	var save_flags := ResourceSaver.FLAG_BUNDLE_RESOURCES
+	var save_err := ResourceSaver.save(array_tex, OUTPUT_PATH, save_flags)
 	if save_err != OK:
 		push_error("Failed to save Texture2DArray: %d" % save_err)
 		quit(1)

@@ -38,6 +38,8 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
 | `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content |
+| `assets/terrain/TerrainTextureManager.gd` | Autoload singleton for terrain texture loading (shared by 2D/3D) |
+| `assets/terrain/TerrainDefinitions.gd` | Single source of truth for terrain definitions |
 
 ---
 
@@ -98,11 +100,12 @@ assets/terrain/
       00_deep_ocean.png
       ...
       36_aquifer_ceiling.png
-    terrain_atlas.res            # Pre-built Texture2DArray (optional)
+    edges/                       # 6 edge masks for blending (optional)
     wang/                        # Wang tile variants (future)
   terrain_config.json            # Configuration
+  TerrainTextureManager.gd       # Autoload singleton for centralized texture loading
+  TerrainDefinitions.gd          # Single source of truth for terrain definitions
   TerrainTextureGenerator.gd     # CLI script to generate placeholder textures
-  TerrainAtlasBuilder.gd         # CLI script to pre-build texture atlas
 ```
 
 ### Enabling Terrain Textures
@@ -113,13 +116,7 @@ assets/terrain/
 2. Replace placeholders in `assets/terrain/textures/base/` with AI-generated or hand-crafted textures
 3. Set `"use_terrain_textures": true` in `terrain_config.json`
 
-The texture atlas is automatically rebuilt when running `scripts/run_stack.sh` if source textures are newer than the atlas. To manually rebuild:
-```bash
-scripts/build_terrain_textures.sh        # Only if out of date
-scripts/build_terrain_textures.sh --force  # Force rebuild
-```
-
-The system first attempts to load the pre-built `terrain_atlas.res`. If not found, it falls back to building from individual PNGs at runtime (slower startup).
+Textures are loaded at runtime from individual PNGs and combined into a `Texture2DArray`.
 
 ### Configuration (`terrain_config.json`)
 ```json
@@ -133,15 +130,20 @@ The system first attempts to load the pre-built `terrain_atlas.res`. If not foun
 }
 ```
 
+### Texture Loading (TerrainTextureManager)
+- Autoload singleton loads textures once at startup, shared by 2D and 3D renderers
+- Builds `Texture2DArray` from individual PNGs in `textures/base/`
+- Exposes: `terrain_textures` (Texture2DArray), `terrain_config`, `use_terrain_textures`, `use_edge_blending`
+
 ### 3D Rendering Pipeline
-- `HeightfieldLayer3D` loads `Texture2DArray` and builds terrain index texture
+- `HeightfieldLayer3D` gets textures from `TerrainTextureManager` and builds terrain index texture
 - `heightfield.gdshader` samples terrain textures via `sampler2DArray`
 - LOD blending between textured (close) and solid color (far)
 - Terrain IDs passed via terrain_index_texture (R8 format)
 - Edge blending: neighbor terrain texture encodes 6 neighbors per hex for smooth transitions
 
 ### 2D Rendering Pipeline
-- `MapView` pre-renders hex-masked textures from atlas on startup
+- `MapView` gets textures from `TerrainTextureManager` and pre-renders hex-masked textures on startup
 - Cached as `ImageTexture` per terrain ID for efficient drawing
 - Falls back to solid colors when overlay mode is active
 - Textures only displayed in base view (empty overlay key)

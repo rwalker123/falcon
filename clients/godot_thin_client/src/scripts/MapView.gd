@@ -136,9 +136,6 @@ const FOOD_SITE_STYLE_DEFAULT := {
 	"shape": "diamond"
 }
 
-const TERRAIN_TEXTURES_PATH := "res://assets/terrain/textures/terrain_atlas.res"
-const TERRAIN_CONFIG_PATH := "res://assets/terrain/terrain_config.json"
-
 const FOOD_SITE_STYLES := {
 	"littoral": {"color": Color(0.95, 0.74, 0.32, 0.9), "shape": "diamond"},
 	"river_garden": {"color": Color(0.4, 0.75, 0.9, 0.9), "shape": "droplet"},
@@ -199,13 +196,9 @@ var hydrology_rivers: Array = []
 var highlight_rivers: bool = false
 var start_marker: Vector2i = Vector2i(-1, -1)
 
-# Terrain texture system for 2D view
-var _terrain_textures: Texture2DArray = null
-var _terrain_config: Dictionary = {}
-var _use_terrain_textures: bool = false
+# Terrain texture system for 2D view (textures loaded via TerrainTextureManager autoload)
 var _hex_texture_cache: Dictionary = {}  # terrain_id -> ImageTexture (hex-masked)
 var _hex_texture_size: int = 128  # Size of cached hex textures
-var _use_edge_blending: bool = false
 var _show_grid_lines: bool = true
 var _terrain_grid_width: int = 0
 var _terrain_grid_height: int = 0
@@ -255,7 +248,7 @@ func _ready() -> void:
 	# Use nearest-neighbor filtering to prevent seams from bilinear interpolation
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_ensure_input_actions()
-	_load_terrain_textures()
+	_init_terrain_rendering()
 
 func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	print("[MapView] display_snapshot called. Keys: ", snapshot.keys())
@@ -499,7 +492,8 @@ func _draw() -> void:
 	draw_rect(map_bounds, Color(0.3, 0.35, 0.25, 1.0))  # Neutral earthy color
 
 	# Determine if using textured rendering (only in base overlay mode)
-	var use_textures := _use_terrain_textures and _terrain_textures != null and active_overlay_key == ""
+	var mgr := TerrainTextureManager
+	var use_textures := mgr.use_terrain_textures and mgr.terrain_textures != null and active_overlay_key == ""
 
 	# Pass 1: Draw all hex textures/colors
 	for y in range(grid_height):
@@ -520,7 +514,7 @@ func _draw() -> void:
 				draw_polygon(polygon_points, PackedColorArray([final_color, final_color, final_color, final_color, final_color, final_color]))
 
 	# Pass 2: Edge blending (between hex textures and grid lines)
-	if use_textures and _use_edge_blending:
+	if use_textures and mgr.use_edge_blending:
 		_draw_terrain_edge_blending(radius, origin)
 
 	# Pass 3: Grid lines (on top of edge blending)
@@ -2337,105 +2331,26 @@ func handle_hex_click(col: int, row: int, button_index: int) -> void:
 
 	_handle_entity_selection(col, row)
 
-# --- Terrain Texture System for 2D View ---
+# --- Terrain Texture System for 2D View (textures loaded via TerrainTextureManager autoload) ---
 
-func _load_terrain_textures() -> void:
-	# Load terrain texture array and config for 2D rendering
-	# Load terrain config
-	if FileAccess.file_exists(TERRAIN_CONFIG_PATH):
-		var file := FileAccess.open(TERRAIN_CONFIG_PATH, FileAccess.READ)
-		if file:
-			var parsed: Variant = JSON.parse_string(file.get_as_text())
-			if typeof(parsed) == TYPE_DICTIONARY:
-				_terrain_config = parsed
-				_use_terrain_textures = bool(_terrain_config.get("use_terrain_textures", false))
-				_use_edge_blending = bool(_terrain_config.get("use_edge_blending", false))
-				_build_terrain_priority_map()
-			file.close()
-
-	# Build texture array from individual PNG files at runtime
-	_terrain_textures = _build_terrain_texture_array()
-	if _terrain_textures != null and _terrain_textures.get_layers() > 0:
-		print("[MapView] Loaded terrain textures: %d layers" % _terrain_textures.get_layers())
+func _init_terrain_rendering() -> void:
+	## Initialize 2D terrain rendering from TerrainTextureManager
+	var mgr := TerrainTextureManager
+	if mgr.terrain_textures != null and mgr.terrain_textures.get_layers() > 0:
+		_build_terrain_priority_map()
 		_build_hex_texture_cache()
-		# Load edge masks for overlay blending
-		if _use_edge_blending:
+		if mgr.use_edge_blending:
 			_load_edge_masks()
 			_build_edge_overlay_cache()
-	else:
-		print("[MapView] Terrain textures not found (using solid colors)")
-
-func _build_terrain_texture_array() -> Texture2DArray:
-	# Build Texture2DArray from individual PNG files at runtime
-	const BASE_PATH := "res://assets/terrain/textures/base/"
-	var terrain_count: int = TerrainDefinitions.get_terrain_count()
-	var terrain_names: Dictionary = TerrainDefinitions.get_names_dict()
-
-	if terrain_count == 0:
-		push_warning("[MapView] No terrain definitions loaded - check terrain_config.json")
-		return null
-
-	var images: Array[Image] = []
-	var first_size: Vector2i = Vector2i.ZERO
-	var missing_textures: Array[String] = []
-
-	for terrain_id: int in range(terrain_count):
-		var tname: String = terrain_names.get(terrain_id, "unknown")
-		var filename := "%02d_%s.png" % [terrain_id, tname]
-		var filepath := BASE_PATH + filename
-
-		var img: Image = null
-		# Try loading via ResourceLoader first (works with imported resources)
-		if ResourceLoader.exists(filepath):
-			var tex: Texture2D = load(filepath)
-			if tex:
-				img = tex.get_image()
-		# Fallback to direct file loading
-		if img == null:
-			var abs_path := ProjectSettings.globalize_path(filepath)
-			if FileAccess.file_exists(abs_path):
-				img = Image.load_from_file(abs_path)
-
-		if img == null:
-			missing_textures.append(filename)
-			img = Image.create(512, 512, false, Image.FORMAT_RGBA8)
-			img.fill(Color.MAGENTA)
-
-		if first_size == Vector2i.ZERO:
-			first_size = Vector2i(img.get_width(), img.get_height())
-		elif Vector2i(img.get_width(), img.get_height()) != first_size:
-			img.resize(first_size.x, first_size.y)
-
-		if img.get_format() != Image.FORMAT_RGBA8:
-			img.convert(Image.FORMAT_RGBA8)
-
-		images.append(img)
-
-	if missing_textures.size() > 0:
-		push_warning("[MapView] Missing %d terrain textures (showing magenta): %s" % [
-			missing_textures.size(),
-			", ".join(missing_textures.slice(0, 5)) + ("..." if missing_textures.size() > 5 else "")
-		])
-
-	if images.size() != terrain_count:
-		push_error("[MapView] Expected %d textures, got %d" % [terrain_count, images.size()])
-		return null
-
-	var array_tex := Texture2DArray.new()
-	var err := array_tex.create_from_images(images)
-	if err != OK:
-		push_error("[MapView] Failed to create Texture2DArray: %d" % err)
-		return null
-
-	return array_tex
 
 func _build_hex_texture_cache() -> void:
-	# Pre-render hex-masked textures from the terrain atlas
-	if _terrain_textures == null:
+	## Pre-render hex-masked textures from the terrain atlas
+	var mgr := TerrainTextureManager
+	if mgr.terrain_textures == null:
 		return
 
 	_hex_texture_cache.clear()
-	var layer_count: int = _terrain_textures.get_layers()
+	var layer_count: int = mgr.terrain_textures.get_layers()
 
 	for terrain_id in range(layer_count):
 		var hex_tex := _render_hex_texture(terrain_id)
@@ -2445,12 +2360,13 @@ func _build_hex_texture_cache() -> void:
 	print("[MapView] Built hex texture cache: %d textures" % _hex_texture_cache.size())
 
 func _render_hex_texture(terrain_id: int) -> ImageTexture:
-	# Render a hex-masked texture for the given terrain ID
-	if _terrain_textures == null or terrain_id < 0 or terrain_id >= _terrain_textures.get_layers():
+	## Render a hex-masked texture for the given terrain ID
+	var mgr := TerrainTextureManager
+	if mgr.terrain_textures == null or terrain_id < 0 or terrain_id >= mgr.terrain_textures.get_layers():
 		return null
 
 	var size := _hex_texture_size
-	var source_img: Image = _terrain_textures.get_layer_data(terrain_id)
+	var source_img: Image = mgr.terrain_textures.get_layer_data(terrain_id)
 	if source_img == null:
 		return null
 
@@ -2527,11 +2443,12 @@ func _draw_hex_textured(center: Vector2, terrain_id: int, radius: float) -> void
 	draw_polygon(polygon_points, colors, uvs, tex)
 
 func get_terrain_textures_enabled() -> bool:
-	return _use_terrain_textures and _terrain_textures != null
+	var mgr := TerrainTextureManager
+	return mgr.use_terrain_textures and mgr.terrain_textures != null
 
 func enable_terrain_textures(enabled: bool) -> void:
-	# Toggle terrain texture rendering for 2D view
-	_use_terrain_textures = enabled
+	## Toggle terrain texture rendering for 2D view
+	TerrainTextureManager.use_terrain_textures = enabled
 	queue_redraw()
 
 func _load_edge_masks() -> void:
@@ -2558,17 +2475,18 @@ func _load_edge_masks() -> void:
 	print("[MapView] Loaded edge masks: %d/6" % loaded)
 
 func _build_edge_overlay_cache() -> void:
-	# Pre-render edge overlays for each terrain type and edge direction
-	# These are the terrain textures masked by the edge gradient
-	if _terrain_textures == null or _edge_mask_textures.size() < 6:
+	## Pre-render edge overlays for each terrain type and edge direction
+	## These are the terrain textures masked by the edge gradient
+	var mgr := TerrainTextureManager
+	if mgr.terrain_textures == null or _edge_mask_textures.size() < 6:
 		return
 
 	_edge_overlay_cache.clear()
 	var size := _hex_texture_size
-	var layer_count: int = _terrain_textures.get_layers()
+	var layer_count: int = mgr.terrain_textures.get_layers()
 
 	for terrain_id: int in range(layer_count):
-		var source_img: Image = _terrain_textures.get_layer_data(terrain_id)
+		var source_img: Image = mgr.terrain_textures.get_layer_data(terrain_id)
 		if source_img == null:
 			continue
 
@@ -2606,12 +2524,13 @@ func _build_edge_overlay_cache() -> void:
 	print("[MapView] Built edge overlay cache: %d textures" % _edge_overlay_cache.size())
 
 func _build_terrain_priority_map() -> void:
-	# Build a map of terrain_id -> priority from config
-	# Higher priority terrains draw fringes onto lower priority terrains
+	## Build a map of terrain_id -> priority from config
+	## Higher priority terrains draw fringes onto lower priority terrains
 	_terrain_priority.clear()
 
-	var categories: Dictionary = _terrain_config.get("categories", {})
-	var terrains: Array = _terrain_config.get("terrains", [])
+	var config: Dictionary = TerrainTextureManager.terrain_config
+	var categories: Dictionary = config.get("categories", {})
+	var terrains: Array = config.get("terrains", [])
 
 	# Build category -> priority map
 	var category_priority: Dictionary = {}

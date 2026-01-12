@@ -18,6 +18,7 @@ config/icon="res://assets/icon.svg"
 
 [autoload]
 
+TerrainTextureManager="*res://assets/terrain/TerrainTextureManager.gd"
 UiScaler="*res://src/scripts/ui_scaler.gd"
 
 [display]

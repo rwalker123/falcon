@@ -6,11 +6,8 @@ signal strategic_view_requested
 
 const HEIGHTFIELD_SHADER := preload("res://src/shaders/heightfield.gdshader")
 const HEX_GRID_SHADER := preload("res://src/shaders/hex_grid.gdshader")
-const TerrainDefinitions := preload("res://assets/terrain/TerrainDefinitions.gd")
 const SQRT3 := 1.7320508075688772
 const MAX_TERRAIN_INDEX := 255.0  # R8 texture format uses 0-255 range
-const TERRAIN_TEXTURES_PATH := "res://assets/terrain/textures/terrain_atlas.res"
-const TERRAIN_CONFIG_PATH := "res://assets/terrain/terrain_config.json"
 const MIN_HEIGHT_EXAGGERATION := 0.0001  # Epsilon for division-by-zero protection
 
 @export var chunk_size := Vector2i(32, 32)
@@ -34,13 +31,9 @@ var _biome_texture: Texture2D
 var _overlay_texture: Texture2D
 var _height_samples: PackedFloat32Array = PackedFloat32Array()
 
-# Terrain texture system
-var _terrain_textures: Texture2DArray = null
+# Terrain texture system (textures loaded via TerrainTextureManager autoload)
 var _terrain_index_texture: Texture2D = null
 var _terrain_neighbor_texture: Texture2D = null
-var _terrain_config: Dictionary = {}
-var _use_terrain_textures: bool = false
-var _use_edge_blending: bool = false
 var _terrain_grid_size: Vector2 = Vector2(64, 64)
 var _cached_terrain_ids: PackedInt32Array = PackedInt32Array()
 var _last_stats_signature: String = ""
@@ -103,8 +96,8 @@ func _ready() -> void:
     _material.set_shader_parameter("overlay_enabled", false)
     _material.set_shader_parameter("ambient_strength", 0.35)
     _update_shader_debug_flags()
-    # Load terrain textures if available
-    _load_terrain_textures()
+    # Terrain textures loaded via TerrainTextureManager autoload - apply params to shader
+    _apply_terrain_texture_params()
     
 
 
@@ -900,113 +893,20 @@ func _build_overlay_texture(values: PackedFloat32Array, width: int, height: int)
             image.set_pixel(x2, y2, filler_color)
     return ImageTexture.create_from_image(image)
 
-# --- Terrain Texture System ---
-
-func _load_terrain_textures() -> void:
-    # Load terrain texture array and config
-    # Load terrain config
-    if FileAccess.file_exists(TERRAIN_CONFIG_PATH):
-        var file := FileAccess.open(TERRAIN_CONFIG_PATH, FileAccess.READ)
-        if file:
-            var parsed: Variant = JSON.parse_string(file.get_as_text())
-            if typeof(parsed) == TYPE_DICTIONARY:
-                _terrain_config = parsed
-                _use_terrain_textures = bool(_terrain_config.get("use_terrain_textures", false))
-            file.close()
-
-    # Load pre-built texture array if available, otherwise build at runtime
-    if ResourceLoader.exists(TERRAIN_TEXTURES_PATH):
-        _terrain_textures = load(TERRAIN_TEXTURES_PATH) as Texture2DArray
-        if _terrain_textures != null and _terrain_textures.get_layers() > 0:
-            print("[HeightfieldLayer3D] Loaded pre-built terrain atlas: %d layers" % _terrain_textures.get_layers())
-        else:
-            _terrain_textures = null
-
-    # Fall back to building from individual PNGs if no pre-built atlas
-    if _terrain_textures == null:
-        _terrain_textures = _build_terrain_texture_array()
-        if _terrain_textures != null and _terrain_textures.get_layers() > 0:
-            print("[HeightfieldLayer3D] Built terrain textures at runtime: %d layers" % _terrain_textures.get_layers())
-        else:
-            print("[HeightfieldLayer3D] Terrain textures not found (using solid colors)")
-
-    _apply_terrain_texture_params()
-
-func _build_terrain_texture_array() -> Texture2DArray:
-    # Build Texture2DArray from individual PNG files at runtime
-    const BASE_PATH := "res://assets/terrain/textures/base/"
-    var terrain_count: int = TerrainDefinitions.get_terrain_count()
-    var terrain_names: Dictionary = TerrainDefinitions.get_names_dict()
-
-    if terrain_count == 0:
-        push_warning("[HeightfieldLayer3D] No terrain definitions loaded - check terrain_config.json")
-        return null
-
-    var images: Array[Image] = []
-    var first_size: Vector2i = Vector2i.ZERO
-    var missing_textures: Array[String] = []
-
-    for terrain_id: int in range(terrain_count):
-        var tname: String = terrain_names.get(terrain_id, "unknown")
-        var filename := "%02d_%s.png" % [terrain_id, tname]
-        var filepath := BASE_PATH + filename
-
-        var img: Image = null
-        # Try loading via ResourceLoader first (works with imported resources)
-        if ResourceLoader.exists(filepath):
-            var tex: Texture2D = load(filepath)
-            if tex:
-                img = tex.get_image()
-        # Fallback to direct file loading
-        if img == null:
-            var abs_path := ProjectSettings.globalize_path(filepath)
-            if FileAccess.file_exists(abs_path):
-                img = Image.load_from_file(abs_path)
-
-        if img == null:
-            missing_textures.append(filename)
-            img = Image.create(512, 512, false, Image.FORMAT_RGBA8)
-            img.fill(Color.MAGENTA)
-
-        if first_size == Vector2i.ZERO:
-            first_size = Vector2i(img.get_width(), img.get_height())
-        elif Vector2i(img.get_width(), img.get_height()) != first_size:
-            img.resize(first_size.x, first_size.y)
-
-        if img.get_format() != Image.FORMAT_RGBA8:
-            img.convert(Image.FORMAT_RGBA8)
-
-        images.append(img)
-
-    if missing_textures.size() > 0:
-        push_warning("[HeightfieldLayer3D] Missing %d terrain textures (showing magenta): %s" % [
-            missing_textures.size(),
-            ", ".join(missing_textures.slice(0, 5)) + ("..." if missing_textures.size() > 5 else "")
-        ])
-
-    if images.size() != terrain_count:
-        push_error("[HeightfieldLayer3D] Expected %d textures, got %d" % [terrain_count, images.size()])
-        return null
-
-    var array_tex := Texture2DArray.new()
-    var err := array_tex.create_from_images(images)
-    if err != OK:
-        push_error("[HeightfieldLayer3D] Failed to create Texture2DArray: %d" % err)
-        return null
-
-    return array_tex
+# --- Terrain Texture System (textures loaded via TerrainTextureManager autoload) ---
 
 func _apply_terrain_texture_params() -> void:
-    # Apply terrain texture parameters to the shader
+    # Apply terrain texture parameters to the shader (textures from TerrainTextureManager autoload)
     if _material == null:
         return
 
-    _material.set_shader_parameter("use_terrain_textures", _use_terrain_textures and _terrain_textures != null)
-    _material.set_shader_parameter("use_edge_blending", _use_edge_blending)
+    var mgr := TerrainTextureManager
+    _material.set_shader_parameter("use_terrain_textures", mgr.use_terrain_textures and mgr.terrain_textures != null)
+    _material.set_shader_parameter("use_edge_blending", mgr.use_edge_blending)
     _material.set_shader_parameter("grid_size", _terrain_grid_size)
 
-    if _terrain_textures != null:
-        _material.set_shader_parameter("terrain_textures", _terrain_textures)
+    if mgr.terrain_textures != null:
+        _material.set_shader_parameter("terrain_textures", mgr.terrain_textures)
 
     if _terrain_index_texture != null:
         _material.set_shader_parameter("terrain_index_texture", _terrain_index_texture)
@@ -1014,18 +914,15 @@ func _apply_terrain_texture_params() -> void:
     if _terrain_neighbor_texture != null:
         _material.set_shader_parameter("terrain_neighbor_texture", _terrain_neighbor_texture)
 
-    # Apply config settings
-    if not _terrain_config.is_empty():
-        var tex_scale: float = float(_terrain_config.get("texture_scale", 4.0))
-        var lod_near: float = float(_terrain_config.get("lod_near_distance", 50.0))
-        var lod_far: float = float(_terrain_config.get("lod_far_distance", 200.0))
-        var blend_width: float = float(_terrain_config.get("blend_width", 0.15))
-        _use_edge_blending = bool(_terrain_config.get("use_edge_blending", false))
-        _material.set_shader_parameter("texture_scale", tex_scale)
-        _material.set_shader_parameter("lod_near", lod_near)
-        _material.set_shader_parameter("lod_far", lod_far)
-        _material.set_shader_parameter("blend_width", blend_width)
-        _material.set_shader_parameter("use_edge_blending", _use_edge_blending)
+    # Apply config settings from manager
+    var tex_scale: float = float(mgr.get_config_value("texture_scale", 4.0))
+    var lod_near: float = float(mgr.get_config_value("lod_near_distance", 50.0))
+    var lod_far: float = float(mgr.get_config_value("lod_far_distance", 200.0))
+    var blend_width: float = float(mgr.get_config_value("blend_width", 0.15))
+    _material.set_shader_parameter("texture_scale", tex_scale)
+    _material.set_shader_parameter("lod_near", lod_near)
+    _material.set_shader_parameter("lod_far", lod_far)
+    _material.set_shader_parameter("blend_width", blend_width)
 
 func set_terrain_overlay(terrain_ids: PackedInt32Array, width: int, height: int) -> void:
     # Build terrain index texture from terrain IDs for shader sampling
@@ -1147,12 +1044,13 @@ func _get_neighbor_offset_y(_row: int, neighbor_idx: int) -> int:
     return 0
 
 func enable_terrain_textures(enabled: bool) -> void:
-    """Toggle terrain texture rendering."""
-    _use_terrain_textures = enabled
+    ## Toggle terrain texture rendering.
+    TerrainTextureManager.use_terrain_textures = enabled
     _apply_terrain_texture_params()
 
 func get_terrain_textures_enabled() -> bool:
-    return _use_terrain_textures and _terrain_textures != null
+    var mgr := TerrainTextureManager
+    return mgr.use_terrain_textures and mgr.terrain_textures != null
 
 # --- End Terrain Texture System ---
 
