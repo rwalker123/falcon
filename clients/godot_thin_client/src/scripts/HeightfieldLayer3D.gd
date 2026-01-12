@@ -56,6 +56,7 @@ var _hex_grid_instance: MeshInstance3D = null
 var _hex_grid_color: Color = Color(0.1, 0.2, 0.4, 0.65)
 var _hex_width_scale: float = 0.05
 var _hex_min_width: float = 0.0
+var _hex_grid_signature: String = ""
 var _layout_ready: bool = false
 var _layout_scale_x: float = 1.0
 var _layout_scale_z: float = 1.0
@@ -256,6 +257,7 @@ func _clear_mesh(reset_dims: bool = true) -> void:
 
 func _invalidate_layout_metrics() -> void:
     _layout_ready = false
+    _hex_grid_signature = ""  # Force hex grid rebuild on next update
 
 func _reset_camera_state() -> void:
     _orbit_azimuth_radians = 0.0
@@ -674,13 +676,36 @@ func _update_hex_overlay() -> void:
     if not show_hex_grid or _width <= 0 or _height <= 0 or _height_samples.is_empty():
         _hex_grid_instance.visible = false
         _hex_grid_instance.mesh = null
+        _hex_grid_signature = ""
         return
     _hex_grid_instance.visible = true
     _ensure_layout_metrics()
     if not _layout_ready:
         _hex_grid_instance.visible = false
         _hex_grid_instance.mesh = null
+        _hex_grid_signature = ""
         return
+
+    # Build signature from all state that affects the hex grid mesh
+    # Skip rebuild if nothing changed (optimization for large grids)
+    var new_signature := "%d:%d:%.4f:%.4f:%.4f:%.4f:%s:%.3f:%.3f" % [
+        _width, _height,
+        _layout_scale_x, _layout_scale_z,
+        _hex_width_scale, _hex_min_width,
+        _hex_grid_color.to_html(),
+        tile_scale, _current_height_exaggeration
+    ]
+    # Include height data fingerprint (size + sample of values)
+    if _height_samples.size() > 0:
+        var h_first := _height_samples[0]
+        var h_last := _height_samples[_height_samples.size() - 1]
+        var h_mid := _height_samples[_height_samples.size() / 2]
+        new_signature += ":%.4f:%.4f:%.4f" % [h_first, h_mid, h_last]
+
+    if new_signature == _hex_grid_signature:
+        return  # No changes, skip expensive rebuild
+    _hex_grid_signature = new_signature
+
     var vertices: PackedVector3Array = PackedVector3Array()
     var colors: PackedColorArray = PackedColorArray()
     var indices: PackedInt32Array = PackedInt32Array()
@@ -1052,9 +1077,10 @@ func set_terrain_overlay(terrain_ids: PackedInt32Array, width: int, height: int)
 
 func _build_neighbor_texture(terrain_ids: PackedInt32Array, width: int, height: int) -> void:
     # Build texture encoding 6 neighbors per hex for edge blending
-    # Uses 2 pixels per hex: RGBA for neighbors 0-3, RGBA for neighbors 4-5
+    # Uses 2 RGB8 pixels per hex: RGB for neighbors 0-2, RGB for neighbors 3-5
+    # Memory: width*2 * height * 3 bytes (25% smaller than RGBA8)
     var neighbor_width: int = width * 2
-    var neighbor_img := Image.create(neighbor_width, height, false, Image.FORMAT_RGBA8)
+    var neighbor_img := Image.create(neighbor_width, height, false, Image.FORMAT_RGB8)
     if neighbor_img == null:
         push_error("[HeightfieldLayer3D] Failed to create neighbor texture")
         return
@@ -1076,21 +1102,21 @@ func _build_neighbor_texture(terrain_ids: PackedInt32Array, width: int, height: 
                         n_id = terrain_ids[n_idx]
                 neighbors.append(n_id)
 
-            # Store neighbors 0-3 in first pixel
+            # Store neighbors 0-2 in first pixel (RGB)
             var px1 := x * 2
             neighbor_img.set_pixel(px1, y, Color(
                 float(neighbors[0]) / MAX_TERRAIN_INDEX,
                 float(neighbors[1]) / MAX_TERRAIN_INDEX,
                 float(neighbors[2]) / MAX_TERRAIN_INDEX,
-                float(neighbors[3]) / MAX_TERRAIN_INDEX
+                1.0
             ))
 
-            # Store neighbors 4-5 in second pixel
+            # Store neighbors 3-5 in second pixel (RGB)
             var px2 := x * 2 + 1
             neighbor_img.set_pixel(px2, y, Color(
+                float(neighbors[3]) / MAX_TERRAIN_INDEX,
                 float(neighbors[4]) / MAX_TERRAIN_INDEX,
                 float(neighbors[5]) / MAX_TERRAIN_INDEX,
-                0.0,
                 1.0
             ))
 

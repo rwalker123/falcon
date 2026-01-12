@@ -7,7 +7,7 @@ uniform sampler2D biome_texture : source_color, filter_linear_mipmap;
 // Terrain texture array (37 terrain types)
 uniform sampler2DArray terrain_textures : source_color, filter_linear_mipmap, repeat_enable;
 uniform sampler2D terrain_index_texture : filter_nearest;
-uniform sampler2D terrain_neighbor_texture : filter_nearest; // RGBA: neighbors 0-3, second sample for 4-5
+uniform sampler2D terrain_neighbor_texture : filter_nearest; // RGB8: neighbors 0-2 in pixel 1, 3-5 in pixel 2
 uniform bool use_terrain_textures = false;
 uniform bool use_edge_blending = false;
 uniform float texture_scale : hint_range(1.0, 16.0) = 4.0;
@@ -81,9 +81,9 @@ int get_neighbor_index(vec2 local_pos) {
 }
 
 // Sample neighbor terrain ID from the neighbor texture
-// The neighbor texture is 2x width: each hex has 2 adjacent pixels
-// Pixel 0: RGBA = neighbors 0,1,2,3
-// Pixel 1: RGBA = neighbors 4,5,unused,unused
+// The neighbor texture is 2x width: each hex has 2 adjacent RGB pixels
+// Pixel 0: RGB = neighbors 0,1,2
+// Pixel 1: RGB = neighbors 3,4,5
 int get_neighbor_terrain_id(vec2 uv, int neighbor_idx) {
 	// The neighbor texture is 2x the width of terrain_index_texture
 	// So we need to sample at uv.x * 2.0 for the first pixel
@@ -91,18 +91,18 @@ int get_neighbor_terrain_id(vec2 uv, int neighbor_idx) {
 	vec2 tex_size = vec2(textureSize(terrain_neighbor_texture, 0));
 	float pixel_width = 1.0 / tex_size.x;
 
-	if (neighbor_idx < 4) {
-		// Sample first pixel (neighbors 0-3)
-		vec4 neighbors = texture(terrain_neighbor_texture, neighbor_uv);
+	if (neighbor_idx < 3) {
+		// Sample first pixel (neighbors 0-2)
+		vec3 neighbors = texture(terrain_neighbor_texture, neighbor_uv).rgb;
 		if (neighbor_idx == 0) return int(neighbors.r * 255.0 + 0.5);
 		if (neighbor_idx == 1) return int(neighbors.g * 255.0 + 0.5);
-		if (neighbor_idx == 2) return int(neighbors.b * 255.0 + 0.5);
-		return int(neighbors.a * 255.0 + 0.5);
+		return int(neighbors.b * 255.0 + 0.5);
 	} else {
-		// Sample second pixel (neighbors 4-5)
-		vec4 neighbors2 = texture(terrain_neighbor_texture, neighbor_uv + vec2(pixel_width, 0.0));
-		if (neighbor_idx == 4) return int(neighbors2.r * 255.0 + 0.5);
-		return int(neighbors2.g * 255.0 + 0.5);
+		// Sample second pixel (neighbors 3-5)
+		vec3 neighbors2 = texture(terrain_neighbor_texture, neighbor_uv + vec2(pixel_width, 0.0)).rgb;
+		if (neighbor_idx == 3) return int(neighbors2.r * 255.0 + 0.5);
+		if (neighbor_idx == 4) return int(neighbors2.g * 255.0 + 0.5);
+		return int(neighbors2.b * 255.0 + 0.5);
 	}
 }
 
