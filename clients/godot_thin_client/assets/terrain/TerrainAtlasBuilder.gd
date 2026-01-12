@@ -3,60 +3,24 @@ extends SceneTree
 ## Run from command line:
 ## godot --path . --headless --script assets/terrain/TerrainAtlasBuilder.gd
 
+const TerrainDefinitions := preload("res://assets/terrain/TerrainDefinitions.gd")
 const BASE_TEXTURES_PATH := "res://assets/terrain/textures/base/"
 const OUTPUT_PATH := "res://assets/terrain/textures/terrain_atlas.res"
-const TERRAIN_COUNT := 37
-
-const TERRAIN_NAMES := {
-	0: "deep_ocean",
-	1: "continental_shelf",
-	2: "inland_sea",
-	3: "coral_shelf",
-	4: "hydrothermal_vent_field",
-	5: "tidal_flat",
-	6: "river_delta",
-	7: "mangrove_swamp",
-	8: "freshwater_marsh",
-	9: "floodplain",
-	10: "alluvial_plain",
-	11: "prairie_steppe",
-	12: "mixed_woodland",
-	13: "boreal_taiga",
-	14: "peat_heath",
-	15: "hot_desert_erg",
-	16: "rocky_reg",
-	17: "semi_arid_scrub",
-	18: "salt_flat",
-	19: "oasis_basin",
-	20: "tundra",
-	21: "periglacial_steppe",
-	22: "glacier",
-	23: "seasonal_snowfield",
-	24: "rolling_hills",
-	25: "high_plateau",
-	26: "alpine_mountain",
-	27: "karst_highland",
-	28: "canyon_badlands",
-	29: "active_volcano_slope",
-	30: "basaltic_lava_field",
-	31: "ash_plain",
-	32: "fumarole_basin",
-	33: "impact_crater_field",
-	34: "karst_cavern_mouth",
-	35: "sinkhole_field",
-	36: "aquifer_ceiling",
-}
 
 func _init() -> void:
 	print("Building Texture2DArray from terrain textures...")
+
+	# Load terrain definitions from single source of truth
+	var terrain_count: int = TerrainDefinitions.get_terrain_count()
+	var terrain_names: Dictionary = TerrainDefinitions.get_names_dict()
 
 	# Load all images
 	var images: Array[Image] = []
 	var first_size: Vector2i = Vector2i.ZERO
 	var missing_count := 0
 
-	for terrain_id in range(TERRAIN_COUNT):
-		var tname: String = TERRAIN_NAMES.get(terrain_id, "unknown")
+	for terrain_id: int in range(terrain_count):
+		var tname: String = terrain_names.get(terrain_id, "unknown")
 		var filename := "%02d_%s.png" % [terrain_id, tname]
 		var filepath := BASE_TEXTURES_PATH + filename
 		var abs_path := ProjectSettings.globalize_path(filepath)
@@ -95,8 +59,8 @@ func _init() -> void:
 		images.append(img)
 		print("  Loaded: %s" % filename)
 
-	if images.size() != TERRAIN_COUNT:
-		push_error("Expected %d textures, got %d" % [TERRAIN_COUNT, images.size()])
+	if images.size() != terrain_count:
+		push_error("Expected %d textures, got %d" % [terrain_count, images.size()])
 		quit(1)
 		return
 

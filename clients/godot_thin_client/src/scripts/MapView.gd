@@ -1,6 +1,8 @@
 extends Node2D
 class_name MapView
 
+const TerrainDefinitions := preload("res://assets/terrain/TerrainDefinitions.gd")
+
 signal hex_selected(col: int, row: int, terrain_id: int)
 signal tile_selected(info: Dictionary)
 signal overlay_legend_changed(legend: Dictionary)
@@ -101,85 +103,20 @@ const CRISIS_SEVERITY_COLORS := {
 	"safe": Color(0.5, 0.82, 0.72, 0.85)
 }
 
-const TERRAIN_COLORS := {
-	0: Color8(11, 30, 61),
-	1: Color8(20, 64, 94),
-	2: Color8(28, 88, 114),
-	3: Color8(21, 122, 115),
-	4: Color8(47, 127, 137),
-	5: Color8(184, 176, 138),
-	6: Color8(155, 195, 123),
-	7: Color8(79, 124, 56),
-	8: Color8(92, 140, 99),
-	9: Color8(136, 182, 90),
-	10: Color8(201, 176, 120),
-	11: Color8(211, 165, 77),
-	12: Color8(91, 127, 67),
-	13: Color8(59, 79, 49),
-	14: Color8(100, 85, 106),
-	15: Color8(231, 195, 106),
-	16: Color8(138, 95, 60),
-	17: Color8(164, 135, 85),
-	18: Color8(224, 220, 210),
-	19: Color8(58, 162, 162),
-	20: Color8(166, 199, 207),
-	21: Color8(127, 183, 161),
-	22: Color8(209, 228, 236),
-	23: Color8(192, 202, 214),
-	24: Color8(111, 155, 75),
-	25: Color8(150, 126, 92),
-	26: Color8(122, 127, 136),
-	27: Color8(74, 106, 85),
-	28: Color8(182, 101, 68),
-	29: Color8(140, 52, 45),
-	30: Color8(64, 51, 61),
-	31: Color8(122, 110, 104),
-	32: Color8(76, 137, 145),
-	33: Color8(91, 70, 57),
-	34: Color8(46, 79, 92),
-	35: Color8(79, 75, 51),
-	36: Color8(47, 143, 178),
-}
+# Terrain colors and labels loaded from TerrainDefinitions (single source of truth)
+var _terrain_colors: Dictionary
+var _terrain_labels: Dictionary
 
-const TERRAIN_LABELS := {
-	0: "Deep Ocean",
-	1: "Continental Shelf",
-	2: "Inland Sea",
-	3: "Coral Shelf",
-	4: "Hydrothermal Vent Field",
-	5: "Tidal Flat",
-	6: "River Delta",
-	7: "Mangrove Swamp",
-	8: "Freshwater Marsh",
-	9: "Floodplain",
-	10: "Alluvial Plain",
-	11: "Prairie Steppe",
-	12: "Mixed Woodland",
-	13: "Boreal Taiga",
-	14: "Peatland/Heath",
-	15: "Hot Desert Erg",
-	16: "Rocky Reg Desert",
-	17: "Semi-Arid Scrub",
-	18: "Salt Flat",
-	19: "Oasis Basin",
-	20: "Tundra",
-	21: "Periglacial Steppe",
-	22: "Glacier",
-	23: "Seasonal Snowfield",
-	24: "Rolling Hills",
-	25: "High Plateau",
-	26: "Alpine Mountain",
-	27: "Karst Highland",
-	28: "Canyon Badlands",
-	29: "Active Volcano Slope",
-	30: "Basaltic Lava Field",
-	31: "Ash Plain",
-	32: "Fumarole Basin",
-	33: "Impact Crater Field",
-	34: "Karst Cavern Mouth",
-	35: "Sinkhole Field",
-	36: "Aquifer Ceiling",
-}
+func _get_terrain_colors() -> Dictionary:
+	if _terrain_colors.is_empty():
+		_terrain_colors = TerrainDefinitions.get_colors_dict()
+	return _terrain_colors
+
+func _get_terrain_labels() -> Dictionary:
+	if _terrain_labels.is_empty():
+		for terrain: Dictionary in TerrainDefinitions.get_terrains():
+			_terrain_labels[terrain.get("id", -1)] = terrain.get("label", "Unknown")
+	return _terrain_labels
 
 const FOOD_MODULE_COLORS := {
 	"coastal_littoral": Color(0.98, 0.76, 0.48, 0.9),
@@ -1291,7 +1228,7 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		return info
 	var terrain_id := _terrain_id_at(col, row)
 	info["terrain_id"] = terrain_id
-	info["terrain_label"] = String(TERRAIN_LABELS.get(terrain_id, "Terrain %d" % terrain_id))
+	info["terrain_label"] = String(_get_terrain_labels().get(terrain_id, "Terrain %d" % terrain_id))
 	var mask := _tag_mask_at(col, row)
 	info["tags_mask"] = mask
 	var tag_labels := _tag_names_for_mask(mask)
@@ -1470,8 +1407,9 @@ func _tile_color(x: int, y: int) -> Color:
 	return GRID_COLOR.lerp(overlay_color, overlay_value)
 
 func _terrain_color_for_id(terrain_id: int) -> Color:
-	if TERRAIN_COLORS.has(terrain_id):
-		return TERRAIN_COLORS[terrain_id]
+	var colors := _get_terrain_colors()
+	if colors.has(terrain_id):
+		return colors[terrain_id]
 	return Color(0.2, 0.2, 0.2, 1.0)
 
 func _update_biome_color_buffer() -> void:
@@ -1786,8 +1724,9 @@ func terrain_palette_entries() -> Array:
 	if terrain_palette.size() > 0:
 		ids = Array(terrain_palette.keys())
 	else:
-		ids = Array(TERRAIN_COLORS.keys())
+		ids = Array(_get_terrain_colors().keys())
 	ids.sort()
+	var labels := _get_terrain_labels()
 	var entries: Array = []
 	for raw_id in ids:
 		var id := int(raw_id)
@@ -1795,7 +1734,7 @@ func terrain_palette_entries() -> Array:
 		if terrain_palette.has(id):
 			label = str(terrain_palette[id])
 		if label == "":
-			label = TERRAIN_LABELS.get(id, "Unknown")
+			label = labels.get(id, "Unknown")
 		var color := _terrain_color_for_id(id)
 		entries.append({
 			"id": id,
@@ -2429,38 +2368,36 @@ func _load_terrain_textures() -> void:
 func _build_terrain_texture_array() -> Texture2DArray:
 	# Build Texture2DArray from individual PNG files at runtime
 	const BASE_PATH := "res://assets/terrain/textures/base/"
-	const TERRAIN_COUNT := 37
-	const TERRAIN_NAMES: Dictionary = {
-		0: "deep_ocean", 1: "continental_shelf", 2: "inland_sea",
-		3: "coral_shelf", 4: "hydrothermal_vent_field", 5: "tidal_flat",
-		6: "river_delta", 7: "mangrove_swamp", 8: "freshwater_marsh",
-		9: "floodplain", 10: "alluvial_plain", 11: "prairie_steppe",
-		12: "mixed_woodland", 13: "boreal_taiga", 14: "peat_heath",
-		15: "hot_desert_erg", 16: "rocky_reg", 17: "semi_arid_scrub",
-		18: "salt_flat", 19: "oasis_basin", 20: "tundra",
-		21: "periglacial_steppe", 22: "glacier", 23: "seasonal_snowfield",
-		24: "rolling_hills", 25: "high_plateau", 26: "alpine_mountain",
-		27: "karst_highland", 28: "canyon_badlands", 29: "active_volcano_slope",
-		30: "basaltic_lava_field", 31: "ash_plain", 32: "fumarole_basin",
-		33: "impact_crater_field", 34: "karst_cavern_mouth", 35: "sinkhole_field",
-		36: "aquifer_ceiling"
-	}
+	var terrain_count: int = TerrainDefinitions.get_terrain_count()
+	var terrain_names: Dictionary = TerrainDefinitions.get_names_dict()
+
+	if terrain_count == 0:
+		push_warning("[MapView] No terrain definitions loaded - check terrain_config.json")
+		return null
 
 	var images: Array[Image] = []
 	var first_size: Vector2i = Vector2i.ZERO
+	var missing_textures: Array[String] = []
 
-	for terrain_id: int in range(TERRAIN_COUNT):
-		var tname: String = TERRAIN_NAMES.get(terrain_id, "unknown")
+	for terrain_id: int in range(terrain_count):
+		var tname: String = terrain_names.get(terrain_id, "unknown")
 		var filename := "%02d_%s.png" % [terrain_id, tname]
 		var filepath := BASE_PATH + filename
-		var abs_path := ProjectSettings.globalize_path(filepath)
 
 		var img: Image = null
-		if FileAccess.file_exists(abs_path):
-			img = Image.load_from_file(abs_path)
+		# Try loading via ResourceLoader first (works with imported resources)
+		if ResourceLoader.exists(filepath):
+			var tex: Texture2D = load(filepath)
+			if tex:
+				img = tex.get_image()
+		# Fallback to direct file loading
+		if img == null:
+			var abs_path := ProjectSettings.globalize_path(filepath)
+			if FileAccess.file_exists(abs_path):
+				img = Image.load_from_file(abs_path)
 
 		if img == null:
-			# Create placeholder
+			missing_textures.append(filename)
 			img = Image.create(512, 512, false, Image.FORMAT_RGBA8)
 			img.fill(Color.MAGENTA)
 
@@ -2474,7 +2411,14 @@ func _build_terrain_texture_array() -> Texture2DArray:
 
 		images.append(img)
 
-	if images.size() != TERRAIN_COUNT:
+	if missing_textures.size() > 0:
+		push_warning("[MapView] Missing %d terrain textures (showing magenta): %s" % [
+			missing_textures.size(),
+			", ".join(missing_textures.slice(0, 5)) + ("..." if missing_textures.size() > 5 else "")
+		])
+
+	if images.size() != terrain_count:
+		push_error("[MapView] Expected %d textures, got %d" % [terrain_count, images.size()])
 		return null
 
 	var array_tex := Texture2DArray.new()

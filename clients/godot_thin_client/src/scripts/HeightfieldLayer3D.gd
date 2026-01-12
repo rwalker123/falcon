@@ -6,6 +6,7 @@ signal strategic_view_requested
 
 const HEIGHTFIELD_SHADER := preload("res://src/shaders/heightfield.gdshader")
 const HEX_GRID_SHADER := preload("res://src/shaders/hex_grid.gdshader")
+const TerrainDefinitions := preload("res://assets/terrain/TerrainDefinitions.gd")
 const SQRT3 := 1.7320508075688772
 const TERRAIN_TEXTURES_PATH := "res://assets/terrain/textures/terrain_atlas.res"
 const TERRAIN_CONFIG_PATH := "res://assets/terrain/terrain_config.json"
@@ -898,38 +899,36 @@ func _load_terrain_textures() -> void:
 func _build_terrain_texture_array() -> Texture2DArray:
     # Build Texture2DArray from individual PNG files at runtime
     const BASE_PATH := "res://assets/terrain/textures/base/"
-    const TERRAIN_COUNT := 37
-    const TERRAIN_NAMES: Dictionary = {
-        0: "deep_ocean", 1: "continental_shelf", 2: "inland_sea",
-        3: "coral_shelf", 4: "hydrothermal_vent_field", 5: "tidal_flat",
-        6: "river_delta", 7: "mangrove_swamp", 8: "freshwater_marsh",
-        9: "floodplain", 10: "alluvial_plain", 11: "prairie_steppe",
-        12: "mixed_woodland", 13: "boreal_taiga", 14: "peat_heath",
-        15: "hot_desert_erg", 16: "rocky_reg", 17: "semi_arid_scrub",
-        18: "salt_flat", 19: "oasis_basin", 20: "tundra",
-        21: "periglacial_steppe", 22: "glacier", 23: "seasonal_snowfield",
-        24: "rolling_hills", 25: "high_plateau", 26: "alpine_mountain",
-        27: "karst_highland", 28: "canyon_badlands", 29: "active_volcano_slope",
-        30: "basaltic_lava_field", 31: "ash_plain", 32: "fumarole_basin",
-        33: "impact_crater_field", 34: "karst_cavern_mouth", 35: "sinkhole_field",
-        36: "aquifer_ceiling"
-    }
+    var terrain_count: int = TerrainDefinitions.get_terrain_count()
+    var terrain_names: Dictionary = TerrainDefinitions.get_names_dict()
+
+    if terrain_count == 0:
+        push_warning("[HeightfieldLayer3D] No terrain definitions loaded - check terrain_config.json")
+        return null
 
     var images: Array[Image] = []
     var first_size: Vector2i = Vector2i.ZERO
+    var missing_textures: Array[String] = []
 
-    for terrain_id: int in range(TERRAIN_COUNT):
-        var tname: String = TERRAIN_NAMES.get(terrain_id, "unknown")
+    for terrain_id: int in range(terrain_count):
+        var tname: String = terrain_names.get(terrain_id, "unknown")
         var filename := "%02d_%s.png" % [terrain_id, tname]
         var filepath := BASE_PATH + filename
-        var abs_path := ProjectSettings.globalize_path(filepath)
 
         var img: Image = null
-        if FileAccess.file_exists(abs_path):
-            img = Image.load_from_file(abs_path)
+        # Try loading via ResourceLoader first (works with imported resources)
+        if ResourceLoader.exists(filepath):
+            var tex: Texture2D = load(filepath)
+            if tex:
+                img = tex.get_image()
+        # Fallback to direct file loading
+        if img == null:
+            var abs_path := ProjectSettings.globalize_path(filepath)
+            if FileAccess.file_exists(abs_path):
+                img = Image.load_from_file(abs_path)
 
         if img == null:
-            # Create placeholder
+            missing_textures.append(filename)
             img = Image.create(512, 512, false, Image.FORMAT_RGBA8)
             img.fill(Color.MAGENTA)
 
@@ -943,7 +942,14 @@ func _build_terrain_texture_array() -> Texture2DArray:
 
         images.append(img)
 
-    if images.size() != TERRAIN_COUNT:
+    if missing_textures.size() > 0:
+        push_warning("[HeightfieldLayer3D] Missing %d terrain textures (showing magenta): %s" % [
+            missing_textures.size(),
+            ", ".join(missing_textures.slice(0, 5)) + ("..." if missing_textures.size() > 5 else "")
+        ])
+
+    if images.size() != terrain_count:
+        push_error("[HeightfieldLayer3D] Expected %d textures, got %d" % [terrain_count, images.size()])
         return null
 
     var array_tex := Texture2DArray.new()
