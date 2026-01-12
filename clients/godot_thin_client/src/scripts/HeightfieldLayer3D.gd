@@ -8,8 +8,10 @@ const HEIGHTFIELD_SHADER := preload("res://src/shaders/heightfield.gdshader")
 const HEX_GRID_SHADER := preload("res://src/shaders/hex_grid.gdshader")
 const TerrainDefinitions := preload("res://assets/terrain/TerrainDefinitions.gd")
 const SQRT3 := 1.7320508075688772
+const MAX_TERRAIN_INDEX := 255.0  # R8 texture format uses 0-255 range
 const TERRAIN_TEXTURES_PATH := "res://assets/terrain/textures/terrain_atlas.res"
 const TERRAIN_CONFIG_PATH := "res://assets/terrain/terrain_config.json"
+const MIN_HEIGHT_EXAGGERATION := 0.0001  # Epsilon for division-by-zero protection
 
 @export var chunk_size := Vector2i(32, 32)
 @export var tile_scale := 1.0
@@ -326,10 +328,10 @@ func _build_chunk_mesh(local_w: int, local_h: int, start_x: int, start_y: int) -
             var uv1: Vector2 = Vector2(float(start_x + lx + 1) / float(_width), float(start_y + ly) / float(_height))
             var uv2: Vector2 = Vector2(float(start_x + lx + 1) / float(_width), float(start_y + ly + 1) / float(_height))
             var uv3: Vector2 = Vector2(float(start_x + lx) / float(_width), float(start_y + ly + 1) / float(_height))
-            var h_norm0: float = height00 / max(_current_height_exaggeration, 0.0001)
-            var h_norm1: float = height10 / max(_current_height_exaggeration, 0.0001)
-            var h_norm2: float = height11 / max(_current_height_exaggeration, 0.0001)
-            var h_norm3: float = height01 / max(_current_height_exaggeration, 0.0001)
+            var h_norm0: float = height00 / max(_current_height_exaggeration, MIN_HEIGHT_EXAGGERATION)
+            var h_norm1: float = height10 / max(_current_height_exaggeration, MIN_HEIGHT_EXAGGERATION)
+            var h_norm2: float = height11 / max(_current_height_exaggeration, MIN_HEIGHT_EXAGGERATION)
+            var h_norm3: float = height01 / max(_current_height_exaggeration, MIN_HEIGHT_EXAGGERATION)
             st.set_uv(uv0)
             st.set_color(_vertex_color_for_debug(start_x + lx, start_y + ly, h_norm0))
             st.add_vertex(v0)
@@ -406,7 +408,7 @@ func _debug_log_chunk(start_x: int, start_y: int, local_w: int, local_h: int) ->
     var max_cols: int = min(local_w, 8)
     for dx in range(max_cols):
         var h := _height_at(start_x + dx, start_y)
-        samples.append("%.2f" % (h / max(_current_height_exaggeration, 0.0001)))
+        samples.append("%.2f" % (h / max(_current_height_exaggeration, MIN_HEIGHT_EXAGGERATION)))
     var min_h: float = 1e9
     var max_h: float = -1e9
     var sum_h: float = 0.0
@@ -887,12 +889,21 @@ func _load_terrain_textures() -> void:
                 _use_terrain_textures = bool(_terrain_config.get("use_terrain_textures", false))
             file.close()
 
-    # Build texture array from individual PNG files at runtime
-    _terrain_textures = _build_terrain_texture_array()
-    if _terrain_textures != null and _terrain_textures.get_layers() > 0:
-        print("[HeightfieldLayer3D] Loaded terrain textures: %d layers" % _terrain_textures.get_layers())
-    else:
-        print("[HeightfieldLayer3D] Terrain textures not found (using solid colors)")
+    # Load pre-built texture array if available, otherwise build at runtime
+    if ResourceLoader.exists(TERRAIN_TEXTURES_PATH):
+        _terrain_textures = load(TERRAIN_TEXTURES_PATH) as Texture2DArray
+        if _terrain_textures != null and _terrain_textures.get_layers() > 0:
+            print("[HeightfieldLayer3D] Loaded pre-built terrain atlas: %d layers" % _terrain_textures.get_layers())
+        else:
+            _terrain_textures = null
+
+    # Fall back to building from individual PNGs if no pre-built atlas
+    if _terrain_textures == null:
+        _terrain_textures = _build_terrain_texture_array()
+        if _terrain_textures != null and _terrain_textures.get_layers() > 0:
+            print("[HeightfieldLayer3D] Built terrain textures at runtime: %d layers" % _terrain_textures.get_layers())
+        else:
+            print("[HeightfieldLayer3D] Terrain textures not found (using solid colors)")
 
     _apply_terrain_texture_params()
 
@@ -1016,7 +1027,7 @@ func set_terrain_overlay(terrain_ids: PackedInt32Array, width: int, height: int)
 
     for idx: int in range(count):
         var terrain_id: int = terrain_ids[idx]
-        var normalized: float = float(terrain_id) / 255.0
+        var normalized: float = float(terrain_id) / MAX_TERRAIN_INDEX
         var x: int = idx % tex_width
         var y: int = idx / tex_width
         image.set_pixel(x, y, Color(normalized, 0.0, 0.0, 1.0))
@@ -1024,7 +1035,7 @@ func set_terrain_overlay(terrain_ids: PackedInt32Array, width: int, height: int)
     # Fill remaining pixels with last valid ID
     if count < total_expected and count > 0:
         var last_id: int = terrain_ids[count - 1]
-        var last_normalized: float = float(last_id) / 255.0
+        var last_normalized: float = float(last_id) / MAX_TERRAIN_INDEX
         var filler := Color(last_normalized, 0.0, 0.0, 1.0)
         for idx: int in range(count, total_expected):
             var x: int = idx % tex_width
@@ -1061,24 +1072,24 @@ func _build_neighbor_texture(terrain_ids: PackedInt32Array, width: int, height: 
                 var n_id: int = center_id  # Default to same terrain if out of bounds
                 if n_col >= 0 and n_col < width and n_row >= 0 and n_row < height:
                     var n_idx: int = n_row * width + n_col
-                    if n_idx < terrain_ids.size():
+                    if n_idx >= 0 and n_idx < terrain_ids.size():
                         n_id = terrain_ids[n_idx]
                 neighbors.append(n_id)
 
             # Store neighbors 0-3 in first pixel
             var px1 := x * 2
             neighbor_img.set_pixel(px1, y, Color(
-                float(neighbors[0]) / 255.0,
-                float(neighbors[1]) / 255.0,
-                float(neighbors[2]) / 255.0,
-                float(neighbors[3]) / 255.0
+                float(neighbors[0]) / MAX_TERRAIN_INDEX,
+                float(neighbors[1]) / MAX_TERRAIN_INDEX,
+                float(neighbors[2]) / MAX_TERRAIN_INDEX,
+                float(neighbors[3]) / MAX_TERRAIN_INDEX
             ))
 
             # Store neighbors 4-5 in second pixel
             var px2 := x * 2 + 1
             neighbor_img.set_pixel(px2, y, Color(
-                float(neighbors[4]) / 255.0,
-                float(neighbors[5]) / 255.0,
+                float(neighbors[4]) / MAX_TERRAIN_INDEX,
+                float(neighbors[5]) / MAX_TERRAIN_INDEX,
                 0.0,
                 1.0
             ))

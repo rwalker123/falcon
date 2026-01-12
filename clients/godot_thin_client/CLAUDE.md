@@ -8,8 +8,11 @@ Inspector and visualization client for the Shadow-Scale simulation. Renders the 
 # Build native extension
 cargo xtask godot-build
 
-# Run client
-godot4 --path clients/godot_thin_client
+# Build terrain texture atlas (if out of date)
+scripts/build_terrain_textures.sh
+
+# Run client (auto-builds textures if needed)
+scripts/run_stack.sh --client-only
 
 # Regenerate FlatBuffers bindings
 cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
@@ -95,20 +98,28 @@ assets/terrain/
       00_deep_ocean.png
       ...
       36_aquifer_ceiling.png
+    terrain_atlas.res            # Pre-built Texture2DArray (optional)
     wang/                        # Wang tile variants (future)
   terrain_config.json            # Configuration
   TerrainTextureGenerator.gd     # CLI script to generate placeholder textures
+  TerrainAtlasBuilder.gd         # CLI script to pre-build texture atlas
 ```
 
 ### Enabling Terrain Textures
 1. Generate placeholder textures from command line:
    ```bash
-   godot --headless --script assets/terrain/TerrainTextureGenerator.gd
+   godot --headless --path clients/godot_thin_client --script assets/terrain/TerrainTextureGenerator.gd
    ```
 2. Replace placeholders in `assets/terrain/textures/base/` with AI-generated or hand-crafted textures
 3. Set `"use_terrain_textures": true` in `terrain_config.json`
 
-Textures are loaded from individual PNGs and built into a `Texture2DArray` at runtime.
+The texture atlas is automatically rebuilt when running `scripts/run_stack.sh` if source textures are newer than the atlas. To manually rebuild:
+```bash
+scripts/build_terrain_textures.sh        # Only if out of date
+scripts/build_terrain_textures.sh --force  # Force rebuild
+```
+
+The system first attempts to load the pre-built `terrain_atlas.res`. If not found, it falls back to building from individual PNGs at runtime (slower startup).
 
 ### Configuration (`terrain_config.json`)
 ```json

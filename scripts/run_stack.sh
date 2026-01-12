@@ -55,6 +55,8 @@ fi
 if [[ "$RUN_CLIENT" == true || "$RUN_GODOT" == true ]]; then
   echo "[run_stack] Building Godot package..."
   cargo xtask godot-build
+  # Build terrain textures if out of date
+  "$ROOT_DIR/scripts/build_terrain_textures.sh"
 fi
 
 cleanup() {
