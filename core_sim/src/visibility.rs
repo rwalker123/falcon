@@ -16,6 +16,14 @@ use bevy::prelude::*;
 use crate::orders::FactionId;
 
 /// Visibility state for a single tile from a faction's perspective.
+///
+/// # Serialization
+/// Manual `as_u8()` / `from_u8()` conversion is used instead of serde derives because:
+/// 1. The visibility raster is exported as raw bytes in FlatBuffers for efficiency
+/// 2. The snapshot pipeline converts states to i64 values for normalization
+/// 3. Serde derives would add overhead without benefiting the actual serialization path
+///
+/// The `#[repr(u8)]` ensures stable discriminant values across compilations.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VisibilityState {
@@ -26,16 +34,26 @@ pub enum VisibilityState {
 }
 
 impl VisibilityState {
-    /// Convert to u8 for serialization.
+    /// Convert to u8 for FlatBuffers serialization.
+    ///
+    /// Uses the discriminant value directly via `#[repr(u8)]`.
+    #[inline]
     pub fn as_u8(self) -> u8 {
         self as u8
     }
 
     /// Convert from u8, defaulting to Unexplored for invalid values.
+    ///
+    /// This provides graceful degradation for corrupted or future-versioned data
+    /// rather than panicking on unknown values. Invalid values (3+) are treated
+    /// as Unexplored to maintain forward compatibility.
+    #[inline]
     pub fn from_u8(value: u8) -> Self {
         match value {
+            0 => Self::Unexplored,
             1 => Self::Discovered,
             2 => Self::Active,
+            // Graceful degradation: unknown values default to Unexplored
             _ => Self::Unexplored,
         }
     }
