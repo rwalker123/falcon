@@ -109,9 +109,12 @@ pub fn calculate_visibility(
 
     // Collect all visibility sources: (faction, position, base_range, elev_factor)
     let mut sources: Vec<(FactionId, UVec2, u32, f32)> = Vec::new();
+    let mut cohort_count = 0u32;
+    let mut settlement_count = 0u32;
 
     // Units (population cohorts with StartingUnit marker)
     for (cohort, unit) in cohorts.iter() {
+        cohort_count += 1;
         let range_def = cfg.sight_range_for(&unit.kind);
         // Get position from home tile entity
         if let Ok(home_tile) = tiles.get(cohort.home) {
@@ -126,6 +129,7 @@ pub fn calculate_visibility(
 
     // Settlements with TownCenter
     for (settlement, _town_center) in settlements.iter() {
+        settlement_count += 1;
         let range_def = cfg.sight_range_for("TownCenter");
         sources.push((
             settlement.faction,
@@ -135,8 +139,6 @@ pub fn calculate_visibility(
         ));
     }
 
-    let cohort_count = cohorts.iter().count();
-    let settlement_count = settlements.iter().count();
     tracing::info!(
         target: "shadow_scale::visibility",
         source_count = sources.len(),
