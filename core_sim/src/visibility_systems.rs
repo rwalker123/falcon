@@ -53,6 +53,14 @@ pub fn calculate_visibility(
     };
     let elevation = elevation.unwrap();
 
+    let _span = tracing::debug_span!(
+        target: "shadow_scale::visibility",
+        "calculate_visibility",
+        turn = current_turn,
+        los_enabled = cfg.line_of_sight.enabled,
+    )
+    .entered();
+
     // Build terrain tags grid for terrain modifier lookups
     let terrain_tags = build_terrain_tags_grid(&tiles, width, height);
 
@@ -83,6 +91,12 @@ pub fn calculate_visibility(
             range_def.elevation_bonus_factor,
         ));
     }
+
+    tracing::trace!(
+        target: "shadow_scale::visibility",
+        source_count = sources.len(),
+        "visibility.sources_collected"
+    );
 
     // Process each visibility source
     for (faction, pos, base_range, elev_factor) in sources {
@@ -130,6 +144,19 @@ fn build_terrain_tags_grid(tiles: &Query<&Tile>, width: u32, height: u32) -> Vec
 
 /// Reveal all tiles within range of a viewer position.
 /// Applies terrain modifiers: forest tiles are harder to see (penalty), water tiles are easier (bonus).
+///
+/// # Performance Notes
+///
+/// Line-of-sight checks use Bresenham ray-casting which runs O(range) per tile.
+/// For range 6, this means ~113 tiles × ~6 steps = ~680 ray steps per source.
+///
+/// If profiling shows this as a bottleneck with many units, consider:
+/// - Shadow-casting algorithm (single pass from source, O(range²) total)
+/// - Spatial caching of blocking tiles
+///
+/// Current optimizations:
+/// - Adjacent tiles (dist ≤ 1) skip LoS check (no intermediate blocker possible)
+/// - Range check before LoS check (avoids unnecessary ray-casts)
 #[allow(clippy::too_many_arguments)]
 fn reveal_tiles_in_range(
     map: &mut crate::visibility::FactionVisibilityMap,
@@ -175,8 +202,9 @@ fn reveal_tiles_in_range(
                 continue;
             }
 
-            // Line of sight check if enabled
+            // Line of sight check if enabled (skip for adjacent tiles - no intermediate blocker)
             if los_enabled
+                && dist_sq > 2
                 && !has_line_of_sight(center, UVec2::new(x, y), center_elevation, elevation)
             {
                 continue;
