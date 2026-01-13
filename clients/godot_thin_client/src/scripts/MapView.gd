@@ -32,7 +32,7 @@ const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
 const GRID_LINE_COLOR := Color(0.1, 0.12, 0.18, 0.45)
 const SQRT3 := 1.7320508075688772
 const SIN_60 := 0.8660254037844386
-const MIN_ZOOM_FACTOR := 0.4
+const MIN_ZOOM_FACTOR := 1.0
 const MAX_ZOOM_FACTOR := 4.0
 const MOUSE_ZOOM_STEP := 0.2
 const KEYBOARD_ZOOM_SPEED := 0.8
@@ -397,6 +397,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	bounds_dirty = dimensions_changed
 
 	_update_layout_metrics()
+	_clamp_pan_offset()
 	queue_redraw()
 	_emit_overlay_legend()
 
@@ -482,6 +483,7 @@ func _draw() -> void:
 		return
 
 	_update_layout_metrics()
+	_clamp_pan_offset()
 
 	var radius: float = last_hex_radius
 	var origin: Vector2 = last_origin
@@ -2152,14 +2154,18 @@ func _hex_points(center: Vector2, radius: float, closed: bool = false) -> Packed
 		points.append(points[0])
 	return points
 
-func _update_layout_metrics() -> void:
-	if grid_width <= 0 or grid_height <= 0:
-		return
+func _get_adjusted_viewport_size() -> Vector2:
 	var viewport_size: Vector2 = get_viewport_rect().size
 	var canvas_scale := get_viewport().get_canvas_transform().get_scale()
 	if canvas_scale.x != 0.0 and canvas_scale.y != 0.0:
 		# Account for global canvas (camera) scaling so hit-testing matches the drawn map
 		viewport_size /= canvas_scale
+	return viewport_size
+
+func _update_layout_metrics() -> void:
+	if grid_width <= 0 or grid_height <= 0:
+		return
+	var viewport_size: Vector2 = _get_adjusted_viewport_size()
 	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
 		return
 	if bounds_dirty:
@@ -2169,12 +2175,47 @@ func _update_layout_metrics() -> void:
 		return
 	var radius_from_width: float = viewport_size.x / base_bounds.size.x
 	var radius_from_height: float = viewport_size.y / base_bounds.size.y
-	base_hex_radius = min(radius_from_width, radius_from_height)
+	base_hex_radius = max(radius_from_width, radius_from_height)
 	last_hex_radius = clamp(base_hex_radius * zoom_factor, base_hex_radius * MIN_ZOOM_FACTOR, base_hex_radius * MAX_ZOOM_FACTOR)
 	var scaled_bounds := Rect2(base_bounds.position * last_hex_radius, base_bounds.size * last_hex_radius)
 	last_map_size = scaled_bounds.size
 	last_base_origin = (viewport_size - last_map_size) * 0.5 - scaled_bounds.position
 	last_origin = last_base_origin + pan_offset
+
+func _clamp_pan_offset() -> void:
+	if last_map_size.x <= 0.0 or last_map_size.y <= 0.0:
+		return
+	var viewport_size: Vector2 = _get_adjusted_viewport_size()
+
+	# Calculate pan limits based on keeping map bounds within viewport
+	# pan_offset affects last_origin, and the map bounds in world coords are:
+	#   left edge: last_origin.x + scaled_bounds.position.x
+	#   right edge: last_origin.x + scaled_bounds.position.x + last_map_size.x
+	# We want: left edge >= 0 and right edge <= viewport_size
+	# Simplifies to: pan_offset in range [-(vp-map)/2, (vp-map)/2] relative to centered position
+
+	var delta_x: float = viewport_size.x - last_map_size.x
+	var delta_y: float = viewport_size.y - last_map_size.y
+
+	# For X axis:
+	if delta_x <= 0.0:
+		# Map is wider than or equal to viewport - allow panning within bounds
+		var max_pan_x: float = -delta_x / 2.0  # pan right limit (shows left edge)
+		var min_pan_x: float = delta_x / 2.0   # pan left limit (shows right edge)
+		pan_offset.x = clamp(pan_offset.x, min_pan_x, max_pan_x)
+	else:
+		# Map is narrower - center it (no horizontal panning)
+		pan_offset.x = 0.0
+
+	# For Y axis:
+	if delta_y <= 0.0:
+		# Map is taller than or equal to viewport - allow panning within bounds
+		var max_pan_y: float = -delta_y / 2.0  # pan down limit (shows top edge)
+		var min_pan_y: float = delta_y / 2.0   # pan up limit (shows bottom edge)
+		pan_offset.y = clamp(pan_offset.y, min_pan_y, max_pan_y)
+	else:
+		# Map is shorter - center it (no vertical panning)
+		pan_offset.y = 0.0
 
 func get_world_center() -> Vector2:
 	return last_origin + last_map_size * 0.5
@@ -2252,6 +2293,7 @@ func _apply_pan(delta: Vector2) -> void:
 		return
 	pan_offset += delta
 	_update_layout_metrics()
+	_clamp_pan_offset()
 	queue_redraw()
 
 func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
@@ -2269,6 +2311,7 @@ func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
 	var new_radius: float = last_hex_radius
 	var new_base_origin: Vector2 = last_base_origin
 	pan_offset = pivot - new_base_origin - unit_position * new_radius
+	_clamp_pan_offset()
 	_update_layout_metrics()
 	queue_redraw()
 
@@ -2315,6 +2358,8 @@ func _ensure_input_actions() -> void:
 func _fit_map_to_view() -> void:
 	zoom_factor = 1.0
 	pan_offset = Vector2.ZERO
+	_update_layout_metrics()
+	_clamp_pan_offset()
 	queue_redraw()
 
 func handle_hex_click(col: int, row: int, button_index: int) -> void:
