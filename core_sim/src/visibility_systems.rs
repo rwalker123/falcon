@@ -7,13 +7,15 @@
 
 use bevy::prelude::*;
 
+use sim_runtime::TerrainTags;
+
 use crate::{
     components::{PopulationCohort, Settlement, StartingUnit, Tile, TownCenter},
     heightfield::ElevationField,
     orders::FactionId,
     resources::SimulationTick,
     visibility::{VisibilityLedger, VisibilityState},
-    visibility_config::VisibilityConfigHandle,
+    visibility_config::{TerrainModifierConfig, VisibilityConfigHandle},
 };
 
 /// Step 1: Clear all Active visibility states to Discovered at the start of the visibility phase.
@@ -50,6 +52,9 @@ pub fn calculate_visibility(
         None => return,
     };
     let elevation = elevation.unwrap();
+
+    // Build terrain tags grid for terrain modifier lookups
+    let terrain_tags = build_terrain_tags_grid(&tiles, width, height);
 
     // Collect all visibility sources: (faction, position, base_range, elev_factor)
     let mut sources: Vec<(FactionId, UVec2, u32, f32)> = Vec::new();
@@ -103,26 +108,45 @@ pub fn calculate_visibility(
             current_turn,
             &elevation,
             cfg.line_of_sight.enabled,
+            &terrain_tags,
+            &cfg.terrain_modifiers,
         );
     }
 }
 
+/// Build a grid of terrain tags from tile entities.
+fn build_terrain_tags_grid(tiles: &Query<&Tile>, width: u32, height: u32) -> Vec<TerrainTags> {
+    let mut grid = vec![TerrainTags::empty(); (width * height) as usize];
+    for tile in tiles.iter() {
+        let idx = (tile.position.y * width + tile.position.x) as usize;
+        if idx < grid.len() {
+            grid[idx] = tile.terrain_tags;
+        }
+    }
+    grid
+}
+
 /// Reveal all tiles within range of a viewer position.
+/// Applies terrain modifiers: forest tiles are harder to see (penalty), water tiles are easier (bonus).
+#[allow(clippy::too_many_arguments)]
 fn reveal_tiles_in_range(
     map: &mut crate::visibility::FactionVisibilityMap,
     center: UVec2,
-    range: u32,
+    base_range: u32,
     current_turn: u64,
     elevation: &ElevationField,
     los_enabled: bool,
+    terrain_tags: &[TerrainTags],
+    terrain_modifiers: &TerrainModifierConfig,
 ) {
-    let range_sq = (range * range) as i32;
+    // Use max possible range for bounding box (base + max bonus)
+    let max_range = base_range + terrain_modifiers.water_bonus.max(0) as u32;
 
     // Bounding box
-    let min_x = center.x.saturating_sub(range);
-    let max_x = (center.x + range).min(elevation.width.saturating_sub(1));
-    let min_y = center.y.saturating_sub(range);
-    let max_y = (center.y + range).min(elevation.height.saturating_sub(1));
+    let min_x = center.x.saturating_sub(max_range);
+    let max_x = (center.x + max_range).min(elevation.width.saturating_sub(1));
+    let min_y = center.y.saturating_sub(max_range);
+    let max_y = (center.y + max_range).min(elevation.height.saturating_sub(1));
 
     let center_elevation = elevation.sample(center.x, center.y);
 
@@ -132,7 +156,19 @@ fn reveal_tiles_in_range(
             let dy = y as i32 - center.y as i32;
             let dist_sq = dx * dx + dy * dy;
 
-            // Skip tiles outside circular range
+            // Calculate terrain modifier for target tile
+            let idx = (y * elevation.width + x) as usize;
+            let tags = terrain_tags
+                .get(idx)
+                .copied()
+                .unwrap_or(TerrainTags::empty());
+            let terrain_modifier = get_terrain_modifier(tags, terrain_modifiers);
+
+            // Calculate effective range for this target tile
+            let effective_range = (base_range as i32 + terrain_modifier).max(1) as u32;
+            let range_sq = (effective_range * effective_range) as i32;
+
+            // Skip tiles outside circular range (accounting for terrain modifier)
             if dist_sq > range_sq {
                 continue;
             }
@@ -148,6 +184,24 @@ fn reveal_tiles_in_range(
             map.mark_active(x, y, current_turn);
         }
     }
+}
+
+/// Get terrain modifier for a tile based on its terrain tags.
+/// - Forest/wetland tiles apply a penalty (harder to see into)
+/// - Water tiles apply a bonus (easier to see across)
+fn get_terrain_modifier(tags: TerrainTags, cfg: &TerrainModifierConfig) -> i32 {
+    // Water bonus takes precedence (open water is easy to see across)
+    if tags.contains(TerrainTags::WATER) {
+        return cfg.water_bonus;
+    }
+
+    // Wetland/forest-like terrain applies penalty (foliage obscures vision)
+    if tags.contains(TerrainTags::WETLAND) {
+        return cfg.forest_penalty;
+    }
+
+    // No modifier for other terrain
+    0
 }
 
 /// Check if there is clear line of sight between two points using Bresenham's algorithm.
@@ -307,5 +361,29 @@ mod tests {
             0.3,
             &elevation
         ));
+    }
+
+    #[test]
+    fn terrain_modifier_water_bonus() {
+        let cfg = TerrainModifierConfig {
+            forest_penalty: -2,
+            water_bonus: 1,
+        };
+
+        // Water tiles get bonus
+        let water_tags = TerrainTags::WATER;
+        assert_eq!(get_terrain_modifier(water_tags, &cfg), 1);
+
+        // Wetland tiles get penalty
+        let wetland_tags = TerrainTags::WETLAND;
+        assert_eq!(get_terrain_modifier(wetland_tags, &cfg), -2);
+
+        // Plain tiles get no modifier
+        let plain_tags = TerrainTags::empty();
+        assert_eq!(get_terrain_modifier(plain_tags, &cfg), 0);
+
+        // Water takes precedence over wetland (coastal wetland)
+        let coastal_wetland = TerrainTags::WATER | TerrainTags::WETLAND;
+        assert_eq!(get_terrain_modifier(coastal_wetland, &cfg), 1);
     }
 }
