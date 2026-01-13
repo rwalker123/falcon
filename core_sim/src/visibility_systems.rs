@@ -7,6 +7,17 @@
 
 use bevy::prelude::*;
 
+/// Height bonus added to viewer position to simulate eye level above ground.
+/// Value is in normalized elevation units (0.0-1.0 range maps to ~0-1000m).
+/// 0.02 ≈ 20m eye level, reasonable for observers on elevated terrain or watchtowers.
+const VIEWER_EYE_LEVEL_BONUS: f32 = 0.02;
+
+/// Elevation threshold for terrain to block line of sight.
+/// If intermediate terrain is this much higher than the expected sight line, it blocks.
+/// Value is in normalized elevation units. 0.03 ≈ 30m provides some tolerance for
+/// minor elevation variations while still blocking significant obstacles.
+const LOS_BLOCKING_THRESHOLD: f32 = 0.03;
+
 use sim_runtime::TerrainTags;
 
 use crate::{
@@ -304,7 +315,7 @@ fn has_line_of_sight(
     let target_elevation = elevation.sample(to.x, to.y);
 
     // Add slight height bonus to viewer (simulating eye level above ground)
-    let viewer_height = source_elevation + 0.02;
+    let viewer_height = source_elevation + VIEWER_EYE_LEVEL_BONUS;
 
     while x != target_x || y != target_y {
         let e2 = 2 * err;
@@ -347,7 +358,7 @@ fn has_line_of_sight(
         let expected_elevation = viewer_height + (target_elevation - viewer_height) * progress;
 
         // If intermediate terrain is significantly higher than the sight line, it blocks
-        if intermediate_elevation > expected_elevation + 0.03 {
+        if intermediate_elevation > expected_elevation + LOS_BLOCKING_THRESHOLD {
             return false;
         }
     }
