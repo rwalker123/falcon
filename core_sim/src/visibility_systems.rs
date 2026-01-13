@@ -98,7 +98,9 @@ pub fn calculate_visibility(
         } else {
             0
         };
-        let effective_range = (base_range + elev_bonus).min(base_range + cfg.elevation.max_bonus);
+        // Cap elevation bonus before adding to base range
+        let capped_bonus = elev_bonus.min(cfg.elevation.max_bonus);
+        let effective_range = base_range + capped_bonus;
 
         // Reveal tiles in range
         reveal_tiles_in_range(
