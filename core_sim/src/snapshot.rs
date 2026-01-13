@@ -116,6 +116,7 @@ pub struct SnapshotContext<'w> {
     pub command_events: Res<'w, CommandEventLog>,
     pub capability_flags: Res<'w, CapabilityFlags>,
     pub visibility_ledger: Res<'w, crate::visibility::VisibilityLedger>,
+    pub viewer_faction: Res<'w, crate::visibility::ViewerFaction>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -1182,6 +1183,7 @@ pub fn capture_snapshot(
         command_events,
         capability_flags,
         visibility_ledger,
+        viewer_faction,
     } = ctx;
     let overlays_config = overlays.get();
     history.set_capacity(config.snapshot_history_limit.max(1));
@@ -1333,11 +1335,8 @@ pub fn capture_snapshot(
         config.grid_size,
         overlays_config.as_ref(),
     );
-    let visibility_raster = visibility_raster_from_ledger(
-        &visibility_ledger,
-        FactionId(0), // Player faction
-        config.grid_size,
-    );
+    let visibility_raster =
+        visibility_raster_from_ledger(&visibility_ledger, viewer_faction.0, config.grid_size);
 
     let policy_axes = axis_bias.policy_values();
     let incident_axes = axis_bias.incident_values();

@@ -128,7 +128,8 @@ pub use victory::{
     VictoryModeState, VictoryState,
 };
 pub use visibility::{
-    FactionVisibilityMap, TileVisibility, VisibilityLedger, VisibilitySource, VisibilityState,
+    FactionVisibilityMap, TileVisibility, ViewerFaction, VisibilityLedger, VisibilitySource,
+    VisibilityState,
 };
 pub use visibility_config::{
     load_visibility_config_from_env, DecayConfig, ElevationConfig, LineOfSightConfig,
@@ -323,6 +324,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility_handle)
         .insert_resource(visibility_metadata)
         .insert_resource(visibility::VisibilityLedger::default())
+        .insert_resource(visibility::ViewerFaction::default())
         .insert_resource(turn_pipeline_handle)
         .insert_resource(turn_pipeline_metadata)
         .insert_resource(snapshot_overlays_metadata)

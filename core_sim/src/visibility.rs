@@ -167,6 +167,18 @@ pub struct VisibilityLedger {
     faction_maps: HashMap<FactionId, FactionVisibilityMap>,
 }
 
+/// The faction whose visibility is exported in snapshots.
+/// In single-player, this is the player's faction. In multiplayer,
+/// each client would have a different viewer faction.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct ViewerFaction(pub FactionId);
+
+impl Default for ViewerFaction {
+    fn default() -> Self {
+        Self(FactionId(0))
+    }
+}
+
 impl VisibilityLedger {
     /// Ensure a faction has a visibility map, creating one if needed.
     pub fn ensure_faction(
