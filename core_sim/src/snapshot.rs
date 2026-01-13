@@ -3144,7 +3144,21 @@ fn visibility_raster_from_ledger(
     let total = (width * height) as usize;
     let mut samples = vec![0i64; total];
 
+    let has_faction = ledger.get_faction(faction).is_some();
+    tracing::info!(
+        target: "shadow_scale::visibility",
+        faction = faction.0,
+        has_faction,
+        width,
+        height,
+        "visibility_raster_from_ledger START"
+    );
+
     if let Some(map) = ledger.get_faction(faction) {
+        let mut active_count = 0u32;
+        let mut discovered_count = 0u32;
+        let mut unexplored_count = 0u32;
+
         for (pos, tile) in map.iter_tiles() {
             if pos.x >= width || pos.y >= height {
                 continue;
@@ -3158,15 +3172,36 @@ fn visibility_raster_from_ledger(
             // Discovered (1) -> 32768 (half, desaturated terrain)
             // Unexplored (0) -> 0 (black/hidden)
             let value = match tile.state {
-                crate::visibility::VisibilityState::Active => 65536,
-                crate::visibility::VisibilityState::Discovered => 32768,
-                crate::visibility::VisibilityState::Unexplored => 0,
+                crate::visibility::VisibilityState::Active => {
+                    active_count += 1;
+                    65536
+                }
+                crate::visibility::VisibilityState::Discovered => {
+                    discovered_count += 1;
+                    32768
+                }
+                crate::visibility::VisibilityState::Unexplored => {
+                    unexplored_count += 1;
+                    0
+                }
             };
             samples[idx] = value;
         }
+
+        tracing::info!(
+            target: "shadow_scale::visibility",
+            active_count,
+            discovered_count,
+            unexplored_count,
+            "visibility_raster_from_ledger faction_found"
+        );
     } else {
         // No visibility data for this faction, all unexplored (0 = black)
         // samples already initialized to 0
+        tracing::info!(
+            target: "shadow_scale::visibility",
+            "visibility_raster_from_ledger NO_FACTION_DATA"
+        );
     }
 
     ScalarRasterState {
