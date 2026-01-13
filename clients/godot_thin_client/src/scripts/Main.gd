@@ -208,16 +208,6 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
                 inspector.call("update_capability_flags", int(snapshot["capability_flags"]))
         if inspector.has_method("set_streaming_active"):
             inspector.call("set_streaming_active", streaming_mode)
-    # Camera positioning disabled - MapView handles all view transformations
-    # var recenter: bool = false
-    # if metrics.has("dimensions_changed"):
-    #     recenter = bool(metrics["dimensions_changed"])
-    # var center_variant: Variant = null
-    # if map_view != null and map_view.has_method("get_world_center"):
-    #     center_variant = map_view.call("get_world_center")
-    # if center_variant is Vector2 and (recenter or not _camera_initialized):
-    #     camera.position = center_variant
-    #     _camera_initialized = true
     _camera_initialized = true
     if script_host_manager != null and script_host_manager.has_host():
         if is_delta:
@@ -362,14 +352,6 @@ func _unhandled_input(event: InputEvent) -> void:
         _adjust_ui_zoom(-UI_ZOOM_STEP)
     elif event.is_action_pressed("ui_zoom_reset"):
         set_ui_zoom(1.0)
-    # Camera zoom via mouse wheel disabled - MapView handles zoom
-    # elif event is InputEventMouseButton:
-    #     var mouse_event: InputEventMouseButton = event as InputEventMouseButton
-    #     if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP and mouse_event.pressed:
-    #         _adjust_camera_zoom(-CAMERA_ZOOM_STEP)
-    #     elif mouse_event.button_index == MOUSE_BUTTON_WHEEL_DOWN and mouse_event.pressed:
-    #         _adjust_camera_zoom(CAMERA_ZOOM_STEP)
-    pass
 
 func _toggle_inspector_visibility() -> void:
     if inspector == null:
@@ -458,14 +440,6 @@ func _process(delta: float) -> void:
                         stream_connection_timer = 0.0
                         if inspector != null and inspector.has_method("set_streaming_active"):
                             inspector.call("set_streaming_active", false)
-    # Camera panning disabled - MapView handles all view transformations via WASD
-    # var pan_input: Vector2 = Vector2(
-    #     Input.get_action_strength("ui_right") - Input.get_action_strength("ui_left"),
-    #     Input.get_action_strength("ui_down") - Input.get_action_strength("ui_up")
-    # )
-    # if pan_input != Vector2.ZERO:
-    #     camera.position += pan_input * CAMERA_PAN_SPEED * delta
-    pass
 
 func _on_overlay_legend_changed(legend: Dictionary) -> void:
     if hud != null and hud.has_method("update_overlay_legend"):
