@@ -149,7 +149,7 @@ pub fn calculate_visibility(
 
     // Process each visibility source
     for (faction, pos, base_range, elev_factor) in sources.iter() {
-        tracing::info!(
+        tracing::debug!(
             target: "shadow_scale::visibility",
             faction = faction.0,
             pos_x = pos.x,
