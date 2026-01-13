@@ -2154,14 +2154,18 @@ func _hex_points(center: Vector2, radius: float, closed: bool = false) -> Packed
 		points.append(points[0])
 	return points
 
-func _update_layout_metrics() -> void:
-	if grid_width <= 0 or grid_height <= 0:
-		return
+func _get_adjusted_viewport_size() -> Vector2:
 	var viewport_size: Vector2 = get_viewport_rect().size
 	var canvas_scale := get_viewport().get_canvas_transform().get_scale()
 	if canvas_scale.x != 0.0 and canvas_scale.y != 0.0:
 		# Account for global canvas (camera) scaling so hit-testing matches the drawn map
 		viewport_size /= canvas_scale
+	return viewport_size
+
+func _update_layout_metrics() -> void:
+	if grid_width <= 0 or grid_height <= 0:
+		return
+	var viewport_size: Vector2 = _get_adjusted_viewport_size()
 	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
 		return
 	if bounds_dirty:
@@ -2181,10 +2185,7 @@ func _update_layout_metrics() -> void:
 func _clamp_pan_offset() -> void:
 	if last_map_size.x <= 0.0 or last_map_size.y <= 0.0:
 		return
-	var viewport_size: Vector2 = get_viewport_rect().size
-	var canvas_scale := get_viewport().get_canvas_transform().get_scale()
-	if canvas_scale.x != 0.0 and canvas_scale.y != 0.0:
-		viewport_size /= canvas_scale
+	var viewport_size: Vector2 = _get_adjusted_viewport_size()
 
 	# Calculate pan limits based on keeping map bounds within viewport
 	# pan_offset affects last_origin, and the map bounds in world coords are:
