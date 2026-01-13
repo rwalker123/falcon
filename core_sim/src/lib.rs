@@ -35,6 +35,9 @@ mod systems;
 mod terrain;
 mod turn_pipeline_config;
 mod victory;
+mod visibility;
+mod visibility_config;
+mod visibility_systems;
 
 use std::sync::Arc;
 
@@ -124,6 +127,14 @@ pub use victory::{
     load_victory_config_from_env, VictoryConfigHandle, VictoryModeId, VictoryModeKind,
     VictoryModeState, VictoryState,
 };
+pub use visibility::{
+    FactionVisibilityMap, TileVisibility, VisibilityLedger, VisibilitySource, VisibilityState,
+};
+pub use visibility_config::{
+    load_visibility_config_from_env, DecayConfig, ElevationConfig, LineOfSightConfig,
+    SightRangeConfig, TerrainModifierConfig, VisibilityConfig, VisibilityConfigHandle,
+    VisibilityConfigMetadata, BUILTIN_VISIBILITY_CONFIG,
+};
 
 pub use metrics::SimulationMetrics;
 pub use orders::{
@@ -159,6 +170,7 @@ pub enum TurnStage {
     Knowledge,
     GreatDiscovery,
     Population,
+    Visibility,
     Crisis,
     Finalize,
     Victory,
@@ -260,6 +272,9 @@ pub fn build_headless_app() -> App {
         load_crisis_telemetry_config_from_env();
     let crisis_telemetry_handle = CrisisTelemetryConfigHandle::new(crisis_telemetry_config.clone());
     let crisis_telemetry_resource = CrisisTelemetry::from_config(crisis_telemetry_config.as_ref());
+    let (visibility_config, visibility_metadata) =
+        visibility_config::load_visibility_config_from_env();
+    let visibility_handle = visibility_config::VisibilityConfigHandle::new(visibility_config);
     let culture_effects = CultureEffectsCache::default();
     let espionage_catalog =
         espionage::EspionageCatalog::load_builtin().expect("espionage catalog should parse");
@@ -305,6 +320,9 @@ pub fn build_headless_app() -> App {
         .insert_resource(crisis_telemetry_handle)
         .insert_resource(ActiveCrisisLedger::default())
         .insert_resource(CrisisOverlayCache::default())
+        .insert_resource(visibility_handle)
+        .insert_resource(visibility_metadata)
+        .insert_resource(visibility::VisibilityLedger::default())
         .insert_resource(turn_pipeline_handle)
         .insert_resource(turn_pipeline_metadata)
         .insert_resource(snapshot_overlays_metadata)
@@ -363,6 +381,7 @@ pub fn build_headless_app() -> App {
                 TurnStage::Knowledge,
                 TurnStage::GreatDiscovery,
                 TurnStage::Population,
+                TurnStage::Visibility,
                 TurnStage::Crisis,
                 TurnStage::Finalize,
                 TurnStage::Victory,
@@ -458,6 +477,17 @@ pub fn build_headless_app() -> App {
                         | CapabilityFlags::INDUSTRY_T2
                         | CapabilityFlags::ALWAYS_ON,
                 )),
+        )
+        .add_systems(
+            Update,
+            (
+                visibility_systems::clear_active_visibility,
+                visibility_systems::calculate_visibility,
+                visibility_systems::apply_visibility_decay,
+            )
+                .chain()
+                .in_set(TurnStage::Visibility)
+                .run_if(capability_enabled(CapabilityFlags::ALWAYS_ON)),
         )
         .add_systems(
             Update,

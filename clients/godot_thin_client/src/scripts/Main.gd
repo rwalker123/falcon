@@ -156,6 +156,7 @@ func _ready() -> void:
         inspector.call("set_streaming_active", streaming_mode)
     _ensure_action_binding("toggle_inspector", Key.KEY_I)
     _ensure_action_binding("toggle_legend", Key.KEY_L)
+    _ensure_action_binding("toggle_fow", Key.KEY_F)
 
 func _ensure_timer() -> void:
     if is_instance_valid(playback_timer):
@@ -368,6 +369,15 @@ func _toggle_legend_visibility() -> void:
     if hud.has_method("toggle_legend"):
         _hud_invoke("toggle_legend")
 
+var _fow_active: bool = false
+
+func _toggle_fow_overlay() -> void:
+    if map_view == null:
+        return
+    _fow_active = not _fow_active
+    if map_view.has_method("set_fow_enabled"):
+        map_view.call("set_fow_enabled", _fow_active)
+
 func _update_campaign_label(raw_value: Variant) -> void:
     var label_dict: Dictionary = {}
     if raw_value is Dictionary:
@@ -412,6 +422,8 @@ func _process(delta: float) -> void:
         _toggle_inspector_visibility()
     if Input.is_action_just_pressed("toggle_legend"):
         _toggle_legend_visibility()
+    if Input.is_action_just_pressed("toggle_fow"):
+        _toggle_fow_overlay()
     if command_client != null:
         command_client.poll()
         command_client.ensure_connected()
