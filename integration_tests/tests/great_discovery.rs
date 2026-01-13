@@ -2,12 +2,13 @@ mod common;
 
 use std::time::{Duration, Instant};
 
+use bevy::prelude::Entity;
 use core_sim::{
     build_headless_app, run_turn, scalar_from_f32, scalar_one, scalar_zero,
     ConstellationRequirement, DiscoveryProgressLedger, FactionId, FactionRegistry,
     GreatDiscoveryDefinition, GreatDiscoveryId, GreatDiscoveryLedger, GreatDiscoveryRegistry,
-    GreatDiscoveryTelemetry, KnowledgeFragment, ObservationLedger, SimulationConfig,
-    SnapshotHistory, TradeLink, TradeTelemetry,
+    GreatDiscoveryTelemetry, KnowledgeFragment, LogisticsLink, ObservationLedger, Scalar,
+    SimulationConfig, SnapshotHistory, TradeLink, TradeTelemetry,
 };
 use sim_runtime::KnowledgeField;
 
@@ -239,23 +240,31 @@ fn gds_forced_publication_accelerates_trade_leaks() {
         "forced publication should mark the ledger entry as deployed"
     );
 
-    {
-        let mut query = app.world.query::<&mut TradeLink>();
-        let mut trade = query
-            .iter_mut(&mut app.world)
-            .next()
-            .expect("expected baseline trade link");
-        trade.from_faction = FactionId(0);
-        trade.to_faction = FactionId(1);
-        trade.openness = scalar_one();
-        trade.decay = scalar_zero();
-        trade.leak_timer = 0;
-        trade.pending_fragments = vec![KnowledgeFragment::new(
-            resolved_record.id.0 as u32,
-            scalar_from_f32(0.4),
-            scalar_one(),
-        )];
-    }
+    // Spawn a LogisticsLink + TradeLink for testing knowledge diffusion.
+    // TradeLinks are now only created when trade routes are established.
+    app.world.spawn((
+        LogisticsLink {
+            from: Entity::PLACEHOLDER,
+            to: Entity::PLACEHOLDER,
+            capacity: Scalar::one(),
+            flow: scalar_zero(),
+        },
+        TradeLink {
+            from_faction: FactionId(0),
+            to_faction: FactionId(1),
+            throughput: scalar_zero(),
+            tariff: scalar_zero(),
+            openness: scalar_one(),
+            decay: scalar_zero(),
+            leak_timer: 0,
+            last_discovery: None,
+            pending_fragments: vec![KnowledgeFragment::new(
+                resolved_record.id.0 as u32,
+                scalar_from_f32(0.4),
+                scalar_one(),
+            )],
+        },
+    ));
 
     run_turn(&mut app);
 
