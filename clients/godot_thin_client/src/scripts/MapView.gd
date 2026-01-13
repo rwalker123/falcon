@@ -2157,15 +2157,36 @@ func _draw_hydrology(radius: float, origin: Vector2) -> void:
 		var points := Array(river.get("points", []))
 		if points.size() < 2:
 			continue
-		var poly: PackedVector2Array = PackedVector2Array()
-		for pt in points:
-			if not (pt is Dictionary):
-				continue
-			var x := int(pt.get("x", 0))
-			var y := int(pt.get("y", 0))
-			poly.append(_hex_center(x, y, radius, origin))
-		if poly.size() >= 2:
-			draw_polyline(poly, river_color, line_width, false)
+		# When FoW is enabled, only draw visible segments
+		if _fow_enabled:
+			var current_segment: PackedVector2Array = PackedVector2Array()
+			for pt in points:
+				if not (pt is Dictionary):
+					continue
+				var x := int(pt.get("x", 0))
+				var y := int(pt.get("y", 0))
+				var is_visible := _is_tile_visible(x, y)
+				if is_visible:
+					current_segment.append(_hex_center(x, y, radius, origin))
+				else:
+					# End current segment and start new one
+					if current_segment.size() >= 2:
+						draw_polyline(current_segment, river_color, line_width, false)
+					current_segment = PackedVector2Array()
+			# Draw final segment if any
+			if current_segment.size() >= 2:
+				draw_polyline(current_segment, river_color, line_width, false)
+		else:
+			# FoW disabled - draw entire river
+			var poly: PackedVector2Array = PackedVector2Array()
+			for pt in points:
+				if not (pt is Dictionary):
+					continue
+				var x := int(pt.get("x", 0))
+				var y := int(pt.get("y", 0))
+				poly.append(_hex_center(x, y, radius, origin))
+			if poly.size() >= 2:
+				draw_polyline(poly, river_color, line_width, false)
 
 func set_highlight_rivers(enabled: bool) -> void:
 	highlight_rivers = enabled

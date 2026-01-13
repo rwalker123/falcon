@@ -485,6 +485,7 @@ pub fn build_headless_app() -> App {
             (
                 visibility_systems::clear_active_visibility,
                 visibility_systems::calculate_visibility,
+                visibility_systems::apply_trade_route_visibility,
                 visibility_systems::apply_visibility_decay,
             )
                 .chain()

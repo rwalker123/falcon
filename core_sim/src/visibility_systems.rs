@@ -1,9 +1,10 @@
 //! Visibility system implementations for the Fog of War.
 //!
-//! Three systems run in sequence during TurnStage::Visibility:
+//! Four systems run in sequence during TurnStage::Visibility:
 //! 1. `clear_active_visibility` - Reset Active tiles to Discovered
 //! 2. `calculate_visibility` - Compute visibility from all sources
-//! 3. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
+//! 3. `apply_trade_route_visibility` - Mark trade route tiles as Active
+//! 4. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
 
 use bevy::prelude::*;
 
@@ -21,7 +22,9 @@ const LOS_BLOCKING_THRESHOLD: f32 = 0.03;
 use sim_runtime::TerrainTags;
 
 use crate::{
-    components::{PopulationCohort, Settlement, StartingUnit, Tile, TownCenter},
+    components::{
+        LogisticsLink, PopulationCohort, Settlement, StartingUnit, Tile, TownCenter, TradeLink,
+    },
     heightfield::ElevationField,
     orders::FactionId,
     resources::SimulationTick,
@@ -31,6 +34,13 @@ use crate::{
 
 /// Step 1: Clear all Active visibility states to Discovered at the start of the visibility phase.
 pub fn clear_active_visibility(mut ledger: ResMut<VisibilityLedger>) {
+    let faction_count = ledger.factions().count();
+    tracing::info!(
+        target: "shadow_scale::visibility",
+        faction_count,
+        "visibility.step1_clear_active START"
+    );
+
     for faction in ledger.factions().collect::<Vec<_>>() {
         if let Some(map) = ledger.get_faction_mut(faction) {
             for (_, tile) in map.iter_tiles_mut() {
@@ -40,6 +50,11 @@ pub fn clear_active_visibility(mut ledger: ResMut<VisibilityLedger>) {
             }
         }
     }
+
+    tracing::info!(
+        target: "shadow_scale::visibility",
+        "visibility.step1_clear_active END"
+    );
 }
 
 /// Step 2: Calculate visibility from all visibility sources (units, settlements).
@@ -60,9 +75,23 @@ pub fn calculate_visibility(
     // Get grid dimensions from elevation field or bail
     let (width, height) = match &elevation {
         Some(elev) => (elev.width, elev.height),
-        None => return,
+        None => {
+            tracing::info!(
+                target: "shadow_scale::visibility",
+                "visibility.step2_calculate SKIPPED - no elevation field"
+            );
+            return;
+        }
     };
     let elevation = elevation.unwrap();
+
+    tracing::info!(
+        target: "shadow_scale::visibility",
+        width,
+        height,
+        turn = current_turn,
+        "visibility.step2_calculate START"
+    );
 
     let _span = tracing::debug_span!(
         target: "shadow_scale::visibility",
@@ -80,9 +109,12 @@ pub fn calculate_visibility(
 
     // Collect all visibility sources: (faction, position, base_range, elev_factor)
     let mut sources: Vec<(FactionId, UVec2, u32, f32)> = Vec::new();
+    let mut cohort_count = 0u32;
+    let mut settlement_count = 0u32;
 
     // Units (population cohorts with StartingUnit marker)
     for (cohort, unit) in cohorts.iter() {
+        cohort_count += 1;
         let range_def = cfg.sight_range_for(&unit.kind);
         // Get position from home tile entity
         if let Ok(home_tile) = tiles.get(cohort.home) {
@@ -97,6 +129,7 @@ pub fn calculate_visibility(
 
     // Settlements with TownCenter
     for (settlement, _town_center) in settlements.iter() {
+        settlement_count += 1;
         let range_def = cfg.sight_range_for("TownCenter");
         sources.push((
             settlement.faction,
@@ -106,15 +139,26 @@ pub fn calculate_visibility(
         ));
     }
 
-    tracing::trace!(
+    tracing::info!(
         target: "shadow_scale::visibility",
         source_count = sources.len(),
-        "visibility.sources_collected"
+        cohort_count,
+        settlement_count,
+        "visibility.step2_calculate sources_collected"
     );
 
     // Process each visibility source
-    for (faction, pos, base_range, elev_factor) in sources {
-        let map = ledger.ensure_faction(faction, width, height);
+    for (faction, pos, base_range, elev_factor) in sources.iter() {
+        tracing::debug!(
+            target: "shadow_scale::visibility",
+            faction = faction.0,
+            pos_x = pos.x,
+            pos_y = pos.y,
+            base_range,
+            "visibility.step2_calculate processing_source"
+        );
+
+        let map = ledger.ensure_faction(*faction, width, height);
         let source_elevation = elevation.sample(pos.x, pos.y);
 
         // Calculate effective range with elevation bonus
@@ -133,7 +177,7 @@ pub fn calculate_visibility(
         // Reveal tiles in range
         reveal_tiles_in_range(
             map,
-            pos,
+            *pos,
             effective_range,
             current_turn,
             &elevation,
@@ -143,6 +187,26 @@ pub fn calculate_visibility(
             blocking_tags,
         );
     }
+
+    // Log visibility state after processing
+    for faction in ledger.factions() {
+        if let Some(map) = ledger.get_faction(faction) {
+            let (unexplored, discovered, active) = map.count_by_state();
+            tracing::info!(
+                target: "shadow_scale::visibility",
+                faction = faction.0,
+                unexplored,
+                discovered,
+                active,
+                "visibility.step2_calculate faction_state"
+            );
+        }
+    }
+
+    tracing::info!(
+        target: "shadow_scale::visibility",
+        "visibility.step2_calculate END"
+    );
 }
 
 /// Build a grid of terrain tags from tile entities.
@@ -366,7 +430,52 @@ fn has_line_of_sight(
     true
 }
 
-/// Step 3: Apply visibility decay - tiles not seen for too long revert to unexplored.
+/// Step 3: Mark tiles along trade routes as Active for visibility.
+///
+/// Trade routes provide visibility because merchants travel the path, reporting
+/// what they see. Both endpoint factions of a trade link gain visibility of
+/// all tiles along the route.
+///
+/// TradeLink components are only attached to LogisticsLinks that are part of
+/// an active trade route, so this query only matches actual trade routes.
+pub fn apply_trade_route_visibility(
+    mut ledger: ResMut<VisibilityLedger>,
+    tick: Res<SimulationTick>,
+    trade_links: Query<(&LogisticsLink, &TradeLink)>,
+    tiles: Query<&Tile>,
+) {
+    let current_turn = tick.0;
+
+    for (logistics, trade) in trade_links.iter() {
+        // Get tile positions from logistics link endpoints
+        let from_pos = tiles.get(logistics.from).ok().map(|t| t.position);
+        let to_pos = tiles.get(logistics.to).ok().map(|t| t.position);
+
+        // Mark tiles visible for the "from" faction
+        if let Some(map) = ledger.get_faction_mut(trade.from_faction) {
+            if let Some(pos) = from_pos {
+                map.mark_active(pos.x, pos.y, current_turn);
+            }
+            if let Some(pos) = to_pos {
+                map.mark_active(pos.x, pos.y, current_turn);
+            }
+        }
+
+        // Mark tiles visible for the "to" faction (they see the route too)
+        if trade.to_faction != trade.from_faction {
+            if let Some(map) = ledger.get_faction_mut(trade.to_faction) {
+                if let Some(pos) = from_pos {
+                    map.mark_active(pos.x, pos.y, current_turn);
+                }
+                if let Some(pos) = to_pos {
+                    map.mark_active(pos.x, pos.y, current_turn);
+                }
+            }
+        }
+    }
+}
+
+/// Step 4: Apply visibility decay - tiles not seen for too long revert to unexplored.
 pub fn apply_visibility_decay(
     mut ledger: ResMut<VisibilityLedger>,
     config: Res<VisibilityConfigHandle>,
@@ -374,12 +483,24 @@ pub fn apply_visibility_decay(
 ) {
     let cfg = config.0.as_ref();
     if !cfg.decay.enabled {
+        tracing::info!(
+            target: "shadow_scale::visibility",
+            "visibility.step4_decay SKIPPED - decay disabled"
+        );
         return;
     }
 
     let current_turn = tick.0;
     let decay_threshold = cfg.decay.threshold_turns;
 
+    tracing::info!(
+        target: "shadow_scale::visibility",
+        current_turn,
+        decay_threshold,
+        "visibility.step4_decay START"
+    );
+
+    let mut decayed_count = 0u32;
     for faction in ledger.factions().collect::<Vec<_>>() {
         if let Some(map) = ledger.get_faction_mut(faction) {
             for (_, tile) in map.iter_tiles_mut() {
@@ -388,11 +509,18 @@ pub fn apply_visibility_decay(
                     if turns_since_seen >= decay_threshold {
                         tile.state = VisibilityState::Unexplored;
                         tile.last_seen_turn = 0;
+                        decayed_count += 1;
                     }
                 }
             }
         }
     }
+
+    tracing::info!(
+        target: "shadow_scale::visibility",
+        decayed_count,
+        "visibility.step4_decay END"
+    );
 }
 
 /// Log visibility statistics for debugging.
