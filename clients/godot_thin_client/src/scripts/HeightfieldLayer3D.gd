@@ -7,6 +7,8 @@ signal strategic_view_requested
 const HEIGHTFIELD_SHADER := preload("res://src/shaders/heightfield.gdshader")
 const HEX_GRID_SHADER := preload("res://src/shaders/hex_grid.gdshader")
 const SQRT3 := 1.7320508075688772
+const MAX_TERRAIN_INDEX := 255.0  # R8 texture format uses 0-255 range
+const MIN_HEIGHT_EXAGGERATION := 0.0001  # Epsilon for division-by-zero protection
 
 @export var chunk_size := Vector2i(32, 32)
 @export var tile_scale := 1.0
@@ -28,6 +30,12 @@ var _material: ShaderMaterial
 var _biome_texture: Texture2D
 var _overlay_texture: Texture2D
 var _height_samples: PackedFloat32Array = PackedFloat32Array()
+
+# Terrain texture system (textures loaded via TerrainTextureManager autoload)
+var _terrain_index_texture: Texture2D = null
+var _terrain_neighbor_texture: Texture2D = null
+var _terrain_grid_size: Vector2 = Vector2(64, 64)
+var _cached_terrain_ids: PackedInt32Array = PackedInt32Array()
 var _last_stats_signature: String = ""
 var _logged_chunk_count: int = 0
 var _max_height_world: float = 0.0
@@ -41,6 +49,7 @@ var _hex_grid_instance: MeshInstance3D = null
 var _hex_grid_color: Color = Color(0.1, 0.2, 0.4, 0.65)
 var _hex_width_scale: float = 0.05
 var _hex_min_width: float = 0.0
+var _hex_grid_signature: String = ""
 var _layout_ready: bool = false
 var _layout_scale_x: float = 1.0
 var _layout_scale_z: float = 1.0
@@ -87,6 +96,8 @@ func _ready() -> void:
     _material.set_shader_parameter("overlay_enabled", false)
     _material.set_shader_parameter("ambient_strength", 0.35)
     _update_shader_debug_flags()
+    # Terrain textures loaded via TerrainTextureManager autoload - apply params to shader
+    _apply_terrain_texture_params()
     
 
 
@@ -239,6 +250,7 @@ func _clear_mesh(reset_dims: bool = true) -> void:
 
 func _invalidate_layout_metrics() -> void:
     _layout_ready = false
+    _hex_grid_signature = ""  # Force hex grid rebuild on next update
 
 func _reset_camera_state() -> void:
     _orbit_azimuth_radians = 0.0
@@ -311,10 +323,10 @@ func _build_chunk_mesh(local_w: int, local_h: int, start_x: int, start_y: int) -
             var uv1: Vector2 = Vector2(float(start_x + lx + 1) / float(_width), float(start_y + ly) / float(_height))
             var uv2: Vector2 = Vector2(float(start_x + lx + 1) / float(_width), float(start_y + ly + 1) / float(_height))
             var uv3: Vector2 = Vector2(float(start_x + lx) / float(_width), float(start_y + ly + 1) / float(_height))
-            var h_norm0: float = height00 / max(_current_height_exaggeration, 0.0001)
-            var h_norm1: float = height10 / max(_current_height_exaggeration, 0.0001)
-            var h_norm2: float = height11 / max(_current_height_exaggeration, 0.0001)
-            var h_norm3: float = height01 / max(_current_height_exaggeration, 0.0001)
+            var h_norm0: float = height00 / max(_current_height_exaggeration, MIN_HEIGHT_EXAGGERATION)
+            var h_norm1: float = height10 / max(_current_height_exaggeration, MIN_HEIGHT_EXAGGERATION)
+            var h_norm2: float = height11 / max(_current_height_exaggeration, MIN_HEIGHT_EXAGGERATION)
+            var h_norm3: float = height01 / max(_current_height_exaggeration, MIN_HEIGHT_EXAGGERATION)
             st.set_uv(uv0)
             st.set_color(_vertex_color_for_debug(start_x + lx, start_y + ly, h_norm0))
             st.add_vertex(v0)
@@ -391,7 +403,7 @@ func _debug_log_chunk(start_x: int, start_y: int, local_w: int, local_h: int) ->
     var max_cols: int = min(local_w, 8)
     for dx in range(max_cols):
         var h := _height_at(start_x + dx, start_y)
-        samples.append("%.2f" % (h / max(_current_height_exaggeration, 0.0001)))
+        samples.append("%.2f" % (h / max(_current_height_exaggeration, MIN_HEIGHT_EXAGGERATION)))
     var min_h: float = 1e9
     var max_h: float = -1e9
     var sum_h: float = 0.0
@@ -657,13 +669,36 @@ func _update_hex_overlay() -> void:
     if not show_hex_grid or _width <= 0 or _height <= 0 or _height_samples.is_empty():
         _hex_grid_instance.visible = false
         _hex_grid_instance.mesh = null
+        _hex_grid_signature = ""
         return
     _hex_grid_instance.visible = true
     _ensure_layout_metrics()
     if not _layout_ready:
         _hex_grid_instance.visible = false
         _hex_grid_instance.mesh = null
+        _hex_grid_signature = ""
         return
+
+    # Build signature from all state that affects the hex grid mesh
+    # Skip rebuild if nothing changed (optimization for large grids)
+    var new_signature := "%d:%d:%.4f:%.4f:%.4f:%.4f:%s:%.3f:%.3f" % [
+        _width, _height,
+        _layout_scale_x, _layout_scale_z,
+        _hex_width_scale, _hex_min_width,
+        _hex_grid_color.to_html(),
+        tile_scale, _current_height_exaggeration
+    ]
+    # Include height data fingerprint (size + sample of values)
+    if _height_samples.size() > 0:
+        var h_first := _height_samples[0]
+        var h_last := _height_samples[_height_samples.size() - 1]
+        var h_mid := _height_samples[_height_samples.size() / 2]
+        new_signature += ":%.4f:%.4f:%.4f" % [h_first, h_mid, h_last]
+
+    if new_signature == _hex_grid_signature:
+        return  # No changes, skip expensive rebuild
+    _hex_grid_signature = new_signature
+
     var vertices: PackedVector3Array = PackedVector3Array()
     var colors: PackedColorArray = PackedColorArray()
     var indices: PackedInt32Array = PackedInt32Array()
@@ -857,6 +892,167 @@ func _build_overlay_texture(values: PackedFloat32Array, width: int, height: int)
             var y2: int = idx / tex_width
             image.set_pixel(x2, y2, filler_color)
     return ImageTexture.create_from_image(image)
+
+# --- Terrain Texture System (textures loaded via TerrainTextureManager autoload) ---
+
+func _apply_terrain_texture_params() -> void:
+    # Apply terrain texture parameters to the shader (textures from TerrainTextureManager autoload)
+    if _material == null:
+        return
+
+    var mgr := TerrainTextureManager
+    _material.set_shader_parameter("use_terrain_textures", mgr.use_terrain_textures and mgr.terrain_textures != null)
+    _material.set_shader_parameter("use_edge_blending", mgr.use_edge_blending)
+    _material.set_shader_parameter("grid_size", _terrain_grid_size)
+
+    if mgr.terrain_textures != null:
+        _material.set_shader_parameter("terrain_textures", mgr.terrain_textures)
+
+    if _terrain_index_texture != null:
+        _material.set_shader_parameter("terrain_index_texture", _terrain_index_texture)
+
+    if _terrain_neighbor_texture != null:
+        _material.set_shader_parameter("terrain_neighbor_texture", _terrain_neighbor_texture)
+
+    # Apply config settings from manager
+    var tex_scale: float = float(mgr.get_config_value("texture_scale", 4.0))
+    var lod_near: float = float(mgr.get_config_value("lod_near_distance", 50.0))
+    var lod_far: float = float(mgr.get_config_value("lod_far_distance", 200.0))
+    var blend_width: float = float(mgr.get_config_value("blend_width", 0.15))
+    _material.set_shader_parameter("texture_scale", tex_scale)
+    _material.set_shader_parameter("lod_near", lod_near)
+    _material.set_shader_parameter("lod_far", lod_far)
+    _material.set_shader_parameter("blend_width", blend_width)
+
+func set_terrain_overlay(terrain_ids: PackedInt32Array, width: int, height: int) -> void:
+    # Build terrain index texture from terrain IDs for shader sampling
+    if terrain_ids.is_empty() or width <= 0 or height <= 0:
+        _terrain_index_texture = null
+        _terrain_neighbor_texture = null
+        _apply_terrain_texture_params()
+        return
+
+    var tex_width: int = max(width, 1)
+    var tex_height: int = max(height, 1)
+    var total_expected: int = tex_width * tex_height
+    var count: int = min(terrain_ids.size(), total_expected)
+
+    # Update grid size for shader
+    _terrain_grid_size = Vector2(tex_width, tex_height)
+    _cached_terrain_ids = terrain_ids
+
+    # Create R8 image with terrain IDs (0-255 range)
+    var image := Image.create(tex_width, tex_height, false, Image.FORMAT_R8)
+    if image == null:
+        push_error("[HeightfieldLayer3D] Failed to create terrain index image")
+        return
+
+    for idx: int in range(count):
+        var terrain_id: int = terrain_ids[idx]
+        var normalized: float = float(terrain_id) / MAX_TERRAIN_INDEX
+        var x: int = idx % tex_width
+        var y: int = idx / tex_width
+        image.set_pixel(x, y, Color(normalized, 0.0, 0.0, 1.0))
+
+    # Fill remaining pixels with last valid ID
+    if count < total_expected and count > 0:
+        var last_id: int = terrain_ids[count - 1]
+        var last_normalized: float = float(last_id) / MAX_TERRAIN_INDEX
+        var filler := Color(last_normalized, 0.0, 0.0, 1.0)
+        for idx: int in range(count, total_expected):
+            var x: int = idx % tex_width
+            var y: int = idx / tex_width
+            image.set_pixel(x, y, filler)
+
+    _terrain_index_texture = ImageTexture.create_from_image(image)
+
+    # Build neighbor texture for edge blending
+    _build_neighbor_texture(terrain_ids, tex_width, tex_height)
+
+    _apply_terrain_texture_params()
+    print("[HeightfieldLayer3D] Terrain index texture built: %dx%d" % [tex_width, tex_height])
+
+func _build_neighbor_texture(terrain_ids: PackedInt32Array, width: int, height: int) -> void:
+    # Build texture encoding 6 neighbors per hex for edge blending
+    # Uses 2 RGB8 pixels per hex: RGB for neighbors 0-2, RGB for neighbors 3-5
+    # Memory: width*2 * height * 3 bytes (25% smaller than RGBA8)
+    var neighbor_width: int = width * 2
+    var neighbor_img := Image.create(neighbor_width, height, false, Image.FORMAT_RGB8)
+    if neighbor_img == null:
+        push_error("[HeightfieldLayer3D] Failed to create neighbor texture")
+        return
+
+    for y: int in range(height):
+        for x: int in range(width):
+            var idx: int = y * width + x
+            var center_id: int = terrain_ids[idx] if idx < terrain_ids.size() else 0
+
+            # Get 6 neighbor terrain IDs (offset coordinates, odd-r layout)
+            var neighbors: Array[int] = []
+            for i: int in range(6):
+                var n_col: int = x + _get_neighbor_offset_x(y, i)
+                var n_row: int = y + _get_neighbor_offset_y(y, i)
+                var n_id: int = center_id  # Default to same terrain if out of bounds
+                if n_col >= 0 and n_col < width and n_row >= 0 and n_row < height:
+                    var n_idx: int = n_row * width + n_col
+                    if n_idx >= 0 and n_idx < terrain_ids.size():
+                        n_id = terrain_ids[n_idx]
+                neighbors.append(n_id)
+
+            # Store neighbors 0-2 in first pixel (RGB)
+            var px1 := x * 2
+            neighbor_img.set_pixel(px1, y, Color(
+                float(neighbors[0]) / MAX_TERRAIN_INDEX,
+                float(neighbors[1]) / MAX_TERRAIN_INDEX,
+                float(neighbors[2]) / MAX_TERRAIN_INDEX,
+                1.0
+            ))
+
+            # Store neighbors 3-5 in second pixel (RGB)
+            var px2 := x * 2 + 1
+            neighbor_img.set_pixel(px2, y, Color(
+                float(neighbors[3]) / MAX_TERRAIN_INDEX,
+                float(neighbors[4]) / MAX_TERRAIN_INDEX,
+                float(neighbors[5]) / MAX_TERRAIN_INDEX,
+                1.0
+            ))
+
+    _terrain_neighbor_texture = ImageTexture.create_from_image(neighbor_img)
+
+func _get_neighbor_offset_x(row: int, neighbor_idx: int) -> int:
+    # Hex neighbor offsets for odd-r offset coordinates (pointy-top)
+    # Neighbor indices: 0=E, 1=NE, 2=NW, 3=W, 4=SW, 5=SE
+    var is_odd_row: bool = (row % 2) == 1
+    match neighbor_idx:
+        0: return 1   # East
+        1: return 1 if is_odd_row else 0   # NE
+        2: return 0 if is_odd_row else -1  # NW
+        3: return -1  # West
+        4: return 0 if is_odd_row else -1  # SW
+        5: return 1 if is_odd_row else 0   # SE
+    return 0
+
+func _get_neighbor_offset_y(_row: int, neighbor_idx: int) -> int:
+    # Hex neighbor Y offsets for odd-r offset coordinates (pointy-top)
+    match neighbor_idx:
+        0: return 0   # East
+        1: return -1  # NE
+        2: return -1  # NW
+        3: return 0   # West
+        4: return 1   # SW
+        5: return 1   # SE
+    return 0
+
+func enable_terrain_textures(enabled: bool) -> void:
+    ## Toggle terrain texture rendering.
+    TerrainTextureManager.use_terrain_textures = enabled
+    _apply_terrain_texture_params()
+
+func get_terrain_textures_enabled() -> bool:
+    var mgr := TerrainTextureManager
+    return mgr.use_terrain_textures and mgr.terrain_textures != null
+
+# --- End Terrain Texture System ---
 
 func get_hex_center(col: int, row: int) -> Vector3:
     var key := "%d,%d" % [col, row]

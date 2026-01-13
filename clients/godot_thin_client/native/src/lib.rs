@@ -48,8 +48,8 @@ impl CommandBridge {
     }
 
     #[func]
-    pub fn send_line(&self, host: GString, proto_port: i64, line: GString) -> Dictionary {
-        let mut dict = Dictionary::new();
+    pub fn send_line(&self, host: GString, proto_port: i64, line: GString) -> VarDictionary {
+        let mut dict = VarDictionary::new();
         if proto_port <= 0 || proto_port > u16::MAX as i64 {
             let _ = dict.insert("ok", false);
             let _ = dict.insert("error", format!("invalid port {proto_port}"));
@@ -189,7 +189,7 @@ fn variant_to_json(value: &Variant) -> JsonValue {
             JsonValue::String(v.to_string())
         }
         VariantType::ARRAY => {
-            let array: VariantArray = value.to();
+            let array: VarArray = value.to();
             let mut result = Vec::with_capacity(array.len() as usize);
             for item in array.iter_shared() {
                 result.push(variant_to_json(&item));
@@ -197,7 +197,7 @@ fn variant_to_json(value: &Variant) -> JsonValue {
             JsonValue::Array(result)
         }
         VariantType::DICTIONARY => {
-            let dict: Dictionary = value.to();
+            let dict: VarDictionary = value.to();
             let mut map = JsonMap::new();
             for (k, v) in dict.iter_shared() {
                 map.insert(variant_to_string(&k), variant_to_json(&v));
@@ -271,7 +271,7 @@ fn json_to_variant(value: &JsonValue) -> Variant {
         }
         JsonValue::String(s) => Variant::from(s.as_str()),
         JsonValue::Array(arr) => {
-            let mut variant_array = VariantArray::new();
+            let mut variant_array = VarArray::new();
             for item in arr {
                 let variant = json_to_variant(item);
                 variant_array.push(&variant);
@@ -279,7 +279,7 @@ fn json_to_variant(value: &JsonValue) -> Variant {
             Variant::from(variant_array)
         }
         JsonValue::Object(map) => {
-            let mut dict = Dictionary::new();
+            let mut dict = VarDictionary::new();
             for (key, value) in map {
                 let _ = dict.insert(key.as_str(), json_to_variant(value));
             }
@@ -288,15 +288,15 @@ fn json_to_variant(value: &JsonValue) -> Variant {
     }
 }
 
-fn json_to_variant_array(value: &JsonValue) -> VariantArray {
-    match json_to_variant(value).try_to::<VariantArray>() {
+fn json_to_variant_array(value: &JsonValue) -> VarArray {
+    match json_to_variant(value).try_to::<VarArray>() {
         Ok(array) => array,
-        Err(_) => VariantArray::new(),
+        Err(_) => VarArray::new(),
     }
 }
 
-fn script_error_to_dict(err: ScriptError) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn script_error_to_dict(err: ScriptError) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("ok", false);
     let _ = dict.insert("error", err.to_string());
     dict
@@ -311,8 +311,8 @@ pub struct ScriptHostBridge {
 #[godot_api]
 impl ScriptHostBridge {
     #[func]
-    pub fn parse_manifest(&self, manifest_path: GString, manifest_json: GString) -> Dictionary {
-        let mut dict = Dictionary::new();
+    pub fn parse_manifest(&self, manifest_path: GString, manifest_json: GString) -> VarDictionary {
+        let mut dict = VarDictionary::new();
         let path_str = manifest_path.to_string();
         match ScriptManifest::parse_str(manifest_json.to_string().as_str()) {
             Ok(mut manifest) => {
@@ -335,11 +335,11 @@ impl ScriptHostBridge {
     #[func]
     pub fn spawn_script(
         &self,
-        manifest_dict: Dictionary,
+        manifest_dict: VarDictionary,
         manifest_path: GString,
         source: GString,
-    ) -> Dictionary {
-        let mut dict = Dictionary::new();
+    ) -> VarDictionary {
+        let mut dict = VarDictionary::new();
         let manifest_json = variant_to_json(&Variant::from(manifest_dict.clone()));
         match serde_json::from_value::<ScriptManifest>(manifest_json) {
             Ok(mut manifest) => {
@@ -385,14 +385,19 @@ impl ScriptHostBridge {
     }
 
     #[func]
-    pub fn dispatch_event(&self, script_id: i64, event: GString, payload: Variant) -> Dictionary {
+    pub fn dispatch_event(
+        &self,
+        script_id: i64,
+        event: GString,
+        payload: Variant,
+    ) -> VarDictionary {
         let payload_json = variant_to_json(&payload);
         match self
             .manager
             .dispatch_event(script_id, &event.to_string(), payload_json)
         {
             Ok(_) => {
-                let mut dict = Dictionary::new();
+                let mut dict = VarDictionary::new();
                 let _ = dict.insert("ok", true);
                 dict
             }
@@ -413,11 +418,11 @@ impl ScriptHostBridge {
     }
 
     #[func]
-    pub fn poll_responses(&self, script_id: i64) -> VariantArray {
+    pub fn poll_responses(&self, script_id: i64) -> VarArray {
         match self.manager.poll_responses(script_id) {
             Ok(responses) => json_to_variant_array(&responses_to_json(responses)),
             Err(err) => {
-                let mut array = VariantArray::new();
+                let mut array = VarArray::new();
                 let variant =
                     json_to_variant(&json!({ "type": "error", "message": err.to_string() }));
                 array.push(&variant);
@@ -427,8 +432,8 @@ impl ScriptHostBridge {
     }
 
     #[func]
-    pub fn poll_all(&self) -> Dictionary {
-        let mut dict = Dictionary::new();
+    pub fn poll_all(&self) -> VarDictionary {
+        let mut dict = VarDictionary::new();
         let map = self.manager.poll_all();
         for (id, responses) in map {
             let _ = dict.insert(id, json_to_variant_array(&responses_to_json(responses)));
@@ -437,10 +442,10 @@ impl ScriptHostBridge {
     }
 
     #[func]
-    pub fn list_scripts(&self) -> VariantArray {
-        let mut array = VariantArray::new();
+    pub fn list_scripts(&self) -> VarArray {
+        let mut array = VarArray::new();
         for (id, manifest) in self.manager.list_scripts() {
-            let mut entry = Dictionary::new();
+            let mut entry = VarDictionary::new();
             let _ = entry.insert("script_id", id);
             let _ = entry.insert("manifest", json_to_variant(&manifest_to_json(&manifest)));
             let variant_entry = Variant::from(entry);
@@ -450,17 +455,17 @@ impl ScriptHostBridge {
     }
 
     #[func]
-    pub fn subscriptions(&self, script_id: i64) -> VariantArray {
+    pub fn subscriptions(&self, script_id: i64) -> VarArray {
         match self.manager.subscriptions(script_id) {
             Ok(subs) => {
-                let mut array = VariantArray::new();
+                let mut array = VarArray::new();
                 for sub in subs {
                     let variant = Variant::from(sub.as_str());
                     array.push(&variant);
                 }
                 array
             }
-            Err(_) => VariantArray::new(),
+            Err(_) => VarArray::new(),
         }
     }
 
@@ -479,8 +484,8 @@ impl ScriptHostBridge {
     }
 
     #[func]
-    pub fn snapshot_active_scripts(&self) -> VariantArray {
-        let mut array = VariantArray::new();
+    pub fn snapshot_active_scripts(&self) -> VarArray {
+        let mut array = VarArray::new();
         for state in self.manager.snapshot_states() {
             if let Ok(json) = serde_json::to_value(&state) {
                 let variant = json_to_variant(&json);
@@ -501,8 +506,8 @@ impl ScriptHostBridge {
     }
 
     #[func]
-    pub fn apply_script_state(&self, script_id: i64, state: Variant) -> Dictionary {
-        let mut dict = Dictionary::new();
+    pub fn apply_script_state(&self, script_id: i64, state: Variant) -> VarDictionary {
+        let mut dict = VarDictionary::new();
         let json = variant_to_json(&state);
         match serde_json::from_value::<SimScriptState>(json) {
             Ok(state_struct) => match self.manager.apply_state(script_id, &state_struct) {
@@ -558,7 +563,7 @@ fn build_heightfield_overlay_dict(
     max_value: f32,
     samples: &[f32],
     normals: &[Vector3],
-) -> Option<Dictionary> {
+) -> Option<VarDictionary> {
     if width == 0 || height == 0 {
         return None;
     }
@@ -566,7 +571,7 @@ fn build_heightfield_overlay_dict(
     if samples.len() < total {
         return None;
     }
-    let mut heightfield = Dictionary::new();
+    let mut heightfield = VarDictionary::new();
     let _ = heightfield.insert("width", width as i64);
     let _ = heightfield.insert("height", height as i64);
     let _ = heightfield.insert("min_value", min_value);
@@ -595,11 +600,11 @@ struct OverlayChannelParams<'a> {
 }
 
 fn insert_overlay_channel(
-    channels: &mut Dictionary,
+    channels: &mut VarDictionary,
     order: &mut PackedStringArray,
     params: OverlayChannelParams<'_>,
 ) {
-    let mut channel = Dictionary::new();
+    let mut channel = VarDictionary::new();
     let _ = channel.insert("label", params.label);
     if let Some(description) = params.description {
         let _ = channel.insert("description", description);
@@ -651,21 +656,21 @@ fn snapshot_dict(
     overlays: OverlaySlices<'_>,
     terrain: TerrainSlices<'_>,
     crisis_annotations: &[CrisisAnnotationRecord],
-    hydrology_rivers: Option<&VariantArray>,
+    hydrology_rivers: Option<&VarArray>,
     start_marker: Option<(u32, u32)>,
-    campaign_label: Option<Dictionary>,
-    campaign_profiles: Option<VariantArray>,
-    victory_state: Option<Dictionary>,
-    faction_inventory: Option<VariantArray>,
-    command_events: Option<VariantArray>,
-    herds: Option<VariantArray>,
-    food_modules: Option<VariantArray>,
-    heightfield_overlay: Option<Dictionary>,
-) -> Dictionary {
-    let mut dict = Dictionary::new();
+    campaign_label: Option<VarDictionary>,
+    campaign_profiles: Option<VarArray>,
+    victory_state: Option<VarDictionary>,
+    faction_inventory: Option<VarArray>,
+    command_events: Option<VarArray>,
+    herds: Option<VarArray>,
+    food_modules: Option<VarArray>,
+    heightfield_overlay: Option<VarDictionary>,
+) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("turn", tick as i64);
 
-    let mut grid_dict = Dictionary::new();
+    let mut grid_dict = VarDictionary::new();
     let _ = grid_dict.insert("width", grid_size.width as i64);
     let _ = grid_dict.insert("height", grid_size.height as i64);
     let _ = dict.insert("grid", grid_dict);
@@ -775,8 +780,8 @@ fn snapshot_dict(
     let elevation_placeholder = elevation_array.is_empty();
     let moisture_placeholder = overlays.moisture.is_empty();
 
-    let mut overlays = Dictionary::new();
-    let mut channels = Dictionary::new();
+    let mut overlays = VarDictionary::new();
+    let mut channels = VarDictionary::new();
     let mut channel_order = PackedStringArray::new();
 
     insert_overlay_channel(
@@ -978,7 +983,7 @@ fn snapshot_dict(
     let _ = overlays.insert("moisture", moisture_array.clone());
     let _ = overlays.insert("moisture_raw", moisture_raw_array.clone());
     let _ = overlays.insert("moisture_contrast", moisture_contrast_array.clone());
-    let mut crisis_annotation_array = VariantArray::new();
+    let mut crisis_annotation_array = VarArray::new();
     for record in crisis_annotations {
         let dict = crisis_annotation_to_dict(record);
         crisis_annotation_array.push(&dict.to_variant());
@@ -1010,7 +1015,7 @@ fn snapshot_dict(
             let _ = overlays.insert("terrain_tags", tag_array);
         }
 
-        let mut palette = Dictionary::new();
+        let mut palette = VarDictionary::new();
         let mut seen = BTreeSet::new();
         for &value in terrain_data {
             if seen.insert(value) {
@@ -1019,7 +1024,7 @@ fn snapshot_dict(
         }
         let _ = overlays.insert("terrain_palette", palette);
 
-        let mut tag_labels = Dictionary::new();
+        let mut tag_labels = VarDictionary::new();
         for (mask, label) in TERRAIN_TAG_LABELS.iter() {
             let _ = tag_labels.insert(*mask as i64, *label);
         }
@@ -1030,7 +1035,7 @@ fn snapshot_dict(
         let _ = overlays.insert("hydrology_rivers", rivers.clone());
     }
     if let Some((sx, sy)) = start_marker {
-        let mut marker = Dictionary::new();
+        let mut marker = VarDictionary::new();
         let _ = marker.insert("x", sx as i64);
         let _ = marker.insert("y", sy as i64);
         let _ = overlays.insert("start_marker", marker);
@@ -1041,8 +1046,8 @@ fn snapshot_dict(
 
     let _ = dict.insert("overlays", overlays);
 
-    let _ = dict.insert("units", VariantArray::new());
-    let _ = dict.insert("orders", VariantArray::new());
+    let _ = dict.insert("units", VarArray::new());
+    let _ = dict.insert("orders", VarArray::new());
 
     if let Some(label) = campaign_label {
         let _ = dict.insert("campaign_label", label);
@@ -1083,17 +1088,17 @@ pub struct SnapshotDecoder;
 #[godot_api]
 impl SnapshotDecoder {
     #[func]
-    pub fn decode_snapshot(&self, data: PackedByteArray) -> Dictionary {
+    pub fn decode_snapshot(&self, data: PackedByteArray) -> VarDictionary {
         decode_snapshot(&data).unwrap_or_default()
     }
 
     #[func]
-    pub fn decode_delta(&self, data: PackedByteArray) -> Dictionary {
+    pub fn decode_delta(&self, data: PackedByteArray) -> VarDictionary {
         decode_delta(&data).unwrap_or_default()
     }
 }
 
-fn decode_snapshot(data: &PackedByteArray) -> Option<Dictionary> {
+fn decode_snapshot(data: &PackedByteArray) -> Option<VarDictionary> {
     if data.is_empty() {
         return None;
     }
@@ -1106,7 +1111,7 @@ fn decode_snapshot(data: &PackedByteArray) -> Option<Dictionary> {
     }
 }
 
-fn decode_delta(data: &PackedByteArray) -> Option<Dictionary> {
+fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
     if data.is_empty() {
         return None;
     }
@@ -1568,7 +1573,7 @@ impl DeltaAggregator {
         }
     }
 
-    fn into_dictionary(self) -> Dictionary {
+    fn into_dictionary(self) -> VarDictionary {
         let DeltaAggregator {
             tick,
             width,
@@ -1916,7 +1921,7 @@ const CULTURE_AXIS_LABELS: [&str; 15] = [
 const CULTURE_SCOPE_LABELS: [&str; 3] = ["Global", "Regional", "Local"];
 const CULTURE_TENSION_LABELS: [&str; 3] = ["Drift Warning", "Assimilation Push", "Schism Risk"];
 
-fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
+fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
     let header = snapshot.header().unwrap();
 
     let mut logistics_grid: Vec<f32> = Vec::new();
@@ -1936,7 +1941,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
     let mut moisture_grid: Vec<f32> = Vec::new();
     let mut moisture_dims = (0u32, 0u32);
     let mut crisis_annotations: Vec<CrisisAnnotationRecord> = Vec::new();
-    let mut heightfield_overlay: Option<Dictionary> = None;
+    let mut heightfield_overlay: Option<VarDictionary> = None;
     if let Some(raster) = snapshot.logisticsRaster() {
         let width = raster.width();
         let height = raster.height();
@@ -2225,7 +2230,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
                 }
             }
             elevation_dims = (width, height);
-            let mut heightfield = Dictionary::new();
+            let mut heightfield = VarDictionary::new();
             let _ = heightfield.insert("width", width as i64);
             let _ = heightfield.insert("height", height as i64);
             let _ = heightfield.insert("min_value", overlay.minValue());
@@ -2520,21 +2525,21 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
     };
 
     // Construct hydrology rivers array for overlays.
-    let mut hydrology_rivers = VariantArray::new();
+    let mut hydrology_rivers = VarArray::new();
     if let Some(hydro) = snapshot.hydrologyOverlay() {
         if let Some(rivers) = hydro.rivers() {
             for river in rivers {
-                let mut points_array = VariantArray::new();
+                let mut points_array = VarArray::new();
                 if let Some(points) = river.points() {
                     for p in points {
-                        let mut pt = Dictionary::new();
+                        let mut pt = VarDictionary::new();
                         let _ = pt.insert("x", p.x() as i64);
                         let _ = pt.insert("y", p.y() as i64);
                         let variant = pt.to_variant();
                         points_array.push(&variant);
                     }
                 }
-                let mut rdict = Dictionary::new();
+                let mut rdict = VarDictionary::new();
                 let _ = rdict.insert("id", river.id() as i64);
                 let _ = rdict.insert("order", river.order() as i64);
                 let _ = rdict.insert("width", river.width() as i64);
@@ -2550,9 +2555,9 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
         .map(|marker| (marker.x(), marker.y()));
 
     let campaign_label_dict = header.campaignLabel().map(campaign_label_to_dict);
-    let mut campaign_profiles_array: Option<VariantArray> = None;
+    let mut campaign_profiles_array: Option<VarArray> = None;
     if let Some(profiles) = snapshot.campaignProfiles() {
-        let mut arr = VariantArray::new();
+        let mut arr = VarArray::new();
         for profile in profiles {
             let dict = campaign_profile_to_dict(profile);
             arr.push(&dict.to_variant());
@@ -2694,8 +2699,8 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Dictionary {
     dict
 }
 
-fn campaign_label_to_dict(label: fb::CampaignLabel<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn campaign_label_to_dict(label: fb::CampaignLabel<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     if let Some(profile_id) = label.profileId() {
         let _ = dict.insert("profile_id", profile_id);
     }
@@ -2714,8 +2719,8 @@ fn campaign_label_to_dict(label: fb::CampaignLabel<'_>) -> Dictionary {
     dict
 }
 
-fn campaign_profile_to_dict(profile: fb::CampaignProfile<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn campaign_profile_to_dict(profile: fb::CampaignProfile<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     if let Some(id) = profile.id() {
         let _ = dict.insert("id", id);
     }
@@ -2773,10 +2778,10 @@ fn campaign_profile_to_dict(profile: fb::CampaignProfile<'_>) -> Dictionary {
 
 fn campaign_starting_units_to_array(
     units: Vector<'_, ForwardsUOffset<fb::CampaignStartingUnit<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for unit in units {
-        let mut dict = Dictionary::new();
+        let mut dict = VarDictionary::new();
         if let Some(kind) = unit.kind() {
             let _ = dict.insert("kind", kind);
         }
@@ -2794,10 +2799,10 @@ fn campaign_starting_units_to_array(
 
 fn campaign_inventory_to_array(
     inventory: Vector<'_, ForwardsUOffset<fb::CampaignInventoryEntry<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for entry in inventory {
-        let mut dict = Dictionary::new();
+        let mut dict = VarDictionary::new();
         if let Some(item) = entry.item() {
             let _ = dict.insert("item", item);
         }
@@ -2809,10 +2814,10 @@ fn campaign_inventory_to_array(
 
 fn faction_inventory_entries_to_array(
     entries: Vector<'_, ForwardsUOffset<fb::FactionInventoryEntry<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for entry in entries {
-        let mut dict = Dictionary::new();
+        let mut dict = VarDictionary::new();
         if let Some(item) = entry.item() {
             let _ = dict.insert("item", item);
         }
@@ -2824,10 +2829,10 @@ fn faction_inventory_entries_to_array(
 
 fn faction_inventory_to_array(
     inventory: Vector<'_, ForwardsUOffset<fb::FactionInventoryState<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for state in inventory {
-        let mut dict = Dictionary::new();
+        let mut dict = VarDictionary::new();
         let _ = dict.insert("faction", state.faction() as i64);
         if let Some(entries) = state.inventory() {
             let entry_array = faction_inventory_entries_to_array(entries);
@@ -2840,10 +2845,10 @@ fn faction_inventory_to_array(
     array
 }
 
-fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>) -> VariantArray {
-    let mut array = VariantArray::new();
+fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>) -> VarArray {
+    let mut array = VarArray::new();
     for herd in herds {
-        let mut dict = Dictionary::new();
+        let mut dict = VarDictionary::new();
         if let Some(id) = herd.id() {
             let _ = dict.insert("id", id);
         }
@@ -2866,10 +2871,10 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
 
 fn food_modules_to_array(
     modules: Vector<'_, ForwardsUOffset<fb::FoodModuleState<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for module in modules {
-        let mut dict = Dictionary::new();
+        let mut dict = VarDictionary::new();
         let _ = dict.insert("x", module.x() as i64);
         let _ = dict.insert("y", module.y() as i64);
         if let Some(label) = module.module() {
@@ -2886,10 +2891,10 @@ fn food_modules_to_array(
 
 fn command_events_to_array(
     events: Vector<'_, ForwardsUOffset<fb::CommandEventState<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for event in events {
-        let mut dict = Dictionary::new();
+        let mut dict = VarDictionary::new();
         let _ = dict.insert("tick", event.tick() as i64);
         if let Some(kind) = event.kind() {
             let _ = dict.insert("kind", kind);
@@ -2906,17 +2911,17 @@ fn command_events_to_array(
     array
 }
 
-fn strings_to_variant_array(values: Vector<'_, ForwardsUOffset<&'_ str>>) -> VariantArray {
-    let mut array = VariantArray::new();
+fn strings_to_variant_array(values: Vector<'_, ForwardsUOffset<&'_ str>>) -> VarArray {
+    let mut array = VarArray::new();
     for value in values {
         array.push(&value.to_variant());
     }
     array
 }
 
-fn victory_state_to_dict(state: fb::VictoryState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
-    let mut modes_array = VariantArray::new();
+fn victory_state_to_dict(state: fb::VictoryState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
+    let mut modes_array = VarArray::new();
     let winner_mode_id = state
         .winner()
         .and_then(|winner| winner.mode())
@@ -2937,7 +2942,7 @@ fn victory_state_to_dict(state: fb::VictoryState<'_>) -> Dictionary {
                 progress_pct = (progress / threshold).clamp(0.0, 1.0);
             }
 
-            let mut entry = Dictionary::new();
+            let mut entry = VarDictionary::new();
             let _ = entry.insert("id", id);
             let _ = entry.insert("kind", kind);
             let _ = entry.insert("label", label_text.clone());
@@ -2961,7 +2966,7 @@ fn victory_state_to_dict(state: fb::VictoryState<'_>) -> Dictionary {
     }
 
     if let Some(winner) = state.winner() {
-        let mut winner_dict = Dictionary::new();
+        let mut winner_dict = VarDictionary::new();
         if let Some(mode) = winner.mode() {
             let _ = winner_dict.insert("mode", mode);
         }
@@ -3107,8 +3112,8 @@ fn great_discovery_effect_labels(mask: u32) -> PackedStringArray {
     labels
 }
 
-fn axis_bias_to_dict(axis: fb::AxisBiasState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn axis_bias_to_dict(axis: fb::AxisBiasState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("knowledge", fixed64_to_f64(axis.knowledge()));
     let _ = dict.insert("trust", fixed64_to_f64(axis.trust()));
     let _ = dict.insert("equity", fixed64_to_f64(axis.equity()));
@@ -3125,17 +3130,17 @@ fn sentiment_driver_category_label(category: fb::SentimentDriverCategory) -> &'s
     }
 }
 
-fn sentiment_axis_to_dict(axis: fb::SentimentAxisTelemetry<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn sentiment_axis_to_dict(axis: fb::SentimentAxisTelemetry<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("policy", fixed64_to_f64(axis.policy()));
     let _ = dict.insert("incidents", fixed64_to_f64(axis.incidents()));
     let _ = dict.insert("influencers", fixed64_to_f64(axis.influencers()));
     let _ = dict.insert("total", fixed64_to_f64(axis.total()));
 
-    let mut drivers = VariantArray::new();
+    let mut drivers = VarArray::new();
     if let Some(list) = axis.drivers() {
         for driver in list {
-            let mut driver_dict = Dictionary::new();
+            let mut driver_dict = VarDictionary::new();
             let _ = driver_dict.insert(
                 "category",
                 sentiment_driver_category_label(driver.category()),
@@ -3151,8 +3156,8 @@ fn sentiment_axis_to_dict(axis: fb::SentimentAxisTelemetry<'_>) -> Dictionary {
     dict
 }
 
-fn sentiment_to_dict(sentiment: fb::SentimentTelemetryState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn sentiment_to_dict(sentiment: fb::SentimentTelemetryState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     if let Some(axis) = sentiment.knowledge() {
         let _ = dict.insert("knowledge", sentiment_axis_to_dict(axis));
     }
@@ -3222,8 +3227,8 @@ fn audience_generations_to_array(
     array
 }
 
-fn influencer_to_dict(state: fb::InfluentialIndividualState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn influencer_to_dict(state: fb::InfluentialIndividualState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("id", state.id() as i64);
     let _ = dict.insert("name", state.name().unwrap_or_default());
     let _ = dict.insert("influence", fixed64_to_f64(state.influence()));
@@ -3308,8 +3313,8 @@ fn influencer_to_dict(state: fb::InfluentialIndividualState<'_>) -> Dictionary {
 
 fn influencers_to_array(
     list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::InfluentialIndividualState<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for state in list {
         let dict = influencer_to_dict(state);
         let variant = dict.to_variant();
@@ -3318,8 +3323,10 @@ fn influencers_to_array(
     array
 }
 
-fn culture_resonance_entry_to_dict(entry: fb::InfluencerCultureResonanceEntry<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn culture_resonance_entry_to_dict(
+    entry: fb::InfluencerCultureResonanceEntry<'_>,
+) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let axis = entry.axis();
     let _ = dict.insert("axis", culture_axis_to_key(axis));
     let _ = dict.insert("label", culture_axis_to_label(axis));
@@ -3333,8 +3340,8 @@ fn culture_resonance_to_array(
         '_,
         flatbuffers::ForwardsUOffset<fb::InfluencerCultureResonanceEntry<'_>>,
     >,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for entry in list {
         let dict = culture_resonance_entry_to_dict(entry);
         array.push(&dict.to_variant());
@@ -3352,8 +3359,8 @@ fn corruption_subsystem_label(subsystem: fb::CorruptionSubsystem) -> &'static st
     }
 }
 
-fn corruption_entry_to_dict(entry: fb::CorruptionEntry<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn corruption_entry_to_dict(entry: fb::CorruptionEntry<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("subsystem", corruption_subsystem_label(entry.subsystem()));
     let _ = dict.insert("intensity", fixed64_to_f64(entry.intensity()));
     let _ = dict.insert("incident_id", entry.incidentId() as i64);
@@ -3363,9 +3370,9 @@ fn corruption_entry_to_dict(entry: fb::CorruptionEntry<'_>) -> Dictionary {
     dict
 }
 
-fn corruption_to_dict(ledger: fb::CorruptionLedger<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
-    let mut entries = VariantArray::new();
+fn corruption_to_dict(ledger: fb::CorruptionLedger<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
+    let mut entries = VarArray::new();
     if let Some(list) = ledger.entries() {
         for entry in list {
             let dict = corruption_entry_to_dict(entry);
@@ -3382,8 +3389,8 @@ fn corruption_to_dict(ledger: fb::CorruptionLedger<'_>) -> Dictionary {
     dict
 }
 
-fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("entity", cohort.entity() as i64);
     let _ = dict.insert("home", cohort.home() as i64);
     let _ = dict.insert("size", cohort.size() as i64);
@@ -3392,7 +3399,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> Dictionary {
     let _ = dict.insert("faction", cohort.faction() as i64);
 
     if let Some(fragments) = cohort.knowledgeFragments() {
-        let mut array = VariantArray::new();
+        let mut array = VarArray::new();
         for fragment in fragments {
             let dict = fragment_to_dict(fragment);
             array.push(&dict.to_variant());
@@ -3401,24 +3408,24 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> Dictionary {
     }
 
     if let Some(migration) = cohort.migration() {
-        let mut migration_dict = Dictionary::new();
+        let mut migration_dict = VarDictionary::new();
         let _ = migration_dict.insert("destination", migration.destination() as i64);
         let _ = migration_dict.insert("eta", migration.eta() as i64);
         if let Some(fragments) = migration.fragments() {
-            let mut fragment_array = VariantArray::new();
+            let mut fragment_array = VarArray::new();
             for fragment in fragments {
                 let dict = fragment_to_dict(fragment);
                 fragment_array.push(&dict.to_variant());
             }
             let _ = migration_dict.insert("fragments", fragment_array);
         } else {
-            let _ = migration_dict.insert("fragments", VariantArray::new());
+            let _ = migration_dict.insert("fragments", VarArray::new());
         }
         let _ = dict.insert("migration", migration_dict);
     }
 
     if let Some(harvest) = cohort.harvestTask() {
-        let mut harvest_dict = Dictionary::new();
+        let mut harvest_dict = VarDictionary::new();
         if let Some(kind) = harvest.kind() {
             let _ = harvest_dict.insert("action", kind);
         }
@@ -3442,7 +3449,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> Dictionary {
     }
 
     if let Some(scout) = cohort.scoutTask() {
-        let mut scout_dict = Dictionary::new();
+        let mut scout_dict = VarDictionary::new();
         if let Some(label) = scout.bandLabel() {
             let _ = scout_dict.insert("band_label", label);
         }
@@ -3458,12 +3465,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> Dictionary {
         let _ = dict.insert("scout", scout_dict);
     }
     if let Some(access) = cohort.accessibleStockpile() {
-        let mut stock_dict = Dictionary::new();
+        let mut stock_dict = VarDictionary::new();
         let _ = stock_dict.insert("radius", access.radius() as i64);
         if let Some(entries) = access.entries() {
-            let mut entry_array = VariantArray::new();
+            let mut entry_array = VarArray::new();
             for entry in entries {
-                let mut entry_dict = Dictionary::new();
+                let mut entry_dict = VarDictionary::new();
                 if let Some(item) = entry.item() {
                     let _ = entry_dict.insert("item", item);
                 }
@@ -3480,8 +3487,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> Dictionary {
 
 fn populations_to_array(
     list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::PopulationCohortState<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for cohort in list {
         let dict = population_to_dict(cohort);
         let variant = dict.to_variant();
@@ -3490,8 +3497,8 @@ fn populations_to_array(
     array
 }
 
-fn fragment_to_dict(fragment: fb::KnownTechFragment<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn fragment_to_dict(fragment: fb::KnownTechFragment<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("discovery", fragment.discoveryId() as i64);
     let _ = dict.insert("progress", fixed64_to_f64(fragment.progress()));
     let _ = dict.insert("progress_raw", fragment.progress());
@@ -3499,8 +3506,8 @@ fn fragment_to_dict(fragment: fb::KnownTechFragment<'_>) -> Dictionary {
     dict
 }
 
-fn discovery_progress_entry_to_dict(entry: fb::DiscoveryProgressEntry<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn discovery_progress_entry_to_dict(entry: fb::DiscoveryProgressEntry<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("faction", entry.faction() as i64);
     let _ = dict.insert("discovery", entry.discovery() as i64);
     let _ = dict.insert("progress", fixed64_to_f64(entry.progress()));
@@ -3510,8 +3517,8 @@ fn discovery_progress_entry_to_dict(entry: fb::DiscoveryProgressEntry<'_>) -> Di
 
 fn discovery_progress_to_array(
     list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::DiscoveryProgressEntry<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for entry in list {
         let dict = discovery_progress_entry_to_dict(entry);
         array.push(&dict.to_variant());
@@ -3519,8 +3526,8 @@ fn discovery_progress_to_array(
     array
 }
 
-fn great_discovery_state_to_dict(state: fb::GreatDiscoveryState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn great_discovery_state_to_dict(state: fb::GreatDiscoveryState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("id", state.id() as i64);
     let _ = dict.insert("faction", state.faction() as i64);
     let _ = dict.insert("field_label", knowledge_field_label(state.field()));
@@ -3534,8 +3541,8 @@ fn great_discovery_state_to_dict(state: fb::GreatDiscoveryState<'_>) -> Dictiona
 
 fn great_discovery_states_to_array(
     list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::GreatDiscoveryState<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for state in list {
         let dict = great_discovery_state_to_dict(state);
         array.push(&dict.to_variant());
@@ -3545,8 +3552,8 @@ fn great_discovery_states_to_array(
 
 fn great_discovery_requirement_definition_to_dict(
     req: fb::GreatDiscoveryRequirementDefinition<'_>,
-) -> Dictionary {
-    let mut dict = Dictionary::new();
+) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("discovery_id", req.discoveryId() as i64);
     let _ = dict.insert("weight", f64::from(req.weight()));
     let _ = dict.insert("minimum_progress", f64::from(req.minimumProgress()));
@@ -3564,8 +3571,8 @@ fn great_discovery_requirements_to_array(
         '_,
         flatbuffers::ForwardsUOffset<fb::GreatDiscoveryRequirementDefinition<'_>>,
     >,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for req in list {
         let dict = great_discovery_requirement_definition_to_dict(req);
         array.push(&dict.to_variant());
@@ -3583,8 +3590,10 @@ fn string_vector_to_packed(
     array
 }
 
-fn great_discovery_definition_to_dict(definition: fb::GreatDiscoveryDefinition<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn great_discovery_definition_to_dict(
+    definition: fb::GreatDiscoveryDefinition<'_>,
+) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("id", definition.id() as i64);
     if let Some(name) = definition.name() {
         let _ = dict.insert("name", GString::from(name));
@@ -3629,15 +3638,15 @@ fn great_discovery_definition_to_dict(definition: fb::GreatDiscoveryDefinition<'
         let array = great_discovery_requirements_to_array(requirements);
         let _ = dict.insert("requirements", array);
     } else {
-        let _ = dict.insert("requirements", VariantArray::new());
+        let _ = dict.insert("requirements", VarArray::new());
     }
     dict
 }
 
 fn great_discovery_definitions_to_array(
     list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::GreatDiscoveryDefinition<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for definition in list {
         let dict = great_discovery_definition_to_dict(definition);
         array.push(&dict.to_variant());
@@ -3647,8 +3656,8 @@ fn great_discovery_definitions_to_array(
 
 fn great_discovery_progress_state_to_dict(
     state: fb::GreatDiscoveryProgressState<'_>,
-) -> Dictionary {
-    let mut dict = Dictionary::new();
+) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let progress_raw = state.progress();
     let _ = dict.insert("faction", state.faction() as i64);
     let _ = dict.insert("discovery", state.discovery() as i64);
@@ -3665,8 +3674,8 @@ fn great_discovery_progress_states_to_array(
         '_,
         flatbuffers::ForwardsUOffset<fb::GreatDiscoveryProgressState<'_>>,
     >,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for state in list {
         let dict = great_discovery_progress_state_to_dict(state);
         array.push(&dict.to_variant());
@@ -3674,16 +3683,16 @@ fn great_discovery_progress_states_to_array(
     array
 }
 
-fn great_discovery_telemetry_to_dict(state: fb::GreatDiscoveryTelemetryState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn great_discovery_telemetry_to_dict(state: fb::GreatDiscoveryTelemetryState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("total_resolved", state.totalResolved() as i64);
     let _ = dict.insert("pending_candidates", state.pendingCandidates() as i64);
     let _ = dict.insert("active_constellations", state.activeConstellations() as i64);
     dict
 }
 
-fn tile_to_dict(tile: fb::TileState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn tile_to_dict(tile: fb::TileState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("entity", tile.entity() as i64);
     let _ = dict.insert("x", tile.x() as i64);
     let _ = dict.insert("y", tile.y() as i64);
@@ -3700,8 +3709,8 @@ fn tile_to_dict(tile: fb::TileState<'_>) -> Dictionary {
 
 fn tiles_to_array(
     list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::TileState<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for tile in list {
         let dict = tile_to_dict(tile);
         let variant = dict.to_variant();
@@ -3710,8 +3719,8 @@ fn tiles_to_array(
     array
 }
 
-fn trade_link_to_dict(link: fb::TradeLinkState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn trade_link_to_dict(link: fb::TradeLinkState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("entity", link.entity() as i64);
     let _ = dict.insert("from_faction", link.fromFaction() as i64);
     let _ = dict.insert("to_faction", link.toFaction() as i64);
@@ -3721,7 +3730,7 @@ fn trade_link_to_dict(link: fb::TradeLinkState<'_>) -> Dictionary {
     let _ = dict.insert("to_tile", link.toTile() as i64);
 
     if let Some(knowledge) = link.knowledge() {
-        let mut knowledge_dict = Dictionary::new();
+        let mut knowledge_dict = VarDictionary::new();
         let _ = knowledge_dict.insert("openness", fixed64_to_f64(knowledge.openness()));
         let _ = knowledge_dict.insert("openness_raw", knowledge.openness());
         let _ = knowledge_dict.insert("leak_timer", knowledge.leakTimer() as i64);
@@ -3732,14 +3741,14 @@ fn trade_link_to_dict(link: fb::TradeLinkState<'_>) -> Dictionary {
     }
 
     if let Some(pending) = link.pendingFragments() {
-        let mut pending_array = VariantArray::new();
+        let mut pending_array = VarArray::new();
         for fragment in pending {
             let fragment_dict = fragment_to_dict(fragment);
             pending_array.push(&fragment_dict.to_variant());
         }
         let _ = dict.insert("pending_fragments", pending_array);
     } else {
-        let _ = dict.insert("pending_fragments", VariantArray::new());
+        let _ = dict.insert("pending_fragments", VarArray::new());
     }
 
     dict
@@ -3747,8 +3756,8 @@ fn trade_link_to_dict(link: fb::TradeLinkState<'_>) -> Dictionary {
 
 fn trade_links_to_array(
     list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::TradeLinkState<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for link in list {
         let dict = trade_link_to_dict(link);
         array.push(&dict.to_variant());
@@ -3756,8 +3765,8 @@ fn trade_links_to_array(
     array
 }
 
-fn power_node_to_dict(node: fb::PowerNodeState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn power_node_to_dict(node: fb::PowerNodeState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("entity", node.entity() as i64);
     let _ = dict.insert("node_id", node.nodeId() as i64);
 
@@ -3793,8 +3802,8 @@ fn power_node_to_dict(node: fb::PowerNodeState<'_>) -> Dictionary {
 
 fn power_nodes_to_array(
     list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::PowerNodeState<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for node in list {
         let dict = power_node_to_dict(node);
         array.push(&dict.to_variant());
@@ -3802,8 +3811,8 @@ fn power_nodes_to_array(
     array
 }
 
-fn power_incident_to_dict(incident: fb::PowerIncidentState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn power_incident_to_dict(incident: fb::PowerIncidentState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("node_id", incident.nodeId() as i64);
     let severity = match incident.severity() {
         fb::PowerIncidentSeverity::Critical => "critical",
@@ -3816,8 +3825,8 @@ fn power_incident_to_dict(incident: fb::PowerIncidentState<'_>) -> Dictionary {
     dict
 }
 
-fn power_metrics_to_dict(metrics: fb::PowerTelemetryState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn power_metrics_to_dict(metrics: fb::PowerTelemetryState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let total_supply_raw = metrics.totalSupply();
     let total_demand_raw = metrics.totalDemand();
     let total_storage_raw = metrics.totalStorage();
@@ -3834,7 +3843,7 @@ fn power_metrics_to_dict(metrics: fb::PowerTelemetryState<'_>) -> Dictionary {
     let _ = dict.insert("surplus_margin", metrics.surplusMargin() as f64);
     let _ = dict.insert("instability_alerts", metrics.instabilityAlerts() as i64);
 
-    let mut incidents_array = VariantArray::new();
+    let mut incidents_array = VarArray::new();
     if let Some(incidents) = metrics.incidents() {
         for incident in incidents {
             let dict = power_incident_to_dict(incident);
@@ -3878,10 +3887,10 @@ fn crisis_severity_band_to_str(band: fb::CrisisSeverityBand) -> &'static str {
 
 fn crisis_history_to_array(
     history: Vector<'_, flatbuffers::ForwardsUOffset<fb::CrisisTrendSample<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for sample in history {
-        let mut entry = Dictionary::new();
+        let mut entry = VarDictionary::new();
         let _ = entry.insert("tick", sample.tick() as i64);
         let _ = entry.insert("value", sample.value());
         array.push(&entry.to_variant());
@@ -3889,8 +3898,8 @@ fn crisis_history_to_array(
     array
 }
 
-fn crisis_gauge_to_dict(gauge: fb::CrisisGaugeState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn crisis_gauge_to_dict(gauge: fb::CrisisGaugeState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let kind = gauge.kind();
     let _ = dict.insert("kind", crisis_metric_kind_to_str(kind));
     let _ = dict.insert("label", crisis_metric_label(kind));
@@ -3905,14 +3914,14 @@ fn crisis_gauge_to_dict(gauge: fb::CrisisGaugeState<'_>) -> Dictionary {
     if let Some(history) = gauge.history() {
         let _ = dict.insert("history", crisis_history_to_array(history));
     } else {
-        let _ = dict.insert("history", VariantArray::new());
+        let _ = dict.insert("history", VarArray::new());
     }
     dict
 }
 
-fn crisis_telemetry_to_dict(telemetry: fb::CrisisTelemetryState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
-    let mut gauges_array = VariantArray::new();
+fn crisis_telemetry_to_dict(telemetry: fb::CrisisTelemetryState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
+    let mut gauges_array = VarArray::new();
     if let Some(gauges) = telemetry.gauges() {
         for gauge in gauges {
             let dict = crisis_gauge_to_dict(gauge);
@@ -3931,9 +3940,9 @@ fn crisis_telemetry_to_dict(telemetry: fb::CrisisTelemetryState<'_>) -> Dictiona
     dict
 }
 
-fn crisis_overlay_to_dict(overlay: fb::CrisisOverlayState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
-    let mut heatmap_dict = Dictionary::new();
+fn crisis_overlay_to_dict(overlay: fb::CrisisOverlayState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
+    let mut heatmap_dict = VarDictionary::new();
     if let Some(raster) = overlay.heatmap() {
         let width = raster.width();
         let height = raster.height();
@@ -3960,10 +3969,10 @@ fn crisis_overlay_to_dict(overlay: fb::CrisisOverlayState<'_>) -> Dictionary {
     }
     let _ = dict.insert("heatmap", heatmap_dict);
 
-    let mut annotations = VariantArray::new();
+    let mut annotations = VarArray::new();
     if let Some(entries) = overlay.annotations() {
         for entry in entries {
-            let mut annotation = Dictionary::new();
+            let mut annotation = VarDictionary::new();
             if let Some(label) = entry.label() {
                 let _ = annotation.insert("label", label);
             }
@@ -3986,8 +3995,8 @@ fn crisis_overlay_to_dict(overlay: fb::CrisisOverlayState<'_>) -> Dictionary {
     dict
 }
 
-fn crisis_annotation_to_dict(record: &CrisisAnnotationRecord) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn crisis_annotation_to_dict(record: &CrisisAnnotationRecord) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     if let Some(label) = &record.label {
         let _ = dict.insert("label", label.clone());
     }
@@ -4004,8 +4013,8 @@ fn crisis_annotation_to_dict(record: &CrisisAnnotationRecord) -> Dictionary {
     dict
 }
 
-fn generation_to_dict(state: fb::GenerationState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn generation_to_dict(state: fb::GenerationState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let _ = dict.insert("id", state.id() as i64);
     let _ = dict.insert("name", state.name().unwrap_or_default());
     let _ = dict.insert("bias_knowledge", fixed64_to_f64(state.biasKnowledge()));
@@ -4015,8 +4024,8 @@ fn generation_to_dict(state: fb::GenerationState<'_>) -> Dictionary {
     dict
 }
 
-fn culture_layer_to_dict(layer: fb::CultureLayerState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn culture_layer_to_dict(layer: fb::CultureLayerState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let id = layer.id();
     let scope = layer.scope();
     let scope_label = culture_scope_to_label(scope);
@@ -4040,7 +4049,7 @@ fn culture_layer_to_dict(layer: fb::CultureLayerState<'_>) -> Dictionary {
     let _ = dict.insert("ticks_above_hard", layer.ticksAboveHard() as i64);
     let _ = dict.insert("last_updated_tick", layer.lastUpdatedTick() as i64);
 
-    let mut traits_array = VariantArray::new();
+    let mut traits_array = VarArray::new();
     if let Some(traits) = layer.traits() {
         for trait_entry in traits {
             let trait_dict = culture_trait_to_dict(trait_entry);
@@ -4052,8 +4061,8 @@ fn culture_layer_to_dict(layer: fb::CultureLayerState<'_>) -> Dictionary {
     dict
 }
 
-fn culture_trait_to_dict(entry: fb::CultureTraitEntry<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn culture_trait_to_dict(entry: fb::CultureTraitEntry<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let axis = entry.axis();
     let _ = dict.insert("axis", culture_axis_to_key(axis));
     let _ = dict.insert("label", culture_axis_to_label(axis));
@@ -4063,8 +4072,8 @@ fn culture_trait_to_dict(entry: fb::CultureTraitEntry<'_>) -> Dictionary {
     dict
 }
 
-fn culture_tension_to_dict(state: fb::CultureTensionState<'_>) -> Dictionary {
-    let mut dict = Dictionary::new();
+fn culture_tension_to_dict(state: fb::CultureTensionState<'_>) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     let scope = state.scope();
     let kind = state.kind();
     let _ = dict.insert("layer_id", state.layerId() as i64);
@@ -4079,8 +4088,8 @@ fn culture_tension_to_dict(state: fb::CultureTensionState<'_>) -> Dictionary {
 
 fn generations_to_array(
     list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::GenerationState<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for state in list {
         let dict = generation_to_dict(state);
         let variant = dict.to_variant();
@@ -4091,8 +4100,8 @@ fn generations_to_array(
 
 fn culture_layers_to_array(
     list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::CultureLayerState<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for layer in list {
         let dict = culture_layer_to_dict(layer);
         let variant = dict.to_variant();
@@ -4103,8 +4112,8 @@ fn culture_layers_to_array(
 
 fn culture_tensions_to_array(
     list: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::CultureTensionState<'_>>>,
-) -> VariantArray {
-    let mut array = VariantArray::new();
+) -> VarArray {
+    let mut array = VarArray::new();
     for tension in list {
         let dict = culture_tension_to_dict(tension);
         let variant = dict.to_variant();
