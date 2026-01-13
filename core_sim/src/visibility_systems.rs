@@ -64,6 +64,9 @@ pub fn calculate_visibility(
     // Build terrain tags grid for terrain modifier lookups
     let terrain_tags = build_terrain_tags_grid(&tiles, width, height);
 
+    // Parse blocking terrain tags from config (e.g., HIGHLAND, VOLCANIC)
+    let blocking_tags = parse_blocking_tags(&cfg.line_of_sight.blocking_terrain_tags);
+
     // Collect all visibility sources: (faction, position, base_range, elev_factor)
     let mut sources: Vec<(FactionId, UVec2, u32, f32)> = Vec::new();
 
@@ -126,6 +129,7 @@ pub fn calculate_visibility(
             cfg.line_of_sight.enabled,
             &terrain_tags,
             &cfg.terrain_modifiers,
+            blocking_tags,
         );
     }
 }
@@ -167,6 +171,7 @@ fn reveal_tiles_in_range(
     los_enabled: bool,
     terrain_tags: &[TerrainTags],
     terrain_modifiers: &TerrainModifierConfig,
+    blocking_tags: TerrainTags,
 ) {
     // Use max possible range for bounding box (base + max bonus)
     let max_range = base_range + terrain_modifiers.water_bonus.max(0) as u32;
@@ -205,7 +210,14 @@ fn reveal_tiles_in_range(
             // Line of sight check if enabled (skip for adjacent tiles - no intermediate blocker)
             if los_enabled
                 && dist_sq > 2
-                && !has_line_of_sight(center, UVec2::new(x, y), center_elevation, elevation)
+                && !has_line_of_sight(
+                    center,
+                    UVec2::new(x, y),
+                    center_elevation,
+                    elevation,
+                    terrain_tags,
+                    blocking_tags,
+                )
             {
                 continue;
             }
@@ -214,6 +226,34 @@ fn reveal_tiles_in_range(
             map.mark_active(x, y, current_turn);
         }
     }
+}
+
+/// Convert string terrain tag names to a combined TerrainTags bitfield.
+fn parse_blocking_tags(tag_names: &[String]) -> TerrainTags {
+    let mut result = TerrainTags::empty();
+    for name in tag_names {
+        let tag = match name.as_str() {
+            "HIGHLAND" => TerrainTags::HIGHLAND,
+            "VOLCANIC" => TerrainTags::VOLCANIC,
+            "WATER" => TerrainTags::WATER,
+            "WETLAND" => TerrainTags::WETLAND,
+            "FERTILE" => TerrainTags::FERTILE,
+            "COASTAL" => TerrainTags::COASTAL,
+            "POLAR" => TerrainTags::POLAR,
+            "ARID" => TerrainTags::ARID,
+            "HAZARDOUS" => TerrainTags::HAZARDOUS,
+            _ => {
+                tracing::warn!(
+                    target: "shadow_scale::visibility",
+                    tag = name,
+                    "Unknown blocking terrain tag in config"
+                );
+                TerrainTags::empty()
+            }
+        };
+        result |= tag;
+    }
+    result
 }
 
 /// Get terrain modifier for a tile based on its terrain tags.
@@ -235,11 +275,14 @@ fn get_terrain_modifier(tags: TerrainTags, cfg: &TerrainModifierConfig) -> i32 {
 }
 
 /// Check if there is clear line of sight between two points using Bresenham's algorithm.
+/// Checks both elevation (terrain height) and blocking terrain tags (e.g., HIGHLAND, VOLCANIC).
 fn has_line_of_sight(
     from: UVec2,
     to: UVec2,
     source_elevation: f32,
     elevation: &ElevationField,
+    terrain_tags: &[TerrainTags],
+    blocking_tags: TerrainTags,
 ) -> bool {
     // Skip if same tile
     if from == to {
@@ -286,6 +329,14 @@ fn has_line_of_sight(
 
         let current_x = x as u32;
         let current_y = y as u32;
+
+        // Check for blocking terrain tags (e.g., mountains, volcanoes)
+        let idx = (current_y * elevation.width + current_x) as usize;
+        if let Some(&tags) = terrain_tags.get(idx) {
+            if (tags & blocking_tags).bits() != 0 {
+                return false;
+            }
+        }
 
         let intermediate_elevation = elevation.sample(current_x, current_y);
 
@@ -358,22 +409,28 @@ mod tests {
     #[test]
     fn line_of_sight_same_tile() {
         let elevation = ElevationField::new(10, 10, vec![0.5; 100]);
+        let terrain_tags = vec![TerrainTags::empty(); 100];
         assert!(has_line_of_sight(
             UVec2::new(5, 5),
             UVec2::new(5, 5),
             0.5,
-            &elevation
+            &elevation,
+            &terrain_tags,
+            TerrainTags::empty(),
         ));
     }
 
     #[test]
     fn line_of_sight_flat_terrain() {
         let elevation = ElevationField::new(10, 10, vec![0.5; 100]);
+        let terrain_tags = vec![TerrainTags::empty(); 100];
         assert!(has_line_of_sight(
             UVec2::new(0, 0),
             UVec2::new(9, 9),
             0.5,
-            &elevation
+            &elevation,
+            &terrain_tags,
+            TerrainTags::empty(),
         ));
     }
 
@@ -383,13 +440,47 @@ mod tests {
         // Create a high point in the middle
         values[55] = 0.9; // (5, 5)
         let elevation = ElevationField::new(10, 10, values);
+        let terrain_tags = vec![TerrainTags::empty(); 100];
 
         // Looking from (0, 5) to (9, 5) should be blocked by the mountain at (5, 5)
         assert!(!has_line_of_sight(
             UVec2::new(0, 5),
             UVec2::new(9, 5),
             0.3,
-            &elevation
+            &elevation,
+            &terrain_tags,
+            TerrainTags::empty(),
+        ));
+    }
+
+    #[test]
+    fn line_of_sight_blocked_by_terrain_tag() {
+        let elevation = ElevationField::new(10, 10, vec![0.5; 100]);
+        let mut terrain_tags = vec![TerrainTags::empty(); 100];
+        // Place HIGHLAND terrain at (5, 5) - index 55
+        terrain_tags[55] = TerrainTags::HIGHLAND;
+
+        // Configure HIGHLAND as blocking
+        let blocking_tags = TerrainTags::HIGHLAND;
+
+        // Looking from (0, 5) to (9, 5) should be blocked by HIGHLAND at (5, 5)
+        assert!(!has_line_of_sight(
+            UVec2::new(0, 5),
+            UVec2::new(9, 5),
+            0.5,
+            &elevation,
+            &terrain_tags,
+            blocking_tags,
+        ));
+
+        // Looking at the HIGHLAND tile itself should still work (target not blocked)
+        assert!(has_line_of_sight(
+            UVec2::new(0, 5),
+            UVec2::new(5, 5),
+            0.5,
+            &elevation,
+            &terrain_tags,
+            blocking_tags,
         ));
     }
 
