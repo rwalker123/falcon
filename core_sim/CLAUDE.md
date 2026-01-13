@@ -38,8 +38,9 @@ cargo run -p core_sim --bin server
 | `src/data/culture_corruption_config.json` | Culture propagation, divergence thresholds, corruption penalties |
 | `src/data/influencer_config.json` | Roster caps, decay factors, scope thresholds |
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
+| `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
 
-Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers [path]`
+Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
 ---
 
@@ -171,6 +172,34 @@ Constellation-level leaps from overlapping discoveries.
 **Flow**: `collect_observation_signals` → `update_constellation_progress` → `screen_great_discovery_candidates` → `resolve_great_discovery` → `propagate_diffusion_impacts`
 
 **Registry**: `GreatDiscoveryRegistry` loads from `great_discovery_definitions.json`. Fields: `id`, `field`, `requirements`, observation gate, cooldown, effect flags.
+
+### Visibility Systems (Fog of War)
+Per-faction visibility tracking with three states: `Unexplored` (never seen), `Discovered` (previously seen), `Active` (currently visible).
+
+**Files**: `visibility.rs` (state + ledger), `visibility_systems.rs` (ECS systems), `visibility_config.rs` (config loading)
+
+**Turn Flow** (`TurnStage::Visibility` after Population, before Crisis):
+1. `clear_active_visibility` - Reset Active tiles to Discovered
+2. `calculate_visibility` - Compute visibility from units/settlements
+3. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
+
+**Visibility Sources**:
+- **Units**: `PopulationCohort` with `StartingUnit` marker provides sight from home tile
+- **Settlements**: `Settlement` with `TownCenter` provides sight from settlement position
+
+**Modifiers**:
+- **Elevation**: Higher elevation grants sight bonus (configurable per 100m)
+- **Terrain**: Water tiles grant bonus range; forest/wetland tiles apply penalty
+- **Line of Sight**: Bresenham ray-cast checks for blocking terrain
+
+**Config** (`visibility_config.json`):
+- `decay`: `enabled`, `threshold_turns` (turns before Discovered → Unexplored)
+- `sight_ranges`: Per-unit-type `base_range` and `elevation_bonus_factor`
+- `elevation`: `enabled`, `bonus_per_100m`, `max_bonus`
+- `line_of_sight`: `enabled`, `blocking_terrain_tags`
+- `terrain_modifiers`: `forest_penalty`, `water_bonus`
+
+**Snapshot Export**: `visibility_raster` emits per-faction byte raster (0=Unexplored, 1=Discovered, 2=Active) for client rendering.
 
 ---
 
