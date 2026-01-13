@@ -191,6 +191,7 @@ pub struct SnapshotHistory {
     sentiment_raster: ScalarRasterState,
     corruption_raster: ScalarRasterState,
     fog_raster: ScalarRasterState,
+    visibility_raster: ScalarRasterState,
     culture_raster: ScalarRasterState,
     military_raster: ScalarRasterState,
     moisture_raster: FloatRasterState,
@@ -250,6 +251,7 @@ impl SnapshotHistory {
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
             fog_raster: ScalarRasterState::default(),
+            visibility_raster: ScalarRasterState::default(),
             culture_raster: ScalarRasterState::default(),
             military_raster: ScalarRasterState::default(),
             moisture_raster: FloatRasterState::default(),
@@ -421,6 +423,13 @@ impl SnapshotHistory {
             None
         } else {
             Some(fog_raster_state.clone())
+        };
+
+        let visibility_raster_state = snapshot.visibility_raster.clone();
+        let visibility_raster_delta = if self.visibility_raster == visibility_raster_state {
+            None
+        } else {
+            Some(visibility_raster_state.clone())
         };
 
         let culture_raster_state = snapshot.culture_raster.clone();
@@ -608,7 +617,7 @@ impl SnapshotHistory {
             removed_culture_layers: diff_removed(&self.culture_layers, &culture_layers_index),
             culture_tensions: delta_culture_tensions.clone(),
             discovery_progress: diff_new(&self.discovery_progress, &discovery_index),
-            visibility_raster: None,
+            visibility_raster: visibility_raster_delta.clone(),
         };
 
         let snapshot_arc = Arc::new(snapshot);
@@ -643,6 +652,7 @@ impl SnapshotHistory {
         self.sentiment_raster = sentiment_raster_state;
         self.corruption_raster = corruption_raster_state;
         self.fog_raster = fog_raster_state;
+        self.visibility_raster = visibility_raster_state;
         self.culture_raster = culture_raster_state;
         self.military_raster = military_raster_state;
         self.moisture_raster = moisture_state;
@@ -716,6 +726,7 @@ impl SnapshotHistory {
         self.sentiment_raster = entry.snapshot.sentiment_raster.clone();
         self.corruption_raster = entry.snapshot.corruption_raster.clone();
         self.fog_raster = entry.snapshot.fog_raster.clone();
+        self.visibility_raster = entry.snapshot.visibility_raster.clone();
         self.culture_raster = entry.snapshot.culture_raster.clone();
         self.military_raster = entry.snapshot.military_raster.clone();
         self.moisture_raster = entry.snapshot.moisture_raster.clone();
