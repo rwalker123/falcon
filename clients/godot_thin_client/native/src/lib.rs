@@ -635,6 +635,7 @@ struct OverlaySlices<'a> {
     crisis: &'a [f32],
     elevation: &'a [f32],
     moisture: &'a [f32],
+    visibility: &'a [f32],
 }
 
 struct TerrainSlices<'a> {
@@ -692,6 +693,7 @@ fn snapshot_dict(
     let sentiment_base = copy_into(overlays.sentiment);
     let corruption_base = copy_into(overlays.corruption);
     let fog_base = copy_into(overlays.fog);
+    let visibility_base = copy_into(overlays.visibility);
     let culture_base = copy_into(overlays.culture);
     let military_base = copy_into(overlays.military);
     let crisis_base = copy_into(overlays.crisis);
@@ -706,6 +708,8 @@ fn snapshot_dict(
     normalize_overlay(&mut corruption_normalized);
     let mut fog_normalized = fog_base.clone();
     normalize_overlay(&mut fog_normalized);
+    let mut visibility_normalized = visibility_base.clone();
+    normalize_overlay(&mut visibility_normalized);
     let mut culture_normalized = culture_base.clone();
     normalize_overlay(&mut culture_normalized);
     let mut military_normalized = military_base.clone();
@@ -730,6 +734,7 @@ fn snapshot_dict(
 
     let corruption_contrast_vec = corruption_normalized.clone();
     let fog_contrast_vec = fog_normalized.clone();
+    let visibility_contrast_vec = visibility_normalized.clone();
     let culture_contrast_vec = culture_normalized.clone();
     let mut military_contrast_vec = military_normalized.clone();
     for value in military_contrast_vec.iter_mut() {
@@ -745,6 +750,7 @@ fn snapshot_dict(
 
     let corruption_placeholder = overlays.corruption.is_empty();
     let fog_placeholder = overlays.fog.is_empty();
+    let visibility_placeholder = overlays.visibility.is_empty();
     let culture_placeholder = overlays.culture.is_empty();
     let military_placeholder = overlays.military.is_empty();
     let crisis_placeholder = overlays.crisis.is_empty();
@@ -761,6 +767,9 @@ fn snapshot_dict(
     let fog_array = packed_from_slice(&fog_normalized);
     let fog_raw_array = packed_from_slice(&fog_base);
     let fog_contrast_array = packed_from_slice(&fog_contrast_vec);
+    let visibility_array = packed_from_slice(&visibility_normalized);
+    let visibility_raw_array = packed_from_slice(&visibility_base);
+    let visibility_contrast_array = packed_from_slice(&visibility_contrast_vec);
     let culture_array = packed_from_slice(&culture_normalized);
     let culture_raw_array = packed_from_slice(&culture_base);
     let culture_contrast_array = packed_from_slice(&culture_contrast_vec);
@@ -857,6 +866,21 @@ fn snapshot_dict(
             raw: &fog_raw_array,
             contrast: &fog_contrast_array,
             placeholder: fog_placeholder,
+        },
+    );
+    insert_overlay_channel(
+        &mut channels,
+        &mut channel_order,
+        OverlayChannelParams {
+            key: "visibility",
+            label: "Fog of War",
+            description: Some(
+                "Line-of-sight visibility from units and settlements (0 = unexplored, 0.5 = discovered, 1 = active).",
+            ),
+            normalized: &visibility_array,
+            raw: &visibility_raw_array,
+            contrast: &visibility_contrast_array,
+            placeholder: visibility_placeholder,
         },
     );
     insert_overlay_channel(
@@ -1148,6 +1172,9 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
     if let Some(raster) = delta.fogRaster() {
         agg.apply_fog_raster(raster);
     }
+    if let Some(raster) = delta.visibilityRaster() {
+        agg.apply_visibility_raster(raster);
+    }
     if let Some(raster) = delta.cultureRaster() {
         agg.apply_culture_raster(raster);
     }
@@ -1331,6 +1358,9 @@ struct DeltaAggregator {
     fog_width: u32,
     fog_height: u32,
     fog_samples: Vec<f32>,
+    visibility_width: u32,
+    visibility_height: u32,
+    visibility_samples: Vec<f32>,
     culture_width: u32,
     culture_height: u32,
     culture_samples: Vec<f32>,
@@ -1447,6 +1477,23 @@ impl DeltaAggregator {
                     break;
                 }
                 self.fog_samples[idx] = fixed64_to_f32(value);
+            }
+        }
+    }
+
+    fn apply_visibility_raster(&mut self, raster: fb::ScalarRaster<'_>) {
+        self.visibility_width = raster.width();
+        self.visibility_height = raster.height();
+        let count = (self.visibility_width as usize)
+            .saturating_mul(self.visibility_height as usize)
+            .max(1);
+        self.visibility_samples.resize(count, 0.0);
+        if let Some(samples) = raster.samples() {
+            for (idx, value) in samples.iter().enumerate() {
+                if idx >= count {
+                    break;
+                }
+                self.visibility_samples[idx] = fixed64_to_f32(value);
             }
         }
     }
@@ -1595,6 +1642,9 @@ impl DeltaAggregator {
             fog_width,
             fog_height,
             fog_samples,
+            visibility_width,
+            visibility_height,
+            visibility_samples,
             culture_width,
             culture_height,
             culture_samples,
@@ -1626,6 +1676,7 @@ impl DeltaAggregator {
             .max(sentiment_width)
             .max(corruption_width)
             .max(fog_width)
+            .max(visibility_width)
             .max(culture_width)
             .max(military_width)
             .max(crisis_width)
@@ -1637,6 +1688,7 @@ impl DeltaAggregator {
             .max(sentiment_height)
             .max(corruption_height)
             .max(fog_height)
+            .max(visibility_height)
             .max(culture_height)
             .max(military_height)
             .max(crisis_height)
@@ -1722,6 +1774,23 @@ impl DeltaAggregator {
                     }
                     let dst_idx = (y as usize) * (final_width as usize) + x as usize;
                     fog[dst_idx] = fog_samples[src_idx];
+                }
+            }
+        }
+
+        let mut visibility = vec![0.0f32; total];
+        if visibility_width > 0 && visibility_height > 0 && !visibility_samples.is_empty() {
+            for y in 0..visibility_height {
+                for x in 0..visibility_width {
+                    let src_idx = (y as usize) * (visibility_width as usize) + x as usize;
+                    if src_idx >= visibility_samples.len() {
+                        break;
+                    }
+                    if x >= final_width || y >= final_height {
+                        continue;
+                    }
+                    let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                    visibility[dst_idx] = visibility_samples[src_idx];
                 }
             }
         }
@@ -1847,6 +1916,7 @@ impl DeltaAggregator {
                 crisis: &crisis,
                 elevation: &elevation,
                 moisture: &moisture,
+                visibility: &visibility,
             },
             TerrainSlices {
                 terrain: terrain_ref.as_deref(),
@@ -1930,6 +2000,8 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
     let mut corruption_dims = (0u32, 0u32);
     let mut fog_grid: Vec<f32> = Vec::new();
     let mut fog_dims = (0u32, 0u32);
+    let mut visibility_grid: Vec<f32> = Vec::new();
+    let mut visibility_dims = (0u32, 0u32);
     let mut culture_grid: Vec<f32> = Vec::new();
     let mut culture_dims = (0u32, 0u32);
     let mut military_grid: Vec<f32> = Vec::new();
@@ -2105,6 +2177,42 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
             .max(1);
         fog_grid = vec![0.0f32; total];
         fog_dims = (fallback_width, fallback_height);
+    }
+
+    if let Some(raster) = snapshot.visibilityRaster() {
+        let width = raster.width();
+        let height = raster.height();
+        if width > 0 && height > 0 {
+            let total = (width as usize).saturating_mul(height as usize);
+            visibility_grid = vec![0.0f32; total];
+            if let Some(samples) = raster.samples() {
+                for (idx, value) in samples.iter().enumerate() {
+                    if idx >= total {
+                        break;
+                    }
+                    visibility_grid[idx] = fixed64_to_f32(value);
+                }
+            }
+            visibility_dims = (width, height);
+        }
+    }
+
+    if visibility_grid.is_empty() {
+        let fallback_width = logistics_dims
+            .0
+            .max(corruption_dims.0)
+            .max(terrain_width)
+            .max(1);
+        let fallback_height = logistics_dims
+            .1
+            .max(corruption_dims.1)
+            .max(terrain_height)
+            .max(1);
+        let total = (fallback_width as usize)
+            .saturating_mul(fallback_height as usize)
+            .max(1);
+        visibility_grid = vec![0.0f32; total];
+        visibility_dims = (fallback_width, fallback_height);
     }
 
     if let Some(raster) = snapshot.cultureRaster() {
@@ -2407,6 +2515,23 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         }
     }
 
+    let mut visibility_resized = vec![0.0f32; total];
+    if visibility_dims.0 > 0 && visibility_dims.1 > 0 {
+        for y in 0..visibility_dims.1 {
+            for x in 0..visibility_dims.0 {
+                let src_idx = (y as usize) * (visibility_dims.0 as usize) + x as usize;
+                if src_idx >= visibility_grid.len() {
+                    break;
+                }
+                if x >= final_width || y >= final_height {
+                    continue;
+                }
+                let dst_idx = (y as usize) * (final_width as usize) + x as usize;
+                visibility_resized[dst_idx] = visibility_grid[src_idx];
+            }
+        }
+    }
+
     let mut culture_resized = vec![0.0f32; total];
     if culture_dims.0 > 0 && culture_dims.1 > 0 {
         for y in 0..culture_dims.1 {
@@ -2586,6 +2711,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
             crisis: &crisis_resized,
             elevation: &elevation_resized,
             moisture: &moisture_resized,
+            visibility: &visibility_resized,
         },
         TerrainSlices {
             terrain: terrain_slice,

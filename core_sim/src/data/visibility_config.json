@@ -1,0 +1,27 @@
+{
+  "decay": {
+    "enabled": true,
+    "threshold_turns": 12
+  },
+  "sight_ranges": {
+    "BandScout": { "base_range": 6, "elevation_bonus_factor": 1.5 },
+    "BandHunter": { "base_range": 4, "elevation_bonus_factor": 1.2 },
+    "BandGuardian": { "base_range": 3, "elevation_bonus_factor": 1.0 },
+    "BandCrafter": { "base_range": 2, "elevation_bonus_factor": 0.8 },
+    "TownCenter": { "base_range": 5, "elevation_bonus_factor": 1.0 },
+    "Camp": { "base_range": 3, "elevation_bonus_factor": 0.5 }
+  },
+  "elevation": {
+    "enabled": true,
+    "bonus_per_100m": 1,
+    "max_bonus": 4
+  },
+  "line_of_sight": {
+    "enabled": true,
+    "blocking_terrain_tags": ["HIGHLAND", "VOLCANIC"]
+  },
+  "terrain_modifiers": {
+    "forest_penalty": -2,
+    "water_bonus": 1
+  }
+}

@@ -1336,6 +1336,8 @@ pub struct WorldSnapshot {
     pub fog_raster: ScalarRasterState,
     pub culture_raster: ScalarRasterState,
     pub military_raster: ScalarRasterState,
+    #[serde(default)]
+    pub visibility_raster: ScalarRasterState,
     pub axis_bias: AxisBiasState,
     pub sentiment: SentimentTelemetryState,
     pub generations: Vec<GenerationState>,
@@ -1388,6 +1390,7 @@ pub struct WorldDelta {
     pub fog_raster: Option<ScalarRasterState>,
     pub culture_raster: Option<ScalarRasterState>,
     pub military_raster: Option<ScalarRasterState>,
+    pub visibility_raster: Option<ScalarRasterState>,
     pub generations: Vec<GenerationState>,
     pub removed_generations: Vec<u16>,
     pub corruption: Option<CorruptionLedger>,
@@ -1521,6 +1524,7 @@ fn build_snapshot_flatbuffer<'a>(
     let fog_raster = create_scalar_raster(builder, &snapshot.fog_raster);
     let culture_raster = create_scalar_raster(builder, &snapshot.culture_raster);
     let military_raster = create_scalar_raster(builder, &snapshot.military_raster);
+    let visibility_raster = create_scalar_raster(builder, &snapshot.visibility_raster);
     let axis_bias = fb::AxisBiasState::create(
         builder,
         &fb::AxisBiasStateArgs {
@@ -1583,6 +1587,7 @@ fn build_snapshot_flatbuffer<'a>(
             cultureLayers: Some(culture_layers_vec),
             cultureTensions: Some(culture_tensions_vec),
             discoveryProgress: Some(discovery_progress_vec),
+            visibilityRaster: Some(visibility_raster),
         },
     );
 
@@ -1725,6 +1730,10 @@ fn build_delta_flatbuffer<'a>(
         .military_raster
         .as_ref()
         .map(|raster| create_scalar_raster(builder, raster));
+    let visibility_raster = delta
+        .visibility_raster
+        .as_ref()
+        .map(|raster| create_scalar_raster(builder, raster));
     let axis_bias = delta.axis_bias.as_ref().map(|axis| {
         fb::AxisBiasState::create(
             builder,
@@ -1806,6 +1815,7 @@ fn build_delta_flatbuffer<'a>(
             removedCultureLayers: Some(removed_culture_layers_vec),
             cultureTensions: Some(culture_tensions_vec),
             discoveryProgress: Some(discovery_progress_vec),
+            visibilityRaster: visibility_raster,
         },
     );
 

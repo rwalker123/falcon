@@ -25,14 +25,14 @@ For detailed implementation documentation, see the subsystem-specific CLAUDE.md 
 - Ecosystem Food Modules
 - Campaign Loop & System Activation (start flow, capability flags, victory engine)
 - Turn Loop & Phases
-- ECS Systems (Power, Crisis, Culture, Knowledge/Espionage, Great Discoveries)
+- ECS Systems (Power, Crisis, Culture, Knowledge/Espionage, Great Discoveries, Visibility/FoW)
 - Trade-Fueled Knowledge Diffusion
 - Snapshot History & Rollback
 
 ### Godot Client (`clients/godot_thin_client/CLAUDE.md`)
 - Heightfield Rendering (3D relief visualization)
 - Inspector Panels (Map, Terrain, Fauna, Culture, Military, Power, Crisis, Knowledge, Logs, Commands)
-- Overlay Channels (logistics, sentiment, corruption, fog, culture, military)
+- Overlay Channels (logistics, sentiment, corruption, fog, culture, military, visibility/FoW)
 - Typography & Theming
 - Scripting Capability Model (QuickJS sandbox, capability families)
 - Script Distribution & Trust Model

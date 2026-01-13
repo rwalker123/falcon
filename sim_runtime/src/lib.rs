@@ -412,6 +412,7 @@ pub mod knowledge {
                 fog_raster: ScalarRasterState::default(),
                 culture_raster: ScalarRasterState::default(),
                 military_raster: ScalarRasterState::default(),
+                visibility_raster: ScalarRasterState::default(),
                 hydrology_overlay: crate::HydrologyOverlayState::default(),
                 elevation_overlay: crate::ElevationOverlayState::default(),
                 start_marker: None,

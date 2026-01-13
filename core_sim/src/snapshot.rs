@@ -115,6 +115,8 @@ pub struct SnapshotContext<'w> {
     pub food_sites: Res<'w, FoodSiteRegistry>,
     pub command_events: Res<'w, CommandEventLog>,
     pub capability_flags: Res<'w, CapabilityFlags>,
+    pub visibility_ledger: Res<'w, crate::visibility::VisibilityLedger>,
+    pub viewer_faction: Res<'w, crate::visibility::ViewerFaction>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -189,6 +191,7 @@ pub struct SnapshotHistory {
     sentiment_raster: ScalarRasterState,
     corruption_raster: ScalarRasterState,
     fog_raster: ScalarRasterState,
+    visibility_raster: ScalarRasterState,
     culture_raster: ScalarRasterState,
     military_raster: ScalarRasterState,
     moisture_raster: FloatRasterState,
@@ -248,6 +251,7 @@ impl SnapshotHistory {
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
             fog_raster: ScalarRasterState::default(),
+            visibility_raster: ScalarRasterState::default(),
             culture_raster: ScalarRasterState::default(),
             military_raster: ScalarRasterState::default(),
             moisture_raster: FloatRasterState::default(),
@@ -419,6 +423,13 @@ impl SnapshotHistory {
             None
         } else {
             Some(fog_raster_state.clone())
+        };
+
+        let visibility_raster_state = snapshot.visibility_raster.clone();
+        let visibility_raster_delta = if self.visibility_raster == visibility_raster_state {
+            None
+        } else {
+            Some(visibility_raster_state.clone())
         };
 
         let culture_raster_state = snapshot.culture_raster.clone();
@@ -606,6 +617,7 @@ impl SnapshotHistory {
             removed_culture_layers: diff_removed(&self.culture_layers, &culture_layers_index),
             culture_tensions: delta_culture_tensions.clone(),
             discovery_progress: diff_new(&self.discovery_progress, &discovery_index),
+            visibility_raster: visibility_raster_delta.clone(),
         };
 
         let snapshot_arc = Arc::new(snapshot);
@@ -640,6 +652,7 @@ impl SnapshotHistory {
         self.sentiment_raster = sentiment_raster_state;
         self.corruption_raster = corruption_raster_state;
         self.fog_raster = fog_raster_state;
+        self.visibility_raster = visibility_raster_state;
         self.culture_raster = culture_raster_state;
         self.military_raster = military_raster_state;
         self.moisture_raster = moisture_state;
@@ -713,6 +726,7 @@ impl SnapshotHistory {
         self.sentiment_raster = entry.snapshot.sentiment_raster.clone();
         self.corruption_raster = entry.snapshot.corruption_raster.clone();
         self.fog_raster = entry.snapshot.fog_raster.clone();
+        self.visibility_raster = entry.snapshot.visibility_raster.clone();
         self.culture_raster = entry.snapshot.culture_raster.clone();
         self.military_raster = entry.snapshot.military_raster.clone();
         self.moisture_raster = entry.snapshot.moisture_raster.clone();
@@ -841,6 +855,7 @@ impl SnapshotHistory {
             removed_culture_layers: Vec::new(),
             culture_tensions: Vec::new(),
             discovery_progress: Vec::new(),
+            visibility_raster: None,
         };
 
         let delta_arc = Arc::new(delta);
@@ -984,6 +999,7 @@ impl SnapshotHistory {
             removed_culture_layers: Vec::new(),
             culture_tensions: Vec::new(),
             discovery_progress: Vec::new(),
+            visibility_raster: None,
         };
 
         let delta_arc = Arc::new(delta);
@@ -1088,6 +1104,7 @@ impl SnapshotHistory {
             removed_culture_layers: Vec::new(),
             culture_tensions: Vec::new(),
             discovery_progress: Vec::new(),
+            visibility_raster: None,
         };
 
         let delta_arc = Arc::new(delta);
@@ -1176,6 +1193,8 @@ pub fn capture_snapshot(
         food_sites,
         command_events,
         capability_flags,
+        visibility_ledger,
+        viewer_faction,
     } = ctx;
     let overlays_config = overlays.get();
     history.set_capacity(config.snapshot_history_limit.max(1));
@@ -1327,6 +1346,8 @@ pub fn capture_snapshot(
         config.grid_size,
         overlays_config.as_ref(),
     );
+    let visibility_raster =
+        visibility_raster_from_ledger(&visibility_ledger, viewer_faction.0, config.grid_size);
 
     let policy_axes = axis_bias.policy_values();
     let incident_axes = axis_bias.incident_values();
@@ -1514,6 +1535,7 @@ pub fn capture_snapshot(
         fog_raster: fog_raster.clone(),
         culture_raster: culture_raster.clone(),
         military_raster: military_raster.clone(),
+        visibility_raster: visibility_raster.clone(),
         moisture_raster: moisture_overlay_state.clone(),
         hydrology_overlay: hydrology_overlay_state,
         elevation_overlay: elevation_overlay_state.clone(),
@@ -3112,6 +3134,48 @@ fn military_raster_from_state(
     }
 }
 
+fn visibility_raster_from_ledger(
+    ledger: &crate::visibility::VisibilityLedger,
+    faction: FactionId,
+    grid_size: UVec2,
+) -> ScalarRasterState {
+    let width = grid_size.x;
+    let height = grid_size.y;
+    let total = (width * height) as usize;
+    let mut samples = vec![0i64; total];
+
+    if let Some(map) = ledger.get_faction(faction) {
+        for (pos, tile) in map.iter_tiles() {
+            if pos.x >= width || pos.y >= height {
+                continue;
+            }
+            let idx = (pos.y as usize) * (width as usize) + pos.x as usize;
+            if idx >= samples.len() {
+                continue;
+            }
+            // Visibility state as normalized scalar (higher = more visible):
+            // Active (2) -> 65536 (fully visible, full terrain color)
+            // Discovered (1) -> 32768 (half, desaturated terrain)
+            // Unexplored (0) -> 0 (black/hidden)
+            let value = match tile.state {
+                crate::visibility::VisibilityState::Active => 65536,
+                crate::visibility::VisibilityState::Discovered => 32768,
+                crate::visibility::VisibilityState::Unexplored => 0,
+            };
+            samples[idx] = value;
+        }
+    } else {
+        // No visibility data for this faction, all unexplored (0 = black)
+        // samples already initialized to 0
+    }
+
+    ScalarRasterState {
+        width,
+        height,
+        samples,
+    }
+}
+
 fn sentiment_raster_from_populations(
     tiles: &[TileState],
     populations: &[PopulationCohortState],
@@ -3624,6 +3688,7 @@ mod tests {
             culture_layers: Vec::new(),
             culture_tensions: Vec::new(),
             discovery_progress: Vec::new(),
+            visibility_raster: ScalarRasterState::default(),
         }
         .finalize()
     }
@@ -3678,6 +3743,7 @@ mod tests {
             culture_layers: Vec::new(),
             culture_tensions: Vec::new(),
             discovery_progress: Vec::new(),
+            visibility_raster: ScalarRasterState::default(),
         }
         .finalize()
     }
@@ -3727,6 +3793,7 @@ mod tests {
             culture_layers: Vec::new(),
             culture_tensions: Vec::new(),
             discovery_progress: Vec::new(),
+            visibility_raster: ScalarRasterState::default(),
         }
         .finalize()
     }

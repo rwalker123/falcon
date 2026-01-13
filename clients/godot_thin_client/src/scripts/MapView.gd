@@ -115,7 +115,8 @@ func _get_terrain_colors() -> Dictionary:
 func _get_terrain_labels() -> Dictionary:
 	if _terrain_labels.is_empty():
 		for terrain: Dictionary in TerrainDefinitions.get_terrains():
-			_terrain_labels[terrain.get("id", -1)] = terrain.get("label", "Unknown")
+			var tid: int = int(terrain.get("id", -1))
+			_terrain_labels[tid] = terrain.get("label", "Unknown")
 	return _terrain_labels
 
 const FOOD_MODULE_COLORS := {
@@ -241,6 +242,7 @@ var biome_color_buffer: PackedColorArray = PackedColorArray()
 var heightfield_preview: Control = null
 var _heightfield_boot_shown: bool = true  # Default to 2D view; user can press R for 3D
 var _hovered_tile: Vector2i = Vector2i(-1, -1)
+var _fow_enabled: bool = false
 
 func _ready() -> void:
 	set_process_unhandled_input(true)
@@ -493,9 +495,9 @@ func _draw() -> void:
 	map_bounds.position += origin
 	draw_rect(map_bounds, Color(0.3, 0.35, 0.25, 1.0))  # Neutral earthy color
 
-	# Determine if using textured rendering (only in base overlay mode)
+	# Determine if using textured rendering (only in base overlay mode, disabled when FoW is active)
 	var mgr := TerrainTextureManager
-	var use_textures := mgr.use_terrain_textures and mgr.terrain_textures != null and active_overlay_key == ""
+	var use_textures := mgr.use_terrain_textures and mgr.terrain_textures != null and active_overlay_key == "" and not _fow_enabled
 
 	# Pass 1: Draw all hex textures/colors
 	for y in range(grid_height):
@@ -603,6 +605,29 @@ func set_overlay_channel(key: String) -> void:
 	_emit_overlay_legend()
 	if _is_heightfield_visible():
 		_push_heightfield_preview()
+
+func set_fow_enabled(enabled: bool) -> void:
+	if _fow_enabled == enabled:
+		return
+	_fow_enabled = enabled
+	# When enabling FoW, ensure we're in terrain view (no overlay)
+	if _fow_enabled and active_overlay_key != "":
+		active_overlay_key = ""
+	queue_redraw()
+	_emit_overlay_legend()
+	if _is_heightfield_visible():
+		_push_heightfield_preview()
+
+func is_fow_enabled() -> bool:
+	return _fow_enabled
+
+func _is_tile_visible(x: int, y: int) -> bool:
+	# Returns true if tile should show entities (Active visibility)
+	# When FoW is disabled, all tiles are visible
+	if not _fow_enabled:
+		return true
+	var vis: float = _value_at_overlay("visibility", x, y)
+	return vis > 0.7  # Active tiles only
 
 func _draw_crisis_annotations(radius: float, origin: Vector2) -> void:
 	if active_overlay_key != "crisis":
@@ -791,6 +816,22 @@ func _unhandled_input(event: InputEvent) -> void:
 				_hovered_tile = offset
 				if offset.x < 0 or offset.y < 0:
 					emit_signal("tile_hovered", {})
+				elif _fow_enabled and not _is_tile_visible(offset.x, offset.y):
+					# Unexplored tiles: no tooltip when FoW is enabled
+					var vis: float = _value_at_overlay("visibility", offset.x, offset.y)
+					if vis <= 0.3:
+						emit_signal("tile_hovered", {})
+					else:
+						# Discovered tiles: show basic terrain info only
+						var info := _tile_info_at(offset.x, offset.y)
+						info.erase("food_module")
+						info.erase("food_module_label")
+						info.erase("food_kind")
+						info.erase("units")
+						info.erase("herds")
+						info.erase("unit_count")
+						info.erase("herd_count")
+						emit_signal("tile_hovered", info)
 				else:
 					var info := _tile_info_at(offset.x, offset.y)
 					emit_signal("tile_hovered", info)
@@ -834,6 +875,8 @@ func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	var y: int = int(herd.get("y", -1))
 	if x < 0 or y < 0:
 		return
+	if not _is_tile_visible(x, y):
+		return
 	var center: Vector2 = _hex_center(x, y, radius, origin)
 	_draw_herd_trail(herd_id, radius, origin)
 	var marker_radius: float = radius * 0.35
@@ -867,6 +910,8 @@ func _draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 	var x: int = int(site.get("x", -1))
 	var y: int = int(site.get("y", -1))
 	if x < 0 or y < 0:
+		return
+	if not _is_tile_visible(x, y):
 		return
 	var center: Vector2 = _hex_center(x, y, radius, origin)
 	var module_key := String(site.get("module", ""))
@@ -926,6 +971,8 @@ func _draw_food_highlight(site: Dictionary, radius: float, origin: Vector2) -> v
 	var x: int = int(site.get("x", -1))
 	var y: int = int(site.get("y", -1))
 	if x < 0 or y < 0:
+		return
+	if not _is_tile_visible(x, y):
 		return
 	var module_key := String(site.get("module", ""))
 	if module_key == "":
@@ -1374,12 +1421,33 @@ func _elevation_color(value: float) -> Color:
 		return ELEVATION_LOW_COLOR.lerp(ELEVATION_MID_COLOR, t * 2.0)
 	return ELEVATION_MID_COLOR.lerp(ELEVATION_HIGH_COLOR, (t - 0.5) * 2.0)
 
+func _desaturate_color(c: Color, factor: float) -> Color:
+	# Convert to grayscale luminance and blend back
+	var gray: float = c.r * 0.299 + c.g * 0.587 + c.b * 0.114
+	return Color(
+		lerpf(c.r, gray, factor),
+		lerpf(c.g, gray, factor),
+		lerpf(c.b, gray, factor),
+		c.a
+	)
+
 func _tile_color(x: int, y: int) -> Color:
 	if active_overlay_key == "":
 		var terrain_id := _terrain_id_at(x, y)
+		var base_color: Color = GRID_COLOR
 		if terrain_id >= 0:
-			return _terrain_color_for_id(terrain_id)
-		return GRID_COLOR
+			base_color = _terrain_color_for_id(terrain_id)
+		# Apply Fog of War modifiers if enabled
+		# Visibility values: Active ≈ 1.0, Discovered ≈ 0.5, Unexplored ≈ 0.0
+		if _fow_enabled:
+			var vis: float = _value_at_overlay("visibility", x, y)
+			if vis > 0.7:  # Active - full terrain color
+				return base_color
+			elif vis > 0.3:  # Discovered - desaturated terrain
+				return _desaturate_color(base_color, 0.65).darkened(0.25)
+			else:  # Unexplored - black
+				return Color.BLACK
+		return base_color
 	if active_overlay_key == "terrain_tags":
 		var mask := _tag_mask_at(x, y)
 		if mask == 0:

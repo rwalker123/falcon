@@ -784,6 +784,7 @@ table WorldSnapshot {
   cultureLayers:[CultureLayerState];
   cultureTensions:[CultureTensionState];
   discoveryProgress:[DiscoveryProgressEntry];
+  visibilityRaster:ScalarRaster;
 }
 
 table WorldDelta {
@@ -837,6 +838,7 @@ table WorldDelta {
   removedCultureLayers:[uint];
   cultureTensions:[CultureTensionState];
   discoveryProgress:[DiscoveryProgressEntry];
+  visibilityRaster:ScalarRaster;
 }
 
 // Hydrology overlay types

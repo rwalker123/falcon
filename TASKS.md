@@ -74,6 +74,17 @@
 
 - [x] World setup: generate province/territory partitions and assign locals to distinct `RegionalCultureId` parents so regional divergence footprints narrow to their actual geography (Owner: TBD, Estimate: 3d; Deps: worldgen province data, `docs/architecture.md` §Culture Simulation Spine alignment).
 
+## Fog of War / Visibility System
+- [x] Implement `VisibilityLedger` and `FactionVisibilityMap` resources with three-state tracking (Unexplored, Discovered, Active) (Owner: TBD, Estimate: 2d). _Status_: Core visibility data structures landed in `core_sim/src/visibility.rs`; per-faction maps track tile states and last-seen turn.
+- [x] Add visibility calculation systems for units and settlements with range-based reveal (Owner: TBD, Estimate: 2d; Deps: visibility resources). _Status_: `TurnStage::Visibility` runs `clear_active_visibility` → `calculate_visibility` → `apply_visibility_decay` in `core_sim/src/visibility_systems.rs`.
+- [x] Implement elevation-based sight bonuses and line-of-sight blocking via Bresenham ray-cast (Owner: TBD, Estimate: 1.5d; Deps: heightfield access). _Status_: `calculate_visibility` applies configurable elevation bonuses; `has_line_of_sight` checks for terrain occlusion.
+- [x] Add terrain modifiers for visibility range (water bonus, forest/wetland penalty) (Owner: TBD, Estimate: 1d; Deps: TerrainTags). _Status_: `reveal_tiles_in_range` applies per-tile terrain modifiers from `visibility_config.json`.
+- [x] Export visibility raster in snapshots for client rendering (Owner: TBD, Estimate: 1d; Deps: snapshot pipeline). _Status_: `visibility_raster_from_ledger` emits normalized values; Godot client renders FoW overlay with 'F' toggle.
+- [x] Implement visibility decay (Discovered → Unexplored after threshold turns) (Owner: TBD, Estimate: 0.5d). _Status_: `apply_visibility_decay` runs each turn, configurable via `decay.threshold_turns`.
+- [x] Add `visibility_config.json` with sight ranges, decay, elevation, and terrain modifier settings (Owner: TBD, Estimate: 0.5d). _Status_: Config loaded via `VisibilityConfigHandle`; supports per-unit-type sight ranges.
+- [x] Client-side FoW rendering: hide entity icons on non-visible tiles, FoW-aware tooltips (Owner: TBD, Estimate: 1d; Deps: visibility raster). _Status_: Godot `MapView.gd` filters food/herd icons and tooltips based on visibility state.
+- [ ] Integrate trade routes with FoW (active trade routes grant visibility along path) (Owner: TBD, Estimate: 1.5d; Deps: TradeLink components). Description: See `docs/plan_trade_fow_integration.md` for implementation plan.
+
 ## Data Contracts (`sim_schema` + `sim_runtime`)
 - [x] Define FlatBuffers schema for snapshots and deltas.
 - [x] Implement hash calculation for determinism validation.
