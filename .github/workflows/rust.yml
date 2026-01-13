@@ -15,6 +15,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - name: Free disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        df -h
     - name: Install system dependencies
       run: |
         sudo apt-get update
@@ -27,24 +33,12 @@ jobs:
         sudo mv flatc /usr/local/bin/flatc
         sudo chmod +x /usr/local/bin/flatc
         rm flatc.zip
-    - name: Cache cargo directories
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin
-          ~/.cargo/registry
-          ~/.cargo/git
-        key: ${{ runner.os }}-stable-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-stable-cargo-
-          ${{ runner.os }}-cargo-
     - name: Install stable toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
-        profile: minimal
-        override: true
         components: rustfmt, clippy
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
     - name: Generate FlatBuffers bindings
       run: cargo build --locked --package shadow_scale_flatbuffers
     - name: Format generated bindings
@@ -67,6 +61,7 @@ jobs:
   push-build:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.toolchain == 'nightly' }}
     strategy:
       matrix:
         toolchain: [ stable, beta, nightly ]
@@ -74,6 +69,12 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Free disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        df -h
     - name: Install system dependencies
       run: |
         sudo apt-get update
@@ -86,25 +87,15 @@ jobs:
         sudo mv flatc /usr/local/bin/flatc
         sudo chmod +x /usr/local/bin/flatc
         rm flatc.zip
-    - name: Cache cargo directories
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-${{ matrix.toolchain }}-cargo-
-          ${{ runner.os }}-cargo-
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.toolchain }}
-        profile: minimal
-        override: true
         components: rustfmt, clippy
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: ${{ matrix.toolchain }}
     - name: Generate FlatBuffers bindings
       if: matrix.toolchain == 'stable'
       run: cargo build --locked --package shadow_scale_flatbuffers
