@@ -398,7 +398,6 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 
 	_update_layout_metrics()
 	_clamp_pan_offset()
-	_update_layout_metrics()
 	queue_redraw()
 	_emit_overlay_legend()
 
@@ -485,7 +484,6 @@ func _draw() -> void:
 
 	_update_layout_metrics()
 	_clamp_pan_offset()
-	_update_layout_metrics()
 
 	var radius: float = last_hex_radius
 	var origin: Vector2 = last_origin
@@ -2295,7 +2293,6 @@ func _apply_pan(delta: Vector2) -> void:
 	pan_offset += delta
 	_update_layout_metrics()
 	_clamp_pan_offset()
-	_update_layout_metrics()
 	queue_redraw()
 
 func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
