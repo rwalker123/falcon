@@ -1654,6 +1654,8 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         .collect();
 
     let mut tile_entity_lookup: HashMap<u64, Entity> = HashMap::with_capacity(snapshot.tiles.len());
+    let mut tile_position_lookup: HashMap<(u32, u32), Entity> =
+        HashMap::with_capacity(snapshot.tiles.len());
     let grid_size = world
         .get_resource::<SimulationConfig>()
         .map(|config| config.grid_size)
@@ -1696,6 +1698,7 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         }
 
         tile_entity_lookup.insert(tile_state.entity, entity);
+        tile_position_lookup.insert((tile_state.x, tile_state.y), entity);
     }
 
     // Rebuild logistics links.
@@ -1748,9 +1751,14 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             .migration
             .as_ref()
             .map(pending_migration_from_state);
+        // Look up current_tile from saved position, falling back to home if not found
+        let current_tile = tile_position_lookup
+            .get(&(cohort_state.current_x, cohort_state.current_y))
+            .copied()
+            .unwrap_or(home_entity);
         let mut spawned = world.spawn(PopulationCohort {
             home: home_entity,
-            current_tile: home_entity,
+            current_tile,
             size: cohort_state.size,
             morale: Scalar::from_raw(cohort_state.morale),
             generation: cohort_state.generation,
