@@ -957,7 +957,10 @@ fn apply_provisions_bonus(
 ) {
     const PROVISIONS_TO_MORALE: f32 = 1.0 / 900.0;
     const MORALE_CAP: f32 = 0.2;
-    let provisions = inventory.take_stockpile(PLAYER_FACTION, "provisions", i64::MAX);
+    let provisions = inventory
+        .stockpile(PLAYER_FACTION)
+        .and_then(|s| s.get("provisions").copied())
+        .unwrap_or(0);
     if provisions <= 0 {
         return;
     }
@@ -2639,6 +2642,7 @@ fn spawn_population_entity(
     *cohort_index = cohort_index.saturating_add(1);
     let mut entity = commands.spawn(PopulationCohort {
         home: tile_entity,
+        current_tile: tile_entity,
         size,
         morale: scalar_from_f32(0.6),
         generation,
@@ -3093,18 +3097,50 @@ pub fn simulate_population(
     }
 }
 
+/// Compute the tile position at a given progress fraction along a line.
+fn interpolate_tile_position(from: UVec2, to: UVec2, remaining: u32, total: u32) -> UVec2 {
+    if total == 0 || remaining >= total {
+        return from;
+    }
+    if remaining == 0 {
+        return to;
+    }
+    let progress = 1.0 - (remaining as f32 / total as f32);
+    UVec2::new(
+        (from.x as f32 + (to.x as f32 - from.x as f32) * progress).round() as u32,
+        (from.y as f32 + (to.y as f32 - from.y as f32) * progress).round() as u32,
+    )
+}
+
 pub fn advance_harvest_assignments(
     mut commands: Commands,
     mut inventory: ResMut<FactionInventory>,
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
+    tile_registry: Res<TileRegistry>,
+    tiles: Query<&Tile>,
     mut cohorts: Query<(Entity, &mut PopulationCohort, &mut HarvestAssignment)>,
 ) {
     for (entity, mut cohort, mut assignment) in cohorts.iter_mut() {
         if assignment.travel_remaining > 0 {
             assignment.travel_remaining -= 1;
+
+            // Update current_tile to interpolated position
+            if let Ok(home_tile) = tiles.get(cohort.home) {
+                let current_pos = interpolate_tile_position(
+                    home_tile.position,
+                    assignment.target_coords,
+                    assignment.travel_remaining,
+                    assignment.travel_total,
+                );
+                if let Some(tile_entity) = tile_registry.index(current_pos.x, current_pos.y) {
+                    cohort.current_tile = tile_entity;
+                }
+            }
+
             if assignment.travel_remaining == 0 {
                 cohort.home = assignment.target_tile;
+                cohort.current_tile = assignment.target_tile;
             }
             continue;
         }
@@ -3170,13 +3206,30 @@ pub fn advance_scout_assignments(
     mut fog: ResMut<FogRevealLedger>,
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
+    tile_registry: Res<TileRegistry>,
+    tiles: Query<&Tile>,
     mut cohorts: Query<(Entity, &mut PopulationCohort, &mut ScoutAssignment)>,
 ) {
     for (entity, mut cohort, mut assignment) in cohorts.iter_mut() {
         if assignment.travel_remaining > 0 {
             assignment.travel_remaining -= 1;
+
+            // Update current_tile to interpolated position
+            if let Ok(home_tile) = tiles.get(cohort.home) {
+                let current_pos = interpolate_tile_position(
+                    home_tile.position,
+                    assignment.target_coords,
+                    assignment.travel_remaining,
+                    assignment.travel_total,
+                );
+                if let Some(tile_entity) = tile_registry.index(current_pos.x, current_pos.y) {
+                    cohort.current_tile = tile_entity;
+                }
+            }
+
             if assignment.travel_remaining == 0 {
                 cohort.home = assignment.target_tile;
+                cohort.current_tile = assignment.target_tile;
             }
             continue;
         }

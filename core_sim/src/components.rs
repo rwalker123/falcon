@@ -132,6 +132,8 @@ pub struct LogisticsLink {
 #[derive(Component, Debug, Clone)]
 pub struct PopulationCohort {
     pub home: Entity,
+    /// Current position during travel (equals home when stationary).
+    pub current_tile: Entity,
     pub size: u32,
     pub morale: Scalar,
     pub generation: GenerationId,

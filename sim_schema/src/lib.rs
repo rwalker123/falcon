@@ -854,6 +854,12 @@ pub struct KnownTechFragment {
 pub struct PopulationCohortState {
     pub entity: u64,
     pub home: u64,
+    #[serde(default)]
+    pub current_x: u32,
+    #[serde(default)]
+    pub current_y: u32,
+    #[serde(default)]
+    pub is_traveling: bool,
     pub size: u32,
     pub morale: i64,
     pub generation: u16,
@@ -2394,6 +2400,9 @@ fn create_populations<'a>(
                 &fb::PopulationCohortStateArgs {
                     entity: cohort.entity,
                     home: cohort.home,
+                    currentX: cohort.current_x,
+                    currentY: cohort.current_y,
+                    isTraveling: cohort.is_traveling,
                     size: cohort.size,
                     morale: cohort.morale,
                     generation: cohort.generation,
