@@ -3556,6 +3556,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     if let Some(harvest) = cohort.harvestTask() {
         let mut harvest_dict = VarDictionary::new();
         if let Some(kind) = harvest.kind() {
+            // "action" used by Hud.gd, "kind" used by MapView.gd for arrow colors
             let _ = harvest_dict.insert("action", kind);
             let _ = harvest_dict.insert("kind", kind);
         }
