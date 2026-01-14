@@ -693,12 +693,9 @@ func _draw_crisis_annotations(radius: float, origin: Vector2) -> void:
 			draw_circle(tail, tail_radius, tail_color)
 		var label: String = String(entry.get("label", ""))
 		if label != "":
-			var font: Font = ThemeDB.fallback_font
-			if font != null:
-				var anchor: Vector2 = coords[coords.size() - 1]
-				var text_color: Color = Color(0.95, 0.96, 0.98, 0.95)
-				var font_size: int = int(round(clamp(radius * 0.5, 14.0, 26.0)))
-				draw_string(font, anchor + Vector2(radius * 0.3, -radius * 0.22), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, text_color)
+			var anchor: Vector2 = coords[coords.size() - 1]
+			var font_size: int = int(round(clamp(radius * 0.5, 14.0, 26.0)))
+			_draw_label(anchor + Vector2(radius * 0.3, -radius * 0.22), label, -1.0, font_size, Color(0.95, 0.96, 0.98, 0.95))
 
 func _draw_trade_overlay(radius: float, origin: Vector2) -> void:
 	if not trade_overlay_enabled:
@@ -862,9 +859,7 @@ func _draw_unit(unit: Dictionary, radius: float, origin: Vector2) -> void:
 
 	var label: String = str(unit.get("id", ""))
 	if label != "":
-		var font: Font = ThemeDB.fallback_font
-		if font != null:
-			draw_string(font, center + Vector2(-marker_radius, marker_radius * 0.1), label, HORIZONTAL_ALIGNMENT_LEFT, marker_radius * 2.0, 16, Color(0.05, 0.05, 0.05, 0.85))
+		_draw_label(center + Vector2(-marker_radius, marker_radius * 0.1), label, marker_radius * 2.0, 16, Color(0.05, 0.05, 0.05, 0.85))
 
 	# Draw task arrow if unit has active assignment
 	var dest_x: int = int(unit.get("dest_x", -1))
@@ -895,6 +890,11 @@ func _travel_arrow_color(task_kind: String) -> Color:
 		_:
 			return Color(0.7, 0.7, 0.7, 0.85)  # Gray
 
+func _draw_label(pos: Vector2, text: String, max_width: float, font_size: int, color: Color) -> void:
+	var font: Font = ThemeDB.fallback_font
+	if font != null:
+		draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, max_width, font_size, color)
+
 func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	var herd_id := String(herd.get("id", ""))
 	var x: int = int(herd.get("x", -1))
@@ -918,9 +918,7 @@ func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 
 	var label: String = String(herd.get("label", herd.get("id", "Herd")))
 	if label != "":
-		var font: Font = ThemeDB.fallback_font
-		if font != null:
-			draw_string(font, center + Vector2(-marker_radius, marker_radius + 4.0), label, HORIZONTAL_ALIGNMENT_LEFT, marker_radius * 2.0, 14, Color(0.1, 0.1, 0.1, 0.85))
+		_draw_label(center + Vector2(-marker_radius, marker_radius + 4.0), label, marker_radius * 2.0, 14, Color(0.1, 0.1, 0.1, 0.85))
 
 	var next_x := int(herd.get("next_x", -1))
 	var next_y := int(herd.get("next_y", -1))
@@ -1033,10 +1031,8 @@ func _draw_harvest_markers(radius: float, origin: Vector2) -> void:
 		stroke_color.a = 0.95
 		draw_arc(center, radius * 0.55, 0, TAU, 32, stroke_color, 3.0)
 		if entries.size() > 1:
-			var font: Font = ThemeDB.fallback_font
-			if font != null:
-				var label := "x%d" % entries.size()
-				draw_string(font, center + Vector2(-radius * 0.25, radius * 0.05), label, HORIZONTAL_ALIGNMENT_LEFT, radius * 0.6, int(radius * 0.4), Color(0, 0, 0, 0.85))
+			var label := "x%d" % entries.size()
+			_draw_label(center + Vector2(-radius * 0.25, radius * 0.05), label, radius * 0.6, int(radius * 0.4), Color(0, 0, 0, 0.85))
 		if not (base_site is Dictionary) and _selected_tile_matches_food(key.x, key.y, module_key):
 			var highlight_color := Color(1.0, 1.0, 1.0, 0.9)
 			draw_arc(center, radius * 0.45, 0, TAU, 32, highlight_color, 2.5)
