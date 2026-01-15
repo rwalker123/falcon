@@ -2,15 +2,24 @@ extends Node
 class_name MinimapPanel
 ## Shared minimap panel component for both 2D and 3D views.
 ## Handles UI setup, aspect ratio sizing, and click-to-pan interaction.
+## Configuration loaded from heightfield_config.json, with fallback defaults.
 
 signal pan_requested(normalized_pos: Vector2)
 signal drag_started()
 signal drag_ended()
 
-const BASE_HEIGHT := 220
-const MIN_WIDTH := 140.0
-const MAX_WIDTH := 520.0
+const CONFIG_PATH := "res://src/data/heightfield_config.json"
+
+# Fallback defaults (overridden by config if available)
+const DEFAULT_BASE_HEIGHT := 220
+const DEFAULT_MIN_WIDTH := 140.0
+const DEFAULT_MAX_WIDTH := 520.0
 const DEFAULT_MARGIN := 16.0
+
+# Loaded config values
+var _base_height: int = DEFAULT_BASE_HEIGHT
+var _min_width: float = DEFAULT_MIN_WIDTH
+var _max_width: float = DEFAULT_MAX_WIDTH
 
 var canvas_layer: CanvasLayer
 var anchor: Control
@@ -23,13 +32,30 @@ var _margin: float = DEFAULT_MARGIN
 var _grid_width: int = 0
 var _grid_height: int = 0
 
+## Load minimap configuration from JSON file.
+func _load_config() -> void:
+	if not FileAccess.file_exists(CONFIG_PATH):
+		return
+	var file := FileAccess.open(CONFIG_PATH, FileAccess.READ)
+	if file == null:
+		return
+	var json = JSON.parse_string(file.get_as_text())
+	if json is Dictionary and json.has("minimap"):
+		var cfg: Dictionary = json["minimap"]
+		_base_height = int(cfg.get("base_height", DEFAULT_BASE_HEIGHT))
+		_min_width = float(cfg.get("min_width", DEFAULT_MIN_WIDTH))
+		_max_width = float(cfg.get("max_width", DEFAULT_MAX_WIDTH))
+		_margin = float(cfg.get("margin", DEFAULT_MARGIN))
+
 ## Initialize the minimap panel UI hierarchy.
 ## parent: Node to add the CanvasLayer to
 ## layer_index: CanvasLayer layer number (default 102)
-## margin: Distance from screen edge
+## margin: Distance from screen edge (uses config value if not specified)
 ## style: Optional StyleBox for the panel (null = default semi-transparent)
-func setup(parent: Node, layer_index: int = 102, margin: float = DEFAULT_MARGIN, style: StyleBox = null) -> void:
-	_margin = margin
+func setup(parent: Node, layer_index: int = 102, margin: float = -1.0, style: StyleBox = null) -> void:
+	_load_config()
+	if margin >= 0.0:
+		_margin = margin
 
 	# Create CanvasLayer
 	canvas_layer = CanvasLayer.new()
@@ -119,8 +145,8 @@ func resize_to_aspect() -> void:
 		return
 
 	var map_aspect := get_aspect_ratio()
-	var target_height := float(BASE_HEIGHT)
-	var target_width := clampf(target_height * map_aspect, MIN_WIDTH, MAX_WIDTH)
+	var target_height := float(_base_height)
+	var target_width := clampf(target_height * map_aspect, _min_width, _max_width)
 
 	panel.custom_minimum_size = Vector2(target_width, target_height)
 

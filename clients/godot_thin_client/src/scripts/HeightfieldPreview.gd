@@ -509,7 +509,7 @@ func _setup_minimap() -> void:
     _minimap_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
     _minimap_viewport.render_target_clear_mode = SubViewport.CLEAR_MODE_ALWAYS
     _minimap_viewport.transparent_bg = false
-    _minimap_viewport.size = Vector2i(MinimapPanelScript.BASE_HEIGHT, MinimapPanelScript.BASE_HEIGHT)
+    _minimap_viewport.size = Vector2i(MinimapPanelScript.DEFAULT_BASE_HEIGHT, MinimapPanelScript.DEFAULT_BASE_HEIGHT)
     _minimap_viewport.process_mode = SubViewport.PROCESS_MODE_ALWAYS
     add_child(_minimap_viewport)
 
@@ -532,7 +532,7 @@ func _setup_minimap() -> void:
 
     _minimap = MinimapPanelScript.new()
     add_child(_minimap)
-    _minimap.setup(self, 102, MinimapPanelScript.DEFAULT_MARGIN, transparent_style)
+    _minimap.setup(self, 102, -1.0, transparent_style)  # Use config margin
     _minimap.pan_requested.connect(_on_minimap_pan_requested)
 
     # Override texture settings for 3D viewport rendering
