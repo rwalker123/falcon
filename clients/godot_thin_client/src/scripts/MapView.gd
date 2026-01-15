@@ -244,6 +244,19 @@ var _heightfield_boot_shown: bool = true  # Default to 2D view; user can press R
 var _hovered_tile: Vector2i = Vector2i(-1, -1)
 var _fow_enabled: bool = false
 
+# 2D Minimap variables
+const MINIMAP_2D_BASE_HEIGHT := 220
+const MINIMAP_2D_MIN_WIDTH := 140.0
+const MINIMAP_2D_MAX_WIDTH := 520.0
+const MINIMAP_2D_MARGIN := 16.0
+var _minimap_2d_layer: CanvasLayer = null
+var _minimap_2d_panel: PanelContainer = null
+var _minimap_2d_texture: TextureRect = null
+var _minimap_2d_image: Image = null
+var _minimap_2d_viewport_indicator: Control = null
+var _minimap_2d_drag_active: bool = false
+var _minimap_2d_last_grid_size: Vector2i = Vector2i.ZERO
+
 func _ready() -> void:
 	set_process_unhandled_input(true)
 	set_process(true)
@@ -251,6 +264,7 @@ func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_ensure_input_actions()
 	_init_terrain_rendering()
+	_setup_2d_minimap()
 
 func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	print("[MapView] display_snapshot called. Keys: ", snapshot.keys())
@@ -403,6 +417,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_clamp_pan_offset()
 	queue_redraw()
 	_emit_overlay_legend()
+	_update_2d_minimap()
 
 	if _is_heightfield_visible():
 		_push_heightfield_preview()
@@ -1687,6 +1702,7 @@ func _toggle_heightfield_preview() -> void:
 			preview.call("hide_preview")
 		else:
 			preview.hide()
+		_update_2d_minimap()  # Show 2D minimap when switching back to 2D view
 		return
 	if heightfield_data.is_empty():
 		push_warning("Relief view not available yet; wait for the next snapshot.")
@@ -1701,6 +1717,7 @@ func _toggle_heightfield_preview() -> void:
 		preview.call_deferred("_resize_to_display")
 	print("[MapView] _toggle_heightfield_preview: showing window, calling push")
 	_push_heightfield_preview()
+	_update_2d_minimap()  # Hide 2D minimap when switching to 3D view
 	if preview.has_method("restore_or_sync_view_state"):
 		preview.call("restore_or_sync_view_state", zoom_factor, pan_offset, last_hex_radius)
 	elif preview.has_method("sync_view_state"):
@@ -2429,6 +2446,8 @@ func _apply_pan(delta: Vector2) -> void:
 	_update_layout_metrics()
 	_clamp_pan_offset()
 	queue_redraw()
+	if _minimap_2d_viewport_indicator != null:
+		_minimap_2d_viewport_indicator.queue_redraw()
 
 func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
 	if is_zero_approx(delta_zoom):
@@ -2448,6 +2467,8 @@ func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
 	_clamp_pan_offset()
 	_update_layout_metrics()
 	queue_redraw()
+	if _minimap_2d_viewport_indicator != null:
+		_minimap_2d_viewport_indicator.queue_redraw()
 
 func _begin_mouse_pan(button_index: int) -> void:
 	mouse_pan_active = true
@@ -2495,6 +2516,8 @@ func _fit_map_to_view() -> void:
 	_update_layout_metrics()
 	_clamp_pan_offset()
 	queue_redraw()
+	if _minimap_2d_viewport_indicator != null:
+		_minimap_2d_viewport_indicator.queue_redraw()
 
 func handle_hex_click(col: int, row: int, button_index: int) -> void:
 	# Only handle left mouse button clicks. Right-clicks and other buttons are intentionally ignored.
@@ -2825,3 +2848,258 @@ func _get_neighbor_offset_y_2d(dir: int) -> int:
 	return 0
 
 # --- End Terrain Texture System ---
+
+# --- 2D Minimap System ---
+
+func _setup_2d_minimap() -> void:
+	# Create a CanvasLayer for the minimap (same layer as 3D minimap)
+	_minimap_2d_layer = CanvasLayer.new()
+	_minimap_2d_layer.layer = 102
+	_minimap_2d_layer.name = "Minimap2DLayer"
+	add_child(_minimap_2d_layer)
+
+	# Create anchor control for bottom-right positioning
+	var anchor := Control.new()
+	anchor.anchor_left = 1.0
+	anchor.anchor_right = 1.0
+	anchor.anchor_top = 1.0
+	anchor.anchor_bottom = 1.0
+	anchor.offset_left = -300.0
+	anchor.offset_right = -MINIMAP_2D_MARGIN
+	anchor.offset_top = -300.0
+	anchor.offset_bottom = -MINIMAP_2D_MARGIN
+	_minimap_2d_layer.add_child(anchor)
+
+	# Create panel container
+	_minimap_2d_panel = PanelContainer.new()
+	_minimap_2d_panel.name = "Minimap2DPanel"
+	_minimap_2d_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_minimap_2d_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# Style with semi-transparent background
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.1, 0.1, 0.15, 0.85)
+	style.border_color = Color(0.3, 0.35, 0.4, 1.0)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(4)
+	style.content_margin_left = 4
+	style.content_margin_top = 4
+	style.content_margin_right = 4
+	style.content_margin_bottom = 4
+	_minimap_2d_panel.add_theme_stylebox_override("panel", style)
+	anchor.add_child(_minimap_2d_panel)
+
+	# Create texture rect for minimap image
+	_minimap_2d_texture = TextureRect.new()
+	_minimap_2d_texture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_minimap_2d_texture.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_minimap_2d_texture.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_minimap_2d_texture.mouse_filter = Control.MOUSE_FILTER_STOP
+	_minimap_2d_texture.gui_input.connect(_on_minimap_2d_gui_input)
+	_minimap_2d_panel.add_child(_minimap_2d_texture)
+
+	# Create viewport indicator overlay
+	_minimap_2d_viewport_indicator = Control.new()
+	_minimap_2d_viewport_indicator.name = "ViewportIndicator"
+	_minimap_2d_viewport_indicator.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_minimap_2d_viewport_indicator.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_minimap_2d_viewport_indicator.draw.connect(_draw_minimap_viewport_indicator)
+	_minimap_2d_texture.add_child(_minimap_2d_viewport_indicator)
+
+func _update_2d_minimap() -> void:
+	if _minimap_2d_texture == null or grid_width == 0 or grid_height == 0:
+		return
+
+	# Hide 2D minimap when 3D view is active (3D view has its own minimap)
+	if _is_heightfield_visible():
+		_minimap_2d_layer.visible = false
+		return
+	_minimap_2d_layer.visible = true
+
+	# Check if we need to regenerate the minimap image
+	var current_size := Vector2i(grid_width, grid_height)
+	var needs_rebuild := _minimap_2d_image == null or _minimap_2d_last_grid_size != current_size
+
+	if needs_rebuild:
+		_minimap_2d_last_grid_size = current_size
+		_rebuild_minimap_2d_image()
+
+	# Update viewport indicator
+	if _minimap_2d_viewport_indicator != null:
+		_minimap_2d_viewport_indicator.queue_redraw()
+
+func _rebuild_minimap_2d_image() -> void:
+	if grid_width == 0 or grid_height == 0:
+		return
+
+	# Create image at 1:1 pixel per hex
+	_minimap_2d_image = Image.create(grid_width, grid_height, false, Image.FORMAT_RGB8)
+
+	# Fill with terrain colors
+	for y in range(grid_height):
+		for x in range(grid_width):
+			var terrain_id := _terrain_id_at(x, y)
+			var color := _terrain_color_for_id(terrain_id)
+			_minimap_2d_image.set_pixel(x, y, color)
+
+	# Create texture from image
+	var tex := ImageTexture.create_from_image(_minimap_2d_image)
+	_minimap_2d_texture.texture = tex
+
+	# Resize panel to match map aspect ratio
+	_resize_minimap_2d_panel()
+
+func _resize_minimap_2d_panel() -> void:
+	if _minimap_2d_panel == null or grid_width == 0 or grid_height == 0:
+		return
+
+	var map_aspect: float = float(grid_width) / float(grid_height)
+	var target_height: float = MINIMAP_2D_BASE_HEIGHT
+	var target_width: float = clampf(target_height * map_aspect, MINIMAP_2D_MIN_WIDTH, MINIMAP_2D_MAX_WIDTH)
+
+	_minimap_2d_panel.custom_minimum_size = Vector2(target_width, target_height)
+
+	# Update anchor offsets based on new size
+	var anchor := _minimap_2d_panel.get_parent() as Control
+	if anchor != null:
+		anchor.offset_left = -(target_width + MINIMAP_2D_MARGIN)
+		anchor.offset_top = -(target_height + MINIMAP_2D_MARGIN)
+
+func _draw_minimap_viewport_indicator() -> void:
+	if _minimap_2d_viewport_indicator == null or _minimap_2d_texture == null:
+		return
+	if grid_width == 0 or grid_height == 0:
+		return
+	if last_hex_radius <= 0:
+		return
+
+	var tex_size := _minimap_2d_texture.size
+	if tex_size.x <= 0 or tex_size.y <= 0:
+		return
+
+	# Get adjusted viewport size (accounting for UI scaling)
+	var viewport_size := _get_adjusted_viewport_size()
+	if viewport_size.x <= 0 or viewport_size.y <= 0:
+		return
+
+	# Convert screen corners to hex coordinates using the same math as _point_to_offset
+	# The viewport shows screen coordinates from (0, 0) to (viewport_size.x, viewport_size.y)
+	var radius: float = max(last_hex_radius, 0.0001)
+
+	# Top-left corner of viewport -> hex coordinate
+	var tl_relative: Vector2 = (Vector2.ZERO - last_origin) / radius
+	var tl_qf: float = (SQRT3 / 3.0) * tl_relative.x - (1.0 / 3.0) * tl_relative.y
+	var tl_rf: float = (2.0 / 3.0) * tl_relative.y
+	var tl_axial := _cube_round(tl_qf, tl_rf)
+	var tl_offset := _axial_to_offset(tl_axial.x, tl_axial.y)
+
+	# Bottom-right corner of viewport -> hex coordinate
+	var br_relative: Vector2 = (viewport_size - last_origin) / radius
+	var br_qf: float = (SQRT3 / 3.0) * br_relative.x - (1.0 / 3.0) * br_relative.y
+	var br_rf: float = (2.0 / 3.0) * br_relative.y
+	var br_axial := _cube_round(br_qf, br_rf)
+	var br_offset := _axial_to_offset(br_axial.x, br_axial.y)
+
+	# Normalize to 0-1 range based on grid dimensions
+	var view_left := clampf(float(tl_offset.x) / float(grid_width), 0.0, 1.0)
+	var view_right := clampf(float(br_offset.x + 1) / float(grid_width), 0.0, 1.0)
+	var view_top := clampf(float(tl_offset.y) / float(grid_height), 0.0, 1.0)
+	var view_bottom := clampf(float(br_offset.y + 1) / float(grid_height), 0.0, 1.0)
+
+	# Calculate texture display area (accounting for aspect ratio centering)
+	var texture_display_rect := _get_minimap_texture_display_rect()
+
+	# Convert normalized coords to pixel coords within the texture display area
+	var rect := Rect2(
+		texture_display_rect.position.x + view_left * texture_display_rect.size.x,
+		texture_display_rect.position.y + view_top * texture_display_rect.size.y,
+		(view_right - view_left) * texture_display_rect.size.x,
+		(view_bottom - view_top) * texture_display_rect.size.y
+	)
+
+	# Draw viewport rectangle
+	var indicator_color := Color(1.0, 1.0, 1.0, 0.8)
+	_minimap_2d_viewport_indicator.draw_rect(rect, indicator_color, false, 2.0)
+
+func _get_minimap_texture_display_rect() -> Rect2:
+	# Calculate where the texture is actually displayed within the TextureRect
+	# (accounting for STRETCH_KEEP_ASPECT_CENTERED)
+	if _minimap_2d_texture == null or _minimap_2d_texture.texture == null:
+		return Rect2()
+
+	var tex_size := _minimap_2d_texture.texture.get_size()
+	var container_size := _minimap_2d_texture.size
+
+	if tex_size.x <= 0 or tex_size.y <= 0:
+		return Rect2()
+	if container_size.x <= 0 or container_size.y <= 0:
+		return Rect2()
+
+	var tex_aspect := tex_size.x / tex_size.y
+	var container_aspect := container_size.x / container_size.y
+
+	var display_size: Vector2
+	var display_pos: Vector2
+
+	if tex_aspect > container_aspect:
+		# Texture is wider - fit to width
+		display_size.x = container_size.x
+		display_size.y = container_size.x / tex_aspect
+		display_pos.x = 0
+		display_pos.y = (container_size.y - display_size.y) * 0.5
+	else:
+		# Texture is taller - fit to height
+		display_size.y = container_size.y
+		display_size.x = container_size.y * tex_aspect
+		display_pos.y = 0
+		display_pos.x = (container_size.x - display_size.x) * 0.5
+
+	return Rect2(display_pos, display_size)
+
+func _on_minimap_2d_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		var mb: InputEventMouseButton = event
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				_minimap_2d_drag_active = true
+				_pan_from_minimap_2d(mb.position)
+			else:
+				_minimap_2d_drag_active = false
+	elif event is InputEventMouseMotion and _minimap_2d_drag_active:
+		var motion: InputEventMouseMotion = event
+		_pan_from_minimap_2d(motion.position)
+
+func _pan_from_minimap_2d(local_pos: Vector2) -> void:
+	if grid_width == 0 or grid_height == 0:
+		return
+	if last_hex_radius <= 0:
+		return
+
+	var display_rect := _get_minimap_texture_display_rect()
+	if display_rect.size.x <= 0 or display_rect.size.y <= 0:
+		return
+
+	# Convert click position to normalized map coordinates
+	var rel_pos := local_pos - display_rect.position
+	var norm_x := clampf(rel_pos.x / display_rect.size.x, 0.0, 1.0)
+	var norm_y := clampf(rel_pos.y / display_rect.size.y, 0.0, 1.0)
+
+	# Convert to hex coordinates (col, row)
+	var target_col := int(norm_x * float(grid_width))
+	var target_row := int(norm_y * float(grid_height))
+	target_col = clampi(target_col, 0, grid_width - 1)
+	target_row = clampi(target_row, 0, grid_height - 1)
+
+	# Calculate the hex center position at base origin (no pan)
+	var hex_center_at_base := _hex_center(target_col, target_row, last_hex_radius, last_base_origin)
+
+	# Calculate pan_offset to center this hex in the viewport
+	var viewport_size := _get_adjusted_viewport_size()
+	var viewport_center := viewport_size * 0.5
+	pan_offset = viewport_center - hex_center_at_base
+
+	_clamp_pan_offset()
+	_update_layout_metrics()
+	queue_redraw()
+	_update_2d_minimap()
+
+# --- End 2D Minimap System ---
