@@ -631,7 +631,8 @@ func set_fow_enabled(enabled: bool) -> void:
 		active_overlay_key = ""
 	queue_redraw()
 	_emit_overlay_legend()
-	_update_2d_minimap()  # Rebuild minimap with/without FoW
+	_update_2d_minimap()  # Rebuild minimap with/without FoW (also sets _explored_bounds_world)
+	_clamp_pan_offset()  # Clamp pan to explored bounds when FoW enabled
 	if _is_heightfield_visible():
 		_push_heightfield_preview()
 
@@ -2399,10 +2400,15 @@ func _clamp_pan_offset() -> void:
 
 	if _fow_enabled and _explored_bounds_world.size.x > 0:
 		effective_size = _explored_bounds_world.size
-		# Calculate offset: explored center relative to full map center
-		var full_map_center := last_map_size * 0.5
+		# Calculate offset: how much to shift pan center from full map center to explored center
+		# A positive bounds_offset shifts the allowed pan range in that direction
+		# base_bounds has the full map position and size at unit radius - scale to current zoom
+		var full_map_position := base_bounds.position * last_hex_radius
+		var full_map_center := full_map_position + last_map_size * 0.5
 		var explored_center := _explored_bounds_world.position + _explored_bounds_world.size * 0.5
-		bounds_offset = explored_center - full_map_center
+		# To center on explored region: pan needs to shift hexes so explored_center is at screen center
+		# Since explored is upper-left of full map, we need positive pan to bring it into view
+		bounds_offset = full_map_center - explored_center
 	else:
 		effective_size = last_map_size
 
