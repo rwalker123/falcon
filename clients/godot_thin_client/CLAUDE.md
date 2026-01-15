@@ -30,13 +30,15 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | Script | Purpose |
 |--------|---------|
 | `Main.gd` | Scene orchestration, streaming toggle, 3D/2D view management |
-| `MapView.gd` | Terrain rendering, overlays, hex selection, navigation (WASD/QE/mouse) |
+| `MapView.gd` | Terrain rendering, overlays, hex selection, navigation (WASD/QE/mouse), 2D minimap |
 | `HeightfieldLayer3D.gd` | 3D relief mesh rendering with chunked `ArrayMesh` |
+| `HeightfieldPreview.gd` | 3D view container with camera controls, 3D minimap |
 | `WaterLayer3D.gd` | Water plane rendering controlled by `heightfield_config.json` |
 | `Inspector.gd` | Tabbed inspector panels, overlay selector |
 | `Hud.gd` | HUD layer, legend, selection panel, turn readout |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
+| `ui/MinimapPanel.gd` | Shared minimap component for 2D/3D views (click-to-pan, aspect ratio sizing) |
 | `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content |
 | `assets/terrain/TerrainTextureManager.gd` | Autoload singleton for terrain texture loading (shared by 2D/3D) |
 | `assets/terrain/TerrainDefinitions.gd` | Single source of truth for terrain definitions |
@@ -83,8 +85,44 @@ Server (FlatBuffers) -> SnapshotStream.gd -> parsed snapshot
 - Existing heatmap overlays render as additive projected quads following height texture
 
 ### Configuration (`heightfield_config.json`)
+- `minimap`: `base_height`, `min_width`, `max_width`, `margin` for panel sizing
 - `markers`: toggle visibility, adjust scale/y_offset, `shaded` flag for lit vs unlit
 - `water`: `sea_level_offset`, `sea_level_override`, deep/coastal/fresh colors
+
+---
+
+## Minimap System
+
+Both 2D and 3D views display a minimap in the bottom-right corner showing the full map with a viewport indicator rectangle.
+
+### Shared Component (`ui/MinimapPanel.gd`)
+Reusable minimap UI component handling:
+- CanvasLayer hierarchy setup (layer 102)
+- Aspect ratio sizing from grid dimensions
+- Click-to-pan with drag support
+- Viewport indicator overlay with draw callbacks
+
+### 2D Minimap (MapView.gd)
+- Renders terrain at 1 pixel per hex as an `ImageTexture`
+- Viewport indicator uses pointy-top hex coordinate math:
+  - Screen corners → axial coords (q,r) → offset coords (col,row) → normalized [0,1]
+- Click-to-pan converts normalized position → hex grid coords → pan_offset
+
+### 3D Minimap (HeightfieldPreview.gd)
+- Uses a `SubViewport` with orthographic `Camera3D` sharing the main world_3d
+- Renders the full 3D terrain from top-down view
+- Click-to-pan converts normalized position → world coordinates → camera pan
+
+### Configuration
+Sizing parameters in `heightfield_config.json`:
+```json
+"minimap": {
+  "base_height": 220,
+  "min_width": 140.0,
+  "max_width": 520.0,
+  "margin": 16.0
+}
+```
 
 ---
 

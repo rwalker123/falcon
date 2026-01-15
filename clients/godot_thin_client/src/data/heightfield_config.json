@@ -1,4 +1,10 @@
 {
+  "minimap": {
+    "base_height": 220,
+    "min_width": 140.0,
+    "max_width": 520.0,
+    "margin": 16.0
+  },
   "default_height_exaggeration": 15.0,
   "per_map_dimensions": {
     "80x52": 3.0,

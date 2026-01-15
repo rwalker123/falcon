@@ -244,6 +244,17 @@ var _heightfield_boot_shown: bool = true  # Default to 2D view; user can press R
 var _hovered_tile: Vector2i = Vector2i(-1, -1)
 var _fow_enabled: bool = false
 
+# 2D Minimap (uses shared MinimapPanel component)
+const MinimapPanelScript := preload("res://src/scripts/ui/MinimapPanel.gd")
+var _minimap_2d: Node = null  # MinimapPanel instance
+var _minimap_2d_image: Image = null
+var _minimap_2d_last_grid_size: Vector2i = Vector2i.ZERO
+var _minimap_2d_data_version: int = 0  # Incremented when terrain/visibility changes
+var _minimap_2d_last_data_version: int = -1  # Last version used for rebuild
+var _minimap_2d_last_fow_enabled: bool = false  # Track FoW state changes
+var _explored_bounds_grid: Rect2i = Rect2i(0, 0, 0, 0)  # Grid coords of explored area
+var _explored_bounds_world: Rect2 = Rect2()  # World coords of explored area (for pan clamping)
+
 func _ready() -> void:
 	set_process_unhandled_input(true)
 	set_process(true)
@@ -251,6 +262,7 @@ func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_ensure_input_actions()
 	_init_terrain_rendering()
+	_setup_2d_minimap()
 
 func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	print("[MapView] display_snapshot called. Keys: ", snapshot.keys())
@@ -272,6 +284,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_terrain_grid_width = grid_width
 	_terrain_grid_height = grid_height
 	_update_biome_color_buffer()
+	# Increment minimap data version to trigger rebuild on terrain/visibility changes
+	_minimap_2d_data_version += 1
 	var palette_raw: Variant = overlays.get("terrain_palette", {})
 	terrain_palette = palette_raw if typeof(palette_raw) == TYPE_DICTIONARY else {}
 	terrain_tags_overlay = PackedInt32Array(overlays.get("terrain_tags", []))
@@ -403,6 +417,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_clamp_pan_offset()
 	queue_redraw()
 	_emit_overlay_legend()
+	_update_2d_minimap()
 
 	if _is_heightfield_visible():
 		_push_heightfield_preview()
@@ -616,6 +631,8 @@ func set_fow_enabled(enabled: bool) -> void:
 		active_overlay_key = ""
 	queue_redraw()
 	_emit_overlay_legend()
+	_update_2d_minimap()  # Rebuild minimap with/without FoW (also sets _explored_bounds_world)
+	_clamp_pan_offset()  # Clamp pan to explored bounds when FoW enabled
 	if _is_heightfield_visible():
 		_push_heightfield_preview()
 
@@ -629,6 +646,59 @@ func _is_tile_visible(x: int, y: int) -> bool:
 		return true
 	var vis: float = _value_at_overlay("visibility", x, y)
 	return vis > 0.7  # Active tiles only
+
+## Calculate the bounding box of explored tiles (visibility > 0).
+## Returns Rect2i(min_col, min_row, width, height) in grid coordinates.
+## Returns empty rect (size 0,0) if no tiles have been explored.
+func _calculate_explored_bounds() -> Rect2i:
+	var visibility_data := _overlay_array("visibility")
+	if visibility_data.is_empty():
+		return Rect2i(0, 0, 0, 0)
+
+	var min_col := grid_width
+	var max_col := -1
+	var min_row := grid_height
+	var max_row := -1
+
+	for i in range(visibility_data.size()):
+		if visibility_data[i] > 0.0:  # Any explored tile (not just active)
+			var row := i / grid_width
+			var col := i % grid_width
+			min_col = mini(min_col, col)
+			max_col = maxi(max_col, col)
+			min_row = mini(min_row, row)
+			max_row = maxi(max_row, row)
+
+	# Return empty rect if no explored tiles found
+	if max_col < 0:
+		return Rect2i(0, 0, 0, 0)
+
+	return Rect2i(min_col, min_row, max_col - min_col + 1, max_row - min_row + 1)
+
+## Convert grid bounds to world-space bounds for pan clamping.
+## Similar to _compute_bounds() but only for the explored region.
+func _compute_explored_bounds_world(grid_bounds: Rect2i, radius: float) -> Rect2:
+	if grid_bounds.size.x <= 0 or grid_bounds.size.y <= 0:
+		return Rect2()
+
+	var min_x := INF
+	var max_x := -INF
+	var min_y := INF
+	var max_y := -INF
+
+	for col in range(grid_bounds.position.x, grid_bounds.position.x + grid_bounds.size.x):
+		for row in range(grid_bounds.position.y, grid_bounds.position.y + grid_bounds.size.y):
+			var axial := _offset_to_axial(col, row)
+			var center := _axial_center(axial.x, axial.y, radius)
+			min_x = min(min_x, center.x - radius)
+			max_x = max(max_x, center.x + radius)
+			min_y = min(min_y, center.y - radius)
+			max_y = max(max_y, center.y + radius)
+
+	if min_x == INF:
+		return Rect2()
+
+	return Rect2(Vector2(min_x, min_y), Vector2(max_x - min_x, max_y - min_y))
 
 func _draw_crisis_annotations(radius: float, origin: Vector2) -> void:
 	if active_overlay_key != "crisis":
@@ -1687,6 +1757,7 @@ func _toggle_heightfield_preview() -> void:
 			preview.call("hide_preview")
 		else:
 			preview.hide()
+		_update_2d_minimap()  # Show 2D minimap when switching back to 2D view
 		return
 	if heightfield_data.is_empty():
 		push_warning("Relief view not available yet; wait for the next snapshot.")
@@ -1701,6 +1772,7 @@ func _toggle_heightfield_preview() -> void:
 		preview.call_deferred("_resize_to_display")
 	print("[MapView] _toggle_heightfield_preview: showing window, calling push")
 	_push_heightfield_preview()
+	_update_2d_minimap()  # Hide 2D minimap when switching to 3D view
 	if preview.has_method("restore_or_sync_view_state"):
 		preview.call("restore_or_sync_view_state", zoom_factor, pan_offset, last_hex_radius)
 	elif preview.has_method("sync_view_state"):
@@ -2321,35 +2393,48 @@ func _clamp_pan_offset() -> void:
 		return
 	var viewport_size: Vector2 = _get_adjusted_viewport_size()
 
-	# Calculate pan limits based on keeping map bounds within viewport
-	# pan_offset affects last_origin, and the map bounds in world coords are:
-	#   left edge: last_origin.x + scaled_bounds.position.x
-	#   right edge: last_origin.x + scaled_bounds.position.x + last_map_size.x
-	# We want: left edge >= 0 and right edge <= viewport_size
-	# Simplifies to: pan_offset in range [-(vp-map)/2, (vp-map)/2] relative to centered position
+	# Determine effective bounds for panning
+	# When FoW enabled, restrict panning to explored region only
+	var effective_size: Vector2
+	var bounds_offset: Vector2 = Vector2.ZERO  # Offset of explored region from map center
 
-	var delta_x: float = viewport_size.x - last_map_size.x
-	var delta_y: float = viewport_size.y - last_map_size.y
+	if _fow_enabled and _explored_bounds_world.size.x > 0:
+		effective_size = _explored_bounds_world.size
+		# Calculate offset: how much to shift pan center from full map center to explored center
+		# A positive bounds_offset shifts the allowed pan range in that direction
+		# base_bounds has the full map position and size at unit radius - scale to current zoom
+		var full_map_position := base_bounds.position * last_hex_radius
+		var full_map_center := full_map_position + last_map_size * 0.5
+		var explored_center := _explored_bounds_world.position + _explored_bounds_world.size * 0.5
+		# To center on explored region: pan needs to shift hexes so explored_center is at screen center
+		# Since explored is upper-left of full map, we need positive pan to bring it into view
+		bounds_offset = full_map_center - explored_center
+	else:
+		effective_size = last_map_size
+
+	# Calculate pan limits based on keeping viewport within effective bounds
+	var delta_x: float = viewport_size.x - effective_size.x
+	var delta_y: float = viewport_size.y - effective_size.y
 
 	# For X axis:
 	if delta_x <= 0.0:
-		# Map is wider than or equal to viewport - allow panning within bounds
-		var max_pan_x: float = -delta_x / 2.0  # pan right limit (shows left edge)
-		var min_pan_x: float = delta_x / 2.0   # pan left limit (shows right edge)
+		# Effective area is wider than viewport - allow panning within bounds
+		var max_pan_x: float = -delta_x / 2.0 + bounds_offset.x
+		var min_pan_x: float = delta_x / 2.0 + bounds_offset.x
 		pan_offset.x = clamp(pan_offset.x, min_pan_x, max_pan_x)
 	else:
-		# Map is narrower - center it (no horizontal panning)
-		pan_offset.x = 0.0
+		# Effective area is narrower - center on it
+		pan_offset.x = bounds_offset.x
 
 	# For Y axis:
 	if delta_y <= 0.0:
-		# Map is taller than or equal to viewport - allow panning within bounds
-		var max_pan_y: float = -delta_y / 2.0  # pan down limit (shows top edge)
-		var min_pan_y: float = delta_y / 2.0   # pan up limit (shows bottom edge)
+		# Effective area is taller than viewport - allow panning within bounds
+		var max_pan_y: float = -delta_y / 2.0 + bounds_offset.y
+		var min_pan_y: float = delta_y / 2.0 + bounds_offset.y
 		pan_offset.y = clamp(pan_offset.y, min_pan_y, max_pan_y)
 	else:
-		# Map is shorter - center it (no vertical panning)
-		pan_offset.y = 0.0
+		# Effective area is shorter - center on it
+		pan_offset.y = bounds_offset.y
 
 func get_world_center() -> Vector2:
 	return last_origin + last_map_size * 0.5
@@ -2429,6 +2514,8 @@ func _apply_pan(delta: Vector2) -> void:
 	_update_layout_metrics()
 	_clamp_pan_offset()
 	queue_redraw()
+	if _minimap_2d != null:
+		_minimap_2d.queue_indicator_redraw()
 
 func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
 	if is_zero_approx(delta_zoom):
@@ -2448,6 +2535,8 @@ func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
 	_clamp_pan_offset()
 	_update_layout_metrics()
 	queue_redraw()
+	if _minimap_2d != null:
+		_minimap_2d.queue_indicator_redraw()
 
 func _begin_mouse_pan(button_index: int) -> void:
 	mouse_pan_active = true
@@ -2495,6 +2584,8 @@ func _fit_map_to_view() -> void:
 	_update_layout_metrics()
 	_clamp_pan_offset()
 	queue_redraw()
+	if _minimap_2d != null:
+		_minimap_2d.queue_indicator_redraw()
 
 func handle_hex_click(col: int, row: int, button_index: int) -> void:
 	# Only handle left mouse button clicks. Right-clicks and other buttons are intentionally ignored.
@@ -2825,3 +2916,248 @@ func _get_neighbor_offset_y_2d(dir: int) -> int:
 	return 0
 
 # --- End Terrain Texture System ---
+
+# --- 2D Minimap System (uses shared MinimapPanel) ---
+
+func _setup_2d_minimap() -> void:
+	_minimap_2d = MinimapPanelScript.new()
+	add_child(_minimap_2d)
+	_minimap_2d.setup(self, 102)
+	_minimap_2d.pan_requested.connect(_on_minimap_2d_pan_requested)
+	_minimap_2d.connect_indicator_draw(_draw_minimap_viewport_indicator)
+
+func _update_2d_minimap() -> void:
+	if _minimap_2d == null or grid_width == 0 or grid_height == 0:
+		return
+
+	# Hide 2D minimap when 3D view is active (3D view has its own minimap)
+	if _is_heightfield_visible():
+		_minimap_2d.set_visible(false)
+		return
+	_minimap_2d.set_visible(true)
+
+	# Check if we need to regenerate the minimap image
+	var current_size := Vector2i(grid_width, grid_height)
+	var size_changed := _minimap_2d_last_grid_size != current_size
+	var data_changed := _minimap_2d_last_data_version != _minimap_2d_data_version
+	var fow_changed := _minimap_2d_last_fow_enabled != _fow_enabled
+	var needs_rebuild := _minimap_2d_image == null or size_changed or data_changed or fow_changed
+
+	if needs_rebuild:
+		_minimap_2d_last_grid_size = current_size
+		_minimap_2d_last_data_version = _minimap_2d_data_version
+		_minimap_2d_last_fow_enabled = _fow_enabled
+		_rebuild_minimap_2d_image()
+
+	# Update viewport indicator
+	_minimap_2d.queue_indicator_redraw()
+
+func _rebuild_minimap_2d_image() -> void:
+	if grid_width == 0 or grid_height == 0:
+		return
+
+	# Cache terrain colors lookup for faster access
+	var colors := _get_terrain_colors()
+	var fallback_color := Color(0.2, 0.2, 0.2, 1.0)
+	var fog_color := Color(0.08, 0.08, 0.12, 1.0)  # Dark color for unexplored
+
+	# Get visibility data for FoW (if enabled)
+	var visibility_data: PackedFloat32Array = PackedFloat32Array()
+	if _fow_enabled:
+		visibility_data = _overlay_array("visibility")
+
+	# Determine image dimensions - crop to explored bounds when FoW enabled
+	var img_width: int
+	var img_height: int
+	var offset_col: int = 0  # Column offset for cropped image
+	var offset_row: int = 0  # Row offset for cropped image
+
+	if _fow_enabled:
+		_explored_bounds_grid = _calculate_explored_bounds()
+		if _explored_bounds_grid.size.x <= 0 or _explored_bounds_grid.size.y <= 0:
+			# No explored tiles - create minimal 1x1 image
+			_minimap_2d_image = Image.create(1, 1, false, Image.FORMAT_RGB8)
+			_minimap_2d_image.set_pixel(0, 0, fog_color)
+			var tex := ImageTexture.create_from_image(_minimap_2d_image)
+			_minimap_2d.set_texture(tex)
+			_minimap_2d.set_grid_size(1, 1)
+			_explored_bounds_world = Rect2()
+			return
+		img_width = _explored_bounds_grid.size.x
+		img_height = _explored_bounds_grid.size.y
+		offset_col = _explored_bounds_grid.position.x
+		offset_row = _explored_bounds_grid.position.y
+		# Update world bounds for pan clamping
+		_explored_bounds_world = _compute_explored_bounds_world(_explored_bounds_grid, last_hex_radius)
+	else:
+		# Full map when FoW disabled
+		img_width = grid_width
+		img_height = grid_height
+		_explored_bounds_grid = Rect2i(0, 0, grid_width, grid_height)
+		_explored_bounds_world = Rect2()  # Clear - use full map bounds
+
+	# Pre-allocate byte array for RGB8 image data (3 bytes per pixel)
+	var pixel_count := img_width * img_height
+	var data := PackedByteArray()
+	data.resize(pixel_count * 3)
+
+	# Fill byte array with terrain colors
+	var byte_index := 0
+	for local_row in range(img_height):
+		for local_col in range(img_width):
+			var grid_col := local_col + offset_col
+			var grid_row := local_row + offset_row
+			var grid_index := grid_row * grid_width + grid_col
+
+			var terrain_id := int(terrain_overlay[grid_index]) if grid_index < terrain_overlay.size() else -1
+			var color: Color = colors.get(terrain_id, fallback_color)
+
+			# Apply Fog of War visibility
+			if _fow_enabled and not visibility_data.is_empty():
+				var vis: float = visibility_data[grid_index] if grid_index < visibility_data.size() else 0.0
+				if vis <= 0.0:
+					# Unexplored - show dark fog
+					color = fog_color
+				elif vis <= 0.7:
+					# Explored but not currently visible - dim the terrain color
+					color = color.lerp(fog_color, 0.6)
+				# else: vis > 0.7 - fully visible, use terrain color as-is
+
+			# Convert Color (0-1 floats) to RGB bytes (0-255)
+			data[byte_index] = int(color.r * 255.0)
+			data[byte_index + 1] = int(color.g * 255.0)
+			data[byte_index + 2] = int(color.b * 255.0)
+			byte_index += 3
+
+	# Create image from byte array
+	_minimap_2d_image = Image.create_from_data(img_width, img_height, false, Image.FORMAT_RGB8, data)
+
+	# Create texture from image and update panel
+	var tex := ImageTexture.create_from_image(_minimap_2d_image)
+	_minimap_2d.set_texture(tex)
+	_minimap_2d.set_grid_size(img_width, img_height)
+
+## Draw the viewport indicator rectangle on the 2D minimap.
+##
+## This shows which portion of the map is currently visible in the main view.
+## The coordinate transformation uses the same axial hex math as _point_to_offset:
+##
+## Screen-to-Hex Coordinate Conversion (pointy-top hexes):
+##   1. Subtract origin and divide by hex radius to get relative position
+##   2. Convert to axial coordinates (q, r) using pointy-top hex formulas:
+##      q = (sqrt(3)/3 * x - 1/3 * y)
+##      r = (2/3 * y)
+##   3. Round to nearest hex using cube coordinate rounding
+##   4. Convert axial (q, r) to offset (col, row) coordinates
+##
+## The resulting hex coordinates are then normalized to [0,1] range and
+## mapped to pixel positions within the minimap texture display area.
+func _draw_minimap_viewport_indicator() -> void:
+	if _minimap_2d == null or grid_width == 0 or grid_height == 0:
+		return
+	if last_hex_radius <= 0:
+		return
+
+	var viewport_size := _get_adjusted_viewport_size()
+	if viewport_size.x <= 0 or viewport_size.y <= 0:
+		return
+
+	var radius: float = max(last_hex_radius, 0.0001)
+
+	# Convert top-left screen corner to hex offset coordinates
+	# Step 1: Get position relative to hex origin, normalized by radius
+	var tl_relative: Vector2 = (Vector2.ZERO - last_origin) / radius
+	# Step 2: Convert to fractional axial coordinates (pointy-top hex formula)
+	var tl_qf: float = (SQRT3 / 3.0) * tl_relative.x - (1.0 / 3.0) * tl_relative.y
+	var tl_rf: float = (2.0 / 3.0) * tl_relative.y
+	# Step 3: Round to nearest hex center using cube coordinates
+	var tl_axial := _cube_round(tl_qf, tl_rf)
+	# Step 4: Convert axial to offset (col, row) coordinates
+	var tl_offset := _axial_to_offset(tl_axial.x, tl_axial.y)
+
+	# Convert bottom-right screen corner to hex offset coordinates (same steps)
+	var br_relative: Vector2 = (viewport_size - last_origin) / radius
+	var br_qf: float = (SQRT3 / 3.0) * br_relative.x - (1.0 / 3.0) * br_relative.y
+	var br_rf: float = (2.0 / 3.0) * br_relative.y
+	var br_axial := _cube_round(br_qf, br_rf)
+	var br_offset := _axial_to_offset(br_axial.x, br_axial.y)
+
+	# Normalize hex coordinates to [0,1] range for minimap positioning
+	# When FoW enabled, normalize relative to explored bounds instead of full grid
+	var view_left: float
+	var view_right: float
+	var view_top: float
+	var view_bottom: float
+
+	if _fow_enabled and _explored_bounds_grid.size.x > 0:
+		var bounds := _explored_bounds_grid
+		# Remap viewport coords relative to explored bounds
+		view_left = clampf(float(tl_offset.x - bounds.position.x) / float(bounds.size.x), 0.0, 1.0)
+		view_right = clampf(float(br_offset.x + 1 - bounds.position.x) / float(bounds.size.x), 0.0, 1.0)
+		view_top = clampf(float(tl_offset.y - bounds.position.y) / float(bounds.size.y), 0.0, 1.0)
+		view_bottom = clampf(float(br_offset.y + 1 - bounds.position.y) / float(bounds.size.y), 0.0, 1.0)
+	else:
+		# Full grid normalization
+		view_left = clampf(float(tl_offset.x) / float(grid_width), 0.0, 1.0)
+		view_right = clampf(float(br_offset.x + 1) / float(grid_width), 0.0, 1.0)
+		view_top = clampf(float(tl_offset.y) / float(grid_height), 0.0, 1.0)
+		view_bottom = clampf(float(br_offset.y + 1) / float(grid_height), 0.0, 1.0)
+
+	# Map normalized coords to pixel positions within minimap texture display area
+	var texture_display_rect: Rect2 = _minimap_2d.get_texture_display_rect()
+	var rect := Rect2(
+		texture_display_rect.position.x + view_left * texture_display_rect.size.x,
+		texture_display_rect.position.y + view_top * texture_display_rect.size.y,
+		(view_right - view_left) * texture_display_rect.size.x,
+		(view_bottom - view_top) * texture_display_rect.size.y
+	)
+
+	var indicator_color := Color(1.0, 1.0, 1.0, 0.8)
+	_minimap_2d.viewport_indicator.draw_rect(rect, indicator_color, false, 2.0)
+
+## Handle minimap click/drag to pan the main view.
+##
+## Converts the normalized minimap position (0-1) to hex grid coordinates,
+## then calculates the pan_offset needed to center that hex in the viewport.
+##
+## normalized_pos: Position within minimap texture, (0,0)=top-left, (1,1)=bottom-right
+func _on_minimap_2d_pan_requested(normalized_pos: Vector2) -> void:
+	if grid_width == 0 or grid_height == 0:
+		return
+	if last_hex_radius <= 0:
+		return
+
+	# Convert normalized [0,1] position to hex grid coordinates (col, row)
+	# When FoW enabled, denormalize using explored bounds offset
+	var target_col: int
+	var target_row: int
+
+	if _fow_enabled and _explored_bounds_grid.size.x > 0:
+		var bounds := _explored_bounds_grid
+		target_col = int(normalized_pos.x * float(bounds.size.x)) + bounds.position.x
+		target_row = int(normalized_pos.y * float(bounds.size.y)) + bounds.position.y
+		# Clamp to explored bounds
+		target_col = clampi(target_col, bounds.position.x, bounds.position.x + bounds.size.x - 1)
+		target_row = clampi(target_row, bounds.position.y, bounds.position.y + bounds.size.y - 1)
+	else:
+		target_col = int(normalized_pos.x * float(grid_width))
+		target_row = int(normalized_pos.y * float(grid_height))
+		target_col = clampi(target_col, 0, grid_width - 1)
+		target_row = clampi(target_row, 0, grid_height - 1)
+
+	# Get the screen position of target hex at base origin (before any panning)
+	var hex_center_at_base := _hex_center(target_col, target_row, last_hex_radius, last_base_origin)
+
+	# Calculate pan_offset to center this hex in the viewport:
+	# viewport_center = hex_center_at_base + pan_offset
+	# Therefore: pan_offset = viewport_center - hex_center_at_base
+	var viewport_size := _get_adjusted_viewport_size()
+	var viewport_center := viewport_size * 0.5
+	pan_offset = viewport_center - hex_center_at_base
+
+	_clamp_pan_offset()
+	_update_layout_metrics()
+	queue_redraw()
+	_update_2d_minimap()
+
+# --- End 2D Minimap System ---
