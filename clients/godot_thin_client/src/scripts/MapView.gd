@@ -2891,44 +2891,59 @@ func _rebuild_minimap_2d_image() -> void:
 	_minimap_2d.set_texture(tex)
 	_minimap_2d.set_grid_size(grid_width, grid_height)
 
+## Draw the viewport indicator rectangle on the 2D minimap.
+##
+## This shows which portion of the map is currently visible in the main view.
+## The coordinate transformation uses the same axial hex math as _point_to_offset:
+##
+## Screen-to-Hex Coordinate Conversion (pointy-top hexes):
+##   1. Subtract origin and divide by hex radius to get relative position
+##   2. Convert to axial coordinates (q, r) using pointy-top hex formulas:
+##      q = (sqrt(3)/3 * x - 1/3 * y)
+##      r = (2/3 * y)
+##   3. Round to nearest hex using cube coordinate rounding
+##   4. Convert axial (q, r) to offset (col, row) coordinates
+##
+## The resulting hex coordinates are then normalized to [0,1] range and
+## mapped to pixel positions within the minimap texture display area.
 func _draw_minimap_viewport_indicator() -> void:
 	if _minimap_2d == null or grid_width == 0 or grid_height == 0:
 		return
 	if last_hex_radius <= 0:
 		return
 
-	# Get adjusted viewport size (accounting for UI scaling)
 	var viewport_size := _get_adjusted_viewport_size()
 	if viewport_size.x <= 0 or viewport_size.y <= 0:
 		return
 
-	# Convert screen corners to hex coordinates using the same math as _point_to_offset
 	var radius: float = max(last_hex_radius, 0.0001)
 
-	# Top-left corner of viewport -> hex coordinate
+	# Convert top-left screen corner to hex offset coordinates
+	# Step 1: Get position relative to hex origin, normalized by radius
 	var tl_relative: Vector2 = (Vector2.ZERO - last_origin) / radius
+	# Step 2: Convert to fractional axial coordinates (pointy-top hex formula)
 	var tl_qf: float = (SQRT3 / 3.0) * tl_relative.x - (1.0 / 3.0) * tl_relative.y
 	var tl_rf: float = (2.0 / 3.0) * tl_relative.y
+	# Step 3: Round to nearest hex center using cube coordinates
 	var tl_axial := _cube_round(tl_qf, tl_rf)
+	# Step 4: Convert axial to offset (col, row) coordinates
 	var tl_offset := _axial_to_offset(tl_axial.x, tl_axial.y)
 
-	# Bottom-right corner of viewport -> hex coordinate
+	# Convert bottom-right screen corner to hex offset coordinates (same steps)
 	var br_relative: Vector2 = (viewport_size - last_origin) / radius
 	var br_qf: float = (SQRT3 / 3.0) * br_relative.x - (1.0 / 3.0) * br_relative.y
 	var br_rf: float = (2.0 / 3.0) * br_relative.y
 	var br_axial := _cube_round(br_qf, br_rf)
 	var br_offset := _axial_to_offset(br_axial.x, br_axial.y)
 
-	# Normalize to 0-1 range based on grid dimensions
+	# Normalize hex coordinates to [0,1] range for minimap positioning
 	var view_left := clampf(float(tl_offset.x) / float(grid_width), 0.0, 1.0)
 	var view_right := clampf(float(br_offset.x + 1) / float(grid_width), 0.0, 1.0)
 	var view_top := clampf(float(tl_offset.y) / float(grid_height), 0.0, 1.0)
 	var view_bottom := clampf(float(br_offset.y + 1) / float(grid_height), 0.0, 1.0)
 
-	# Get texture display area from shared component
+	# Map normalized coords to pixel positions within minimap texture display area
 	var texture_display_rect: Rect2 = _minimap_2d.get_texture_display_rect()
-
-	# Convert normalized coords to pixel coords within the texture display area
 	var rect := Rect2(
 		texture_display_rect.position.x + view_left * texture_display_rect.size.x,
 		texture_display_rect.position.y + view_top * texture_display_rect.size.y,
@@ -2936,26 +2951,33 @@ func _draw_minimap_viewport_indicator() -> void:
 		(view_bottom - view_top) * texture_display_rect.size.y
 	)
 
-	# Draw viewport rectangle
 	var indicator_color := Color(1.0, 1.0, 1.0, 0.8)
 	_minimap_2d.viewport_indicator.draw_rect(rect, indicator_color, false, 2.0)
 
+## Handle minimap click/drag to pan the main view.
+##
+## Converts the normalized minimap position (0-1) to hex grid coordinates,
+## then calculates the pan_offset needed to center that hex in the viewport.
+##
+## normalized_pos: Position within minimap texture, (0,0)=top-left, (1,1)=bottom-right
 func _on_minimap_2d_pan_requested(normalized_pos: Vector2) -> void:
 	if grid_width == 0 or grid_height == 0:
 		return
 	if last_hex_radius <= 0:
 		return
 
-	# Convert normalized position to hex coordinates (col, row)
+	# Convert normalized [0,1] position to hex grid coordinates (col, row)
 	var target_col := int(normalized_pos.x * float(grid_width))
 	var target_row := int(normalized_pos.y * float(grid_height))
 	target_col = clampi(target_col, 0, grid_width - 1)
 	target_row = clampi(target_row, 0, grid_height - 1)
 
-	# Calculate the hex center position at base origin (no pan)
+	# Get the screen position of target hex at base origin (before any panning)
 	var hex_center_at_base := _hex_center(target_col, target_row, last_hex_radius, last_base_origin)
 
-	# Calculate pan_offset to center this hex in the viewport
+	# Calculate pan_offset to center this hex in the viewport:
+	# viewport_center = hex_center_at_base + pan_offset
+	# Therefore: pan_offset = viewport_center - hex_center_at_base
 	var viewport_size := _get_adjusted_viewport_size()
 	var viewport_center := viewport_size * 0.5
 	pan_offset = viewport_center - hex_center_at_base

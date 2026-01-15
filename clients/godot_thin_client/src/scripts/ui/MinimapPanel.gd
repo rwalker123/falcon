@@ -1,11 +1,35 @@
 extends Node
 class_name MinimapPanel
 ## Shared minimap panel component for both 2D and 3D views.
+##
 ## Handles UI setup, aspect ratio sizing, and click-to-pan interaction.
 ## Configuration loaded from heightfield_config.json, with fallback defaults.
+##
+## UI Hierarchy (created by setup()):
+##   CanvasLayer (layer 102)
+##     └─ anchor (Control, bottom-right positioned)
+##         └─ panel (PanelContainer)
+##             └─ texture_rect (TextureRect, STRETCH_KEEP_ASPECT_CENTERED)
+##                 └─ viewport_indicator (Control, for draw callbacks)
+##
+## Usage:
+##   var minimap := MinimapPanel.new()
+##   add_child(minimap)
+##   minimap.setup(self)
+##   minimap.pan_requested.connect(_on_pan)
+##   minimap.set_texture(my_texture)
+##   minimap.set_grid_size(width, height)
+##
+## The parent view must provide:
+##   - A texture (2D: rendered Image, 3D: SubViewport texture)
+##   - A draw callback for viewport_indicator (connected via connect_indicator_draw)
+##   - A handler for pan_requested signal to convert normalized coords to view coords
 
+## Emitted when user clicks/drags on minimap. Position is normalized (0-1) within texture.
 signal pan_requested(normalized_pos: Vector2)
+## Emitted when drag interaction begins.
 signal drag_started()
+## Emitted when drag interaction ends.
 signal drag_ended()
 
 const CONFIG_PATH := "res://src/data/heightfield_config.json"
@@ -156,7 +180,18 @@ func resize_to_aspect() -> void:
 		anchor.offset_top = -(target_height + _margin)
 
 ## Get the display rect of the texture within the TextureRect.
-## Accounts for STRETCH_KEEP_ASPECT_CENTERED mode.
+##
+## Because TextureRect uses STRETCH_KEEP_ASPECT_CENTERED, the actual texture
+## may not fill the entire control. This method calculates where the texture
+## is actually rendered, accounting for letterboxing/pillarboxing.
+##
+## Returns: Rect2 with position and size of the texture display area in local coords.
+##          Returns empty Rect2 if texture or container is invalid.
+##
+## Example: If container is 200x200 and texture is 400x200 (2:1 aspect):
+##   - Texture fits to width: display_size = (200, 100)
+##   - Centered vertically: display_pos = (0, 50)
+##   - Result: Rect2(0, 50, 200, 100)
 func get_texture_display_rect() -> Rect2:
 	if texture_rect == null or texture_rect.texture == null:
 		return Rect2()
@@ -176,13 +211,13 @@ func get_texture_display_rect() -> Rect2:
 	var display_pos: Vector2
 
 	if tex_aspect > container_aspect:
-		# Texture is wider - fit to width
+		# Texture is wider than container - fit to width, letterbox vertically
 		display_size.x = container_size.x
 		display_size.y = container_size.x / tex_aspect
 		display_pos.x = 0
 		display_pos.y = (container_size.y - display_size.y) * 0.5
 	else:
-		# Texture is taller - fit to height
+		# Texture is taller than container - fit to height, pillarbox horizontally
 		display_size.y = container_size.y
 		display_size.x = container_size.y * tex_aspect
 		display_pos.y = 0
@@ -190,12 +225,21 @@ func get_texture_display_rect() -> Rect2:
 
 	return Rect2(display_pos, display_size)
 
-## Convert a local position within the texture to normalized (0-1) coordinates.
+## Convert a local position within the texture_rect to normalized (0-1) coordinates.
+##
+## Accounts for the actual texture display area (see get_texture_display_rect).
+## Used to convert mouse click/drag positions to map-relative coordinates.
+##
+## local_pos: Position in texture_rect local coordinates (from InputEvent.position)
+## Returns: Vector2 with x,y in range [0,1] representing position within the map.
+##          (0,0) = top-left of map, (1,1) = bottom-right of map.
+##          Returns (0.5, 0.5) if display rect is invalid.
 func local_to_normalized(local_pos: Vector2) -> Vector2:
 	var display_rect := get_texture_display_rect()
 	if display_rect.size.x <= 0 or display_rect.size.y <= 0:
 		return Vector2(0.5, 0.5)
 
+	# Subtract display_rect position to account for letterboxing/pillarboxing offset
 	var rel_pos := local_pos - display_rect.position
 	return Vector2(
 		clampf(rel_pos.x / display_rect.size.x, 0.0, 1.0),
