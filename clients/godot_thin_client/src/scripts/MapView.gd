@@ -249,6 +249,9 @@ const MinimapPanelScript := preload("res://src/scripts/ui/MinimapPanel.gd")
 var _minimap_2d: Node = null  # MinimapPanel instance
 var _minimap_2d_image: Image = null
 var _minimap_2d_last_grid_size: Vector2i = Vector2i.ZERO
+var _minimap_2d_data_version: int = 0  # Incremented when terrain/visibility changes
+var _minimap_2d_last_data_version: int = -1  # Last version used for rebuild
+var _minimap_2d_last_fow_enabled: bool = false  # Track FoW state changes
 
 func _ready() -> void:
 	set_process_unhandled_input(true)
@@ -279,6 +282,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_terrain_grid_width = grid_width
 	_terrain_grid_height = grid_height
 	_update_biome_color_buffer()
+	# Increment minimap data version to trigger rebuild on terrain/visibility changes
+	_minimap_2d_data_version += 1
 	var palette_raw: Variant = overlays.get("terrain_palette", {})
 	terrain_palette = palette_raw if typeof(palette_raw) == TYPE_DICTIONARY else {}
 	terrain_tags_overlay = PackedInt32Array(overlays.get("terrain_tags", []))
@@ -624,6 +629,7 @@ func set_fow_enabled(enabled: bool) -> void:
 		active_overlay_key = ""
 	queue_redraw()
 	_emit_overlay_legend()
+	_update_2d_minimap()  # Rebuild minimap with/without FoW
 	if _is_heightfield_visible():
 		_push_heightfield_preview()
 
@@ -2863,10 +2869,15 @@ func _update_2d_minimap() -> void:
 
 	# Check if we need to regenerate the minimap image
 	var current_size := Vector2i(grid_width, grid_height)
-	var needs_rebuild := _minimap_2d_image == null or _minimap_2d_last_grid_size != current_size
+	var size_changed := _minimap_2d_last_grid_size != current_size
+	var data_changed := _minimap_2d_last_data_version != _minimap_2d_data_version
+	var fow_changed := _minimap_2d_last_fow_enabled != _fow_enabled
+	var needs_rebuild := _minimap_2d_image == null or size_changed or data_changed or fow_changed
 
 	if needs_rebuild:
 		_minimap_2d_last_grid_size = current_size
+		_minimap_2d_last_data_version = _minimap_2d_data_version
+		_minimap_2d_last_fow_enabled = _fow_enabled
 		_rebuild_minimap_2d_image()
 
 	# Update viewport indicator
@@ -2885,12 +2896,30 @@ func _rebuild_minimap_2d_image() -> void:
 	# Cache terrain colors lookup for faster access
 	var colors := _get_terrain_colors()
 	var fallback_color := Color(0.2, 0.2, 0.2, 1.0)
+	var fog_color := Color(0.08, 0.08, 0.12, 1.0)  # Dark color for unexplored
+
+	# Get visibility data for FoW (if enabled)
+	var visibility_data: PackedFloat32Array = PackedFloat32Array()
+	if _fow_enabled:
+		visibility_data = _overlay_array("visibility")
 
 	# Fill byte array with terrain colors in a single pass
 	var byte_index := 0
 	for i in range(pixel_count):
 		var terrain_id := int(terrain_overlay[i]) if i < terrain_overlay.size() else -1
 		var color: Color = colors.get(terrain_id, fallback_color)
+
+		# Apply Fog of War visibility
+		if _fow_enabled and not visibility_data.is_empty():
+			var vis: float = visibility_data[i] if i < visibility_data.size() else 0.0
+			if vis <= 0.0:
+				# Unexplored - show dark fog
+				color = fog_color
+			elif vis <= 0.7:
+				# Explored but not currently visible - dim the terrain color
+				color = color.lerp(fog_color, 0.6)
+			# else: vis > 0.7 - fully visible, use terrain color as-is
+
 		# Convert Color (0-1 floats) to RGB bytes (0-255)
 		data[byte_index] = int(color.r * 255.0)
 		data[byte_index + 1] = int(color.g * 255.0)
