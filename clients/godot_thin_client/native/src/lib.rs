@@ -3519,6 +3519,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let mut dict = VarDictionary::new();
     let _ = dict.insert("entity", cohort.entity() as i64);
     let _ = dict.insert("home", cohort.home() as i64);
+    let _ = dict.insert("current_x", cohort.currentX() as i64);
+    let _ = dict.insert("current_y", cohort.currentY() as i64);
+    let _ = dict.insert("is_traveling", cohort.isTraveling());
     let _ = dict.insert("size", cohort.size() as i64);
     let _ = dict.insert("morale", fixed64_to_f64(cohort.morale()));
     let _ = dict.insert("generation", cohort.generation() as i64);
@@ -3553,7 +3556,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     if let Some(harvest) = cohort.harvestTask() {
         let mut harvest_dict = VarDictionary::new();
         if let Some(kind) = harvest.kind() {
+            // "action" used by Hud.gd, "kind" used by MapView.gd for arrow colors
             let _ = harvest_dict.insert("action", kind);
+            let _ = harvest_dict.insert("kind", kind);
         }
         if let Some(module) = harvest.module() {
             let _ = harvest_dict.insert("module", module);

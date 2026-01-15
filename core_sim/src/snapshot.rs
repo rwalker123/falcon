@@ -1243,12 +1243,17 @@ pub fn capture_snapshot(
         .iter()
         .map(|(entity, cohort, harvest, scout)| {
             let home_pos = tile_positions.get(&cohort.home.to_bits()).copied();
+            let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
+            let is_traveling = harvest.map(|h| h.travel_remaining > 0).unwrap_or(false)
+                || scout.map(|s| s.travel_remaining > 0).unwrap_or(false);
             population_state(
                 entity,
                 cohort,
                 harvest,
                 scout,
                 home_pos,
+                current_pos,
+                is_traveling,
                 stockpile_radius,
                 start_position,
                 &faction_inventory,
@@ -1649,6 +1654,8 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         .collect();
 
     let mut tile_entity_lookup: HashMap<u64, Entity> = HashMap::with_capacity(snapshot.tiles.len());
+    let mut tile_position_lookup: HashMap<(u32, u32), Entity> =
+        HashMap::with_capacity(snapshot.tiles.len());
     let grid_size = world
         .get_resource::<SimulationConfig>()
         .map(|config| config.grid_size)
@@ -1691,6 +1698,7 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         }
 
         tile_entity_lookup.insert(tile_state.entity, entity);
+        tile_position_lookup.insert((tile_state.x, tile_state.y), entity);
     }
 
     // Rebuild logistics links.
@@ -1743,8 +1751,14 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             .migration
             .as_ref()
             .map(pending_migration_from_state);
+        // Look up current_tile from saved position, falling back to home if not found
+        let current_tile = tile_position_lookup
+            .get(&(cohort_state.current_x, cohort_state.current_y))
+            .copied()
+            .unwrap_or(home_entity);
         let mut spawned = world.spawn(PopulationCohort {
             home: home_entity,
+            current_tile,
             size: cohort_state.size,
             morale: Scalar::from_raw(cohort_state.morale),
             generation: cohort_state.generation,
@@ -3443,6 +3457,8 @@ fn population_state(
     harvest: Option<&HarvestAssignment>,
     scout: Option<&ScoutAssignment>,
     home_position: Option<UVec2>,
+    current_position: Option<UVec2>,
+    is_traveling: bool,
     stockpile_radius: u32,
     start_position: Option<UVec2>,
     inventory: &FactionInventory,
@@ -3451,6 +3467,9 @@ fn population_state(
     PopulationCohortState {
         entity: entity.to_bits(),
         home: cohort.home.to_bits(),
+        current_x: current_position.map(|p| p.x).unwrap_or(0),
+        current_y: current_position.map(|p| p.y).unwrap_or(0),
+        is_traveling,
         size: cohort.size,
         morale: cohort.morale.raw(),
         generation: cohort.generation,
@@ -4101,6 +4120,9 @@ mod tests {
             PopulationCohortState {
                 entity: 100,
                 home: 1,
+                current_x: 0,
+                current_y: 0,
+                is_traveling: false,
                 size: 120,
                 morale: Scalar::from_f32(0.3).raw(),
                 generation: 0,
@@ -4114,6 +4136,9 @@ mod tests {
             PopulationCohortState {
                 entity: 101,
                 home: 2,
+                current_x: 0,
+                current_y: 0,
+                is_traveling: false,
                 size: 80,
                 morale: Scalar::from_f32(0.8).raw(),
                 generation: 0,
@@ -4200,6 +4225,9 @@ mod tests {
             PopulationCohortState {
                 entity: 200,
                 home: 1,
+                current_x: 0,
+                current_y: 0,
+                is_traveling: false,
                 size: 150,
                 morale: Scalar::from_f32(0.5).raw(),
                 generation: 0,
@@ -4217,6 +4245,9 @@ mod tests {
             PopulationCohortState {
                 entity: 201,
                 home: 2,
+                current_x: 0,
+                current_y: 0,
+                is_traveling: false,
                 size: 60,
                 morale: Scalar::from_f32(0.7).raw(),
                 generation: 0,

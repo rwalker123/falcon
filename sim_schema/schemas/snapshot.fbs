@@ -421,6 +421,9 @@ table LogisticsLinkState {
 table PopulationCohortState {
   entity:ulong;
   home:ulong;
+  currentX:uint;
+  currentY:uint;
+  isTraveling:bool;
   size:uint;
   morale:long;
   generation:ushort;

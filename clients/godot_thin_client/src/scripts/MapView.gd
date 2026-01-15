@@ -318,6 +318,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	food_sites = []
 	food_site_lookup.clear()
 	harvest_sites.clear()
+	scout_sites.clear()
 	var food_variant: Variant = snapshot.get("food_modules", [])
 	if food_variant is Array:
 		for entry in food_variant:
@@ -692,12 +693,9 @@ func _draw_crisis_annotations(radius: float, origin: Vector2) -> void:
 			draw_circle(tail, tail_radius, tail_color)
 		var label: String = String(entry.get("label", ""))
 		if label != "":
-			var font: Font = ThemeDB.fallback_font
-			if font != null:
-				var anchor: Vector2 = coords[coords.size() - 1]
-				var text_color: Color = Color(0.95, 0.96, 0.98, 0.95)
-				var font_size: int = int(round(clamp(radius * 0.5, 14.0, 26.0)))
-				draw_string(font, anchor + Vector2(radius * 0.3, -radius * 0.22), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size, text_color)
+			var anchor: Vector2 = coords[coords.size() - 1]
+			var font_size: int = int(round(clamp(radius * 0.5, 14.0, 26.0)))
+			_draw_label(anchor + Vector2(radius * 0.3, -radius * 0.22), label, -1.0, font_size, Color(0.95, 0.96, 0.98, 0.95))
 
 func _draw_trade_overlay(radius: float, origin: Vector2) -> void:
 	if not trade_overlay_enabled:
@@ -861,13 +859,41 @@ func _draw_unit(unit: Dictionary, radius: float, origin: Vector2) -> void:
 
 	var label: String = str(unit.get("id", ""))
 	if label != "":
-		var font: Font = ThemeDB.fallback_font
-		if font != null:
-			draw_string(font, center + Vector2(-marker_radius, marker_radius * 0.1), label, HORIZONTAL_ALIGNMENT_LEFT, marker_radius * 2.0, 16, Color(0.05, 0.05, 0.05, 0.85))
+		_draw_label(center + Vector2(-marker_radius, marker_radius * 0.1), label, marker_radius * 2.0, 16, Color(0.05, 0.05, 0.05, 0.85))
+
+	# Draw task arrow if unit has active assignment
+	var dest_x: int = int(unit.get("dest_x", -1))
+	var dest_y: int = int(unit.get("dest_y", -1))
+	if dest_x >= 0 and dest_y >= 0:
+		var dest_center: Vector2 = _hex_center(dest_x, dest_y, radius, origin)
+		var task_kind: String = String(unit.get("travel_task_kind", ""))
+		var arrow_color: Color = _travel_arrow_color(task_kind)
+		# Only draw arrow if unit is not already at destination
+		var pos_x: int = int(position[0])
+		var pos_y: int = int(position[1])
+		if pos_x != dest_x or pos_y != dest_y:
+			draw_line(center, dest_center, arrow_color, 2.5)
+			_draw_arrowhead(center, dest_center, arrow_color)
 
 	if int(unit.get("entity", -1)) == selected_unit_id:
 		var highlight_color := Color(1.0, 1.0, 1.0, 0.9)
 		draw_arc(center, marker_radius + 4.0, 0, TAU, 24, highlight_color, 3.0)
+
+func _travel_arrow_color(task_kind: String) -> Color:
+	match task_kind:
+		"harvest":
+			return Color(0.3, 0.8, 0.3, 0.85)  # Green
+		"hunt":
+			return Color(0.8, 0.3, 0.3, 0.85)  # Red
+		"scout":
+			return Color(0.3, 0.6, 0.9, 0.85)  # Blue
+		_:
+			return Color(0.7, 0.7, 0.7, 0.85)  # Gray
+
+func _draw_label(pos: Vector2, text: String, max_width: float, font_size: int, color: Color) -> void:
+	var font: Font = ThemeDB.fallback_font
+	if font != null:
+		draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, max_width, font_size, color)
 
 func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	var herd_id := String(herd.get("id", ""))
@@ -892,9 +918,7 @@ func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 
 	var label: String = String(herd.get("label", herd.get("id", "Herd")))
 	if label != "":
-		var font: Font = ThemeDB.fallback_font
-		if font != null:
-			draw_string(font, center + Vector2(-marker_radius, marker_radius + 4.0), label, HORIZONTAL_ALIGNMENT_LEFT, marker_radius * 2.0, 14, Color(0.1, 0.1, 0.1, 0.85))
+		_draw_label(center + Vector2(-marker_radius, marker_radius + 4.0), label, marker_radius * 2.0, 14, Color(0.1, 0.1, 0.1, 0.85))
 
 	var next_x := int(herd.get("next_x", -1))
 	var next_y := int(herd.get("next_y", -1))
@@ -1007,10 +1031,8 @@ func _draw_harvest_markers(radius: float, origin: Vector2) -> void:
 		stroke_color.a = 0.95
 		draw_arc(center, radius * 0.55, 0, TAU, 32, stroke_color, 3.0)
 		if entries.size() > 1:
-			var font: Font = ThemeDB.fallback_font
-			if font != null:
-				var label := "x%d" % entries.size()
-				draw_string(font, center + Vector2(-radius * 0.25, radius * 0.05), label, HORIZONTAL_ALIGNMENT_LEFT, radius * 0.6, int(radius * 0.4), Color(0, 0, 0, 0.85))
+			var label := "x%d" % entries.size()
+			_draw_label(center + Vector2(-radius * 0.25, radius * 0.05), label, radius * 0.6, int(radius * 0.4), Color(0, 0, 0, 0.85))
 		if not (base_site is Dictionary) and _selected_tile_matches_food(key.x, key.y, module_key):
 			var highlight_color := Color(1.0, 1.0, 1.0, 0.9)
 			draw_arc(center, radius * 0.45, 0, TAU, 32, highlight_color, 2.5)
@@ -1091,10 +1113,21 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 		if not (entry_variant is Dictionary):
 			continue
 		var entry: Dictionary = entry_variant
-		var home_id: int = int(entry.get("home", -1))
-		if home_id < 0 or not tile_lookup.has(home_id):
-			continue
-		var coords: Vector2i = tile_lookup[home_id]
+
+		# Use current position if available, otherwise fall back to home tile lookup
+		var current_x: int = int(entry.get("current_x", -1))
+		var current_y: int = int(entry.get("current_y", -1))
+		var is_traveling: bool = bool(entry.get("is_traveling", false))
+
+		if current_x < 0 or current_y < 0:
+			# Fall back to home tile lookup
+			var home_id: int = int(entry.get("home", -1))
+			if home_id < 0 or not tile_lookup.has(home_id):
+				continue
+			var coords: Vector2i = tile_lookup[home_id]
+			current_x = coords.x
+			current_y = coords.y
+
 		var label: String = String(entry.get("label", ""))
 		if label == "":
 			label = "Band %d" % counter
@@ -1103,18 +1136,30 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			label = "Band %d" % counter
 		label_cache[label] = true
 		var marker := {
-			"entity": int(entry.get("entity", home_id)),
+			"entity": int(entry.get("entity", -1)),
 			"faction": entry.get("faction", PLAYER_FACTION_ID),
-			"pos": [coords.x, coords.y],
+			"pos": [current_x, current_y],
 			"size": int(entry.get("size", 0)),
-			"id": label
+			"id": label,
+			"is_traveling": is_traveling
 		}
+
+		# Add destination info for units with active assignments
 		var harvest_variant: Variant = entry.get("harvest", {})
 		if harvest_variant is Dictionary:
-			marker["harvest"] = (harvest_variant as Dictionary).duplicate(true)
+			var harvest: Dictionary = harvest_variant as Dictionary
+			marker["harvest"] = harvest.duplicate(true)
+			marker["dest_x"] = int(harvest.get("target_x", -1))
+			marker["dest_y"] = int(harvest.get("target_y", -1))
+			marker["travel_task_kind"] = String(harvest.get("kind", "harvest"))
 		var scout_variant: Variant = entry.get("scout", {})
 		if scout_variant is Dictionary:
-			marker["scout"] = (scout_variant as Dictionary).duplicate(true)
+			var scout: Dictionary = scout_variant as Dictionary
+			marker["scout"] = scout.duplicate(true)
+			if not marker.has("dest_x") or int(marker.get("dest_x", -1)) < 0:
+				marker["dest_x"] = int(scout.get("target_x", -1))
+				marker["dest_y"] = int(scout.get("target_y", -1))
+				marker["travel_task_kind"] = "scout"
 		var stockpile_variant: Variant = entry.get("accessible_stockpile", {})
 		if stockpile_variant is Dictionary:
 			marker["accessible_stockpile"] = (stockpile_variant as Dictionary).duplicate(true)

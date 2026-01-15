@@ -116,11 +116,11 @@ pub fn calculate_visibility(
     for (cohort, unit) in cohorts.iter() {
         cohort_count += 1;
         let range_def = cfg.sight_range_for(&unit.kind);
-        // Get position from home tile entity
-        if let Ok(home_tile) = tiles.get(cohort.home) {
+        // Get position from current tile (tracks travel position)
+        if let Ok(current_tile) = tiles.get(cohort.current_tile) {
             sources.push((
                 cohort.faction,
-                home_tile.position,
+                current_tile.position,
                 range_def.base_range,
                 range_def.elevation_bonus_factor,
             ));
