@@ -2876,15 +2876,29 @@ func _rebuild_minimap_2d_image() -> void:
 	if grid_width == 0 or grid_height == 0:
 		return
 
-	# Create image at 1:1 pixel per hex
-	_minimap_2d_image = Image.create(grid_width, grid_height, false, Image.FORMAT_RGB8)
+	# Pre-allocate byte array for RGB8 image data (3 bytes per pixel)
+	# This is O(n) instead of O(n²) set_pixel() calls
+	var pixel_count := grid_width * grid_height
+	var data := PackedByteArray()
+	data.resize(pixel_count * 3)
 
-	# Fill with terrain colors
-	for y in range(grid_height):
-		for x in range(grid_width):
-			var terrain_id := _terrain_id_at(x, y)
-			var color := _terrain_color_for_id(terrain_id)
-			_minimap_2d_image.set_pixel(x, y, color)
+	# Cache terrain colors lookup for faster access
+	var colors := _get_terrain_colors()
+	var fallback_color := Color(0.2, 0.2, 0.2, 1.0)
+
+	# Fill byte array with terrain colors in a single pass
+	var byte_index := 0
+	for i in range(pixel_count):
+		var terrain_id := int(terrain_overlay[i]) if i < terrain_overlay.size() else -1
+		var color: Color = colors.get(terrain_id, fallback_color)
+		# Convert Color (0-1 floats) to RGB bytes (0-255)
+		data[byte_index] = int(color.r * 255.0)
+		data[byte_index + 1] = int(color.g * 255.0)
+		data[byte_index + 2] = int(color.b * 255.0)
+		byte_index += 3
+
+	# Create image from byte array
+	_minimap_2d_image = Image.create_from_data(grid_width, grid_height, false, Image.FORMAT_RGB8, data)
 
 	# Create texture from image and update panel
 	var tex := ImageTexture.create_from_image(_minimap_2d_image)
