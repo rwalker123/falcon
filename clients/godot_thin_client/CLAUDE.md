@@ -225,12 +225,13 @@ data-driven — `set_relevant(panel, false)` (or `panel.visible = false`) remove
 panel from layout flow and the stack reflows with no gap. Hud builds `left_dock`
 and `right_dock` in `_ready()`.
 
-**Scroll behaviour:** on construction the dock configures its enclosing
-`ScrollContainer` — horizontal scrolling **disabled** (plus the stack's
-horizontal minimum zeroed, so it always fills the dock width and content wraps to
-fit rather than spilling under a sideways scrollbar) and vertical scrolling set
-to **AUTO** (the scrollbar appears only when the stack actually overflows, not
-permanently). Both permanent scrollbars read as unpolished for a game HUD.
+**Scroll behaviour:** on construction the dock disables **horizontal** scrolling
+on its enclosing `ScrollContainer` and zeroes the stack's horizontal minimum, so
+the stack always fills the dock width and content wraps to fit rather than
+spilling under a sideways scrollbar (which reads as unpolished for a game HUD).
+**Vertical** scroll mode is *not* set by PanelDock — it is configured per dock in
+the scene (`HudLayer.tscn`); both docks use `AUTO`, so a scrollbar appears only
+when the stack actually overflows.
 
 **Migration status:** `SelectionPanel`, `CommandFeedPanel`, and
 `TerrainLegendPanel` are now `PanelCard`s (the last two dropped the bespoke

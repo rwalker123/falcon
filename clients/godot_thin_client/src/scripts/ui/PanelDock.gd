@@ -35,7 +35,7 @@ func _configure_scroll() -> void:
 
 ## Register (or re-prioritise) a panel in this dock, then reorder the stack.
 func add(panel: Control, priority: int) -> void:
-	if panel == null or _container == null:
+	if not is_instance_valid(panel) or not is_instance_valid(_container):
 		return
 	for entry in _entries:
 		if entry.get("panel") == panel:
@@ -63,7 +63,7 @@ func _reorder() -> void:
 	_entries.sort_custom(_sort_by_priority)
 	for idx in range(_entries.size()):
 		var panel: Control = _entries[idx].get("panel")
-		if panel == null:
+		if not is_instance_valid(panel):
 			continue
 		if panel.get_parent() != _container:
 			if panel.get_parent() != null:
