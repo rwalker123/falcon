@@ -32,6 +32,16 @@ const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
 const GRID_LINE_COLOR := Color(0.1, 0.12, 0.18, 0.45)
 const SQRT3 := 1.7320508075688772
 const SIN_60 := 0.8660254037844386
+# Fog-of-War visibility discriminators on the 0.0/0.5/1.0 visibility encoding
+# (Active ≈ 1.0, Discovered ≈ 0.5, Unexplored ≈ 0.0).
+const FOW_VISIBLE_THRESHOLD := 0.7  # Above this a tile is Active (full color)
+const FOW_EXPLORED_THRESHOLD := 0.3  # Above this a tile is at least Discovered
+# Fallback FoW appearance; overridden by the "fog_of_war" section of
+# heightfield_config.json (see _load_fow_config).
+const DEFAULT_FOW_MIST_COLOR := Color(0.45, 0.48, 0.55, 1.0)
+const DEFAULT_FOW_MIST_BLEND := 0.35
+const DEFAULT_FOW_FOG_FILL_COLOR := Color(0.08, 0.08, 0.12, 1.0)
+const HEIGHTFIELD_CONFIG_PATH := "res://src/data/heightfield_config.json"
 const MIN_ZOOM_FACTOR := 1.0
 const MAX_ZOOM_FACTOR := 4.0
 const MOUSE_ZOOM_STEP := 0.2
@@ -168,6 +178,7 @@ const HeightfieldPreviewScene := preload("res://src/ui/HeightfieldPreview.tscn")
 
 var grid_width: int = 0
 var grid_height: int = 0
+var _wrap_horizontal: bool = false
 var overlay_channels: Dictionary = {}
 var overlay_raw_channels: Dictionary = {}
 var overlay_channel_labels: Dictionary = {}
@@ -206,6 +217,7 @@ var _terrain_grid_height: int = 0
 var _cached_terrain_ids: PackedInt32Array = PackedInt32Array()
 var _edge_mask_textures: Array[ImageTexture] = []  # 6 edge masks for overlay blending
 var _edge_overlay_cache: Dictionary = {}  # (terrain_id, edge_idx) -> ImageTexture
+var _hex_alpha_mask: PackedByteArray = PackedByteArray()  # Pre-computed hex mask for texture rendering
 var _terrain_priority: Dictionary = {}  # terrain_id -> priority (higher wins)
 var culture_layer_grid: PackedInt32Array = PackedInt32Array()
 var highlighted_culture_layer_ids: PackedInt32Array = PackedInt32Array()
@@ -220,6 +232,14 @@ var last_map_size: Vector2 = Vector2.ZERO
 var last_base_origin: Vector2 = Vector2.ZERO
 var base_hex_radius: float = 1.0
 var zoom_factor: float = 1.0
+# Cached hex point offsets (pre-computed trig values for hex corners)
+var _cached_hex_offsets: PackedVector2Array = PackedVector2Array()
+var _cached_hex_radius: float = -1.0
+# Visible column/row range from last render (for minimap indicator)
+var _last_visible_col_start: float = 0.0
+var _last_visible_col_end: float = 0.0
+var _last_visible_row_start: float = 0.0
+var _last_visible_row_end: float = 0.0
 var pan_offset: Vector2 = Vector2.ZERO
 var base_bounds: Rect2 = Rect2(Vector2.ZERO, Vector2.ONE)
 var bounds_dirty: bool = true
@@ -244,13 +264,158 @@ var _heightfield_boot_shown: bool = true  # Default to 2D view; user can press R
 var _hovered_tile: Vector2i = Vector2i(-1, -1)
 var _fow_enabled: bool = false
 
+# FoW appearance, loaded from heightfield_config.json "fog_of_war" (see _load_fow_config).
+var _fow_mist_color: Color = DEFAULT_FOW_MIST_COLOR
+var _fow_mist_blend: float = DEFAULT_FOW_MIST_BLEND
+var _fow_fog_fill_color: Color = DEFAULT_FOW_FOG_FILL_COLOR
+
+# 2D Minimap (uses shared MinimapPanel component)
+const MinimapPanelScript := preload("res://src/scripts/ui/MinimapPanel.gd")
+var _minimap_2d: Node = null  # MinimapPanel instance
+var _minimap_2d_image: Image = null
+var _minimap_2d_last_grid_size: Vector2i = Vector2i.ZERO
+var _minimap_2d_data_version: int = 0  # Incremented when terrain/visibility changes
+var _minimap_2d_last_data_version: int = -1  # Last version used for rebuild
+var _minimap_2d_last_fow_enabled: bool = false  # Track FoW state changes
+var _hud_layer: Node = null  # HudLayer reference, set via set_hud_reference() for embedded minimap
+var _explored_bounds_grid: Rect2i = Rect2i(0, 0, 0, 0)  # Grid coords of explored area
+var _explored_bounds_world: Rect2 = Rect2()  # World coords of explored area at unit radius (scaled in _clamp_pan_offset)
+
+# Profiling for performance measurement
+var _draw_frame_times: Array[float] = []
+var _profiling_enabled: bool = false  # Opt-in draw-time profiling; enable manually when profiling
+
+# Cached map rendering (Single-buffer with simple invalidation)
+var _map_cache_enabled: bool = true
+const MAP_CACHE_BUFFER_MARGIN := 0.5  # 50% buffer on each side
+
+# Single cache (simpler than dual-buffer, avoids sync issues)
+var _cache_viewport: SubViewport = null
+var _cache_renderer: Node2D = null  # CachedMapRenderer instance
+var _cache_texture: ViewportTexture = null
+var _cache_pan_offset: Vector2 = Vector2.ZERO  # Pan offset when cache was rendered
+var _cache_valid: bool = false
+var _cache_display_offset: Vector2 = Vector2.ZERO
+var _cache_rendering: bool = false  # Is cache currently rendering?
+
 func _ready() -> void:
 	set_process_unhandled_input(true)
 	set_process(true)
 	# Use nearest-neighbor filtering to prevent seams from bilinear interpolation
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_load_fow_config()
 	_ensure_input_actions()
 	_init_terrain_rendering()
+	_setup_map_cache()
+	# Note: _setup_2d_minimap() is now called lazily from _update_2d_minimap()
+	# This allows Main.gd to set_hud_reference() before the minimap is created
+
+
+## Load FoW appearance tunables from heightfield_config.json ("fog_of_war" section).
+## Falls back to the DEFAULT_FOW_* constants when the file or individual keys are missing.
+func _load_fow_config() -> void:
+	if not FileAccess.file_exists(HEIGHTFIELD_CONFIG_PATH):
+		return
+	var file := FileAccess.open(HEIGHTFIELD_CONFIG_PATH, FileAccess.READ)
+	if file == null:
+		push_warning("[MapView] Failed to open config: " + HEIGHTFIELD_CONFIG_PATH)
+		return
+	var text := file.get_as_text()
+	file.close()
+	var json = JSON.parse_string(text)
+	if json == null:
+		push_warning("[MapView] Failed to parse JSON config: " + HEIGHTFIELD_CONFIG_PATH)
+		return
+	if not (json is Dictionary and json.has("fog_of_war")):
+		return
+	var cfg: Dictionary = json["fog_of_war"]
+	_fow_mist_color = _color_from_config(cfg.get("mist_color"), DEFAULT_FOW_MIST_COLOR)
+	_fow_mist_blend = float(cfg.get("mist_blend", DEFAULT_FOW_MIST_BLEND))
+	_fow_fog_fill_color = _color_from_config(cfg.get("fog_fill_color"), DEFAULT_FOW_FOG_FILL_COLOR)
+
+## Parse an [r, g, b] (or [r, g, b, a]) config array into a Color, or return the fallback.
+func _color_from_config(value, fallback: Color) -> Color:
+	if value is Array and value.size() >= 3:
+		var alpha := float(value[3]) if value.size() >= 4 else 1.0
+		return Color(float(value[0]), float(value[1]), float(value[2]), alpha)
+	return fallback
+
+
+func _setup_map_cache() -> void:
+	## Initialize the SubViewport-based map caching system for fast panning
+	if not _map_cache_enabled:
+		return
+
+	# Create SubViewport for cached rendering
+	_cache_viewport = SubViewport.new()
+	_cache_viewport.name = "MapCacheViewport"
+	_cache_viewport.transparent_bg = false
+	_cache_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	_cache_viewport.size = Vector2i(1920, 1080)  # Will be resized on first render
+	add_child(_cache_viewport)
+
+	# Create the renderer inside the SubViewport
+	var CachedMapRendererScript := preload("res://src/scripts/CachedMapRenderer.gd")
+	_cache_renderer = CachedMapRendererScript.new()
+	_cache_renderer.name = "CachedMapRenderer"
+	_cache_renderer.setup(self)
+	_cache_viewport.add_child(_cache_renderer)
+
+	# Connect render completion signal
+	_cache_renderer.cache_rendered.connect(_on_cache_rendered)
+
+	# Get the viewport texture
+	_cache_texture = _cache_viewport.get_texture()
+
+	print("[MapView] Map cache system initialized")
+
+
+func _invalidate_map_cache() -> void:
+	## Mark the map cache as invalid, forcing a re-render on next draw
+	_cache_valid = false
+
+
+func _render_map_cache() -> void:
+	## Render the map to the cache SubViewport
+	if _cache_viewport == null or _cache_renderer == null:
+		return
+
+	# Calculate buffer size
+	var viewport_size := get_viewport_rect().size
+	var buffer_size := viewport_size * (1.0 + MAP_CACHE_BUFFER_MARGIN * 2.0)
+	_cache_viewport.size = Vector2i(int(buffer_size.x), int(buffer_size.y))
+
+	# Store the pan offset at render time
+	_cache_pan_offset = pan_offset
+
+	# Trigger render of the SubViewport
+	_cache_renderer.queue_redraw()
+	_cache_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	_cache_rendering = true
+
+	# Calculate display offset (the buffer margin)
+	_cache_display_offset = viewport_size * MAP_CACHE_BUFFER_MARGIN
+
+	# Mark as valid (texture will be ready next frame)
+	_cache_valid = true
+
+
+func _is_pan_within_cache_buffer() -> bool:
+	## Check if current pan is still within the cached buffer bounds
+	if not _cache_valid or _cache_viewport == null:
+		return false
+
+	var pan_delta := pan_offset - _cache_pan_offset
+	var viewport_size := get_viewport_rect().size
+	var max_offset := viewport_size * MAP_CACHE_BUFFER_MARGIN
+
+	# Check if pan is within buffer bounds
+	return absf(pan_delta.x) <= max_offset.x and absf(pan_delta.y) <= max_offset.y
+
+
+func _on_cache_rendered() -> void:
+	## Called when cache finishes rendering (signal from CachedMapRenderer)
+	_cache_rendering = false
 
 func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	print("[MapView] display_snapshot called. Keys: ", snapshot.keys())
@@ -264,6 +429,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	var dimensions_changed: bool = previous_width != new_width or previous_height != new_height
 	grid_width = new_width
 	grid_height = new_height
+	_wrap_horizontal = bool(grid.get("wrap_horizontal", false))
 
 	var overlays: Dictionary = snapshot.get("overlays", {})
 	_ingest_overlay_channels(overlays)
@@ -272,6 +438,10 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_terrain_grid_width = grid_width
 	_terrain_grid_height = grid_height
 	_update_biome_color_buffer()
+	# Increment minimap data version to trigger rebuild on terrain/visibility changes
+	_minimap_2d_data_version += 1
+	# Invalidate map cache when terrain data changes
+	_invalidate_map_cache()
 	var palette_raw: Variant = overlays.get("terrain_palette", {})
 	terrain_palette = palette_raw if typeof(palette_raw) == TYPE_DICTIONARY else {}
 	terrain_tags_overlay = PackedInt32Array(overlays.get("terrain_tags", []))
@@ -403,6 +573,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_clamp_pan_offset()
 	queue_redraw()
 	_emit_overlay_legend()
+	_update_2d_minimap()
 
 	if _is_heightfield_visible():
 		_push_heightfield_preview()
@@ -482,58 +653,60 @@ func _ingest_overlay_channels(overlays: Variant) -> void:
 	else:
 		active_overlay_key = ""
 func _draw() -> void:
+	var _profile_start := Time.get_ticks_usec() if _profiling_enabled else 0
+
 	if grid_width == 0 or grid_height == 0:
 		return
 
 	_update_layout_metrics()
 	_clamp_pan_offset()
+	# Recalculate last_origin after clamp (pan_offset may have wrapped)
+	last_origin = last_base_origin + pan_offset
 
 	var radius: float = last_hex_radius
 	var origin: Vector2 = last_origin
+	var viewport_size := _get_adjusted_viewport_size()
 
-	# Draw background to hide any sub-pixel gaps between hexes
-	var map_bounds := _compute_bounds(radius)
-	map_bounds.position += origin
-	draw_rect(map_bounds, Color(0.3, 0.35, 0.25, 1.0))  # Neutral earthy color
+	# Pre-compute hex point offsets for this radius (eliminates per-hex trig)
+	_update_hex_offset_cache(radius)
 
-	# Determine if using textured rendering (only in base overlay mode, disabled when FoW is active)
-	var mgr := TerrainTextureManager
-	var use_textures := mgr.use_terrain_textures and mgr.terrain_textures != null and active_overlay_key == "" and not _fow_enabled
+	# Update minimap indicator values
+	var hex_col_width := SQRT3 * radius
+	_last_visible_col_start = (0.0 - origin.x) / hex_col_width
+	_last_visible_col_end = (viewport_size.x - origin.x) / hex_col_width
+	var hex_row_height := 1.5 * radius
+	_last_visible_row_start = (0.0 - origin.y) / hex_row_height
+	_last_visible_row_end = (viewport_size.y - origin.y) / hex_row_height
 
-	# Pass 1: Draw all hex textures/colors
-	for y in range(grid_height):
-		for x in range(grid_width):
-			var center: Vector2 = _hex_center(x, y, radius, origin)
-			var is_hovered := _hovered_tile == Vector2i(x, y)
+	# === CACHED TERRAIN RENDERING ===
+	var use_cache := _map_cache_enabled and _cache_viewport != null and _cache_texture != null
+	var cache_needs_render := false
 
-			if use_textures and not is_hovered:
-				# Draw textured hex
-				var terrain_id := _terrain_id_at(x, y)
-				_draw_hex_textured(center, terrain_id, radius)
-			else:
-				# Draw solid color hex
-				var final_color: Color = _tile_color(x, y)
-				if is_hovered:
-					final_color = final_color.darkened(0.18)
-				var polygon_points := _hex_points(center, radius)
-				draw_polygon(polygon_points, PackedColorArray([final_color, final_color, final_color, final_color, final_color, final_color]))
+	if use_cache:
+		# Check if we need to re-render the cache
+		if not _cache_valid or not _is_pan_within_cache_buffer():
+			cache_needs_render = true
+			_render_map_cache()
 
-	# Pass 2: Edge blending (between hex textures and grid lines)
-	if use_textures and mgr.use_edge_blending:
-		_draw_terrain_edge_blending(radius, origin)
+	# If cache is valid and doesn't need re-render, use it
+	# Otherwise fall back to direct rendering (SubViewport won't be ready until next frame)
+	var using_cached_render := use_cache and _cache_valid and not cache_needs_render
+	var pan_delta := pan_offset - _cache_pan_offset
 
-	# Pass 3: Grid lines (on top of edge blending)
-	if _show_grid_lines:
-		for y in range(grid_height):
-			for x in range(grid_width):
-				var center: Vector2 = _hex_center(x, y, radius, origin)
-				draw_polyline(_hex_points(center, radius, true), GRID_LINE_COLOR, 2.0, true)
+	if using_cached_render:
+		# Draw the cached texture with offset
+		var draw_pos := -_cache_display_offset + pan_delta
+		draw_texture_rect(_cache_texture, Rect2(draw_pos, Vector2(_cache_viewport.size)), false)
+	else:
+		# Fallback: Direct rendering (used when cache is re-rendering or disabled)
+		_draw_terrain_direct(radius, origin, viewport_size)
 
+	# === OVERLAYS (always drawn fresh) ===
+	# These need to respond to hover, selection, and other dynamic state
 	_draw_trade_overlay(radius, origin)
 	_draw_hydrology(radius, origin)
 	_draw_crisis_annotations(radius, origin)
 	_draw_start_marker(radius, origin)
-	_draw_hydrology(radius, origin)
 
 	for unit in units:
 		_draw_unit(unit, radius, origin)
@@ -550,7 +723,88 @@ func _draw() -> void:
 	for order in routes:
 		_draw_route(order, radius, origin)
 
-	_draw_start_marker(radius, origin)
+	# Profiling output
+	if _profiling_enabled:
+		var elapsed: float = (Time.get_ticks_usec() - _profile_start) / 1000.0
+		_draw_frame_times.append(elapsed)
+		if _draw_frame_times.size() >= 100:
+			var total: float = 0.0
+			for t: float in _draw_frame_times:
+				total += t
+			var avg: float = total / _draw_frame_times.size()
+			print("[MapView] Avg draw time (100 frames): %.2f ms" % avg)
+			_draw_frame_times.clear()
+
+func _draw_terrain_direct(radius: float, origin: Vector2, viewport_size: Vector2) -> void:
+	## Direct terrain rendering (fallback when cache is disabled or unavailable)
+	# Draw background
+	draw_rect(Rect2(Vector2.ZERO, viewport_size), Color(0.3, 0.35, 0.25, 1.0))
+
+	# Determine if using textured rendering
+	var mgr = get_node_or_null("/root/TerrainTextureManager")
+	var use_textures: bool = mgr != null and mgr.use_terrain_textures and mgr.terrain_textures != null and active_overlay_key == "" and not _fow_enabled
+
+	# Calculate visible range
+	var hex_col_width := SQRT3 * radius
+	var hex_row_height := 1.5 * radius
+
+	var col_start: int = int((-origin.x) / hex_col_width) - 2
+	var col_end: int = int((viewport_size.x - origin.x) / hex_col_width) + 2
+	var row_start: int = maxi(0, int((-origin.y) / hex_row_height) - 2)
+	var row_end: int = mini(grid_height, int((viewport_size.y - origin.y) / hex_row_height) + 2)
+
+	# Handle horizontal wrapping
+	if not _wrap_horizontal:
+		col_start = maxi(0, col_start)
+		col_end = mini(grid_width, col_end)
+
+	# Draw hexes
+	for y in range(row_start, row_end):
+		for logical_x in range(col_start, col_end):
+			var data_x: int = posmod(logical_x, grid_width) if _wrap_horizontal else logical_x
+			if not _wrap_horizontal and (logical_x < 0 or logical_x >= grid_width):
+				continue
+
+			var center: Vector2 = _hex_center(logical_x, y, radius, origin)
+
+			if use_textures:
+				var terrain_id: int = _terrain_id_at(data_x, y)
+				_draw_hex_textured_direct(center, terrain_id, radius)
+			else:
+				var final_color: Color = _tile_color(data_x, y)
+				var polygon_points := _hex_points(center, radius)
+				draw_polygon(polygon_points, PackedColorArray([final_color, final_color, final_color, final_color, final_color, final_color]))
+
+	# Draw grid lines if enabled and radius is large enough
+	if _show_grid_lines and radius >= 12.0:
+		for y in range(row_start, row_end):
+			for logical_x in range(col_start, col_end):
+				if not _wrap_horizontal and (logical_x < 0 or logical_x >= grid_width):
+					continue
+				var center: Vector2 = _hex_center(logical_x, y, radius, origin)
+				draw_polyline(_hex_points(center, radius, true), GRID_LINE_COLOR, 2.0, true)
+
+
+func _draw_hex_textured_direct(center: Vector2, terrain_id: int, radius: float) -> void:
+	## Draw a single hex with texture (direct rendering version)
+	var tex: ImageTexture = _hex_texture_cache.get(terrain_id)
+	if tex == null:
+		var color: Color = _terrain_color_for_id(terrain_id)
+		var polygon_points := _hex_points(center, radius)
+		draw_polygon(polygon_points, PackedColorArray([color, color, color, color, color, color]))
+		return
+
+	var polygon_points := _hex_points(center, radius)
+	var uvs := PackedVector2Array()
+	for point in polygon_points:
+		var uv := Vector2(
+			(point.x - center.x) / radius * 0.5 + 0.5,
+			(point.y - center.y) / radius * 0.5 + 0.5
+		)
+		uvs.append(uv)
+	var colors := PackedColorArray([Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE])
+	draw_polygon(polygon_points, colors, uvs, tex)
+
 
 func update_trade_overlay(trade_links: Array, enabled: bool = trade_overlay_enabled) -> void:
 	trade_links_overlay = []
@@ -587,11 +841,13 @@ func set_overlay_channel(key: String) -> void:
 		if active_overlay_key == key:
 			return
 		active_overlay_key = key
+		_invalidate_map_cache()  # Overlay changes require fresh cache render
 		queue_redraw()
 		_emit_overlay_legend()
 		return
 	if key == "":
 		active_overlay_key = ""
+		_invalidate_map_cache()  # Overlay changes require fresh cache render
 		queue_redraw()
 		_emit_overlay_legend()
 		if _is_heightfield_visible():
@@ -602,6 +858,7 @@ func set_overlay_channel(key: String) -> void:
 	if active_overlay_key == key:
 		return
 	active_overlay_key = key
+	_invalidate_map_cache()  # Overlay changes require fresh cache render
 	queue_redraw()
 	_emit_overlay_legend()
 	if _is_heightfield_visible():
@@ -614,8 +871,11 @@ func set_fow_enabled(enabled: bool) -> void:
 	# When enabling FoW, ensure we're in terrain view (no overlay)
 	if _fow_enabled and active_overlay_key != "":
 		active_overlay_key = ""
+	_invalidate_map_cache()  # FoW changes require fresh cache render
 	queue_redraw()
 	_emit_overlay_legend()
+	_update_2d_minimap()  # Rebuild minimap with/without FoW (also sets _explored_bounds_world)
+	_clamp_pan_offset()  # Clamp pan to explored bounds when FoW enabled
 	if _is_heightfield_visible():
 		_push_heightfield_preview()
 
@@ -628,7 +888,60 @@ func _is_tile_visible(x: int, y: int) -> bool:
 	if not _fow_enabled:
 		return true
 	var vis: float = _value_at_overlay("visibility", x, y)
-	return vis > 0.7  # Active tiles only
+	return vis > FOW_VISIBLE_THRESHOLD  # Active tiles only
+
+## Calculate the bounding box of explored tiles (visibility > 0).
+## Returns Rect2i(min_col, min_row, width, height) in grid coordinates.
+## Returns empty rect (size 0,0) if no tiles have been explored.
+func _calculate_explored_bounds() -> Rect2i:
+	var visibility_data := _overlay_array("visibility")
+	if visibility_data.is_empty():
+		return Rect2i(0, 0, 0, 0)
+
+	var min_col := grid_width
+	var max_col := -1
+	var min_row := grid_height
+	var max_row := -1
+
+	for i in range(visibility_data.size()):
+		if visibility_data[i] > 0.0:  # Any explored tile (not just active)
+			var row := i / grid_width
+			var col := i % grid_width
+			min_col = mini(min_col, col)
+			max_col = maxi(max_col, col)
+			min_row = mini(min_row, row)
+			max_row = maxi(max_row, row)
+
+	# Return empty rect if no explored tiles found
+	if max_col < 0:
+		return Rect2i(0, 0, 0, 0)
+
+	return Rect2i(min_col, min_row, max_col - min_col + 1, max_row - min_row + 1)
+
+## Convert grid bounds to world-space bounds for pan clamping.
+## Similar to _compute_bounds() but only for the explored region.
+func _compute_explored_bounds_world(grid_bounds: Rect2i, radius: float) -> Rect2:
+	if grid_bounds.size.x <= 0 or grid_bounds.size.y <= 0:
+		return Rect2()
+
+	var min_x := INF
+	var max_x := -INF
+	var min_y := INF
+	var max_y := -INF
+
+	for col in range(grid_bounds.position.x, grid_bounds.position.x + grid_bounds.size.x):
+		for row in range(grid_bounds.position.y, grid_bounds.position.y + grid_bounds.size.y):
+			var axial := _offset_to_axial(col, row)
+			var center := _axial_center(axial.x, axial.y, radius)
+			min_x = min(min_x, center.x - radius)
+			max_x = max(max_x, center.x + radius)
+			min_y = min(min_y, center.y - radius)
+			max_y = max(max_y, center.y + radius)
+
+	if min_x == INF:
+		return Rect2()
+
+	return Rect2(Vector2(min_x, min_y), Vector2(max_x - min_x, max_y - min_y))
 
 func _draw_crisis_annotations(radius: float, origin: Vector2) -> void:
 	if active_overlay_key != "crisis":
@@ -743,19 +1056,20 @@ func _draw_trade_overlay(radius: float, origin: Vector2) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if grid_width == 0 or grid_height == 0:
 		return
-	if event.is_action_pressed("map_toggle_relief"):
-		_toggle_heightfield_preview()
-		_mark_input_handled()
-		return
-	if event.is_action_pressed("map_switch_strategic_view"):
-		if _is_heightfield_visible():
-			var preview := _ensure_heightfield_preview()
-			if preview.has_method("hide_preview"):
-				preview.call("hide_preview")
-			else:
-				preview.hide()
-			_mark_input_handled()
-		return
+	# DISABLED: 3D view while debugging FoW minimap
+	#if event.is_action_pressed("map_toggle_relief"):
+	#	_toggle_heightfield_preview()
+	#	_mark_input_handled()
+	#	return
+	#if event.is_action_pressed("map_switch_strategic_view"):
+	#	if _is_heightfield_visible():
+	#		var preview := _ensure_heightfield_preview()
+	#		if preview.has_method("hide_preview"):
+	#			preview.call("hide_preview")
+	#		else:
+	#			preview.hide()
+	#		_mark_input_handled()
+	#	return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_C:
 		_fit_map_to_view()
 		_mark_input_handled()
@@ -817,7 +1131,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				elif _fow_enabled and not _is_tile_visible(offset.x, offset.y):
 					# Unexplored tiles: no tooltip when FoW is enabled
 					var vis: float = _value_at_overlay("visibility", offset.x, offset.y)
-					if vis <= 0.3:
+					if vis <= FOW_EXPLORED_THRESHOLD:
 						emit_signal("tile_hovered", {})
 					else:
 						# Discovered tiles: show basic terrain info only
@@ -851,7 +1165,7 @@ func _draw_unit(unit: Dictionary, radius: float, origin: Vector2) -> void:
 	var position: Array = Array(unit.get("pos", [0, 0]))
 	if position.size() != 2:
 		return
-	var center: Vector2 = _hex_center(int(position[0]), int(position[1]), radius, origin)
+	var center: Vector2 = _hex_center_wrapped(int(position[0]), int(position[1]), radius, origin)
 	var marker_radius: float = radius * 0.45
 	var color: Color = faction_colors.get(unit.get("faction", ""), Color(0.9, 0.9, 0.9, 1.0))
 	draw_circle(center, marker_radius, color)
@@ -865,15 +1179,17 @@ func _draw_unit(unit: Dictionary, radius: float, origin: Vector2) -> void:
 	var dest_x: int = int(unit.get("dest_x", -1))
 	var dest_y: int = int(unit.get("dest_y", -1))
 	if dest_x >= 0 and dest_y >= 0:
-		var dest_center: Vector2 = _hex_center(dest_x, dest_y, radius, origin)
+		var dest_center: Vector2 = _hex_center_wrapped(dest_x, dest_y, radius, origin)
 		var task_kind: String = String(unit.get("travel_task_kind", ""))
 		var arrow_color: Color = _travel_arrow_color(task_kind)
-		# Only draw arrow if unit is not already at destination
+		# Only draw arrow if unit is not already at destination and line isn't too long
 		var pos_x: int = int(position[0])
 		var pos_y: int = int(position[1])
+		var line_too_long: bool = abs(center.x - dest_center.x) > last_map_size.x * 0.4
 		if pos_x != dest_x or pos_y != dest_y:
-			draw_line(center, dest_center, arrow_color, 2.5)
-			_draw_arrowhead(center, dest_center, arrow_color)
+			if not line_too_long:
+				draw_line(center, dest_center, arrow_color, 2.5)
+				_draw_arrowhead(center, dest_center, arrow_color)
 
 	if int(unit.get("entity", -1)) == selected_unit_id:
 		var highlight_color := Color(1.0, 1.0, 1.0, 0.9)
@@ -903,7 +1219,7 @@ func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 		return
 	if not _is_tile_visible(x, y):
 		return
-	var center: Vector2 = _hex_center(x, y, radius, origin)
+	var center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
 	_draw_herd_trail(herd_id, radius, origin)
 	var marker_radius: float = radius * 0.35
 	var base_color := Color(0.95, 0.76, 0.35, 0.95)
@@ -923,9 +1239,12 @@ func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	var next_x := int(herd.get("next_x", -1))
 	var next_y := int(herd.get("next_y", -1))
 	if next_x >= 0 and next_y >= 0:
-		var next_center := _hex_center(next_x, next_y, radius, origin)
-		draw_line(center, next_center, Color(0.98, 0.58, 0.18, 0.85), 3.0)
-		_draw_arrowhead(center, next_center, Color(0.98, 0.58, 0.18, 0.85))
+		var next_center := _hex_center_wrapped(next_x, next_y, radius, origin)
+		# Skip line if it would span more than 40% of map (wrap artifact)
+		var line_too_long: bool = abs(center.x - next_center.x) > last_map_size.x * 0.4
+		if not line_too_long:
+			draw_line(center, next_center, Color(0.98, 0.58, 0.18, 0.85), 3.0)
+			_draw_arrowhead(center, next_center, Color(0.98, 0.58, 0.18, 0.85))
 
 	if herd_id == selected_herd_id:
 		draw_arc(center, marker_radius + 3.0, 0, TAU, 24, Color(1.0, 1.0, 1.0, 0.9), 2.5)
@@ -937,7 +1256,9 @@ func _draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 		return
 	if not _is_tile_visible(x, y):
 		return
-	var center: Vector2 = _hex_center(x, y, radius, origin)
+	var center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
+
+	# Debug removed - was too spammy
 	var module_key := String(site.get("module", ""))
 	var kind := String(site.get("kind", ""))
 	var style: Dictionary = FOOD_SITE_STYLES.get(kind, FOOD_SITE_STYLE_DEFAULT)
@@ -1002,7 +1323,7 @@ func _draw_food_highlight(site: Dictionary, radius: float, origin: Vector2) -> v
 	if module_key == "":
 		return
 	if _selected_tile_matches_food(x, y, module_key):
-		var center := _hex_center(x, y, radius, origin)
+		var center := _hex_center_wrapped(x, y, radius, origin)
 		var highlight_color := Color(1.0, 1.0, 1.0, 0.85)
 		draw_arc(center, radius * 0.5, 0, TAU, 32, highlight_color, 2.0)
 
@@ -1016,7 +1337,7 @@ func _draw_harvest_markers(radius: float, origin: Vector2) -> void:
 		var entries: Array = entries_variant
 		if entries.is_empty():
 			continue
-		var center := _hex_center(key.x, key.y, radius, origin)
+		var center := _hex_center_wrapped(key.x, key.y, radius, origin)
 		var module_key := String((entries[0] as Dictionary).get("module", ""))
 		var style: Dictionary = FOOD_SITE_STYLE_DEFAULT
 		var base_site: Variant = food_site_lookup.get(key, null)
@@ -1047,7 +1368,7 @@ func _draw_scout_markers(radius: float, origin: Vector2) -> void:
 		var entries: Array = entries_variant
 		if entries.is_empty():
 			continue
-		var center := _hex_center(key.x, key.y, radius, origin)
+		var center := _hex_center_wrapped(key.x, key.y, radius, origin)
 		var base_color := Color(0.8, 0.92, 1.0, 0.4)
 		draw_circle(center, radius * 0.4, base_color)
 		var stroke_color := Color(0.9, 0.97, 1.0, 0.95)
@@ -1291,7 +1612,7 @@ func _unit_at_point(point: Vector2) -> Dictionary:
 		var position: Array = Array(unit.get("pos", []))
 		if position.size() != 2:
 			continue
-		var center := _hex_center(int(position[0]), int(position[1]), last_hex_radius, last_origin)
+		var center := _hex_center_wrapped(int(position[0]), int(position[1]), last_hex_radius, last_origin)
 		if center.distance_to(point) <= last_hex_radius * 0.55:
 			return unit
 	return {}
@@ -1302,7 +1623,7 @@ func _herd_at_point(point: Vector2) -> Dictionary:
 		var y := int(herd.get("y", -1))
 		if x < 0 or y < 0:
 			continue
-		var center := _hex_center(x, y, last_hex_radius, last_origin)
+		var center := _hex_center_wrapped(x, y, last_hex_radius, last_origin)
 		if center.distance_to(point) <= last_hex_radius * 0.45:
 			return herd
 	return {}
@@ -1486,12 +1807,13 @@ func _tile_color(x: int, y: int) -> Color:
 		# Visibility values: Active ≈ 1.0, Discovered ≈ 0.5, Unexplored ≈ 0.0
 		if _fow_enabled:
 			var vis: float = _value_at_overlay("visibility", x, y)
-			if vis > 0.7:  # Active - full terrain color
+			if vis > FOW_VISIBLE_THRESHOLD:  # Active - full terrain color
 				return base_color
-			elif vis > 0.3:  # Discovered - desaturated terrain
-				return _desaturate_color(base_color, 0.65).darkened(0.25)
-			else:  # Unexplored - black
-				return Color.BLACK
+			elif vis > 0.0:  # Explored but not active - show terrain with foggy overlay
+				# Light mist effect that preserves terrain recognition
+				return base_color.lerp(_fow_mist_color, _fow_mist_blend)
+			else:  # Unexplored - dark fog
+				return _fow_fog_fill_color
 		return base_color
 	if active_overlay_key == "terrain_tags":
 		var mask := _tag_mask_at(x, y)
@@ -1581,25 +1903,27 @@ func _ensure_heightfield_preview() -> Control:
 	return heightfield_preview
 
 func _maybe_auto_show_heightfield() -> void:
-	if _heightfield_boot_shown:
-		return
-	if heightfield_data.is_empty() or grid_width == 0 or grid_height == 0:
-		return
-	var preview := _ensure_heightfield_preview()
-	if preview.has_method("show_preview"):
-		preview.call("show_preview")
-	else:
-		preview.show()
-	_heightfield_boot_shown = true
-	if preview.has_method("move_to_front"):
-		preview.call("move_to_front")
-	if preview.has_method("_resize_to_display"):
-		preview.call_deferred("_resize_to_display")
-	_push_heightfield_preview()
-	if preview.has_method("restore_or_sync_view_state"):
-		preview.call("restore_or_sync_view_state", zoom_factor, pan_offset, last_hex_radius)
-	elif preview.has_method("sync_view_state"):
-		preview.sync_view_state(zoom_factor, pan_offset, last_hex_radius)
+	# DISABLED: 3D view while debugging FoW minimap
+	return
+	#if _heightfield_boot_shown:
+	#	return
+	#if heightfield_data.is_empty() or grid_width == 0 or grid_height == 0:
+	#	return
+	#var preview := _ensure_heightfield_preview()
+	#if preview.has_method("show_preview"):
+	#	preview.call("show_preview")
+	#else:
+	#	preview.show()
+	#_heightfield_boot_shown = true
+	#if preview.has_method("move_to_front"):
+	#	preview.call("move_to_front")
+	#if preview.has_method("_resize_to_display"):
+	#	preview.call_deferred("_resize_to_display")
+	#_push_heightfield_preview()
+	#if preview.has_method("restore_or_sync_view_state"):
+	#	preview.call("restore_or_sync_view_state", zoom_factor, pan_offset, last_hex_radius)
+	#elif preview.has_method("sync_view_state"):
+	#	preview.sync_view_state(zoom_factor, pan_offset, last_hex_radius)
 
 func relay_hud_call(method: String, args: Array = []) -> void:
 	if heightfield_preview != null and is_instance_valid(heightfield_preview):
@@ -1687,6 +2011,7 @@ func _toggle_heightfield_preview() -> void:
 			preview.call("hide_preview")
 		else:
 			preview.hide()
+		_update_2d_minimap()  # Show 2D minimap when switching back to 2D view
 		return
 	if heightfield_data.is_empty():
 		push_warning("Relief view not available yet; wait for the next snapshot.")
@@ -1701,6 +2026,7 @@ func _toggle_heightfield_preview() -> void:
 		preview.call_deferred("_resize_to_display")
 	print("[MapView] _toggle_heightfield_preview: showing window, calling push")
 	_push_heightfield_preview()
+	_update_2d_minimap()  # Hide 2D minimap when switching to 3D view
 	if preview.has_method("restore_or_sync_view_state"):
 		preview.call("restore_or_sync_view_state", zoom_factor, pan_offset, last_hex_radius)
 	elif preview.has_method("sync_view_state"):
@@ -2240,7 +2566,7 @@ func set_highlight_rivers(enabled: bool) -> void:
 func _draw_start_marker(radius: float, origin: Vector2) -> void:
 	if start_marker.x < 0 or start_marker.y < 0:
 		return
-	var center := _hex_center(start_marker.x, start_marker.y, radius, origin)
+	var center := _hex_center_wrapped(start_marker.x, start_marker.y, radius, origin)
 	var size := radius * 0.3
 	var color := Color(1.0, 0.86, 0.2, 0.9)
 	var points := PackedVector2Array([center + Vector2(size, 0), center + Vector2(0, size), center + Vector2(-size, 0), center + Vector2(0, -size)])
@@ -2262,6 +2588,24 @@ func _hex_center(col: int, row: int, radius: float, origin: Vector2) -> Vector2:
 	var axial := _offset_to_axial(col, row)
 	return origin + _axial_center(axial.x, axial.y, radius)
 
+func _hex_center_wrapped(col: int, row: int, radius: float, origin: Vector2) -> Vector2:
+	## Like _hex_center but wraps column to nearest visible position when horizontal wrapping enabled.
+	## Use for individual markers (food sites, units). Do NOT use for connected lines (rivers, routes).
+	var effective_col: int = col
+	if _wrap_horizontal and grid_width > 0:
+		# Find the viewport center in hex column space
+		var viewport_size: Vector2 = _get_adjusted_viewport_size()
+		var center_world_x: float = viewport_size.x * 0.5 - origin.x
+		var col_width: float = SQRT3 * radius
+		var center_col: float = center_world_x / col_width
+
+		# Wrap col to be within grid_width/2 of center_col
+		var offset: int = int(round((center_col - float(col)) / float(grid_width)))
+		effective_col = col + offset * grid_width
+
+	var axial := _offset_to_axial(effective_col, row)
+	return origin + _axial_center(axial.x, axial.y, radius)
+
 func _axial_center(q: int, r: int, radius: float) -> Vector2:
 	var fq := float(q)
 	var fr := float(r)
@@ -2280,6 +2624,17 @@ func _axial_to_offset(q: int, r: int) -> Vector2i:
 	return Vector2i(col, r)
 
 func _hex_points(center: Vector2, radius: float, closed: bool = false) -> PackedVector2Array:
+	# Use cached offsets if available (avoids trig per hex)
+	if radius == _cached_hex_radius and not _cached_hex_offsets.is_empty():
+		var points := PackedVector2Array()
+		points.resize(7 if closed else 6)
+		for i in range(6):
+			points[i] = center + _cached_hex_offsets[i]
+		if closed:
+			points[6] = points[0]
+		return points
+
+	# Fallback to computing (used when radius changes)
 	var points := PackedVector2Array()
 	for i in range(6):
 		var angle := deg_to_rad(60.0 * float(i) + 30.0)
@@ -2287,6 +2642,17 @@ func _hex_points(center: Vector2, radius: float, closed: bool = false) -> Packed
 	if closed:
 		points.append(points[0])
 	return points
+
+
+func _update_hex_offset_cache(radius: float) -> void:
+	## Pre-compute hex corner offsets for the given radius (eliminates per-hex trig)
+	if radius == _cached_hex_radius:
+		return
+	_cached_hex_offsets.resize(6)
+	for i in range(6):
+		var angle := deg_to_rad(60.0 * float(i) + 30.0)
+		_cached_hex_offsets[i] = Vector2(radius * cos(angle), radius * sin(angle))
+	_cached_hex_radius = radius
 
 func _get_adjusted_viewport_size() -> Vector2:
 	var viewport_size: Vector2 = get_viewport_rect().size
@@ -2321,35 +2687,66 @@ func _clamp_pan_offset() -> void:
 		return
 	var viewport_size: Vector2 = _get_adjusted_viewport_size()
 
-	# Calculate pan limits based on keeping map bounds within viewport
-	# pan_offset affects last_origin, and the map bounds in world coords are:
-	#   left edge: last_origin.x + scaled_bounds.position.x
-	#   right edge: last_origin.x + scaled_bounds.position.x + last_map_size.x
-	# We want: left edge >= 0 and right edge <= viewport_size
-	# Simplifies to: pan_offset in range [-(vp-map)/2, (vp-map)/2] relative to centered position
+	# When horizontal wrapping is enabled, X pans infinitely (wraps around)
+	if _wrap_horizontal:
+		# Wrap pan_offset.x to stay within one map width for numerical stability
+		# This doesn't affect rendering but keeps the value reasonable
+		pan_offset.x = fposmod(pan_offset.x + last_map_size.x * 0.5, last_map_size.x) - last_map_size.x * 0.5
 
-	var delta_x: float = viewport_size.x - last_map_size.x
-	var delta_y: float = viewport_size.y - last_map_size.y
+		# Y axis still clamps normally (poles are boundaries)
+		var delta_y: float = viewport_size.y - last_map_size.y
+		if delta_y <= 0.0:
+			var max_pan_y: float = -delta_y / 2.0
+			var min_pan_y: float = delta_y / 2.0
+			pan_offset.y = clamp(pan_offset.y, min_pan_y, max_pan_y)
+		else:
+			pan_offset.y = 0.0
+		return
+
+	# Non-wrapping mode: use FoW bounds if enabled
+	var effective_size: Vector2
+	var bounds_offset: Vector2 = Vector2.ZERO  # Offset of explored region from map center
+
+	if _fow_enabled and _explored_bounds_world.size.x > 0:
+		# _explored_bounds_world is stored at unit radius - scale to current zoom
+		var scaled_explored_size := _explored_bounds_world.size * last_hex_radius
+		var scaled_explored_position := _explored_bounds_world.position * last_hex_radius
+		effective_size = scaled_explored_size
+		# Calculate offset: how much to shift pan center from full map center to explored center
+		# A positive bounds_offset shifts the allowed pan range in that direction
+		# base_bounds is at unit radius - scale to current zoom
+		var full_map_position := base_bounds.position * last_hex_radius
+		var full_map_center := full_map_position + last_map_size * 0.5
+		var explored_center := scaled_explored_position + scaled_explored_size * 0.5
+		# To center on explored region: pan needs to shift hexes so explored_center is at screen center
+		# Since explored is upper-left of full map, we need positive pan to bring it into view
+		bounds_offset = full_map_center - explored_center
+	else:
+		effective_size = last_map_size
+
+	# Calculate pan limits based on keeping viewport within effective bounds
+	var delta_x: float = viewport_size.x - effective_size.x
+	var delta_y: float = viewport_size.y - effective_size.y
 
 	# For X axis:
 	if delta_x <= 0.0:
-		# Map is wider than or equal to viewport - allow panning within bounds
-		var max_pan_x: float = -delta_x / 2.0  # pan right limit (shows left edge)
-		var min_pan_x: float = delta_x / 2.0   # pan left limit (shows right edge)
+		# Effective area is wider than viewport - allow panning within bounds
+		var max_pan_x: float = -delta_x / 2.0 + bounds_offset.x
+		var min_pan_x: float = delta_x / 2.0 + bounds_offset.x
 		pan_offset.x = clamp(pan_offset.x, min_pan_x, max_pan_x)
 	else:
-		# Map is narrower - center it (no horizontal panning)
-		pan_offset.x = 0.0
+		# Effective area is narrower - center on it
+		pan_offset.x = bounds_offset.x
 
 	# For Y axis:
 	if delta_y <= 0.0:
-		# Map is taller than or equal to viewport - allow panning within bounds
-		var max_pan_y: float = -delta_y / 2.0  # pan down limit (shows top edge)
-		var min_pan_y: float = delta_y / 2.0   # pan up limit (shows bottom edge)
+		# Effective area is taller than viewport - allow panning within bounds
+		var max_pan_y: float = -delta_y / 2.0 + bounds_offset.y
+		var min_pan_y: float = delta_y / 2.0 + bounds_offset.y
 		pan_offset.y = clamp(pan_offset.y, min_pan_y, max_pan_y)
 	else:
-		# Map is shorter - center it (no vertical panning)
-		pan_offset.y = 0.0
+		# Effective area is shorter - center on it
+		pan_offset.y = bounds_offset.y
 
 func get_world_center() -> Vector2:
 	return last_origin + last_map_size * 0.5
@@ -2382,7 +2779,10 @@ func _point_to_offset(point: Vector2) -> Vector2i:
 	var qf: float = (SQRT3 / 3.0) * relative.x - (1.0 / 3.0) * relative.y
 	var rf: float = (2.0 / 3.0) * relative.y
 	var axial: Vector2i = _cube_round(qf, rf)
-	return _axial_to_offset(axial.x, axial.y)
+	var offset := _axial_to_offset(axial.x, axial.y)
+	if _wrap_horizontal:
+		offset.x = posmod(offset.x, grid_width)
+	return offset
 
 func _cube_round(qf: float, rf: float) -> Vector2i:
 	var sf: float = -qf - rf
@@ -2425,10 +2825,22 @@ func _process(delta: float) -> void:
 func _apply_pan(delta: Vector2) -> void:
 	if delta == Vector2.ZERO:
 		return
+	var pan_x_before := pan_offset.x
 	pan_offset += delta
 	_update_layout_metrics()
 	_clamp_pan_offset()
+
+	# Detect horizontal wrap: if actual change differs significantly from delta,
+	# the fposmod wrap occurred and we need to invalidate the cache
+	if _wrap_horizontal and last_map_size.x > 0:
+		var actual_x_change: float = pan_offset.x - pan_x_before
+		var wrap_occurred: bool = abs(actual_x_change - delta.x) > last_map_size.x * 0.5
+		if wrap_occurred:
+			_invalidate_map_cache()
+
 	queue_redraw()
+	if _minimap_2d != null:
+		_minimap_2d.queue_indicator_redraw()
 
 func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
 	if is_zero_approx(delta_zoom):
@@ -2447,7 +2859,10 @@ func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
 	pan_offset = pivot - new_base_origin - unit_position * new_radius
 	_clamp_pan_offset()
 	_update_layout_metrics()
+	_invalidate_map_cache()  # Zoom changes require fresh cache render
 	queue_redraw()
+	if _minimap_2d != null:
+		_minimap_2d.queue_indicator_redraw()
 
 func _begin_mouse_pan(button_index: int) -> void:
 	mouse_pan_active = true
@@ -2495,6 +2910,8 @@ func _fit_map_to_view() -> void:
 	_update_layout_metrics()
 	_clamp_pan_offset()
 	queue_redraw()
+	if _minimap_2d != null:
+		_minimap_2d.queue_indicator_redraw()
 
 func handle_hex_click(col: int, row: int, button_index: int) -> void:
 	# Only handle left mouse button clicks. Right-clicks and other buttons are intentionally ignored.
@@ -2539,19 +2956,15 @@ func _build_hex_texture_cache() -> void:
 	print("[MapView] Built hex texture cache: %d textures" % _hex_texture_cache.size())
 
 func _render_hex_texture(terrain_id: int) -> ImageTexture:
-	## Render a hex-masked texture for the given terrain ID
+	## Render a hex-masked texture for the given terrain ID (optimized)
 	var mgr := TerrainTextureManager
 	if mgr.terrain_textures == null or terrain_id < 0 or terrain_id >= mgr.terrain_textures.get_layers():
 		return null
 
 	var size := _hex_texture_size
-	var source_img: Image = mgr.terrain_textures.get_layer_data(terrain_id)
+	# Use the fixed get_terrain_image() which properly extracts from Texture2DArray
+	var source_img: Image = mgr.get_terrain_image(terrain_id)
 	if source_img == null:
-		return null
-
-	# Create output image with alpha
-	var output := Image.create(size, size, false, Image.FORMAT_RGBA8)
-	if output == null:
 		return null
 
 	# Scale source image to output size
@@ -2560,26 +2973,33 @@ func _render_hex_texture(terrain_id: int) -> ImageTexture:
 	if scaled_source.get_format() != Image.FORMAT_RGBA8:
 		scaled_source.convert(Image.FORMAT_RGBA8)
 
-	# Define hex shape (pointy-top)
-	var center := Vector2(size * 0.5, size * 0.5)
-	# Slightly larger than 0.5 to ensure edge pixels sample valid terrain color
-	var hex_radius := size * 0.51
+	# Ensure hex alpha mask is built (done once, reused for all textures)
+	if _hex_alpha_mask.is_empty():
+		_build_hex_alpha_mask(size)
 
-	# First pass: copy all pixels (to avoid black bleeding at edges during filtering)
-	for y in range(size):
-		for x in range(size):
-			var src_color: Color = scaled_source.get_pixel(x, y)
-			output.set_pixel(x, y, src_color)
+	# Get raw pixel data and apply hex mask directly (much faster than get_pixel/set_pixel)
+	var data: PackedByteArray = scaled_source.get_data()
 
-	# Second pass: set alpha to 0 for pixels outside the hex
-	for y in range(size):
-		for x in range(size):
-			var pos := Vector2(x, y)
-			if not _point_in_hex(pos, center, hex_radius):
-				var existing: Color = output.get_pixel(x, y)
-				output.set_pixel(x, y, Color(existing.r, existing.g, existing.b, 0.0))
+	# Apply hex mask: set alpha to 0 for pixels outside the hex
+	# RGBA8 format: 4 bytes per pixel, alpha is at offset 3
+	for i in range(_hex_alpha_mask.size()):
+		if _hex_alpha_mask[i] == 0:
+			data[i * 4 + 3] = 0  # Set alpha to 0
 
+	var output := Image.create_from_data(size, size, false, Image.FORMAT_RGBA8, data)
 	return ImageTexture.create_from_image(output)
+
+
+func _build_hex_alpha_mask(size: int) -> void:
+	## Pre-compute hex mask once (reused for all terrain textures)
+	_hex_alpha_mask.resize(size * size)
+	var center := Vector2(size * 0.5, size * 0.5)
+	var hex_radius := size * 0.51  # Slightly larger to ensure edge pixels are included
+
+	for y in range(size):
+		for x in range(size):
+			var idx := y * size + x
+			_hex_alpha_mask[idx] = 1 if _point_in_hex(Vector2(x, y), center, hex_radius) else 0
 
 func _point_in_hex(point: Vector2, center: Vector2, radius: float) -> bool:
 	# Check if a point is inside a pointy-top hexagon
@@ -2665,7 +3085,8 @@ func _build_edge_overlay_cache() -> void:
 	var layer_count: int = mgr.terrain_textures.get_layers()
 
 	for terrain_id: int in range(layer_count):
-		var source_img: Image = mgr.terrain_textures.get_layer_data(terrain_id)
+		# Use the fixed get_terrain_image() which properly extracts from Texture2DArray
+		var source_img: Image = mgr.get_terrain_image(terrain_id)
 		if source_img == null:
 			continue
 
@@ -2674,6 +3095,9 @@ func _build_edge_overlay_cache() -> void:
 		scaled_source.resize(size, size)
 		if scaled_source.get_format() != Image.FORMAT_RGBA8:
 			scaled_source.convert(Image.FORMAT_RGBA8)
+
+		# Get source pixel data once for all edges
+		var src_data: PackedByteArray = scaled_source.get_data()
 
 		for edge_idx: int in range(6):
 			var mask_tex: ImageTexture = _edge_mask_textures[edge_idx]
@@ -2687,15 +3111,17 @@ func _build_edge_overlay_cache() -> void:
 			# Scale mask to match
 			var scaled_mask: Image = mask_img.duplicate()
 			scaled_mask.resize(size, size)
+			if scaled_mask.get_format() != Image.FORMAT_RGBA8:
+				scaled_mask.convert(Image.FORMAT_RGBA8)
+			var mask_data: PackedByteArray = scaled_mask.get_data()
 
-			# Create masked overlay: terrain texture with alpha from edge mask
-			var overlay := Image.create(size, size, false, Image.FORMAT_RGBA8)
-			for y: int in range(size):
-				for x: int in range(size):
-					var src_color: Color = scaled_source.get_pixel(x, y)
-					var mask_alpha: float = scaled_mask.get_pixel(x, y).a
-					overlay.set_pixel(x, y, Color(src_color.r, src_color.g, src_color.b, mask_alpha))
+			# Create masked overlay using direct byte manipulation (much faster)
+			var overlay_data: PackedByteArray = src_data.duplicate()
+			for i in range(size * size):
+				# Copy alpha from mask (byte offset 3 in each RGBA8 pixel)
+				overlay_data[i * 4 + 3] = mask_data[i * 4 + 3]
 
+			var overlay := Image.create_from_data(size, size, false, Image.FORMAT_RGBA8, overlay_data)
 			var overlay_tex := ImageTexture.create_from_image(overlay)
 			var cache_key := "%d_%d" % [terrain_id, edge_idx]
 			_edge_overlay_cache[cache_key] = overlay_tex
@@ -2729,9 +3155,8 @@ func _build_terrain_priority_map() -> void:
 func _get_terrain_priority(terrain_id: int) -> int:
 	return int(_terrain_priority.get(terrain_id, 3))
 
-var _edge_debug_done: bool = false
 
-func _draw_terrain_edge_blending(radius: float, origin: Vector2) -> void:
+func _draw_terrain_edge_blending(radius: float, origin: Vector2, col_start: int = 0, col_end: int = -1) -> void:
 	# Draw edge overlays using the overlay/fringe technique
 	# Only HIGHER priority terrains draw fringes onto LOWER priority terrains
 	if _cached_terrain_ids.is_empty() or _terrain_grid_width == 0:
@@ -2741,35 +3166,34 @@ func _draw_terrain_edge_blending(radius: float, origin: Vector2) -> void:
 
 	var tex_size := radius * 2.0
 
-	# Debug: check specific hexes once
-	if not _edge_debug_done:
-		var t56_25 := _terrain_id_at(56, 25)
-		var t56_26 := _terrain_id_at(56, 26)
-		var t57_26 := _terrain_id_at(57, 26)
-		print("[DEBUG] Hex(56,25) terrain=%d, Hex(56,26) terrain=%d, Hex(57,26) terrain=%d" % [t56_25, t56_26, t57_26])
-		print("[DEBUG] Priorities: (56,25)=%d, (56,26)=%d, (57,26)=%d" % [_get_terrain_priority(t56_25), _get_terrain_priority(t56_26), _get_terrain_priority(t57_26)])
-		_edge_debug_done = true
+	# Use default column range if not specified
+	if col_end < 0:
+		col_end = _terrain_grid_width
 
 	for y: int in range(_terrain_grid_height):
-		for x: int in range(_terrain_grid_width):
-			var center := _hex_center(x, y, radius, origin)
-			var terrain_id := _terrain_id_at(x, y)
+		for logical_x: int in range(col_start, col_end):
+			var data_x: int = posmod(logical_x, _terrain_grid_width) if _wrap_horizontal else logical_x
+			if not _wrap_horizontal and (logical_x < 0 or logical_x >= _terrain_grid_width):
+				continue
+			var center := _hex_center(logical_x, y, radius, origin)
+			var terrain_id := _terrain_id_at(data_x, y)
 			var my_priority := _get_terrain_priority(terrain_id)
 
 			# Check each of the 6 neighbors
 			for edge_idx: int in range(6):
-				var n_col: int = x + _get_neighbor_offset_x_2d(y, edge_idx)
+				var n_col: int = data_x + _get_neighbor_offset_x_2d(y, edge_idx)
 				var n_row: int = y + _get_neighbor_offset_y_2d(edge_idx)
 
-				if n_col < 0 or n_col >= _terrain_grid_width or n_row < 0 or n_row >= _terrain_grid_height:
+				# Wrap neighbor column if horizontal wrapping is enabled
+				if _wrap_horizontal:
+					n_col = posmod(n_col, _terrain_grid_width)
+				elif n_col < 0 or n_col >= _terrain_grid_width:
+					continue
+
+				if n_row < 0 or n_row >= _terrain_grid_height:
 					continue
 
 				var neighbor_id := _terrain_id_at(n_col, n_row)
-
-				# Debug: log when hexes 56,26 or 57,26 check neighbor 56,25
-				if (x == 56 and y == 26) or (x == 57 and y == 26):
-					if n_col == 56 and n_row == 25:
-						print("[DEBUG] Hex(%d,%d) terrain=%d checking neighbor (56,25) terrain=%d, same=%s" % [x, y, terrain_id, neighbor_id, str(neighbor_id == terrain_id)])
 
 				if neighbor_id == terrain_id:
 					continue
@@ -2780,10 +3204,6 @@ func _draw_terrain_edge_blending(radius: float, origin: Vector2) -> void:
 				# (neighbor's terrain extends into my hex)
 				if neighbor_priority <= my_priority:
 					continue
-
-				# Debug: log any fringe drawn onto hex 56,25
-				if n_col == 56 and n_row == 25:
-					print("[DEBUG] DRAWING fringe onto (56,25) from hex(%d,%d) terrain=%d->%d priority=%d->%d edge=%d" % [x, y, terrain_id, neighbor_id, my_priority, neighbor_priority, edge_idx])
 
 				# Get the edge overlay for the neighbor's terrain at THIS edge
 				# (the fringe extends from neighbor toward my center)
@@ -2825,3 +3245,340 @@ func _get_neighbor_offset_y_2d(dir: int) -> int:
 	return 0
 
 # --- End Terrain Texture System ---
+
+# --- 2D Minimap System (uses shared MinimapPanel) ---
+
+## Set reference to HUD layer for minimap integration.
+## Must be called before _ready() or _setup_2d_minimap() for embedded mode to work.
+func set_hud_reference(hud: Node) -> void:
+	_hud_layer = hud
+
+func _setup_2d_minimap() -> void:
+	_minimap_2d = MinimapPanelScript.new()
+	add_child(_minimap_2d)
+
+	# Prefer embedded mode if HUD reference is available
+	var embedded := false
+	if _hud_layer != null and _hud_layer.has_method("get_minimap_container"):
+		var container: Control = _hud_layer.get_minimap_container()
+		if container != null:
+			_minimap_2d.setup_embedded(container)
+			embedded = true
+
+	if not embedded:
+		# Fallback to floating mode (legacy behavior)
+		_minimap_2d.setup(self, MinimapPanelScript.MINIMAP_CANVAS_LAYER)
+
+	_minimap_2d.pan_requested.connect(_on_minimap_2d_pan_requested)
+	_minimap_2d.connect_indicator_draw(_draw_minimap_viewport_indicator)
+
+func _update_2d_minimap() -> void:
+	if grid_width == 0 or grid_height == 0:
+		return
+
+	# Lazy initialization: set up minimap on first call (after Main.gd has a chance to set HUD reference)
+	if _minimap_2d == null:
+		_setup_2d_minimap()
+
+	# Hide 2D minimap when 3D view is active (3D view has its own minimap)
+	if _is_heightfield_visible():
+		_minimap_2d.set_visible(false)
+		return
+	_minimap_2d.set_visible(true)
+
+	# Check if we need to regenerate the minimap image
+	var current_size := Vector2i(grid_width, grid_height)
+	var size_changed := _minimap_2d_last_grid_size != current_size
+	var data_changed := _minimap_2d_last_data_version != _minimap_2d_data_version
+	var fow_changed := _minimap_2d_last_fow_enabled != _fow_enabled
+	var needs_rebuild := _minimap_2d_image == null or size_changed or data_changed or fow_changed
+
+	if needs_rebuild:
+		_minimap_2d_last_grid_size = current_size
+		_minimap_2d_last_data_version = _minimap_2d_data_version
+		_minimap_2d_last_fow_enabled = _fow_enabled
+		_rebuild_minimap_2d_image()
+
+	# Update viewport indicator
+	_minimap_2d.queue_indicator_redraw()
+
+func _rebuild_minimap_2d_image() -> void:
+	if grid_width == 0 or grid_height == 0:
+		return
+
+	# Cache terrain colors lookup for faster access
+	var colors := _get_terrain_colors()
+	var fallback_color := Color(0.2, 0.2, 0.2, 1.0)
+	var fog_color := _fow_fog_fill_color  # Dark color for unexplored
+	var mist_color := _fow_mist_color  # Light gray-blue mist for explored-but-not-visible
+
+	# Get visibility data for FoW (if enabled)
+	var visibility_data: PackedFloat32Array = PackedFloat32Array()
+	if _fow_enabled:
+		visibility_data = _overlay_array("visibility")
+
+	# Determine image dimensions - crop to explored bounds when FoW enabled
+	var img_width: int
+	var img_height: int
+	var offset_col: int = 0  # Column offset for cropped image
+	var offset_row: int = 0  # Row offset for cropped image
+
+	if _fow_enabled:
+		_explored_bounds_grid = _calculate_explored_bounds()
+		if _explored_bounds_grid.size.x <= 0 or _explored_bounds_grid.size.y <= 0:
+			# No explored tiles - create minimal 1x1 image
+			_minimap_2d_image = Image.create(1, 1, false, Image.FORMAT_RGB8)
+			_minimap_2d_image.set_pixel(0, 0, fog_color)
+			var tex := ImageTexture.create_from_image(_minimap_2d_image)
+			_minimap_2d.set_texture(tex)
+			_minimap_2d.set_grid_size(1, 1)
+			_explored_bounds_world = Rect2()
+			return
+		img_width = _explored_bounds_grid.size.x
+		img_height = _explored_bounds_grid.size.y
+		offset_col = _explored_bounds_grid.position.x
+		offset_row = _explored_bounds_grid.position.y
+		# Update world bounds for pan clamping (at unit radius, scaled in _clamp_pan_offset)
+		_explored_bounds_world = _compute_explored_bounds_world(_explored_bounds_grid, 1.0)
+	else:
+		# Full map when FoW disabled
+		img_width = grid_width
+		img_height = grid_height
+		_explored_bounds_grid = Rect2i(0, 0, grid_width, grid_height)
+		_explored_bounds_world = Rect2()  # Clear - use full map bounds
+
+	# Pre-allocate byte array for RGB8 image data (3 bytes per pixel)
+	var pixel_count := img_width * img_height
+	var data := PackedByteArray()
+	data.resize(pixel_count * 3)
+
+	# Fill byte array with terrain colors
+	var byte_index := 0
+	for local_row in range(img_height):
+		for local_col in range(img_width):
+			var grid_col := local_col + offset_col
+			var grid_row := local_row + offset_row
+			var grid_index := grid_row * grid_width + grid_col
+
+			var terrain_id := int(terrain_overlay[grid_index]) if grid_index < terrain_overlay.size() else -1
+			var color: Color = colors.get(terrain_id, fallback_color)
+
+			# Apply Fog of War visibility
+			if _fow_enabled and not visibility_data.is_empty():
+				var vis: float = visibility_data[grid_index] if grid_index < visibility_data.size() else 0.0
+				if vis <= 0.0:
+					# Unexplored - show dark fog
+					color = fog_color
+				elif vis <= FOW_VISIBLE_THRESHOLD:
+					# Explored but not currently visible - show terrain with light mist overlay
+					# Desaturate slightly and blend with mist to show "remembered" state
+					color = color.lerp(mist_color, _fow_mist_blend)
+				# else: vis > FOW_VISIBLE_THRESHOLD - fully visible, use terrain color as-is
+
+			# Convert Color (0-1 floats) to RGB bytes (0-255)
+			data[byte_index] = int(color.r * 255.0)
+			data[byte_index + 1] = int(color.g * 255.0)
+			data[byte_index + 2] = int(color.b * 255.0)
+			byte_index += 3
+
+	# Create image from byte array
+	_minimap_2d_image = Image.create_from_data(img_width, img_height, false, Image.FORMAT_RGB8, data)
+
+	# Create texture from image and update panel
+	var tex := ImageTexture.create_from_image(_minimap_2d_image)
+	_minimap_2d.set_texture(tex)
+	_minimap_2d.set_grid_size(img_width, img_height)
+
+## Draw the viewport indicator rectangle on the 2D minimap.
+##
+## This shows which portion of the map is currently visible in the main view.
+## The coordinate transformation uses the same axial hex math as _point_to_offset:
+##
+## Screen-to-Hex Coordinate Conversion (pointy-top hexes):
+##   1. Subtract origin and divide by hex radius to get relative position
+##   2. Convert to axial coordinates (q, r) using pointy-top hex formulas:
+##      q = (sqrt(3)/3 * x - 1/3 * y)
+##      r = (2/3 * y)
+##   3. Round to nearest hex using cube coordinate rounding
+##   4. Convert axial (q, r) to offset (col, row) coordinates
+##
+## The resulting hex coordinates are then normalized to [0,1] range and
+## mapped to pixel positions within the minimap texture display area.
+func _draw_minimap_viewport_indicator() -> void:
+	if _minimap_2d == null or grid_width == 0 or grid_height == 0:
+		return
+	if last_hex_radius <= 0:
+		return
+
+	var viewport_size := _get_adjusted_viewport_size()
+	if viewport_size.x <= 0 or viewport_size.y <= 0:
+		return
+
+	var radius: float = max(last_hex_radius, 0.0001)
+
+	# Use the visible column/row range stored during the last render
+	# This ensures the indicator matches exactly what's being drawn
+	var tl_col_f: float = _last_visible_col_start
+	var tl_row_f: float = _last_visible_row_start
+	var br_col_f: float = _last_visible_col_end
+	var br_row_f: float = _last_visible_row_end
+
+	# Normalize hex coordinates to [0,1] range for minimap positioning
+	# When FoW enabled, normalize relative to explored bounds instead of full grid
+	var view_left: float
+	var view_right: float
+	var view_top: float
+	var view_bottom: float
+
+	if _fow_enabled and _explored_bounds_grid.size.x > 0:
+		var bounds := _explored_bounds_grid
+		# Remap viewport coords relative to explored bounds
+		view_left = clampf((tl_col_f - float(bounds.position.x)) / float(bounds.size.x), 0.0, 1.0)
+		view_right = clampf((br_col_f - float(bounds.position.x)) / float(bounds.size.x), 0.0, 1.0)
+		view_top = clampf((tl_row_f - float(bounds.position.y)) / float(bounds.size.y), 0.0, 1.0)
+		view_bottom = clampf((br_row_f - float(bounds.position.y)) / float(bounds.size.y), 0.0, 1.0)
+	elif _wrap_horizontal:
+		# When wrapping, don't clamp X - allow values outside [0,1] to indicate wrap
+		view_left = tl_col_f / float(grid_width)
+		view_right = br_col_f / float(grid_width)
+		view_top = clampf(tl_row_f / float(grid_height), 0.0, 1.0)
+		view_bottom = clampf(br_row_f / float(grid_height), 0.0, 1.0)
+	else:
+		# Full grid normalization with clamping
+		view_left = clampf(tl_col_f / float(grid_width), 0.0, 1.0)
+		view_right = clampf(br_col_f / float(grid_width), 0.0, 1.0)
+		view_top = clampf(tl_row_f / float(grid_height), 0.0, 1.0)
+		view_bottom = clampf(br_row_f / float(grid_height), 0.0, 1.0)
+
+	# Map normalized coords to pixel positions within minimap texture display area
+	var texture_display_rect: Rect2 = _minimap_2d.get_texture_display_rect()
+	var indicator_color := Color(1.0, 1.0, 1.0, 0.8)
+
+	# Calculate viewport width in normalized coords
+	var viewport_width_norm := view_right - view_left
+
+	# When wrapping is enabled and viewport spans the wrap boundary, may need split rectangles
+	# But if viewport shows >= entire map width, draw full-width indicator instead
+	if _wrap_horizontal and (view_left < 0.0 or view_right > 1.0):
+		if viewport_width_norm >= 1.0:
+			# Viewport shows entire map width or more - draw full-width indicator
+			var rect := Rect2(
+				texture_display_rect.position.x,
+				texture_display_rect.position.y + view_top * texture_display_rect.size.y,
+				texture_display_rect.size.x,
+				(view_bottom - view_top) * texture_display_rect.size.y
+			)
+			_minimap_2d.viewport_indicator.draw_rect(rect, indicator_color, false, 2.0)
+		else:
+			# Wrap the normalized coordinates to [0,1] range
+			var wrapped_left := fposmod(view_left, 1.0)
+			var wrapped_right := fposmod(view_right, 1.0)
+
+			# If viewport spans wrap, wrapped_right < wrapped_left
+			if wrapped_right < wrapped_left:
+				# Draw left portion (from wrapped_left to right edge)
+				var rect_left := Rect2(
+					texture_display_rect.position.x + wrapped_left * texture_display_rect.size.x,
+					texture_display_rect.position.y + view_top * texture_display_rect.size.y,
+					(1.0 - wrapped_left) * texture_display_rect.size.x,
+					(view_bottom - view_top) * texture_display_rect.size.y
+				)
+				_minimap_2d.viewport_indicator.draw_rect(rect_left, indicator_color, false, 2.0)
+
+				# Draw right portion (from left edge to wrapped_right)
+				var rect_right := Rect2(
+					texture_display_rect.position.x,
+					texture_display_rect.position.y + view_top * texture_display_rect.size.y,
+					wrapped_right * texture_display_rect.size.x,
+					(view_bottom - view_top) * texture_display_rect.size.y
+				)
+				_minimap_2d.viewport_indicator.draw_rect(rect_right, indicator_color, false, 2.0)
+			else:
+				# Viewport doesn't span wrap, just draw single rectangle at wrapped position
+				var rect := Rect2(
+					texture_display_rect.position.x + wrapped_left * texture_display_rect.size.x,
+					texture_display_rect.position.y + view_top * texture_display_rect.size.y,
+					(wrapped_right - wrapped_left) * texture_display_rect.size.x,
+					(view_bottom - view_top) * texture_display_rect.size.y
+				)
+				_minimap_2d.viewport_indicator.draw_rect(rect, indicator_color, false, 2.0)
+	else:
+		# Standard non-wrapping case
+		var rect := Rect2(
+			texture_display_rect.position.x + view_left * texture_display_rect.size.x,
+			texture_display_rect.position.y + view_top * texture_display_rect.size.y,
+			(view_right - view_left) * texture_display_rect.size.x,
+			(view_bottom - view_top) * texture_display_rect.size.y
+		)
+		_minimap_2d.viewport_indicator.draw_rect(rect, indicator_color, false, 2.0)
+
+## Handle minimap click/drag to pan the main view.
+##
+## Converts the normalized minimap position (0-1) to hex grid coordinates,
+## then calculates the pan_offset needed to center that hex in the viewport.
+##
+## normalized_pos: Position within minimap texture, (0,0)=top-left, (1,1)=bottom-right
+func _on_minimap_2d_pan_requested(normalized_pos: Vector2) -> void:
+	if grid_width == 0 or grid_height == 0:
+		return
+	if last_hex_radius <= 0:
+		return
+
+	# Convert normalized [0,1] position to hex grid coordinates (col, row)
+	# When FoW enabled, denormalize using explored bounds offset
+	var target_col: int
+	var target_row: int
+
+	if _fow_enabled and _explored_bounds_grid.size.x > 0:
+		var bounds := _explored_bounds_grid
+		target_col = int(normalized_pos.x * float(bounds.size.x)) + bounds.position.x
+		target_row = int(normalized_pos.y * float(bounds.size.y)) + bounds.position.y
+		# Clamp to explored bounds
+		target_col = clampi(target_col, bounds.position.x, bounds.position.x + bounds.size.x - 1)
+		target_row = clampi(target_row, bounds.position.y, bounds.position.y + bounds.size.y - 1)
+	else:
+		target_col = int(normalized_pos.x * float(grid_width))
+		target_row = int(normalized_pos.y * float(grid_height))
+		if _wrap_horizontal:
+			# When wrapping, find the closest logical column to current view center
+			# First, wrap target to [0, grid_width)
+			target_col = posmod(target_col, grid_width)
+
+			# Find current view center column using direct hex geometry
+			# (consistent with indicator drawing)
+			var viewport_size := _get_adjusted_viewport_size()
+			var hex_width := SQRT3 * last_hex_radius
+			var current_center_col := (viewport_size.x * 0.5 - last_origin.x) / hex_width
+
+			# Find closest logical column: target_col, target_col - grid_width, or target_col + grid_width
+			var dist_direct := absf(float(target_col) - current_center_col)
+			var dist_minus := absf(float(target_col - grid_width) - current_center_col)
+			var dist_plus := absf(float(target_col + grid_width) - current_center_col)
+
+			if dist_minus < dist_direct and dist_minus < dist_plus:
+				target_col = target_col - grid_width
+			elif dist_plus < dist_direct and dist_plus < dist_minus:
+				target_col = target_col + grid_width
+			# else: use target_col as-is
+		else:
+			target_col = clampi(target_col, 0, grid_width - 1)
+		target_row = clampi(target_row, 0, grid_height - 1)
+
+	# Get the screen position of target hex at base origin (before any panning)
+	var hex_center_at_base := _hex_center(target_col, target_row, last_hex_radius, last_base_origin)
+
+	# Calculate pan_offset to center this hex in the viewport:
+	# viewport_center = hex_center_at_base + pan_offset
+	# Therefore: pan_offset = viewport_center - hex_center_at_base
+	var viewport_size := _get_adjusted_viewport_size()
+	var viewport_center := viewport_size * 0.5
+	pan_offset = viewport_center - hex_center_at_base
+
+	_clamp_pan_offset()
+	_update_layout_metrics()
+	queue_redraw()
+	# Panning only moves the viewport; the minimap image is unchanged, so just
+	# refresh the indicator instead of running the full rebuild-check path.
+	_minimap_2d.queue_indicator_redraw()
+
+# --- End 2D Minimap System ---

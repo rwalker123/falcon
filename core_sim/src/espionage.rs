@@ -781,10 +781,7 @@ impl EspionageRoster {
                     ));
                 }
             }
-            self.agents
-                .entry(*faction)
-                .or_default()
-                .extend(additions.into_iter());
+            self.agents.entry(*faction).or_default().extend(additions);
         }
     }
 

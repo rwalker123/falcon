@@ -275,6 +275,7 @@ pub fn spawn_initial_world(
             world_seed,
             preset.mountain_scale,
             &preset.mountains,
+            config.map_topology.wrap_horizontal,
         )
     });
     if let Some(ref bands_res) = bands {
@@ -660,8 +661,7 @@ pub fn spawn_initial_world(
 
     // Calculate quotas based on active bands
     let mut latitude_targets = [0usize; LATITUDE_BANDS];
-    if active_bands > 0 {
-        let base_quota = target_total / active_bands;
+    if let Some(base_quota) = target_total.checked_div(active_bands) {
         let remainder = target_total % active_bands;
         let mut distributed_remainder = 0;
 

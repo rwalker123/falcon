@@ -13,6 +13,7 @@ mod fauna;
 mod food;
 mod generations;
 mod great_discovery;
+pub mod grid_utils;
 pub mod hashing;
 mod heightfield;
 mod hydrology;
@@ -149,9 +150,10 @@ pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
     CapabilityFlags, CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers,
     CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory,
-    FogRevealLedger, FoodSiteEntry, FoodSiteRegistry, HydrologyOverrides, PendingCrisisSeeds,
-    PendingCrisisSpawns, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata,
-    SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
+    FogRevealLedger, FoodSiteEntry, FoodSiteRegistry, HydrologyOverrides, MapTopology,
+    PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord,
+    TradeTelemetry,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{

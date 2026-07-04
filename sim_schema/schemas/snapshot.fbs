@@ -684,6 +684,7 @@ table SnapshotHeader {
   hash:ulong;
   campaignLabel:CampaignLabel;
   victory:VictoryState;
+  wrapHorizontal:bool = false;
 }
 
 table KnownTechFragment {

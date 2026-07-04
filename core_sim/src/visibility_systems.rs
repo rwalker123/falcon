@@ -25,9 +25,10 @@ use crate::{
     components::{
         LogisticsLink, PopulationCohort, Settlement, StartingUnit, Tile, TownCenter, TradeLink,
     },
+    grid_utils::{shortest_delta_x, wrap_x, wrapped_distance_x},
     heightfield::ElevationField,
     orders::FactionId,
-    resources::SimulationTick,
+    resources::{SimulationConfig, SimulationTick},
     visibility::{VisibilityLedger, VisibilityState},
     visibility_config::{TerrainModifierConfig, VisibilityConfigHandle},
 };
@@ -58,9 +59,11 @@ pub fn clear_active_visibility(mut ledger: ResMut<VisibilityLedger>) {
 }
 
 /// Step 2: Calculate visibility from all visibility sources (units, settlements).
+#[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn calculate_visibility(
     mut ledger: ResMut<VisibilityLedger>,
     config: Res<VisibilityConfigHandle>,
+    sim_config: Res<SimulationConfig>,
     tick: Res<SimulationTick>,
     elevation: Option<Res<ElevationField>>,
     tiles: Query<&Tile>,
@@ -71,6 +74,7 @@ pub fn calculate_visibility(
 ) {
     let cfg = config.0.as_ref();
     let current_turn = tick.0;
+    let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
 
     // Get grid dimensions from elevation field or bail
     let (width, height) = match &elevation {
@@ -185,6 +189,7 @@ pub fn calculate_visibility(
             &terrain_tags,
             &cfg.terrain_modifiers,
             blocking_tags,
+            wrap_horizontal,
         );
     }
 
@@ -223,6 +228,7 @@ fn build_terrain_tags_grid(tiles: &Query<&Tile>, width: u32, height: u32) -> Vec
 
 /// Reveal all tiles within range of a viewer position.
 /// Applies terrain modifiers: forest tiles are harder to see (penalty), water tiles are easier (bonus).
+/// Supports horizontal wrapping for cylindrical world topology.
 ///
 /// # Performance Notes
 ///
@@ -247,26 +253,52 @@ fn reveal_tiles_in_range(
     terrain_tags: &[TerrainTags],
     terrain_modifiers: &TerrainModifierConfig,
     blocking_tags: TerrainTags,
+    wrap_horizontal: bool,
 ) {
+    let width = elevation.width;
+    let height = elevation.height;
+
     // Use max possible range for bounding box (base + max bonus)
     let max_range = base_range + terrain_modifiers.water_bonus.max(0) as u32;
 
-    // Bounding box
-    let min_x = center.x.saturating_sub(max_range);
-    let max_x = (center.x + max_range).min(elevation.width.saturating_sub(1));
+    // Y bounds (no vertical wrap)
     let min_y = center.y.saturating_sub(max_range);
-    let max_y = (center.y + max_range).min(elevation.height.saturating_sub(1));
+    let max_y = (center.y + max_range).min(height.saturating_sub(1));
+
+    // X iteration range (may extend beyond grid bounds when wrapping)
+    let (x_start, x_end) = if wrap_horizontal {
+        // Iterate using signed offsets to handle wrap correctly
+        let range_i = max_range as i32;
+        (-(range_i), range_i)
+    } else {
+        // Clamp to grid bounds
+        let min_x = center.x.saturating_sub(max_range) as i32;
+        let max_x = (center.x + max_range).min(width.saturating_sub(1)) as i32;
+        (min_x - center.x as i32, max_x - center.x as i32)
+    };
 
     let center_elevation = elevation.sample(center.x, center.y);
 
     for y in min_y..=max_y {
-        for x in min_x..=max_x {
-            let dx = x as i32 - center.x as i32;
+        for dx in x_start..=x_end {
+            // Calculate actual x coordinate, wrapping if needed
+            let x = if wrap_horizontal {
+                wrap_x(center.x as i32 + dx, width, true)
+            } else {
+                let raw_x = center.x as i32 + dx;
+                if raw_x < 0 || raw_x >= width as i32 {
+                    continue;
+                }
+                raw_x as u32
+            };
+
+            // Calculate distance using wrapped distance for X
+            let actual_dx = wrapped_distance_x(center.x, x, width, wrap_horizontal) as i32;
             let dy = y as i32 - center.y as i32;
-            let dist_sq = dx * dx + dy * dy;
+            let dist_sq = actual_dx * actual_dx + dy * dy;
 
             // Calculate terrain modifier for target tile
-            let idx = (y * elevation.width + x) as usize;
+            let idx = (y * width + x) as usize;
             let tags = terrain_tags
                 .get(idx)
                 .copied()
@@ -285,13 +317,16 @@ fn reveal_tiles_in_range(
             // Line of sight check if enabled (skip for adjacent tiles - no intermediate blocker)
             if los_enabled
                 && dist_sq > 2
-                && !has_line_of_sight(
+                && !has_line_of_sight_wrapped(
                     center,
                     UVec2::new(x, y),
                     center_elevation,
-                    elevation,
-                    terrain_tags,
-                    blocking_tags,
+                    &LineOfSightCtx {
+                        elevation,
+                        terrain_tags,
+                        blocking_tags,
+                        wrap_horizontal,
+                    },
                 )
             {
                 continue;
@@ -349,43 +384,63 @@ fn get_terrain_modifier(tags: TerrainTags, cfg: &TerrainModifierConfig) -> i32 {
     0
 }
 
+/// Terrain data and blocking rules that stay constant across every ray cast in a
+/// visibility pass. Bundled into one parameter so the LoS query stays under Clippy's
+/// argument limit without suppressing the lint.
+struct LineOfSightCtx<'a> {
+    elevation: &'a ElevationField,
+    terrain_tags: &'a [TerrainTags],
+    blocking_tags: TerrainTags,
+    wrap_horizontal: bool,
+}
+
 /// Check if there is clear line of sight between two points using Bresenham's algorithm.
 /// Checks both elevation (terrain height) and blocking terrain tags (e.g., HIGHLAND, VOLCANIC).
-fn has_line_of_sight(
+/// Supports horizontal wrapping for cylindrical world topology.
+fn has_line_of_sight_wrapped(
     from: UVec2,
     to: UVec2,
     source_elevation: f32,
-    elevation: &ElevationField,
-    terrain_tags: &[TerrainTags],
-    blocking_tags: TerrainTags,
+    ctx: &LineOfSightCtx,
 ) -> bool {
     // Skip if same tile
     if from == to {
         return true;
     }
 
-    let dx = (to.x as i32 - from.x as i32).abs();
-    let dy = (to.y as i32 - from.y as i32).abs();
-    let sx = if from.x < to.x { 1i32 } else { -1i32 };
-    let sy = if from.y < to.y { 1i32 } else { -1i32 };
+    let width = ctx.elevation.width;
+
+    // Calculate deltas using shortest path (may go through wrap boundary)
+    let delta_x = if ctx.wrap_horizontal {
+        shortest_delta_x(from.x, to.x, width, true)
+    } else {
+        to.x as i32 - from.x as i32
+    };
+    let delta_y = to.y as i32 - from.y as i32;
+
+    let dx = delta_x.abs();
+    let dy = delta_y.abs();
+    let sx = if delta_x > 0 { 1i32 } else { -1i32 };
+    let sy = if delta_y > 0 { 1i32 } else { -1i32 };
     let mut err = dx - dy;
 
-    let mut x = from.x as i32;
+    // Use logical coordinates for Bresenham (may go negative or beyond width when wrapping)
+    let mut logical_x = from.x as i32;
     let mut y = from.y as i32;
-    let target_x = to.x as i32;
+    let target_logical_x = from.x as i32 + delta_x;
     let target_y = to.y as i32;
 
     let total_dist = ((dx * dx + dy * dy) as f32).sqrt().max(1.0);
-    let target_elevation = elevation.sample(to.x, to.y);
+    let target_elevation = ctx.elevation.sample(to.x, to.y);
 
     // Add slight height bonus to viewer (simulating eye level above ground)
     let viewer_height = source_elevation + VIEWER_EYE_LEVEL_BONUS;
 
-    while x != target_x || y != target_y {
+    while logical_x != target_logical_x || y != target_y {
         let e2 = 2 * err;
         if e2 > -dy {
             err -= dy;
-            x += sx;
+            logical_x += sx;
         }
         if e2 < dx {
             err += dx;
@@ -393,31 +448,34 @@ fn has_line_of_sight(
         }
 
         // Skip the target tile itself
-        if x == target_x && y == target_y {
+        if logical_x == target_logical_x && y == target_y {
             break;
         }
 
-        // Bounds check
-        if x < 0 || y < 0 || x >= elevation.width as i32 || y >= elevation.height as i32 {
+        // Y bounds check (no vertical wrap)
+        if y < 0 || y >= ctx.elevation.height as i32 {
             continue;
         }
 
-        let current_x = x as u32;
+        // Wrap X coordinate to get actual grid position
+        let current_x = wrap_x(logical_x, width, ctx.wrap_horizontal);
         let current_y = y as u32;
 
         // Check for blocking terrain tags (e.g., mountains, volcanoes)
-        let idx = (current_y * elevation.width + current_x) as usize;
-        if let Some(&tags) = terrain_tags.get(idx) {
-            if (tags & blocking_tags).bits() != 0 {
+        let idx = (current_y * width + current_x) as usize;
+        if let Some(&tags) = ctx.terrain_tags.get(idx) {
+            if (tags & ctx.blocking_tags).bits() != 0 {
                 return false;
             }
         }
 
-        let intermediate_elevation = elevation.sample(current_x, current_y);
+        let intermediate_elevation = ctx.elevation.sample(current_x, current_y);
 
         // Calculate expected elevation at this point on the sight line
-        let dist_from_source =
-            (((x - from.x as i32).pow(2) + (y - from.y as i32).pow(2)) as f32).sqrt();
+        // Use logical distance from source for progress calculation
+        let logical_dx = logical_x - from.x as i32;
+        let logical_dy = y - from.y as i32;
+        let dist_from_source = ((logical_dx * logical_dx + logical_dy * logical_dy) as f32).sqrt();
         let progress = dist_from_source / total_dist;
         let expected_elevation = viewer_height + (target_elevation - viewer_height) * progress;
 
@@ -549,13 +607,16 @@ mod tests {
     fn line_of_sight_same_tile() {
         let elevation = ElevationField::new(10, 10, vec![0.5; 100]);
         let terrain_tags = vec![TerrainTags::empty(); 100];
-        assert!(has_line_of_sight(
+        assert!(has_line_of_sight_wrapped(
             UVec2::new(5, 5),
             UVec2::new(5, 5),
             0.5,
-            &elevation,
-            &terrain_tags,
-            TerrainTags::empty(),
+            &LineOfSightCtx {
+                elevation: &elevation,
+                terrain_tags: &terrain_tags,
+                blocking_tags: TerrainTags::empty(),
+                wrap_horizontal: false,
+            },
         ));
     }
 
@@ -563,13 +624,16 @@ mod tests {
     fn line_of_sight_flat_terrain() {
         let elevation = ElevationField::new(10, 10, vec![0.5; 100]);
         let terrain_tags = vec![TerrainTags::empty(); 100];
-        assert!(has_line_of_sight(
+        assert!(has_line_of_sight_wrapped(
             UVec2::new(0, 0),
             UVec2::new(9, 9),
             0.5,
-            &elevation,
-            &terrain_tags,
-            TerrainTags::empty(),
+            &LineOfSightCtx {
+                elevation: &elevation,
+                terrain_tags: &terrain_tags,
+                blocking_tags: TerrainTags::empty(),
+                wrap_horizontal: false,
+            },
         ));
     }
 
@@ -582,44 +646,109 @@ mod tests {
         let terrain_tags = vec![TerrainTags::empty(); 100];
 
         // Looking from (0, 5) to (9, 5) should be blocked by the mountain at (5, 5)
-        assert!(!has_line_of_sight(
+        assert!(!has_line_of_sight_wrapped(
             UVec2::new(0, 5),
             UVec2::new(9, 5),
             0.3,
-            &elevation,
-            &terrain_tags,
-            TerrainTags::empty(),
+            &LineOfSightCtx {
+                elevation: &elevation,
+                terrain_tags: &terrain_tags,
+                blocking_tags: TerrainTags::empty(),
+                wrap_horizontal: false,
+            },
         ));
     }
 
     #[test]
     fn line_of_sight_blocked_by_terrain_tag() {
-        let elevation = ElevationField::new(10, 10, vec![0.5; 100]);
-        let mut terrain_tags = vec![TerrainTags::empty(); 100];
-        // Place HIGHLAND terrain at (5, 5) - index 55
-        terrain_tags[55] = TerrainTags::HIGHLAND;
+        const WIDTH: u32 = 10;
+        const HEIGHT: u32 = 10;
+        let tile_count = (WIDTH * HEIGHT) as usize;
+        let idx = |x: u32, y: u32| (y * WIDTH + x) as usize;
+
+        let elevation = ElevationField::new(WIDTH, HEIGHT, vec![0.5; tile_count]);
+        let mut terrain_tags = vec![TerrainTags::empty(); tile_count];
+        // Place HIGHLAND terrain at (5, 5).
+        terrain_tags[idx(5, 5)] = TerrainTags::HIGHLAND;
 
         // Configure HIGHLAND as blocking
         let blocking_tags = TerrainTags::HIGHLAND;
 
         // Looking from (0, 5) to (9, 5) should be blocked by HIGHLAND at (5, 5)
-        assert!(!has_line_of_sight(
+        assert!(!has_line_of_sight_wrapped(
             UVec2::new(0, 5),
             UVec2::new(9, 5),
             0.5,
-            &elevation,
-            &terrain_tags,
-            blocking_tags,
+            &LineOfSightCtx {
+                elevation: &elevation,
+                terrain_tags: &terrain_tags,
+                blocking_tags,
+                wrap_horizontal: false,
+            },
         ));
 
         // Looking at the HIGHLAND tile itself should still work (target not blocked)
-        assert!(has_line_of_sight(
+        assert!(has_line_of_sight_wrapped(
             UVec2::new(0, 5),
             UVec2::new(5, 5),
             0.5,
-            &elevation,
-            &terrain_tags,
-            blocking_tags,
+            &LineOfSightCtx {
+                elevation: &elevation,
+                terrain_tags: &terrain_tags,
+                blocking_tags,
+                wrap_horizontal: false,
+            },
+        ));
+    }
+
+    #[test]
+    fn line_of_sight_across_wrap_boundary() {
+        const WIDTH: u32 = 20;
+        const HEIGHT: u32 = 10;
+        let tile_count = (WIDTH * HEIGHT) as usize;
+
+        // 20-wide grid, looking from x=2 to x=18 (via wrap: 2->1->0->19->18 = distance 4)
+        let elevation = ElevationField::new(WIDTH, HEIGHT, vec![0.5; tile_count]);
+        let terrain_tags = vec![TerrainTags::empty(); tile_count];
+
+        // With wrapping, should have clear LoS across the boundary
+        assert!(has_line_of_sight_wrapped(
+            UVec2::new(2, 5),
+            UVec2::new(18, 5),
+            0.5,
+            &LineOfSightCtx {
+                elevation: &elevation,
+                terrain_tags: &terrain_tags,
+                blocking_tags: TerrainTags::empty(),
+                wrap_horizontal: true,
+            },
+        ));
+    }
+
+    #[test]
+    fn line_of_sight_blocked_across_wrap() {
+        const WIDTH: u32 = 20;
+        const HEIGHT: u32 = 10;
+        let tile_count = (WIDTH * HEIGHT) as usize;
+        let idx = |x: u32, y: u32| (y * WIDTH + x) as usize;
+
+        // Place a mountain at (0, 5), on the wrap boundary path.
+        let mut values = vec![0.3; tile_count];
+        values[idx(0, 5)] = 0.9;
+        let elevation = ElevationField::new(WIDTH, HEIGHT, values);
+        let terrain_tags = vec![TerrainTags::empty(); tile_count];
+
+        // Looking from x=2 to x=18 via wrap should be blocked by mountain at x=0
+        assert!(!has_line_of_sight_wrapped(
+            UVec2::new(2, 5),
+            UVec2::new(18, 5),
+            0.3,
+            &LineOfSightCtx {
+                elevation: &elevation,
+                terrain_tags: &terrain_tags,
+                blocking_tags: TerrainTags::empty(),
+                wrap_horizontal: true,
+            },
         ));
     }
 

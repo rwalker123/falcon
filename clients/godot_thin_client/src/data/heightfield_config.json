@@ -1,4 +1,26 @@
 {
+  "minimap": {
+    "base_height": 220,
+    "embedded_height": 140,
+    "min_width": 180.0,
+    "max_width": 520.0,
+    "margin": 16.0
+  },
+  "fog_of_war": {
+    "mist_color": [
+      0.45,
+      0.48,
+      0.55,
+      1.0
+    ],
+    "mist_blend": 0.35,
+    "fog_fill_color": [
+      0.08,
+      0.08,
+      0.12,
+      1.0
+    ]
+  },
   "default_height_exaggeration": 15.0,
   "per_map_dimensions": {
     "80x52": 3.0,
@@ -37,7 +59,7 @@
   "markers": {
     "visible": true,
     "scale": 1.0,
-    "y_offset": 0.0,
+    "y_offset": 0.0
   },
   "water": {
     "visible": true,

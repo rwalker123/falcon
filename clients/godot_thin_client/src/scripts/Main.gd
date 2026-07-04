@@ -103,6 +103,10 @@ func _ready() -> void:
         inspector.call("attach_script_host", script_host_manager)
     _hud_invoke("set_localization_store", [localization_store])
 
+    # Wire HUD reference to MapView for embedded minimap (must happen before first snapshot)
+    if map_view != null and map_view.has_method("set_hud_reference") and hud != null:
+        map_view.call("set_hud_reference", hud)
+
     var initial: Dictionary = {}
     if streaming_mode and not snapshot_loader.last_stream_snapshot.is_empty():
         initial = snapshot_loader.last_stream_snapshot

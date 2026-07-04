@@ -44,17 +44,45 @@ mouse_filter = 2
 
 [node name="BottomBar" type="HBoxContainer" parent="LayoutRoot/RootColumn"]
 size_flags_horizontal = 3
-custom_minimum_size = Vector2(0, 64)
+custom_minimum_size = Vector2(0, 100)
 mouse_filter = 2
+
+[node name="ResourceSummary" type="MarginContainer" parent="LayoutRoot/RootColumn/BottomBar"]
+custom_minimum_size = Vector2(360, 0)
+size_flags_horizontal = 0
+size_flags_vertical = 1
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_right = 8
+mouse_filter = 2
+
+[node name="ResourceHBox" type="HBoxContainer" parent="LayoutRoot/RootColumn/BottomBar/ResourceSummary"]
+size_flags_horizontal = 3
+size_flags_vertical = 1
+theme_override_constants/separation = 12
+mouse_filter = 2
+
+[node name="ResourcePlaceholder" type="Label" parent="LayoutRoot/RootColumn/BottomBar/ResourceSummary/ResourceHBox"]
+theme_override_colors/font_color = Color(0.7, 0.75, 0.8, 1)
+text = "Resources: --"
 
 [node name="BottomSpacer" type="Control" parent="LayoutRoot/RootColumn/BottomBar"]
 size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="MinimapContainer" type="MarginContainer" parent="LayoutRoot/RootColumn/BottomBar"]
+size_flags_horizontal = 0
+size_flags_vertical = 1
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_bottom = 4
 mouse_filter = 2
 
 [node name="NextTurnButton" type="Button" parent="LayoutRoot/RootColumn/BottomBar"]
 text = "Advance Turn"
 custom_minimum_size = Vector2(220, 48)
 size_flags_horizontal = 0
+theme_override_constants/margin_right = 16
 
 [node name="LeftDock" type="MarginContainer" parent="LayoutRoot/RootColumn/ContentRow"]
 size_flags_horizontal = 1

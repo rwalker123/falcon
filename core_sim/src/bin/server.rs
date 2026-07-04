@@ -1030,16 +1030,16 @@ fn watch_config(
 
         match event_rx.recv_timeout(Duration::from_millis(500)) {
             Ok(Ok(event)) => match event.kind {
-                EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
-                    if last_emit.elapsed() >= debounce {
-                        if sender
-                            .send(Command::ReloadConfig { kind, path: None })
-                            .is_err()
-                        {
-                            break;
-                        }
-                        last_emit = Instant::now();
+                EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
+                    if last_emit.elapsed() >= debounce =>
+                {
+                    if sender
+                        .send(Command::ReloadConfig { kind, path: None })
+                        .is_err()
+                    {
+                        break;
                     }
+                    last_emit = Instant::now();
                 }
                 _ => {}
             },

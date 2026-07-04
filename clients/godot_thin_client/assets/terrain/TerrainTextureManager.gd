@@ -32,6 +32,11 @@ func _load_config() -> void:
 
 
 func _load_textures() -> void:
+	# Skip texture loading if disabled in config
+	if not use_terrain_textures:
+		print("[TerrainTextureManager] Terrain textures disabled in config (using solid colors)")
+		return
+
 	# Build texture array from individual PNGs at runtime
 	terrain_textures = _build_terrain_texture_array()
 	if terrain_textures != null and terrain_textures.get_layers() > 0:
@@ -59,16 +64,10 @@ func _build_terrain_texture_array() -> Texture2DArray:
 		var filepath := BASE_PATH + filename
 
 		var img: Image = null
-		# Try loading via ResourceLoader first (works with imported resources)
-		if ResourceLoader.exists(filepath):
-			var tex: Texture2D = load(filepath)
-			if tex:
-				img = tex.get_image()
-		# Fallback to direct file loading
-		if img == null:
-			var abs_path := ProjectSettings.globalize_path(filepath)
-			if FileAccess.file_exists(abs_path):
-				img = Image.load_from_file(abs_path)
+		# Load directly from file (more reliable than ResourceLoader which requires import cache)
+		var abs_path := ProjectSettings.globalize_path(filepath)
+		if FileAccess.file_exists(abs_path):
+			img = Image.load_from_file(abs_path)
 
 		if img == null:
 			missing_textures.append(filename)
@@ -114,6 +113,7 @@ func get_terrain_image(terrain_id: int) -> Image:
 		return null
 	if terrain_id < 0 or terrain_id >= terrain_textures.get_layers():
 		return null
+	# In Godot 4.5, get_layer_data() returns an Image directly
 	return terrain_textures.get_layer_data(terrain_id)
 
 
