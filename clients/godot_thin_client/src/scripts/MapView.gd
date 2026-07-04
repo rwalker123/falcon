@@ -3451,7 +3451,7 @@ func _draw_minimap_viewport_indicator() -> void:
 		view_bottom = clampf(br_row_f / float(grid_height), 0.0, 1.0)
 
 	# Map normalized coords to pixel positions within minimap texture display area
-	var texture_display_rect := _minimap_2d.get_texture_display_rect() as Rect2
+	var texture_display_rect: Rect2 = _minimap_2d.get_texture_display_rect()
 	var indicator_color := Color(1.0, 1.0, 1.0, 0.8)
 
 	# Calculate viewport width in normalized coords

@@ -108,9 +108,9 @@ func setup(parent: Node, layer_index: int = MINIMAP_CANVAS_LAYER, margin: float 
 	# Placeholder extents; the real width/height are set by resize_to_aspect()
 	# once the grid size is known. -300 just gives a sane pre-layout footprint.
 	anchor.offset_left = -300.0
-	anchor.offset_right = -margin
+	anchor.offset_right = -_margin
 	anchor.offset_top = -300.0
-	anchor.offset_bottom = -margin
+	anchor.offset_bottom = -_margin
 	canvas_layer.add_child(anchor)
 
 	# Create panel container
