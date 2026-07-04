@@ -17,31 +17,23 @@ signal next_turn_requested(steps: int)
 @onready var zoom_out_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomOutButton
 @onready var zoom_reset_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomResetButton
 @onready var zoom_in_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomInButton
-@onready var terrain_legend_panel: Panel = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel
-@onready var terrain_legend_container: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/LegendContainer
-@onready var terrain_legend_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/LegendContainer/LegendScroll
-@onready var terrain_legend_list: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/LegendContainer/LegendScroll/LegendList
-@onready var terrain_legend_title: Label = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/LegendContainer/LegendTitle
-@onready var terrain_legend_description: Label = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/LegendContainer/LegendDescription
+@onready var terrain_legend_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel as PanelCard
+@onready var terrain_legend_scroll: ScrollContainer = %LegendScroll
+@onready var terrain_legend_list: VBoxContainer = %LegendList
+@onready var terrain_legend_description: Label = %LegendDescription
 @onready var victory_panel: PanelContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/VictoryPanel
 @onready var victory_status_label: RichTextLabel = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/VictoryPanel/Margin/VictoryLabel
-@onready var command_feed_panel: Panel = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel
-@onready var command_feed_heading: Label = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/MarginContainer/VBoxContainer/CommandFeedHeading
-@onready var command_feed_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/MarginContainer/VBoxContainer/CommandFeedScroll
-@onready var command_feed_label: RichTextLabel = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/MarginContainer/VBoxContainer/CommandFeedScroll/CommandFeedLabel
-@onready var selection_panel: PanelContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel as PanelContainer
-@onready var selection_margin: MarginContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin
-@onready var selection_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll
-@onready var selection_content: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox
-@onready var selection_title: Label = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/SelectionTitle
-@onready var selection_detail: Label = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/SelectionDetail
-@onready var unit_buttons: HBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/UnitButtons
-@onready var unit_scout_button: Button = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/UnitButtons/UnitScoutButton
-@onready var unit_camp_button: Button = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/UnitButtons/UnitCampButton
-@onready var herd_buttons: HBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/HerdButtons
-@onready var follow_herd_button: Button = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/HerdButtons/FollowHerdButton
-@onready var food_buttons: HBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/FoodButtons
-@onready var forage_button: Button = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/FoodButtons/ForageButton
+@onready var command_feed_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel as PanelCard
+@onready var command_feed_label: RichTextLabel = %CommandFeedLabel
+@onready var selection_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel as PanelCard
+@onready var selection_detail: Label = %SelectionDetail
+@onready var unit_buttons: HBoxContainer = %UnitButtons
+@onready var unit_scout_button: Button = %UnitScoutButton
+@onready var unit_camp_button: Button = %UnitCampButton
+@onready var herd_buttons: HBoxContainer = %HerdButtons
+@onready var follow_herd_button: Button = %FollowHerdButton
+@onready var food_buttons: HBoxContainer = %FoodButtons
+@onready var forage_button: Button = %ForageButton
 @onready var stockpile_panel: PanelContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel
 @onready var stockpile_title: Label = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin/StockpileVBox/StockpileTitle
 @onready var stockpile_list: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin/StockpileVBox/StockpileList
@@ -60,20 +52,8 @@ const LEGEND_SWATCH_FRACTION := 0.75
 const LEGEND_MIN_ROW_HEIGHT := 20.0
 const LEGEND_ROW_PADDING := 6.0
 const LEGEND_MAX_HEIGHT := 640.0
-const LEGEND_MIN_WIDTH := 320.0
-const LEGEND_WIDTH_PADDING := 120.0
-const LEGEND_RIGHT_MARGIN := 16.0
-const LEGEND_VERTICAL_PADDING := 16.0
-const LEGEND_HEADER_SPACING := 6.0
 const STACK_ADDITIONAL_MARGIN := 16.0
 const COMMAND_FEED_LIMIT := 6
-const COMMAND_FEED_MIN_HEIGHT := 120.0
-const COMMAND_FEED_MAX_HEIGHT := 360.0
-const COMMAND_FEED_BOTTOM_MARGIN := 24.0
-const SELECTION_PANEL_WIDTH := 320.0
-const SELECTION_PANEL_MIN_HEIGHT := 140.0
-const SELECTION_PANEL_MAX_HEIGHT := 420.0
-const SELECTION_PANEL_BOTTOM_MARGIN := 40.0
 const PLAYER_FACTION_ID := 0
 const HERD_CONSUMPTION_BIOMASS := 250.0
 const HERD_PROVISIONS_YIELD_PER_BIOMASS := 0.02
@@ -115,10 +95,11 @@ var _pending_scout_unit: Dictionary = {}
 var _stockpile_totals: Dictionary = {}
 var travel_tiles_per_turn: float = DEFAULT_TRAVEL_SPEED
 var travel_preview_turn_cap: int = DEFAULT_TRAVEL_PREVIEW_LIMIT
-var dock_registry := {
-    "left": [],
-    "right": [],
-}
+var left_dock: PanelDock
+var right_dock: PanelDock
+var _gameplay_cards: Array = []
+# The Inspector boots visible, so gameplay cards start docked on the right.
+var _inspector_docked: bool = true
 
 func _ready() -> void:
     _load_ui_balance_config()
@@ -132,11 +113,19 @@ func _ready() -> void:
     _render_command_feed()
     _connect_selection_buttons()
     _connect_control_buttons()
-    register_dock_panel(selection_panel, "left", 10)
-    register_dock_panel(stockpile_panel, "left", 20)
-    register_dock_panel(command_feed_panel, "left", 30)
-    register_dock_panel(victory_panel, "right", 10)
-    register_dock_panel(terrain_legend_panel, "right", 20)
+    left_dock = PanelDock.new(left_stack)
+    right_dock = PanelDock.new(right_stack)
+    # Victory + terrain legend are status/reference panels that always live on
+    # the right. The gameplay cards below relocate depending on whether the
+    # Inspector is occupying the left dock (see set_inspector_docked).
+    right_dock.add(victory_panel, 40)
+    right_dock.add(terrain_legend_panel, 50)
+    _gameplay_cards = [
+        {"panel": selection_panel, "priority": 10},
+        {"panel": stockpile_panel, "priority": 20},
+        {"panel": command_feed_panel, "priority": 30},
+    ]
+    set_inspector_docked(_inspector_docked)
     if stockpile_panel != null:
         stockpile_panel.visible = false
     if stockpile_title != null:
@@ -243,47 +232,6 @@ func _connect_control_buttons() -> void:
     if next_turn_button != null and not next_turn_button.is_connected("pressed", Callable(self, "_on_next_turn_pressed")):
         next_turn_button.pressed.connect(_on_next_turn_pressed)
 
-func register_dock_panel(panel: Control, slot: String, priority: int) -> void:
-    if panel == null or not dock_registry.has(slot):
-        print("[HUD] register_dock_panel: Invalid panel or slot: ", slot)
-        return
-    print("[HUD] register_dock_panel: slot=", slot, " priority=", priority, " panel=", panel.name)
-    var bucket: Array = dock_registry[slot]
-    var found := false
-    for entry in bucket:
-        if entry.get("panel") == panel:
-            entry["priority"] = priority
-            found = true
-            break
-    if not found:
-        bucket.append({"panel": panel, "priority": priority})
-    bucket.sort_custom(Callable(self, "_dock_sort"))
-    _apply_dock_order(slot)
-
-func _dock_sort(a: Dictionary, b: Dictionary) -> bool:
-    return int(a.get("priority", 0)) < int(b.get("priority", 0))
-
-func _dock_container(slot: String) -> VBoxContainer:
-    if slot == "left":
-        return left_stack
-    if slot == "right":
-        return right_stack
-    print("[HUD] _dock_container: Unknown slot: ", slot)
-    return null
-
-func _apply_dock_order(slot: String) -> void:
-    var container := _dock_container(slot)
-    if container == null:
-        return
-    var bucket: Array = dock_registry.get(slot, [])
-    for idx in range(bucket.size()):
-        var panel: Control = bucket[idx].get("panel")
-        if panel == null:
-            continue
-        if panel.get_parent() != container:
-            container.add_child(panel)
-        container.move_child(panel, idx)
-
 func _on_zoom_out_pressed() -> void:
     emit_signal("ui_zoom_delta", -1.0)
 
@@ -357,7 +305,7 @@ func update_overlay_legend(legend: Dictionary) -> void:
         return
     terrain_legend_panel.visible = true
     var title := String(overlay_legend.get("title", "Map Legend"))
-    terrain_legend_title.text = title
+    terrain_legend_panel.set_card_title(title)
     var description := String(overlay_legend.get("description", "")).strip_edges()
     if description == "":
         terrain_legend_description.visible = false
@@ -417,6 +365,22 @@ func get_upper_stack_height() -> float:
     if max_bottom <= 0.0:
         max_bottom = 24.0
     return max_bottom + STACK_ADDITIONAL_MARGIN
+
+## Relocate the gameplay cards so they never share the left region with the
+## Inspector. When the Inspector is docked (visible) the cards live on the right;
+## when it is hidden they return to the left dock.
+func set_inspector_docked(inspector_docked: bool) -> void:
+    _inspector_docked = inspector_docked
+    if left_dock == null or right_dock == null:
+        return
+    var target: PanelDock = right_dock if inspector_docked else left_dock
+    var source: PanelDock = left_dock if inspector_docked else right_dock
+    for entry in _gameplay_cards:
+        var panel: Control = entry.get("panel")
+        if panel == null:
+            continue
+        source.remove(panel)
+        target.add(panel, int(entry.get("priority", 0)))
 
 func _legend_row_height() -> float:
     return LEGEND_MIN_ROW_HEIGHT + LEGEND_ROW_PADDING
@@ -492,7 +456,7 @@ func show_herd_selection(herd_data: Dictionary) -> void:
     _render_selection_panel(tile_info, {}, _selected_herd)
 
 func _render_selection_panel(tile_info: Dictionary, unit_data: Dictionary, herd_data: Dictionary) -> void:
-    if selection_panel == null or selection_detail == null or selection_title == null:
+    if selection_panel == null or selection_detail == null:
         return
     selection_panel.visible = true
     var title_text := "Tile"
@@ -500,7 +464,7 @@ func _render_selection_panel(tile_info: Dictionary, unit_data: Dictionary, herd_
         var x := int(tile_info.get("x", -1))
         var y := int(tile_info.get("y", -1))
         title_text = "Tile (%d, %d)" % [x, y]
-    selection_title.text = title_text
+    selection_panel.set_card_title(title_text)
     var food_kind_value := ""
     if not tile_info.is_empty():
         food_kind_value = String(tile_info.get("food_kind", "")).strip_edges()
@@ -515,14 +479,11 @@ func _render_selection_panel(tile_info: Dictionary, unit_data: Dictionary, herd_
             detail_lines.append("")
         detail_lines.append_array(_herd_summary_lines(herd_data))
     selection_detail.text = _join_lines(detail_lines)
-    if selection_scroll != null:
-        selection_scroll.set_deferred("scroll_vertical", 0)
     if unit_buttons != null:
         unit_buttons.visible = not unit_data.is_empty()
     if herd_buttons != null:
         herd_buttons.visible = not herd_data.is_empty()
     _update_food_buttons(tile_info, not unit_data.is_empty())
-    _apply_selection_panel_size()
 
 
 func _tile_summary_lines(tile_info: Dictionary) -> Array[String]:
@@ -837,43 +798,6 @@ func _join_lines(lines: Array) -> String:
         packed.append(String(line))
     return "\n".join(packed)
 
-func _apply_selection_panel_size() -> void:
-    if selection_panel == null or selection_content == null:
-        return
-    var content_height: float = selection_content.get_combined_minimum_size().y
-    var margin_height: float = 0.0
-    if selection_margin != null:
-        margin_height = float(
-            selection_margin.get_theme_constant("margin_top", "MarginContainer")
-            + selection_margin.get_theme_constant("margin_bottom", "MarginContainer")
-        )
-    if selection_panel != null and selection_panel.has_method("fit_to_content"):
-        selection_panel.call("fit_to_content", content_height, margin_height, selection_scroll)
-        return
-    _legacy_selection_panel_size(content_height, margin_height)
-
-func _legacy_selection_panel_size(content_height: float, margin_height: float) -> void:
-    var desired_height: float = content_height + margin_height
-    var viewport := get_viewport()
-    var viewport_height: float = viewport.get_visible_rect().size.y if viewport != null else DisplayServer.window_get_size().y
-    var max_available: float = max(
-        SELECTION_PANEL_MIN_HEIGHT,
-        viewport_height - selection_panel.position.y - SELECTION_PANEL_BOTTOM_MARGIN
-    )
-    var clamped_height: float = clamp(
-        desired_height,
-        SELECTION_PANEL_MIN_HEIGHT,
-        min(max_available, SELECTION_PANEL_MAX_HEIGHT)
-    )
-    selection_panel.custom_minimum_size = Vector2(SELECTION_PANEL_WIDTH, clamped_height)
-    selection_panel.size = Vector2(SELECTION_PANEL_WIDTH, clamped_height)
-    if selection_scroll != null:
-        if desired_height > max_available:
-            selection_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-        else:
-            selection_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-            selection_scroll.scroll_vertical = 0
-
 func _update_food_buttons(tile_info: Dictionary, has_unit: bool) -> void:
     if food_buttons == null or forage_button == null:
         return
@@ -930,8 +854,6 @@ func clear_selection() -> void:
     if _selected_tile_info.is_empty():
         if selection_panel != null:
             selection_panel.visible = false
-        if selection_scroll != null:
-            selection_scroll.scroll_vertical = 0
         if food_buttons != null:
             food_buttons.visible = false
     else:
@@ -1039,48 +961,10 @@ func _render_command_feed() -> void:
     if command_feed_panel == null or command_feed_label == null:
         return
     command_feed_panel.visible = true
-    if command_feed_heading != null:
-        command_feed_heading.text = "Command Feed"
     if _command_feed_entries.is_empty():
         command_feed_label.text = "[i]No command activity yet.[/i]"
     else:
         command_feed_label.text = "\n\n".join(_command_feed_entries)
-    _apply_command_feed_size()
-
-func _apply_command_feed_size() -> void:
-    if command_feed_panel == null or command_feed_label == null:
-        return
-    command_feed_label.reset_size()
-    var heading_height: float = 0.0
-    if command_feed_heading != null:
-        heading_height = command_feed_heading.get_combined_minimum_size().y
-    var content_height: float = command_feed_label.get_content_height()
-    command_feed_label.custom_minimum_size.y = content_height
-    if command_feed_scroll != null:
-        command_feed_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-    if command_feed_panel != null and command_feed_panel.has_method("fit_to_content"):
-        command_feed_panel.call("fit_to_content", content_height, heading_height + 24.0, command_feed_scroll)
-        return
-    _legacy_command_feed_size(content_height, heading_height)
-
-func _legacy_command_feed_size(content_height: float, heading_height: float) -> void:
-    var desired_height: float = heading_height + content_height + 24.0
-    var viewport := get_viewport()
-    var viewport_height: float = viewport.get_visible_rect().size.y if viewport != null else DisplayServer.window_get_size().y
-    var max_available: float = viewport_height - command_feed_panel.offset_top - COMMAND_FEED_BOTTOM_MARGIN
-    var clamped_height: float = clamp(
-        desired_height,
-        COMMAND_FEED_MIN_HEIGHT,
-        min(COMMAND_FEED_MAX_HEIGHT, max_available)
-    )
-    var top := command_feed_panel.offset_top
-    command_feed_panel.offset_bottom = top + clamped_height
-    if command_feed_scroll != null:
-        if desired_height > clamped_height + 0.5:
-            command_feed_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-        else:
-            command_feed_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-            command_feed_scroll.scroll_vertical = 0
 
 func _refresh_victory_status() -> void:
     if victory_status_label == null:
@@ -1252,40 +1136,15 @@ func _legend_list_size() -> Vector2:
         return Vector2.ZERO
     return terrain_legend_list.get_combined_minimum_size()
 
-func _resize_legend_panel(list_size: Vector2) -> void:
-    if terrain_legend_panel == null or terrain_legend_scroll == null:
+## Cap the legend's inner scroll so a long list scrolls internally instead of
+## stretching the whole right dock. Width and placement come from the PanelCard
+## + dock; this only bounds the row list's height.
+func _resize_legend_panel(_list_size: Vector2) -> void:
+    if terrain_legend_scroll == null or terrain_legend_list == null:
         return
-    var header_width: float = 0.0
-    if terrain_legend_title != null:
-        header_width = max(header_width, terrain_legend_title.get_combined_minimum_size().x)
-    if terrain_legend_description != null and terrain_legend_description.visible:
-        header_width = max(header_width, terrain_legend_description.get_combined_minimum_size().x)
-    var content_width: float = max(list_size.x, header_width)
-    var title_height: float = 0.0
-    if terrain_legend_title != null:
-        title_height += terrain_legend_title.get_combined_minimum_size().y
-    if terrain_legend_description != null and terrain_legend_description.visible:
-        title_height += LEGEND_HEADER_SPACING
-        title_height += terrain_legend_description.get_combined_minimum_size().y
     var list_height: float = terrain_legend_list.get_combined_minimum_size().y
-    var padded_width: float = max(content_width + LEGEND_WIDTH_PADDING, LEGEND_MIN_WIDTH)
-    var header_and_padding: float = title_height + LEGEND_VERTICAL_PADDING
-    var padded_height: float = header_and_padding + list_height
-    var min_height: float = header_and_padding + LEGEND_MIN_ROW_HEIGHT
-    var clamped_height: float = clamp(padded_height, min_height, LEGEND_MAX_HEIGHT)
-    var available_for_rows: float = clamped_height - header_and_padding
-    var scroll_height: float = clamp(available_for_rows, LEGEND_MIN_ROW_HEIGHT, LEGEND_MAX_HEIGHT - header_and_padding)
-
-    terrain_legend_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-    terrain_legend_panel.offset_left = -padded_width - LEGEND_RIGHT_MARGIN
-    terrain_legend_panel.offset_right = -LEGEND_RIGHT_MARGIN
-    terrain_legend_panel.offset_top = 0
-    terrain_legend_panel.offset_bottom = clamped_height
-    terrain_legend_panel.custom_minimum_size = Vector2(padded_width, clamped_height)
-
-    var scroll_width: float = max(padded_width - (LEGEND_WIDTH_PADDING * 0.5), LEGEND_MIN_WIDTH - LEGEND_RIGHT_MARGIN)
-    scroll_width = clamp(scroll_width, LEGEND_MIN_WIDTH * 0.5, padded_width - LEGEND_RIGHT_MARGIN)
-    terrain_legend_scroll.custom_minimum_size = Vector2(scroll_width, scroll_height)
+    var clamped_height: float = clamp(list_height, LEGEND_MIN_ROW_HEIGHT, LEGEND_MAX_HEIGHT)
+    terrain_legend_scroll.custom_minimum_size.y = clamped_height
     terrain_legend_scroll.scroll_vertical = 0
 
 func toggle_legend() -> void:

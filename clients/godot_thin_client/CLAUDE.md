@@ -199,6 +199,56 @@ Generate edge masks: `godot --headless --script assets/terrain/EdgeMaskGenerator
 
 ---
 
+## HUD Panel Framework (Docked PanelCards)
+
+The HUD (`HudLayer.tscn`) owns the screen regions with one layout authority — a
+`RootColumn` VBox split into `TopBar` / `ContentRow(LeftDock · center · RightDock)`
+/ `BottomBar`. No panel positions itself with absolute offsets into a region;
+everything is container-sized so regions never collide.
+
+### Left/right coexistence with the Inspector
+The `Inspector` is a separate CanvasLayer that docks into the **left** region
+(resizable, full height below the campaign header). To guarantee it never paints
+on top of gameplay panels, `Hud.set_inspector_docked(open)` relocates the
+gameplay cards between docks: while the Inspector is open they live in the
+`RightDock`; when it is hidden they return to the `LeftDock`. `Main.gd` calls
+this on startup and on every `I` toggle (`_sync_inspector_dock`). Victory and the
+terrain legend are status/reference panels that always stay on the right. The
+`BottomBar` keeps its content (resource summary, minimap, Advance Turn)
+right-aligned behind a leading expander so the bottom-left stays clear of the
+Inspector too.
+
+### PanelCard (`ui/PanelCard.gd`)
+The single building block for every dock panel. It is a `PanelContainer` (never a
+bare `Panel`) that owns the chrome — styled background, header, collapse toggle —
+and hosts caller content in a plain `VBoxContainer`. Because it is container-sized,
+it always reports a correct minimum size, so the dock reflows automatically.
+
+- **Content contract:** author one child `VBoxContainer` named `CardContent`; the
+  card wraps it in a header/body scaffold at runtime. Reference the inner widgets
+  by unique name (`%Name`) so reparenting is transparent to the owner script.
+- **Rule:** no anchor-positioned children inside a card. Anchor layout inside a
+  container parent is what made the legacy `Panel`s overlap.
+- API: `set_card_title()`, `get_content()`, `set_collapsed()`, `is_collapsed()`.
+- Replaces the bespoke `ui/AutoSizingPanel.gd` height math — the dock's own
+  `ScrollContainer` owns overflow, so cards only size to content.
+
+### PanelDock (`ui/PanelDock.gd`)
+Ordered controller for one dock region's `VBoxContainer`. Panels `add(panel,
+priority)` to register; the dock reparents them in priority order. Visibility is
+data-driven — `set_relevant(panel, false)` (or `panel.visible = false`) removes a
+panel from layout flow and the stack reflows with no gap. Hud builds `left_dock`
+and `right_dock` in `_ready()`.
+
+**Migration status:** `SelectionPanel`, `CommandFeedPanel`, and
+`TerrainLegendPanel` are now `PanelCard`s (the last two dropped the bespoke
+`AutoSizingPanel` height math and the legend's absolute `PRESET_TOP_RIGHT`
+positioning that used to overlap the Victory panel). `StockpilePanel` and
+`VictoryPanel` are still plain `PanelContainer`s (correctly container-sized, but
+not yet cards). `AutoSizingPanel.gd` remains only for the Inspector.
+
+---
+
 ## Inspector Panels
 
 See `docs/godot_inspector_plan.md` for full roadmap.

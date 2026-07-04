@@ -1,7 +1,7 @@
 [gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://src/scripts/Hud.gd" id="1"]
-[ext_resource type="Script" path="res://src/scripts/ui/AutoSizingPanel.gd" id="2"]
+[ext_resource type="Script" path="res://src/scripts/ui/PanelCard.gd" id="4"]
 
 [node name="HudLayer" type="CanvasLayer"]
 script = ExtResource("1")
@@ -47,11 +47,14 @@ size_flags_horizontal = 3
 custom_minimum_size = Vector2(0, 100)
 mouse_filter = 2
 
+[node name="BottomSpacer" type="Control" parent="LayoutRoot/RootColumn/BottomBar"]
+size_flags_horizontal = 3
+mouse_filter = 2
+
 [node name="ResourceSummary" type="MarginContainer" parent="LayoutRoot/RootColumn/BottomBar"]
-custom_minimum_size = Vector2(360, 0)
 size_flags_horizontal = 0
-size_flags_vertical = 1
-theme_override_constants/margin_left = 16
+size_flags_vertical = 4
+theme_override_constants/margin_left = 8
 theme_override_constants/margin_right = 8
 mouse_filter = 2
 
@@ -65,10 +68,6 @@ mouse_filter = 2
 theme_override_colors/font_color = Color(0.7, 0.75, 0.8, 1)
 text = "Resources: --"
 
-[node name="BottomSpacer" type="Control" parent="LayoutRoot/RootColumn/BottomBar"]
-size_flags_horizontal = 3
-mouse_filter = 2
-
 [node name="MinimapContainer" type="MarginContainer" parent="LayoutRoot/RootColumn/BottomBar"]
 size_flags_horizontal = 0
 size_flags_vertical = 1
@@ -80,9 +79,9 @@ mouse_filter = 2
 
 [node name="NextTurnButton" type="Button" parent="LayoutRoot/RootColumn/BottomBar"]
 text = "Advance Turn"
-custom_minimum_size = Vector2(220, 48)
+custom_minimum_size = Vector2(140, 40)
 size_flags_horizontal = 0
-theme_override_constants/margin_right = 16
+size_flags_vertical = 4
 
 [node name="LeftDock" type="MarginContainer" parent="LayoutRoot/RootColumn/ContentRow"]
 size_flags_horizontal = 1
@@ -161,11 +160,8 @@ scroll_active = false
 text = "[b]Victory[/b]\n[i]Awaiting telemetry.[/i]"
 
 [node name="SelectionPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]
-script = ExtResource("2")
-target_width = 320.0
-min_height = 140.0
-max_height = 420.0
-bottom_margin = 40.0
+script = ExtResource("4")
+card_title = "Selection"
 custom_minimum_size = Vector2(320, 0)
 visible = false
 
@@ -188,107 +184,58 @@ text = "Stockpiles"
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="Margin" type="MarginContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel"]
-layout_mode = 2
+[node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel"]
 size_flags_horizontal = 3
-size_flags_vertical = 3
-theme_override_constants/margin_left = 12
-theme_override_constants/margin_top = 12
-theme_override_constants/margin_right = 12
-theme_override_constants/margin_bottom = 12
+theme_override_constants/separation = 8
 
-[node name="Scroll" type="ScrollContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
-vertical_scroll_mode = 2
-custom_minimum_size = Vector2(320, 0)
-
-[node name="VBox" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
-[node name="SelectionTitle" type="Label" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox"]
-text = "Selection"
-
-[node name="SelectionDetail" type="Label" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox"]
+[node name="SelectionDetail" type="Label" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent"]
+unique_name_in_owner = true
 text = ""
 autowrap_mode = 2
 
-[node name="UnitButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox"]
+[node name="UnitButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent"]
+unique_name_in_owner = true
 size_flags_horizontal = 3
 visible = false
 
-[node name="UnitScoutButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/UnitButtons"]
+[node name="UnitScoutButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/UnitButtons"]
+unique_name_in_owner = true
 text = "Scout Area"
 
-[node name="UnitCampButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/UnitButtons"]
+[node name="UnitCampButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/UnitButtons"]
+unique_name_in_owner = true
 text = "Found Camp"
 
-[node name="HerdButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox"]
+[node name="HerdButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent"]
+unique_name_in_owner = true
 size_flags_horizontal = 3
 visible = false
 
-[node name="FollowHerdButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/HerdButtons"]
+[node name="FollowHerdButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons"]
+unique_name_in_owner = true
 text = "Follow Herd"
 
-[node name="FoodButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox"]
+[node name="FoodButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent"]
+unique_name_in_owner = true
 size_flags_horizontal = 3
 visible = false
 
-[node name="ForageButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/Margin/Scroll/VBox/FoodButtons"]
+[node name="ForageButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/FoodButtons"]
+unique_name_in_owner = true
 text = "Harvest"
 
 
-[node name="CommandFeedPanel" type="Panel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]
-script = ExtResource("2")
-target_width = 520.0
-min_height = 120.0
-max_height = 360.0
-bottom_margin = 24.0
+[node name="CommandFeedPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]
+script = ExtResource("4")
+card_title = "Command Feed"
+custom_minimum_size = Vector2(320, 0)
 
-[node name="MarginContainer" type="MarginContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel"]
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_right = 0.0
-offset_bottom = 0.0
-theme_override_constants/margin_left = 12
-theme_override_constants/margin_top = 8
-theme_override_constants/margin_right = 12
-theme_override_constants/margin_bottom = 8
-
-[node name="VBoxContainer" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/MarginContainer"]
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_right = 0.0
-offset_bottom = 0.0
+[node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel"]
 size_flags_horizontal = 3
-size_flags_vertical = 3
 
-[node name="CommandFeedHeading" type="Label" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/MarginContainer/VBoxContainer"]
-theme_override_font_sizes/font_size = 18
-theme_override_colors/font_color = Color(0.9, 0.95, 1, 1)
-text = "Command Feed"
-
-[node name="CommandFeedScroll" type="ScrollContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/MarginContainer/VBoxContainer"]
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_right = 0.0
-offset_bottom = 0.0
+[node name="CommandFeedLabel" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/CardContent"]
+unique_name_in_owner = true
 size_flags_horizontal = 3
-size_flags_vertical = 3
-vertical_scroll_mode = 2
-
-[node name="CommandFeedLabel" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/MarginContainer/VBoxContainer/CommandFeedScroll"]
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_right = 0.0
-offset_bottom = 0.0
-grow_horizontal = 2
-grow_vertical = 2
-size_flags_horizontal = 3
-size_flags_vertical = 0
 bbcode_enabled = true
 scroll_active = false
 fit_content = true
@@ -296,51 +243,51 @@ autowrap_mode = 2
 text = "[i]No command activity yet.[/i]"
 
 [node name="ZoomControls" type="HBoxContainer" parent="LayoutRoot/RootColumn/TopBar"]
+size_flags_vertical = 4
 theme_override_constants/separation = 4
 
 [node name="ZoomOutButton" type="Button" parent="LayoutRoot/RootColumn/TopBar/ZoomControls"]
 layout_mode = 2
+custom_minimum_size = Vector2(32, 32)
+size_flags_vertical = 4
+tooltip_text = "Shrink interface"
 text = "−"
 
 [node name="ZoomResetButton" type="Button" parent="LayoutRoot/RootColumn/TopBar/ZoomControls"]
 layout_mode = 2
+custom_minimum_size = Vector2(56, 32)
+size_flags_vertical = 4
+tooltip_text = "Interface scale — click to reset to 100%"
 text = "100%"
 
 [node name="ZoomInButton" type="Button" parent="LayoutRoot/RootColumn/TopBar/ZoomControls"]
 layout_mode = 2
+custom_minimum_size = Vector2(32, 32)
+size_flags_vertical = 4
+tooltip_text = "Enlarge interface"
 text = "+"
 
-[node name="TerrainLegendPanel" type="Panel" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack"]
+[node name="TerrainLegendPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack"]
+script = ExtResource("4")
+card_title = "Terrain Types"
 visible = false
 
-[node name="LegendContainer" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel"]
-layout_mode = 0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = 8.0
-offset_top = 8.0
-offset_right = -8.0
-offset_bottom = -8.0
+[node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel"]
+size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
-[node name="LegendTitle" type="Label" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/LegendContainer"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_colors/font_color = Color(0.9, 0.95, 1, 1)
-text = "Terrain Types"
-
-[node name="LegendDescription" type="Label" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/LegendContainer"]
+[node name="LegendDescription" type="Label" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/CardContent"]
+unique_name_in_owner = true
 visible = false
-layout_mode = 2
 size_flags_horizontal = 3
 autowrap_mode = 1
 
-[node name="LegendScroll" type="ScrollContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/LegendContainer"]
-layout_mode = 2
+[node name="LegendScroll" type="ScrollContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/CardContent"]
+unique_name_in_owner = true
 size_flags_horizontal = 3
-size_flags_vertical = 3
+vertical_scroll_mode = 2
 
-[node name="LegendList" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/LegendContainer/LegendScroll"]
-layout_mode = 2
+[node name="LegendList" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/CardContent/LegendScroll"]
+unique_name_in_owner = true
 size_flags_horizontal = 3
 size_flags_vertical = 3

@@ -161,6 +161,7 @@ func _ready() -> void:
     _ensure_action_binding("toggle_inspector", Key.KEY_I)
     _ensure_action_binding("toggle_legend", Key.KEY_L)
     _ensure_action_binding("toggle_fow", Key.KEY_F)
+    _sync_inspector_dock()
 
 func _ensure_timer() -> void:
     if is_instance_valid(playback_timer):
@@ -366,6 +367,17 @@ func _toggle_inspector_visibility() -> void:
     elif inspector.has_method("set_panel_visible") and inspector.has_method("is_panel_visible"):
         var current_visible: bool = bool(inspector.call("is_panel_visible"))
         inspector.call("set_panel_visible", not current_visible)
+    _sync_inspector_dock()
+
+## Keep the HUD gameplay cards out of the left region while the Inspector docks
+## there. Called on startup and whenever the Inspector is toggled.
+func _sync_inspector_dock() -> void:
+    if hud == null or not hud.has_method("set_inspector_docked"):
+        return
+    var docked := true
+    if inspector != null and inspector.has_method("is_panel_visible"):
+        docked = bool(inspector.call("is_panel_visible"))
+    hud.call("set_inspector_docked", docked)
 
 func _toggle_legend_visibility() -> void:
     if hud == null:
