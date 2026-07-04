@@ -160,6 +160,10 @@ func _ready() -> void:
     _ensure_action_binding("toggle_inspector", Key.KEY_I)
     _ensure_action_binding("toggle_legend", Key.KEY_L)
     _ensure_action_binding("toggle_fow", Key.KEY_F)
+    if inspector != null and inspector.has_signal("reserved_width_changed") and not inspector.is_connected("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed")):
+        inspector.connect("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed"))
+    if inspector != null and inspector.has_method("reserved_width"):
+        _apply_inspector_inset(float(inspector.call("reserved_width")))
 
 func _ensure_timer() -> void:
     if is_instance_valid(playback_timer):
@@ -365,6 +369,19 @@ func _toggle_inspector_visibility() -> void:
     elif inspector.has_method("set_panel_visible") and inspector.has_method("is_panel_visible"):
         var current_visible: bool = bool(inspector.call("is_panel_visible"))
         inspector.call("set_panel_visible", not current_visible)
+    # The inset update arrives via the inspector's reserved_width_changed signal.
+
+## Reserve space for the docked Inspector by insetting the game area (map + HUD)
+## from the left edge, so the panel shrinks the play space instead of overlapping
+## it. Called on startup and on every reserved_width_changed signal (toggle/resize).
+func _apply_inspector_inset(width: float) -> void:
+    if hud != null and hud.has_method("set_left_inset"):
+        hud.call("set_left_inset", width)
+    if map_view != null and map_view.has_method("set_view_inset_left"):
+        map_view.call("set_view_inset_left", width)
+
+func _on_inspector_reserved_width_changed(width: float) -> void:
+    _apply_inspector_inset(width)
 
 func _toggle_legend_visibility() -> void:
     if hud == null:

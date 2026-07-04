@@ -1,5 +1,11 @@
 extends CanvasLayer
 class_name InspectorLayer
+
+## Emitted whenever the width this panel reserves on the left edge changes —
+## on show/hide and on live resize. The game area (map + HUD) insets by this
+## amount so the Inspector never overlaps other panels.
+signal reserved_width_changed(width: float)
+
 const ScriptManagerPanel := preload("res://src/scripts/scripting/ScriptManagerPanel.gd")
 const ScriptHostManager := preload("res://src/scripts/scripting/ScriptHostManager.gd")
 
@@ -472,9 +478,17 @@ func set_panel_visible(visible: bool) -> void:
 		root_panel.visible = visible
 	set_process(visible)
 	set_process_input(visible)
+	reserved_width_changed.emit(reserved_width())
 
 func toggle_panel_visibility() -> void:
 	set_panel_visible(not _panel_visible)
+
+## Width the docked panel occupies on the left edge (0 when hidden). The game
+## area insets by this so the Inspector reserves space instead of overlapping.
+func reserved_width() -> float:
+	if not _panel_visible:
+		return 0.0
+	return _panel_width + PANEL_MARGIN * 2.0
 
 func _process(delta: float) -> void:
 	_poll_log_stream(delta)
@@ -5467,6 +5481,7 @@ func _update_panel_layout() -> void:
 	root_panel.offset_top = _panel_top_offset()
 	root_panel.offset_bottom = -PANEL_MARGIN
 	root_panel.custom_minimum_size = Vector2(_panel_width, 0)
+	reserved_width_changed.emit(reserved_width())
 
 func _on_viewport_resized() -> void:
 	_update_panel_layout()

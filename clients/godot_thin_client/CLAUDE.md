@@ -162,6 +162,86 @@ Generate edge masks: `godot --headless --script assets/terrain/EdgeMaskGenerator
 
 ---
 
+## HUD Panel Framework (Docked PanelCards)
+
+The HUD (`HudLayer.tscn`) owns the screen regions with one layout authority — a
+`RootColumn` VBox split into `TopBar` / `ContentRow(LeftDock · center · RightDock)`
+/ `BottomBar`. No panel positions itself with absolute offsets into a region;
+everything is container-sized so regions never collide.
+
+### Inspector as a reserved side dock
+The `Inspector` is a debug/telemetry CanvasLayer docked (resizable) against the
+**left** edge. It does not overlap or rearrange gameplay panels — instead it
+*reserves* space, shrinking the game area to fit beside it, as if the window were
+narrower:
+
+- `Inspector.reserved_width()` reports the strip it occupies (`_panel_width +
+  2·PANEL_MARGIN`, or 0 when hidden) and emits `reserved_width_changed` on
+  show/hide and on live drag-resize.
+- `Main._on_inspector_reserved_width_changed` fans that width out to both
+  surfaces: `Hud.set_left_inset(px)` (insets `LayoutRoot.offset_left`, so every
+  bar and dock lives in the narrower rect) and `MapView.set_view_inset_left(px)`.
+- `MapView.set_view_inset_left` makes the map behave as if the window were that
+  much narrower, via three coordinated pieces:
+  1. `_get_adjusted_viewport_size()` subtracts the inset, so fit, pan-clamp, draw
+     extents, hit-testing and the minimap indicator all treat the remaining width
+     as the whole viewport.
+  2. The node is translated right by the same amount (`position.x = inset`) so
+     that reduced coordinate space renders beside the panel. Because
+     `get_local_mouse_position()` accounts for the node transform, clicks stay
+     correct without touching any screen↔hex math.
+  3. `_apply_view_clip()` (in `_draw`, via `RenderingServer.canvas_item_set_clip`)
+     clips every draw command to the usable rect. This is essential: the map is
+     **cover-fit**, so its content is wider than the reduced viewport and would
+     otherwise overflow left into the reserved strip. Clipping confines it.
+
+Because the HUD, Inspector, and map all sit under the same `content_scale`
+transform, the reserved width is a single canvas-space value that applies to all
+three with no per-surface scaling. Panels keep their natural left/right docks.
+
+### PanelCard (`ui/PanelCard.gd`)
+The single building block for every dock panel. It is a `PanelContainer` (never a
+bare `Panel`) that owns the chrome — styled background + title header — and hosts
+caller content in a plain `VBoxContainer`. Because it is container-sized, it
+always reports a correct minimum size, so the dock reflows automatically.
+
+- **Content contract:** author one child `VBoxContainer` named `CardContent`. The
+  card inserts its title header as that container's first row and **never
+  reparents the authored widgets** — reparenting them into a runtime wrapper
+  silently clears `unique_name_in_owner`, so `%Name` references from the owner
+  script break. Reference inner widgets by unique name (`%Name`).
+- **Rule:** no anchor-positioned children inside a card. Anchor layout inside a
+  container parent is what made the legacy `Panel`s overlap.
+- API: `card_title` / `set_card_title()`, `get_content()`, and `hotkey_hint`
+  (renders the toggle key in the header, e.g. `"Terrain Types (L)"`; leave empty
+  for panels with no show/hide hotkey).
+- Replaces the bespoke `ui/AutoSizingPanel.gd` height math — the dock's own
+  `ScrollContainer` owns overflow, so cards only size to content.
+
+### PanelDock (`ui/PanelDock.gd`)
+Ordered controller for one dock region's `VBoxContainer`. Panels `add(panel,
+priority)` to register; the dock reparents them in priority order. Visibility is
+data-driven — `set_relevant(panel, false)` (or `panel.visible = false`) removes a
+panel from layout flow and the stack reflows with no gap. Hud builds `left_dock`
+and `right_dock` in `_ready()`.
+
+**Scroll behaviour:** on construction the dock disables **horizontal** scrolling
+on its enclosing `ScrollContainer` and zeroes the stack's horizontal minimum, so
+the stack always fills the dock width and content wraps to fit rather than
+spilling under a sideways scrollbar (which reads as unpolished for a game HUD).
+**Vertical** scroll mode is *not* set by PanelDock — it is configured per dock in
+the scene (`HudLayer.tscn`); both docks use `AUTO`, so a scrollbar appears only
+when the stack actually overflows.
+
+**Migration status:** `SelectionPanel`, `CommandFeedPanel`, and
+`TerrainLegendPanel` are now `PanelCard`s (the last two dropped the bespoke
+`AutoSizingPanel` height math and the legend's absolute `PRESET_TOP_RIGHT`
+positioning that used to overlap the Victory panel). `StockpilePanel` and
+`VictoryPanel` are still plain `PanelContainer`s (correctly container-sized, but
+not yet cards). `AutoSizingPanel.gd` remains only for the Inspector.
+
+---
+
 ## Inspector Panels
 
 See `docs/godot_inspector_plan.md` for full roadmap.
