@@ -535,60 +535,6 @@ fn packed_from_slice(values: &[f32]) -> PackedFloat32Array {
     array
 }
 
-fn decode_packed_normal(bits: u32) -> Vector3 {
-    fn decode_component(value: u32) -> f32 {
-        let mut signed = value as i32;
-        if signed & 0x200 != 0 {
-            signed |= !0x3FF;
-        }
-        (signed as f32) / 511.0
-    }
-    let x = decode_component(bits & 0x3FF);
-    let y = decode_component((bits >> 10) & 0x3FF);
-    let z = decode_component((bits >> 20) & 0x3FF);
-    let mut normal = Vector3::new(x, y, z);
-    let length = normal.length();
-    if length > 0.0 {
-        normal /= length;
-    } else {
-        normal = Vector3::UP;
-    }
-    normal
-}
-
-fn build_heightfield_overlay_dict(
-    width: u32,
-    height: u32,
-    min_value: f32,
-    max_value: f32,
-    samples: &[f32],
-    normals: &[Vector3],
-) -> Option<VarDictionary> {
-    if width == 0 || height == 0 {
-        return None;
-    }
-    let total = (width as usize).saturating_mul(height as usize).max(1);
-    if samples.len() < total {
-        return None;
-    }
-    let mut heightfield = VarDictionary::new();
-    let _ = heightfield.insert("width", width as i64);
-    let _ = heightfield.insert("height", height as i64);
-    let _ = heightfield.insert("min_value", min_value);
-    let _ = heightfield.insert("max_value", max_value);
-    let samples_array = packed_from_slice(samples);
-    let _ = heightfield.insert("samples", samples_array);
-    if normals.len() >= total {
-        let mut normals_array = PackedVector3Array::new();
-        normals_array.resize(total);
-        normals_array
-            .as_mut_slice()
-            .copy_from_slice(&normals[..total]);
-        let _ = heightfield.insert("normals", normals_array);
-    }
-    Some(heightfield)
-}
-
 struct OverlayChannelParams<'a> {
     key: &'a str,
     label: &'a str,
@@ -667,7 +613,6 @@ fn snapshot_dict(
     command_events: Option<VarArray>,
     herds: Option<VarArray>,
     food_modules: Option<VarArray>,
-    heightfield_overlay: Option<VarDictionary>,
 ) -> VarDictionary {
     let mut dict = VarDictionary::new();
     let _ = dict.insert("turn", tick as i64);
@@ -1066,9 +1011,6 @@ fn snapshot_dict(
         let _ = marker.insert("y", sy as i64);
         let _ = overlays.insert("start_marker", marker);
     }
-    if let Some(heightfield) = heightfield_overlay {
-        let _ = overlays.insert("heightfield", heightfield);
-    }
 
     let _ = dict.insert("overlays", overlays);
 
@@ -1377,12 +1319,6 @@ struct DeltaAggregator {
     elevation_width: u32,
     elevation_height: u32,
     elevation_samples: Vec<f32>,
-    heightfield_width: u32,
-    heightfield_height: u32,
-    heightfield_min: f32,
-    heightfield_max: f32,
-    heightfield_samples: Vec<f32>,
-    heightfield_normals: Vec<Vector3>,
     moisture_width: u32,
     moisture_height: u32,
     moisture_samples: Vec<f32>,
@@ -1576,16 +1512,10 @@ impl DeltaAggregator {
     fn apply_elevation_overlay(&mut self, overlay: fb::ElevationOverlay<'_>) {
         self.elevation_width = overlay.width();
         self.elevation_height = overlay.height();
-        self.heightfield_width = self.elevation_width;
-        self.heightfield_height = self.elevation_height;
-        self.heightfield_min = overlay.minValue();
-        self.heightfield_max = overlay.maxValue();
         let count = (self.elevation_width as usize)
             .saturating_mul(self.elevation_height as usize)
             .max(1);
         self.elevation_samples.resize(count, 0.0);
-        self.heightfield_samples.resize(count, 0.0);
-        self.heightfield_normals.resize(count, Vector3::UP);
         if let Some(samples) = overlay.samples() {
             for (idx, value) in samples.iter().enumerate() {
                 if idx >= count {
@@ -1594,15 +1524,6 @@ impl DeltaAggregator {
                 let normalized = (value as f32) / 65535.0;
                 let clamped = normalized.clamp(0.0, 1.0);
                 self.elevation_samples[idx] = clamped;
-                self.heightfield_samples[idx] = clamped;
-            }
-        }
-        if let Some(normals) = overlay.normals() {
-            for (idx, value) in normals.iter().enumerate() {
-                if idx >= self.heightfield_normals.len() {
-                    break;
-                }
-                self.heightfield_normals[idx] = decode_packed_normal(value);
             }
         }
     }
@@ -1662,12 +1583,6 @@ impl DeltaAggregator {
             elevation_width,
             elevation_height,
             elevation_samples,
-            heightfield_width,
-            heightfield_height,
-            heightfield_min,
-            heightfield_max,
-            heightfield_samples,
-            heightfield_normals,
             moisture_width,
             moisture_height,
             moisture_samples,
@@ -1896,15 +1811,6 @@ impl DeltaAggregator {
             Some(terrain_tags)
         };
 
-        let heightfield_overlay = build_heightfield_overlay_dict(
-            heightfield_width,
-            heightfield_height,
-            heightfield_min,
-            heightfield_max,
-            &heightfield_samples,
-            &heightfield_normals,
-        );
-
         snapshot_dict(
             tick,
             GridSize {
@@ -1938,7 +1844,6 @@ impl DeltaAggregator {
             None,
             None,
             None,
-            heightfield_overlay,
         )
     }
 }
@@ -2019,7 +1924,6 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
     let mut moisture_grid: Vec<f32> = Vec::new();
     let mut moisture_dims = (0u32, 0u32);
     let mut crisis_annotations: Vec<CrisisAnnotationRecord> = Vec::new();
-    let mut heightfield_overlay: Option<VarDictionary> = None;
     if let Some(raster) = snapshot.logisticsRaster() {
         let width = raster.width();
         let height = raster.height();
@@ -2344,26 +2248,6 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
                 }
             }
             elevation_dims = (width, height);
-            let mut heightfield = VarDictionary::new();
-            let _ = heightfield.insert("width", width as i64);
-            let _ = heightfield.insert("height", height as i64);
-            let _ = heightfield.insert("min_value", overlay.minValue());
-            let _ = heightfield.insert("max_value", overlay.maxValue());
-            let samples_array = packed_from_slice(&elevation_grid);
-            let _ = heightfield.insert("samples", samples_array);
-            if let Some(normals) = overlay.normals() {
-                let mut packed_normals = PackedVector3Array::new();
-                packed_normals.resize(total);
-                let slice = packed_normals.as_mut_slice();
-                for (idx, value) in normals.iter().enumerate() {
-                    if idx >= total {
-                        break;
-                    }
-                    slice[idx] = decode_packed_normal(value);
-                }
-                let _ = heightfield.insert("normals", packed_normals);
-            }
-            heightfield_overlay = Some(heightfield);
         }
     }
 
@@ -2738,7 +2622,6 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         snapshot.commandEvents().map(command_events_to_array),
         herds_array,
         snapshot.foodModules().map(food_modules_to_array),
-        heightfield_overlay,
     );
 
     if let Some(axis_bias) = snapshot.axisBias() {

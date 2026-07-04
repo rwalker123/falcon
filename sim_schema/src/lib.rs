@@ -779,8 +779,6 @@ pub struct ElevationOverlayState {
     pub max_value: f32,
     #[serde(default)]
     pub samples: Vec<u16>,
-    #[serde(default)]
-    pub normals: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -1886,11 +1884,6 @@ fn create_elevation_overlay<'a>(
     overlay: &ElevationOverlayState,
 ) -> WIPOffset<fb::ElevationOverlay<'a>> {
     let samples_vec = builder.create_vector(&overlay.samples);
-    let normals_vec = if overlay.normals.is_empty() {
-        None
-    } else {
-        Some(builder.create_vector(&overlay.normals))
-    };
     fb::ElevationOverlay::create(
         builder,
         &fb::ElevationOverlayArgs {
@@ -1899,7 +1892,6 @@ fn create_elevation_overlay<'a>(
             minValue: overlay.min_value,
             maxValue: overlay.max_value,
             samples: Some(samples_vec),
-            normals: normals_vec,
         },
     )
 }
