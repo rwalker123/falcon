@@ -23,7 +23,6 @@ var ui_zoom: float = 1.0
 var localization_store: LocalizationStore = null
 var _campaign_label_signature: String = ""
 var _victory_analytics_signature: String = ""
-var _hud_state_latest: Dictionary = {}
 
 const MOCK_DATA_PATH = "res://src/data/mock_snapshots.json"
 const TURN_INTERVAL_SECONDS = 1.5
@@ -56,7 +55,7 @@ func _ready() -> void:
     get_window().content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
     get_window().content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND
     
-    # Ensure HUD and Inspector are above the 3D view (Layer 100)
+    # Ensure HUD and Inspector render above the map layer
     if hud != null:
         hud.layer = 101
     if inspector != null:
@@ -551,33 +550,7 @@ func _hud_invoke(method: String, args: Array = []) -> Variant:
     if hud != null and hud.has_method(method):
         # print("[HUD->Main]", method, args)  # Commented out to reduce log spam
         result = hud.callv(method, args)
-    _cache_hud_state(method, args)
-    if map_view != null and map_view.has_method("relay_hud_call"):
-        map_view.call("relay_hud_call", method, args)
     return result
-
-func _cache_hud_state(method: String, args: Array) -> void:
-    var cacheable := {
-        "set_localization_store": true,
-        "update_campaign_label": true,
-        "update_overlay": true,
-        "update_stockpiles": true,
-        "reset_command_feed": true,
-        "ingest_command_events": true,
-        "update_victory_state": true,
-        "set_ui_zoom": true,
-        "update_overlay_legend": true,
-        "show_unit_selection": true,
-        "show_herd_selection": true,
-        "show_tile_selection": true,
-        "clear_selection": true,
-    }
-    if not cacheable.has(method):
-        return
-    _hud_state_latest[method] = args.duplicate(true)
-
-func export_hud_state() -> Dictionary:
-    return _hud_state_latest.duplicate(true)
 
 func _determine_stream_enabled() -> bool:
     var env_flag: String = OS.get_environment("STREAM_ENABLED")

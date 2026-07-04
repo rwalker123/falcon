@@ -2280,7 +2280,6 @@ fn elevation_overlay_from_field(field: &ElevationField, grid_size: UVec2) -> Ele
     let height = grid_size.y.max(field.height).max(1);
     let total = (width as usize).saturating_mul(height as usize).max(1);
     let mut samples = vec![0u16; total];
-    let mut normals = vec![pack_snorm_3x10([0.0, 1.0, 0.0]); total];
 
     let mut min_value = f32::MAX;
     let mut max_value = f32::MIN;
@@ -2307,7 +2306,6 @@ fn elevation_overlay_from_field(field: &ElevationField, grid_size: UVec2) -> Ele
             let value = field.sample(x, y);
             let normalised = ((value - min_value) / range).clamp(0.0, 1.0);
             samples[idx] = (normalised * 65535.0).round().clamp(0.0, 65535.0) as u16;
-            normals[idx] = pack_snorm_3x10(sample_normal(field, x, y));
         }
     }
 
@@ -2317,48 +2315,7 @@ fn elevation_overlay_from_field(field: &ElevationField, grid_size: UVec2) -> Ele
         samples,
         min_value,
         max_value,
-        normals,
     }
-}
-
-fn sample_normal(field: &ElevationField, x: u32, y: u32) -> [f32; 3] {
-    fn sample_clamped(field: &ElevationField, x: i32, y: i32) -> f32 {
-        let max_x = field.width.saturating_sub(1) as i32;
-        let max_y = field.height.saturating_sub(1) as i32;
-        let clamped_x = x.clamp(0, max_x) as u32;
-        let clamped_y = y.clamp(0, max_y) as u32;
-        field.sample(clamped_x, clamped_y)
-    }
-
-    let xi = x as i32;
-    let yi = y as i32;
-    let left = sample_clamped(field, xi - 1, yi);
-    let right = sample_clamped(field, xi + 1, yi);
-    let down = sample_clamped(field, xi, yi - 1);
-    let up = sample_clamped(field, xi, yi + 1);
-    let dx = right - left;
-    let dz = up - down;
-    let mut normal = [-dx, 2.0, -dz];
-    let length = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
-    if length > f32::EPSILON {
-        normal[0] /= length;
-        normal[1] /= length;
-        normal[2] /= length;
-    } else {
-        normal = [0.0, 1.0, 0.0];
-    }
-    normal
-}
-
-fn pack_snorm_3x10(normal: [f32; 3]) -> u32 {
-    fn encode_component(value: f32) -> u32 {
-        let scaled = (value.clamp(-1.0, 1.0) * 511.0).round() as i32;
-        (scaled as u32) & 0x3FF
-    }
-    let x = encode_component(normal[0]);
-    let y = encode_component(normal[1]);
-    let z = encode_component(normal[2]);
-    x | (y << 10) | (z << 20)
 }
 
 fn moisture_overlay_from_resource(

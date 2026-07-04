@@ -30,12 +30,33 @@ For detailed implementation documentation, see the subsystem-specific CLAUDE.md 
 - Snapshot History & Rollback
 
 ### Godot Client (`clients/godot_thin_client/CLAUDE.md`)
-- Heightfield Rendering (3D relief visualization)
+- 2D Hex Map Rendering (terrain, overlays, minimap) — the client is 2D-only; see "Removed: 3D Relief Rendering" below
 - Inspector Panels (Map, Terrain, Fauna, Culture, Military, Power, Crisis, Knowledge, Logs, Commands)
 - Overlay Channels (logistics, sentiment, corruption, fog, culture, military, visibility/FoW)
 - Typography & Theming
 - Scripting Capability Model (QuickJS sandbox, capability families)
 - Script Distribution & Trust Model
+
+---
+
+## Removed: 3D Relief Rendering (permanent)
+
+The Godot thin client once carried an experimental **3D heightfield/relief view** (chunked
+`ArrayMesh` terrain, `Camera3D` orbit controls, a water plane, and 3D unit markers). It was a
+persistent source of instability and was **permanently removed**. The client is **2D-only** and
+there is no plan to reintroduce a 3D view.
+
+What was removed:
+- Godot 3D scripts, scenes, and spatial shaders (`HeightfieldLayer3D`, `HeightfieldPreview`,
+  `WaterLayer3D`, `UnitOverlay3D`, `heightfield.gdshader`, `water.gdshader`).
+- The native decode of the relief overlay and the FlatBuffers `ElevationOverlay.normals` field
+  (per-vertex normals were only ever consumed by the 3D shader).
+
+What was intentionally kept (it is simulation/2D data, not 3D rendering):
+- `core_sim/src/heightfield.rs` `ElevationField` — drives hydrology, mapgen, sea-level, and
+  fog-of-war visibility.
+- The FlatBuffers `ElevationOverlay.samples` raster and the 2D **Elevation Heatmap** overlay
+  channel that renders from it.
 
 ---
 

@@ -1,6 +1,6 @@
 extends Node
 class_name MinimapPanel
-## Shared minimap panel component for both 2D and 3D views.
+## Minimap panel component for the 2D map view.
 ##
 ## Handles UI setup, aspect ratio sizing, and click-to-pan interaction.
 ## Configuration loaded from heightfield_config.json, with fallback defaults.
@@ -21,7 +21,7 @@ class_name MinimapPanel
 ##   minimap.set_grid_size(width, height)
 ##
 ## The parent view must provide:
-##   - A texture (2D: rendered Image, 3D: SubViewport texture)
+##   - A texture (rendered Image of the map)
 ##   - A draw callback for viewport_indicator (connected via connect_indicator_draw)
 ##   - A handler for pan_requested signal to convert normalized coords to view coords
 
@@ -34,8 +34,7 @@ signal drag_ended()
 
 const CONFIG_PATH := "res://src/data/heightfield_config.json"
 
-# CanvasLayer index for the floating minimap. Chosen to sit above the HUD/inspector
-# layers while remaining consistent between the 2D and 3D minimaps.
+# CanvasLayer index for the floating minimap. Chosen to sit above the HUD/inspector layers.
 const MINIMAP_CANVAS_LAYER := 102
 
 # Fallback defaults (overridden by config if available)

@@ -12,7 +12,7 @@ This repository uses a layered documentation structure:
 
 ### Subsystem Documentation
 - `core_sim/CLAUDE.md` — Simulation engine: ECS systems, world generation, turn loop, power/crisis/culture/knowledge subsystems
-- `clients/godot_thin_client/CLAUDE.md` — Godot inspector: heightfield rendering, panels, overlays, scripting capability model
+- `clients/godot_thin_client/CLAUDE.md` — Godot inspector: 2D hex map rendering, panels, overlays, scripting capability model
 - `sim_schema/README.md` — FlatBuffers schema contracts
 - `sim_runtime/README.md` — Shared runtime utilities
 
