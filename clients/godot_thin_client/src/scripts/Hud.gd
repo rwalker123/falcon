@@ -59,7 +59,9 @@ const STACK_ADDITIONAL_MARGIN := 16.0
 const COMMAND_FEED_LIMIT := 6
 # The feed grows to fit its entries, but never past the space left in the dock
 # below the panels above it: past that it scrolls internally instead of pushing
-# the whole dock to scroll. Keeps at least a few lines visible.
+# the whole dock to scroll. Genuinely short content still shrinks to fit (no
+# empty box). MIN_HEIGHT is a floor on that available-space limit only, so a
+# cramped dock still leaves the feed usable rather than collapsing it to nothing.
 const COMMAND_FEED_MIN_HEIGHT := 72.0
 const COMMAND_FEED_BOTTOM_MARGIN := 12.0
 const PLAYER_FACTION_ID := 0

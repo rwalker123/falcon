@@ -56,7 +56,7 @@ func remove(panel: Control) -> void:
 
 ## Show or hide a panel; the stack reflows to close the gap when hidden.
 func set_relevant(panel: Control, relevant: bool) -> void:
-	if panel != null:
+	if is_instance_valid(panel):
 		panel.visible = relevant
 
 func _reorder() -> void:
