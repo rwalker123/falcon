@@ -34,6 +34,10 @@ signal drag_ended()
 
 const CONFIG_PATH := "res://src/data/heightfield_config.json"
 
+# CanvasLayer index for the floating minimap. Chosen to sit above the HUD/inspector
+# layers while remaining consistent between the 2D and 3D minimaps.
+const MINIMAP_CANVAS_LAYER := 102
+
 # Fallback defaults (overridden by config if available)
 const DEFAULT_BASE_HEIGHT := 220
 const DEFAULT_MIN_WIDTH := 140.0
@@ -42,6 +46,7 @@ const DEFAULT_MARGIN := 16.0
 
 # Loaded config values
 var _base_height: int = DEFAULT_BASE_HEIGHT
+var _embedded_height: int = 80  # Smaller height for embedded mode
 var _min_width: float = DEFAULT_MIN_WIDTH
 var _max_width: float = DEFAULT_MAX_WIDTH
 
@@ -62,11 +67,18 @@ func _load_config() -> void:
 		return
 	var file := FileAccess.open(CONFIG_PATH, FileAccess.READ)
 	if file == null:
+		push_warning("[MinimapPanel] Failed to open config: " + CONFIG_PATH)
 		return
-	var json = JSON.parse_string(file.get_as_text())
+	var text := file.get_as_text()
+	file.close()
+	var json = JSON.parse_string(text)
+	if json == null:
+		push_warning("[MinimapPanel] Failed to parse JSON config: " + CONFIG_PATH)
+		return
 	if json is Dictionary and json.has("minimap"):
 		var cfg: Dictionary = json["minimap"]
 		_base_height = int(cfg.get("base_height", DEFAULT_BASE_HEIGHT))
+		_embedded_height = int(cfg.get("embedded_height", 80))
 		_min_width = float(cfg.get("min_width", DEFAULT_MIN_WIDTH))
 		_max_width = float(cfg.get("max_width", DEFAULT_MAX_WIDTH))
 		_margin = float(cfg.get("margin", DEFAULT_MARGIN))
@@ -76,7 +88,7 @@ func _load_config() -> void:
 ## layer_index: CanvasLayer layer number (default 102)
 ## margin: Distance from screen edge (uses config value if not specified)
 ## style: Optional StyleBox for the panel (null = default semi-transparent)
-func setup(parent: Node, layer_index: int = 102, margin: float = -1.0, style: StyleBox = null) -> void:
+func setup(parent: Node, layer_index: int = MINIMAP_CANVAS_LAYER, margin: float = -1.0, style: StyleBox = null) -> void:
 	_load_config()
 	if margin >= 0.0:
 		_margin = margin
@@ -93,6 +105,8 @@ func setup(parent: Node, layer_index: int = 102, margin: float = -1.0, style: St
 	anchor.anchor_right = 1.0
 	anchor.anchor_top = 1.0
 	anchor.anchor_bottom = 1.0
+	# Placeholder extents; the real width/height are set by resize_to_aspect()
+	# once the grid size is known. -300 just gives a sane pre-layout footprint.
 	anchor.offset_left = -300.0
 	anchor.offset_right = -margin
 	anchor.offset_top = -300.0
@@ -137,6 +151,62 @@ func setup(parent: Node, layer_index: int = 102, margin: float = -1.0, style: St
 	viewport_indicator.set_anchors_preset(Control.PRESET_FULL_RECT)
 	texture_rect.add_child(viewport_indicator)
 
+## Initialize the minimap panel UI for embedding within an existing container.
+## Unlike setup(), this does NOT create a CanvasLayer - the panel is added directly
+## to the provided container and participates in normal layout flow.
+##
+## container: Control node to add the minimap panel to (e.g., MarginContainer in BottomBar)
+## style: Optional StyleBox for the panel (null = default semi-transparent)
+func setup_embedded(container: Control, style: StyleBox = null) -> void:
+	_load_config()
+
+	# Skip CanvasLayer and anchor - embed directly in container
+	canvas_layer = null
+	anchor = null
+
+	# Create panel container as direct child
+	panel = PanelContainer.new()
+	panel.name = "MinimapPanel"
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	panel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+
+	# Apply style
+	if style != null:
+		panel.add_theme_stylebox_override("panel", style)
+	else:
+		var default_style := StyleBoxFlat.new()
+		default_style.bg_color = Color(0.1, 0.1, 0.15, 0.85)
+		default_style.border_color = Color(0.3, 0.35, 0.4, 1.0)
+		default_style.set_border_width_all(2)
+		default_style.set_corner_radius_all(4)
+		default_style.content_margin_left = 4
+		default_style.content_margin_top = 4
+		default_style.content_margin_right = 4
+		default_style.content_margin_bottom = 4
+		panel.add_theme_stylebox_override("panel", default_style)
+	container.add_child(panel)
+
+	# Create texture rect
+	texture_rect = TextureRect.new()
+	texture_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	texture_rect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	texture_rect.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	texture_rect.mouse_filter = Control.MOUSE_FILTER_STOP
+	texture_rect.gui_input.connect(_on_gui_input)
+	panel.add_child(texture_rect)
+
+	# Create viewport indicator overlay
+	viewport_indicator = Control.new()
+	viewport_indicator.name = "ViewportIndicator"
+	viewport_indicator.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	viewport_indicator.set_anchors_preset(Control.PRESET_FULL_RECT)
+	texture_rect.add_child(viewport_indicator)
+
+## Check if this minimap is in embedded mode (no CanvasLayer).
+func is_embedded() -> bool:
+	return canvas_layer == null and panel != null
+
 ## Set the texture to display in the minimap.
 func set_texture(tex: Texture2D) -> void:
 	if texture_rect != null:
@@ -152,10 +222,16 @@ func set_grid_size(width: int, height: int) -> void:
 func set_visible(visible: bool) -> void:
 	if canvas_layer != null:
 		canvas_layer.visible = visible
+	elif panel != null:
+		panel.visible = visible
 
 ## Check if the minimap is visible.
 func is_visible() -> bool:
-	return canvas_layer != null and canvas_layer.visible
+	if canvas_layer != null:
+		return canvas_layer.visible
+	if panel != null:
+		return panel.visible
+	return false
 
 ## Calculate the map aspect ratio.
 func get_aspect_ratio() -> float:
@@ -169,12 +245,13 @@ func resize_to_aspect() -> void:
 		return
 
 	var map_aspect := get_aspect_ratio()
-	var target_height := float(_base_height)
+	# Use smaller height for embedded mode
+	var target_height := float(_embedded_height if is_embedded() else _base_height)
 	var target_width := clampf(target_height * map_aspect, _min_width, _max_width)
 
 	panel.custom_minimum_size = Vector2(target_width, target_height)
 
-	# Update anchor offsets based on new size
+	# Only update anchor offsets if in floating mode (anchor exists)
 	if anchor != null:
 		anchor.offset_left = -(target_width + _margin)
 		anchor.offset_top = -(target_height + _margin)

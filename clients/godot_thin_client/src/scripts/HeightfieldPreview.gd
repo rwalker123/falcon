@@ -532,7 +532,7 @@ func _setup_minimap() -> void:
 
     _minimap = MinimapPanelScript.new()
     add_child(_minimap)
-    _minimap.setup(self, 102, -1.0, transparent_style)  # Use config margin
+    _minimap.setup(self, MinimapPanelScript.MINIMAP_CANVAS_LAYER, -1.0, transparent_style)  # Use config margin
     _minimap.pan_requested.connect(_on_minimap_pan_requested)
 
     # Override texture settings for 3D viewport rendering
