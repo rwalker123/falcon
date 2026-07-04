@@ -1,6 +1,6 @@
 extends Node
 ## Singleton that centralizes terrain texture loading and configuration.
-## Shared by MapView (2D) and HeightfieldLayer3D (3D) to avoid duplicate loading.
+## Loads terrain textures once for the 2D MapView renderer to avoid duplicate loading.
 ## Registered as autoload "TerrainTextureManager" in project.godot.
 
 const TERRAIN_CONFIG_PATH := "res://assets/terrain/terrain_config.json"
