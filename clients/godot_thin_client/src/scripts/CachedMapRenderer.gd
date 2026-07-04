@@ -61,7 +61,7 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, buffer_size), Color(0.3, 0.35, 0.25, 1.0))
 
 	# Determine if using textured rendering
-	var mgr = map_view.get_node("/root/TerrainTextureManager")
+	var mgr = map_view.get_node_or_null("/root/TerrainTextureManager")
 	var use_textures: bool = mgr != null and mgr.use_terrain_textures and mgr.terrain_textures != null and map_view.active_overlay_key == "" and not map_view._fow_enabled
 
 	# Calculate visible range with buffer

@@ -283,7 +283,7 @@ var _explored_bounds_world: Rect2 = Rect2()  # World coords of explored area at 
 
 # Profiling for performance measurement
 var _draw_frame_times: Array[float] = []
-var _profiling_enabled: bool = true
+var _profiling_enabled: bool = false  # Opt-in draw-time profiling; enable manually when profiling
 
 # Cached map rendering (Single-buffer with simple invalidation)
 var _map_cache_enabled: bool = true
@@ -1248,8 +1248,6 @@ func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 
 	if herd_id == selected_herd_id:
 		draw_arc(center, marker_radius + 3.0, 0, TAU, 24, Color(1.0, 1.0, 1.0, 0.9), 2.5)
-
-var _food_debug_counter: int = 0
 
 func _draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 	var x: int = int(site.get("x", -1))
@@ -3157,7 +3155,6 @@ func _build_terrain_priority_map() -> void:
 func _get_terrain_priority(terrain_id: int) -> int:
 	return int(_terrain_priority.get(terrain_id, 3))
 
-var _edge_debug_done: bool = false
 
 func _draw_terrain_edge_blending(radius: float, origin: Vector2, col_start: int = 0, col_end: int = -1) -> void:
 	# Draw edge overlays using the overlay/fringe technique
@@ -3172,15 +3169,6 @@ func _draw_terrain_edge_blending(radius: float, origin: Vector2, col_start: int 
 	# Use default column range if not specified
 	if col_end < 0:
 		col_end = _terrain_grid_width
-
-	# Debug: check specific hexes once
-	if not _edge_debug_done:
-		var t56_25 := _terrain_id_at(56, 25)
-		var t56_26 := _terrain_id_at(56, 26)
-		var t57_26 := _terrain_id_at(57, 26)
-		print("[DEBUG] Hex(56,25) terrain=%d, Hex(56,26) terrain=%d, Hex(57,26) terrain=%d" % [t56_25, t56_26, t57_26])
-		print("[DEBUG] Priorities: (56,25)=%d, (56,26)=%d, (57,26)=%d" % [_get_terrain_priority(t56_25), _get_terrain_priority(t56_26), _get_terrain_priority(t57_26)])
-		_edge_debug_done = true
 
 	for y: int in range(_terrain_grid_height):
 		for logical_x: int in range(col_start, col_end):
@@ -3207,11 +3195,6 @@ func _draw_terrain_edge_blending(radius: float, origin: Vector2, col_start: int 
 
 				var neighbor_id := _terrain_id_at(n_col, n_row)
 
-				# Debug: log when hexes 56,26 or 57,26 check neighbor 56,25
-				if (data_x == 56 and y == 26) or (data_x == 57 and y == 26):
-					if n_col == 56 and n_row == 25:
-						print("[DEBUG] Hex(%d,%d) terrain=%d checking neighbor (56,25) terrain=%d, same=%s" % [data_x, y, terrain_id, neighbor_id, str(neighbor_id == terrain_id)])
-
 				if neighbor_id == terrain_id:
 					continue
 
@@ -3221,10 +3204,6 @@ func _draw_terrain_edge_blending(radius: float, origin: Vector2, col_start: int 
 				# (neighbor's terrain extends into my hex)
 				if neighbor_priority <= my_priority:
 					continue
-
-				# Debug: log any fringe drawn onto hex 56,25
-				if n_col == 56 and n_row == 25:
-					print("[DEBUG] DRAWING fringe onto (56,25) from hex(%d,%d) terrain=%d->%d priority=%d->%d edge=%d" % [data_x, y, terrain_id, neighbor_id, my_priority, neighbor_priority, edge_idx])
 
 				# Get the edge overlay for the neighbor's terrain at THIS edge
 				# (the fringe extends from neighbor toward my center)
