@@ -174,8 +174,6 @@ const FOOD_MODULE_LABELS := {
 	"mixed_woodland": "Mixed Woodland",
 }
 
-const HeightfieldPreviewScene := preload("res://src/ui/HeightfieldPreview.tscn")
-
 var grid_width: int = 0
 var grid_height: int = 0
 var _wrap_horizontal: bool = false
@@ -257,10 +255,7 @@ var faction_colors: Dictionary = {
 
 var selected_unit_id: int = -1
 var selected_herd_id: String = ""
-var heightfield_data: Dictionary = {}
 var biome_color_buffer: PackedColorArray = PackedColorArray()
-var heightfield_preview: Control = null
-var _heightfield_boot_shown: bool = true  # Default to 2D view; user can press R for 3D
 var _hovered_tile: Vector2i = Vector2i(-1, -1)
 var _fow_enabled: bool = false
 
@@ -479,11 +474,6 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 		start_marker = Vector2i(int(marker_dict.get("x", -1)), int(marker_dict.get("y", -1)))
 	else:
 		start_marker = Vector2i(-1, -1)
-	var heightfield_variant: Variant = overlays.get("heightfield", {})
-	if heightfield_variant is Dictionary:
-		heightfield_data = (heightfield_variant as Dictionary).duplicate(true)
-	else:
-		heightfield_data = {}
 	routes = Array(snapshot.get("orders", []))
 	food_sites = []
 	food_site_lookup.clear()
@@ -574,11 +564,6 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	queue_redraw()
 	_emit_overlay_legend()
 	_update_2d_minimap()
-
-	if _is_heightfield_visible():
-		_push_heightfield_preview()
-	else:
-		_maybe_auto_show_heightfield()
 
 	return {
 		"unit_count": units.size(),
@@ -850,8 +835,6 @@ func set_overlay_channel(key: String) -> void:
 		_invalidate_map_cache()  # Overlay changes require fresh cache render
 		queue_redraw()
 		_emit_overlay_legend()
-		if _is_heightfield_visible():
-			_push_heightfield_preview()
 		return
 	if not overlay_channels.has(key):
 		return
@@ -861,8 +844,6 @@ func set_overlay_channel(key: String) -> void:
 	_invalidate_map_cache()  # Overlay changes require fresh cache render
 	queue_redraw()
 	_emit_overlay_legend()
-	if _is_heightfield_visible():
-		_push_heightfield_preview()
 
 func set_fow_enabled(enabled: bool) -> void:
 	if _fow_enabled == enabled:
@@ -876,8 +857,6 @@ func set_fow_enabled(enabled: bool) -> void:
 	_emit_overlay_legend()
 	_update_2d_minimap()  # Rebuild minimap with/without FoW (also sets _explored_bounds_world)
 	_clamp_pan_offset()  # Clamp pan to explored bounds when FoW enabled
-	if _is_heightfield_visible():
-		_push_heightfield_preview()
 
 func is_fow_enabled() -> bool:
 	return _fow_enabled
@@ -1056,20 +1035,6 @@ func _draw_trade_overlay(radius: float, origin: Vector2) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if grid_width == 0 or grid_height == 0:
 		return
-	# DISABLED: 3D view while debugging FoW minimap
-	#if event.is_action_pressed("map_toggle_relief"):
-	#	_toggle_heightfield_preview()
-	#	_mark_input_handled()
-	#	return
-	#if event.is_action_pressed("map_switch_strategic_view"):
-	#	if _is_heightfield_visible():
-	#		var preview := _ensure_heightfield_preview()
-	#		if preview.has_method("hide_preview"):
-	#			preview.call("hide_preview")
-	#		else:
-	#			preview.hide()
-	#		_mark_input_handled()
-	#	return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_C:
 		_fit_map_to_view()
 		_mark_input_handled()
@@ -1524,8 +1489,6 @@ func _handle_entity_selection(col: int, row: int) -> void:
 		unit_payload["tile_info"] = _tile_info_at(unit_col, unit_row)
 		emit_signal("unit_selected", unit_payload)
 		queue_redraw()
-		if _is_heightfield_visible():
-			heightfield_preview.call("update_selection", unit_payload.get("tile_info", {}), unit_payload, {})
 		return
 
 	# Check for herds on this tile
@@ -1540,8 +1503,6 @@ func _handle_entity_selection(col: int, row: int) -> void:
 		herd_payload["tile_info"] = _tile_info_at(herd_col, herd_row)
 		emit_signal("herd_selected", herd_payload)
 		queue_redraw()
-		if _is_heightfield_visible():
-			heightfield_preview.call("update_selection", herd_payload.get("tile_info", {}), {}, herd_payload)
 		return
 	if selected_unit_id != -1 or selected_herd_id != "":
 		selected_unit_id = -1
@@ -1549,8 +1510,6 @@ func _handle_entity_selection(col: int, row: int) -> void:
 		emit_signal("selection_cleared")
 		selected_tile = Vector2i(-1, -1)
 		queue_redraw()
-		if _is_heightfield_visible():
-			heightfield_preview.call("update_selection", {}, {}, {})
 
 func _update_herd_trail(herd_id: String, herd: Dictionary) -> void:
 	if herd_id == "":
@@ -1604,8 +1563,6 @@ func _emit_tile_selection(col: int, row: int) -> void:
 	var info := _tile_info_at(col, row)
 	emit_signal("tile_selected", info)
 	queue_redraw()
-	if _is_heightfield_visible():
-		heightfield_preview.call("update_selection", info, {}, {})
 
 func _unit_at_point(point: Vector2) -> Dictionary:
 	for unit in units:
@@ -1855,191 +1812,6 @@ func _update_biome_color_buffer() -> void:
 		if idx < terrain_overlay.size():
 			terrain_id = int(terrain_overlay[idx])
 		biome_color_buffer[idx] = _terrain_color_for_id(terrain_id)
-
-func _ensure_heightfield_preview() -> Control:
-	if heightfield_preview == null or not is_instance_valid(heightfield_preview):
-		# Create a CanvasLayer to hold the preview overlay
-		var layer = CanvasLayer.new()
-		layer.layer = 100 # High layer to be on top
-		layer.name = "HeightfieldPreviewLayer"
-		get_tree().root.add_child(layer)
-
-		heightfield_preview = HeightfieldPreviewScene.instantiate()
-		heightfield_preview.hide()
-		layer.add_child(heightfield_preview)
-		if heightfield_preview.has_signal("strategic_view_requested"):
-			heightfield_preview.strategic_view_requested.connect(_on_heightfield_strategic_view_requested)
-		
-		# Connect relayed HUD signals
-		if heightfield_preview.has_signal("next_turn_requested"):
-			heightfield_preview.next_turn_requested.connect(func(steps): emit_signal("next_turn_requested", steps))
-		if heightfield_preview.has_signal("unit_scout_requested"):
-			heightfield_preview.unit_scout_requested.connect(func(x, y, bits): emit_signal("unit_scout_requested", x, y, bits))
-		if heightfield_preview.has_signal("unit_found_camp_requested"):
-			heightfield_preview.unit_found_camp_requested.connect(func(x, y): emit_signal("unit_found_camp_requested", x, y))
-		if heightfield_preview.has_signal("herd_follow_requested"):
-			heightfield_preview.herd_follow_requested.connect(func(id): emit_signal("herd_follow_requested", id))
-		if heightfield_preview.has_signal("forage_requested"):
-			heightfield_preview.forage_requested.connect(func(x, y, mod): emit_signal("forage_requested", x, y, mod))
-		if heightfield_preview.has_signal("hex_clicked"):
-			heightfield_preview.hex_clicked.connect(handle_hex_click)
-		
-		# Connect 3D-specific control signals
-		if heightfield_preview.has_signal("overlay_changed"):
-			heightfield_preview.overlay_changed.connect(_on_heightfield_overlay_changed)
-		if heightfield_preview.has_signal("inspector_toggle_requested"):
-			heightfield_preview.inspector_toggle_requested.connect(_on_heightfield_inspector_toggle)
-		if heightfield_preview.has_signal("legend_toggle_requested"):
-			heightfield_preview.legend_toggle_requested.connect(_on_heightfield_legend_toggle)
-		if heightfield_preview.has_signal("hex_hovered"):
-			heightfield_preview.hex_hovered.connect(_on_heightfield_hex_hovered)
-		if heightfield_preview.has_signal("view_state_changed"):
-			heightfield_preview.view_state_changed.connect(_on_heightfield_view_state_changed)
-
-		var main_node := get_tree().root.get_node_or_null("Main")
-		if main_node != null and heightfield_preview.has_method("apply_hud_state") and main_node.has_method("export_hud_state"):
-			var state: Dictionary = main_node.call("export_hud_state")
-			heightfield_preview.call("apply_hud_state", state)
-	return heightfield_preview
-
-func _maybe_auto_show_heightfield() -> void:
-	# DISABLED: 3D view while debugging FoW minimap
-	return
-	#if _heightfield_boot_shown:
-	#	return
-	#if heightfield_data.is_empty() or grid_width == 0 or grid_height == 0:
-	#	return
-	#var preview := _ensure_heightfield_preview()
-	#if preview.has_method("show_preview"):
-	#	preview.call("show_preview")
-	#else:
-	#	preview.show()
-	#_heightfield_boot_shown = true
-	#if preview.has_method("move_to_front"):
-	#	preview.call("move_to_front")
-	#if preview.has_method("_resize_to_display"):
-	#	preview.call_deferred("_resize_to_display")
-	#_push_heightfield_preview()
-	#if preview.has_method("restore_or_sync_view_state"):
-	#	preview.call("restore_or_sync_view_state", zoom_factor, pan_offset, last_hex_radius)
-	#elif preview.has_method("sync_view_state"):
-	#	preview.sync_view_state(zoom_factor, pan_offset, last_hex_radius)
-
-func relay_hud_call(method: String, args: Array = []) -> void:
-	if heightfield_preview != null and is_instance_valid(heightfield_preview):
-		if heightfield_preview.has_method("relay_hud_call"):
-			heightfield_preview.call("relay_hud_call", method, args)
-
-
-
-func _on_heightfield_overlay_changed(key: String) -> void:
-	set_overlay_channel(key)
-	_push_heightfield_preview()
-
-func _on_heightfield_inspector_toggle() -> void:
-	var main_node := get_tree().root.get_node_or_null("Main")
-	if main_node != null and main_node.has_method("_on_toggle_inspector"):
-		main_node.call("_on_toggle_inspector")
-
-func _on_heightfield_legend_toggle() -> void:
-	var main_node := get_tree().root.get_node_or_null("Main")
-	if main_node != null and main_node.has_method("_on_toggle_legend"):
-		main_node.call("_on_toggle_legend")
-
-func _on_heightfield_hex_hovered(col: int, row: int) -> void:
-	if col < 0 or row < 0:
-		if _hovered_tile != Vector2i(-1, -1):
-			_hovered_tile = Vector2i(-1, -1)
-			queue_redraw()
-		emit_signal("tile_hovered", {})
-		return
-	var incoming := Vector2i(col, row)
-	if _hovered_tile != incoming:
-		_hovered_tile = incoming
-		queue_redraw()
-	var info := _tile_info_at(col, row)
-	emit_signal("tile_hovered", info)
-
-func _on_heightfield_view_state_changed(zoom_2d: float, pan_2d: Vector2, hex_radius_2d: float) -> void:
-	zoom_factor = zoom_2d
-	pan_offset = pan_2d
-	last_hex_radius = hex_radius_2d
-	_update_layout_metrics()
-	queue_redraw()
-
-func _push_heightfield_preview() -> void:
-	if heightfield_preview == null:
-		print("[MapView] _push_heightfield_preview: heightfield_preview is null")
-		return
-	if not heightfield_preview.visible:
-		print("[MapView] _push_heightfield_preview: heightfield_preview is not visible")
-		return
-	print("[MapView] _push_heightfield_preview: Pushing data...")
-	
-	var heightfield: Dictionary = heightfield_data
-	_update_biome_color_buffer()
-	
-	var overlay_values: PackedFloat32Array = PackedFloat32Array()
-	var overlay_color: Color = Color.WHITE
-	if active_overlay_key != "":
-		overlay_values = _overlay_array(active_overlay_key) # Changed from _get_overlay_values to _overlay_array
-		overlay_color = OVERLAY_COLORS.get(active_overlay_key, LOGISTICS_COLOR)
-	
-	if not heightfield_preview.has_method("update_snapshot"):
-		push_error("[MapView] HeightfieldPreview missing update_snapshot method!")
-		return
-	
-	heightfield_preview.update_snapshot(
-		heightfield, 
-		biome_color_buffer,
-		overlay_values,
-		overlay_color,
-		active_overlay_key,
-		grid_width, 
-		grid_height,
-		units,
-		herds,
-		food_sites,
-		terrain_tags_overlay,
-		terrain_overlay
-	)
-
-func _toggle_heightfield_preview() -> void:
-	var preview := _ensure_heightfield_preview()
-	if preview.visible:
-		if preview.has_method("hide_preview"):
-			preview.call("hide_preview")
-		else:
-			preview.hide()
-		_update_2d_minimap()  # Show 2D minimap when switching back to 2D view
-		return
-	if heightfield_data.is_empty():
-		push_warning("Relief view not available yet; wait for the next snapshot.")
-		return
-	if preview.has_method("show_preview"):
-		preview.call("show_preview")
-	else:
-		preview.show()
-	if preview.has_method("move_to_front"):
-		preview.call("move_to_front")
-	if preview.has_method("_resize_to_display"):
-		preview.call_deferred("_resize_to_display")
-	print("[MapView] _toggle_heightfield_preview: showing window, calling push")
-	_push_heightfield_preview()
-	_update_2d_minimap()  # Hide 2D minimap when switching to 3D view
-	if preview.has_method("restore_or_sync_view_state"):
-		preview.call("restore_or_sync_view_state", zoom_factor, pan_offset, last_hex_radius)
-	elif preview.has_method("sync_view_state"):
-		preview.sync_view_state(zoom_factor, pan_offset, last_hex_radius)
-
-func _is_heightfield_visible() -> bool:
-	var vis := heightfield_preview != null and is_instance_valid(heightfield_preview) and heightfield_preview.visible
-	# print("[MapView] _is_heightfield_visible: ", vis) # Commented out to avoid spam
-	return vis
-
-func _on_heightfield_strategic_view_requested() -> void:
-	if heightfield_preview != null and is_instance_valid(heightfield_preview):
-		heightfield_preview.hide()
 
 func _tag_mask_at(x: int, y: int) -> int:
 	if terrain_tags_overlay.is_empty() or grid_width == 0:
@@ -2886,8 +2658,6 @@ func _ensure_input_actions() -> void:
 		"map_pan_down": KEY_S,
 		"map_zoom_in": KEY_E,
 		"map_zoom_out": KEY_Q,
-		"map_toggle_relief": KEY_R,
-		"map_switch_strategic_view": KEY_V,
 	}
 	for action in action_keys.keys():
 		if not InputMap.has_action(action):
@@ -3280,10 +3050,6 @@ func _update_2d_minimap() -> void:
 	if _minimap_2d == null:
 		_setup_2d_minimap()
 
-	# Hide 2D minimap when 3D view is active (3D view has its own minimap)
-	if _is_heightfield_visible():
-		_minimap_2d.set_visible(false)
-		return
 	_minimap_2d.set_visible(true)
 
 	# Check if we need to regenerate the minimap image

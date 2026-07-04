@@ -201,7 +201,6 @@ table ElevationOverlay {
   minValue:float;
   maxValue:float;
   samples:[ushort];
-  normals:[uint];
 }
 
 table InfluentialIndividualState {

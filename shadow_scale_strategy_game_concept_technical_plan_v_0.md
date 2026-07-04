@@ -266,13 +266,11 @@ Raw terrain defines movement, habitability, and discovery potential before facti
 | 35 | Sinkholes/Collapse Zones | `#4F4B33` |
 | 36 | Subterranean Aquifer Ceilings | `#2F8FB2` |
 
-#### Elevation Presentation Roadmap
-- The map will graduate from a flat board to a shallow 3D relief that mirrors the underlying `ElevationField`. Expect ridgelines, basins, and escarpments to rise out of the palette while keeping the same camera controls designers already rely on.
-- Initial pass: render the world-height raster in greyscale with soft rim lighting so teams can validate data fidelity before colour is reintroduced. Designers can flip between pure greyscale, height-tinted palette, and the legacy flat view via a HUD toggle.
-- Biome visuals ride on top of the relief. Each hex still owns its palette ID, but the client blends seamless biome textures (tri-planar decals or texture arrays) using the same weights that drive adjacency rules. This keeps coastlines, riverbanks, and mountain seams from “tiling” visibly when stretched over relief.
-- Overlay integration: logistics/sentiment/culture heatmaps will project onto the same relief so colour ramps hug hillsides instead of floating in screen space. Selection/hover rings sit slightly above the mesh to remain legible.
-- Accessibility defaults: camera pitch stays shallow (no full free-look) to preserve the strategic blueprint feel, and the relief exaggeration slider lets QA tune readability for screenshots, low-contrast monitors, and future fog-of-war silhouettes.
-- Engineering hooks live in `docs/architecture.md` (“Terrain Visualization Upgrade”), which lays out the added snapshot payloads (heightfield + normals), Godot mesh chunking strategy, and fallback pseudo-3D shader path. Update both documents in lockstep as the spike matures.
+#### Elevation Presentation (2D-only)
+- **3D relief was permanently removed.** An experimental shallow-3D relief view (heightfield mesh, orbit camera, water plane) was prototyped but proved a persistent source of instability, so it was dropped for good. The client renders the world as a **flat 2D hex board** and there is no plan to reintroduce a 3D view.
+- Elevation still matters to play — the underlying `ElevationField` drives hydrology, sea level, mapgen, and fog-of-war visibility — but it is surfaced to players as data, not as rendered terrain relief.
+- Elevation is presented in 2D as the **Elevation Heatmap** overlay (a colour ramp over the hex board, `0` = coast → `1` = peaks), alongside the other overlay channels. Biome palette IDs and terrain textures continue to render on the flat board.
+- See `docs/architecture.md` → "Removed: 3D Relief Rendering" for the engineering record of what was deleted and what was kept.
 
 - **Open Water & Shelf Biomes**
   - **Deep Ocean**: abyssal plains/trenches with crushing pressure; logistics limited to specialized hulls and submersibles; harbors exotic vents/resources.
@@ -1218,6 +1216,7 @@ Shadow-Scale mixes deep systemic simulation with a data-driven ECS and high-modu
 - **Strengths**: Full source access; lightweight workflow; built-in deterministic physics mode; strong community for systems programming via Rust bindings; can compile to headless/server targets easily.
 - **Risks**: 3D tooling less mature vs Unity/Unreal; performance tuning needed for large ECS; fewer off-the-shelf debugging/profiling tools; smaller talent pool; headless networking stack would need custom build-out.
 - **Fit**: Attractive if we value open-source stack and plan to invest in custom ECS modules (possibly Rust-based) while keeping editor UI customizable; works as a simulation core if we commit to extending its networking and data export.
+- **Status**: This is the shipped client stack, and it renders a **2D-only** hex board. An experimental Godot 3D relief view was tried and permanently removed (see the Elevation Presentation section and `docs/architecture.md` → "Removed: 3D Relief Rendering"), so Godot's 3D-tooling maturity is not a concern for this project.
 
 #### Option D: Custom Rust Engine (Bevy/wgpu + Custom ECS)
 - **Why**: Rust safety, modern ECS-first architecture, deterministic control, easy headless builds, fully open-source.
