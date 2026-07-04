@@ -974,7 +974,7 @@ pub fn snapshot_discoveries(ledger: &GreatDiscoveryLedger) -> Vec<GreatDiscovery
             effect_flags: record.effect_flags,
         })
         .collect();
-    states.sort_unstable_by(|a, b| (a.faction, a.id).cmp(&(b.faction, b.id)));
+    states.sort_unstable_by_key(|a| (a.faction, a.id));
     states
 }
 
@@ -995,7 +995,7 @@ pub fn snapshot_progress(readiness: &GreatDiscoveryReadiness) -> Vec<GreatDiscov
             });
         }
     }
-    states.sort_unstable_by(|a, b| (a.faction, a.discovery).cmp(&(b.faction, b.discovery)));
+    states.sort_unstable_by_key(|a| (a.faction, a.discovery));
     states
 }
 

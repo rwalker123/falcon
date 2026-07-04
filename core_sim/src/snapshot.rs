@@ -3447,7 +3447,7 @@ fn discovery_progress_entries(ledger: &DiscoveryProgressLedger) -> Vec<Discovery
             });
         }
     }
-    entries.sort_unstable_by(|a, b| (a.faction, a.discovery).cmp(&(b.faction, b.discovery)));
+    entries.sort_unstable_by_key(|a| (a.faction, a.discovery));
     entries
 }
 
@@ -3625,7 +3625,7 @@ fn snapshot_faction_inventory(inventory: &FactionInventory) -> Vec<SchemaFaction
             inventory: entries,
         });
     }
-    states.sort_by(|a, b| a.faction.cmp(&b.faction));
+    states.sort_by_key(|a| a.faction);
     states
 }
 
