@@ -241,6 +241,9 @@ var _last_visible_row_end: float = 0.0
 var pan_offset: Vector2 = Vector2.ZERO
 var base_bounds: Rect2 = Rect2(Vector2.ZERO, Vector2.ONE)
 var bounds_dirty: bool = true
+# Left-edge strip reserved for the docked Inspector (canvas-space px). The map
+# fits and recentres into the remaining width instead of drawing under it.
+var _view_inset_left: float = 0.0
 var mouse_pan_active: bool = false
 var mouse_pan_button: int = -1
 
@@ -651,6 +654,7 @@ func _draw() -> void:
 	var radius: float = last_hex_radius
 	var origin: Vector2 = last_origin
 	var viewport_size := _get_adjusted_viewport_size()
+	_apply_view_clip(viewport_size)
 
 	# Pre-compute hex point offsets for this radius (eliminates per-hex trig)
 	_update_hex_offset_cache(radius)
@@ -1063,6 +1067,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		elif mouse_event.button_index == MOUSE_BUTTON_LEFT and mouse_event.pressed:
 			var local_position: Vector2 = get_local_mouse_position()
+			if not _is_local_point_in_view(local_position):
+				return
 			_update_layout_metrics()
 			var offset := _point_to_offset(local_position)
 			var col: int = offset.x
@@ -1087,6 +1093,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			_mark_input_handled()
 		else:
 			var local_pos: Vector2 = get_local_mouse_position()
+			if not _is_local_point_in_view(local_pos):
+				# Hovering the Inspector's reserved strip: no map tooltip.
+				if _hovered_tile != Vector2i(-1, -1):
+					_hovered_tile = Vector2i(-1, -1)
+					emit_signal("tile_hovered", {})
+				return
 			_update_layout_metrics()
 			var offset := _point_to_offset(local_pos)
 			if offset != _hovered_tile:
@@ -2432,6 +2444,10 @@ func _get_adjusted_viewport_size() -> Vector2:
 	if canvas_scale.x != 0.0 and canvas_scale.y != 0.0:
 		# Account for global canvas (camera) scaling so hit-testing matches the drawn map
 		viewport_size /= canvas_scale
+	# Exclude the docked Inspector's reserved strip: the map treats the remaining
+	# width as its entire viewport, and the node is translated right by the same
+	# amount (see set_view_inset_left), so nothing renders behind the panel.
+	viewport_size.x = max(viewport_size.x - _view_inset_left, 1.0)
 	return viewport_size
 
 func _update_layout_metrics() -> void:
@@ -3022,6 +3038,44 @@ func _get_neighbor_offset_y_2d(dir: int) -> int:
 ## Must be called before _ready() or _setup_2d_minimap() for embedded mode to work.
 func set_hud_reference(hud: Node) -> void:
 	_hud_layer = hud
+
+## True when a local-space point lies in the map's usable area rather than the
+## strip reserved for the docked Inspector. The node is translated right by the
+## inset, so local x < 0 is exactly the reserved region — the map ignores input
+## there even though its cover-fit content mathematically extends under it.
+func _is_local_point_in_view(local_pos: Vector2) -> bool:
+	return local_pos.x >= 0.0
+
+## Clip this node's drawing to its usable rect (in local space, i.e. after the
+## node's translation). Because the map is cover-fit, its content is wider than
+## the reduced viewport and would otherwise overflow left into the Inspector's
+## strip; clipping confines every draw command (terrain, overlays, markers) to
+## the usable width.
+func _apply_view_clip(usable_size: Vector2) -> void:
+	var ci := get_canvas_item()
+	if _view_inset_left > 0.0:
+		RenderingServer.canvas_item_set_custom_rect(ci, true, Rect2(Vector2.ZERO, usable_size))
+		RenderingServer.canvas_item_set_clip(ci, true)
+	else:
+		RenderingServer.canvas_item_set_clip(ci, false)
+		RenderingServer.canvas_item_set_custom_rect(ci, false, Rect2())
+
+## Reserve a strip of the left edge for the docked Inspector. The map's viewport
+## shrinks by this width (canvas-space px) and the node is translated right by
+## the same amount, so the whole map system behaves as if the window were that
+## much narrower — nothing draws behind the panel. 0 reclaims the full width.
+func set_view_inset_left(px: float) -> void:
+	var inset: float = max(px, 0.0)
+	if is_equal_approx(inset, _view_inset_left):
+		return
+	_view_inset_left = inset
+	position.x = inset
+	_update_layout_metrics()
+	_clamp_pan_offset()
+	_invalidate_map_cache()
+	queue_redraw()
+	if _minimap_2d != null and _minimap_2d.has_method("queue_indicator_redraw"):
+		_minimap_2d.queue_indicator_redraw()
 
 func _setup_2d_minimap() -> void:
 	_minimap_2d = MinimapPanelScript.new()

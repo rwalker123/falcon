@@ -95,7 +95,7 @@ theme_override_constants/margin_bottom = 24
 [node name="LeftScroll" type="ScrollContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock"]
 size_flags_horizontal = 3
 size_flags_vertical = 3
-vertical_scroll_mode = 2
+vertical_scroll_mode = 1
 mouse_filter = 2
 
 [node name="LeftStack" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll"]
@@ -121,7 +121,7 @@ theme_override_constants/margin_bottom = 24
 [node name="RightScroll" type="ScrollContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock"]
 size_flags_horizontal = 3
 size_flags_vertical = 3
-vertical_scroll_mode = 2
+vertical_scroll_mode = 1
 mouse_filter = 2
 
 [node name="RightStack" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll"]
@@ -233,7 +233,13 @@ custom_minimum_size = Vector2(320, 0)
 [node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel"]
 size_flags_horizontal = 3
 
-[node name="CommandFeedLabel" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/CardContent"]
+[node name="CommandFeedScroll" type="ScrollContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/CardContent"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 1
+
+[node name="CommandFeedLabel" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/CardContent/CommandFeedScroll"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
 bbcode_enabled = true
@@ -270,6 +276,7 @@ text = "+"
 [node name="TerrainLegendPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack"]
 script = ExtResource("4")
 card_title = "Terrain Types"
+hotkey_hint = "L"
 visible = false
 
 [node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel"]
@@ -285,7 +292,7 @@ autowrap_mode = 1
 [node name="LegendScroll" type="ScrollContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/CardContent"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
-vertical_scroll_mode = 2
+vertical_scroll_mode = 1
 
 [node name="LegendList" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel/CardContent/LegendScroll"]
 unique_name_in_owner = true

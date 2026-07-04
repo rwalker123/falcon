@@ -17,14 +17,26 @@ offset_right = 627.0
 offset_bottom = 23.0
 grow_vertical = 2
 
-[node name="CommandToolbar" type="HBoxContainer" parent="RootPanel"]
+[node name="TitleLabel" type="Label" parent="RootPanel"]
 layout_mode = 0
 anchor_right = 1.0
 anchor_bottom = 0.0
 offset_left = 8.0
 offset_top = 8.0
 offset_right = -8.0
-offset_bottom = 48.0
+offset_bottom = 34.0
+theme_override_font_sizes/font_size = 16
+theme_override_colors/font_color = Color(0.9, 0.95, 1, 1)
+text = "Inspector (I)"
+
+[node name="CommandToolbar" type="HBoxContainer" parent="RootPanel"]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 0.0
+offset_left = 8.0
+offset_top = 40.0
+offset_right = -8.0
+offset_bottom = 80.0
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
@@ -64,7 +76,7 @@ layout_mode = 0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 8.0
-offset_top = 56.0
+offset_top = 88.0
 offset_right = -8.0
 offset_bottom = -8.0
 current_tab = 9

@@ -13,6 +13,25 @@ var _entries: Array = []  # Array of {panel: Control, priority: int}
 
 func _init(container: VBoxContainer) -> void:
 	_container = container
+	_configure_scroll()
+
+## A dock never scrolls horizontally — that reads as unpolished for a game HUD.
+## The stack fills its ScrollContainer and imposes no horizontal minimum, so it
+## can never be wider than the dock; disabling horizontal scroll then clamps the
+## stack to that width so content wraps to fit instead of spilling sideways under
+## a scrollbar. Vertical scroll mode is left to each dock's scene config (some
+## docks auto-scroll their stack; others let a flex panel absorb the overflow and
+## scroll internally).
+func _configure_scroll() -> void:
+	if _container == null:
+		return
+	_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_container.custom_minimum_size.x = 0.0
+	var ancestor: Node = _container.get_parent()
+	while ancestor != null and not (ancestor is ScrollContainer):
+		ancestor = ancestor.get_parent()
+	if ancestor is ScrollContainer:
+		(ancestor as ScrollContainer).horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 
 ## Register (or re-prioritise) a panel in this dock, then reorder the stack.
 func add(panel: Control, priority: int) -> void:

@@ -9,6 +9,7 @@ signal herd_follow_requested(herd_id: String)
 signal forage_requested(x: int, y: int, module_key: String)
 signal next_turn_requested(steps: int)
 
+@onready var layout_root: Control = $LayoutRoot
 @onready var campaign_title_label: Label = $LayoutRoot/RootColumn/TopBar/CampaignBlock/CampaignTitleLabel
 @onready var campaign_subtitle_label: Label = $LayoutRoot/RootColumn/TopBar/CampaignBlock/CampaignSubtitleLabel
 @onready var turn_label: Label = $LayoutRoot/RootColumn/TopBar/TurnBlock/TurnLabel
@@ -24,7 +25,9 @@ signal next_turn_requested(steps: int)
 @onready var victory_panel: PanelContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/VictoryPanel
 @onready var victory_status_label: RichTextLabel = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/VictoryPanel/Margin/VictoryLabel
 @onready var command_feed_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel as PanelCard
+@onready var command_feed_scroll: ScrollContainer = %CommandFeedScroll
 @onready var command_feed_label: RichTextLabel = %CommandFeedLabel
+@onready var left_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll
 @onready var selection_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel as PanelCard
 @onready var selection_detail: Label = %SelectionDetail
 @onready var unit_buttons: HBoxContainer = %UnitButtons
@@ -54,6 +57,11 @@ const LEGEND_ROW_PADDING := 6.0
 const LEGEND_MAX_HEIGHT := 640.0
 const STACK_ADDITIONAL_MARGIN := 16.0
 const COMMAND_FEED_LIMIT := 6
+# The feed grows to fit its entries, but never past the space left in the dock
+# below the panels above it: past that it scrolls internally instead of pushing
+# the whole dock to scroll. Keeps at least a few lines visible.
+const COMMAND_FEED_MIN_HEIGHT := 72.0
+const COMMAND_FEED_BOTTOM_MARGIN := 12.0
 const PLAYER_FACTION_ID := 0
 const HERD_CONSUMPTION_BIOMASS := 250.0
 const HERD_PROVISIONS_YIELD_PER_BIOMASS := 0.02
@@ -97,9 +105,8 @@ var travel_tiles_per_turn: float = DEFAULT_TRAVEL_SPEED
 var travel_preview_turn_cap: int = DEFAULT_TRAVEL_PREVIEW_LIMIT
 var left_dock: PanelDock
 var right_dock: PanelDock
-var _gameplay_cards: Array = []
-# The Inspector boots visible, so gameplay cards start docked on the right.
-var _inspector_docked: bool = true
+# Left-edge space reserved for the docked Inspector; the whole HUD insets by it.
+var _left_inset: float = 0.0
 
 func _ready() -> void:
     _load_ui_balance_config()
@@ -115,17 +122,11 @@ func _ready() -> void:
     _connect_control_buttons()
     left_dock = PanelDock.new(left_stack)
     right_dock = PanelDock.new(right_stack)
-    # Victory + terrain legend are status/reference panels that always live on
-    # the right. The gameplay cards below relocate depending on whether the
-    # Inspector is occupying the left dock (see set_inspector_docked).
-    right_dock.add(victory_panel, 40)
-    right_dock.add(terrain_legend_panel, 50)
-    _gameplay_cards = [
-        {"panel": selection_panel, "priority": 10},
-        {"panel": stockpile_panel, "priority": 20},
-        {"panel": command_feed_panel, "priority": 30},
-    ]
-    set_inspector_docked(_inspector_docked)
+    left_dock.add(selection_panel, 10)
+    left_dock.add(stockpile_panel, 20)
+    left_dock.add(command_feed_panel, 30)
+    right_dock.add(victory_panel, 10)
+    right_dock.add(terrain_legend_panel, 20)
     if stockpile_panel != null:
         stockpile_panel.visible = false
     if stockpile_title != null:
@@ -366,21 +367,13 @@ func get_upper_stack_height() -> float:
         max_bottom = 24.0
     return max_bottom + STACK_ADDITIONAL_MARGIN
 
-## Relocate the gameplay cards so they never share the left region with the
-## Inspector. When the Inspector is docked (visible) the cards live on the right;
-## when it is hidden they return to the left dock.
-func set_inspector_docked(inspector_docked: bool) -> void:
-    _inspector_docked = inspector_docked
-    if left_dock == null or right_dock == null:
-        return
-    var target: PanelDock = right_dock if inspector_docked else left_dock
-    var source: PanelDock = left_dock if inspector_docked else right_dock
-    for entry in _gameplay_cards:
-        var panel: Control = entry.get("panel")
-        if panel == null:
-            continue
-        source.remove(panel)
-        target.add(panel, int(entry.get("priority", 0)))
+## Inset the entire HUD from the left edge to reserve room for the docked
+## Inspector. The panels keep their natural docks; the whole layout just lives in
+## the narrower rectangle, matching the shrunk map area.
+func set_left_inset(px: float) -> void:
+    _left_inset = max(px, 0.0)
+    if layout_root != null:
+        layout_root.offset_left = _left_inset
 
 func _legend_row_height() -> float:
     return LEGEND_MIN_ROW_HEIGHT + LEGEND_ROW_PADDING
@@ -965,6 +958,25 @@ func _render_command_feed() -> void:
         command_feed_label.text = "[i]No command activity yet.[/i]"
     else:
         command_feed_label.text = "\n\n".join(_command_feed_entries)
+    # The feed grows to fit but stays within the dock so only it scrolls, not the
+    # whole stack; the label needs a frame to re-lay out before its content height
+    # and position are accurate.
+    call_deferred("_resize_command_feed")
+
+## Grow the feed's scroll region to fit its entries, capped to the space
+## remaining in the dock below the panels above it (so the feed scrolls
+## internally rather than dragging the fixed panels through the dock scroll),
+## then scroll to the newest (bottom) entry.
+func _resize_command_feed() -> void:
+    if command_feed_scroll == null or command_feed_label == null:
+        return
+    var cap: float = command_feed_label.get_content_height()
+    if left_dock_scroll != null and left_dock_scroll.size.y > 0.0:
+        var top_in_dock: float = command_feed_scroll.global_position.y - left_dock_scroll.global_position.y
+        var available: float = left_dock_scroll.size.y - top_in_dock - COMMAND_FEED_BOTTOM_MARGIN
+        cap = min(cap, max(available, COMMAND_FEED_MIN_HEIGHT))
+    command_feed_scroll.custom_minimum_size.y = max(cap, 0.0)
+    command_feed_scroll.set_deferred("scroll_vertical", 1000000)
 
 func _refresh_victory_status() -> void:
     if victory_status_label == null:
@@ -1190,14 +1202,35 @@ func _setup_tooltip() -> void:
     
     add_child(tooltip_panel)
 
+func _process(_delta: float) -> void:
+    _suppress_tooltip_over_ui()
+
+## Hide the hex tooltip whenever the pointer is over an interactive HUD control
+## (panel, button, minimap, inspector). The map cannot detect this itself: those
+## controls are MOUSE_FILTER_STOP and consume the motion events, so the map never
+## receives a "moved away" event to clear its tooltip and it would otherwise stay
+## frozen on top of the panel.
+func _suppress_tooltip_over_ui() -> void:
+    if tooltip_panel == null or not tooltip_panel.visible:
+        return
+    var viewport := get_viewport()
+    if viewport != null and viewport.gui_get_hovered_control() != null:
+        tooltip_panel.visible = false
+
 func show_tooltip(info: Dictionary) -> void:
     if tooltip_panel == null:
         return
-        
+
     if info.is_empty():
         tooltip_panel.visible = false
         return
-        
+
+    # Never show over interactive HUD controls (see _suppress_tooltip_over_ui).
+    var hover_viewport := get_viewport()
+    if hover_viewport != null and hover_viewport.gui_get_hovered_control() != null:
+        tooltip_panel.visible = false
+        return
+
     var lines: PackedStringArray = []
     
     # Coordinates
