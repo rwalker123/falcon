@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 
 use crate::{
+    grid_utils::neighbors4_wrapped,
     heightfield::ElevationField,
     map_preset::{
         BiomeTransitionConfig, InlandSeaConfig, IslandConfig, MacroLandConfig, OceanConfig,
@@ -217,6 +218,7 @@ pub fn build_bands(
     seed: u64,
     mountain_scale: f32,
     mountain_cfg: &crate::map_preset::MountainsConfig,
+    wrap_horizontal: bool,
 ) -> BandsResult {
     let w = elevation.width as usize;
     let h = elevation.height as usize;
@@ -230,10 +232,11 @@ pub fn build_bands(
         continents = macro_cfg.continents,
         min_area = macro_cfg.min_area,
         jitter = macro_cfg.jitter,
+        wrap_horizontal,
         "mapgen.macro_land.initial_ratio"
     );
 
-    let mut is_ocean = compute_ocean_mask(&land, w, h);
+    let mut is_ocean = compute_ocean_mask_wrapped(&land, w, h, wrap_horizontal);
 
     // Optionally connect inland seas to ocean via simple strait rule
     if inland.merge_strait_width > 0 {
@@ -244,12 +247,12 @@ pub fn build_bands(
             w,
             h,
         );
-        is_ocean = compute_ocean_mask(&land, w, h);
+        is_ocean = compute_ocean_mask_wrapped(&land, w, h, wrap_horizontal);
     }
 
     // Place islands before classifying so shelves wrap correctly.
     place_islands(&mut land, &mut is_ocean, islands, shelf, w, h, seed);
-    is_ocean = compute_ocean_mask(&land, w, h);
+    is_ocean = compute_ocean_mask_wrapped(&land, w, h, wrap_horizontal);
 
     rebalance_land_ratio(
         &mut land,
@@ -261,9 +264,9 @@ pub fn build_bands(
         h,
         seed,
     );
-    is_ocean = compute_ocean_mask(&land, w, h);
+    is_ocean = compute_ocean_mask_wrapped(&land, w, h, wrap_horizontal);
 
-    let land_distance = compute_land_distance(&land, w, h);
+    let land_distance = compute_land_distance_wrapped(&land, w, h, wrap_horizontal);
     let coastal_land = compute_coastal_land(&land, &is_ocean, w, h);
     let mountains = derive_mountain_mask(
         &land,
@@ -303,7 +306,7 @@ pub fn build_bands(
     );
 
     // Distance transform and classification
-    let ocean_distance = compute_ocean_distance(&land, w, h);
+    let ocean_distance = compute_ocean_distance_wrapped(&land, w, h, wrap_horizontal);
     let terrain = classify_bands(&land, &is_ocean, &ocean_distance, shelf, w, h);
 
     BandsResult {
@@ -318,21 +321,44 @@ pub fn build_bands(
     }
 }
 
+/// Get 4-connected (cardinal) neighbors without wrapping.
+/// Returns neighbors in a specific order: W, E, N, S (for deterministic BFS).
 fn neighbors4(x: usize, y: usize, w: usize, h: usize) -> impl Iterator<Item = (usize, usize)> {
     let mut v = Vec::with_capacity(4);
     if x > 0 {
-        v.push((x - 1, y));
+        v.push((x - 1, y)); // W
     }
     if x + 1 < w {
-        v.push((x + 1, y));
+        v.push((x + 1, y)); // E
     }
     if y > 0 {
-        v.push((x, y - 1));
+        v.push((x, y - 1)); // N
     }
     if y + 1 < h {
-        v.push((x, y + 1));
+        v.push((x, y + 1)); // S
     }
     v.into_iter()
+}
+
+/// Get 4-connected neighbors with horizontal wrap support.
+/// Uses grid_utils implementation for consistent wrap behavior.
+fn neighbors4_with_wrap(
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
+    wrap_horizontal: bool,
+) -> impl Iterator<Item = (usize, usize)> {
+    if wrap_horizontal {
+        // Use the grid_utils implementation for wrap-aware neighbors
+        neighbors4_wrapped(x as u32, y as u32, w as u32, h as u32, true)
+            .map(|(nx, ny)| (nx as usize, ny as usize))
+            .collect::<Vec<_>>()
+            .into_iter()
+    } else {
+        // Non-wrapping case: use original logic for deterministic output
+        neighbors4(x, y, w, h).collect::<Vec<_>>().into_iter()
+    }
 }
 
 fn neighbor_dirs() -> [(i32, i32); 8] {
@@ -965,12 +991,27 @@ fn adjust_land_tiles(
     }
 }
 
+#[allow(dead_code)]
 fn compute_ocean_mask(land: &[bool], w: usize, h: usize) -> Vec<bool> {
+    compute_ocean_mask_wrapped(land, w, h, false)
+}
+
+/// Compute ocean mask with optional horizontal wrap support.
+///
+/// When wrapping horizontally, left/right edges connect (no ocean boundary there).
+/// Ocean is seeded only from top/bottom edges.
+fn compute_ocean_mask_wrapped(
+    land: &[bool],
+    w: usize,
+    h: usize,
+    wrap_horizontal: bool,
+) -> Vec<bool> {
     let idx = |x: usize, y: usize| -> usize { y * w + x };
     let mut visited = vec![false; w * h];
     let mut is_ocean = vec![false; w * h];
     let mut q = VecDeque::new();
 
+    // Seed from top and bottom edges (poles - always boundaries)
     for x in 0..w {
         if !land[idx(x, 0)] {
             q.push_back((x, 0));
@@ -979,12 +1020,17 @@ fn compute_ocean_mask(land: &[bool], w: usize, h: usize) -> Vec<bool> {
             q.push_back((x, h.saturating_sub(1)));
         }
     }
-    for y in 0..h {
-        if !land[idx(0, y)] {
-            q.push_back((0, y));
-        }
-        if !land[idx(w.saturating_sub(1), y)] {
-            q.push_back((w.saturating_sub(1), y));
+
+    // Seed from left and right edges only if NOT wrapping horizontally
+    // When wrapping, these edges connect so ocean doesn't enter from there
+    if !wrap_horizontal {
+        for y in 0..h {
+            if !land[idx(0, y)] {
+                q.push_back((0, y));
+            }
+            if !land[idx(w.saturating_sub(1), y)] {
+                q.push_back((w.saturating_sub(1), y));
+            }
         }
     }
 
@@ -995,7 +1041,7 @@ fn compute_ocean_mask(land: &[bool], w: usize, h: usize) -> Vec<bool> {
         }
         visited[i] = true;
         is_ocean[i] = true;
-        for (nx, ny) in neighbors4(x, y, w, h) {
+        for (nx, ny) in neighbors4_with_wrap(x, y, w, h, wrap_horizontal) {
             let ni = idx(nx, ny);
             if !visited[ni] && !land[ni] {
                 q.push_back((nx, ny));
@@ -1006,7 +1052,18 @@ fn compute_ocean_mask(land: &[bool], w: usize, h: usize) -> Vec<bool> {
     is_ocean
 }
 
+#[allow(dead_code)]
 fn compute_ocean_distance(land: &[bool], w: usize, h: usize) -> Vec<u32> {
+    compute_ocean_distance_wrapped(land, w, h, false)
+}
+
+/// Compute distance from ocean (water tiles) to each tile, with optional wrap.
+fn compute_ocean_distance_wrapped(
+    land: &[bool],
+    w: usize,
+    h: usize,
+    wrap_horizontal: bool,
+) -> Vec<u32> {
     let mut distance = vec![u32::MAX; w * h];
     let mut dq = VecDeque::new();
     let idx = |x: usize, y: usize| -> usize { y * w + x };
@@ -1023,7 +1080,7 @@ fn compute_ocean_distance(land: &[bool], w: usize, h: usize) -> Vec<u32> {
 
     while let Some((x, y)) = dq.pop_front() {
         let base = distance[idx(x, y)];
-        for (nx, ny) in neighbors4(x, y, w, h) {
+        for (nx, ny) in neighbors4_with_wrap(x, y, w, h, wrap_horizontal) {
             let ni = idx(nx, ny);
             if distance[ni] == u32::MAX {
                 distance[ni] = base.saturating_add(1);
@@ -1035,7 +1092,18 @@ fn compute_ocean_distance(land: &[bool], w: usize, h: usize) -> Vec<u32> {
     distance
 }
 
+#[allow(dead_code)]
 fn compute_land_distance(land: &[bool], w: usize, h: usize) -> Vec<u32> {
+    compute_land_distance_wrapped(land, w, h, false)
+}
+
+/// Compute distance from coast (water-adjacent land) inward, with optional wrap.
+fn compute_land_distance_wrapped(
+    land: &[bool],
+    w: usize,
+    h: usize,
+    wrap_horizontal: bool,
+) -> Vec<u32> {
     let mut distance = vec![u32::MAX; w * h];
     let mut dq = VecDeque::new();
     let idx = |x: usize, y: usize| -> usize { y * w + x };
@@ -1047,7 +1115,7 @@ fn compute_land_distance(land: &[bool], w: usize, h: usize) -> Vec<u32> {
                 continue;
             }
             let mut adjacent_water = false;
-            for (nx, ny) in neighbors4(x, y, w, h) {
+            for (nx, ny) in neighbors4_with_wrap(x, y, w, h, wrap_horizontal) {
                 if !land[idx(nx, ny)] {
                     adjacent_water = true;
                     break;
@@ -1062,7 +1130,7 @@ fn compute_land_distance(land: &[bool], w: usize, h: usize) -> Vec<u32> {
 
     while let Some((x, y)) = dq.pop_front() {
         let base = distance[idx(x, y)];
-        for (nx, ny) in neighbors4(x, y, w, h) {
+        for (nx, ny) in neighbors4_with_wrap(x, y, w, h, wrap_horizontal) {
             let ni = idx(nx, ny);
             if !land[ni] {
                 continue;
@@ -2522,6 +2590,7 @@ mod tests {
             seed,
             preset.mountain_scale,
             &preset.mountains,
+            false, // wrap_horizontal - test without wrap
         );
 
         compute_metrics(preset, &bands)
@@ -2756,6 +2825,7 @@ mod tests {
             seed,
             preset.mountain_scale,
             &preset.mountains,
+            false, // wrap_horizontal - test without wrap
         );
         assert_eq!(bands.terrain.len(), width * height);
         assert!(bands.land_mask.iter().any(|&cell| cell));

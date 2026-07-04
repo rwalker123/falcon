@@ -34,10 +34,20 @@ pub struct HydrologyOverrides {
     pub uphill_gain_pct: Option<f32>,
 }
 
+/// Configuration for map topology (wrapping behavior).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MapTopology {
+    /// Whether the map wraps horizontally (east-west edges connect).
+    pub wrap_horizontal: bool,
+    /// Whether the map wraps vertically (north-south edges connect). Reserved for future use.
+    pub wrap_vertical: bool,
+}
+
 /// Global configuration parameters for the headless simulation prototype.
 #[derive(Resource, Debug, Clone)]
 pub struct SimulationConfig {
     pub grid_size: UVec2,
+    pub map_topology: MapTopology,
     pub map_preset_id: String,
     pub map_seed: u64,
     pub start_profile_id: String,
@@ -167,9 +177,19 @@ pub enum SimulationConfigError {
     },
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct MapTopologyData {
+    #[serde(default)]
+    wrap_horizontal: bool,
+    #[serde(default)]
+    wrap_vertical: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct SimulationConfigData {
     grid_size: GridSizeData,
+    #[serde(default)]
+    map_topology: MapTopologyData,
     #[serde(default = "default_map_preset_id")]
     map_preset_id: String,
     #[serde(default)]
@@ -269,6 +289,10 @@ impl SimulationConfigData {
     fn into_config(self) -> Result<SimulationConfig, SimulationConfigError> {
         Ok(SimulationConfig {
             grid_size: UVec2::new(self.grid_size.x, self.grid_size.y),
+            map_topology: MapTopology {
+                wrap_horizontal: self.map_topology.wrap_horizontal,
+                wrap_vertical: self.map_topology.wrap_vertical,
+            },
             map_preset_id: self.map_preset_id,
             map_seed: self.map_seed,
             start_profile_id: self.start_profile_id,

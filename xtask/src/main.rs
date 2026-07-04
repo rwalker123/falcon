@@ -653,6 +653,18 @@ fn godot_build() -> Result<(), Box<dyn Error>> {
 
     println!("Copied {} -> {}", source.display(), dest.display());
 
+    // On macOS, re-sign the library to avoid code signature issues
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("codesign")
+            .args(["--force", "--sign", "-", dest.to_str().unwrap()])
+            .status()?;
+        if !status.success() {
+            return Err("codesign failed".into());
+        }
+        println!("Signed {}", dest.display());
+    }
+
     Ok(())
 }
 

@@ -161,6 +161,8 @@ pub struct SnapshotHeader {
     pub hash: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub campaign_label: Option<CampaignLabel>,
+    #[serde(default)]
+    pub wrap_horizontal: bool,
 }
 
 impl SnapshotHeader {
@@ -183,7 +185,14 @@ impl SnapshotHeader {
             influencer_count: influencer_count as u32,
             hash: 0,
             campaign_label: None,
+            wrap_horizontal: false,
         }
+    }
+
+    /// Creates a header with wrap_horizontal set.
+    pub fn with_wrap_horizontal(mut self, wrap: bool) -> Self {
+        self.wrap_horizontal = wrap;
+        self
     }
 }
 
@@ -1490,6 +1499,7 @@ fn build_snapshot_flatbuffer<'a>(
             hash: snapshot.header.hash,
             campaignLabel: campaign_label_fb,
             victory: Some(victory_state),
+            wrapHorizontal: snapshot.header.wrap_horizontal,
         },
     );
 
@@ -1649,6 +1659,7 @@ fn build_delta_flatbuffer<'a>(
             hash: delta.header.hash,
             campaignLabel: campaign_label_fb,
             victory: victory_state,
+            wrapHorizontal: delta.header.wrap_horizontal,
         },
     );
 

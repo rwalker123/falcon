@@ -623,6 +623,7 @@ fn insert_overlay_channel(
 struct GridSize {
     width: u32,
     height: u32,
+    wrap_horizontal: bool,
 }
 
 struct OverlaySlices<'a> {
@@ -674,6 +675,7 @@ fn snapshot_dict(
     let mut grid_dict = VarDictionary::new();
     let _ = grid_dict.insert("width", grid_size.width as i64);
     let _ = grid_dict.insert("height", grid_size.height as i64);
+    let _ = grid_dict.insert("wrap_horizontal", grid_size.wrap_horizontal);
     let _ = dict.insert("grid", grid_dict);
 
     let size = (grid_size.width as usize)
@@ -1151,6 +1153,7 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
     let mut agg = DeltaAggregator::default();
     if let Some(header) = delta.header() {
         agg.tick = header.tick();
+        agg.wrap_horizontal = header.wrapHorizontal();
     }
     if let Some(tiles) = delta.tiles() {
         for tile in tiles {
@@ -1341,6 +1344,7 @@ struct DeltaAggregator {
     tick: u64,
     width: u32,
     height: u32,
+    wrap_horizontal: bool,
     tile_updates: HashMap<(u32, u32), f32>,
     terrain_width: u32,
     terrain_height: u32,
@@ -1625,6 +1629,7 @@ impl DeltaAggregator {
             tick,
             width,
             height,
+            wrap_horizontal,
             tile_updates,
             terrain_width,
             terrain_height,
@@ -1905,6 +1910,7 @@ impl DeltaAggregator {
             GridSize {
                 width: final_width,
                 height: final_height,
+                wrap_horizontal,
             },
             OverlaySlices {
                 logistics: &logistics,
@@ -2700,6 +2706,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         GridSize {
             width: final_width,
             height: final_height,
+            wrap_horizontal: header.wrapHorizontal(),
         },
         OverlaySlices {
             logistics: &logistics_resized,

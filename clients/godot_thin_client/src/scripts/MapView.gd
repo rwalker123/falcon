@@ -32,9 +32,16 @@ const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
 const GRID_LINE_COLOR := Color(0.1, 0.12, 0.18, 0.45)
 const SQRT3 := 1.7320508075688772
 const SIN_60 := 0.8660254037844386
-# Fog-of-War visibility threshold above which a tile counts as "Active" (fully
-# visible). Values: Active ≈ 1.0, Discovered ≈ 0.5, Unexplored ≈ 0.0.
-const FOW_VISIBLE_THRESHOLD := 0.7
+# Fog-of-War visibility discriminators on the 0.0/0.5/1.0 visibility encoding
+# (Active ≈ 1.0, Discovered ≈ 0.5, Unexplored ≈ 0.0).
+const FOW_VISIBLE_THRESHOLD := 0.7  # Above this a tile is Active (full color)
+const FOW_EXPLORED_THRESHOLD := 0.3  # Above this a tile is at least Discovered
+# Fallback FoW appearance; overridden by the "fog_of_war" section of
+# heightfield_config.json (see _load_fow_config).
+const DEFAULT_FOW_MIST_COLOR := Color(0.45, 0.48, 0.55, 1.0)
+const DEFAULT_FOW_MIST_BLEND := 0.35
+const DEFAULT_FOW_FOG_FILL_COLOR := Color(0.08, 0.08, 0.12, 1.0)
+const HEIGHTFIELD_CONFIG_PATH := "res://src/data/heightfield_config.json"
 const MIN_ZOOM_FACTOR := 1.0
 const MAX_ZOOM_FACTOR := 4.0
 const MOUSE_ZOOM_STEP := 0.2
@@ -257,6 +264,11 @@ var _heightfield_boot_shown: bool = true  # Default to 2D view; user can press R
 var _hovered_tile: Vector2i = Vector2i(-1, -1)
 var _fow_enabled: bool = false
 
+# FoW appearance, loaded from heightfield_config.json "fog_of_war" (see _load_fow_config).
+var _fow_mist_color: Color = DEFAULT_FOW_MIST_COLOR
+var _fow_mist_blend: float = DEFAULT_FOW_MIST_BLEND
+var _fow_fog_fill_color: Color = DEFAULT_FOW_FOG_FILL_COLOR
+
 # 2D Minimap (uses shared MinimapPanel component)
 const MinimapPanelScript := preload("res://src/scripts/ui/MinimapPanel.gd")
 var _minimap_2d: Node = null  # MinimapPanel instance
@@ -291,11 +303,42 @@ func _ready() -> void:
 	set_process(true)
 	# Use nearest-neighbor filtering to prevent seams from bilinear interpolation
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_load_fow_config()
 	_ensure_input_actions()
 	_init_terrain_rendering()
 	_setup_map_cache()
 	# Note: _setup_2d_minimap() is now called lazily from _update_2d_minimap()
 	# This allows Main.gd to set_hud_reference() before the minimap is created
+
+
+## Load FoW appearance tunables from heightfield_config.json ("fog_of_war" section).
+## Falls back to the DEFAULT_FOW_* constants when the file or individual keys are missing.
+func _load_fow_config() -> void:
+	if not FileAccess.file_exists(HEIGHTFIELD_CONFIG_PATH):
+		return
+	var file := FileAccess.open(HEIGHTFIELD_CONFIG_PATH, FileAccess.READ)
+	if file == null:
+		push_warning("[MapView] Failed to open config: " + HEIGHTFIELD_CONFIG_PATH)
+		return
+	var text := file.get_as_text()
+	file.close()
+	var json = JSON.parse_string(text)
+	if json == null:
+		push_warning("[MapView] Failed to parse JSON config: " + HEIGHTFIELD_CONFIG_PATH)
+		return
+	if not (json is Dictionary and json.has("fog_of_war")):
+		return
+	var cfg: Dictionary = json["fog_of_war"]
+	_fow_mist_color = _color_from_config(cfg.get("mist_color"), DEFAULT_FOW_MIST_COLOR)
+	_fow_mist_blend = float(cfg.get("mist_blend", DEFAULT_FOW_MIST_BLEND))
+	_fow_fog_fill_color = _color_from_config(cfg.get("fog_fill_color"), DEFAULT_FOW_FOG_FILL_COLOR)
+
+## Parse an [r, g, b] (or [r, g, b, a]) config array into a Color, or return the fallback.
+func _color_from_config(value, fallback: Color) -> Color:
+	if value is Array and value.size() >= 3:
+		var alpha := float(value[3]) if value.size() >= 4 else 1.0
+		return Color(float(value[0]), float(value[1]), float(value[2]), alpha)
+	return fallback
 
 
 func _setup_map_cache() -> void:
@@ -1088,7 +1131,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				elif _fow_enabled and not _is_tile_visible(offset.x, offset.y):
 					# Unexplored tiles: no tooltip when FoW is enabled
 					var vis: float = _value_at_overlay("visibility", offset.x, offset.y)
-					if vis <= 0.3:
+					if vis <= FOW_EXPLORED_THRESHOLD:
 						emit_signal("tile_hovered", {})
 					else:
 						# Discovered tiles: show basic terrain info only
@@ -1770,10 +1813,9 @@ func _tile_color(x: int, y: int) -> Color:
 				return base_color
 			elif vis > 0.0:  # Explored but not active - show terrain with foggy overlay
 				# Light mist effect that preserves terrain recognition
-				var mist := Color(0.45, 0.48, 0.55, 1.0)
-				return base_color.lerp(mist, 0.35)
+				return base_color.lerp(_fow_mist_color, _fow_mist_blend)
 			else:  # Unexplored - dark fog
-				return Color(0.08, 0.08, 0.12, 1.0)
+				return _fow_fog_fill_color
 		return base_color
 	if active_overlay_key == "terrain_tags":
 		var mask := _tag_mask_at(x, y)
@@ -3288,8 +3330,8 @@ func _rebuild_minimap_2d_image() -> void:
 	# Cache terrain colors lookup for faster access
 	var colors := _get_terrain_colors()
 	var fallback_color := Color(0.2, 0.2, 0.2, 1.0)
-	var fog_color := Color(0.08, 0.08, 0.12, 1.0)  # Dark color for unexplored
-	var mist_color := Color(0.45, 0.48, 0.55, 1.0)  # Light gray-blue mist for explored-but-not-visible
+	var fog_color := _fow_fog_fill_color  # Dark color for unexplored
+	var mist_color := _fow_mist_color  # Light gray-blue mist for explored-but-not-visible
 
 	# Get visibility data for FoW (if enabled)
 	var visibility_data: PackedFloat32Array = PackedFloat32Array()
@@ -3351,7 +3393,7 @@ func _rebuild_minimap_2d_image() -> void:
 				elif vis <= FOW_VISIBLE_THRESHOLD:
 					# Explored but not currently visible - show terrain with light mist overlay
 					# Desaturate slightly and blend with mist to show "remembered" state
-					color = color.lerp(mist_color, 0.35)
+					color = color.lerp(mist_color, _fow_mist_blend)
 				# else: vis > FOW_VISIBLE_THRESHOLD - fully visible, use terrain color as-is
 
 			# Convert Color (0-1 floats) to RGB bytes (0-255)

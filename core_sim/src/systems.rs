@@ -275,6 +275,7 @@ pub fn spawn_initial_world(
             world_seed,
             preset.mountain_scale,
             &preset.mountains,
+            config.map_topology.wrap_horizontal,
         )
     });
     if let Some(ref bands_res) = bands {

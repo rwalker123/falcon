@@ -1483,6 +1483,7 @@ pub fn capture_snapshot(
         power_states.len(),
         influencer_states.len(),
     );
+    header.wrap_horizontal = config.map_topology.wrap_horizontal;
 
     if let Some(label_res) = campaign_label.as_ref() {
         let label = label_res.as_ref();
