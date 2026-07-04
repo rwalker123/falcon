@@ -61,15 +61,19 @@ func set_relevant(panel: Control, relevant: bool) -> void:
 
 func _reorder() -> void:
 	_entries.sort_custom(_sort_by_priority)
-	for idx in range(_entries.size()):
-		var panel: Control = _entries[idx].get("panel")
+	# Use a contiguous target index that only advances for valid panels, so a
+	# skipped (freed) entry can't leave a gap that pushes move_child out of range.
+	var target_idx := 0
+	for entry in _entries:
+		var panel: Control = entry.get("panel")
 		if not is_instance_valid(panel):
 			continue
 		if panel.get_parent() != _container:
 			if panel.get_parent() != null:
 				panel.get_parent().remove_child(panel)
 			_container.add_child(panel)
-		_container.move_child(panel, idx)
+		_container.move_child(panel, target_idx)
+		target_idx += 1
 
 func _sort_by_priority(a: Dictionary, b: Dictionary) -> bool:
 	return int(a.get("priority", 0)) < int(b.get("priority", 0))
