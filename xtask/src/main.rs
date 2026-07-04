@@ -657,10 +657,11 @@ fn godot_build() -> Result<(), Box<dyn Error>> {
     #[cfg(target_os = "macos")]
     {
         let status = Command::new("codesign")
-            .args(["--force", "--sign", "-", dest.to_str().unwrap()])
+            .args(["--force", "--sign", "-"])
+            .arg(&dest)
             .status()?;
         if !status.success() {
-            return Err("codesign failed".into());
+            return Err(format!("codesign failed with status {status}").into());
         }
         println!("Signed {}", dest.display());
     }

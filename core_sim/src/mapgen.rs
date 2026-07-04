@@ -991,7 +991,7 @@ fn adjust_land_tiles(
     }
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn compute_ocean_mask(land: &[bool], w: usize, h: usize) -> Vec<bool> {
     compute_ocean_mask_wrapped(land, w, h, false)
 }
@@ -1052,11 +1052,6 @@ fn compute_ocean_mask_wrapped(
     is_ocean
 }
 
-#[allow(dead_code)]
-fn compute_ocean_distance(land: &[bool], w: usize, h: usize) -> Vec<u32> {
-    compute_ocean_distance_wrapped(land, w, h, false)
-}
-
 /// Compute distance from ocean (water tiles) to each tile, with optional wrap.
 fn compute_ocean_distance_wrapped(
     land: &[bool],
@@ -1092,7 +1087,7 @@ fn compute_ocean_distance_wrapped(
     distance
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn compute_land_distance(land: &[bool], w: usize, h: usize) -> Vec<u32> {
     compute_land_distance_wrapped(land, w, h, false)
 }

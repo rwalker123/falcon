@@ -321,10 +321,12 @@ fn reveal_tiles_in_range(
                     center,
                     UVec2::new(x, y),
                     center_elevation,
-                    elevation,
-                    terrain_tags,
-                    blocking_tags,
-                    wrap_horizontal,
+                    &LineOfSightCtx {
+                        elevation,
+                        terrain_tags,
+                        blocking_tags,
+                        wrap_horizontal,
+                    },
                 )
             {
                 continue;
@@ -382,28 +384,34 @@ fn get_terrain_modifier(tags: TerrainTags, cfg: &TerrainModifierConfig) -> i32 {
     0
 }
 
+/// Terrain data and blocking rules that stay constant across every ray cast in a
+/// visibility pass. Bundled into one parameter so the LoS query stays under Clippy's
+/// argument limit without suppressing the lint.
+struct LineOfSightCtx<'a> {
+    elevation: &'a ElevationField,
+    terrain_tags: &'a [TerrainTags],
+    blocking_tags: TerrainTags,
+    wrap_horizontal: bool,
+}
+
 /// Check if there is clear line of sight between two points using Bresenham's algorithm.
 /// Checks both elevation (terrain height) and blocking terrain tags (e.g., HIGHLAND, VOLCANIC).
 /// Supports horizontal wrapping for cylindrical world topology.
-#[allow(clippy::too_many_arguments)]
 fn has_line_of_sight_wrapped(
     from: UVec2,
     to: UVec2,
     source_elevation: f32,
-    elevation: &ElevationField,
-    terrain_tags: &[TerrainTags],
-    blocking_tags: TerrainTags,
-    wrap_horizontal: bool,
+    ctx: &LineOfSightCtx,
 ) -> bool {
     // Skip if same tile
     if from == to {
         return true;
     }
 
-    let width = elevation.width;
+    let width = ctx.elevation.width;
 
     // Calculate deltas using shortest path (may go through wrap boundary)
-    let delta_x = if wrap_horizontal {
+    let delta_x = if ctx.wrap_horizontal {
         shortest_delta_x(from.x, to.x, width, true)
     } else {
         to.x as i32 - from.x as i32
@@ -423,7 +431,7 @@ fn has_line_of_sight_wrapped(
     let target_y = to.y as i32;
 
     let total_dist = ((dx * dx + dy * dy) as f32).sqrt().max(1.0);
-    let target_elevation = elevation.sample(to.x, to.y);
+    let target_elevation = ctx.elevation.sample(to.x, to.y);
 
     // Add slight height bonus to viewer (simulating eye level above ground)
     let viewer_height = source_elevation + VIEWER_EYE_LEVEL_BONUS;
@@ -445,23 +453,23 @@ fn has_line_of_sight_wrapped(
         }
 
         // Y bounds check (no vertical wrap)
-        if y < 0 || y >= elevation.height as i32 {
+        if y < 0 || y >= ctx.elevation.height as i32 {
             continue;
         }
 
         // Wrap X coordinate to get actual grid position
-        let current_x = wrap_x(logical_x, width, wrap_horizontal);
+        let current_x = wrap_x(logical_x, width, ctx.wrap_horizontal);
         let current_y = y as u32;
 
         // Check for blocking terrain tags (e.g., mountains, volcanoes)
         let idx = (current_y * width + current_x) as usize;
-        if let Some(&tags) = terrain_tags.get(idx) {
-            if (tags & blocking_tags).bits() != 0 {
+        if let Some(&tags) = ctx.terrain_tags.get(idx) {
+            if (tags & ctx.blocking_tags).bits() != 0 {
                 return false;
             }
         }
 
-        let intermediate_elevation = elevation.sample(current_x, current_y);
+        let intermediate_elevation = ctx.elevation.sample(current_x, current_y);
 
         // Calculate expected elevation at this point on the sight line
         // Use logical distance from source for progress calculation
@@ -603,10 +611,12 @@ mod tests {
             UVec2::new(5, 5),
             UVec2::new(5, 5),
             0.5,
-            &elevation,
-            &terrain_tags,
-            TerrainTags::empty(),
-            false,
+            &LineOfSightCtx {
+                elevation: &elevation,
+                terrain_tags: &terrain_tags,
+                blocking_tags: TerrainTags::empty(),
+                wrap_horizontal: false,
+            },
         ));
     }
 
@@ -618,10 +628,12 @@ mod tests {
             UVec2::new(0, 0),
             UVec2::new(9, 9),
             0.5,
-            &elevation,
-            &terrain_tags,
-            TerrainTags::empty(),
-            false,
+            &LineOfSightCtx {
+                elevation: &elevation,
+                terrain_tags: &terrain_tags,
+                blocking_tags: TerrainTags::empty(),
+                wrap_horizontal: false,
+            },
         ));
     }
 
@@ -638,10 +650,12 @@ mod tests {
             UVec2::new(0, 5),
             UVec2::new(9, 5),
             0.3,
-            &elevation,
-            &terrain_tags,
-            TerrainTags::empty(),
-            false,
+            &LineOfSightCtx {
+                elevation: &elevation,
+                terrain_tags: &terrain_tags,
+                blocking_tags: TerrainTags::empty(),
+                wrap_horizontal: false,
+            },
         ));
     }
 
@@ -665,10 +679,12 @@ mod tests {
             UVec2::new(0, 5),
             UVec2::new(9, 5),
             0.5,
-            &elevation,
-            &terrain_tags,
-            blocking_tags,
-            false,
+            &LineOfSightCtx {
+                elevation: &elevation,
+                terrain_tags: &terrain_tags,
+                blocking_tags,
+                wrap_horizontal: false,
+            },
         ));
 
         // Looking at the HIGHLAND tile itself should still work (target not blocked)
@@ -676,10 +692,12 @@ mod tests {
             UVec2::new(0, 5),
             UVec2::new(5, 5),
             0.5,
-            &elevation,
-            &terrain_tags,
-            blocking_tags,
-            false,
+            &LineOfSightCtx {
+                elevation: &elevation,
+                terrain_tags: &terrain_tags,
+                blocking_tags,
+                wrap_horizontal: false,
+            },
         ));
     }
 
@@ -698,10 +716,12 @@ mod tests {
             UVec2::new(2, 5),
             UVec2::new(18, 5),
             0.5,
-            &elevation,
-            &terrain_tags,
-            TerrainTags::empty(),
-            true,
+            &LineOfSightCtx {
+                elevation: &elevation,
+                terrain_tags: &terrain_tags,
+                blocking_tags: TerrainTags::empty(),
+                wrap_horizontal: true,
+            },
         ));
     }
 
@@ -723,10 +743,12 @@ mod tests {
             UVec2::new(2, 5),
             UVec2::new(18, 5),
             0.3,
-            &elevation,
-            &terrain_tags,
-            TerrainTags::empty(),
-            true,
+            &LineOfSightCtx {
+                elevation: &elevation,
+                terrain_tags: &terrain_tags,
+                blocking_tags: TerrainTags::empty(),
+                wrap_horizontal: true,
+            },
         ));
     }
 
