@@ -1622,6 +1622,15 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         world.insert_resource(moisture_raster);
     }
 
+    // Reset per-faction Fog of War. WorldSnapshot doesn't carry the visibility
+    // ledger, and with permanent-memory FoW (decay disabled by default) a rollback
+    // would otherwise retain tiles discovered on ticks *after* the restore point,
+    // leaking future knowledge. Clearing both resources rebuilds visibility from the
+    // restored unit positions on the next turn (see calculate_visibility). The sweep
+    // tracker is cleared too so corridor sweeps don't reference pre-rollback tiles.
+    world.insert_resource(crate::visibility::VisibilityLedger::default());
+    world.insert_resource(crate::visibility::VisibilitySweepTracker::default());
+
     // Despawn existing entities.
     let existing_tiles: Vec<Entity> = {
         let mut query = world.query_filtered::<Entity, With<Tile>>();

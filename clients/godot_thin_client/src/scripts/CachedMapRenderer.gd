@@ -89,13 +89,14 @@ func _draw() -> void:
 			var center: Vector2 = _hex_center(logical_x, y, radius, _render_origin)
 
 			if use_textures:
-				if map_view._fow_hides_texture(data_x, y):
+				var vstate: String = map_view._visibility_state_at(data_x, y)  # one FoW lookup per tile
+				if vstate == "unexplored":
 					var fog: Color = map_view._fow_fog_fill_color
 					var fog_points := _hex_points(center, radius)
 					draw_polygon(fog_points, PackedColorArray([fog, fog, fog, fog, fog, fog]))
 				else:
 					var terrain_id: int = map_view._terrain_id_at(data_x, y)
-					_draw_hex_textured(center, terrain_id, radius, map_view._fow_texture_modulate(data_x, y))
+					_draw_hex_textured(center, terrain_id, radius, map_view._fow_texture_tint_for_state(vstate))
 			else:
 				var final_color: Color = map_view._tile_color(data_x, y)
 				var polygon_points := _hex_points(center, radius)

@@ -272,11 +272,15 @@ pub fn calculate_visibility(
 }
 
 /// Tiles crossed by the straight offset-space segment from `from` to `to`,
-/// inclusive of both ends and de-duplicated. Used to reveal the corridor a unit
-/// sweeps when it moves several tiles in one turn. Honors horizontal wrap via the
-/// shortest x-delta; returns just `[to]` for a degenerate span, or one longer than
-/// `max_sweep_tiles` — an implausible span from a wrap-seam artifact or an
-/// interpolation/coordinate glitch, which should not blow up into a huge corridor.
+/// inclusive of both ends. Used to reveal the corridor a unit sweeps when it moves
+/// several tiles in one turn. Honors horizontal wrap via the shortest x-delta;
+/// returns just `[to]` for a degenerate span, or one longer than `max_sweep_tiles`
+/// — an implausible span from a wrap-seam artifact or a coordinate glitch, which
+/// should not blow up into a huge corridor.
+///
+/// Uses integer supercover rasterization (all cells the segment passes through, not
+/// just one per major-axis step) rather than float interpolation, so the tile set
+/// is deterministic — no `f32` rounding — and never skips a crossed tile.
 fn corridor_tiles(
     from: UVec2,
     to: UVec2,
@@ -287,27 +291,48 @@ fn corridor_tiles(
 ) -> Vec<UVec2> {
     let dx = shortest_delta_x(from.x, to.x, width, wrap_horizontal);
     let dy = to.y as i32 - from.y as i32;
-    let steps = dx.abs().max(dy.abs());
-    if steps == 0 || steps > max_sweep_tiles as i32 {
+    let span = dx.abs().max(dy.abs());
+    if span == 0 || span > max_sweep_tiles as i32 {
         return vec![to];
     }
+
     let max_y = height.saturating_sub(1) as i32;
-    let mut tiles = Vec::with_capacity(steps as usize + 1);
-    let mut last: Option<UVec2> = None;
-    for i in 0..=steps {
-        let t = i as f32 / steps as f32;
-        let x = wrap_x(
-            (from.x as f32 + dx as f32 * t).round() as i32,
-            width,
-            wrap_horizontal,
+    // 4-connected integer supercover from (from.x, from.y) to (from.x + dx, ...):
+    // step exactly one axis per iteration, so consecutive cells are orthogonally
+    // adjacent and no crossed cell is skipped. `x` stays "logical" (may run past the
+    // grid edge) and is wrapped back on emit. Deterministic — pure integer math.
+    let n_x = dx.abs();
+    let n_y = dy.abs();
+    let step_x = dx.signum();
+    let step_y = dy.signum();
+    let mut logical_x = from.x as i32;
+    let mut y = from.y as i32;
+    // Doubled error accumulator; ties (err == 0, exact diagonal crossings) step y.
+    let mut err = n_x - n_y;
+    let (n_x2, n_y2) = (n_x * 2, n_y * 2);
+
+    let mut tiles = Vec::with_capacity((n_x + n_y) as usize + 1);
+    let push = |lx: i32, gy: i32, out: &mut Vec<UVec2>| {
+        let tile = UVec2::new(
+            wrap_x(lx, width, wrap_horizontal),
+            gy.clamp(0, max_y) as u32,
         );
-        let y = ((from.y as f32 + dy as f32 * t).round() as i32).clamp(0, max_y) as u32;
-        let tile = UVec2::new(x, y);
-        if last != Some(tile) {
-            tiles.push(tile);
-            last = Some(tile);
+        if out.last() != Some(&tile) {
+            out.push(tile);
+        }
+    };
+
+    for _ in 0..(n_x + n_y) {
+        push(logical_x, y, &mut tiles);
+        if err > 0 {
+            logical_x += step_x;
+            err -= n_y2;
+        } else {
+            y += step_y;
+            err += n_x2;
         }
     }
+    push(logical_x, y, &mut tiles);
     tiles
 }
 
@@ -747,15 +772,40 @@ mod tests {
     }
 
     #[test]
-    fn corridor_tiles_diagonal_and_dedup() {
-        // Diagonal move: one tile per step, endpoints included, no duplicates.
+    fn corridor_tiles_diagonal_is_4_connected() {
+        // Diagonal move: supercover steps one axis at a time, so the corridor is a
+        // contiguous staircase with no diagonal skips (each step is a neighbour).
         let path = corridor_tiles(UVec2::new(4, 4), UVec2::new(6, 6), 80, 40, false, 8);
-        assert_eq!(path.first(), Some(&UVec2::new(4, 4)));
-        assert_eq!(path.last(), Some(&UVec2::new(6, 6)));
-        assert_eq!(path.len(), 3);
+        assert_eq!(
+            path,
+            vec![
+                UVec2::new(4, 4),
+                UVec2::new(4, 5),
+                UVec2::new(5, 5),
+                UVec2::new(5, 6),
+                UVec2::new(6, 6),
+            ]
+        );
         for w in path.windows(2) {
-            assert_ne!(w[0], w[1]);
+            let manhattan = w[0].x.abs_diff(w[1].x) + w[0].y.abs_diff(w[1].y);
+            assert_eq!(manhattan, 1, "steps must be orthogonally adjacent");
         }
+    }
+
+    #[test]
+    fn corridor_tiles_shallow_slope_covers_all_crossed_cells() {
+        // Regression for the float-rounding gap: a shallow (0,0)->(2,1) segment must
+        // include the corner cells it crosses, deterministically, with no skips.
+        let path = corridor_tiles(UVec2::new(0, 0), UVec2::new(2, 1), 80, 40, false, 8);
+        assert_eq!(
+            path,
+            vec![
+                UVec2::new(0, 0),
+                UVec2::new(1, 0),
+                UVec2::new(1, 1),
+                UVec2::new(2, 1),
+            ]
+        );
     }
 
     #[test]

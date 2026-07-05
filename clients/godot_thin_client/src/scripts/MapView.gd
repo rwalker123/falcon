@@ -765,13 +765,14 @@ func _draw_terrain_direct(radius: float, origin: Vector2, viewport_size: Vector2
 			var center: Vector2 = _hex_center(logical_x, y, radius, origin)
 
 			if use_textures:
-				if _fow_hides_texture(data_x, y):
+				var vstate := _visibility_state_at(data_x, y)  # one FoW lookup per tile
+				if vstate == "unexplored":
 					var fog := _fow_fog_fill_color
 					var fog_points := _hex_points(center, radius)
 					draw_polygon(fog_points, PackedColorArray([fog, fog, fog, fog, fog, fog]))
 				else:
 					var terrain_id: int = _terrain_id_at(data_x, y)
-					_draw_hex_textured_direct(center, terrain_id, radius, _fow_texture_modulate(data_x, y))
+					_draw_hex_textured_direct(center, terrain_id, radius, _fow_texture_tint_for_state(vstate))
 			else:
 				var final_color: Color = _tile_color(data_x, y)
 				var polygon_points := _hex_points(center, radius)
@@ -1430,17 +1431,14 @@ func _apply_visibility_to_info(info: Dictionary, x: int, y: int) -> Dictionary:
 			info.erase(key)
 	return info
 
-## FoW handling for TEXTURED tiles (the terrain-texture render paths). Unexplored
-## tiles must be replaced by the solid fog fill (no terrain shown); callers check
-## this first and draw _fow_fog_fill_color instead of the texture.
-func _fow_hides_texture(x: int, y: int) -> bool:
-	return _fow_enabled and _visibility_state_at(x, y) == "unexplored"
-
-## Vertex-color modulate for a textured tile. Discovered tiles are tinted toward
-## the mist color so remembered terrain reads as cloudy while keeping its texture;
-## Active tiles (and FoW off) draw at full brightness.
-func _fow_texture_modulate(x: int, y: int) -> Color:
-	if _fow_enabled and _visibility_state_at(x, y) == "discovered":
+## Vertex-color tint for a TEXTURED tile given its already-computed FoW state.
+## Pure function of `state` (no per-tile visibility lookup) so the hot draw loops
+## can classify each tile once via _visibility_state_at() and derive both the
+## hide decision (state == "unexplored") and this tint from that single value.
+## Discovered tiles are tinted toward the mist color (remembered/cloudy while
+## keeping their texture); Active tiles (and FoW off, state == "") draw full.
+func _fow_texture_tint_for_state(state: String) -> Color:
+	if state == "discovered":
 		return Color.WHITE.lerp(_fow_mist_color, _fow_mist_blend)
 	return Color.WHITE
 
