@@ -887,34 +887,6 @@ func _is_tile_visible(x: int, y: int) -> bool:
 	var vis: float = _visibility_value_at(x, y)
 	return vis > FOW_VISIBLE_THRESHOLD  # Active tiles only
 
-## Calculate the bounding box of explored tiles (visibility > 0).
-## Returns Rect2i(min_col, min_row, width, height) in grid coordinates.
-## Returns empty rect (size 0,0) if no tiles have been explored.
-func _calculate_explored_bounds() -> Rect2i:
-	var visibility_data := _visibility_array()
-	if visibility_data.is_empty():
-		return Rect2i(0, 0, 0, 0)
-
-	var min_col := grid_width
-	var max_col := -1
-	var min_row := grid_height
-	var max_row := -1
-
-	for i in range(visibility_data.size()):
-		if visibility_data[i] > 0.0:  # Any explored tile (not just active)
-			var row := i / grid_width
-			var col := i % grid_width
-			min_col = mini(min_col, col)
-			max_col = maxi(max_col, col)
-			min_row = mini(min_row, row)
-			max_row = maxi(max_row, row)
-
-	# Return empty rect if no explored tiles found
-	if max_col < 0:
-		return Rect2i(0, 0, 0, 0)
-
-	return Rect2i(min_col, min_row, max_col - min_col + 1, max_row - min_row + 1)
-
 ## Convert grid bounds to world-space bounds for pan clamping.
 ## Similar to _compute_bounds() but only for the explored region.
 func _compute_explored_bounds_world(grid_bounds: Rect2i, radius: float) -> Rect2:
@@ -3211,16 +3183,18 @@ func _rebuild_minimap_2d_image() -> void:
 	var img_width := grid_width
 	var img_height := grid_height
 
-	if _fow_enabled:
-		# Update world bounds for pan clamping (at unit radius, scaled in _clamp_pan_offset)
-		_explored_bounds_world = _compute_explored_bounds_world(_calculate_explored_bounds(), 1.0)
-	else:
-		_explored_bounds_world = Rect2()  # Clear - use full map bounds
-
 	# Pre-allocate byte array for RGB8 image data (3 bytes per pixel)
 	var pixel_count := img_width * img_height
 	var data := PackedByteArray()
 	data.resize(pixel_count * 3)
+
+	# Track the bounding box of explored tiles while painting (FoW only), so pan
+	# clamping can use it without a second full pass over the visibility array.
+	var have_fow_data := _fow_enabled and not visibility_data.is_empty()
+	var min_col := grid_width
+	var max_col := -1
+	var min_row := grid_height
+	var max_row := -1
 
 	# Fill byte array with terrain colors
 	var byte_index := 0
@@ -3232,22 +3206,36 @@ func _rebuild_minimap_2d_image() -> void:
 			var color: Color = colors.get(terrain_id, fallback_color)
 
 			# Apply Fog of War visibility
-			if _fow_enabled and not visibility_data.is_empty():
+			if have_fow_data:
 				var vis: float = visibility_data[grid_index] if grid_index < visibility_data.size() else 0.0
 				if vis <= 0.0:
 					# Unexplored - show dark fog
 					color = fog_color
-				elif vis <= FOW_VISIBLE_THRESHOLD:
-					# Explored but not currently visible - show terrain with light mist overlay
-					# Desaturate slightly and blend with mist to show "remembered" state
-					color = color.lerp(mist_color, _fow_mist_blend)
-				# else: vis > FOW_VISIBLE_THRESHOLD - fully visible, use terrain color as-is
+				else:
+					# Explored (discovered or active) - grow the explored bounds
+					min_col = mini(min_col, grid_col)
+					max_col = maxi(max_col, grid_col)
+					min_row = mini(min_row, grid_row)
+					max_row = maxi(max_row, grid_row)
+					if vis <= FOW_VISIBLE_THRESHOLD:
+						# Explored but not currently visible - show terrain with light mist overlay
+						# Desaturate slightly and blend with mist to show "remembered" state
+						color = color.lerp(mist_color, _fow_mist_blend)
+					# else: vis > FOW_VISIBLE_THRESHOLD - fully visible, use terrain color as-is
 
 			# Convert Color (0-1 floats) to RGB bytes (0-255)
 			data[byte_index] = int(color.r * 255.0)
 			data[byte_index + 1] = int(color.g * 255.0)
 			data[byte_index + 2] = int(color.b * 255.0)
 			byte_index += 3
+
+	# Update world bounds for pan clamping (at unit radius, scaled in _clamp_pan_offset).
+	# Cleared when FoW is off (full map) or nothing is explored yet.
+	if have_fow_data and max_col >= 0:
+		var explored := Rect2i(min_col, min_row, max_col - min_col + 1, max_row - min_row + 1)
+		_explored_bounds_world = _compute_explored_bounds_world(explored, 1.0)
+	else:
+		_explored_bounds_world = Rect2()
 
 	# Create image from byte array
 	_minimap_2d_image = Image.create_from_data(img_width, img_height, false, Image.FORMAT_RGB8, data)
