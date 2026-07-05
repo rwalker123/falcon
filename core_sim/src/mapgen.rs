@@ -2495,7 +2495,11 @@ fn restamp_elevation(
                         MountainType::Volcanic => {
                             (cell.strength as f32 / VOLCANIC_STRENGTH_SPAN).clamp(0.0, 1.0)
                         }
-                        MountainType::Dome => 1.0,
+                        // Domes have no belt spine, so they get no spine
+                        // texture — they read as flat plateaus floored at
+                        // dome_prominence, matching apply_belt_relief which
+                        // also skips domes.
+                        MountainType::Dome => 0.0,
                     };
                     let floor = mountain_floor(cell.ty, relief);
                     v = (floor + belt_ratio * MOUNTAIN_BELT_TEXTURE).clamp(0.0, 1.0);
