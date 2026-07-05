@@ -1113,7 +1113,9 @@ fn biome_upgrade(terrain: sim_runtime::TerrainType) -> Option<sim_runtime::Terra
         HotDesertErg => Some(SemiAridScrub),
         Floodplain => Some(FreshwaterMarsh),
         MixedWoodland => Some(Floodplain),
-        TidalFlat => Some(RiverDelta),
+        // TidalFlat upgrades to MangroveSwamp, NOT RiverDelta: deltas are placed
+        // only at river mouths by the hydrology pass, never by tag-budget noise.
+        TidalFlat => Some(MangroveSwamp),
         MangroveSwamp => Some(FreshwaterMarsh),
         _ => None,
     }
@@ -1442,6 +1444,9 @@ pub fn apply_tag_budget_solver(
                         !tile_info[idx]
                             .tags
                             .contains(sim_runtime::TerrainTags::WATER)
+                            // Don't drown hydrology-placed river deltas.
+                            && tile_info[idx].terrain
+                                != sim_runtime::TerrainType::RiverDelta
                     })
                     .collect();
                 candidates.sort_by_key(|idx| {
@@ -1599,6 +1604,9 @@ pub fn apply_tag_budget_solver(
                     if tile_info[idx]
                         .tags
                         .contains(sim_runtime::TerrainTags::WETLAND)
+                        // River-mouth deltas are placed by the hydrology pass and
+                        // must survive the tag solver; never reduce them away.
+                        && tile_info[idx].terrain != sim_runtime::TerrainType::RiverDelta
                     {
                         let near_freshwater = has_neighbor(
                             &tile_info,
@@ -1745,6 +1753,8 @@ pub fn apply_tag_budget_solver(
                     if tile_info[idx]
                         .tags
                         .contains(sim_runtime::TerrainTags::FERTILE)
+                        // Preserve hydrology-placed river deltas (see Wetland pass).
+                        && tile_info[idx].terrain != sim_runtime::TerrainType::RiverDelta
                     {
                         let terrain = if river_mask[idx] {
                             sim_runtime::TerrainType::SemiAridScrub
@@ -1854,6 +1864,8 @@ pub fn apply_tag_budget_solver(
                         && !tile_info[idx]
                             .tags
                             .contains(sim_runtime::TerrainTags::WATER)
+                        // Preserve hydrology-placed river deltas (see Wetland pass).
+                        && tile_info[idx].terrain != sim_runtime::TerrainType::RiverDelta
                         && apply_tile_change(
                             &mut tiles,
                             &mut tile_info,
@@ -4148,6 +4160,139 @@ mod terrain_tag_tests {
             polar_freshwater_marsh, 0,
             "expected no freshwater marsh in polar latitudes (found {} of {})",
             polar_freshwater_marsh, polar_land
+        );
+    }
+
+    #[test]
+    fn river_deltas_only_appear_on_river_mouths() {
+        // Regression: deltas must be a river-mouth feature only. Previously the
+        // biome picker + tag solver stamped RiverDelta by noise along the coast,
+        // scattering deltas with no river attached, while genuine river-mouth
+        // deltas were culled by the solver's wetland/coastal/fertile reductions.
+        let mut world = World::default();
+        let presets = MapPresets::builtin();
+
+        let mut config = SimulationConfig::builtin();
+        config.map_preset_id = "earthlike".to_string();
+        config.map_seed = 119304647;
+        config.hydrology = crate::HydrologyOverrides {
+            river_density: Some(1.4),
+            river_min_count: Some(8),
+            river_max_count: Some(24),
+            accumulation_threshold_factor: Some(0.2),
+            source_percentile: Some(0.55),
+            source_sea_buffer: Some(0.04),
+            min_length: Some(8),
+            fallback_min_length: Some(4),
+            spacing: Some(8.0),
+            uphill_gain_pct: Some(0.07),
+        };
+
+        world.insert_resource(config);
+        world.insert_resource(SimulationTick::default());
+        world.insert_resource(CultureManager::default());
+        world.insert_resource(GenerationRegistry::with_seed(42, 8));
+        world.insert_resource(MapPresetsHandle::new(presets));
+        world.insert_resource(DiscoveryProgressLedger::default());
+        world.insert_resource(FactionInventory::default());
+        world.insert_resource(StartProfileKnowledgeTagsHandle::new(
+            StartProfileKnowledgeTags::builtin(),
+        ));
+        world.insert_resource(SnapshotOverlaysConfigHandle::new(
+            SnapshotOverlaysConfig::builtin(),
+        ));
+
+        world.run_system_once(crate::systems::spawn_initial_world);
+        hydrology::generate_hydrology(&mut world);
+        world.run_system_once(crate::systems::apply_tag_budget_solver);
+
+        let registry = world
+            .get_resource::<TileRegistry>()
+            .expect("tile registry after spawn")
+            .clone();
+        let width = registry.width as usize;
+        let height = registry.height as usize;
+
+        // Every tile a river polyline passes through.
+        let river_tiles: std::collections::HashSet<usize> = world
+            .resource::<crate::HydrologyState>()
+            .rivers
+            .iter()
+            .flat_map(|river| river.path.iter())
+            .map(|pos| pos.y as usize * width + pos.x as usize)
+            .collect();
+
+        let is_water = |terrain: TerrainType| {
+            matches!(
+                terrain,
+                TerrainType::DeepOcean
+                    | TerrainType::ContinentalShelf
+                    | TerrainType::CoralShelf
+                    | TerrainType::HydrothermalVentField
+                    | TerrainType::InlandSea
+            )
+        };
+
+        // Index -> terrain for neighbour lookups.
+        let mut query = world.query::<&Tile>();
+        let mut terrain_by_idx = vec![None; registry.tiles.len()];
+        for (idx, &entity) in registry.tiles.iter().enumerate() {
+            terrain_by_idx[idx] = Some(query.get(&world, entity).expect("tile component").terrain);
+        }
+
+        let mut delta_count = 0usize;
+        let mut orphan_deltas = 0usize;
+        let mut landlocked_deltas = 0usize;
+        for (idx, terrain) in terrain_by_idx.iter().enumerate() {
+            if *terrain != Some(TerrainType::RiverDelta) {
+                continue;
+            }
+            delta_count += 1;
+            if !river_tiles.contains(&idx) {
+                orphan_deltas += 1;
+            }
+            let x = (idx % width) as i32;
+            let y = (idx / width) as i32;
+            let borders_water = [
+                (-1, 0),
+                (1, 0),
+                (0, -1),
+                (0, 1),
+                (-1, -1),
+                (1, 1),
+                (-1, 1),
+                (1, -1),
+            ]
+            .iter()
+            .any(|(dx, dy)| {
+                let nx = x + dx;
+                let ny = y + dy;
+                if nx < 0 || ny < 0 || nx as usize >= width || ny as usize >= height {
+                    return false;
+                }
+                terrain_by_idx[ny as usize * width + nx as usize]
+                    .map(is_water)
+                    .unwrap_or(false)
+            });
+            if !borders_water {
+                landlocked_deltas += 1;
+            }
+        }
+
+        assert!(
+            delta_count > 0,
+            "expected at least one river-mouth delta to be placed"
+        );
+        assert_eq!(
+            orphan_deltas, 0,
+            "found {} RiverDelta tiles not on any river path (of {} total deltas)",
+            orphan_deltas, delta_count
+        );
+        // Deltas must sit at a genuine mouth: bordering the ocean or an inland sea.
+        assert_eq!(
+            landlocked_deltas, 0,
+            "found {} RiverDelta tiles not bordering any water body (of {} total deltas)",
+            landlocked_deltas, delta_count
         );
     }
 

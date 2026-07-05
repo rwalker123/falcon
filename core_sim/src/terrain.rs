@@ -482,13 +482,13 @@ pub fn classify_terrain(
         );
     }
     if edge < classifier.coastal_inland_edge {
+        // NOTE: RiverDelta is intentionally NOT a candidate here. Deltas are a
+        // river-mouth feature and are stamped exclusively by the hydrology pass
+        // (see `generate_hydrology` in hydrology.rs). Picking them by noise here
+        // scattered deltas across the coast with no relation to actual rivers.
         return pick(
             noise,
-            &[
-                TerrainType::InlandSea,
-                TerrainType::RiverDelta,
-                TerrainType::FreshwaterMarsh,
-            ],
+            &[TerrainType::InlandSea, TerrainType::FreshwaterMarsh],
         );
     }
 

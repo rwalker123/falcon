@@ -56,7 +56,7 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 5. **Coastal smoothing** - Blend shoreline tiles via 3×3 blur
 6. **Ocean/coasts** - Distance-transform bands: Shelf → Slope → Deep Ocean; inland seas
 7. **Climate** - Assign `climate_band` using latitude + elevation + moisture
-8. **Hydrology** - D8 flow direction, river polylines, `Floodplain`/`FreshwaterMarsh` marking
+8. **Hydrology** - D8 flow direction, river polylines, `Floodplain`/`FreshwaterMarsh` marking. `RiverDelta` is stamped **only here**, at the last land tile of each river that ends in a standing water body — the ocean *or* an inland sea/lake (lacustrine deltas). The mouth tile must border that water; the biome picker and tag solver never create deltas (those would scatter them with no river attached). Delta tiles are protected from the tag solver's reduction passes so genuine river mouths survive.
 9. **Biomes** - Stamp `TerrainType` via `terrain_for_position` with micro-variant jitters
 10. **Moisture transport** - Humidity blending with wind-driven rain-shadow pass
 11. **Resources** - Surface deposits biased by `TerrainDefinition.resource_bias`

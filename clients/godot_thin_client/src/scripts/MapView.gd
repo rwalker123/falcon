@@ -28,6 +28,13 @@ const CRISIS_COLOR := Color(0.92, 0.24, 0.46, 1.0)
 const ELEVATION_LOW_COLOR := Color(0.16, 0.32, 0.78, 1.0)
 const ELEVATION_MID_COLOR := Color(0.97, 0.82, 0.32, 1.0)
 const ELEVATION_HIGH_COLOR := Color(0.78, 0.14, 0.18, 1.0)
+# Tile "Height" is a relative 0..100 indicator (not meters) so a player can reason
+# about line of sight: a higher tile can occlude the tile behind it. Elevation is
+# only a normalized 0..1 field, so height rescales the ABOVE-sea-level span into
+# 0..100 (sea level and below read 0 — nothing occludes over open water). SEA_LEVEL
+# mirrors core_sim's map-preset default (`sea_level` in data/map_presets.json).
+const HEIGHT_SEA_LEVEL_NORMALIZED := 0.6
+const HEIGHT_BAR_SEGMENTS := 10
 const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
 const GRID_LINE_COLOR := Color(0.1, 0.12, 0.18, 0.45)
 const SQRT3 := 1.7320508075688772
@@ -1363,6 +1370,31 @@ func _average_overlay(key: String) -> float:
 func _value_at_overlay(key: String, x: int, y: int) -> float:
 	return _value_at(_overlay_array(key), x, y)
 
+## Relative 0..100 "Height" for a tile, for the tile panels. Elevation is surfaced
+## only as the normalized 0..1 ElevationField raster, so this reads the RAW elevation
+## channel (the per-frame min/max-normalized channel would distort cross-tile
+## comparison) and rescales the above-sea-level span into 0..100 — sea level and below
+## clamp to 0. Returns -1 when no elevation data has streamed yet so callers can omit
+## the row.
+func relative_height_at(x: int, y: int) -> int:
+	var raster: PackedFloat32Array = _overlay_raw_array("elevation")
+	if raster.is_empty():
+		return -1
+	var normalized: float = _value_at(raster, x, y)
+	var above_sea: float = (normalized - HEIGHT_SEA_LEVEL_NORMALIZED) / (1.0 - HEIGHT_SEA_LEVEL_NORMALIZED)
+	return int(round(clampf(above_sea, 0.0, 1.0) * 100.0))
+
+## Formats a relative height (0..100) as a number plus a filled/empty bar, e.g.
+## "78  ▰▰▰▰▰▰▰▱▱▱", so two tiles can be compared at a glance. Single source of truth
+## shared by every tile panel.
+func format_height(height: int) -> String:
+	var clamped: int = clampi(height, 0, 100)
+	var filled: int = int(round(float(clamped) / 100.0 * HEIGHT_BAR_SEGMENTS))
+	var bar: String = ""
+	for i in HEIGHT_BAR_SEGMENTS:
+		bar += "▰" if i < filled else "▱"
+	return "%d  %s" % [clamped, bar]
+
 ## Fog of War reads the RAW visibility channel, never the min-max normalized one.
 ## The channel carries a discrete encoding (0.0 = Unexplored, 0.5 = Discovered,
 ## 1.0 = Active) and the FoW thresholds are tuned to it. normalize_overlay()
@@ -1636,6 +1668,10 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 	var terrain_id := _terrain_id_at(col, row)
 	info["terrain_id"] = terrain_id
 	info["terrain_label"] = String(_get_terrain_labels().get(terrain_id, "Terrain %d" % terrain_id))
+	var relative_height := relative_height_at(col, row)
+	if relative_height >= 0:
+		info["relative_height"] = relative_height
+		info["height_display"] = format_height(relative_height)
 	var mask := _tag_mask_at(col, row)
 	info["tags_mask"] = mask
 	var tag_labels := _tag_names_for_mask(mask)
