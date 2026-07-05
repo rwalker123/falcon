@@ -1,13 +1,13 @@
 //! Visibility system implementations for the Fog of War.
 //!
-//! Four systems run in sequence during TurnStage::Visibility:
+//! Systems run in sequence during TurnStage::Visibility:
 //! 1. `clear_active_visibility` - Reset Active tiles to Discovered
-//! 2. `calculate_visibility` - Compute visibility from all sources
-//! 3. `apply_trade_route_visibility` - Mark trade route tiles as Active
-//! 4. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
+//! 2. `prune_sweep_tracker` - Forget sweep positions of despawned cohorts
+//! 3. `calculate_visibility` - Compute visibility from all sources
+//! 4. `apply_trade_route_visibility` - Mark trade route tiles as Active
+//! 5. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
 
 use bevy::prelude::*;
-use std::collections::HashSet;
 
 /// Height bonus added to viewer position to simulate eye level above ground.
 /// Value is in normalized elevation units (0.0-1.0 range maps to ~0-1000m).
@@ -76,6 +76,25 @@ pub fn clear_active_visibility(mut ledger: ResMut<VisibilityLedger>) {
     );
 }
 
+/// Forget sweep-tracker positions for cohorts that despawned since last turn.
+///
+/// Drains `RemovedComponents<StartingUnit>` (fired when a visibility-source cohort
+/// is despawned — e.g. Founders consumed on settlement founding — or loses its
+/// marker), removing exactly those entities from `VisibilitySweepTracker`. This is
+/// cheaper than rebuilding a live-set each turn: it touches only the entities that
+/// actually went away, keeping the tracker from accumulating stale entries over a
+/// long-running sim. Runs before `calculate_visibility`, though ordering is not
+/// load-bearing — the sweep only reads `previous()` for live cohorts, so a stale
+/// entry is never read, merely wastes memory until drained.
+pub fn prune_sweep_tracker(
+    mut sweep: ResMut<VisibilitySweepTracker>,
+    mut removed_sources: RemovedComponents<StartingUnit>,
+) {
+    for entity in removed_sources.read() {
+        sweep.forget(entity);
+    }
+}
+
 /// Step 2: Calculate visibility from all visibility sources (units, settlements).
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn calculate_visibility(
@@ -136,10 +155,8 @@ pub fn calculate_visibility(
     let mut settlement_count = 0u32;
 
     // Units (population cohorts with StartingUnit marker)
-    let mut live_sources: HashSet<Entity> = HashSet::new();
     for (entity, cohort, unit) in cohorts.iter() {
         cohort_count += 1;
-        live_sources.insert(entity);
         let range_def = cfg.sight_range_for(&unit.kind);
         // Get position from current tile (tracks travel position)
         if let Ok(current_tile) = tiles.get(cohort.current_tile) {
@@ -169,8 +186,6 @@ pub fn calculate_visibility(
             sweep.record(entity, current_pos);
         }
     }
-    // Prune tracker entries for cohorts that have despawned since last turn.
-    sweep.retain_live(&live_sources);
 
     // Settlements with TownCenter
     for (settlement, _town_center) in settlements.iter() {
@@ -685,6 +700,35 @@ pub fn log_visibility_stats(ledger: Res<VisibilityLedger>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prune_sweep_tracker_forgets_despawned_source() {
+        use crate::components::StartingUnit;
+
+        let mut world = World::new();
+        let mut sweep = VisibilitySweepTracker::default();
+
+        let live = world
+            .spawn(StartingUnit::new("BandScout".to_string(), vec![]))
+            .id();
+        let despawned = world
+            .spawn(StartingUnit::new("BandScout".to_string(), vec![]))
+            .id();
+        sweep.record(live, UVec2::new(1, 1));
+        sweep.record(despawned, UVec2::new(2, 2));
+        world.insert_resource(sweep);
+
+        // Despawning removes StartingUnit, which the drain reads via RemovedComponents.
+        world.entity_mut(despawned).despawn();
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(prune_sweep_tracker);
+        schedule.run(&mut world);
+
+        let sweep = world.resource::<VisibilitySweepTracker>();
+        assert_eq!(sweep.previous(live), Some(UVec2::new(1, 1)));
+        assert_eq!(sweep.previous(despawned), None);
+    }
 
     #[test]
     fn corridor_tiles_covers_intermediate_tiles() {
