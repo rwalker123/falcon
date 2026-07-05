@@ -2472,7 +2472,11 @@ fn restamp_elevation(
             MountainType::Dome => cfg.dome_prominence,
         };
         let relief_norm = ((relief - MIN_RELIEF_SCALE) / relief_span).clamp(0.0, 1.0);
-        elevation_base + relief_norm * (1.0 - elevation_base) * prominence.max(0.0)
+        // Clamp to 1.0 so the invariant floor ∈ [elevation_base, 1.0] holds even when a
+        // preset sets a *_prominence > 1.0 — the post-smoothing re-floor uses this floor
+        // directly (unclamped .max), so an out-of-range floor would leak elevation
+        // samples outside the normalized 0..1 contract.
+        (elevation_base + relief_norm * (1.0 - elevation_base) * prominence.max(0.0)).min(1.0)
     };
 
     let mut values = Vec::with_capacity(w * h);
