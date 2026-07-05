@@ -2318,12 +2318,18 @@ fn elevation_overlay_from_field(field: &ElevationField, grid_size: UVec2) -> Ele
         }
     }
 
+    // Express sea level on the same [min_value, max_value] scale as the samples so the
+    // client can compare it directly against decoded (0..1) samples for its
+    // relative-height / LOS readout.
+    let sea_level = ((field.sea_level - min_value) / range).clamp(0.0, 1.0);
+
     ElevationOverlayState {
         width,
         height,
         samples,
         min_value,
         max_value,
+        sea_level,
     }
 }
 

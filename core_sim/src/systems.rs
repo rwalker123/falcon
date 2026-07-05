@@ -279,7 +279,7 @@ pub fn spawn_initial_world(
         )
     });
     if let Some(ref bands_res) = bands {
-        commands.insert_resource(bands_res.elevation.clone());
+        commands.insert_resource(bands_res.elevation.clone().with_sea_level(sea_level));
         commands.insert_resource(MoistureRaster::new(
             config.grid_size.x,
             config.grid_size.y,
@@ -287,7 +287,7 @@ pub fn spawn_initial_world(
         ));
         validate_bands(bands_res, config.grid_size);
     } else {
-        commands.insert_resource(base_elevation_field.clone());
+        commands.insert_resource(base_elevation_field.clone().with_sea_level(sea_level));
         commands.insert_resource(MoistureRaster::new(
             config.grid_size.x,
             config.grid_size.y,

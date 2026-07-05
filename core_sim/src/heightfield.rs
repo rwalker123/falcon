@@ -4,10 +4,19 @@ use bevy::prelude::*;
 
 use crate::{map_preset::MapPreset, resources::SimulationConfig};
 
+/// Sea level (on the normalized 0..1 elevation scale) used when no map preset is
+/// available. Mirrors the `unwrap_or` fallback in the worldgen/hydrology paths.
+pub const DEFAULT_SEA_LEVEL: f32 = 0.6;
+
 #[derive(Resource, Debug, Clone)]
 pub struct ElevationField {
     pub width: u32,
     pub height: u32,
+    /// The active map's sea level on this field's normalized 0..1 scale. Carried on
+    /// the field so it can be emitted in the snapshot's `ElevationOverlay` for the
+    /// client's relative-height readout. Defaults to [`DEFAULT_SEA_LEVEL`] until the
+    /// preset value is attached via [`ElevationField::with_sea_level`].
+    pub sea_level: f32,
     values: Arc<Vec<f32>>,
 }
 
@@ -17,8 +26,15 @@ impl ElevationField {
         Self {
             width,
             height,
+            sea_level: DEFAULT_SEA_LEVEL,
             values: Arc::new(values),
         }
+    }
+
+    /// Attaches the active map's sea level (normalized 0..1 scale) to this field.
+    pub fn with_sea_level(mut self, sea_level: f32) -> Self {
+        self.sea_level = sea_level;
+        self
     }
 
     #[inline]

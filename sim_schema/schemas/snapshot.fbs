@@ -201,6 +201,11 @@ table ElevationOverlay {
   minValue:float;
   maxValue:float;
   samples:[ushort];
+  // Sea level expressed on the SAME normalized scale as `samples` (each sample is
+  // (fieldValue - minValue)/(maxValue - minValue)), so the client can compare it
+  // directly against decoded samples for its relative-height / LOS readout. Appended
+  // field; defaults to 0 for snapshots produced before it existed.
+  seaLevel:float;
 }
 
 table InfluentialIndividualState {
