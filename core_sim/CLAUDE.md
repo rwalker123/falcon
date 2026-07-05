@@ -203,6 +203,7 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 - `elevation`: `enabled`, `bonus_per_100m`, `max_bonus`
 - `line_of_sight`: `enabled`, `blocking_terrain_tags`
 - `terrain_modifiers`: `forest_penalty`, `water_bonus`
+- `movement`: `max_sweep_tiles` (cap on the corridor length revealed for a single-turn move; keep above the real max per-turn move distance so genuine moves sweep fully — see `corridor_tiles`)
 
 **Snapshot Export**: `visibility_raster` emits per-faction byte raster (0=Unexplored, 1=Discovered, 2=Active) for client rendering.
 

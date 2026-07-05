@@ -19,12 +19,6 @@ const VIEWER_EYE_LEVEL_BONUS: f32 = 0.02;
 /// minor elevation variations while still blocking significant obstacles.
 const LOS_BLOCKING_THRESHOLD: f32 = 0.03;
 
-/// Upper bound on how many tiles a single-turn move may sweep for visibility.
-/// Normal moves cover ~3 tiles/turn; a span larger than this is treated as
-/// spurious (e.g. a wrap-seam artifact or entity-id reuse) and only the endpoint
-/// is revealed, guarding against pathological corridor blowups.
-const MAX_SWEEP_TILES: i32 = 8;
-
 use sim_runtime::TerrainTags;
 
 use crate::{
@@ -134,9 +128,14 @@ pub fn calculate_visibility(
             // the corridor it swept from its previous position to the current one —
             // not just the endpoint — otherwise passed-over tiles stay Unexplored.
             let path = match sweep.previous(entity) {
-                Some(prev) if prev != current_pos => {
-                    corridor_tiles(prev, current_pos, width, height, wrap_horizontal)
-                }
+                Some(prev) if prev != current_pos => corridor_tiles(
+                    prev,
+                    current_pos,
+                    width,
+                    height,
+                    wrap_horizontal,
+                    cfg.movement.max_sweep_tiles,
+                ),
                 _ => vec![current_pos],
             };
             for pos in path {
@@ -237,19 +236,21 @@ pub fn calculate_visibility(
 /// Tiles crossed by the straight offset-space segment from `from` to `to`,
 /// inclusive of both ends and de-duplicated. Used to reveal the corridor a unit
 /// sweeps when it moves several tiles in one turn. Honors horizontal wrap via the
-/// shortest x-delta; returns just `[to]` for a degenerate or over-long span (see
-/// `MAX_SWEEP_TILES`).
+/// shortest x-delta; returns just `[to]` for a degenerate span, or one longer than
+/// `max_sweep_tiles` — an implausible span from a wrap-seam artifact or an
+/// interpolation/coordinate glitch, which should not blow up into a huge corridor.
 fn corridor_tiles(
     from: UVec2,
     to: UVec2,
     width: u32,
     height: u32,
     wrap_horizontal: bool,
+    max_sweep_tiles: u32,
 ) -> Vec<UVec2> {
     let dx = shortest_delta_x(from.x, to.x, width, wrap_horizontal);
     let dy = to.y as i32 - from.y as i32;
     let steps = dx.abs().max(dy.abs());
-    if steps == 0 || steps > MAX_SWEEP_TILES {
+    if steps == 0 || steps > max_sweep_tiles as i32 {
         return vec![to];
     }
     let max_y = height.saturating_sub(1) as i32;
@@ -665,7 +666,7 @@ mod tests {
     fn corridor_tiles_covers_intermediate_tiles() {
         // A 3-tile horizontal move must reveal the two tiles it passed over, not
         // just the endpoint — this is the fog-of-war "teleport gap" fix.
-        let path = corridor_tiles(UVec2::new(10, 5), UVec2::new(13, 5), 80, 40, false);
+        let path = corridor_tiles(UVec2::new(10, 5), UVec2::new(13, 5), 80, 40, false, 8);
         assert_eq!(
             path,
             vec![
@@ -680,7 +681,7 @@ mod tests {
     #[test]
     fn corridor_tiles_diagonal_and_dedup() {
         // Diagonal move: one tile per step, endpoints included, no duplicates.
-        let path = corridor_tiles(UVec2::new(4, 4), UVec2::new(6, 6), 80, 40, false);
+        let path = corridor_tiles(UVec2::new(4, 4), UVec2::new(6, 6), 80, 40, false, 8);
         assert_eq!(path.first(), Some(&UVec2::new(4, 4)));
         assert_eq!(path.last(), Some(&UVec2::new(6, 6)));
         assert_eq!(path.len(), 3);
@@ -691,16 +692,24 @@ mod tests {
 
     #[test]
     fn corridor_tiles_over_long_span_reveals_endpoint_only() {
-        // A span beyond MAX_SWEEP_TILES (spurious/wrap-seam) collapses to the endpoint.
-        let path = corridor_tiles(UVec2::new(0, 0), UVec2::new(40, 0), 80, 40, false);
+        // A span beyond max_sweep_tiles (spurious/wrap-seam) collapses to the endpoint.
+        let path = corridor_tiles(UVec2::new(0, 0), UVec2::new(40, 0), 80, 40, false, 8);
         assert_eq!(path, vec![UVec2::new(40, 0)]);
+    }
+
+    #[test]
+    fn corridor_tiles_respects_config_cap() {
+        // The cap is config-driven: a lower max_sweep_tiles collapses a span that
+        // the default (8) would sweep, confirming the value is honored, not hardcoded.
+        let path = corridor_tiles(UVec2::new(10, 5), UVec2::new(13, 5), 80, 40, false, 2);
+        assert_eq!(path, vec![UVec2::new(13, 5)]);
     }
 
     #[test]
     fn corridor_tiles_wraps_horizontally() {
         // Moving from x=79 to x=1 on an 80-wide wrapped map goes the short way
         // across the seam (79 -> 0 -> 1), not the long way back across the map.
-        let path = corridor_tiles(UVec2::new(79, 5), UVec2::new(1, 5), 80, 40, true);
+        let path = corridor_tiles(UVec2::new(79, 5), UVec2::new(1, 5), 80, 40, true, 8);
         assert_eq!(
             path,
             vec![UVec2::new(79, 5), UVec2::new(0, 5), UVec2::new(1, 5)]

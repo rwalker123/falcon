@@ -24,6 +24,7 @@ pub struct VisibilityConfig {
     pub elevation: ElevationConfig,
     pub line_of_sight: LineOfSightConfig,
     pub terrain_modifiers: TerrainModifierConfig,
+    pub movement: MovementConfig,
 }
 
 impl Default for VisibilityConfig {
@@ -34,6 +35,7 @@ impl Default for VisibilityConfig {
             elevation: ElevationConfig::default(),
             line_of_sight: LineOfSightConfig::default(),
             terrain_modifiers: TerrainModifierConfig::default(),
+            movement: MovementConfig::default(),
         }
     }
 }
@@ -174,6 +176,26 @@ impl Default for ElevationConfig {
             bonus_per_100m: 1,
             max_bonus: 4,
         }
+    }
+}
+
+/// Configuration for how unit movement drives visibility.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MovementConfig {
+    /// Upper bound on how many tiles a single-turn move may sweep for visibility.
+    /// When a unit moves, `calculate_visibility` reveals the corridor between its
+    /// previous and current tile; a span larger than this is treated as spurious
+    /// (wrap-seam artifact, interpolation glitch, or an implausible jump) and only
+    /// the endpoint is revealed. Keep this comfortably above the real maximum
+    /// per-turn move distance (derived from movement speed) so genuine moves are
+    /// always swept in full.
+    pub max_sweep_tiles: u32,
+}
+
+impl Default for MovementConfig {
+    fn default() -> Self {
+        Self { max_sweep_tiles: 8 }
     }
 }
 
