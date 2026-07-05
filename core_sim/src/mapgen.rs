@@ -69,10 +69,6 @@ pub struct MountainCell {
 
 const MIN_RELIEF_SCALE: f32 = 0.35;
 const MAX_RELIEF_SCALE: f32 = 2.5;
-/// Max elevation a mountain tile gains from belt position on top of its relief floor.
-/// Small enough that belt texture never reorders relief bands (see `restamp_elevation`).
-const MOUNTAIN_BELT_TEXTURE: f32 = 0.06;
-
 // --- Belt-strength normalization. FAULT/VOLCANIC spans convert a cell's u8 strength
 // into a 0..1 belt ratio; they are used in BOTH the relief pass and restamp_elevation's
 // elevation pass and must stay identical, hence shared consts. ---
@@ -2133,9 +2129,16 @@ fn apply_belt_relief(
         return;
     }
     let fold_band_width = mask.fold_band_width() as f32 + 1.0;
-    let polar_rows = ((h as f32) * cfg.polar_latitude_fraction)
-        .ceil()
-        .clamp(1.0, h as f32) as usize;
+    // Only skip polar rows when a polar band is actually configured. `= 0.0` means
+    // "no polar band" and must skip nothing, matching the polar_band idiom used during
+    // microplate seeding (see `polar_latitude_fraction > 0.0` guard above).
+    let polar_rows = if cfg.polar_latitude_fraction > 0.0 {
+        ((h as f32) * cfg.polar_latitude_fraction)
+            .ceil()
+            .clamp(1.0, h as f32) as usize
+    } else {
+        0
+    };
     for y in 0..h {
         if y < polar_rows || y >= h.saturating_sub(polar_rows) {
             continue;
@@ -2502,7 +2505,7 @@ fn restamp_elevation(
                         MountainType::Dome => 0.0,
                     };
                     let floor = mountain_floor(cell.ty, relief);
-                    v = (floor + belt_ratio * MOUNTAIN_BELT_TEXTURE).clamp(0.0, 1.0);
+                    v = (floor + belt_ratio * cfg.belt_texture.max(0.0)).clamp(0.0, 1.0);
                 } else {
                     // Non-mountain land: compress into [sea_level, elevation_base] so
                     // lowlands (plains, etc.) never out-top the mountains.

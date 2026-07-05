@@ -6,7 +6,7 @@ use crate::{map_preset::TerrainClassifierConfig, mapgen::MountainType};
 /// Relief scale (from the mountain mask) at/above which a Fold belt tile becomes an
 /// AlpineMountain. `MountainsConfig::relief_belt_gain` and `elevation_base` defaults are
 /// tuned relative to this, so it lives in one place instead of a bare literal.
-pub const ALPINE_RELIEF_THRESHOLD: f32 = 1.45;
+const ALPINE_RELIEF_THRESHOLD: f32 = 1.45;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MovementProfile {

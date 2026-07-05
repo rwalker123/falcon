@@ -135,6 +135,11 @@ pub struct MountainsConfig {
     pub volcanic_prominence: f32,
     #[serde(default = "default_dome_prominence")]
     pub dome_prominence: f32,
+    /// Amplitude of the belt-position elevation texture added on top of a mountain tile's
+    /// relief-driven floor (spine tiles slightly taller than edges). Bounded small so it
+    /// never lifts a low-relief tile above a higher-relief one — relief still orders tiles.
+    #[serde(default = "default_belt_texture")]
+    pub belt_texture: f32,
     /// How much a belt tile's relief scales with its belt strength (core vs edge).
     /// Belt cores reach `1.0 + relief_belt_gain`, so with the default they clear the
     /// AlpineMountain relief threshold (1.45) and taper to plateaus/hills at the edges —
@@ -228,6 +233,7 @@ impl Default for MountainsConfig {
             fault_prominence: default_fault_prominence(),
             volcanic_prominence: default_volcanic_prominence(),
             dome_prominence: default_dome_prominence(),
+            belt_texture: default_belt_texture(),
             relief_belt_gain: default_relief_belt_gain(),
             belt_convergence: default_belt_convergence(),
             plate_area_bucket_2: default_plate_area_bucket_2(),
@@ -325,6 +331,10 @@ const fn default_volcanic_prominence() -> f32 {
 
 const fn default_dome_prominence() -> f32 {
     0.7
+}
+
+const fn default_belt_texture() -> f32 {
+    0.06
 }
 
 const fn default_river_accum_threshold_factor() -> f32 {
