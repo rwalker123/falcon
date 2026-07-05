@@ -19,6 +19,23 @@ const VIEWER_EYE_LEVEL_BONUS: f32 = 0.02;
 /// minor elevation variations while still blocking significant obstacles.
 const LOS_BLOCKING_THRESHOLD: f32 = 0.03;
 
+/// Meters of real relief spanned by the normalized (0.0–1.0) elevation field.
+/// Used to convert normalized elevation to meters for the sight bonus.
+const ELEVATION_RANGE_METERS: f32 = 1000.0;
+
+/// Meters of elevation per step of the `elevation.bonus_per_100m` sight bonus.
+/// Named to keep this coupled, and consistent, with that config field.
+const METERS_PER_ELEVATION_BONUS_STEP: f32 = 100.0;
+
+/// A unit always retains at least this much sight range after terrain penalties,
+/// so it can never be blinded to its own tile/ring.
+const MIN_EFFECTIVE_SIGHT_RANGE: i32 = 1;
+
+/// Squared offset-space distance at or below which no tile can lie *between* the
+/// viewer and the target, so the line-of-sight ray-cast is skipped. `dist² ≤ 2`
+/// covers the eight immediate neighbours (orthogonal `dist²=1`, diagonal `dist²=2`).
+const ADJACENT_LOS_SKIP_DIST_SQ: i32 = 2;
+
 use sim_runtime::TerrainTags;
 
 use crate::{
@@ -187,8 +204,9 @@ pub fn calculate_visibility(
         // Calculate effective range with elevation bonus
         let elev_bonus = if cfg.elevation.enabled {
             // Elevation is normalized 0-1, scale to approximate meters (0-1000m)
-            let elevation_m = source_elevation * 1000.0;
-            let bonus = (elevation_m / 100.0) as u32 * cfg.elevation.bonus_per_100m;
+            let elevation_m = source_elevation * ELEVATION_RANGE_METERS;
+            let bonus = (elevation_m / METERS_PER_ELEVATION_BONUS_STEP) as u32
+                * cfg.elevation.bonus_per_100m;
             ((bonus as f32) * elev_factor) as u32
         } else {
             0
@@ -365,7 +383,8 @@ fn reveal_tiles_in_range(
             let terrain_modifier = get_terrain_modifier(tags, terrain_modifiers);
 
             // Calculate effective range for this target tile
-            let effective_range = (base_range as i32 + terrain_modifier).max(1) as u32;
+            let effective_range =
+                (base_range as i32 + terrain_modifier).max(MIN_EFFECTIVE_SIGHT_RANGE) as u32;
             let range_sq = (effective_range * effective_range) as i32;
 
             // Skip tiles outside circular range (accounting for terrain modifier)
@@ -375,7 +394,7 @@ fn reveal_tiles_in_range(
 
             // Line of sight check if enabled (skip for adjacent tiles - no intermediate blocker)
             if los_enabled
-                && dist_sq > 2
+                && dist_sq > ADJACENT_LOS_SKIP_DIST_SQ
                 && !has_line_of_sight_wrapped(
                     center,
                     UVec2::new(x, y),
