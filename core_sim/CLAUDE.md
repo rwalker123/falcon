@@ -181,7 +181,8 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 **Turn Flow** (`TurnStage::Visibility` after Population, before Crisis):
 1. `clear_active_visibility` - Reset Active tiles to Discovered
 2. `calculate_visibility` - Compute visibility from units/settlements
-3. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored (disabled by default; permanent memory)
+3. `apply_trade_route_visibility` - Mark active trade-route tiles as Active
+4. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored (disabled by default; permanent memory)
 
 **Visibility Sources**:
 - **Units**: `PopulationCohort` with `StartingUnit` marker provides sight from its
@@ -205,7 +206,7 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 - `terrain_modifiers`: `forest_penalty`, `water_bonus`
 - `movement`: `max_sweep_tiles` (cap on the corridor length revealed for a single-turn move; keep above the real max per-turn move distance so genuine moves sweep fully — see `corridor_tiles`)
 
-**Snapshot Export**: `visibility_raster` emits per-faction byte raster (0=Unexplored, 1=Discovered, 2=Active) for client rendering.
+**Snapshot Export**: `visibility_raster` emits a per-faction `ScalarRasterState` (fixed-point i64 samples) encoding Unexplored=0.0, Discovered=0.5, Active=1.0; the client decodes these to floats and renders black / cloudy / full-color. (`FactionVisibilityMap::to_byte_raster` still exists as a 0/1/2 byte view, but is not the snapshot export.)
 
 ---
 

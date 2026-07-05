@@ -7,6 +7,7 @@
 //! 4. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
 
 use bevy::prelude::*;
+use std::collections::HashSet;
 
 /// Height bonus added to viewer position to simulate eye level above ground.
 /// Value is in normalized elevation units (0.0-1.0 range maps to ~0-1000m).
@@ -135,8 +136,10 @@ pub fn calculate_visibility(
     let mut settlement_count = 0u32;
 
     // Units (population cohorts with StartingUnit marker)
+    let mut live_sources: HashSet<Entity> = HashSet::new();
     for (entity, cohort, unit) in cohorts.iter() {
         cohort_count += 1;
+        live_sources.insert(entity);
         let range_def = cfg.sight_range_for(&unit.kind);
         // Get position from current tile (tracks travel position)
         if let Ok(current_tile) = tiles.get(cohort.current_tile) {
@@ -166,6 +169,8 @@ pub fn calculate_visibility(
             sweep.record(entity, current_pos);
         }
     }
+    // Prune tracker entries for cohorts that have despawned since last turn.
+    sweep.retain_live(&live_sources);
 
     // Settlements with TownCenter
     for (settlement, _town_center) in settlements.iter() {

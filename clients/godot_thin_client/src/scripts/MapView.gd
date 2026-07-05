@@ -2897,10 +2897,13 @@ func enable_terrain_textures(enabled: bool) -> void:
 	_invalidate_map_cache()  # cache bakes textured vs solid tiles; force a re-render
 	queue_redraw()
 
-## Toggle terrain textures on/off (bound to the T key). No-op appearance when no
-## texture atlas is loaded, since textured rendering needs one.
+## Toggle terrain textures on/off (bound to the T key). Flips the underlying
+## intent flag directly rather than get_terrain_textures_enabled(), which also
+## factors in atlas presence — using the getter would leave the toggle stuck
+## "on" (and pop textures in later) whenever the atlas isn't loaded yet.
+## No visible effect until an atlas is available, since rendering needs one.
 func _toggle_terrain_textures() -> void:
-	enable_terrain_textures(not get_terrain_textures_enabled())
+	enable_terrain_textures(not TerrainTextureManager.use_terrain_textures)
 
 func _load_edge_masks() -> void:
 	# Load the 6 edge gradient mask textures

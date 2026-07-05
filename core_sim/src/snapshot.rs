@@ -3139,9 +3139,10 @@ fn visibility_raster_from_ledger(
             if idx >= samples.len() {
                 continue;
             }
-            // Visibility state as a fixed-point Scalar (Scalar::SCALE == 1.0), so the
-            // client's fixed64_to_f32 (which divides by Scalar::SCALE) recovers the
-            // intended 0.0 / 0.5 / 1.0 encoding. Higher = more visible:
+            // Visibility state as a fixed-point Scalar, where `Scalar::SCALE`
+            // (1_000_000) is the raw value that represents 1.0. The client's
+            // fixed64_to_f32 divides by that factor to recover the intended
+            // 0.0 / 0.5 / 1.0 encoding. Higher = more visible:
             // Active -> 1.0 (fully visible, full terrain color)
             // Discovered -> 0.5 (remembered/cloudy terrain)
             // Unexplored -> 0.0 (black/hidden)

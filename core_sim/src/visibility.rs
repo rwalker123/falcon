@@ -8,7 +8,7 @@
 //! Visibility decays over time: tiles that haven't been seen for a configurable
 //! number of turns revert from Discovered back to Unexplored.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::math::UVec2;
 use bevy::prelude::*;
@@ -294,6 +294,13 @@ impl VisibilitySweepTracker {
     pub fn record(&mut self, entity: Entity, pos: UVec2) {
         self.last_position.insert(entity, pos);
     }
+
+    /// Drop entries for entities no longer present in `live`, so despawned units
+    /// (e.g. Founders consumed when founding a settlement) don't accumulate stale
+    /// positions and grow this resource without bound over a long-running sim.
+    pub fn retain_live(&mut self, live: &HashSet<Entity>) {
+        self.last_position.retain(|entity, _| live.contains(entity));
+    }
 }
 
 #[cfg(test)]
@@ -371,5 +378,22 @@ mod tests {
         assert_eq!(raster[0], 2); // (0,0) active
         assert_eq!(raster[4], 1); // (1,1) discovered
         assert_eq!(raster[8], 0); // (2,2) unexplored
+    }
+
+    #[test]
+    fn sweep_tracker_prunes_despawned_entities() {
+        let mut tracker = VisibilitySweepTracker::default();
+        let live = Entity::from_raw(1);
+        let despawned = Entity::from_raw(2);
+        tracker.record(live, UVec2::new(3, 4));
+        tracker.record(despawned, UVec2::new(5, 6));
+
+        // Only `live` remains present this turn.
+        let mut present = HashSet::new();
+        present.insert(live);
+        tracker.retain_live(&present);
+
+        assert_eq!(tracker.previous(live), Some(UVec2::new(3, 4)));
+        assert_eq!(tracker.previous(despawned), None);
     }
 }
