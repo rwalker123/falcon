@@ -3376,8 +3376,11 @@ func _on_minimap_2d_pan_requested(normalized_pos: Vector2) -> void:
 	# Convert normalized [0,1] position to hex grid coordinates (col, row).
 	# The minimap image spans the full grid, so denormalize against it directly;
 	# _clamp_pan_offset() still confines the resulting pan to explored space.
-	var target_col := int(normalized_pos.x * float(grid_width))
-	var target_row := int(normalized_pos.y * float(grid_height))
+	# normalized_pos is clamped to [0,1], so x/y == 1.0 must map to the LAST
+	# column/row; clamp the source index here so the wrap branch's posmod() below
+	# doesn't turn a right-edge click (col == grid_width) into column 0.
+	var target_col := mini(int(normalized_pos.x * float(grid_width)), grid_width - 1)
+	var target_row := mini(int(normalized_pos.y * float(grid_height)), grid_height - 1)
 	if _wrap_horizontal:
 		# When wrapping, find the closest logical column to current view center
 		# First, wrap target to [0, grid_width)
