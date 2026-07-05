@@ -3,11 +3,6 @@ use sim_runtime::{TerrainTags, TerrainType};
 
 use crate::{map_preset::TerrainClassifierConfig, mapgen::MountainType};
 
-/// Relief scale (from the mountain mask) at/above which a Fold belt tile becomes an
-/// AlpineMountain. `MountainsConfig::relief_belt_gain` and `elevation_base` defaults are
-/// tuned relative to this, so it lives in one place instead of a bare literal.
-const ALPINE_RELIEF_THRESHOLD: f32 = 1.45;
-
 #[derive(Debug, Clone, Copy)]
 pub struct MovementProfile {
     pub foot: f32,
@@ -595,13 +590,18 @@ pub fn classify_terrain(
     )
 }
 
-fn select_mountain_terrain(kind: MountainType, relief: f32, moisture: f32) -> TerrainType {
+fn select_mountain_terrain(
+    kind: MountainType,
+    relief: f32,
+    moisture: f32,
+    alpine_relief_threshold: f32,
+) -> TerrainType {
     use sim_runtime::TerrainType::*;
     let relief = relief.clamp(0.5, 3.0);
     let moisture = moisture.clamp(0.0, 1.0);
     match kind {
         MountainType::Fold => {
-            if relief >= ALPINE_RELIEF_THRESHOLD {
+            if relief >= alpine_relief_threshold {
                 AlpineMountain
             } else if moisture >= 0.6 {
                 RollingHills
@@ -652,7 +652,8 @@ pub fn terrain_for_position_with_classifier(
             definition = terrain_definition(terrain);
             tags = definition.tags | TerrainTags::HIGHLAND;
         } else {
-            terrain = select_mountain_terrain(kind, relief, moisture);
+            terrain =
+                select_mountain_terrain(kind, relief, moisture, classifier.alpine_relief_threshold);
             definition = terrain_definition(terrain);
             tags = definition.tags;
         }

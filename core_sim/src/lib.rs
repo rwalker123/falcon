@@ -7,7 +7,7 @@
 /// server-affecting change.** It is stamped onto each snapshot header
 /// (`SnapshotHeader::server_build`) and shown in the client's version overlay so the
 /// running server build can be confirmed at a glance. Format: `YYYY-MM-DD.N`.
-pub const BUILD_ID: &str = "2026-07-05.6";
+pub(crate) const BUILD_ID: &str = "2026-07-05.6";
 
 mod components;
 mod crisis;
