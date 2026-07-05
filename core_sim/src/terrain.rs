@@ -644,7 +644,7 @@ pub fn terrain_for_position_with_classifier(
     let lat_denom = grid_size.y.saturating_sub(1).max(1) as f32;
     let lat = position.y as f32 / lat_denom;
     let dist_from_equator = (lat - 0.5).abs();
-    let is_polar_lat = dist_from_equator >= 0.35;
+    let is_polar_lat = dist_from_equator >= classifier.polar_latitude_cutoff;
 
     if let Some((kind, relief)) = mountain {
         if is_polar_lat {
