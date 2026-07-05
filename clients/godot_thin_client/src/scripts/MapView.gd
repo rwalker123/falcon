@@ -3190,7 +3190,10 @@ func _rebuild_minimap_2d_image() -> void:
 
 	# Track the bounding box of explored tiles while painting (FoW only), so pan
 	# clamping can use it without a second full pass over the visibility array.
-	var have_fow_data := _fow_enabled and not visibility_data.is_empty()
+	# Gate fog on _fow_enabled alone (not on visibility_data being populated): when
+	# FoW is on but the visibility channel hasn't streamed yet, the per-tile lookup
+	# below falls back to vis == 0.0, so every tile paints as fog rather than leaking
+	# the unexplored map as full terrain. Explored bounds simply stay empty.
 	var min_col := grid_width
 	var max_col := -1
 	var min_row := grid_height
@@ -3206,7 +3209,7 @@ func _rebuild_minimap_2d_image() -> void:
 			var color: Color = colors.get(terrain_id, fallback_color)
 
 			# Apply Fog of War visibility
-			if have_fow_data:
+			if _fow_enabled:
 				var vis: float = visibility_data[grid_index] if grid_index < visibility_data.size() else 0.0
 				if vis <= 0.0:
 					# Unexplored - show dark fog
@@ -3231,7 +3234,7 @@ func _rebuild_minimap_2d_image() -> void:
 
 	# Update world bounds for pan clamping (at unit radius, scaled in _clamp_pan_offset).
 	# Cleared when FoW is off (full map) or nothing is explored yet.
-	if have_fow_data and max_col >= 0:
+	if _fow_enabled and max_col >= 0:
 		var explored := Rect2i(min_col, min_row, max_col - min_col + 1, max_row - min_row + 1)
 		_explored_bounds_world = _compute_explored_bounds_world(explored, 1.0)
 	else:
