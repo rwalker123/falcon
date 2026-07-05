@@ -181,10 +181,15 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 **Turn Flow** (`TurnStage::Visibility` after Population, before Crisis):
 1. `clear_active_visibility` - Reset Active tiles to Discovered
 2. `calculate_visibility` - Compute visibility from units/settlements
-3. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
+3. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored (disabled by default; permanent memory)
 
 **Visibility Sources**:
-- **Units**: `PopulationCohort` with `StartingUnit` marker provides sight from home tile
+- **Units**: `PopulationCohort` with `StartingUnit` marker provides sight from its
+  `current_tile`. Because a unit can move several tiles in one turn (see
+  `estimate_travel_turns`, travel interpolation), `calculate_visibility` reveals
+  the whole **corridor** it swept from its previous position (tracked in
+  `VisibilitySweepTracker`) to the current one — not just the endpoint — so
+  passed-over tiles are seen (`corridor_tiles`).
 - **Settlements**: `Settlement` with `TownCenter` provides sight from settlement position
 
 **Modifiers**:
@@ -193,7 +198,7 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 - **Line of Sight**: Bresenham ray-cast checks for blocking terrain
 
 **Config** (`visibility_config.json`):
-- `decay`: `enabled`, `threshold_turns` (turns before Discovered → Unexplored)
+- `decay`: `enabled` (default `false` — permanent memory; Discovered tiles never revert to Unexplored), `threshold_turns` (turns before Discovered → Unexplored when enabled)
 - `sight_ranges`: Per-unit-type `base_range` and `elevation_bonus_factor`
 - `elevation`: `enabled`, `bonus_per_100m`, `max_bonus`
 - `line_of_sight`: `enabled`, `blocking_terrain_tags`

@@ -19,6 +19,12 @@ const VIEWER_EYE_LEVEL_BONUS: f32 = 0.02;
 /// minor elevation variations while still blocking significant obstacles.
 const LOS_BLOCKING_THRESHOLD: f32 = 0.03;
 
+/// Upper bound on how many tiles a single-turn move may sweep for visibility.
+/// Normal moves cover ~3 tiles/turn; a span larger than this is treated as
+/// spurious (e.g. a wrap-seam artifact or entity-id reuse) and only the endpoint
+/// is revealed, guarding against pathological corridor blowups.
+const MAX_SWEEP_TILES: i32 = 8;
+
 use sim_runtime::TerrainTags;
 
 use crate::{
@@ -29,7 +35,7 @@ use crate::{
     heightfield::ElevationField,
     orders::FactionId,
     resources::{SimulationConfig, SimulationTick},
-    visibility::{VisibilityLedger, VisibilityState},
+    visibility::{VisibilityLedger, VisibilityState, VisibilitySweepTracker},
     visibility_config::{TerrainModifierConfig, VisibilityConfigHandle},
 };
 
@@ -62,13 +68,14 @@ pub fn clear_active_visibility(mut ledger: ResMut<VisibilityLedger>) {
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn calculate_visibility(
     mut ledger: ResMut<VisibilityLedger>,
+    mut sweep: ResMut<VisibilitySweepTracker>,
     config: Res<VisibilityConfigHandle>,
     sim_config: Res<SimulationConfig>,
     tick: Res<SimulationTick>,
     elevation: Option<Res<ElevationField>>,
     tiles: Query<&Tile>,
     // Population cohorts with StartingUnit marker for unit type
-    cohorts: Query<(&PopulationCohort, &StartingUnit)>,
+    cohorts: Query<(Entity, &PopulationCohort, &StartingUnit)>,
     // Settlements with TownCenter
     settlements: Query<(&Settlement, &TownCenter)>,
 ) {
@@ -117,17 +124,30 @@ pub fn calculate_visibility(
     let mut settlement_count = 0u32;
 
     // Units (population cohorts with StartingUnit marker)
-    for (cohort, unit) in cohorts.iter() {
+    for (entity, cohort, unit) in cohorts.iter() {
         cohort_count += 1;
         let range_def = cfg.sight_range_for(&unit.kind);
         // Get position from current tile (tracks travel position)
         if let Ok(current_tile) = tiles.get(cohort.current_tile) {
-            sources.push((
-                cohort.faction,
-                current_tile.position,
-                range_def.base_range,
-                range_def.elevation_bonus_factor,
-            ));
+            let current_pos = current_tile.position;
+            // A unit can move several tiles in one turn, so reveal every tile along
+            // the corridor it swept from its previous position to the current one —
+            // not just the endpoint — otherwise passed-over tiles stay Unexplored.
+            let path = match sweep.previous(entity) {
+                Some(prev) if prev != current_pos => {
+                    corridor_tiles(prev, current_pos, width, height, wrap_horizontal)
+                }
+                _ => vec![current_pos],
+            };
+            for pos in path {
+                sources.push((
+                    cohort.faction,
+                    pos,
+                    range_def.base_range,
+                    range_def.elevation_bonus_factor,
+                ));
+            }
+            sweep.record(entity, current_pos);
         }
     }
 
@@ -212,6 +232,44 @@ pub fn calculate_visibility(
         target: "shadow_scale::visibility",
         "visibility.step2_calculate END"
     );
+}
+
+/// Tiles crossed by the straight offset-space segment from `from` to `to`,
+/// inclusive of both ends and de-duplicated. Used to reveal the corridor a unit
+/// sweeps when it moves several tiles in one turn. Honors horizontal wrap via the
+/// shortest x-delta; returns just `[to]` for a degenerate or over-long span (see
+/// `MAX_SWEEP_TILES`).
+fn corridor_tiles(
+    from: UVec2,
+    to: UVec2,
+    width: u32,
+    height: u32,
+    wrap_horizontal: bool,
+) -> Vec<UVec2> {
+    let dx = shortest_delta_x(from.x, to.x, width, wrap_horizontal);
+    let dy = to.y as i32 - from.y as i32;
+    let steps = dx.abs().max(dy.abs());
+    if steps == 0 || steps > MAX_SWEEP_TILES {
+        return vec![to];
+    }
+    let max_y = height.saturating_sub(1) as i32;
+    let mut tiles = Vec::with_capacity(steps as usize + 1);
+    let mut last: Option<UVec2> = None;
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let x = wrap_x(
+            (from.x as f32 + dx as f32 * t).round() as i32,
+            width,
+            wrap_horizontal,
+        );
+        let y = ((from.y as f32 + dy as f32 * t).round() as i32).clamp(0, max_y) as u32;
+        let tile = UVec2::new(x, y);
+        if last != Some(tile) {
+            tiles.push(tile);
+            last = Some(tile);
+        }
+    }
+    tiles
 }
 
 /// Build a grid of terrain tags from tile entities.
@@ -602,6 +660,52 @@ pub fn log_visibility_stats(ledger: Res<VisibilityLedger>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corridor_tiles_covers_intermediate_tiles() {
+        // A 3-tile horizontal move must reveal the two tiles it passed over, not
+        // just the endpoint — this is the fog-of-war "teleport gap" fix.
+        let path = corridor_tiles(UVec2::new(10, 5), UVec2::new(13, 5), 80, 40, false);
+        assert_eq!(
+            path,
+            vec![
+                UVec2::new(10, 5),
+                UVec2::new(11, 5),
+                UVec2::new(12, 5),
+                UVec2::new(13, 5),
+            ]
+        );
+    }
+
+    #[test]
+    fn corridor_tiles_diagonal_and_dedup() {
+        // Diagonal move: one tile per step, endpoints included, no duplicates.
+        let path = corridor_tiles(UVec2::new(4, 4), UVec2::new(6, 6), 80, 40, false);
+        assert_eq!(path.first(), Some(&UVec2::new(4, 4)));
+        assert_eq!(path.last(), Some(&UVec2::new(6, 6)));
+        assert_eq!(path.len(), 3);
+        for w in path.windows(2) {
+            assert_ne!(w[0], w[1]);
+        }
+    }
+
+    #[test]
+    fn corridor_tiles_over_long_span_reveals_endpoint_only() {
+        // A span beyond MAX_SWEEP_TILES (spurious/wrap-seam) collapses to the endpoint.
+        let path = corridor_tiles(UVec2::new(0, 0), UVec2::new(40, 0), 80, 40, false);
+        assert_eq!(path, vec![UVec2::new(40, 0)]);
+    }
+
+    #[test]
+    fn corridor_tiles_wraps_horizontally() {
+        // Moving from x=79 to x=1 on an 80-wide wrapped map goes the short way
+        // across the seam (79 -> 0 -> 1), not the long way back across the map.
+        let path = corridor_tiles(UVec2::new(79, 5), UVec2::new(1, 5), 80, 40, true);
+        assert_eq!(
+            path,
+            vec![UVec2::new(79, 5), UVec2::new(0, 5), UVec2::new(1, 5)]
+        );
+    }
 
     #[test]
     fn line_of_sight_same_tile() {

@@ -1,6 +1,6 @@
 {
   "decay": {
-    "enabled": true,
+    "enabled": false,
     "threshold_turns": 12
   },
   "sight_ranges": {

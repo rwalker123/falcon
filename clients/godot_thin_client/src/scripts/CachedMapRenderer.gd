@@ -62,7 +62,7 @@ func _draw() -> void:
 
 	# Determine if using textured rendering
 	var mgr = map_view.get_node_or_null("/root/TerrainTextureManager")
-	var use_textures: bool = mgr != null and mgr.use_terrain_textures and mgr.terrain_textures != null and map_view.active_overlay_key == "" and not map_view._fow_enabled
+	var use_textures: bool = mgr != null and mgr.use_terrain_textures and mgr.terrain_textures != null and map_view.active_overlay_key == ""
 
 	# Calculate visible range with buffer
 	var hex_col_width := SQRT3 * radius
@@ -89,8 +89,13 @@ func _draw() -> void:
 			var center: Vector2 = _hex_center(logical_x, y, radius, _render_origin)
 
 			if use_textures:
-				var terrain_id: int = map_view._terrain_id_at(data_x, y)
-				_draw_hex_textured(center, terrain_id, radius)
+				if map_view._fow_hides_texture(data_x, y):
+					var fog: Color = map_view._fow_fog_fill_color
+					var fog_points := _hex_points(center, radius)
+					draw_polygon(fog_points, PackedColorArray([fog, fog, fog, fog, fog, fog]))
+				else:
+					var terrain_id: int = map_view._terrain_id_at(data_x, y)
+					_draw_hex_textured(center, terrain_id, radius, map_view._fow_texture_modulate(data_x, y))
 			else:
 				var final_color: Color = map_view._tile_color(data_x, y)
 				var polygon_points := _hex_points(center, radius)
@@ -134,10 +139,11 @@ func _hex_points(center: Vector2, radius: float, closed: bool = false) -> Packed
 		points[6] = points[0]
 	return points
 
-func _draw_hex_textured(center: Vector2, terrain_id: int, radius: float) -> void:
+func _draw_hex_textured(center: Vector2, terrain_id: int, radius: float, tint: Color = Color.WHITE) -> void:
+	## `tint` modulates the texture (Fog of War: mist for Discovered, white for Active).
 	var tex: ImageTexture = map_view._hex_texture_cache.get(terrain_id)
 	if tex == null:
-		var color: Color = map_view._terrain_color_for_id(terrain_id)
+		var color: Color = map_view._terrain_color_for_id(terrain_id) * tint
 		var polygon_points := _hex_points(center, radius)
 		draw_polygon(polygon_points, PackedColorArray([color, color, color, color, color, color]))
 		return
@@ -150,7 +156,7 @@ func _draw_hex_textured(center: Vector2, terrain_id: int, radius: float) -> void
 			(point.y - center.y) / radius * 0.5 + 0.5
 		)
 		uvs.append(uv)
-	var colors := PackedColorArray([Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE])
+	var colors := PackedColorArray([tint, tint, tint, tint, tint, tint])
 	draw_polygon(polygon_points, colors, uvs, tex)
 
 func get_render_origin() -> Vector2:

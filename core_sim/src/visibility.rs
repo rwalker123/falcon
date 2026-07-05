@@ -273,6 +273,29 @@ impl VisibilitySource {
     }
 }
 
+/// Tracks the tile each mobile visibility source last revealed from, keyed by
+/// cohort entity. A unit can move several tiles in a single turn (see
+/// `estimate_travel_turns` / the travel interpolation), so `calculate_visibility`
+/// uses this to reveal the whole corridor swept between the previous and current
+/// position. Without it, only the endpoint tile is revealed and tiles the unit
+/// passed over stay `Unexplored`.
+#[derive(Resource, Default, Debug, Clone)]
+pub struct VisibilitySweepTracker {
+    last_position: HashMap<Entity, UVec2>,
+}
+
+impl VisibilitySweepTracker {
+    /// The tile this entity last revealed visibility from, if known.
+    pub fn previous(&self, entity: Entity) -> Option<UVec2> {
+        self.last_position.get(&entity).copied()
+    }
+
+    /// Record the tile this entity revealed visibility from this turn.
+    pub fn record(&mut self, entity: Entity, pos: UVec2) {
+        self.last_position.insert(entity, pos);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

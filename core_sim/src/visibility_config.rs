@@ -130,8 +130,12 @@ pub struct DecayConfig {
 
 impl Default for DecayConfig {
     fn default() -> Self {
+        // Permanent memory: a tile that leaves sight becomes Discovered (cloudy) and
+        // stays that way — it never decays back to Unexplored (black). Set
+        // enabled = true in visibility_config.json to re-enable the final decay step
+        // (Discovered -> Unexplored after threshold_turns unseen).
         Self {
-            enabled: true,
+            enabled: false,
             threshold_turns: 12,
         }
     }
@@ -304,7 +308,8 @@ mod tests {
     #[test]
     fn default_config_parses() {
         let config = VisibilityConfig::default();
-        assert!(config.decay.enabled);
+        // Permanent-memory default: Discovered tiles do not decay to Unexplored.
+        assert!(!config.decay.enabled);
         assert_eq!(config.decay.threshold_turns, 12);
         assert!(config.sight_ranges.contains_key("BandScout"));
     }

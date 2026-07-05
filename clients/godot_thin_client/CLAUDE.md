@@ -150,6 +150,10 @@ Textures are loaded at runtime from individual PNGs and combined into a `Texture
 - Cached as `ImageTexture` per terrain ID for efficient drawing
 - Falls back to solid colors when overlay mode is active
 - Textures only displayed in base view (empty overlay key)
+- Fog of War keeps textures: Active tiles draw full-brightness, Discovered tiles
+  are tinted toward the mist color (cloudy), Unexplored tiles fill with the fog
+  color. See `_fow_hides_texture` / `_fow_texture_modulate` in `MapView.gd`.
+- Runtime toggle: `T` key (`enable_terrain_textures` / `_toggle_terrain_textures`)
 - Edge blending: gradient lines drawn at terrain boundaries
 
 ### Edge Blending - Overlay/Fringe Technique
@@ -321,6 +325,7 @@ QuickJS sandbox for user scripts.
 | `C` | Fit map to view |
 | `G` | Toggle grid lines |
 | `F` | Toggle fog of war |
+| `T` | Toggle terrain textures |
 | `I` | Hide/show inspector |
 | `L` | Collapse/restore legend |
 | Double-click herd | Issue `FollowHerd` |

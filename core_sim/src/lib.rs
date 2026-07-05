@@ -326,6 +326,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility_handle)
         .insert_resource(visibility_metadata)
         .insert_resource(visibility::VisibilityLedger::default())
+        .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(visibility::ViewerFaction::default())
         .insert_resource(turn_pipeline_handle)
         .insert_resource(turn_pipeline_metadata)

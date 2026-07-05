@@ -3139,18 +3139,20 @@ fn visibility_raster_from_ledger(
             if idx >= samples.len() {
                 continue;
             }
-            // Visibility state as normalized scalar (higher = more visible):
-            // Active (2) -> 65536 (fully visible, full terrain color)
-            // Discovered (1) -> 32768 (half, desaturated terrain)
-            // Unexplored (0) -> 0 (black/hidden)
+            // Visibility state as a fixed-point Scalar (Scalar::SCALE == 1.0), so the
+            // client's fixed64_to_f32 (which divides by Scalar::SCALE) recovers the
+            // intended 0.0 / 0.5 / 1.0 encoding. Higher = more visible:
+            // Active -> 1.0 (fully visible, full terrain color)
+            // Discovered -> 0.5 (remembered/cloudy terrain)
+            // Unexplored -> 0.0 (black/hidden)
             let value = match tile.state {
                 crate::visibility::VisibilityState::Active => {
                     active_count += 1;
-                    65536
+                    Scalar::SCALE
                 }
                 crate::visibility::VisibilityState::Discovered => {
                     discovered_count += 1;
-                    32768
+                    Scalar::SCALE / 2
                 }
                 crate::visibility::VisibilityState::Unexplored => {
                     unexplored_count += 1;
