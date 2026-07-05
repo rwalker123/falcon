@@ -486,10 +486,21 @@ func _tile_summary_lines(tile_info: Dictionary) -> Array[String]:
     if tile_info.is_empty():
         lines.append("Hover or click a tile to inspect details.")
         return lines
+    # Fog of War: never-seen tiles reveal nothing; remembered (Discovered) tiles
+    # show only their last-known terrain, not current contents. See MapView
+    # _apply_visibility_to_info, which redacts the hidden fields before this runs.
+    var visibility_state := String(tile_info.get("visibility_state", ""))
+    if visibility_state == "unexplored":
+        lines.append("Undiscovered tile")
+        lines.append("Not yet scouted — send a band to reveal this area.")
+        return lines
     var terrain_label := String(tile_info.get("terrain_label", "Unknown"))
     lines.append("Biome: %s" % terrain_label)
     var tags_text := String(tile_info.get("tags_text", "none"))
     lines.append("Tags: %s" % tags_text)
+    if visibility_state == "discovered":
+        lines.append("Last seen — information incomplete. Scout to update.")
+        return lines
     var food_label := String(tile_info.get("food_module_label", "None")).strip_edges()
     if food_label == "":
         food_label = "None"
@@ -1245,7 +1256,11 @@ func show_tooltip(info: Dictionary) -> void:
     var terrain := String(info.get("terrain_label", ""))
     if terrain != "":
         lines.append("Terrain: %s" % terrain)
-        
+
+    # Remembered (Discovered) tiles: flag that contents are stale/incomplete.
+    if String(info.get("visibility_state", "")) == "discovered":
+        lines.append("(last seen — incomplete)")
+
     # Food
     var food := String(info.get("food_module_label", ""))
     if food != "" and food != "None":

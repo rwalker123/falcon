@@ -273,6 +273,36 @@ impl VisibilitySource {
     }
 }
 
+/// Tracks the tile each mobile visibility source last revealed from, keyed by
+/// cohort entity. A unit can move several tiles in a single turn (see
+/// `estimate_travel_turns` / the travel interpolation), so `calculate_visibility`
+/// uses this to reveal the whole corridor swept between the previous and current
+/// position. Without it, only the endpoint tile is revealed and tiles the unit
+/// passed over stay `Unexplored`.
+#[derive(Resource, Default, Debug, Clone)]
+pub struct VisibilitySweepTracker {
+    last_position: HashMap<Entity, UVec2>,
+}
+
+impl VisibilitySweepTracker {
+    /// The tile this entity last revealed visibility from, if known.
+    pub fn previous(&self, entity: Entity) -> Option<UVec2> {
+        self.last_position.get(&entity).copied()
+    }
+
+    /// Record the tile this entity revealed visibility from this turn.
+    pub fn record(&mut self, entity: Entity, pos: UVec2) {
+        self.last_position.insert(entity, pos);
+    }
+
+    /// Drop the tracked position for a single entity — called when a cohort
+    /// despawns (e.g. Founders consumed when founding a settlement) so stale
+    /// entries don't accumulate and grow this resource over a long-running sim.
+    pub fn forget(&mut self, entity: Entity) {
+        self.last_position.remove(&entity);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,5 +378,19 @@ mod tests {
         assert_eq!(raster[0], 2); // (0,0) active
         assert_eq!(raster[4], 1); // (1,1) discovered
         assert_eq!(raster[8], 0); // (2,2) unexplored
+    }
+
+    #[test]
+    fn sweep_tracker_forgets_despawned_entity() {
+        let mut tracker = VisibilitySweepTracker::default();
+        let live = Entity::from_raw(1);
+        let despawned = Entity::from_raw(2);
+        tracker.record(live, UVec2::new(3, 4));
+        tracker.record(despawned, UVec2::new(5, 6));
+
+        tracker.forget(despawned);
+
+        assert_eq!(tracker.previous(live), Some(UVec2::new(3, 4)));
+        assert_eq!(tracker.previous(despawned), None);
     }
 }

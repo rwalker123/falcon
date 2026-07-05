@@ -1,10 +1,11 @@
 //! Visibility system implementations for the Fog of War.
 //!
-//! Four systems run in sequence during TurnStage::Visibility:
+//! Systems run in sequence during TurnStage::Visibility:
 //! 1. `clear_active_visibility` - Reset Active tiles to Discovered
-//! 2. `calculate_visibility` - Compute visibility from all sources
-//! 3. `apply_trade_route_visibility` - Mark trade route tiles as Active
-//! 4. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
+//! 2. `prune_sweep_tracker` - Forget sweep positions of despawned cohorts
+//! 3. `calculate_visibility` - Compute visibility from all sources
+//! 4. `apply_trade_route_visibility` - Mark trade route tiles as Active
+//! 5. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
 
 use bevy::prelude::*;
 
@@ -19,6 +20,23 @@ const VIEWER_EYE_LEVEL_BONUS: f32 = 0.02;
 /// minor elevation variations while still blocking significant obstacles.
 const LOS_BLOCKING_THRESHOLD: f32 = 0.03;
 
+/// Meters of real relief spanned by the normalized (0.0–1.0) elevation field.
+/// Used to convert normalized elevation to meters for the sight bonus.
+const ELEVATION_RANGE_METERS: f32 = 1000.0;
+
+/// Meters of elevation per step of the `elevation.bonus_per_100m` sight bonus.
+/// Named to keep this coupled, and consistent, with that config field.
+const METERS_PER_ELEVATION_BONUS_STEP: f32 = 100.0;
+
+/// A unit always retains at least this much sight range after terrain penalties,
+/// so it can never be blinded to its own tile/ring.
+const MIN_EFFECTIVE_SIGHT_RANGE: i32 = 1;
+
+/// Squared offset-space distance at or below which no tile can lie *between* the
+/// viewer and the target, so the line-of-sight ray-cast is skipped. `dist² ≤ 2`
+/// covers the eight immediate neighbours (orthogonal `dist²=1`, diagonal `dist²=2`).
+const ADJACENT_LOS_SKIP_DIST_SQ: i32 = 2;
+
 use sim_runtime::TerrainTags;
 
 use crate::{
@@ -29,7 +47,7 @@ use crate::{
     heightfield::ElevationField,
     orders::FactionId,
     resources::{SimulationConfig, SimulationTick},
-    visibility::{VisibilityLedger, VisibilityState},
+    visibility::{VisibilityLedger, VisibilityState, VisibilitySweepTracker},
     visibility_config::{TerrainModifierConfig, VisibilityConfigHandle},
 };
 
@@ -58,17 +76,37 @@ pub fn clear_active_visibility(mut ledger: ResMut<VisibilityLedger>) {
     );
 }
 
+/// Forget sweep-tracker positions for cohorts that despawned since last turn.
+///
+/// Drains `RemovedComponents<StartingUnit>` (fired when a visibility-source cohort
+/// is despawned — e.g. Founders consumed on settlement founding — or loses its
+/// marker), removing exactly those entities from `VisibilitySweepTracker`. This is
+/// cheaper than rebuilding a live-set each turn: it touches only the entities that
+/// actually went away, keeping the tracker from accumulating stale entries over a
+/// long-running sim. Runs before `calculate_visibility`, though ordering is not
+/// load-bearing — the sweep only reads `previous()` for live cohorts, so a stale
+/// entry is never read, merely wastes memory until drained.
+pub fn prune_sweep_tracker(
+    mut sweep: ResMut<VisibilitySweepTracker>,
+    mut removed_sources: RemovedComponents<StartingUnit>,
+) {
+    for entity in removed_sources.read() {
+        sweep.forget(entity);
+    }
+}
+
 /// Step 2: Calculate visibility from all visibility sources (units, settlements).
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn calculate_visibility(
     mut ledger: ResMut<VisibilityLedger>,
+    mut sweep: ResMut<VisibilitySweepTracker>,
     config: Res<VisibilityConfigHandle>,
     sim_config: Res<SimulationConfig>,
     tick: Res<SimulationTick>,
     elevation: Option<Res<ElevationField>>,
     tiles: Query<&Tile>,
     // Population cohorts with StartingUnit marker for unit type
-    cohorts: Query<(&PopulationCohort, &StartingUnit)>,
+    cohorts: Query<(Entity, &PopulationCohort, &StartingUnit)>,
     // Settlements with TownCenter
     settlements: Query<(&Settlement, &TownCenter)>,
 ) {
@@ -117,17 +155,35 @@ pub fn calculate_visibility(
     let mut settlement_count = 0u32;
 
     // Units (population cohorts with StartingUnit marker)
-    for (cohort, unit) in cohorts.iter() {
+    for (entity, cohort, unit) in cohorts.iter() {
         cohort_count += 1;
         let range_def = cfg.sight_range_for(&unit.kind);
         // Get position from current tile (tracks travel position)
         if let Ok(current_tile) = tiles.get(cohort.current_tile) {
-            sources.push((
-                cohort.faction,
-                current_tile.position,
-                range_def.base_range,
-                range_def.elevation_bonus_factor,
-            ));
+            let current_pos = current_tile.position;
+            // A unit can move several tiles in one turn, so reveal every tile along
+            // the corridor it swept from its previous position to the current one —
+            // not just the endpoint — otherwise passed-over tiles stay Unexplored.
+            let path = match sweep.previous(entity) {
+                Some(prev) if prev != current_pos => corridor_tiles(
+                    prev,
+                    current_pos,
+                    width,
+                    height,
+                    wrap_horizontal,
+                    cfg.movement.max_sweep_tiles,
+                ),
+                _ => vec![current_pos],
+            };
+            for pos in path {
+                sources.push((
+                    cohort.faction,
+                    pos,
+                    range_def.base_range,
+                    range_def.elevation_bonus_factor,
+                ));
+            }
+            sweep.record(entity, current_pos);
         }
     }
 
@@ -168,8 +224,9 @@ pub fn calculate_visibility(
         // Calculate effective range with elevation bonus
         let elev_bonus = if cfg.elevation.enabled {
             // Elevation is normalized 0-1, scale to approximate meters (0-1000m)
-            let elevation_m = source_elevation * 1000.0;
-            let bonus = (elevation_m / 100.0) as u32 * cfg.elevation.bonus_per_100m;
+            let elevation_m = source_elevation * ELEVATION_RANGE_METERS;
+            let bonus = (elevation_m / METERS_PER_ELEVATION_BONUS_STEP) as u32
+                * cfg.elevation.bonus_per_100m;
             ((bonus as f32) * elev_factor) as u32
         } else {
             0
@@ -212,6 +269,71 @@ pub fn calculate_visibility(
         target: "shadow_scale::visibility",
         "visibility.step2_calculate END"
     );
+}
+
+/// Tiles crossed by the straight offset-space segment from `from` to `to`,
+/// inclusive of both ends. Used to reveal the corridor a unit sweeps when it moves
+/// several tiles in one turn. Honors horizontal wrap via the shortest x-delta;
+/// returns just `[to]` for a degenerate span, or one longer than `max_sweep_tiles`
+/// — an implausible span from a wrap-seam artifact or a coordinate glitch, which
+/// should not blow up into a huge corridor.
+///
+/// Uses integer supercover rasterization (all cells the segment passes through, not
+/// just one per major-axis step) rather than float interpolation, so the tile set
+/// is deterministic — no `f32` rounding — and never skips a crossed tile.
+fn corridor_tiles(
+    from: UVec2,
+    to: UVec2,
+    width: u32,
+    height: u32,
+    wrap_horizontal: bool,
+    max_sweep_tiles: u32,
+) -> Vec<UVec2> {
+    let dx = shortest_delta_x(from.x, to.x, width, wrap_horizontal);
+    let dy = to.y as i32 - from.y as i32;
+    let span = dx.abs().max(dy.abs());
+    if span == 0 || span > max_sweep_tiles as i32 {
+        return vec![to];
+    }
+
+    let max_y = height.saturating_sub(1) as i32;
+    // 4-connected integer supercover from (from.x, from.y) to (from.x + dx, ...):
+    // step exactly one axis per iteration, so consecutive cells are orthogonally
+    // adjacent and no crossed cell is skipped. `x` stays "logical" (may run past the
+    // grid edge) and is wrapped back on emit. Deterministic — pure integer math.
+    let n_x = dx.abs();
+    let n_y = dy.abs();
+    let step_x = dx.signum();
+    let step_y = dy.signum();
+    let mut logical_x = from.x as i32;
+    let mut y = from.y as i32;
+    // Doubled error accumulator; ties (err == 0, exact diagonal crossings) step y.
+    let mut err = n_x - n_y;
+    let (n_x2, n_y2) = (n_x * 2, n_y * 2);
+
+    let mut tiles = Vec::with_capacity((n_x + n_y) as usize + 1);
+    let push = |lx: i32, gy: i32, out: &mut Vec<UVec2>| {
+        let tile = UVec2::new(
+            wrap_x(lx, width, wrap_horizontal),
+            gy.clamp(0, max_y) as u32,
+        );
+        if out.last() != Some(&tile) {
+            out.push(tile);
+        }
+    };
+
+    for _ in 0..(n_x + n_y) {
+        push(logical_x, y, &mut tiles);
+        if err > 0 {
+            logical_x += step_x;
+            err -= n_y2;
+        } else {
+            y += step_y;
+            err += n_x2;
+        }
+    }
+    push(logical_x, y, &mut tiles);
+    tiles
 }
 
 /// Build a grid of terrain tags from tile entities.
@@ -306,7 +428,8 @@ fn reveal_tiles_in_range(
             let terrain_modifier = get_terrain_modifier(tags, terrain_modifiers);
 
             // Calculate effective range for this target tile
-            let effective_range = (base_range as i32 + terrain_modifier).max(1) as u32;
+            let effective_range =
+                (base_range as i32 + terrain_modifier).max(MIN_EFFECTIVE_SIGHT_RANGE) as u32;
             let range_sq = (effective_range * effective_range) as i32;
 
             // Skip tiles outside circular range (accounting for terrain modifier)
@@ -316,7 +439,7 @@ fn reveal_tiles_in_range(
 
             // Line of sight check if enabled (skip for adjacent tiles - no intermediate blocker)
             if los_enabled
-                && dist_sq > 2
+                && dist_sq > ADJACENT_LOS_SKIP_DIST_SQ
                 && !has_line_of_sight_wrapped(
                     center,
                     UVec2::new(x, y),
@@ -602,6 +725,114 @@ pub fn log_visibility_stats(ledger: Res<VisibilityLedger>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prune_sweep_tracker_forgets_despawned_source() {
+        use crate::components::StartingUnit;
+
+        let mut world = World::new();
+        let mut sweep = VisibilitySweepTracker::default();
+
+        let live = world
+            .spawn(StartingUnit::new("BandScout".to_string(), vec![]))
+            .id();
+        let despawned = world
+            .spawn(StartingUnit::new("BandScout".to_string(), vec![]))
+            .id();
+        sweep.record(live, UVec2::new(1, 1));
+        sweep.record(despawned, UVec2::new(2, 2));
+        world.insert_resource(sweep);
+
+        // Despawning removes StartingUnit, which the drain reads via RemovedComponents.
+        world.entity_mut(despawned).despawn();
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(prune_sweep_tracker);
+        schedule.run(&mut world);
+
+        let sweep = world.resource::<VisibilitySweepTracker>();
+        assert_eq!(sweep.previous(live), Some(UVec2::new(1, 1)));
+        assert_eq!(sweep.previous(despawned), None);
+    }
+
+    #[test]
+    fn corridor_tiles_covers_intermediate_tiles() {
+        // A 3-tile horizontal move must reveal the two tiles it passed over, not
+        // just the endpoint — this is the fog-of-war "teleport gap" fix.
+        let path = corridor_tiles(UVec2::new(10, 5), UVec2::new(13, 5), 80, 40, false, 8);
+        assert_eq!(
+            path,
+            vec![
+                UVec2::new(10, 5),
+                UVec2::new(11, 5),
+                UVec2::new(12, 5),
+                UVec2::new(13, 5),
+            ]
+        );
+    }
+
+    #[test]
+    fn corridor_tiles_diagonal_is_4_connected() {
+        // Diagonal move: supercover steps one axis at a time, so the corridor is a
+        // contiguous staircase with no diagonal skips (each step is a neighbour).
+        let path = corridor_tiles(UVec2::new(4, 4), UVec2::new(6, 6), 80, 40, false, 8);
+        assert_eq!(
+            path,
+            vec![
+                UVec2::new(4, 4),
+                UVec2::new(4, 5),
+                UVec2::new(5, 5),
+                UVec2::new(5, 6),
+                UVec2::new(6, 6),
+            ]
+        );
+        for w in path.windows(2) {
+            let manhattan = w[0].x.abs_diff(w[1].x) + w[0].y.abs_diff(w[1].y);
+            assert_eq!(manhattan, 1, "steps must be orthogonally adjacent");
+        }
+    }
+
+    #[test]
+    fn corridor_tiles_shallow_slope_covers_all_crossed_cells() {
+        // Regression for the float-rounding gap: a shallow (0,0)->(2,1) segment must
+        // include the corner cells it crosses, deterministically, with no skips.
+        let path = corridor_tiles(UVec2::new(0, 0), UVec2::new(2, 1), 80, 40, false, 8);
+        assert_eq!(
+            path,
+            vec![
+                UVec2::new(0, 0),
+                UVec2::new(1, 0),
+                UVec2::new(1, 1),
+                UVec2::new(2, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn corridor_tiles_over_long_span_reveals_endpoint_only() {
+        // A span beyond max_sweep_tiles (spurious/wrap-seam) collapses to the endpoint.
+        let path = corridor_tiles(UVec2::new(0, 0), UVec2::new(40, 0), 80, 40, false, 8);
+        assert_eq!(path, vec![UVec2::new(40, 0)]);
+    }
+
+    #[test]
+    fn corridor_tiles_respects_config_cap() {
+        // The cap is config-driven: a lower max_sweep_tiles collapses a span that
+        // the default (8) would sweep, confirming the value is honored, not hardcoded.
+        let path = corridor_tiles(UVec2::new(10, 5), UVec2::new(13, 5), 80, 40, false, 2);
+        assert_eq!(path, vec![UVec2::new(13, 5)]);
+    }
+
+    #[test]
+    fn corridor_tiles_wraps_horizontally() {
+        // Moving from x=79 to x=1 on an 80-wide wrapped map goes the short way
+        // across the seam (79 -> 0 -> 1), not the long way back across the map.
+        let path = corridor_tiles(UVec2::new(79, 5), UVec2::new(1, 5), 80, 40, true, 8);
+        assert_eq!(
+            path,
+            vec![UVec2::new(79, 5), UVec2::new(0, 5), UVec2::new(1, 5)]
+        );
+    }
 
     #[test]
     fn line_of_sight_same_tile() {

@@ -36,6 +36,14 @@ const SIN_60 := 0.8660254037844386
 # (Active ≈ 1.0, Discovered ≈ 0.5, Unexplored ≈ 0.0).
 const FOW_VISIBLE_THRESHOLD := 0.7  # Above this a tile is Active (full color)
 const FOW_EXPLORED_THRESHOLD := 0.3  # Above this a tile is at least Discovered
+# Tile-info fields that describe live/current contents. They are stripped from a
+# Discovered (remembered, not currently in sight) tile because the player only
+# retains the terrain memory, not what is happening on the tile right now.
+const FOW_DISCOVERED_HIDDEN_KEYS := [
+	"food_module", "food_module_label", "food_module_weight", "food_kind",
+	"units", "herds", "unit_count", "herd_count",
+	"harvest_tasks", "harvest_active", "scout_tasks", "scout_active",
+]
 # Fallback FoW appearance; overridden by the "fog_of_war" section of
 # heightfield_config.json (see _load_fow_config).
 const DEFAULT_FOW_MIST_COLOR := Color(0.45, 0.48, 0.55, 1.0)
@@ -731,7 +739,7 @@ func _draw_terrain_direct(radius: float, origin: Vector2, viewport_size: Vector2
 
 	# Determine if using textured rendering
 	var mgr = get_node_or_null("/root/TerrainTextureManager")
-	var use_textures: bool = mgr != null and mgr.use_terrain_textures and mgr.terrain_textures != null and active_overlay_key == "" and not _fow_enabled
+	var use_textures: bool = mgr != null and mgr.use_terrain_textures and mgr.terrain_textures != null and active_overlay_key == ""
 
 	# Calculate visible range
 	var hex_col_width := SQRT3 * radius
@@ -757,8 +765,14 @@ func _draw_terrain_direct(radius: float, origin: Vector2, viewport_size: Vector2
 			var center: Vector2 = _hex_center(logical_x, y, radius, origin)
 
 			if use_textures:
-				var terrain_id: int = _terrain_id_at(data_x, y)
-				_draw_hex_textured_direct(center, terrain_id, radius)
+				var vstate := _visibility_state_at(data_x, y)  # one FoW lookup per tile
+				if vstate == "unexplored":
+					var fog := _fow_fog_fill_color
+					var fog_points := _hex_points(center, radius)
+					draw_polygon(fog_points, PackedColorArray([fog, fog, fog, fog, fog, fog]))
+				else:
+					var terrain_id: int = _terrain_id_at(data_x, y)
+					_draw_hex_textured_direct(center, terrain_id, radius, _fow_texture_tint_for_state(vstate))
 			else:
 				var final_color: Color = _tile_color(data_x, y)
 				var polygon_points := _hex_points(center, radius)
@@ -774,11 +788,12 @@ func _draw_terrain_direct(radius: float, origin: Vector2, viewport_size: Vector2
 				draw_polyline(_hex_points(center, radius, true), GRID_LINE_COLOR, 2.0, true)
 
 
-func _draw_hex_textured_direct(center: Vector2, terrain_id: int, radius: float) -> void:
-	## Draw a single hex with texture (direct rendering version)
+func _draw_hex_textured_direct(center: Vector2, terrain_id: int, radius: float, tint: Color = Color.WHITE) -> void:
+	## Draw a single hex with texture (direct rendering version). `tint` modulates
+	## the texture (used for Fog of War: mist for Discovered, white for Active).
 	var tex: ImageTexture = _hex_texture_cache.get(terrain_id)
 	if tex == null:
-		var color: Color = _terrain_color_for_id(terrain_id)
+		var color: Color = _terrain_color_for_id(terrain_id) * tint
 		var polygon_points := _hex_points(center, radius)
 		draw_polygon(polygon_points, PackedColorArray([color, color, color, color, color, color]))
 		return
@@ -791,7 +806,7 @@ func _draw_hex_textured_direct(center: Vector2, terrain_id: int, radius: float) 
 			(point.y - center.y) / radius * 0.5 + 0.5
 		)
 		uvs.append(uv)
-	var colors := PackedColorArray([Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE])
+	var colors := PackedColorArray([tint, tint, tint, tint, tint, tint])
 	draw_polygon(polygon_points, colors, uvs, tex)
 
 
@@ -870,14 +885,14 @@ func _is_tile_visible(x: int, y: int) -> bool:
 	# When FoW is disabled, all tiles are visible
 	if not _fow_enabled:
 		return true
-	var vis: float = _value_at_overlay("visibility", x, y)
+	var vis: float = _visibility_value_at(x, y)
 	return vis > FOW_VISIBLE_THRESHOLD  # Active tiles only
 
 ## Calculate the bounding box of explored tiles (visibility > 0).
 ## Returns Rect2i(min_col, min_row, width, height) in grid coordinates.
 ## Returns empty rect (size 0,0) if no tiles have been explored.
 func _calculate_explored_bounds() -> Rect2i:
-	var visibility_data := _overlay_array("visibility")
+	var visibility_data := _visibility_array()
 	if visibility_data.is_empty():
 		return Rect2i(0, 0, 0, 0)
 
@@ -1048,6 +1063,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		queue_redraw()
 		_mark_input_handled()
 		return
+	if event is InputEventKey and event.pressed and event.keycode == KEY_T:
+		_toggle_terrain_textures()
+		_mark_input_handled()
+		return
 	if event is InputEventMouseButton:
 		var mouse_event: InputEventMouseButton = event
 		if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP and mouse_event.pressed:
@@ -1105,24 +1124,13 @@ func _unhandled_input(event: InputEvent) -> void:
 				_hovered_tile = offset
 				if offset.x < 0 or offset.y < 0:
 					emit_signal("tile_hovered", {})
-				elif _fow_enabled and not _is_tile_visible(offset.x, offset.y):
-					# Unexplored tiles: no tooltip when FoW is enabled
-					var vis: float = _value_at_overlay("visibility", offset.x, offset.y)
-					if vis <= FOW_EXPLORED_THRESHOLD:
-						emit_signal("tile_hovered", {})
-					else:
-						# Discovered tiles: show basic terrain info only
-						var info := _tile_info_at(offset.x, offset.y)
-						info.erase("food_module")
-						info.erase("food_module_label")
-						info.erase("food_kind")
-						info.erase("units")
-						info.erase("herds")
-						info.erase("unit_count")
-						info.erase("herd_count")
-						emit_signal("tile_hovered", info)
+				elif _fow_enabled and _visibility_state_at(offset.x, offset.y) == "unexplored":
+					# Never-seen tiles: no hover tooltip (they are inspectable via click).
+					emit_signal("tile_hovered", {})
 				else:
-					var info := _tile_info_at(offset.x, offset.y)
+					# Active tiles get full info; Discovered tiles are redacted to
+					# remembered terrain by _apply_visibility_to_info.
+					var info := _apply_visibility_to_info(_tile_info_at(offset.x, offset.y), offset.x, offset.y)
 					emit_signal("tile_hovered", info)
 				queue_redraw()
 	elif event is InputEventPanGesture:
@@ -1384,6 +1392,56 @@ func _average_overlay(key: String) -> float:
 func _value_at_overlay(key: String, x: int, y: int) -> float:
 	return _value_at(_overlay_array(key), x, y)
 
+## Fog of War reads the RAW visibility channel, never the min-max normalized one.
+## The channel carries a discrete encoding (0.0 = Unexplored, 0.5 = Discovered,
+## 1.0 = Active) and the FoW thresholds are tuned to it. normalize_overlay()
+## rescales per frame, so whenever a frame lacks either an unexplored (0.0) or an
+## active (1.0) tile the 0.5 "discovered" value collapses to 0.0 and the remembered
+## terrain wrongly renders as black. Reading raw keeps the encoding intact.
+func _visibility_array() -> PackedFloat32Array:
+	return _overlay_raw_array("visibility")
+
+func _visibility_value_at(x: int, y: int) -> float:
+	return _value_at(_visibility_array(), x, y)
+
+## Three-state Fog of War classification for a tile: "active", "discovered", or
+## "unexplored". Returns "" when FoW is disabled so callers render full info.
+func _visibility_state_at(x: int, y: int) -> String:
+	if not _fow_enabled:
+		return ""
+	var vis := _visibility_value_at(x, y)
+	if vis > FOW_VISIBLE_THRESHOLD:
+		return "active"
+	if vis > FOW_EXPLORED_THRESHOLD:
+		return "discovered"
+	return "unexplored"
+
+## Tag tile info with its FoW state and strip fields the player cannot currently
+## know. Active tiles (and FoW-off) keep full info; Discovered tiles keep only the
+## remembered terrain (biome/tags); Unexplored tiles keep just their coordinates.
+func _apply_visibility_to_info(info: Dictionary, x: int, y: int) -> Dictionary:
+	var state := _visibility_state_at(x, y)
+	if state == "":
+		return info
+	info["visibility_state"] = state
+	if state == "unexplored":
+		return {"x": info.get("x", x), "y": info.get("y", y), "visibility_state": state}
+	if state == "discovered":
+		for key in FOW_DISCOVERED_HIDDEN_KEYS:
+			info.erase(key)
+	return info
+
+## Vertex-color tint for a TEXTURED tile given its already-computed FoW state.
+## Pure function of `state` (no per-tile visibility lookup) so the hot draw loops
+## can classify each tile once via _visibility_state_at() and derive both the
+## hide decision (state == "unexplored") and this tint from that single value.
+## Discovered tiles are tinted toward the mist color (remembered/cloudy while
+## keeping their texture); Active tiles (and FoW off, state == "") draw full.
+func _fow_texture_tint_for_state(state: String) -> Color:
+	if state == "discovered":
+		return Color.WHITE.lerp(_fow_mist_color, _fow_mist_blend)
+	return Color.WHITE
+
 func _value_at(data: PackedFloat32Array, x: int, y: int) -> float:
 	if data.is_empty() or grid_width == 0:
 		return 0.0
@@ -1572,7 +1630,7 @@ func _emit_tile_selection(col: int, row: int) -> void:
 	if col < 0 or row < 0 or col >= grid_width or row >= grid_height:
 		return
 	selected_tile = Vector2i(col, row)
-	var info := _tile_info_at(col, row)
+	var info := _apply_visibility_to_info(_tile_info_at(col, row), col, row)
 	emit_signal("tile_selected", info)
 	queue_redraw()
 
@@ -1775,7 +1833,7 @@ func _tile_color(x: int, y: int) -> Color:
 		# Apply Fog of War modifiers if enabled
 		# Visibility values: Active ≈ 1.0, Discovered ≈ 0.5, Unexplored ≈ 0.0
 		if _fow_enabled:
-			var vis: float = _value_at_overlay("visibility", x, y)
+			var vis: float = _visibility_value_at(x, y)
 			if vis > FOW_VISIBLE_THRESHOLD:  # Active - full terrain color
 				return base_color
 			elif vis > 0.0:  # Explored but not active - show terrain with foggy overlay
@@ -2834,7 +2892,16 @@ func get_terrain_textures_enabled() -> bool:
 func enable_terrain_textures(enabled: bool) -> void:
 	## Toggle terrain texture rendering for 2D view
 	TerrainTextureManager.use_terrain_textures = enabled
+	_invalidate_map_cache()  # cache bakes textured vs solid tiles; force a re-render
 	queue_redraw()
+
+## Toggle terrain textures on/off (bound to the T key). Flips the underlying
+## intent flag directly rather than get_terrain_textures_enabled(), which also
+## factors in atlas presence — using the getter would leave the toggle stuck
+## "on" (and pop textures in later) whenever the atlas isn't loaded yet.
+## No visible effect until an atlas is available, since rendering needs one.
+func _toggle_terrain_textures() -> void:
+	enable_terrain_textures(not TerrainTextureManager.use_terrain_textures)
 
 func _load_edge_masks() -> void:
 	# Load the 6 edge gradient mask textures
@@ -3135,7 +3202,7 @@ func _rebuild_minimap_2d_image() -> void:
 	# Get visibility data for FoW (if enabled)
 	var visibility_data: PackedFloat32Array = PackedFloat32Array()
 	if _fow_enabled:
-		visibility_data = _overlay_array("visibility")
+		visibility_data = _visibility_array()
 
 	# Determine image dimensions - crop to explored bounds when FoW enabled
 	var img_width: int

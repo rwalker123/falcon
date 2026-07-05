@@ -326,6 +326,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility_handle)
         .insert_resource(visibility_metadata)
         .insert_resource(visibility::VisibilityLedger::default())
+        .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(visibility::ViewerFaction::default())
         .insert_resource(turn_pipeline_handle)
         .insert_resource(turn_pipeline_metadata)
@@ -486,6 +487,7 @@ pub fn build_headless_app() -> App {
             Update,
             (
                 visibility_systems::clear_active_visibility,
+                visibility_systems::prune_sweep_tracker,
                 visibility_systems::calculate_visibility,
                 visibility_systems::apply_trade_route_visibility,
                 visibility_systems::apply_visibility_decay,

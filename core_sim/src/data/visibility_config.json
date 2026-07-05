@@ -1,6 +1,6 @@
 {
   "decay": {
-    "enabled": true,
+    "enabled": false,
     "threshold_turns": 12
   },
   "sight_ranges": {
@@ -23,5 +23,8 @@
   "terrain_modifiers": {
     "forest_penalty": -2,
     "water_bonus": 1
+  },
+  "movement": {
+    "max_sweep_tiles": 8
   }
 }

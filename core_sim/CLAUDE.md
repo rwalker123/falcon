@@ -180,11 +180,18 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 
 **Turn Flow** (`TurnStage::Visibility` after Population, before Crisis):
 1. `clear_active_visibility` - Reset Active tiles to Discovered
-2. `calculate_visibility` - Compute visibility from units/settlements
-3. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored
+2. `prune_sweep_tracker` - Forget sweep positions of despawned cohorts
+3. `calculate_visibility` - Compute visibility from units/settlements
+4. `apply_trade_route_visibility` - Mark active trade-route tiles as Active
+5. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored (disabled by default; permanent memory)
 
 **Visibility Sources**:
-- **Units**: `PopulationCohort` with `StartingUnit` marker provides sight from home tile
+- **Units**: `PopulationCohort` with `StartingUnit` marker provides sight from its
+  `current_tile`. Because a unit can move several tiles in one turn (see
+  `estimate_travel_turns`, travel interpolation), `calculate_visibility` reveals
+  the whole **corridor** it swept from its previous position (tracked in
+  `VisibilitySweepTracker`) to the current one — not just the endpoint — so
+  passed-over tiles are seen (`corridor_tiles`).
 - **Settlements**: `Settlement` with `TownCenter` provides sight from settlement position
 
 **Modifiers**:
@@ -193,13 +200,14 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 - **Line of Sight**: Bresenham ray-cast checks for blocking terrain
 
 **Config** (`visibility_config.json`):
-- `decay`: `enabled`, `threshold_turns` (turns before Discovered → Unexplored)
+- `decay`: `enabled` (default `false` — permanent memory; Discovered tiles never revert to Unexplored), `threshold_turns` (turns before Discovered → Unexplored when enabled)
 - `sight_ranges`: Per-unit-type `base_range` and `elevation_bonus_factor`
 - `elevation`: `enabled`, `bonus_per_100m`, `max_bonus`
 - `line_of_sight`: `enabled`, `blocking_terrain_tags`
 - `terrain_modifiers`: `forest_penalty`, `water_bonus`
+- `movement`: `max_sweep_tiles` (cap on the corridor length revealed for a single-turn move; keep above the real max per-turn move distance so genuine moves sweep fully — see `corridor_tiles`)
 
-**Snapshot Export**: `visibility_raster` emits per-faction byte raster (0=Unexplored, 1=Discovered, 2=Active) for client rendering.
+**Snapshot Export**: `visibility_raster` emits a per-faction `ScalarRasterState` (fixed-point i64 samples) encoding Unexplored=0.0, Discovered=0.5, Active=1.0; the client decodes these to floats and renders black / cloudy / full-color. (`FactionVisibilityMap::to_byte_raster` still exists as a 0/1/2 byte view, but is not the snapshot export.)
 
 ---
 
