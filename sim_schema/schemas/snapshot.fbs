@@ -689,6 +689,9 @@ table SnapshotHeader {
   campaignLabel:CampaignLabel;
   victory:VictoryState;
   wrapHorizontal:bool = false;
+  // Build identifier of the server binary that produced this snapshot, so the client
+  // can display it and confirm which build is actually running. Appended field.
+  serverBuild:string;
 }
 
 table KnownTechFragment {

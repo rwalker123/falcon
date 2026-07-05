@@ -9,6 +9,14 @@ signal herd_follow_requested(herd_id: String)
 signal forage_requested(x: int, y: int, module_key: String)
 signal next_turn_requested(steps: int)
 
+## Build identifier of THIS client (GDScript/native). **Bump on client-affecting
+## changes.** Shown in the lower-left version overlay next to the server build (streamed
+## in the snapshot header) so the running client+server builds can be confirmed at a
+## glance. Format: `YYYY-MM-DD.N`.
+const CLIENT_BUILD := "2026-07-05.3"
+var _build_label: Label = null
+var _server_build: String = "?"
+
 @onready var layout_root: Control = $LayoutRoot
 @onready var campaign_title_label: Label = $LayoutRoot/RootColumn/TopBar/CampaignBlock/CampaignTitleLabel
 @onready var campaign_subtitle_label: Label = $LayoutRoot/RootColumn/TopBar/CampaignBlock/CampaignSubtitleLabel
@@ -133,6 +141,35 @@ func _ready() -> void:
         stockpile_panel.visible = false
     if stockpile_title != null:
         stockpile_title.text = "Stockpiles"
+    _setup_build_overlay()
+
+## Lower-left version overlay showing the client build and the streamed server build,
+## so the running builds can be confirmed at a glance. Mouse-transparent so it never
+## intercepts map clicks.
+func _setup_build_overlay() -> void:
+    _build_label = Label.new()
+    _build_label.name = "BuildOverlay"
+    _build_label.anchor_left = 0.0
+    _build_label.anchor_right = 0.0
+    _build_label.anchor_top = 1.0
+    _build_label.anchor_bottom = 1.0
+    _build_label.offset_left = 8.0
+    _build_label.offset_top = -26.0
+    _build_label.offset_right = 480.0
+    _build_label.offset_bottom = -6.0
+    _build_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    _build_label.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0, 0.65))
+    add_child(_build_label)
+    _refresh_build_overlay()
+
+func _refresh_build_overlay() -> void:
+    if _build_label != null:
+        _build_label.text = "build  cli %s · srv %s" % [CLIENT_BUILD, _server_build]
+
+## Called from Main with the server build id from each snapshot header.
+func update_build_info(server_build: String) -> void:
+    _server_build = server_build if server_build != "" else "?"
+    _refresh_build_overlay()
 
 func set_localization_store(store) -> void:
     localization_store = store

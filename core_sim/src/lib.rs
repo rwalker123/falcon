@@ -3,6 +3,12 @@
 //! Provides deterministic ECS systems that resolve a single turn of the
 //! simulation when [`run_turn`] is invoked.
 
+/// Human-readable build identifier for the server binary. **Bump this on every
+/// server-affecting change.** It is stamped onto each snapshot header
+/// (`SnapshotHeader::server_build`) and shown in the client's version overlay so the
+/// running server build can be confirmed at a glance. Format: `YYYY-MM-DD.N`.
+pub(crate) const BUILD_ID: &str = "2026-07-05.6";
+
 mod components;
 mod crisis;
 mod crisis_config;

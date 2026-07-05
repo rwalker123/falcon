@@ -192,6 +192,8 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         push_warning("Map view missing display_snapshot(); skipping map render.")
         _warned_missing_map_view_method = true
     _hud_invoke("update_overlay", [snapshot.get("turn", 0), metrics])
+    if snapshot.has("server_build"):
+        _hud_invoke("update_build_info", [String(snapshot["server_build"])])
     if snapshot.has("faction_inventory"):
         _hud_invoke("update_stockpiles", [snapshot["faction_inventory"]])
     if not is_delta:

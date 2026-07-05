@@ -37,6 +37,8 @@ const ELEVATION_HIGH_COLOR := Color(0.78, 0.14, 0.18, 1.0)
 # first snapshot arrives (mirrors core_sim's DEFAULT_SEA_LEVEL).
 const HEIGHT_DEFAULT_SEA_LEVEL := 0.6
 const HEIGHT_BAR_SEGMENTS := 10
+# Bright outline/fill used by the Terrain-tab "highlight all tiles of type" tool.
+const TERRAIN_HIGHLIGHT_COLOR := Color(1.0, 0.25, 0.9, 1.0)
 const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
 const GRID_LINE_COLOR := Color(0.4, 0.4, 0.4, 0.7)
 const SQRT3 := 1.7320508075688772
@@ -199,6 +201,8 @@ var overlay_raw_channels: Dictionary = {}
 # The active map's sea level on the elevation raster's normalized 0..1 scale, streamed
 # per-snapshot. Held here so relative_height_at floors at the correct per-map value.
 var _elevation_sea_level: float = HEIGHT_DEFAULT_SEA_LEVEL
+# Terrain id to highlight on the map (from the Terrain-tab dropdown); -1 = off.
+var _terrain_highlight_id: int = -1
 var overlay_channel_labels: Dictionary = {}
 var overlay_channel_descriptions: Dictionary = {}
 var overlay_placeholder_flags: Dictionary = {}
@@ -715,6 +719,7 @@ func _draw() -> void:
 
 	# === OVERLAYS (always drawn fresh) ===
 	# These need to respond to hover, selection, and other dynamic state
+	_draw_terrain_highlight(radius, origin, viewport_size)
 	_draw_trade_overlay(radius, origin)
 	_draw_hydrology(radius, origin)
 	_draw_crisis_annotations(radius, origin)
@@ -746,6 +751,43 @@ func _draw() -> void:
 			var avg: float = total / _draw_frame_times.size()
 			print("[MapView] Avg draw time (100 frames): %.2f ms" % avg)
 			_draw_frame_times.clear()
+
+## Highlights all hexes of a given terrain id (Terrain-tab dropdown). Pass -1 to clear.
+func set_terrain_highlight(terrain_id: int) -> void:
+	if _terrain_highlight_id == terrain_id:
+		return
+	_terrain_highlight_id = terrain_id
+	queue_redraw()
+
+## Overlay pass: outline + tint every visible tile matching `_terrain_highlight_id`.
+## Draws map-wide (ignores Fog of War) so it doubles as a worldgen debugging tool.
+func _draw_terrain_highlight(radius: float, origin: Vector2, viewport_size: Vector2) -> void:
+	if _terrain_highlight_id < 0 or terrain_overlay.is_empty() or grid_width == 0:
+		return
+	var hex_col_width := SQRT3 * radius
+	var hex_row_height := 1.5 * radius
+	var col_start: int = int((-origin.x) / hex_col_width) - 2
+	var col_end: int = int((viewport_size.x - origin.x) / hex_col_width) + 2
+	var row_start: int = maxi(0, int((-origin.y) / hex_row_height) - 2)
+	var row_end: int = mini(grid_height, int((viewport_size.y - origin.y) / hex_row_height) + 2)
+	if not _wrap_horizontal:
+		col_start = maxi(0, col_start)
+		col_end = mini(grid_width, col_end)
+	var fill := TERRAIN_HIGHLIGHT_COLOR
+	fill.a = 0.35
+	var fill_colors := PackedColorArray([fill, fill, fill, fill, fill, fill])
+	for y in range(row_start, row_end):
+		for logical_x in range(col_start, col_end):
+			var data_x: int = posmod(logical_x, grid_width) if _wrap_horizontal else logical_x
+			if not _wrap_horizontal and (logical_x < 0 or logical_x >= grid_width):
+				continue
+			if _terrain_id_at(data_x, y) != _terrain_highlight_id:
+				continue
+			var center: Vector2 = _hex_center(logical_x, y, radius, origin)
+			var pts := _hex_points(center, radius)
+			draw_polygon(pts, fill_colors)
+			var outline := PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[4], pts[5], pts[0]])
+			draw_polyline(outline, TERRAIN_HIGHLIGHT_COLOR, 2.5, true)
 
 func _draw_terrain_direct(radius: float, origin: Vector2, viewport_size: Vector2) -> void:
 	## Direct terrain rendering (fallback when cache is disabled or unavailable)

@@ -8,6 +8,7 @@ signal reserved_width_changed(width: float)
 
 const ScriptManagerPanel := preload("res://src/scripts/scripting/ScriptManagerPanel.gd")
 const ScriptHostManager := preload("res://src/scripts/scripting/ScriptHostManager.gd")
+const TerrainDefinitions := preload("res://assets/terrain/TerrainDefinitions.gd")
 
 const LogStreamClientScript = preload("res://src/scripts/LogStreamClient.gd")
 const Typography = preload("res://src/scripts/Typography.gd")
@@ -67,7 +68,9 @@ const CAP_MEGAPROJECTS := 1 << 8
 var capability_flags: int = 0
 
 @onready var sentiment_text: RichTextLabel = $RootPanel/TabContainer/Sentiment/SentimentText
+@onready var terrain_vbox: VBoxContainer = $RootPanel/TabContainer/Terrain/TerrainVBox
 @onready var terrain_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TerrainText
+var _terrain_highlight_dropdown: OptionButton = null
 @onready var terrain_biome_section_label: Label = $RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection/BiomeSectionLabel
 @onready var terrain_biome_list: ItemList = $RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection/BiomeList
 @onready var terrain_biome_detail_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection/BiomeDetailText
@@ -402,6 +405,7 @@ func _ready() -> void:
 	_initialize_config_controls()
 	_initialize_map_controls()
 	_initialize_scenario_controls()
+	_setup_terrain_highlight_dropdown()
 	_apply_capability_gating()
 	_ensure_overlay_selector()
 	apply_typography()
@@ -4576,6 +4580,34 @@ func _format_biome_list_entry(entry: Dictionary) -> String:
 	var percent: float = float(entry.get("percent", 0.0))
 	return "%s – %d tiles (%.1f%%)" % [label, count, percent]
 
+## Builds the Terrain-tab "highlight all tiles of a type" dropdown. Lists EVERY defined
+## terrain (not just those present), so it doubles as a check for absent biomes — e.g.
+## selecting AlpineMountain and seeing no highlights confirms none were generated.
+func _setup_terrain_highlight_dropdown() -> void:
+	if terrain_vbox == null:
+		return
+	_terrain_highlight_dropdown = OptionButton.new()
+	_terrain_highlight_dropdown.name = "TerrainHighlightDropdown"
+	_terrain_highlight_dropdown.add_item("Highlight terrain: none", -1)
+	var terrains: Array = TerrainDefinitions.get_terrains().duplicate()
+	terrains.sort_custom(func(a, b): return String(a.get("label", "")) < String(b.get("label", "")))
+	for terrain in terrains:
+		var id: int = int(terrain.get("id", -1))
+		if id < 0:
+			continue
+		_terrain_highlight_dropdown.add_item(String(terrain.get("label", "Terrain %d" % id)), id)
+	_terrain_highlight_dropdown.item_selected.connect(_on_terrain_highlight_selected)
+	terrain_vbox.add_child(_terrain_highlight_dropdown)
+	# Sit just under the tab's intro text, above the biome list.
+	terrain_vbox.move_child(_terrain_highlight_dropdown, 1)
+
+func _on_terrain_highlight_selected(index: int) -> void:
+	if _terrain_highlight_dropdown == null:
+		return
+	var terrain_id: int = _terrain_highlight_dropdown.get_item_id(index)
+	if _map_view != null and _map_view.has_method("set_terrain_highlight"):
+		_map_view.call("set_terrain_highlight", terrain_id)
+
 func _update_biome_list() -> void:
 	if terrain_biome_list == null:
 		return
@@ -6402,7 +6434,9 @@ func _apply_capability_gating() -> void:
 	_set_tab_enabled("GreatDiscoveries", _has_flag(CAP_MEGAPROJECTS))
 	_set_tab_enabled("Knowledge", _has_flag(CAP_ESPIONAGE_T2))
 	_set_tab_enabled("Trade", _has_flag(CAP_INDUSTRY_T1) or _has_flag(CAP_INDUSTRY_T2))
-	_set_tab_enabled("Terrain", _has_flag(CAP_CONSTRUCTION))
+	# Terrain is an always-available inspection tab (biome list, tile drill-down, terrain
+	# highlight). Only the Found Camp *action* within it is construction-gated (below).
+	_set_tab_enabled("Terrain", true)
 	_set_tab_enabled("Crisis", _has_flag(CAP_MEGAPROJECTS))
 	_set_tab_enabled("Influencers", _has_flag(CAP_INDUSTRY_T1) or _has_flag(CAP_INDUSTRY_T2))
 	if tile_found_camp_button != null:
