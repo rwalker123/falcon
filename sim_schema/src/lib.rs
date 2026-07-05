@@ -1486,6 +1486,66 @@ pub fn decode_delta_json(data: &str) -> serde_json::Result<WorldDelta> {
     serde_json::from_str(data)
 }
 
+/// A self-describing on-disk export of a running game's map: the full
+/// [`WorldSnapshot`] plus the resolved worldgen seed and preset needed to
+/// reproduce it. Written by the `export_map` command and consumed as a test
+/// fixture (see [`decode_map_export_json`]). Wrapping the snapshot rather than
+/// adding a seed to [`SnapshotHeader`] keeps the wire schema untouched while
+/// giving offline consumers everything in one file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MapExport {
+    /// Resolved worldgen seed the running game was generated from.
+    pub seed: u64,
+    /// Preset id the map was generated with (empty when none was active).
+    pub preset: String,
+    /// Terrain grid width in tiles; mirrors `snapshot.terrain.width` so the
+    /// row-major `(x, y)` indexing of the samples is self-documenting.
+    pub width: u32,
+    /// Terrain grid height in tiles; mirrors `snapshot.terrain.height`.
+    pub height: u32,
+    /// Full world snapshot captured at export time.
+    pub snapshot: WorldSnapshot,
+}
+
+impl MapExport {
+    /// Build an export from a captured snapshot, deriving the grid dimensions
+    /// from the terrain overlay so callers cannot desync `width`/`height` from
+    /// the sample buffer.
+    pub fn from_snapshot(seed: u64, preset: impl Into<String>, snapshot: WorldSnapshot) -> Self {
+        let width = snapshot.terrain.width;
+        let height = snapshot.terrain.height;
+        Self {
+            seed,
+            preset: preset.into(),
+            width,
+            height,
+            snapshot,
+        }
+    }
+
+    /// Return the terrain sample at row-major `(x, y)`, or `None` when the
+    /// coordinate is outside the grid. This is the canonical way for offline
+    /// consumers (tests, inspection) to reference a hex by coordinate.
+    pub fn tile_at(&self, x: u32, y: u32) -> Option<&TerrainSample> {
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+        let idx = (y as usize) * (self.width as usize) + (x as usize);
+        self.snapshot.terrain.samples.get(idx)
+    }
+}
+
+/// Encode a [`MapExport`] as pretty-printed JSON (human-readable for offline
+/// inspection).
+pub fn encode_map_export_json(export: &MapExport) -> serde_json::Result<String> {
+    serde_json::to_string_pretty(export)
+}
+
+/// Decode a [`MapExport`] previously written by [`encode_map_export_json`].
+pub fn decode_map_export_json(data: &str) -> serde_json::Result<MapExport> {
+    serde_json::from_str(data)
+}
+
 fn build_snapshot_flatbuffer<'a>(
     builder: &mut FbBuilder<'a>,
     snapshot: &WorldSnapshot,

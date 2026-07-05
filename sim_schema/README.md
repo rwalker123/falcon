@@ -14,6 +14,23 @@ dependencies.
 - Consumers should prefer the overlay for large renders while keeping tile-level
   data for debugging.
 
+## Map Export (offline inspection & test fixtures)
+
+`MapExport` bundles a full `WorldSnapshot` with the resolved worldgen `seed`,
+`preset`, and grid `width`/`height` so a running game's exact map can be dumped
+to a single self-describing JSON file — reproducible and inspectable offline.
+
+- Written by the server's `export_map` command (see `core_sim` server) into the
+  gitignored `exports/` scratch dir; the Godot Terrain tab has an **Export Map**
+  button that triggers it.
+- Round-trip helpers: `encode_map_export_json` / `decode_map_export_json`.
+  `MapExport::from_snapshot` derives `width`/`height` from the terrain overlay so
+  they can never desync from the sample buffer.
+- `MapExport::tile_at(x, y)` resolves a terrain sample by **row-major `(x, y)`** —
+  the same coordinate the Godot inspector shows as `@x,y` — so tests (and agents)
+  can reference a hex by coordinate. See `integration_tests/tests/map_fixture.rs`
+  for the round-trip + per-hex assertion pattern.
+
 ## Pending Culture Payload Additions
 
 To stay ahead of the culture subsystem work, the FlatBuffers schema will pick up

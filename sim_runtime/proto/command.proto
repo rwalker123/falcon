@@ -201,6 +201,12 @@ message HuntGameCommand {
   optional uint64 band_entity_bits = 4;
 }
 
+message ExportMapCommand {
+  // Optional destination path. When absent the server writes a
+  // timestamped file into the gitignored exports/ scratch directory.
+  optional string path = 1;
+}
+
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
@@ -231,5 +237,6 @@ message CommandEnvelope {
     ForageTileCommand forage_tile = 25;
     HuntGameCommand hunt_game = 26;
     FoundSettlementCommand found_settlement = 27;
+    ExportMapCommand export_map = 28;
   }
 }

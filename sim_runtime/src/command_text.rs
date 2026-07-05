@@ -151,6 +151,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         summary: "Hunt localized wild game at a tile.",
         usage: "hunt_game <faction_id> <x> <y> [band_entity_bits]",
     },
+    CommandVerbHelp {
+        verb: "export_map",
+        aliases: &["export"],
+        summary: "Write the current world map (terrain + seed) to a JSON file for inspection and tests.",
+        usage: "export_map [path]",
+    },
 ];
 
 use crate::{
@@ -650,6 +656,17 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                     None => None,
                 },
             })
+        }
+        "export" | "export_map" => {
+            // Remaining tokens (if any) form the destination path; join so
+            // paths containing spaces survive whitespace tokenization.
+            let path: Vec<&str> = parts.collect();
+            let path = if path.is_empty() {
+                None
+            } else {
+                Some(path.join(" "))
+            };
+            Ok(CommandPayload::ExportMap { path })
         }
         other => Err(CommandParseError::UnknownCommand(other.to_string())),
     }
