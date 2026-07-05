@@ -1659,7 +1659,10 @@ fn build_delta_flatbuffer<'a>(
         .as_ref()
         .map(|entries| create_food_modules(builder, entries));
 
-    let server_build_fb = builder.create_string(&delta.header.server_build);
+    // Deltas fire every turn and only full snapshots populate server_build, so omit the
+    // field (leave it None) when empty instead of serializing an empty string each delta.
+    let server_build_fb = (!delta.header.server_build.is_empty())
+        .then(|| builder.create_string(&delta.header.server_build));
     let header = fb::SnapshotHeader::create(
         builder,
         &fb::SnapshotHeaderArgs {
@@ -1674,7 +1677,7 @@ fn build_delta_flatbuffer<'a>(
             campaignLabel: campaign_label_fb,
             victory: victory_state,
             wrapHorizontal: delta.header.wrap_horizontal,
-            serverBuild: Some(server_build_fb),
+            serverBuild: server_build_fb,
         },
     );
 

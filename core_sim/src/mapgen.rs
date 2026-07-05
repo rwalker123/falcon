@@ -2132,10 +2132,14 @@ fn apply_belt_relief(
     // Only skip polar rows when a polar band is actually configured. `= 0.0` means
     // "no polar band" and must skip nothing, matching the polar_band idiom used during
     // microplate seeding (see `polar_latitude_fraction > 0.0` guard above).
+    // Only skip polar rows when a polar band is actually configured. `= 0.0` means
+    // "no polar band" and must skip nothing. Match `derive_mountain_mask`: the band is at
+    // most half the map, so clamp the fraction to 0.5 and cap the skipped rows to h/2 —
+    // otherwise a `fraction > 0.5` would overlap the top/bottom bands and skip every row.
     let polar_rows = if cfg.polar_latitude_fraction > 0.0 {
-        ((h as f32) * cfg.polar_latitude_fraction)
+        ((h as f32) * cfg.polar_latitude_fraction.clamp(0.0, 0.5))
             .ceil()
-            .clamp(1.0, h as f32) as usize
+            .clamp(1.0, (h / 2).max(1) as f32) as usize
     } else {
         0
     };
