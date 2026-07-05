@@ -1484,6 +1484,7 @@ pub fn capture_snapshot(
         influencer_states.len(),
     );
     header.wrap_horizontal = config.map_topology.wrap_horizontal;
+    header.server_build = crate::BUILD_ID.to_string();
 
     if let Some(label_res) = campaign_label.as_ref() {
         let label = label_res.as_ref();

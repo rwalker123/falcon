@@ -163,6 +163,9 @@ pub struct SnapshotHeader {
     pub campaign_label: Option<CampaignLabel>,
     #[serde(default)]
     pub wrap_horizontal: bool,
+    /// Build identifier of the server binary (see `snapshot.fbs`). Set by core_sim.
+    #[serde(default)]
+    pub server_build: String,
 }
 
 impl SnapshotHeader {
@@ -186,7 +189,14 @@ impl SnapshotHeader {
             hash: 0,
             campaign_label: None,
             wrap_horizontal: false,
+            server_build: String::new(),
         }
+    }
+
+    /// Sets the server build identifier reported to clients.
+    pub fn with_server_build(mut self, build: impl Into<String>) -> Self {
+        self.server_build = build.into();
+        self
     }
 
     /// Creates a header with wrap_horizontal set.
@@ -1486,6 +1496,7 @@ fn build_snapshot_flatbuffer<'a>(
         .as_ref()
         .and_then(|label| create_campaign_label(builder, label));
     let victory_state = create_victory_state(builder, &snapshot.victory);
+    let server_build_fb = builder.create_string(&snapshot.header.server_build);
 
     let header = fb::SnapshotHeader::create(
         builder,
@@ -1501,6 +1512,7 @@ fn build_snapshot_flatbuffer<'a>(
             campaignLabel: campaign_label_fb,
             victory: Some(victory_state),
             wrapHorizontal: snapshot.header.wrap_horizontal,
+            serverBuild: Some(server_build_fb),
         },
     );
 
@@ -1647,6 +1659,7 @@ fn build_delta_flatbuffer<'a>(
         .as_ref()
         .map(|entries| create_food_modules(builder, entries));
 
+    let server_build_fb = builder.create_string(&delta.header.server_build);
     let header = fb::SnapshotHeader::create(
         builder,
         &fb::SnapshotHeaderArgs {
@@ -1661,6 +1674,7 @@ fn build_delta_flatbuffer<'a>(
             campaignLabel: campaign_label_fb,
             victory: victory_state,
             wrapHorizontal: delta.header.wrap_horizontal,
+            serverBuild: Some(server_build_fb),
         },
     );
 

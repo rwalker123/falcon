@@ -119,6 +119,71 @@ pub struct MountainsConfig {
     pub polar_uplift_scale: f32,
     #[serde(default = "default_polar_low_relief_scale")]
     pub polar_low_relief_scale: f32,
+    /// Elevation (normalized 0..1) that separates lowlands from mountains. Non-mountain
+    /// land is compressed into `[sea_level, elevation_base]`; every mountain tile is
+    /// floored at least here so mountains always read higher than plains. Tie the
+    /// elevation field to the (relief-based) biome so mountains are genuinely tall.
+    #[serde(default = "default_mountain_elevation_base")]
+    pub elevation_base: f32,
+    /// Per-mountain-type prominence weights applied to the relief-driven floor above
+    /// `elevation_base` — Fold/Volcanic peaks tower, Domes read as lower plateaus.
+    #[serde(default = "default_fold_prominence")]
+    pub fold_prominence: f32,
+    #[serde(default = "default_fault_prominence")]
+    pub fault_prominence: f32,
+    #[serde(default = "default_volcanic_prominence")]
+    pub volcanic_prominence: f32,
+    #[serde(default = "default_dome_prominence")]
+    pub dome_prominence: f32,
+    /// How much a belt tile's relief scales with its belt strength (core vs edge).
+    /// Belt cores reach `1.0 + relief_belt_gain`, so with the default they clear the
+    /// AlpineMountain relief threshold (1.45) and taper to plateaus/hills at the edges —
+    /// giving genuine Alpine spines instead of flat, mask-less "mountains".
+    #[serde(default = "default_relief_belt_gain")]
+    pub relief_belt_gain: f32,
+    /// Plate-boundary convergence cutoff for forming a fold belt (a mountain range).
+    /// A boundary becomes a belt when the two plates' drift dot product is `<=` this.
+    /// Drift is radial-outward, so most boundaries diverge (dot > 0); raising this from
+    /// strongly-convergent (−0.1) toward 0 lets more boundaries qualify → more ranges,
+    /// which matters most on small maps where continents have few plates.
+    #[serde(default = "default_belt_convergence")]
+    pub belt_convergence: f32,
+    /// Continent-area thresholds (in land tiles) for how many tectonic plates a landmass
+    /// is split into (1/2/3/4). More plates → more convergent boundaries → more ranges.
+    /// `plate_area_bump` gives a 2nd plate to a landmass that would otherwise get 1.
+    #[serde(default = "default_plate_area_bucket_2")]
+    pub plate_area_bucket_2: u32,
+    #[serde(default = "default_plate_area_bucket_3")]
+    pub plate_area_bucket_3: u32,
+    #[serde(default = "default_plate_area_bucket_4")]
+    pub plate_area_bucket_4: u32,
+    #[serde(default = "default_plate_area_bump")]
+    pub plate_area_bump: u32,
+    /// Polar-microplate boundary dot-product cutoffs: `<= polar_convergence` uplifts
+    /// (fold), `>= polar_divergence` relaxes to low relief (the polar analogue of
+    /// `belt_convergence`).
+    #[serde(default = "default_polar_convergence")]
+    pub polar_convergence: f32,
+    #[serde(default = "default_polar_divergence")]
+    pub polar_divergence: f32,
+    /// Fault abundance/length: plates larger than these areas get +1 fault line each, and
+    /// a seam's length is `plate_area * fault_length_fraction * rand`.
+    #[serde(default = "default_fault_area_bonus_2")]
+    pub fault_area_bonus_2: u32,
+    #[serde(default = "default_fault_area_bonus_3")]
+    pub fault_area_bonus_3: u32,
+    #[serde(default = "default_fault_length_fraction")]
+    pub fault_length_fraction: f32,
+    /// Volcanic distribution: plate-area normalization for eruption weight, per-plate tile
+    /// budget fraction, and the coastal-bias base/gain (arcs favor coasts).
+    #[serde(default = "default_volcanic_area_norm")]
+    pub volcanic_area_norm: f32,
+    #[serde(default = "default_volcanic_tile_fraction")]
+    pub volcanic_tile_fraction: f32,
+    #[serde(default = "default_volcanic_coastal_base")]
+    pub volcanic_coastal_base: f32,
+    #[serde(default = "default_volcanic_coastal_gain")]
+    pub volcanic_coastal_gain: f32,
 }
 
 const fn default_polar_latitude_fraction() -> f32 {
@@ -158,8 +223,108 @@ impl Default for MountainsConfig {
             polar_microplate_density: default_polar_microplate_density(),
             polar_uplift_scale: default_polar_uplift_scale(),
             polar_low_relief_scale: default_polar_low_relief_scale(),
+            elevation_base: default_mountain_elevation_base(),
+            fold_prominence: default_fold_prominence(),
+            fault_prominence: default_fault_prominence(),
+            volcanic_prominence: default_volcanic_prominence(),
+            dome_prominence: default_dome_prominence(),
+            relief_belt_gain: default_relief_belt_gain(),
+            belt_convergence: default_belt_convergence(),
+            plate_area_bucket_2: default_plate_area_bucket_2(),
+            plate_area_bucket_3: default_plate_area_bucket_3(),
+            plate_area_bucket_4: default_plate_area_bucket_4(),
+            plate_area_bump: default_plate_area_bump(),
+            polar_convergence: default_polar_convergence(),
+            polar_divergence: default_polar_divergence(),
+            fault_area_bonus_2: default_fault_area_bonus_2(),
+            fault_area_bonus_3: default_fault_area_bonus_3(),
+            fault_length_fraction: default_fault_length_fraction(),
+            volcanic_area_norm: default_volcanic_area_norm(),
+            volcanic_tile_fraction: default_volcanic_tile_fraction(),
+            volcanic_coastal_base: default_volcanic_coastal_base(),
+            volcanic_coastal_gain: default_volcanic_coastal_gain(),
         }
     }
+}
+
+const fn default_belt_convergence() -> f32 {
+    0.05
+}
+
+const fn default_plate_area_bucket_2() -> u32 {
+    192
+}
+
+const fn default_plate_area_bucket_3() -> u32 {
+    640
+}
+
+const fn default_plate_area_bucket_4() -> u32 {
+    1500
+}
+
+const fn default_plate_area_bump() -> u32 {
+    256
+}
+
+const fn default_polar_convergence() -> f32 {
+    -0.2
+}
+
+const fn default_polar_divergence() -> f32 {
+    0.45
+}
+
+const fn default_fault_area_bonus_2() -> u32 {
+    600
+}
+
+const fn default_fault_area_bonus_3() -> u32 {
+    1400
+}
+
+const fn default_fault_length_fraction() -> f32 {
+    0.1
+}
+
+const fn default_volcanic_area_norm() -> f32 {
+    800.0
+}
+
+const fn default_volcanic_tile_fraction() -> f32 {
+    0.012
+}
+
+const fn default_volcanic_coastal_base() -> f32 {
+    0.55
+}
+
+const fn default_volcanic_coastal_gain() -> f32 {
+    0.7
+}
+
+const fn default_mountain_elevation_base() -> f32 {
+    0.7
+}
+
+const fn default_relief_belt_gain() -> f32 {
+    1.2
+}
+
+const fn default_fold_prominence() -> f32 {
+    1.0
+}
+
+const fn default_fault_prominence() -> f32 {
+    0.85
+}
+
+const fn default_volcanic_prominence() -> f32 {
+    1.0
+}
+
+const fn default_dome_prominence() -> f32 {
+    0.7
 }
 
 const fn default_river_accum_threshold_factor() -> f32 {
@@ -320,6 +485,14 @@ pub struct BiomeTransitionConfig {
     pub humidity_scale: f32,
     pub humidity_bias: f32,
     pub coastal_bonus_scale: f32,
+    /// Half-width (fraction of latitude from the equator) of the easterly trade-wind belt.
+    pub trade_wind_band: f32,
+    /// How fast the equatorial humidity bonus falls off toward the poles.
+    pub latitude_dryness_falloff: f32,
+    /// Distance scale for continental-interior drying: `distance/(distance + this)`.
+    pub interior_aridity_distance: f32,
+    /// How much a tile's elevation shifts its humidity (`(elev - 0.5) * this`).
+    pub elevation_humidity_weight: f32,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -330,6 +503,16 @@ pub struct TerrainClassifierConfig {
     pub coastal_inland_edge: f32,
     pub polar_latitude_cutoff: f32,
     pub high_latitude_threshold: f32,
+    /// Elevation (normalized 0..1) above which a dry non-mountain tile becomes
+    /// CanyonBadlands. Sits near the top of the compressed lowland band (just under
+    /// `MountainsConfig::elevation_base`) so high-dry plains still vary.
+    pub high_dry_elevation: f32,
+    /// Elevation (normalized 0..1) above which a wet non-mountain tile becomes
+    /// RollingHills. Also near the top of the compressed lowland band.
+    pub high_wet_elevation: f32,
+    /// Moisture below which a high-dry non-mountain tile becomes CanyonBadlands (the
+    /// companion gate to `high_dry_elevation`).
+    pub high_dry_moisture: f32,
 }
 
 impl TerrainClassifierConfig {
@@ -340,6 +523,9 @@ impl TerrainClassifierConfig {
             coastal_inland_edge: 0.12,
             polar_latitude_cutoff: 0.35,
             high_latitude_threshold: 0.15,
+            high_dry_elevation: 0.68,
+            high_wet_elevation: 0.66,
+            high_dry_moisture: 0.28,
         }
     }
 }
@@ -362,6 +548,10 @@ impl Default for BiomeTransitionConfig {
             humidity_scale: 1.0,
             humidity_bias: 0.0,
             coastal_bonus_scale: 0.8,
+            trade_wind_band: 0.18,
+            latitude_dryness_falloff: 1.8,
+            interior_aridity_distance: 3.5,
+            elevation_humidity_weight: 0.08,
         }
     }
 }

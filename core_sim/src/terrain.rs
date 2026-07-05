@@ -3,6 +3,11 @@ use sim_runtime::{TerrainTags, TerrainType};
 
 use crate::{map_preset::TerrainClassifierConfig, mapgen::MountainType};
 
+/// Relief scale (from the mountain mask) at/above which a Fold belt tile becomes an
+/// AlpineMountain. `MountainsConfig::relief_belt_gain` and `elevation_base` defaults are
+/// tuned relative to this, so it lives in one place instead of a bare literal.
+pub const ALPINE_RELIEF_THRESHOLD: f32 = 1.45;
+
 #[derive(Debug, Clone, Copy)]
 pub struct MovementProfile {
     pub foot: f32,
@@ -461,7 +466,6 @@ pub fn classify_terrain(
     let is_high_latitude = dist_from_equator >= classifier.high_latitude_threshold;
     let noise = tile_noise(position);
     let humidity = ((noise >> 8) & 0xFF) as f32 / 255.0;
-    let elevation = ((noise >> 16) & 0xFF) as f32 / 255.0;
     let anomaly = (noise >> 4) & 0x0F;
 
     if edge < classifier.coastal_deep_ocean_edge {
@@ -515,28 +519,15 @@ pub fn classify_terrain(
         return TerrainType::ActiveVolcanoSlope;
     }
 
-    if elevation > 0.78 {
-        return pick(
-            noise,
-            &[
-                TerrainType::AlpineMountain,
-                TerrainType::HighPlateau,
-                TerrainType::CanyonBadlands,
-            ],
-        );
-    }
-
-    if elevation > 0.62 {
-        return pick(
-            noise,
-            &[
-                TerrainType::RollingHills,
-                TerrainType::KarstHighland,
-                TerrainType::BasalticLavaField,
-            ],
-        );
-    }
-
+    // NOTE: highland/mountain biomes (AlpineMountain, HighPlateau, CanyonBadlands,
+    // RollingHills, KarstHighland, ...) are intentionally NOT picked here. The base
+    // classifier has no access to the real ElevationField, so it used to invent a
+    // per-tile "elevation" from a tile hash and stamp mountains on flat lowland tiles —
+    // decoupling the biome from actual height (mask-less "Alpine Mountains" at Height 0).
+    // Those biomes now come exclusively from the tectonic mountain mask
+    // (`select_mountain_terrain`) and the real-elevation branches in
+    // `terrain_for_position_with_classifier`, so they always sit on genuinely high
+    // ground. The base classifier only assigns climate/humidity lowland biomes.
     if humidity > 0.7 && !is_high_latitude {
         return pick(
             noise,
@@ -610,7 +601,7 @@ fn select_mountain_terrain(kind: MountainType, relief: f32, moisture: f32) -> Te
     let moisture = moisture.clamp(0.0, 1.0);
     match kind {
         MountainType::Fold => {
-            if relief >= 1.45 {
+            if relief >= ALPINE_RELIEF_THRESHOLD {
                 AlpineMountain
             } else if moisture >= 0.6 {
                 RollingHills
@@ -666,11 +657,14 @@ pub fn terrain_for_position_with_classifier(
             tags = definition.tags;
         }
     } else if let Some(elev) = elevation {
-        if !is_polar_lat && elev >= 0.86 && moisture < 0.28 {
+        if !is_polar_lat
+            && elev >= classifier.high_dry_elevation
+            && moisture < classifier.high_dry_moisture
+        {
             terrain = sim_runtime::TerrainType::CanyonBadlands;
             definition = terrain_definition(terrain);
             tags = definition.tags;
-        } else if elev >= 0.78
+        } else if elev >= classifier.high_wet_elevation
             && moisture >= 0.6
             && !definition.tags.contains(TerrainTags::HIGHLAND)
         {

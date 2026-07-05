@@ -45,7 +45,11 @@
         "dryness_thresholds": [0.48, 0.30, 0.18],
         "humidity_scale": 0.55,
         "humidity_bias": 0.18,
-        "coastal_bonus_scale": 0.45
+        "coastal_bonus_scale": 0.45,
+        "trade_wind_band": 0.18,
+        "latitude_dryness_falloff": 1.8,
+        "interior_aridity_distance": 3.5,
+        "elevation_humidity_weight": 0.08
       },
       "mountains": {
         "belt_width_tiles": 3,
@@ -65,7 +69,27 @@
         "polar_latitude_fraction": 0.18,
         "polar_microplate_density": 0.0015,
         "polar_uplift_scale": 1.3,
-        "polar_low_relief_scale": 0.65
+        "polar_low_relief_scale": 0.65,
+        "elevation_base": 0.7,
+        "fold_prominence": 1.0,
+        "fault_prominence": 0.85,
+        "volcanic_prominence": 1.0,
+        "dome_prominence": 0.7,
+        "relief_belt_gain": 1.2,
+        "belt_convergence": 0.25,
+        "plate_area_bucket_2": 192,
+        "plate_area_bucket_3": 640,
+        "plate_area_bucket_4": 1500,
+        "plate_area_bump": 256,
+        "polar_convergence": -0.2,
+        "polar_divergence": 0.45,
+        "fault_area_bonus_2": 600,
+        "fault_area_bonus_3": 1400,
+        "fault_length_fraction": 0.1,
+        "volcanic_area_norm": 800.0,
+        "volcanic_tile_fraction": 0.012,
+        "volcanic_coastal_base": 0.55,
+        "volcanic_coastal_gain": 0.7
       },
       "climate_band_weights": { "polar": 0.12, "temperate": 0.46, "tropical": 0.42 },
       "terrain_tag_targets": {
@@ -142,7 +166,11 @@
         "dryness_thresholds": [0.48, 0.3, 0.16],
         "humidity_scale": 0.52,
         "humidity_bias": 0.16,
-        "coastal_bonus_scale": 0.44
+        "coastal_bonus_scale": 0.44,
+        "trade_wind_band": 0.18,
+        "latitude_dryness_falloff": 1.8,
+        "interior_aridity_distance": 3.5,
+        "elevation_humidity_weight": 0.08
       },
       "mountains": {
         "belt_width_tiles": 3,
@@ -162,7 +190,27 @@
         "polar_latitude_fraction": 0.22,
         "polar_microplate_density": 0.0065,
         "polar_uplift_scale": 1.85,
-        "polar_low_relief_scale": 0.48
+        "polar_low_relief_scale": 0.48,
+        "elevation_base": 0.7,
+        "fold_prominence": 1.0,
+        "fault_prominence": 0.85,
+        "volcanic_prominence": 1.0,
+        "dome_prominence": 0.7,
+        "relief_belt_gain": 1.2,
+        "belt_convergence": -0.1,
+        "plate_area_bucket_2": 192,
+        "plate_area_bucket_3": 640,
+        "plate_area_bucket_4": 1500,
+        "plate_area_bump": 256,
+        "polar_convergence": -0.2,
+        "polar_divergence": 0.45,
+        "fault_area_bonus_2": 600,
+        "fault_area_bonus_3": 1400,
+        "fault_length_fraction": 0.1,
+        "volcanic_area_norm": 800.0,
+        "volcanic_tile_fraction": 0.012,
+        "volcanic_coastal_base": 0.55,
+        "volcanic_coastal_gain": 0.7
       },
       "climate_band_weights": { "polar": 0.18, "temperate": 0.42, "tropical": 0.4 },
       "terrain_tag_targets": {

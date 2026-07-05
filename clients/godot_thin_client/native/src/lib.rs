@@ -1101,6 +1101,9 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
     if let Some(header) = delta.header() {
         agg.tick = header.tick();
         agg.wrap_horizontal = header.wrapHorizontal();
+        if let Some(build) = header.serverBuild() {
+            agg.server_build = build.to_string();
+        }
     }
     if let Some(tiles) = delta.tiles() {
         for tile in tiles {
@@ -1292,6 +1295,7 @@ struct DeltaAggregator {
     width: u32,
     height: u32,
     wrap_horizontal: bool,
+    server_build: String,
     tile_updates: HashMap<(u32, u32), f32>,
     terrain_width: u32,
     terrain_height: u32,
@@ -1560,6 +1564,7 @@ impl DeltaAggregator {
             width,
             height,
             wrap_horizontal,
+            server_build,
             tile_updates,
             terrain_width,
             terrain_height,
@@ -1821,7 +1826,7 @@ impl DeltaAggregator {
             Some(terrain_tags)
         };
 
-        snapshot_dict(
+        let mut dict = snapshot_dict(
             tick,
             GridSize {
                 width: final_width,
@@ -1855,7 +1860,11 @@ impl DeltaAggregator {
             None,
             None,
             None,
-        )
+        );
+        if !server_build.is_empty() {
+            let _ = dict.insert("server_build", server_build.as_str());
+        }
+        dict
     }
 }
 
@@ -2637,6 +2646,10 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         herds_array,
         snapshot.foodModules().map(food_modules_to_array),
     );
+
+    if let Some(server_build) = header.serverBuild() {
+        let _ = dict.insert("server_build", server_build);
+    }
 
     if let Some(axis_bias) = snapshot.axisBias() {
         let _ = dict.insert("axis_bias", axis_bias_to_dict(axis_bias));

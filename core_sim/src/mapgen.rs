@@ -69,6 +69,61 @@ pub struct MountainCell {
 
 const MIN_RELIEF_SCALE: f32 = 0.35;
 const MAX_RELIEF_SCALE: f32 = 2.5;
+/// Max elevation a mountain tile gains from belt position on top of its relief floor.
+/// Small enough that belt texture never reorders relief bands (see `restamp_elevation`).
+const MOUNTAIN_BELT_TEXTURE: f32 = 0.06;
+
+// --- Belt-strength normalization. FAULT/VOLCANIC spans convert a cell's u8 strength
+// into a 0..1 belt ratio; they are used in BOTH the relief pass and restamp_elevation's
+// elevation pass and must stay identical, hence shared consts. ---
+const FAULT_STRENGTH_SPAN: f32 = 8.0;
+const VOLCANIC_STRENGTH_SPAN: f32 = 12.0;
+/// Ceiling on a mountain cell's u8 strength (volcanic/plateau paths).
+const MAX_CELL_STRENGTH: f32 = 12.0;
+/// Fold-belt width grows with mountain_scale: `width * (1 + scale.clamp(0,MAX)*GAIN)`.
+const BELT_WIDTH_SCALE_GAIN: f32 = 0.5;
+const BELT_WIDTH_SCALE_MAX: f32 = 2.0;
+/// Shoreline elevation-blur strength indexed by distance-from-coast (`land_distance`).
+const COASTAL_BLUR_WEIGHTS: [f32; 4] = [0.6, 0.45, 0.3, 0.15];
+/// Polar microplate formation: minimum polar-cell mass, and cells-per-microplate divisor.
+const MIN_POLAR_CELLS: usize = 32;
+const POLAR_MICROPLATE_DIVISOR: usize = 12;
+/// Polar microplate drift = radial*RADIAL + random*RANDOM + poleward_bias*BIAS.
+const POLAR_FLOW_RADIAL: f32 = 0.7;
+const POLAR_FLOW_RANDOM: f32 = 0.3;
+const POLAR_FLOW_BIAS: f32 = 0.6;
+/// ±45° random rotation applied to each plate's radial drift vector.
+const PLATE_DRIFT_JITTER: f32 = std::f32::consts::FRAC_PI_2;
+// Fault-seam geometry/strength (per-map abundance/length are preset config).
+const MAX_FAULT_LINES: u32 = 6;
+const MIN_FAULT_PLATE_AREA: usize = 12;
+const FAULT_INTERIOR_START_DIST: u32 = 3;
+const FAULT_SEAM_STRENGTH: u8 = 6;
+const FAULT_BRANCH_SKIP_CHANCE: f32 = 0.55;
+const FAULT_FLANK_STRENGTH_DROP: u8 = 2;
+// Volcanic chain shape (stochastic texture; per-map volcanic-ness is preset config).
+const VOLCANIC_CHAIN_LEN_CAP: u32 = 12;
+const VOLCANIC_STRENGTH_SCALE: f32 = 7.0;
+const VOLCANIC_CHANCE_CEILING: f32 = 0.8;
+const VOLCANIC_FLANK_SPAWN_CHANCE: f32 = 0.5;
+const VOLCANIC_FLANK_SIDE_SKIP: f32 = 0.35;
+const VOLCANIC_FLANK_DROP_FACTOR: f32 = 0.6;
+const VOLCANIC_DIR_CHANGE_CHANCE: f32 = 0.4;
+const VOLCANIC_GAP_SKIP_CHANCE: f32 = 0.2;
+const VOLCANIC_HUMIDITY_SUPPRESSION: f32 = 0.25;
+// Plateau microrelief response curves on `plateau_microrelief_strength`.
+const PLATEAU_VARIANCE_FACTOR: f32 = 0.5;
+const PLATEAU_INTERIOR_FACTOR: f32 = 0.4;
+const PLATEAU_RIM_BOOST_FACTOR: f32 = 4.0;
+/// Baseline seed strengths for dome plateaus and polar shear faults.
+const DOME_CELL_STRENGTH: u8 = 4;
+const POLAR_FAULT_STRENGTH: u8 = 4;
+// Land-ratio rebalance coastline-scoring weights.
+const REBALANCE_GROW_ADJACENT: f32 = 0.35;
+const REBALANCE_GROW_ISOLATED: f32 = 0.15;
+const REBALANCE_SHRINK_ADJACENT: f32 = 0.25;
+const REBALANCE_SHRINK_ISOLATED: f32 = 0.1;
+const REBALANCE_JITTER: f32 = 0.05;
 
 #[derive(Debug, Clone)]
 pub struct MountainMask {
@@ -287,8 +342,8 @@ pub fn build_bands(
         &mountains,
         elevation,
         mountain_cfg,
-        mountain_scale,
         ocean_cfg,
+        sea_level,
         seed,
     );
 
@@ -944,17 +999,17 @@ fn adjust_land_tiles(
             }
             if grow {
                 if adjacent {
-                    score += 0.35;
+                    score += REBALANCE_GROW_ADJACENT;
                 } else {
-                    score -= 0.15;
+                    score -= REBALANCE_GROW_ISOLATED;
                 }
             } else if adjacent {
-                score -= 0.25;
+                score -= REBALANCE_SHRINK_ADJACENT;
             } else {
-                score += 0.1;
+                score += REBALANCE_SHRINK_ISOLATED;
             }
             let noise = terrain_hash(seed ^ 0xA962_4D3B, x as u32, y as u32);
-            let jitter = ((noise & 0xFFFF) as f32 / 65535.0 - 0.5) * 0.05;
+            let jitter = ((noise & 0xFFFF) as f32 / 65535.0 - 0.5) * REBALANCE_JITTER;
             score += jitter;
             candidates.push((tile_idx, score));
         }
@@ -1217,7 +1272,8 @@ fn derive_mountain_mask(
 ) -> MountainMask {
     let total = w * h;
     let belt_width_base = cfg.belt_width_tiles.max(1);
-    let belt_width = ((belt_width_base as f32) * (1.0 + mountain_scale.clamp(0.0, 2.0) * 0.5))
+    let belt_width = ((belt_width_base as f32)
+        * (1.0 + mountain_scale.clamp(0.0, BELT_WIDTH_SCALE_MAX) * BELT_WIDTH_SCALE_GAIN))
         .round()
         .max(1.0) as u32;
     let mut mask = MountainMask::new(w, h, belt_width);
@@ -1282,16 +1338,16 @@ fn derive_mountain_mask(
         centroid_x /= comp_area as f32;
         centroid_y /= comp_area as f32;
 
-        let mut plate_count = if comp_area < 192 {
+        let mut plate_count = if comp_area < cfg.plate_area_bucket_2 as usize {
             1
-        } else if comp_area < 640 {
+        } else if comp_area < cfg.plate_area_bucket_3 as usize {
             2
-        } else if comp_area < 1500 {
+        } else if comp_area < cfg.plate_area_bucket_4 as usize {
             3
         } else {
             4
         };
-        if plate_count <= 1 && comp_area >= 256 {
+        if plate_count <= 1 && comp_area >= cfg.plate_area_bump as usize {
             plate_count = 2;
         }
         plate_count = plate_count.min(comp_area.max(1));
@@ -1315,7 +1371,7 @@ fn derive_mountain_mask(
             } else {
                 vx /= len;
                 vy /= len;
-                let jitter = (rng.gen::<f32>() - 0.5) * std::f32::consts::FRAC_PI_2;
+                let jitter = (rng.gen::<f32>() - 0.5) * PLATE_DRIFT_JITTER;
                 let (sin_j, cos_j) = jitter.sin_cos();
                 let rx = vx * cos_j - vy * sin_j;
                 let ry = vx * sin_j + vy * cos_j;
@@ -1386,7 +1442,7 @@ fn derive_mountain_mask(
                 .copied()
                 .unwrap_or((0.0, 0.0));
             let dot = flow_a.0 * flow_b.0 + flow_a.1 * flow_b.1;
-            if dot <= -0.1 {
+            if dot <= cfg.belt_convergence {
                 if !is_boundary {
                     boundary_cells.push((idx, plate_id as usize));
                     is_boundary = true;
@@ -1463,8 +1519,8 @@ fn derive_mountain_mask(
             let mut polar_microplate_ids = vec![-1i32; total];
             let mut microplate_flows: Vec<(f32, f32)> = Vec::new();
             let mut polar_logs: Vec<PolarLogEntry> = Vec::new();
-            let convergence_threshold = -0.2f32;
-            let divergence_threshold = 0.45f32;
+            let convergence_threshold = cfg.polar_convergence;
+            let divergence_threshold = cfg.polar_divergence;
 
             for (comp_idx, cells) in components.iter().enumerate() {
                 let mut polar_cells = Vec::new();
@@ -1475,7 +1531,7 @@ fn derive_mountain_mask(
                     }
                 }
 
-                if polar_cells.len() < 32 {
+                if polar_cells.len() < MIN_POLAR_CELLS {
                     continue;
                 }
 
@@ -1494,7 +1550,7 @@ fn derive_mountain_mask(
 
                 let desired = (polar_cells.len() as f32) * cfg.polar_microplate_density.max(0.0);
                 let mut microplate_count = desired.ceil() as usize;
-                let upper_bound = (polar_cells.len() / 12).max(2);
+                let upper_bound = (polar_cells.len() / POLAR_MICROPLATE_DIVISOR).max(2);
                 if microplate_count < 2 {
                     microplate_count = 2;
                 }
@@ -1565,8 +1621,12 @@ fn derive_mountain_mask(
                     }
                     let theta = micro_rng.gen::<f32>() * std::f32::consts::TAU;
                     let rand_vec = (theta.cos(), theta.sin());
-                    vx = vx * 0.7 + rand_vec.0 * 0.3 + bias.0 * 0.6;
-                    vy = vy * 0.7 + rand_vec.1 * 0.3 + bias.1 * 0.6;
+                    vx = vx * POLAR_FLOW_RADIAL
+                        + rand_vec.0 * POLAR_FLOW_RANDOM
+                        + bias.0 * POLAR_FLOW_BIAS;
+                    vy = vy * POLAR_FLOW_RADIAL
+                        + rand_vec.1 * POLAR_FLOW_RANDOM
+                        + bias.1 * POLAR_FLOW_BIAS;
                     let norm = (vx * vx + vy * vy).sqrt().max(1e-3);
                     microplate_flows.push((vx / norm, vy / norm));
                 }
@@ -1707,14 +1767,14 @@ fn derive_mountain_mask(
                                 cell,
                                 MountainCell {
                                     ty: MountainType::Fault,
-                                    strength: 4,
+                                    strength: POLAR_FAULT_STRENGTH,
                                 },
                             );
                             mask.set(
                                 nidx,
                                 MountainCell {
                                     ty: MountainType::Fault,
-                                    strength: 4,
+                                    strength: POLAR_FAULT_STRENGTH,
                                 },
                             );
                             comp_fault += 2;
@@ -1763,7 +1823,7 @@ fn derive_mountain_mask(
         }
     }
 
-    let fault_line_count = cfg.fault_line_count.min(6);
+    let fault_line_count = cfg.fault_line_count.min(MAX_FAULT_LINES);
     let fault_dirs: &[(isize, isize)] = &[
         (1, 0),
         (1, 1),
@@ -1776,7 +1836,7 @@ fn derive_mountain_mask(
     ];
 
     for (comp_idx, cells) in components.iter().enumerate() {
-        if cells.len() < 12 {
+        if cells.len() < MIN_FAULT_PLATE_AREA {
             continue;
         }
         let mut comp_rng = SmallRng::seed_from_u64(seed ^ ((comp_idx as u64 + 1) * 0x9E37C15D));
@@ -1784,7 +1844,7 @@ fn derive_mountain_mask(
         let interior_cells: Vec<usize> = cells
             .iter()
             .copied()
-            .filter(|&idx| land_distance[idx] >= 3)
+            .filter(|&idx| land_distance[idx] >= FAULT_INTERIOR_START_DIST)
             .collect();
         let fault_start_pool = if !interior_cells.is_empty() {
             &interior_cells
@@ -1793,10 +1853,10 @@ fn derive_mountain_mask(
         };
 
         let mut local_faults = fault_line_count.max(1);
-        if cells.len() > 600 {
+        if cells.len() > cfg.fault_area_bonus_2 as usize {
             local_faults += 1;
         }
-        if cells.len() > 1400 {
+        if cells.len() > cfg.fault_area_bonus_3 as usize {
             local_faults += 1;
         }
 
@@ -1804,10 +1864,12 @@ fn derive_mountain_mask(
             let start = fault_start_pool[comp_rng.gen_range(0..fault_start_pool.len())];
             let dir = fault_dirs[comp_rng.gen_range(0..fault_dirs.len())];
             let mut current = start;
-            let mut length = (cells.len() as f32 * 0.1 * comp_rng.gen::<f32>()).round() as usize;
+            let mut length =
+                (cells.len() as f32 * cfg.fault_length_fraction * comp_rng.gen::<f32>()).round()
+                    as usize;
             length = length.clamp(4, (cells.len() / 2).max(4));
             let mut step = 0usize;
-            let strength = 6u8;
+            let strength = FAULT_SEAM_STRENGTH;
             let mut block_phase = comp_rng.gen_range(2..5);
             while step < length {
                 if step % block_phase != 0 {
@@ -1823,7 +1885,7 @@ fn derive_mountain_mask(
                     let y = current / w;
                     let perpendicular = (-dir.1, dir.0);
                     for &(px, py) in [perpendicular, (-perpendicular.0, -perpendicular.1)].iter() {
-                        if comp_rng.gen::<f32>() > 0.55 {
+                        if comp_rng.gen::<f32>() > FAULT_BRANCH_SKIP_CHANCE {
                             continue;
                         }
                         let nx = x as isize + px;
@@ -1837,7 +1899,7 @@ fn derive_mountain_mask(
                                 nidx,
                                 MountainCell {
                                     ty: MountainType::Fault,
-                                    strength: strength.saturating_sub(2),
+                                    strength: strength.saturating_sub(FAULT_FLANK_STRENGTH_DROP),
                                 },
                             );
                         }
@@ -1882,14 +1944,15 @@ fn derive_mountain_mask(
             .collect();
 
         let coastal_fraction = (coastal.len() as f32 / cells.len() as f32).clamp(0.0, 1.0);
-        let volcanic_weight =
-            (cells.len() as f32 / 800.0).clamp(0.3, 1.4) * (0.55 + 0.7 * coastal_fraction);
-        let volcanic_chance = (cfg.volcanic_arc_chance * volcanic_weight).clamp(0.0, 0.8);
+        let volcanic_weight = (cells.len() as f32 / cfg.volcanic_area_norm).clamp(0.3, 1.4)
+            * (cfg.volcanic_coastal_base + cfg.volcanic_coastal_gain * coastal_fraction);
+        let volcanic_chance =
+            (cfg.volcanic_arc_chance * volcanic_weight).clamp(0.0, VOLCANIC_CHANCE_CEILING);
         let max_chains = cfg.max_volcanic_chains_per_plate.max(1) as usize;
         let mut chains_spawned = 0usize;
         let mut attempts = max_chains * 3;
         let strength_drop = cfg.volcanic_strength_drop.max(0.8);
-        let component_cap = ((cells.len() as f32) * 0.012)
+        let component_cap = ((cells.len() as f32) * cfg.volcanic_tile_fraction)
             .clamp(6.0, cfg.volcanic_tile_cap_per_plate as f32)
             as usize;
         let tile_cap = component_cap.max(4);
@@ -1906,10 +1969,11 @@ fn derive_mountain_mask(
             let start_idx = comp_rng.gen_range(0..coastal.len());
             let mut start = coastal.swap_remove(start_idx);
             let mut chain_dir = fault_dirs[comp_rng.gen_range(0..fault_dirs.len())];
-            let base_length = cfg.volcanic_chain_length.clamp(1, 12) as usize;
+            let base_length = cfg.volcanic_chain_length.clamp(1, VOLCANIC_CHAIN_LEN_CAP) as usize;
             let max_chain_len = (tile_cap - volcanic_tiles_used).max(1);
             let chain_len = base_length.min(max_chain_len);
-            let mut chain_strength = (cfg.volcanic_strength * 7.0).clamp(2.5, 9.0);
+            let mut chain_strength =
+                (cfg.volcanic_strength * VOLCANIC_STRENGTH_SCALE).clamp(2.5, 9.0);
             let mut chain_step = 0usize;
             let mut chain_gap = comp_rng.gen_range(2..5);
 
@@ -1917,7 +1981,7 @@ fn derive_mountain_mask(
                 if volcanic_tiles_used >= tile_cap {
                     break;
                 }
-                let primary_strength = chain_strength.round().clamp(1.0, 12.0) as u8;
+                let primary_strength = chain_strength.round().clamp(1.0, MAX_CELL_STRENGTH) as u8;
                 mask.set(
                     start,
                     MountainCell {
@@ -1927,12 +1991,12 @@ fn derive_mountain_mask(
                 );
                 volcanic_tiles_used += 1;
 
-                if comp_rng.gen::<f32>() < 0.5 {
+                if comp_rng.gen::<f32>() < VOLCANIC_FLANK_SPAWN_CHANCE {
                     let x = start % w;
                     let y = start / w;
                     let perpendicular = (-chain_dir.1, chain_dir.0);
                     for &(px, py) in [perpendicular, (-perpendicular.0, -perpendicular.1)].iter() {
-                        if comp_rng.gen::<f32>() > 0.35 {
+                        if comp_rng.gen::<f32>() > VOLCANIC_FLANK_SIDE_SKIP {
                             continue;
                         }
                         let nx = x as isize + px;
@@ -1942,10 +2006,10 @@ fn derive_mountain_mask(
                         }
                         let nidx = ny as usize * w + nx as usize;
                         if component_ids[nidx] == comp_idx as i32 {
-                            let flank_strength = (chain_strength - strength_drop * 0.6)
-                                .round()
-                                .clamp(1.0, 9.0)
-                                as u8;
+                            let flank_strength =
+                                (chain_strength - strength_drop * VOLCANIC_FLANK_DROP_FACTOR)
+                                    .round()
+                                    .clamp(1.0, 9.0) as u8;
                             mask.set(
                                 nidx,
                                 MountainCell {
@@ -1977,14 +2041,14 @@ fn derive_mountain_mask(
                 chain_strength = (chain_strength - strength_drop).max(1.0);
                 if chain_step % chain_gap == 0 {
                     chain_gap = comp_rng.gen_range(2..5);
-                    chain_dir = if comp_rng.gen::<f32>() < 0.4 {
+                    chain_dir = if comp_rng.gen::<f32>() < VOLCANIC_DIR_CHANGE_CHANCE {
                         *(fault_dirs
                             .get(comp_rng.gen_range(0..fault_dirs.len()))
                             .unwrap_or(&(1, 0)))
                     } else {
                         chain_dir
                     };
-                    if comp_rng.gen::<f32>() < 0.2 {
+                    if comp_rng.gen::<f32>() < VOLCANIC_GAP_SKIP_CHANCE {
                         chain_step += 1;
                     }
                 }
@@ -2018,7 +2082,7 @@ fn derive_mountain_mask(
                     cell,
                     MountainCell {
                         ty: MountainType::Dome,
-                        strength: 4,
+                        strength: DOME_CELL_STRENGTH,
                     },
                 );
                 if matches!(
@@ -2034,6 +2098,7 @@ fn derive_mountain_mask(
         }
     }
 
+    apply_belt_relief(&mut mask, w, h, cfg);
     apply_plateau_microrelief(&mut mask, &plateau_cells, w, h, cfg, seed);
 
     let (fold, fault, volcanic, dome) = mask.iter_counts();
@@ -2047,6 +2112,51 @@ fn derive_mountain_mask(
     );
 
     mask
+}
+
+/// Scales belt-tile relief by belt strength so cores tower (clearing the AlpineMountain
+/// threshold) and edges taper to plateaus/hills. Raise-only (`enforce_relief_floor`), so
+/// it never lowers the plateau relief tuning applied during mask construction.
+///
+/// Polar rows are intentionally skipped: those tiles have their own uplift/low-relief
+/// basin tuning (`polar_*` config), they become SeasonalSnowfield rather than Alpine
+/// anyway, and boosting them would flatten the deliberate polar contrast. Domes are also
+/// skipped — they are handled as low-relief plateaus by microrelief.
+fn apply_belt_relief(
+    mask: &mut MountainMask,
+    w: usize,
+    h: usize,
+    cfg: &crate::map_preset::MountainsConfig,
+) {
+    let gain = cfg.relief_belt_gain.max(0.0);
+    if gain <= f32::EPSILON {
+        return;
+    }
+    let fold_band_width = mask.fold_band_width() as f32 + 1.0;
+    let polar_rows = ((h as f32) * cfg.polar_latitude_fraction)
+        .ceil()
+        .clamp(1.0, h as f32) as usize;
+    for y in 0..h {
+        if y < polar_rows || y >= h.saturating_sub(polar_rows) {
+            continue;
+        }
+        for x in 0..w {
+            let idx = y * w + x;
+            if let Some(cell) = mask.get(idx) {
+                let ratio = match cell.ty {
+                    MountainType::Fold => (cell.strength as f32 / fold_band_width).clamp(0.0, 1.0),
+                    MountainType::Fault => {
+                        (cell.strength as f32 / FAULT_STRENGTH_SPAN).clamp(0.0, 1.0)
+                    }
+                    MountainType::Volcanic => {
+                        (cell.strength as f32 / VOLCANIC_STRENGTH_SPAN).clamp(0.0, 1.0)
+                    }
+                    MountainType::Dome => continue,
+                };
+                mask.enforce_relief_floor(idx, 1.0 + ratio * gain);
+            }
+        }
+    }
 }
 
 fn apply_plateau_microrelief(
@@ -2142,8 +2252,9 @@ fn apply_plateau_microrelief(
     }
 
     let rim_width_f = rim_width as f32;
-    let variance_scale = (variance * micro_strength * 0.5).clamp(0.0, 1.0);
-    let base_interior = (1.0 - micro_strength * 0.4).clamp(MIN_RELIEF_SCALE, 1.0);
+    let variance_scale = (variance * micro_strength * PLATEAU_VARIANCE_FACTOR).clamp(0.0, 1.0);
+    let base_interior =
+        (1.0 - micro_strength * PLATEAU_INTERIOR_FACTOR).clamp(MIN_RELIEF_SCALE, 1.0);
     let noise_seed = seed ^ 0xA99D_13E7_9925u64;
 
     for &idx in plateau_cells {
@@ -2161,9 +2272,10 @@ fn apply_plateau_microrelief(
             let rim_relief =
                 (1.0 + micro_strength * factor).clamp(MIN_RELIEF_SCALE, MAX_RELIEF_SCALE);
             mask.set_relief_scale(idx, rim_relief);
-            let boosted = ((cell.strength as f32) + micro_strength * 4.0 * factor)
+            let boosted = ((cell.strength as f32)
+                + micro_strength * PLATEAU_RIM_BOOST_FACTOR * factor)
                 .round()
-                .clamp(cell.strength as f32, 12.0) as u8;
+                .clamp(cell.strength as f32, MAX_CELL_STRENGTH) as u8;
             mask.set(
                 idx,
                 MountainCell {
@@ -2206,7 +2318,11 @@ fn prevailing_wind_for_row(y: usize, height: usize, cfg: &BiomeTransitionConfig,
         y as f32 / (height.saturating_sub(1) as f32)
     };
     let dist_equator = (lat - 0.5).abs();
-    let mut dir = if dist_equator < 0.18 { -1 } else { 1 };
+    let mut dir = if dist_equator < cfg.trade_wind_band {
+        -1
+    } else {
+        1
+    };
     let hash = terrain_hash(seed ^ 0xACED_D00Du64, y as u32, height as u32);
     let roll = (hash & 0xFFFF) as f32 / 65535.0;
     if roll < cfg.prevailing_wind_flip_chance.clamp(0.0, 1.0) {
@@ -2244,8 +2360,8 @@ fn compute_moisture_field(
             y as f32 / (height.saturating_sub(1) as f32)
         };
         let dist_equator = (lat - 0.5).abs();
-        let latitude_bonus =
-            (1.0 - (dist_equator * 1.8).min(1.0)) * cfg.latitude_humidity_weight.clamp(0.0, 1.0);
+        let latitude_bonus = (1.0 - (dist_equator * cfg.latitude_dryness_falloff).min(1.0))
+            * cfg.latitude_humidity_weight.clamp(0.0, 1.0);
 
         let iter: Box<dyn Iterator<Item = usize>> = if direction >= 0 {
             Box::new(0..width)
@@ -2285,18 +2401,18 @@ fn compute_moisture_field(
                 let added_shadow = cfg.rain_shadow_strength.max(0.0) * relief;
                 shadow = (shadow + added_shadow).clamp(0.0, 2.0);
                 if matches!(cell.ty, MountainType::Volcanic) {
-                    humidity -= added_shadow * 0.25;
+                    humidity -= added_shadow * VOLCANIC_HUMIDITY_SUPPRESSION;
                 }
                 carry = (carry + cfg.windward_moisture_bonus * 0.5).clamp(0.0, 1.2);
             }
 
             let interior_penalty = cfg.interior_aridity_strength
-                * (distance / (distance + 3.5)).min(1.0)
+                * (distance / (distance + cfg.interior_aridity_distance)).min(1.0)
                 * (1.0 - latitude_bonus.clamp(0.0, 1.0));
             humidity -= interior_penalty;
 
             let elev = elevation.sample(x as u32, y as u32);
-            humidity += (elev - 0.5) * 0.08;
+            humidity += (elev - 0.5) * cfg.elevation_humidity_weight;
 
             humidity = humidity * cfg.humidity_scale + cfg.humidity_bias;
             humidity = (humidity * moisture_scale).clamp(0.0, 1.0);
@@ -2324,8 +2440,8 @@ fn restamp_elevation(
     mountains: &MountainMask,
     base_elevation: &ElevationField,
     cfg: &crate::map_preset::MountainsConfig,
-    mountain_scale: f32,
     ocean_cfg: &OceanConfig,
+    sea_level: f32,
     seed: u64,
 ) -> ElevationField {
     let w = base_elevation.width as usize;
@@ -2333,10 +2449,28 @@ fn restamp_elevation(
     let idx = |x: usize, y: usize| -> usize { y * w + x };
 
     let fold_band_width = mountains.fold_band_width() as f32 + 1.0;
-    let fold_strength = cfg.fold_strength.max(0.0);
-    let fault_strength_cfg = cfg.fault_strength.max(0.0);
-    let volcanic_strength_cfg = cfg.volcanic_strength.max(0.0);
-    let dome_strength_cfg = (cfg.plateau_density * 0.8).clamp(0.0, 0.4) + mountain_scale * 0.05;
+
+    // Tie the elevation field to the (relief-based) biome so mountains are genuinely
+    // tall: lowlands compress into [sea_level, elevation_base] and every mountain tile
+    // is floored above elevation_base, ordered by relief and per-type prominence.
+    let sea_level = sea_level.clamp(0.0, 0.999);
+    let elevation_base = cfg.elevation_base.clamp(sea_level, 1.0);
+    let relief_span = (MAX_RELIEF_SCALE - MIN_RELIEF_SCALE).max(f32::EPSILON);
+
+    // A mountain tile's elevation is a monotonic function of its relief (the same
+    // signal that picks its biome), so the field and the biome always agree. Kept as a
+    // closure because it is re-applied after coastal smoothing (which would otherwise
+    // drag coast-adjacent peaks down toward the ocean).
+    let mountain_floor = |ty: MountainType, relief: f32| -> f32 {
+        let prominence = match ty {
+            MountainType::Fold => cfg.fold_prominence,
+            MountainType::Fault => cfg.fault_prominence,
+            MountainType::Volcanic => cfg.volcanic_prominence,
+            MountainType::Dome => cfg.dome_prominence,
+        };
+        let relief_norm = ((relief - MIN_RELIEF_SCALE) / relief_span).clamp(0.0, 1.0);
+        elevation_base + relief_norm * (1.0 - elevation_base) * prominence.max(0.0)
+    };
 
     let mut values = Vec::with_capacity(w * h);
     for y in 0..h {
@@ -2348,23 +2482,28 @@ fn restamp_elevation(
             if land[i] {
                 if let Some(cell) = mountains.get(i) {
                     let relief = mountains.relief_scale(i);
-                    match cell.ty {
+                    // Belt position adds a small texture (peaks slightly taller at the
+                    // range spine) that is bounded so it can never lift a low-relief
+                    // tile above a higher-relief one — relief still determines ordering.
+                    let belt_ratio = match cell.ty {
                         MountainType::Fold => {
-                            let ratio = (cell.strength as f32 / fold_band_width).clamp(0.0, 1.0);
-                            v += fold_strength * ratio * relief;
+                            (cell.strength as f32 / fold_band_width).clamp(0.0, 1.0)
                         }
                         MountainType::Fault => {
-                            let ratio = (cell.strength as f32 / 8.0).clamp(0.0, 1.0);
-                            v += fault_strength_cfg * ratio * relief;
+                            (cell.strength as f32 / FAULT_STRENGTH_SPAN).clamp(0.0, 1.0)
                         }
                         MountainType::Volcanic => {
-                            let ratio = (cell.strength as f32 / 12.0).clamp(0.0, 1.0);
-                            v += volcanic_strength_cfg * ratio * relief;
+                            (cell.strength as f32 / VOLCANIC_STRENGTH_SPAN).clamp(0.0, 1.0)
                         }
-                        MountainType::Dome => {
-                            v += dome_strength_cfg * relief;
-                        }
-                    }
+                        MountainType::Dome => 1.0,
+                    };
+                    let floor = mountain_floor(cell.ty, relief);
+                    v = (floor + belt_ratio * MOUNTAIN_BELT_TEXTURE).clamp(0.0, 1.0);
+                } else {
+                    // Non-mountain land: compress into [sea_level, elevation_base] so
+                    // lowlands (plains, etc.) never out-top the mountains.
+                    let above_sea = ((v - sea_level) / (1.0 - sea_level)).clamp(0.0, 1.0);
+                    v = sea_level + above_sea * (elevation_base - sea_level);
                 }
             } else if is_ocean[i]
                 && ocean_cfg.ridge_density > 0.0
@@ -2382,6 +2521,25 @@ fn restamp_elevation(
     }
 
     apply_coastal_smoothing(&mut values, w, h, land, land_distance);
+
+    // Coastal smoothing blends land toward its (ocean-inclusive) neighborhood, which
+    // drags coast-adjacent mountains down toward the sea and lifts mountain-adjacent
+    // plains up. Re-assert the hard band boundary so mountains stay at/above
+    // elevation_base and lowlands stay at/below it, with no overlap.
+    for y in 0..h {
+        for x in 0..w {
+            let i = idx(x, y);
+            if !land[i] {
+                continue;
+            }
+            if let Some(cell) = mountains.get(i) {
+                let floor = mountain_floor(cell.ty, mountains.relief_scale(i));
+                values[i] = values[i].max(floor);
+            } else {
+                values[i] = values[i].min(elevation_base);
+            }
+        }
+    }
 
     ElevationField::new(base_elevation.width, base_elevation.height, values)
 }
@@ -2428,13 +2586,7 @@ fn apply_coastal_smoothing(
             continue;
         }
         let distance = land_distance[idx] as usize;
-        let weight = match distance {
-            0 => 0.6,
-            1 => 0.45,
-            2 => 0.3,
-            3 => 0.15,
-            _ => 0.0,
-        };
+        let weight = COASTAL_BLUR_WEIGHTS.get(distance).copied().unwrap_or(0.0);
         if weight <= 0.0 {
             continue;
         }
@@ -2678,6 +2830,211 @@ mod tests {
         assert!(total > 0, "expected mountain features to be generated");
     }
 
+    // Guards the elevation<->biome coupling: mountain-mask tiles (which become the
+    // mountain biomes) must read clearly higher on the elevation field than
+    // non-mountain lowland tiles. Regression test for the historical decoupling where
+    // AlpineMountain tiles could sit near the field minimum while plains hit the max.
+    #[test]
+    fn mountain_tiles_out_top_lowland_tiles() {
+        use bevy::math::UVec2;
+
+        let presets = MapPresets::builtin();
+        let preset = presets.get("earthlike").expect("earthlike preset");
+        let seed = preset_seed(preset, None);
+
+        let mut config = SimulationConfig::builtin();
+        config.grid_size = UVec2::new(preset.dimensions.width, preset.dimensions.height);
+        config.map_seed = seed;
+        config.map_preset_id = preset.id.clone();
+
+        let elevation = build_elevation_field(&config, Some(preset), seed);
+        let bands = build_bands(
+            &elevation,
+            preset.sea_level,
+            &preset.macro_land,
+            &preset.shelf,
+            &preset.islands,
+            &preset.inland_sea,
+            &preset.ocean,
+            preset.moisture_scale,
+            &preset.biomes,
+            seed,
+            preset.mountain_scale,
+            &preset.mountains,
+            false, // wrap_horizontal - test without wrap
+        );
+
+        let width = preset.dimensions.width as usize;
+        let height = preset.dimensions.height as usize;
+        let (mut mountain_sum, mut mountain_n) = (0.0f64, 0usize);
+        let (mut lowland_sum, mut lowland_n) = (0.0f64, 0usize);
+        let mut mountain_min = f64::MAX;
+        let mut lowland_max = f64::MIN;
+        // Track mountains that border ocean specifically — the coast case that used to
+        // get dragged to ~0 by coastal smoothing before the post-smoothing re-floor.
+        let mut coastal_mountain_min = f64::MAX;
+        let mut coastal_mountain_n = 0usize;
+        let is_ocean = |x: usize, y: usize| bands.terrain[y * width + x] != TerrainBand::Land;
+        for y in 0..height {
+            for x in 0..width {
+                let idx = y * width + x;
+                if bands.terrain[idx] != TerrainBand::Land {
+                    continue;
+                }
+                let elev = bands.elevation.sample(x as u32, y as u32) as f64;
+                if bands.mountains.get(idx).is_some() {
+                    mountain_sum += elev;
+                    mountain_n += 1;
+                    mountain_min = mountain_min.min(elev);
+                    let borders_ocean =
+                        [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)]
+                            .iter()
+                            .any(|&(dx, dy)| {
+                                let nx = x as i32 + dx;
+                                let ny = y as i32 + dy;
+                                nx >= 0
+                                    && ny >= 0
+                                    && (nx as usize) < width
+                                    && (ny as usize) < height
+                                    && is_ocean(nx as usize, ny as usize)
+                            });
+                    if borders_ocean {
+                        coastal_mountain_min = coastal_mountain_min.min(elev);
+                        coastal_mountain_n += 1;
+                    }
+                } else {
+                    lowland_sum += elev;
+                    lowland_n += 1;
+                    lowland_max = lowland_max.max(elev);
+                }
+            }
+        }
+
+        assert!(
+            mountain_n > 0 && lowland_n > 0,
+            "expected both mountain and lowland land tiles (mountain={mountain_n}, lowland={lowland_n})"
+        );
+        let mountain_mean = mountain_sum / mountain_n as f64;
+        let lowland_mean = lowland_sum / lowland_n as f64;
+        let elevation_base = preset.mountains.elevation_base as f64;
+
+        assert!(
+            mountain_mean > lowland_mean + 0.15,
+            "mountain mean elevation {mountain_mean:.3} should clearly exceed lowland mean {lowland_mean:.3}"
+        );
+        // The post-smoothing re-floor guarantees EVERY mountain tile sits at/above
+        // elevation_base, and lowland compression keeps every plain at/below it — a hard
+        // separation with no overlap. (Small epsilon for f32→f64 rounding.)
+        let eps = 1e-4;
+        assert!(
+            mountain_min >= elevation_base - eps,
+            "lowest mountain tile {mountain_min:.3} must stay at/above elevation_base {elevation_base:.3}"
+        );
+        assert!(
+            lowland_max <= elevation_base + eps,
+            "highest lowland tile {lowland_max:.3} must stay at/below elevation_base {elevation_base:.3}"
+        );
+        // The reported regression: mountains next to water must not collapse to ~0.
+        assert!(
+            coastal_mountain_n > 0,
+            "expected some ocean-bordering mountain tiles to exercise the coastal case"
+        );
+        assert!(
+            coastal_mountain_min >= elevation_base - eps,
+            "lowest coast-bordering mountain {coastal_mountain_min:.3} must stay at/above elevation_base {elevation_base:.3}"
+        );
+    }
+
+    // Guards against the base classifier re-introducing mask-less "mountains": every
+    // tile whose FINAL biome is AlpineMountain must sit on genuinely high ground (it can
+    // only come from a mountain-mask cell with relief >= 1.45, floored well above
+    // elevation_base). Before the classify_terrain fix these could sit near sea level.
+    #[test]
+    fn alpine_biome_tiles_are_tall() {
+        use crate::terrain::terrain_for_position_with_classifier;
+        use bevy::math::UVec2;
+        use sim_runtime::TerrainType;
+
+        let presets = MapPresets::builtin();
+        let preset = presets.get("earthlike").expect("earthlike preset");
+        let seed = preset_seed(preset, None);
+
+        let mut config = SimulationConfig::builtin();
+        config.grid_size = UVec2::new(preset.dimensions.width, preset.dimensions.height);
+        config.map_seed = seed;
+        config.map_preset_id = preset.id.clone();
+
+        let elevation = build_elevation_field(&config, Some(preset), seed);
+        let bands = build_bands(
+            &elevation,
+            preset.sea_level,
+            &preset.macro_land,
+            &preset.shelf,
+            &preset.islands,
+            &preset.inland_sea,
+            &preset.ocean,
+            preset.moisture_scale,
+            &preset.biomes,
+            seed,
+            preset.mountain_scale,
+            &preset.mountains,
+            false,
+        );
+
+        let width = preset.dimensions.width as usize;
+        let height = preset.dimensions.height as usize;
+        let grid = UVec2::new(preset.dimensions.width, preset.dimensions.height);
+        // These biomes are produced ONLY by the tectonic mountain mask
+        // (select_mountain_terrain), never by the base climate classifier, so every one
+        // must sit on floored (tall) ground. Before the fix the base classifier's fake
+        // noise-elevation stamped them on flat lowland tiles.
+        let mask_only_peaks = [
+            TerrainType::AlpineMountain,
+            TerrainType::HighPlateau,
+            TerrainType::KarstHighland,
+        ];
+        let (mut peak_min, mut peak_n) = (f64::MAX, 0usize);
+        let mut alpine_n = 0usize;
+        for y in 0..height {
+            for x in 0..width {
+                let idx = y * width + x;
+                if bands.terrain[idx] != TerrainBand::Land {
+                    continue;
+                }
+                let position = UVec2::new(x as u32, y as u32);
+                let relief = bands.mountains.relief_scale(idx);
+                let (terrain, _tags) = terrain_for_position_with_classifier(
+                    position,
+                    grid,
+                    bands.moisture.get(idx).copied(),
+                    Some(bands.elevation.sample(position.x, position.y)),
+                    bands.mountains.get(idx).map(|cell| (cell.ty, relief)),
+                    &preset.terrain_classifier,
+                );
+                if terrain == TerrainType::AlpineMountain {
+                    alpine_n += 1;
+                }
+                if mask_only_peaks.contains(&terrain) {
+                    peak_min = peak_min.min(bands.elevation.sample(x as u32, y as u32) as f64);
+                    peak_n += 1;
+                }
+            }
+        }
+
+        assert!(peak_n > 0, "expected some mask-based peak biomes");
+        // The belt-relief boost (relief_belt_gain) must lift belt cores past the Alpine
+        // threshold, so AlpineMountain genuinely appears (not fabricated by noise).
+        assert!(
+            alpine_n > 0,
+            "expected AlpineMountain tiles from high-relief belt cores"
+        );
+        let elevation_base = preset.mountains.elevation_base as f64;
+        assert!(
+            peak_min >= elevation_base - 1e-4,
+            "lowest mask-peak biome tile {peak_min:.3} should sit at/above elevation_base {elevation_base:.3} (no mask-less mountains from the base classifier)"
+        );
+    }
+
     #[test]
     fn moisture_field_respects_orographic_shadow() {
         let width = 5usize;
@@ -2839,7 +3196,7 @@ mod tests {
             metrics.land_ratio
         );
         assert!(
-            (metrics.fold as isize - 1122).abs() <= 32,
+            (metrics.fold as isize - 1204).abs() <= 32,
             "earthlike fold count drift: {}",
             metrics.fold
         );
@@ -2859,7 +3216,7 @@ mod tests {
             metrics.dome
         );
         assert!(
-            (metrics.polar_fold as isize - 656).abs() <= 32,
+            (metrics.polar_fold as isize - 712).abs() <= 32,
             "earthlike polar fold drift: {}",
             metrics.polar_fold
         );
