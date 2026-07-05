@@ -137,6 +137,9 @@ func setup(parent: Node, layer_index: int = MINIMAP_CANVAS_LAYER, margin: float 
 	# Create texture rect for minimap content
 	texture_rect = TextureRect.new()
 	texture_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	# Minimap is a 1px-per-hex raster upscaled into the panel; nearest filtering
+	# keeps it crisp instead of the blurry linear default.
+	texture_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	texture_rect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	texture_rect.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	texture_rect.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -189,6 +192,9 @@ func setup_embedded(container: Control, style: StyleBox = null) -> void:
 	# Create texture rect
 	texture_rect = TextureRect.new()
 	texture_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	# Minimap is a 1px-per-hex raster upscaled into the panel; nearest filtering
+	# keeps it crisp instead of the blurry linear default.
+	texture_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	texture_rect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	texture_rect.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	texture_rect.mouse_filter = Control.MOUSE_FILTER_STOP

@@ -284,7 +284,6 @@ var _minimap_2d_data_version: int = 0  # Incremented when terrain/visibility cha
 var _minimap_2d_last_data_version: int = -1  # Last version used for rebuild
 var _minimap_2d_last_fow_enabled: bool = false  # Track FoW state changes
 var _hud_layer: Node = null  # HudLayer reference, set via set_hud_reference() for embedded minimap
-var _explored_bounds_grid: Rect2i = Rect2i(0, 0, 0, 0)  # Grid coords of explored area
 var _explored_bounds_world: Rect2 = Rect2()  # World coords of explored area at unit radius (scaled in _clamp_pan_offset)
 
 # Profiling for performance measurement
@@ -3204,34 +3203,18 @@ func _rebuild_minimap_2d_image() -> void:
 	if _fow_enabled:
 		visibility_data = _visibility_array()
 
-	# Determine image dimensions - crop to explored bounds when FoW enabled
-	var img_width: int
-	var img_height: int
-	var offset_col: int = 0  # Column offset for cropped image
-	var offset_row: int = 0  # Row offset for cropped image
+	# The minimap always renders the FULL grid so its shape/aspect ratio stays
+	# constant whether FoW is on or off; unexplored tiles are painted as fog in
+	# the pixel loop below (standard 4X behaviour — no unseen terrain is revealed).
+	# Explored bounds are still computed when FoW is on so that panning stays
+	# clamped to discovered space (see _clamp_pan_offset).
+	var img_width := grid_width
+	var img_height := grid_height
 
 	if _fow_enabled:
-		_explored_bounds_grid = _calculate_explored_bounds()
-		if _explored_bounds_grid.size.x <= 0 or _explored_bounds_grid.size.y <= 0:
-			# No explored tiles - create minimal 1x1 image
-			_minimap_2d_image = Image.create(1, 1, false, Image.FORMAT_RGB8)
-			_minimap_2d_image.set_pixel(0, 0, fog_color)
-			var tex := ImageTexture.create_from_image(_minimap_2d_image)
-			_minimap_2d.set_texture(tex)
-			_minimap_2d.set_grid_size(1, 1)
-			_explored_bounds_world = Rect2()
-			return
-		img_width = _explored_bounds_grid.size.x
-		img_height = _explored_bounds_grid.size.y
-		offset_col = _explored_bounds_grid.position.x
-		offset_row = _explored_bounds_grid.position.y
 		# Update world bounds for pan clamping (at unit radius, scaled in _clamp_pan_offset)
-		_explored_bounds_world = _compute_explored_bounds_world(_explored_bounds_grid, 1.0)
+		_explored_bounds_world = _compute_explored_bounds_world(_calculate_explored_bounds(), 1.0)
 	else:
-		# Full map when FoW disabled
-		img_width = grid_width
-		img_height = grid_height
-		_explored_bounds_grid = Rect2i(0, 0, grid_width, grid_height)
 		_explored_bounds_world = Rect2()  # Clear - use full map bounds
 
 	# Pre-allocate byte array for RGB8 image data (3 bytes per pixel)
@@ -3241,10 +3224,8 @@ func _rebuild_minimap_2d_image() -> void:
 
 	# Fill byte array with terrain colors
 	var byte_index := 0
-	for local_row in range(img_height):
-		for local_col in range(img_width):
-			var grid_col := local_col + offset_col
-			var grid_row := local_row + offset_row
+	for grid_row in range(img_height):
+		for grid_col in range(img_width):
 			var grid_index := grid_row * grid_width + grid_col
 
 			var terrain_id := int(terrain_overlay[grid_index]) if grid_index < terrain_overlay.size() else -1
@@ -3310,21 +3291,14 @@ func _draw_minimap_viewport_indicator() -> void:
 	var br_col_f: float = _last_visible_col_end
 	var br_row_f: float = _last_visible_row_end
 
-	# Normalize hex coordinates to [0,1] range for minimap positioning
-	# When FoW enabled, normalize relative to explored bounds instead of full grid
+	# Normalize hex coordinates to [0,1] range for minimap positioning.
+	# The minimap image spans the full grid (FoW or not), so normalize against it.
 	var view_left: float
 	var view_right: float
 	var view_top: float
 	var view_bottom: float
 
-	if _fow_enabled and _explored_bounds_grid.size.x > 0:
-		var bounds := _explored_bounds_grid
-		# Remap viewport coords relative to explored bounds
-		view_left = clampf((tl_col_f - float(bounds.position.x)) / float(bounds.size.x), 0.0, 1.0)
-		view_right = clampf((br_col_f - float(bounds.position.x)) / float(bounds.size.x), 0.0, 1.0)
-		view_top = clampf((tl_row_f - float(bounds.position.y)) / float(bounds.size.y), 0.0, 1.0)
-		view_bottom = clampf((br_row_f - float(bounds.position.y)) / float(bounds.size.y), 0.0, 1.0)
-	elif _wrap_horizontal:
+	if _wrap_horizontal:
 		# When wrapping, don't clamp X - allow values outside [0,1] to indicate wrap
 		view_left = tl_col_f / float(grid_width)
 		view_right = br_col_f / float(grid_width)
@@ -3411,45 +3385,35 @@ func _on_minimap_2d_pan_requested(normalized_pos: Vector2) -> void:
 	if last_hex_radius <= 0:
 		return
 
-	# Convert normalized [0,1] position to hex grid coordinates (col, row)
-	# When FoW enabled, denormalize using explored bounds offset
-	var target_col: int
-	var target_row: int
+	# Convert normalized [0,1] position to hex grid coordinates (col, row).
+	# The minimap image spans the full grid, so denormalize against it directly;
+	# _clamp_pan_offset() still confines the resulting pan to explored space.
+	var target_col := int(normalized_pos.x * float(grid_width))
+	var target_row := int(normalized_pos.y * float(grid_height))
+	if _wrap_horizontal:
+		# When wrapping, find the closest logical column to current view center
+		# First, wrap target to [0, grid_width)
+		target_col = posmod(target_col, grid_width)
 
-	if _fow_enabled and _explored_bounds_grid.size.x > 0:
-		var bounds := _explored_bounds_grid
-		target_col = int(normalized_pos.x * float(bounds.size.x)) + bounds.position.x
-		target_row = int(normalized_pos.y * float(bounds.size.y)) + bounds.position.y
-		# Clamp to explored bounds
-		target_col = clampi(target_col, bounds.position.x, bounds.position.x + bounds.size.x - 1)
-		target_row = clampi(target_row, bounds.position.y, bounds.position.y + bounds.size.y - 1)
+		# Find current view center column using direct hex geometry
+		# (consistent with indicator drawing)
+		var viewport_size := _get_adjusted_viewport_size()
+		var hex_width := SQRT3 * last_hex_radius
+		var current_center_col := (viewport_size.x * 0.5 - last_origin.x) / hex_width
+
+		# Find closest logical column: target_col, target_col - grid_width, or target_col + grid_width
+		var dist_direct := absf(float(target_col) - current_center_col)
+		var dist_minus := absf(float(target_col - grid_width) - current_center_col)
+		var dist_plus := absf(float(target_col + grid_width) - current_center_col)
+
+		if dist_minus < dist_direct and dist_minus < dist_plus:
+			target_col = target_col - grid_width
+		elif dist_plus < dist_direct and dist_plus < dist_minus:
+			target_col = target_col + grid_width
+		# else: use target_col as-is
 	else:
-		target_col = int(normalized_pos.x * float(grid_width))
-		target_row = int(normalized_pos.y * float(grid_height))
-		if _wrap_horizontal:
-			# When wrapping, find the closest logical column to current view center
-			# First, wrap target to [0, grid_width)
-			target_col = posmod(target_col, grid_width)
-
-			# Find current view center column using direct hex geometry
-			# (consistent with indicator drawing)
-			var viewport_size := _get_adjusted_viewport_size()
-			var hex_width := SQRT3 * last_hex_radius
-			var current_center_col := (viewport_size.x * 0.5 - last_origin.x) / hex_width
-
-			# Find closest logical column: target_col, target_col - grid_width, or target_col + grid_width
-			var dist_direct := absf(float(target_col) - current_center_col)
-			var dist_minus := absf(float(target_col - grid_width) - current_center_col)
-			var dist_plus := absf(float(target_col + grid_width) - current_center_col)
-
-			if dist_minus < dist_direct and dist_minus < dist_plus:
-				target_col = target_col - grid_width
-			elif dist_plus < dist_direct and dist_plus < dist_minus:
-				target_col = target_col + grid_width
-			# else: use target_col as-is
-		else:
-			target_col = clampi(target_col, 0, grid_width - 1)
-		target_row = clampi(target_row, 0, grid_height - 1)
+		target_col = clampi(target_col, 0, grid_width - 1)
+	target_row = clampi(target_row, 0, grid_height - 1)
 
 	# Get the screen position of target hex at base origin (before any panning)
 	var hex_center_at_base := _hex_center(target_col, target_row, last_hex_radius, last_base_origin)
