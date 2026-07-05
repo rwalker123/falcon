@@ -1125,11 +1125,40 @@ pub fn generate_hydrology(world: &mut World) {
         let width_val = ((max_acc.max(1) as f32).log2().floor() as i32 + 1).max(1);
         segment.width = width_val.clamp(1, u8::MAX as i32) as u8;
 
-        if matches!(segment.termination, TerminationClass::Ocean) {
+        // Deltas form where a river meets a standing water body: the open ocean
+        // *or* an inland sea / lake (lacustrine deltas, e.g. Volga→Caspian). The
+        // mouth tile is the last true-land tile of the path that borders that
+        // water. Ocean tiles are sea-masked; inland seas are water *terrain* but
+        // may sit above sea level, so check both.
+        if matches!(
+            segment.termination,
+            TerminationClass::Ocean | TerminationClass::Lake
+        ) {
             delta_segment_count += 1;
+            let is_water_idx = |idx: usize| -> bool {
+                seamask[idx]
+                    || tile_terrain[idx]
+                        .map(|(terrain, _)| is_water_terrain(terrain))
+                        .unwrap_or(false)
+            };
             if let Some(delta_idx) = segment.path.iter().rev().find_map(|pos| {
                 let idx = (pos.y * width + pos.x) as usize;
-                if !seamask[idx] {
+                if is_water_idx(idx) {
+                    return None;
+                }
+                // Only a genuine shore tile (adjacent to the terminal water body)
+                // becomes a delta, never a spot where the river merely petered out.
+                let x = pos.x as i32;
+                let y = pos.y as i32;
+                let borders_water = neighbor_dirs().iter().any(|&(dx, dy)| {
+                    let nx = x + dx;
+                    let ny = y + dy;
+                    if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                        return false;
+                    }
+                    is_water_idx(ny as usize * width as usize + nx as usize)
+                });
+                if borders_water {
                     Some(idx)
                 } else {
                     None

@@ -28,8 +28,17 @@ const CRISIS_COLOR := Color(0.92, 0.24, 0.46, 1.0)
 const ELEVATION_LOW_COLOR := Color(0.16, 0.32, 0.78, 1.0)
 const ELEVATION_MID_COLOR := Color(0.97, 0.82, 0.32, 1.0)
 const ELEVATION_HIGH_COLOR := Color(0.78, 0.14, 0.18, 1.0)
+# Tile "Height" is a relative 0..100 indicator (not meters) so a player can reason
+# about line of sight: a higher tile can occlude the tile behind it. Elevation is
+# only a normalized 0..1 field, so height rescales the ABOVE-sea-level span into
+# 0..100 (at/below sea level reads 0 — nothing occludes over open water). The sea
+# level is the ACTIVE map's `sea_level`, streamed per-snapshot in the elevation
+# overlay (`_elevation_sea_level`); this constant is only the fallback used until the
+# first snapshot arrives (mirrors core_sim's DEFAULT_SEA_LEVEL).
+const HEIGHT_DEFAULT_SEA_LEVEL := 0.6
+const HEIGHT_BAR_SEGMENTS := 10
 const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
-const GRID_LINE_COLOR := Color(0.1, 0.12, 0.18, 0.45)
+const GRID_LINE_COLOR := Color(0.4, 0.4, 0.4, 0.7)
 const SQRT3 := 1.7320508075688772
 const SIN_60 := 0.8660254037844386
 # Fog-of-War visibility discriminators on the 0.0/0.5/1.0 visibility encoding
@@ -187,6 +196,9 @@ var grid_height: int = 0
 var _wrap_horizontal: bool = false
 var overlay_channels: Dictionary = {}
 var overlay_raw_channels: Dictionary = {}
+# The active map's sea level on the elevation raster's normalized 0..1 scale, streamed
+# per-snapshot. Held here so relative_height_at floors at the correct per-map value.
+var _elevation_sea_level: float = HEIGHT_DEFAULT_SEA_LEVEL
 var overlay_channel_labels: Dictionary = {}
 var overlay_channel_descriptions: Dictionary = {}
 var overlay_placeholder_flags: Dictionary = {}
@@ -598,6 +610,10 @@ func _ingest_overlay_channels(overlays: Variant) -> void:
 	overlay_channel_order = PackedStringArray()
 
 	var overlay_dict: Dictionary = overlays if overlays is Dictionary else {}
+	# Presence-based: keep the fallback default until a snapshot actually carries the
+	# per-map value (older native/server builds omit the key).
+	if overlay_dict.has("elevation_sea_level"):
+		_elevation_sea_level = float(overlay_dict["elevation_sea_level"])
 	if overlay_dict.has("channels"):
 		var channel_variant: Variant = overlay_dict["channels"]
 		if channel_variant is Dictionary:
@@ -777,14 +793,26 @@ func _draw_terrain_direct(radius: float, origin: Vector2, viewport_size: Vector2
 				var polygon_points := _hex_points(center, radius)
 				draw_polygon(polygon_points, PackedColorArray([final_color, final_color, final_color, final_color, final_color, final_color]))
 
-	# Draw grid lines if enabled and radius is large enough
+	# Draw grid lines if enabled and radius is large enough.
+	# Each hex draws only its right + lower-right + lower-left edges (the open
+	# polyline v5-v0-v1-v2); its upper and left edges are drawn by the neighbours
+	# that share them. This paints every interior edge exactly once — drawing the
+	# full closed hex per tile painted each shared edge twice, so the doubled
+	# coverage made a translucent GRID_LINE_COLOR read as opaque.
 	if _show_grid_lines and radius >= 12.0:
 		for y in range(row_start, row_end):
 			for logical_x in range(col_start, col_end):
 				if not _wrap_horizontal and (logical_x < 0 or logical_x >= grid_width):
 					continue
 				var center: Vector2 = _hex_center(logical_x, y, radius, origin)
-				draw_polyline(_hex_points(center, radius, true), GRID_LINE_COLOR, 2.0, true)
+				var pts := _hex_points(center, radius)
+				draw_polyline(PackedVector2Array([pts[5], pts[0], pts[1], pts[2]]), GRID_LINE_COLOR, 2.0, true)
+				# Map's north boundary: the top row has no neighbour above to draw its upper edges.
+				if y == 0:
+					draw_polyline(PackedVector2Array([pts[3], pts[4], pts[5]]), GRID_LINE_COLOR, 2.0, true)
+				# Map's west boundary (non-wrapping): column 0 has no western neighbour.
+				if not _wrap_horizontal and logical_x == 0:
+					draw_polyline(PackedVector2Array([pts[2], pts[3]]), GRID_LINE_COLOR, 2.0, true)
 
 
 func _draw_hex_textured_direct(center: Vector2, terrain_id: int, radius: float, tint: Color = Color.WHITE) -> void:
@@ -1029,8 +1057,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		_fit_map_to_view()
 		_mark_input_handled()
 		return
-	if event is InputEventKey and event.pressed and event.keycode == KEY_G:
+	if event is InputEventKey and event.pressed and event.keycode == KEY_H:
 		_show_grid_lines = not _show_grid_lines
+		_invalidate_map_cache()  # grid lines are baked into the cached texture; force a re-render
 		queue_redraw()
 		_mark_input_handled()
 		return
@@ -1363,6 +1392,32 @@ func _average_overlay(key: String) -> float:
 func _value_at_overlay(key: String, x: int, y: int) -> float:
 	return _value_at(_overlay_array(key), x, y)
 
+## Relative 0..100 "Height" for a tile, for the tile panels. Elevation is surfaced
+## only as the normalized 0..1 ElevationField raster, so this reads the RAW elevation
+## channel (the per-frame min/max-normalized channel would distort cross-tile
+## comparison) and rescales the above-sea-level span into 0..100 — sea level and below
+## clamp to 0. Returns -1 when no elevation data has streamed yet so callers can omit
+## the row.
+func relative_height_at(x: int, y: int) -> int:
+	var raster: PackedFloat32Array = _overlay_raw_array("elevation")
+	if raster.is_empty():
+		return -1
+	var normalized: float = _value_at(raster, x, y)
+	var sea_level: float = clampf(_elevation_sea_level, 0.0, 0.999)
+	var above_sea: float = (normalized - sea_level) / (1.0 - sea_level)
+	return int(round(clampf(above_sea, 0.0, 1.0) * 100.0))
+
+## Formats a relative height (0..100) as a number plus a filled/empty bar, e.g.
+## "78  ▰▰▰▰▰▰▰▱▱▱", so two tiles can be compared at a glance. Single source of truth
+## shared by every tile panel.
+func format_height(height: int) -> String:
+	var clamped: int = clampi(height, 0, 100)
+	var filled: int = int(round(float(clamped) / 100.0 * HEIGHT_BAR_SEGMENTS))
+	var bar: String = ""
+	for i in HEIGHT_BAR_SEGMENTS:
+		bar += "▰" if i < filled else "▱"
+	return "%d  %s" % [clamped, bar]
+
 ## Fog of War reads the RAW visibility channel, never the min-max normalized one.
 ## The channel carries a discrete encoding (0.0 = Unexplored, 0.5 = Discovered,
 ## 1.0 = Active) and the FoW thresholds are tuned to it. normalize_overlay()
@@ -1636,6 +1691,10 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 	var terrain_id := _terrain_id_at(col, row)
 	info["terrain_id"] = terrain_id
 	info["terrain_label"] = String(_get_terrain_labels().get(terrain_id, "Terrain %d" % terrain_id))
+	var relative_height := relative_height_at(col, row)
+	if relative_height >= 0:
+		info["relative_height"] = relative_height
+		info["height_display"] = format_height(relative_height)
 	var mask := _tag_mask_at(col, row)
 	info["tags_mask"] = mask
 	var tag_labels := _tag_names_for_mask(mask)

@@ -496,6 +496,8 @@ func _tile_summary_lines(tile_info: Dictionary) -> Array[String]:
         return lines
     var terrain_label := String(tile_info.get("terrain_label", "Unknown"))
     lines.append("Biome: %s" % terrain_label)
+    if tile_info.has("height_display"):
+        lines.append("Height: %s" % String(tile_info["height_display"]))
     var tags_text := String(tile_info.get("tags_text", "none"))
     lines.append("Tags: %s" % tags_text)
     if visibility_state == "discovered":

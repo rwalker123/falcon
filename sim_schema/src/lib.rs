@@ -779,6 +779,9 @@ pub struct ElevationOverlayState {
     pub max_value: f32,
     #[serde(default)]
     pub samples: Vec<u16>,
+    /// Sea level on the same normalized scale as `samples` (see `snapshot.fbs`).
+    #[serde(default)]
+    pub sea_level: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
@@ -1892,6 +1895,7 @@ fn create_elevation_overlay<'a>(
             minValue: overlay.min_value,
             maxValue: overlay.max_value,
             samples: Some(samples_vec),
+            seaLevel: overlay.sea_level,
         },
     )
 }

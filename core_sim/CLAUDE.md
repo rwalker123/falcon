@@ -56,7 +56,7 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 5. **Coastal smoothing** - Blend shoreline tiles via 3×3 blur
 6. **Ocean/coasts** - Distance-transform bands: Shelf → Slope → Deep Ocean; inland seas
 7. **Climate** - Assign `climate_band` using latitude + elevation + moisture
-8. **Hydrology** - D8 flow direction, river polylines, `Floodplain`/`FreshwaterMarsh` marking
+8. **Hydrology** - D8 flow direction, river polylines, `Floodplain`/`FreshwaterMarsh` marking. `RiverDelta` is stamped **only here**, at the last land tile of each river that ends in a standing water body — the ocean *or* an inland sea/lake (lacustrine deltas). The mouth tile must border that water; the biome picker and tag solver never create deltas (those would scatter them with no river attached). Delta tiles are protected from the tag solver's reduction passes so genuine river mouths survive.
 9. **Biomes** - Stamp `TerrainType` via `terrain_for_position` with micro-variant jitters
 10. **Moisture transport** - Humidity blending with wind-driven rain-shadow pass
 11. **Resources** - Surface deposits biased by `TerrainDefinition.resource_bias`
@@ -70,6 +70,8 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 
 ### Map Presets (`map_presets.json`)
 Presets control: `seed_policy`, `dimensions`, `sea_level`, `continent_scale`, `mountain_scale`, `moisture_scale`, `river_density`, `terrain_tag_targets`, `locked_terrain_tags`, `biome_weights`.
+
+The active preset's `sea_level` is carried on the `ElevationField` resource (`heightfield.rs`, via `with_sea_level`; falls back to `DEFAULT_SEA_LEVEL` = 0.6) and exported in the snapshot as `ElevationOverlay.seaLevel` — **pre-normalized to the overlay's [minValue, maxValue] sample scale** (`snapshot.rs` `elevation_overlay_from_field`) so the Godot client can compare it directly against decoded samples for its relative-height / LOS readout.
 
 **Tag Budget Solver**: After biome stamping, iterates locked tag families (water → wetlands → fertile → coastal → highland → polar → arid → volcanic → hazardous) nudging tiles until coverage falls within `tolerance`.
 

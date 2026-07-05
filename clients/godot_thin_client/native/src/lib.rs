@@ -581,6 +581,9 @@ struct OverlaySlices<'a> {
     military: &'a [f32],
     crisis: &'a [f32],
     elevation: &'a [f32],
+    /// Sea level on the same normalized 0..1 scale as `elevation`, surfaced to the
+    /// client as the `elevation_sea_level` scalar for its relative-height readout.
+    elevation_sea_level: f32,
     moisture: &'a [f32],
     visibility: &'a [f32],
 }
@@ -645,6 +648,7 @@ fn snapshot_dict(
     let military_base = copy_into(overlays.military);
     let crisis_base = copy_into(overlays.crisis);
     let elevation_base = copy_into(overlays.elevation);
+    let elevation_sea_level = overlays.elevation_sea_level;
     let moisture_base = copy_into(overlays.moisture);
 
     let mut logistics_normalized = logistics_base.clone();
@@ -951,6 +955,7 @@ fn snapshot_dict(
     let _ = overlays.insert("elevation", elevation_array.clone());
     let _ = overlays.insert("elevation_raw", elevation_raw_array.clone());
     let _ = overlays.insert("elevation_contrast", elevation_contrast_array.clone());
+    let _ = overlays.insert("elevation_sea_level", elevation_sea_level);
     let _ = overlays.insert("moisture", moisture_array.clone());
     let _ = overlays.insert("moisture_raw", moisture_raw_array.clone());
     let _ = overlays.insert("moisture_contrast", moisture_contrast_array.clone());
@@ -1319,6 +1324,9 @@ struct DeltaAggregator {
     elevation_width: u32,
     elevation_height: u32,
     elevation_samples: Vec<f32>,
+    // Sea level on the same normalized 0..1 scale as `elevation_samples`, streamed from
+    // the active map's preset so the client's relative-height readout floors at it.
+    elevation_sea_level: f32,
     moisture_width: u32,
     moisture_height: u32,
     moisture_samples: Vec<f32>,
@@ -1512,6 +1520,7 @@ impl DeltaAggregator {
     fn apply_elevation_overlay(&mut self, overlay: fb::ElevationOverlay<'_>) {
         self.elevation_width = overlay.width();
         self.elevation_height = overlay.height();
+        self.elevation_sea_level = overlay.seaLevel();
         let count = (self.elevation_width as usize)
             .saturating_mul(self.elevation_height as usize)
             .max(1);
@@ -1583,6 +1592,7 @@ impl DeltaAggregator {
             elevation_width,
             elevation_height,
             elevation_samples,
+            elevation_sea_level,
             moisture_width,
             moisture_height,
             moisture_samples,
@@ -1827,6 +1837,7 @@ impl DeltaAggregator {
                 military: &military,
                 crisis: &crisis,
                 elevation: &elevation,
+                elevation_sea_level,
                 moisture: &moisture,
                 visibility: &visibility,
             },
@@ -1921,6 +1932,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
     let mut crisis_dims = (0u32, 0u32);
     let mut elevation_grid: Vec<f32> = Vec::new();
     let mut elevation_dims = (0u32, 0u32);
+    let mut elevation_sea_level: f32 = 0.0;
     let mut moisture_grid: Vec<f32> = Vec::new();
     let mut moisture_dims = (0u32, 0u32);
     let mut crisis_annotations: Vec<CrisisAnnotationRecord> = Vec::new();
@@ -2236,6 +2248,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
     if let Some(overlay) = snapshot.elevationOverlay() {
         let width = overlay.width();
         let height = overlay.height();
+        elevation_sea_level = overlay.seaLevel();
         if width > 0 && height > 0 {
             let total = (width as usize).saturating_mul(height as usize);
             elevation_grid = vec![0.0f32; total];
@@ -2601,6 +2614,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
             military: &military_resized,
             crisis: &crisis_resized,
             elevation: &elevation_resized,
+            elevation_sea_level,
             moisture: &moisture_resized,
             visibility: &visibility_resized,
         },

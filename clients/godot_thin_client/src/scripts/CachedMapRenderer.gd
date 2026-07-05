@@ -6,7 +6,6 @@ class_name CachedMapRenderer
 signal cache_rendered  # Emitted when the cache has been rendered
 
 const SQRT3 := 1.7320508075688772
-const GRID_LINE_COLOR := Color(0.35, 0.45, 0.30, 0.45)
 
 # Reference to the main MapView for accessing map data
 var map_view: Node2D = null
@@ -102,14 +101,26 @@ func _draw() -> void:
 				var polygon_points := _hex_points(center, radius)
 				draw_polygon(polygon_points, PackedColorArray([final_color, final_color, final_color, final_color, final_color, final_color]))
 
-	# Draw grid lines if enabled and radius is large enough
+	# Draw grid lines if enabled and radius is large enough.
+	# Each hex draws only its right + lower-right + lower-left edges (the open
+	# polyline v5-v0-v1-v2); its upper and left edges are drawn by the neighbours
+	# that share them, so every interior edge is painted exactly once. See the
+	# matching loop in MapView._draw_terrain_direct for the rationale.
 	if map_view._show_grid_lines and radius >= 12.0:
+		var grid_color: Color = map_view.GRID_LINE_COLOR
 		for y in range(row_start, row_end):
 			for logical_x in range(col_start, col_end):
 				if not wrap_horizontal and (logical_x < 0 or logical_x >= grid_width):
 					continue
 				var center: Vector2 = _hex_center(logical_x, y, radius, _render_origin)
-				draw_polyline(_hex_points(center, radius, true), GRID_LINE_COLOR, 2.0, true)
+				var pts := _hex_points(center, radius)
+				draw_polyline(PackedVector2Array([pts[5], pts[0], pts[1], pts[2]]), grid_color, 2.0, true)
+				# Map's north boundary: the top row has no neighbour above to draw its upper edges.
+				if y == 0:
+					draw_polyline(PackedVector2Array([pts[3], pts[4], pts[5]]), grid_color, 2.0, true)
+				# Map's west boundary (non-wrapping): column 0 has no western neighbour.
+				if not wrap_horizontal and logical_x == 0:
+					draw_polyline(PackedVector2Array([pts[2], pts[3]]), grid_color, 2.0, true)
 
 	cache_rendered.emit()
 

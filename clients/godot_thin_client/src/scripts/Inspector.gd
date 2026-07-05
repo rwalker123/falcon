@@ -4811,6 +4811,20 @@ func _format_tile_coords(record: Dictionary) -> String:
 	var y: int = int(record.get("y", -1))
 	return "@%d,%d" % [x, y]
 
+## Relative "Height" lives only in the normalized ElevationField raster (surfaced by
+## MapView), not on the per-tile record, so this asks MapView for the 0..100 reading
+## and its shared bar formatting, and returns "" when coords are invalid or no
+## elevation data is available yet.
+func _tile_height_text(x: int, y: int) -> String:
+	if x < 0 or y < 0:
+		return ""
+	if _map_view == null or not _map_view.has_method("relative_height_at"):
+		return ""
+	var height: int = int(_map_view.call("relative_height_at", x, y))
+	if height < 0:
+		return ""
+	return String(_map_view.call("format_height", height))
+
 func _render_tile_detail(entity_id: int, preview: bool = false) -> void:
 	if terrain_tile_detail_text == null:
 		return
@@ -4852,6 +4866,9 @@ Hover or select a tile to inspect biome tags and conditions."""
 		lines.append("Food Module: none")
 	lines.append("Temperature: %.1f" % float(record.get("temperature", 0.0)))
 	lines.append("Mass: %.1f" % float(record.get("mass", 0.0)))
+	var height_text: String = _tile_height_text(int(record.get("x", -1)), int(record.get("y", -1)))
+	if height_text != "":
+		lines.append("Height: %s" % height_text)
 	lines.append("Element ID: %d" % int(record.get("element", -1)))
 	var mountain_kind: int = int(record.get("mountain_kind", 0))
 	if mountain_kind > 0:

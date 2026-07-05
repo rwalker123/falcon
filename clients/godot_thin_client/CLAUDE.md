@@ -61,10 +61,23 @@ Server (FlatBuffers) -> SnapshotStream.gd -> parsed snapshot
 `native/` contains GDExtension bindings for FlatBuffers decoding (generated from `sim_schema/schemas/snapshot.fbs`).
 
 > **Note:** Elevation is not rendered as 3D relief. A shallow-3D heightfield view was
-> prototyped and permanently removed; elevation is now surfaced only as the 2D **Elevation
-> Heatmap** overlay. The `ElevationOverlay.samples` raster still streams from the core for that
-> heatmap and for gameplay, but the per-vertex `normals` field (3D-only) was dropped from the
-> schema. See `docs/architecture.md` → "Removed: 3D Relief Rendering".
+> prototyped and permanently removed; elevation is surfaced as the 2D **Elevation
+> Heatmap** overlay and as a per-tile **Height** readout in the tile panels (the HUD
+> selection panel via `MapView._tile_info_at` → `Hud._tile_summary_lines`, and the
+> Inspector Terrain tab). All read the same normalized `ElevationOverlay.samples` raster —
+> there is no per-tile elevation on `TileState`. **Height is a relative 0..100 indicator**
+> (a number + filled/empty bar), NOT meters: it exists so a player can reason about line of
+> sight — a higher tile can occlude the tile behind it (matching the LOS raycast in
+> `visibility_systems.rs`). `MapView.relative_height_at` rescales the above-sea-level span
+> into 0..100 (at/below sea level reads 0, since open water occludes nothing). The sea level
+> is the **active map's** `sea_level`, streamed per-snapshot as `ElevationOverlay.seaLevel`
+> (pre-normalized server-side to the raster's [min,max] scale) and read into
+> `MapView._elevation_sea_level` — no hardcode; `HEIGHT_DEFAULT_SEA_LEVEL` is only the
+> pre-first-snapshot fallback. `MapView.format_height` is the single source of truth for the
+> number+bar formatting. The
+> raster still streams from the core for the heatmap and for gameplay (LOS), but the
+> per-vertex `normals` field (3D-only) was dropped from the schema. See
+> `docs/architecture.md` → "Removed: 3D Relief Rendering".
 
 ---
 
@@ -324,7 +337,7 @@ QuickJS sandbox for user scripts.
 | Mouse wheel | Zoom at cursor |
 | Right/middle drag | Pan |
 | `C` | Fit map to view |
-| `G` | Toggle grid lines |
+| `H` | Toggle hex grid lines |
 | `F` | Toggle fog of war |
 | `T` | Toggle terrain textures |
 | `I` | Hide/show inspector |
