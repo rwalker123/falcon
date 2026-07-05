@@ -180,9 +180,10 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 
 **Turn Flow** (`TurnStage::Visibility` after Population, before Crisis):
 1. `clear_active_visibility` - Reset Active tiles to Discovered
-2. `calculate_visibility` - Compute visibility from units/settlements
-3. `apply_trade_route_visibility` - Mark active trade-route tiles as Active
-4. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored (disabled by default; permanent memory)
+2. `prune_sweep_tracker` - Forget sweep positions of despawned cohorts
+3. `calculate_visibility` - Compute visibility from units/settlements
+4. `apply_trade_route_visibility` - Mark active trade-route tiles as Active
+5. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored (disabled by default; permanent memory)
 
 **Visibility Sources**:
 - **Units**: `PopulationCohort` with `StartingUnit` marker provides sight from its
