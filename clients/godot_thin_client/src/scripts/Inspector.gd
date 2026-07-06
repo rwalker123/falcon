@@ -49,7 +49,6 @@ const HERD_TRADE_GOODS_YIELD_PER_BIOMASS := 0.005
 const HERD_FOLLOW_MORALE_GAIN := 0.03
 const HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS := 0.0004
 const HERD_KNOWLEDGE_PROGRESS_CAP := 0.25
-const HERD_TRADE_DIFFUSION_BONUS := 0.25
 const CAP_CONSTRUCTION := 1 << 1
 const CAP_INDUSTRY_T1 := 1 << 2
 const CAP_INDUSTRY_T2 := 1 << 3
@@ -95,12 +94,9 @@ var _terrain_highlight_dropdown: OptionButton = null
 @onready var victory_modes_list: ItemList = $RootPanel/TabContainer/Victory/VictoryVBox/VictoryModesList
 @onready var influencers_text: RichTextLabel = $RootPanel/TabContainer/Influencers/InfluencersText
 @onready var corruption_text: RichTextLabel = $RootPanel/TabContainer/Corruption/CorruptionText
-@onready var trade_summary_text: RichTextLabel = $RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection/TradeSummaryText
-@onready var trade_overlay_toggle: CheckButton = $RootPanel/TabContainer/Map/MapVBox/LogisticsSection/LogisticsOverlayToggle
 @onready var highlight_rivers_toggle: CheckButton = $RootPanel/TabContainer/Map/MapVBox/HydrologySection/HighlightRiversToggle
-@onready var trade_links_list: ItemList = $RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection/TradeLinksList
-@onready var trade_events_text: RichTextLabel = $RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection/TradeEventsText
 @onready var power_panel: PowerInspectorPanel = $RootPanel/TabContainer/Power
+@onready var trade_panel: TradeInspectorPanel = $RootPanel/TabContainer/Trade
 @onready var crisis_panel: CrisisInspectorPanel = $RootPanel/TabContainer/Crisis
 ## Extracted tab panels that implement the coordinator contract (apply_update/reset).
 ## Populated in _ready once the @onready handles resolve.
@@ -207,9 +203,6 @@ var _selected_culture_layer_id: int = -1
 var _culture_layers: Dictionary = {}
 var _culture_tensions: Array[Dictionary] = []
 var _culture_tension_tracker: Dictionary = {}
-var _trade_links: Dictionary = {}
-var _trade_metrics: Dictionary = {}
-var _trade_history: Array[Dictionary] = []
 var _great_discovery_records: Dictionary = {}
 var _great_discovery_progress_map: Dictionary = {}
 var _great_discovery_telemetry: Dictionary = {}
@@ -225,7 +218,6 @@ var _map_dimensions: Vector2i = MAP_SIZE_DEFAULT_DIMENSIONS
 var _map_size_custom_index: int = -1
 var _suppress_map_size_signal: bool = false
 var _panel_visible: bool = true
-var _selected_trade_entity: int = -1
 var _seen_command_events: Dictionary = {}
 var _log_entries: Array = []
 var _log_filtered_records: Array = []
@@ -313,8 +305,6 @@ const CORRUPTION_OPTIONS = [
 	{"label": "Military", "key": "military"},
 	{"label": "Governance", "key": "governance"}
 ]
-const TRADE_TOP_LINK_LIMIT = 10
-const TRADE_EVENT_HISTORY_LIMIT = 24
 var _viewport: Viewport = null
 var _panel_width: float = PANEL_WIDTH_DEFAULT
 var _is_resizing = false
@@ -353,17 +343,9 @@ func _ready() -> void:
 	apply_typography()
 	_connect_terrain_ui()
 	_connect_culture_ui()
-	if trade_overlay_toggle != null:
-		trade_overlay_toggle.toggled.connect(_on_trade_overlay_toggled)
 	if highlight_rivers_toggle != null:
 		highlight_rivers_toggle.toggled.connect(_on_highlight_rivers_toggled)
 		_on_highlight_rivers_toggled(highlight_rivers_toggle.button_pressed)
-	if trade_links_list != null:
-		var trade_select_callable = Callable(self, "_on_trade_link_selected")
-		if not trade_links_list.is_connected("item_selected", trade_select_callable):
-			trade_links_list.item_selected.connect(_on_trade_link_selected)
-		if not trade_links_list.is_connected("item_activated", trade_select_callable):
-			trade_links_list.item_activated.connect(_on_trade_link_selected)
 	if fauna_list != null and not fauna_list.is_connected("item_selected", Callable(self, "_on_fauna_list_item_selected")):
 		fauna_list.item_selected.connect(_on_fauna_list_item_selected)
 	if great_discovery_ledger_list != null:
@@ -384,11 +366,17 @@ func _ready() -> void:
 			great_discovery_definitions_list.item_selected.connect(_on_great_discovery_definition_selected)
 		if not great_discovery_definitions_list.is_connected("item_activated", definition_select_callable):
 			great_discovery_definitions_list.item_activated.connect(_on_great_discovery_definition_selected)
-	_tab_panels = [power_panel, crisis_panel, knowledge_panel]
+	_tab_panels = [power_panel, crisis_panel, knowledge_panel, trade_panel]
 	if crisis_panel != null:
 		crisis_panel.set_command_hooks(Callable(self, "_send_command"), Callable(self, "_append_command_log"))
 	if knowledge_panel != null:
 		knowledge_panel.set_command_hooks(Callable(self, "_send_command"), Callable(self, "_append_command_log"))
+	# Trade diffusion records also feed the Knowledge event list; the panels stay
+	# decoupled — Trade emits, the coordinator forwards to Knowledge.
+	if trade_panel != null and knowledge_panel != null:
+		trade_panel.knowledge_events_produced.connect(
+			func(records: Array) -> void: knowledge_panel.append_events(records)
+		)
 	_update_panel_layout()
 	_initialize_log_filters()
 	_render_static_sections()
@@ -507,14 +495,6 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 	if data.has("corruption"):
 		var ledger: Dictionary = data["corruption"]
 		_corruption = ledger.duplicate(true)
-
-	if full_snapshot and data.has("trade_links"):
-		_rebuild_trade_links(data["trade_links"])
-	elif data.has("trade_link_updates"):
-		_merge_trade_links(data["trade_link_updates"])
-
-	if data.has("trade_link_removed"):
-		_remove_trade_links(data["trade_link_removed"])
 
 	if full_snapshot and data.has("great_discovery_definitions"):
 		_set_great_discovery_definitions(data["great_discovery_definitions"])
@@ -701,7 +681,6 @@ func _render_dynamic_sections() -> void:
 	_render_sentiment()
 	_render_influencers()
 	_render_corruption()
-	_render_trade()
 	_render_fauna()
 	_render_victory()
 	_render_great_discoveries()
@@ -722,9 +701,8 @@ func _render_static_sections() -> void:
 	_selected_culture_layer_id = -1
 	_selected_tile_entity = -1
 	_selected_tile_coords = Vector2i(-1, -1)
-	_trade_links.clear()
-	_trade_metrics.clear()
-	_trade_history.clear()
+	if trade_panel != null:
+		trade_panel.reset()
 	if power_panel != null:
 		power_panel.reset()
 	_fauna_entries.clear()
@@ -743,7 +721,6 @@ func _render_static_sections() -> void:
 	_great_discovery_telemetry.clear()
 	_selected_great_discovery_key = ""
 	_selected_great_discovery_progress_key = ""
-	_selected_trade_entity = -1
 	_seen_command_events.clear()
 	_clear_terrain_ui()
 	_mark_logs_dirty()
@@ -759,12 +736,6 @@ func _render_static_sections() -> void:
 	_refresh_influencer_dropdown()
 	_update_command_controls_enabled()
 
-	if trade_summary_text != null:
-		trade_summary_text.text = "[b]Trade Diffusion[/b]\nAwaiting trade link telemetry."
-	if trade_links_list != null:
-		trade_links_list.clear()
-	if trade_events_text != null:
-		trade_events_text.text = "[i]No diffusion events recorded yet.[/i]"
 	if victory_summary_text != null:
 		victory_summary_text.text = "[b]Victory Progress[/b]\n[i]Awaiting telemetry.[/i]"
 	if victory_modes_list != null:
@@ -833,8 +804,6 @@ func apply_typography() -> void:
 		culture_tension_text,
 		influencers_text,
 		corruption_text,
-	trade_summary_text,
-	trade_events_text,
 		great_discovery_summary_text,
 		great_discovery_ledger_detail,
 		great_discovery_progress_detail,
@@ -870,7 +839,6 @@ func apply_typography() -> void:
 		terrain_biome_list,
 		terrain_tile_list,
 		culture_divergence_list,
-		trade_links_list,
 		great_discovery_definitions_list,
 		great_discovery_ledger_list,
 		great_discovery_progress_list
@@ -879,7 +847,6 @@ func apply_typography() -> void:
 
 	var control_nodes: Array = [
 		map_size_dropdown,
-		trade_overlay_toggle,
 		rollback_ten_button,
 		rollback_button,
 		play_pause_button,
@@ -924,6 +891,8 @@ func apply_typography() -> void:
 		crisis_panel.apply_typography()
 	if knowledge_panel != null:
 		knowledge_panel.apply_typography()
+	if trade_panel != null:
+		trade_panel.apply_typography()
 
 	_update_panel_layout()
 
@@ -2210,38 +2179,6 @@ func _render_culture() -> void:
 			])
 	culture_tension_text.text = "\n".join(tension_lines)
 
-func _rebuild_trade_links(array) -> void:
-	_trade_links.clear()
-	_merge_trade_links(array)
-	_selected_trade_entity = -1
-	if trade_links_list != null:
-		trade_links_list.clear()
-	_sync_map_trade_overlay()
-
-func _merge_trade_links(array) -> void:
-	if array is Array:
-		for entry in array:
-			if not (entry is Dictionary):
-				continue
-			var info: Dictionary = (entry as Dictionary).duplicate(true)
-			var id: int = int(info.get("entity", info.get("id", 0)))
-			_trade_links[id] = info
-	_render_trade()
-	_sync_map_trade_overlay()
-
-func _remove_trade_links(ids) -> void:
-	if ids is PackedInt64Array:
-		var packed: PackedInt64Array = ids
-		for value in packed:
-			_trade_links.erase(int(value))
-	elif ids is Array:
-		for value in ids:
-			_trade_links.erase(int(value))
-	if _trade_links.is_empty():
-		_selected_trade_entity = -1
-	_render_trade()
-	_sync_map_trade_overlay()
-
 func _render_fauna() -> void:
 	if fauna_list == null or fauna_detail_text == null:
 		return
@@ -2884,105 +2821,10 @@ func _get_great_discovery_progress_entry_by_key(key: String) -> Dictionary:
 		return (entry_variant as Dictionary).duplicate(true)
 	return {}
 
-func _render_trade() -> void:
-	if trade_summary_text == null:
-		return
-
-	if _trade_links.is_empty():
-		trade_summary_text.text = "[b]Trade Diffusion[/b]\n[i]Awaiting trade link telemetry.[/i]"
-		if trade_links_list != null:
-			trade_links_list.clear()
-		if trade_events_text != null:
-			trade_events_text.text = "[i]No diffusion events recorded yet.[/i]"
-		return
-
-	var lines: Array[String] = []
-	lines.append("[b]Trade Diffusion[/b]")
-	lines.append("Tracked links: %d" % _trade_links.size())
-
-	if not _trade_metrics.is_empty():
-		var metric_tick: int = int(_trade_metrics.get("tick", _last_turn))
-		var diffusion_count: int = int(_trade_metrics.get("tech_diffusion_applied", 0))
-		var migration_count: int = int(_trade_metrics.get("migration_transfers", 0))
-		var truncated: int = int(_trade_metrics.get("records_truncated", 0))
-		lines.append("Last tick %d → leaks %d (migration %d, extra %d)"
-			% [metric_tick, diffusion_count, migration_count, truncated])
-
-	var total_open: float = 0.0
-	var total_flow: float = 0.0
-	for value in _trade_links.values():
-		if value is Dictionary:
-			total_open += _extract_trade_openness(value)
-			total_flow += abs(float((value as Dictionary).get("throughput", 0.0)))
-	var avg_open: float = total_open / max(1, _trade_links.size())
-	var avg_flow: float = total_flow / max(1, _trade_links.size())
-	lines.append("Avg openness %.2f | avg flow %.2f" % [avg_open, avg_flow])
-	var wildlife_line := _wildlife_trade_summary_line()
-	if wildlife_line != "":
-		lines.append(wildlife_line)
-
-	trade_summary_text.text = "\n".join(lines)
-
-	if trade_links_list != null:
-		trade_links_list.clear()
-		var entries: Array = Array(_trade_links.values())
-		entries.sort_custom(Callable(self, "_compare_trade_links"))
-		var limit: int = min(entries.size(), TRADE_TOP_LINK_LIMIT)
-		for idx in range(limit):
-			var info_variant: Variant = entries[idx]
-			if not (info_variant is Dictionary):
-				continue
-			var info: Dictionary = info_variant
-			var entity_id: int = int(info.get("entity", info.get("id", 0)))
-			var openness: float = _extract_trade_openness(info)
-			var throughput: float = float(info.get("throughput", 0.0))
-			var knowledge_variant: Variant = info.get("knowledge", {})
-			var leak_timer: int = 0
-			if knowledge_variant is Dictionary:
-				leak_timer = int((knowledge_variant as Dictionary).get("leak_timer", 0))
-			var from_faction: int = int(info.get("from_faction", -1))
-			var to_faction: int = int(info.get("to_faction", -1))
-			var label: String = "ID %d :: F%d→F%d | open %.2f | τ %d | flow %.2f" % [
-				entity_id,
-				from_faction,
-				to_faction,
-				openness,
-				leak_timer,
-				throughput
-			]
-			trade_links_list.add_item(label)
-			trade_links_list.set_item_metadata(trade_links_list.get_item_count() - 1, entity_id)
-			if entity_id == _selected_trade_entity:
-				trade_links_list.select(trade_links_list.get_item_count() - 1)
-
-	if trade_events_text != null:
-		if _trade_history.is_empty():
-			trade_events_text.text = "[i]No diffusion events recorded yet.[/i]"
-		else:
-			var event_lines: Array[String] = []
-			for record in _trade_history:
-				if record is Dictionary:
-					event_lines.append(_format_trade_event_line(record))
-			trade_events_text.text = "\n".join(event_lines)
-
-func _compare_trade_links(a: Dictionary, b: Dictionary) -> bool:
-	var a_open: float = _extract_trade_openness(a)
-	var b_open: float = _extract_trade_openness(b)
-	if is_equal_approx(a_open, b_open):
-		var a_flow: float = abs(float(a.get("throughput", 0.0)))
-		var b_flow: float = abs(float(b.get("throughput", 0.0)))
-		return a_flow > b_flow
-	return a_open > b_open
-
-func _extract_trade_openness(info: Dictionary) -> float:
-	var knowledge_variant: Variant = info.get("knowledge", {})
-	if knowledge_variant is Dictionary:
-		return float((knowledge_variant as Dictionary).get("openness", 0.0))
-	return 0.0
-
 func attach_map_view(view: Node) -> void:
 	_map_view = view
-	_sync_map_trade_overlay()
+	if trade_panel != null:
+		trade_panel.set_map_view(view)
 	if highlight_rivers_toggle != null and _map_view.has_method("set_highlight_rivers"):
 		_map_view.call("set_highlight_rivers", highlight_rivers_toggle.button_pressed)
 	_apply_overlay_selection_to_map()
@@ -3000,93 +2842,9 @@ func set_hud_layer(layer: Object) -> void:
 	_hud_layer = layer
 	_update_panel_layout()
 
-func _sync_map_trade_overlay() -> void:
-	if _map_view == null:
-		return
-	var links_array: Array = []
-	for value in _trade_links.values():
-		if value is Dictionary:
-			links_array.append((value as Dictionary).duplicate(true))
-	var enabled: bool = trade_overlay_toggle != null and trade_overlay_toggle.button_pressed
-	if _map_view.has_method("update_trade_overlay"):
-		_map_view.call("update_trade_overlay", links_array, enabled)
-	if _map_view.has_method("set_trade_overlay_enabled"):
-		_map_view.call("set_trade_overlay_enabled", enabled)
-	if _map_view.has_method("set_trade_overlay_selection"):
-		_map_view.call("set_trade_overlay_selection", _selected_trade_entity)
-
-func _on_trade_overlay_toggled(pressed: bool) -> void:
-	_sync_map_trade_overlay()
-
 func _on_highlight_rivers_toggled(pressed: bool) -> void:
 	if _map_view != null and _map_view.has_method("set_highlight_rivers"):
 		_map_view.call("set_highlight_rivers", pressed)
-
-func _on_trade_link_selected(index: int) -> void:
-	if trade_links_list == null:
-		return
-	if index < 0 or index >= trade_links_list.get_item_count():
-		_selected_trade_entity = -1
-		_sync_map_trade_overlay()
-		return
-	var meta = trade_links_list.get_item_metadata(index)
-	if typeof(meta) in [TYPE_INT, TYPE_FLOAT]:
-		_selected_trade_entity = int(meta)
-	else:
-		_selected_trade_entity = -1
-	_sync_map_trade_overlay()
-
-func _push_trade_record(record: Dictionary, tick: int) -> void:
-	var entry: Dictionary = record.duplicate(true)
-	entry["tick"] = tick
-	_trade_history.append(entry.duplicate(true))
-	while _trade_history.size() > TRADE_EVENT_HISTORY_LIMIT:
-		_trade_history.pop_front()
-	# Trade diffusion records also surface in the Knowledge tab's event feed.
-	if knowledge_panel != null:
-		knowledge_panel.append_events([entry])
-
-func _format_trade_event_line(record: Dictionary) -> String:
-	var tick: int = int(record.get("tick", _last_turn))
-	var from_faction: int = int(record.get("from", -1))
-	var to_faction: int = int(record.get("to", -1))
-	var discovery: int = int(record.get("discovery", -1))
-	var delta_percent: float = float(record.get("delta", 0.0)) * 100.0
-	var via_migration: bool = bool(record.get("via_migration", false))
-	var tag: String = "migration" if via_migration else "trade"
-	var herd_density: float = float(record.get("herd_density", 0.0))
-	var wildlife_suffix := ""
-	if herd_density > 0.0:
-		var bonus_pct := herd_density * HERD_TRADE_DIFFUSION_BONUS * 100.0
-		wildlife_suffix = " ρ=%.2f (+%.1f%%)" % [herd_density, bonus_pct]
-	return "[%03d] F%d→F%d discovery %d +%.2f%% (%s)%s" % [
-		tick,
-		from_faction,
-		to_faction,
-		discovery,
-		delta_percent,
-		tag,
-		wildlife_suffix
-	]
-
-func _maybe_ingest_trade_telemetry(entry: Dictionary) -> bool:
-	var message: String = String(entry.get("message", ""))
-	if not message.begins_with("trade.telemetry "):
-		return false
-	var payload := message.substr("trade.telemetry ".length())
-	var parsed: Variant = JSON.parse_string(payload)
-	if typeof(parsed) != TYPE_DICTIONARY:
-		return false
-	var info: Dictionary = parsed
-	_trade_metrics = info.duplicate(true)
-	var tick_value: int = int(info.get("tick", _last_turn))
-	var records_variant: Variant = info.get("records", [])
-	if records_variant is Array:
-		for record_variant in records_variant:
-			if record_variant is Dictionary:
-				_push_trade_record(record_variant as Dictionary, tick_value)
-	_render_trade()
-	return true
 
 func _herd_reward_summary_lines(biomass: float) -> Array[String]:
 	var lines: Array[String] = []
@@ -3109,19 +2867,6 @@ func _herd_reward_summary_lines(biomass: float) -> Array[String]:
 		lines.append("• Fauna lore +%.1f%% progress" % (lore_progress * 100.0))
 	lines.append("• Fog pulse reveals nearby tiles")
 	return lines
-
-func _wildlife_trade_summary_line() -> String:
-	if _trade_history.is_empty():
-		return ""
-	var last_index := _trade_history.size() - 1
-	if last_index < 0:
-		return ""
-	var record: Dictionary = _trade_history[last_index]
-	var herd_density: float = float(record.get("herd_density", 0.0))
-	if herd_density <= 0.0:
-		return ""
-	var bonus_pct := herd_density * HERD_TRADE_DIFFUSION_BONUS * 100.0
-	return "Wildlife density %.0f%% → +%.1f%% leak bonus" % [herd_density * 100.0, bonus_pct]
 
 func _update_culture_divergence_detail() -> void:
 	if culture_divergence_detail == null:
@@ -3928,7 +3673,8 @@ func _ingest_log_entry(entry: Dictionary) -> void:
 	_record_tick_sample(entry)
 	if knowledge_panel != null:
 		knowledge_panel.ingest_log_entry(entry)
-	_maybe_ingest_trade_telemetry(entry)
+	if trade_panel != null:
+		trade_panel.ingest_log_entry(entry)
 	var level: String = _normalize_log_level(String(entry.get("level", "INFO")))
 	var raw_target: String = String(entry.get("target", ""))
 	var timestamp_ms: int = int(entry.get("timestamp_ms", 0))
@@ -5226,7 +4972,9 @@ func _apply_capability_gating() -> void:
 	# Knowledge stays a clickable tab; the panel renders a locked explanation while gated.
 	if knowledge_panel != null:
 		knowledge_panel.set_available(_has_flag(CAP_ESPIONAGE_T2))
-	_set_tab_enabled("Trade", _has_flag(CAP_INDUSTRY_T1) or _has_flag(CAP_INDUSTRY_T2))
+	# Trade stays a clickable tab; the panel renders a locked explanation while gated.
+	if trade_panel != null:
+		trade_panel.set_available(_has_flag(CAP_INDUSTRY_T1) or _has_flag(CAP_INDUSTRY_T2))
 	# Terrain is an always-available inspection tab (biome list, tile drill-down, terrain
 	# highlight). Only the Found Camp *action* within it is construction-gated (below).
 	_set_tab_enabled("Terrain", true)

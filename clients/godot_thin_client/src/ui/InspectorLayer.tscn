@@ -1,4 +1,4 @@
-[gd_scene load_steps=7 format=3 uid="uid://b8x7k2q5j4l3n"]
+[gd_scene load_steps=8 format=3 uid="uid://b8x7k2q5j4l3n"]
 
 [ext_resource type="Script" uid="uid://dgjdlxbpsrrw6" path="res://src/scripts/Inspector.gd" id="1"]
 [ext_resource type="Script" uid="uid://dnhxgwd0jtak5" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="2"]
@@ -6,6 +6,7 @@
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/PowerPanel.gd" id="4"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/CrisisPanel.gd" id="5"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/KnowledgePanel.gd" id="6"]
+[ext_resource type="Script" path="res://src/scripts/ui/inspector/TradePanel.gd" id="7"]
 
 [node name="Inspector" type="CanvasLayer"]
 script = ExtResource("1")
@@ -323,6 +324,7 @@ size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="LogisticsOverlayToggle" type="CheckButton" parent="RootPanel/TabContainer/Map/MapVBox/LogisticsSection"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Show logistics overlay"
@@ -599,6 +601,7 @@ visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+script = ExtResource("7")
 metadata/_tab_index = 7
 
 [node name="TradeVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Trade"]
@@ -618,6 +621,7 @@ size_flags_horizontal = 3
 text = "Trade Diffusion"
 
 [node name="TradeSummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 bbcode_enabled = true
@@ -634,6 +638,7 @@ size_flags_horizontal = 3
 text = "Top Trade Links"
 
 [node name="TradeLinksList" type="ItemList" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection"]
+unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 200)
 layout_mode = 2
 size_flags_horizontal = 3
@@ -651,6 +656,7 @@ size_flags_horizontal = 3
 text = "Recent Trade Events"
 
 [node name="TradeEventsText" type="RichTextLabel" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 bbcode_enabled = true
