@@ -1,10 +1,12 @@
-[gd_scene load_steps=6 format=3 uid="uid://b8x7k2q5j4l3n"]
+[gd_scene load_steps=8 format=3 uid="uid://b8x7k2q5j4l3n"]
 
 [ext_resource type="Script" uid="uid://dgjdlxbpsrrw6" path="res://src/scripts/Inspector.gd" id="1"]
 [ext_resource type="Script" uid="uid://dnhxgwd0jtak5" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="2"]
 [ext_resource type="Script" path="res://src/scripts/ui/AutoSizingPanel.gd" id="3"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/PowerPanel.gd" id="4"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/CrisisPanel.gd" id="5"]
+[ext_resource type="Script" path="res://src/scripts/ui/inspector/KnowledgePanel.gd" id="6"]
+[ext_resource type="Script" path="res://src/scripts/ui/inspector/TradePanel.gd" id="7"]
 
 [node name="Inspector" type="CanvasLayer"]
 script = ExtResource("1")
@@ -322,6 +324,7 @@ size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="LogisticsOverlayToggle" type="CheckButton" parent="RootPanel/TabContainer/Map/MapVBox/LogisticsSection"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Show logistics overlay"
@@ -598,6 +601,7 @@ visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+script = ExtResource("7")
 metadata/_tab_index = 7
 
 [node name="TradeVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Trade"]
@@ -617,6 +621,7 @@ size_flags_horizontal = 3
 text = "Trade Diffusion"
 
 [node name="TradeSummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 bbcode_enabled = true
@@ -633,6 +638,7 @@ size_flags_horizontal = 3
 text = "Top Trade Links"
 
 [node name="TradeLinksList" type="ItemList" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection"]
+unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 200)
 layout_mode = 2
 size_flags_horizontal = 3
@@ -650,6 +656,7 @@ size_flags_horizontal = 3
 text = "Recent Trade Events"
 
 [node name="TradeEventsText" type="RichTextLabel" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 bbcode_enabled = true
@@ -716,6 +723,7 @@ visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+script = ExtResource("6")
 metadata/_tab_index = 9
 
 [node name="KnowledgeVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Knowledge"]
@@ -730,6 +738,7 @@ size_flags_horizontal = 3
 text = "Knowledge Diffusion"
 
 [node name="KnowledgeSummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 bbcode_enabled = true
@@ -746,6 +755,7 @@ size_flags_horizontal = 3
 text = "Discovery Progress"
 
 [node name="DiscoveryProgressList" type="ItemList" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection"]
+unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 200)
 layout_mode = 2
 size_flags_horizontal = 3
@@ -763,6 +773,7 @@ size_flags_horizontal = 3
 text = "Recent Events"
 
 [node name="KnowledgeEventsText" type="RichTextLabel" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 bbcode_enabled = true
@@ -789,6 +800,7 @@ layout_mode = 2
 text = "Target Faction"
 
 [node name="KnowledgeCounterFactionSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 min_value = 0.0
@@ -799,10 +811,12 @@ layout_mode = 2
 text = "Policy"
 
 [node name="KnowledgePolicyDropdown" type="OptionButton" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="KnowledgePolicyApplyButton" type="Button" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Apply Policy"
 
@@ -811,6 +825,7 @@ layout_mode = 2
 text = "Budget Reserve"
 
 [node name="KnowledgeBudgetReserveSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 min_value = 0.0
@@ -818,6 +833,7 @@ max_value = 100000.0
 step = 1.0
 
 [node name="KnowledgeBudgetSetButton" type="Button" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Set Reserve"
 
@@ -826,6 +842,7 @@ layout_mode = 2
 text = "Budget Delta"
 
 [node name="KnowledgeBudgetDeltaSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 min_value = -10000.0
@@ -833,10 +850,12 @@ max_value = 10000.0
 step = 1.0
 
 [node name="KnowledgeBudgetAdjustButton" type="Button" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection/KnowledgeCounterintelGrid"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Adjust Budget"
 
 [node name="KnowledgeCounterintelStatusText" type="RichTextLabel" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeCounterintelSection"]
+unique_name_in_owner = true
 layout_mode = 2
 fit_content = true
 
@@ -862,6 +881,7 @@ size_flags_horizontal = 1
 text = "Mission"
 
 [node name="KnowledgeMissionDropdown" type="OptionButton" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 
@@ -870,6 +890,7 @@ layout_mode = 2
 text = "Attacker Faction"
 
 [node name="KnowledgeOwnerSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 min_value = 0.0
@@ -880,6 +901,7 @@ layout_mode = 2
 text = "Target Faction"
 
 [node name="KnowledgeTargetSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 min_value = 0.0
@@ -890,6 +912,7 @@ layout_mode = 2
 text = "Discovery ID"
 
 [node name="KnowledgeDiscoverySpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 min_value = 0.0
@@ -900,6 +923,7 @@ layout_mode = 2
 text = "Target Tier"
 
 [node name="KnowledgeTierSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 min_value = -1.0
@@ -917,10 +941,12 @@ size_flags_horizontal = 3
 theme_override_constants/separation = 8
 
 [node name="KnowledgeAgentAutoToggle" type="CheckButton" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeAgentContainer"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Auto"
 
 [node name="KnowledgeAgentSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid/KnowledgeAgentContainer"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 min_value = -1.0
@@ -933,6 +959,7 @@ layout_mode = 2
 text = "Schedule Turn"
 
 [node name="KnowledgeScheduleSpin" type="SpinBox" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection/KnowledgeToolsGrid"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 min_value = 0.0
@@ -940,10 +967,12 @@ max_value = 100000.0
 step = 1.0
 
 [node name="KnowledgeQueueMissionButton" type="Button" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Queue Mission"
 
 [node name="KnowledgeMissionDetailsText" type="RichTextLabel" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeToolsSection"]
+unique_name_in_owner = true
 layout_mode = 2
 fit_content = true
 
@@ -956,6 +985,7 @@ layout_mode = 2
 text = "Mission Queue"
 
 [node name="KnowledgeQueueList" type="ItemList" parent="RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeQueueSection"]
+unique_name_in_owner = true
 layout_mode = 2
 auto_height = true
 
