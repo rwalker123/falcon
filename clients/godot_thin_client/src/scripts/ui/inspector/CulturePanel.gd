@@ -107,6 +107,10 @@ func _render_impl() -> void:
 		if culture_divergence_detail != null:
 			culture_divergence_detail.text = "[i]Awaiting regional or local layers.[/i]"
 		culture_tension_text.text = "[i]No active tensions.[/i]"
+		# No layers means no valid selection: clear any stale MapView highlight so a
+		# reset()/disconnect or a removal that empties the layer set doesn't leave the
+		# previous culture-layer highlight active on the map.
+		_publish_culture_layer_highlight_from_layer({})
 		return
 
 	var global_layer := {}
