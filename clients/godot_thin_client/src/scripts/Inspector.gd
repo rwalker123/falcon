@@ -43,12 +43,6 @@ const FOOD_MODULE_LABELS := {
 	"coastal_upwelling": "Coastal Upwelling",
 	"mixed_woodland": "Mixed Woodland",
 }
-const HERD_CONSUMPTION_BIOMASS := 250.0
-const HERD_PROVISIONS_YIELD_PER_BIOMASS := 0.02
-const HERD_TRADE_GOODS_YIELD_PER_BIOMASS := 0.005
-const HERD_FOLLOW_MORALE_GAIN := 0.03
-const HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS := 0.0004
-const HERD_KNOWLEDGE_PROGRESS_CAP := 0.25
 const CAP_CONSTRUCTION := 1 << 1
 const CAP_INDUSTRY_T1 := 1 << 2
 const CAP_INDUSTRY_T2 := 1 << 3
@@ -60,7 +54,7 @@ const CAP_MEGAPROJECTS := 1 << 8
 
 var capability_flags: int = 0
 
-@onready var sentiment_text: RichTextLabel = $RootPanel/TabContainer/Sentiment/SentimentText
+@onready var sentiment_panel: SentimentInspectorPanel = $RootPanel/TabContainer/Sentiment
 @onready var terrain_vbox: VBoxContainer = $RootPanel/TabContainer/Terrain/TerrainVBox
 @onready var terrain_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TerrainText
 @onready var export_map_button: Button = $RootPanel/TabContainer/Terrain/TerrainVBox/ExportRow/ExportMapButton
@@ -90,8 +84,7 @@ var _terrain_highlight_dropdown: OptionButton = null
 @onready var culture_divergence_list: ItemList = $RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection/CultureDivergenceList
 @onready var culture_divergence_detail: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection/CultureDivergenceDetail
 @onready var culture_tension_text: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureTensionSection/CultureTensionText
-@onready var victory_summary_text: RichTextLabel = $RootPanel/TabContainer/Victory/VictoryVBox/VictorySummaryText
-@onready var victory_modes_list: ItemList = $RootPanel/TabContainer/Victory/VictoryVBox/VictoryModesList
+@onready var victory_panel: VictoryInspectorPanel = $RootPanel/TabContainer/Victory
 @onready var influencers_text: RichTextLabel = $RootPanel/TabContainer/Influencers/InfluencersText
 @onready var corruption_text: RichTextLabel = $RootPanel/TabContainer/Corruption/CorruptionText
 @onready var highlight_rivers_toggle: CheckButton = $RootPanel/TabContainer/Map/MapVBox/HydrologySection/HighlightRiversToggle
@@ -135,9 +128,7 @@ var _tab_panels: Array = []
 @onready var camp_x_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampXSpin")
 @onready var camp_y_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampYSpin")
 @onready var camp_execute_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampExecuteButton")
-@onready var fauna_list: ItemList = $RootPanel/TabContainer/Fauna/FaunaList
-@onready var fauna_detail_text: RichTextLabel = $RootPanel/TabContainer/Fauna/FaunaDetail
-@onready var fauna_follow_button: Button = $RootPanel/TabContainer/Fauna/FaunaFollowButton
+@onready var fauna_panel: FaunaInspectorPanel = $RootPanel/TabContainer/Fauna
 @onready var rollback_ten_button: Button = $RootPanel/CommandToolbar/RollbackTenButton
 @onready var rollback_button: Button = $RootPanel/CommandToolbar/RollbackButton
 @onready var play_pause_button: Button = $RootPanel/CommandToolbar/PlayPauseButton
@@ -175,14 +166,9 @@ var _tab_panels: Array = []
 @onready var snapshot_overlays_reload_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/SnapshotOverlaysReloadButton")
 
 var _axis_bias: Dictionary = {}
-var _sentiment: Dictionary = {}
 var _influencers: Dictionary = {}
 var _corruption: Dictionary = {}
-var _victory_state: Dictionary = {}
 var _faction_inventory_state: Array = []
-var _fauna_entries: Array = []
-var _selected_herd_id: String = ""
-var _victory_log_signature: String = ""
 var _terrain_palette: Dictionary = {}
 var _terrain_tag_labels: Dictionary = {}
 var _tile_records: Dictionary = {}
@@ -346,8 +332,6 @@ func _ready() -> void:
 	if highlight_rivers_toggle != null:
 		highlight_rivers_toggle.toggled.connect(_on_highlight_rivers_toggled)
 		_on_highlight_rivers_toggled(highlight_rivers_toggle.button_pressed)
-	if fauna_list != null and not fauna_list.is_connected("item_selected", Callable(self, "_on_fauna_list_item_selected")):
-		fauna_list.item_selected.connect(_on_fauna_list_item_selected)
 	if great_discovery_ledger_list != null:
 		var ledger_select_callable = Callable(self, "_on_great_discovery_ledger_selected")
 		if not great_discovery_ledger_list.is_connected("item_selected", ledger_select_callable):
@@ -366,7 +350,7 @@ func _ready() -> void:
 			great_discovery_definitions_list.item_selected.connect(_on_great_discovery_definition_selected)
 		if not great_discovery_definitions_list.is_connected("item_activated", definition_select_callable):
 			great_discovery_definitions_list.item_activated.connect(_on_great_discovery_definition_selected)
-	_tab_panels = [power_panel, crisis_panel, knowledge_panel, trade_panel]
+	_tab_panels = [power_panel, crisis_panel, knowledge_panel, trade_panel, sentiment_panel, victory_panel, fauna_panel]
 	if crisis_panel != null:
 		crisis_panel.set_command_hooks(Callable(self, "_send_command"), Callable(self, "_append_command_log"))
 	if knowledge_panel != null:
@@ -377,6 +361,13 @@ func _ready() -> void:
 		trade_panel.knowledge_events_produced.connect(
 			func(records: Array) -> void: knowledge_panel.append_events(records)
 		)
+	if victory_panel != null:
+		victory_panel.set_log_hook(Callable(self, "_append_command_log"))
+	# Fauna owns selection; the coordinator resolves the active faction + issues the
+	# follow-herd command, and mirrors the selection into the Commands follow field.
+	if fauna_panel != null:
+		fauna_panel.follow_herd_requested.connect(_on_fauna_follow_herd_requested)
+		fauna_panel.herd_selected.connect(_on_fauna_herd_selected)
 	_update_panel_layout()
 	_initialize_log_filters()
 	_render_static_sections()
@@ -445,22 +436,11 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 				_selected_profile_id = _active_profile_id
 			_refresh_scenario_selection()
 
-	if data.has("victory"):
-		var victory_variant: Variant = data["victory"]
-		if victory_variant is Dictionary:
-			_victory_state = (victory_variant as Dictionary).duplicate(true)
-			_log_victory_to_command_log()
-
 	if data.has("faction_inventory"):
 		var inventory_variant: Variant = data["faction_inventory"]
 		if inventory_variant is Array:
 			_faction_inventory_state = (inventory_variant as Array).duplicate(true)
 			_refresh_scenario_description()
-	if data.has("herds"):
-		var herds_variant: Variant = data["herds"]
-		if herds_variant is Array:
-			_fauna_entries = (herds_variant as Array).duplicate(true)
-			_render_fauna()
 	if data.has("command_events"):
 		_ingest_command_events(data["command_events"])
 	if data.has("food_modules"):
@@ -479,10 +459,8 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 		var axis_dict: Dictionary = data["axis_bias"]
 		_axis_bias = axis_dict.duplicate(true)
 		_refresh_axis_controls()
-
-	if data.has("sentiment"):
-		var sentiment_dict: Dictionary = data["sentiment"]
-		_sentiment = sentiment_dict.duplicate(true)
+		if sentiment_panel != null:
+			sentiment_panel.set_axis_bias(_axis_bias)
 
 	if full_snapshot and data.has("influencers"):
 		_rebuild_influencers(data["influencers"])
@@ -678,11 +656,8 @@ func _on_great_discovery_definition_selected(index: int) -> void:
 	_render_great_discoveries()
 
 func _render_dynamic_sections() -> void:
-	_render_sentiment()
 	_render_influencers()
 	_render_corruption()
-	_render_fauna()
-	_render_victory()
 	_render_great_discoveries()
 	_render_terrain()
 	_render_culture()
@@ -705,17 +680,16 @@ func _render_static_sections() -> void:
 		trade_panel.reset()
 	if power_panel != null:
 		power_panel.reset()
-	_fauna_entries.clear()
-	_selected_herd_id = ""
-	if fauna_list != null:
-		fauna_list.clear()
-	if fauna_detail_text != null:
-		fauna_detail_text.text = "[i]Awaiting telemetry.[/i]"
+	if fauna_panel != null:
+		fauna_panel.reset()
+	if sentiment_panel != null:
+		sentiment_panel.reset()
 	if knowledge_panel != null:
 		knowledge_panel.reset()
 	if crisis_panel != null:
 		crisis_panel.reset()
-	_victory_state.clear()
+	if victory_panel != null:
+		victory_panel.reset()
 	_great_discovery_records.clear()
 	_great_discovery_progress_map.clear()
 	_great_discovery_telemetry.clear()
@@ -736,11 +710,6 @@ func _render_static_sections() -> void:
 	_refresh_influencer_dropdown()
 	_update_command_controls_enabled()
 
-	if victory_summary_text != null:
-		victory_summary_text.text = "[b]Victory Progress[/b]\n[i]Awaiting telemetry.[/i]"
-	if victory_modes_list != null:
-		victory_modes_list.clear()
-		victory_modes_list.add_item("Awaiting telemetry.")
 	if great_discovery_summary_text != null:
 		great_discovery_summary_text.text = "[b]Great Discoveries[/b]\n[i]Awaiting snapshot data.[/i]"
 	if great_discovery_definitions_list != null:
@@ -793,7 +762,6 @@ func apply_typography() -> void:
 		tab_container.tab_alignment = 0
 
 	var body_rich_text: Array = [
-		sentiment_text,
 		terrain_text,
 		terrain_biome_detail_text,
 		terrain_tile_detail_text,
@@ -893,6 +861,8 @@ func apply_typography() -> void:
 		knowledge_panel.apply_typography()
 	if trade_panel != null:
 		trade_panel.apply_typography()
+	if sentiment_panel != null:
+		sentiment_panel.apply_typography()
 
 	_update_panel_layout()
 
@@ -1157,27 +1127,6 @@ func _current_selected_profile() -> Dictionary:
 		return metadata
 	return {}
 
-func _log_victory_to_command_log() -> void:
-	if _victory_state.is_empty():
-		_victory_log_signature = ""
-		return
-	var winner_variant: Variant = _victory_state.get("winner", {})
-	if not (winner_variant is Dictionary):
-		return
-	var winner: Dictionary = winner_variant
-	var mode: String = String(winner.get("mode", "")).strip_edges()
-	if mode == "":
-		return
-	var tick: int = int(winner.get("tick", -1))
-	var signature := "%s#%d" % [mode, tick]
-	if signature == _victory_log_signature:
-		return
-	_victory_log_signature = signature
-	var label: String = String(winner.get("label", mode)).strip_edges()
-	if label == "":
-		label = mode
-	_append_command_log("Victory achieved: %s (tick %d)." % [label, tick])
-
 func _join_profile_strings(parts: Array, separator: String = ", ") -> String:
 	if parts.is_empty():
 		return ""
@@ -1405,8 +1354,6 @@ func _setup_command_controls() -> void:
 		tile_scout_button.pressed.connect(_on_tile_scout_button_pressed)
 	if tile_found_camp_button != null:
 		tile_found_camp_button.pressed.connect(_on_tile_found_button_pressed)
-	if fauna_follow_button != null:
-		fauna_follow_button.pressed.connect(_on_fauna_follow_button_pressed)
 	_update_command_status()
 	_append_command_log("Command console ready.")
 
@@ -1693,8 +1640,8 @@ func _update_command_controls_enabled() -> void:
 		tile_scout_button.disabled = not (connected and has_tile_target)
 	if tile_found_camp_button != null:
 		tile_found_camp_button.disabled = not (connected and has_tile_target)
-	if fauna_follow_button != null:
-		fauna_follow_button.disabled = not (connected and _selected_herd_id != "")
+	if fauna_panel != null:
+		fauna_panel.set_command_connected(connected)
 	if turn_pipeline_reload_button != null:
 		turn_pipeline_reload_button.disabled = not connected
 	if snapshot_overlays_reload_button != null:
@@ -1820,47 +1767,6 @@ func _disable_autoplay(log_message: bool) -> void:
 			_append_command_log("Auto-play paused.")
 	if autoplay_toggle != null and autoplay_toggle.button_pressed:
 		autoplay_toggle.button_pressed = false
-
-func _render_sentiment() -> void:
-	var lines: Array[String] = []
-	lines.append("[b]Turn[/b] %d" % _last_turn)
-
-	if not _axis_bias.is_empty():
-		lines.append("[b]Axis Bias[/b]")
-		for key in ["knowledge", "trust", "equity", "agency"]:
-			var bias_value = float(_axis_bias.get(key, 0.0))
-			lines.append(" • %s: %.3f" % [key.capitalize(), bias_value])
-
-	if not _sentiment.is_empty():
-		lines.append("")
-		lines.append("[b]Axis Totals[/b]")
-		for key in ["knowledge", "trust", "equity", "agency"]:
-			if not _sentiment.has(key):
-				continue
-			var axis: Dictionary = _sentiment[key]
-			var total = float(axis.get("total", 0.0))
-			var policy = float(axis.get("policy", 0.0))
-			var incidents = float(axis.get("incidents", 0.0))
-			var influencer_val = float(axis.get("influencers", 0.0))
-			lines.append(" • %s: %.3f (policy %.3f | incidents %.3f | influencers %.3f)"
-				% [key.capitalize(), total, policy, incidents, influencer_val])
-
-			var drivers = axis.get("drivers", [])
-			var count = 0
-			for driver in drivers:
-				if count >= 3:
-					break
-				if not (driver is Dictionary):
-					continue
-				var driver_dict: Dictionary = driver
-				var label: String = str(driver_dict.get("label", "Unnamed"))
-				var category = str(driver_dict.get("category", ""))
-				var value = float(driver_dict.get("value", 0.0))
-				var weight = float(driver_dict.get("weight", 0.0))
-				lines.append("    · [%s] %s: %.3f × %.3f" % [category, label, value, weight])
-				count += 1
-
-	sentiment_text.text = "\n".join(lines)
 
 func _render_influencers() -> void:
 	if _influencers.is_empty():
@@ -2178,141 +2084,6 @@ func _render_culture() -> void:
 				timer_val
 			])
 	culture_tension_text.text = "\n".join(tension_lines)
-
-func _render_fauna() -> void:
-	if fauna_list == null or fauna_detail_text == null:
-		return
-	fauna_list.clear()
-	_selected_herd_id = ""
-	if _fauna_entries.is_empty():
-		fauna_detail_text.text = "[i]Awaiting telemetry.[/i]"
-		return
-	for herd_variant in _fauna_entries:
-		if not (herd_variant is Dictionary):
-			continue
-		var herd: Dictionary = herd_variant
-		var label := String(herd.get("label", herd.get("id", "Herd")))
-		var x := int(herd.get("x", 0))
-		var y := int(herd.get("y", 0))
-		var biomass := float(herd.get("biomass", 0.0))
-		var entry_label := "%s — (%d,%d) · %.0f" % [label, x, y, biomass]
-		var item_index := fauna_list.add_item(entry_label)
-		fauna_list.set_item_metadata(item_index, herd)
-	fauna_detail_text.text = "[i]Select a herd to view details.[/i]"
-	_update_command_controls_enabled()
-
-func _render_victory() -> void:
-	if victory_summary_text != null:
-		if _victory_state.is_empty():
-			victory_summary_text.text = "[b]Victory Progress[/b]\n[i]Awaiting telemetry.[/i]"
-		else:
-			var lines: Array[String] = ["[b]Victory Progress[/b]"]
-			var winner_variant: Variant = _victory_state.get("winner", {})
-			if winner_variant is Dictionary and not (winner_variant as Dictionary).is_empty():
-				var winner_dict: Dictionary = winner_variant
-				var label_text := String(winner_dict.get("label", winner_dict.get("mode", "Victory")))
-				var tick := int(winner_dict.get("tick", 0))
-				lines.append("[color=gold]Winner locked:[/color] %s · Tick %d" % [label_text, tick])
-			else:
-				lines.append("[color=gray]No faction has secured a victory yet.[/color]")
-			victory_summary_text.text = "\n".join(lines)
-	if victory_modes_list == null:
-		return
-	victory_modes_list.clear()
-	if _victory_state.is_empty():
-		victory_modes_list.add_item("Awaiting telemetry.")
-		return
-	var modes_variant: Variant = _victory_state.get("modes", [])
-	if not (modes_variant is Array) or (modes_variant as Array).is_empty():
-		victory_modes_list.add_item("No victory modes reported.")
-		return
-	var sorted_modes: Array = _sorted_victory_modes_array(modes_variant as Array)
-	for mode in sorted_modes:
-		if not (mode is Dictionary):
-			continue
-		var mode_dict: Dictionary = mode
-		var label_text := String(mode_dict.get("label", mode_dict.get("id", mode_dict.get("kind", "Mode"))))
-		if label_text.strip_edges() == "":
-			label_text = _format_victory_label_text(String(mode_dict.get("id", mode_dict.get("kind", "Mode"))))
-		var pct: float = clamp(float(mode_dict.get("progress_pct", 0.0)), 0.0, 1.0) * 100.0
-		var achieved := bool(mode_dict.get("achieved", false))
-		var row_text := "%s — %.1f%%" % [label_text, pct]
-		victory_modes_list.add_item(row_text)
-		var row_index := victory_modes_list.get_item_count() - 1
-		victory_modes_list.set_item_metadata(row_index, mode_dict)
-		var progress_raw := float(mode_dict.get("progress", 0.0))
-		var threshold := float(mode_dict.get("threshold", 0.0))
-		var tooltip := "%s\nProgress %.2f / %.2f" % [
-			("Achieved" if achieved else "In progress"),
-			progress_raw,
-			threshold
-		]
-		victory_modes_list.set_item_tooltip(row_index, tooltip)
-
-func _sorted_victory_modes_array(source: Array) -> Array:
-	var entries: Array = []
-	for entry in source:
-		if entry is Dictionary:
-			entries.append((entry as Dictionary).duplicate(true))
-	entries.sort_custom(Callable(self, "_victory_mode_sorter"))
-	return entries
-
-func _victory_mode_sorter(a: Dictionary, b: Dictionary) -> bool:
-	var pct_a := float(a.get("progress_pct", 0.0))
-	var pct_b := float(b.get("progress_pct", 0.0))
-	if is_equal_approx(pct_a, pct_b):
-		var label_a := _format_victory_label_text(String(a.get("label", a.get("id", ""))))
-		var label_b := _format_victory_label_text(String(b.get("label", b.get("id", ""))))
-		return label_a < label_b
-	return pct_a > pct_b
-
-func _format_victory_label_text(raw: String) -> String:
-	var trimmed := raw.strip_edges()
-	if trimmed == "":
-		return "Victory Mode"
-	var sanitized := trimmed.replace("_", " ").replace("-", " ").replace(".", " ")
-	var parts: Array = sanitized.split(" ", false)
-	for i in range(parts.size()):
-		parts[i] = String(parts[i]).capitalize()
-	return String(" ".join(parts)).strip_edges()
-
-func _on_fauna_list_item_selected(index: int) -> void:
-	if fauna_list == null or fauna_detail_text == null:
-		return
-	var meta: Variant = fauna_list.get_item_metadata(index)
-	if not (meta is Dictionary):
-		fauna_detail_text.text = "[i]No herd details available.[/i]"
-		_selected_herd_id = ""
-		_update_command_controls_enabled()
-		return
-	var info: Dictionary = meta
-	_selected_herd_id = String(info.get("id", ""))
-	var label := String(info.get("label", info.get("id", "Herd")))
-	var species := String(info.get("species", ""))
-	var x := int(info.get("x", 0))
-	var y := int(info.get("y", 0))
-	var biomass := float(info.get("biomass", 0.0))
-	var route_length := int(info.get("route_length", 0))
-	var lines: Array[String] = []
-	lines.append("[b]%s[/b]" % label)
-	if species != "":
-		lines.append(species)
-	lines.append("Position (%d, %d)" % [x, y])
-	lines.append("Biomass %.0f" % biomass)
-	lines.append("Route length %d" % route_length)
-	var reward_lines := _herd_reward_summary_lines(biomass)
-	if not reward_lines.is_empty():
-		lines.append("")
-		lines.append_array(reward_lines)
-	var next_x := int(info.get("next_x", -1))
-	var next_y := int(info.get("next_y", -1))
-	if next_x >= 0 and next_y >= 0:
-		lines.append("")
-		lines.append("Next waypoint (%d, %d)" % [next_x, next_y])
-	fauna_detail_text.text = "\n".join(lines)
-	if follow_herd_field != null:
-		follow_herd_field.text = String(info.get("id", ""))
-	_update_command_controls_enabled()
 
 func _render_great_discoveries() -> void:
 	if great_discovery_summary_text == null:
@@ -2845,28 +2616,6 @@ func set_hud_layer(layer: Object) -> void:
 func _on_highlight_rivers_toggled(pressed: bool) -> void:
 	if _map_view != null and _map_view.has_method("set_highlight_rivers"):
 		_map_view.call("set_highlight_rivers", pressed)
-
-func _herd_reward_summary_lines(biomass: float) -> Array[String]:
-	var lines: Array[String] = []
-	if biomass <= 0.0:
-		return lines
-	var consumption: float = min(biomass, HERD_CONSUMPTION_BIOMASS)
-	if consumption <= 0.0:
-		return lines
-	var provisions: float = round(consumption * HERD_PROVISIONS_YIELD_PER_BIOMASS)
-	var trade_goods: float = round(consumption * HERD_TRADE_GOODS_YIELD_PER_BIOMASS)
-	var lore_progress: float = min(
-		consumption * HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS,
-		HERD_KNOWLEDGE_PROGRESS_CAP
-	)
-	lines.append("[b]Follow Herd rewards[/b]")
-	lines.append("• Morale +%.2f per band" % HERD_FOLLOW_MORALE_GAIN)
-	if provisions > 0 or trade_goods > 0:
-		lines.append("• Supplies: +%d provisions, +%d trade goods" % [int(provisions), int(trade_goods)])
-	if lore_progress > 0.0:
-		lines.append("• Fauna lore +%.1f%% progress" % (lore_progress * 100.0))
-	lines.append("• Fog pulse reveals nearby tiles")
-	return lines
 
 func _update_culture_divergence_detail() -> void:
 	if culture_divergence_detail == null:
@@ -4632,6 +4381,8 @@ func _send_axis_bias(axis_idx: int, value: float) -> bool:
 	if _send_command("bias %d %.6f" % [axis_idx, clamped], message):
 		var key: String = String(AXIS_KEYS[axis_idx])
 		_axis_bias[key] = clamped
+		if sentiment_panel != null:
+			sentiment_panel.set_axis_bias(_axis_bias)
 		_update_axis_spin_value(axis_idx)
 		return true
 	return false
@@ -4822,6 +4573,19 @@ func _on_snapshot_overlays_reload_button_pressed() -> void:
 func _scenario_command_faction() -> int:
 	return int(scenario_faction_spin.value) if scenario_faction_spin != null else 0
 
+# FaunaPanel owns herd selection; the coordinator resolves the active faction and
+# issues the follow-herd command, and mirrors the selection into the Commands field.
+func _on_fauna_follow_herd_requested(herd_id: String) -> void:
+	if herd_id == "":
+		return
+	var faction := _scenario_command_faction()
+	var message := "Follow herd '%s' requested for faction %d." % [herd_id, faction]
+	_send_command("follow_herd %d %s" % [faction, herd_id], message)
+
+func _on_fauna_herd_selected(herd_id: String) -> void:
+	if follow_herd_field != null:
+		follow_herd_field.text = herd_id
+
 func _on_scout_command_pressed() -> void:
 	if scout_x_spin == null or scout_y_spin == null:
 		return
@@ -4877,14 +4641,6 @@ func _on_tile_found_button_pressed() -> void:
 	var y := _selected_tile_coords.y
 	var message := "Found camp request for faction %d at (%d, %d)." % [faction, x, y]
 	_send_command("found_camp %d %d %d" % [faction, x, y], message)
-
-func _on_fauna_follow_button_pressed() -> void:
-	if _selected_herd_id == "":
-		_append_command_log("Select a herd from the Fauna tab before following.")
-		return
-	var faction := _scenario_command_faction()
-	var message := "Follow herd '%s' requested for faction %d." % [_selected_herd_id, faction]
-	_send_command("follow_herd %d %s" % [faction, _selected_herd_id], message)
 
 func _ingest_command_events(events_variant: Variant) -> void:
 	if not (events_variant is Array):
