@@ -150,7 +150,9 @@ func _style(control: Control, style: StringName) -> void:
 func append_events(records: Array) -> void:
 	for record in records:
 		if record is Dictionary:
-			_events.append(record)
+			# Public cross-panel boundary: own a copy so a caller mutating its
+			# records later can't retroactively alter the knowledge history.
+			_events.append((record as Dictionary).duplicate(true))
 	while _events.size() > KNOWLEDGE_EVENT_HISTORY_LIMIT:
 		_events.pop_front()
 	_render()
