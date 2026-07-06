@@ -36,6 +36,9 @@ func reset() -> void:
 ## Coordinator collaborator: command-log sink for the one-shot victory announcement.
 func set_log_hook(append_log: Callable) -> void:
 	_append_log = append_log
+	# Replay any victory that was ingested before the hook was wired (the signature is
+	# only recorded once the log actually emits, so this can't double-announce).
+	_log_victory()
 
 func _log_victory() -> void:
 	if _victory_state.is_empty():
@@ -52,12 +55,15 @@ func _log_victory() -> void:
 	var signature := "%s#%d" % [mode, tick]
 	if signature == _log_signature:
 		return
-	_log_signature = signature
+	if not _append_log.is_valid():
+		# Don't record the signature until we actually emit, so a victory ingested
+		# before the hook is wired still announces once the hook arrives.
+		return
 	var label: String = String(winner.get("label", mode)).strip_edges()
 	if label == "":
 		label = mode
-	if _append_log.is_valid():
-		_append_log.call("Victory achieved: %s (tick %d)." % [label, tick])
+	_log_signature = signature
+	_append_log.call("Victory achieved: %s (tick %d)." % [label, tick])
 
 func _render() -> void:
 	if _summary_text != null:

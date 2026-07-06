@@ -36,6 +36,10 @@ func apply_update(data: Dictionary, _full_snapshot: bool) -> void:
 ## Coordinator contract: drop state (new snapshot / disconnect).
 func reset() -> void:
 	_sentiment.clear()
+	# Clean slate: axis bias + turn are pushed/mirrored in, so clear them too rather
+	# than let a reset show stale values (matters if reset is wired to a reconnect).
+	_axis_bias.clear()
+	_last_turn = 0
 	_render()
 
 ## Coordinator push: axis bias is coordinator-owned (Commands axis controls mutate it
