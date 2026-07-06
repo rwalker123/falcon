@@ -45,7 +45,10 @@ func set_map_view(view: Node) -> void:
 ## Coordinator collaborator: ingest the overlay payload (channels + metadata). The
 ## coordinator passes Terrain's tag labels so the tag overlay reports availability.
 func ingest(overlay_dict: Dictionary, terrain_tag_labels: Dictionary) -> void:
-	_terrain_tag_labels = terrain_tag_labels
+	# Deep-copy: the coordinator owns this Dictionary, so we must not hold a live
+	# reference into it (reset() clears our copy, which would otherwise wipe
+	# Terrain-owned state through the shared reference).
+	_terrain_tag_labels = terrain_tag_labels.duplicate(true)
 	_update_overlay_channels(overlay_dict)
 
 ## Coordinator contract: drop state (new snapshot / disconnect).
@@ -55,9 +58,14 @@ func reset() -> void:
 	_overlay_channel_order.clear()
 	_overlay_placeholder_flags.clear()
 	_selected_overlay_key = ""
-	_terrain_tag_labels.clear()
+	# Fresh Dictionary rather than clearing in place — see ingest(): this is our own
+	# copy, but replacing keeps the "never mutate shared state" invariant obvious.
+	_terrain_tag_labels = {}
 	_refresh_overlay_selector()
 	_update_overlay_section_text()
+	# Push the cleared channel to the map so a disconnect/reset drops the stale
+	# overlay instead of leaving it painted on the map.
+	_apply_overlay_selection_to_map()
 	_refresh_overlay_panels()
 
 ## Coordinator contract: (re)apply typography to this panel's styled widgets.
