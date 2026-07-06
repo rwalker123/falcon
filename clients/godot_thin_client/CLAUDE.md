@@ -47,6 +47,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/OverlayPanel.gd` | "Map Overlays" section (nested inside the Map tab, attached to `OverlaySection`) — owns the overlay-channel selector (built at runtime), channel metadata, and the culture/military readouts; drives `MapView.set_overlay_channel`. Fed via `set_map_view` + `ingest(overlay_dict, terrain_tag_labels)` (the coordinator re-homes the palette → Terrain and crisis_annotations → Crisis side-routes that share the `overlays` key, and passes Terrain's tag labels since the terrain-tags channel depends on them). NOT in `_tab_panels` |
 | `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the hydrology rivers toggle. Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` via `set_map_view`. The nested Map-Overlays section keeps its own `OverlayPanel` script |
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
+| `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the Terrain-tab command buttons. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`; scout/found emit `tile_scout_requested`/`tile_found_camp_requested` (coordinator resolves the faction + sends, like FaunaPanel); gated by `set_command_connected` + `set_construction_available` (CAP_CONSTRUCTION) |
 | `Hud.gd` | HUD layer, legend, selection panel, turn readout |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
@@ -361,8 +362,12 @@ snapshot/render), `ui/inspector/CrisisPanel.gd` (Crisis — command hooks +
 typography), `ui/inspector/KnowledgePanel.gd` (Knowledge — the fullest: connection
 gating, log-path ingestion, and the Trade→Knowledge event feed), and
 `ui/inspector/TradePanel.gd` (Trade — map-overlay collaborator + the emit side of
-the Knowledge↔Trade seam). Tabs still living inline in `Inspector.gd` are migrated
-onto this contract one at a time.
+the Knowledge↔Trade seam). **The decomposition is complete** — every inspector tab is
+now its own panel (see the key-scripts table). `Inspector.gd` (≈880 lines, down from
+~6,500) is purely the coordinator: streaming fan-out, the command hub + autoplay timer,
+capability gating, typography, MapView attach, and the cross-panel seams (faction
+resolution for Fauna/Terrain, influencer resonance → Culture, the `overlays` fan-out
+junction routing palette→Terrain / annotations→Crisis / channels→Overlay).
 
 **Commands tab (designer/debug console).** The `Commands` tab (axis-bias, heat,
 config-reload, scenario scout/follow/camp, autoplay row, influencer/corruption command
