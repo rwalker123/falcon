@@ -2739,7 +2739,11 @@ func _draw_targeting(radius: float, origin: Vector2) -> void:
 	var pulse: float = 0.5 + 0.5 * sin(_targeting_time * 3.2)
 	var cyan := Color(0.31, 0.878, 0.812, 1.0)
 	if need == "band":
+		# Only the player's own bands can fulfill a harvest/hunt, so only they get
+		# the valid-target glow / ETA — not other factions' visible units.
 		for unit in units:
+			if not _is_player_unit(unit):
+				continue
 			var pos: Array = Array(unit.get("pos", []))
 			if pos.size() != 2:
 				continue
@@ -2749,6 +2753,8 @@ func _draw_targeting(radius: float, origin: Vector2) -> void:
 			draw_arc(center, ring_radius, 0, TAU, 32, ring_color, 2.5)
 		if _hovered_tile.x >= 0 and _hovered_tile.y >= 0:
 			for unit in units:
+				if not _is_player_unit(unit):
+					continue
 				var hpos: Array = Array(unit.get("pos", []))
 				if hpos.size() == 2 and int(hpos[0]) == _hovered_tile.x and int(hpos[1]) == _hovered_tile.y:
 					_draw_targeting_hover_label(unit, radius, origin)
@@ -2757,6 +2763,9 @@ func _draw_targeting(radius: float, origin: Vector2) -> void:
 		if _hovered_tile.x >= 0 and _hovered_tile.y >= 0:
 			var reticle_center: Vector2 = _hex_center_wrapped(_hovered_tile.x, _hovered_tile.y, radius, origin)
 			_draw_reticle(reticle_center, radius * 0.82, cyan, pulse)
+
+func _is_player_unit(unit: Dictionary) -> bool:
+	return int(unit.get("faction", PLAYER_FACTION_ID)) == PLAYER_FACTION_ID
 
 func _draw_reticle(center: Vector2, r: float, color: Color, pulse: float) -> void:
 	var a := Color(color.r, color.g, color.b, 0.7 + 0.3 * pulse)

@@ -20,7 +20,7 @@ const HERD_SPECIES := {
 	"bison": "🦬",
 	"buffalo": "🦬",
 	"cattle": "🐂",
-	"ox": "🐂",
+	"oxen": "🐂",
 	"reindeer": "🦌",
 	"caribou": "🦌",
 	"deer": "🦌",
@@ -57,10 +57,14 @@ static func for_site(module_key: String, is_hunt: bool) -> String:
 	return for_module(module_key)
 
 ## Icon for a migratory herd, inferred from a species keyword in its label
-## (falls back to a generic grazer).
+## (falls back to a generic grazer). Matches the longest keyword first so a
+## specific species wins over a shorter substring (e.g. "reindeer" is not
+## mistaken for "deer") regardless of HERD_SPECIES declaration order.
 static func for_herd(label: String) -> String:
 	var lower := label.to_lower()
-	for keyword in HERD_SPECIES:
+	var keywords := HERD_SPECIES.keys()
+	keywords.sort_custom(func(a, b): return String(a).length() > String(b).length())
+	for keyword in keywords:
 		if lower.find(keyword) != -1:
 			return String(HERD_SPECIES[keyword])
 	return HERD_DEFAULT
