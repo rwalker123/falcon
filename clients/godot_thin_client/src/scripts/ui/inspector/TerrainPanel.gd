@@ -147,6 +147,14 @@ func apply_typography() -> void:
 		Typography.apply(terrain_biome_section_label, Typography.STYLE_HEADING)
 	if terrain_tile_section_label != null:
 		Typography.apply(terrain_tile_section_label, Typography.STYLE_HEADING)
+	# Interactive controls: match MapPanel/OverlayPanel so the buttons + terrain-highlight
+	# dropdown carry the same STYLE_CONTROL sizing as every other inspector panel.
+	for control in [
+		export_map_button, tile_scout_button, tile_found_camp_button,
+		_terrain_highlight_dropdown
+	]:
+		if control != null:
+			Typography.apply(control, Typography.STYLE_CONTROL)
 
 ## Coordinator collaborator: the map view driving highlight + height readout.
 func set_map_view(view: Node) -> void:
@@ -179,12 +187,18 @@ func set_construction_available(available: bool) -> void:
 	_apply_enabled()
 
 ## Coordinator collaborator: the biome palette (arrives on the overlays snapshot key).
+## Re-render so biome labels refresh if the palette lands after tiles (or on reload) —
+## otherwise the histogram/drill-down stay on the "Terrain N" fallback until the next tile update.
 func set_terrain_palette(palette: Dictionary) -> void:
 	_terrain_palette = palette.duplicate(true)
+	_render_terrain()
 
 ## Coordinator collaborator: the tag labels (arrives on the overlays snapshot key).
+## Re-render so tag labels refresh if they arrive after tiles — otherwise the drill-down and
+## tile detail keep showing the "Tag N" fallback until a later tile selection/update.
 func set_terrain_tag_labels(labels: Dictionary) -> void:
 	_terrain_tag_labels = labels.duplicate(true)
+	_render_terrain()
 
 ## Coordinator collaborator: tag labels feed OverlayPanel's terrain-tags channel.
 func get_terrain_tag_labels() -> Dictionary:
@@ -293,6 +307,10 @@ func _clear_terrain_ui() -> void:
 	_selected_biome_id = -1
 	_selected_tile_entity = -1
 	_hovered_tile_entity = -1
+	# Drop the command target too, so clearing terrain (e.g. tile_removed emptying the
+	# panel) re-gates Scout/Found instead of leaving them enabled against a stale hex.
+	_selected_tile_coords = Vector2i(-1, -1)
+	_apply_enabled()
 	if terrain_biome_list != null:
 		terrain_biome_list.clear()
 	if terrain_biome_detail_text != null:
