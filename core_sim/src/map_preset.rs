@@ -414,6 +414,20 @@ impl Default for MacroLandConfig {
 pub struct ShelfConfig {
     pub width_tiles: u32,
     pub slope_width_tiles: u32,
+    /// Optional shelf-width coefficient that scales with map size. When set, the
+    /// effective (possibly fractional) shelf band width is
+    /// `width_frac * min(width, height).powf(width_exp)` tiles instead of the
+    /// fixed `width_tiles`. The band width is deliberately *not* floored to a
+    /// whole tile — at coarse resolution Earth's shelf is thinner than one tile,
+    /// and `classify_bands` renders a sub-1.0 width as a partial coastal ring.
+    /// `None` falls back to the absolute `width_tiles` (historical behavior).
+    pub width_frac: Option<f32>,
+    /// Exponent for the map-size scaling of `width_frac` (`min_dim^width_exp`).
+    /// `1.0` is pure dimension-proportional scaling; values below 1.0 grow the
+    /// band sub-linearly to counteract the coastline complexity that larger maps
+    /// accumulate, keeping the shelf a size-invariant fraction of the ocean.
+    /// Only consulted when `width_frac` is set; defaults to `1.0`.
+    pub width_exp: Option<f32>,
 }
 
 impl Default for ShelfConfig {
@@ -421,6 +435,8 @@ impl Default for ShelfConfig {
         Self {
             width_tiles: 2,
             slope_width_tiles: 3,
+            width_frac: None,
+            width_exp: None,
         }
     }
 }
