@@ -56,15 +56,20 @@ static func for_site(module_key: String, is_hunt: bool) -> String:
 		return HUNT
 	return for_module(module_key)
 
+# Species keywords sorted longest-first, built once on first use. `for_herd`
+# runs per herd from the map draw loop, so this avoids re-sorting every frame.
+static var _herd_keywords_by_length: Array = []
+
 ## Icon for a migratory herd, inferred from a species keyword in its label
 ## (falls back to a generic grazer). Matches the longest keyword first so a
 ## specific species wins over a shorter substring (e.g. "reindeer" is not
 ## mistaken for "deer") regardless of HERD_SPECIES declaration order.
 static func for_herd(label: String) -> String:
+	if _herd_keywords_by_length.is_empty():
+		_herd_keywords_by_length = HERD_SPECIES.keys()
+		_herd_keywords_by_length.sort_custom(func(a, b): return String(a).length() > String(b).length())
 	var lower := label.to_lower()
-	var keywords := HERD_SPECIES.keys()
-	keywords.sort_custom(func(a, b): return String(a).length() > String(b).length())
-	for keyword in keywords:
+	for keyword in _herd_keywords_by_length:
 		if lower.find(keyword) != -1:
 			return String(HERD_SPECIES[keyword])
 	return HERD_DEFAULT

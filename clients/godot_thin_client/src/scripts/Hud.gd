@@ -17,7 +17,7 @@ signal targeting_changed(info: Dictionary)
 ## changes.** Shown in the lower-left version overlay next to the server build (streamed
 ## in the snapshot header) so the running client+server builds can be confirmed at a
 ## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-06.3"
+const CLIENT_BUILD := "2026-07-06.4"
 var _build_label: Label = null
 var _server_build: String = "?"
 
