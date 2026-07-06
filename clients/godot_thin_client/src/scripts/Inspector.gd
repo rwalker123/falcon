@@ -98,52 +98,14 @@ var _tab_panels: Array = []
 @onready var logs_panel: LogsInspectorPanel = $RootPanel/TabContainer/Logs
 @onready var root_panel: Panel = $RootPanel
 @onready var tab_container: TabContainer = $RootPanel/TabContainer
-@onready var command_status_label: Label = get_node_or_null("RootPanel/TabContainer/Commands/StatusLabel")
-@onready var scenario_faction_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/ScenarioFactionRow/ScenarioFactionSpin")
-@onready var scout_x_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow/ScoutXSpin")
-@onready var scout_y_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow/ScoutYSpin")
-@onready var scout_execute_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow/ScoutExecuteButton")
-@onready var follow_herd_field: LineEdit = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow/FollowHerdField")
-@onready var follow_herd_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow/FollowHerdButton")
-@onready var camp_x_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampXSpin")
-@onready var camp_y_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampYSpin")
-@onready var camp_execute_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/ScenarioCommands/CampRow/CampExecuteButton")
+@onready var commands_panel: CommandsInspectorPanel = $RootPanel/TabContainer/Commands
 @onready var fauna_panel: FaunaInspectorPanel = $RootPanel/TabContainer/Fauna
 @onready var rollback_ten_button: Button = $RootPanel/CommandToolbar/RollbackTenButton
 @onready var rollback_button: Button = $RootPanel/CommandToolbar/RollbackButton
 @onready var play_pause_button: Button = $RootPanel/CommandToolbar/PlayPauseButton
 @onready var step_one_button: Button = $RootPanel/CommandToolbar/StepOneButton
 @onready var step_ten_button: Button = $RootPanel/CommandToolbar/StepTenButton
-@onready var autoplay_toggle: CheckButton = get_node_or_null("RootPanel/TabContainer/Commands/AutoplayRow/AutoplayToggle")
-@onready var autoplay_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/AutoplayRow/AutoplayIntervalSpin")
-@onready var autoplay_label: Label = get_node_or_null("RootPanel/TabContainer/Commands/AutoplayRow/AutoplayIntervalLabel")
-@onready var command_log_text: RichTextLabel = get_node_or_null("RootPanel/TabContainer/Commands/LogPanel/LogScroll/LogText")
 @onready var scripts_panel: ScriptManagerPanel = $RootPanel/TabContainer/Scripts
-@onready var axis_dropdown: OptionButton = get_node_or_null("RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisDropdown")
-@onready var axis_value_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisValueSpin")
-@onready var axis_apply_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisApplyButton")
-@onready var axis_reset_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/AxisControls/AxisRow/AxisResetButton")
-@onready var axis_reset_all_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/AxisControls/AxisResetAllButton")
-@onready var influencer_dropdown: OptionButton = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow/InfluencerDropdown")
-@onready var influencer_magnitude_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow/InfluencerMagnitudeSpin")
-@onready var influencer_support_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow/InfluencerSupportButton")
-@onready var influencer_suppress_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow/InfluencerSuppressButton")
-@onready var channel_dropdown: OptionButton = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow/ChannelDropdown")
-@onready var channel_magnitude_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow/ChannelMagnitudeSpin")
-@onready var channel_boost_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow/ChannelBoostButton")
-@onready var spawn_scope_dropdown: OptionButton = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow/SpawnScopeDropdown")
-@onready var spawn_generation_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow/SpawnGenerationSpin")
-@onready var spawn_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow/SpawnButton")
-@onready var corruption_dropdown: OptionButton = get_node_or_null("RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow/CorruptionSubsystemDropdown")
-@onready var corruption_intensity_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow/CorruptionIntensitySpin")
-@onready var corruption_exposure_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow/CorruptionExposureSpin")
-@onready var corruption_inject_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow/CorruptionInjectButton")
-@onready var heat_entity_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/HeatControls/HeatRow/HeatEntitySpin")
-@onready var heat_delta_spin: SpinBox = get_node_or_null("RootPanel/TabContainer/Commands/HeatControls/HeatRow/HeatDeltaSpin")
-@onready var heat_apply_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/HeatControls/HeatRow/HeatApplyButton")
-@onready var config_path_edit: LineEdit = get_node_or_null("RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/ConfigPathEdit")
-@onready var turn_pipeline_reload_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/TurnPipelineReloadButton")
-@onready var snapshot_overlays_reload_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/SnapshotOverlaysReloadButton")
 
 var _axis_bias: Dictionary = {}
 var _faction_inventory_state: Array = []
@@ -180,9 +142,7 @@ var command_client: Object = null
 var command_connected: bool = false
 var stream_active: bool = false
 var autoplay_timer: Timer
-var command_log: Array[String] = []
 var _hud_layer: Object = null
-const COMMAND_LOG_LIMIT = 40
 # Character width of the proportional bar drawn for each biome in the terrain
 # overview histogram (bar is scaled to the most common biome).
 const TERRAIN_HISTOGRAM_BAR_WIDTH = 16
@@ -199,25 +159,7 @@ const AXIS_NAMES: Array[String] = ["Knowledge", "Trust", "Equity", "Agency"]
 const AXIS_KEYS: Array[String] = ["knowledge", "trust", "equity", "agency"]
 const CULTURE_TOP_TRAIT_LIMIT = 6
 const CULTURE_MAX_DIVERGENCES = 6
-const CHANNEL_OPTIONS = [
-	{"label": "Popular", "key": "popular"},
-	{"label": "Peer", "key": "peer"},
-	{"label": "Institutional", "key": "institutional"},
-	{"label": "Humanitarian", "key": "humanitarian"}
-]
-const SPAWN_SCOPE_OPTIONS = [
-	{"label": "Auto", "key": null},
-	{"label": "Local", "key": "local"},
-	{"label": "Regional", "key": "regional"},
-	{"label": "Global", "key": "global"},
-	{"label": "Generation", "key": "generation"}
-]
-const CORRUPTION_OPTIONS = [
-	{"label": "Logistics", "key": "logistics"},
-	{"label": "Trade", "key": "trade"},
-	{"label": "Military", "key": "military"},
-	{"label": "Governance", "key": "governance"}
-]
+# CHANNEL_OPTIONS / SPAWN_SCOPE_OPTIONS / CORRUPTION_OPTIONS moved to CommandsPanel.
 var _viewport: Viewport = null
 var _panel_width: float = PANEL_WIDTH_DEFAULT
 var _is_resizing = false
@@ -243,11 +185,7 @@ func _ready() -> void:
 	if root_panel != null:
 		root_panel.gui_input.connect(_on_root_panel_gui_input)
 		root_panel.focus_mode = Control.FOCUS_CLICK
-	_initialize_axis_controls()
-	_initialize_influencer_controls()
-	_initialize_corruption_controls()
-	_initialize_heat_controls()
-	_initialize_config_controls()
+	# Axis/influencer/corruption/heat/config controls are owned by CommandsPanel now.
 	_initialize_map_controls()
 	_initialize_scenario_controls()
 	_setup_terrain_highlight_dropdown()
@@ -279,11 +217,17 @@ func _ready() -> void:
 	if fauna_panel != null:
 		fauna_panel.follow_herd_requested.connect(_on_fauna_follow_herd_requested)
 		fauna_panel.herd_selected.connect(_on_fauna_herd_selected)
+	# Commands tab owns the runtime command controls; the hub (_send_command / autoplay
+	# timer / command_client) stays here. Axis bias apply routes back so _axis_bias stays
+	# coordinator-owned (Sentiment depends on it); autoplay relays to the coordinator timer.
+	if commands_panel != null:
+		commands_panel.set_command_hooks(Callable(self, "_send_command"), Callable(self, "_append_command_log"))
+		commands_panel.axis_bias_apply_requested.connect(_on_axis_bias_apply_requested)
+		commands_panel.autoplay_toggled.connect(_on_autoplay_toggled)
+		commands_panel.autoplay_interval_changed.connect(_on_autoplay_interval_changed)
 	_update_panel_layout()
 	_render_static_sections()
 	_setup_command_controls()
-	if command_log_text != null:
-		command_log_text.selection_enabled = true
 
 func is_panel_visible() -> bool:
 	return _panel_visible
@@ -361,9 +305,10 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 	if data.has("axis_bias"):
 		var axis_dict: Dictionary = data["axis_bias"]
 		_axis_bias = axis_dict.duplicate(true)
-		_refresh_axis_controls()
 		if sentiment_panel != null:
 			sentiment_panel.set_axis_bias(_axis_bias)
+		if commands_panel != null:
+			commands_panel.set_axis_bias(_axis_bias)
 
 	# Influencer roster + corruption ledger are owned by InfluencerPanel / CorruptionPanel
 	# and ingested via the _tab_panels fan-out at the end of this method.
@@ -397,13 +342,12 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 		if panel != null:
 			panel.apply_update(data, full_snapshot)
 
-	# InfluencerPanel owns the roster now, but the coordinator's (still-inline)
-	# influencer command dropdown reads it back via get_influencers(). Refresh the
-	# dropdown after the panel has ingested this delta so it can't go stale once the
-	# Commands subtree exists (today influencer_dropdown is null and this is a no-op).
+	# InfluencerPanel owns the roster; feed it to the Commands tab's influencer dropdown
+	# after the panel has ingested this delta (panels stay decoupled — coordinator mediates).
 	if (full_snapshot and data.has("influencers")) \
 			or data.has("influencer_updates") or data.has("influencer_removed"):
-		_refresh_influencer_dropdown()
+		if commands_panel != null and influencer_panel != null:
+			commands_panel.set_influencer_roster(influencer_panel.get_influencers())
 
 func _render_dynamic_sections() -> void:
 	_render_terrain()
@@ -444,13 +388,9 @@ func _render_static_sections() -> void:
 	_clear_terrain_ui()
 	_render_terrain()
 	_render_culture()
-	if command_status_label != null:
-		command_status_label.text = "Commands: disconnected."
-	if command_log_text != null:
-		command_log_text.text = ""
+	if commands_panel != null:
+		commands_panel.reset()
 	_panel_width = PANEL_WIDTH_DEFAULT
-	_refresh_axis_controls()
-	_refresh_influencer_dropdown()
 	_update_command_controls_enabled()
 
 func apply_typography() -> void:
@@ -494,8 +434,7 @@ func apply_typography() -> void:
 		terrain_overlay_military_placeholder,
 		culture_summary_text,
 		culture_divergence_detail,
-		culture_tension_text,
-		command_log_text
+		culture_tension_text
 	]
 	_apply_typography_style(body_rich_text, Typography.STYLE_BODY)
 
@@ -508,9 +447,7 @@ func apply_typography() -> void:
 	_apply_typography_style(heading_labels, Typography.STYLE_HEADING)
 
 	var caption_labels: Array = [
-		map_terrain_hint_label,
-		command_status_label,
-		autoplay_label
+		map_terrain_hint_label
 	]
 	_apply_typography_style(caption_labels, Typography.STYLE_CAPTION)
 
@@ -521,6 +458,7 @@ func apply_typography() -> void:
 	]
 	_apply_typography_style(list_controls, Typography.STYLE_BODY)
 
+	# The Commands-tab controls are styled by CommandsPanel.apply_typography().
 	var control_nodes: Array = [
 		map_size_dropdown,
 		rollback_ten_button,
@@ -528,30 +466,6 @@ func apply_typography() -> void:
 		play_pause_button,
 		step_one_button,
 		step_ten_button,
-		autoplay_toggle,
-		autoplay_spin,
-		axis_dropdown,
-		axis_value_spin,
-		axis_apply_button,
-		axis_reset_button,
-		axis_reset_all_button,
-		influencer_dropdown,
-		influencer_magnitude_spin,
-		influencer_support_button,
-		influencer_suppress_button,
-		channel_dropdown,
-		channel_magnitude_spin,
-		channel_boost_button,
-		spawn_scope_dropdown,
-		spawn_generation_spin,
-		spawn_button,
-		corruption_dropdown,
-		corruption_intensity_spin,
-		corruption_exposure_spin,
-		corruption_inject_button,
-		heat_entity_spin,
-		heat_delta_spin,
-		heat_apply_button,
 		terrain_overlay_tabs
 	]
 	if _overlay_selector != null:
@@ -574,6 +488,8 @@ func apply_typography() -> void:
 		influencer_panel.apply_typography()
 	if corruption_panel != null:
 		corruption_panel.apply_typography()
+	if commands_panel != null:
+		commands_panel.apply_typography()
 
 	_update_panel_layout()
 
@@ -992,30 +908,13 @@ func _setup_command_controls() -> void:
 		step_one_button.pressed.connect(_on_step_one_button_pressed)
 	if step_ten_button != null:
 		step_ten_button.pressed.connect(_on_step_ten_button_pressed)
-	if autoplay_toggle != null:
-		autoplay_toggle.toggled.connect(_on_autoplay_toggled)
-		autoplay_toggle.button_pressed = false
-	var autoplay_interval := 0.5
-	if autoplay_spin != null:
-		autoplay_spin.value_changed.connect(_on_autoplay_interval_changed)
-		autoplay_spin.min_value = 0.2
-		autoplay_spin.max_value = 5.0
-		autoplay_spin.step = 0.1
-		if autoplay_spin.value < 0.2:
-			autoplay_spin.value = 0.5
-		autoplay_interval = float(autoplay_spin.value)
+	# Autoplay toggle/interval + scenario buttons are owned by CommandsPanel; the timer
+	# (which drives turn-stepping) stays here and is relayed via the panel's signals.
 	autoplay_timer = Timer.new()
 	autoplay_timer.one_shot = false
-	autoplay_timer.wait_time = autoplay_interval
+	autoplay_timer.wait_time = 0.5
 	add_child(autoplay_timer)
 	autoplay_timer.timeout.connect(_on_autoplay_timeout)
-	if scout_execute_button != null:
-		scout_execute_button.pressed.connect(_on_scout_command_pressed)
-	if follow_herd_button != null:
-		follow_herd_button.pressed.connect(_on_follow_herd_button_pressed)
-		follow_herd_button.tooltip_text = "Teleport bands to the selected herd and gain morale, supplies, fauna lore, and a fog reveal pulse."
-	if camp_execute_button != null:
-		camp_execute_button.pressed.connect(_on_camp_command_pressed)
 	if export_map_button != null:
 		export_map_button.pressed.connect(_on_export_map_button_pressed)
 	if tile_scout_button != null:
@@ -1024,109 +923,6 @@ func _setup_command_controls() -> void:
 		tile_found_camp_button.pressed.connect(_on_tile_found_button_pressed)
 	_update_command_status()
 	_append_command_log("Command console ready.")
-
-func _initialize_axis_controls() -> void:
-	if axis_dropdown == null:
-		return
-	axis_dropdown.clear()
-	for idx in range(AXIS_NAMES.size()):
-		axis_dropdown.add_item(AXIS_NAMES[idx], idx)
-	axis_dropdown.select(0)
-	axis_dropdown.item_selected.connect(_on_axis_dropdown_selected)
-	if axis_apply_button != null:
-		axis_apply_button.pressed.connect(_on_axis_apply_button_pressed)
-	if axis_reset_button != null:
-		axis_reset_button.pressed.connect(_on_axis_reset_button_pressed)
-	if axis_reset_all_button != null:
-		axis_reset_all_button.pressed.connect(_on_axis_reset_all_button_pressed)
-	if axis_value_spin != null:
-		axis_value_spin.step = 0.01
-		axis_value_spin.min_value = -1.0
-		axis_value_spin.max_value = 1.0
-		axis_value_spin.allow_greater = true
-		axis_value_spin.allow_lesser = true
-		axis_value_spin.value = 0.0
-	_refresh_axis_controls()
-	_update_command_controls_enabled()
-
-func _initialize_influencer_controls() -> void:
-	if influencer_support_button != null:
-		influencer_support_button.pressed.connect(_on_influencer_support_button_pressed)
-	if influencer_suppress_button != null:
-		influencer_suppress_button.pressed.connect(_on_influencer_suppress_button_pressed)
-	if channel_boost_button != null:
-		channel_boost_button.pressed.connect(_on_channel_boost_button_pressed)
-	if spawn_button != null:
-		spawn_button.pressed.connect(_on_spawn_button_pressed)
-	if influencer_dropdown != null:
-		influencer_dropdown.clear()
-		influencer_dropdown.disabled = true
-		influencer_dropdown.item_selected.connect(_on_influencer_dropdown_selected)
-	if channel_dropdown != null:
-		channel_dropdown.clear()
-		for option in CHANNEL_OPTIONS:
-			var index = channel_dropdown.get_item_count()
-			channel_dropdown.add_item(option["label"])
-			channel_dropdown.set_item_metadata(index, option["key"])
-		channel_dropdown.select(0)
-	if spawn_scope_dropdown != null:
-		spawn_scope_dropdown.clear()
-		for option in SPAWN_SCOPE_OPTIONS:
-			var index = spawn_scope_dropdown.get_item_count()
-			spawn_scope_dropdown.add_item(option["label"])
-			spawn_scope_dropdown.set_item_metadata(index, option["key"])
-		spawn_scope_dropdown.select(0)
-	if influencer_magnitude_spin != null:
-		influencer_magnitude_spin.value = 1.0
-	if channel_magnitude_spin != null:
-		channel_magnitude_spin.value = 1.0
-	if spawn_generation_spin != null:
-		spawn_generation_spin.min_value = 0
-		spawn_generation_spin.max_value = 65535
-		spawn_generation_spin.step = 1
-		spawn_generation_spin.value = 0
-	_refresh_influencer_dropdown()
-	_update_command_controls_enabled()
-
-func _initialize_corruption_controls() -> void:
-	if corruption_dropdown != null:
-		corruption_dropdown.clear()
-		for option in CORRUPTION_OPTIONS:
-			var index = corruption_dropdown.get_item_count()
-			corruption_dropdown.add_item(option["label"])
-			corruption_dropdown.set_item_metadata(index, option["key"])
-		corruption_dropdown.select(0)
-	if corruption_intensity_spin != null:
-		corruption_intensity_spin.value = 0.25
-	if corruption_exposure_spin != null:
-		corruption_exposure_spin.value = 3
-	if corruption_inject_button != null:
-		corruption_inject_button.pressed.connect(_on_corruption_inject_button_pressed)
-	_update_command_controls_enabled()
-
-func _initialize_heat_controls() -> void:
-	if heat_entity_spin != null:
-		heat_entity_spin.min_value = 0
-		heat_entity_spin.max_value = 999999999
-		heat_entity_spin.step = 1
-	if heat_delta_spin != null:
-		heat_delta_spin.min_value = -1000000
-		heat_delta_spin.max_value = 1000000
-		heat_delta_spin.step = 1000
-		heat_delta_spin.value = 100000
-	if heat_apply_button != null:
-		heat_apply_button.pressed.connect(_on_heat_apply_button_pressed)
-	_update_command_controls_enabled()
-
-func _initialize_config_controls() -> void:
-	if config_path_edit != null:
-		config_path_edit.clear_button_enabled = true
-		config_path_edit.text = ""
-	if turn_pipeline_reload_button != null:
-		turn_pipeline_reload_button.pressed.connect(_on_turn_pipeline_reload_button_pressed)
-	if snapshot_overlays_reload_button != null:
-		snapshot_overlays_reload_button.pressed.connect(_on_snapshot_overlays_reload_button_pressed)
-	_update_command_controls_enabled()
 
 func attach_script_host(manager: ScriptHostManager) -> void:
 	if _script_host != null:
@@ -1187,7 +983,7 @@ func set_streaming_active(active: bool) -> void:
 		_append_command_log("Streaming snapshots active.")
 	else:
 		_append_command_log("Streaming unavailable; using mock playback.")
-		if autoplay_toggle != null and autoplay_toggle.button_pressed:
+		if autoplay_timer != null and not autoplay_timer.is_stopped():
 			_disable_autoplay(true)
 	_update_command_status()
 
@@ -1225,18 +1021,13 @@ func _update_command_status() -> void:
 		status_text += " Streaming: active."
 	else:
 		status_text += " Streaming: paused."
-	if command_status_label != null:
-		command_status_label.text = status_text
+	if commands_panel != null:
+		commands_panel.set_status(status_text)
 	_update_command_controls_enabled()
 
 func _append_command_log(entry: String) -> void:
-	command_log.append(entry)
-	while command_log.size() > COMMAND_LOG_LIMIT:
-		command_log.pop_front()
-	if command_log_text != null:
-		command_log_text.text = "\n".join(command_log)
-		if command_log_text.get_line_count() > 0:
-			command_log_text.scroll_to_line(command_log_text.get_line_count() - 1)
+	if commands_panel != null:
+		commands_panel.append_log(entry)
 	_append_log_entry("[CMD] %s" % entry, "COMMAND", "inspector.command")
 
 func _update_command_controls_enabled() -> void:
@@ -1249,73 +1040,17 @@ func _update_command_controls_enabled() -> void:
 		scenario_apply_button.disabled = not connected
 	if scenario_regen_toggle != null:
 		scenario_regen_toggle.disabled = not connected
-	if axis_apply_button != null:
-		axis_apply_button.disabled = not connected
-	if axis_reset_button != null:
-		axis_reset_button.disabled = not connected
-	if axis_reset_all_button != null:
-		axis_reset_all_button.disabled = not connected
-	if axis_value_spin != null:
-		axis_value_spin.editable = connected
-	var has_influencer = _selected_influencer_id() != -1
-	if influencer_support_button != null:
-		influencer_support_button.disabled = not (connected and has_influencer)
-	if influencer_suppress_button != null:
-		influencer_suppress_button.disabled = not (connected and has_influencer)
-	if influencer_magnitude_spin != null:
-		influencer_magnitude_spin.editable = connected
-	if channel_boost_button != null:
-		var has_channel = channel_dropdown != null and channel_dropdown.get_item_count() > 0
-		channel_boost_button.disabled = not (connected and has_influencer and has_channel)
-	if channel_magnitude_spin != null:
-		channel_magnitude_spin.editable = connected
-	if spawn_button != null:
-		spawn_button.disabled = not connected
-	if spawn_generation_spin != null:
-		spawn_generation_spin.editable = connected
-	if corruption_inject_button != null:
-		corruption_inject_button.disabled = not connected
-	if corruption_intensity_spin != null:
-		corruption_intensity_spin.editable = connected
-	if corruption_exposure_spin != null:
-		corruption_exposure_spin.editable = connected
-	if heat_apply_button != null:
-		heat_apply_button.disabled = not connected
-	if heat_entity_spin != null:
-		heat_entity_spin.editable = connected
-	if heat_delta_spin != null:
-		heat_delta_spin.editable = connected
-	if scenario_faction_spin != null:
-		scenario_faction_spin.editable = connected
-	if scout_x_spin != null:
-		scout_x_spin.editable = connected
-	if scout_y_spin != null:
-		scout_y_spin.editable = connected
-	if scout_execute_button != null:
-		scout_execute_button.disabled = not connected
-	if follow_herd_field != null:
-		follow_herd_field.editable = connected
-	if follow_herd_button != null:
-		follow_herd_button.disabled = not connected
-	if camp_x_spin != null:
-		camp_x_spin.editable = connected
-	if camp_y_spin != null:
-		camp_y_spin.editable = connected
-	if camp_execute_button != null:
-		camp_execute_button.disabled = not connected
 	var has_tile_target := _selected_tile_coords.x >= 0 and _selected_tile_coords.y >= 0
 	if tile_scout_button != null:
 		tile_scout_button.disabled = not (connected and has_tile_target)
 	if tile_found_camp_button != null:
 		tile_found_camp_button.disabled = not (connected and has_tile_target)
+	# The Commands-tab controls (axis/influencer/corruption/heat/scenario/config) are
+	# gated inside CommandsPanel.
+	if commands_panel != null:
+		commands_panel.set_command_connected(connected)
 	if fauna_panel != null:
 		fauna_panel.set_command_connected(connected)
-	if turn_pipeline_reload_button != null:
-		turn_pipeline_reload_button.disabled = not connected
-	if snapshot_overlays_reload_button != null:
-		snapshot_overlays_reload_button.disabled = not connected
-	if config_path_edit != null:
-		config_path_edit.editable = connected
 	if knowledge_panel != null:
 		knowledge_panel.set_command_connected(connected)
 
@@ -1389,29 +1124,24 @@ func _on_rollback_button_pressed() -> void:
 	_request_rollback(1)
 
 func _on_play_pause_button_pressed() -> void:
-	var desired_state := play_pause_button.button_pressed
-	if autoplay_toggle != null:
-		if autoplay_toggle.button_pressed != desired_state:
-			autoplay_toggle.button_pressed = desired_state
-		else:
-			_on_autoplay_toggled(desired_state)
-	else:
-		_on_autoplay_toggled(desired_state)
+	# The toolbar Play/Pause and the Commands-tab autoplay toggle drive the same timer;
+	# _on_autoplay_toggled mirrors the state into both.
+	_on_autoplay_toggled(play_pause_button.button_pressed)
 
 func _on_autoplay_toggled(pressed: bool) -> void:
 	if play_pause_button != null and play_pause_button.button_pressed != pressed:
 		play_pause_button.button_pressed = pressed
+	if commands_panel != null:
+		commands_panel.set_autoplay_active(pressed)
 	if pressed:
 		if not _ensure_command_connection():
-			if autoplay_toggle != null:
-				autoplay_toggle.button_pressed = false
+			if commands_panel != null:
+				commands_panel.set_autoplay_active(false)
 			if play_pause_button != null:
 				play_pause_button.button_pressed = false
 			_append_command_log("Auto-play requires an active command connection.")
 			return
-		var interval := autoplay_timer.wait_time if autoplay_timer != null else 0.5
-		if autoplay_spin != null:
-			interval = float(autoplay_spin.value)
+		var interval := commands_panel.get_autoplay_interval() if commands_panel != null else 0.5
 		if autoplay_timer != null:
 			autoplay_timer.wait_time = interval
 			autoplay_timer.start()
@@ -1433,8 +1163,8 @@ func _disable_autoplay(log_message: bool) -> void:
 		autoplay_timer.stop()
 		if log_message:
 			_append_command_log("Auto-play paused.")
-	if autoplay_toggle != null and autoplay_toggle.button_pressed:
-		autoplay_toggle.button_pressed = false
+	if commands_panel != null:
+		commands_panel.set_autoplay_active(false)
 
 ## Build a fixed-width proportional bar (filled + empty blocks) for a 0..1
 ## fraction. Wrapped in [code] by callers so the monospace glyphs align into a
@@ -2909,44 +2639,13 @@ func _bump_tag_counts(mask: int, delta: int) -> void:
 			_terrain_tag_counts[bit] = current
 		remaining &= remaining - 1
 
-func _selected_axis_index() -> int:
-	if axis_dropdown == null:
-		return -1
-	var selected_id = axis_dropdown.get_selected_id()
-	if selected_id != -1:
-		return int(selected_id)
-	var idx = axis_dropdown.get_selected()
-	if idx >= 0 and idx < axis_dropdown.get_item_count():
-		return int(axis_dropdown.get_item_id(idx))
-	return -1
-
-func _refresh_axis_controls() -> void:
-	if axis_dropdown == null or axis_value_spin == null:
-		return
-	if axis_dropdown.get_item_count() == 0:
-		_initialize_axis_controls()
-	var axis_idx = _selected_axis_index()
-	if axis_idx < 0:
-		axis_dropdown.select(0)
-		axis_idx = _selected_axis_index()
-	_update_axis_spin_value(axis_idx)
-
-func _update_axis_spin_value(axis_idx: int) -> void:
-	if axis_value_spin == null:
-		return
-	if axis_idx < 0 or axis_idx >= AXIS_KEYS.size():
-		axis_value_spin.value = 0.0
-		return
-	var key: String = String(AXIS_KEYS[axis_idx])
-	var value: float = 0.0
-	if _axis_bias.has(key):
-		value = float(_axis_bias.get(key, 0.0))
-	axis_value_spin.value = clamp(value, axis_value_spin.min_value, axis_value_spin.max_value)
-
-func _send_axis_bias(axis_idx: int, value: float) -> bool:
+# CommandsPanel owns the axis widgets and requests an apply via axis_bias_apply_requested.
+# _axis_bias stays coordinator-owned here (Sentiment depends on it); on a successful send we
+# update the mirror and push it to both the Sentiment view and the Commands axis spin.
+func _on_axis_bias_apply_requested(axis_idx: int, value: float) -> void:
 	if axis_idx < 0 or axis_idx >= AXIS_NAMES.size():
 		_append_command_log("Invalid axis selection.")
-		return false
+		return
 	var clamped: float = clamp(value, -1.0, 1.0)
 	var message: String = "Axis %s set to %.3f" % [AXIS_NAMES[axis_idx], clamped]
 	if _send_command("bias %d %.6f" % [axis_idx, clamped], message):
@@ -2954,242 +2653,22 @@ func _send_axis_bias(axis_idx: int, value: float) -> bool:
 		_axis_bias[key] = clamped
 		if sentiment_panel != null:
 			sentiment_panel.set_axis_bias(_axis_bias)
-		_update_axis_spin_value(axis_idx)
-		return true
-	return false
+		if commands_panel != null:
+			commands_panel.set_axis_bias(_axis_bias)
 
-func _on_axis_dropdown_selected(_index: int) -> void:
-	_update_axis_spin_value(_selected_axis_index())
-
-func _on_axis_apply_button_pressed() -> void:
-	var axis_idx = _selected_axis_index()
-	if axis_idx < 0:
-		_append_command_log("Select an axis before applying bias.")
-		return
-	_send_axis_bias(axis_idx, float(axis_value_spin.value))
-
-func _on_axis_reset_button_pressed() -> void:
-	var axis_idx = _selected_axis_index()
-	if axis_idx < 0:
-		_append_command_log("Select an axis before resetting bias.")
-		return
-	axis_value_spin.value = 0.0
-	_send_axis_bias(axis_idx, 0.0)
-
-func _on_axis_reset_all_button_pressed() -> void:
-	for idx in range(AXIS_NAMES.size()):
-		_send_axis_bias(idx, 0.0)
-
-func _selected_influencer_id() -> int:
-	if influencer_dropdown == null or influencer_dropdown.get_item_count() == 0:
-		return -1
-	var selected_id = influencer_dropdown.get_selected_id()
-	if selected_id != -1:
-		return int(selected_id)
-	var idx = influencer_dropdown.get_selected()
-	if idx >= 0 and idx < influencer_dropdown.get_item_count():
-		return int(influencer_dropdown.get_item_id(idx))
-	return -1
-
-func _influencer_display_name(id: int) -> String:
-	# The roster is owned by InfluencerPanel; the coordinator's command controls read
-	# it back. This path is currently dead (the dropdown never resolves in this scene),
-	# but kept compiling against the panel-owned roster.
-	var info = influencer_panel.get_influencers().get(id, null) if influencer_panel != null else null
-	if info == null:
-		return "ID %d" % id
-	var name: String = str(info.get("name", "Influencer %d" % id))
-	return name if name.strip_edges() != "" else "ID %d" % id
-
-func _refresh_influencer_dropdown() -> void:
-	if influencer_dropdown == null:
-		return
-	var previous_id: int = _selected_influencer_id()
-	var entries: Array = []
-	var roster: Dictionary = influencer_panel.get_influencers() if influencer_panel != null else {}
-	for key in roster.keys():
-		var id = int(key)
-		var name: String = _influencer_display_name(id)
-		var entry = {
-			"id": id,
-			"label": "%s (ID %d)" % [name, id]
-		}
-		entries.append(entry)
-	entries.sort_custom(Callable(self, "_compare_influencer_option"))
-	influencer_dropdown.clear()
-	if entries.is_empty():
-		influencer_dropdown.disabled = true
-	else:
-		influencer_dropdown.disabled = false
-		var selected_index: int = 0
-		for idx in range(entries.size()):
-			var entry: Dictionary = entries[idx]
-			var label: String = entry["label"]
-			var entry_id: int = entry["id"]
-			influencer_dropdown.add_item(label, entry_id)
-			if entry_id == previous_id:
-				selected_index = idx
-		influencer_dropdown.select(selected_index)
-	_update_command_controls_enabled()
-
-func _compare_influencer_option(a: Dictionary, b: Dictionary) -> bool:
-	var a_label: String = String(a.get("label", ""))
-	var b_label: String = String(b.get("label", ""))
-	return a_label < b_label
-
-func _on_influencer_dropdown_selected(_index: int) -> void:
-	_update_command_controls_enabled()
-
-func _on_influencer_support_button_pressed() -> void:
-	var id = _selected_influencer_id()
-	if id < 0:
-		_append_command_log("Select an influencer before sending support.")
-		return
-	var magnitude: float = max(float(influencer_magnitude_spin.value), 0.0)
-	var name: String = _influencer_display_name(id)
-	_send_command("support %d %.3f" % [id, magnitude], "Support +%.2f sent to %s" % [magnitude, name])
-
-func _on_influencer_suppress_button_pressed() -> void:
-	var id = _selected_influencer_id()
-	if id < 0:
-		_append_command_log("Select an influencer before sending suppress.")
-		return
-	var magnitude: float = max(float(influencer_magnitude_spin.value), 0.0)
-	var name: String = _influencer_display_name(id)
-	_send_command("suppress %d %.3f" % [id, magnitude], "Suppress −%.2f sent to %s" % [magnitude, name])
-
-func _on_channel_boost_button_pressed() -> void:
-	var id = _selected_influencer_id()
-	if id < 0:
-		_append_command_log("Select an influencer before applying channel boost.")
-		return
-	if channel_dropdown == null or channel_dropdown.get_item_count() == 0:
-		_append_command_log("No channel options configured.")
-		return
-	var channel_index: int = channel_dropdown.get_selected()
-	if channel_index < 0:
-		channel_index = 0
-	var channel_key_variant: Variant = channel_dropdown.get_item_metadata(channel_index)
-	var channel_key: String = String(channel_key_variant) if typeof(channel_key_variant) == TYPE_STRING else "popular"
-	var magnitude: float = max(float(channel_magnitude_spin.value), 0.0)
-	var name: String = _influencer_display_name(id)
-	var channel_label: String = String(channel_dropdown.get_item_text(channel_index))
-	_send_command(
-		"support_channel %d %s %.3f" % [id, channel_key, magnitude],
-		"Channel boost (%s, +%.2f) sent to %s" % [channel_label, magnitude, name]
-	)
-
-func _on_spawn_button_pressed() -> void:
-	var scope_key: Variant = null
-	if spawn_scope_dropdown != null and spawn_scope_dropdown.get_item_count() > 0:
-		var scope_index: int = spawn_scope_dropdown.get_selected()
-		scope_key = spawn_scope_dropdown.get_item_metadata(scope_index)
-	var generation_id: int = int(spawn_generation_spin.value) if spawn_generation_spin != null else 0
-	var line: String
-	var message: String
-	if scope_key == null:
-		if generation_id > 0:
-			line = "spawn_influencer %d" % generation_id
-			message = "Spawn influencer from generation %d requested." % generation_id
-		else:
-			line = "spawn_influencer"
-			message = "Spawn influencer requested."
-	else:
-		var scope_text: String = String(scope_key)
-		match scope_text:
-			"generation":
-				if generation_id <= 0:
-					_append_command_log("Specify a generation ID when spawning by generation.")
-					return
-				line = "spawn_influencer generation %d" % generation_id
-				message = "Spawn influencer (generation %d) requested." % generation_id
-			_:
-				line = "spawn_influencer %s" % scope_text
-				message = "Spawn influencer (%s) requested." % scope_text.capitalize()
-	_send_command(line, message)
-
-func _on_corruption_inject_button_pressed() -> void:
-	if corruption_dropdown == null:
-		return
-	var idx: int = corruption_dropdown.get_selected()
-	if idx < 0 and corruption_dropdown.get_item_count() > 0:
-		idx = 0
-	var key_variant: Variant = corruption_dropdown.get_item_metadata(idx)
-	var key: String = String(key_variant) if typeof(key_variant) == TYPE_STRING else "logistics"
-	var label: String = corruption_dropdown.get_item_text(idx)
-	var intensity: float = float(corruption_intensity_spin.value)
-	var exposure: int = int(corruption_exposure_spin.value)
-	var line: String = "corruption %s %.3f %d" % [key, intensity, exposure]
-	var message: String = "Corruption (%s, %.2f, τ=%d) requested." % [label, intensity, exposure]
-	_send_command(line, message)
-
-func _on_turn_pipeline_reload_button_pressed() -> void:
-	var path: String = ""
-	if config_path_edit != null:
-		path = String(config_path_edit.text).strip_edges()
-	var command_line: String = "reload_config turn"
-	var summary: String = "Turn pipeline config reload requested (watched file)."
-	if path != "":
-		command_line += " %s" % path
-		summary = "Turn pipeline config reload requested (%s)." % path
-	_send_command(command_line, summary)
-
-func _on_snapshot_overlays_reload_button_pressed() -> void:
-	var path: String = ""
-	if config_path_edit != null:
-		path = String(config_path_edit.text).strip_edges()
-	var command_line: String = "reload_config overlay"
-	var summary: String = "Snapshot overlays config reload requested (watched file)."
-	if path != "":
-		command_line += " %s" % path
-		summary = "Snapshot overlays config reload requested (%s)." % path
-	_send_command(command_line, summary)
-
-func _scenario_command_faction() -> int:
-	return int(scenario_faction_spin.value) if scenario_faction_spin != null else 0
-
-# FaunaPanel owns herd selection; the coordinator resolves the active faction and
-# issues the follow-herd command, and mirrors the selection into the Commands field.
+# FaunaPanel owns herd selection; the coordinator resolves the active faction (from the
+# Commands tab) and issues the follow-herd command, mirroring the selection into the
+# Commands follow field.
 func _on_fauna_follow_herd_requested(herd_id: String) -> void:
 	if herd_id == "":
 		return
-	var faction := _scenario_command_faction()
+	var faction := commands_panel.get_scenario_faction() if commands_panel != null else 0
 	var message := "Follow herd '%s' requested for faction %d." % [herd_id, faction]
 	_send_command("follow_herd %d %s" % [faction, herd_id], message)
 
 func _on_fauna_herd_selected(herd_id: String) -> void:
-	if follow_herd_field != null:
-		follow_herd_field.text = herd_id
-
-func _on_scout_command_pressed() -> void:
-	if scout_x_spin == null or scout_y_spin == null:
-		return
-	var x := int(scout_x_spin.value)
-	var y := int(scout_y_spin.value)
-	var faction := _scenario_command_faction()
-	var message := "Scout order queued for faction %d at (%d, %d)." % [faction, x, y]
-	_send_command("scout %d %d %d" % [faction, x, y], message)
-
-func _on_follow_herd_button_pressed() -> void:
-	if follow_herd_field == null:
-		return
-	var herd_id := follow_herd_field.text.strip_edges()
-	if herd_id.is_empty():
-		_append_command_log("Provide a herd id before issuing Follow Herd.")
-		return
-	var normalized := herd_id.to_lower().replace(" ", "_")
-	var faction := _scenario_command_faction()
-	var message := "Follow herd '%s' requested for faction %d." % [herd_id, faction]
-	_send_command("follow_herd %d %s" % [faction, normalized], message)
-
-func _on_camp_command_pressed() -> void:
-	if camp_x_spin == null or camp_y_spin == null:
-		return
-	var x := int(camp_x_spin.value)
-	var y := int(camp_y_spin.value)
-	var faction := _scenario_command_faction()
-	var message := "Found camp request for faction %d at (%d, %d)." % [faction, x, y]
-	_send_command("found_camp %d %d %d" % [faction, x, y], message)
+	if commands_panel != null:
+		commands_panel.set_follow_herd(herd_id)
 
 func _on_export_map_button_pressed() -> void:
 	# Fire-and-forget: the server writes the map JSON (terrain + resolved seed)
@@ -3201,7 +2680,7 @@ func _on_tile_scout_button_pressed() -> void:
 	if _selected_tile_coords.x < 0 or _selected_tile_coords.y < 0:
 		_append_command_log("Select a tile before issuing a scout order.")
 		return
-	var faction := _scenario_command_faction()
+	var faction := commands_panel.get_scenario_faction() if commands_panel != null else 0
 	var x := _selected_tile_coords.x
 	var y := _selected_tile_coords.y
 	var message := "Scout order queued for faction %d at (%d, %d)." % [faction, x, y]
@@ -3211,7 +2690,7 @@ func _on_tile_found_button_pressed() -> void:
 	if _selected_tile_coords.x < 0 or _selected_tile_coords.y < 0:
 		_append_command_log("Select a tile before founding a camp.")
 		return
-	var faction := _scenario_command_faction()
+	var faction := commands_panel.get_scenario_faction() if commands_panel != null else 0
 	var x := _selected_tile_coords.x
 	var y := _selected_tile_coords.y
 	var message := "Found camp request for faction %d at (%d, %d)." % [faction, x, y]
@@ -3238,16 +2717,6 @@ func _ingest_command_events(events_variant: Variant) -> void:
 		if detail != "":
 			message += " (%s)" % detail
 		_append_command_log(message)
-
-func _on_heat_apply_button_pressed() -> void:
-	var entity_id: int = int(heat_entity_spin.value) if heat_entity_spin != null else 0
-	var delta: int = int(heat_delta_spin.value) if heat_delta_spin != null else 0
-	if entity_id <= 0:
-		_append_command_log("Heat command requires a valid entity id.")
-		return
-	var line: String = "heat %d %d" % [entity_id, delta]
-	var message: String = "Heat delta %d applied to entity %d." % [delta, entity_id]
-	_send_command(line, message)
 
 func _on_script_log_from_package(script_id: int, level: String, message: String) -> void:
 	var prefix: String = "[SCRIPT %d]" % script_id if script_id >= 0 else "[SCRIPT]"
