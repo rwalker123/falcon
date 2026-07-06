@@ -222,6 +222,14 @@ func _ready() -> void:
 	_refresh_influencer_dropdown()
 	_apply_enabled()
 
+## Coordinator contract: no-op. This panel is command-driven (outbound) and takes no
+## snapshot inputs — its data arrives via targeted setters (set_axis_bias,
+## set_influencer_roster, set_command_connected), so it is intentionally kept out of the
+## _tab_panels fan-out. Defined anyway to satisfy the tab-panel contract uniformly and
+## stay crash-safe if it is ever added to the fan-out.
+func apply_update(_data: Dictionary, _full_snapshot: bool) -> void:
+	pass
+
 ## Coordinator contract: drop state (new snapshot / disconnect).
 func reset() -> void:
 	_command_log.clear()
@@ -491,6 +499,8 @@ func _on_spawn_button_pressed() -> void:
 	var scope_key: Variant = null
 	if spawn_scope_dropdown != null and spawn_scope_dropdown.get_item_count() > 0:
 		var scope_index: int = spawn_scope_dropdown.get_selected()
+		if scope_index < 0:
+			scope_index = 0
 		scope_key = spawn_scope_dropdown.get_item_metadata(scope_index)
 	var generation_id: int = int(spawn_generation_spin.value) if spawn_generation_spin != null else 0
 	var line: String
