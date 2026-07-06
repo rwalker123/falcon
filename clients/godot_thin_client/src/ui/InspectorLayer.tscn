@@ -1171,3 +1171,334 @@ unique_name_in_owner = true
 layout_mode = 2
 fit_content = true
 bbcode_enabled = true
+
+[node name="Commands" type="VBoxContainer" parent="RootPanel/TabContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+metadata/_tab_index = 14
+
+[node name="StatusLabel" type="Label" parent="RootPanel/TabContainer/Commands"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Commands: disconnected."
+
+[node name="AutoplayRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AutoplayToggle" type="CheckButton" parent="RootPanel/TabContainer/Commands/AutoplayRow"]
+layout_mode = 2
+text = "Auto-play"
+
+[node name="AutoplayIntervalLabel" type="Label" parent="RootPanel/TabContainer/Commands/AutoplayRow"]
+layout_mode = 2
+text = "Interval (s):"
+
+[node name="AutoplayIntervalSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/AutoplayRow"]
+layout_mode = 2
+min_value = 0.2
+max_value = 5.0
+step = 0.1
+value = 0.5
+alignment = 1
+
+[node name="AxisControls" type="VBoxContainer" parent="RootPanel/TabContainer/Commands"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AxisLabel" type="Label" parent="RootPanel/TabContainer/Commands/AxisControls"]
+layout_mode = 2
+text = "Axis Bias"
+
+[node name="AxisRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/AxisControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AxisDropdown" type="OptionButton" parent="RootPanel/TabContainer/Commands/AxisControls/AxisRow"]
+layout_mode = 2
+
+[node name="AxisValueSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/AxisControls/AxisRow"]
+layout_mode = 2
+min_value = -1.0
+max_value = 1.0
+step = 0.01
+allow_greater = true
+allow_lesser = true
+
+[node name="AxisApplyButton" type="Button" parent="RootPanel/TabContainer/Commands/AxisControls/AxisRow"]
+layout_mode = 2
+text = "Apply"
+
+[node name="AxisResetButton" type="Button" parent="RootPanel/TabContainer/Commands/AxisControls/AxisRow"]
+layout_mode = 2
+text = "Reset Axis"
+
+[node name="AxisResetAllButton" type="Button" parent="RootPanel/TabContainer/Commands/AxisControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Reset All Axes"
+
+[node name="InfluencerControls" type="VBoxContainer" parent="RootPanel/TabContainer/Commands"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="InfluencerLabel" type="Label" parent="RootPanel/TabContainer/Commands/InfluencerControls"]
+layout_mode = 2
+text = "Influencer Commands"
+
+[node name="InfluencerRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/InfluencerControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="InfluencerDropdown" type="OptionButton" parent="RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow"]
+layout_mode = 2
+
+[node name="InfluencerMagnitudeSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow"]
+layout_mode = 2
+max_value = 5.0
+step = 0.1
+value = 1.0
+
+[node name="InfluencerSupportButton" type="Button" parent="RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow"]
+layout_mode = 2
+text = "Support"
+
+[node name="InfluencerSuppressButton" type="Button" parent="RootPanel/TabContainer/Commands/InfluencerControls/InfluencerRow"]
+layout_mode = 2
+text = "Suppress"
+
+[node name="ChannelRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/InfluencerControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ChannelDropdown" type="OptionButton" parent="RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow"]
+layout_mode = 2
+
+[node name="ChannelMagnitudeSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow"]
+layout_mode = 2
+max_value = 5.0
+step = 0.1
+value = 1.0
+
+[node name="ChannelBoostButton" type="Button" parent="RootPanel/TabContainer/Commands/InfluencerControls/ChannelRow"]
+layout_mode = 2
+text = "Channel Boost"
+
+[node name="SpawnRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/InfluencerControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SpawnScopeDropdown" type="OptionButton" parent="RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow"]
+layout_mode = 2
+
+[node name="SpawnGenerationSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow"]
+layout_mode = 2
+max_value = 65535.0
+
+[node name="SpawnButton" type="Button" parent="RootPanel/TabContainer/Commands/InfluencerControls/SpawnRow"]
+layout_mode = 2
+text = "Spawn"
+
+[node name="CorruptionControls" type="VBoxContainer" parent="RootPanel/TabContainer/Commands"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="CorruptionLabel" type="Label" parent="RootPanel/TabContainer/Commands/CorruptionControls"]
+layout_mode = 2
+text = "Corruption Injection"
+
+[node name="CorruptionRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/CorruptionControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="CorruptionSubsystemDropdown" type="OptionButton" parent="RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow"]
+layout_mode = 2
+
+[node name="CorruptionIntensitySpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow"]
+layout_mode = 2
+max_value = 2.0
+step = 0.05
+value = 0.25
+
+[node name="CorruptionExposureSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow"]
+layout_mode = 2
+min_value = 1.0
+max_value = 24.0
+value = 3.0
+
+[node name="CorruptionInjectButton" type="Button" parent="RootPanel/TabContainer/Commands/CorruptionControls/CorruptionRow"]
+layout_mode = 2
+text = "Inject"
+
+[node name="HeatControls" type="VBoxContainer" parent="RootPanel/TabContainer/Commands"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HeatLabel" type="Label" parent="RootPanel/TabContainer/Commands/HeatControls"]
+layout_mode = 2
+text = "Heat Debug"
+
+[node name="HeatRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/HeatControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HeatEntitySpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
+layout_mode = 2
+max_value = 999999999.0
+
+[node name="HeatDeltaSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
+layout_mode = 2
+min_value = -1000000.0
+max_value = 1000000.0
+step = 1000.0
+value = 100000.0
+
+[node name="HeatApplyButton" type="Button" parent="RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
+layout_mode = 2
+text = "Apply Heat"
+
+[node name="ScenarioCommands" type="VBoxContainer" parent="RootPanel/TabContainer/Commands"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="ScenarioCommandLabel" type="Label" parent="RootPanel/TabContainer/Commands/ScenarioCommands"]
+layout_mode = 2
+text = "Scenario Commands"
+
+[node name="ScenarioFactionRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/ScenarioCommands"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="ScenarioFactionLabel" type="Label" parent="RootPanel/TabContainer/Commands/ScenarioCommands/ScenarioFactionRow"]
+layout_mode = 2
+text = "Faction"
+
+[node name="ScenarioFactionSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/ScenarioCommands/ScenarioFactionRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+max_value = 16.0
+step = 1.0
+
+[node name="ScoutRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/ScenarioCommands"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="ScoutLabel" type="Label" parent="RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow"]
+layout_mode = 2
+text = "Scout"
+
+[node name="ScoutXSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 512.0
+step = 1.0
+
+[node name="ScoutYSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 512.0
+step = 1.0
+
+[node name="ScoutExecuteButton" type="Button" parent="RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow"]
+layout_mode = 2
+text = "Scout Hex"
+
+[node name="FollowRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/ScenarioCommands"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="FollowLabel" type="Label" parent="RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow"]
+layout_mode = 2
+text = "Follow Herd"
+
+[node name="FollowHerdField" type="LineEdit" parent="RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "herd id (e.g. trail_herd_a)"
+
+[node name="FollowHerdButton" type="Button" parent="RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow"]
+layout_mode = 2
+text = "Follow"
+
+[node name="CampRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/ScenarioCommands"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="CampLabel" type="Label" parent="RootPanel/TabContainer/Commands/ScenarioCommands/CampRow"]
+layout_mode = 2
+text = "Found Camp"
+
+[node name="CampXSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/ScenarioCommands/CampRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 512.0
+step = 1.0
+
+[node name="CampYSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/ScenarioCommands/CampRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 512.0
+step = 1.0
+
+[node name="CampExecuteButton" type="Button" parent="RootPanel/TabContainer/Commands/ScenarioCommands/CampRow"]
+layout_mode = 2
+text = "Found"
+
+[node name="ConfigControls" type="VBoxContainer" parent="RootPanel/TabContainer/Commands"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ConfigLabel" type="Label" parent="RootPanel/TabContainer/Commands/ConfigControls"]
+layout_mode = 2
+text = "Config Reload"
+
+[node name="ConfigRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/ConfigControls"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ConfigPathEdit" type="LineEdit" parent="RootPanel/TabContainer/Commands/ConfigControls/ConfigRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Optional override path"
+
+[node name="TurnPipelineReloadButton" type="Button" parent="RootPanel/TabContainer/Commands/ConfigControls/ConfigRow"]
+layout_mode = 2
+text = "Reload Turn Pipeline"
+
+[node name="SnapshotOverlaysReloadButton" type="Button" parent="RootPanel/TabContainer/Commands/ConfigControls/ConfigRow"]
+layout_mode = 2
+text = "Reload Snapshot Overlays"
+
+[node name="ConfigHintLabel" type="Label" parent="RootPanel/TabContainer/Commands/ConfigControls"]
+layout_mode = 2
+text = "Leave path empty to reload the watched file."
+
+[node name="LogPanel" type="Panel" parent="RootPanel/TabContainer/Commands"]
+custom_minimum_size = Vector2(0, 160)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="LogScroll" type="ScrollContainer" parent="RootPanel/TabContainer/Commands/LogPanel"]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 6.0
+offset_top = 6.0
+offset_right = -6.0
+offset_bottom = -6.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="LogText" type="RichTextLabel" parent="RootPanel/TabContainer/Commands/LogPanel/LogScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+fit_content = true
