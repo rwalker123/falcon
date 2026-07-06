@@ -34,6 +34,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `Inspector.gd` | Inspector coordinator: streaming fan-out, capability gating, typography; hosts per-tab panels |
 | `ui/inspector/PowerPanel.gd` | Power tab panel — reference for the tab-panel extraction contract (`apply_update`/`reset`) |
 | `ui/inspector/CrisisPanel.gd` | Crisis tab panel — adds command hooks (`set_command_hooks`) and `apply_typography` to the contract |
+| `ui/inspector/KnowledgePanel.gd` | Knowledge tab panel — adds `set_command_connected` (connection-gating), `ingest_log_entry` (log-path telemetry), and `append_events` (Trade→Knowledge feed) |
 | `Hud.gd` | HUD layer, legend, selection panel, turn readout |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
@@ -314,17 +315,29 @@ Optional contract hooks a panel adds only if it needs them:
   typography is implemented.
 - Collaborator setters for cross-cutting dependencies, kept narrow: `set_map_view`
   (overlay sync), `set_command_hooks(send: Callable, append_log: Callable)` for
-  tabs that issue runtime commands (`CrisisPanel` spawn/auto-seed). The panel never
-  reaches back into the coordinator — it holds only the Callables/handles it is given.
+  tabs that issue runtime commands (`CrisisPanel` spawn/auto-seed, `KnowledgePanel`
+  policy/budget/mission). The panel never reaches back into the coordinator — it
+  holds only the Callables/handles it is given.
+- `set_command_connected(connected: bool)` — for tabs whose command controls
+  enable/disable on the command socket state (`KnowledgePanel`). The coordinator's
+  `_update_command_controls_enabled` delegates the panel's own controls to this.
+- `ingest_log_entry(entry: Dictionary)` — for tabs fed by parsed *log messages*
+  rather than snapshot keys (`KnowledgePanel` knowledge/espionage/counter-intel
+  telemetry). The coordinator's log loop calls it per entry.
+- Public feeder methods for cross-panel data flow (`KnowledgePanel.append_events`,
+  fed by Trade's diffusion records). The two panels never reference each other —
+  the coordinator wires the seam (`_push_trade_record` → `knowledge_panel.append_events`).
 
 The coordinator collects extracted panels in `_tab_panels` and fans `apply_update`
 out to them at the **end** of `_apply_update`, after its own key routing (e.g.
 `_ingest_overlays`), so a panel's own keys win over coordinator-side feeders on
 conflict (see the `crisis_overlay` vs `overlays.crisis_annotations` precedence note).
 
-**Reference implementation:** `ui/inspector/PowerPanel.gd` (Power) and
-`ui/inspector/CrisisPanel.gd` (Crisis — adds command hooks + typography). Tabs still
-living inline in `Inspector.gd` are migrated onto this contract one at a time.
+**Reference implementations:** `ui/inspector/PowerPanel.gd` (Power — pure
+snapshot/render), `ui/inspector/CrisisPanel.gd` (Crisis — command hooks +
+typography), `ui/inspector/KnowledgePanel.gd` (Knowledge — the fullest: connection
+gating, log-path ingestion, and the Trade→Knowledge event feed). Tabs still living
+inline in `Inspector.gd` are migrated onto this contract one at a time.
 
 ---
 
