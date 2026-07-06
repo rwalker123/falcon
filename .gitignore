@@ -1,5 +1,7 @@
 /target
 **/target/
+# Scratch directory for `export_map` command output (map JSON dumps).
+/exports/
 **/*.rs.bk
 .DS_Store
 /.idea

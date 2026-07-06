@@ -267,7 +267,7 @@ See `docs/godot_inspector_plan.md` for full roadmap.
 | Tab | Purpose |
 |-----|---------|
 | Map | Overlay selector, logistics toggle, map size dropdown, Generate Map button |
-| Terrain | Biome list, tag histograms, tile drill-down, terrain-type highlight dropdown |
+| Terrain | Full biome histogram, tag histograms, tile drill-down, terrain-type highlight dropdown, **Export Map** button |
 | Fauna | Herd registry, follow-herd commands, density telemetry |
 | Culture | Layer trait vectors, divergence meters, resonance pushes |
 | Military | Readiness heatmaps, cohort summaries |
@@ -278,6 +278,8 @@ See `docs/godot_inspector_plan.md` for full roadmap.
 | Commands | Turn/rollback/autoplay, axis bias, spawn utilities, debug hooks |
 
 **Capability gating** (`Inspector._apply_capability_gating`): most tabs enable only when the matching `CapabilityFlags` bit is set. **Terrain is exempt** — it is an always-available inspection tab (the one construction *action* inside it, Found Camp, stays separately gated). Its **terrain-type highlight** dropdown lists every defined terrain (via `TerrainDefinitions`), and selecting one calls `MapView.set_terrain_highlight(id)`, which outlines/tints all matching hexes map-wide (ignoring Fog of War) — handy for spotting a biome or confirming one is absent. Selecting "none" (`-1`) clears it.
+
+The overview text draws a **full biome histogram** (`_render_terrain` → `_histogram_bar`): every present biome, sorted by count, with a monospace `[code]` bar scaled to the most common biome plus its tile count and percentage — all computed client-side from the streamed `_terrain_counts`. The **Export Map** button (`_on_export_map_button_pressed`) sends the fire-and-forget `export_map` runtime command; the server writes the current map (terrain snapshot + resolved seed) to its `exports/` scratch dir as JSON (see `sim_schema` `MapExport`). Tile coordinates shown here as `@x,y` (`_format_tile_coords`) index straight into the export's row-major samples, so the same coordinate names a hex in the client, in the export file, and in tests.
 
 ---
 

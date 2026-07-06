@@ -48,6 +48,11 @@ use sim_runtime::{
     OrdersDirective as ProtoOrdersDirective, SecurityPolicyKind,
     SupportChannel as ProtoSupportChannel, TerrainTags,
 };
+use sim_schema::{encode_map_export_json, MapExport};
+
+/// Gitignored scratch directory that `export_map` writes into when the command
+/// is invoked without an explicit path.
+const DEFAULT_EXPORT_DIR: &str = "exports";
 
 const MIN_SCOUT_REVEAL_RADIUS: u32 = 2;
 const DEFAULT_SCOUT_REVEAL_RADIUS: u32 = 3;
@@ -361,6 +366,9 @@ fn main() {
                     "map.reset.completed"
                 );
             }
+            Command::ExportMap { path } => {
+                write_map_export(&app, path);
+            }
             Command::Heat { entity, delta } => {
                 apply_heat(&mut app, entity, delta);
                 info!(
@@ -649,6 +657,9 @@ enum Command {
         target_x: u32,
         target_y: u32,
         band_entity_bits: Option<u64>,
+    },
+    ExportMap {
+        path: Option<String>,
     },
 }
 
@@ -1071,6 +1082,85 @@ fn handle_reload_config(
         ReloadConfigKind::CrisisArchetypes => handle_reload_crisis_archetypes_config(app, path),
         ReloadConfigKind::CrisisModifiers => handle_reload_crisis_modifiers_config(app, path),
         ReloadConfigKind::CrisisTelemetry => handle_reload_crisis_telemetry_config(app, path),
+    }
+}
+
+/// Write the current world map (terrain snapshot + resolved seed/preset) to disk
+/// as JSON for offline inspection and as a test fixture. Never panics: on any
+/// failure it logs a warning and returns, leaving the simulation untouched.
+fn write_map_export(app: &bevy::prelude::App, requested_path: Option<String>) {
+    let snapshot = {
+        let history = app.world.resource::<SnapshotHistory>();
+        match history.last_snapshot.clone() {
+            Some(snapshot) => snapshot,
+            None => {
+                warn!(
+                    target: "shadow_scale::server",
+                    "map.export.rejected=no_snapshot"
+                );
+                return;
+            }
+        }
+    };
+
+    // `spawn_initial_world` resolves the (possibly random) seed and writes it
+    // back into `SimulationConfig.map_seed`, so the config is the seed's source
+    // of truth by the time any command is handled.
+    let (seed, preset) = {
+        let config = app.world.resource::<SimulationConfig>();
+        (config.map_seed, config.map_preset_id.clone())
+    };
+    let tick = snapshot.header.tick;
+
+    let export = MapExport::from_snapshot(seed, preset, (*snapshot).clone());
+
+    let path = match requested_path {
+        Some(path) => PathBuf::from(path),
+        None => PathBuf::from(DEFAULT_EXPORT_DIR).join(format!("map-tick{tick}-seed{seed}.json")),
+    };
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(err) = std::fs::create_dir_all(parent) {
+                warn!(
+                    target: "shadow_scale::server",
+                    error = %err,
+                    path = %path.display(),
+                    "map.export.failed=create_dir"
+                );
+                return;
+            }
+        }
+    }
+
+    let json = match encode_map_export_json(&export) {
+        Ok(json) => json,
+        Err(err) => {
+            warn!(
+                target: "shadow_scale::server",
+                error = %err,
+                "map.export.failed=encode"
+            );
+            return;
+        }
+    };
+
+    match std::fs::write(&path, json) {
+        Ok(()) => info!(
+            target: "shadow_scale::server",
+            path = %path.display(),
+            seed,
+            tick,
+            width = export.width,
+            height = export.height,
+            "map.export.completed"
+        ),
+        Err(err) => warn!(
+            target: "shadow_scale::server",
+            error = %err,
+            path = %path.display(),
+            "map.export.failed=write"
+        ),
     }
 }
 
@@ -2613,6 +2703,7 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             target_y,
             band_entity_bits,
         }),
+        ProtoCommandPayload::ExportMap { path } => Some(Command::ExportMap { path }),
     }
 }
 

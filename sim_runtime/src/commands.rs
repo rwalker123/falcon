@@ -138,6 +138,9 @@ pub enum CommandPayload {
         target_y: u32,
         band_entity_bits: Option<u64>,
     },
+    ExportMap {
+        path: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -437,6 +440,11 @@ impl CommandEnvelope {
                 target_y: *target_y,
                 band_entity_bits: *band_entity_bits,
             }),
+            CommandPayload::ExportMap { path } => {
+                pb::command_envelope::Command::ExportMap(pb::ExportMapCommand {
+                    path: path.clone(),
+                })
+            }
         });
 
         pb::CommandEnvelope {
@@ -640,6 +648,9 @@ impl CommandEnvelope {
                 target_y: cmd.target_y,
                 band_entity_bits: cmd.band_entity_bits,
             },
+            pb::command_envelope::Command::ExportMap(cmd) => {
+                CommandPayload::ExportMap { path: cmd.path }
+            }
         };
 
         Ok(CommandEnvelope {

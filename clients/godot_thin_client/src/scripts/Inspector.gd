@@ -70,6 +70,7 @@ var capability_flags: int = 0
 @onready var sentiment_text: RichTextLabel = $RootPanel/TabContainer/Sentiment/SentimentText
 @onready var terrain_vbox: VBoxContainer = $RootPanel/TabContainer/Terrain/TerrainVBox
 @onready var terrain_text: RichTextLabel = $RootPanel/TabContainer/Terrain/TerrainVBox/TerrainText
+@onready var export_map_button: Button = $RootPanel/TabContainer/Terrain/TerrainVBox/ExportRow/ExportMapButton
 var _terrain_highlight_dropdown: OptionButton = null
 @onready var terrain_biome_section_label: Label = $RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection/BiomeSectionLabel
 @onready var terrain_biome_list: ItemList = $RootPanel/TabContainer/Terrain/TerrainVBox/BiomeSection/BiomeList
@@ -300,7 +301,9 @@ var autoplay_timer: Timer
 var command_log: Array[String] = []
 var _hud_layer: Object = null
 const COMMAND_LOG_LIMIT = 40
-const TERRAIN_TOP_LIMIT = 5
+# Character width of the proportional bar drawn for each biome in the terrain
+# overview histogram (bar is scaled to the most common biome).
+const TERRAIN_HISTOGRAM_BAR_WIDTH = 16
 const TAG_TOP_LIMIT = 6
 const TERRAIN_TILE_DISPLAY_LIMIT = 24
 const TERRAIN_BIOME_SAMPLE_LIMIT = 6
@@ -1539,6 +1542,8 @@ func _setup_command_controls() -> void:
 		follow_herd_button.tooltip_text = "Teleport bands to the selected herd and gain morale, supplies, fauna lore, and a fog reveal pulse."
 	if camp_execute_button != null:
 		camp_execute_button.pressed.connect(_on_camp_command_pressed)
+	if export_map_button != null:
+		export_map_button.pressed.connect(_on_export_map_button_pressed)
 	if tile_scout_button != null:
 		tile_scout_button.pressed.connect(_on_tile_scout_button_pressed)
 	if tile_found_camp_button != null:
@@ -2147,6 +2152,14 @@ func _render_corruption() -> void:
 
 	corruption_text.text = "\n".join(lines)
 
+## Build a fixed-width proportional bar (filled + empty blocks) for a 0..1
+## fraction. Wrapped in [code] by callers so the monospace glyphs align into a
+## column, turning the biome list into a readable histogram.
+func _histogram_bar(fraction: float) -> String:
+	var clamped: float = clampf(fraction, 0.0, 1.0)
+	var filled: int = clampi(int(round(clamped * float(TERRAIN_HISTOGRAM_BAR_WIDTH))), 0, TERRAIN_HISTOGRAM_BAR_WIDTH)
+	return "█".repeat(filled) + "░".repeat(TERRAIN_HISTOGRAM_BAR_WIDTH - filled)
+
 func _render_terrain() -> void:
 	if terrain_text == null:
 		return
@@ -2176,13 +2189,15 @@ No terrain data received yet. Palette legend remains available on the HUD."""
 		})
 	terrain_entries.sort_custom(Callable(self, "_compare_terrain_entries"))
 
-	var limit: int = min(terrain_entries.size(), TERRAIN_TOP_LIMIT)
-	if limit > 0:
-		lines.append("Top biomes:")
-		for idx in range(limit):
-			var entry: Dictionary = terrain_entries[idx]
-			lines.append(" • %s (ID %d): %d tiles (%.1f%%)"
-				% [entry.get("label", "Unknown"), int(entry.get("id", -1)), int(entry.get("count", 0)), float(entry.get("percent", 0.0))])
+	if terrain_entries.size() > 0:
+		lines.append("Biome histogram (%d biomes, bars scaled to most common):" % terrain_entries.size())
+		var max_count: int = 0
+		for entry in terrain_entries:
+			max_count = max(max_count, int(entry.get("count", 0)))
+		for entry in terrain_entries:
+			var fraction: float = float(int(entry.get("count", 0))) / float(max(max_count, 1))
+			lines.append("[code]%s[/code] %s — %d (%.1f%%)"
+				% [_histogram_bar(fraction), entry.get("label", "Unknown"), int(entry.get("count", 0)), float(entry.get("percent", 0.0))])
 
 	var tag_entries: Array[Dictionary] = []
 	for key in _terrain_tag_counts.keys():
@@ -6323,6 +6338,12 @@ func _on_camp_command_pressed() -> void:
 	var faction := _scenario_command_faction()
 	var message := "Found camp request for faction %d at (%d, %d)." % [faction, x, y]
 	_send_command("found_camp %d %d %d" % [faction, x, y], message)
+
+func _on_export_map_button_pressed() -> void:
+	# Fire-and-forget: the server writes the map JSON (terrain + resolved seed)
+	# into its exports/ directory. Tile coordinates shown here as "@x,y" index
+	# straight into the export's row-major samples.
+	_send_command("export_map", "Map export requested; server writing exports/ JSON.")
 
 func _on_tile_scout_button_pressed() -> void:
 	if _selected_tile_coords.x < 0 or _selected_tile_coords.y < 0:
