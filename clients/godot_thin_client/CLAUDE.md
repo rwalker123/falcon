@@ -42,7 +42,8 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/GreatDiscoveriesPanel.gd` | GreatDiscoveries tab panel — large, self-contained (ledger + progress + definition catalog + details); capability-gated (`CAP_MEGAPROJECTS`), no command/log/MapView coupling |
 | `ui/inspector/LogsPanel.gd` | Logs tab panel — owns the LogStreamClient + polling + filters + tick sparkline; emits `log_entry_received` (coordinator dispatches to Knowledge/Trade); fed synthetic lines via `append_entry` |
 | `ui/inspector/InfluencerPanel.gd` | Influencers tab panel — owns the influencer roster; capability-gated (`CAP_INDUSTRY_T1`/`T2`) via `set_available`; exposes `aggregate_resonance()` (coordinator feeds it into the Culture tab) and `get_influencers()` (coordinator's still-inline influencer command controls read the roster back). The influencer *command* controls stay coordinator-owned |
-| `ui/inspector/CorruptionPanel.gd` | Corruption tab panel — display-only ledger (reputation modifier, audit capacity, incidents); not capability-gated; the corruption *inject* command controls stay coordinator-owned |
+| `ui/inspector/CorruptionPanel.gd` | Corruption tab panel — display-only ledger (reputation modifier, audit capacity, incidents); not capability-gated |
+| `ui/inspector/CommandsPanel.gd` | Commands tab panel — the designer/debug console (axis-bias, influencer/channel/spawn, corruption inject, heat, config reload, scenario scout/follow/camp, autoplay row, command status/log). Outbound: issues verbs via `set_command_hooks` and logs via the sink; the command transport + autoplay timer + turn-sending stay in the coordinator. Couplings are coordinator-mediated: emits `axis_bias_apply_requested` (coordinator owns `_axis_bias`, pushes back via `set_axis_bias`), `autoplay_toggled`/`autoplay_interval_changed` (coordinator drives the timer, mirrors via `set_autoplay_active`); fed the roster via `set_influencer_roster` and gated via `set_command_connected`. NOT in `_tab_panels` (no snapshot inputs) |
 | `Hud.gd` | HUD layer, legend, selection panel, turn readout |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
@@ -360,21 +361,25 @@ gating, log-path ingestion, and the Trade→Knowledge event feed), and
 the Knowledge↔Trade seam). Tabs still living inline in `Inspector.gd` are migrated
 onto this contract one at a time.
 
-**Commands tab (designer/debug console).** The `Commands` tab holds the runtime
-command controls (axis-bias, heat, config-reload, scenario scout/follow/camp,
-autoplay row, the influencer/corruption *command* buttons, plus a command
-status/log display). Its subtree went missing in the 2025-11-21 scene split
-(`Main.tscn` → instanced `InspectorLayer.tscn`) and sat dead for months — the
-coordinator's `get_node_or_null("RootPanel/TabContainer/Commands/…")` refs silently
-resolved to `null` — until it was transplanted back from git history. The controls
-issue their verbs through the shared command hub (`_send_command` →
-`command_client`), which is also used by the working turn controls in
-`RootPanel/CommandToolbar` (outside the `TabContainer`) and the scout/found_camp
-buttons in the Terrain tab. `_update_command_controls_enabled` enables/disables the
-tab's controls on the command-socket connection state. The controls still live
-inline in `Inspector.gd` (not yet on the tab-panel contract); extracting them into a
-`CommandsPanel` is the next step. The influencer command controls read the roster via
-`InfluencerPanel.get_influencers()` (coordinator-mediated).
+**Commands tab (designer/debug console).** The `Commands` tab (axis-bias, heat,
+config-reload, scenario scout/follow/camp, autoplay row, influencer/corruption command
+buttons, command status/log) is now `CommandsPanel` (see the key-scripts table). Its
+subtree once went missing in the 2025-11-21 scene split (`Main.tscn` → instanced
+`InspectorLayer.tscn`) and sat dead for months — the coordinator's
+`get_node_or_null("RootPanel/TabContainer/Commands/…")` refs silently resolved to
+`null` — before it was transplanted back from git history and extracted onto the
+tab-panel contract. The **command hub stays in the coordinator**: `_send_command` →
+`command_client`, `_ensure_command_connection`, the `autoplay_timer`, and turn-sending
+are shared with the turn controls in `RootPanel/CommandToolbar` (outside the
+`TabContainer`) and the scout/found_camp buttons in the Terrain tab. The panel issues
+verbs through `set_command_hooks` and is connection-gated via `set_command_connected`.
+Autoplay is split: the toggle+interval widgets live in the panel (relayed as
+`autoplay_toggled`/`autoplay_interval_changed`), while the timer that steps turns and
+the toolbar Play/Pause mirroring stay in the coordinator (which calls back
+`set_autoplay_active`). Axis bias is coordinator-owned (Sentiment depends on it): the
+panel emits `axis_bias_apply_requested` and the coordinator sends + mirrors it back via
+`set_axis_bias`. The influencer dropdown is fed `InfluencerPanel.get_influencers()`
+through the coordinator (`set_influencer_roster`).
 
 ---
 
