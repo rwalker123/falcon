@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3 uid="uid://b8x7k2q5j4l3n"]
+[gd_scene load_steps=12 format=3 uid="uid://b8x7k2q5j4l3n"]
 
 [ext_resource type="Script" uid="uid://dgjdlxbpsrrw6" path="res://src/scripts/Inspector.gd" id="1"]
 [ext_resource type="Script" uid="uid://dnhxgwd0jtak5" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="2"]
@@ -10,6 +10,7 @@
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/SentimentPanel.gd" id="8"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/VictoryPanel.gd" id="9"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/FaunaPanel.gd" id="10"]
+[ext_resource type="Script" path="res://src/scripts/ui/inspector/GreatDiscoveriesPanel.gd" id="11"]
 
 [node name="Inspector" type="CanvasLayer"]
 script = ExtResource("1")
@@ -1087,6 +1088,7 @@ text = "Follow Herd"
 visible = false
 layout_mode = 2
 metadata/_tab_index = 13
+script = ExtResource("11")
 
 [node name="GreatDiscoveryVBox" type="VBoxContainer" parent="RootPanel/TabContainer/GreatDiscoveries"]
 layout_mode = 2
@@ -1094,10 +1096,12 @@ size_flags_horizontal = 3
 size_flags_vertical = 3
 
 [node name="GreatDiscoverySummaryLabel" type="Label" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Summary"
 
 [node name="GreatDiscoverySummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
+unique_name_in_owner = true
 layout_mode = 2
 fit_content = true
 
@@ -1105,6 +1109,7 @@ fit_content = true
 layout_mode = 2
 
 [node name="GreatDiscoveryDefinitionsList" type="ItemList" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryDefinitionsSection"]
+unique_name_in_owner = true
 layout_mode = 2
 auto_height = true
 
@@ -1112,14 +1117,17 @@ auto_height = true
 layout_mode = 2
 
 [node name="GreatDiscoveryLedgerLabel" type="Label" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Ledger"
 
 [node name="GreatDiscoveryLedgerList" type="ItemList" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection"]
+unique_name_in_owner = true
 layout_mode = 2
 auto_height = true
 
 [node name="GreatDiscoveryLedgerDetail" type="RichTextLabel" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryLedgerSection"]
+unique_name_in_owner = true
 layout_mode = 2
 fit_content = true
 
@@ -1127,13 +1135,16 @@ fit_content = true
 layout_mode = 2
 
 [node name="GreatDiscoveryProgressLabel" type="Label" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Progress"
 
 [node name="GreatDiscoveryProgressList" type="ItemList" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection"]
+unique_name_in_owner = true
 layout_mode = 2
 auto_height = true
 
 [node name="GreatDiscoveryProgressDetail" type="RichTextLabel" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox/GreatDiscoveryProgressSection"]
+unique_name_in_owner = true
 layout_mode = 2
 fit_content = true
