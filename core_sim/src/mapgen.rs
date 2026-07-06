@@ -358,7 +358,7 @@ pub fn build_bands(
 
     // Distance transform and classification
     let ocean_distance = compute_ocean_distance_wrapped(&land, w, h, wrap_horizontal);
-    let terrain = classify_bands(&land, &is_ocean, &ocean_distance, shelf, w, h);
+    let terrain = classify_bands(&land, &is_ocean, &ocean_distance, shelf, w, h, seed);
 
     BandsResult {
         terrain,
@@ -1218,6 +1218,32 @@ fn compute_coastal_land(land: &[bool], is_ocean: &[bool], w: usize, h: usize) ->
     coastal
 }
 
+/// Resolve the shelf band width in tiles for a map of the given dimensions, as a
+/// (possibly fractional) tile count.
+///
+/// When `shelf.width_frac` is set, the width scales with the map's shorter
+/// dimension (`frac * min(w, h)`) so the shelf stays a size-invariant fraction of
+/// the ocean. Crucially the result is **not** floored to a whole tile: at coarse
+/// map resolution Earth's shelf is thinner than one tile, so a sub-1.0 width is
+/// meaningful and `classify_bands` renders it as a partial coastal ring (see
+/// there). Presets that omit `width_frac` fall back to the fixed integer
+/// `width_tiles` (historical behavior).
+fn effective_shelf_width(shelf: &ShelfConfig, w: usize, h: usize) -> f32 {
+    match shelf.width_frac {
+        Some(frac) => {
+            let min_dim = w.min(h) as f32;
+            let exp = shelf.width_exp.unwrap_or(1.0);
+            frac.max(0.0) * min_dim.powf(exp)
+        }
+        None => shelf.width_tiles as f32,
+    }
+}
+
+/// Map a per-tile hash into a unit `[0, 1)` value for deterministic thresholding.
+fn shelf_hash_unit(seed: u64, x: usize, y: usize) -> f32 {
+    terrain_hash(seed, x as u32, y as u32) as f32 / (u32::MAX as f32 + 1.0)
+}
+
 fn classify_bands(
     land: &[bool],
     is_ocean: &[bool],
@@ -1225,9 +1251,19 @@ fn classify_bands(
     shelf: &ShelfConfig,
     w: usize,
     h: usize,
+    seed: u64,
 ) -> Vec<TerrainBand> {
     let mut terrain = vec![TerrainBand::DeepOcean; w * h];
     let idx = |x: usize, y: usize| -> usize { y * w + x };
+    // Fractional shelf width: `full` whole rings are always shelf; the next ring
+    // (`full + 1`) is shelf on only `frac` of its tiles (deterministic hash), so
+    // a width below 1.0 yields a thin, sparse coastal shelf instead of a full
+    // ring. Slope collapses to DeepOcean downstream, so its exact extent is
+    // cosmetic — only the shelf boundary matters for the ocean composition.
+    let shelf_width = effective_shelf_width(shelf, w, h);
+    let full = shelf_width.floor();
+    let frac = shelf_width - full;
+    let full = full as u32;
 
     for y in 0..h {
         for x in 0..w {
@@ -1241,9 +1277,12 @@ fn classify_bands(
                 continue;
             }
             let d = ocean_distance[i];
-            if d <= shelf.width_tiles {
+            let is_shelf = d >= 1
+                && (d <= full
+                    || (d == full + 1 && frac > 0.0 && shelf_hash_unit(seed, x, y) < frac));
+            if is_shelf {
                 terrain[i] = TerrainBand::ContinentalShelf;
-            } else if d <= shelf.width_tiles + shelf.slope_width_tiles {
+            } else if d <= full + shelf.slope_width_tiles {
                 terrain[i] = TerrainBand::ContinentalSlope;
             } else {
                 terrain[i] = TerrainBand::DeepOcean;
