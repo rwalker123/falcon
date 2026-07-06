@@ -1527,10 +1527,16 @@ impl MapExport {
     /// coordinate is outside the grid. This is the canonical way for offline
     /// consumers (tests, inspection) to reference a hex by coordinate.
     pub fn tile_at(&self, x: u32, y: u32) -> Option<&TerrainSample> {
-        if x >= self.width || y >= self.height {
+        // Use the terrain overlay's own dimensions as canonical rather than the
+        // top-level `width`/`height` mirrors: a hand-edited or corrupted export
+        // could desync the mirrors from the sample buffer, and indexing off a
+        // stale mirror would silently return the wrong (but in-bounds) tile.
+        let width = self.snapshot.terrain.width;
+        let height = self.snapshot.terrain.height;
+        if x >= width || y >= height {
             return None;
         }
-        let idx = (y as usize) * (self.width as usize) + (x as usize);
+        let idx = (y as usize) * (width as usize) + (x as usize);
         self.snapshot.terrain.samples.get(idx)
     }
 }
