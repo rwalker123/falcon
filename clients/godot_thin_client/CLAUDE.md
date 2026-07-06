@@ -370,7 +370,7 @@ resolved to `null` — until it was transplanted back from git history. The cont
 issue their verbs through the shared command hub (`_send_command` →
 `command_client`), which is also used by the working turn controls in
 `RootPanel/CommandToolbar` (outside the `TabContainer`) and the scout/found_camp
-buttons in the Terrain tab. `_update_command_controls_enabled` enable/disables the
+buttons in the Terrain tab. `_update_command_controls_enabled` enables/disables the
 tab's controls on the command-socket connection state. The controls still live
 inline in `Inspector.gd` (not yet on the tab-panel contract); extracting them into a
 `CommandsPanel` is the next step. The influencer command controls read the roster via
