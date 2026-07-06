@@ -17,7 +17,7 @@ signal targeting_changed(info: Dictionary)
 ## changes.** Shown in the lower-left version overlay next to the server build (streamed
 ## in the snapshot header) so the running client+server builds can be confirmed at a
 ## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-06.2"
+const CLIENT_BUILD := "2026-07-06.3"
 var _build_label: Label = null
 var _server_build: String = "?"
 
@@ -183,6 +183,10 @@ func _ensure_targeting_banner() -> void:
     center.anchor_top = 0.0
     center.anchor_bottom = 0.0
     center.offset_top = 12.0
+    # Anchored to the top edge with zero anchored height; grow downward so the
+    # container takes its child's (the banner's) height instead of a 0/negative
+    # rect that could clip it.
+    center.grow_vertical = Control.GROW_DIRECTION_END
     center.mouse_filter = Control.MOUSE_FILTER_IGNORE
     layout_root.add_child(center)
 
@@ -287,7 +291,9 @@ func cancel_active_targeting() -> void:
         changed = true
     if changed and not _selected_tile_info.is_empty():
         _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
-    _refresh_targeting()
+    # Note: _cancel_pending_forage / _cancel_pending_scout already call
+    # _refresh_targeting(), so no extra refresh (and duplicate targeting_changed
+    # emission) is needed here.
 
 ## Lower-left version overlay showing the client build and the streamed server build,
 ## so the running builds can be confirmed at a glance. Mouse-transparent so it never

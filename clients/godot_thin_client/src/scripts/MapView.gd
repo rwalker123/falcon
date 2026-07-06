@@ -1310,7 +1310,7 @@ func _draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 	# Dark backing disc so the (monochrome) glyph stays legible over any terrain.
 	draw_circle(center, radius * 0.44, Color(0.04, 0.06, 0.07, 0.55))
 	if _food_harvest_active(x, y):
-		draw_arc(center, radius * 0.52, 0, TAU, 28, Color(0.31, 0.878, 0.812, 0.9), 2.0)
+		draw_arc(center, radius * 0.52, 0, TAU, 28, Color(HudStyle.SIGNAL, 0.9), 2.0)
 	var icon_font: Font = ThemeDB.fallback_font
 	if icon_font != null:
 		var icon_size: int = int(maxf(12.0, radius * 1.05))
@@ -2737,7 +2737,7 @@ func _draw_targeting(radius: float, origin: Vector2) -> void:
 		return
 	var need := String(_targeting.get("need", ""))
 	var pulse: float = 0.5 + 0.5 * sin(_targeting_time * 3.2)
-	var cyan := Color(0.31, 0.878, 0.812, 1.0)
+	var cyan := HudStyle.SIGNAL
 	if need == "band":
 		# Only the player's own bands can fulfill a harvest/hunt, so only they get
 		# the valid-target glow / ETA — not other factions' visible units.
@@ -2796,7 +2796,7 @@ func _draw_targeting_hover_label(unit: Dictionary, radius: float, origin: Vector
 	box_pos.y = maxf(box_pos.y, 4.0)
 	var rect := Rect2(box_pos, text_size + pad * 2)
 	draw_rect(rect, Color(0.03, 0.055, 0.06, 0.95))
-	draw_rect(rect, Color(0.31, 0.878, 0.812, 1.0), false, 1.0)
+	draw_rect(rect, HudStyle.SIGNAL, false, 1.0)
 	draw_string(font, box_pos + Vector2(pad.x, pad.y + text_size.y * 0.8), text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.87, 0.98, 0.96))
 
 func _targeting_distance(col: int, row: int) -> int:
