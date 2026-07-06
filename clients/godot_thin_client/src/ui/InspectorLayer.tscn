@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3 uid="uid://b8x7k2q5j4l3n"]
+[gd_scene load_steps=13 format=3 uid="uid://b8x7k2q5j4l3n"]
 
 [ext_resource type="Script" uid="uid://dgjdlxbpsrrw6" path="res://src/scripts/Inspector.gd" id="1"]
 [ext_resource type="Script" uid="uid://dnhxgwd0jtak5" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="2"]
@@ -11,6 +11,7 @@
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/VictoryPanel.gd" id="9"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/FaunaPanel.gd" id="10"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/GreatDiscoveriesPanel.gd" id="11"]
+[ext_resource type="Script" path="res://src/scripts/ui/inspector/LogsPanel.gd" id="12"]
 
 [node name="Inspector" type="CanvasLayer"]
 script = ExtResource("1")
@@ -999,6 +1000,7 @@ layout_mode = 2
 auto_height = true
 
 [node name="Logs" type="VBoxContainer" parent="RootPanel/TabContainer"]
+script = ExtResource("12")
 visible = false
 layout_mode = 2
 metadata/_tab_index = 11
@@ -1007,14 +1009,17 @@ metadata/_tab_index = 11
 layout_mode = 2
 
 [node name="SparklineStatusLabel" type="Label" parent="RootPanel/TabContainer/Logs/SparklineContainer"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Status"
 
 [node name="SparklineGraph" type="Control" parent="RootPanel/TabContainer/Logs/SparklineContainer"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="SparklineStatsLabel" type="Label" parent="RootPanel/TabContainer/Logs/SparklineContainer"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Stats"
 
@@ -1022,32 +1027,40 @@ text = "Stats"
 layout_mode = 2
 
 [node name="LevelLabel" type="Label" parent="RootPanel/TabContainer/Logs/FilterControls"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Level"
 
 [node name="LogLevelDropdown" type="OptionButton" parent="RootPanel/TabContainer/Logs/FilterControls"]
+unique_name_in_owner = true
 layout_mode = 2
 
 [node name="TargetLabel" type="Label" parent="RootPanel/TabContainer/Logs/FilterControls"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Target"
 
 [node name="LogTargetDropdown" type="OptionButton" parent="RootPanel/TabContainer/Logs/FilterControls"]
+unique_name_in_owner = true
 layout_mode = 2
 
 [node name="FilterLabel" type="Label" parent="RootPanel/TabContainer/Logs/FilterControls"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Filter"
 
 [node name="LogFilterLine" type="LineEdit" parent="RootPanel/TabContainer/Logs/FilterControls"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="ClearButton" type="Button" parent="RootPanel/TabContainer/Logs/FilterControls"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Clear"
 
 [node name="CopyButton" type="Button" parent="RootPanel/TabContainer/Logs/FilterControls"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Copy"
 
@@ -1056,6 +1069,7 @@ layout_mode = 2
 size_flags_vertical = 3
 
 [node name="LogsText" type="RichTextLabel" parent="RootPanel/TabContainer/Logs/LogScroll"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3

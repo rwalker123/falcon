@@ -10,7 +10,6 @@ const ScriptManagerPanel := preload("res://src/scripts/scripting/ScriptManagerPa
 const ScriptHostManager := preload("res://src/scripts/scripting/ScriptHostManager.gd")
 const TerrainDefinitions := preload("res://assets/terrain/TerrainDefinitions.gd")
 
-const LogStreamClientScript = preload("res://src/scripts/LogStreamClient.gd")
 const Typography = preload("res://src/scripts/Typography.gd")
 
 const MAP_SIZE_OPTIONS := [
@@ -96,18 +95,7 @@ var _terrain_highlight_dropdown: OptionButton = null
 var _tab_panels: Array = []
 @onready var knowledge_panel: KnowledgeInspectorPanel = $RootPanel/TabContainer/Knowledge
 @onready var great_discoveries_panel: GreatDiscoveriesInspectorPanel = $RootPanel/TabContainer/GreatDiscoveries
-@onready var logs_text: RichTextLabel = $RootPanel/TabContainer/Logs/LogScroll/LogsText
-@onready var log_status_label: Label = $RootPanel/TabContainer/Logs/SparklineContainer/SparklineStatusLabel
-@onready var sparkline_graph: Control = $RootPanel/TabContainer/Logs/SparklineContainer/SparklineGraph
-@onready var sparkline_stats_label: Label = $RootPanel/TabContainer/Logs/SparklineContainer/SparklineStatsLabel
-@onready var log_level_label: Label = $RootPanel/TabContainer/Logs/FilterControls/LevelLabel
-@onready var log_level_dropdown: OptionButton = $RootPanel/TabContainer/Logs/FilterControls/LogLevelDropdown
-@onready var log_target_label: Label = $RootPanel/TabContainer/Logs/FilterControls/TargetLabel
-@onready var log_target_dropdown: OptionButton = $RootPanel/TabContainer/Logs/FilterControls/LogTargetDropdown
-@onready var log_filter_label: Label = $RootPanel/TabContainer/Logs/FilterControls/FilterLabel
-@onready var log_filter_line: LineEdit = $RootPanel/TabContainer/Logs/FilterControls/LogFilterLine
-@onready var log_clear_button: Button = $RootPanel/TabContainer/Logs/FilterControls/ClearButton
-@onready var log_copy_button: Button = $RootPanel/TabContainer/Logs/FilterControls/CopyButton
+@onready var logs_panel: LogsInspectorPanel = $RootPanel/TabContainer/Logs
 @onready var root_panel: Panel = $RootPanel
 @onready var tab_container: TabContainer = $RootPanel/TabContainer
 @onready var command_status_label: Label = get_node_or_null("RootPanel/TabContainer/Commands/StatusLabel")
@@ -188,24 +176,6 @@ var _map_size_custom_index: int = -1
 var _suppress_map_size_signal: bool = false
 var _panel_visible: bool = true
 var _seen_command_events: Dictionary = {}
-var _log_entries: Array = []
-var _log_filtered_records: Array = []
-var _log_render_dirty: bool = true
-var _log_targets_dirty: bool = true
-var _log_target_counts: Dictionary = {}
-var _log_target_list: Array[String] = []
-var _selected_log_target: String = ""
-var _log_level_threshold: int = 0
-var _log_search_query: String = ""
-var _log_search_query_lower: String = ""
-var _log_client: RefCounted = null
-var _log_host: String = ""
-var _log_port: int = 0
-var _log_connected: bool = false
-var _log_poll_timer: float = 0.0
-var _log_retry_timer: float = 0.0
-var _tick_samples: Array[Dictionary] = []
-var _log_status_message: String = "Log stream offline."
 var _resolved_font_size: int = Typography.DEFAULT_FONT_SIZE
 var _last_turn: int = 0
 var command_client: Object = null
@@ -221,30 +191,6 @@ const TERRAIN_HISTOGRAM_BAR_WIDTH = 16
 const TAG_TOP_LIMIT = 6
 const TERRAIN_TILE_DISPLAY_LIMIT = 24
 const TERRAIN_BIOME_SAMPLE_LIMIT = 6
-const LOG_ENTRY_LIMIT = 60
-const LOG_HOST_DEFAULT = "127.0.0.1"
-const LOG_PORT_DEFAULT = 41003
-const LOG_POLL_INTERVAL = 0.1
-const LOG_RECONNECT_INTERVAL = 2.0
-const LOG_TARGET_FALLBACK = "(general)"
-const LOG_LEVEL_FILTER_OPTIONS = [
-	{"label": "All", "threshold": 0},
-	{"label": "Debug+", "threshold": 1},
-	{"label": "Info+", "threshold": 2},
-	{"label": "Warn+", "threshold": 3},
-	{"label": "Error", "threshold": 4}
-]
-const LOG_LEVEL_SEVERITY = {
-	"TRACE": 0,
-	"DEBUG": 1,
-	"INFO": 2,
-	"WARN": 3,
-	"WARNING": 3,
-	"ERROR": 4,
-	"COMMAND": 2,
-	"SCRIPT": 2
-}
-const TICK_SAMPLE_LIMIT = 48
 const PANEL_WIDTH_DEFAULT = 340.0
 const PANEL_WIDTH_MIN = 260.0
 const PANEL_MIN_TOP_OFFSET = 48.0
@@ -315,7 +261,9 @@ func _ready() -> void:
 	if highlight_rivers_toggle != null:
 		highlight_rivers_toggle.toggled.connect(_on_highlight_rivers_toggled)
 		_on_highlight_rivers_toggled(highlight_rivers_toggle.button_pressed)
-	_tab_panels = [power_panel, crisis_panel, knowledge_panel, trade_panel, sentiment_panel, victory_panel, fauna_panel, great_discoveries_panel]
+	_tab_panels = [power_panel, crisis_panel, knowledge_panel, trade_panel, sentiment_panel, victory_panel, fauna_panel, great_discoveries_panel, logs_panel]
+	if logs_panel != null:
+		logs_panel.log_entry_received.connect(_on_log_stream_entry)
 	if crisis_panel != null:
 		crisis_panel.set_command_hooks(Callable(self, "_send_command"), Callable(self, "_append_command_log"))
 	if knowledge_panel != null:
@@ -334,12 +282,8 @@ func _ready() -> void:
 		fauna_panel.follow_herd_requested.connect(_on_fauna_follow_herd_requested)
 		fauna_panel.herd_selected.connect(_on_fauna_herd_selected)
 	_update_panel_layout()
-	_initialize_log_filters()
 	_render_static_sections()
 	_setup_command_controls()
-	_initialize_log_channel()
-	_render_logs()
-	_update_tick_sparkline()
 	if command_log_text != null:
 		command_log_text.selection_enabled = true
 
@@ -363,9 +307,6 @@ func reserved_width() -> float:
 	if not _panel_visible:
 		return 0.0
 	return _panel_width + PANEL_MARGIN * 2.0
-
-func _process(delta: float) -> void:
-	_poll_log_stream(delta)
 
 func update_snapshot(snapshot: Dictionary) -> void:
 	_apply_update(snapshot, true)
@@ -500,7 +441,6 @@ func _render_dynamic_sections() -> void:
 	_render_corruption()
 	_render_terrain()
 	_render_culture()
-	_render_logs()
 
 func _render_static_sections() -> void:
 	_terrain_palette.clear()
@@ -531,12 +471,12 @@ func _render_static_sections() -> void:
 		victory_panel.reset()
 	if great_discoveries_panel != null:
 		great_discoveries_panel.reset()
+	if logs_panel != null:
+		logs_panel.reset()
 	_seen_command_events.clear()
 	_clear_terrain_ui()
-	_mark_logs_dirty()
 	_render_terrain()
 	_render_culture()
-	_render_logs()
 	if command_status_label != null:
 		command_status_label.text = "Commands: disconnected."
 	if command_log_text != null:
@@ -590,7 +530,6 @@ func apply_typography() -> void:
 		culture_tension_text,
 		influencers_text,
 		corruption_text,
-		logs_text,
 		command_log_text
 	]
 	_apply_typography_style(body_rich_text, Typography.STYLE_BODY)
@@ -605,13 +544,8 @@ func apply_typography() -> void:
 
 	var caption_labels: Array = [
 		map_terrain_hint_label,
-		log_status_label,
-		sparkline_stats_label,
 		command_status_label,
-		autoplay_label,
-		log_level_label,
-		log_target_label,
-		log_filter_label
+		autoplay_label
 	]
 	_apply_typography_style(caption_labels, Typography.STYLE_CAPTION)
 
@@ -653,12 +587,7 @@ func apply_typography() -> void:
 		heat_entity_spin,
 		heat_delta_spin,
 		heat_apply_button,
-		terrain_overlay_tabs,
-		log_level_dropdown,
-		log_target_dropdown,
-		log_filter_line,
-		log_clear_button,
-		log_copy_button
+		terrain_overlay_tabs
 	]
 	if _overlay_selector != null:
 		control_nodes.append(_overlay_selector)
@@ -674,6 +603,8 @@ func apply_typography() -> void:
 		sentiment_panel.apply_typography()
 	if great_discoveries_panel != null:
 		great_discoveries_panel.apply_typography()
+	if logs_panel != null:
+		logs_panel.apply_typography()
 
 	_update_panel_layout()
 
@@ -701,49 +632,6 @@ func _connect_culture_ui() -> void:
 			culture_divergence_list.item_selected.connect(_on_culture_divergence_selected)
 		if not culture_divergence_list.is_connected("item_activated", divergence_callable):
 			culture_divergence_list.item_activated.connect(_on_culture_divergence_selected)
-
-func _initialize_log_filters() -> void:
-	if log_level_dropdown != null:
-		log_level_dropdown.clear()
-		for idx in range(LOG_LEVEL_FILTER_OPTIONS.size()):
-			var option: Dictionary = LOG_LEVEL_FILTER_OPTIONS[idx]
-			log_level_dropdown.add_item(String(option.get("label", "All")))
-			log_level_dropdown.set_item_metadata(idx, int(option.get("threshold", 0)))
-		var default_index: int = 0
-		if log_level_dropdown.get_item_count() > 0:
-			default_index = min(2, log_level_dropdown.get_item_count() - 1)
-			log_level_dropdown.select(default_index)
-			var meta_variant: Variant = log_level_dropdown.get_item_metadata(default_index)
-			_log_level_threshold = int(meta_variant) if typeof(meta_variant) == TYPE_INT else 0
-		var level_callable = Callable(self, "_on_log_level_filter_changed")
-		if not log_level_dropdown.is_connected("item_selected", level_callable):
-			log_level_dropdown.item_selected.connect(_on_log_level_filter_changed)
-
-	if log_filter_line != null:
-		log_filter_line.text = ""
-		log_filter_line.placeholder_text = "Search text or fields"
-		var filter_callable = Callable(self, "_on_log_search_changed")
-		if not log_filter_line.is_connected("text_changed", filter_callable):
-			log_filter_line.text_changed.connect(_on_log_search_changed)
-
-	if log_target_dropdown != null:
-		log_target_dropdown.clear()
-		log_target_dropdown.add_item("All targets")
-		log_target_dropdown.set_item_metadata(0, "")
-		log_target_dropdown.select(0)
-		var target_callable = Callable(self, "_on_log_target_filter_changed")
-		if not log_target_dropdown.is_connected("item_selected", target_callable):
-			log_target_dropdown.item_selected.connect(_on_log_target_filter_changed)
-
-	if log_clear_button != null:
-		var clear_callable = Callable(self, "_on_log_clear_pressed")
-		if not log_clear_button.is_connected("pressed", clear_callable):
-			log_clear_button.pressed.connect(_on_log_clear_pressed)
-
-	if log_copy_button != null:
-		var copy_callable = Callable(self, "_on_log_copy_pressed")
-		if not log_copy_button.is_connected("pressed", copy_callable):
-			log_copy_button.pressed.connect(_on_log_copy_pressed)
 
 func _initialize_map_controls() -> void:
 	if map_size_dropdown != null:
@@ -2625,455 +2513,12 @@ func _on_terrain_tile_gui_input(event: InputEvent) -> void:
 		_hovered_tile_entity = entity_id
 		_render_tile_detail(entity_id, true)
 
-func _initialize_log_channel() -> void:
-	_log_client = LogStreamClientScript.new()
-	_log_host = _determine_log_host()
-	_log_port = _determine_log_port()
-	_log_connected = false
-	_log_poll_timer = 0.0
-	_log_retry_timer = 0.0
-	_update_log_status("Connecting to log stream (%s:%d)..." % [_log_host, _log_port])
-	var err: Error = ERR_UNAVAILABLE
-	if _log_client != null and _log_client.has_method("connect_to"):
-		err = _log_client.call("connect_to", _log_host, _log_port)
-	if err != OK:
-		_update_log_status("Log stream connection failed (%s)." % error_string(err))
-		_log_retry_timer = LOG_RECONNECT_INTERVAL
-
-func _determine_log_host() -> String:
-	var env_host: String = OS.get_environment("LOG_HOST")
-	if env_host != "":
-		return env_host
-	env_host = OS.get_environment("STREAM_HOST")
-	if env_host != "":
-		return env_host
-	env_host = OS.get_environment("COMMAND_HOST")
-	if env_host != "":
-		return env_host
-	return LOG_HOST_DEFAULT
-
-func _determine_log_port() -> int:
-	var env_port: String = OS.get_environment("LOG_PORT")
-	if env_port != "":
-		var parsed: int = int(env_port)
-		if parsed > 0:
-			return parsed
-	return LOG_PORT_DEFAULT
-
-func _poll_log_stream(delta: float) -> void:
-	if _log_client == null:
-		return
-	_log_poll_timer += delta
-	if _log_poll_timer < LOG_POLL_INTERVAL:
-		return
-	_log_poll_timer = 0.0
-	if not _log_client.has_method("poll"):
-		return
-	var entries_variant: Variant = _log_client.call("poll")
-	if typeof(entries_variant) != TYPE_ARRAY:
-		entries_variant = []
-	var entries: Array = entries_variant
-	var status_code_variant: Variant = _log_client.call("status") if _log_client.has_method("status") else StreamPeerTCP.STATUS_NONE
-	var status_code: int = int(status_code_variant)
-	match status_code:
-		StreamPeerTCP.STATUS_CONNECTING:
-			var connecting_message: String = "Log stream connecting (%s:%d)..." % [_log_host, _log_port]
-			if _log_status_message != connecting_message:
-				_update_log_status(connecting_message)
-			_log_connected = false
-			return
-		StreamPeerTCP.STATUS_CONNECTED:
-			if not _log_connected:
-				_update_log_status("Log stream connected (%s:%d)." % [_log_host, _log_port])
-			_log_connected = true
-			_log_retry_timer = 0.0
-		_:
-			if _log_connected:
-				_update_log_status("Log stream disconnected; retrying...")
-			_log_connected = false
-
-	if not _log_connected:
-		_log_retry_timer += LOG_POLL_INTERVAL
-		if _log_retry_timer >= LOG_RECONNECT_INTERVAL:
-			_log_retry_timer = 0.0
-			var retry_err: Error = ERR_UNAVAILABLE
-			if _log_client.has_method("connect_to"):
-				retry_err = _log_client.call("connect_to", _log_host, _log_port)
-			if retry_err != OK:
-				_update_log_status("Log stream retry failed (%s)." % error_string(retry_err))
-			else:
-				_update_log_status("Reconnecting to log stream (%s:%d)..." % [_log_host, _log_port])
-		return
-
-	var updated: bool = false
-	for entry in entries:
-		if typeof(entry) != TYPE_DICTIONARY:
-			continue
-		_ingest_log_entry(entry)
-		updated = true
-	if updated:
-		_update_tick_sparkline()
-
-func _update_log_status(message: String) -> void:
-	if _log_status_message == message:
-		return
-	_log_status_message = message
-	if log_status_label != null:
-		log_status_label.text = message
-	_render_logs()
-
-func _ingest_log_entry(entry: Dictionary) -> void:
-	_record_tick_sample(entry)
+func _on_log_stream_entry(entry: Dictionary) -> void:
+	# Cross-panel dispatch of a raw log-stream entry (LogsPanel owns display/sparkline).
 	if knowledge_panel != null:
 		knowledge_panel.ingest_log_entry(entry)
 	if trade_panel != null:
 		trade_panel.ingest_log_entry(entry)
-	var level: String = _normalize_log_level(String(entry.get("level", "INFO")))
-	var raw_target: String = String(entry.get("target", ""))
-	var timestamp_ms: int = int(entry.get("timestamp_ms", 0))
-	var message: String = String(entry.get("message", ""))
-	var fields_variant: Variant = entry.get("fields", {})
-	var fields: Dictionary = {}
-	if typeof(fields_variant) == TYPE_DICTIONARY:
-		fields = (fields_variant as Dictionary).duplicate(true)
-	var formatted: String = _format_log_entry(timestamp_ms, level, raw_target, message, fields)
-	if formatted != "":
-		_record_log(formatted, level, raw_target, message, timestamp_ms, fields, false)
-
-func _format_log_entry(timestamp_ms: int, level: String, target: String, message: String, fields: Dictionary) -> String:
-	var time_str: String = _format_timestamp(timestamp_ms)
-	var level_label: String = _normalize_log_level(level)
-	var colored_level: String = "[%s]" % level_label
-	var level_color: String = _log_level_color(level_label)
-	if level_color != "":
-		colored_level = "[color=%s][%s][/color]" % [level_color, level_label]
-	var target_segment: String = ""
-	var trimmed_target: String = target.strip_edges()
-	if trimmed_target != "":
-		target_segment = " (%s)" % trimmed_target
-	var suffix: String = _format_field_suffix(fields)
-	return "[%s] %s%s %s%s" % [time_str, colored_level, target_segment, message, suffix]
-
-func _stringify_field(name: String, value) -> String:
-	match typeof(value):
-		TYPE_BOOL:
-			return "true" if value else "false"
-		TYPE_INT:
-			return str(value)
-		TYPE_FLOAT:
-			if name == "duration_ms":
-				return "%.1fms" % float(value)
-			return "%.2f" % float(value)
-		TYPE_STRING:
-			return String(value)
-		TYPE_ARRAY:
-			return "[%d]" % (value as Array).size()
-		TYPE_DICTIONARY:
-			return "{...}"
-		TYPE_NIL:
-			return "null"
-		_:
-			return str(value)
-
-func _format_timestamp(ms: int) -> String:
-	if ms <= 0:
-		return "--:--:--"
-	var seconds: int = ms / 1000
-	var millis: int = ms % 1000
-	var datetime: Dictionary = Time.get_datetime_dict_from_unix_time(float(seconds))
-	var hour: int = int(datetime.get("hour", 0))
-	var minute: int = int(datetime.get("minute", 0))
-	var second: int = int(datetime.get("second", 0))
-	return "%02d:%02d:%02d.%03d" % [hour, minute, second, millis]
-
-func _record_tick_sample(entry: Dictionary) -> void:
-	var fields_variant: Variant = entry.get("fields", {})
-	if typeof(fields_variant) != TYPE_DICTIONARY:
-		return
-	var fields: Dictionary = fields_variant
-	var turn_id: int = int(fields.get("turn", -1))
-	var duration_val: float = float(fields.get("duration_ms", 0.0))
-	if duration_val <= 0.0:
-		return
-	var sample := {
-		"turn": turn_id,
-		"duration_ms": duration_val
-	}
-	_tick_samples.append(sample)
-	while _tick_samples.size() > TICK_SAMPLE_LIMIT:
-		_tick_samples.pop_front()
-
-func _update_tick_sparkline() -> void:
-	if sparkline_graph == null:
-		return
-	if _tick_samples.is_empty():
-		if sparkline_graph.has_method("clear_samples"):
-			sparkline_graph.call("clear_samples")
-		if sparkline_stats_label != null:
-			sparkline_stats_label.text = "Awaiting telemetry."
-		return
-	var durations: Array = []
-	var total: float = 0.0
-	for sample in _tick_samples:
-		var value: float = float(sample.get("duration_ms", 0.0))
-		durations.append(value)
-		total += value
-	if sparkline_graph.has_method("set_samples"):
-		sparkline_graph.call("set_samples", durations)
-	var latest: Dictionary = _tick_samples[_tick_samples.size() - 1]
-	var turn_id: int = int(latest.get("turn", -1))
-	var last_duration: float = float(latest.get("duration_ms", 0.0))
-	var avg_duration: float = total / max(durations.size(), 1)
-	if sparkline_stats_label != null:
-		sparkline_stats_label.text = "Turn %d: %.1f ms (avg %.1f ms over %d turns)" % [
-			turn_id,
-			last_duration,
-			avg_duration,
-			durations.size()
-		]
-
-func _render_logs() -> void:
-	if logs_text == null:
-		return
-	if _log_targets_dirty:
-		_refresh_log_target_dropdown()
-	var lines: Array[String] = []
-	lines.append("[b]Logs[/b]")
-	if _log_status_message != "":
-		lines.append("[color=#a4c6ff]%s[/color]" % _log_status_message)
-	var filtered: Array = _filtered_log_records()
-	if filtered.is_empty():
-		if _log_entries.is_empty():
-			lines.append("No log entries yet.")
-		else:
-			lines.append("[i]No log entries match current filters.[/i]")
-	else:
-		for record_variant in filtered:
-			if not (record_variant is Dictionary):
-				continue
-			var record: Dictionary = record_variant
-			lines.append(String(record.get("formatted", "")))
-	logs_text.text = "\n".join(lines)
-	if logs_text.get_line_count() > 0:
-		logs_text.scroll_to_line(logs_text.get_line_count() - 1)
-
-func _filtered_log_records() -> Array:
-	if not _log_render_dirty:
-		return _log_filtered_records
-	var filtered: Array = []
-	for record_variant in _log_entries:
-		if not (record_variant is Dictionary):
-			continue
-		var record: Dictionary = record_variant
-		if _record_passes_filters(record):
-			filtered.append(record)
-	_log_filtered_records = filtered
-	_log_render_dirty = false
-	return _log_filtered_records
-
-func _record_passes_filters(record: Dictionary) -> bool:
-	var level: String = _normalize_log_level(String(record.get("level", "INFO")))
-	if _severity_for_level(level) < _log_level_threshold:
-		return false
-	if _selected_log_target != "":
-		var record_target: String = _normalize_log_target(String(record.get("target", "")))
-		if record_target != _selected_log_target:
-			return false
-	if _log_search_query_lower != "":
-		var haystack: String = String(record.get("formatted_lower", record.get("formatted", ""))).to_lower()
-		if not haystack.contains(_log_search_query_lower):
-			return false
-	return true
-
-func _severity_for_level(level: String) -> int:
-	var upper: String = level.to_upper()
-	if LOG_LEVEL_SEVERITY.has(upper):
-		return int(LOG_LEVEL_SEVERITY[upper])
-	return LOG_LEVEL_SEVERITY.get("INFO", 2)
-
-func _normalize_log_level(level: String) -> String:
-	var upper: String = level.to_upper()
-	match upper:
-		"WARNING":
-			return "WARN"
-		"ERR":
-			return "ERROR"
-		_:
-			return upper
-
-func _normalize_log_target(raw: String) -> String:
-	var trimmed := raw.strip_edges()
-	if trimmed == "":
-		return LOG_TARGET_FALLBACK
-	return trimmed
-
-func _register_log_target(target_key: String, delta: int) -> void:
-	var previous: int = int(_log_target_counts.get(target_key, 0))
-	var updated: int = previous + delta
-	if updated <= 0:
-		_log_target_counts.erase(target_key)
-		_log_target_list.erase(target_key)
-		if _selected_log_target == target_key:
-			_selected_log_target = ""
-	else:
-		_log_target_counts[target_key] = updated
-		if previous == 0 and delta > 0:
-			_log_target_list.append(target_key)
-	_log_targets_dirty = true
-
-func _refresh_log_target_dropdown() -> void:
-	if log_target_dropdown == null:
-		_log_targets_dirty = false
-		return
-	if _selected_log_target != "" and not _log_target_counts.has(_selected_log_target):
-		_selected_log_target = ""
-	log_target_dropdown.clear()
-	log_target_dropdown.add_item("All targets")
-	log_target_dropdown.set_item_metadata(0, "")
-	var sorted_targets: Array = _log_target_list.duplicate()
-	sorted_targets.sort()
-	var index: int = 1
-	var applied_selection: bool = false
-	for target_key in sorted_targets:
-		var count: int = int(_log_target_counts.get(target_key, 0))
-		if count <= 0:
-			continue
-		log_target_dropdown.add_item("%s (%d)" % [target_key, count])
-		log_target_dropdown.set_item_metadata(index, target_key)
-		if target_key == _selected_log_target:
-			log_target_dropdown.select(index)
-			applied_selection = true
-		index += 1
-	if not applied_selection:
-		log_target_dropdown.select(0)
-	_log_targets_dirty = false
-
-func _mark_logs_dirty() -> void:
-	_log_render_dirty = true
-
-func _reset_log_state() -> void:
-	_log_entries.clear()
-	_log_filtered_records.clear()
-	_log_render_dirty = true
-	_log_targets_dirty = true
-	_log_target_counts.clear()
-	_log_target_list.clear()
-	_selected_log_target = ""
-
-func _record_log(formatted: String, level: String, target: String, message: String, timestamp_ms: int, fields: Dictionary, synthetic: bool) -> void:
-	var target_key: String = _normalize_log_target(target)
-	var stored_fields: Dictionary = {}
-	if fields is Dictionary:
-		stored_fields = (fields as Dictionary).duplicate(true)
-	var record: Dictionary = {
-		"formatted": formatted,
-		"formatted_lower": formatted.to_lower(),
-		"level": level,
-		"target": target,
-		"target_key": target_key,
-		"message": message,
-		"timestamp_ms": timestamp_ms,
-		"fields": stored_fields,
-		"synthetic": synthetic
-	}
-	_log_entries.append(record)
-	_register_log_target(target_key, 1)
-	while _log_entries.size() > LOG_ENTRY_LIMIT:
-		var removed_variant: Variant = _log_entries.pop_front()
-		if removed_variant is Dictionary:
-			var removed: Dictionary = removed_variant
-			var removed_key: String = _normalize_log_target(String(removed.get("target", "")))
-			_register_log_target(removed_key, -1)
-	_mark_logs_dirty()
-	_render_logs()
-
-func _log_level_color(level: String) -> String:
-	match level:
-		"ERROR":
-			return "#ff6b6b"
-		"WARN":
-			return "#ffd166"
-		"INFO":
-			return "#a4c6ff"
-		"DEBUG":
-			return "#6ee7b7"
-		"TRACE":
-			return "#9aa5b1"
-		"COMMAND":
-			return "#d4bfff"
-		"SCRIPT":
-			return "#d4bfff"
-		_:
-			return ""
-
-func _format_field_suffix(fields: Dictionary) -> String:
-	if fields.is_empty():
-		return ""
-	var keys: Array = fields.keys()
-	keys.sort()
-	var parts: Array[String] = []
-	for key in keys:
-		var key_str: String = String(key)
-		parts.append("%s=%s" % [key_str, _stringify_field(key_str, fields[key])])
-	if parts.is_empty():
-		return ""
-	return " " + ", ".join(parts)
-
-func _on_log_level_filter_changed(index: int) -> void:
-	if log_level_dropdown == null:
-		return
-	var metadata: Variant = log_level_dropdown.get_item_metadata(index)
-	var threshold: int = 0
-	if typeof(metadata) == TYPE_INT:
-		threshold = int(metadata)
-	_log_level_threshold = threshold
-	_mark_logs_dirty()
-	_render_logs()
-
-func _on_log_target_filter_changed(index: int) -> void:
-	if log_target_dropdown == null:
-		return
-	var metadata: Variant = log_target_dropdown.get_item_metadata(index)
-	if metadata == null:
-		_selected_log_target = ""
-	else:
-		_selected_log_target = String(metadata)
-	if _selected_log_target != "" and not _log_target_counts.has(_selected_log_target):
-		_selected_log_target = ""
-	_mark_logs_dirty()
-	_render_logs()
-
-func _on_log_search_changed(new_text: String) -> void:
-	_log_search_query = new_text
-	_log_search_query_lower = new_text.to_lower()
-	_mark_logs_dirty()
-	_render_logs()
-
-func _on_log_clear_pressed() -> void:
-	_reset_log_state()
-	if log_target_dropdown != null:
-		log_target_dropdown.select(0)
-	if log_filter_line != null and log_filter_line.text != "":
-		log_filter_line.text = ""
-	_log_search_query = ""
-	_log_search_query_lower = ""
-	_mark_logs_dirty()
-	_render_logs()
-	_update_log_status("Logs cleared")
-
-func _on_log_copy_pressed() -> void:
-	if logs_text == null:
-		return
-	var contents := logs_text.text
-	if contents.strip_edges().is_empty():
-		_update_log_status("No logs to copy")
-		return
-	DisplayServer.clipboard_set(contents)
-	var line_count := logs_text.get_line_count()
-	if line_count > 0:
-		_update_log_status("Copied %d log lines" % line_count)
-	else:
-		_update_log_status("Logs copied to clipboard")
 
 func get_resolved_font_size() -> int:
 	return _resolved_font_size
@@ -4008,15 +3453,22 @@ func _on_script_event_from_package(script_id: int, event_name: String, payload: 
 			_append_log_entry("%s command failed: %s" % [prefix, line], "WARN", target)
 
 func _append_log_entry(entry: String, level: String = "INFO", target: String = "inspector", timestamp_ms: int = -1) -> void:
-	var trimmed: String = entry.strip_edges(true, true)
-	if trimmed == "":
-		return
-	var resolved_timestamp: int = timestamp_ms
-	if resolved_timestamp < 0:
-		resolved_timestamp = Time.get_ticks_msec()
-	var normalized_level: String = _normalize_log_level(level)
-	var formatted: String = "[%s] %s" % [_format_timestamp(resolved_timestamp), trimmed]
-	_record_log(formatted, normalized_level, target, trimmed, resolved_timestamp, {}, true)
+	# Thin forwarder: synthetic log lines (command log, culture tensions, script logs)
+	# are recorded/displayed by the LogsPanel, which owns the log buffer.
+	if logs_panel != null:
+		logs_panel.append_entry(entry, level, target, timestamp_ms)
+
+# Small local copy for the script-alert display strings, which need the normalized
+# level before handing off (LogsPanel re-normalizes on record).
+func _normalize_log_level(level: String) -> String:
+	var upper: String = level.to_upper()
+	match upper:
+		"WARNING":
+			return "WARN"
+		"ERR":
+			return "ERROR"
+		_:
+			return upper
 
 # Capability gating
 func update_capability_flags(flags: int) -> void:
