@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3 uid="uid://b8x7k2q5j4l3n"]
+[gd_scene load_steps=11 format=3 uid="uid://b8x7k2q5j4l3n"]
 
 [ext_resource type="Script" uid="uid://dgjdlxbpsrrw6" path="res://src/scripts/Inspector.gd" id="1"]
 [ext_resource type="Script" uid="uid://dnhxgwd0jtak5" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="2"]
@@ -7,6 +7,9 @@
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/CrisisPanel.gd" id="5"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/KnowledgePanel.gd" id="6"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/TradePanel.gd" id="7"]
+[ext_resource type="Script" path="res://src/scripts/ui/inspector/SentimentPanel.gd" id="8"]
+[ext_resource type="Script" path="res://src/scripts/ui/inspector/VictoryPanel.gd" id="9"]
+[ext_resource type="Script" path="res://src/scripts/ui/inspector/FaunaPanel.gd" id="10"]
 
 [node name="Inspector" type="CanvasLayer"]
 script = ExtResource("1")
@@ -149,9 +152,11 @@ visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+script = ExtResource("8")
 metadata/_tab_index = 1
 
 [node name="SentimentText" type="RichTextLabel" parent="RootPanel/TabContainer/Sentiment"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -473,6 +478,7 @@ visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+script = ExtResource("9")
 metadata/_tab_index = 10
 
 [node name="VictoryVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Victory"]
@@ -482,6 +488,7 @@ size_flags_vertical = 3
 theme_override_constants/separation = 12
 
 [node name="VictorySummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/Victory/VictoryVBox"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 bbcode_enabled = true
@@ -494,6 +501,7 @@ size_flags_horizontal = 3
 text = "Victory Modes"
 
 [node name="VictoryModesList" type="ItemList" parent="RootPanel/TabContainer/Victory/VictoryVBox"]
+unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 160)
 layout_mode = 2
 size_flags_horizontal = 3
@@ -1056,18 +1064,22 @@ fit_content = true
 [node name="Fauna" type="VBoxContainer" parent="RootPanel/TabContainer"]
 visible = false
 layout_mode = 2
+script = ExtResource("10")
 metadata/_tab_index = 12
 
 [node name="FaunaList" type="ItemList" parent="RootPanel/TabContainer/Fauna"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 
 [node name="FaunaDetail" type="RichTextLabel" parent="RootPanel/TabContainer/Fauna"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 bbcode_enabled = true
 
 [node name="FaunaFollowButton" type="Button" parent="RootPanel/TabContainer/Fauna"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Follow Herd"
 

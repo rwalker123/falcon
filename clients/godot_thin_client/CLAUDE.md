@@ -36,6 +36,9 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/CrisisPanel.gd` | Crisis tab panel — adds command hooks (`set_command_hooks`) and `apply_typography` to the contract |
 | `ui/inspector/KnowledgePanel.gd` | Knowledge tab panel — adds `set_command_connected` (connection-gating), `ingest_log_entry` (log-path telemetry), and `append_events` (Trade→Knowledge feed) |
 | `ui/inspector/TradePanel.gd` | Trade tab panel — `set_map_view` (overlay), owns the Map-tab overlay toggle, and emits `knowledge_events_produced` (the coordinator forwards it to KnowledgePanel — panels stay decoupled) |
+| `ui/inspector/SentimentPanel.gd` | Sentiment tab panel — display; axis bias is coordinator-owned and pushed in via `set_axis_bias` |
+| `ui/inspector/VictoryPanel.gd` | Victory tab panel — display + one-shot "victory achieved" log via `set_log_hook` |
+| `ui/inspector/FaunaPanel.gd` | Fauna tab panel — herd list/detail; emits `follow_herd_requested` + `herd_selected` (coordinator resolves faction, issues command, mirrors the Commands follow field); `set_command_connected` gates the follow button |
 | `Hud.gd` | HUD layer, legend, selection panel, turn readout |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
@@ -329,6 +332,16 @@ Optional contract hooks a panel adds only if it needs them:
   fed by Trade's diffusion records). The two panels never reference each other —
   `TradePanel` emits `knowledge_events_produced(records)` and the coordinator
   forwards the batch to `KnowledgePanel.append_events` (wired in `_ready`).
+- Coordinator-owned state pushed into a display panel: `SentimentPanel.set_axis_bias`
+  — axis bias belongs to the Commands axis controls (which mutate it optimistically),
+  so the coordinator pushes it to the Sentiment view at both the snapshot and the
+  optimistic-write sites, instead of the panel owning the key.
+- Command-issuing via a signal when the command needs coordinator-only context:
+  `FaunaPanel` emits `follow_herd_requested(herd_id)` (the follow command needs the
+  active faction, which lives in the coordinator) rather than taking `set_command_hooks`;
+  it also emits `herd_selected(herd_id)` so the coordinator can mirror the Commands
+  follow field. `set_log_hook(append_log)` is the log-only variant of `set_command_hooks`
+  (`VictoryPanel`'s one-shot victory announcement).
 
 The coordinator collects extracted panels in `_tab_panels` and fans `apply_update`
 out to them at the **end** of `_apply_update`, after its own key routing (e.g.
