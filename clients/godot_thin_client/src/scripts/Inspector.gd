@@ -106,17 +106,11 @@ var _terrain_highlight_dropdown: OptionButton = null
 @onready var highlight_rivers_toggle: CheckButton = $RootPanel/TabContainer/Map/MapVBox/HydrologySection/HighlightRiversToggle
 @onready var trade_links_list: ItemList = $RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection/TradeLinksList
 @onready var trade_events_text: RichTextLabel = $RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection/TradeEventsText
-@onready var power_summary_text: RichTextLabel = $RootPanel/TabContainer/Power/PowerVBox/PowerSummarySection/PowerSummaryText
-@onready var power_node_list: ItemList = $RootPanel/TabContainer/Power/PowerVBox/PowerNodeSection/PowerNodeList
-@onready var power_node_detail_text: RichTextLabel = $RootPanel/TabContainer/Power/PowerVBox/PowerNodeSection/PowerNodeDetailText
-@onready var crisis_summary_label: Label = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSummaryLabel
-@onready var crisis_summary_text: RichTextLabel = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSummaryText
-@onready var crisis_alerts_label: Label = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisAlertsLabel
-@onready var crisis_alerts_text: RichTextLabel = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisAlertsText
-@onready var crisis_auto_seed_check: CheckButton = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisControls/CrisisAutoSeedCheck
-@onready var crisis_archetype_field: LineEdit = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls/CrisisArchetypeField
-@onready var crisis_faction_spin: SpinBox = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls/CrisisFactionSpin
-@onready var crisis_spawn_button: Button = $RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls/CrisisSpawnButton
+@onready var power_panel: PowerInspectorPanel = $RootPanel/TabContainer/Power
+@onready var crisis_panel: CrisisInspectorPanel = $RootPanel/TabContainer/Crisis
+## Extracted tab panels that implement the coordinator contract (apply_update/reset).
+## Populated in _ready once the @onready handles resolve.
+var _tab_panels: Array = []
 @onready var knowledge_summary_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeSummaryText
 @onready var discovery_progress_list: ItemList = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/DiscoveryProgressSection/DiscoveryProgressList
 @onready var knowledge_events_text: RichTextLabel = $RootPanel/TabContainer/Knowledge/KnowledgeVBox/KnowledgeEventsSection/KnowledgeEventsText
@@ -243,15 +237,10 @@ var _culture_tension_tracker: Dictionary = {}
 var _trade_links: Dictionary = {}
 var _trade_metrics: Dictionary = {}
 var _trade_history: Array[Dictionary] = []
-var _power_nodes: Dictionary = {}
-var _power_metrics: Dictionary = {}
-var _selected_power_node_id: int = -1
 var _discovery_progress: Dictionary = {}
 var _knowledge_events: Array[Dictionary] = []
 var _knowledge_timeline_events: Array[Dictionary] = []
 var _knowledge_metrics: Dictionary = {}
-var _crisis_telemetry: Dictionary = {}
-var _crisis_annotations: Array[Dictionary] = []
 var _knowledge_policy_states: Dictionary = {}
 var _knowledge_budget_states: Dictionary = {}
 var _knowledge_missions: Array[Dictionary] = []
@@ -373,9 +362,6 @@ const KNOWLEDGE_TIMELINE_KIND_LABELS := {
 	5: "Cascade",
 	6: "Digest"
 }
-const POWER_NODE_LIST_LIMIT = 16
-const POWER_STABILITY_WARN = 0.4
-const POWER_STABILITY_CRITICAL = 0.2
 var _viewport: Viewport = null
 var _panel_width: float = PANEL_WIDTH_DEFAULT
 var _is_resizing = false
@@ -425,12 +411,6 @@ func _ready() -> void:
 			trade_links_list.item_selected.connect(_on_trade_link_selected)
 		if not trade_links_list.is_connected("item_activated", trade_select_callable):
 			trade_links_list.item_activated.connect(_on_trade_link_selected)
-	if power_node_list != null:
-		var power_select_callable = Callable(self, "_on_power_node_selected")
-		if not power_node_list.is_connected("item_selected", power_select_callable):
-			power_node_list.item_selected.connect(_on_power_node_selected)
-		if not power_node_list.is_connected("item_activated", power_select_callable):
-			power_node_list.item_activated.connect(_on_power_node_selected)
 	if fauna_list != null and not fauna_list.is_connected("item_selected", Callable(self, "_on_fauna_list_item_selected")):
 		fauna_list.item_selected.connect(_on_fauna_list_item_selected)
 	if great_discovery_ledger_list != null:
@@ -461,10 +441,9 @@ func _ready() -> void:
 		if not knowledge_mission_dropdown.is_connected("item_selected", mission_select_callable):
 			knowledge_mission_dropdown.item_selected.connect(_on_knowledge_mission_selected)
 	_initialize_counterintel_controls()
-	if crisis_auto_seed_check != null:
-		crisis_auto_seed_check.toggled.connect(_on_crisis_auto_seed_toggled)
-	if crisis_spawn_button != null:
-		crisis_spawn_button.pressed.connect(_on_crisis_spawn_button_pressed)
+	_tab_panels = [power_panel, crisis_panel]
+	if crisis_panel != null:
+		crisis_panel.set_command_hooks(Callable(self, "_send_command"), Callable(self, "_append_command_log"))
 	_update_panel_layout()
 	_initialize_log_filters()
 	_render_static_sections()
@@ -592,19 +571,6 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 	if data.has("trade_link_removed"):
 		_remove_trade_links(data["trade_link_removed"])
 
-	if full_snapshot and data.has("power_nodes"):
-		_rebuild_power_nodes(data["power_nodes"])
-	elif data.has("power_updates"):
-		_merge_power_nodes(data["power_updates"])
-
-	if data.has("power_removed"):
-		_remove_power_nodes(data["power_removed"])
-
-	if data.has("power_metrics"):
-		var metrics_variant: Variant = data["power_metrics"]
-		if metrics_variant is Dictionary:
-			_power_metrics = (metrics_variant as Dictionary).duplicate(true)
-
 	if full_snapshot and data.has("great_discovery_definitions"):
 		_set_great_discovery_definitions(data["great_discovery_definitions"])
 
@@ -648,12 +614,12 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 	if data.has("culture_tensions"):
 		_update_culture_tensions(data["culture_tensions"], full_snapshot)
 
-	if data.has("crisis_telemetry"):
-		var crisis_variant: Variant = data["crisis_telemetry"]
-		if crisis_variant is Dictionary:
-			_crisis_telemetry = (crisis_variant as Dictionary).duplicate(true)
-	if data.has("crisis_overlay"):
-		_update_crisis_overlay(data["crisis_overlay"])
+	# Fan the update out to extracted tab panels last, so any coordinator-side
+	# routing above (e.g. overlays.crisis_annotations via _ingest_overlays) is
+	# already applied and a panel's own keys (e.g. crisis_overlay) win on conflict.
+	for panel in _tab_panels:
+		if panel != null:
+			panel.apply_update(data, full_snapshot)
 
 func _rebuild_influencers(array_data) -> void:
 	_influencers.clear()
@@ -795,9 +761,7 @@ func _render_dynamic_sections() -> void:
 	_render_influencers()
 	_render_corruption()
 	_render_trade()
-	_render_power()
 	_render_fauna()
-	_render_crisis()
 	_render_victory()
 	_render_great_discoveries()
 	_render_knowledge()
@@ -821,9 +785,8 @@ func _render_static_sections() -> void:
 	_trade_links.clear()
 	_trade_metrics.clear()
 	_trade_history.clear()
-	_power_nodes.clear()
-	_power_metrics.clear()
-	_selected_power_node_id = -1
+	if power_panel != null:
+		power_panel.reset()
 	_fauna_entries.clear()
 	_selected_herd_id = ""
 	if fauna_list != null:
@@ -834,8 +797,8 @@ func _render_static_sections() -> void:
 	_knowledge_events.clear()
 	_knowledge_timeline_events.clear()
 	_knowledge_metrics.clear()
-	_crisis_telemetry.clear()
-	_crisis_annotations.clear()
+	if crisis_panel != null:
+		crisis_panel.reset()
 	_victory_state.clear()
 	_great_discovery_records.clear()
 	_great_discovery_progress_map.clear()
@@ -848,7 +811,6 @@ func _render_static_sections() -> void:
 	_mark_logs_dirty()
 	_render_terrain()
 	_render_culture()
-	_render_power()
 	_render_logs()
 	if command_status_label != null:
 		command_status_label.text = "Commands: disconnected."
@@ -865,10 +827,6 @@ func _render_static_sections() -> void:
 		trade_links_list.clear()
 	if trade_events_text != null:
 		trade_events_text.text = "[i]No diffusion events recorded yet.[/i]"
-	if crisis_summary_text != null:
-		crisis_summary_text.text = "[b]Crisis Telemetry[/b]\n[i]Awaiting telemetry.[/i]"
-	if crisis_alerts_text != null:
-		crisis_alerts_text.text = "[i]No crisis alerts reported.[/i]"
 	if victory_summary_text != null:
 		victory_summary_text.text = "[b]Victory Progress[/b]\n[i]Awaiting telemetry.[/i]"
 	if victory_modes_list != null:
@@ -945,8 +903,6 @@ func apply_typography() -> void:
 		corruption_text,
 	trade_summary_text,
 	trade_events_text,
-	crisis_summary_text,
-	crisis_alerts_text,
 	knowledge_summary_text,
 		knowledge_events_text,
 		great_discovery_summary_text,
@@ -962,8 +918,6 @@ func apply_typography() -> void:
 		terrain_biome_section_label,
 		terrain_tile_section_label,
 	terrain_overlay_section_label,
-	crisis_summary_label,
-	crisis_alerts_label,
 	great_discovery_summary_label,
 		great_discovery_ledger_label,
 		great_discovery_progress_label
@@ -1036,6 +990,9 @@ func apply_typography() -> void:
 	if _overlay_selector != null:
 		control_nodes.append(_overlay_selector)
 	_apply_typography_style(control_nodes, Typography.STYLE_CONTROL)
+
+	if crisis_panel != null:
+		crisis_panel.apply_typography()
 
 	_update_panel_layout()
 
@@ -1922,28 +1879,6 @@ func _send_command(line: String, success_message: String) -> bool:
 func send_runtime_command(line: String, success_message: String) -> bool:
 	return _send_command(line, success_message)
 
-func _on_crisis_auto_seed_toggled(pressed: bool) -> void:
-	var line := "crisis_autoseed %s" % ("on" if pressed else "off")
-	var message := "Crisis auto-seed %s." % ("enabled" if pressed else "disabled")
-	if not _send_command(line, message) and crisis_auto_seed_check != null:
-		crisis_auto_seed_check.button_pressed = not pressed
-
-func _on_crisis_spawn_button_pressed() -> void:
-	if crisis_archetype_field == null:
-		return
-	var archetype_id := crisis_archetype_field.text.strip_edges()
-	if archetype_id.is_empty():
-		_append_command_log("Provide a crisis archetype id to spawn.")
-		return
-	var normalized_id := archetype_id.to_lower()
-	var faction := 0
-	if crisis_faction_spin != null:
-		faction = int(crisis_faction_spin.value)
-	var line := "spawn_crisis %s %d" % [normalized_id, faction]
-	var message := "Spawn request for crisis '%s' (faction %d)." % [normalized_id, faction]
-	if _send_command(line, message):
-		crisis_archetype_field.clear()
-
 func _send_turn(steps: int) -> bool:
 	return _send_command("turn %d" % steps, "+%d turns requested." % steps)
 
@@ -2407,89 +2342,6 @@ func _remove_trade_links(ids) -> void:
 	_render_trade()
 	_sync_map_trade_overlay()
 
-func _rebuild_power_nodes(array) -> void:
-	_power_nodes.clear()
-	_merge_power_nodes(array)
-
-func _merge_power_nodes(array) -> void:
-	if array is Array:
-		for entry in array:
-			if not (entry is Dictionary):
-				continue
-			var info: Dictionary = (entry as Dictionary).duplicate(true)
-			var node_id: int = int(info.get("node_id", info.get("entity", 0)))
-			_power_nodes[node_id] = info
-	_render_power()
-
-func _remove_power_nodes(ids) -> void:
-	if ids is PackedInt64Array:
-		for value in (ids as PackedInt64Array):
-			_power_nodes.erase(int(value))
-	elif ids is Array:
-		for value in ids:
-			_power_nodes.erase(int(value))
-	if not _power_nodes.has(_selected_power_node_id):
-		_selected_power_node_id = -1
-	_render_power()
-
-func _render_power() -> void:
-	if power_summary_text != null:
-		if _power_metrics.is_empty():
-			power_summary_text.text = "[b]Power Grid[/b]\n[i]Awaiting telemetry.[/i]"
-		else:
-			var supply: float = float(_power_metrics.get("total_supply", _power_metrics.get("total_supply_raw", 0.0)))
-			var demand: float = float(_power_metrics.get("total_demand", _power_metrics.get("total_demand_raw", 0.0)))
-			var storage: float = float(_power_metrics.get("total_storage", _power_metrics.get("total_storage_raw", 0.0)))
-			var capacity: float = float(_power_metrics.get("total_capacity", _power_metrics.get("total_capacity_raw", 0.0)))
-			var stress: float = float(_power_metrics.get("grid_stress_avg", 0.0))
-			var margin: float = float(_power_metrics.get("surplus_margin", 0.0))
-			var alerts: int = int(_power_metrics.get("instability_alerts", 0))
-			var lines: Array[String] = []
-			lines.append("[b]Power Grid[/b]")
-			lines.append("Supply %.2f | Demand %.2f" % [supply, demand])
-			lines.append("Storage %.2f / %.2f" % [storage, capacity])
-			lines.append("Stress %.2f | Margin %.2f | Alerts %d" % [stress, margin, alerts])
-			var incidents_variant: Variant = _power_metrics.get("incidents", [])
-			if incidents_variant is Array and not (incidents_variant as Array).is_empty():
-				var warn_count := 0
-				var critical_count := 0
-				for entry in (incidents_variant as Array):
-					if not (entry is Dictionary):
-						continue
-					var severity := String((entry as Dictionary).get("severity", "warning"))
-					if severity == "critical":
-						critical_count += 1
-					else:
-						warn_count += 1
-				lines.append("Incidents: %d critical, %d warning" % [critical_count, warn_count])
-			power_summary_text.text = "\n".join(lines)
-
-	if power_node_list != null:
-		power_node_list.clear()
-		var entries: Array = Array(_power_nodes.values())
-		entries.sort_custom(Callable(self, "_compare_power_nodes"))
-		var selection_index: int = -1
-		var limit: int = min(entries.size(), POWER_NODE_LIST_LIMIT)
-		for idx in range(limit):
-			var info_variant: Variant = entries[idx]
-			if not (info_variant is Dictionary):
-				continue
-			var info: Dictionary = info_variant
-			var label := _format_power_node_entry(info)
-			var item_index := power_node_list.add_item(label)
-			power_node_list.set_item_metadata(item_index, info)
-			var node_id := int(info.get("node_id", info.get("entity", 0)))
-			if node_id == _selected_power_node_id:
-				selection_index = item_index
-		if selection_index >= 0:
-			power_node_list.select(selection_index)
-		elif power_node_list.get_item_count() > 0:
-			power_node_list.select(0)
-			var first_meta: Variant = power_node_list.get_item_metadata(0)
-			if first_meta is Dictionary:
-				_selected_power_node_id = int((first_meta as Dictionary).get("node_id", (first_meta as Dictionary).get("entity", -1)))
-	_update_power_node_detail()
-
 func _render_fauna() -> void:
 	if fauna_list == null or fauna_detail_text == null:
 		return
@@ -2511,141 +2363,6 @@ func _render_fauna() -> void:
 		fauna_list.set_item_metadata(item_index, herd)
 	fauna_detail_text.text = "[i]Select a herd to view details.[/i]"
 	_update_command_controls_enabled()
-
-func _render_crisis() -> void:
-	if crisis_summary_text != null:
-		if _crisis_telemetry.is_empty():
-			crisis_summary_text.text = "[b]Crisis Telemetry[/b]\n[i]Awaiting telemetry.[/i]"
-		else:
-			var lines: Array[String] = []
-			lines.append("[b]Crisis Telemetry[/b]")
-			var warnings: int = int(_crisis_telemetry.get("warnings_active", 0))
-			var criticals: int = int(_crisis_telemetry.get("criticals_active", 0))
-			var modifiers: int = int(_crisis_telemetry.get("modifiers_active", 0))
-			lines.append("Warnings %d · Criticals %d · Modifiers %d" % [warnings, criticals, modifiers])
-			var foreshock: int = int(_crisis_telemetry.get("foreshock_incidents", 0))
-			var containment: int = int(_crisis_telemetry.get("containment_incidents", 0))
-			if foreshock > 0 or containment > 0:
-				lines.append("Incidents %d foreshock · %d containment" % [foreshock, containment])
-			var gauges_variant: Variant = _crisis_telemetry.get("gauges", [])
-			var gauge_lines: Array[String] = []
-			if gauges_variant is Array:
-				for gauge_entry in (gauges_variant as Array):
-					if not (gauge_entry is Dictionary):
-						continue
-					var gauge: Dictionary = gauge_entry
-					var label := String(gauge.get("label", gauge.get("kind", "Metric")))
-					var band := String(gauge.get("band", "safe"))
-					var raw := float(gauge.get("raw", 0.0))
-					var ema := float(gauge.get("ema", 0.0))
-					var trend := float(gauge.get("trend_5t", 0.0))
-					var warn_threshold := float(gauge.get("warn_threshold", 0.0))
-					var crit_threshold := float(gauge.get("critical_threshold", 0.0))
-					var stale := int(gauge.get("stale_ticks", 0))
-					var status := _format_crisis_band(band)
-					var gauge_text := "%s: raw %.3f · ema %.3f · trend %+0.3f [i](warn %.3f / crit %.3f)[/i] — %s" % [
-						label,
-						raw,
-						ema,
-						trend,
-						warn_threshold,
-						crit_threshold,
-						status
-					]
-					if stale > 0:
-						gauge_text += " [i](stale %dt)[/i]" % stale
-					gauge_lines.append(gauge_text)
-			if gauge_lines.is_empty():
-				gauge_lines.append("[i]No gauges reported.[/i]")
-			lines.append_array(gauge_lines)
-			crisis_summary_text.text = "\n".join(lines)
-	if crisis_alerts_text != null:
-		if _crisis_annotations.is_empty():
-			if _crisis_telemetry.is_empty():
-				crisis_alerts_text.text = "[i]Awaiting crisis telemetry.[/i]"
-			else:
-				var warnings := int(_crisis_telemetry.get("warnings_active", 0))
-				var criticals := int(_crisis_telemetry.get("criticals_active", 0))
-				if warnings == 0 and criticals == 0:
-					crisis_alerts_text.text = "[i]No active crisis alerts.[/i]"
-				else:
-					crisis_alerts_text.text = "Warnings %d · Criticals %d — awaiting annotations." % [warnings, criticals]
-		else:
-			var alert_lines: Array[String] = ["[b]Active Crisis Alerts[/b]"]
-			for annotation in _crisis_annotations:
-				if not (annotation is Dictionary):
-					continue
-				var entry: Dictionary = annotation
-				var label := String(entry.get("label", ""))
-				if label == "":
-					label = "Unlabelled vector"
-				var severity := String(entry.get("severity", "safe"))
-				var severity_text := _format_crisis_band(severity)
-				var path_summary := _summarize_crisis_path(entry.get("path", PackedInt32Array()))
-				if path_summary == "":
-					alert_lines.append("%s — %s" % [severity_text, label])
-				else:
-					alert_lines.append("%s — %s %s" % [severity_text, label, path_summary])
-			crisis_alerts_text.text = "\n".join(alert_lines)
-
-func _format_crisis_band(band: String) -> String:
-	var normalized := band.to_lower()
-	match normalized:
-		"critical":
-			return "[color=#ff4d6a]CRITICAL[/color]"
-		"warn":
-			return "[color=#f2c94c]Warning[/color]"
-		_:
-			return "[color=#7ce7ff]Stable[/color]"
-
-func _summarize_crisis_path(path_variant: Variant) -> String:
-	if path_variant is PackedInt32Array:
-		var packed: PackedInt32Array = path_variant
-		var length := packed.size()
-		if length < 2:
-			return ""
-		var start_col := int(packed[0])
-		var start_row := int(packed[1])
-		var tiles: int = max(int(length / 2), 1)
-		if length >= 4:
-			var end_col := int(packed[length - 2])
-			var end_row := int(packed[length - 1])
-			if start_col == end_col and start_row == end_row:
-				return "[i](%d,%d · %d tiles)[/i]" % [start_col, start_row, tiles]
-			return "[i](%d,%d → %d,%d · %d tiles)[/i]" % [start_col, start_row, end_col, end_row, tiles]
-		return "[i](%d,%d · %d tiles)[/i]" % [start_col, start_row, tiles]
-	elif path_variant is Array:
-		var arr: Array = path_variant
-		if arr.is_empty():
-			return ""
-		var tiles: int = max(int(arr.size()), 1)
-		var start_step = arr[0]
-		var end_step = arr[arr.size() - 1]
-		if start_step is Array and start_step.size() >= 2:
-			var start_col := int(start_step[0])
-			var start_row := int(start_step[1])
-			if end_step is Array and end_step.size() >= 2:
-				var end_col := int(end_step[0])
-				var end_row := int(end_step[1])
-				if start_col == end_col and start_row == end_row:
-					return "[i](%d,%d · %d tiles)[/i]" % [start_col, start_row, tiles]
-				return "[i](%d,%d → %d,%d · %d tiles)[/i]" % [start_col, start_row, end_col, end_row, tiles]
-		return "[i](path length %d)[/i]" % tiles
-	return ""
-
-func _update_crisis_overlay(data: Variant) -> void:
-	if not (data is Dictionary):
-		_crisis_annotations.clear()
-		return
-	var overlay: Dictionary = data
-	_store_crisis_annotations_from_variant(overlay.get("annotations", []))
-
-func _store_crisis_annotations_from_variant(source: Variant) -> void:
-	_crisis_annotations.clear()
-	if source is Array:
-		for entry in source:
-			if entry is Dictionary:
-				_crisis_annotations.append((entry as Dictionary).duplicate(true))
 
 func _render_victory() -> void:
 	if victory_summary_text != null:
@@ -2721,77 +2438,6 @@ func _format_victory_label_text(raw: String) -> String:
 	for i in range(parts.size()):
 		parts[i] = String(parts[i]).capitalize()
 	return String(" ".join(parts)).strip_edges()
-
-func _compare_power_nodes(a: Dictionary, b: Dictionary) -> bool:
-	var stability_a: float = float(a.get("stability", a.get("stability_raw", 0.0)))
-	var stability_b: float = float(b.get("stability", b.get("stability_raw", 0.0)))
-	if not is_equal_approx(stability_a, stability_b):
-		return stability_a < stability_b
-	var deficit_a: float = float(a.get("deficit", a.get("deficit_raw", 0.0)))
-	var deficit_b: float = float(b.get("deficit", b.get("deficit_raw", 0.0)))
-	return deficit_a > deficit_b
-
-func _format_power_node_entry(info: Dictionary) -> String:
-	var node_id: int = int(info.get("node_id", info.get("entity", 0)))
-	var stability: float = float(info.get("stability", info.get("stability_raw", 0.0)))
-	var generation: float = float(info.get("generation", info.get("generation_raw", 0.0)))
-	var demand: float = float(info.get("demand", info.get("demand_raw", 0.0)))
-	var deficit: float = float(info.get("deficit", info.get("deficit_raw", 0.0)))
-	var surplus: float = float(info.get("surplus", info.get("surplus_raw", 0.0)))
-	var incidents: int = int(info.get("incident_count", 0))
-	return "#%03d st %.2f | gen %.1f / dem %.1f | Δ-%.1f Δ+%.1f | incidents %d" % [
-		node_id,
-		stability,
-		generation,
-		demand,
-		deficit,
-		surplus,
-		incidents
-	]
-
-func _update_power_node_detail() -> void:
-	if power_node_detail_text == null:
-		return
-	if _selected_power_node_id < 0 or not _power_nodes.has(_selected_power_node_id):
-		power_node_detail_text.text = "[i]Select a node to inspect output, demand, and stability.[/i]"
-		return
-	var info: Dictionary = _power_nodes[_selected_power_node_id]
-	var lines: Array[String] = []
-	lines.append("[b]Node #%03d[/b]" % _selected_power_node_id)
-	var entity_id: int = int(info.get("entity", 0))
-	lines.append("Entity %016X" % entity_id)
-	var generation: float = float(info.get("generation", info.get("generation_raw", 0.0)))
-	var demand: float = float(info.get("demand", info.get("demand_raw", 0.0)))
-	var efficiency: float = float(info.get("efficiency", info.get("efficiency_raw", 0.0)))
-	var storage_level: float = float(info.get("storage_level", info.get("storage_level_raw", 0.0)))
-	var storage_capacity: float = float(info.get("storage_capacity", info.get("storage_capacity_raw", 0.0)))
-	var stability: float = float(info.get("stability", info.get("stability_raw", 0.0)))
-	var surplus: float = float(info.get("surplus", info.get("surplus_raw", 0.0)))
-	var deficit: float = float(info.get("deficit", info.get("deficit_raw", 0.0)))
-	var incidents: int = int(info.get("incident_count", 0))
-	var stability_label := "[color=green]stable[/color]"
-	if stability < POWER_STABILITY_CRITICAL:
-		stability_label = "[color=red]critical[/color]"
-	elif stability < POWER_STABILITY_WARN:
-		stability_label = "[color=yellow]warning[/color]"
-	lines.append("Generation %.2f -> Demand %.2f" % [generation, demand])
-	lines.append("Efficiency %.2f" % efficiency)
-	lines.append("Storage %.2f / %.2f" % [storage_level, storage_capacity])
-	lines.append("Stability %.2f %s" % [stability, stability_label])
-	lines.append("Surplus %.2f | Deficit %.2f" % [surplus, deficit])
-	lines.append("Incidents %d" % incidents)
-	power_node_detail_text.text = "\n".join(lines)
-
-func _on_power_node_selected(index: int) -> void:
-	if power_node_list == null:
-		return
-	var meta: Variant = power_node_list.get_item_metadata(index)
-	if meta is Dictionary:
-		var info: Dictionary = meta
-		_selected_power_node_id = int(info.get("node_id", info.get("entity", -1)))
-	else:
-		_selected_power_node_id = -1
-	_update_power_node_detail()
 
 func _on_fauna_list_item_selected(index: int) -> void:
 	if fauna_list == null or fauna_detail_text == null:
@@ -5647,8 +5293,8 @@ func _ingest_overlays(overlays: Variant) -> void:
 		var tag_variant: Variant = overlay_dict["terrain_tag_labels"]
 		if tag_variant is Dictionary:
 			_terrain_tag_labels = (tag_variant as Dictionary).duplicate(true)
-	if overlay_dict.has("crisis_annotations"):
-		_store_crisis_annotations_from_variant(overlay_dict["crisis_annotations"])
+	if overlay_dict.has("crisis_annotations") and crisis_panel != null:
+		crisis_panel.ingest_annotations(overlay_dict["crisis_annotations"])
 	_update_overlay_channels(overlay_dict)
 
 func _update_overlay_channels(overlay_dict: Dictionary) -> void:
@@ -6451,14 +6097,19 @@ func update_capability_flags(flags: int) -> void:
 	_apply_capability_gating()
 
 func _apply_capability_gating() -> void:
-	_set_tab_enabled("Power", _has_flag(CAP_POWER))
+	# Power stays a clickable tab; when its capability is locked the panel renders an
+	# explanation of how it unlocks rather than being greyed out (see PowerPanel).
+	if power_panel != null:
+		power_panel.set_available(_has_flag(CAP_POWER))
 	_set_tab_enabled("GreatDiscoveries", _has_flag(CAP_MEGAPROJECTS))
 	_set_tab_enabled("Knowledge", _has_flag(CAP_ESPIONAGE_T2))
 	_set_tab_enabled("Trade", _has_flag(CAP_INDUSTRY_T1) or _has_flag(CAP_INDUSTRY_T2))
 	# Terrain is an always-available inspection tab (biome list, tile drill-down, terrain
 	# highlight). Only the Found Camp *action* within it is construction-gated (below).
 	_set_tab_enabled("Terrain", true)
-	_set_tab_enabled("Crisis", _has_flag(CAP_MEGAPROJECTS))
+	# Crisis stays a clickable tab; the panel renders a locked explanation while gated.
+	if crisis_panel != null:
+		crisis_panel.set_available(_has_flag(CAP_MEGAPROJECTS))
 	_set_tab_enabled("Influencers", _has_flag(CAP_INDUSTRY_T1) or _has_flag(CAP_INDUSTRY_T2))
 	if tile_found_camp_button != null:
 		tile_found_camp_button.disabled = not _has_flag(CAP_CONSTRUCTION)
