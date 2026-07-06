@@ -1,9 +1,10 @@
-[gd_scene load_steps=5 format=3 uid="uid://b8x7k2q5j4l3n"]
+[gd_scene load_steps=6 format=3 uid="uid://b8x7k2q5j4l3n"]
 
 [ext_resource type="Script" uid="uid://dgjdlxbpsrrw6" path="res://src/scripts/Inspector.gd" id="1"]
 [ext_resource type="Script" uid="uid://dnhxgwd0jtak5" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="2"]
 [ext_resource type="Script" path="res://src/scripts/ui/AutoSizingPanel.gd" id="3"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/PowerPanel.gd" id="4"]
+[ext_resource type="Script" path="res://src/scripts/ui/inspector/CrisisPanel.gd" id="5"]
 
 [node name="Inspector" type="CanvasLayer"]
 script = ExtResource("1")
@@ -383,6 +384,7 @@ visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
+script = ExtResource("5")
 metadata/_tab_index = 4
 
 [node name="CrisisVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Crisis"]
@@ -397,6 +399,7 @@ size_flags_horizontal = 3
 theme_override_constants/separation = 12
 
 [node name="CrisisAutoSeedCheck" type="CheckButton" parent="RootPanel/TabContainer/Crisis/CrisisVBox/CrisisControls"]
+unique_name_in_owner = true
 layout_mode = 2
 toggle_mode = true
 text = "Auto-seed when idle"
@@ -415,11 +418,13 @@ layout_mode = 2
 text = "Spawn crisis ID"
 
 [node name="CrisisArchetypeField" type="LineEdit" parent="RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 placeholder_text = "e.g. plague_bloom"
 
 [node name="CrisisFactionSpin" type="SpinBox" parent="RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls"]
+unique_name_in_owner = true
 layout_mode = 2
 min_value = 0.0
 step = 1.0
@@ -428,15 +433,18 @@ custom_arrow_step = 1.0
 size_flags_horizontal = 1
 
 [node name="CrisisSpawnButton" type="Button" parent="RootPanel/TabContainer/Crisis/CrisisVBox/CrisisSpawnControls"]
+unique_name_in_owner = true
 layout_mode = 2
 text = "Spawn"
 
 [node name="CrisisSummaryLabel" type="Label" parent="RootPanel/TabContainer/Crisis/CrisisVBox"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Gauge Summary"
 
 [node name="CrisisSummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/Crisis/CrisisVBox"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 bbcode_enabled = true
@@ -444,11 +452,13 @@ text = "[b]Crisis Telemetry[/b]\nAwaiting crisis telemetry."
 fit_content = true
 
 [node name="CrisisAlertsLabel" type="Label" parent="RootPanel/TabContainer/Crisis/CrisisVBox"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Alert Summary"
 
 [node name="CrisisAlertsText" type="RichTextLabel" parent="RootPanel/TabContainer/Crisis/CrisisVBox"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 bbcode_enabled = true

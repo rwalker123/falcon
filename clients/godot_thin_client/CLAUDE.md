@@ -33,6 +33,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `MapView.gd` | Terrain rendering, overlays, hex selection, navigation (WASD/QE/mouse), 2D minimap |
 | `Inspector.gd` | Inspector coordinator: streaming fan-out, capability gating, typography; hosts per-tab panels |
 | `ui/inspector/PowerPanel.gd` | Power tab panel — reference for the tab-panel extraction contract (`apply_update`/`reset`) |
+| `ui/inspector/CrisisPanel.gd` | Crisis tab panel — adds command hooks (`set_command_hooks`) and `apply_typography` to the contract |
 | `Hud.gd` | HUD layer, legend, selection panel, turn readout |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
@@ -305,8 +306,24 @@ reserved-width/resize) and forwards each update to the tab panels. A tab panel:
   and the panel renders a locked explanation while unavailable (the tab is *not*
   disabled). Always-on tabs (e.g. Terrain) skip this.
 
-**Reference implementation:** `ui/inspector/PowerPanel.gd` (the Power tab). Tabs
-still living inline in `Inspector.gd` are migrated onto this contract one at a time.
+Optional contract hooks a panel adds only if it needs them:
+- `apply_typography()` — the coordinator's `apply_typography()` calls it so the
+  panel styles its own widgets (`CrisisPanel`). `Typography.gd` is currently a
+  no-op stub, so this has no visual effect yet — it preserves intent for when
+  typography is implemented.
+- Collaborator setters for cross-cutting dependencies, kept narrow: `set_map_view`
+  (overlay sync), `set_command_hooks(send: Callable, append_log: Callable)` for
+  tabs that issue runtime commands (`CrisisPanel` spawn/auto-seed). The panel never
+  reaches back into the coordinator — it holds only the Callables/handles it is given.
+
+The coordinator collects extracted panels in `_tab_panels` and fans `apply_update`
+out to them at the **end** of `_apply_update`, after its own key routing (e.g.
+`_ingest_overlays`), so a panel's own keys win over coordinator-side feeders on
+conflict (see the `crisis_overlay` vs `overlays.crisis_annotations` precedence note).
+
+**Reference implementation:** `ui/inspector/PowerPanel.gd` (Power) and
+`ui/inspector/CrisisPanel.gd` (Crisis — adds command hooks + typography). Tabs still
+living inline in `Inspector.gd` are migrated onto this contract one at a time.
 
 ---
 
