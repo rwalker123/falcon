@@ -122,7 +122,10 @@ func append_entry(entry: String, level: String = "INFO", target: String = "inspe
 		return
 	var resolved_timestamp: int = timestamp_ms
 	if resolved_timestamp < 0:
-		resolved_timestamp = Time.get_ticks_msec()
+		# UNIX-epoch ms, matching the server log stream (log_stream.rs) so
+		# synthetic lines and stream entries share the same time base and
+		# _format_timestamp renders both correctly.
+		resolved_timestamp = int(Time.get_unix_time_from_system() * 1000.0)
 	var normalized_level: String = _normalize_level(level)
 	var formatted: String = "[%s] %s" % [_format_timestamp(resolved_timestamp), trimmed]
 	_record(formatted, normalized_level, target, trimmed, resolved_timestamp, {}, true)
