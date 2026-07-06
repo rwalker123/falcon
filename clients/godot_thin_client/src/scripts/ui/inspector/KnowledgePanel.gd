@@ -115,6 +115,11 @@ func reset() -> void:
 	_mission_lookup.clear()
 	_mission_queue.clear()
 	_render()
+	# _render() repaints the ledger/events/queue but not these two on-demand widgets;
+	# refresh them so reset() is a true clean slate (matters when reset is wired to a
+	# mid-session reconnect — at startup they are already empty).
+	_refresh_counterintel_status()
+	_refresh_mission_options()
 
 ## Coordinator contract (capability-gated): the tab stays clickable; when locked the panel
 ## explains how it unlocks and its debug controls are disabled.
