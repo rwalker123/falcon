@@ -31,7 +31,8 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 |--------|---------|
 | `Main.gd` | Scene orchestration, streaming toggle |
 | `MapView.gd` | Terrain rendering, overlays, hex selection, navigation (WASD/QE/mouse), 2D minimap |
-| `Inspector.gd` | Tabbed inspector panels, overlay selector |
+| `Inspector.gd` | Inspector coordinator: streaming fan-out, capability gating, typography; hosts per-tab panels |
+| `ui/inspector/PowerPanel.gd` | Power tab panel — reference for the tab-panel extraction contract (`apply_update`/`reset`) |
 | `Hud.gd` | HUD layer, legend, selection panel, turn readout |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
@@ -277,9 +278,35 @@ See `docs/godot_inspector_plan.md` for full roadmap.
 | Logs | Streaming tracing feed, level/target/text filters, duration sparkline |
 | Commands | Turn/rollback/autoplay, axis bias, spawn utilities, debug hooks |
 
-**Capability gating** (`Inspector._apply_capability_gating`): most tabs enable only when the matching `CapabilityFlags` bit is set. **Terrain is exempt** — it is an always-available inspection tab (the one construction *action* inside it, Found Camp, stays separately gated). Its **terrain-type highlight** dropdown lists every defined terrain (via `TerrainDefinitions`), and selecting one calls `MapView.set_terrain_highlight(id)`, which outlines/tints all matching hexes map-wide (ignoring Fog of War) — handy for spotting a biome or confirming one is absent. Selecting "none" (`-1`) clears it.
+**Capability gating** (`Inspector._apply_capability_gating`): most tabs enable only when the matching `CapabilityFlags` bit is set. **Terrain is exempt** — it is an always-available inspection tab (the one construction *action* inside it, Found Camp, stays separately gated). **Migrated tab panels don't grey out** — instead of disabling the tab (confusing: a dead tab with no explanation), the coordinator calls `panel.set_available(has_flag)` and the panel stays clickable, rendering a "🔒 Locked — unlocks via …" message while gated (see `PowerPanel`). `_set_tab_enabled` is still used for tabs not yet migrated to the panel contract. Its **terrain-type highlight** dropdown lists every defined terrain (via `TerrainDefinitions`), and selecting one calls `MapView.set_terrain_highlight(id)`, which outlines/tints all matching hexes map-wide (ignoring Fog of War) — handy for spotting a biome or confirming one is absent. Selecting "none" (`-1`) clears it.
 
 The overview text draws a **full biome histogram** (`_render_terrain` → `_histogram_bar`): every present biome, sorted by count, with a monospace `[code]` bar scaled to the most common biome plus its tile count and percentage — all computed client-side from the streamed `_terrain_counts`. The **Export Map** button (`_on_export_map_button_pressed`) sends the fire-and-forget `export_map` runtime command; the server writes the current map (terrain snapshot + resolved seed) to its `exports/` scratch dir as JSON (see `sim_schema` `MapExport`). Tile coordinates shown here as `@x,y` (`_format_tile_coords`) index straight into the export's row-major samples, so the same coordinate names a hex in the client, in the export file, and in tests.
+
+### Tab-panel extraction pattern
+
+`Inspector.gd` is being decomposed from a single god-object into per-tab panels;
+`Inspector` stays the **coordinator** (streaming, capability gating, typography,
+reserved-width/resize) and forwards each update to the tab panels. A tab panel:
+
+- Is a script attached to the tab's own scene node (its `class_name` typed by the
+  node's base type — the Power tab is a `ScrollContainer`, so `PowerInspectorPanel
+  extends ScrollContainer`). References its widgets by `%UniqueName` (mark those
+  nodes `unique_name_in_owner` in `InspectorLayer.tscn`) and wires its own signals
+  in `_ready()`. Same model as the pre-existing `scripting/ScriptManagerPanel`.
+- Implements the coordinator contract: `apply_update(data: Dictionary,
+  full_snapshot: bool)` — the panel reads only the snapshot/delta keys it owns and
+  re-renders itself — and `reset()` — clear state on new snapshot/disconnect.
+  `Inspector._apply_update` forwards to `panel.apply_update(...)`;
+  `_render_static_sections` calls `panel.reset()`. The panel owns its schema keys,
+  state, and rendering; the coordinator knows none of them. Panels needing extra
+  collaborators add setters (as `ScriptManagerPanel` does with `set_manager()`).
+- Capability-gated panels also implement `set_available(available: bool)` — the
+  coordinator maps the `CapabilityFlags` bit to it in `_apply_capability_gating`,
+  and the panel renders a locked explanation while unavailable (the tab is *not*
+  disabled). Always-on tabs (e.g. Terrain) skip this.
+
+**Reference implementation:** `ui/inspector/PowerPanel.gd` (the Power tab). Tabs
+still living inline in `Inspector.gd` are migrated onto this contract one at a time.
 
 ---
 
