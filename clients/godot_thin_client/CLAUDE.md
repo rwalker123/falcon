@@ -296,9 +296,10 @@ reserved-width/resize) and forwards each update to the tab panels. A tab panel:
   in `_ready()`. Same model as the pre-existing `scripting/ScriptManagerPanel`.
 - Implements the coordinator contract: `apply_update(data: Dictionary,
   full_snapshot: bool)` — the panel reads only the snapshot/delta keys it owns and
-  re-renders itself — and `reset()` — clear state on new snapshot/disconnect.
-  `Inspector._apply_update` forwards to `panel.apply_update(...)`;
-  `_render_static_sections` calls `panel.reset()`. The panel owns its schema keys,
+  re-renders itself — and `reset()` — drop all panel state so the coordinator can
+  re-seed it from a clean slate. `Inspector._apply_update` forwards to
+  `panel.apply_update(...)`; `_render_static_sections` calls `panel.reset()` (today
+  only on init; it is the hook a future disconnect/full-reinit flow would call). The panel owns its schema keys,
   state, and rendering; the coordinator knows none of them. Panels needing extra
   collaborators add setters (as `ScriptManagerPanel` does with `set_manager()`).
 - Capability-gated panels also implement `set_available(available: bool)` — the

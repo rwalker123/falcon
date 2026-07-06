@@ -53,7 +53,8 @@ func apply_update(data: Dictionary, full_snapshot: bool) -> void:
 	if dirty:
 		_render()
 
-## Coordinator contract: drop all state (new snapshot or disconnect).
+## Coordinator contract: drop all state so the coordinator can re-seed from a clean
+## slate (called during static-section (re)init; the hook for a future disconnect flow).
 func reset() -> void:
 	_nodes.clear()
 	_metrics.clear()

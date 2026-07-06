@@ -51,7 +51,8 @@ func apply_update(data: Dictionary, _full_snapshot: bool) -> void:
 	if dirty:
 		_render()
 
-## Coordinator contract: drop all state (new snapshot or disconnect).
+## Coordinator contract: drop all state so the coordinator can re-seed from a clean
+## slate (called during static-section (re)init; the hook for a future disconnect flow).
 func reset() -> void:
 	_telemetry.clear()
 	_annotations.clear()
@@ -257,7 +258,9 @@ func _on_auto_seed_toggled(pressed: bool) -> void:
 	var line := "crisis_autoseed %s" % ("on" if pressed else "off")
 	var message := "Crisis auto-seed %s." % ("enabled" if pressed else "disabled")
 	if not _call_send(line, message) and _auto_seed_check != null:
-		_auto_seed_check.button_pressed = not pressed
+		# Revert without re-emitting `toggled` (which would re-enter this handler
+		# and fire the opposite command).
+		_auto_seed_check.set_pressed_no_signal(not pressed)
 
 func _on_spawn_pressed() -> void:
 	if _archetype_field == null:
