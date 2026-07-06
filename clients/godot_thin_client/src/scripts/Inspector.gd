@@ -60,10 +60,7 @@ var _terrain_highlight_dropdown: OptionButton = null
 @onready var tile_found_camp_button: Button = $RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileActionRow/TileFoundCampButton
 @onready var map_panel: MapInspectorPanel = $RootPanel/TabContainer/Map
 @onready var overlay_panel: OverlayInspectorPanel = $RootPanel/TabContainer/Map/MapVBox/OverlaySection
-@onready var culture_summary_text: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureSummarySection/CultureSummaryText
-@onready var culture_divergence_list: ItemList = $RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection/CultureDivergenceList
-@onready var culture_divergence_detail: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection/CultureDivergenceDetail
-@onready var culture_tension_text: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureTensionSection/CultureTensionText
+@onready var culture_panel: CultureInspectorPanel = $RootPanel/TabContainer/Culture
 @onready var victory_panel: VictoryInspectorPanel = $RootPanel/TabContainer/Victory
 @onready var influencer_panel: InfluencerInspectorPanel = $RootPanel/TabContainer/Influencers
 @onready var corruption_panel: CorruptionInspectorPanel = $RootPanel/TabContainer/Corruption
@@ -104,10 +101,7 @@ var _selected_tile_entity: int = -1
 var _selected_tile_coords: Vector2i = Vector2i(-1, -1)
 var _hovered_tile_entity: int = -1
 var _tile_coord_lookup: Dictionary = {}
-var _selected_culture_layer_id: int = -1
-var _culture_layers: Dictionary = {}
-var _culture_tensions: Array[Dictionary] = []
-var _culture_tension_tracker: Dictionary = {}
+# Culture layer/tension state moved to CulturePanel.
 var _map_view: Node = null
 # Map-size + scenario state moved to MapPanel.
 var _panel_visible: bool = true
@@ -133,8 +127,7 @@ const PANEL_HANDLE_WIDTH = 12.0
 const PANEL_TAB_PADDING = 16.0
 const AXIS_NAMES: Array[String] = ["Knowledge", "Trust", "Equity", "Agency"]
 const AXIS_KEYS: Array[String] = ["knowledge", "trust", "equity", "agency"]
-const CULTURE_TOP_TRAIT_LIMIT = 6
-const CULTURE_MAX_DIVERGENCES = 6
+# CULTURE_* constants moved to CulturePanel.
 # CHANNEL_OPTIONS / SPAWN_SCOPE_OPTIONS / CORRUPTION_OPTIONS moved to CommandsPanel.
 var _viewport: Viewport = null
 var _panel_width: float = PANEL_WIDTH_DEFAULT
@@ -158,10 +151,11 @@ func _ready() -> void:
 	_apply_capability_gating()
 	apply_typography()
 	_connect_terrain_ui()
-	_connect_culture_ui()
-	_tab_panels = [power_panel, crisis_panel, knowledge_panel, trade_panel, sentiment_panel, victory_panel, fauna_panel, great_discoveries_panel, logs_panel, influencer_panel, corruption_panel, map_panel]
+	_tab_panels = [power_panel, crisis_panel, knowledge_panel, trade_panel, sentiment_panel, victory_panel, fauna_panel, great_discoveries_panel, logs_panel, influencer_panel, corruption_panel, map_panel, culture_panel]
 	if map_panel != null:
 		map_panel.set_command_hooks(Callable(self, "_send_command"), Callable(self, "_append_command_log"))
+	if culture_panel != null:
+		culture_panel.set_log_hook(Callable(self, "_append_log_entry"))
 	if logs_panel != null:
 		logs_panel.log_entry_received.connect(_on_log_stream_entry)
 	if crisis_panel != null:
@@ -261,16 +255,9 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 	if data.has("tile_removed"):
 		_remove_tiles(data["tile_removed"])
 
-	if full_snapshot and data.has("culture_layers"):
-		_rebuild_culture_layers(data["culture_layers"])
-	elif data.has("culture_layer_updates"):
-		_apply_culture_layer_updates(data["culture_layer_updates"])
-
-	if data.has("culture_layer_removed"):
-		_remove_culture_layers(data["culture_layer_removed"])
-
-	if data.has("culture_tensions"):
-		_update_culture_tensions(data["culture_tensions"], full_snapshot)
+	# culture_layers / culture_layer_updates / culture_layer_removed / culture_tensions are
+	# consumed by CulturePanel via the _tab_panels fan-out; it renders from
+	# _render_dynamic_sections with the coordinator-supplied influencer resonance.
 
 	# Fan the update out to extracted tab panels last, so any coordinator-side
 	# routing above (e.g. overlays.crisis_annotations via _ingest_overlays) is
@@ -288,7 +275,10 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 
 func _render_dynamic_sections() -> void:
 	_render_terrain()
-	_render_culture()
+	# CulturePanel renders here so the coordinator can supply the influencer-resonance
+	# summary (pulled from InfluencerPanel — panels stay decoupled).
+	if culture_panel != null:
+		culture_panel.render(influencer_panel.aggregate_resonance() if influencer_panel != null else {})
 
 func _render_static_sections() -> void:
 	_terrain_palette.clear()
@@ -297,10 +287,6 @@ func _render_static_sections() -> void:
 	_terrain_counts.clear()
 	_terrain_tag_counts.clear()
 	_tile_total = 0
-	_culture_layers.clear()
-	_culture_tensions.clear()
-	_culture_tension_tracker.clear()
-	_selected_culture_layer_id = -1
 	_selected_tile_entity = -1
 	_selected_tile_coords = Vector2i(-1, -1)
 	if trade_panel != null:
@@ -324,7 +310,8 @@ func _render_static_sections() -> void:
 	_seen_command_events.clear()
 	_clear_terrain_ui()
 	_render_terrain()
-	_render_culture()
+	if culture_panel != null:
+		culture_panel.reset()
 	if commands_panel != null:
 		commands_panel.reset()
 	if overlay_panel != null:
@@ -370,10 +357,7 @@ func apply_typography() -> void:
 	var body_rich_text: Array = [
 		terrain_text,
 		terrain_biome_detail_text,
-		terrain_tile_detail_text,
-		culture_summary_text,
-		culture_divergence_detail,
-		culture_tension_text
+		terrain_tile_detail_text
 	]
 	_apply_typography_style(body_rich_text, Typography.STYLE_BODY)
 
@@ -386,7 +370,6 @@ func apply_typography() -> void:
 	var list_controls: Array = [
 		terrain_biome_list,
 		terrain_tile_list,
-		culture_divergence_list,
 	]
 	_apply_typography_style(list_controls, Typography.STYLE_BODY)
 
@@ -422,6 +405,8 @@ func apply_typography() -> void:
 		overlay_panel.apply_typography()
 	if map_panel != null:
 		map_panel.apply_typography()
+	if culture_panel != null:
+		culture_panel.apply_typography()
 
 	_update_panel_layout()
 
@@ -441,14 +426,6 @@ func _connect_terrain_ui() -> void:
 		var tile_gui_callable = Callable(self, "_on_terrain_tile_gui_input")
 		if not terrain_tile_list.is_connected("gui_input", tile_gui_callable):
 			terrain_tile_list.gui_input.connect(_on_terrain_tile_gui_input)
-
-func _connect_culture_ui() -> void:
-	if culture_divergence_list != null:
-		var divergence_callable = Callable(self, "_on_culture_divergence_selected")
-		if not culture_divergence_list.is_connected("item_selected", divergence_callable):
-			culture_divergence_list.item_selected.connect(_on_culture_divergence_selected)
-		if not culture_divergence_list.is_connected("item_activated", divergence_callable):
-			culture_divergence_list.item_activated.connect(_on_culture_divergence_selected)
 
 func _setup_command_controls() -> void:
 	if rollback_ten_button != null:
@@ -788,155 +765,6 @@ No terrain data received yet. Palette legend remains available on the HUD."""
 	terrain_text.text = "\n".join(lines)
 	_refresh_biome_section(terrain_entries)
 
-func _render_culture() -> void:
-	if culture_summary_text == null or culture_divergence_list == null or culture_tension_text == null:
-		return
-
-	if _culture_layers.is_empty():
-		culture_summary_text.text = "[b]Culture[/b]\n[i]No culture data received yet.[/i]"
-		culture_divergence_list.clear()
-		if culture_divergence_detail != null:
-			culture_divergence_detail.text = "[i]Awaiting regional or local layers.[/i]"
-		culture_tension_text.text = "[i]No active tensions.[/i]"
-		return
-
-	var global_layer := {}
-	for value in _culture_layers.values():
-		if not (value is Dictionary):
-			continue
-		var scope := str(value.get("scope", ""))
-		if scope == "Global":
-			global_layer = value
-			break
-	var summary_lines: Array[String] = []
-	summary_lines.append("[b]Global Identity[/b]")
-	if global_layer.is_empty():
-		summary_lines.append("[i]Global layer missing.[/i]")
-	else:
-		var divergence_val: float = float(global_layer.get("divergence", 0.0))
-		var soft_threshold: float = float(global_layer.get("soft_threshold", 0.0))
-		var hard_threshold: float = float(global_layer.get("hard_threshold", 0.0))
-		var ticks_soft: int = int(global_layer.get("ticks_above_soft", 0))
-		var ticks_hard: int = int(global_layer.get("ticks_above_hard", 0))
-		var traits: Array[Dictionary] = _extract_culture_traits(global_layer)
-		traits.sort_custom(Callable(self, "_compare_trait_strength"))
-		var limit: int = min(traits.size(), CULTURE_TOP_TRAIT_LIMIT)
-		if limit == 0:
-			summary_lines.append("[i]No trait telemetry available.[/i]")
-		else:
-			for idx in range(limit):
-				var atrait: Dictionary = Dictionary()
-				if idx < traits.size():
-					var candidate_trait: Variant = traits[idx]
-					if candidate_trait is Dictionary:
-						atrait = candidate_trait as Dictionary
-					else:
-						continue
-				var label: String = str(atrait.get("label", atrait.get("axis", "Trait")))
-				var value: float = float(atrait.get("value", 0.0))
-				var modifier: float = float(atrait.get("modifier", 0.0))
-				summary_lines.append("%d. %s: %+.2f (modifier %+.2f)" % [idx + 1, label, value, modifier])
-		summary_lines.append("")
-		summary_lines.append("Δ %+.2f | soft %.2f · hard %.2f" % [divergence_val, soft_threshold, hard_threshold])
-		summary_lines.append("Ticks above soft: %d · hard: %d" % [ticks_soft, ticks_hard])
-	var resonance_summary: Dictionary = influencer_panel.aggregate_resonance() if influencer_panel != null else {}
-	var scope_sequence: Array[String] = ["Global", "Regional", "Local"]
-	for scope_key in scope_sequence:
-		if not resonance_summary.has(scope_key):
-			continue
-		var entries_variant: Variant = resonance_summary[scope_key]
-		if not (entries_variant is Array):
-			continue
-		var entries: Array = entries_variant as Array
-		if entries.is_empty():
-			continue
-		var limit_scope: int = min(entries.size(), 2)
-		var fragments: Array[String] = []
-		for idx in range(limit_scope):
-			var entry_variant: Variant = entries[idx]
-			if not (entry_variant is Dictionary):
-				continue
-			var entry: Dictionary = entry_variant as Dictionary
-			var axis_label: String = str(entry.get("label", entry.get("axis", "Axis")))
-			var output_val: float = float(entry.get("output", 0.0))
-			fragments.append("%s %+.3f" % [axis_label, output_val])
-		if fragments.size() > 0:
-			summary_lines.append("%s pushes: %s" % [scope_key, ", ".join(fragments)])
-	culture_summary_text.text = "\n".join(summary_lines)
-
-	var divergence_entries: Array[Dictionary] = []
-	for key in _culture_layers.keys():
-		var layer_variant: Variant = _culture_layers[key]
-		if not (layer_variant is Dictionary):
-			continue
-		var layer: Dictionary = layer_variant as Dictionary
-		var scope_str := str(layer.get("scope", ""))
-		if scope_str == "Global":
-			continue
-		var magnitude: float = float(layer.get("divergence", 0.0))
-		divergence_entries.append({
-			"layer": layer,
-			"magnitude": absf(magnitude),
-			"value": magnitude
-		})
-	divergence_entries.sort_custom(Callable(self, "_compare_culture_divergences"))
-
-	var previous_selection: int = _selected_culture_layer_id
-	culture_divergence_list.clear()
-	var selection_index: int = -1
-	var divergence_limit: int = min(divergence_entries.size(), CULTURE_MAX_DIVERGENCES)
-	for idx in range(divergence_limit):
-		var entry: Dictionary = divergence_entries[idx]
-		var layer_dict: Dictionary = {}
-		var layer_entry: Variant = entry.get("layer", {})
-		if layer_entry is Dictionary:
-			layer_dict = layer_entry as Dictionary
-		var divergence_label := _format_culture_divergence_entry(layer_dict, float(entry.get("value", 0.0)))
-		var item_index := culture_divergence_list.add_item(divergence_label)
-		culture_divergence_list.set_item_metadata(item_index, layer_dict)
-		if selection_index == -1 and int(layer_dict.get("id", -1)) == previous_selection:
-			selection_index = item_index
-	if selection_index >= 0:
-		culture_divergence_list.select(selection_index)
-	elif culture_divergence_list.get_item_count() > 0:
-		if previous_selection >= 0 and _culture_layers.has(previous_selection):
-			var ref_dict: Dictionary = _culture_layers[previous_selection]
-			_selected_culture_layer_id = int(ref_dict.get("id", -1))
-			_publish_culture_layer_highlight_from_layer(ref_dict)
-		else:
-			culture_divergence_list.select(0)
-			var first_meta: Variant = culture_divergence_list.get_item_metadata(0)
-			if first_meta is Dictionary:
-				var first_dict: Dictionary = first_meta as Dictionary
-				_selected_culture_layer_id = int(first_dict.get("id", -1))
-				_publish_culture_layer_highlight_from_layer(first_dict)
-	else:
-		_selected_culture_layer_id = -1
-		_publish_culture_layer_highlight_from_layer({})
-	_update_culture_divergence_detail()
-
-	var tension_lines: Array[String] = []
-	if _culture_tensions.is_empty():
-		tension_lines.append("[i]No active tensions.[/i]")
-	else:
-		for tension in _culture_tensions:
-			if not (tension is Dictionary):
-				continue
-			var info: Dictionary = tension as Dictionary
-			var kind_label: String = str(info.get("kind_label", info.get("kind", "Tension")))
-			var scope_label: String = str(info.get("scope_label", info.get("scope", "")))
-			var severity: float = float(info.get("severity", 0.0))
-			var timer_val: int = int(info.get("timer", 0))
-			var layer_id: int = int(info.get("layer_id", 0))
-			tension_lines.append("• %s — layer #%03d [%s] | Δ %.2f | timer %d" % [
-				kind_label,
-				layer_id,
-				scope_label,
-				severity,
-				timer_val
-			])
-	culture_tension_text.text = "\n".join(tension_lines)
-
 func attach_map_view(view: Node) -> void:
 	_map_view = view
 	if trade_panel != null:
@@ -945,172 +773,12 @@ func attach_map_view(view: Node) -> void:
 		map_panel.set_map_view(view)
 	if overlay_panel != null:
 		overlay_panel.set_map_view(view)
-	if _selected_culture_layer_id >= 0 and _culture_layers.has(_selected_culture_layer_id):
-		var layer_variant: Variant = _culture_layers.get(_selected_culture_layer_id)
-		if layer_variant is Dictionary:
-			_publish_culture_layer_highlight_from_layer(layer_variant as Dictionary)
-		else:
-			_publish_culture_layer_highlight_from_layer({})
-	else:
-		_publish_culture_layer_highlight_from_layer({})
+	if culture_panel != null:
+		culture_panel.set_map_view(view)
 
 func set_hud_layer(layer: Object) -> void:
 	_hud_layer = layer
 	_update_panel_layout()
-
-func _update_culture_divergence_detail() -> void:
-	if culture_divergence_detail == null:
-		return
-	var selected_items := culture_divergence_list.get_selected_items()
-	if selected_items.is_empty():
-		culture_divergence_detail.text = "[i]Select a regional or local layer to inspect divergence.[/i]"
-		_publish_culture_layer_highlight_from_layer({})
-		return
-	var index: int = selected_items[0]
-	var meta: Variant = culture_divergence_list.get_item_metadata(index)
-	if not (meta is Dictionary):
-		culture_divergence_detail.text = "[i]Select a regional or local layer to inspect divergence.[/i]"
-		_publish_culture_layer_highlight_from_layer({})
-		return
-	var layer: Dictionary = meta as Dictionary
-	_selected_culture_layer_id = int(layer.get("id", -1))
-	_publish_culture_layer_highlight_from_layer(layer)
-	var lines: Array[String] = []
-	var scope_label: String = str(layer.get("scope_label", layer.get("scope", "")))
-	var owner_variant: Variant = layer.get("owner")
-	if owner_variant == null:
-		owner_variant = layer.get("owner_value", 0)
-	var owner_display: String = _format_owner_display(owner_variant)
-	var parent_id: int = int(layer.get("parent", 0))
-	var divergence_val: float = float(layer.get("divergence", 0.0))
-	var soft_threshold: float = float(layer.get("soft_threshold", 0.0))
-	var hard_threshold: float = float(layer.get("hard_threshold", 0.0))
-	var ticks_soft: int = int(layer.get("ticks_above_soft", 0))
-	var ticks_hard: int = int(layer.get("ticks_above_hard", 0))
-	lines.append("[b]Layer #%03d · %s[/b]" % [int(layer.get("id", 0)), scope_label])
-	lines.append("Owner: %s | Parent: %d" % [owner_display, parent_id])
-	lines.append("Δ %+.2f | soft %.2f | hard %.2f" % [divergence_val, soft_threshold, hard_threshold])
-	lines.append("Ticks above soft: %d | hard: %d" % [ticks_soft, ticks_hard])
-	lines.append("")
-	lines.append("[b]Top Trait Drift[/b]")
-	var traits: Array[Dictionary] = _extract_culture_traits(layer)
-	traits.sort_custom(Callable(self, "_compare_trait_strength"))
-	var limit: int = min(traits.size(), CULTURE_TOP_TRAIT_LIMIT)
-	if limit == 0:
-		lines.append("(no trait telemetry)")
-	else:
-		for idx in range(limit):
-			var atrait: Dictionary = Dictionary()
-			if idx < traits.size():
-				var candidate_trait: Variant = traits[idx]
-				if candidate_trait is Dictionary:
-					atrait = candidate_trait as Dictionary
-				else:
-					continue
-			var label: String = str(atrait.get("label", atrait.get("axis", "Trait")))
-			var value: float = float(atrait.get("value", 0.0))
-			var baseline: float = float(atrait.get("baseline", 0.0))
-			var modifier: float = float(atrait.get("modifier", 0.0))
-			lines.append("%d. %s: value %+.2f | baseline %+.2f | modifier %+.2f" % [
-				idx + 1,
-				label,
-				value,
-				baseline,
-				modifier
-			])
-	culture_divergence_detail.text = "\n".join(lines)
-
-func _publish_culture_layer_highlight_from_layer(layer: Dictionary) -> void:
-	if _map_view == null:
-		return
-	if not _map_view.has_method("set_culture_layer_highlight"):
-		return
-	if layer.is_empty():
-		var empty_ids := PackedInt32Array()
-		_map_view.call("set_culture_layer_highlight", empty_ids, "")
-		return
-	var scope_str := str(layer.get("scope", ""))
-	var layer_ids: Array[int] = []
-	var context_label: String = ""
-	if scope_str == "Regional":
-		var region_id: int = int(layer.get("id", -1))
-		for entry_variant in _culture_layers.values():
-			if entry_variant is Dictionary:
-				var entry_dict: Dictionary = entry_variant as Dictionary
-				if String(entry_dict.get("scope", "")) != "Local":
-					continue
-				if int(entry_dict.get("parent", -1)) == region_id:
-					layer_ids.append(int(entry_dict.get("id", -1)))
-		var local_count: int = layer_ids.size()
-		context_label = "Region #%03d (%d locals)" % [region_id, local_count]
-	elif scope_str == "Local":
-		var local_id: int = int(layer.get("id", -1))
-		var parent_id: int = int(layer.get("parent", -1))
-		layer_ids.append(local_id)
-		if parent_id >= 0:
-			context_label = "Local #%03d (Region #%03d)" % [local_id, parent_id]
-		else:
-			context_label = "Local #%03d" % local_id
-	else:
-		for entry_variant in _culture_layers.values():
-			if entry_variant is Dictionary:
-				var entry_dict: Dictionary = entry_variant as Dictionary
-				if String(entry_dict.get("scope", "")) == "Local":
-					layer_ids.append(int(entry_dict.get("id", -1)))
-		context_label = "Global culture selection"
-	var packed_ids := PackedInt32Array(layer_ids)
-	_map_view.call("set_culture_layer_highlight", packed_ids, context_label)
-
-func _extract_culture_traits(layer: Dictionary) -> Array[Dictionary]:
-	var result: Array[Dictionary] = []
-	var traits_variant = layer.get("traits", [])
-	if traits_variant is Array:
-		for trait_entry in traits_variant:
-			if not (trait_entry is Dictionary):
-				continue
-			result.append((trait_entry as Dictionary).duplicate(true))
-	return result
-
-func _format_culture_divergence_entry(layer: Dictionary, divergence: float) -> String:
-	var layer_id: int = int(layer.get("id", 0))
-	var scope_label: String = str(layer.get("scope_label", layer.get("scope", "")))
-	return "#%03d [%s] Δ %+.2f" % [layer_id, scope_label, divergence]
-
-func _compare_culture_divergences(a: Dictionary, b: Dictionary) -> bool:
-	var a_mag: float = float(a.get("magnitude", 0.0))
-	var b_mag: float = float(b.get("magnitude", 0.0))
-	if absf(a_mag - b_mag) > 0.0001:
-		return a_mag > b_mag
-	return float(a.get("value", 0.0)) > float(b.get("value", 0.0))
-
-func _compare_trait_strength(a: Dictionary, b: Dictionary) -> bool:
-	var a_val: float = absf(float(a.get("value", 0.0)))
-	var b_val: float = absf(float(b.get("value", 0.0)))
-	if absf(a_val - b_val) > 0.0001:
-		return a_val > b_val
-	return absf(float(a.get("modifier", 0.0))) > absf(float(b.get("modifier", 0.0)))
-
-func _format_owner_display(owner_variant: Variant) -> String:
-	match typeof(owner_variant):
-		TYPE_INT, TYPE_FLOAT:
-			var numeric: int = int(owner_variant)
-			return "0x%016x" % numeric
-		TYPE_STRING:
-			return String(owner_variant)
-		TYPE_NIL:
-			return "n/a"
-		_:
-			return str(owner_variant)
-
-func _on_culture_divergence_selected(index: int) -> void:
-	if culture_divergence_list == null:
-		return
-	var meta: Variant = culture_divergence_list.get_item_metadata(index)
-	if meta is Dictionary:
-		_selected_culture_layer_id = int((meta as Dictionary).get("id", -1))
-	else:
-		_selected_culture_layer_id = -1
-	_update_culture_divergence_detail()
 
 func _clear_terrain_ui() -> void:
 	_biome_entries.clear()
@@ -1814,96 +1482,6 @@ func _ingest_food_modules(entries) -> void:
 		if x < 0 or y < 0:
 			continue
 		_food_module_lookup[Vector2i(x, y)] = record
-
-func _rebuild_culture_layers(array_data) -> void:
-	var prev_selected: int = _selected_culture_layer_id
-	_culture_layers.clear()
-	if array_data is Array:
-		for entry in array_data:
-			var layer_dict: Dictionary = _normalize_culture_layer(entry)
-			if layer_dict.is_empty():
-				continue
-			var id = int(layer_dict.get("id", 0))
-			_culture_layers[id] = layer_dict
-	if prev_selected >= 0 and _culture_layers.has(prev_selected):
-		_selected_culture_layer_id = prev_selected
-	else:
-		_selected_culture_layer_id = -1
-
-func _apply_culture_layer_updates(array_data) -> void:
-	if not (array_data is Array):
-		return
-	for entry in array_data:
-		var layer_dict: Dictionary = _normalize_culture_layer(entry)
-		if layer_dict.is_empty():
-			continue
-		var id = int(layer_dict.get("id", 0))
-		_culture_layers[id] = layer_dict
-		if id == _selected_culture_layer_id:
-			_publish_culture_layer_highlight_from_layer(layer_dict)
-
-func _remove_culture_layers(ids) -> void:
-	if ids is Array:
-		for value in ids:
-			_erase_culture_layer(int(value))
-	elif ids is PackedInt32Array:
-		var packed_ids: PackedInt32Array = ids
-		for value in packed_ids:
-			_erase_culture_layer(int(value))
-
-func _erase_culture_layer(id: int) -> void:
-	if _culture_layers.has(id):
-		_culture_layers.erase(id)
-	if _selected_culture_layer_id == id:
-		_selected_culture_layer_id = -1
-
-func _normalize_culture_layer(entry) -> Dictionary:
-	if not (entry is Dictionary):
-		return {}
-	var info: Dictionary = (entry as Dictionary).duplicate(true)
-	var traits_variant: Variant = info.get("traits", [])
-	if traits_variant is Array:
-		var cleaned: Array[Dictionary] = []
-		for trait_entry in traits_variant:
-			if trait_entry is Dictionary:
-				cleaned.append((trait_entry as Dictionary).duplicate(true))
-		info["traits"] = cleaned
-	return info
-
-func _update_culture_tensions(array_data, full_snapshot: bool) -> void:
-	var tensions: Array[Dictionary] = []
-	if array_data is Array:
-		for entry in array_data:
-			if not (entry is Dictionary):
-				continue
-			tensions.append((entry as Dictionary).duplicate(true))
-	if full_snapshot:
-		_culture_tension_tracker.clear()
-	else:
-		_log_new_culture_tensions(tensions)
-	_culture_tensions = tensions
-
-func _log_new_culture_tensions(tensions: Array[Dictionary]) -> void:
-	for tension in tensions:
-		var layer_id = int(tension.get("layer_id", 0))
-		var kind_key = str(tension.get("kind", ""))
-		var key = "%d:%s" % [layer_id, kind_key]
-		var timer_val: int = int(tension.get("timer", 0))
-		var previous: int = int(_culture_tension_tracker.get(key, -1))
-		if timer_val > previous:
-			var kind_label: String = str(tension.get("kind_label", kind_key.capitalize()))
-			var scope_label: String = str(tension.get("scope_label", tension.get("scope", "")))
-			var severity: float = float(tension.get("severity", 0.0))
-			_append_log_entry("[color=#ffd166]%s[/color] layer #%03d [%s] severity %.2f (timer %d)" % [
-				kind_label,
-				layer_id,
-				scope_label,
-				severity,
-				timer_val
-			])
-			_culture_tension_tracker[key] = timer_val
-		else:
-			_culture_tension_tracker[key] = max(previous, timer_val)
 
 func _store_tile(entry) -> void:
 	if not (entry is Dictionary):

@@ -1,4 +1,4 @@
-[gd_scene load_steps=18 format=3 uid="uid://b8x7k2q5j4l3n"]
+[gd_scene load_steps=19 format=3 uid="uid://b8x7k2q5j4l3n"]
 
 [ext_resource type="Script" uid="uid://dgjdlxbpsrrw6" path="res://src/scripts/Inspector.gd" id="1"]
 [ext_resource type="Script" uid="uid://dnhxgwd0jtak5" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="2"]
@@ -17,6 +17,7 @@
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/CommandsPanel.gd" id="15"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/OverlayPanel.gd" id="16"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/MapPanel.gd" id="17"]
+[ext_resource type="Script" path="res://src/scripts/ui/inspector/CulturePanel.gd" id="18"]
 
 [node name="Inspector" type="CanvasLayer"]
 script = ExtResource("1")
@@ -523,6 +524,7 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 metadata/_tab_index = 13
+script = ExtResource("18")
 
 [node name="CultureVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Culture"]
 layout_mode = 2
