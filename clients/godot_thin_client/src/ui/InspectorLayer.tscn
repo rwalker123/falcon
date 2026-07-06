@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3 uid="uid://b8x7k2q5j4l3n"]
+[gd_scene load_steps=15 format=3 uid="uid://b8x7k2q5j4l3n"]
 
 [ext_resource type="Script" uid="uid://dgjdlxbpsrrw6" path="res://src/scripts/Inspector.gd" id="1"]
 [ext_resource type="Script" uid="uid://dnhxgwd0jtak5" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="2"]
@@ -12,6 +12,8 @@
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/FaunaPanel.gd" id="10"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/GreatDiscoveriesPanel.gd" id="11"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/LogsPanel.gd" id="12"]
+[ext_resource type="Script" path="res://src/scripts/ui/inspector/InfluencerPanel.gd" id="13"]
+[ext_resource type="Script" path="res://src/scripts/ui/inspector/CorruptionPanel.gd" id="14"]
 
 [node name="Inspector" type="CanvasLayer"]
 script = ExtResource("1")
@@ -584,8 +586,10 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 metadata/_tab_index = 5
+script = ExtResource("13")
 
 [node name="InfluencersText" type="RichTextLabel" parent="RootPanel/TabContainer/Influencers"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -598,8 +602,10 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 metadata/_tab_index = 6
+script = ExtResource("14")
 
 [node name="CorruptionText" type="RichTextLabel" parent="RootPanel/TabContainer/Corruption"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3

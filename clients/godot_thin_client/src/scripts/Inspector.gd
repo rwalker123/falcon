@@ -84,8 +84,8 @@ var _terrain_highlight_dropdown: OptionButton = null
 @onready var culture_divergence_detail: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureDivergenceSection/CultureDivergenceDetail
 @onready var culture_tension_text: RichTextLabel = $RootPanel/TabContainer/Culture/CultureVBox/CultureTensionSection/CultureTensionText
 @onready var victory_panel: VictoryInspectorPanel = $RootPanel/TabContainer/Victory
-@onready var influencers_text: RichTextLabel = $RootPanel/TabContainer/Influencers/InfluencersText
-@onready var corruption_text: RichTextLabel = $RootPanel/TabContainer/Corruption/CorruptionText
+@onready var influencer_panel: InfluencerInspectorPanel = $RootPanel/TabContainer/Influencers
+@onready var corruption_panel: CorruptionInspectorPanel = $RootPanel/TabContainer/Corruption
 @onready var highlight_rivers_toggle: CheckButton = $RootPanel/TabContainer/Map/MapVBox/HydrologySection/HighlightRiversToggle
 @onready var power_panel: PowerInspectorPanel = $RootPanel/TabContainer/Power
 @onready var trade_panel: TradeInspectorPanel = $RootPanel/TabContainer/Trade
@@ -146,8 +146,6 @@ var _tab_panels: Array = []
 @onready var snapshot_overlays_reload_button: Button = get_node_or_null("RootPanel/TabContainer/Commands/ConfigControls/ConfigRow/SnapshotOverlaysReloadButton")
 
 var _axis_bias: Dictionary = {}
-var _influencers: Dictionary = {}
-var _corruption: Dictionary = {}
 var _faction_inventory_state: Array = []
 var _terrain_palette: Dictionary = {}
 var _terrain_tag_labels: Dictionary = {}
@@ -261,7 +259,7 @@ func _ready() -> void:
 	if highlight_rivers_toggle != null:
 		highlight_rivers_toggle.toggled.connect(_on_highlight_rivers_toggled)
 		_on_highlight_rivers_toggled(highlight_rivers_toggle.button_pressed)
-	_tab_panels = [power_panel, crisis_panel, knowledge_panel, trade_panel, sentiment_panel, victory_panel, fauna_panel, great_discoveries_panel, logs_panel]
+	_tab_panels = [power_panel, crisis_panel, knowledge_panel, trade_panel, sentiment_panel, victory_panel, fauna_panel, great_discoveries_panel, logs_panel, influencer_panel, corruption_panel]
 	if logs_panel != null:
 		logs_panel.log_entry_received.connect(_on_log_stream_entry)
 	if crisis_panel != null:
@@ -367,18 +365,8 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 		if sentiment_panel != null:
 			sentiment_panel.set_axis_bias(_axis_bias)
 
-	if full_snapshot and data.has("influencers"):
-		_rebuild_influencers(data["influencers"])
-	elif data.has("influencer_updates"):
-		_merge_influencers(data["influencer_updates"])
-
-	if data.has("influencer_removed"):
-		_remove_influencers(data["influencer_removed"])
-
-	if data.has("corruption"):
-		var ledger: Dictionary = data["corruption"]
-		_corruption = ledger.duplicate(true)
-
+	# Influencer roster + corruption ledger are owned by InfluencerPanel / CorruptionPanel
+	# and ingested via the _tab_panels fan-out at the end of this method.
 
 	if data.has("overlays"):
 		_ingest_overlays(data["overlays"])
@@ -409,36 +397,15 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 		if panel != null:
 			panel.apply_update(data, full_snapshot)
 
-func _rebuild_influencers(array_data) -> void:
-	_influencers.clear()
-	for entry in array_data:
-		if not (entry is Dictionary):
-			continue
-		var info: Dictionary = entry.duplicate(true)
-		var id = int(info.get("id", 0))
-		_influencers[id] = info
-	_refresh_influencer_dropdown()
-
-func _merge_influencers(array_data) -> void:
-	var changed = false
-	for entry in array_data:
-		if not (entry is Dictionary):
-			continue
-		var info: Dictionary = entry.duplicate(true)
-		var id = int(info.get("id", 0))
-		_influencers[id] = info
-		changed = true
-	if changed:
+	# InfluencerPanel owns the roster now, but the coordinator's (still-inline)
+	# influencer command dropdown reads it back via get_influencers(). Refresh the
+	# dropdown after the panel has ingested this delta so it can't go stale once the
+	# Commands subtree exists (today influencer_dropdown is null and this is a no-op).
+	if (full_snapshot and data.has("influencers")) \
+			or data.has("influencer_updates") or data.has("influencer_removed"):
 		_refresh_influencer_dropdown()
 
-func _remove_influencers(ids) -> void:
-	for id in ids:
-		_influencers.erase(int(id))
-	_refresh_influencer_dropdown()
-
 func _render_dynamic_sections() -> void:
-	_render_influencers()
-	_render_corruption()
 	_render_terrain()
 	_render_culture()
 
@@ -528,8 +495,6 @@ func apply_typography() -> void:
 		culture_summary_text,
 		culture_divergence_detail,
 		culture_tension_text,
-		influencers_text,
-		corruption_text,
 		command_log_text
 	]
 	_apply_typography_style(body_rich_text, Typography.STYLE_BODY)
@@ -605,6 +570,10 @@ func apply_typography() -> void:
 		great_discoveries_panel.apply_typography()
 	if logs_panel != null:
 		logs_panel.apply_typography()
+	if influencer_panel != null:
+		influencer_panel.apply_typography()
+	if corruption_panel != null:
+		corruption_panel.apply_typography()
 
 	_update_panel_layout()
 
@@ -1467,100 +1436,6 @@ func _disable_autoplay(log_message: bool) -> void:
 	if autoplay_toggle != null and autoplay_toggle.button_pressed:
 		autoplay_toggle.button_pressed = false
 
-func _render_influencers() -> void:
-	if _influencers.is_empty():
-		influencers_text.text = "[b]Influencers[/b]\nNo roster data received yet."
-		return
-
-	var entries: Array = _influencers.values()
-	entries.sort_custom(Callable(self, "_compare_influencers"))
-
-	var lines: Array[String] = []
-	lines.append("[b]Influencers[/b] (%d tracked)" % entries.size())
-	var limit: int = min(entries.size(), 8)
-	for index in range(limit):
-		var info: Dictionary = entries[index]
-		var id = int(info.get("id", 0))
-		var name: String = str(info.get("name", "Unnamed"))
-		var lifecycle = str(info.get("lifecycle", ""))
-		var influence = float(info.get("influence", 0.0))
-		var growth = float(info.get("growth_rate", 0.0))
-		var support = float(info.get("support_charge", 0.0))
-		var suppress = float(info.get("suppress_pressure", 0.0))
-		lines.append("%d. %s [ID %d] — %s" % [index + 1, name, id, lifecycle])
-		lines.append("    influence %.3f | growth %.3f | support %.3f | suppress %.3f"
-			% [influence, growth, support, suppress])
-
-		var domains_variant = info.get("domains")
-		if domains_variant is PackedStringArray:
-			var domain_str = _join_strings(domains_variant)
-			if domain_str != "":
-				lines.append("    domains: %s" % domain_str)
-
-		var resonance_variant: Variant = info.get("culture_resonance", null)
-		var resonance_entries: Array = []
-		if resonance_variant is Array:
-			resonance_entries = resonance_variant
-		if resonance_entries.size() > 0:
-			resonance_entries.sort_custom(Callable(self, "_compare_culture_resonance"))
-			var resonance_limit: int = min(resonance_entries.size(), 2)
-			var fragments: Array[String] = []
-			for ridx in range(resonance_limit):
-				var entry_variant: Variant = resonance_entries[ridx]
-				if not (entry_variant is Dictionary):
-					continue
-				var entry: Dictionary = entry_variant as Dictionary
-				var axis_label: String = str(entry.get("label", entry.get("axis", "Axis")))
-				var weight_val: float = float(entry.get("weight", 0.0))
-				var output_val: float = float(entry.get("output", 0.0))
-				fragments.append("%s w%+.2f Δ%+.3f" % [axis_label, weight_val, output_val])
-			if fragments.size() > 0:
-				lines.append("    culture: %s" % ", ".join(fragments))
-
-	influencers_text.text = "\n".join(lines)
-
-func _compare_influencers(a: Dictionary, b: Dictionary) -> bool:
-	var a_score = float(a.get("influence", 0.0))
-	var b_score = float(b.get("influence", 0.0))
-	return a_score > b_score
-
-func _compare_culture_resonance(a: Dictionary, b: Dictionary) -> bool:
-	var a_out = abs(float(a.get("output", 0.0)))
-	var b_out = abs(float(b.get("output", 0.0)))
-	if is_equal_approx(a_out, b_out):
-		var a_weight = abs(float(a.get("weight", 0.0)))
-		var b_weight = abs(float(b.get("weight", 0.0)))
-		return a_weight > b_weight
-	return a_out > b_out
-
-func _render_corruption() -> void:
-	if _corruption.is_empty():
-		corruption_text.text = "[b]Corruption[/b]\nNo ledger data received yet."
-		return
-
-	var lines: Array[String] = []
-	lines.append("[b]Corruption[/b]")
-	lines.append("Reputation modifier: %.3f" % float(_corruption.get("reputation_modifier", 0.0)))
-	lines.append("Audit capacity: %d" % int(_corruption.get("audit_capacity", 0)))
-
-	var entries = _corruption.get("entries", [])
-	if entries.size() == 0:
-		lines.append("No active incidents.")
-	else:
-		lines.append("Active incidents:")
-		for entry in entries:
-			if not (entry is Dictionary):
-				continue
-			var info: Dictionary = entry
-			var subsystem = str(info.get("subsystem", "Unknown"))
-			var intensity = float(info.get("intensity", 0.0))
-			var timer = int(info.get("exposure_timer", 0))
-			var last_tick = int(info.get("last_update_tick", 0))
-			lines.append(" • %s: intensity %.3f | τ=%d | updated %d"
-				% [subsystem, intensity, timer, last_tick])
-
-	corruption_text.text = "\n".join(lines)
-
 ## Build a fixed-width proportional bar (filled + empty blocks) for a 0..1
 ## fraction. Wrapped in [code] by callers so the monospace glyphs align into a
 ## column, turning the biome list into a readable histogram.
@@ -1686,7 +1561,7 @@ func _render_culture() -> void:
 		summary_lines.append("")
 		summary_lines.append("Δ %+.2f | soft %.2f · hard %.2f" % [divergence_val, soft_threshold, hard_threshold])
 		summary_lines.append("Ticks above soft: %d · hard: %d" % [ticks_soft, ticks_hard])
-	var resonance_summary := _aggregate_influencer_resonance()
+	var resonance_summary: Dictionary = influencer_panel.aggregate_resonance() if influencer_panel != null else {}
 	var scope_sequence: Array[String] = ["Global", "Regional", "Local"]
 	for scope_key in scope_sequence:
 		if not resonance_summary.has(scope_key):
@@ -1940,59 +1815,6 @@ func _compare_trait_strength(a: Dictionary, b: Dictionary) -> bool:
 	if absf(a_val - b_val) > 0.0001:
 		return a_val > b_val
 	return absf(float(a.get("modifier", 0.0))) > absf(float(b.get("modifier", 0.0)))
-
-func _aggregate_influencer_resonance() -> Dictionary:
-	var totals := {
-		"Global": {},
-		"Regional": {},
-		"Local": {}
-	}
-	for value in _influencers.values():
-		if not (value is Dictionary):
-			continue
-		var info: Dictionary = value as Dictionary
-		var scope_text := str(info.get("scope", ""))
-		if scope_text == "Generation":
-			scope_text = "Global"
-		if not totals.has(scope_text):
-			totals[scope_text] = {}
-		var resonance_variant: Variant = info.get("culture_resonance", null)
-		var entries: Array = []
-		if resonance_variant is Array:
-			entries = resonance_variant
-		if entries.is_empty():
-			continue
-		var axis_map: Dictionary = totals[scope_text]
-		for entry_variant in entries:
-			if not (entry_variant is Dictionary):
-				continue
-			var entry: Dictionary = entry_variant as Dictionary
-			var axis_key: String = str(entry.get("axis", entry.get("label", "")))
-			if axis_key == "":
-				continue
-			var label: String = str(entry.get("label", axis_key))
-			var output_val: float = float(entry.get("output", 0.0))
-			if absf(output_val) < 0.0001:
-				continue
-			if not axis_map.has(axis_key):
-				axis_map[axis_key] = {
-					"axis": axis_key,
-					"label": label,
-					"output": 0.0
-				}
-			axis_map[axis_key]["output"] += output_val
-	var result := {}
-	for scope_key in totals.keys():
-		var axis_map: Dictionary = totals[scope_key]
-		var entries: Array = axis_map.values()
-		entries.sort_custom(Callable(self, "_compare_resonance_total"))
-		result[scope_key] = entries
-	return result
-
-func _compare_resonance_total(a: Dictionary, b: Dictionary) -> bool:
-	var a_out: float = absf(float(a.get("output", 0.0)))
-	var b_out: float = absf(float(b.get("output", 0.0)))
-	return a_out > b_out
 
 func _format_owner_display(owner_variant: Variant) -> String:
 	match typeof(owner_variant):
@@ -3170,7 +2992,10 @@ func _selected_influencer_id() -> int:
 	return -1
 
 func _influencer_display_name(id: int) -> String:
-	var info = _influencers.get(id, null)
+	# The roster is owned by InfluencerPanel; the coordinator's command controls read
+	# it back. This path is currently dead (the dropdown never resolves in this scene),
+	# but kept compiling against the panel-owned roster.
+	var info = influencer_panel.get_influencers().get(id, null) if influencer_panel != null else null
 	if info == null:
 		return "ID %d" % id
 	var name: String = str(info.get("name", "Influencer %d" % id))
@@ -3181,7 +3006,8 @@ func _refresh_influencer_dropdown() -> void:
 		return
 	var previous_id: int = _selected_influencer_id()
 	var entries: Array = []
-	for key in _influencers.keys():
+	var roster: Dictionary = influencer_panel.get_influencers() if influencer_panel != null else {}
+	for key in roster.keys():
 		var id = int(key)
 		var name: String = _influencer_display_name(id)
 		var entry = {
@@ -3494,7 +3320,9 @@ func _apply_capability_gating() -> void:
 	# Crisis stays a clickable tab; the panel renders a locked explanation while gated.
 	if crisis_panel != null:
 		crisis_panel.set_available(_has_flag(CAP_MEGAPROJECTS))
-	_set_tab_enabled("Influencers", _has_flag(CAP_INDUSTRY_T1) or _has_flag(CAP_INDUSTRY_T2))
+	# Influencers stays a clickable tab; the panel renders a locked explanation while gated.
+	if influencer_panel != null:
+		influencer_panel.set_available(_has_flag(CAP_INDUSTRY_T1) or _has_flag(CAP_INDUSTRY_T2))
 	if tile_found_camp_button != null:
 		tile_found_camp_button.disabled = not _has_flag(CAP_CONSTRUCTION)
 

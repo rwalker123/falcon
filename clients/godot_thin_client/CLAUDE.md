@@ -41,6 +41,8 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/FaunaPanel.gd` | Fauna tab panel — herd list/detail; emits `follow_herd_requested` + `herd_selected` (coordinator resolves faction, issues command, mirrors the Commands follow field); `set_command_connected` gates the follow button |
 | `ui/inspector/GreatDiscoveriesPanel.gd` | GreatDiscoveries tab panel — large, self-contained (ledger + progress + definition catalog + details); capability-gated (`CAP_MEGAPROJECTS`), no command/log/MapView coupling |
 | `ui/inspector/LogsPanel.gd` | Logs tab panel — owns the LogStreamClient + polling + filters + tick sparkline; emits `log_entry_received` (coordinator dispatches to Knowledge/Trade); fed synthetic lines via `append_entry` |
+| `ui/inspector/InfluencerPanel.gd` | Influencers tab panel — owns the influencer roster; capability-gated (`CAP_INDUSTRY_T1`/`T2`) via `set_available`; exposes `aggregate_resonance()` (coordinator feeds it into the Culture tab) and `get_influencers()` (coordinator's still-inline influencer command controls read the roster back). The influencer *command* controls stay coordinator-owned |
+| `ui/inspector/CorruptionPanel.gd` | Corruption tab panel — display-only ledger (reputation modifier, audit capacity, incidents); not capability-gated; the corruption *inject* command controls stay coordinator-owned |
 | `Hud.gd` | HUD layer, legend, selection panel, turn readout |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
@@ -357,6 +359,19 @@ gating, log-path ingestion, and the Trade→Knowledge event feed), and
 `ui/inspector/TradePanel.gd` (Trade — map-overlay collaborator + the emit side of
 the Knowledge↔Trade seam). Tabs still living inline in `Inspector.gd` are migrated
 onto this contract one at a time.
+
+**Commands-tab controls are not in the scene.** The coordinator declares the whole
+Commands cluster (axis-bias, heat, config-reload, scenario scout/follow/camp,
+autoplay row, and the influencer/corruption *command* buttons) via
+`get_node_or_null("RootPanel/TabContainer/Commands/…")`, but no `Commands` tab node
+exists in `InspectorLayer.tscn` — so those refs resolve to `null` and every use site
+is null-guarded. They are effectively dead in this scene (the working turn controls
+live in `RootPanel/CommandToolbar`, outside the `TabContainer`). What renders from
+that cluster are the display-only `Influencers` and `Corruption` tabs (now
+`InfluencerPanel`/`CorruptionPanel`). Because the influencer command controls read
+the roster, `InfluencerPanel.get_influencers()` keeps them compiling against the
+panel-owned data even though they never run. Reviving the cluster means authoring the
+Commands subtree in the scene — new UI work, not decomposition.
 
 ---
 
