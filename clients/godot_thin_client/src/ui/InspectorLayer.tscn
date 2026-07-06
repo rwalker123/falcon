@@ -1104,6 +1104,7 @@ text = "Summary"
 unique_name_in_owner = true
 layout_mode = 2
 fit_content = true
+bbcode_enabled = true
 
 [node name="GreatDiscoveryDefinitionsSection" type="VBoxContainer" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
 layout_mode = 2
@@ -1130,6 +1131,7 @@ auto_height = true
 unique_name_in_owner = true
 layout_mode = 2
 fit_content = true
+bbcode_enabled = true
 
 [node name="GreatDiscoveryProgressSection" type="VBoxContainer" parent="RootPanel/TabContainer/GreatDiscoveries/GreatDiscoveryVBox"]
 layout_mode = 2
@@ -1148,3 +1150,4 @@ auto_height = true
 unique_name_in_owner = true
 layout_mode = 2
 fit_content = true
+bbcode_enabled = true
