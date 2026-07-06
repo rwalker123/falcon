@@ -1,4 +1,4 @@
-[gd_scene load_steps=17 format=3 uid="uid://b8x7k2q5j4l3n"]
+[gd_scene load_steps=18 format=3 uid="uid://b8x7k2q5j4l3n"]
 
 [ext_resource type="Script" uid="uid://dgjdlxbpsrrw6" path="res://src/scripts/Inspector.gd" id="1"]
 [ext_resource type="Script" uid="uid://dnhxgwd0jtak5" path="res://src/scripts/scripting/ScriptManagerPanel.gd" id="2"]
@@ -16,6 +16,7 @@
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/CorruptionPanel.gd" id="14"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/CommandsPanel.gd" id="15"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/OverlayPanel.gd" id="16"]
+[ext_resource type="Script" path="res://src/scripts/ui/inspector/MapPanel.gd" id="17"]
 
 [node name="Inspector" type="CanvasLayer"]
 script = ExtResource("1")
@@ -262,6 +263,7 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 metadata/_tab_index = 3
+script = ExtResource("17")
 
 [node name="MapVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Map"]
 layout_mode = 2
