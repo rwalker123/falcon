@@ -697,17 +697,6 @@ func _on_root_panel_gui_input(event: InputEvent) -> void:
 			else:
 				root_panel.mouse_default_cursor_shape = Control.CURSOR_ARROW
 
-func _join_strings(values: PackedStringArray) -> String:
-	var parts: Array[String] = []
-	for value in values:
-		parts.append(String(value))
-	var result = ""
-	for i in range(parts.size()):
-		result += parts[i]
-		if i < parts.size() - 1:
-			result += ", "
-	return result
-
 func _ingest_overlays(overlays: Variant) -> void:
 	if not (overlays is Dictionary):
 		return
