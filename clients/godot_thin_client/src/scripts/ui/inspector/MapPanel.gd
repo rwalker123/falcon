@@ -101,6 +101,17 @@ func set_command_hooks(send: Callable, append_log: Callable) -> void:
 	_send = send
 	_append_log_sink = append_log
 
+## Guarded command dispatch — mirrors CrisisPanel/KnowledgePanel so a cleared or
+## not-yet-wired hook (during a disconnect/reset flow) is a no-op, not an error.
+func _call_send(line: String, message: String) -> bool:
+	if _send.is_valid():
+		return bool(_send.call(line, message))
+	return false
+
+func _call_log(text: String) -> void:
+	if _append_log_sink.is_valid():
+		_append_log_sink.call(text)
+
 ## Coordinator contract: connection-gated enable/disable of the command controls.
 func set_command_connected(connected: bool) -> void:
 	_connected = connected
@@ -116,10 +127,19 @@ func set_map_view(view: Node) -> void:
 func apply_typography() -> void:
 	if map_size_label != null:
 		Typography.apply(map_size_label, Typography.STYLE_HEADING)
+	if scenario_label != null:
+		Typography.apply(scenario_label, Typography.STYLE_HEADING)
 	if map_terrain_hint_label != null:
 		Typography.apply(map_terrain_hint_label, Typography.STYLE_CAPTION)
-	if map_size_dropdown != null:
-		Typography.apply(map_size_dropdown, Typography.STYLE_CONTROL)
+	if scenario_description_label != null:
+		Typography.apply(scenario_description_label, Typography.STYLE_CAPTION)
+	for control in [
+		map_size_dropdown, map_generate_button,
+		scenario_dropdown, scenario_apply_button, scenario_regen_toggle,
+		highlight_rivers_toggle
+	]:
+		if control != null:
+			Typography.apply(control, Typography.STYLE_CONTROL)
 
 func _apply_enabled() -> void:
 	var connected = _connected
@@ -362,13 +382,13 @@ func _on_scenario_selected(index: int) -> void:
 
 func _on_scenario_apply_pressed() -> void:
 	if _selected_profile_id == "":
-		_append_log_sink.call("Select a start profile before applying.")
+		_call_log("Select a start profile before applying.")
 		return
 	var profile: Dictionary = _current_selected_profile()
 	var display_name: String = _scenario_profile_label(profile)
 	var line := "start_profile %s" % _selected_profile_id
 	var message := "Start profile '%s' requested." % display_name
-	if _send.call(line, message):
+	if _call_send(line, message):
 		if scenario_regen_toggle != null and scenario_regen_toggle.button_pressed:
 			_on_map_generate_button_pressed()
 
@@ -456,28 +476,50 @@ func _on_map_size_selected(index: int) -> void:
 	var key: String = String(descriptor.get("key", ""))
 	# If the selected key is empty or "custom", do not process further.
 	# Custom map sizes are set programmatically and not directly selectable from the dropdown.
-	# Provide user feedback to avoid confusion.
+	# Surface the feedback through the command log (not just the console) and revert the
+	# dropdown to the active size so the widget doesn't stay parked on the unusable entry.
 	if key == "" or key == "custom":
-		push_warning("Custom map sizes must be set via the map size controls, not directly from the dropdown.")
+		_call_log("Custom map sizes must be set via the map size controls, not directly from the dropdown.")
+		_reselect_active_map_size()
 		return
 	var width: int = int(descriptor.get("width", 0))
 	var height: int = int(descriptor.get("height", 0))
 	if width <= 0 or height <= 0:
 		return
 	if key == _map_size_key and _map_dimensions.x == width and _map_dimensions.y == height:
-		_append_log_sink.call("Selected map size '%s' (%dx%d) is already active. No change made." % [key, width, height])
+		_call_log("Selected map size '%s' (%dx%d) is already active. No change made." % [key, width, height])
 		return
 	_map_size_key = key
 	_map_dimensions = Vector2i(width, height)
 	var label: String = String(descriptor.get("label", key.capitalize()))
 	if not _send_map_size_command(width, height, label):
-		_append_log_sink.call("Failed to request map size change.")
+		_call_log("Failed to request map size change.")
+
+## Restore the dropdown selection to the currently active map size (used when the
+## user picks the non-actionable "custom" entry).
+func _reselect_active_map_size() -> void:
+	if map_size_dropdown == null:
+		return
+	var target_index := -1
+	for idx in range(map_size_dropdown.get_item_count()):
+		var metadata: Variant = map_size_dropdown.get_item_metadata(idx)
+		if metadata is Dictionary and String((metadata as Dictionary).get("key", "")) == _map_size_key:
+			target_index = idx
+			break
+	if target_index < 0 and _map_size_key == "custom":
+		target_index = _map_size_custom_index
+	if target_index < 0 or target_index >= map_size_dropdown.get_item_count():
+		return
+	var previous := _suppress_map_size_signal
+	_suppress_map_size_signal = true
+	map_size_dropdown.select(target_index)
+	_suppress_map_size_signal = previous
 
 func _send_map_size_command(width: int, height: int, label: String) -> bool:
 	if width <= 0 or height <= 0:
 		return false
 	var descriptor: String = label if label.strip_edges() != "" else "%dx%d" % [width, height]
-	return _send.call(
+	return _call_send(
 		"map_size %d %d" % [width, height],
 		"%s map (%dx%d) requested." % [descriptor, width, height]
 	)
@@ -486,8 +528,8 @@ func _on_map_generate_button_pressed() -> void:
 	var width: int = _map_dimensions.x
 	var height: int = _map_dimensions.y
 	if width <= 0 or height <= 0:
-		_append_log_sink.call("Map dimensions unavailable; cannot generate a new map.")
+		_call_log("Map dimensions unavailable; cannot generate a new map.")
 		return
 	var descriptor := "%s (regenerate)" % _active_map_label()
 	if not _send_map_size_command(width, height, descriptor):
-		_append_log_sink.call("Failed to request map generation.")
+		_call_log("Failed to request map generation.")
