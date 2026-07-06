@@ -120,6 +120,8 @@ func aggregate_resonance() -> Dictionary:
 
 func _rebuild_influencers(array_data) -> void:
 	_influencers.clear()
+	if not (array_data is Array):
+		return
 	for entry in array_data:
 		if not (entry is Dictionary):
 			continue
@@ -128,6 +130,8 @@ func _rebuild_influencers(array_data) -> void:
 		_influencers[id] = info
 
 func _merge_influencers(array_data) -> void:
+	if not (array_data is Array):
+		return
 	for entry in array_data:
 		if not (entry is Dictionary):
 			continue
@@ -136,8 +140,12 @@ func _merge_influencers(array_data) -> void:
 		_influencers[id] = info
 
 func _remove_influencers(ids) -> void:
-	for id in ids:
-		_influencers.erase(int(id))
+	if ids is PackedInt64Array:
+		for value in (ids as PackedInt64Array):
+			_influencers.erase(int(value))
+	elif ids is Array:
+		for value in ids:
+			_influencers.erase(int(value))
 
 func _render() -> void:
 	if _text == null:

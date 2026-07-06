@@ -397,6 +397,14 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 		if panel != null:
 			panel.apply_update(data, full_snapshot)
 
+	# InfluencerPanel owns the roster now, but the coordinator's (still-inline)
+	# influencer command dropdown reads it back via get_influencers(). Refresh the
+	# dropdown after the panel has ingested this delta so it can't go stale once the
+	# Commands subtree exists (today influencer_dropdown is null and this is a no-op).
+	if (full_snapshot and data.has("influencers")) \
+			or data.has("influencer_updates") or data.has("influencer_removed"):
+		_refresh_influencer_dropdown()
+
 func _render_dynamic_sections() -> void:
 	_render_terrain()
 	_render_culture()

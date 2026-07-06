@@ -48,8 +48,9 @@ func _render() -> void:
 	lines.append("Reputation modifier: %.3f" % float(_corruption.get("reputation_modifier", 0.0)))
 	lines.append("Audit capacity: %d" % int(_corruption.get("audit_capacity", 0)))
 
-	var entries = _corruption.get("entries", [])
-	if entries.size() == 0:
+	var entries_variant: Variant = _corruption.get("entries", [])
+	var entries: Array = entries_variant if entries_variant is Array else []
+	if entries.is_empty():
 		lines.append("No active incidents.")
 	else:
 		lines.append("Active incidents:")
