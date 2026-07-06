@@ -360,18 +360,21 @@ gating, log-path ingestion, and the Trade→Knowledge event feed), and
 the Knowledge↔Trade seam). Tabs still living inline in `Inspector.gd` are migrated
 onto this contract one at a time.
 
-**Commands-tab controls are not in the scene.** The coordinator declares the whole
-Commands cluster (axis-bias, heat, config-reload, scenario scout/follow/camp,
-autoplay row, and the influencer/corruption *command* buttons) via
-`get_node_or_null("RootPanel/TabContainer/Commands/…")`, but no `Commands` tab node
-exists in `InspectorLayer.tscn` — so those refs resolve to `null` and every use site
-is null-guarded. They are effectively dead in this scene (the working turn controls
-live in `RootPanel/CommandToolbar`, outside the `TabContainer`). What renders from
-that cluster are the display-only `Influencers` and `Corruption` tabs (now
-`InfluencerPanel`/`CorruptionPanel`). Because the influencer command controls read
-the roster, `InfluencerPanel.get_influencers()` keeps them compiling against the
-panel-owned data even though they never run. Reviving the cluster means authoring the
-Commands subtree in the scene — new UI work, not decomposition.
+**Commands tab (designer/debug console).** The `Commands` tab holds the runtime
+command controls (axis-bias, heat, config-reload, scenario scout/follow/camp,
+autoplay row, the influencer/corruption *command* buttons, plus a command
+status/log display). Its subtree went missing in the 2025-11-21 scene split
+(`Main.tscn` → instanced `InspectorLayer.tscn`) and sat dead for months — the
+coordinator's `get_node_or_null("RootPanel/TabContainer/Commands/…")` refs silently
+resolved to `null` — until it was transplanted back from git history. The controls
+issue their verbs through the shared command hub (`_send_command` →
+`command_client`), which is also used by the working turn controls in
+`RootPanel/CommandToolbar` (outside the `TabContainer`) and the scout/found_camp
+buttons in the Terrain tab. `_update_command_controls_enabled` enable/disables the
+tab's controls on the command-socket connection state. The controls still live
+inline in `Inspector.gd` (not yet on the tab-panel contract); extracting them into a
+`CommandsPanel` is the next step. The influencer command controls read the roster via
+`InfluencerPanel.get_influencers()` (coordinator-mediated).
 
 ---
 
