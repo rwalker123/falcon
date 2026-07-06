@@ -53,6 +53,9 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `CommandBridge.gd` | Issues Protobuf commands to server |
 | `ui/MinimapPanel.gd` | Minimap component for the 2D map view (click-to-pan, aspect ratio sizing) |
 | `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content |
+| `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, and `apply_button(btn, "primary"/"ghost"/"armed")`. Every HUD surface styles through here |
+| `ui/FoodIcons.gd` | Shared map-marker emoji glyphs — food modules (`for_site`) and migratory herds (`for_herd`, species inferred from label). Used by the Harvest/Hunt button (`Hud.gd`) and the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`) so a source always reads the same |
+| `tools/ui_preview.gd` / `.tscn` | Dev-only preview harness: instances the real `HudLayer` with canned selection/targeting data, renders each state, and saves PNGs to `ui_preview_out/` (gitignored). Iterate on HUD styling without a server: `godot --path . res://tools/ui_preview.tscn` |
 | `assets/terrain/TerrainTextureManager.gd` | Autoload singleton for terrain texture loading |
 | `assets/terrain/TerrainDefinitions.gd` | Single source of truth for terrain definitions |
 
@@ -275,6 +278,30 @@ positioning that used to overlap the Victory panel). `StockpilePanel` and
 not yet cards). `AutoSizingPanel.gd` remains only for the Inspector.
 
 ---
+
+## Command Targeting
+
+Commands that need a target (Harvest/Hunt need a band; Scout needs a tile) run
+through an explicit **targeting mode** instead of the old easy-to-miss "select a
+band…" line in the selection panel.
+
+- **HUD owns the state** (`Hud.gd` `_pending_forage` / `_pending_scout_unit`) and
+  derives a descriptor via `_current_targeting_info()` (`{active, command, need:
+  "band"|"tile", origin_x/y, context_label}`). Any pending change calls
+  `_refresh_targeting()`, which shows the floating **targeting banner**
+  (top-centre of the map, `HudStyle.banner_stylebox()`: cyan reticle glyph +
+  command + what to click + Cancel) and emits `targeting_changed(info)`.
+- **Main forwards** `hud.targeting_changed → map_view.set_targeting` and
+  `map_view.targeting_cancel_requested → hud.cancel_active_targeting`.
+- **MapView draws** the overlay (`_draw_targeting`): `need == "band"` pulses a
+  cyan ring on every unit and shows a hover ETA label (`_targeting_distance`
+  via `_offset_to_axial`); `need == "tile"` draws a reticle on the hovered hex.
+  Esc / right-click during targeting emit `targeting_cancel_requested` instead of
+  panning. The pulse is animated from the existing `_process`.
+- **Resolution is unchanged**: a left-click still selects the band (which
+  `consume_pending_forage` binds to the pending harvest) or the tile (which
+  `_try_dispatch_pending_scout` sends). Targeting mode is the *feedback* layer on
+  top of the existing pending flows; cancel routes to `cancel_active_targeting`.
 
 ## Inspector Panels
 

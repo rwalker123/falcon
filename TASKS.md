@@ -256,3 +256,28 @@
 That second step will touch the protobuf/command parser, server handlers, inventory rewards, HUD buttons, and command log, so it’s best tackled after the overlay/schema change is merged.
 
 scouting to expose terrain/food
+
+## Wildlife & Hunting Overlay
+
+Design: `docs/plan_wildlife_hunting_overlay.md`. Unifies wild game into the fauna
+system (game = short-range herds), gives Harvest/Hunt/Follow their own verbs, and
+retires the static `game_trail` food-site (which never survives food-site curation
+— see the plan's Motivation). Phased so each lands independently.
+
+### Phase A — game exists and is visible
+- [ ] Species table in `fauna.rs` (Owner: TBD, Estimate: 1.5d). Turn `HerdSpecies` into a data-driven table: display, icon key, range (route length), group biomass, host biomes, `migratory` flag, size class. Add big game (deer, boar) and small game (rabbit, fowl) alongside the migratory species.
+- [ ] Short-route game spawning (Owner: TBD, Estimate: 1.5d; Deps: species table). Seed game as short-route groups by biome density from a new `core_sim/src/data/fauna_config.json` (abundance high). Reuse `advance_herds` for roaming.
+- [ ] Retire `game_trail` (Owner: TBD, Estimate: 0.5d; Deps: spawning). Remove the wild-game tile upgrade in `systems.rs` and `FoodSiteKind::GameTrail`; confirm the food-site curation bug is gone.
+- [ ] Client render pass (Owner: TBD, Estimate: 0.5d; Deps: schema for game species). Verify game groups render with species icons (`FoodIcons.for_herd`); short routes show minimal/no trail.
+
+### Phase B — Hunt (one-shot)
+- [ ] Fauna-targeted Hunt command (Owner: TBD, Estimate: 2d; Deps: Phase A). Generalize hunting to target a fauna group: band pursues to ≤1 tile (re-paths as it moves), takes a portion of biomass → provisions/trade via existing food-yield config. New assignment component reusing `HarvestAssignment` travel/work machinery.
+- [ ] Biomass regrowth (Owner: TBD, Estimate: 1d; Deps: Hunt). Per-turn logistic regrowth toward a per-species carrying cap; 0 → despawn (local extinction).
+- [ ] Schema: fauna huntable/biomass/size fields (Owner: TBD, Estimate: 1d; Deps: sim_schema). So the client can offer the right verbs.
+
+### Phase C — Follow + policy
+- [ ] Generalize Follow to carry a policy (Owner: TBD, Estimate: 1.5d; Deps: Phase B). `Follow { fauna_id, policy: Sustain|Surplus|Eradicate }`: pursue-to-adjacent, then auto-hunt per policy each turn; retain a small non-food benefit (tracking/fog pulse/Fauna Lore).
+- [ ] Client: Harvest/Hunt/Follow in selection panel (Owner: TBD, Estimate: 1.5d; Deps: schema). Surface all applicable verbs when a hex has both a gather module and a fauna group (fix entity-shadows-tile selection); add a Follow policy picker; reuse the targeting-mode banner/reticle for Hunt/Follow.
+
+### Phase D — ecology
+- [ ] Overhunting → collapse/extinction (Owner: TBD, Estimate: 1.5d; Deps: Phase C). When sustained take > regrowth, group collapses; expose abundance/regrowth tunables in `fauna_config.json`; scaffold hooks for the later domestication / industrialized-hunting arc.

@@ -17,6 +17,7 @@ signal unit_scout_requested(x: int, y: int, band_entity_bits: int)
 signal unit_found_camp_requested(x: int, y: int)
 signal herd_follow_requested(herd_id: String)
 signal forage_requested(x: int, y: int, module_key: String)
+signal targeting_cancel_requested()
 
 const LOGISTICS_COLOR := Color(0.15, 0.45, 1.0, 1.0)
 const SENTIMENT_COLOR := Color(1.0, 0.35, 0.25, 1.0)
@@ -247,6 +248,11 @@ var highlighted_culture_layer_set: Dictionary = {}
 var highlighted_culture_context: String = ""
 
 var selected_tile: Vector2i = Vector2i(-1, -1)
+# Active command-targeting overlay, mirrored from the HUD's pending state via
+# `set_targeting`. Drives the reticle / valid-target glow / hover ETA in _draw.
+# Keys: active(bool), need("band"|"tile"), command(String), origin_x/origin_y(int).
+var _targeting: Dictionary = {}
+var _targeting_time: float = 0.0
 
 var last_hex_radius: float = 48.0
 var last_origin: Vector2 = Vector2.ZERO
@@ -740,6 +746,8 @@ func _draw() -> void:
 	for order in routes:
 		_draw_route(order, radius, origin)
 
+	_draw_targeting(radius, origin)
+
 	# Profiling output
 	if _profiling_enabled:
 		var elapsed: float = (Time.get_ticks_usec() - _profile_start) / 1000.0
@@ -1095,6 +1103,17 @@ func _draw_trade_overlay(radius: float, origin: Vector2) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if grid_width == 0 or grid_height == 0:
 		return
+	# While a command is targeting, Esc / right-click back out of it (instead of
+	# panning), matching the targeting-mode contract.
+	if _targeting.get("active", false):
+		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+			emit_signal("targeting_cancel_requested")
+			_mark_input_handled()
+			return
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+			emit_signal("targeting_cancel_requested")
+			_mark_input_handled()
+			return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_C:
 		_fit_map_to_view()
 		_mark_input_handled()
@@ -1249,15 +1268,14 @@ func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	var center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
 	_draw_herd_trail(herd_id, radius, origin)
 	var marker_radius: float = radius * 0.35
-	var base_color := Color(0.95, 0.76, 0.35, 0.95)
-	var points := PackedVector2Array([
-		center + Vector2(0, -marker_radius),
-		center + Vector2(marker_radius * 0.85, 0),
-		center + Vector2(0, marker_radius),
-		center + Vector2(-marker_radius * 0.85, 0)
-	])
-	draw_polygon(points, PackedColorArray([base_color, base_color, base_color, base_color]))
-	draw_polyline(points, Color(0, 0, 0, 0.4), 2.0, true)
+	var herd_icon := FoodIcons.for_herd(String(herd.get("label", herd.get("id", "Herd"))))
+	# Dark backing disc keeps the (color) glyph legible over any terrain.
+	draw_circle(center, radius * 0.44, Color(0.04, 0.06, 0.07, 0.55))
+	var herd_font: Font = ThemeDB.fallback_font
+	if herd_font != null:
+		var herd_icon_size: int = int(maxf(12.0, radius * 1.05))
+		var herd_text_size: Vector2 = herd_font.get_string_size(herd_icon, HORIZONTAL_ALIGNMENT_LEFT, -1, herd_icon_size)
+		draw_string(herd_font, Vector2(center.x - herd_text_size.x * 0.5, center.y + herd_icon_size * 0.34), herd_icon, HORIZONTAL_ALIGNMENT_LEFT, -1, herd_icon_size, Color(0.96, 0.97, 0.92))
 
 	var label: String = String(herd.get("label", herd.get("id", "Herd")))
 	if label != "":
@@ -1274,7 +1292,7 @@ func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 			_draw_arrowhead(center, next_center, Color(0.98, 0.58, 0.18, 0.85))
 
 	if herd_id == selected_herd_id:
-		draw_arc(center, marker_radius + 3.0, 0, TAU, 24, Color(1.0, 1.0, 1.0, 0.9), 2.5)
+		draw_arc(center, radius * 0.5, 0, TAU, 24, Color(1.0, 1.0, 1.0, 0.9), 2.5)
 
 func _draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 	var x: int = int(site.get("x", -1))
@@ -1285,59 +1303,20 @@ func _draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 		return
 	var center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
 
-	# Debug removed - was too spammy
 	var module_key := String(site.get("module", ""))
 	var kind := String(site.get("kind", ""))
-	var style: Dictionary = FOOD_SITE_STYLES.get(kind, FOOD_SITE_STYLE_DEFAULT)
-	var color: Color = style.get("color", FOOD_SITE_STYLE_DEFAULT["color"])
-	var weight: float = float(site.get("seasonal_weight", 1.0))
-	var marker_radius: float = radius * 0.2 + weight * 2.0
-	var shape := String(style.get("shape", FOOD_SITE_STYLE_DEFAULT["shape"]))
-	match shape:
-		"circle":
-			draw_circle(center, marker_radius * 0.9, color)
-		"triangle":
-			var tri := PackedVector2Array([
-				center + Vector2(0, -marker_radius),
-				center + Vector2(marker_radius, marker_radius),
-				center + Vector2(-marker_radius, marker_radius)
-			])
-			draw_polygon(tri, PackedColorArray([color, color, color]))
-			draw_polyline(tri, Color(0, 0, 0, 0.4), 1.75, true)
-		"droplet":
-			draw_circle(center, marker_radius * 0.65, color)
-			var tip := PackedVector2Array([
-				center + Vector2(0, -marker_radius),
-				center + Vector2(marker_radius * 0.35, -marker_radius * 0.2),
-				center + Vector2(-marker_radius * 0.35, -marker_radius * 0.2)
-			])
-			draw_polygon(tip, PackedColorArray([color, color, color]))
-			draw_polyline(tip, Color(0, 0, 0, 0.35), 1.25, true)
-		"square":
-			var square := PackedVector2Array([
-				center + Vector2(-marker_radius, -marker_radius),
-				center + Vector2(marker_radius, -marker_radius),
-				center + Vector2(marker_radius, marker_radius),
-				center + Vector2(-marker_radius, marker_radius)
-			])
-			draw_polygon(square, PackedColorArray([color, color, color, color]))
-			draw_polyline(square, Color(0, 0, 0, 0.4), 1.5, true)
-		_:
-			var points := PackedVector2Array([
-				center + Vector2(0, -marker_radius),
-				center + Vector2(marker_radius, 0),
-				center + Vector2(0, marker_radius),
-				center + Vector2(-marker_radius, 0)
-			])
-			draw_polygon(points, PackedColorArray([color, color, color, color]))
-			draw_polyline(points, Color(0, 0, 0, 0.4), 1.75, true)
-	if _food_harvest_active(int(site.get("x", -1)), int(site.get("y", -1))):
-		var halo_color := color
-		halo_color.a = 0.25
-		draw_circle(center, marker_radius * 1.8, halo_color)
-		var stroke_color := color
-		stroke_color.a = 0.95
-		draw_arc(center, marker_radius * 1.4, 0, TAU, 32, stroke_color, 2.0)
+	var is_hunt := kind == "game_trail"
+	var icon := FoodIcons.for_site(module_key, is_hunt)
+	# Dark backing disc so the (monochrome) glyph stays legible over any terrain.
+	draw_circle(center, radius * 0.44, Color(0.04, 0.06, 0.07, 0.55))
+	if _food_harvest_active(x, y):
+		draw_arc(center, radius * 0.52, 0, TAU, 28, Color(0.31, 0.878, 0.812, 0.9), 2.0)
+	var icon_font: Font = ThemeDB.fallback_font
+	if icon_font != null:
+		var icon_size: int = int(maxf(12.0, radius * 1.05))
+		var text_size: Vector2 = icon_font.get_string_size(icon, HORIZONTAL_ALIGNMENT_LEFT, -1, icon_size)
+		var pos: Vector2 = Vector2(center.x - text_size.x * 0.5, center.y + icon_size * 0.34)
+		draw_string(icon_font, pos, icon, HORIZONTAL_ALIGNMENT_LEFT, -1, icon_size, Color(0.96, 0.97, 0.92))
 
 func _draw_food_highlight(site: Dictionary, radius: float, origin: Vector2) -> void:
 	var x: int = int(site.get("x", -1))
@@ -2739,6 +2718,88 @@ func _process(delta: float) -> void:
 	if not is_zero_approx(zoom_direction):
 		var viewport_center: Vector2 = get_viewport_rect().size * 0.5
 		_apply_zoom(zoom_direction * KEYBOARD_ZOOM_SPEED * delta, viewport_center)
+	# Animate the targeting overlay (pulsing glow / reticle) while a command is
+	# being targeted.
+	if _targeting.get("active", false):
+		_targeting_time += delta
+		queue_redraw()
+
+## Mirror the HUD's pending command-targeting state so the map can draw the
+## reticle / valid-target glow / hover ETA. Pass {} to clear.
+func set_targeting(info: Dictionary) -> void:
+	_targeting = info if info is Dictionary else {}
+	if not bool(_targeting.get("active", false)):
+		_targeting_time = 0.0
+	queue_redraw()
+
+func _draw_targeting(radius: float, origin: Vector2) -> void:
+	if not bool(_targeting.get("active", false)):
+		return
+	var need := String(_targeting.get("need", ""))
+	var pulse: float = 0.5 + 0.5 * sin(_targeting_time * 3.2)
+	var cyan := Color(0.31, 0.878, 0.812, 1.0)
+	if need == "band":
+		for unit in units:
+			var pos: Array = Array(unit.get("pos", []))
+			if pos.size() != 2:
+				continue
+			var center: Vector2 = _hex_center_wrapped(int(pos[0]), int(pos[1]), radius, origin)
+			var ring_radius: float = radius * (0.62 + 0.10 * pulse)
+			var ring_color := Color(cyan.r, cyan.g, cyan.b, 0.5 + 0.35 * pulse)
+			draw_arc(center, ring_radius, 0, TAU, 32, ring_color, 2.5)
+		if _hovered_tile.x >= 0 and _hovered_tile.y >= 0:
+			for unit in units:
+				var hpos: Array = Array(unit.get("pos", []))
+				if hpos.size() == 2 and int(hpos[0]) == _hovered_tile.x and int(hpos[1]) == _hovered_tile.y:
+					_draw_targeting_hover_label(unit, radius, origin)
+					break
+	elif need == "tile":
+		if _hovered_tile.x >= 0 and _hovered_tile.y >= 0:
+			var reticle_center: Vector2 = _hex_center_wrapped(_hovered_tile.x, _hovered_tile.y, radius, origin)
+			_draw_reticle(reticle_center, radius * 0.82, cyan, pulse)
+
+func _draw_reticle(center: Vector2, r: float, color: Color, pulse: float) -> void:
+	var a := Color(color.r, color.g, color.b, 0.7 + 0.3 * pulse)
+	draw_arc(center, r, 0, TAU, 40, a, 2.0)
+	var g: float = r * 0.5
+	draw_line(center + Vector2(-r, 0), center + Vector2(-g, 0), a, 2.0)
+	draw_line(center + Vector2(g, 0), center + Vector2(r, 0), a, 2.0)
+	draw_line(center + Vector2(0, -r), center + Vector2(0, -g), a, 2.0)
+	draw_line(center + Vector2(0, g), center + Vector2(0, r), a, 2.0)
+
+func _draw_targeting_hover_label(unit: Dictionary, radius: float, origin: Vector2) -> void:
+	var pos: Array = Array(unit.get("pos", []))
+	if pos.size() != 2:
+		return
+	var center: Vector2 = _hex_center_wrapped(int(pos[0]), int(pos[1]), radius, origin)
+	var text: String = str(unit.get("id", "Band"))
+	var dist := _targeting_distance(int(pos[0]), int(pos[1]))
+	if dist >= 0:
+		text += " · %d tiles" % dist
+	var font: Font = ThemeDB.fallback_font
+	if font == null:
+		return
+	var font_size := 13
+	var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+	var pad := Vector2(8, 5)
+	var box_pos: Vector2 = center + Vector2(radius * 0.7, -radius * 0.7 - text_size.y - pad.y * 2)
+	box_pos.x = clampf(box_pos.x, 4.0, _get_adjusted_viewport_size().x - text_size.x - pad.x * 2 - 4.0)
+	box_pos.y = maxf(box_pos.y, 4.0)
+	var rect := Rect2(box_pos, text_size + pad * 2)
+	draw_rect(rect, Color(0.03, 0.055, 0.06, 0.95))
+	draw_rect(rect, Color(0.31, 0.878, 0.812, 1.0), false, 1.0)
+	draw_string(font, box_pos + Vector2(pad.x, pad.y + text_size.y * 0.8), text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.87, 0.98, 0.96))
+
+func _targeting_distance(col: int, row: int) -> int:
+	var ox := int(_targeting.get("origin_x", -1))
+	var oy := int(_targeting.get("origin_y", -1))
+	if ox < 0 or oy < 0:
+		return -1
+	var a := _offset_to_axial(col, row)
+	var b := _offset_to_axial(ox, oy)
+	var dq: int = a.x - b.x
+	var dr: int = a.y - b.y
+	return int((abs(dq) + abs(dr) + abs(dq + dr)) / 2)
 
 func _apply_pan(delta: Vector2) -> void:
 	if delta == Vector2.ZERO:

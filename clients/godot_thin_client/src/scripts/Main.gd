@@ -151,6 +151,14 @@ func _ready() -> void:
         if map_view.has_signal("tile_hovered") and hud != null and hud.has_method("show_tooltip"):
             if not map_view.is_connected("tile_hovered", Callable(hud, "show_tooltip")):
                 map_view.connect("tile_hovered", Callable(hud, "show_tooltip"))
+        # Targeting mode: HUD publishes the active target request; the map draws
+        # the reticle / valid-target glow, and routes Esc/right-click cancels back.
+        if hud != null and hud.has_signal("targeting_changed") and map_view.has_method("set_targeting"):
+            if not hud.is_connected("targeting_changed", Callable(map_view, "set_targeting")):
+                hud.connect("targeting_changed", Callable(map_view, "set_targeting"))
+        if hud != null and map_view.has_signal("targeting_cancel_requested") and hud.has_method("cancel_active_targeting"):
+            if not map_view.is_connected("targeting_cancel_requested", Callable(hud, "cancel_active_targeting")):
+                map_view.connect("targeting_cancel_requested", Callable(hud, "cancel_active_targeting"))
     if map_view != null and map_view.has_signal("overlay_legend_changed") and hud != null and hud.has_method("update_overlay_legend"):
         map_view.connect("overlay_legend_changed", Callable(self, "_on_overlay_legend_changed"))
         if map_view.has_method("refresh_overlay_legend"):
