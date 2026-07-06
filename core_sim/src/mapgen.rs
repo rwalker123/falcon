@@ -1222,20 +1222,31 @@ fn compute_coastal_land(land: &[bool], is_ocean: &[bool], w: usize, h: usize) ->
 /// (possibly fractional) tile count.
 ///
 /// When `shelf.width_frac` is set, the width scales with the map's shorter
-/// dimension (`frac * min(w, h)`) so the shelf stays a size-invariant fraction of
-/// the ocean. Crucially the result is **not** floored to a whole tile: at coarse
-/// map resolution Earth's shelf is thinner than one tile, so a sub-1.0 width is
-/// meaningful and `classify_bands` renders it as a partial coastal ring (see
-/// there). Presets that omit `width_frac` fall back to the fixed integer
-/// `width_tiles` (historical behavior).
+/// dimension as `width_frac * min(w, h)^width_exp` (`width_exp` defaults to 1.0)
+/// so the shelf stays a size-invariant fraction of the ocean. Crucially the
+/// result is **not** floored to a whole tile: at coarse map resolution Earth's
+/// shelf is thinner than one tile, so a sub-1.0 width is meaningful and
+/// `classify_bands` renders it as a partial coastal ring (see there). Presets
+/// that omit `width_frac` fall back to the fixed integer `width_tiles`
+/// (historical behavior).
+///
+/// The result is clamped to `[0, min(w, h)]`: a shelf can't sensibly be wider
+/// than the map, and clamping guards a misconfigured `width_frac`/`width_exp`
+/// (huge or non-finite) from overflowing the `u32` band arithmetic in
+/// `classify_bands`.
 fn effective_shelf_width(shelf: &ShelfConfig, w: usize, h: usize) -> f32 {
-    match shelf.width_frac {
+    let min_dim = w.min(h) as f32;
+    let raw = match shelf.width_frac {
         Some(frac) => {
-            let min_dim = w.min(h) as f32;
             let exp = shelf.width_exp.unwrap_or(1.0);
             frac.max(0.0) * min_dim.powf(exp)
         }
         None => shelf.width_tiles as f32,
+    };
+    if raw.is_finite() {
+        raw.clamp(0.0, min_dim)
+    } else {
+        0.0
     }
 }
 
