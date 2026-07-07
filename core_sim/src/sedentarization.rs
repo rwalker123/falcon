@@ -133,8 +133,17 @@ pub fn sedentarization_tick(
     let resource_density = density.normalized_average().clamp(0.0, 1.0);
     let refs = &cfg.references;
     let w = &cfg.weights;
+    // Guard against a malformed env-override config: `smoothing >= 1.0` would freeze the
+    // score and `< 0` would make the update term negative.
+    let smoothing = cfg.smoothing.clamp(0.0, 1.0);
 
-    for (faction, pop) in population {
+    // Process factions in a stable order so prompt/command-feed ordering is deterministic
+    // across runs (a `HashMap` iterates arbitrarily).
+    let mut factions: Vec<FactionId> = population.keys().copied().collect();
+    factions.sort_by_key(|f| f.0);
+
+    for faction in factions {
+        let pop = population[&faction];
         let domesticated = herds.domesticated_count(faction) as f32;
         let surplus = inventory
             .stockpile(faction)
@@ -155,7 +164,7 @@ pub fn sedentarization_tick(
 
         let entry = score.entries.entry(faction).or_default();
         // EMA smoothing (victory_tick pattern) so the pressure builds gradually.
-        entry.score = (cfg.smoothing * entry.score + (1.0 - cfg.smoothing) * raw).clamp(0.0, 100.0);
+        entry.score = (smoothing * entry.score + (1.0 - smoothing) * raw).clamp(0.0, 100.0);
 
         let new_stage = SedentarizationStage::for_score(entry.score, &cfg);
         // Edge-gate: only narrate a *rising* threshold crossing (a fall lowers the stage
