@@ -30,8 +30,14 @@ const CONTENT_NODE_NAME := "CardContent"
 	set(value):
 		hotkey_hint = value
 		_refresh_header()
+## Optional cyan eyebrow rendered before the title, e.g. "Tile" -> "TILE (5, 3)".
+## Used by the selection panel to label what kind of thing is selected.
+@export var card_kind: String = "":
+	set(value):
+		card_kind = value
+		_refresh_header()
 
-var _header: Label
+var _header: RichTextLabel
 var _content: VBoxContainer
 var _built: bool = false
 
@@ -46,10 +52,16 @@ func get_content() -> VBoxContainer:
 func set_card_title(value: String) -> void:
 	card_title = value
 
+func set_card_kind(value: String) -> void:
+	card_kind = value
+
 func _build() -> void:
 	if _built:
 		return
 	_built = true
+
+	# Card chrome: dark translucent surface, hairline border, rounded corners.
+	add_theme_stylebox_override("panel", HudStyle.card_stylebox())
 
 	# Adopt the authored CardContent node if present, otherwise create an empty
 	# one as the card's sole child. Either way the content container stays put —
@@ -61,10 +73,17 @@ func _build() -> void:
 		add_child(_content)
 	_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	_header = Label.new()
+	# RichTextLabel header so the title can carry a colored "kind" eyebrow while
+	# still behaving like a single-line label inside the content VBox.
+	_header = RichTextLabel.new()
 	_header.name = "CardHeader"
-	_header.add_theme_font_size_override("font_size", 16)
-	_header.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0, 1.0))
+	_header.bbcode_enabled = true
+	_header.fit_content = true
+	_header.scroll_active = false
+	_header.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_header.add_theme_font_size_override("normal_font_size", 14)
+	_header.add_theme_color_override("default_color", HudStyle.INK)
+	_header.add_theme_stylebox_override("normal", HudStyle.header_stylebox())
 	_content.add_child(_header)
 	_content.move_child(_header, 0)
 	_refresh_header()
@@ -72,7 +91,12 @@ func _build() -> void:
 func _refresh_header() -> void:
 	if _header == null:
 		return
-	if hotkey_hint.is_empty():
-		_header.text = card_title
+	var title := card_title
+	if not hotkey_hint.is_empty():
+		title = "%s (%s)" % [card_title, hotkey_hint]
+	if card_kind.is_empty():
+		_header.text = title
 	else:
-		_header.text = "%s (%s)" % [card_title, hotkey_hint]
+		_header.text = "[color=#%s][font_size=11]%s[/font_size][/color]  %s" % [
+			HudStyle.SIGNAL_HEX, card_kind.to_upper(), title,
+		]

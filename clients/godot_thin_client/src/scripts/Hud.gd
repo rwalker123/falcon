@@ -8,12 +8,16 @@ signal unit_found_camp_requested(x: int, y: int)
 signal herd_follow_requested(herd_id: String)
 signal forage_requested(x: int, y: int, module_key: String)
 signal next_turn_requested(steps: int)
+## Emitted whenever the active command-targeting state changes. Carries a dict
+## ({} when inactive) that Main forwards to MapView so the map can draw the
+## reticle / valid-target glow / hover ETA.
+signal targeting_changed(info: Dictionary)
 
 ## Build identifier of THIS client (GDScript/native). **Bump on client-affecting
 ## changes.** Shown in the lower-left version overlay next to the server build (streamed
 ## in the snapshot header) so the running client+server builds can be confirmed at a
 ## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-05.3"
+const CLIENT_BUILD := "2026-07-06.4"
 var _build_label: Label = null
 var _server_build: String = "?"
 
@@ -37,7 +41,7 @@ var _server_build: String = "?"
 @onready var command_feed_label: RichTextLabel = %CommandFeedLabel
 @onready var left_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll
 @onready var selection_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel as PanelCard
-@onready var selection_detail: Label = %SelectionDetail
+@onready var selection_detail: RichTextLabel = %SelectionDetail
 @onready var unit_buttons: HBoxContainer = %UnitButtons
 @onready var unit_scout_button: Button = %UnitScoutButton
 @onready var unit_camp_button: Button = %UnitCampButton
@@ -110,6 +114,8 @@ var _selected_food_module: String = ""
 var _selected_food_is_hunt: bool = false
 var _pending_forage: Dictionary = {}
 var _pending_scout_unit: Dictionary = {}
+var _targeting_banner: PanelContainer = null
+var _targeting_banner_label: RichTextLabel = null
 var _stockpile_totals: Dictionary = {}
 var travel_tiles_per_turn: float = DEFAULT_TRAVEL_SPEED
 var travel_preview_turn_cap: int = DEFAULT_TRAVEL_PREVIEW_LIMIT
@@ -141,7 +147,153 @@ func _ready() -> void:
         stockpile_panel.visible = false
     if stockpile_title != null:
         stockpile_title.text = "Stockpiles"
+    _apply_hud_style()
+    _ensure_targeting_banner()
     _setup_build_overlay()
+
+## Apply the shared HudStyle console look to the selection panel: restyle its
+## action buttons, tint the detail text, and bring the two plain PanelContainers
+## (stockpile, victory) up to the same card chrome the PanelCards already use.
+func _apply_hud_style() -> void:
+    if selection_detail != null:
+        selection_detail.add_theme_color_override("default_color", HudStyle.INK_DIM)
+        selection_detail.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
+        selection_detail.add_theme_constant_override("table_h_separation", 16)
+        selection_detail.add_theme_constant_override("table_v_separation", 3)
+    HudStyle.apply_button(unit_scout_button, "primary")
+    HudStyle.apply_button(unit_camp_button, "ghost")
+    HudStyle.apply_button(follow_herd_button, "ghost")
+    HudStyle.apply_button(forage_button, "primary")
+    if stockpile_panel != null:
+        stockpile_panel.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
+    if victory_panel != null:
+        victory_panel.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
+
+## Floating targeting banner, pinned to the top-centre of the map. Shown only
+## while a command is choosing its target; it names the command + what to click
+## next and offers Cancel. This is the primary targeting feedback — it replaces
+## the easy-to-miss "select a band…" line buried in the selection panel.
+func _ensure_targeting_banner() -> void:
+    if _targeting_banner != null:
+        return
+    var center := CenterContainer.new()
+    center.name = "TargetingBannerCenter"
+    center.anchor_left = 0.0
+    center.anchor_right = 1.0
+    center.anchor_top = 0.0
+    center.anchor_bottom = 0.0
+    center.offset_top = 12.0
+    # Anchored to the top edge with zero anchored height; grow downward so the
+    # container takes its child's (the banner's) height instead of a 0/negative
+    # rect that could clip it.
+    center.grow_vertical = Control.GROW_DIRECTION_END
+    center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    layout_root.add_child(center)
+
+    var banner := PanelContainer.new()
+    banner.name = "TargetingBanner"
+    banner.add_theme_stylebox_override("panel", HudStyle.banner_stylebox())
+    banner.visible = false
+    center.add_child(banner)
+
+    var hbox := HBoxContainer.new()
+    hbox.add_theme_constant_override("separation", 12)
+    banner.add_child(hbox)
+
+    var reticle := Label.new()
+    reticle.text = "⌖"  # ⌖ target reticle
+    reticle.add_theme_color_override("font_color", HudStyle.SIGNAL)
+    reticle.add_theme_font_size_override("font_size", 20)
+    reticle.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    hbox.add_child(reticle)
+
+    var label := RichTextLabel.new()
+    label.name = "TargetingLabel"
+    label.bbcode_enabled = true
+    label.fit_content = true
+    label.scroll_active = false
+    label.autowrap_mode = TextServer.AUTOWRAP_OFF
+    label.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
+    label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    hbox.add_child(label)
+
+    var cancel := Button.new()
+    cancel.text = "Cancel  (Esc)"
+    HudStyle.apply_button(cancel, "ghost")
+    cancel.pressed.connect(cancel_active_targeting)
+    hbox.add_child(cancel)
+
+    _targeting_banner = banner
+    _targeting_banner_label = label
+
+## Recompute targeting state from the pending flows, update the banner, and
+## notify listeners (Main -> MapView). Call after any pending change.
+func _refresh_targeting() -> void:
+    _ensure_targeting_banner()
+    var info := _current_targeting_info()
+    if info.is_empty():
+        _targeting_banner.visible = false
+    else:
+        _targeting_banner.visible = true
+        _targeting_banner_label.text = _targeting_banner_bbcode(info)
+    emit_signal("targeting_changed", info)
+
+## The active targeting descriptor, or {} when nothing is targeting. A pending
+## harvest/hunt needs a band; a pending scout needs a tile.
+func _current_targeting_info() -> Dictionary:
+    if not _pending_forage.is_empty():
+        var action := _pending_forage_action()
+        return {
+            "active": true,
+            "command": "hunt" if action == FOOD_ACTION_HUNT else "harvest",
+            "need": "band",
+            "origin_x": int(_pending_forage.get("x", -1)),
+            "origin_y": int(_pending_forage.get("y", -1)),
+            "context_label": String(_pending_forage.get("module_label", "food source")),
+        }
+    if not _pending_scout_unit.is_empty():
+        var pos: Array = Array(_pending_scout_unit.get("pos", []))
+        var ox := int(pos[0]) if pos.size() == 2 else -1
+        var oy := int(pos[1]) if pos.size() == 2 else -1
+        return {
+            "active": true,
+            "command": "scout",
+            "need": "tile",
+            "origin_x": ox,
+            "origin_y": oy,
+            "context_label": String(_pending_scout_unit.get("id", "Band")),
+        }
+    return {}
+
+func _targeting_banner_bbcode(info: Dictionary) -> String:
+    var cmd := String(info.get("command", "")).to_upper()
+    var need := String(info.get("need", ""))
+    var ctx := String(info.get("context_label", ""))
+    var loc := ""
+    if need == "band":
+        loc = "  [color=#%s](%d, %d)[/color]" % [
+            HudStyle.INK_DIM_HEX, int(info.get("origin_x", 0)), int(info.get("origin_y", 0)),
+        ]
+    var instruction := "click a band to send it here" if need == "band" else "click a tile to survey"
+    return "[color=#%s]%s[/color]  [color=#%s]%s[/color]%s   [color=#%s]— %s[/color]" % [
+        HudStyle.SIGNAL_HEX, cmd, HudStyle.INK_HEX, ctx, loc, HudStyle.INK_DIM_HEX, instruction,
+    ]
+
+## Cancel whichever command is currently targeting (banner Cancel / Esc /
+## right-click all route here).
+func cancel_active_targeting() -> void:
+    var changed := false
+    if not _pending_forage.is_empty():
+        _cancel_pending_forage(false)
+        changed = true
+    if not _pending_scout_unit.is_empty():
+        _cancel_pending_scout()
+        changed = true
+    if changed and not _selected_tile_info.is_empty():
+        _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
+    # Note: _cancel_pending_forage / _cancel_pending_scout already call
+    # _refresh_targeting(), so no extra refresh (and duplicate targeting_changed
+    # emission) is needed here.
 
 ## Lower-left version overlay showing the client build and the streamed server build,
 ## so the running builds can be confirmed at a glance. Mouse-transparent so it never
@@ -297,6 +449,7 @@ func _on_unit_scout_pressed() -> void:
     _pending_scout_unit = _selected_unit.duplicate(true)
     if not _selected_tile_info.is_empty():
         _try_dispatch_pending_scout(_selected_tile_info)
+    _refresh_targeting()
 
 func _on_unit_camp_pressed() -> void:
     if _selected_unit.is_empty():
@@ -491,11 +644,21 @@ func _render_selection_panel(tile_info: Dictionary, unit_data: Dictionary, herd_
     if selection_panel == null or selection_detail == null:
         return
     selection_panel.visible = true
-    var title_text := "Tile"
+    # Title carries a colored "kind" eyebrow (TILE / BAND / HERD) plus a concise
+    # identifier — the new Tile Banner look.
+    var kind_text := "Tile"
+    var title_text := "—"
     if not tile_info.is_empty():
         var x := int(tile_info.get("x", -1))
         var y := int(tile_info.get("y", -1))
-        title_text = "Tile (%d, %d)" % [x, y]
+        title_text = "(%d, %d)" % [x, y]
+    if not unit_data.is_empty():
+        kind_text = "Band"
+        title_text = String(unit_data.get("id", "Band"))
+    elif not herd_data.is_empty():
+        kind_text = "Herd"
+        title_text = String(herd_data.get("id", "Herd"))
+    selection_panel.set_card_kind(kind_text)
     selection_panel.set_card_title(title_text)
     var food_kind_value := ""
     if not tile_info.is_empty():
@@ -510,7 +673,7 @@ func _render_selection_panel(tile_info: Dictionary, unit_data: Dictionary, herd_
         if not detail_lines.is_empty():
             detail_lines.append("")
         detail_lines.append_array(_herd_summary_lines(herd_data))
-    selection_detail.text = _join_lines(detail_lines)
+    selection_detail.text = _format_detail_bbcode(detail_lines)
     if unit_buttons != null:
         unit_buttons.visible = not unit_data.is_empty()
     if herd_buttons != null:
@@ -843,6 +1006,56 @@ func _join_lines(lines: Array) -> String:
         packed.append(String(line))
     return "\n".join(packed)
 
+## Render the selection detail lines as BBCode: consecutive "Key: value" rows
+## become a 2-column table (dim key, bright value; Food value in amber) so the
+## data aligns into columns, while sentences/section lines stay full-width and
+## muted. Matches the mockup's Tile Banner body.
+func _format_detail_bbcode(lines: Array) -> String:
+    var out := ""
+    var table_open := false
+    for raw in lines:
+        var line := String(raw)
+        if line == "":
+            if table_open:
+                out += "[/table]"
+                table_open = false
+            out += "\n"
+            continue
+        var kv := _split_detail_kv(line)
+        if kv.is_empty():
+            if table_open:
+                out += "[/table]"
+                table_open = false
+            out += "[color=#%s]%s[/color]\n" % [HudStyle.INK_DIM_HEX, line]
+        else:
+            if not table_open:
+                out += "[table=2]"
+                table_open = true
+            var value_hex := HudStyle.WARN_HEX if String(kv[0]) == "Food" else HudStyle.INK_HEX
+            out += "[cell][color=#%s]%s[/color][/cell][cell][color=#%s]%s[/color][/cell]" % [
+                HudStyle.INK_DIM_HEX, kv[0], value_hex, kv[1],
+            ]
+    if table_open:
+        out += "[/table]"
+    return out
+
+## Split a "Key: value" data line into [key, value]; returns [] for sentence
+## lines (trailing period), long keys, or non-matching text so those stay
+## full-width rather than becoming a lopsided table row.
+func _split_detail_kv(line: String) -> Array:
+    if line.ends_with("."):
+        return []
+    var idx := line.find(": ")
+    if idx <= 0:
+        return []
+    var key := line.substr(0, idx)
+    if key.length() > 16:
+        return []
+    var value := line.substr(idx + 2)
+    if value.strip_edges() == "":
+        return []
+    return [key, value]
+
 func _update_food_buttons(tile_info: Dictionary, has_unit: bool) -> void:
     if food_buttons == null or forage_button == null:
         return
@@ -860,6 +1073,7 @@ func _update_food_buttons(tile_info: Dictionary, has_unit: bool) -> void:
     if label == "":
         label = module_key.capitalize()
     var pending_active := _pending_forage_matches_tile(tile_info)
+    HudStyle.apply_button(forage_button, "armed" if pending_active else "primary")
     if pending_active:
         var pending_action := _pending_forage_action()
         if pending_action == FOOD_ACTION_HUNT:
@@ -877,7 +1091,7 @@ func _update_food_buttons(tile_info: Dictionary, has_unit: bool) -> void:
             button_text = "Harvest %s" % label
             if turns > 0:
                 button_text += " (~%d turns)" % turns
-        forage_button.text = button_text
+        forage_button.text = "%s  %s" % [FoodIcons.for_site(module_key, is_game_trail), button_text]
         var hint := _travel_eta_hint(tile_info)
         if hint == "":
             if is_game_trail:
@@ -1100,6 +1314,7 @@ func consume_pending_forage(unit_data: Dictionary) -> Dictionary:
     if x < 0 or y < 0 or (module_key == "" and action != FOOD_ACTION_HUNT):
         _pending_forage.clear()
         _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
+        _refresh_targeting()
         return {}
     var payload := _pending_forage.duplicate(true)
     payload["action"] = action
@@ -1111,6 +1326,7 @@ func consume_pending_forage(unit_data: Dictionary) -> Dictionary:
     payload["unit_id"] = entity_bits_variant
     _pending_forage.clear()
     _render_selection_panel(_selected_tile_info, unit_data, _selected_herd)
+    _refresh_targeting()
     return payload
 
 func _pending_forage_matches_tile(tile_info: Dictionary) -> bool:
@@ -1150,6 +1366,7 @@ func _cancel_pending_scout() -> void:
     if _pending_scout_unit.is_empty():
         return
     _pending_scout_unit.clear()
+    _refresh_targeting()
 
 func _try_dispatch_pending_scout(tile_info: Dictionary) -> void:
     if _pending_scout_unit.is_empty() or tile_info.is_empty():
@@ -1166,6 +1383,7 @@ func _try_dispatch_pending_scout(tile_info: Dictionary) -> void:
         return
     emit_signal("unit_scout_requested", target_x, target_y, band_bits)
     _pending_scout_unit.clear()
+    _refresh_targeting()
 
 func _begin_pending_forage(x: int, y: int, module_key: String, action: String) -> void:
     var module_label := String(_selected_tile_info.get("food_module_label", module_key)).strip_edges()
@@ -1179,11 +1397,13 @@ func _begin_pending_forage(x: int, y: int, module_key: String, action: String) -
         "action": action if action != "" else FOOD_ACTION_FORAGE,
     }
     _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
+    _refresh_targeting()
 
 func _cancel_pending_forage(refresh: bool) -> void:
     _pending_forage.clear()
     if refresh:
         _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
+    _refresh_targeting()
 
 func _resolve_localized_field(field: String) -> String:
     var text := String(campaign_label.get(field, ""))
