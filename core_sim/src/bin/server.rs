@@ -1430,6 +1430,13 @@ fn handle_follow_herd(
 /// scout) so a newly issued verb fully takes over the band.
 fn reassign_band(app: &mut bevy::prelude::App, band: Entity) {
     let mut entity = app.world.entity_mut(band);
+    // Snap the travel origin to where the band actually is before dropping its old
+    // task: ETA/pathing (`queue_food_assignment`, scout) and `simulate_population`
+    // key off `cohort.home`, so a band re-tasked mid-travel must not fall back to a
+    // stale home tile (which would "snap" it back and mis-compute distances).
+    if let Some(mut cohort) = entity.get_mut::<PopulationCohort>() {
+        cohort.home = cohort.current_tile;
+    }
     entity.remove::<FaunaPursuit>();
     entity.remove::<HarvestAssignment>();
     entity.remove::<ScoutAssignment>();

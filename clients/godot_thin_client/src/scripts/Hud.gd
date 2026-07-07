@@ -321,7 +321,10 @@ func cancel_active_targeting() -> void:
     if not _pending_follow.is_empty():
         _cancel_pending_follow(false)
         changed = true
-    if changed and not _selected_tile_info.is_empty():
+    # Re-render whenever anything is selected — not just a tile — so cancelling a
+    # pending Hunt/Follow on an inspector-selected herd (empty tile_info) still
+    # clears the buttons' "Cancel …" state.
+    if changed and (not _selected_tile_info.is_empty() or not _selected_herd.is_empty() or not _selected_unit.is_empty()):
         _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
     # Note: _cancel_pending_forage / _cancel_pending_scout already call
     # _refresh_targeting(), so no extra refresh (and duplicate targeting_changed
