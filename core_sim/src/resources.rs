@@ -931,6 +931,7 @@ pub enum CommandEventKind {
     Forage,
     Hunt,
     Domesticate,
+    SedentarizationPrompt,
 }
 
 impl CommandEventKind {
@@ -946,6 +947,7 @@ impl CommandEventKind {
             CommandEventKind::Forage => "forage",
             CommandEventKind::Hunt => "hunt",
             CommandEventKind::Domesticate => "domesticate",
+            CommandEventKind::SedentarizationPrompt => "sedentarization_prompt",
         }
     }
 }

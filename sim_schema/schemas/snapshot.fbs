@@ -632,6 +632,12 @@ table FactionInventoryState {
   inventory:[FactionInventoryEntry];
 }
 
+table SedentarizationState {
+  faction:uint;
+  score:float = 0;
+  stage:string;
+}
+
 table HerdTelemetryState {
   id:string;
   label:string;
@@ -780,6 +786,7 @@ table WorldSnapshot {
   herds:[HerdTelemetryState];
   foodModules:[FoodModuleState];
   factionInventory:[FactionInventoryState];
+  sedentarization:[SedentarizationState];
   moistureRaster:FloatRaster;
   hydrologyOverlay:HydrologyOverlay; // rivers/streams polylines
   elevationOverlay:ElevationOverlay;
@@ -831,6 +838,7 @@ table WorldDelta {
   herds:[HerdTelemetryState];
   foodModules:[FoodModuleState];
   factionInventory:[FactionInventoryState];
+  sedentarization:[SedentarizationState];
   moistureRaster:FloatRaster;
   axisBias:AxisBiasState;
   sentiment:SentimentTelemetryState;

@@ -307,6 +307,12 @@ easy-to-miss "select a band…" line in the selection panel.
   (SIGNAL tint via `_husbandry_value_hex`) once fully domesticated. Progress builds while a
   band Sustain-follows a Thriving herd; the `domesticate` command claims it early (see
   `core_sim` Fauna & Wild Game — Domestication / husbandry).
+- **Sedentarization meter** (`Hud.gd` `update_sedentarization`, dispatched from `Main.gd`):
+  the player faction's `SedentarizationState.score` (snapshot `sedentarization[]`) shows as a
+  compact top-bar block-glyph meter (`▰▰▰▰▰▱▱ 62/100 · soft`, `SedentarizationLabel` in
+  `TurnBlock`), tinted amber (soft) / cyan (hard) by stage and hidden until the score is
+  meaningful. The soft/hard threshold prompts themselves arrive in the command feed
+  (`CommandEventKind::SedentarizationPrompt`). See `core_sim` Campaign Loop — Sedentarization.
 - **HUD owns the state** (`Hud.gd` `_pending_forage` / `_pending_scout_unit` /
   `_pending_hunt` / `_pending_follow` — only one active at a time via
   `_clear_other_pending`) and derives a descriptor via `_current_targeting_info()`

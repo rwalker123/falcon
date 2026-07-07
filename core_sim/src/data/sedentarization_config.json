@@ -1,0 +1,16 @@
+{
+  "soft_threshold": 40.0,
+  "hard_threshold": 70.0,
+  "smoothing": 0.5,
+  "weights": {
+    "domestication": 0.35,
+    "surplus": 0.30,
+    "resource_density": 0.20,
+    "population": 0.15
+  },
+  "references": {
+    "domesticated_herds": 3,
+    "surplus": 300.0,
+    "population": 300.0
+  }
+}

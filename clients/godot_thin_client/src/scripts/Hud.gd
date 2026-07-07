@@ -17,7 +17,7 @@ signal targeting_changed(info: Dictionary)
 ## changes.** Shown in the lower-left version overlay next to the server build (streamed
 ## in the snapshot header) so the running client+server builds can be confirmed at a
 ## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-07.6"
+const CLIENT_BUILD := "2026-07-07.7"
 var _build_label: Label = null
 var _server_build: String = "?"
 
@@ -26,6 +26,7 @@ var _server_build: String = "?"
 @onready var campaign_subtitle_label: Label = $LayoutRoot/RootColumn/TopBar/CampaignBlock/CampaignSubtitleLabel
 @onready var turn_label: Label = $LayoutRoot/RootColumn/TopBar/TurnBlock/TurnLabel
 @onready var metrics_label: Label = $LayoutRoot/RootColumn/TopBar/TurnBlock/MetricsLabel
+@onready var sedentarization_label: Label = %SedentarizationLabel
 @onready var zoom_controls: HBoxContainer = $LayoutRoot/RootColumn/TopBar/ZoomControls
 @onready var zoom_out_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomOutButton
 @onready var zoom_reset_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomResetButton
@@ -378,6 +379,41 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
     var avg_logistics: float = float(metrics.get("avg_logistics", 0.0))
     var avg_sentiment: float = float(metrics.get("avg_sentiment", 0.0))
     metrics_label.text = "Units: %d | Logistics: %.2f | Sentiment: %.2f" % [unit_count, avg_logistics, avg_sentiment]
+
+## Show the player faction's Sedentarization pressure as a compact top-bar text meter.
+## Hidden until the score is meaningful; tinted amber (soft) / cyan (hard) as it climbs.
+func update_sedentarization(sedentarization_variant: Variant) -> void:
+    if sedentarization_label == null:
+        return
+    var score := 0.0
+    var stage := ""
+    if sedentarization_variant is Array:
+        for entry in sedentarization_variant:
+            if entry is Dictionary and int(entry.get("faction", -1)) == PLAYER_FACTION_ID:
+                score = float(entry.get("score", 0.0))
+                stage = String(entry.get("stage", ""))
+                break
+    if score < 1.0:
+        sedentarization_label.visible = false
+        return
+    sedentarization_label.visible = true
+    var suffix := "" if stage == "" or stage == "none" else " · %s" % stage
+    sedentarization_label.text = "Sedentarization  %s  %d/100%s" % [_meter_bar(score), int(round(score)), suffix]
+    sedentarization_label.add_theme_color_override("font_color", _sedentarization_color(stage))
+
+## A 10-cell block-glyph bar for a 0–100 score.
+func _meter_bar(score: float) -> String:
+    var filled := int(round(clampf(score / 100.0, 0.0, 1.0) * 10.0))
+    return "▰".repeat(filled) + "▱".repeat(10 - filled)
+
+func _sedentarization_color(stage: String) -> Color:
+    match stage:
+        "hard":
+            return HudStyle.SIGNAL
+        "soft":
+            return HudStyle.WARN
+        _:
+            return HudStyle.INK_DIM
 
 func update_stockpiles(faction_inventory_variant: Variant) -> void:
     if stockpile_panel == null:

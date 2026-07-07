@@ -20,7 +20,8 @@ use sim_runtime::{
     HydrologyOverlayState, InfluentialIndividualState, KnowledgeLedgerEntryState,
     KnowledgeMetricsState, KnowledgeTimelineEventState, LogisticsLinkState, MountainKind,
     PendingMigrationState, PopulationCohortState, PowerIncidentSeverity, PowerIncidentState,
-    PowerNodeState, PowerTelemetryState, ScalarRasterState, ScoutTaskState, SentimentAxisTelemetry,
+    PowerNodeState, PowerTelemetryState, ScalarRasterState, ScoutTaskState,
+    SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState, SnapshotHeader,
     StartMarkerState, TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge,
     TradeLinkState, VictoryModeSnapshotState, VictoryResultState, VictorySnapshotState, WorldDelta,
@@ -67,6 +68,7 @@ use crate::{
         SentimentAxisBias, SimulationConfig, SimulationTick, StartLocation, TileRegistry,
     },
     scalar::Scalar,
+    sedentarization::SedentarizationScore,
     snapshot_overlays_config::{SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle},
     start_profile::{snapshot_profiles, CampaignLabel, FogMode, StartProfilesHandle},
     victory::VictoryState,
@@ -112,6 +114,7 @@ pub struct SnapshotContext<'w> {
     pub start_profiles: Res<'w, StartProfilesHandle>,
     pub victory: Res<'w, VictoryState>,
     pub faction_inventory: Res<'w, FactionInventory>,
+    pub sedentarization: Res<'w, SedentarizationScore>,
     pub food_sites: Res<'w, FoodSiteRegistry>,
     pub command_events: Res<'w, CommandEventLog>,
     pub capability_flags: Res<'w, CapabilityFlags>,
@@ -201,6 +204,7 @@ pub struct SnapshotHistory {
     victory: VictorySnapshotState,
     capability_flags: u32,
     faction_inventory: Vec<SchemaFactionInventoryState>,
+    sedentarization: Vec<SchemaSedentarizationState>,
     command_events: Vec<CommandEventState>,
     herds: Vec<HerdTelemetryState>,
     food_modules: Vec<FoodModuleState>,
@@ -261,6 +265,7 @@ impl SnapshotHistory {
             victory: VictorySnapshotState::default(),
             capability_flags: 0,
             faction_inventory: Vec::new(),
+            sedentarization: Vec::new(),
             command_events: Vec::new(),
             herds: Vec::new(),
             food_modules: Vec::new(),
@@ -538,6 +543,12 @@ impl SnapshotHistory {
         } else {
             Some(faction_inventory_state.clone())
         };
+        let sedentarization_state = snapshot.sedentarization.clone();
+        let sedentarization_delta = if self.sedentarization == sedentarization_state {
+            None
+        } else {
+            Some(sedentarization_state.clone())
+        };
         let command_events_state = snapshot.command_events.clone();
         let command_events_delta = if self.command_events == command_events_state {
             None
@@ -590,6 +601,7 @@ impl SnapshotHistory {
             capability_flags: capability_flags_delta,
             command_events: command_events_delta.clone(),
             faction_inventory: faction_inventory_delta.clone(),
+            sedentarization: sedentarization_delta.clone(),
             herds: herds_delta.clone(),
             food_modules: food_modules_delta.clone(),
             knowledge_timeline: knowledge_timeline_delta.clone(),
@@ -662,6 +674,7 @@ impl SnapshotHistory {
         self.victory = victory_state;
         self.capability_flags = capability_flags_state;
         self.faction_inventory = faction_inventory_state;
+        self.sedentarization = sedentarization_state;
         self.command_events = command_events_state;
         self.herds = herd_state;
         self.food_modules = food_modules_state;
@@ -739,6 +752,7 @@ impl SnapshotHistory {
             .collect();
         self.victory = entry.snapshot.victory.clone();
         self.faction_inventory = entry.snapshot.faction_inventory.clone();
+        self.sedentarization = entry.snapshot.sedentarization.clone();
         self.command_events = entry.snapshot.command_events.clone();
         self.herds = entry.snapshot.herds.clone();
         self.food_modules = entry.snapshot.food_modules.clone();
@@ -830,6 +844,7 @@ impl SnapshotHistory {
             herds: None,
             food_modules: None,
             faction_inventory: None,
+            sedentarization: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -974,6 +989,7 @@ impl SnapshotHistory {
             herds: None,
             food_modules: None,
             faction_inventory: None,
+            sedentarization: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1079,6 +1095,7 @@ impl SnapshotHistory {
             herds: None,
             food_modules: None,
             faction_inventory: None,
+            sedentarization: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1190,6 +1207,7 @@ pub fn capture_snapshot(
         start_profiles,
         victory,
         faction_inventory,
+        sedentarization,
         food_sites,
         command_events,
         capability_flags,
@@ -1523,6 +1541,7 @@ pub fn capture_snapshot(
         .collect();
     let herd_states = herd_snapshot_entries(&herds);
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
+    let sedentarization_state = snapshot_sedentarization(&sedentarization);
     let command_events_state = command_events_to_state(&command_events);
     let victory_snapshot_state = victory_snapshot_from_resource(&victory);
     let capability_bits = capability_flags.bits();
@@ -1552,6 +1571,7 @@ pub fn capture_snapshot(
         food_modules: food_module_states.clone(),
         campaign_profiles: campaign_profiles_state,
         faction_inventory: faction_inventory_state.clone(),
+        sedentarization: sedentarization_state.clone(),
         command_events: command_events_state.clone(),
         capability_flags: capability_bits,
         axis_bias: axis_bias_state,
@@ -3605,6 +3625,18 @@ fn snapshot_faction_inventory(inventory: &FactionInventory) -> Vec<SchemaFaction
     states
 }
 
+fn snapshot_sedentarization(score: &SedentarizationScore) -> Vec<SchemaSedentarizationState> {
+    score
+        .iter_sorted()
+        .into_iter()
+        .map(|(faction, entry)| SchemaSedentarizationState {
+            faction: faction.0,
+            score: entry.score,
+            stage: entry.stage.as_str().to_string(),
+        })
+        .collect()
+}
+
 fn herd_snapshot_entries(telemetry: &HerdTelemetry) -> Vec<HerdTelemetryState> {
     telemetry
         .entries
@@ -3704,6 +3736,7 @@ mod tests {
             herds: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
+            sedentarization: Vec::new(),
             terrain: overlay,
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
@@ -3759,6 +3792,7 @@ mod tests {
             herds: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
+            sedentarization: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
@@ -3809,6 +3843,7 @@ mod tests {
             herds: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
+            sedentarization: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),

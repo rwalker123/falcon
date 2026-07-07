@@ -204,6 +204,8 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_build_info", [String(snapshot["server_build"])])
     if snapshot.has("faction_inventory"):
         _hud_invoke("update_stockpiles", [snapshot["faction_inventory"]])
+    if snapshot.has("sedentarization"):
+        _hud_invoke("update_sedentarization", [snapshot["sedentarization"]])
     if not is_delta:
         _hud_invoke("reset_command_feed")
     if snapshot.has("command_events"):

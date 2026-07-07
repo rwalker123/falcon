@@ -1160,6 +1160,10 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
         let _ = dict.insert("herds", herds_to_array(herds));
     }
 
+    if let Some(sedentarization) = delta.sedentarization() {
+        let _ = dict.insert("sedentarization", sedentarization_to_array(sedentarization));
+    }
+
     if let Some(definitions) = delta.greatDiscoveryDefinitions() {
         let _ = dict.insert(
             "great_discovery_definitions",
@@ -2651,6 +2655,10 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         let _ = dict.insert("server_build", server_build);
     }
 
+    if let Some(sedentarization) = snapshot.sedentarization() {
+        let _ = dict.insert("sedentarization", sedentarization_to_array(sedentarization));
+    }
+
     if let Some(axis_bias) = snapshot.axisBias() {
         let _ = dict.insert("axis_bias", axis_bias_to_dict(axis_bias));
     }
@@ -2882,6 +2890,22 @@ fn faction_inventory_to_array(
             if !entry_array.is_empty() {
                 let _ = dict.insert("inventory", entry_array);
             }
+        }
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn sedentarization_to_array(
+    states: Vector<'_, ForwardsUOffset<fb::SedentarizationState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for state in states {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("faction", state.faction() as i64);
+        let _ = dict.insert("score", state.score());
+        if let Some(stage) = state.stage() {
+            let _ = dict.insert("stage", stage);
         }
         array.push(&dict.to_variant());
     }
