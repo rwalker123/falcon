@@ -715,15 +715,25 @@ func show_herd_selection(herd_data: Dictionary) -> void:
     var tile_variant: Variant = herd_data.get("tile_info", {})
     if tile_variant is Dictionary and not (tile_variant as Dictionary).is_empty():
         tile_info = (tile_variant as Dictionary).duplicate(true)
-    else:
-        # Fall back to the current tile so a hex with both a gather module and a
-        # fauna group surfaces Harvest alongside the herd verbs.
+    elif _herd_matches_selected_tile(herd_data):
+        # Same hex as the currently-selected tile (a map click on a hex that has
+        # both a gather module and a fauna group): surface Harvest alongside the
+        # herd verbs. A herd picked from the inspector (no tile_info, unrelated tile
+        # selected) falls through to herd-only so Harvest can't mis-target.
         tile_info = _selected_tile_info
     _selected_tile_info = tile_info
     _selected_herd = herd_data.duplicate(true)
     _selected_unit.clear()
     _selected_food_module = String(tile_info.get("food_module", "")).strip_edges()
     _render_selection_panel(tile_info, {}, _selected_herd)
+
+## True when the currently-selected tile is the same hex the herd occupies, so it
+## is safe to keep showing that tile's Harvest verb alongside the herd verbs.
+func _herd_matches_selected_tile(herd_data: Dictionary) -> bool:
+    if _selected_tile_info.is_empty():
+        return false
+    return int(_selected_tile_info.get("x", -1)) == int(herd_data.get("x", -2)) \
+        and int(_selected_tile_info.get("y", -1)) == int(herd_data.get("y", -2))
 
 func _render_selection_panel(tile_info: Dictionary, unit_data: Dictionary, herd_data: Dictionary) -> void:
     if selection_panel == null or selection_detail == null:

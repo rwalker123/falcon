@@ -1329,6 +1329,24 @@ fn handle_scout_area(
     );
 }
 
+/// Parse a follow policy string, warning (and defaulting to Sustain) when a
+/// non-empty value fails to parse so a typo like `surpluss` is diagnosable rather
+/// than silently accepted.
+fn parse_follow_policy(policy: Option<&str>) -> FollowPolicy {
+    match policy {
+        Some(raw) if !raw.trim().is_empty() => raw.parse().unwrap_or_else(|_| {
+            warn!(
+                target: "shadow_scale::command",
+                command = "follow_herd",
+                policy = %raw,
+                "command.follow_herd.policy_unrecognized=default_sustain"
+            );
+            FollowPolicy::default()
+        }),
+        _ => FollowPolicy::default(),
+    }
+}
+
 fn handle_follow_herd(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -2561,10 +2579,7 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
         } => Some(Command::FollowHerd {
             faction: FactionId(faction_id),
             herd_id,
-            policy: policy
-                .as_deref()
-                .and_then(|p| p.parse().ok())
-                .unwrap_or_default(),
+            policy: parse_follow_policy(policy.as_deref()),
             band_entity_bits,
         }),
         ProtoCommandPayload::FoundCamp {

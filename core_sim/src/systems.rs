@@ -3380,39 +3380,49 @@ pub fn advance_fauna_pursuits(
             inventory.add_stockpile(pursuit.faction, "trade_goods", trade_goods);
         }
 
-        let (action, event_kind) = match pursuit.mode {
-            FaunaPursuitMode::Hunt => ("hunt", CommandEventKind::Hunt),
-            FaunaPursuitMode::Follow { .. } => ("follow", CommandEventKind::FollowHerd),
-        };
-        let detail = format!(
-            "status={} action={} herd={} species={} take={:.0} biomass_left={:.0} provisions={} trade_goods={} elapsed_turns={} started_tick={}",
-            if matches!(pursuit.mode, FaunaPursuitMode::Hunt) { "complete" } else { "tick" },
-            action,
-            pursuit.fauna_id,
-            species,
-            take,
-            biomass_left,
-            provisions.max(0),
-            trade_goods.max(0),
-            pursuit.elapsed_turns,
-            pursuit.started_tick
-        );
-        event_log.push(CommandEventEntry::new(
-            tick.0,
-            event_kind,
-            pursuit.faction,
-            format!("{} {} -> {}", pursuit.band_label, action, pursuit.fauna_id),
-            Some(detail),
-        ));
-
         match pursuit.mode {
             FaunaPursuitMode::Hunt => {
+                // One-shot: a Hunt completion is a notable event → command feed.
+                let detail = format!(
+                    "status=complete action=hunt herd={} species={} take={:.0} biomass_left={:.0} provisions={} trade_goods={} elapsed_turns={} started_tick={}",
+                    pursuit.fauna_id,
+                    species,
+                    take,
+                    biomass_left,
+                    provisions.max(0),
+                    trade_goods.max(0),
+                    pursuit.elapsed_turns,
+                    pursuit.started_tick
+                );
+                event_log.push(CommandEventEntry::new(
+                    tick.0,
+                    CommandEventKind::Hunt,
+                    pursuit.faction,
+                    format!("{} hunt -> {}", pursuit.band_label, pursuit.fauna_id),
+                    Some(detail),
+                ));
                 cohort.home = cohort.current_tile;
                 commands.entity(entity).remove::<FaunaPursuit>();
             }
             FaunaPursuitMode::Follow { .. } => {
-                // Established follow: reset the give-up counter, and grant the small
-                // non-food tracking benefit (fog reveal pulse + morale).
+                // A follow yields every turn; log the tick to the analytics stream
+                // rather than the small command feed (it would otherwise crowd out
+                // one-shot events like harvest/scout/hunt completions). The queued
+                // FollowHerd event (handle_follow_herd) already announces the order,
+                // and cancellations still surface in the feed above.
+                tracing::info!(
+                    target: "shadow_scale::analytics",
+                    event = "follow_tick",
+                    herd = %pursuit.fauna_id,
+                    band = %pursuit.band_label,
+                    species = %species,
+                    take,
+                    biomass_left,
+                    provisions = provisions.max(0),
+                    trade_goods = trade_goods.max(0),
+                );
+                // Reset the give-up counter and grant the small non-food tracking
+                // benefit (fog reveal pulse + morale).
                 pursuit.elapsed_turns = 0;
                 cohort.morale = (cohort.morale + Scalar::from_f32(follow.morale_gain))
                     .clamp(Scalar::zero(), Scalar::one());
