@@ -1137,7 +1137,8 @@ func _update_herd_buttons(herd_data: Dictionary) -> void:
         return
     var herd_id := String(herd_data.get("id", ""))
     if hunt_herd_button != null:
-        hunt_herd_button.visible = bool(herd_data.get("huntable", true))
+        # Fail closed: only offer Hunt when the snapshot explicitly allows it.
+        hunt_herd_button.visible = bool(herd_data.get("huntable", false))
         var hunt_pending := not _pending_hunt.is_empty() and String(_pending_hunt.get("herd_id", "")) == herd_id
         HudStyle.apply_button(hunt_herd_button, "armed" if hunt_pending else "primary")
         hunt_herd_button.text = "Cancel Hunt" if hunt_pending else "Hunt"

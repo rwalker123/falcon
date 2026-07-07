@@ -3335,10 +3335,14 @@ pub fn advance_fauna_pursuits(
             .unwrap_or(herd_pos);
 
         // Not close enough: step toward the herd's live tile and wait for next turn.
+        // Keep `home` on the band's real position so per-turn systems that read it
+        // (e.g. `simulate_population`'s environmental inputs) don't use the stale
+        // origin as the band ranges across the map.
         if chebyshev_tiles(band_pos, herd_pos) > hunt.pursuit_radius {
             let next = step_toward(band_pos, herd_pos, hunt.pursuit_tiles_per_turn);
             if let Some(tile_entity) = tile_registry.index(next.x, next.y) {
                 cohort.current_tile = tile_entity;
+                cohort.home = tile_entity;
             }
             continue;
         }
@@ -3422,7 +3426,10 @@ pub fn advance_fauna_pursuits(
                     trade_goods = trade_goods.max(0),
                 );
                 // Reset the give-up counter and grant the small non-food tracking
-                // benefit (fog reveal pulse + morale).
+                // benefit (fog reveal pulse + morale). Keep `home` on the band's
+                // current tile so a persistent follow's population/environment inputs
+                // track its real location rather than the starting tile.
+                cohort.home = cohort.current_tile;
                 pursuit.elapsed_turns = 0;
                 cohort.morale = (cohort.morale + Scalar::from_f32(follow.morale_gain))
                     .clamp(Scalar::zero(), Scalar::one());
