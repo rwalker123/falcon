@@ -580,16 +580,28 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let herd_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("herd_id"))?;
-            let policy = parts.next().map(|s| s.to_string());
-            let band_bits = parts.next();
+            // Optional `[policy] [band_entity_bits]`. When both trail, 3rd = policy,
+            // 4th = band. A lone 3rd token that is purely numeric is taken as the
+            // band id (policy omitted) so `follow_herd <f> <herd> <band>` works —
+            // mirroring `hunt_fauna`'s numeric band arg; policy words are never numeric.
+            let third = parts.next();
+            let fourth = parts.next();
+            let (policy, band_bits) = match (third, fourth) {
+                (Some(p), Some(b)) => (
+                    Some(p.to_string()),
+                    Some(parse_u64(b, "follow_herd band_entity_bits")?),
+                ),
+                (Some(tok), None) => match tok.parse::<u64>() {
+                    Ok(bits) => (None, Some(bits)),
+                    Err(_) => (Some(tok.to_string()), None),
+                },
+                (None, _) => (None, None),
+            };
             Ok(CommandPayload::FollowHerd {
                 faction_id: parse_u32(faction_str, "follow_herd faction")?,
                 herd_id: herd_id.to_string(),
                 policy,
-                band_entity_bits: match band_bits {
-                    Some(raw) => Some(parse_u64(raw, "follow_herd band_entity_bits")?),
-                    None => None,
-                },
+                band_entity_bits: band_bits,
             })
         }
         "found_camp" => {
@@ -808,6 +820,50 @@ fn parse_corruption_subsystem(token: &str) -> Result<CorruptionSubsystem, Comman
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_follow_herd_optional_args() {
+        // Bare: no policy, no band.
+        assert_eq!(
+            parse_command_line("follow_herd 0 game_deer_07").unwrap(),
+            CommandPayload::FollowHerd {
+                faction_id: 0,
+                herd_id: "game_deer_07".to_string(),
+                policy: None,
+                band_entity_bits: None,
+            }
+        );
+        // Policy word only.
+        assert_eq!(
+            parse_command_line("follow_herd 0 game_deer_07 surplus").unwrap(),
+            CommandPayload::FollowHerd {
+                faction_id: 0,
+                herd_id: "game_deer_07".to_string(),
+                policy: Some("surplus".to_string()),
+                band_entity_bits: None,
+            }
+        );
+        // Lone numeric 3rd token = band id (policy omitted).
+        assert_eq!(
+            parse_command_line("follow_herd 0 game_deer_07 904").unwrap(),
+            CommandPayload::FollowHerd {
+                faction_id: 0,
+                herd_id: "game_deer_07".to_string(),
+                policy: None,
+                band_entity_bits: Some(904),
+            }
+        );
+        // Both: policy then band.
+        assert_eq!(
+            parse_command_line("follow_herd 0 game_deer_07 eradicate 904").unwrap(),
+            CommandPayload::FollowHerd {
+                faction_id: 0,
+                herd_id: "game_deer_07".to_string(),
+                policy: Some("eradicate".to_string()),
+                band_entity_bits: Some(904),
+            }
+        );
+    }
 
     #[test]
     fn parse_counterintel_policy_command() {
