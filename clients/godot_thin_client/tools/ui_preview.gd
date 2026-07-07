@@ -60,6 +60,11 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_collapsing")
 
+	# State 3c — a domesticated herd: the husbandry readout shows "🐄 Domesticated".
+	_hud.show_herd_selection(_domesticated_herd_fixture())
+	await _settle()
+	await _save("herd_domesticated")
+
 	# State 4 — targeting active: pending harvest raises the top-centre banner
 	# and flips the button to the armed "Cancel Harvest" treatment.
 	_hud.show_tile_selection(_food_tile_fixture())
@@ -132,6 +137,7 @@ func _herd_fixture() -> Dictionary:
 		"size_class": "big",
 		"huntable": true,
 		"ecology_phase": "thriving",
+		"domestication": 0.4,
 		"x": 66, "y": 10,
 		"biomass": 820.0,
 		"route_length": 3,
@@ -142,4 +148,10 @@ func _collapsing_herd_fixture() -> Dictionary:
 	var fixture := _herd_fixture()
 	fixture["biomass"] = 96.0
 	fixture["ecology_phase"] = "collapsing"
+	fixture["domestication"] = 0.0
+	return fixture
+
+func _domesticated_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["domestication"] = 1.0
 	return fixture

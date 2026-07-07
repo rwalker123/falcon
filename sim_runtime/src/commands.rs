@@ -145,6 +145,10 @@ pub enum CommandPayload {
         herd_id: String,
         band_entity_bits: Option<u64>,
     },
+    Domesticate {
+        faction_id: u32,
+        herd_id: String,
+    },
     ExportMap {
         path: Option<String>,
     },
@@ -460,6 +464,13 @@ impl CommandEnvelope {
                 herd_id: herd_id.clone(),
                 band_entity_bits: *band_entity_bits,
             }),
+            CommandPayload::Domesticate {
+                faction_id,
+                herd_id,
+            } => pb::command_envelope::Command::Domesticate(pb::DomesticateCommand {
+                faction_id: *faction_id,
+                herd_id: herd_id.clone(),
+            }),
             CommandPayload::ExportMap { path } => {
                 pb::command_envelope::Command::ExportMap(pb::ExportMapCommand {
                     path: path.clone(),
@@ -674,6 +685,10 @@ impl CommandEnvelope {
                 faction_id: cmd.faction_id,
                 herd_id: cmd.herd_id,
                 band_entity_bits: cmd.band_entity_bits,
+            },
+            pb::command_envelope::Command::Domesticate(cmd) => CommandPayload::Domesticate {
+                faction_id: cmd.faction_id,
+                herd_id: cmd.herd_id,
             },
             pb::command_envelope::Command::ExportMap(cmd) => {
                 CommandPayload::ExportMap { path: cmd.path }

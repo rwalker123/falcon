@@ -158,6 +158,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "hunt_fauna <faction_id> <herd_id> [band_entity_bits]",
     },
     CommandVerbHelp {
+        verb: "domesticate",
+        aliases: &[],
+        summary: "Claim a tame-enough herd as domesticated livestock (needs husbandry progress from a Sustain follow).",
+        usage: "domesticate <faction_id> <herd_id>",
+    },
+    CommandVerbHelp {
         verb: "export_map",
         aliases: &["export"],
         summary: "Write the current world map (terrain + seed) to a JSON file for inspection and tests.",
@@ -699,6 +705,18 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 },
             })
         }
+        "domesticate" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let herd_id = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("herd_id"))?;
+            Ok(CommandPayload::Domesticate {
+                faction_id: parse_u32(faction_str, "domesticate faction")?,
+                herd_id: herd_id.to_string(),
+            })
+        }
         "export" | "export_map" => {
             // Remaining tokens (if any) form the destination path; join so
             // paths containing spaces survive whitespace tokenization.
@@ -863,6 +881,22 @@ mod tests {
                 band_entity_bits: Some(904),
             }
         );
+    }
+
+    #[test]
+    fn parse_domesticate_command() {
+        assert_eq!(
+            parse_command_line("domesticate 0 game_deer_07").unwrap(),
+            CommandPayload::Domesticate {
+                faction_id: 0,
+                herd_id: "game_deer_07".to_string(),
+            }
+        );
+        // herd_id is required.
+        assert!(matches!(
+            parse_command_line("domesticate 0"),
+            Err(CommandParseError::MissingArgument("herd_id"))
+        ));
     }
 
     #[test]

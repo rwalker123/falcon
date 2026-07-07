@@ -84,6 +84,8 @@ pub struct HerdTelemetryState {
     pub huntable: bool,
     #[serde(default)]
     pub ecology_phase: String,
+    #[serde(default)]
+    pub domestication: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -101,6 +103,7 @@ impl Default for HerdTelemetryState {
             size_class: String::new(),
             huntable: false,
             ecology_phase: String::new(),
+            domestication: 0.0,
         }
     }
 }
@@ -2222,6 +2225,7 @@ fn create_herds<'a>(
                 sizeClass: Some(size_class),
                 huntable: herd.huntable,
                 ecologyPhase: Some(ecology_phase),
+                domestication: herd.domestication,
             },
         );
         entries.push(entry);

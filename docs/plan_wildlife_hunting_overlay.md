@@ -92,6 +92,15 @@ Each phase is independently shippable.
 - **Phase D — ecology.** Overhunting → collapse/extinction when sustained take >
   regrowth; abundance/regrowth tunables; scaffolding for the later domestication /
   industrialized-hunting arc.
+- **Phase E — domestication (husbandry core).** The pastoral counter-force to
+  depletion. A **sustained Sustain-follow on a `Thriving` herd** accrues husbandry
+  progress on the herd (emergent), decaying when untended; at full progress — or via an
+  explicit `domesticate` command that claims it early once past `claim_threshold` — the
+  herd becomes **domesticated**: owned by that faction, yielding steady provisions each
+  turn (proportional to biomass, without depleting it) and **immune to the overhunting
+  collapse**. `HerdRegistry::domesticated_count` is the value the future
+  `SedentarizationScore` reads. *Deferred beyond E:* the **industrialized / market-hunting**
+  counterpart, and the pastoral→corral→settlement chain (`Camp`, `SedentarizationScore`).
 
 ## Cross-cutting touchpoints
 

@@ -10,7 +10,8 @@ use crate::{
     fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle, SizeClass},
     food::{classify_food_module, FoodModule},
     mapgen::WorldGenSeed,
-    resources::{SimulationConfig, SimulationTick, StartLocation, TileRegistry},
+    orders::FactionId,
+    resources::{FactionInventory, SimulationConfig, SimulationTick, StartLocation, TileRegistry},
 };
 
 /// RNG salt for per-turn immigration, kept distinct from the initial-spawn salt so the
@@ -87,6 +88,11 @@ pub struct Herd {
     /// Coarse health band (Thriving/Stressed/Collapsing), recomputed each turn from
     /// biomass vs `carrying_capacity`. Surfaced to the client and the domestication hook.
     pub ecology_phase: EcologyPhase,
+    /// Husbandry progress in `[0.0, 1.0]`; `1.0` = domesticated. Accrues while a band
+    /// Sustain-follows this (Thriving) group and decays otherwise (see `advance_husbandry`).
+    pub domestication_progress: f32,
+    /// Faction tending/owning this group (`Some` iff `domestication_progress > 0`).
+    pub owner: Option<FactionId>,
 }
 
 impl Herd {
@@ -110,12 +116,52 @@ impl Herd {
             carrying_capacity,
             // Refreshed against the ecology config at spawn/each turn; Thriving until then.
             ecology_phase: EcologyPhase::Thriving,
+            domestication_progress: 0.0,
+            owner: None,
         }
     }
 
     /// Recompute `ecology_phase` from the current biomass against the ecology config.
     pub(crate) fn refresh_ecology_phase(&mut self, ecology: &EcologyConfig) {
         self.ecology_phase = classify_ecology_phase(self.biomass, self.carrying_capacity, ecology);
+    }
+
+    /// A fully-tamed (managed livestock) group: yields provisions each turn and is
+    /// immune to the overhunting collapse.
+    pub fn is_domesticated(&self) -> bool {
+        self.domestication_progress >= 1.0
+    }
+
+    /// Accrue husbandry progress for `faction` (the tending band). Sets ownership on the
+    /// first accrual; only the owner makes progress. Clamped to 1.0 (auto-domestication).
+    pub(crate) fn accrue_domestication(&mut self, faction: FactionId, amount: f32) {
+        if self.is_domesticated() {
+            return;
+        }
+        if self.owner.is_none() {
+            self.owner = Some(faction);
+        }
+        if self.owner == Some(faction) {
+            self.domestication_progress = (self.domestication_progress + amount).min(1.0);
+        }
+    }
+
+    /// Decay husbandry progress toward zero when the group isn't being actively tended;
+    /// ownership lapses once progress reaches zero.
+    pub(crate) fn decay_domestication(&mut self, amount: f32) {
+        if self.is_domesticated() || self.domestication_progress <= 0.0 {
+            return;
+        }
+        self.domestication_progress = (self.domestication_progress - amount).max(0.0);
+        if self.domestication_progress <= 0.0 {
+            self.owner = None;
+        }
+    }
+
+    /// Finalize domestication (the `domesticate` command's early claim): snap progress to
+    /// 1.0 so `is_domesticated()` latches.
+    pub fn claim_domestication(&mut self) {
+        self.domestication_progress = 1.0;
     }
 
     pub fn position(&self) -> UVec2 {
@@ -154,6 +200,8 @@ pub struct HerdTelemetryEntry {
     pub huntable: bool,
     /// Ecological health band string (see `EcologyPhase::as_str`).
     pub ecology_phase: String,
+    /// Husbandry progress in `[0.0, 1.0]` (`1.0` = domesticated).
+    pub domestication: f32,
     pub position: UVec2,
     pub biomass: f32,
     pub route_length: u32,
@@ -180,6 +228,15 @@ impl HerdRegistry {
 
     pub fn snapshot_entries(&self) -> Vec<HerdTelemetryEntry> {
         self.herds.iter().map(to_entry).collect()
+    }
+
+    /// Number of domesticated groups owned by `faction`. The seam the future
+    /// `SedentarizationScore` reads for its "domestication progress" input (`TASKS.md`).
+    pub fn domesticated_count(&self, faction: FactionId) -> usize {
+        self.herds
+            .iter()
+            .filter(|herd| herd.is_domesticated() && herd.owner == Some(faction))
+            .count()
     }
 }
 
@@ -631,6 +688,41 @@ pub fn repopulate_fauna(
     }
 }
 
+/// Per-turn husbandry upkeep (`TurnStage::Logistics`, after `advance_herds`): pay each
+/// domesticated group's owner a steady provisions yield — proportional to biomass and
+/// **without** depleting the herd (sustainable managed harvest) — and decay husbandry
+/// progress on any not-yet-tamed group. Runs before the same turn's accrual in
+/// `advance_fauna_pursuits` (`Population`), so a Sustain-followed group nets
+/// `progress_per_turn - decay_per_turn` while an untended one only decays.
+pub fn advance_husbandry(
+    mut registry: ResMut<HerdRegistry>,
+    mut inventory: ResMut<FactionInventory>,
+    fauna_config: Res<FaunaConfigHandle>,
+) {
+    let fauna = fauna_config.get();
+    let husbandry = &fauna.husbandry;
+    for herd in registry.herds.iter_mut() {
+        if herd.is_domesticated() {
+            let Some(owner) = herd.owner else {
+                continue;
+            };
+            let provisions = (herd.biomass * husbandry.provisions_per_biomass).round() as i64;
+            if provisions > 0 {
+                inventory.add_stockpile(owner, "provisions", provisions);
+                info!(
+                    target: "shadow_scale::analytics",
+                    event = "husbandry_yield",
+                    herd = %herd.id,
+                    faction = owner.0,
+                    provisions,
+                );
+            }
+        } else {
+            herd.decay_domestication(husbandry.decay_per_turn);
+        }
+    }
+}
+
 /// One turn's positive logistic regrowth increment (>= 0) for a group of `biomass`
 /// toward `cap`. The healthy branch of `net_biomass_delta`.
 fn logistic_regrowth(biomass: f32, cap: f32, regrowth_rate: f32) -> f32 {
@@ -663,7 +755,13 @@ pub(crate) fn net_biomass_delta(biomass: f32, cap: f32, ecology: &EcologyConfig)
 /// the caller despawns it once it falls below the viability floor.
 fn regrow_biomass(herd: &mut Herd, ecology: &EcologyConfig) {
     let cap = herd.carrying_capacity;
-    let delta = net_biomass_delta(herd.biomass, cap, ecology);
+    // A domesticated (managed) group is immune to the overhunting collapse: it always
+    // regrows logistically toward capacity and never crosses into the depensation crash.
+    let delta = if herd.is_domesticated() {
+        logistic_regrowth(herd.biomass, cap, ecology.regrowth_rate)
+    } else {
+        net_biomass_delta(herd.biomass, cap, ecology)
+    };
     herd.biomass = (herd.biomass + delta).clamp(0.0, cap);
     herd.refresh_ecology_phase(ecology);
 }
@@ -677,6 +775,7 @@ fn to_entry(herd: &Herd) -> HerdTelemetryEntry {
         // All fauna are huntable in Phase B; Phase C/D may differentiate.
         huntable: true,
         ecology_phase: herd.ecology_phase.as_str().to_string(),
+        domestication: herd.domestication_progress,
         position: herd.position(),
         biomass: herd.biomass,
         route_length: herd.route_length() as u32,

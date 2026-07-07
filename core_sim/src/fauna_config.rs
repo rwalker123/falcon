@@ -229,6 +229,31 @@ impl Default for FollowConfig {
     }
 }
 
+/// Husbandry / domestication tuning: a sustained Sustain-follow on a Thriving herd
+/// accrues `progress_per_turn` toward taming (1.0 = domesticated); progress that isn't
+/// being actively sustained decays by `decay_per_turn`. The explicit `domesticate`
+/// command may claim a herd early once progress reaches `claim_threshold`. A domesticated
+/// herd yields `biomass * provisions_per_biomass` provisions to its owner each turn.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct HusbandryConfig {
+    pub progress_per_turn: f32,
+    pub decay_per_turn: f32,
+    pub claim_threshold: f32,
+    pub provisions_per_biomass: f32,
+}
+
+impl Default for HusbandryConfig {
+    fn default() -> Self {
+        Self {
+            progress_per_turn: 0.04,
+            decay_per_turn: 0.01,
+            claim_threshold: 0.6,
+            provisions_per_biomass: 0.01,
+        }
+    }
+}
+
 /// Root fauna configuration.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
@@ -239,6 +264,7 @@ pub struct FaunaConfig {
     pub ecology: EcologyConfig,
     pub follow: FollowConfig,
     pub immigration: ImmigrationConfig,
+    pub husbandry: HusbandryConfig,
 }
 
 impl FaunaConfig {
@@ -439,6 +465,12 @@ mod tests {
         assert!(config.immigration.max_attempts >= 1);
         assert!(config.follow.surplus_multiplier > 1.0);
         assert!(config.follow.reveal_radius >= 1);
+        // Husbandry: sustained accrual outpaces decay, and the early-claim threshold is
+        // in (0, 1) so a herd can be claimed before auto-domestication.
+        assert!(config.husbandry.progress_per_turn > config.husbandry.decay_per_turn);
+        assert!(config.husbandry.claim_threshold > 0.0);
+        assert!(config.husbandry.claim_threshold < 1.0);
+        assert!(config.husbandry.provisions_per_biomass > 0.0);
         // take clamps to [min_take, biomass].
         assert_eq!(config.hunt.take_from(0.0), 0.0);
         assert_eq!(config.hunt.take_from(10.0), 10.0); // below min_take -> whole group
