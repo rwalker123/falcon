@@ -216,9 +216,28 @@ unique_name_in_owner = true
 size_flags_horizontal = 3
 visible = false
 
+[node name="HuntHerdButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons"]
+unique_name_in_owner = true
+text = "Hunt"
+
 [node name="FollowHerdButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons"]
 unique_name_in_owner = true
-text = "Follow Herd"
+text = "Follow"
+
+[node name="FollowPolicyButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons"]
+unique_name_in_owner = true
+
+[node name="FollowSustainButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons/FollowPolicyButtons"]
+unique_name_in_owner = true
+text = "Sustain"
+
+[node name="FollowSurplusButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons/FollowPolicyButtons"]
+unique_name_in_owner = true
+text = "Surplus"
+
+[node name="FollowEradicateButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons/FollowPolicyButtons"]
+unique_name_in_owner = true
+text = "Eradicate"
 
 [node name="FoodButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent"]
 unique_name_in_owner = true

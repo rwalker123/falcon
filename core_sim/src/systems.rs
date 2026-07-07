@@ -14,9 +14,9 @@ use crate::snapshot_overlays_config::SnapshotOverlaysConfig;
 use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, FaunaPursuit,
-        HarvestAssignment, HarvestTaskKind, KnowledgeFragment, LogisticsLink, MountainMetadata,
-        PendingMigration, PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile,
-        TradeLink,
+        FaunaPursuitMode, FollowPolicy, HarvestAssignment, HarvestTaskKind, KnowledgeFragment,
+        LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort, PowerNode,
+        ScoutAssignment, StartingUnit, Tile, TradeLink,
     },
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
@@ -24,7 +24,7 @@ use crate::{
         CULTURE_TRAIT_AXES,
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
-    fauna::{HerdDensityMap, HerdRegistry},
+    fauna::{regrowth_amount, HerdDensityMap, HerdRegistry},
     fauna_config::FaunaConfigHandle,
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     generations::GenerationRegistry,
@@ -3285,6 +3285,7 @@ pub fn advance_fauna_pursuits(
     mut registry: ResMut<HerdRegistry>,
     mut inventory: ResMut<FactionInventory>,
     mut event_log: ResMut<CommandEventLog>,
+    mut fog: ResMut<FogRevealLedger>,
     tick: Res<SimulationTick>,
     tile_registry: Res<TileRegistry>,
     fauna_config: Res<FaunaConfigHandle>,
@@ -3293,6 +3294,8 @@ pub fn advance_fauna_pursuits(
 ) {
     let fauna = fauna_config.get();
     let hunt = &fauna.hunt;
+    let follow = &fauna.follow;
+    let ecology_rate = fauna.ecology.regrowth_rate;
     for (entity, mut cohort, mut pursuit) in cohorts.iter_mut() {
         // Herd still around? (may have despawned via extinction or another hunter).
         let Some(herd_pos) = registry.find(&pursuit.fauna_id).map(|herd| herd.position()) else {
@@ -3332,15 +3335,20 @@ pub fn advance_fauna_pursuits(
             .unwrap_or(herd_pos);
 
         // Not close enough: step toward the herd's live tile and wait for next turn.
+        // Keep `home` on the band's real position so per-turn systems that read it
+        // (e.g. `simulate_population`'s environmental inputs) don't use the stale
+        // origin as the band ranges across the map.
         if chebyshev_tiles(band_pos, herd_pos) > hunt.pursuit_radius {
             let next = step_toward(band_pos, herd_pos, hunt.pursuit_tiles_per_turn);
             if let Some(tile_entity) = tile_registry.index(next.x, next.y) {
                 cohort.current_tile = tile_entity;
+                cohort.home = tile_entity;
             }
             continue;
         }
 
-        // Close enough: resolve the one-shot take against the herd's live biomass.
+        // Close enough: resolve the take against the herd's live biomass. Hunt is a
+        // one-shot; Follow keeps shadowing and auto-hunts per policy each turn.
         let Some(herd) = registry
             .herds
             .iter_mut()
@@ -3349,7 +3357,20 @@ pub fn advance_fauna_pursuits(
             commands.entity(entity).remove::<FaunaPursuit>();
             continue;
         };
-        let take = hunt.take_from(herd.biomass);
+        let take = match pursuit.mode {
+            FaunaPursuitMode::Hunt => hunt.take_from(herd.biomass),
+            FaunaPursuitMode::Follow { policy } => match policy {
+                FollowPolicy::Sustain => {
+                    regrowth_amount(herd.biomass, herd.carrying_capacity, ecology_rate)
+                }
+                FollowPolicy::Surplus => {
+                    regrowth_amount(herd.biomass, herd.carrying_capacity, ecology_rate)
+                        * follow.surplus_multiplier
+                }
+                FollowPolicy::Eradicate => hunt.take_from(herd.biomass),
+            },
+        }
+        .clamp(0.0, herd.biomass);
         herd.biomass -= take;
         let biomass_left = herd.biomass;
         let species = herd.species.clone();
@@ -3362,27 +3383,60 @@ pub fn advance_fauna_pursuits(
         if trade_goods > 0 {
             inventory.add_stockpile(pursuit.faction, "trade_goods", trade_goods);
         }
-        cohort.home = cohort.current_tile;
 
-        let detail = format!(
-            "status=complete action=hunt herd={} species={} take={:.0} biomass_left={:.0} provisions={} trade_goods={} elapsed_turns={} started_tick={}",
-            pursuit.fauna_id,
-            species,
-            take,
-            biomass_left,
-            provisions.max(0),
-            trade_goods.max(0),
-            pursuit.elapsed_turns,
-            pursuit.started_tick
-        );
-        event_log.push(CommandEventEntry::new(
-            tick.0,
-            CommandEventKind::Hunt,
-            pursuit.faction,
-            format!("{} hunt -> {}", pursuit.band_label, pursuit.fauna_id),
-            Some(detail),
-        ));
-        commands.entity(entity).remove::<FaunaPursuit>();
+        match pursuit.mode {
+            FaunaPursuitMode::Hunt => {
+                // One-shot: a Hunt completion is a notable event → command feed.
+                let detail = format!(
+                    "status=complete action=hunt herd={} species={} take={:.0} biomass_left={:.0} provisions={} trade_goods={} elapsed_turns={} started_tick={}",
+                    pursuit.fauna_id,
+                    species,
+                    take,
+                    biomass_left,
+                    provisions.max(0),
+                    trade_goods.max(0),
+                    pursuit.elapsed_turns,
+                    pursuit.started_tick
+                );
+                event_log.push(CommandEventEntry::new(
+                    tick.0,
+                    CommandEventKind::Hunt,
+                    pursuit.faction,
+                    format!("{} hunt -> {}", pursuit.band_label, pursuit.fauna_id),
+                    Some(detail),
+                ));
+                cohort.home = cohort.current_tile;
+                commands.entity(entity).remove::<FaunaPursuit>();
+            }
+            FaunaPursuitMode::Follow { .. } => {
+                // A follow yields every turn; log the tick to the analytics stream
+                // rather than the small command feed (it would otherwise crowd out
+                // one-shot events like harvest/scout/hunt completions). The queued
+                // FollowHerd event (handle_follow_herd) already announces the order,
+                // and cancellations still surface in the feed above.
+                tracing::info!(
+                    target: "shadow_scale::analytics",
+                    event = "follow_tick",
+                    herd = %pursuit.fauna_id,
+                    band = %pursuit.band_label,
+                    species = %species,
+                    take,
+                    biomass_left,
+                    provisions = provisions.max(0),
+                    trade_goods = trade_goods.max(0),
+                );
+                // Reset the give-up counter and grant the small non-food tracking
+                // benefit (fog reveal pulse + morale). Keep `home` on the band's
+                // current tile so a persistent follow's population/environment inputs
+                // track its real location rather than the starting tile.
+                cohort.home = cohort.current_tile;
+                pursuit.elapsed_turns = 0;
+                cohort.morale = (cohort.morale + Scalar::from_f32(follow.morale_gain))
+                    .clamp(Scalar::zero(), Scalar::one());
+                let expires_at = tick.0.saturating_add(follow.reveal_duration_turns);
+                fog.queue(herd_pos, follow.reveal_radius, expires_at);
+            }
+        }
     }
 }
 

@@ -281,13 +281,23 @@ not yet cards). `AutoSizingPanel.gd` remains only for the Inspector.
 
 ## Command Targeting
 
-Commands that need a target (Harvest/Hunt need a band; Scout needs a tile) run
-through an explicit **targeting mode** instead of the old easy-to-miss "select a
-band…" line in the selection panel.
+Commands that need a target (Harvest / Hunt / Follow a herd all need a band; Scout
+needs a tile) run through an explicit **targeting mode** instead of the old
+easy-to-miss "select a band…" line in the selection panel.
 
-- **HUD owns the state** (`Hud.gd` `_pending_forage` / `_pending_scout_unit`) and
-  derives a descriptor via `_current_targeting_info()` (`{active, command, need:
-  "band"|"tile", origin_x/y, context_label}`). Any pending change calls
+- **Selection-panel verbs** (`Hud.gd`): a hex can surface **Harvest** (tile gather
+  module, `ForageButton`) *and* **Hunt** / **Follow** (a fauna group on the same
+  hex) together — `show_herd_selection` falls back to the current tile so the
+  combined panel renders all applicable groups (`_update_herd_buttons` +
+  `_update_food_buttons`). Hunt is gated on the herd's `huntable` snapshot flag;
+  **Follow** carries a policy from a Sustain/Surplus/Eradicate picker
+  (`FollowPolicyButtons`, `_follow_policy`, restyled via `HudStyle.apply_button`).
+  Both Hunt and Follow enter targeting mode to pick a band; the button flips to a
+  "Cancel …" affordance while pending.
+- **HUD owns the state** (`Hud.gd` `_pending_forage` / `_pending_scout_unit` /
+  `_pending_hunt` / `_pending_follow` — only one active at a time via
+  `_clear_other_pending`) and derives a descriptor via `_current_targeting_info()`
+  (`{active, command, need: "band"|"tile", origin_x/y, context_label}`). Any pending change calls
   `_refresh_targeting()`, which shows the floating **targeting banner**
   (top-centre of the map, `HudStyle.banner_stylebox()`: cyan reticle glyph +
   command + what to click + Cancel) and emits `targeting_changed(info)`.
@@ -299,10 +309,14 @@ band…" line in the selection panel.
   `need == "tile"` draws a reticle on the hovered hex.
   Esc / right-click during targeting emit `targeting_cancel_requested` instead of
   panning. The pulse is animated from the existing `_process`.
-- **Resolution is unchanged**: a left-click still selects the band (which
-  `consume_pending_forage` binds to the pending harvest) or the tile (which
-  `_try_dispatch_pending_scout` sends). Targeting mode is the *feedback* layer on
-  top of the existing pending flows; cancel routes to `cancel_active_targeting`.
+- **Resolution**: a left-click selects the band, which `consume_pending_forage` /
+  `consume_pending_hunt` / `consume_pending_follow` (fanned out in `Main._on_map_unit_selected`)
+  binds to the pending action → `_issue_forage_command` / `_issue_hunt_command`
+  (`hunt_fauna …`) / `_issue_follow_command` (`follow_herd … <policy> <band>`); or a
+  tile click that `_try_dispatch_pending_scout` sends. Targeting mode is the
+  *feedback* layer on top of the pending flows; cancel routes to `cancel_active_targeting`.
+  Quick-follow (double-click herd / Fauna tab) still fires `follow_herd … sustain`
+  with no band (server auto-picks).
 
 ## Inspector Panels
 

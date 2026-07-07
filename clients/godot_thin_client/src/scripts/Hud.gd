@@ -17,7 +17,7 @@ signal targeting_changed(info: Dictionary)
 ## changes.** Shown in the lower-left version overlay next to the server build (streamed
 ## in the snapshot header) so the running client+server builds can be confirmed at a
 ## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-07.2"
+const CLIENT_BUILD := "2026-07-07.3"
 var _build_label: Label = null
 var _server_build: String = "?"
 
@@ -46,7 +46,12 @@ var _server_build: String = "?"
 @onready var unit_scout_button: Button = %UnitScoutButton
 @onready var unit_camp_button: Button = %UnitCampButton
 @onready var herd_buttons: HBoxContainer = %HerdButtons
+@onready var hunt_herd_button: Button = %HuntHerdButton
 @onready var follow_herd_button: Button = %FollowHerdButton
+@onready var follow_policy_buttons: HBoxContainer = %FollowPolicyButtons
+@onready var follow_sustain_button: Button = %FollowSustainButton
+@onready var follow_surplus_button: Button = %FollowSurplusButton
+@onready var follow_eradicate_button: Button = %FollowEradicateButton
 @onready var food_buttons: HBoxContainer = %FoodButtons
 @onready var forage_button: Button = %ForageButton
 @onready var stockpile_panel: PanelContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel
@@ -77,12 +82,6 @@ const COMMAND_FEED_LIMIT := 6
 const COMMAND_FEED_MIN_HEIGHT := 72.0
 const COMMAND_FEED_BOTTOM_MARGIN := 12.0
 const PLAYER_FACTION_ID := 0
-const HERD_CONSUMPTION_BIOMASS := 250.0
-const HERD_PROVISIONS_YIELD_PER_BIOMASS := 0.02
-const HERD_TRADE_GOODS_YIELD_PER_BIOMASS := 0.005
-const HERD_FOLLOW_MORALE_GAIN := 0.03
-const HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS := 0.0004
-const HERD_KNOWLEDGE_PROGRESS_CAP := 0.25
 const FOOD_MODULE_LABELS := {
     "coastal_littoral": "Coastal Littoral",
     "riverine_delta": "Riverine Delta",
@@ -114,6 +113,10 @@ var _selected_food_module: String = ""
 var _selected_food_is_hunt: bool = false
 var _pending_forage: Dictionary = {}
 var _pending_scout_unit: Dictionary = {}
+var _pending_hunt: Dictionary = {}
+var _pending_follow: Dictionary = {}
+var _follow_policy: String = "sustain"
+const FOLLOW_POLICIES := ["sustain", "surplus", "eradicate"]
 var _targeting_banner: PanelContainer = null
 var _targeting_banner_label: RichTextLabel = null
 var _stockpile_totals: Dictionary = {}
@@ -162,8 +165,10 @@ func _apply_hud_style() -> void:
         selection_detail.add_theme_constant_override("table_v_separation", 3)
     HudStyle.apply_button(unit_scout_button, "primary")
     HudStyle.apply_button(unit_camp_button, "ghost")
+    HudStyle.apply_button(hunt_herd_button, "primary")
     HudStyle.apply_button(follow_herd_button, "ghost")
     HudStyle.apply_button(forage_button, "primary")
+    _refresh_follow_policy_buttons()
     if stockpile_panel != null:
         stockpile_panel.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
     if victory_panel != null:
@@ -263,6 +268,27 @@ func _current_targeting_info() -> Dictionary:
             "origin_y": oy,
             "context_label": String(_pending_scout_unit.get("id", "Band")),
         }
+    if not _pending_hunt.is_empty():
+        return {
+            "active": true,
+            "command": "hunt",
+            "need": "band",
+            "origin_x": int(_pending_hunt.get("x", -1)),
+            "origin_y": int(_pending_hunt.get("y", -1)),
+            "context_label": String(_pending_hunt.get("label", "herd")),
+        }
+    if not _pending_follow.is_empty():
+        return {
+            "active": true,
+            "command": "follow",
+            "need": "band",
+            "origin_x": int(_pending_follow.get("x", -1)),
+            "origin_y": int(_pending_follow.get("y", -1)),
+            "context_label": "%s · %s" % [
+                String(_pending_follow.get("label", "herd")),
+                String(_pending_follow.get("policy", "sustain")).capitalize(),
+            ],
+        }
     return {}
 
 func _targeting_banner_bbcode(info: Dictionary) -> String:
@@ -289,7 +315,16 @@ func cancel_active_targeting() -> void:
     if not _pending_scout_unit.is_empty():
         _cancel_pending_scout()
         changed = true
-    if changed and not _selected_tile_info.is_empty():
+    if not _pending_hunt.is_empty():
+        _cancel_pending_hunt(false)
+        changed = true
+    if not _pending_follow.is_empty():
+        _cancel_pending_follow(false)
+        changed = true
+    # Re-render whenever anything is selected — not just a tile — so cancelling a
+    # pending Hunt/Follow on an inspector-selected herd (empty tile_info) still
+    # clears the buttons' "Cancel …" state.
+    if changed and (not _selected_tile_info.is_empty() or not _selected_herd.is_empty() or not _selected_unit.is_empty()):
         _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
     # Note: _cancel_pending_forage / _cancel_pending_scout already call
     # _refresh_targeting(), so no extra refresh (and duplicate targeting_changed
@@ -414,9 +449,21 @@ func _connect_selection_buttons() -> void:
         unit_scout_button.pressed.connect(_on_unit_scout_pressed)
     if unit_camp_button != null and not unit_camp_button.is_connected("pressed", Callable(self, "_on_unit_camp_pressed")):
         unit_camp_button.pressed.connect(_on_unit_camp_pressed)
+    if hunt_herd_button != null and not hunt_herd_button.is_connected("pressed", Callable(self, "_on_hunt_herd_pressed")):
+        hunt_herd_button.pressed.connect(_on_hunt_herd_pressed)
+        hunt_herd_button.tooltip_text = "Send a band to hunt the selected herd once (a portion of its biomass → provisions/trade)."
     if follow_herd_button != null and not follow_herd_button.is_connected("pressed", Callable(self, "_on_follow_herd_pressed")):
         follow_herd_button.pressed.connect(_on_follow_herd_pressed)
-        follow_herd_button.tooltip_text = "Follow the selected herd to gain morale, supplies, fauna lore, and a fog reveal pulse."
+        follow_herd_button.tooltip_text = "Shadow the selected herd and auto-hunt each turn per the chosen policy, plus a tracking fog pulse."
+    if follow_sustain_button != null and not follow_sustain_button.is_connected("pressed", Callable(self, "_on_follow_policy_pressed")):
+        follow_sustain_button.pressed.connect(_on_follow_policy_pressed.bind("sustain"))
+        follow_sustain_button.tooltip_text = "Sustain: take ≈ regrowth — the group stays roughly stable."
+    if follow_surplus_button != null and not follow_surplus_button.is_connected("pressed", Callable(self, "_on_follow_policy_pressed")):
+        follow_surplus_button.pressed.connect(_on_follow_policy_pressed.bind("surplus"))
+        follow_surplus_button.tooltip_text = "Surplus: take extra for provisions/trade — the group slowly declines."
+    if follow_eradicate_button != null and not follow_eradicate_button.is_connected("pressed", Callable(self, "_on_follow_policy_pressed")):
+        follow_eradicate_button.pressed.connect(_on_follow_policy_pressed.bind("eradicate"))
+        follow_eradicate_button.tooltip_text = "Eradicate: take the maximum — drives the group toward local extinction."
     if forage_button != null and not forage_button.is_connected("pressed", Callable(self, "_on_forage_pressed")):
         forage_button.pressed.connect(_on_forage_pressed)
 
@@ -446,6 +493,7 @@ func _on_unit_scout_pressed() -> void:
     if not _pending_scout_unit.is_empty() and int(_pending_scout_unit.get("entity", -1)) == entity_id:
         _cancel_pending_scout()
         return
+    _clear_other_pending("scout")
     _pending_scout_unit = _selected_unit.duplicate(true)
     if not _selected_tile_info.is_empty():
         _try_dispatch_pending_scout(_selected_tile_info)
@@ -459,13 +507,49 @@ func _on_unit_camp_pressed() -> void:
         return
     emit_signal("unit_found_camp_requested", int(position[0]), int(position[1]))
 
+func _on_hunt_herd_pressed() -> void:
+    if _selected_herd.is_empty():
+        return
+    var herd_id := String(_selected_herd.get("id", ""))
+    if herd_id == "":
+        return
+    if not _pending_hunt.is_empty() and String(_pending_hunt.get("herd_id", "")) == herd_id:
+        _cancel_pending_hunt(true)
+        return
+    _begin_pending_hunt(herd_id)
+
 func _on_follow_herd_pressed() -> void:
     if _selected_herd.is_empty():
         return
     var herd_id := String(_selected_herd.get("id", ""))
     if herd_id == "":
         return
-    emit_signal("herd_follow_requested", herd_id)
+    if not _pending_follow.is_empty() and String(_pending_follow.get("herd_id", "")) == herd_id:
+        _cancel_pending_follow(true)
+        return
+    _begin_pending_follow(herd_id, _follow_policy)
+
+func _on_follow_policy_pressed(policy: String) -> void:
+    if policy in FOLLOW_POLICIES:
+        _follow_policy = policy
+    _refresh_follow_policy_buttons()
+    # If a follow is already being targeted, update its policy in place.
+    if not _pending_follow.is_empty():
+        _pending_follow["policy"] = _follow_policy
+        _refresh_targeting()
+
+## Restyle the three policy buttons so the active one reads as selected.
+func _refresh_follow_policy_buttons() -> void:
+    var buttons := {
+        "sustain": follow_sustain_button,
+        "surplus": follow_surplus_button,
+        "eradicate": follow_eradicate_button,
+    }
+    for policy in buttons:
+        var btn: Button = buttons[policy]
+        if btn == null:
+            continue
+        HudStyle.apply_button(btn, "primary" if policy == _follow_policy else "ghost")
 
 func _on_forage_pressed() -> void:
     if _selected_food_module == "":
@@ -632,13 +716,27 @@ func show_unit_selection(unit_data: Dictionary) -> void:
 func show_herd_selection(herd_data: Dictionary) -> void:
     var tile_info: Dictionary = {}
     var tile_variant: Variant = herd_data.get("tile_info", {})
-    if tile_variant is Dictionary:
+    if tile_variant is Dictionary and not (tile_variant as Dictionary).is_empty():
         tile_info = (tile_variant as Dictionary).duplicate(true)
+    elif _herd_matches_selected_tile(herd_data):
+        # Same hex as the currently-selected tile (a map click on a hex that has
+        # both a gather module and a fauna group): surface Harvest alongside the
+        # herd verbs. A herd picked from the inspector (no tile_info, unrelated tile
+        # selected) falls through to herd-only so Harvest can't mis-target.
+        tile_info = _selected_tile_info
     _selected_tile_info = tile_info
     _selected_herd = herd_data.duplicate(true)
     _selected_unit.clear()
     _selected_food_module = String(tile_info.get("food_module", "")).strip_edges()
     _render_selection_panel(tile_info, {}, _selected_herd)
+
+## True when the currently-selected tile is the same hex the herd occupies, so it
+## is safe to keep showing that tile's Harvest verb alongside the herd verbs.
+func _herd_matches_selected_tile(herd_data: Dictionary) -> bool:
+    if _selected_tile_info.is_empty():
+        return false
+    return int(_selected_tile_info.get("x", -1)) == int(herd_data.get("x", -2)) \
+        and int(_selected_tile_info.get("y", -1)) == int(herd_data.get("y", -2))
 
 func _render_selection_panel(tile_info: Dictionary, unit_data: Dictionary, herd_data: Dictionary) -> void:
     if selection_panel == null or selection_detail == null:
@@ -660,10 +758,6 @@ func _render_selection_panel(tile_info: Dictionary, unit_data: Dictionary, herd_
         title_text = String(herd_data.get("id", "Herd"))
     selection_panel.set_card_kind(kind_text)
     selection_panel.set_card_title(title_text)
-    var food_kind_value := ""
-    if not tile_info.is_empty():
-        food_kind_value = String(tile_info.get("food_kind", "")).strip_edges()
-    _selected_food_is_hunt = food_kind_value == "game_trail"
     var detail_lines: Array[String] = _tile_summary_lines(tile_info)
     if not unit_data.is_empty():
         if not detail_lines.is_empty():
@@ -678,6 +772,7 @@ func _render_selection_panel(tile_info: Dictionary, unit_data: Dictionary, herd_
         unit_buttons.visible = not unit_data.is_empty()
     if herd_buttons != null:
         herd_buttons.visible = not herd_data.is_empty()
+    _update_herd_buttons(herd_data)
     _update_food_buttons(tile_info, not unit_data.is_empty())
 
 
@@ -935,10 +1030,12 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     var species := String(herd_data.get("species", ""))
     if species != "":
         lines.append("Species: %s" % species)
+    var size_class := String(herd_data.get("size_class", "")).strip_edges()
+    if size_class != "":
+        lines.append("Size: %s game" % size_class.capitalize())
     var biomass: float = float(herd_data.get("biomass", 0.0))
     if biomass > 0.0:
         lines.append("Biomass: %.0f" % biomass)
-        lines.append_array(_follow_herd_reward_lines(biomass))
     var x := int(herd_data.get("x", -1))
     var y := int(herd_data.get("y", -1))
     if x >= 0 and y >= 0:
@@ -947,29 +1044,6 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     var next_y := int(herd_data.get("next_y", -1))
     if next_x >= 0 and next_y >= 0:
         lines.append("Next waypoint: (%d, %d)" % [next_x, next_y])
-    return lines
-
-func _follow_herd_reward_lines(biomass: float) -> Array[String]:
-    var lines: Array[String] = []
-    if biomass <= 0.0:
-        return lines
-    var consumption: float = min(biomass, HERD_CONSUMPTION_BIOMASS)
-    if consumption <= 0.0:
-        return lines
-    var provisions: float = round(consumption * HERD_PROVISIONS_YIELD_PER_BIOMASS)
-    var trade_goods: float = round(consumption * HERD_TRADE_GOODS_YIELD_PER_BIOMASS)
-    var lore_progress: float = min(
-        consumption * HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS,
-        HERD_KNOWLEDGE_PROGRESS_CAP
-    )
-    if lines.is_empty():
-        lines.append("Follow Herd rewards:")
-    lines.append("  - Morale +%.2f per band" % HERD_FOLLOW_MORALE_GAIN)
-    if provisions > 0 or trade_goods > 0:
-        lines.append("  - Supplies: +%d provisions, +%d trade goods" % [int(provisions), int(trade_goods)])
-    if lore_progress > 0.0:
-        lines.append("  - Fauna lore +%.1f%% progress" % (lore_progress * 100.0))
-    lines.append("  - Reveals nearby fog (scouting pulse)")
     return lines
 
 func _format_unit_list(entries: Array) -> String:
@@ -1056,6 +1130,24 @@ func _split_detail_kv(line: String) -> Array:
         return []
     return [key, value]
 
+## Herd verbs: Hunt (gated on `huntable`) + Follow with a policy picker. Both enter
+## targeting mode to pick a band; the button flips to a Cancel affordance while pending.
+func _update_herd_buttons(herd_data: Dictionary) -> void:
+    if herd_data.is_empty():
+        return
+    var herd_id := String(herd_data.get("id", ""))
+    if hunt_herd_button != null:
+        # Fail closed: only offer Hunt when the snapshot explicitly allows it.
+        hunt_herd_button.visible = bool(herd_data.get("huntable", false))
+        var hunt_pending := not _pending_hunt.is_empty() and String(_pending_hunt.get("herd_id", "")) == herd_id
+        HudStyle.apply_button(hunt_herd_button, "armed" if hunt_pending else "primary")
+        hunt_herd_button.text = "Cancel Hunt" if hunt_pending else "Hunt"
+    if follow_herd_button != null:
+        var follow_pending := not _pending_follow.is_empty() and String(_pending_follow.get("herd_id", "")) == herd_id
+        HudStyle.apply_button(follow_herd_button, "armed" if follow_pending else "ghost")
+        follow_herd_button.text = "Cancel Follow" if follow_pending else "Follow"
+    _refresh_follow_policy_buttons()
+
 func _update_food_buttons(tile_info: Dictionary, has_unit: bool) -> void:
     if food_buttons == null or forage_button == null:
         return
@@ -1066,38 +1158,24 @@ func _update_food_buttons(tile_info: Dictionary, has_unit: bool) -> void:
         _selected_food_is_hunt = false
         return
     _selected_food_module = module_key
-    var food_kind_value := String(tile_info.get("food_kind", "")).strip_edges()
-    var is_game_trail := food_kind_value == "game_trail"
-    _selected_food_is_hunt = is_game_trail
+    _selected_food_is_hunt = false
     var label := String(tile_info.get("food_module_label", "Harvest")).strip_edges()
     if label == "":
         label = module_key.capitalize()
     var pending_active := _pending_forage_matches_tile(tile_info)
     HudStyle.apply_button(forage_button, "armed" if pending_active else "primary")
     if pending_active:
-        var pending_action := _pending_forage_action()
-        if pending_action == FOOD_ACTION_HUNT:
-            forage_button.text = "Cancel Hunt"
-            forage_button.tooltip_text = "Cancel the pending hunt assignment for this tile."
-        else:
-            forage_button.text = "Cancel Harvest"
-            forage_button.tooltip_text = "Cancel the pending harvest assignment for this tile."
+        forage_button.text = "Cancel Harvest"
+        forage_button.tooltip_text = "Cancel the pending harvest assignment for this tile."
     else:
         var turns := _travel_turns_for_tile(tile_info)
-        var button_text := ""
-        if is_game_trail:
-            button_text = "Hunt Game"
-        else:
-            button_text = "Harvest %s" % label
-            if turns > 0:
-                button_text += " (~%d turns)" % turns
-        forage_button.text = "%s  %s" % [FoodIcons.for_site(module_key, is_game_trail), button_text]
+        var button_text := "Harvest %s" % label
+        if turns > 0:
+            button_text += " (~%d turns)" % turns
+        forage_button.text = "%s  %s" % [FoodIcons.for_site(module_key, false), button_text]
         var hint := _travel_eta_hint(tile_info)
         if hint == "":
-            if is_game_trail:
-                hint = "Select a band after clicking to send them on a hunt here."
-            else:
-                hint = "Select a band after clicking to send them here."
+            hint = "Select a band after clicking to send them here."
         forage_button.tooltip_text = hint
     forage_button.disabled = false
     food_buttons.visible = true
@@ -1386,6 +1464,7 @@ func _try_dispatch_pending_scout(tile_info: Dictionary) -> void:
     _refresh_targeting()
 
 func _begin_pending_forage(x: int, y: int, module_key: String, action: String) -> void:
+    _clear_other_pending("forage")
     var module_label := String(_selected_tile_info.get("food_module_label", module_key)).strip_edges()
     if module_label == "":
         module_label = module_key.capitalize()
@@ -1404,6 +1483,92 @@ func _cancel_pending_forage(refresh: bool) -> void:
     if refresh:
         _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
     _refresh_targeting()
+
+## Only one command targets at a time — clear any other pending action so the
+## banner + band glow are unambiguous.
+func _clear_other_pending(keep: String) -> void:
+    if keep != "forage":
+        _pending_forage.clear()
+    if keep != "scout":
+        _pending_scout_unit.clear()
+    if keep != "hunt":
+        _pending_hunt.clear()
+    if keep != "follow":
+        _pending_follow.clear()
+
+func _begin_pending_hunt(herd_id: String) -> void:
+    _clear_other_pending("hunt")
+    _pending_hunt = {
+        "herd_id": herd_id,
+        "x": int(_selected_herd.get("x", -1)),
+        "y": int(_selected_herd.get("y", -1)),
+        "label": String(_selected_herd.get("label", herd_id)),
+    }
+    _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
+    _refresh_targeting()
+
+func _cancel_pending_hunt(refresh: bool) -> void:
+    _pending_hunt.clear()
+    if refresh:
+        _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
+    _refresh_targeting()
+
+func consume_pending_hunt(unit_data: Dictionary) -> Dictionary:
+    if _pending_hunt.is_empty():
+        return {}
+    var herd_id := String(_pending_hunt.get("herd_id", ""))
+    if herd_id == "":
+        _pending_hunt.clear()
+        _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
+        _refresh_targeting()
+        return {}
+    var payload := {"herd_id": herd_id}
+    var entity_bits_variant: Variant = unit_data.get("entity", -1)
+    if typeof(entity_bits_variant) == TYPE_INT:
+        payload["band_entity_bits"] = int(entity_bits_variant)
+    _pending_hunt.clear()
+    _render_selection_panel(_selected_tile_info, unit_data, _selected_herd)
+    _refresh_targeting()
+    return payload
+
+func _begin_pending_follow(herd_id: String, policy: String) -> void:
+    _clear_other_pending("follow")
+    _pending_follow = {
+        "herd_id": herd_id,
+        "policy": policy if policy in FOLLOW_POLICIES else "sustain",
+        "x": int(_selected_herd.get("x", -1)),
+        "y": int(_selected_herd.get("y", -1)),
+        "label": String(_selected_herd.get("label", herd_id)),
+    }
+    _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
+    _refresh_targeting()
+
+func _cancel_pending_follow(refresh: bool) -> void:
+    _pending_follow.clear()
+    if refresh:
+        _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
+    _refresh_targeting()
+
+func consume_pending_follow(unit_data: Dictionary) -> Dictionary:
+    if _pending_follow.is_empty():
+        return {}
+    var herd_id := String(_pending_follow.get("herd_id", ""))
+    if herd_id == "":
+        _pending_follow.clear()
+        _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
+        _refresh_targeting()
+        return {}
+    var payload := {
+        "herd_id": herd_id,
+        "policy": String(_pending_follow.get("policy", "sustain")),
+    }
+    var entity_bits_variant: Variant = unit_data.get("entity", -1)
+    if typeof(entity_bits_variant) == TYPE_INT:
+        payload["band_entity_bits"] = int(entity_bits_variant)
+    _pending_follow.clear()
+    _render_selection_panel(_selected_tile_info, unit_data, _selected_herd)
+    _refresh_targeting()
+    return payload
 
 func _resolve_localized_field(field: String) -> String:
     var text := String(campaign_label.get(field, ""))

@@ -56,7 +56,7 @@ use crate::start_profile::{
 use bevy::prelude::*;
 
 pub use components::{
-    ElementKind, FaunaPursuit, FaunaPursuitMode, HarvestAssignment, HarvestTaskKind,
+    ElementKind, FaunaPursuit, FaunaPursuitMode, FollowPolicy, HarvestAssignment, HarvestTaskKind,
     KnowledgeFragment, LogisticsLink, PendingMigration, PopulationCohort, PowerNode,
     ScoutAssignment, Settlement, StartingUnit, Tile, TownCenter, TradeLink,
 };

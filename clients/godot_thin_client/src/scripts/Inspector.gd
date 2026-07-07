@@ -743,7 +743,7 @@ func _on_fauna_follow_herd_requested(herd_id: String) -> void:
 		return
 	var faction := commands_panel.get_scenario_faction() if commands_panel != null else 0
 	var message := "Follow herd '%s' requested for faction %d." % [herd_id, faction]
-	_send_command("follow_herd %d %s" % [faction, herd_id], message)
+	_send_command("follow_herd %d %s sustain" % [faction, herd_id], message)
 
 func _on_fauna_herd_selected(herd_id: String) -> void:
 	if commands_panel != null:

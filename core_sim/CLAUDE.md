@@ -39,7 +39,7 @@ cargo run -p core_sim --bin server
 | `src/data/influencer_config.json` | Roster caps, decay factors, scope thresholds |
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
-| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance |
+| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` tuning |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -161,19 +161,38 @@ provisions/trade (`hunt.*_per_biomass`), drawn from the group and added to
 `FactionInventory`, then removes the component. An elusive herd is abandoned after
 `hunt.max_pursuit_turns`. Config lives in the `hunt` block of `fauna_config.json`.
 
+**Follow (persistent, per policy)** — `follow_herd <faction> <herd_id> [policy]
+[band_entity_bits]` attaches a `FaunaPursuit { mode: Follow { policy } }`
+(`FollowPolicy` ∈ Sustain | Surplus | Eradicate). The same `advance_fauna_pursuits`
+system keeps the band within `pursuit_radius` of the moving group and, once adjacent,
+**auto-hunts each turn per policy** instead of removing the component: Sustain takes
+one turn's regrowth (`regrowth_amount`, group ~stable), Surplus takes that ×
+`follow.surplus_multiplier` (slow decline), Eradicate takes `hunt.take_from` (drives
+extinction). Each turn it also grants a small non-food benefit — a `FogRevealLedger`
+tracking pulse (`follow.reveal_radius`/`reveal_duration_turns`) + `follow.morale_gain`.
+Config lives in the `follow` block of `fauna_config.json`. The old one-shot teleport
+follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
+
+**Orders replace orders** — a band holds exactly one task. Issuing Harvest / Hunt /
+Follow / Scout calls `reassign_band` (`server.rs`) first, stripping any existing
+`FaunaPursuit` / `HarvestAssignment` / `ScoutAssignment` before attaching the new one
+(this also fixes a latent harvest+follow double-assignment). To stop following, order
+the band to do something else.
+
 **Ecology** — `advance_herds` applies per-turn logistic regrowth toward each group's
 per-species carrying capacity (`Herd.carrying_capacity` = the species' `biomass[1]`;
-rate = `ecology.regrowth_rate`) and **despawns** any group at or below zero biomass
-(local extinction). So a hunt draws a group down in `Population`; it regrows in the
-next turn's `Logistics`; sustained overhunting (Phase D) drives it extinct.
+rate = `ecology.regrowth_rate`; increment via the shared `regrowth_amount` helper) and
+**despawns** any group at or below zero biomass (local extinction). So a hunt/follow
+draws a group down in `Population`; it regrows in the next turn's `Logistics`; sustained
+overhunting drives it extinct.
 
 > `FaunaPursuit` is **not** snapshot-persisted (unlike `HarvestAssignment`): a
 > `rollback` mid-pursuit cleanly cancels the in-flight hunt (the rehydrated cohort
 > simply lacks the component). Pursuits are short-lived; revisit if needed.
 
-Deferred to later phases (`docs/plan_wildlife_hunting_overlay.md`): the client Hunt
-UI + **Follow + policy** (Phase C) and the overhunting/domestication arc (Phase D).
-The tile-based `HuntGame` handler stays neutralized (Phase C removes it).
+Deferred to Phase D (`docs/plan_wildlife_hunting_overlay.md`): the overhunting →
+collapse tuning and the domestication / industrialized-hunting arc. The tile-based
+`HuntGame` handler stays neutralized (its client button no longer surfaces).
 
 ---
 

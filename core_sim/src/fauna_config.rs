@@ -165,6 +165,29 @@ impl Default for EcologyConfig {
     }
 }
 
+/// Follow tuning: policy draw-rates (Sustain = regrowth, Surplus = regrowth ×
+/// `surplus_multiplier`, Eradicate reuses the one-shot hunt take) plus the small
+/// per-turn non-food tracking benefit (fog reveal pulse + morale).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct FollowConfig {
+    pub surplus_multiplier: f32,
+    pub reveal_radius: u32,
+    pub reveal_duration_turns: u64,
+    pub morale_gain: f32,
+}
+
+impl Default for FollowConfig {
+    fn default() -> Self {
+        Self {
+            surplus_multiplier: 1.6,
+            reveal_radius: 2,
+            reveal_duration_turns: 3,
+            morale_gain: 0.01,
+        }
+    }
+}
+
 /// Root fauna configuration.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
@@ -173,6 +196,7 @@ pub struct FaunaConfig {
     pub abundance: AbundanceConfig,
     pub hunt: HuntConfig,
     pub ecology: EcologyConfig,
+    pub follow: FollowConfig,
 }
 
 impl FaunaConfig {
@@ -361,6 +385,8 @@ mod tests {
         assert!(config.hunt.take_fraction > 0.0);
         assert_eq!(config.hunt.pursuit_radius, 1);
         assert!(config.ecology.regrowth_rate > 0.0);
+        assert!(config.follow.surplus_multiplier > 1.0);
+        assert!(config.follow.reveal_radius >= 1);
         // take clamps to [min_take, biomass].
         assert_eq!(config.hunt.take_from(0.0), 0.0);
         assert_eq!(config.hunt.take_from(10.0), 10.0); // below min_take -> whole group

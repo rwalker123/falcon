@@ -82,5 +82,11 @@
   },
   "ecology": {
     "regrowth_rate": 0.05
+  },
+  "follow": {
+    "surplus_multiplier": 1.6,
+    "reveal_radius": 2,
+    "reveal_duration_turns": 3,
+    "morale_gain": 0.01
   }
 }

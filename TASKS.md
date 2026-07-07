@@ -275,9 +275,9 @@ retires the static `game_trail` food-site (which never survives food-site curati
 - [x] Biomass regrowth. Per-turn logistic regrowth in `advance_herds` toward each group's per-species carrying cap (`Herd.carrying_capacity`, `ecology.regrowth_rate`); a group at ≤0 biomass despawns (local extinction).
 - [x] Schema: fauna huntable/size fields. `HerdTelemetryState` gains `size_class` + `huntable` (biomass already present), wired producer→client-decode; no UI consumes them until Phase C.
 
-### Phase C — Follow + policy
-- [ ] Generalize Follow to carry a policy (Owner: TBD, Estimate: 1.5d; Deps: Phase B). `Follow { fauna_id, policy: Sustain|Surplus|Eradicate }`: pursue-to-adjacent, then auto-hunt per policy each turn; retain a small non-food benefit (tracking/fog pulse/Fauna Lore).
-- [ ] Client: Harvest/Hunt/Follow in selection panel (Owner: TBD, Estimate: 1.5d; Deps: schema). Surface all applicable verbs when a hex has both a gather module and a fauna group (fix entity-shadows-tile selection); add a Follow policy picker; reuse the targeting-mode banner/reticle for Hunt/Follow.
+### Phase C — Follow + policy ✅
+- [x] Generalize Follow to carry a policy. `FaunaPursuitMode::Follow { policy: Sustain|Surplus|Eradicate }` on the Phase B `FaunaPursuit`; `advance_fauna_pursuits` pursues-to-adjacent then auto-hunts per policy each turn (Sustain=regrowth, Surplus=×mult, Eradicate=max) with a small non-food benefit (fog tracking pulse + morale). `follow_herd` gains `[policy] [band]` args; the one-shot teleport follow is retired. "Orders replace orders" (`reassign_band`) gives a band exactly one task.
+- [x] Client: Harvest/Hunt/Follow in selection panel. Combined selection shows all applicable verbs when a hex has both a gather module and a fauna group; Hunt + Follow buttons + a Sustain/Surplus/Eradicate policy picker in the herd button group; both reuse the targeting-mode band-select banner. Dead `game_trail` tile-hunt path retired.
 
 ### Phase D — ecology
 - [ ] Overhunting → collapse/extinction (Owner: TBD, Estimate: 1.5d; Deps: Phase C). When sustained take > regrowth, group collapses; expose abundance/regrowth tunables in `fauna_config.json`; scaffold hooks for the later domestication / industrialized-hunting arc.
