@@ -32,6 +32,17 @@ pub enum SizeClass {
     Migratory,
 }
 
+impl SizeClass {
+    /// Stable string key (also the snapshot `size_class` field).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SizeClass::Small => "small",
+            SizeClass::Big => "big",
+            SizeClass::Migratory => "migratory",
+        }
+    }
+}
+
 /// One species row in the table.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SpeciesDef {
@@ -73,6 +84,11 @@ impl SpeciesDef {
     pub fn hosts_biome(&self, module_key: &str) -> bool {
         self.host_biomes.iter().any(|b| b == module_key)
     }
+
+    /// Per-species carrying capacity biomass regrows toward (= the table max).
+    pub fn carrying_capacity(&self) -> f32 {
+        self.biomass[1].max(self.biomass[0]).max(0.0)
+    }
 }
 
 /// Spawn-density tuning. `per_biome` is the per-tile probability of placing a game
@@ -95,12 +111,68 @@ impl AbundanceConfig {
     }
 }
 
+/// One-shot hunt tuning: how much biomass a hunt takes, how it converts to
+/// resources, and the pursuit geometry (band closes to `pursuit_radius` tiles).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct HuntConfig {
+    pub take_fraction: f32,
+    pub min_take: f32,
+    pub provisions_per_biomass: f32,
+    pub trade_goods_per_biomass: f32,
+    pub pursuit_radius: u32,
+    pub pursuit_tiles_per_turn: u32,
+    pub max_pursuit_turns: u32,
+}
+
+impl Default for HuntConfig {
+    fn default() -> Self {
+        Self {
+            take_fraction: 0.30,
+            min_take: 40.0,
+            provisions_per_biomass: 0.02,
+            trade_goods_per_biomass: 0.005,
+            pursuit_radius: 1,
+            pursuit_tiles_per_turn: 3,
+            max_pursuit_turns: 12,
+        }
+    }
+}
+
+impl HuntConfig {
+    /// Biomass taken from a group of `biomass`, clamped to `[min_take, biomass]`.
+    pub fn take_from(&self, biomass: f32) -> f32 {
+        if biomass <= 0.0 {
+            return 0.0;
+        }
+        let fraction_take = (biomass * self.take_fraction).max(self.min_take);
+        fraction_take.min(biomass)
+    }
+}
+
+/// Ecology tuning: per-turn logistic regrowth toward each species' carrying cap.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct EcologyConfig {
+    pub regrowth_rate: f32,
+}
+
+impl Default for EcologyConfig {
+    fn default() -> Self {
+        Self {
+            regrowth_rate: 0.05,
+        }
+    }
+}
+
 /// Root fauna configuration.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct FaunaConfig {
     pub species: HashMap<String, SpeciesDef>,
     pub abundance: AbundanceConfig,
+    pub hunt: HuntConfig,
+    pub ecology: EcologyConfig,
 }
 
 impl FaunaConfig {
@@ -281,5 +353,24 @@ mod tests {
         let config = FaunaConfig::builtin();
         assert!(config.abundance.probability_for("temperate_forest") > 0.0);
         assert_eq!(config.abundance.probability_for("deep_ocean"), 0.0);
+    }
+
+    #[test]
+    fn hunt_and_ecology_present() {
+        let config = FaunaConfig::builtin();
+        assert!(config.hunt.take_fraction > 0.0);
+        assert_eq!(config.hunt.pursuit_radius, 1);
+        assert!(config.ecology.regrowth_rate > 0.0);
+        // take clamps to [min_take, biomass].
+        assert_eq!(config.hunt.take_from(0.0), 0.0);
+        assert_eq!(config.hunt.take_from(10.0), 10.0); // below min_take -> whole group
+        let big = config.hunt.take_from(10_000.0);
+        assert!(big >= config.hunt.min_take && big <= 10_000.0);
+    }
+
+    #[test]
+    fn size_class_round_trips() {
+        assert_eq!(SizeClass::Big.as_str(), "big");
+        assert_eq!(SizeClass::Migratory.as_str(), "migratory");
     }
 }

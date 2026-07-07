@@ -80,6 +80,8 @@ pub struct HerdTelemetryState {
     pub route_length: u32,
     pub next_x: i32,
     pub next_y: i32,
+    pub size_class: String,
+    pub huntable: bool,
 }
 
 impl Default for HerdTelemetryState {
@@ -94,6 +96,8 @@ impl Default for HerdTelemetryState {
             route_length: 0,
             next_x: -1,
             next_y: -1,
+            size_class: String::new(),
+            huntable: false,
         }
     }
 }
@@ -2198,6 +2202,7 @@ fn create_herds<'a>(
         let id = builder.create_string(herd.id.as_str());
         let label = builder.create_string(herd.label.as_str());
         let species = builder.create_string(herd.species.as_str());
+        let size_class = builder.create_string(herd.size_class.as_str());
         let entry = fb::HerdTelemetryState::create(
             builder,
             &fb::HerdTelemetryStateArgs {
@@ -2210,6 +2215,8 @@ fn create_herds<'a>(
                 routeLength: herd.route_length,
                 nextX: herd.next_x,
                 nextY: herd.next_y,
+                sizeClass: Some(size_class),
+                huntable: herd.huntable,
             },
         );
         entries.push(entry);

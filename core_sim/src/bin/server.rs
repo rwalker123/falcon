@@ -25,17 +25,17 @@ use core_sim::{
     CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
     EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
     EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionInventory,
-    FactionOrders, FactionRegistry, FactionSecurityPolicies, FogRevealLedger, FoodModule,
-    FoodModuleTag, GenerationId, GenerationRegistry, HarvestAssignment, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, InfluencerImpacts, InfluentialRoster, KnowledgeFragment,
-    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
-    Scalar, ScoutAssignment, SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
-    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
-    SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
-    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
-    DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
+    FactionOrders, FactionRegistry, FactionSecurityPolicies, FaunaPursuit, FaunaPursuitMode,
+    FogRevealLedger, FoodModule, FoodModuleTag, GenerationId, GenerationRegistry,
+    HarvestAssignment, HerdDensityMap, HerdRegistry, HerdTelemetry, InfluencerImpacts,
+    InfluentialRoster, KnowledgeFragment, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort,
+    QueueMissionError, QueueMissionParams, Scalar, ScoutAssignment, SecurityPolicy,
+    SentimentAxisBias, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
+    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
+    StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry,
+    TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata,
+    TurnQueue, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
 use core_sim::{
     resolve_active_profile, ActiveStartProfile, CampaignLabel, HarvestTaskKind,
@@ -542,6 +542,13 @@ fn main() {
             } => {
                 handle_hunt_game(&mut app, faction, target_x, target_y, band_entity_bits);
             }
+            Command::HuntFauna {
+                faction,
+                herd_id,
+                band_entity_bits,
+            } => {
+                handle_hunt_fauna(&mut app, faction, herd_id, band_entity_bits);
+            }
         }
 
         broadcast_command_events_if_needed(&mut app, bin_server, flat_server);
@@ -656,6 +663,11 @@ enum Command {
         faction: FactionId,
         target_x: u32,
         target_y: u32,
+        band_entity_bits: Option<u64>,
+    },
+    HuntFauna {
+        faction: FactionId,
+        herd_id: String,
         band_entity_bits: Option<u64>,
     },
     ExportMap {
@@ -1868,7 +1880,101 @@ fn handle_hunt_game(
         app,
         CommandEventKind::Hunt,
         faction,
-        "Hunting now targets wild game groups (coming soon); tile hunting has been retired.",
+        "Tile hunting is retired; use `hunt_fauna <faction> <herd_id>` to hunt a fauna group.",
+    );
+}
+
+/// Order a band to pursue and hunt a fauna group (herd) by id. Validates the herd,
+/// resolves the band (auto-picks the first faction cohort when none is given),
+/// rejects a busy band, then attaches a `FaunaPursuit` component. The pursuit itself
+/// (travel to ≤1 tile, then take biomass → provisions/trade) resolves each turn in
+/// `advance_fauna_pursuits`.
+fn handle_hunt_fauna(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    herd_id: String,
+    band_entity_bits: Option<u64>,
+) {
+    let Some(herd_position) = app
+        .world
+        .get_resource::<HerdRegistry>()
+        .and_then(|registry| registry.find(&herd_id))
+        .map(|herd| herd.position())
+    else {
+        warn!(
+            target: "shadow_scale::command",
+            command = "hunt_fauna",
+            faction = %faction.0,
+            herd = %herd_id,
+            "command.hunt_fauna.rejected=unknown_herd"
+        );
+        emit_command_failure(
+            app,
+            CommandEventKind::Hunt,
+            faction,
+            format!("Herd '{}' no longer exists.", herd_id),
+        );
+        return;
+    };
+
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        band_entity_bits,
+        "hunt_fauna",
+        CommandEventKind::Hunt,
+    ) else {
+        return;
+    };
+
+    if app.world.get::<HarvestAssignment>(band.entity).is_some()
+        || app.world.get::<FaunaPursuit>(band.entity).is_some()
+    {
+        warn!(
+            target: "shadow_scale::command",
+            command = "hunt_fauna",
+            faction = %faction.0,
+            band = %band.label,
+            "command.hunt_fauna.rejected=band_busy"
+        );
+        emit_command_failure(
+            app,
+            CommandEventKind::Hunt,
+            faction,
+            format!("{} is already assigned to a different task.", band.label),
+        );
+        return;
+    }
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    app.world.entity_mut(band.entity).insert(FaunaPursuit {
+        faction,
+        band_label: band.label.clone(),
+        fauna_id: herd_id.clone(),
+        mode: FaunaPursuitMode::Hunt,
+        elapsed_turns: 0,
+        started_tick: tick,
+    });
+
+    let detail = format!(
+        "status=queued action=hunt band={} herd={} herd_x={} herd_y={}",
+        band.label, herd_id, herd_position.x, herd_position.y
+    );
+    info!(
+        target: "shadow_scale::command",
+        command = "hunt_fauna",
+        faction = %faction.0,
+        band = %band.label,
+        herd = %herd_id,
+        "command.hunt_fauna.queued"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Hunt,
+        faction,
+        format!("{} Hunt -> {}", band.label, herd_id),
+        Some(detail),
     );
 }
 
@@ -2659,6 +2765,15 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             faction: FactionId(faction_id),
             target_x,
             target_y,
+            band_entity_bits,
+        }),
+        ProtoCommandPayload::HuntFauna {
+            faction_id,
+            herd_id,
+            band_entity_bits,
+        } => Some(Command::HuntFauna {
+            faction: FactionId(faction_id),
+            herd_id,
             band_entity_bits,
         }),
         ProtoCommandPayload::ExportMap { path } => Some(Command::ExportMap { path }),

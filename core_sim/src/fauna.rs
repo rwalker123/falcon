@@ -7,7 +7,7 @@ use tracing::info;
 
 use crate::{
     components::Tile,
-    fauna_config::{FaunaConfig, FaunaConfigHandle},
+    fauna_config::{FaunaConfig, FaunaConfigHandle, SizeClass},
     food::{classify_food_module, FoodModule},
     mapgen::WorldGenSeed,
     resources::{SimulationConfig, StartLocation, TileRegistry},
@@ -22,21 +22,34 @@ pub struct Herd {
     /// Species display name (also the snapshot `species` string; drives the client
     /// icon via keyword match). Sourced from the data-driven `fauna_config.json`.
     pub species: String,
+    /// Coarse size band (snapshot `size_class`); lets the client offer the right verbs.
+    pub size_class: SizeClass,
     pub route: Vec<UVec2>,
     pub step_index: usize,
     pub biomass: f32,
+    /// Per-species carrying capacity (= table biomass max) that biomass regrows toward.
+    pub carrying_capacity: f32,
 }
 
 impl Herd {
-    pub fn new(id: String, species_display: String, route: Vec<UVec2>, biomass: f32) -> Self {
+    pub fn new(
+        id: String,
+        species_display: String,
+        size_class: SizeClass,
+        route: Vec<UVec2>,
+        biomass: f32,
+        carrying_capacity: f32,
+    ) -> Self {
         let label = format!("{} ({})", species_display, id);
         Self {
             id,
             label,
             species: species_display,
+            size_class,
             route,
             step_index: 0,
             biomass,
+            carrying_capacity,
         }
     }
 
@@ -72,6 +85,8 @@ pub struct HerdTelemetryEntry {
     pub id: String,
     pub label: String,
     pub species: String,
+    pub size_class: String,
+    pub huntable: bool,
     pub position: UVec2,
     pub biomass: f32,
     pub route_length: u32,
@@ -292,8 +307,16 @@ fn spawn_migratory_herds(
             continue;
         };
         let biomass = def.sample_biomass(rng);
+        let carrying_capacity = def.carrying_capacity();
         let id = format!("herd_{key}_{idx:02}");
-        let herd = Herd::new(id, def.display_name.clone(), route, biomass);
+        let herd = Herd::new(
+            id,
+            def.display_name.clone(),
+            def.size_class,
+            route,
+            biomass,
+            carrying_capacity,
+        );
         log_herd_spawn(&herd);
         herds.push(herd);
     }
@@ -357,9 +380,17 @@ fn spawn_short_range_game(
             continue;
         };
         let biomass = def.sample_biomass(rng);
+        let carrying_capacity = def.carrying_capacity();
         let id = format!("game_{key}_{game_idx:02}");
         game_idx += 1;
-        let herd = Herd::new(id, def.display_name.clone(), route, biomass);
+        let herd = Herd::new(
+            id,
+            def.display_name.clone(),
+            def.size_class,
+            route,
+            biomass,
+            carrying_capacity,
+        );
         log_herd_spawn(&herd);
         placed.push(pos);
         herds.push(herd);
@@ -371,6 +402,7 @@ pub fn advance_herds(
     mut telemetry: ResMut<HerdTelemetry>,
     mut density: ResMut<HerdDensityMap>,
     config: Res<SimulationConfig>,
+    fauna_config: Res<FaunaConfigHandle>,
 ) {
     if registry.herds.is_empty() {
         telemetry.entries.clear();
@@ -379,8 +411,10 @@ pub fn advance_herds(
         density.samples.clear();
         return;
     }
+    let regrowth_rate = fauna_config.get().ecology.regrowth_rate;
     for herd in registry.herds.iter_mut() {
         herd.advance();
+        regrow_biomass(herd, regrowth_rate);
         let position = herd.position();
         info!(
             target: "shadow_scale::analytics",
@@ -394,8 +428,21 @@ pub fn advance_herds(
             biomass = herd.biomass,
         );
     }
+    // Local extinction: a group hunted to zero disperses and despawns.
+    registry.herds.retain(|herd| herd.biomass > 0.0);
     telemetry.entries = registry.snapshot_entries();
     density.rebuild(config.grid_size, &registry);
+}
+
+/// Logistic regrowth toward the herd's per-species carrying capacity. A group at or
+/// below zero is left for the caller to despawn (it does not regrow from extinction).
+fn regrow_biomass(herd: &mut Herd, regrowth_rate: f32) {
+    let cap = herd.carrying_capacity;
+    if cap <= 0.0 || herd.biomass <= 0.0 {
+        return;
+    }
+    herd.biomass =
+        (herd.biomass + regrowth_rate * herd.biomass * (1.0 - herd.biomass / cap)).clamp(0.0, cap);
 }
 
 fn to_entry(herd: &Herd) -> HerdTelemetryEntry {
@@ -403,6 +450,9 @@ fn to_entry(herd: &Herd) -> HerdTelemetryEntry {
         id: herd.id.clone(),
         label: herd.label.clone(),
         species: herd.species.clone(),
+        size_class: herd.size_class.as_str().to_string(),
+        // All fauna are huntable in Phase B; Phase C/D may differentiate.
+        huntable: true,
         position: herd.position(),
         biomass: herd.biomass,
         route_length: herd.route_length() as u32,

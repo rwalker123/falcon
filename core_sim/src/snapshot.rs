@@ -3619,6 +3619,8 @@ fn herd_snapshot_entries(telemetry: &HerdTelemetry) -> Vec<HerdTelemetryState> {
             route_length: entry.route_length,
             next_x: entry.next_position.map(|pos| pos.x as i32).unwrap_or(-1),
             next_y: entry.next_position.map(|pos| pos.y as i32).unwrap_or(-1),
+            size_class: entry.size_class.clone(),
+            huntable: entry.huntable,
         })
         .collect()
 }

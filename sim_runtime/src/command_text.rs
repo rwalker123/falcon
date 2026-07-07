@@ -152,6 +152,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "hunt_game <faction_id> <x> <y> [band_entity_bits]",
     },
     CommandVerbHelp {
+        verb: "hunt_fauna",
+        aliases: &[],
+        summary: "Order a band to pursue and hunt a fauna group (herd) by id.",
+        usage: "hunt_fauna <faction_id> <herd_id> [band_entity_bits]",
+    },
+    CommandVerbHelp {
         verb: "export_map",
         aliases: &["export"],
         summary: "Write the current world map (terrain + seed) to a JSON file for inspection and tests.",
@@ -653,6 +659,23 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 target_y: parse_u32(y_str, "hunt_game target_y")?,
                 band_entity_bits: match band_bits {
                     Some(raw) => Some(parse_u64(raw, "hunt band_entity_bits")?),
+                    None => None,
+                },
+            })
+        }
+        "hunt_fauna" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let herd_id = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("herd_id"))?;
+            let band_bits = parts.next();
+            Ok(CommandPayload::HuntFauna {
+                faction_id: parse_u32(faction_str, "hunt_fauna faction")?,
+                herd_id: herd_id.to_string(),
+                band_entity_bits: match band_bits {
+                    Some(raw) => Some(parse_u64(raw, "hunt_fauna band_entity_bits")?),
                     None => None,
                 },
             })
