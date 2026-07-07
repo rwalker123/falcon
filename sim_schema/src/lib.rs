@@ -69,6 +69,14 @@ pub struct FactionInventoryState {
     pub inventory: Vec<FactionInventoryEntryState>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SedentarizationState {
+    pub faction: u32,
+    pub score: f32,
+    #[serde(default)]
+    pub stage: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HerdTelemetryState {
     pub id: String,
@@ -1361,6 +1369,8 @@ pub struct WorldSnapshot {
     pub food_modules: Vec<FoodModuleState>,
     #[serde(default)]
     pub faction_inventory: Vec<FactionInventoryState>,
+    #[serde(default)]
+    pub sedentarization: Vec<SedentarizationState>,
     pub moisture_raster: FloatRasterState,
     pub hydrology_overlay: HydrologyOverlayState,
     pub elevation_overlay: ElevationOverlayState,
@@ -1414,6 +1424,7 @@ pub struct WorldDelta {
     pub herds: Option<Vec<HerdTelemetryState>>,
     pub food_modules: Option<Vec<FoodModuleState>>,
     pub faction_inventory: Option<Vec<FactionInventoryState>>,
+    pub sedentarization: Option<Vec<SedentarizationState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub hydrology_overlay: Option<HydrologyOverlayState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
@@ -1615,6 +1626,7 @@ fn build_snapshot_flatbuffer<'a>(
     let herds_vec = create_herds(builder, &snapshot.herds);
     let food_modules_vec = create_food_modules(builder, &snapshot.food_modules);
     let faction_inventory_vec = create_faction_inventory(builder, &snapshot.faction_inventory);
+    let sedentarization_vec = create_sedentarization(builder, &snapshot.sedentarization);
     let hydrology_overlay = create_hydrology_overlay(builder, &snapshot.hydrology_overlay);
     let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
     let elevation_overlay = create_elevation_overlay(builder, &snapshot.elevation_overlay);
@@ -1673,6 +1685,7 @@ fn build_snapshot_flatbuffer<'a>(
             herds: Some(herds_vec),
             foodModules: Some(food_modules_vec),
             factionInventory: Some(faction_inventory_vec),
+            sedentarization: Some(sedentarization_vec),
             moistureRaster: Some(moisture_raster),
             hydrologyOverlay: Some(hydrology_overlay),
             elevationOverlay: Some(elevation_overlay),
@@ -1726,6 +1739,10 @@ fn build_delta_flatbuffer<'a>(
         .faction_inventory
         .as_ref()
         .map(|entries| create_faction_inventory(builder, entries));
+    let sedentarization = delta
+        .sedentarization
+        .as_ref()
+        .map(|entries| create_sedentarization(builder, entries));
     let command_events = delta
         .command_events
         .as_ref()
@@ -1904,6 +1921,7 @@ fn build_delta_flatbuffer<'a>(
             herds,
             foodModules: food_modules,
             factionInventory: faction_inventory,
+            sedentarization,
             moistureRaster: moisture_raster,
             elevationOverlay: elevation_overlay,
             axisBias: axis_bias,
@@ -2195,6 +2213,26 @@ fn create_faction_inventory<'a>(
             },
         );
         entries.push(faction_entry);
+    }
+    builder.create_vector(&entries)
+}
+
+fn create_sedentarization<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[SedentarizationState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::SedentarizationState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let stage = builder.create_string(state.stage.as_str());
+        let entry = fb::SedentarizationState::create(
+            builder,
+            &fb::SedentarizationStateArgs {
+                faction: state.faction,
+                score: state.score,
+                stage: Some(stage),
+            },
+        );
+        entries.push(entry);
     }
     builder.create_vector(&entries)
 }

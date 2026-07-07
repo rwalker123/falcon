@@ -3065,6 +3065,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Forage => "Harvest",
         CommandEventKind::Hunt => "Hunt",
         CommandEventKind::Domesticate => "Domesticate",
+        CommandEventKind::SedentarizationPrompt => "Sedentarization",
     }
 }
 

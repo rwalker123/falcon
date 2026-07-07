@@ -36,6 +36,8 @@ mod power;
 mod provinces;
 mod resources;
 mod scalar;
+mod sedentarization;
+mod sedentarization_config;
 mod snapshot;
 mod snapshot_overlays_config;
 mod start_profile;
@@ -119,6 +121,13 @@ pub use knowledge_ledger::{
     KnowledgeTimelineEvent, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
 };
 pub use map_preset::{MapPreset, MapPresets, MapPresetsHandle};
+pub use sedentarization::{
+    sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
+};
+pub use sedentarization_config::{
+    load_sedentarization_config_from_env, SedentarizationConfig, SedentarizationConfigHandle,
+    SedentarizationConfigMetadata,
+};
 pub use snapshot_overlays_config::{
     load_snapshot_overlays_config_from_env, CorruptionOverlayConfig, CultureOverlayConfig,
     FogOverlayConfig, MilitaryOverlayConfig, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
@@ -294,6 +303,10 @@ pub fn build_headless_app() -> App {
     let visibility_handle = visibility_config::VisibilityConfigHandle::new(visibility_config);
     let (fauna_config, fauna_metadata) = fauna_config::load_fauna_config_from_env();
     let fauna_handle = fauna_config::FaunaConfigHandle::new(fauna_config);
+    let (sedentarization_config, sedentarization_metadata) =
+        sedentarization_config::load_sedentarization_config_from_env();
+    let sedentarization_handle =
+        sedentarization_config::SedentarizationConfigHandle::new(sedentarization_config);
     let culture_effects = CultureEffectsCache::default();
     let espionage_catalog =
         espionage::EspionageCatalog::load_builtin().expect("espionage catalog should parse");
@@ -343,6 +356,9 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility_metadata)
         .insert_resource(fauna_handle)
         .insert_resource(fauna_metadata)
+        .insert_resource(sedentarization_handle)
+        .insert_resource(sedentarization_metadata)
+        .insert_resource(sedentarization::SedentarizationScore::default())
         .insert_resource(visibility::VisibilityLedger::default())
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(visibility::ViewerFaction::default())
@@ -493,6 +509,7 @@ pub fn build_headless_app() -> App {
                 systems::advance_harvest_assignments,
                 systems::advance_scout_assignments,
                 systems::advance_fauna_pursuits,
+                sedentarization::sedentarization_tick,
                 systems::publish_trade_telemetry,
             )
                 .chain()

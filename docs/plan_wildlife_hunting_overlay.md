@@ -106,8 +106,14 @@ Each phase is independently shippable.
   trade-goods windfall (`market.trade_goods_multiplier`), declining the group fast into the
   Phase D collapse. Reuses the Follow verb + policy picker + command plumbing (the policy is
   a free string, no schema change). Completes the overlay's "domestication *or* market
-  hunting take hold" design. *Deferred:* the pastoral→corral→settlement chain (`Camp`,
-  `SedentarizationScore`).
+  hunting take hold" design.
+- **Sedentarization Score.** The first slice of the pastoral→settlement chain and the
+  consumer of the domestication seam: an emergent per-faction 0–100 "pressure to settle"
+  (`sedentarization_tick`) blending domestication (`domesticated_count`) + surplus + resource
+  density + population, EMA-smoothed, firing **soft (~40)** / **hard (~70)** command-feed
+  prompts and exported as a HUD meter (`SedentarizationState`). Tunables in
+  `sedentarization_config.json`. *Still deferred:* the `Camp` entity + corrals, and wiring the
+  hard prompt to an actual `found_settlement`.
 
 ## Cross-cutting touchpoints
 

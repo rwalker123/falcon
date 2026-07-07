@@ -38,6 +38,9 @@ func _ready() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 
+	# Top-bar Sedentarization meter (faction 0, soft band) — visible across all frames.
+	_hud.update_sedentarization([{"faction": 0, "score": 62.0, "stage": "soft"}])
+
 	# State 1 — a band selected (BAND eyebrow, primary Scout / ghost Found Camp).
 	_hud.show_unit_selection(_band_fixture())
 	await _settle()

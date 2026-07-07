@@ -40,6 +40,7 @@ cargo run -p core_sim --bin server
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
 | `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) / `market` (commercial-hunt take + trade multiplier) tuning |
+| `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -241,10 +242,11 @@ of `fauna_config.json`.
 > simply lacks the component). Pursuits are short-lived; revisit if needed. Domestication
 > state lives on the `Herd` (in `HerdRegistry`), alongside `biomass`.
 
-Deferred beyond Phase E (`docs/plan_wildlife_hunting_overlay.md`): the **industrialized /
-market-hunting** counterpart, and the pastoral→corral→settlement chain (`Camp`,
-`SedentarizationScore`). The tile-based `HuntGame` handler stays neutralized (its client
-button no longer surfaces).
+Market hunting shipped as the `Market` follow policy; `SedentarizationScore` shipped (see
+"Sedentarization" under Campaign Loop). Still deferred (`docs/plan_wildlife_hunting_overlay.md`):
+the `Camp` entity + corrals, and wiring the sedentarization hard prompt to an actual
+`found_settlement`. The tile-based `HuntGame` handler stays neutralized (its client button no
+longer surfaces).
 
 ---
 
@@ -253,9 +255,31 @@ button no longer surfaces).
 ### Start Flow
 - **Data**: `StartProfile` records with `starting_units`, `starting_knowledge_tags`, `inventory`, `survey_radius`, `fog_mode`
 - **Spawn**: Worldgen seeds 2-3 bands, unlocks `ScoutArea`, `FollowHerd`, `FoundCamp`
-- **Camps**: Transient settlement-likes with `PortableBuildings`, `CampStorage`, `DecayOnAbandon`
-- **Sedentarization**: `SedentarizationScore` computed from resource density, surplus stability, trade potential
+- **Camps**: Transient settlement-likes with `PortableBuildings`, `CampStorage`, `DecayOnAbandon` (backlog — not yet built)
+- **Sedentarization**: implemented — see the dedicated section below.
 - **Founding**: `Command::FoundSettlement { q, r }` requires Founders unit, consumes provisions, spawns Settlement
+
+### Sedentarization
+The emergent per-faction "pressure to root in place" — the first slice of the pastoral→
+settlement chain, and the consumer of Phase E's domestication seam.
+
+`sedentarization_tick` (`sedentarization.rs`, `TurnStage::Population` after
+`advance_fauna_pursuits`) computes a per-faction 0–100 **`SedentarizationScore`** each turn as
+a config-weighted blend of normalized inputs, then **EMA-smooths** it (`smoothing`):
+- **domestication** = `HerdRegistry::domesticated_count(faction) / references.domesticated_herds`
+  (the Phase E seam),
+- **surplus** = provisions stockpile / `references.surplus`,
+- **resource density** = `HerdDensityMap::normalized_average()` (map-wide game richness — a v1
+  baseline; per-faction-local density is a future refinement),
+- **population** = Σ cohort size / `references.population`.
+
+On a **rising** crossing of `soft_threshold` (~40, "establish a seasonal base?") or
+`hard_threshold` (~70, "settle?") it pushes a `CommandEventKind::SedentarizationPrompt` to the
+command feed (edge-gated on the stored `SedentarizationStage` so it doesn't re-fire; a fall
+lowers the stage silently). The score is exported per-faction in the snapshot
+(`SedentarizationState`, mirroring `factionInventory`) and shown as a HUD meter. Tunables live
+in `data/sedentarization_config.json` (`sedentarization_config.rs`). Deferred next slices:
+the `Camp` entity + corrals, and wiring the hard prompt to an actual `found_settlement`.
 
 ### Capability Flags
 `CapabilityFlags` bitflags: `AlwaysOn`, `Construction`, `IndustryT1/T2`, `Power`, `NavalOps`, `AirOps`, `EspionageT2`, `Megaprojects`. Systems are inert until corresponding flag is set.
