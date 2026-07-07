@@ -254,6 +254,26 @@ impl Default for HusbandryConfig {
     }
 }
 
+/// Market-hunting tuning: the commercial Follow policy over-harvests a large fixed share
+/// of biomass each turn (`take_fraction`) and sells it, yielding `trade_goods_multiplier`×
+/// the normal trade-goods rate. The heavy take drives the group past the Allee threshold
+/// into the depensation collapse (no separate depletion state — pure ecology reuse).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MarketConfig {
+    pub take_fraction: f32,
+    pub trade_goods_multiplier: f32,
+}
+
+impl Default for MarketConfig {
+    fn default() -> Self {
+        Self {
+            take_fraction: 0.20,
+            trade_goods_multiplier: 4.0,
+        }
+    }
+}
+
 /// Root fauna configuration.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
@@ -265,6 +285,7 @@ pub struct FaunaConfig {
     pub follow: FollowConfig,
     pub immigration: ImmigrationConfig,
     pub husbandry: HusbandryConfig,
+    pub market: MarketConfig,
 }
 
 impl FaunaConfig {
@@ -471,6 +492,10 @@ mod tests {
         assert!(config.husbandry.claim_threshold > 0.0);
         assert!(config.husbandry.claim_threshold < 1.0);
         assert!(config.husbandry.provisions_per_biomass > 0.0);
+        // Market hunting takes a meaningful share and sells at a premium trade rate.
+        assert!(config.market.take_fraction > 0.0);
+        assert!(config.market.take_fraction < 1.0);
+        assert!(config.market.trade_goods_multiplier > 1.0);
         // take clamps to [min_take, biomass].
         assert_eq!(config.hunt.take_from(0.0), 0.0);
         assert_eq!(config.hunt.take_from(10.0), 10.0); // below min_take -> whole group

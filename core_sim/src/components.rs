@@ -246,12 +246,14 @@ pub struct ScoutAssignment {
 
 /// Auto-hunt policy for a Follow: how much biomass the band takes each turn once
 /// adjacent. Sustain ≈ regrowth (group stable), Surplus > regrowth (slow decline),
+/// Market = large commercial share (fast decline → collapse, boosted trade goods),
 /// Eradicate = max (drives the group toward local extinction).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FollowPolicy {
     #[default]
     Sustain,
     Surplus,
+    Market,
     Eradicate,
 }
 
@@ -260,6 +262,7 @@ impl FollowPolicy {
         match self {
             FollowPolicy::Sustain => "sustain",
             FollowPolicy::Surplus => "surplus",
+            FollowPolicy::Market => "market",
             FollowPolicy::Eradicate => "eradicate",
         }
     }
@@ -271,6 +274,7 @@ impl FromStr for FollowPolicy {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.trim().to_ascii_lowercase().as_str() {
             "surplus" => Ok(FollowPolicy::Surplus),
+            "market" => Ok(FollowPolicy::Market),
             "eradicate" => Ok(FollowPolicy::Eradicate),
             "sustain" | "" => Ok(FollowPolicy::Sustain),
             _ => Err(()),
