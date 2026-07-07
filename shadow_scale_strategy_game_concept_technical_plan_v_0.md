@@ -62,6 +62,7 @@ This section translates the sandbox into a concrete, Civ-like campaign loop whil
 - Loose territory: project soft “roaming rights” via patrols/totems; early conflicts are skirmishes/raids, not sieges. Encounters with other tribes can lead to parley, exchange, intermarriage/adoption, or feud.
 
 ### Organic Settlement — Sedentarization (When/Why to Found)
+- **There is no "found a settlement" action.** A camp/settlement/town/city is the *emergent, derived label* for a cluster of populated tiles — the accumulated result of a population that builds place-bound improvements it must attend. Settling is the point where the cost of leaving (abandoning built improvements + stored surplus) exceeds the benefit of moving. See `docs/plan_settlement_population.md` for the population/labor/improvement model this arc implements; the Sedentarization Score below is the *readout* of that accumulated tether.
 - Sedentarization Score (0–100): emergent pressure to root in place. Inputs: local resource density (now including the live herd-density overlay), food stability, storage/spoilage reductions, domestication progress, trade hub potential, travel fatigue, security.
 - Soft prompt at ~40 (“establish seasonal base?”); hard opportunity at ~70 (“invest in storehouses/fields and settle?”). You can ignore prompts and remain nomadic.
 - Multiple settlement on-ramps:
