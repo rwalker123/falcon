@@ -207,9 +207,43 @@
 ### Nomadic Start Prototype
 - [ ] Define default `late_forager_tribe` StartProfile (Owner: TBD, Estimate: 0.5d; Deps: StartProfile loader). Description: 2–3 bands, no permanent buildings, enable Nomadic commands; victory modes enabled: Hegemony, Cultural Diffusion, Stewardship, Survival.
 - [ ] Implement `Band` units and roles (`Scout`, `Hunter`, `Crafter`/`Guardian`) (Owner: TBD, Estimate: 2d; Deps: unit registry). Description: Movement profiles, inventory capacity, fatigue, discovery throughput.
-- [ ] Implement `Camp` entity with portable buildings, light queue, storage, decay (Owner: TBD, Estimate: 2d; Deps: construction/storage systems). Description: Components `PortableBuildings`, `CampStorage`, `DecayOnAbandon`, `TrailKnowledge`.
-- [ ] Commands: `FoundSeasonalCamp`, `AbandonCamp`, `SplitClan`, `MergeClan` (Owner: TBD, Estimate: 2–3d; Deps: command plumbing). Description: Validation, salvage rules, population/inventory reassignment, telemetry.
+- [ ] ~~Implement `Camp` entity with portable buildings, light queue, storage, decay~~ **Superseded** by the Settlement & Population Economy arc (`docs/plan_settlement_population.md`): camps/settlements are **derived** from clustered populated tiles + tended improvements, not a discrete `Camp` entity. See the phase breakdown below.
+- [ ] Commands: `FoundSeasonalCamp`, `AbandonCamp`, `SplitClan`, `MergeClan` (Owner: TBD; Deps: command plumbing). Note: reframed under the Settlement & Population Economy arc — camp lifecycle emerges from building/decay + migration rather than discrete found/abandon commands (clan split/merge becomes migration between locations).
 - [x] Add `SedentarizationScore` resource and per-turn computation. `sedentarization_tick` (`sedentarization.rs`, `TurnStage::Population`) computes a per-faction 0–100 score — a config-weighted (`sedentarization_config.json`), EMA-smoothed blend of domestication (`HerdRegistry::domesticated_count`, the Phase E seam), provisions surplus, map resource density, and population — and pushes a `CommandEventKind::SedentarizationPrompt` on rising soft(~40)/hard(~70) crossings (edge-gated). Exported per-faction (`SedentarizationState`) + client HUD meter. _Remaining inputs deferred:_ storage/spoilage modifiers, trade-hub potential, travel fatigue, security; and per-faction-local (vs map-wide) resource density.
+
+### Settlement & Population Economy
+
+Design: `docs/plan_settlement_population.md`. The game's core early/mid economy — a localized
+demographic population + labor allocation + a knowledge-gated improvement catalog, from which
+**settlements emerge** (no discrete founding). Replaces the inert `found_settlement`/Founders
+model and the `Camp`-entity item above; consumes the Wildlife Overlay's `domesticated_count` /
+`SedentarizationScore` seams. Guiding principle: one general mechanism, scaled by config — a
+lean-to and an arcology (and a 400k town vs a 5M city) are the same engine at different tuning.
+
+- [x] Phase 0 — Design doc. Authored `docs/plan_settlement_population.md` (population/labor/
+  improvements/settlements model + phasing) and cross-linked it (manual §Organic Settlement,
+  `plan_wildlife_hunting_overlay.md`, `core_sim/CLAUDE.md`).
+- [ ] Phase 1 — Demographic population. Give `PopulationCohort` a 3-bracket age structure
+  (children/working/elders) with per-turn births/aging/deaths modulated by food/morale/environment,
+  replacing/extending `simulate_population`; config rates; snapshot + client population/age readout.
+  Localized (per band/tile) from day one.
+- [ ] Phase 2 — Labor pool + hybrid allocation. Working-age → a local labor supply; a
+  demand/allocation system (auto by priority + player override) across tending/construction/
+  military/knowledge; client labor readout.
+- [ ] Phase 3 — Improvement catalog + building + knowledge-gating. `Improvement` component +
+  data-driven catalog by class (dwelling/storage/food-tending/…, each pure config: footprint,
+  occupancy, labor_draw, build_cost, yield, decay, prerequisite) + `build` command (stockpiles +
+  known knowledge tag + labor over turns) + multiple-per-tile footprint + dwellings housing tile
+  population + tending-draw + decay. Sets the `CONSTRUCTION` capability bit. Snapshot + client
+  (tile improvements + build UI). First catalog = the manual's storage hooks + corrals + tended
+  patches. Likely splits (3a build+catalog, 3b tending/decay, 3c dwellings/housing).
+- [ ] Phase 4 — Settlements as derived clusters. Compute the camp/settlement/town/city label from
+  populated-tile clusters; tiering; retire discrete founding; rework `SedentarizationScore` into an
+  emergent tether readout. Client settlement view.
+- [ ] Future arc — Borders & Government (deferred). A cluster of populated tiles is a **territory
+  with borders**; a city *is* its (fluid) borders and the population within them → **government/
+  governance** (settlement → town → city → nation). Border-claiming, territory, and government are
+  a later arc; the link is documented in `docs/plan_settlement_population.md`.
 
 ### Early Diplomacy & Route Network
 - [ ] Derive `RouteNetwork` overlay from movement/logistics traversals (Owner: TBD, Estimate: 2d; Deps: movement/logistics stage hooks). Description: Record adjacent-hex segment hits during movement/logistics; maintain exponentially decaying occupancy counters (fixed-point); surface segments above threshold via telemetry. Do not build a separate path graph.

@@ -278,8 +278,13 @@ On a **rising** crossing of `soft_threshold` (~40, "establish a seasonal base?")
 command feed (edge-gated on the stored `SedentarizationStage` so it doesn't re-fire; a fall
 lowers the stage silently). The score is exported per-faction in the snapshot
 (`SedentarizationState`, mirroring `factionInventory`) and shown as a HUD meter. Tunables live
-in `data/sedentarization_config.json` (`sedentarization_config.rs`). Deferred next slices:
-the `Camp` entity + corrals, and wiring the hard prompt to an actual `found_settlement`.
+in `data/sedentarization_config.json` (`sedentarization_config.rs`).
+
+> **Reframed by the Settlement & Population Economy arc** (`docs/plan_settlement_population.md`):
+> settlements are *derived* from clustered populated tiles + tended improvements (there is no
+> discrete founding), and `SedentarizationScore` becomes an emergent readout of accumulated
+> *tether* rather than a gate. See that design doc for the population/labor/improvement model
+> this score ultimately feeds.
 
 ### Capability Flags
 `CapabilityFlags` bitflags: `AlwaysOn`, `Construction`, `IndustryT1/T2`, `Power`, `NavalOps`, `AirOps`, `EspionageT2`, `Megaprojects`. Systems are inert until corresponding flag is set.
