@@ -294,8 +294,9 @@ band…" line in the selection panel.
 - **Main forwards** `hud.targeting_changed → map_view.set_targeting` and
   `map_view.targeting_cancel_requested → hud.cancel_active_targeting`.
 - **MapView draws** the overlay (`_draw_targeting`): `need == "band"` pulses a
-  cyan ring on every unit and shows a hover ETA label (`_targeting_distance`
-  via `_offset_to_axial`); `need == "tile"` draws a reticle on the hovered hex.
+  cyan ring on each of the player's own bands (`_is_player_unit`) and shows a
+  hover distance-in-tiles label (`_targeting_distance` via `_offset_to_axial`);
+  `need == "tile"` draws a reticle on the hovered hex.
   Esc / right-click during targeting emit `targeting_cancel_requested` instead of
   panning. The pulse is animated from the existing `_process`.
 - **Resolution is unchanged**: a left-click still selects the band (which
