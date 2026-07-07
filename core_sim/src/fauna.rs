@@ -456,6 +456,8 @@ fn spawn_short_range_game(
 /// roll its route/biomass, and stamp its initial `ecology_phase`. Returns `None` if no
 /// species hosts the biome or the origin is not land. Shared by initial spawn and
 /// per-turn immigration.
+// Placement needs the config, grid bounds, both tile resources, and the RNG; grouping
+// them into a struct would just move the noise without improving clarity.
 #[allow(clippy::too_many_arguments)]
 fn spawn_game_group_at(
     pos: UVec2,
@@ -537,6 +539,9 @@ pub fn advance_herds(
 /// replenishes (early forager play stays game-rich). Samples up to
 /// `immigration.max_attempts` random land tiles hosting game, respecting `min_spacing`
 /// from existing groups. Runs in `TurnStage::Logistics` right after `advance_herds`.
+// Bevy system signature: each param is a distinct resource/query the immigration roll
+// needs (registry + telemetry/density outputs, config, tick+seed for the RNG, tiles);
+// they can't be collapsed without a container resource that adds no clarity.
 #[allow(clippy::too_many_arguments)]
 pub fn repopulate_fauna(
     mut registry: ResMut<HerdRegistry>,

@@ -1063,11 +1063,13 @@ func _ecology_phase_label(phase: String) -> String:
             return phase.capitalize()
 
 ## BBCode hex for an "Ecology" value: red for a collapsing group, amber for stressed,
-## normal ink otherwise. Matched on the label text produced by `_ecology_phase_label`.
+## normal ink otherwise. Matched on the lowercased phase stems ("collaps"/"stress" from
+## `EcologyPhase::as_str`) so tinting survives glyph/capitalization tweaks to the label.
 func _ecology_value_hex(value: String) -> String:
-    if value.contains("Collapsing"):
+    var normalized := value.to_lower()
+    if normalized.contains("collaps"):
         return HudStyle.DANGER_HEX
-    if value.contains("Stressed"):
+    if normalized.contains("stress"):
         return HudStyle.WARN_HEX
     return HudStyle.INK_HEX
 
