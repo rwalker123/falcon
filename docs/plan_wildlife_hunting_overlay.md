@@ -99,8 +99,15 @@ Each phase is independently shippable.
   herd becomes **domesticated**: owned by that faction, yielding steady provisions each
   turn (proportional to biomass, without depleting it) and **immune to the overhunting
   collapse**. `HerdRegistry::domesticated_count` is the value the future
-  `SedentarizationScore` reads. *Deferred beyond E:* the **industrialized / market-hunting**
-  counterpart, and the pastoral→corral→settlement chain (`Camp`, `SedentarizationScore`).
+  `SedentarizationScore` reads.
+- **Market hunting.** The depletion-side counterpart to domestication: a **`Market`
+  Follow policy** (Sustain | Surplus | **Market** | Eradicate) that commercially
+  over-harvests a herd — takes `market.take_fraction × biomass` each turn for a boosted
+  trade-goods windfall (`market.trade_goods_multiplier`), declining the group fast into the
+  Phase D collapse. Reuses the Follow verb + policy picker + command plumbing (the policy is
+  a free string, no schema change). Completes the overlay's "domestication *or* market
+  hunting take hold" design. *Deferred:* the pastoral→corral→settlement chain (`Camp`,
+  `SedentarizationScore`).
 
 ## Cross-cutting touchpoints
 

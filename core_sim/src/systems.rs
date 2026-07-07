@@ -3297,6 +3297,7 @@ pub fn advance_fauna_pursuits(
     let follow = &fauna.follow;
     let ecology = &fauna.ecology;
     let husbandry = &fauna.husbandry;
+    let market = &fauna.market;
     for (entity, mut cohort, mut pursuit) in cohorts.iter_mut() {
         // Herd still around? (may have despawned via extinction or another hunter).
         let Some(herd_pos) = registry.find(&pursuit.fauna_id).map(|herd| herd.position()) else {
@@ -3370,6 +3371,9 @@ pub fn advance_fauna_pursuits(
                     net_biomass_delta(herd.biomass, herd.carrying_capacity, ecology).max(0.0)
                         * follow.surplus_multiplier
                 }
+                // Market: a large commercial share each turn — drives the group down fast
+                // (into the Phase D collapse) but yields boosted trade goods (see below).
+                FollowPolicy::Market => market.take_fraction * herd.biomass,
                 FollowPolicy::Eradicate => hunt.take_from(herd.biomass),
             },
         }
@@ -3391,8 +3395,20 @@ pub fn advance_fauna_pursuits(
         let biomass_left = herd.biomass;
         let species = herd.species.clone();
 
+        // Market hunting sells its harvest — boosted trade goods; every other mode uses
+        // the normal rate. Provisions stay at the normal rate for all modes.
+        let trade_multiplier = if matches!(
+            pursuit.mode,
+            FaunaPursuitMode::Follow {
+                policy: FollowPolicy::Market
+            }
+        ) {
+            market.trade_goods_multiplier
+        } else {
+            1.0
+        };
         let provisions = (take * hunt.provisions_per_biomass).round() as i64;
-        let trade_goods = (take * hunt.trade_goods_per_biomass).round() as i64;
+        let trade_goods = (take * hunt.trade_goods_per_biomass * trade_multiplier).round() as i64;
         if provisions > 0 {
             inventory.add_stockpile(pursuit.faction, "provisions", provisions);
         }

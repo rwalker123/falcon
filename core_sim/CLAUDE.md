@@ -39,7 +39,7 @@ cargo run -p core_sim --bin server
 | `src/data/influencer_config.json` | Roster caps, decay factors, scope thresholds |
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
-| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) tuning |
+| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) / `market` (commercial-hunt take + trade multiplier) tuning |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -163,16 +163,19 @@ provisions/trade (`hunt.*_per_biomass`), drawn from the group and added to
 
 **Follow (persistent, per policy)** — `follow_herd <faction> <herd_id> [policy]
 [band_entity_bits]` attaches a `FaunaPursuit { mode: Follow { policy } }`
-(`FollowPolicy` ∈ Sustain | Surplus | Eradicate). The same `advance_fauna_pursuits`
+(`FollowPolicy` ∈ Sustain | Surplus | Market | Eradicate). The same `advance_fauna_pursuits`
 system keeps the band within `pursuit_radius` of the moving group and, once adjacent,
-**auto-hunts each turn per policy** instead of removing the component: Sustain takes
-one turn's net regrowth (`net_biomass_delta(..).max(0.0)`, group ~stable; a collapsing
-group yields nothing), Surplus takes that × `follow.surplus_multiplier` (slow decline),
-Eradicate takes `hunt.take_from` (drives extinction). Each turn it also grants a small
-non-food benefit — a `FogRevealLedger`
-tracking pulse (`follow.reveal_radius`/`reveal_duration_turns`) + `follow.morale_gain`.
-Config lives in the `follow` block of `fauna_config.json`. The old one-shot teleport
-follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
+**auto-hunts each turn per policy** instead of removing the component — a commercial
+spectrum: Sustain takes one turn's net regrowth (`net_biomass_delta(..).max(0.0)`, group
+~stable; a collapsing group yields nothing), Surplus takes that × `follow.surplus_multiplier`
+(slow decline), **Market** takes `market.take_fraction × biomass` (a large commercial share →
+fast decline into the Phase D collapse) and sells it at `market.trade_goods_multiplier`× the
+normal trade-goods rate, Eradicate takes `hunt.take_from` (drives extinction). The policy is a
+free string parsed via `FollowPolicy::from_str`, so Market needs no schema/proto change. Each
+turn it also grants a small non-food benefit — a `FogRevealLedger` tracking pulse
+(`follow.reveal_radius`/`reveal_duration_turns`) + `follow.morale_gain`. Config lives in the
+`follow` and `market` blocks of `fauna_config.json`. The old one-shot teleport follow (and its
+`apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
 
 **Orders replace orders** — a band holds exactly one task. Issuing Harvest / Hunt /
 Follow / Scout calls `reassign_band` (`server.rs`) first, stripping any existing

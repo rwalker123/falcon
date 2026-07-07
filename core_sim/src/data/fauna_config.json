@@ -102,5 +102,9 @@
     "decay_per_turn": 0.01,
     "claim_threshold": 0.6,
     "provisions_per_biomass": 0.01
+  },
+  "market": {
+    "take_fraction": 0.20,
+    "trade_goods_multiplier": 4.0
   }
 }

@@ -17,7 +17,7 @@ signal targeting_changed(info: Dictionary)
 ## changes.** Shown in the lower-left version overlay next to the server build (streamed
 ## in the snapshot header) so the running client+server builds can be confirmed at a
 ## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-07.5"
+const CLIENT_BUILD := "2026-07-07.6"
 var _build_label: Label = null
 var _server_build: String = "?"
 
@@ -51,6 +51,7 @@ var _server_build: String = "?"
 @onready var follow_policy_buttons: HBoxContainer = %FollowPolicyButtons
 @onready var follow_sustain_button: Button = %FollowSustainButton
 @onready var follow_surplus_button: Button = %FollowSurplusButton
+@onready var follow_market_button: Button = %FollowMarketButton
 @onready var follow_eradicate_button: Button = %FollowEradicateButton
 @onready var food_buttons: HBoxContainer = %FoodButtons
 @onready var forage_button: Button = %ForageButton
@@ -116,7 +117,7 @@ var _pending_scout_unit: Dictionary = {}
 var _pending_hunt: Dictionary = {}
 var _pending_follow: Dictionary = {}
 var _follow_policy: String = "sustain"
-const FOLLOW_POLICIES := ["sustain", "surplus", "eradicate"]
+const FOLLOW_POLICIES := ["sustain", "surplus", "market", "eradicate"]
 var _targeting_banner: PanelContainer = null
 var _targeting_banner_label: RichTextLabel = null
 var _stockpile_totals: Dictionary = {}
@@ -461,6 +462,9 @@ func _connect_selection_buttons() -> void:
     if follow_surplus_button != null and not follow_surplus_button.is_connected("pressed", Callable(self, "_on_follow_policy_pressed")):
         follow_surplus_button.pressed.connect(_on_follow_policy_pressed.bind("surplus"))
         follow_surplus_button.tooltip_text = "Surplus: take extra for provisions/trade — the group slowly declines."
+    if follow_market_button != null and not follow_market_button.is_connected("pressed", Callable(self, "_on_follow_policy_pressed")):
+        follow_market_button.pressed.connect(_on_follow_policy_pressed.bind("market"))
+        follow_market_button.tooltip_text = "Market: commercially over-harvest for a big trade-goods windfall — the group declines fast toward collapse."
     if follow_eradicate_button != null and not follow_eradicate_button.is_connected("pressed", Callable(self, "_on_follow_policy_pressed")):
         follow_eradicate_button.pressed.connect(_on_follow_policy_pressed.bind("eradicate"))
         follow_eradicate_button.tooltip_text = "Eradicate: take the maximum — drives the group toward local extinction."
@@ -543,6 +547,7 @@ func _refresh_follow_policy_buttons() -> void:
     var buttons := {
         "sustain": follow_sustain_button,
         "surplus": follow_surplus_button,
+        "market": follow_market_button,
         "eradicate": follow_eradicate_button,
     }
     for policy in buttons:

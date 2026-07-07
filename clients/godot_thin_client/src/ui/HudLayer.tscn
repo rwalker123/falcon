@@ -235,6 +235,10 @@ text = "Sustain"
 unique_name_in_owner = true
 text = "Surplus"
 
+[node name="FollowMarketButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons/FollowPolicyButtons"]
+unique_name_in_owner = true
+text = "Market"
+
 [node name="FollowEradicateButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons/FollowPolicyButtons"]
 unique_name_in_owner = true
 text = "Eradicate"

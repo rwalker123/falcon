@@ -290,8 +290,9 @@ easy-to-miss "select a band…" line in the selection panel.
   hex) together — `show_herd_selection` falls back to the current tile so the
   combined panel renders all applicable groups (`_update_herd_buttons` +
   `_update_food_buttons`). Hunt is gated on the herd's `huntable` snapshot flag;
-  **Follow** carries a policy from a Sustain/Surplus/Eradicate picker
-  (`FollowPolicyButtons`, `_follow_policy`, restyled via `HudStyle.apply_button`).
+  **Follow** carries a policy from a Sustain/Surplus/Market/Eradicate picker
+  (`FollowPolicyButtons`, `FOLLOW_POLICIES`, `_follow_policy`, restyled via
+  `HudStyle.apply_button`; Market = commercial over-harvest, sent as `follow_herd … market`).
   Both Hunt and Follow enter targeting mode to pick a band; the button flips to a
   "Cancel …" affordance while pending.
 - **Herd ecology readout** (`Hud.gd` `_herd_summary_lines`): the selection panel shows
