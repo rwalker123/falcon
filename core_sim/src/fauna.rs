@@ -147,12 +147,15 @@ impl Herd {
     }
 
     /// Decay husbandry progress toward zero when the group isn't being actively tended;
-    /// ownership lapses once progress reaches zero.
+    /// ownership lapses once progress reaches zero. A domesticated group is left alone.
     pub(crate) fn decay_domestication(&mut self, amount: f32) {
-        if self.is_domesticated() || self.domestication_progress <= 0.0 {
+        if self.is_domesticated() {
             return;
         }
         self.domestication_progress = (self.domestication_progress - amount).max(0.0);
+        // Reconcile the `owner is Some ⟺ progress > 0` invariant unconditionally, so a
+        // group that reaches (or somehow sits at) zero progress never keeps a stale owner
+        // — which would otherwise block another faction from ever tending it.
         if self.domestication_progress <= 0.0 {
             self.owner = None;
         }

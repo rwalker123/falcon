@@ -1869,6 +1869,7 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
     enum Outcome {
         UnknownHerd,
         AlreadyDomesticated,
+        NotOwner,
         NotTame(f32),
         Claimed,
     }
@@ -1887,9 +1888,9 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
         match registry.herds.iter_mut().find(|herd| herd.id == herd_id) {
             None => Outcome::UnknownHerd,
             Some(herd) if herd.is_domesticated() => Outcome::AlreadyDomesticated,
-            Some(herd)
-                if herd.owner != Some(faction) || herd.domestication_progress < claim_threshold =>
-            {
+            // Only the tending faction may claim; report ownership and tameness distinctly.
+            Some(herd) if herd.owner != Some(faction) => Outcome::NotOwner,
+            Some(herd) if herd.domestication_progress < claim_threshold => {
                 Outcome::NotTame(herd.domestication_progress)
             }
             Some(herd) => {
@@ -1921,12 +1922,21 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
             faction,
             format!("{} is already domesticated.", herd_id),
         ),
+        Outcome::NotOwner => emit_command_failure(
+            app,
+            CommandEventKind::Domesticate,
+            faction,
+            format!(
+                "You are not tending {}. Sustain-follow it to build husbandry before claiming it.",
+                herd_id
+            ),
+        ),
         Outcome::NotTame(progress) => emit_command_failure(
             app,
             CommandEventKind::Domesticate,
             faction,
             format!(
-                "{} is not tame enough to domesticate ({}%). Sustain-follow it to build husbandry.",
+                "{} is not tame enough to domesticate ({}%). Keep Sustain-following it to build husbandry.",
                 herd_id,
                 (progress * 100.0).round() as i64
             ),
