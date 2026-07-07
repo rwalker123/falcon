@@ -172,6 +172,8 @@ message ScoutAreaCommand {
 message FollowHerdCommand {
   uint32 faction_id = 1;
   string herd_id = 2;
+  optional string policy = 3;
+  optional uint64 band_entity_bits = 4;
 }
 
 message FoundCampCommand {

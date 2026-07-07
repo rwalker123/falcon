@@ -48,8 +48,15 @@ func _ready() -> void:
 	await _settle()
 	await _save("food_tile")
 
-	# State 3 — targeting active: pending harvest raises the top-centre banner
+	# State 3 — a herd selected on a food tile: Harvest + Hunt + Follow verbs plus
+	# the Sustain/Surplus/Eradicate policy picker all surface together.
+	_hud.show_herd_selection(_herd_fixture())
+	await _settle()
+	await _save("herd_verbs")
+
+	# State 4 — targeting active: pending harvest raises the top-centre banner
 	# and flips the button to the armed "Cancel Harvest" treatment.
+	_hud.show_tile_selection(_food_tile_fixture())
 	_hud._begin_pending_forage(66, 10, "savanna_grassland", "forage")
 	await _settle()
 	await _save("targeting_banner")
@@ -109,4 +116,17 @@ func _food_tile_fixture() -> Dictionary:
 		"food_module_label": "Savanna Grassland",
 		"food_module_weight": 1.0,
 		"food_kind": "savanna_track",
+	}
+
+func _herd_fixture() -> Dictionary:
+	return {
+		"id": "game_deer_07",
+		"label": "Red Deer (game_deer_07)",
+		"species": "Red Deer",
+		"size_class": "big",
+		"huntable": true,
+		"x": 66, "y": 10,
+		"biomass": 820.0,
+		"route_length": 3,
+		"tile_info": _food_tile_fixture(),
 	}

@@ -600,7 +600,7 @@ func _on_follow_herd_button_pressed() -> void:
 	var normalized := herd_id.to_lower().replace(" ", "_")
 	var faction := get_scenario_faction()
 	var message := "Follow herd '%s' requested for faction %d." % [herd_id, faction]
-	_send.call("follow_herd %d %s" % [faction, normalized], message)
+	_send.call("follow_herd %d %s sustain" % [faction, normalized], message)
 
 func _on_camp_command_pressed() -> void:
 	if camp_x_spin == null or camp_y_spin == null:

@@ -130,8 +130,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "follow_herd",
         aliases: &[],
-        summary: "Queue a herd-following order for the given faction and herd id.",
-        usage: "follow_herd <faction_id> <herd_id>",
+        summary: "Order a band to follow a herd, auto-hunting per policy each turn.",
+        usage: "follow_herd <faction_id> <herd_id> [policy] [band_entity_bits]",
     },
     CommandVerbHelp {
         verb: "found_camp",
@@ -580,9 +580,16 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let herd_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("herd_id"))?;
+            let policy = parts.next().map(|s| s.to_string());
+            let band_bits = parts.next();
             Ok(CommandPayload::FollowHerd {
                 faction_id: parse_u32(faction_str, "follow_herd faction")?,
                 herd_id: herd_id.to_string(),
+                policy,
+                band_entity_bits: match band_bits {
+                    Some(raw) => Some(parse_u64(raw, "follow_herd band_entity_bits")?),
+                    None => None,
+                },
             })
         }
         "found_camp" => {

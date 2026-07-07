@@ -22,16 +22,15 @@ use core_sim::{
     CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
     CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
     CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
-    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
-    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
-    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionInventory,
-    FactionOrders, FactionRegistry, FactionSecurityPolicies, FaunaPursuit, FaunaPursuitMode,
-    FogRevealLedger, FoodModule, FoodModuleTag, GenerationId, GenerationRegistry,
-    HarvestAssignment, HerdDensityMap, HerdRegistry, HerdTelemetry, InfluencerImpacts,
-    InfluentialRoster, KnowledgeFragment, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort,
-    QueueMissionError, QueueMissionParams, Scalar, ScoutAssignment, SecurityPolicy,
-    SentimentAxisBias, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
-    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, EspionageAgentHandle,
+    EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
+    EspionageMissionTemplate, EspionageRoster, FactionId, FactionInventory, FactionOrders,
+    FactionRegistry, FactionSecurityPolicies, FaunaPursuit, FaunaPursuitMode, FogRevealLedger,
+    FollowPolicy, FoodModule, FoodModuleTag, GenerationId, GenerationRegistry, HarvestAssignment,
+    HerdRegistry, InfluencerImpacts, InfluentialRoster, MapPresetsHandle, PendingCrisisSpawns,
+    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, ScoutAssignment,
+    SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig, SimulationConfigMetadata,
+    SimulationTick, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
     StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry,
     TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata,
@@ -59,18 +58,10 @@ const DEFAULT_SCOUT_REVEAL_RADIUS: u32 = 3;
 const SCOUT_REVEAL_DURATION_TURNS: u64 = 8;
 const SCOUT_MORALE_GAIN: f32 = 0.02;
 const SCOUT_PROVISION_COST: i64 = 10;
-const HERD_CONSUMPTION_BIOMASS: f32 = 250.0;
 const CAMP_PROVISION_COST: i64 = 40;
 const SETTLEMENT_PROVISION_COST: i64 = 80;
 const SETTLEMENT_CONSTRUCTION_RADIUS: u32 = 3;
 const SETTLEMENT_LOGISTICS_RADIUS: u32 = 4;
-const HERD_PROVISIONS_YIELD_PER_BIOMASS: f32 = 0.02;
-const HERD_TRADE_GOODS_YIELD_PER_BIOMASS: f32 = 0.005;
-const HERD_FOLLOW_MORALE_GAIN: f32 = 0.03;
-const HERD_KNOWLEDGE_DISCOVERY_ID: u32 = 2003;
-const HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS: f32 = 0.0004;
-const HERD_KNOWLEDGE_PROGRESS_CAP: f32 = 0.25;
-const HERD_KNOWLEDGE_FIDELITY: f32 = 0.7;
 
 fn main() {
     let mut app = build_headless_app();
@@ -501,8 +492,13 @@ fn main() {
             } => {
                 handle_scout_area(&mut app, faction, target_x, target_y, band_entity_bits);
             }
-            Command::FollowHerd { faction, herd_id } => {
-                handle_follow_herd(&mut app, faction, herd_id);
+            Command::FollowHerd {
+                faction,
+                herd_id,
+                policy,
+                band_entity_bits,
+            } => {
+                handle_follow_herd(&mut app, faction, herd_id, policy, band_entity_bits);
             }
             Command::FoundCamp {
                 faction,
@@ -641,6 +637,8 @@ enum Command {
     FollowHerd {
         faction: FactionId,
         herd_id: String,
+        policy: FollowPolicy,
+        band_entity_bits: Option<u64>,
     },
     FoundCamp {
         faction: FactionId,
@@ -1255,24 +1253,8 @@ fn handle_scout_area(
         return;
     }
 
-    if app.world.get::<HarvestAssignment>(band.entity).is_some()
-        || app.world.get::<ScoutAssignment>(band.entity).is_some()
-    {
-        warn!(
-            target: "shadow_scale::command",
-            command = "scout_area",
-            faction = %faction.0,
-            band = %band.label,
-            "command.scout_area.rejected=band_busy"
-        );
-        emit_command_failure(
-            app,
-            CommandEventKind::Scout,
-            faction,
-            format!("{} is already committed to another task.", band.label),
-        );
-        return;
-    }
+    // Orders replace orders: this scout takes over the band from any prior task.
+    reassign_band(app, band.entity);
 
     let home_coords = {
         let cohort = match app.world.get::<PopulationCohort>(band.entity) {
@@ -1347,209 +1329,92 @@ fn handle_scout_area(
     );
 }
 
-fn handle_follow_herd(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String) {
-    let (target, herd_label, route_length) = {
-        let registry = match app.world.get_resource::<HerdRegistry>() {
-            Some(res) => res,
-            None => {
-                warn!(
-                    target: "shadow_scale::command",
-                    command = "follow_herd",
-                    faction = %faction.0,
-                    herd = %herd_id,
-                    "command.follow_herd.rejected=no_herd_registry"
-                );
-                emit_command_failure(
-                    app,
-                    CommandEventKind::FollowHerd,
-                    faction,
-                    "Herd registry unavailable; cannot follow that herd.",
-                );
-                return;
-            }
-        };
-        match registry.find(&herd_id) {
-            Some(herd) => (
-                herd.position(),
-                herd.label.clone(),
-                herd.route_length() as u32,
-            ),
-            None => {
-                warn!(
-                    target: "shadow_scale::command",
-                    command = "follow_herd",
-                    faction = %faction.0,
-                    herd = %herd_id,
-                    "command.follow_herd.rejected=unknown_herd"
-                );
-                emit_command_failure(
-                    app,
-                    CommandEventKind::FollowHerd,
-                    faction,
-                    format!("Herd '{}' was not found.", herd_id),
-                );
-                return;
-            }
-        }
-    };
-
-    let Some(tile_entity) = ensure_land_tile(
-        app,
-        faction,
-        target,
-        "follow_herd",
-        Some(CommandEventKind::FollowHerd),
-    ) else {
-        return;
-    };
-
-    let mut moved = 0u32;
-    let mut band_labels: Vec<String> = Vec::new();
-    let mut moved_entities: Vec<Entity> = Vec::new();
-    {
-        let mut query = app
-            .world
-            .query::<(Entity, &mut PopulationCohort, &StartingUnit)>();
-        for (entity, mut cohort, unit) in query.iter_mut(&mut app.world) {
-            if cohort.faction != faction {
-                continue;
-            }
-            cohort.home = tile_entity;
-            cohort.morale = (cohort.morale + Scalar::from_f32(HERD_FOLLOW_MORALE_GAIN))
-                .clamp(Scalar::zero(), Scalar::one());
-            moved = moved.saturating_add(1);
-            band_labels.push(unit.kind.clone());
-            moved_entities.push(entity);
-        }
-    }
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    if moved == 0 {
+fn handle_follow_herd(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    herd_id: String,
+    policy: FollowPolicy,
+    band_entity_bits: Option<u64>,
+) {
+    let Some(herd_position) = app
+        .world
+        .get_resource::<HerdRegistry>()
+        .and_then(|registry| registry.find(&herd_id))
+        .map(|herd| herd.position())
+    else {
         warn!(
             target: "shadow_scale::command",
             command = "follow_herd",
             faction = %faction.0,
             herd = %herd_id,
-            "command.follow_herd.rejected=no_starting_units"
+            "command.follow_herd.rejected=unknown_herd"
         );
         emit_command_failure(
             app,
             CommandEventKind::FollowHerd,
             faction,
-            "No available bands to follow the herd.",
+            format!("Herd '{}' no longer exists.", herd_id),
         );
         return;
-    }
-
-    let (biomass_after, consumed) = {
-        let mut registry = match app.world.get_resource_mut::<HerdRegistry>() {
-            Some(res) => res,
-            None => {
-                warn!(
-                    target: "shadow_scale::command",
-                    command = "follow_herd",
-                    faction = %faction.0,
-                    herd = %herd_id,
-                    "command.follow_herd.rejected=no_herd_registry"
-                );
-                emit_command_failure(
-                    app,
-                    CommandEventKind::FollowHerd,
-                    faction,
-                    "Herd registry unavailable; cannot update herd state.",
-                );
-                return;
-            }
-        };
-        let Some(herd) = registry.herds.iter_mut().find(|herd| herd.id == herd_id) else {
-            warn!(
-                target: "shadow_scale::command",
-                command = "follow_herd",
-                faction = %faction.0,
-                herd = %herd_id,
-                "command.follow_herd.rejected=unknown_herd"
-            );
-            emit_command_failure(
-                app,
-                CommandEventKind::FollowHerd,
-                faction,
-                format!("Herd '{}' no longer exists.", herd_id),
-            );
-            return;
-        };
-        let consumed = herd.biomass.min(HERD_CONSUMPTION_BIOMASS);
-        herd.biomass -= consumed;
-        (herd.biomass, consumed)
     };
 
-    refresh_herd_telemetry(app);
-    let (provisions_gain, trade_goods_gain) = apply_herd_rewards(app, faction, consumed);
-    let knowledge_gain = apply_herd_knowledge(app, faction, consumed, &moved_entities);
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        band_entity_bits,
+        "follow_herd",
+        CommandEventKind::FollowHerd,
+    ) else {
+        return;
+    };
 
-    let mut reveals = app.world.resource_mut::<FogRevealLedger>();
-    let radius = DEFAULT_SCOUT_REVEAL_RADIUS.saturating_add(1);
-    let expires_at = tick.saturating_add(SCOUT_REVEAL_DURATION_TURNS * 2);
-    reveals.queue(target, radius, expires_at);
+    // Orders replace orders: a band holds exactly one task at a time.
+    reassign_band(app, band.entity);
 
-    let mut detail_parts = vec![format!(
-        "herd={} moved_units={} route_len={} biomass={:.0} consumed={:.0}",
-        herd_label, moved, route_length, biomass_after, consumed
-    )];
-    if provisions_gain > 0 || trade_goods_gain > 0 {
-        detail_parts.push(format!(
-            "rewards=provisions:{} trade_goods:{}",
-            provisions_gain, trade_goods_gain
-        ));
-    }
-    if knowledge_gain > 0.0 {
-        detail_parts.push(format!("knowledge={:.3}", knowledge_gain));
-    }
-    if !band_labels.is_empty() {
-        detail_parts.push(format!("bands={}", band_labels.join(", ")));
-    }
-    let detail = detail_parts.join(" | ");
+    let tick = app.world.resource::<SimulationTick>().0;
+    app.world.entity_mut(band.entity).insert(FaunaPursuit {
+        faction,
+        band_label: band.label.clone(),
+        fauna_id: herd_id.clone(),
+        mode: FaunaPursuitMode::Follow { policy },
+        elapsed_turns: 0,
+        started_tick: tick,
+    });
 
+    let detail = format!(
+        "status=queued action=follow policy={} band={} herd={} herd_x={} herd_y={}",
+        policy.as_str(),
+        band.label,
+        herd_id,
+        herd_position.x,
+        herd_position.y
+    );
     info!(
         target: "shadow_scale::command",
         command = "follow_herd",
         faction = %faction.0,
+        band = %band.label,
         herd = %herd_id,
-        label = %herd_label,
-        x = target.x,
-        y = target.y,
-        moved_units = moved,
-        route_length,
-        consumed,
-        biomass = biomass_after,
-        provisions = provisions_gain,
-        trade_goods = trade_goods_gain,
-        knowledge = knowledge_gain,
-        radius,
-        expires_at,
-        "command.follow_herd.applied"
-    );
-    info!(
-        target: "shadow_scale::analytics",
-        event = "herd_follow",
-        faction = %faction.0,
-        herd = %herd_id,
-        label = %herd_label,
-        x = target.x,
-        y = target.y,
-        consumed,
-        biomass = biomass_after,
-        provisions = provisions_gain,
-        trade_goods = trade_goods_gain,
-        knowledge = knowledge_gain,
+        policy = policy.as_str(),
+        "command.follow_herd.queued"
     );
     push_command_event(
         app,
         tick,
         CommandEventKind::FollowHerd,
         faction,
-        format!("{} -> ({}, {})", herd_label, target.x, target.y),
+        format!("{} follow -> {}", band.label, herd_id),
         Some(detail),
     );
+}
+
+/// Orders replace orders: strip any single-band task (fauna pursuit / harvest /
+/// scout) so a newly issued verb fully takes over the band.
+fn reassign_band(app: &mut bevy::prelude::App, band: Entity) {
+    let mut entity = app.world.entity_mut(band);
+    entity.remove::<FaunaPursuit>();
+    entity.remove::<HarvestAssignment>();
+    entity.remove::<ScoutAssignment>();
 }
 
 fn handle_found_camp(
@@ -1927,24 +1792,8 @@ fn handle_hunt_fauna(
         return;
     };
 
-    if app.world.get::<HarvestAssignment>(band.entity).is_some()
-        || app.world.get::<FaunaPursuit>(band.entity).is_some()
-    {
-        warn!(
-            target: "shadow_scale::command",
-            command = "hunt_fauna",
-            faction = %faction.0,
-            band = %band.label,
-            "command.hunt_fauna.rejected=band_busy"
-        );
-        emit_command_failure(
-            app,
-            CommandEventKind::Hunt,
-            faction,
-            format!("{} is already assigned to a different task.", band.label),
-        );
-        return;
-    }
+    // Orders replace orders: this hunt takes over the band from any prior task.
+    reassign_band(app, band.entity);
 
     let tick = app.world.resource::<SimulationTick>().0;
     app.world.entity_mut(band.entity).insert(FaunaPursuit {
@@ -2001,22 +1850,8 @@ fn queue_food_assignment(
         return;
     };
 
-    if app.world.get::<HarvestAssignment>(band.entity).is_some() {
-        warn!(
-            target: "shadow_scale::command",
-            command = command_label,
-            faction = %faction.0,
-            band = %band.label,
-            "command.food.rejected=band_busy"
-        );
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!("{} is already assigned to a different task.", band.label),
-        );
-        return;
-    }
+    // Orders replace orders: this harvest takes over the band from any prior task.
+    reassign_band(app, band.entity);
 
     let home_coords = app
         .world
@@ -2721,9 +2556,16 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
         ProtoCommandPayload::FollowHerd {
             faction_id,
             herd_id,
+            policy,
+            band_entity_bits,
         } => Some(Command::FollowHerd {
             faction: FactionId(faction_id),
             herd_id,
+            policy: policy
+                .as_deref()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or_default(),
+            band_entity_bits,
         }),
         ProtoCommandPayload::FoundCamp {
             faction_id,
@@ -3043,101 +2885,6 @@ fn consume_inventory_item(
         inventory.take_stockpile(faction, item, amount);
     }
     true
-}
-
-fn refresh_herd_telemetry(app: &mut bevy::prelude::App) {
-    let (entries, density_samples) = {
-        let registry = match app.world.get_resource::<HerdRegistry>() {
-            Some(res) => res,
-            None => return,
-        };
-        let density_samples: Vec<(UVec2, f32)> = registry
-            .herds
-            .iter()
-            .map(|herd| (herd.position(), herd.biomass))
-            .collect();
-        (registry.snapshot_entries(), density_samples)
-    };
-    if let Some(mut telemetry) = app.world.get_resource_mut::<HerdTelemetry>() {
-        telemetry.entries = entries;
-    }
-    let grid = app.world.resource::<SimulationConfig>().grid_size;
-    if let Some(mut density) = app.world.get_resource_mut::<HerdDensityMap>() {
-        density.rebuild_from_samples(grid, &density_samples);
-    }
-}
-
-fn apply_herd_rewards(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    consumed_biomass: f32,
-) -> (i64, i64) {
-    if consumed_biomass <= f32::EPSILON {
-        return (0, 0);
-    }
-    let provisions_gain = (consumed_biomass * HERD_PROVISIONS_YIELD_PER_BIOMASS).round() as i64;
-    let trade_goods_gain = (consumed_biomass * HERD_TRADE_GOODS_YIELD_PER_BIOMASS).round() as i64;
-    if provisions_gain <= 0 && trade_goods_gain <= 0 {
-        return (0, 0);
-    }
-    let mut inventory = app.world.resource_mut::<FactionInventory>();
-    if provisions_gain > 0 {
-        inventory.add_stockpile(faction, "provisions", provisions_gain);
-    }
-    if trade_goods_gain > 0 {
-        inventory.add_stockpile(faction, "trade_goods", trade_goods_gain);
-    }
-    (provisions_gain, trade_goods_gain)
-}
-
-fn apply_herd_knowledge(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    consumed_biomass: f32,
-    moved_entities: &[Entity],
-) -> f32 {
-    if consumed_biomass <= f32::EPSILON {
-        return 0.0;
-    }
-    let mut progress = consumed_biomass * HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS;
-    progress = progress.clamp(0.0, HERD_KNOWLEDGE_PROGRESS_CAP);
-    if progress <= 0.0 {
-        return 0.0;
-    }
-    let progress_scalar = scalar_from_f32(progress);
-    {
-        let mut ledger = app.world.resource_mut::<DiscoveryProgressLedger>();
-        ledger.add_progress(faction, HERD_KNOWLEDGE_DISCOVERY_ID, progress_scalar);
-    }
-    if moved_entities.is_empty() {
-        return progress;
-    }
-    let fragment = KnowledgeFragment::new(
-        HERD_KNOWLEDGE_DISCOVERY_ID,
-        progress_scalar,
-        scalar_from_f32(HERD_KNOWLEDGE_FIDELITY),
-    );
-    let mut query = app.world.query::<(Entity, &mut PopulationCohort)>();
-    for (entity, mut cohort) in query.iter_mut(&mut app.world) {
-        if !moved_entities.contains(&entity) {
-            continue;
-        }
-        merge_fragment(&mut cohort.knowledge, fragment.clone());
-    }
-    progress
-}
-
-fn merge_fragment(fragments: &mut Vec<KnowledgeFragment>, payload: KnowledgeFragment) {
-    if let Some(existing) = fragments
-        .iter_mut()
-        .find(|fragment| fragment.discovery_id == payload.discovery_id)
-    {
-        existing.progress =
-            (existing.progress + payload.progress).clamp(Scalar::zero(), Scalar::one());
-        existing.fidelity = existing.fidelity.max(payload.fidelity);
-    } else {
-        fragments.push(payload);
-    }
 }
 
 fn push_command_event(

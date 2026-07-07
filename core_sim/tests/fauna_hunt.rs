@@ -5,10 +5,11 @@ use bevy::MinimalPlugins;
 use core_sim::{
     advance_fauna_pursuits, advance_herds, scalar_one, spawn_initial_herds, spawn_initial_world,
     CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory,
-    FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode, GenerationId, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, MapPresets, MapPresetsHandle, PopulationCohort, SimulationConfig,
-    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
+    FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode, FogRevealLedger, GenerationId,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle, PopulationCohort,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
+    TileRegistry,
 };
 
 /// Build a land-rich world with herds spawned (mirrors `fauna_spawn.rs` setup).
@@ -47,6 +48,7 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
+    app.world.insert_resource(FogRevealLedger::default());
     app.world.run_system_once(spawn_initial_herds);
     app
 }

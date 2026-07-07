@@ -244,12 +244,49 @@ pub struct ScoutAssignment {
     pub started_tick: u64,
 }
 
+/// Auto-hunt policy for a Follow: how much biomass the band takes each turn once
+/// adjacent. Sustain ≈ regrowth (group stable), Surplus > regrowth (slow decline),
+/// Eradicate = max (drives the group toward local extinction).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FollowPolicy {
+    #[default]
+    Sustain,
+    Surplus,
+    Eradicate,
+}
+
+impl FollowPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FollowPolicy::Sustain => "sustain",
+            FollowPolicy::Surplus => "surplus",
+            FollowPolicy::Eradicate => "eradicate",
+        }
+    }
+}
+
+impl FromStr for FollowPolicy {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "surplus" => Ok(FollowPolicy::Surplus),
+            "eradicate" => Ok(FollowPolicy::Eradicate),
+            "sustain" | "" => Ok(FollowPolicy::Sustain),
+            _ => Err(()),
+        }
+    }
+}
+
 /// What a band does once it catches the fauna group it is pursuing. `Hunt` is a
-/// one-shot take (Phase B); `Follow` (Phase C) will add a per-turn policy.
+/// one-shot take (Phase B); `Follow` shadows the group and auto-hunts per policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FaunaPursuitMode {
     #[default]
     Hunt,
+    Follow {
+        policy: FollowPolicy,
+    },
 }
 
 /// A band pursuing a moving fauna **group** (herd) by id. Unlike `HarvestAssignment`

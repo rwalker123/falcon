@@ -434,15 +434,21 @@ pub fn advance_herds(
     density.rebuild(config.grid_size, &registry);
 }
 
+/// One turn's logistic regrowth increment for a group of `biomass` toward `cap`.
+/// Used both to apply regrowth and to size a Sustain-policy follow's take.
+pub(crate) fn regrowth_amount(biomass: f32, cap: f32, regrowth_rate: f32) -> f32 {
+    if cap <= 0.0 || biomass <= 0.0 {
+        return 0.0;
+    }
+    (regrowth_rate * biomass * (1.0 - biomass / cap)).max(0.0)
+}
+
 /// Logistic regrowth toward the herd's per-species carrying capacity. A group at or
 /// below zero is left for the caller to despawn (it does not regrow from extinction).
 fn regrow_biomass(herd: &mut Herd, regrowth_rate: f32) {
     let cap = herd.carrying_capacity;
-    if cap <= 0.0 || herd.biomass <= 0.0 {
-        return;
-    }
-    herd.biomass =
-        (herd.biomass + regrowth_rate * herd.biomass * (1.0 - herd.biomass / cap)).clamp(0.0, cap);
+    let delta = regrowth_amount(herd.biomass, cap, regrowth_rate);
+    herd.biomass = (herd.biomass + delta).clamp(0.0, cap);
 }
 
 fn to_entry(herd: &Herd) -> HerdTelemetryEntry {

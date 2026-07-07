@@ -114,6 +114,8 @@ pub enum CommandPayload {
     FollowHerd {
         faction_id: u32,
         herd_id: String,
+        policy: Option<String>,
+        band_entity_bits: Option<u64>,
     },
     FoundCamp {
         faction_id: u32,
@@ -399,9 +401,13 @@ impl CommandEnvelope {
             CommandPayload::FollowHerd {
                 faction_id,
                 herd_id,
+                policy,
+                band_entity_bits,
             } => pb::command_envelope::Command::FollowHerd(pb::FollowHerdCommand {
                 faction_id: *faction_id,
                 herd_id: herd_id.clone(),
+                policy: policy.clone(),
+                band_entity_bits: *band_entity_bits,
             }),
             CommandPayload::FoundCamp {
                 faction_id,
@@ -636,6 +642,8 @@ impl CommandEnvelope {
             pb::command_envelope::Command::FollowHerd(cmd) => CommandPayload::FollowHerd {
                 faction_id: cmd.faction_id,
                 herd_id: cmd.herd_id,
+                policy: cmd.policy,
+                band_entity_bits: cmd.band_entity_bits,
             },
             pb::command_envelope::Command::FoundCamp(cmd) => CommandPayload::FoundCamp {
                 faction_id: cmd.faction_id,
