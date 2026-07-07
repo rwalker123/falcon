@@ -201,6 +201,12 @@ message HuntGameCommand {
   optional uint64 band_entity_bits = 4;
 }
 
+message HuntFaunaCommand {
+  uint32 faction_id = 1;
+  string herd_id = 2;
+  optional uint64 band_entity_bits = 3;
+}
+
 message ExportMapCommand {
   // Optional destination path. When absent the server writes a
   // timestamped file into the gitignored exports/ scratch directory.
@@ -238,5 +244,6 @@ message CommandEnvelope {
     HuntGameCommand hunt_game = 26;
     FoundSettlementCommand found_settlement = 27;
     ExportMapCommand export_map = 28;
+    HuntFaunaCommand hunt_fauna = 29;
   }
 }

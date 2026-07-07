@@ -56,9 +56,9 @@ use crate::start_profile::{
 use bevy::prelude::*;
 
 pub use components::{
-    ElementKind, HarvestAssignment, HarvestTaskKind, KnowledgeFragment, LogisticsLink,
-    PendingMigration, PopulationCohort, PowerNode, ScoutAssignment, Settlement, StartingUnit, Tile,
-    TownCenter, TradeLink,
+    ElementKind, FaunaPursuit, FaunaPursuitMode, HarvestAssignment, HarvestTaskKind,
+    KnowledgeFragment, LogisticsLink, PendingMigration, PopulationCohort, PowerNode,
+    ScoutAssignment, Settlement, StartingUnit, Tile, TownCenter, TradeLink,
 };
 pub use crisis::{
     ActiveCrisisLedger, CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot,
@@ -171,7 +171,10 @@ pub use snapshot::{
     command_events_to_state, restore_world_from_snapshot, SnapshotHistory, StoredSnapshot,
 };
 pub use systems::spawn_initial_world;
-pub use systems::{simulate_power, MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent};
+pub use systems::{
+    advance_fauna_pursuits, simulate_power, MigrationKnowledgeEvent, PowerSimParams,
+    TradeDiffusionEvent,
+};
 pub use terrain::{
     classify_terrain, terrain_definition, terrain_for_position, MovementProfile, TerrainDefinition,
     TerrainResourceBias,
@@ -487,6 +490,7 @@ pub fn build_headless_app() -> App {
                 systems::simulate_population,
                 systems::advance_harvest_assignments,
                 systems::advance_scout_assignments,
+                systems::advance_fauna_pursuits,
                 systems::publish_trade_telemetry,
             )
                 .chain()

@@ -270,10 +270,10 @@ retires the static `game_trail` food-site (which never survives food-site curati
 - [x] Retire `game_trail`. Removed the wild-game tile upgrade + `wild_game_*` config (`systems.rs` / `snapshot_overlays_config.rs` / `.json`) and `FoodSiteKind::GameTrail`; curation bug gone (no discounted candidates compete). Tile-based `HuntGame` handler neutralized (Hunt command kept for Phase B).
 - [x] Client render pass. `FoodIcons.for_herd` gains rabbit/fowl glyphs; game renders with species icons keyed on the label's embedded species name; short routes show minimal/no trail. No schema change (snapshot already carries `species`).
 
-### Phase B — Hunt (one-shot)
-- [ ] Fauna-targeted Hunt command (Owner: TBD, Estimate: 2d; Deps: Phase A). Generalize hunting to target a fauna group: band pursues to ≤1 tile (re-paths as it moves), takes a portion of biomass → provisions/trade via existing food-yield config. New assignment component reusing `HarvestAssignment` travel/work machinery.
-- [ ] Biomass regrowth (Owner: TBD, Estimate: 1d; Deps: Hunt). Per-turn logistic regrowth toward a per-species carrying cap; 0 → despawn (local extinction).
-- [ ] Schema: fauna huntable/biomass/size fields (Owner: TBD, Estimate: 1d; Deps: sim_schema). So the client can offer the right verbs.
+### Phase B — Hunt (one-shot) ✅ (server + schema; client Hunt UI in Phase C)
+- [x] Fauna-targeted Hunt command. `hunt_fauna <faction> <herd_id> [band]` (full proto/runtime/text/server plumbing) attaches a `FaunaPursuit` component; `advance_fauna_pursuits` (`TurnStage::Population`) re-targets the herd's live position each turn, steps the band toward it, and on ≤1 tile takes a portion of biomass → provisions/trade (config-driven yield). Server auto-picks a band when none is given.
+- [x] Biomass regrowth. Per-turn logistic regrowth in `advance_herds` toward each group's per-species carrying cap (`Herd.carrying_capacity`, `ecology.regrowth_rate`); a group at ≤0 biomass despawns (local extinction).
+- [x] Schema: fauna huntable/size fields. `HerdTelemetryState` gains `size_class` + `huntable` (biomass already present), wired producer→client-decode; no UI consumes them until Phase C.
 
 ### Phase C — Follow + policy
 - [ ] Generalize Follow to carry a policy (Owner: TBD, Estimate: 1.5d; Deps: Phase B). `Follow { fauna_id, policy: Sustain|Surplus|Eradicate }`: pursue-to-adjacent, then auto-hunt per policy each turn; retain a small non-food benefit (tracking/fog pulse/Fauna Lore).

@@ -70,5 +70,17 @@
     },
     "max_total_game": 120,
     "min_spacing": 2
+  },
+  "hunt": {
+    "take_fraction": 0.30,
+    "min_take": 40.0,
+    "provisions_per_biomass": 0.02,
+    "trade_goods_per_biomass": 0.005,
+    "pursuit_radius": 1,
+    "pursuit_tiles_per_turn": 3,
+    "max_pursuit_turns": 12
+  },
+  "ecology": {
+    "regrowth_rate": 0.05
   }
 }

@@ -146,11 +146,34 @@ marsh_grazer (long routes); big game deer/boar (2–3 tiles); small game rabbit/
 Abundance is a **tuning value, high to start** (design: game plentiful early,
 thins under overhunting in later phases). Roaming reuses `advance_herds`; herds
 flow to telemetry, the `HerdDensityMap`, and the snapshot (`HerdTelemetryState`,
-a free-form `species` string — no schema change needed to add species).
+which now also carries `size_class` + `huntable` so the client can offer the right
+verbs — a free-form `species` string means new species need no schema change).
 
-Deferred to later phases (`docs/plan_wildlife_hunting_overlay.md`): fauna-targeted
-**Hunt** (Phase B) and **Follow + policy** (Phase C) — the tile-based `HuntGame`
-handler is neutralized in the meantime (the Hunt command/verb stay registered).
+**Hunt (one-shot)** — the `hunt_fauna <faction> <herd_id> [band_entity_bits]`
+command (`handle_hunt_fauna`, `server.rs`; full plumbing in `command.proto` /
+`commands.rs` / `command_text.rs`) attaches a `FaunaPursuit` component (`components.rs`)
+to a band (auto-picked when no band id is given). Each turn `advance_fauna_pursuits`
+(`systems.rs`, `TurnStage::Population`) re-reads the herd's **live** position (herds
+already moved in the earlier `Logistics` stage), steps the band up to
+`hunt.pursuit_tiles_per_turn` toward it, and on closing to `hunt.pursuit_radius`
+(=1, Chebyshev) resolves a one-shot take: `hunt.take_from(biomass)` biomass →
+provisions/trade (`hunt.*_per_biomass`), drawn from the group and added to
+`FactionInventory`, then removes the component. An elusive herd is abandoned after
+`hunt.max_pursuit_turns`. Config lives in the `hunt` block of `fauna_config.json`.
+
+**Ecology** — `advance_herds` applies per-turn logistic regrowth toward each group's
+per-species carrying capacity (`Herd.carrying_capacity` = the species' `biomass[1]`;
+rate = `ecology.regrowth_rate`) and **despawns** any group at or below zero biomass
+(local extinction). So a hunt draws a group down in `Population`; it regrows in the
+next turn's `Logistics`; sustained overhunting (Phase D) drives it extinct.
+
+> `FaunaPursuit` is **not** snapshot-persisted (unlike `HarvestAssignment`): a
+> `rollback` mid-pursuit cleanly cancels the in-flight hunt (the rehydrated cohort
+> simply lacks the component). Pursuits are short-lived; revisit if needed.
+
+Deferred to later phases (`docs/plan_wildlife_hunting_overlay.md`): the client Hunt
+UI + **Follow + policy** (Phase C) and the overhunting/domestication arc (Phase D).
+The tile-based `HuntGame` handler stays neutralized (Phase C removes it).
 
 ---
 

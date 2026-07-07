@@ -13,9 +13,10 @@ use crate::map_preset::{MapPreset, MapPresetsHandle, TerrainClassifierConfig};
 use crate::snapshot_overlays_config::SnapshotOverlaysConfig;
 use crate::{
     components::{
-        fragments_from_contract, fragments_to_contract, ElementKind, HarvestAssignment,
-        HarvestTaskKind, KnowledgeFragment, LogisticsLink, MountainMetadata, PendingMigration,
-        PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink,
+        fragments_from_contract, fragments_to_contract, ElementKind, FaunaPursuit,
+        HarvestAssignment, HarvestTaskKind, KnowledgeFragment, LogisticsLink, MountainMetadata,
+        PendingMigration, PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile,
+        TradeLink,
     },
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
@@ -23,7 +24,8 @@ use crate::{
         CULTURE_TRAIT_AXES,
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
-    fauna::HerdDensityMap,
+    fauna::{HerdDensityMap, HerdRegistry},
+    fauna_config::FaunaConfigHandle,
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     generations::GenerationRegistry,
     heightfield::build_elevation_field,
@@ -3255,6 +3257,132 @@ pub fn advance_scout_assignments(
         );
 
         commands.entity(entity).remove::<ScoutAssignment>();
+    }
+}
+
+/// Chebyshev (king-move) distance in tiles.
+fn chebyshev_tiles(a: UVec2, b: UVec2) -> u32 {
+    a.x.abs_diff(b.x).max(a.y.abs_diff(b.y))
+}
+
+/// One pursuit step: move each axis toward `to` by up to `max_step` tiles.
+fn step_toward(from: UVec2, to: UVec2, max_step: u32) -> UVec2 {
+    let axis = |f: u32, t: u32| -> u32 {
+        let delta = (t as i64 - f as i64).clamp(-(max_step as i64), max_step as i64);
+        (f as i64 + delta).max(0) as u32
+    };
+    UVec2::new(axis(from.x, to.x), axis(from.y, to.y))
+}
+
+/// Advance fauna hunt pursuits: each turn the band re-targets the herd's *live*
+/// position (herds already moved in `TurnStage::Logistics`), steps toward it, and on
+/// closing to within `pursuit_radius` resolves a one-shot take of biomass →
+/// provisions/trade. The group's biomass draws down here and regrows in `advance_herds`;
+/// a group taken to zero despawns there (local extinction).
+#[allow(clippy::too_many_arguments)]
+pub fn advance_fauna_pursuits(
+    mut commands: Commands,
+    mut registry: ResMut<HerdRegistry>,
+    mut inventory: ResMut<FactionInventory>,
+    mut event_log: ResMut<CommandEventLog>,
+    tick: Res<SimulationTick>,
+    tile_registry: Res<TileRegistry>,
+    fauna_config: Res<FaunaConfigHandle>,
+    tiles: Query<&Tile>,
+    mut cohorts: Query<(Entity, &mut PopulationCohort, &mut FaunaPursuit)>,
+) {
+    let fauna = fauna_config.get();
+    let hunt = &fauna.hunt;
+    for (entity, mut cohort, mut pursuit) in cohorts.iter_mut() {
+        // Herd still around? (may have despawned via extinction or another hunter).
+        let Some(herd_pos) = registry.find(&pursuit.fauna_id).map(|herd| herd.position()) else {
+            event_log.push(CommandEventEntry::new(
+                tick.0,
+                CommandEventKind::Hunt,
+                pursuit.faction,
+                format!(
+                    "{} lost {} (herd dispersed)",
+                    pursuit.band_label, pursuit.fauna_id
+                ),
+                Some("status=cancelled reason=herd_gone".to_string()),
+            ));
+            commands.entity(entity).remove::<FaunaPursuit>();
+            continue;
+        };
+
+        pursuit.elapsed_turns += 1;
+        if pursuit.elapsed_turns > hunt.max_pursuit_turns {
+            event_log.push(CommandEventEntry::new(
+                tick.0,
+                CommandEventKind::Hunt,
+                pursuit.faction,
+                format!(
+                    "{} gave up chasing {}",
+                    pursuit.band_label, pursuit.fauna_id
+                ),
+                Some("status=cancelled reason=elusive".to_string()),
+            ));
+            commands.entity(entity).remove::<FaunaPursuit>();
+            continue;
+        }
+
+        let band_pos = tiles
+            .get(cohort.current_tile)
+            .map(|tile| tile.position)
+            .unwrap_or(herd_pos);
+
+        // Not close enough: step toward the herd's live tile and wait for next turn.
+        if chebyshev_tiles(band_pos, herd_pos) > hunt.pursuit_radius {
+            let next = step_toward(band_pos, herd_pos, hunt.pursuit_tiles_per_turn);
+            if let Some(tile_entity) = tile_registry.index(next.x, next.y) {
+                cohort.current_tile = tile_entity;
+            }
+            continue;
+        }
+
+        // Close enough: resolve the one-shot take against the herd's live biomass.
+        let Some(herd) = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == pursuit.fauna_id)
+        else {
+            commands.entity(entity).remove::<FaunaPursuit>();
+            continue;
+        };
+        let take = hunt.take_from(herd.biomass);
+        herd.biomass -= take;
+        let biomass_left = herd.biomass;
+        let species = herd.species.clone();
+
+        let provisions = (take * hunt.provisions_per_biomass).round() as i64;
+        let trade_goods = (take * hunt.trade_goods_per_biomass).round() as i64;
+        if provisions > 0 {
+            inventory.add_stockpile(pursuit.faction, "provisions", provisions);
+        }
+        if trade_goods > 0 {
+            inventory.add_stockpile(pursuit.faction, "trade_goods", trade_goods);
+        }
+        cohort.home = cohort.current_tile;
+
+        let detail = format!(
+            "status=complete action=hunt herd={} species={} take={:.0} biomass_left={:.0} provisions={} trade_goods={} elapsed_turns={} started_tick={}",
+            pursuit.fauna_id,
+            species,
+            take,
+            biomass_left,
+            provisions.max(0),
+            trade_goods.max(0),
+            pursuit.elapsed_turns,
+            pursuit.started_tick
+        );
+        event_log.push(CommandEventEntry::new(
+            tick.0,
+            CommandEventKind::Hunt,
+            pursuit.faction,
+            format!("{} hunt -> {}", pursuit.band_label, pursuit.fauna_id),
+            Some(detail),
+        ));
+        commands.entity(entity).remove::<FaunaPursuit>();
     }
 }
 

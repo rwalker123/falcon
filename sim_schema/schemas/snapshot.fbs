@@ -642,6 +642,8 @@ table HerdTelemetryState {
   routeLength:uint;
   nextX:int = -1;
   nextY:int = -1;
+  sizeClass:string;
+  huntable:bool = false;
 }
 
 table CommandEventState {

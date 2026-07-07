@@ -138,6 +138,11 @@ pub enum CommandPayload {
         target_y: u32,
         band_entity_bits: Option<u64>,
     },
+    HuntFauna {
+        faction_id: u32,
+        herd_id: String,
+        band_entity_bits: Option<u64>,
+    },
     ExportMap {
         path: Option<String>,
     },
@@ -440,6 +445,15 @@ impl CommandEnvelope {
                 target_y: *target_y,
                 band_entity_bits: *band_entity_bits,
             }),
+            CommandPayload::HuntFauna {
+                faction_id,
+                herd_id,
+                band_entity_bits,
+            } => pb::command_envelope::Command::HuntFauna(pb::HuntFaunaCommand {
+                faction_id: *faction_id,
+                herd_id: herd_id.clone(),
+                band_entity_bits: *band_entity_bits,
+            }),
             CommandPayload::ExportMap { path } => {
                 pb::command_envelope::Command::ExportMap(pb::ExportMapCommand {
                     path: path.clone(),
@@ -646,6 +660,11 @@ impl CommandEnvelope {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
+                band_entity_bits: cmd.band_entity_bits,
+            },
+            pb::command_envelope::Command::HuntFauna(cmd) => CommandPayload::HuntFauna {
+                faction_id: cmd.faction_id,
+                herd_id: cmd.herd_id,
                 band_entity_bits: cmd.band_entity_bits,
             },
             pb::command_envelope::Command::ExportMap(cmd) => {

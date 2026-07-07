@@ -2907,6 +2907,10 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         let _ = dict.insert("route_length", herd.routeLength() as i64);
         let _ = dict.insert("next_x", herd.nextX() as i64);
         let _ = dict.insert("next_y", herd.nextY() as i64);
+        if let Some(size_class) = herd.sizeClass() {
+            let _ = dict.insert("size_class", size_class);
+        }
+        let _ = dict.insert("huntable", herd.huntable());
         array.push(&dict.to_variant());
     }
     array

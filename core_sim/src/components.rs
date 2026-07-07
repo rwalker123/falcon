@@ -244,6 +244,27 @@ pub struct ScoutAssignment {
     pub started_tick: u64,
 }
 
+/// What a band does once it catches the fauna group it is pursuing. `Hunt` is a
+/// one-shot take (Phase B); `Follow` (Phase C) will add a per-turn policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FaunaPursuitMode {
+    #[default]
+    Hunt,
+}
+
+/// A band pursuing a moving fauna **group** (herd) by id. Unlike `HarvestAssignment`
+/// (fixed tile, precomputed reward), the target and yield are resolved against the
+/// live `HerdRegistry` each turn, so the band chases a genuinely moving herd.
+#[derive(Component, Debug, Clone)]
+pub struct FaunaPursuit {
+    pub faction: FactionId,
+    pub band_label: String,
+    pub fauna_id: String,
+    pub mode: FaunaPursuitMode,
+    pub elapsed_turns: u32,
+    pub started_tick: u64,
+}
+
 impl Default for PowerNode {
     fn default() -> Self {
         Self {
