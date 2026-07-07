@@ -7,13 +7,63 @@ use tracing::info;
 
 use crate::{
     components::Tile,
-    fauna_config::{FaunaConfig, FaunaConfigHandle, SizeClass},
+    fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle, SizeClass},
     food::{classify_food_module, FoodModule},
     mapgen::WorldGenSeed,
-    resources::{SimulationConfig, StartLocation, TileRegistry},
+    resources::{SimulationConfig, SimulationTick, StartLocation, TileRegistry},
 };
 
+/// RNG salt for per-turn immigration, kept distinct from the initial-spawn salt so the
+/// two streams don't correlate.
+const IMMIGRATION_SEED_SALT: u64 = 0xFA1A_B0B0;
+
 pub const HERD_DENSITY_REFERENCE_BIOMASS: f32 = 8_000.0;
+
+/// Coarse ecological health band derived from a group's biomass vs its carrying
+/// capacity (thresholds in `EcologyConfig`). Surfaced to the client as an early
+/// overhunting warning, and the seam the later domestication / industrialized-hunting
+/// arc keys off (e.g. a long Sustain-follow on a `Thriving` herd → husbandry progress).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EcologyPhase {
+    /// At or above the stressed band — a healthy, self-sustaining group.
+    #[default]
+    Thriving,
+    /// Depleted but above the collapse threshold — still able to recover if left alone.
+    Stressed,
+    /// Below the Allee threshold — non-viable and crashing to local extinction
+    /// regardless of whether hunting continues (the point of no return).
+    Collapsing,
+}
+
+impl EcologyPhase {
+    /// Stable string key (also the snapshot `ecologyPhase` field).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EcologyPhase::Thriving => "thriving",
+            EcologyPhase::Stressed => "stressed",
+            EcologyPhase::Collapsing => "collapsing",
+        }
+    }
+}
+
+/// Classify a group's ecological phase from its biomass fraction of carrying capacity.
+pub(crate) fn classify_ecology_phase(
+    biomass: f32,
+    cap: f32,
+    ecology: &EcologyConfig,
+) -> EcologyPhase {
+    if cap <= 0.0 {
+        return EcologyPhase::Collapsing;
+    }
+    let frac = biomass / cap;
+    if frac < ecology.collapse_fraction {
+        EcologyPhase::Collapsing
+    } else if frac < ecology.stressed_fraction {
+        EcologyPhase::Stressed
+    } else {
+        EcologyPhase::Thriving
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Herd {
@@ -29,6 +79,9 @@ pub struct Herd {
     pub biomass: f32,
     /// Per-species carrying capacity (= table biomass max) that biomass regrows toward.
     pub carrying_capacity: f32,
+    /// Coarse health band (Thriving/Stressed/Collapsing), recomputed each turn from
+    /// biomass vs `carrying_capacity`. Surfaced to the client and the domestication hook.
+    pub ecology_phase: EcologyPhase,
 }
 
 impl Herd {
@@ -50,7 +103,14 @@ impl Herd {
             step_index: 0,
             biomass,
             carrying_capacity,
+            // Refreshed against the ecology config at spawn/each turn; Thriving until then.
+            ecology_phase: EcologyPhase::Thriving,
         }
+    }
+
+    /// Recompute `ecology_phase` from the current biomass against the ecology config.
+    pub(crate) fn refresh_ecology_phase(&mut self, ecology: &EcologyConfig) {
+        self.ecology_phase = classify_ecology_phase(self.biomass, self.carrying_capacity, ecology);
     }
 
     pub fn position(&self) -> UVec2 {
@@ -87,6 +147,8 @@ pub struct HerdTelemetryEntry {
     pub species: String,
     pub size_class: String,
     pub huntable: bool,
+    /// Ecological health band string (see `EcologyPhase::as_str`).
+    pub ecology_phase: String,
     pub position: UVec2,
     pub biomass: f32,
     pub route_length: u32,
@@ -309,7 +371,7 @@ fn spawn_migratory_herds(
         let biomass = def.sample_biomass(rng);
         let carrying_capacity = def.carrying_capacity();
         let id = format!("herd_{key}_{idx:02}");
-        let herd = Herd::new(
+        let mut herd = Herd::new(
             id,
             def.display_name.clone(),
             def.size_class,
@@ -317,6 +379,7 @@ fn spawn_migratory_herds(
             biomass,
             carrying_capacity,
         );
+        herd.refresh_ecology_phase(&fauna.ecology);
         log_herd_spawn(&herd);
         herds.push(herd);
     }
@@ -369,32 +432,62 @@ fn spawn_short_range_game(
         {
             continue;
         }
-        let candidates = fauna.game_species_for_biome(module_key);
-        if candidates.is_empty() {
-            continue;
-        }
-        let (key, def) = candidates[rng.gen_range(0..candidates.len())];
-        let steps = def.sample_route_len(rng);
-        let Some(route) = build_short_route(pos, steps, width, height, tile_registry, tiles, rng)
-        else {
+        let Some(herd) = spawn_game_group_at(
+            pos,
+            module_key,
+            game_idx,
+            fauna,
+            width,
+            height,
+            tile_registry,
+            tiles,
+            rng,
+        ) else {
             continue;
         };
-        let biomass = def.sample_biomass(rng);
-        let carrying_capacity = def.carrying_capacity();
-        let id = format!("game_{key}_{game_idx:02}");
         game_idx += 1;
-        let herd = Herd::new(
-            id,
-            def.display_name.clone(),
-            def.size_class,
-            route,
-            biomass,
-            carrying_capacity,
-        );
         log_herd_spawn(&herd);
         placed.push(pos);
         herds.push(herd);
     }
+}
+
+/// Build a single short-range game group at `pos`: pick a species hosting `module_key`,
+/// roll its route/biomass, and stamp its initial `ecology_phase`. Returns `None` if no
+/// species hosts the biome or the origin is not land. Shared by initial spawn and
+/// per-turn immigration.
+#[allow(clippy::too_many_arguments)]
+fn spawn_game_group_at(
+    pos: UVec2,
+    module_key: &str,
+    game_idx: u32,
+    fauna: &FaunaConfig,
+    width: u32,
+    height: u32,
+    tile_registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    rng: &mut SmallRng,
+) -> Option<Herd> {
+    let candidates = fauna.game_species_for_biome(module_key);
+    if candidates.is_empty() {
+        return None;
+    }
+    let (key, def) = candidates[rng.gen_range(0..candidates.len())];
+    let steps = def.sample_route_len(rng);
+    let route = build_short_route(pos, steps, width, height, tile_registry, tiles, rng)?;
+    let biomass = def.sample_biomass(rng);
+    let carrying_capacity = def.carrying_capacity();
+    let id = format!("game_{key}_{game_idx:02}");
+    let mut herd = Herd::new(
+        id,
+        def.display_name.clone(),
+        def.size_class,
+        route,
+        biomass,
+        carrying_capacity,
+    );
+    herd.refresh_ecology_phase(&fauna.ecology);
+    Some(herd)
 }
 
 pub fn advance_herds(
@@ -411,10 +504,11 @@ pub fn advance_herds(
         density.samples.clear();
         return;
     }
-    let regrowth_rate = fauna_config.get().ecology.regrowth_rate;
+    let fauna = fauna_config.get();
+    let ecology = &fauna.ecology;
     for herd in registry.herds.iter_mut() {
         herd.advance();
-        regrow_biomass(herd, regrowth_rate);
+        regrow_biomass(herd, ecology);
         let position = herd.position();
         info!(
             target: "shadow_scale::analytics",
@@ -426,29 +520,135 @@ pub fn advance_herds(
             step_index = herd.step_index,
             route_length = herd.route_length(),
             biomass = herd.biomass,
+            ecology_phase = herd.ecology_phase.as_str(),
         );
     }
-    // Local extinction: a group hunted to zero disperses and despawns.
-    registry.herds.retain(|herd| herd.biomass > 0.0);
+    // Local extinction: a group hunted to zero, or a collapsing remnant that has fallen
+    // below the viability floor, disperses and despawns.
+    registry
+        .herds
+        .retain(|herd| herd.biomass > ecology.extinction_floor * herd.carrying_capacity);
     telemetry.entries = registry.snapshot_entries();
     density.rebuild(config.grid_size, &registry);
 }
 
-/// One turn's logistic regrowth increment for a group of `biomass` toward `cap`.
-/// Used both to apply regrowth and to size a Sustain-policy follow's take.
-pub(crate) fn regrowth_amount(biomass: f32, cap: f32, regrowth_rate: f32) -> f32 {
+/// Per-turn immigration: with probability `immigration.chance_per_turn`, respawn one
+/// short-range game group up to the abundance cap so an overhunted map slowly
+/// replenishes (early forager play stays game-rich). Samples up to
+/// `immigration.max_attempts` random land tiles hosting game, respecting `min_spacing`
+/// from existing groups. Runs in `TurnStage::Logistics` right after `advance_herds`.
+#[allow(clippy::too_many_arguments)]
+pub fn repopulate_fauna(
+    mut registry: ResMut<HerdRegistry>,
+    mut telemetry: ResMut<HerdTelemetry>,
+    mut density: ResMut<HerdDensityMap>,
+    config: Res<SimulationConfig>,
+    fauna_config: Res<FaunaConfigHandle>,
+    tick: Res<SimulationTick>,
+    world_seed: Option<Res<WorldGenSeed>>,
+    tile_registry: Res<TileRegistry>,
+    tiles: Query<&Tile>,
+) {
+    let fauna = fauna_config.get();
+    let imm = &fauna.immigration;
+    if imm.chance_per_turn <= 0.0 || registry.herds.len() >= fauna.abundance.max_total_game {
+        return;
+    }
+
+    let width = config.grid_size.x.max(4);
+    let height = config.grid_size.y.max(4);
+    let seed = world_seed.map(|s| s.0).unwrap_or(config.map_seed);
+    let mut rng = SmallRng::seed_from_u64(seed ^ tick.0 ^ IMMIGRATION_SEED_SALT);
+
+    // Roll the per-turn immigration chance.
+    if rng.gen::<f32>() >= imm.chance_per_turn {
+        return;
+    }
+
+    // Ids past the initial cap + tick keep immigrants from colliding with spawn ids
+    // (only one group immigrates per turn, so `tick` disambiguates across turns).
+    let idx = fauna.abundance.max_total_game as u32 + tick.0 as u32;
+    let min_spacing = fauna.abundance.min_spacing;
+    let existing: Vec<UVec2> = registry.herds.iter().map(|herd| herd.position()).collect();
+
+    for _ in 0..imm.max_attempts {
+        let pos = UVec2::new(rng.gen_range(0..width), rng.gen_range(0..height));
+        let Some(module) = module_at(pos, &tile_registry, &tiles) else {
+            continue;
+        };
+        let module_key = module.as_str();
+        if fauna.abundance.probability_for(module_key) <= 0.0 {
+            continue;
+        }
+        if existing
+            .iter()
+            .any(|p| chebyshev_distance(*p, pos) < min_spacing)
+        {
+            continue;
+        }
+        if let Some(herd) = spawn_game_group_at(
+            pos,
+            module_key,
+            idx,
+            &fauna,
+            width,
+            height,
+            &tile_registry,
+            &tiles,
+            &mut rng,
+        ) {
+            info!(
+                target: "shadow_scale::analytics",
+                event = "immigration",
+                herd = %herd.id,
+                species = %herd.species,
+                x = pos.x,
+                y = pos.y,
+                biomass = herd.biomass,
+            );
+            registry.herds.push(herd);
+            telemetry.entries = registry.snapshot_entries();
+            density.rebuild(config.grid_size, &registry);
+            return;
+        }
+    }
+}
+
+/// One turn's positive logistic regrowth increment (>= 0) for a group of `biomass`
+/// toward `cap`. The healthy branch of `net_biomass_delta`.
+fn logistic_regrowth(biomass: f32, cap: f32, regrowth_rate: f32) -> f32 {
     if cap <= 0.0 || biomass <= 0.0 {
         return 0.0;
     }
     (regrowth_rate * biomass * (1.0 - biomass / cap)).max(0.0)
 }
 
-/// Logistic regrowth toward the herd's per-species carrying capacity. A group at or
-/// below zero is left for the caller to despawn (it does not regrow from extinction).
-fn regrow_biomass(herd: &mut Herd, regrowth_rate: f32) {
+/// Net per-turn biomass change with **critical depensation**. Above the Allee
+/// threshold (`collapse_fraction * cap`) the group regrows logistically; below it the
+/// group is non-viable and declines by `collapse_rate` of its biomass each turn — an
+/// irreversible crash to local extinction even without further hunting (the overhunting
+/// point of no return). Also sizes a Sustain/Surplus follow's take (via `.max(0.0)`):
+/// a collapsing group yields no surplus.
+pub(crate) fn net_biomass_delta(biomass: f32, cap: f32, ecology: &EcologyConfig) -> f32 {
+    if cap <= 0.0 || biomass <= 0.0 {
+        return 0.0;
+    }
+    let allee = ecology.collapse_fraction * cap;
+    if biomass < allee {
+        -(ecology.collapse_rate * biomass)
+    } else {
+        logistic_regrowth(biomass, cap, ecology.regrowth_rate)
+    }
+}
+
+/// Apply one turn of critical-depensation dynamics toward the herd's carrying capacity
+/// and refresh its `ecology_phase`. A sub-threshold group declines instead of regrowing;
+/// the caller despawns it once it falls below the viability floor.
+fn regrow_biomass(herd: &mut Herd, ecology: &EcologyConfig) {
     let cap = herd.carrying_capacity;
-    let delta = regrowth_amount(herd.biomass, cap, regrowth_rate);
+    let delta = net_biomass_delta(herd.biomass, cap, ecology);
     herd.biomass = (herd.biomass + delta).clamp(0.0, cap);
+    herd.refresh_ecology_phase(ecology);
 }
 
 fn to_entry(herd: &Herd) -> HerdTelemetryEntry {
@@ -459,6 +659,7 @@ fn to_entry(herd: &Herd) -> HerdTelemetryEntry {
         size_class: herd.size_class.as_str().to_string(),
         // All fauna are huntable in Phase B; Phase C/D may differentiate.
         huntable: true,
+        ecology_phase: herd.ecology_phase.as_str().to_string(),
         position: herd.position(),
         biomass: herd.biomass,
         route_length: herd.route_length() as u32,

@@ -81,7 +81,15 @@
     "max_pursuit_turns": 12
   },
   "ecology": {
-    "regrowth_rate": 0.05
+    "regrowth_rate": 0.05,
+    "collapse_fraction": 0.15,
+    "collapse_rate": 0.20,
+    "stressed_fraction": 0.40,
+    "extinction_floor": 0.02
+  },
+  "immigration": {
+    "chance_per_turn": 0.15,
+    "max_attempts": 12
   },
   "follow": {
     "surplus_multiplier": 1.6,

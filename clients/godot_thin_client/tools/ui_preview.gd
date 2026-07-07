@@ -49,10 +49,16 @@ func _ready() -> void:
 	await _save("food_tile")
 
 	# State 3 — a herd selected on a food tile: Harvest + Hunt + Follow verbs plus
-	# the Sustain/Surplus/Eradicate policy picker all surface together.
+	# the Sustain/Surplus/Eradicate policy picker all surface together. A Thriving
+	# herd shows a neutral ecology readout.
 	_hud.show_herd_selection(_herd_fixture())
 	await _settle()
 	await _save("herd_verbs")
+
+	# State 3b — an overhunted herd: the ecology readout warns "⚠ Collapsing" in red.
+	_hud.show_herd_selection(_collapsing_herd_fixture())
+	await _settle()
+	await _save("herd_collapsing")
 
 	# State 4 — targeting active: pending harvest raises the top-centre banner
 	# and flips the button to the armed "Cancel Harvest" treatment.
@@ -125,8 +131,15 @@ func _herd_fixture() -> Dictionary:
 		"species": "Red Deer",
 		"size_class": "big",
 		"huntable": true,
+		"ecology_phase": "thriving",
 		"x": 66, "y": 10,
 		"biomass": 820.0,
 		"route_length": 3,
 		"tile_info": _food_tile_fixture(),
 	}
+
+func _collapsing_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["biomass"] = 96.0
+	fixture["ecology_phase"] = "collapsing"
+	return fixture

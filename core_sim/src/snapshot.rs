@@ -3621,6 +3621,7 @@ fn herd_snapshot_entries(telemetry: &HerdTelemetry) -> Vec<HerdTelemetryState> {
             next_y: entry.next_position.map(|pos| pos.y as i32).unwrap_or(-1),
             size_class: entry.size_class.clone(),
             huntable: entry.huntable,
+            ecology_phase: entry.ecology_phase.clone(),
         })
         .collect()
 }

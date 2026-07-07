@@ -644,6 +644,7 @@ table HerdTelemetryState {
   nextY:int = -1;
   sizeClass:string;
   huntable:bool = false;
+  ecologyPhase:string;
 }
 
 table CommandEventState {

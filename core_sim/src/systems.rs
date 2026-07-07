@@ -24,7 +24,7 @@ use crate::{
         CULTURE_TRAIT_AXES,
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
-    fauna::{regrowth_amount, HerdDensityMap, HerdRegistry},
+    fauna::{net_biomass_delta, HerdDensityMap, HerdRegistry},
     fauna_config::FaunaConfigHandle,
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     generations::GenerationRegistry,
@@ -3295,7 +3295,7 @@ pub fn advance_fauna_pursuits(
     let fauna = fauna_config.get();
     let hunt = &fauna.hunt;
     let follow = &fauna.follow;
-    let ecology_rate = fauna.ecology.regrowth_rate;
+    let ecology = &fauna.ecology;
     for (entity, mut cohort, mut pursuit) in cohorts.iter_mut() {
         // Herd still around? (may have despawned via extinction or another hunter).
         let Some(herd_pos) = registry.find(&pursuit.fauna_id).map(|herd| herd.position()) else {
@@ -3359,12 +3359,16 @@ pub fn advance_fauna_pursuits(
         };
         let take = match pursuit.mode {
             FaunaPursuitMode::Hunt => hunt.take_from(herd.biomass),
+            // Sustain/Surplus take is sized off the group's net regrowth; a collapsing
+            // (sub-threshold) group has no surplus to give, so `.max(0.0)` yields zero.
+            // Phase E hook: a long-lived Sustain follow on a Thriving herd
+            // (`herd.ecology_phase`) is where husbandry / domestication progress accrues.
             FaunaPursuitMode::Follow { policy } => match policy {
                 FollowPolicy::Sustain => {
-                    regrowth_amount(herd.biomass, herd.carrying_capacity, ecology_rate)
+                    net_biomass_delta(herd.biomass, herd.carrying_capacity, ecology).max(0.0)
                 }
                 FollowPolicy::Surplus => {
-                    regrowth_amount(herd.biomass, herd.carrying_capacity, ecology_rate)
+                    net_biomass_delta(herd.biomass, herd.carrying_capacity, ecology).max(0.0)
                         * follow.surplus_multiplier
                 }
                 FollowPolicy::Eradicate => hunt.take_from(herd.biomass),

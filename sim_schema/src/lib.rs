@@ -82,6 +82,8 @@ pub struct HerdTelemetryState {
     pub next_y: i32,
     pub size_class: String,
     pub huntable: bool,
+    #[serde(default)]
+    pub ecology_phase: String,
 }
 
 impl Default for HerdTelemetryState {
@@ -98,6 +100,7 @@ impl Default for HerdTelemetryState {
             next_y: -1,
             size_class: String::new(),
             huntable: false,
+            ecology_phase: String::new(),
         }
     }
 }
@@ -2203,6 +2206,7 @@ fn create_herds<'a>(
         let label = builder.create_string(herd.label.as_str());
         let species = builder.create_string(herd.species.as_str());
         let size_class = builder.create_string(herd.size_class.as_str());
+        let ecology_phase = builder.create_string(herd.ecology_phase.as_str());
         let entry = fb::HerdTelemetryState::create(
             builder,
             &fb::HerdTelemetryStateArgs {
@@ -2217,6 +2221,7 @@ fn create_herds<'a>(
                 nextY: herd.next_y,
                 sizeClass: Some(size_class),
                 huntable: herd.huntable,
+                ecologyPhase: Some(ecology_phase),
             },
         );
         entries.push(entry);

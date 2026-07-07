@@ -17,7 +17,7 @@ signal targeting_changed(info: Dictionary)
 ## changes.** Shown in the lower-left version overlay next to the server build (streamed
 ## in the snapshot header) so the running client+server builds can be confirmed at a
 ## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-07.3"
+const CLIENT_BUILD := "2026-07-07.4"
 var _build_label: Label = null
 var _server_build: String = "?"
 
@@ -1036,6 +1036,9 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     var biomass: float = float(herd_data.get("biomass", 0.0))
     if biomass > 0.0:
         lines.append("Biomass: %.0f" % biomass)
+    var phase := String(herd_data.get("ecology_phase", "")).strip_edges().to_lower()
+    if phase != "":
+        lines.append("Ecology: %s" % _ecology_phase_label(phase))
     var x := int(herd_data.get("x", -1))
     var y := int(herd_data.get("y", -1))
     if x >= 0 and y >= 0:
@@ -1045,6 +1048,28 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     if next_x >= 0 and next_y >= 0:
         lines.append("Next waypoint: (%d, %d)" % [next_x, next_y])
     return lines
+
+## Player-facing label for a herd's ecology phase. Stressed/Collapsing carry a warning
+## glyph; `_format_detail_bbcode` additionally tints the value (see `_ecology_value_hex`).
+func _ecology_phase_label(phase: String) -> String:
+    match phase:
+        "collapsing":
+            return "⚠ Collapsing"
+        "stressed":
+            return "⚠ Stressed"
+        "thriving":
+            return "Thriving"
+        _:
+            return phase.capitalize()
+
+## BBCode hex for an "Ecology" value: red for a collapsing group, amber for stressed,
+## normal ink otherwise. Matched on the label text produced by `_ecology_phase_label`.
+func _ecology_value_hex(value: String) -> String:
+    if value.contains("Collapsing"):
+        return HudStyle.DANGER_HEX
+    if value.contains("Stressed"):
+        return HudStyle.WARN_HEX
+    return HudStyle.INK_HEX
 
 func _format_unit_list(entries: Array) -> String:
     var labels := PackedStringArray()
@@ -1105,7 +1130,11 @@ func _format_detail_bbcode(lines: Array) -> String:
             if not table_open:
                 out += "[table=2]"
                 table_open = true
-            var value_hex := HudStyle.WARN_HEX if String(kv[0]) == "Food" else HudStyle.INK_HEX
+            var value_hex := HudStyle.INK_HEX
+            if String(kv[0]) == "Food":
+                value_hex = HudStyle.WARN_HEX
+            elif String(kv[0]) == "Ecology":
+                value_hex = _ecology_value_hex(String(kv[1]))
             out += "[cell][color=#%s]%s[/color][/cell][cell][color=#%s]%s[/color][/cell]" % [
                 HudStyle.INK_DIM_HEX, kv[0], value_hex, kv[1],
             ]

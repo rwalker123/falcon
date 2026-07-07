@@ -28,6 +28,7 @@ const DANGER        := Color(0.910, 0.455, 0.416, 1.0)   # #e8746a
 # Hex strings for BBCode-based labels (RichTextLabel headers, command feed).
 const SIGNAL_HEX := "4fe0cf"
 const WARN_HEX := "f2b13f"
+const DANGER_HEX := "e8746a"
 const INK_HEX := "e9efe9"
 const INK_DIM_HEX := "9db0ad"
 
