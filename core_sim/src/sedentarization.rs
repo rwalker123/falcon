@@ -133,9 +133,10 @@ pub fn sedentarization_tick(
     let resource_density = density.normalized_average().clamp(0.0, 1.0);
     let refs = &cfg.references;
     let w = &cfg.weights;
-    // Guard against a malformed env-override config: `smoothing >= 1.0` would freeze the
-    // score and `< 0` would make the update term negative.
-    let smoothing = cfg.smoothing.clamp(0.0, 1.0);
+    // Guard against a malformed env-override config: `< 0` would make the update term
+    // negative, and `>= 1.0` would zero it and freeze the score forever — so cap strictly
+    // below 1.0 (the largest representable float under 1) to always leave some movement.
+    let smoothing = cfg.smoothing.clamp(0.0, 1.0 - f32::EPSILON);
 
     // Process factions in a stable order so prompt/command-feed ordering is deterministic
     // across runs (a `HashMap` iterates arbitrarily).
