@@ -1894,7 +1894,7 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
                 Outcome::NotTame(herd.domestication_progress)
             }
             Some(herd) => {
-                herd.claim_domestication();
+                herd.claim_domestication(faction);
                 Outcome::Claimed
             }
         }

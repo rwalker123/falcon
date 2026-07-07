@@ -222,9 +222,8 @@ fn domesticated_herd_is_collapse_immune() {
     let low = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.owner = Some(FactionId(0));
-        herd.claim_domestication(); // progress = 1.0 → domesticated
-                                    // Below the 15% collapse threshold — a wild herd here would crash.
+        herd.claim_domestication(FactionId(0)); // sets owner + progress = 1.0 → domesticated
+                                                // Below the 15% collapse threshold — a wild herd here would crash.
         let low = herd.carrying_capacity * 0.10;
         herd.biomass = low;
         low
@@ -251,8 +250,7 @@ fn domesticated_herd_yields_provisions() {
     let biomass_before = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.owner = Some(FactionId(0));
-        herd.claim_domestication();
+        herd.claim_domestication(FactionId(0));
         herd.biomass
     };
     assert_eq!(provisions(&app), 0);

@@ -161,9 +161,12 @@ impl Herd {
         }
     }
 
-    /// Finalize domestication (the `domesticate` command's early claim): snap progress to
-    /// 1.0 so `is_domesticated()` latches.
-    pub fn claim_domestication(&mut self) {
+    /// Finalize domestication for `faction` (the `domesticate` command's early claim): set
+    /// ownership and snap progress to 1.0 so `is_domesticated()` latches. Taking the faction
+    /// here makes the `owner is Some ⟺ progress > 0` invariant impossible to violate (no
+    /// ownerless domesticated herd).
+    pub fn claim_domestication(&mut self, faction: FactionId) {
+        self.owner = Some(faction);
         self.domestication_progress = 1.0;
     }
 
