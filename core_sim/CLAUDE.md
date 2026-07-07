@@ -39,6 +39,7 @@ cargo run -p core_sim --bin server
 | `src/data/influencer_config.json` | Roster caps, decay factors, scope thresholds |
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
+| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -105,6 +106,51 @@ Pre-agricultural survival modules mapping to worldgen tags, snapshot payloads, a
 | Semi-Arid Scrub | Drought tubers, cactus fruits | Roasting pits, seed cakes |
 
 **Implementation**: `FoodModuleTag` components with tile entity, module id, seasonal weight. `ForageSiteLedger` tracks capacity. Commands: `gather_roots`, `harvest_shellfish`, `dry_fish`, `follow_herd`.
+
+> **Wild game is an overlay, not a tile flag.** Game used to overwrite a food
+> tile's gather kind with `FoodSiteKind::GameTrail` (×0.75 weight), but food-site
+> curation sorts by weight **descending** so game trails never survived (0 on live
+> maps). That upgrade + the `wild_game_*` config + `GameTrail` are **retired**;
+> wild game now lives in the fauna herd layer (below), so a tile offers **both**
+> gathering and hunting. See "Fauna & Wild Game" and
+> `docs/plan_wildlife_hunting_overlay.md`.
+
+---
+
+## Fauna & Wild Game
+
+Mobile animal **groups** (not individuals) walk cyclic routes independent of the
+gather layer. One entity = one band/warren/herd; `biomass` = group size.
+
+**Species table** (`src/data/fauna_config.json`, loader `fauna_config.rs`): the
+former hard-coded `HerdSpecies` enum is now a data-driven table. Each row has a
+`display_name` (also the snapshot `species` string — it embeds the client icon
+keyword, e.g. "Red Deer" → 🦌), `size_class` (`migratory`/`big`/`small`),
+`migratory` flag, `route_len` `[min,max]` (= roaming range), `biomass` `[min,max]`
+(group size), and `host_biomes` (a list of **`FoodModule` keys**, reusing
+`classify_food_module`). Shipped species: migratory mammoth/steppe_runner/
+marsh_grazer (long routes); big game deer/boar (2–3 tiles); small game rabbit/fowl
+(~1 tile, stationary).
+
+**Spawning** (`spawn_initial_herds`, `fauna.rs`): two passes into one
+`HerdRegistry`.
+1. **Migratory** — a few start-anchored long-route walkers (`determine_herd_count`,
+   `build_route`), species drawn from the config's `migratory` rows.
+2. **Short-range game** — iterate land tiles, classify each via
+   `classify_food_module`, roll `abundance.per_biome[module]`; the map-wide winners
+   are shuffled then greedily placed respecting `min_spacing` up to `max_total_game`
+   (bounded entity count, spread across the map rather than clustered by scan
+   order). Route via `build_short_route` (`route_len == 1` → single stationary
+   tile → no client trail).
+
+Abundance is a **tuning value, high to start** (design: game plentiful early,
+thins under overhunting in later phases). Roaming reuses `advance_herds`; herds
+flow to telemetry, the `HerdDensityMap`, and the snapshot (`HerdTelemetryState`,
+a free-form `species` string — no schema change needed to add species).
+
+Deferred to later phases (`docs/plan_wildlife_hunting_overlay.md`): fauna-targeted
+**Hunt** (Phase B) and **Follow + policy** (Phase C) — the tile-based `HuntGame`
+handler is neutralized in the meantime (the Hunt command/verb stay registered).
 
 ---
 

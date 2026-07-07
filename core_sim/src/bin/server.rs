@@ -26,14 +26,14 @@ use core_sim::{
     EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
     EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionInventory,
     FactionOrders, FactionRegistry, FactionSecurityPolicies, FogRevealLedger, FoodModule,
-    FoodModuleTag, FoodSiteKind, GenerationId, GenerationRegistry, HarvestAssignment,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, InfluencerImpacts, InfluentialRoster,
-    KnowledgeFragment, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
-    QueueMissionParams, Scalar, ScoutAssignment, SecurityPolicy, SentimentAxisBias, Settlement,
-    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
-    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
-    SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
+    FoodModuleTag, GenerationId, GenerationRegistry, HarvestAssignment, HerdDensityMap,
+    HerdRegistry, HerdTelemetry, InfluencerImpacts, InfluentialRoster, KnowledgeFragment,
+    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
+    Scalar, ScoutAssignment, SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
+    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
+    SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
     TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
     DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
@@ -1851,66 +1851,24 @@ fn handle_forage_tile(
 fn handle_hunt_game(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    target_x: u32,
-    target_y: u32,
-    band_entity_bits: Option<u64>,
+    _target_x: u32,
+    _target_y: u32,
+    _band_entity_bits: Option<u64>,
 ) {
-    let coords = UVec2::new(target_x, target_y);
-    let Some(tile_entity) = ensure_land_tile(
+    // Tile-based hunting retired alongside `game_trail` (Wildlife & Hunting Overlay,
+    // Phase A). Hunt is being reworked to target wild-game fauna groups in Phase B;
+    // the command stays registered but has no tile target to resolve until then.
+    warn!(
+        target: "shadow_scale::command",
+        command = "hunt_game",
+        faction = %faction.0,
+        "command.hunt_game.rejected=tile_hunting_retired"
+    );
+    emit_command_failure(
         app,
-        faction,
-        coords,
-        "hunt_game",
-        Some(CommandEventKind::Hunt),
-    ) else {
-        return;
-    };
-    let tag = {
-        let entity_ref = app.world.entity(tile_entity);
-        match entity_ref.get::<FoodModuleTag>() {
-            Some(tag) => tag.clone(),
-            None => {
-                log_tile_rejection(
-                    app,
-                    faction,
-                    coords,
-                    "hunt_game",
-                    "no_food_module",
-                    Some(CommandEventKind::Hunt),
-                );
-                return;
-            }
-        }
-    };
-    if tag.kind != FoodSiteKind::GameTrail {
-        warn!(
-            target: "shadow_scale::command",
-            command = "hunt_game",
-            faction = %faction.0,
-            kind = ?tag.kind,
-            "command.hunt_game.rejected=not_game_trail"
-        );
-        emit_command_failure(
-            app,
-            CommandEventKind::Hunt,
-            faction,
-            "Hunt commands must target a game trail tile.",
-        );
-        return;
-    }
-    queue_food_assignment(
-        app,
-        faction,
-        target_x,
-        target_y,
-        tile_entity,
-        tag.module,
-        tag.seasonal_weight,
-        band_entity_bits,
-        "hunt_game",
-        "Hunt",
         CommandEventKind::Hunt,
-        HarvestTaskKind::Hunt,
+        faction,
+        "Hunting now targets wild game groups (coming soon); tile hunting has been retired.",
     );
 }
 

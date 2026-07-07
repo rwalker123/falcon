@@ -121,7 +121,6 @@ pub enum FoodSiteKind {
     ScrubRoots,
     UpwellingDrying,
     WoodlandCache,
-    GameTrail,
 }
 
 impl FoodSiteKind {
@@ -137,7 +136,6 @@ impl FoodSiteKind {
             FoodSiteKind::ScrubRoots => "scrub_roots",
             FoodSiteKind::UpwellingDrying => "upwelling_drying",
             FoodSiteKind::WoodlandCache => "woodland_cache",
-            FoodSiteKind::GameTrail => "game_trail",
         }
     }
 }

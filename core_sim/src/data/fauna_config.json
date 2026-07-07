@@ -1,0 +1,74 @@
+{
+  "species": {
+    "mammoth": {
+      "display_name": "Thunder Mammoths",
+      "size_class": "migratory",
+      "migratory": true,
+      "route_len": [6, 12],
+      "biomass": [8000, 12000],
+      "host_biomes": ["boreal_arctic", "montane_highland"]
+    },
+    "steppe_runner": {
+      "display_name": "Steppe Runners",
+      "size_class": "migratory",
+      "migratory": true,
+      "route_len": [6, 12],
+      "biomass": [4000, 9000],
+      "host_biomes": ["savanna_grassland"]
+    },
+    "marsh_grazer": {
+      "display_name": "Marsh Grazers",
+      "size_class": "migratory",
+      "migratory": true,
+      "route_len": [6, 12],
+      "biomass": [4000, 9000],
+      "host_biomes": ["wetland_swamp", "riverine_delta"]
+    },
+    "deer": {
+      "display_name": "Red Deer",
+      "size_class": "big",
+      "migratory": false,
+      "route_len": [2, 3],
+      "biomass": [600, 1200],
+      "host_biomes": ["temperate_forest", "mixed_woodland", "savanna_grassland"]
+    },
+    "boar": {
+      "display_name": "Wild Boar",
+      "size_class": "big",
+      "migratory": false,
+      "route_len": [2, 3],
+      "biomass": [500, 1000],
+      "host_biomes": ["temperate_forest", "mixed_woodland", "wetland_swamp"]
+    },
+    "rabbit": {
+      "display_name": "Rabbit Warren",
+      "size_class": "small",
+      "migratory": false,
+      "route_len": [1, 1],
+      "biomass": [80, 200],
+      "host_biomes": ["savanna_grassland", "semi_arid_scrub", "temperate_forest"]
+    },
+    "fowl": {
+      "display_name": "Wild Fowl",
+      "size_class": "small",
+      "migratory": false,
+      "route_len": [1, 1],
+      "biomass": [60, 160],
+      "host_biomes": ["wetland_swamp", "riverine_delta", "coastal_littoral"]
+    }
+  },
+  "abundance": {
+    "per_biome": {
+      "temperate_forest": 0.30,
+      "mixed_woodland": 0.30,
+      "savanna_grassland": 0.25,
+      "wetland_swamp": 0.20,
+      "riverine_delta": 0.15,
+      "semi_arid_scrub": 0.12,
+      "montane_highland": 0.10,
+      "coastal_littoral": 0.10
+    },
+    "max_total_game": 120,
+    "min_spacing": 2
+  }
+}

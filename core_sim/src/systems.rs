@@ -24,10 +24,7 @@ use crate::{
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
     fauna::HerdDensityMap,
-    food::{
-        classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,
-        FoodSiteKind,
-    },
+    food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     generations::GenerationRegistry,
     heightfield::build_elevation_field,
     hydrology::HydrologyState,
@@ -408,21 +405,6 @@ pub fn spawn_initial_world(
     let overlays_cfg = snapshot_overlays.get();
     let food_overlay_cfg = overlays_cfg.food();
     let preference = &config.start_profile_overrides.food_modules;
-    let wild_module_set: HashSet<FoodModule> = food_overlay_cfg
-        .wild_game_modules()
-        .iter()
-        .copied()
-        .collect();
-    let wild_game_active = !wild_module_set.is_empty()
-        && food_overlay_cfg.wild_game_probability() > 0.0
-        && food_overlay_cfg.wild_game_max_total() > 0;
-    let wild_game_weight_scale = food_overlay_cfg.wild_game_weight_scale();
-    let wild_game_max_per_module = food_overlay_cfg.wild_game_max_per_module();
-    let wild_game_max_total = food_overlay_cfg.wild_game_max_total();
-    let wild_game_probability = food_overlay_cfg.wild_game_probability();
-    let mut wild_game_counts: HashMap<FoodModule, usize> = HashMap::new();
-    let mut wild_game_total = 0usize;
-    let mut wild_rng = SmallRng::seed_from_u64(world_seed ^ 0xC0FA_BEEF);
     let land_tiles = province_map.land_tiles().max(1);
     let baseline_total = food_overlay_cfg.max_total_sites();
     let scaled_total = (land_tiles / 120).max(24);
@@ -468,22 +450,8 @@ pub fn spawn_initial_world(
             .food_module
             .or_else(|| classify_food_module(&tile_component));
         if let Some(module) = module {
-            let mut site_kind = module.site_kind();
-            let mut seasonal_weight = 1.0;
-            if wild_game_active
-                && wild_game_total < wild_game_max_total
-                && wild_module_set.contains(&module)
-            {
-                let entry = wild_game_counts.entry(module).or_insert(0);
-                if *entry < wild_game_max_per_module
-                    && wild_rng.gen::<f32>() < wild_game_probability
-                {
-                    site_kind = FoodSiteKind::GameTrail;
-                    seasonal_weight *= wild_game_weight_scale;
-                    *entry += 1;
-                    wild_game_total += 1;
-                }
-            }
+            let site_kind = module.site_kind();
+            let seasonal_weight = 1.0;
             entity_commands.insert(FoodModuleTag::new(module, seasonal_weight, site_kind));
             module_candidates
                 .entry(module)
@@ -4305,69 +4273,6 @@ mod terrain_tag_tests {
             let actual = ratios.get(name).copied().unwrap_or(0.0);
             println!("  {name}: actual {actual:.4}, target {target:.4}");
         }
-    }
-
-    #[test]
-    fn wild_game_sites_spawn_with_overrides() {
-        let mut world = World::default();
-        let presets = MapPresets::builtin();
-        let overlays_cfg = SnapshotOverlaysConfig::from_json_str(
-            r#"{
-                "food": {
-                    "wild_game_modules": [
-                        "coastal_littoral",
-                        "riverine_delta",
-                        "savanna_grassland",
-                        "temperate_forest",
-                        "boreal_arctic",
-                        "montane_highland",
-                        "wetland_swamp",
-                        "semi_arid_scrub",
-                        "coastal_upwelling",
-                        "mixed_woodland"
-                    ],
-                    "wild_game_probability": 1.0,
-                    "wild_game_weight_scale": 1.0,
-                    "wild_game_max_per_module": 32,
-                    "wild_game_max_total": 128,
-                    "wild_game_radius": 128
-                }
-            }"#,
-        )
-        .expect("overlay config");
-
-        world.insert_resource(SimulationConfig::builtin());
-        world.insert_resource(SimulationTick::default());
-        world.insert_resource(CultureManager::default());
-        world.insert_resource(GenerationRegistry::with_seed(0xFACE_FEED, 6));
-        world.insert_resource(MapPresetsHandle::new(presets));
-        world.insert_resource(DiscoveryProgressLedger::default());
-        world.insert_resource(FactionInventory::default());
-        world.insert_resource(StartProfileKnowledgeTagsHandle::new(
-            StartProfileKnowledgeTags::builtin(),
-        ));
-        world.insert_resource(SnapshotOverlaysConfigHandle::new(Arc::new(overlays_cfg)));
-
-        world.run_system_once(crate::systems::spawn_initial_world);
-
-        let mut query = world.query::<&FoodModuleTag>();
-        let mut total_tags = 0usize;
-        let mut wild_sites = 0usize;
-        for tag in query.iter(&world) {
-            total_tags += 1;
-            if matches!(tag.kind, FoodSiteKind::GameTrail) {
-                wild_sites += 1;
-            }
-        }
-
-        assert!(
-            total_tags > 0,
-            "expected some food modules to exist after worldgen"
-        );
-        assert!(
-            wild_sites > 0,
-            "expected at least one wild game site (found 0 / {total_tags})"
-        );
     }
 }
 
