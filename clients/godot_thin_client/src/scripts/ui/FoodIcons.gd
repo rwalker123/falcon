@@ -5,8 +5,10 @@ class_name FoodIcons
 ## shared by the selection panel's Harvest/Hunt button and the map's markers so a
 ## given module/species always reads the same. Food icons map to the ecosystem
 ## food modules in `core_sim/CLAUDE.md` (Coastal Littoral = shellfish, Savanna =
-## grassland herds, Temperate Forest = nut groves, etc.); herd icons are inferred
-## from the herd label since the snapshot carries no species field.
+## grassland herds, Temperate Forest = nut groves, etc.); herd icons are picked by
+## a species keyword in the herd label — the snapshot's `species` display name is
+## embedded in the label (e.g. "Red Deer (game_deer_03)"), so wild game reads with
+## the right animal glyph.
 
 const DEFAULT := "🌿"
 const HUNT := "🦌"
@@ -30,6 +32,8 @@ const HERD_SPECIES := {
 	"goat": "🐐",
 	"ibex": "🐐",
 	"sheep": "🐑",
+	"rabbit": "🐇",
+	"fowl": "🐓",
 }
 
 const ICONS := {

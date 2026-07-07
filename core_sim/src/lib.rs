@@ -16,6 +16,7 @@ mod culture;
 mod culture_corruption_config;
 mod espionage;
 mod fauna;
+mod fauna_config;
 mod food;
 mod generations;
 mod great_discovery;
@@ -91,6 +92,10 @@ pub use espionage::{
 pub use fauna::{
     advance_herds, spawn_initial_herds, HerdDensityMap, HerdRegistry, HerdTelemetry,
     HerdTelemetryEntry,
+};
+pub use fauna_config::{
+    load_fauna_config_from_env, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata, SizeClass,
+    SpeciesDef, BUILTIN_FAUNA_CONFIG,
 };
 pub use food::{
     classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,
@@ -284,6 +289,8 @@ pub fn build_headless_app() -> App {
     let (visibility_config, visibility_metadata) =
         visibility_config::load_visibility_config_from_env();
     let visibility_handle = visibility_config::VisibilityConfigHandle::new(visibility_config);
+    let (fauna_config, fauna_metadata) = fauna_config::load_fauna_config_from_env();
+    let fauna_handle = fauna_config::FaunaConfigHandle::new(fauna_config);
     let culture_effects = CultureEffectsCache::default();
     let espionage_catalog =
         espionage::EspionageCatalog::load_builtin().expect("espionage catalog should parse");
@@ -331,6 +338,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(CrisisOverlayCache::default())
         .insert_resource(visibility_handle)
         .insert_resource(visibility_metadata)
+        .insert_resource(fauna_handle)
+        .insert_resource(fauna_metadata)
         .insert_resource(visibility::VisibilityLedger::default())
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(visibility::ViewerFaction::default())

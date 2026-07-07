@@ -264,11 +264,11 @@ system (game = short-range herds), gives Harvest/Hunt/Follow their own verbs, an
 retires the static `game_trail` food-site (which never survives food-site curation
 — see the plan's Motivation). Phased so each lands independently.
 
-### Phase A — game exists and is visible
-- [ ] Species table in `fauna.rs` (Owner: TBD, Estimate: 1.5d). Turn `HerdSpecies` into a data-driven table: display, icon key, range (route length), group biomass, host biomes, `migratory` flag, size class. Add big game (deer, boar) and small game (rabbit, fowl) alongside the migratory species.
-- [ ] Short-route game spawning (Owner: TBD, Estimate: 1.5d; Deps: species table). Seed game as short-route groups by biome density from a new `core_sim/src/data/fauna_config.json` (abundance high). Reuse `advance_herds` for roaming.
-- [ ] Retire `game_trail` (Owner: TBD, Estimate: 0.5d; Deps: spawning). Remove the wild-game tile upgrade in `systems.rs` and `FoodSiteKind::GameTrail`; confirm the food-site curation bug is gone.
-- [ ] Client render pass (Owner: TBD, Estimate: 0.5d; Deps: schema for game species). Verify game groups render with species icons (`FoodIcons.for_herd`); short routes show minimal/no trail.
+### Phase A — game exists and is visible ✅
+- [x] Species table in `fauna.rs`. `HerdSpecies` enum retired for a data-driven table in `core_sim/src/data/fauna_config.json` (loader `fauna_config.rs`): display name, size class, `migratory` flag, route length, group biomass, host biomes (keyed on `FoodModule`). Adds big game (deer, boar) and small game (rabbit, fowl) beside the migratory species. `Herd.species` is now the display-name `String`.
+- [x] Short-route game spawning. `spawn_initial_herds` places migratory herds (long, start-anchored) plus short-route game by per-biome abundance (`classify_food_module`), shuffled + capped (`max_total_game`/`min_spacing`) for map-wide spread. Reuses `advance_herds` for roaming; `route_len == 1` game is stationary.
+- [x] Retire `game_trail`. Removed the wild-game tile upgrade + `wild_game_*` config (`systems.rs` / `snapshot_overlays_config.rs` / `.json`) and `FoodSiteKind::GameTrail`; curation bug gone (no discounted candidates compete). Tile-based `HuntGame` handler neutralized (Hunt command kept for Phase B).
+- [x] Client render pass. `FoodIcons.for_herd` gains rabbit/fowl glyphs; game renders with species icons keyed on the label's embedded species name; short routes show minimal/no trail. No schema change (snapshot already carries `species`).
 
 ### Phase B — Hunt (one-shot)
 - [ ] Fauna-targeted Hunt command (Owner: TBD, Estimate: 2d; Deps: Phase A). Generalize hunting to target a fauna group: band pursues to ≤1 tile (re-paths as it moves), takes a portion of biomass → provisions/trade via existing food-yield config. New assignment component reusing `HarvestAssignment` travel/work machinery.

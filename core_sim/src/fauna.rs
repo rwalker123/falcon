@@ -1,12 +1,14 @@
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
-use rand::{rngs::SmallRng, Rng, SeedableRng};
+use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 use sim_runtime::TerrainTags;
 use tracing::info;
 
 use crate::{
     components::Tile,
+    fauna_config::{FaunaConfig, FaunaConfigHandle},
+    food::{classify_food_module, FoodModule},
     mapgen::WorldGenSeed,
     resources::{SimulationConfig, StartLocation, TileRegistry},
 };
@@ -17,19 +19,21 @@ pub const HERD_DENSITY_REFERENCE_BIOMASS: f32 = 8_000.0;
 pub struct Herd {
     pub id: String,
     pub label: String,
-    pub species: HerdSpecies,
+    /// Species display name (also the snapshot `species` string; drives the client
+    /// icon via keyword match). Sourced from the data-driven `fauna_config.json`.
+    pub species: String,
     pub route: Vec<UVec2>,
     pub step_index: usize,
     pub biomass: f32,
 }
 
 impl Herd {
-    pub fn new(id: String, species: HerdSpecies, route: Vec<UVec2>, biomass: f32) -> Self {
-        let label = format!("{} ({})", species.display_label(), id);
+    pub fn new(id: String, species_display: String, route: Vec<UVec2>, biomass: f32) -> Self {
+        let label = format!("{} ({})", species_display, id);
         Self {
             id,
             label,
-            species,
+            species: species_display,
             route,
             step_index: 0,
             biomass,
@@ -60,31 +64,6 @@ impl Herd {
         }
         let next_index = (self.step_index + 1) % self.route.len();
         self.route.get(next_index).copied()
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum HerdSpecies {
-    Mammoth,
-    SteppeRunner,
-    MarshGrazer,
-}
-
-impl HerdSpecies {
-    pub fn display_label(&self) -> &'static str {
-        match self {
-            HerdSpecies::Mammoth => "Thunder Mammoths",
-            HerdSpecies::SteppeRunner => "Steppe Runners",
-            HerdSpecies::MarshGrazer => "Marsh Grazers",
-        }
-    }
-
-    pub fn sample(rng: &mut SmallRng) -> Self {
-        match rng.gen_range(0..=2) {
-            0 => HerdSpecies::Mammoth,
-            1 => HerdSpecies::SteppeRunner,
-            _ => HerdSpecies::MarshGrazer,
-        }
     }
 }
 
@@ -220,6 +199,7 @@ pub fn spawn_initial_herds(
     tile_registry: Res<TileRegistry>,
     tiles: Query<&Tile>,
     world_seed: Option<Res<WorldGenSeed>>,
+    fauna_config: Res<FaunaConfigHandle>,
 ) {
     if !registry.herds.is_empty() {
         telemetry.entries = registry.herds.iter().map(to_entry).collect();
@@ -227,6 +207,7 @@ pub fn spawn_initial_herds(
         return;
     }
 
+    let fauna = fauna_config.get();
     let seed = world_seed
         .map(|seed| seed.0)
         .unwrap_or_else(|| config.map_seed);
@@ -242,32 +223,147 @@ pub fn spawn_initial_herds(
         .position()
         .unwrap_or(UVec2::new(width / 2, height / 2));
 
-    let herd_target = determine_herd_count(width, height);
-    let mut herds = Vec::with_capacity(herd_target as usize);
-    for idx in 0..herd_target {
-        if let Some(route) = build_route(base, width, height, &tile_registry, &tiles, &mut rng) {
-            let species = HerdSpecies::sample(&mut rng);
-            let id = format!("trail_herd_{:02}", idx);
-            let biomass = rng.gen_range(4000.0..12000.0);
-            let herd = Herd::new(id, species, route, biomass);
-            let position = herd.position();
-            info!(
-                target: "shadow_scale::analytics",
-                event = "herd_spawn",
-                herd = %herd.id,
-                label = %herd.label,
-                species = %herd.species.display_label(),
-                x = position.x,
-                y = position.y,
-                biomass = herd.biomass,
-                route_length = herd.route_length(),
-            );
-            herds.push(herd);
-        }
-    }
+    let mut herds = Vec::new();
+    // 1. Long-range migratory herds — start-anchored, species/biomass from config.
+    spawn_migratory_herds(
+        &fauna,
+        base,
+        width,
+        height,
+        &tile_registry,
+        &tiles,
+        &mut rng,
+        &mut herds,
+    );
+    // 2. Short-range wild game — biome-density placement across the whole map.
+    spawn_short_range_game(
+        &fauna,
+        width,
+        height,
+        &tile_registry,
+        &tiles,
+        &mut rng,
+        &mut herds,
+    );
+
     registry.herds = herds;
     telemetry.entries = registry.snapshot_entries();
     density.rebuild(config.grid_size, &registry);
+}
+
+fn log_herd_spawn(herd: &Herd) {
+    let position = herd.position();
+    info!(
+        target: "shadow_scale::analytics",
+        event = "herd_spawn",
+        herd = %herd.id,
+        label = %herd.label,
+        species = %herd.species,
+        x = position.x,
+        y = position.y,
+        biomass = herd.biomass,
+        route_length = herd.route_length(),
+    );
+}
+
+/// Long-range migratory herds: a handful of cross-region walkers anchored on the
+/// start area, one per `determine_herd_count`, species drawn from the config's
+/// migratory rows.
+#[allow(clippy::too_many_arguments)]
+fn spawn_migratory_herds(
+    fauna: &FaunaConfig,
+    base: UVec2,
+    width: u32,
+    height: u32,
+    tile_registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    rng: &mut SmallRng,
+    herds: &mut Vec<Herd>,
+) {
+    let migratory = fauna.migratory_species();
+    if migratory.is_empty() {
+        return;
+    }
+    let herd_target = determine_herd_count(width, height);
+    for idx in 0..herd_target {
+        let (key, def) = migratory[rng.gen_range(0..migratory.len())];
+        let steps = def.sample_route_len(rng);
+        let Some(route) = build_route(base, width, height, tile_registry, tiles, rng, steps) else {
+            continue;
+        };
+        let biomass = def.sample_biomass(rng);
+        let id = format!("herd_{key}_{idx:02}");
+        let herd = Herd::new(id, def.display_name.clone(), route, biomass);
+        log_herd_spawn(&herd);
+        herds.push(herd);
+    }
+}
+
+/// Short-range wild game (big + small): iterate land tiles, roll the per-biome
+/// abundance, then greedily place bounded, spaced-out groups from a shuffled pool
+/// so placement is spread across the map rather than clustered by scan order.
+fn spawn_short_range_game(
+    fauna: &FaunaConfig,
+    width: u32,
+    height: u32,
+    tile_registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    rng: &mut SmallRng,
+    herds: &mut Vec<Herd>,
+) {
+    // Collect every tile where the abundance roll succeeds (map-wide).
+    let mut winners: Vec<(UVec2, &'static str)> = Vec::new();
+    for y in 0..height {
+        for x in 0..width {
+            let pos = UVec2::new(x, y);
+            let Some(module) = module_at(pos, tile_registry, tiles) else {
+                continue;
+            };
+            let module_key = module.as_str();
+            let prob = fauna.abundance.probability_for(module_key);
+            if prob <= 0.0 {
+                continue;
+            }
+            if rng.gen::<f32>() < prob {
+                winners.push((pos, module_key));
+            }
+        }
+    }
+    // Shuffle so the cap + spacing thin the pool uniformly, not top-to-bottom.
+    winners.shuffle(rng);
+
+    let max_total = fauna.abundance.max_total_game;
+    let min_spacing = fauna.abundance.min_spacing;
+    let mut placed: Vec<UVec2> = Vec::new();
+    let mut game_idx = 0u32;
+    for (pos, module_key) in winners {
+        if placed.len() >= max_total {
+            break;
+        }
+        if placed
+            .iter()
+            .any(|p| chebyshev_distance(*p, pos) < min_spacing)
+        {
+            continue;
+        }
+        let candidates = fauna.game_species_for_biome(module_key);
+        if candidates.is_empty() {
+            continue;
+        }
+        let (key, def) = candidates[rng.gen_range(0..candidates.len())];
+        let steps = def.sample_route_len(rng);
+        let Some(route) = build_short_route(pos, steps, width, height, tile_registry, tiles, rng)
+        else {
+            continue;
+        };
+        let biomass = def.sample_biomass(rng);
+        let id = format!("game_{key}_{game_idx:02}");
+        game_idx += 1;
+        let herd = Herd::new(id, def.display_name.clone(), route, biomass);
+        log_herd_spawn(&herd);
+        placed.push(pos);
+        herds.push(herd);
+    }
 }
 
 pub fn advance_herds(
@@ -306,7 +402,7 @@ fn to_entry(herd: &Herd) -> HerdTelemetryEntry {
     HerdTelemetryEntry {
         id: herd.id.clone(),
         label: herd.label.clone(),
-        species: herd.species.display_label().to_string(),
+        species: herd.species.clone(),
         position: herd.position(),
         biomass: herd.biomass,
         route_length: herd.route_length() as u32,
@@ -320,6 +416,8 @@ fn determine_herd_count(width: u32, height: u32) -> u32 {
     baseline.clamp(2, 6)
 }
 
+/// Long migratory route: a jittered spiral of `steps` waypoints around `origin`,
+/// keeping only land tiles. Returns `None` if fewer than 3 distinct points land.
 fn build_route(
     origin: UVec2,
     width: u32,
@@ -327,9 +425,9 @@ fn build_route(
     registry: &TileRegistry,
     tiles: &Query<&Tile>,
     rng: &mut SmallRng,
+    steps: u32,
 ) -> Option<Vec<UVec2>> {
     let mut points = Vec::new();
-    let steps = rng.gen_range(6..=12);
     let radius = rng.gen_range(4..=12) as f32;
     let mut angle = rng.gen_range(0.0..TAU);
     for _ in 0..steps {
@@ -353,6 +451,59 @@ fn build_route(
     } else {
         Some(points)
     }
+}
+
+/// Short roaming route for wild game: `steps` waypoints within a small radius of
+/// `origin` (radius grows with route length). `steps == 1` yields a single-tile,
+/// stationary group (which the client draws with no trail). Returns `None` only if
+/// `origin` itself is not land.
+fn build_short_route(
+    origin: UVec2,
+    steps: u32,
+    width: u32,
+    height: u32,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    rng: &mut SmallRng,
+) -> Option<Vec<UVec2>> {
+    if !is_land_tile(origin, registry, tiles) {
+        return None;
+    }
+    let mut points = vec![origin];
+    let target = steps.max(1) as usize;
+    if target <= 1 {
+        return Some(points);
+    }
+    // Wander radius scales with route length (big game ~2-3 tiles, small ~1).
+    let radius = target.saturating_sub(1).max(1) as i32;
+    let max_attempts = target * 4;
+    let mut attempts = 0;
+    while points.len() < target && attempts < max_attempts {
+        attempts += 1;
+        let dx = rng.gen_range(-radius..=radius);
+        let dy = rng.gen_range(-radius..=radius);
+        let Some(pos) = clamp_to_grid(origin.x as i32 + dx, origin.y as i32 + dy, width, height)
+        else {
+            continue;
+        };
+        if is_land_tile(pos, registry, tiles) && !points.contains(&pos) {
+            points.push(pos);
+        }
+    }
+    Some(points)
+}
+
+/// Food module for a tile position, or `None` for water / unclassified tiles.
+fn module_at(position: UVec2, registry: &TileRegistry, tiles: &Query<&Tile>) -> Option<FoodModule> {
+    let entity = registry.index(position.x, position.y)?;
+    let tile = tiles.get(entity).ok()?;
+    classify_food_module(tile)
+}
+
+fn chebyshev_distance(a: UVec2, b: UVec2) -> u32 {
+    let dx = a.x.abs_diff(b.x);
+    let dy = a.y.abs_diff(b.y);
+    dx.max(dy)
 }
 
 fn clamp_to_grid(x: i32, y: i32, width: u32, height: u32) -> Option<UVec2> {
