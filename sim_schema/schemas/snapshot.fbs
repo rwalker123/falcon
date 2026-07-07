@@ -645,6 +645,7 @@ table HerdTelemetryState {
   sizeClass:string;
   huntable:bool = false;
   ecologyPhase:string;
+  domestication:float = 0;
 }
 
 table CommandEventState {

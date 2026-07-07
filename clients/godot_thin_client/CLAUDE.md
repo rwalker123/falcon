@@ -300,6 +300,12 @@ easy-to-miss "select a band…" line in the selection panel.
   that `_format_detail_bbcode` tints amber / red (`_ecology_value_hex`, `HudStyle.WARN_HEX`
   / `DANGER_HEX`). A `Collapsing` herd has been overhunted past the point of no return and
   is crashing to local extinction (see `core_sim` Fauna & Wild Game — depensation collapse).
+- **Herd husbandry readout** (`Hud.gd` `_herd_summary_lines`): when a herd's
+  `domestication` (snapshot `HerdTelemetryState.domestication`, 0–1) is above 0, a
+  **Husbandry** row shows "Domesticating N%" while it's being tamed and "🐄 Domesticated"
+  (SIGNAL tint via `_husbandry_value_hex`) once fully domesticated. Progress builds while a
+  band Sustain-follows a Thriving herd; the `domesticate` command claims it early (see
+  `core_sim` Fauna & Wild Game — Domestication / husbandry).
 - **HUD owns the state** (`Hud.gd` `_pending_forage` / `_pending_scout_unit` /
   `_pending_hunt` / `_pending_follow` — only one active at a time via
   `_clear_other_pending`) and derives a descriptor via `_current_targeting_info()`

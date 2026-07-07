@@ -930,6 +930,7 @@ pub enum CommandEventKind {
     CampaignVictory,
     Forage,
     Hunt,
+    Domesticate,
 }
 
 impl CommandEventKind {
@@ -944,6 +945,7 @@ impl CommandEventKind {
             CommandEventKind::CampaignVictory => "campaign_victory",
             CommandEventKind::Forage => "forage",
             CommandEventKind::Hunt => "hunt",
+            CommandEventKind::Domesticate => "domesticate",
         }
     }
 }

@@ -39,7 +39,7 @@ cargo run -p core_sim --bin server
 | `src/data/influencer_config.json` | Roster caps, decay factors, scope thresholds |
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
-| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) tuning |
+| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) tuning |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -196,9 +196,8 @@ collapse reaches zero in finite turns. So a hunt/follow draws a group down in
 (`Thriving` / `Stressed` / `Collapsing`), recomputed every turn from biomass vs
 `ecology.stressed_fraction`/`collapse_fraction` (`classify_ecology_phase`) and exported in
 the snapshot (`HerdTelemetryState.ecologyPhase`) so the client warns the player before a
-group is doomed. This derived state is also the **seam the later domestication /
-industrialized-hunting arc keys off** (e.g. a long Sustain-follow on a `Thriving` herd →
-husbandry progress); see the `// Phase E hook:` marker in `advance_fauna_pursuits`.
+group is doomed. This derived state also **gates domestication** (below): husbandry
+progress accrues only while a `Thriving` herd is Sustain-followed.
 
 **Immigration** — `repopulate_fauna` (`fauna.rs`, `TurnStage::Logistics` right after
 `advance_herds`) gives a low per-turn chance (`immigration.chance_per_turn`) to respawn one
@@ -208,17 +207,41 @@ keeps an overhunted map slowly replenishing (early forager play stays game-rich)
 undoing a local extinction (the crashed group is gone; a *new* group may immigrate
 elsewhere). Seeded per-turn from `map_seed ^ tick ^ salt` (deterministic under rollback).
 
-Ecology tunables live in the `ecology` (`regrowth_rate`, `collapse_fraction`,
-`collapse_rate`, `stressed_fraction`, `extinction_floor`) and `immigration` blocks of
-`fauna_config.json`.
+**Domestication / husbandry (Phase E)** — the pastoral counter-force to depletion. A
+`Herd` carries `domestication_progress` (0–1, `1.0` = domesticated) and `owner:
+Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
+- *Emergent accrual*: in `advance_fauna_pursuits` (Population), a **Sustain** follow on a
+  **Thriving** herd adds `husbandry.progress_per_turn` for the following faction (sets
+  `owner` on first accrual; only the owner accrues). At `1.0` the herd auto-domesticates.
+- *Decay + yield*: `advance_husbandry` (`fauna.rs`, `TurnStage::Logistics` after
+  `advance_herds` — runs *before* the same turn's accrual, so a Sustain-followed herd nets
+  `progress_per_turn − decay_per_turn` and an untended one only decays by
+  `husbandry.decay_per_turn`, clearing `owner` at 0). A **domesticated** herd pays its owner
+  `biomass × husbandry.provisions_per_biomass` provisions each turn (via `add_stockpile`,
+  **without** depleting biomass — sustainable managed harvest).
+- *Collapse immunity*: `regrow_biomass` uses plain `logistic_regrowth` (never the collapse
+  branch) for a domesticated herd — a managed group recovers and never crashes.
+- *Explicit claim*: the `domesticate <faction_id> <herd_id>` command (`handle_domesticate`,
+  full proto/runtime/text/server plumbing) lets the owner claim a herd **early** once
+  `domestication_progress ≥ husbandry.claim_threshold` (snaps progress to 1.0); rejected for a
+  non-owner or an under-threshold herd. The emergent Sustain-follow is how progress is built.
+- `HerdRegistry::domesticated_count(faction)` is the seam the future `SedentarizationScore`
+  (`TASKS.md`) reads for its "domestication progress" input.
+
+Ecology/husbandry tunables live in the `ecology` (`regrowth_rate`, `collapse_fraction`,
+`collapse_rate`, `stressed_fraction`, `extinction_floor`), `immigration`, and `husbandry`
+(`progress_per_turn`, `decay_per_turn`, `claim_threshold`, `provisions_per_biomass`) blocks
+of `fauna_config.json`.
 
 > `FaunaPursuit` is **not** snapshot-persisted (unlike `HarvestAssignment`): a
 > `rollback` mid-pursuit cleanly cancels the in-flight hunt (the rehydrated cohort
-> simply lacks the component). Pursuits are short-lived; revisit if needed.
+> simply lacks the component). Pursuits are short-lived; revisit if needed. Domestication
+> state lives on the `Herd` (in `HerdRegistry`), alongside `biomass`.
 
-Deferred beyond Phase D (`docs/plan_wildlife_hunting_overlay.md`): the domestication /
-industrialized-hunting arc itself (Phase D only leaves the `EcologyPhase` hook). The
-tile-based `HuntGame` handler stays neutralized (its client button no longer surfaces).
+Deferred beyond Phase E (`docs/plan_wildlife_hunting_overlay.md`): the **industrialized /
+market-hunting** counterpart, and the pastoral→corral→settlement chain (`Camp`,
+`SedentarizationScore`). The tile-based `HuntGame` handler stays neutralized (its client
+button no longer surfaces).
 
 ---
 

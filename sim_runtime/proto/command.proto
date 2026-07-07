@@ -209,6 +209,11 @@ message HuntFaunaCommand {
   optional uint64 band_entity_bits = 3;
 }
 
+message DomesticateCommand {
+  uint32 faction_id = 1;
+  string herd_id = 2;
+}
+
 message ExportMapCommand {
   // Optional destination path. When absent the server writes a
   // timestamped file into the gitignored exports/ scratch directory.
@@ -247,5 +252,6 @@ message CommandEnvelope {
     FoundSettlementCommand found_settlement = 27;
     ExportMapCommand export_map = 28;
     HuntFaunaCommand hunt_fauna = 29;
+    DomesticateCommand domesticate = 30;
   }
 }

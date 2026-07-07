@@ -25,16 +25,17 @@ use core_sim::{
     CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, EspionageAgentHandle,
     EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
     EspionageMissionTemplate, EspionageRoster, FactionId, FactionInventory, FactionOrders,
-    FactionRegistry, FactionSecurityPolicies, FaunaPursuit, FaunaPursuitMode, FogRevealLedger,
-    FollowPolicy, FoodModule, FoodModuleTag, GenerationId, GenerationRegistry, HarvestAssignment,
-    HerdRegistry, InfluencerImpacts, InfluentialRoster, MapPresetsHandle, PendingCrisisSpawns,
-    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, ScoutAssignment,
-    SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig, SimulationConfigMetadata,
-    SimulationTick, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
-    StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry,
-    TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata,
-    TurnQueue, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
+    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode,
+    FogRevealLedger, FollowPolicy, FoodModule, FoodModuleTag, GenerationId, GenerationRegistry,
+    HarvestAssignment, HerdRegistry, InfluencerImpacts, InfluentialRoster, MapPresetsHandle,
+    PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams, Scalar,
+    ScoutAssignment, SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
+    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
+    SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
+    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
+    DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
 use core_sim::{
     resolve_active_profile, ActiveStartProfile, CampaignLabel, HarvestTaskKind,
@@ -545,6 +546,9 @@ fn main() {
             } => {
                 handle_hunt_fauna(&mut app, faction, herd_id, band_entity_bits);
             }
+            Command::Domesticate { faction, herd_id } => {
+                handle_domesticate(&mut app, faction, herd_id);
+            }
         }
 
         broadcast_command_events_if_needed(&mut app, bin_server, flat_server);
@@ -667,6 +671,10 @@ enum Command {
         faction: FactionId,
         herd_id: String,
         band_entity_bits: Option<u64>,
+    },
+    Domesticate {
+        faction: FactionId,
+        herd_id: String,
     },
     ExportMap {
         path: Option<String>,
@@ -1852,6 +1860,111 @@ fn handle_hunt_fauna(
     );
 }
 
+/// Claim a herd as domesticated livestock. Requires the faction to have built husbandry
+/// progress by Sustain-following it (so it owns the herd) and for that progress to have
+/// reached `husbandry.claim_threshold`; otherwise the command is rejected. On success the
+/// herd is finalized to domesticated (`claim_domestication`), after which it yields steady
+/// provisions and is collapse-immune.
+fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String) {
+    enum Outcome {
+        UnknownHerd,
+        AlreadyDomesticated,
+        NotOwner,
+        NotTame(f32),
+        Claimed,
+    }
+
+    let claim_threshold = app
+        .world
+        .resource::<FaunaConfigHandle>()
+        .get()
+        .husbandry
+        .claim_threshold;
+
+    // Decide (and, on success, mutate the herd) inside a scope so the registry borrow ends
+    // before we emit command events through `app`.
+    let outcome = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        match registry.herds.iter_mut().find(|herd| herd.id == herd_id) {
+            None => Outcome::UnknownHerd,
+            Some(herd) if herd.is_domesticated() => Outcome::AlreadyDomesticated,
+            // Only the tending faction may claim; report ownership and tameness distinctly.
+            Some(herd) if herd.owner != Some(faction) => Outcome::NotOwner,
+            Some(herd) if herd.domestication_progress < claim_threshold => {
+                Outcome::NotTame(herd.domestication_progress)
+            }
+            Some(herd) => {
+                herd.claim_domestication(faction);
+                Outcome::Claimed
+            }
+        }
+    };
+
+    match outcome {
+        Outcome::UnknownHerd => {
+            warn!(
+                target: "shadow_scale::command",
+                command = "domesticate",
+                faction = %faction.0,
+                herd = %herd_id,
+                "command.domesticate.rejected=unknown_herd"
+            );
+            emit_command_failure(
+                app,
+                CommandEventKind::Domesticate,
+                faction,
+                format!("Herd '{}' no longer exists.", herd_id),
+            );
+        }
+        Outcome::AlreadyDomesticated => emit_command_failure(
+            app,
+            CommandEventKind::Domesticate,
+            faction,
+            format!("{} is already domesticated.", herd_id),
+        ),
+        Outcome::NotOwner => emit_command_failure(
+            app,
+            CommandEventKind::Domesticate,
+            faction,
+            format!(
+                "You are not tending {}. Sustain-follow it to build husbandry before claiming it.",
+                herd_id
+            ),
+        ),
+        Outcome::NotTame(progress) => emit_command_failure(
+            app,
+            CommandEventKind::Domesticate,
+            faction,
+            format!(
+                "{} is not tame enough to domesticate ({}%). Keep Sustain-following it to build husbandry.",
+                herd_id,
+                (progress * 100.0).round() as i64
+            ),
+        ),
+        Outcome::Claimed => {
+            let tick = app.world.resource::<SimulationTick>().0;
+            info!(
+                target: "shadow_scale::command",
+                command = "domesticate",
+                faction = %faction.0,
+                herd = %herd_id,
+                "command.domesticate.claimed"
+            );
+            push_command_event(
+                app,
+                tick,
+                CommandEventKind::Domesticate,
+                faction,
+                format!("Domesticated {}", herd_id),
+                Some(format!(
+                    "status=complete action=domesticate herd={}",
+                    herd_id
+                )),
+            );
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn queue_food_assignment(
     app: &mut bevy::prelude::App,
@@ -2640,6 +2753,13 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             herd_id,
             band_entity_bits,
         }),
+        ProtoCommandPayload::Domesticate {
+            faction_id,
+            herd_id,
+        } => Some(Command::Domesticate {
+            faction: FactionId(faction_id),
+            herd_id,
+        }),
         ProtoCommandPayload::ExportMap { path } => Some(Command::ExportMap { path }),
     }
 }
@@ -2944,6 +3064,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::CampaignVictory => "Campaign victory",
         CommandEventKind::Forage => "Harvest",
         CommandEventKind::Hunt => "Hunt",
+        CommandEventKind::Domesticate => "Domesticate",
     }
 }
 

@@ -24,7 +24,7 @@ use crate::{
         CULTURE_TRAIT_AXES,
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
-    fauna::{net_biomass_delta, HerdDensityMap, HerdRegistry},
+    fauna::{net_biomass_delta, EcologyPhase, HerdDensityMap, HerdRegistry},
     fauna_config::FaunaConfigHandle,
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     generations::GenerationRegistry,
@@ -3296,6 +3296,7 @@ pub fn advance_fauna_pursuits(
     let hunt = &fauna.hunt;
     let follow = &fauna.follow;
     let ecology = &fauna.ecology;
+    let husbandry = &fauna.husbandry;
     for (entity, mut cohort, mut pursuit) in cohorts.iter_mut() {
         // Herd still around? (may have despawned via extinction or another hunter).
         let Some(herd_pos) = registry.find(&pursuit.fauna_id).map(|herd| herd.position()) else {
@@ -3361,8 +3362,6 @@ pub fn advance_fauna_pursuits(
             FaunaPursuitMode::Hunt => hunt.take_from(herd.biomass),
             // Sustain/Surplus take is sized off the group's net regrowth; a collapsing
             // (sub-threshold) group has no surplus to give, so `.max(0.0)` yields zero.
-            // Phase E hook: a long-lived Sustain follow on a Thriving herd
-            // (`herd.ecology_phase`) is where husbandry / domestication progress accrues.
             FaunaPursuitMode::Follow { policy } => match policy {
                 FollowPolicy::Sustain => {
                     net_biomass_delta(herd.biomass, herd.carrying_capacity, ecology).max(0.0)
@@ -3376,6 +3375,19 @@ pub fn advance_fauna_pursuits(
         }
         .clamp(0.0, herd.biomass);
         herd.biomass -= take;
+        // Phase E husbandry: a Sustain follow on a Thriving group tames it over time.
+        // Progress accrues here (Population) for the following faction; untended groups
+        // decay in `advance_husbandry` (Logistics), so domestication needs a *sustained*
+        // Sustain-follow. Once progress reaches 1.0 the group is domesticated.
+        if matches!(
+            pursuit.mode,
+            FaunaPursuitMode::Follow {
+                policy: FollowPolicy::Sustain
+            }
+        ) && herd.ecology_phase == EcologyPhase::Thriving
+        {
+            herd.accrue_domestication(pursuit.faction, husbandry.progress_per_turn);
+        }
         let biomass_left = herd.biomass;
         let species = herd.species.clone();
 

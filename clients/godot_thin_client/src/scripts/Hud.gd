@@ -17,7 +17,7 @@ signal targeting_changed(info: Dictionary)
 ## changes.** Shown in the lower-left version overlay next to the server build (streamed
 ## in the snapshot header) so the running client+server builds can be confirmed at a
 ## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-07.4"
+const CLIENT_BUILD := "2026-07-07.5"
 var _build_label: Label = null
 var _server_build: String = "?"
 
@@ -1039,6 +1039,9 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     var phase := String(herd_data.get("ecology_phase", "")).strip_edges().to_lower()
     if phase != "":
         lines.append("Ecology: %s" % _ecology_phase_label(phase))
+    var domestication := float(herd_data.get("domestication", 0.0))
+    if domestication > 0.0:
+        lines.append("Husbandry: %s" % _husbandry_label(domestication))
     var x := int(herd_data.get("x", -1))
     var y := int(herd_data.get("y", -1))
     if x >= 0 and y >= 0:
@@ -1071,6 +1074,21 @@ func _ecology_value_hex(value: String) -> String:
         return HudStyle.DANGER_HEX
     if normalized.contains("stress"):
         return HudStyle.WARN_HEX
+    return HudStyle.INK_HEX
+
+## Player-facing husbandry label from domestication progress (0.0–1.0). Fully tamed shows
+## a livestock glyph; in-progress shows the percentage. `_format_detail_bbcode` tints a
+## Domesticated value via `_husbandry_value_hex`.
+func _husbandry_label(progress: float) -> String:
+    if progress >= 1.0:
+        return "🐄 Domesticated"
+    return "Domesticating %d%%" % int(round(progress * 100.0))
+
+## BBCode hex for a "Husbandry" value: signal (positive) for a domesticated herd, normal
+## ink while it's still being tamed. Matched on the label produced by `_husbandry_label`.
+func _husbandry_value_hex(value: String) -> String:
+    if value.to_lower().contains("domesticated"):
+        return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
 
 func _format_unit_list(entries: Array) -> String:
@@ -1137,6 +1155,8 @@ func _format_detail_bbcode(lines: Array) -> String:
                 value_hex = HudStyle.WARN_HEX
             elif String(kv[0]) == "Ecology":
                 value_hex = _ecology_value_hex(String(kv[1]))
+            elif String(kv[0]) == "Husbandry":
+                value_hex = _husbandry_value_hex(String(kv[1]))
             out += "[cell][color=#%s]%s[/color][/cell][cell][color=#%s]%s[/color][/cell]" % [
                 HudStyle.INK_DIM_HEX, kv[0], value_hex, kv[1],
             ]
