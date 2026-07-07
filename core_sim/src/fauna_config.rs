@@ -150,17 +150,58 @@ impl HuntConfig {
     }
 }
 
-/// Ecology tuning: per-turn logistic regrowth toward each species' carrying cap.
+/// Ecology tuning: per-turn **critical-depensation** biomass dynamics toward each
+/// species' carrying cap. Above the Allee threshold (`collapse_fraction * cap`) the
+/// group regrows logistically at `regrowth_rate`; below it the group is non-viable and
+/// declines by `collapse_rate` of its biomass each turn — an irreversible crash to
+/// local extinction even without further hunting (the overhunting point-of-no-return).
+/// A collapsing remnant below `extinction_floor * cap` disperses (despawns).
+/// `stressed_fraction` is the softer band used only to classify a herd's `EcologyPhase`
+/// for the client; it does not affect the growth curve.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct EcologyConfig {
     pub regrowth_rate: f32,
+    /// Allee threshold as a fraction of carrying capacity. Below `collapse_fraction *
+    /// cap` the group collapses instead of regrowing.
+    pub collapse_fraction: f32,
+    /// Per-turn fractional decline of a collapsing (sub-threshold) group.
+    pub collapse_rate: f32,
+    /// Upper edge of the "stressed" (depleted-but-recovering) band, as a fraction of
+    /// carrying capacity. Classification only.
+    pub stressed_fraction: f32,
+    /// Viability floor: a group below `extinction_floor * cap` disperses (local
+    /// extinction) so a collapse reaches zero in finite turns.
+    pub extinction_floor: f32,
 }
 
 impl Default for EcologyConfig {
     fn default() -> Self {
         Self {
             regrowth_rate: 0.05,
+            collapse_fraction: 0.15,
+            collapse_rate: 0.20,
+            stressed_fraction: 0.40,
+            extinction_floor: 0.02,
+        }
+    }
+}
+
+/// Immigration tuning: a low per-turn chance to respawn a wild-game group up to the
+/// abundance cap so an overhunted map slowly replenishes (early forager play stays
+/// game-rich). `max_attempts` bounds the per-turn random tile sampling.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ImmigrationConfig {
+    pub chance_per_turn: f32,
+    pub max_attempts: u32,
+}
+
+impl Default for ImmigrationConfig {
+    fn default() -> Self {
+        Self {
+            chance_per_turn: 0.15,
+            max_attempts: 12,
         }
     }
 }
@@ -197,6 +238,7 @@ pub struct FaunaConfig {
     pub hunt: HuntConfig,
     pub ecology: EcologyConfig,
     pub follow: FollowConfig,
+    pub immigration: ImmigrationConfig,
 }
 
 impl FaunaConfig {
@@ -385,6 +427,16 @@ mod tests {
         assert!(config.hunt.take_fraction > 0.0);
         assert_eq!(config.hunt.pursuit_radius, 1);
         assert!(config.ecology.regrowth_rate > 0.0);
+        // Thresholds are ordered extinction_floor < collapse < stressed < 1.
+        assert!(config.ecology.extinction_floor > 0.0);
+        assert!(config.ecology.extinction_floor < config.ecology.collapse_fraction);
+        assert!(config.ecology.collapse_fraction < config.ecology.stressed_fraction);
+        assert!(config.ecology.stressed_fraction < 1.0);
+        assert!(config.ecology.collapse_rate > 0.0);
+        // Immigration is a low per-turn chance with a bounded sampling budget.
+        assert!(config.immigration.chance_per_turn > 0.0);
+        assert!(config.immigration.chance_per_turn <= 1.0);
+        assert!(config.immigration.max_attempts >= 1);
         assert!(config.follow.surplus_multiplier > 1.0);
         assert!(config.follow.reveal_radius >= 1);
         // take clamps to [min_take, biomass].

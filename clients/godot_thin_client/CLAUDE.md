@@ -294,6 +294,12 @@ easy-to-miss "select a band…" line in the selection panel.
   (`FollowPolicyButtons`, `_follow_policy`, restyled via `HudStyle.apply_button`).
   Both Hunt and Follow enter targeting mode to pick a band; the button flips to a
   "Cancel …" affordance while pending.
+- **Herd ecology readout** (`Hud.gd` `_herd_summary_lines`): the selection panel shows
+  the group's `ecology_phase` (snapshot `HerdTelemetryState.ecologyPhase`) as an
+  **Ecology** row — a neutral "Thriving", or a warned "⚠ Stressed" / "⚠ Collapsing"
+  that `_format_detail_bbcode` tints amber / red (`_ecology_value_hex`, `HudStyle.WARN_HEX`
+  / `DANGER_HEX`). A `Collapsing` herd has been overhunted past the point of no return and
+  is crashing to local extinction (see `core_sim` Fauna & Wild Game — depensation collapse).
 - **HUD owns the state** (`Hud.gd` `_pending_forage` / `_pending_scout_unit` /
   `_pending_hunt` / `_pending_follow` — only one active at a time via
   `_clear_other_pending`) and derives a descriptor via `_current_targeting_info()`

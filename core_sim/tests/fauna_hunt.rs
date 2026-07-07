@@ -153,9 +153,11 @@ fn biomass_regrows_and_extinct_group_despawns() {
 
     let low_biomass = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
-        // Drive herd 0 well below its cap so logistic regrowth is clearly positive.
+        // Draw herd 0 down to half its cap: below capacity so logistic regrowth is
+        // clearly positive, but above the Phase D collapse threshold so it recovers
+        // rather than crashing.
         let cap = registry.herds[0].carrying_capacity;
-        let low = (cap * 0.1).max(1.0);
+        let low = (cap * 0.5).max(1.0);
         registry.herds[0].biomass = low;
         // Zero out herd 1 -> local extinction.
         registry.herds[1].biomass = 0.0;

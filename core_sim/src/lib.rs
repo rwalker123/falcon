@@ -90,8 +90,8 @@ pub use espionage::{
     QueueMissionParams, SecurityPolicy,
 };
 pub use fauna::{
-    advance_herds, spawn_initial_herds, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    HerdTelemetryEntry,
+    advance_herds, repopulate_fauna, spawn_initial_herds, EcologyPhase, HerdDensityMap,
+    HerdRegistry, HerdTelemetry, HerdTelemetryEntry,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata, SizeClass,
@@ -441,6 +441,7 @@ pub fn build_headless_app() -> App {
                 systems::simulate_materials,
                 systems::simulate_logistics,
                 advance_herds,
+                repopulate_fauna,
                 systems::trade_knowledge_diffusion,
             )
                 .chain()

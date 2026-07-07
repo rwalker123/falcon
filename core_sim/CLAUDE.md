@@ -39,7 +39,7 @@ cargo run -p core_sim --bin server
 | `src/data/influencer_config.json` | Roster caps, decay factors, scope thresholds |
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
-| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` tuning |
+| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) tuning |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -166,9 +166,10 @@ provisions/trade (`hunt.*_per_biomass`), drawn from the group and added to
 (`FollowPolicy` ∈ Sustain | Surplus | Eradicate). The same `advance_fauna_pursuits`
 system keeps the band within `pursuit_radius` of the moving group and, once adjacent,
 **auto-hunts each turn per policy** instead of removing the component: Sustain takes
-one turn's regrowth (`regrowth_amount`, group ~stable), Surplus takes that ×
-`follow.surplus_multiplier` (slow decline), Eradicate takes `hunt.take_from` (drives
-extinction). Each turn it also grants a small non-food benefit — a `FogRevealLedger`
+one turn's net regrowth (`net_biomass_delta(..).max(0.0)`, group ~stable; a collapsing
+group yields nothing), Surplus takes that × `follow.surplus_multiplier` (slow decline),
+Eradicate takes `hunt.take_from` (drives extinction). Each turn it also grants a small
+non-food benefit — a `FogRevealLedger`
 tracking pulse (`follow.reveal_radius`/`reveal_duration_turns`) + `follow.morale_gain`.
 Config lives in the `follow` block of `fauna_config.json`. The old one-shot teleport
 follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
@@ -179,20 +180,45 @@ Follow / Scout calls `reassign_band` (`server.rs`) first, stripping any existing
 (this also fixes a latent harvest+follow double-assignment). To stop following, order
 the band to do something else.
 
-**Ecology** — `advance_herds` applies per-turn logistic regrowth toward each group's
-per-species carrying capacity (`Herd.carrying_capacity` = the species' `biomass[1]`;
-rate = `ecology.regrowth_rate`; increment via the shared `regrowth_amount` helper) and
-**despawns** any group at or below zero biomass (local extinction). So a hunt/follow
-draws a group down in `Population`; it regrows in the next turn's `Logistics`; sustained
-overhunting drives it extinct.
+**Ecology — critical-depensation collapse (Phase D)** — `advance_herds` applies one
+turn of `net_biomass_delta` (`fauna.rs`) toward each group's per-species carrying
+capacity (`Herd.carrying_capacity` = the species' `biomass[1]`). The curve is **not**
+plain logistic: above the Allee threshold (`ecology.collapse_fraction * cap`) the group
+regrows logistically at `ecology.regrowth_rate`; **below** it the group is non-viable and
+declines by `ecology.collapse_rate` per turn — an **irreversible crash to local
+extinction even if hunting stops** (the overhunting point of no return). `advance_herds`
+**despawns** any group below the viability floor (`ecology.extinction_floor * cap`), so a
+collapse reaches zero in finite turns. So a hunt/follow draws a group down in
+`Population`; it regrows (or, past the threshold, collapses) in the next turn's
+`Logistics`; sustained overhunting drives it extinct permanently.
+
+**Ecology phase + domestication hook** — each `Herd` carries a coarse `EcologyPhase`
+(`Thriving` / `Stressed` / `Collapsing`), recomputed every turn from biomass vs
+`ecology.stressed_fraction`/`collapse_fraction` (`classify_ecology_phase`) and exported in
+the snapshot (`HerdTelemetryState.ecologyPhase`) so the client warns the player before a
+group is doomed. This derived state is also the **seam the later domestication /
+industrialized-hunting arc keys off** (e.g. a long Sustain-follow on a `Thriving` herd →
+husbandry progress); see the `// Phase E hook:` marker in `advance_fauna_pursuits`.
+
+**Immigration** — `repopulate_fauna` (`fauna.rs`, `TurnStage::Logistics` right after
+`advance_herds`) gives a low per-turn chance (`immigration.chance_per_turn`) to respawn one
+short-range game group up to `abundance.max_total_game`, sampling up to
+`immigration.max_attempts` random land tiles that host game and respect `min_spacing`. This
+keeps an overhunted map slowly replenishing (early forager play stays game-rich) without
+undoing a local extinction (the crashed group is gone; a *new* group may immigrate
+elsewhere). Seeded per-turn from `map_seed ^ tick ^ salt` (deterministic under rollback).
+
+Ecology tunables live in the `ecology` (`regrowth_rate`, `collapse_fraction`,
+`collapse_rate`, `stressed_fraction`, `extinction_floor`) and `immigration` blocks of
+`fauna_config.json`.
 
 > `FaunaPursuit` is **not** snapshot-persisted (unlike `HarvestAssignment`): a
 > `rollback` mid-pursuit cleanly cancels the in-flight hunt (the rehydrated cohort
 > simply lacks the component). Pursuits are short-lived; revisit if needed.
 
-Deferred to Phase D (`docs/plan_wildlife_hunting_overlay.md`): the overhunting →
-collapse tuning and the domestication / industrialized-hunting arc. The tile-based
-`HuntGame` handler stays neutralized (its client button no longer surfaces).
+Deferred beyond Phase D (`docs/plan_wildlife_hunting_overlay.md`): the domestication /
+industrialized-hunting arc itself (Phase D only leaves the `EcologyPhase` hook). The
+tile-based `HuntGame` handler stays neutralized (its client button no longer surfaces).
 
 ---
 

@@ -2911,6 +2911,9 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
             let _ = dict.insert("size_class", size_class);
         }
         let _ = dict.insert("huntable", herd.huntable());
+        if let Some(ecology_phase) = herd.ecologyPhase() {
+            let _ = dict.insert("ecology_phase", ecology_phase);
+        }
         array.push(&dict.to_variant());
     }
     array
