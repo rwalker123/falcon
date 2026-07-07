@@ -178,13 +178,25 @@ fn config_with(chance: f32, max_total_game: usize) -> FaunaConfigHandle {
     FaunaConfigHandle::new(Arc::new(cfg))
 }
 
+/// Count short-range game groups (the ones `max_total_game` caps; migratory `herd_*`
+/// are excluded).
+fn game_count(app: &App) -> usize {
+    app.world
+        .resource::<HerdRegistry>()
+        .herds
+        .iter()
+        .filter(|h| h.id.starts_with("game_"))
+        .count()
+}
+
 /// Below the abundance cap and with a guaranteed roll, immigration respawns one group.
 #[test]
 fn immigration_respawns_below_cap() {
     let mut app = spawn_world();
     let before = app.world.resource::<HerdRegistry>().herds.len();
-    // Force the roll and keep the cap above the current count.
-    app.world.insert_resource(config_with(1.0, before + 5));
+    // Force the roll and keep the game cap above the current game count.
+    app.world
+        .insert_resource(config_with(1.0, game_count(&app) + 5));
 
     app.world.run_system_once(repopulate_fauna);
 
@@ -196,16 +208,18 @@ fn immigration_respawns_below_cap() {
     );
 }
 
-/// At (or above) the abundance cap, immigration adds nothing.
+/// At (or above) the abundance cap, immigration adds nothing. The cap counts only
+/// short-range game groups, not migratory herds.
 #[test]
 fn immigration_respects_cap() {
     let mut app = spawn_world();
     let before = app.world.resource::<HerdRegistry>().herds.len();
-    // Cap at the current count → the early return fires despite the guaranteed roll.
-    app.world.insert_resource(config_with(1.0, before));
+    // Cap at the current game count → the early return fires despite the guaranteed roll.
+    app.world
+        .insert_resource(config_with(1.0, game_count(&app)));
 
     app.world.run_system_once(repopulate_fauna);
 
     let after = app.world.resource::<HerdRegistry>().herds.len();
-    assert_eq!(after, before, "no group should immigrate at the cap");
+    assert_eq!(after, before, "no group should immigrate at the game cap");
 }

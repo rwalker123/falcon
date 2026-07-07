@@ -17,6 +17,11 @@ use crate::{
 /// two streams don't correlate.
 const IMMIGRATION_SEED_SALT: u64 = 0xFA1A_B0B0;
 
+/// Id prefix marking a short-range wild-game group (migratory herds use `herd_`). The
+/// `abundance.max_total_game` cap applies to these groups only — both at initial spawn
+/// (`placed.len()`) and per-turn immigration.
+const GAME_ID_PREFIX: &str = "game_";
+
 pub const HERD_DENSITY_REFERENCE_BIOMASS: f32 = 8_000.0;
 
 /// Coarse ecological health band derived from a group's biomass vs its carrying
@@ -479,7 +484,7 @@ fn spawn_game_group_at(
     let route = build_short_route(pos, steps, width, height, tile_registry, tiles, rng)?;
     let biomass = def.sample_biomass(rng);
     let carrying_capacity = def.carrying_capacity();
-    let id = format!("game_{key}_{game_idx:02}");
+    let id = format!("{GAME_ID_PREFIX}{key}_{game_idx:02}");
     let mut herd = Herd::new(
         id,
         def.display_name.clone(),
@@ -556,7 +561,14 @@ pub fn repopulate_fauna(
 ) {
     let fauna = fauna_config.get();
     let imm = &fauna.immigration;
-    if imm.chance_per_turn <= 0.0 || registry.herds.len() >= fauna.abundance.max_total_game {
+    // `max_total_game` caps short-range game groups only (matching spawn's `placed`
+    // counter); migratory `herd_*` are spawned separately and don't count against it.
+    let game_count = registry
+        .herds
+        .iter()
+        .filter(|herd| herd.id.starts_with(GAME_ID_PREFIX))
+        .count();
+    if imm.chance_per_turn <= 0.0 || game_count >= fauna.abundance.max_total_game {
         return;
     }
 
