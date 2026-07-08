@@ -159,6 +159,9 @@ func _ready() -> void:
         if hud != null and map_view.has_signal("targeting_cancel_requested") and hud.has_method("cancel_active_targeting"):
             if not map_view.is_connected("targeting_cancel_requested", Callable(hud, "cancel_active_targeting")):
                 map_view.connect("targeting_cancel_requested", Callable(hud, "cancel_active_targeting"))
+        if hud != null and hud.has_signal("alert_focus_requested") and map_view.has_method("focus_on_tile"):
+            if not hud.is_connected("alert_focus_requested", Callable(map_view, "focus_on_tile")):
+                hud.connect("alert_focus_requested", Callable(map_view, "focus_on_tile"))
     if map_view != null and map_view.has_signal("overlay_legend_changed") and hud != null and hud.has_method("update_overlay_legend"):
         map_view.connect("overlay_legend_changed", Callable(self, "_on_overlay_legend_changed"))
         if map_view.has_method("refresh_overlay_legend"):
@@ -208,6 +211,8 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_sedentarization", [snapshot["sedentarization"]])
     if snapshot.has("demographics"):
         _hud_invoke("update_demographics", [snapshot["demographics"]])
+    if snapshot.has("populations"):
+        _hud_invoke("update_band_alerts", [snapshot["populations"]])
     if not is_delta:
         _hud_invoke("reset_command_feed")
     if snapshot.has("command_events"):

@@ -69,6 +69,27 @@ const KEYBOARD_ZOOM_SPEED := 0.8
 const KEYBOARD_PAN_SPEED := 600.0
 const PLAYER_FACTION_ID := 0
 
+# --- Band status decorations (food-days dot, activity glyph, supply links) ---
+# Sit relative to the band marker radius so they scale with zoom.
+const BAND_FOOD_DOT_RADIUS_FACTOR := 0.28   # of the band marker radius
+const BAND_FOOD_DOT_OFFSET_FACTOR := 0.9    # dot center offset up-right from marker center
+const BAND_ACTIVITY_RING_FACTOR := 0.72     # activity ring radius, of marker radius
+const BAND_ACTIVITY_RING_WIDTH := 2.0
+const BAND_ACTIVITY_RING_ALPHA := 0.7
+# Per-activity ring tint; "idle" bands never reach here (they draw no ring).
+const BAND_ACTIVITY_COLORS := {
+	"harvest": Color(0.30, 0.80, 0.30, BAND_ACTIVITY_RING_ALPHA),  # green — gathering
+	"hunt": Color(0.80, 0.30, 0.30, BAND_ACTIVITY_RING_ALPHA),     # red — hunting
+	"follow": Color(0.98, 0.58, 0.18, BAND_ACTIVITY_RING_ALPHA),   # amber — following a herd
+	"scout": Color(0.30, 0.60, 0.90, BAND_ACTIVITY_RING_ALPHA),    # blue — scouting
+}
+const BAND_ACTIVITY_DEFAULT_COLOR := Color(0.70, 0.70, 0.70, BAND_ACTIVITY_RING_ALPHA)
+const BAND_ACTIVITY_IDLE := "idle"
+# Supply-link overlay: faint lines connecting bands sharing a supply network.
+const SUPPLY_LINK_COLOR := Color(0.310, 0.878, 0.812, 0.28)  # dim SIGNAL cyan
+const SUPPLY_LINK_WIDTH := 2.0
+const SUPPLY_NETWORK_SOLO := 0  # supply_network_id 0 == not in a shared network
+
 const OVERLAY_COLORS := {
 	"logistics": LOGISTICS_COLOR,
 	"sentiment": SENTIMENT_COLOR,
@@ -731,6 +752,7 @@ func _draw() -> void:
 	_draw_crisis_annotations(radius, origin)
 	_draw_start_marker(radius, origin)
 
+	_draw_supply_links(radius, origin)
 	for unit in units:
 		_draw_unit(unit, radius, origin)
 
@@ -1217,6 +1239,11 @@ func _draw_unit(unit: Dictionary, radius: float, origin: Vector2) -> void:
 	draw_circle(center, marker_radius, color)
 	draw_arc(center, marker_radius, 0, TAU, 12, Color(0, 0, 0, 0.4), 2.5)
 
+	# Band food + activity indicators (player bands only — other factions' larders
+	# and orders aren't ours to see).
+	if _is_player_unit(unit):
+		_draw_band_status(unit, center, marker_radius)
+
 	var label: String = str(unit.get("id", ""))
 	if label != "":
 		_draw_label(center + Vector2(-marker_radius, marker_radius * 0.1), label, marker_radius * 2.0, 16, Color(0.05, 0.05, 0.05, 0.85))
@@ -1240,6 +1267,55 @@ func _draw_unit(unit: Dictionary, radius: float, origin: Vector2) -> void:
 	if int(unit.get("entity", -1)) == selected_unit_id:
 		var highlight_color := Color(1.0, 1.0, 1.0, 0.9)
 		draw_arc(center, marker_radius + 4.0, 0, TAU, 24, highlight_color, 3.0)
+
+## Faint links between the player's bands that share a supply network (bands
+## auto-share goods by reach, grouped server-side by `supply_network_id`). Drawn
+## as a simple chain through each network's members so the player can see who is
+## pooling food. Solo bands (id 0) and non-player bands are ignored.
+func _draw_supply_links(radius: float, origin: Vector2) -> void:
+	var networks: Dictionary = {}  # supply_network_id -> Array[Vector2] of centers
+	for unit in units:
+		if not _is_player_unit(unit):
+			continue
+		var network_id: int = int(unit.get("supply_network_id", SUPPLY_NETWORK_SOLO))
+		if network_id == SUPPLY_NETWORK_SOLO:
+			continue
+		var pos: Array = Array(unit.get("pos", []))
+		if pos.size() != 2:
+			continue
+		var center: Vector2 = _hex_center_wrapped(int(pos[0]), int(pos[1]), radius, origin)
+		var members: Array = networks.get(network_id, [])
+		members.append(center)
+		networks[network_id] = members
+	for network_id in networks:
+		var members: Array = networks[network_id]
+		if members.size() < 2:
+			continue
+		# Chain the members in draw order — enough to read the grouping for the
+		# small networks these form, without an all-pairs mesh.
+		for i in range(members.size() - 1):
+			var a: Vector2 = members[i]
+			var b: Vector2 = members[i + 1]
+			# Skip wrap artifacts (a segment spanning most of the map width).
+			if abs(a.x - b.x) > last_map_size.x * 0.4:
+				continue
+			draw_line(a, b, SUPPLY_LINK_COLOR, SUPPLY_LINK_WIDTH)
+
+## Two decorations on a player band marker: a food-days dot (green/amber/red by
+## the shared BandFoodStatus thresholds) up-and-right of the marker, and — when
+## the band is on a command (activity != idle) — a subtle activity-tinted ring.
+func _draw_band_status(unit: Dictionary, center: Vector2, marker_radius: float) -> void:
+	var days: float = float(unit.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
+	var dot_color := BandFoodStatus.color_for_days(days)
+	var dot_radius: float = marker_radius * BAND_FOOD_DOT_RADIUS_FACTOR
+	var dot_center := center + Vector2(marker_radius, -marker_radius) * BAND_FOOD_DOT_OFFSET_FACTOR
+	draw_circle(dot_center, dot_radius, dot_color)
+	draw_arc(dot_center, dot_radius, 0, TAU, 10, Color(0, 0, 0, 0.5), 1.0)
+
+	var activity := String(unit.get("activity", "")).strip_edges()
+	if activity != "" and activity != BAND_ACTIVITY_IDLE:
+		var ring_color: Color = BAND_ACTIVITY_COLORS.get(activity, BAND_ACTIVITY_DEFAULT_COLOR)
+		draw_arc(center, marker_radius * BAND_ACTIVITY_RING_FACTOR, 0, TAU, 28, ring_color, BAND_ACTIVITY_RING_WIDTH)
 
 func _travel_arrow_color(task_kind: String) -> Color:
 	match task_kind:
@@ -1544,8 +1620,14 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"pos": [current_x, current_y],
 			"size": int(entry.get("size", 0)),
 			"id": label,
-			"is_traveling": is_traveling
+			"is_traveling": is_traveling,
+			"days_of_food": float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS)),
+			"activity": String(entry.get("activity", "")),
+			"supply_network_id": int(entry.get("supply_network_id", 0)),
 		}
+		var stores_variant: Variant = entry.get("stores", {})
+		if stores_variant is Dictionary:
+			marker["stores"] = (stores_variant as Dictionary).duplicate(true)
 
 		# Add destination info for units with active assignments
 		var harvest_variant: Variant = entry.get("harvest", {})
@@ -3555,6 +3637,18 @@ func _on_minimap_2d_pan_requested(normalized_pos: Vector2) -> void:
 	# doesn't turn a right-edge click (col == grid_width) into column 0.
 	var target_col := mini(int(normalized_pos.x * float(grid_width)), grid_width - 1)
 	var target_row := mini(int(normalized_pos.y * float(grid_height)), grid_height - 1)
+	focus_on_tile(target_col, target_row)
+
+## Center the main view on a hex, reusing the minimap's centering + wrap-nearest
+## machinery. Public so the HUD (e.g. clicking a band alert) can pan to a band's
+## tile. Silently no-ops before the first layout pass.
+func focus_on_tile(col: int, row: int) -> void:
+	if grid_width == 0 or grid_height == 0:
+		return
+	if last_hex_radius <= 0:
+		return
+	var target_col := col
+	var target_row := row
 	if _wrap_horizontal:
 		# When wrapping, find the closest logical column to current view center
 		# First, wrap target to [0, grid_width)

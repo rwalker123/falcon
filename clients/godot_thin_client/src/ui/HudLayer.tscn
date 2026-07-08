@@ -263,6 +263,22 @@ unique_name_in_owner = true
 text = "Harvest"
 
 
+[node name="AlertsPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]
+script = ExtResource("4")
+card_title = "Alerts"
+custom_minimum_size = Vector2(320, 0)
+
+[node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/AlertsPanel"]
+size_flags_horizontal = 3
+
+[node name="AlertsLabel" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/AlertsPanel/CardContent"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+bbcode_enabled = true
+scroll_active = false
+fit_content = true
+autowrap_mode = 2
+
 [node name="CommandFeedPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]
 script = ExtResource("4")
 card_title = "Command Feed"

@@ -45,9 +45,17 @@ func _ready() -> void:
 	_hud.update_demographics([{"faction": 0, "children": 34, "working": 51, "elders": 15}])
 
 	# State 1 — a band selected (BAND eyebrow, primary Scout / ghost Found Camp).
+	# The band fixture carries a warn-tier larder, so the Food line reads amber.
 	_hud.show_unit_selection(_band_fixture())
 	await _settle()
 	await _save("band")
+
+	# State 1b — band alerts: seed previous sizes, then a snapshot that raises all
+	# three alert kinds (starving red / losing-population amber / idle quiet).
+	_hud.update_band_alerts(_band_alert_baseline())
+	_hud.update_band_alerts(_band_alert_fixture())
+	await _settle()
+	await _save("band_alerts")
 
 	# State 2 — a food tile selected (primary Harvest button).
 	_hud.show_tile_selection(_food_tile_fixture())
@@ -113,6 +121,8 @@ func _band_fixture() -> Dictionary:
 		"size": 148,
 		"entity": 904,
 		"pos": [71, 18],
+		"days_of_food": 7.0,
+		"stores": {"provisions": 84.0},
 		"tile_info": {
 			"x": 71, "y": 18,
 			"terrain_label": "Freshwater Marsh",
@@ -122,6 +132,27 @@ func _band_fixture() -> Dictionary:
 			"food_module_label": "None",
 		},
 	}
+
+## Prior-snapshot band sizes so the "losing population" alert has a baseline to
+## compare against (Band Ash drops 90 → 78 in the live fixture below).
+func _band_alert_baseline() -> Array:
+	return [
+		{"faction": 0, "entity": 101, "size": 60, "days_of_food": 12.0, "activity": "harvest", "current_x": 71, "current_y": 18},
+		{"faction": 0, "entity": 102, "size": 90, "days_of_food": 999.0, "activity": "hunt", "current_x": 40, "current_y": 22},
+		{"faction": 0, "entity": 103, "size": 45, "days_of_food": 999.0, "activity": "harvest", "current_x": 12, "current_y": 9},
+	]
+
+func _band_alert_fixture() -> Array:
+	return [
+		# Starving: 3 days of food (< critical) → red alert.
+		{"faction": 0, "entity": 101, "size": 60, "days_of_food": 3.0, "activity": "harvest", "current_x": 71, "current_y": 18,
+			"harvest": {"band_label": "Band Fen"}},
+		# Losing population: size 90 → 78 vs baseline → amber alert.
+		{"faction": 0, "entity": 102, "size": 78, "days_of_food": 999.0, "activity": "hunt", "current_x": 40, "current_y": 22,
+			"harvest": {"band_label": "Band Ash"}},
+		# Idle labor: quiet low-priority alert.
+		{"faction": 0, "entity": 103, "size": 45, "days_of_food": 999.0, "activity": "idle", "current_x": 12, "current_y": 9},
+	]
 
 func _food_tile_fixture() -> Dictionary:
 	return {

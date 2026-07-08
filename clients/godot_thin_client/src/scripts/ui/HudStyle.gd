@@ -24,11 +24,13 @@ const SIGNAL_DEEP   := Color(0.122, 0.612, 0.557, 1.0)   # #1f9c8e
 const SIGNAL_WASH   := Color(0.310, 0.878, 0.812, 0.14)
 const WARN          := Color(0.949, 0.694, 0.247, 1.0)   # #f2b13f  success / ETA
 const DANGER        := Color(0.910, 0.455, 0.416, 1.0)   # #e8746a
+const HEALTHY       := Color(0.463, 0.804, 0.502, 1.0)   # #76cd80  well-supplied / good
 
 # Hex strings for BBCode-based labels (RichTextLabel headers, command feed).
 const SIGNAL_HEX := "4fe0cf"
 const WARN_HEX := "f2b13f"
 const DANGER_HEX := "e8746a"
+const HEALTHY_HEX := "76cd80"
 const INK_HEX := "e9efe9"
 const INK_DIM_HEX := "9db0ad"
 
