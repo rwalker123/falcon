@@ -48,7 +48,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the hydrology rivers toggle. Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` via `set_map_view`. The nested Map-Overlays section keeps its own `OverlayPanel` script |
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
 | `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the Terrain-tab command buttons. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`; scout/found emit `tile_scout_requested`/`tile_found_camp_requested` (coordinator resolves the faction + sends, like FaunaPanel); gated by `set_command_connected` + `set_construction_available` (CAP_CONSTRUCTION) |
-| `Hud.gd` | HUD layer, legend, selection panel (incl. band food line), band **Alerts** panel, turn readout |
+| `Hud.gd` | HUD layer, legend, the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + Forage) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer + Scout / Hunt / Follow verbs), band **Alerts** panel, turn readout. Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) live here; roster selection emits `roster_occupant_selected` |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping, shared by MapView's band dot and Hud's food line/alerts |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
@@ -271,7 +271,8 @@ spilling under a sideways scrollbar (which reads as unpolished for a game HUD).
 the scene (`HudLayer.tscn`); both docks use `AUTO`, so a scrollbar appears only
 when the stack actually overflows.
 
-**Migration status:** `SelectionPanel`, `CommandFeedPanel`, and
+**Migration status:** `TilePanel`, `OccupantsPanel` (the split selection cards),
+`CommandFeedPanel`, and
 `TerrainLegendPanel` are now `PanelCard`s (the last two dropped the bespoke
 `AutoSizingPanel` height math and the legend's absolute `PRESET_TOP_RIGHT`
 positioning that used to overlap the Victory panel). `StockpilePanel` and
@@ -286,9 +287,33 @@ Commands that need a target (Harvest / Hunt / Follow a herd all need a band; Sco
 needs a tile) run through an explicit **targeting mode** instead of the old
 easy-to-miss "select a band…" line in the selection panel.
 
+- **Selection split — Tile card + Occupants roster** (`Hud.gd`): the old single
+  selection panel is now **two left-dock `PanelCard`s driven by one script**. The
+  **Tile card** (`TilePanel`/`%TileDetail`, priority 10) is the *place* — terrain
+  rows (Biome/Height/Tags + the gather module relabeled `Forage:`) and its one
+  action, the `ForageButton`. The **Occupants card** (`OccupantsPanel`, priority 12,
+  hidden via the dock on an empty hex) is a **selectable roster** of the bands +
+  wildlife on the hex, built at runtime into `%RosterList` as two sub-groups
+  (`Bands (N)` / `Wildlife (N)`); each row is a `Button` hosting a mouse-transparent
+  HBox — a selection accent, a **vitality dot**, name, size, and (bands) an
+  activity glyph. Below the roster, `%OccupantDetail` is the selected occupant's
+  **detail drawer** (band → `_unit_summary_lines` + Scout; herd → `_herd_summary_lines`
+  + Hunt/Follow+policy). Selecting a row (`_on_roster_row_selected`) re-homes the
+  selection and emits `roster_occupant_selected(kind, id)`; **Main forwards it to
+  `MapView.select_occupant`, which moves the map selection ring** (sets
+  `selected_unit_id`/`selected_herd_id`) with no hex click. A fresh tile click
+  auto-selects the first occupant through the same path. The **vitality dot is
+  unified** across map/roster/drawer: a band's dot uses `BandFoodStatus.color_for_days`
+  (`days_of_food` → green/amber/red), a herd's uses `_ecology_tier_color`
+  (`ecology_phase` → thriving green / stressed amber / collapsing red), sharing the
+  exact `HudStyle` HEALTHY/WARN/DANGER constants. Non-player bands list with a neutral
+  dot and no activity/Scout (their larder/orders aren't ours to see). (Found Camp is
+  retired — the Tile card has no camp action; the `unit_found_camp_requested` signal
+  remains declared but unemitted.)
 - **Selection-panel verbs** (`Hud.gd`): a hex can surface **Harvest** (tile gather
-  module, `ForageButton`) *and* **Hunt** / **Follow** (a fauna group on the same
-  hex) together — `show_herd_selection` falls back to the current tile so the
+  module, `ForageButton` on the Tile card) *and* **Hunt** / **Follow** (a fauna group
+  selected in the Occupants roster) together —
+  `show_herd_selection` falls back to the current tile so the
   combined panel renders all applicable groups (`_update_herd_buttons` +
   `_update_food_buttons`). Hunt is gated on the herd's `huntable` snapshot flag;
   **Follow** carries a policy from a Sustain/Surplus/Market/Eradicate picker

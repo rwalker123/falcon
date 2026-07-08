@@ -1671,6 +1671,18 @@ func _rebuild_herd_markers(snapshot: Dictionary) -> void:
 		if not active_ids.has(herd_id):
 			herd_trails.erase(herd_id)
 
+## Move the selection ring to a band/herd chosen from the HUD Occupants roster
+## (no hex click). `kind` is "unit" (id = entity_id int) or "herd" (id = herd_id
+## String); the existing ring draw reads `selected_unit_id`/`selected_herd_id`.
+func select_occupant(kind: String, id) -> void:
+	if kind == "unit":
+		selected_unit_id = int(id)
+		selected_herd_id = ""
+	elif kind == "herd":
+		selected_herd_id = String(id)
+		selected_unit_id = -1
+	queue_redraw()
+
 func _handle_entity_selection(col: int, row: int) -> void:
 	# Check for units on this tile
 	var units_here := _units_on_tile(col, row)

@@ -128,6 +128,8 @@ func _ready() -> void:
             hud.connect("herd_follow_requested", Callable(self, "_on_hud_follow_herd"))
         if hud.has_signal("next_turn_requested") and not hud.is_connected("next_turn_requested", Callable(self, "_on_hud_next_turn")):
             hud.connect("next_turn_requested", Callable(self, "_on_hud_next_turn"))
+        if hud.has_signal("roster_occupant_selected") and not hud.is_connected("roster_occupant_selected", Callable(self, "_on_hud_roster_occupant_selected")):
+            hud.connect("roster_occupant_selected", Callable(self, "_on_hud_roster_occupant_selected"))
     if inspector != null and inspector.has_method("attach_map_view"):
         inspector.call("attach_map_view", map_view)
     if map_view != null and inspector != null and map_view.has_signal("hex_selected") and inspector.has_method("focus_tile_from_map"):
@@ -277,6 +279,12 @@ func _on_map_unit_selected(unit: Dictionary) -> void:
 
 func _on_map_herd_selected(herd: Dictionary) -> void:
     _hud_invoke("show_herd_selection", [herd])
+
+## Roster-row selection in the HUD Occupants card drives the map selection ring to
+## the chosen band/herd (no hex click).
+func _on_hud_roster_occupant_selected(kind: String, id: Variant) -> void:
+    if map_view != null and map_view.has_method("select_occupant"):
+        map_view.call("select_occupant", kind, id)
 
 func _on_map_herd_follow_shortcut(herd_id: String) -> void:
     _on_hud_follow_herd(herd_id)
