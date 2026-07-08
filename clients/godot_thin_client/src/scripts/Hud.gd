@@ -653,22 +653,27 @@ func _on_unit_scout_pressed() -> void:
 
 ## The single Hunt verb, routed by the active policy: Single → a one-shot
 ## `hunt_fauna` (`_pending_hunt`); any other policy → a persistent `follow_herd`
-## (`_pending_follow`). Toggling the button while its matching hunt is pending cancels.
+## (`_pending_follow`). Toggling the button while *either* kind is pending for this
+## herd cancels it (matching the unified "Cancel Hunt" label), regardless of policy.
 func _on_hunt_herd_pressed() -> void:
     if _selected_herd.is_empty():
         return
     var herd_id := String(_selected_herd.get("id", ""))
     if herd_id == "":
         return
+    # The button reads "Cancel Hunt" whenever *either* pending kind is active for
+    # this herd (see _update_herd_buttons), so honor that contract: cancel any
+    # pending hunt/follow before routing by policy, rather than only the kind that
+    # happens to match the current policy (which would re-target instead of cancel).
+    if not _pending_hunt.is_empty() and String(_pending_hunt.get("herd_id", "")) == herd_id:
+        _cancel_pending_hunt(true)
+        return
+    if not _pending_follow.is_empty() and String(_pending_follow.get("herd_id", "")) == herd_id:
+        _cancel_pending_follow(true)
+        return
     if _hunt_policy == HUNT_POLICY_SINGLE:
-        if not _pending_hunt.is_empty() and String(_pending_hunt.get("herd_id", "")) == herd_id:
-            _cancel_pending_hunt(true)
-            return
         _begin_pending_hunt(herd_id)
     else:
-        if not _pending_follow.is_empty() and String(_pending_follow.get("herd_id", "")) == herd_id:
-            _cancel_pending_follow(true)
-            return
         _begin_pending_follow(herd_id, _hunt_policy)
 
 func _on_hunt_policy_pressed(policy: String) -> void:
