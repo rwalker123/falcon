@@ -1053,6 +1053,12 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     if tile_info.has("habitability"):
         var drain := float(tile_info["habitability"])
         lines.append("Habitability: %s" % TileHabitability.rating_for(drain))
+    # Climate is the tile's latitude+elevation temperature band (informational, not a
+    # warning). Terrain-intrinsic, so fine on a remembered tile; only when the snapshot
+    # carries the field (a rehydrated tile may lack it) so we never invent a band.
+    if tile_info.has("temperature"):
+        var temperature := float(tile_info["temperature"])
+        lines.append("Climate: %s" % TileClimate.band_for(temperature))
     if visibility_state == "discovered":
         lines.append("Last seen — information incomplete. Scout to update.")
         return lines

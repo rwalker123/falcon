@@ -51,6 +51,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `Hud.gd` | HUD layer, legend, the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + Forage) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer + Scout / Hunt-with-policy verbs), band **Alerts** panel, turn readout. Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) live here; roster selection emits `roster_occupant_selected` |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale warn/critical thresholds + `color_for_morale`/`hex_for_morale`), shared by MapView's band dot and Hud's food/morale lines + alerts |
 | `ui/TileHabitability.gd` | Single source of truth for the Tile-card Habitability rating: buckets `TileState.habitability` (band-independent per-turn morale drain) into Hospitable/Fair/Harsh/Hostile via `tile_habitability_config.json` thresholds, with the HEALTHY/INK/WARN/DANGER color / `hex_for_rating` mapping. Consumed by `Hud._tile_terrain_lines` + `_format_detail_bbcode` |
+| `ui/TileClimate.gd` | Single source of truth for the Tile-card Climate band: maps `TileState.temperature` (°, a latitude+elevation climate, equator-in-the-middle) into Tropical/Warm/Temperate/Cool/Polar via `tile_climate_config.json` cutoffs. INFORMATIONAL only — deliberately no HEALTHY/WARN/DANGER tint (renders neutral ink), so it doesn't compete with the Habitability row's semantic palette. Consumed by `Hud._tile_terrain_lines` |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
 | `ui/MinimapPanel.gd` | Minimap component for the 2D map view (click-to-pan, aspect ratio sizing) |
@@ -392,6 +393,22 @@ easy-to-miss "select a band…" line in the selection panel.
   fair_max,harsh_max}` = `0.02`/`0.05`/`0.09`) buckets the drain into Hospitable/Fair/Harsh/Hostile,
   tinted HEALTHY/INK/WARN/DANGER via `hex_for_rating` in `_format_detail_bbcode` (mirrors the
   `BandFoodStatus` bucketing pattern). The Karst Cavern Mouth (~0.0825) reads "Harsh" (amber).
+  With the latitude climate + cold-morale tolerance dead-band (see `core_sim`), temperate
+  mid-latitudes read "Hospitable", the equator "Hospitable/Fair", and poles/high-alt/caverns
+  "Harsh/Hostile" — the config buckets (`0.02`/`0.05`/`0.09`) spread cleanly across that range,
+  so no re-tune was needed.
+- **Tile-card Climate** (snapshot `TileState.temperature`, decoded in `native/src/lib.rs`
+  `tile_to_dict` as `temperature` (°); temperature is now a **latitude + elevation** climate
+  (equator-in-the-middle, poles cold) with a small element jitter, NOT the old element
+  checkerboard — see `core_sim`), stored in `MapView.tile_temperature` keyed by `Vector2i` and
+  copied onto the `_tile_info_at` dict): `Hud._tile_terrain_lines` adds a `Climate: <band>` row
+  next to Habitability (before the FoW discovered/unexplored returns — it's terrain-intrinsic, so
+  fine on a remembered tile; only shown when the field is present so rehydrated tiles degrade
+  gracefully). `ui/TileClimate.gd` is the single source of truth — config
+  `src/config/tile_climate_config.json` (`climate.{tropical_min,warm_min,temperate_min,cool_min}`
+  = `26`/`20`/`12`/`3`) maps the temperature into Tropical/Warm/Temperate/Cool/Polar, making the
+  latitude gradient legible ("far south → Polar"). The row is **informational** — neutral ink, no
+  HEALTHY/WARN/DANGER tint, so it doesn't overload the Habitability row's warning semantics.
 - **Alerts panel** (`Hud.gd` `update_band_alerts`, dispatched from `Main.gd` on the snapshot
   `populations`): a left-dock `PanelCard` (`AlertsPanel`/`%AlertsLabel`, priority 15) that rebuilds each
   snapshot from the player faction's bands — **starving** (`days_of_food` < critical, red),

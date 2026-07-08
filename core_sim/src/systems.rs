@@ -29,7 +29,7 @@ use crate::{
     fauna_config::FaunaConfigHandle,
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     generations::GenerationRegistry,
-    heightfield::build_elevation_field,
+    heightfield::{build_elevation_field, ElevationField},
     hydrology::HydrologyState,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
     mapgen::MountainType,
@@ -41,11 +41,11 @@ use crate::{
     },
     provinces::{ProvinceId, ProvinceMap},
     resources::{
-        CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionExposureRecord,
-        CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger,
-        FactionInventory, FogRevealLedger, FoodSiteEntry, FoodSiteRegistry, MoistureRaster,
-        SentimentAxisBias, SimulationConfig, SimulationTick, StartLocation, TileRegistry,
-        TradeDiffusionRecord, TradeTelemetry,
+        ClimateConfig, CommandEventEntry, CommandEventKind, CommandEventLog,
+        CorruptionExposureRecord, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
+        DiscoveryProgressLedger, FactionInventory, FogRevealLedger, FoodSiteEntry,
+        FoodSiteRegistry, MoistureRaster, SentimentAxisBias, SimulationConfig, SimulationTick,
+        StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
     },
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
     snapshot_overlays_config::SnapshotOverlaysConfigHandle,
@@ -415,6 +415,15 @@ pub fn spawn_initial_world(
     let mut module_candidates: std::collections::BTreeMap<FoodModule, Vec<FoodSiteCandidate>> =
         std::collections::BTreeMap::new();
 
+    // Elevation field (with the active sea level attached) used to compute each tile's climate
+    // temperature. Must exist before the tile loop so temperature is derived from real elevation —
+    // hence computed here, after both the bands' restamped field and the base field are available.
+    let climate_elevation = bands
+        .as_ref()
+        .map(|bands_res| bands_res.elevation.clone())
+        .unwrap_or_else(|| base_elevation_field.clone())
+        .with_sea_level(sea_level);
+
     let mut province_region_layers: HashMap<ProvinceId, CultureLayerId> = HashMap::new();
     for (idx, proto) in prototypes.iter().enumerate() {
         let (generation, demand, efficiency) = proto.element.power_profile();
@@ -425,11 +434,18 @@ pub fn spawn_initial_world(
             .clamp(scalar_from_f32(1.0), scalar_from_f32(40.0));
         let storage_level =
             (storage_capacity * scalar_from_f32(0.5)).clamp(scalar_zero(), storage_capacity);
+        let above_sea = climate_elevation.above_sea_normalized(proto.position.x, proto.position.y);
         let tile_component = Tile {
             position: proto.position,
             element: proto.element,
             mass: base_mass,
-            temperature: config.ambient_temperature + proto.element.thermal_bias(),
+            temperature: climate_temperature(
+                proto.position.y,
+                config.grid_size.y,
+                above_sea,
+                proto.element,
+                &config.climate,
+            ),
             terrain: proto.terrain,
             terrain_tags: proto.tags,
             mountain: proto.mountain,
@@ -2758,10 +2774,59 @@ fn tile_index_from_coords(x: i32, y: i32, width: usize, height: usize) -> Option
     Some((y as usize) * width + x as usize)
 }
 
-/// Relax material temperatures and adjust masses using deterministic rules.
-pub fn simulate_materials(config: Res<SimulationConfig>, mut tiles: Query<&mut Tile>) {
+/// Latitude-driven base temperature (°): warmest at the center row (equator), symmetric cold toward
+/// the top and bottom edges (poles). `lat_frac ∈ [0, 1]` is 0 at the equator and 1 at a pole.
+pub(crate) fn latitude_base(y: u32, grid_height: u32, equator_temp: f32, polar_temp: f32) -> f32 {
+    let half = grid_height.saturating_sub(1) as f32 / 2.0;
+    let lat_frac = if half > 0.0 {
+        ((y as f32 - half).abs() / half).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    equator_temp - lat_frac * (equator_temp - polar_temp)
+}
+
+/// Elevation lapse (°): how much colder a tile is than sea level at the same latitude. Scales the
+/// tile's above-sea-level height (normalized to `[0, 1]`) by `elevation_lapse_span`.
+pub(crate) fn elevation_lapse(above_sea_normalized: f32, span: f32) -> f32 {
+    above_sea_normalized.max(0.0) * span
+}
+
+/// Full latitude + elevation climate temperature for a tile, plus a small element-driven local
+/// jitter for intra-band texture. Single source shared by worldgen (the tile's initial temperature)
+/// and `simulate_materials` (its per-turn relaxation target) so the two never drift.
+pub(crate) fn climate_temperature(
+    y: u32,
+    grid_height: u32,
+    above_sea_normalized: f32,
+    element: ElementKind,
+    climate: &ClimateConfig,
+) -> Scalar {
+    let base = latitude_base(y, grid_height, climate.equator_temp, climate.polar_temp);
+    let lapse = elevation_lapse(above_sea_normalized, climate.elevation_lapse_span);
+    let jitter = element.thermal_bias().to_f32() * climate.element_jitter_scale;
+    scalar_from_f32(base - lapse + jitter)
+}
+
+/// Relax material temperatures and adjust masses using deterministic rules. The relaxation target is
+/// the tile's latitude + elevation + jitter climate temperature (recomputed deterministically from
+/// its position/elevation/element), so the field converges to the climate model rather than the old
+/// element checkerboard. Worldgen seeds each tile at exactly this value, so turn 1 has no jump.
+pub fn simulate_materials(
+    config: Res<SimulationConfig>,
+    elevation: Res<ElevationField>,
+    mut tiles: Query<&mut Tile>,
+) {
+    let grid_height = config.grid_size.y;
     for mut tile in tiles.iter_mut() {
-        let target = config.ambient_temperature + tile.element.thermal_bias();
+        let above_sea = elevation.above_sea_normalized(tile.position.x, tile.position.y);
+        let target = climate_temperature(
+            tile.position.y,
+            grid_height,
+            above_sea,
+            tile.element,
+            &config.climate,
+        );
         let delta = (target - tile.temperature) * config.temperature_lerp;
         let conductivity = tile.element.conductivity();
         tile.temperature += delta * conductivity;
@@ -3122,6 +3187,9 @@ fn advance_demographics(
 pub struct MoralePressureConfig {
     pub ambient_temperature: Scalar,
     pub temperature_morale_penalty: Scalar,
+    /// Dead-band (°) around `ambient_temperature` within which climate bleeds **no** morale — only
+    /// the deviation beyond it is penalized, so temperate mid-latitudes hold morale.
+    pub temperature_morale_tolerance: Scalar,
     pub attrition_penalty_scale: Scalar,
     pub hardness_penalty_scale: Scalar,
 }
@@ -3157,9 +3225,10 @@ pub fn tile_morale_pressure(
     let hardness_excess = (terrain.logistics_penalty - 1.0).max(0.0);
     let terrain_hardness_penalty = scalar_from_f32(hardness_excess) * cfg.hardness_penalty_scale;
     let temp_diff = (temperature - cfg.ambient_temperature).abs();
+    let temp_excess = (temp_diff - cfg.temperature_morale_tolerance).max(scalar_zero());
     TileMoralePressure {
         terrain: terrain_attrition_penalty + terrain_hardness_penalty,
-        cold: temp_diff * cfg.temperature_morale_penalty,
+        cold: temp_excess * cfg.temperature_morale_penalty,
     }
 }
 
@@ -3185,6 +3254,7 @@ pub fn simulate_population(
     let morale_pressure_cfg = MoralePressureConfig {
         ambient_temperature: config.ambient_temperature,
         temperature_morale_penalty: config.temperature_morale_penalty,
+        temperature_morale_tolerance: config.temperature_morale_tolerance,
         attrition_penalty_scale: population_cfg.attrition_penalty_scale(),
         hardness_penalty_scale: population_cfg.hardness_penalty_scale(),
     };
@@ -4152,6 +4222,7 @@ mod tile_morale_pressure_tests {
         MoralePressureConfig {
             ambient_temperature: scalar_from_f32(ambient),
             temperature_morale_penalty: scalar_from_f32(0.004),
+            temperature_morale_tolerance: scalar_from_f32(9.0),
             attrition_penalty_scale: scalar_from_f32(0.2),
             hardness_penalty_scale: scalar_from_f32(0.05),
         }
@@ -4175,15 +4246,89 @@ mod tile_morale_pressure_tests {
     }
 
     #[test]
-    fn temperature_difference_drives_cold_term() {
+    fn temperature_tolerance_dead_band_yields_no_cold_drain() {
         let terrain = terrain_definition(TerrainType::AlluvialPlain);
-        let ambient = 0.5;
-        let cold_tile = scalar_from_f32(ambient + 0.25);
-        let pressure = tile_morale_pressure(&terrain, cold_tile, &shipped_cfg(ambient));
-        // temp_diff 0.25 * 0.004 = 0.001.
-        assert!(pressure.cold > scalar_zero());
-        let expected = scalar_from_f32(0.001);
-        assert!((pressure.cold - expected).abs() < scalar_from_f32(0.0002));
+        let ambient = 18.0;
+        // Deviation within the 9° tolerance (|Δ| = 8°) → zero climate morale drain.
+        let temperate = scalar_from_f32(ambient + 8.0);
+        let pressure = tile_morale_pressure(&terrain, temperate, &shipped_cfg(ambient));
+        assert_eq!(pressure.cold, scalar_zero());
+    }
+
+    #[test]
+    fn temperature_beyond_tolerance_drains_linearly() {
+        let terrain = terrain_definition(TerrainType::AlluvialPlain);
+        let ambient = 18.0;
+        // Pole-like tile at −5°: |Δ| = 23°, excess beyond tolerance = 23 − 9 = 14°.
+        let polar = scalar_from_f32(-5.0);
+        let pressure = tile_morale_pressure(&terrain, polar, &shipped_cfg(ambient));
+        // 14 * 0.004 = 0.056.
+        let expected = scalar_from_f32(0.056);
+        assert!(
+            (pressure.cold - expected).abs() < scalar_from_f32(0.0005),
+            "cold drain {:?} should be ~0.056",
+            pressure.cold.to_f32()
+        );
+    }
+}
+
+#[cfg(test)]
+mod climate_model_tests {
+    use super::*;
+    use crate::components::ElementKind;
+
+    const EQUATOR: f32 = 30.0;
+    const POLAR: f32 = -5.0;
+    const H: u32 = 52;
+
+    #[test]
+    fn latitude_base_warmest_at_equator_coldest_at_poles() {
+        let equator = latitude_base(H / 2, H, EQUATOR, POLAR);
+        let mid = latitude_base(H / 4, H, EQUATOR, POLAR);
+        let pole = latitude_base(0, H, EQUATOR, POLAR);
+        assert!(equator > mid, "equator {equator} should exceed mid {mid}");
+        assert!(mid > pole, "mid {mid} should exceed pole {pole}");
+        // Center row is essentially the equator temperature; the true pole is the polar temperature.
+        assert!(
+            (equator - EQUATOR).abs() < 1.0,
+            "equator ~= {EQUATOR}, got {equator}"
+        );
+        assert!((pole - POLAR).abs() < 0.01, "pole == {POLAR}, got {pole}");
+    }
+
+    #[test]
+    fn latitude_base_symmetric_top_and_bottom() {
+        for offset in 0..(H / 2) {
+            let top = latitude_base(offset, H, EQUATOR, POLAR);
+            let bottom = latitude_base(H - 1 - offset, H, EQUATOR, POLAR);
+            assert!(
+                (top - bottom).abs() < 1e-4,
+                "row {offset} ({top}) should mirror row {} ({bottom})",
+                H - 1 - offset
+            );
+        }
+    }
+
+    #[test]
+    fn elevation_lapse_cools_high_ground() {
+        let span = 12.0;
+        assert_eq!(elevation_lapse(0.0, span), 0.0);
+        assert_eq!(elevation_lapse(1.0, span), span);
+        // Below sea level clamps to zero lapse (no bonus warmth from being underwater).
+        assert_eq!(elevation_lapse(-0.5, span), 0.0);
+        // A mountain is colder than sea level at the same latitude.
+        let cfg = ClimateConfig {
+            equator_temp: EQUATOR,
+            polar_temp: POLAR,
+            elevation_lapse_span: span,
+            element_jitter_scale: 0.25,
+        };
+        let sea = climate_temperature(H / 2, H, 0.0, ElementKind::Ferrite, &cfg);
+        let peak = climate_temperature(H / 2, H, 1.0, ElementKind::Ferrite, &cfg);
+        assert!(
+            peak < sea,
+            "mountain {peak:?} should be colder than sea {sea:?}"
+        );
     }
 }
 

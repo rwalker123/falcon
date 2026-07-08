@@ -175,6 +175,8 @@ func _low_morale_band_fixture() -> Dictionary:
 		"visibility_state": "active",
 		# Cavern habitability (~0.0825) lands in the Harsh band → amber Tile-card row.
 		"habitability": 0.0825,
+		# High-latitude cold ~-2° → "Polar" climate band (neutral Tile-card row).
+		"temperature": -2.0,
 		"food_module": "",
 		"food_module_label": "None",
 	}
@@ -210,6 +212,8 @@ func _food_tile_fixture() -> Dictionary:
 		"visibility_state": "active",
 		# Fertile steppe: low drain → "Hospitable" (green Tile-card row).
 		"habitability": 0.01,
+		# Mid-latitude ~18° → "Temperate" climate band (neutral Tile-card row).
+		"temperature": 18.0,
 		"food_module": "savanna_grassland",
 		"food_module_label": "Savanna Grassland",
 		"food_module_weight": 1.0,

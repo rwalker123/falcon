@@ -43,6 +43,17 @@ impl ElevationField {
         let idx = (y * self.width + x) as usize;
         self.values[idx]
     }
+
+    /// Height above sea level remapped to `[0, 1]` (0 = at/below sea level, 1 = the field's max
+    /// elevation) using the attached `sea_level`. Feeds the climate model's elevation lapse.
+    #[inline]
+    pub fn above_sea_normalized(&self, x: u32, y: u32) -> f32 {
+        let headroom = 1.0 - self.sea_level;
+        if headroom <= 0.0 {
+            return 0.0;
+        }
+        ((self.sample(x, y) - self.sea_level) / headroom).clamp(0.0, 1.0)
+    }
 }
 
 pub fn build_elevation_field(
