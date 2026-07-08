@@ -128,8 +128,9 @@ const MORALE_CAUSE_UNREST := 3
 const MORALE_CAUSE_LABEL_TERRAIN := "harsh terrain"
 const MORALE_CAUSE_LABEL_COLD := "harsh climate"
 const MORALE_CAUSE_LABEL_UNREST := "unrest"
-# Morale-trend arrow glyphs; |morale_delta| below this reads as flat (no arrow).
-const MORALE_TREND_EPSILON := 0.0005
+# Morale-trend arrow glyphs; |morale_delta| below this (0.5%/turn) reads as flat (no
+# arrow), so trivial drift — nearly every tile bleeds a hair today — isn't shown as a decline.
+const MORALE_TREND_EPSILON := 0.005
 const MORALE_TREND_FALLING_GLYPH := "▼"
 const MORALE_TREND_RISING_GLYPH := "▲"
 # Occupants roster row chrome.
@@ -1326,14 +1327,18 @@ func _band_morale_line(unit_data: Dictionary) -> String:
     var delta: float = float(unit_data.get("morale_delta", 0.0))
     if delta <= -MORALE_TREND_EPSILON:
         text += " %s" % MORALE_TREND_FALLING_GLYPH
-        var cause := int(unit_data.get("morale_cause", MORALE_CAUSE_NONE))
-        var cause_label := _morale_cause_label(cause)
-        if cause_label != "":
-            if cause == MORALE_CAUSE_TERRAIN:
-                var terrain_label := String(_selected_tile_info.get("terrain_label", "")).strip_edges()
-                if terrain_label != "":
-                    cause_label = "%s (%s)" % [cause_label, terrain_label]
-            text += " — %s" % cause_label
+        # Name the cause only when morale is actually concerning — a healthy band
+        # drifting slowly (nearly every tile bleeds a little today) shouldn't be
+        # branded "harsh climate/terrain". Below the warn threshold, spell it out.
+        if morale < BandFoodStatus.warn_morale():
+            var cause := int(unit_data.get("morale_cause", MORALE_CAUSE_NONE))
+            var cause_label := _morale_cause_label(cause)
+            if cause_label != "":
+                if cause == MORALE_CAUSE_TERRAIN:
+                    var terrain_label := String(_selected_tile_info.get("terrain_label", "")).strip_edges()
+                    if terrain_label != "":
+                        cause_label = "%s (%s)" % [cause_label, terrain_label]
+                text += " — %s" % cause_label
     elif delta >= MORALE_TREND_EPSILON:
         text += " %s" % MORALE_TREND_RISING_GLYPH
     return text
