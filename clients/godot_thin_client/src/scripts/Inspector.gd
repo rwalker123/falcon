@@ -15,7 +15,8 @@ const Typography = preload("res://src/scripts/Typography.gd")
 # MAP_SIZE_* constants moved to MapPanel.
 
 # MOUNTAIN_KIND_LABELS / FOOD_MODULE_LABELS moved to TerrainPanel.
-const CAP_CONSTRUCTION := 1 << 1
+# (bit 1 / CAP_CONSTRUCTION was dropped with the retired camp-founding command —
+# nothing client-side gates on it now.)
 const CAP_INDUSTRY_T1 := 1 << 2
 const CAP_INDUSTRY_T2 := 1 << 3
 const CAP_POWER := 1 << 4
@@ -105,11 +106,10 @@ func _ready() -> void:
 	if culture_panel != null:
 		culture_panel.set_log_hook(Callable(self, "_append_log_entry"))
 	# Terrain owns tile selection + its command buttons; export_map sends directly via the
-	# hook, scout/found emit signals so the coordinator resolves the active faction.
+	# hook, scout emits a signal so the coordinator resolves the active faction.
 	if terrain_panel != null:
 		terrain_panel.set_command_hooks(Callable(self, "_send_command"), Callable(self, "_append_command_log"))
 		terrain_panel.tile_scout_requested.connect(_on_terrain_tile_scout_requested)
-		terrain_panel.tile_found_camp_requested.connect(_on_terrain_tile_found_requested)
 	if logs_panel != null:
 		logs_panel.log_entry_received.connect(_on_log_stream_entry)
 	if crisis_panel != null:
@@ -749,15 +749,11 @@ func _on_fauna_herd_selected(herd_id: String) -> void:
 	if commands_panel != null:
 		commands_panel.set_follow_herd(herd_id)
 
-# TerrainPanel owns tile selection; the scout/found buttons emit these so the coordinator
+# TerrainPanel owns tile selection; the scout button emits this so the coordinator
 # resolves the active faction (from the Commands tab) and issues the command.
 func _on_terrain_tile_scout_requested(x: int, y: int) -> void:
 	var faction := commands_panel.get_scenario_faction() if commands_panel != null else 0
 	_send_command("scout %d %d %d" % [faction, x, y], "Scout order queued for faction %d at (%d, %d)." % [faction, x, y])
-
-func _on_terrain_tile_found_requested(x: int, y: int) -> void:
-	var faction := commands_panel.get_scenario_faction() if commands_panel != null else 0
-	_send_command("found_camp %d %d %d" % [faction, x, y], "Found camp request for faction %d at (%d, %d)." % [faction, x, y])
 
 func _ingest_command_events(events_variant: Variant) -> void:
 	if not (events_variant is Array):
@@ -847,7 +843,7 @@ func _apply_capability_gating() -> void:
 	if trade_panel != null:
 		trade_panel.set_available(_has_flag(CAP_INDUSTRY_T1) or _has_flag(CAP_INDUSTRY_T2))
 	# Terrain is an always-available inspection tab (biome list, tile drill-down, terrain
-	# highlight). Only the Found Camp *action* within it is construction-gated (below).
+	# highlight) with no capability-gated actions.
 	_set_tab_enabled("Terrain", true)
 	# Crisis stays a clickable tab; the panel renders a locked explanation while gated.
 	if crisis_panel != null:
@@ -855,8 +851,6 @@ func _apply_capability_gating() -> void:
 	# Influencers stays a clickable tab; the panel renders a locked explanation while gated.
 	if influencer_panel != null:
 		influencer_panel.set_available(_has_flag(CAP_INDUSTRY_T1) or _has_flag(CAP_INDUSTRY_T2))
-	if terrain_panel != null:
-		terrain_panel.set_construction_available(_has_flag(CAP_CONSTRUCTION))
 
 func _set_tab_enabled(name: String, enabled: bool) -> void:
 	if tab_container == null:

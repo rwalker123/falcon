@@ -134,12 +134,6 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "follow_herd <faction_id> <herd_id> [policy] [band_entity_bits]",
     },
     CommandVerbHelp {
-        verb: "found_camp",
-        aliases: &[],
-        summary: "Queue a request to found a seasonal camp at the specified tile.",
-        usage: "found_camp <faction_id> <x> <y>",
-    },
-    CommandVerbHelp {
         verb: "forage",
         aliases: &[],
         summary: "Harvest food from a tile using the specified module key.",
@@ -608,22 +602,6 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 herd_id: herd_id.to_string(),
                 policy,
                 band_entity_bits: band_bits,
-            })
-        }
-        "found_camp" => {
-            let faction_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
-            let x_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("target_x"))?;
-            let y_str = parts
-                .next()
-                .ok_or(CommandParseError::MissingArgument("target_y"))?;
-            Ok(CommandPayload::FoundCamp {
-                faction_id: parse_u32(faction_str, "found_camp faction")?,
-                target_x: parse_u32(x_str, "found_camp target_x")?,
-                target_y: parse_u32(y_str, "found_camp target_y")?,
             })
         }
         "found_settlement" => {

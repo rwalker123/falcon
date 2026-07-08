@@ -122,8 +122,6 @@ func _ready() -> void:
             hud.connect("ui_zoom_reset", Callable(self, "_on_hud_zoom_reset"))
         if hud.has_signal("unit_scout_requested") and not hud.is_connected("unit_scout_requested", Callable(self, "_on_hud_unit_scout")):
             hud.connect("unit_scout_requested", Callable(self, "_on_hud_unit_scout"))
-        if hud.has_signal("unit_found_camp_requested") and not hud.is_connected("unit_found_camp_requested", Callable(self, "_on_hud_unit_found_camp")):
-            hud.connect("unit_found_camp_requested", Callable(self, "_on_hud_unit_found_camp"))
         if hud.has_signal("herd_follow_requested") and not hud.is_connected("herd_follow_requested", Callable(self, "_on_hud_follow_herd")):
             hud.connect("herd_follow_requested", Callable(self, "_on_hud_follow_herd"))
         if hud.has_signal("next_turn_requested") and not hud.is_connected("next_turn_requested", Callable(self, "_on_hud_next_turn")):
@@ -306,10 +304,6 @@ func _on_hud_unit_scout(x: int, y: int, band_bits: int) -> void:
         parts.append(str(band_bits))
     var line := " ".join(parts)
     _send_runtime_command(line, "Scout order queued at (%d, %d)." % [x, y])
-
-func _on_hud_unit_found_camp(x: int, y: int) -> void:
-    var line := "found_camp %d %d %d" % [PLAYER_FACTION_ID, x, y]
-    _send_runtime_command(line, "Found camp request at (%d, %d)." % [x, y])
 
 func _on_hud_follow_herd(herd_id: String) -> void:
     if herd_id.is_empty():

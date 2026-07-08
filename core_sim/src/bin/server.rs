@@ -58,7 +58,6 @@ const DEFAULT_SCOUT_REVEAL_RADIUS: u32 = 3;
 const SCOUT_REVEAL_DURATION_TURNS: u64 = 8;
 const SCOUT_MORALE_GAIN: f32 = 0.02;
 const SCOUT_PROVISION_COST: i64 = 10;
-const CAMP_PROVISION_COST: i64 = 40;
 const SETTLEMENT_PROVISION_COST: i64 = 80;
 const SETTLEMENT_CONSTRUCTION_RADIUS: u32 = 3;
 const SETTLEMENT_LOGISTICS_RADIUS: u32 = 4;
@@ -500,13 +499,6 @@ fn main() {
             } => {
                 handle_follow_herd(&mut app, faction, herd_id, policy, band_entity_bits);
             }
-            Command::FoundCamp {
-                faction,
-                target_x,
-                target_y,
-            } => {
-                handle_found_camp(&mut app, faction, target_x, target_y);
-            }
             Command::FoundSettlement {
                 faction,
                 target_x,
@@ -642,11 +634,6 @@ enum Command {
         herd_id: String,
         policy: FollowPolicy,
         band_entity_bits: Option<u64>,
-    },
-    FoundCamp {
-        faction: FactionId,
-        target_x: u32,
-        target_y: u32,
     },
     FoundSettlement {
         faction: FactionId,
@@ -1446,93 +1433,6 @@ fn reassign_band(app: &mut bevy::prelude::App, band: Entity) {
     entity.remove::<FaunaPursuit>();
     entity.remove::<HarvestAssignment>();
     entity.remove::<ScoutAssignment>();
-}
-
-fn handle_found_camp(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    target_x: u32,
-    target_y: u32,
-) {
-    let target = UVec2::new(target_x, target_y);
-    let Some(_tile_entity) = ensure_land_tile(
-        app,
-        faction,
-        target,
-        "found_camp",
-        Some(CommandEventKind::FoundCamp),
-    ) else {
-        return;
-    };
-    if !consume_faction_provisions(
-        app,
-        faction,
-        CAMP_PROVISION_COST,
-        "found_camp",
-        CommandEventKind::FoundCamp,
-    ) {
-        return;
-    }
-    let (survey_radius_override, fog_mode_override) = {
-        let config = app.world.resource::<SimulationConfig>();
-        (
-            config.start_profile_overrides.survey_radius,
-            config.start_profile_overrides.fog_mode,
-        )
-    };
-    let tick = app.world.resource::<SimulationTick>().0;
-    let applied_radius =
-        if let Some(mut start_location) = app.world.get_resource_mut::<StartLocation>() {
-            start_location.relocate(target);
-            if start_location.survey_radius().is_none() {
-                start_location.set_survey_radius(survey_radius_override);
-            }
-            if let Some(fog_mode) = fog_mode_override {
-                start_location.set_fog_mode(fog_mode);
-            }
-            info!(
-                target: "shadow_scale::command",
-                faction = %faction.0,
-                x = target_x,
-                y = target_y,
-                radius = ?start_location.survey_radius(),
-                "command.found_camp.applied"
-            );
-            start_location.survey_radius()
-        } else {
-            warn!(
-                target: "shadow_scale::command",
-                faction = %faction.0,
-                "command.found_camp.rejected=start_location_missing"
-            );
-            return;
-        };
-
-    if let Some(radius) = applied_radius {
-        let expires_at = tick.saturating_add(SCOUT_REVEAL_DURATION_TURNS * 2);
-        let mut reveals = app.world.resource_mut::<FogRevealLedger>();
-        reveals.queue(target, radius.max(MIN_SCOUT_REVEAL_RADIUS), expires_at);
-        push_command_event(
-            app,
-            tick,
-            CommandEventKind::FoundCamp,
-            faction,
-            format!("Camp -> ({}, {})", target_x, target_y),
-            Some(format!(
-                "radius={} expires={} cost={} provisions",
-                radius, expires_at, CAMP_PROVISION_COST
-            )),
-        );
-    } else {
-        push_command_event(
-            app,
-            tick,
-            CommandEventKind::FoundCamp,
-            faction,
-            format!("Camp -> ({}, {})", target_x, target_y),
-            Some(format!("cost={} provisions", CAMP_PROVISION_COST)),
-        );
-    }
 }
 
 fn handle_found_settlement(
@@ -2698,15 +2598,6 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             policy: parse_follow_policy(policy.as_deref()),
             band_entity_bits,
         }),
-        ProtoCommandPayload::FoundCamp {
-            faction_id,
-            target_x,
-            target_y,
-        } => Some(Command::FoundCamp {
-            faction: FactionId(faction_id),
-            target_x,
-            target_y,
-        }),
         ProtoCommandPayload::FoundSettlement {
             faction_id,
             target_x,
@@ -3068,7 +2959,6 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
     match kind {
         CommandEventKind::Scout => "Scout",
         CommandEventKind::FollowHerd => "Follow herd",
-        CommandEventKind::FoundCamp => "Found camp",
         CommandEventKind::FoundSettlement => "Found settlement",
         CommandEventKind::CampaignFounded => "Campaign founded",
         CommandEventKind::CampaignMilestone => "Campaign milestone",

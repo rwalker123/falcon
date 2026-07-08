@@ -44,7 +44,7 @@ func _ready() -> void:
 	# Top-bar demographics readout (faction 0 age structure + dependency ratio).
 	_hud.update_demographics([{"faction": 0, "children": 34, "working": 51, "elders": 15}])
 
-	# State 1 — a band selected (BAND eyebrow, primary Scout / ghost Found Camp).
+	# State 1 — a single band selected: the Occupants roster + drawer (primary Scout).
 	# The band fixture carries a warn-tier larder, so the Food line reads amber.
 	_hud.show_unit_selection(_band_fixture())
 	await _settle()

@@ -4,7 +4,6 @@ class_name HudLayer
 signal ui_zoom_delta(delta: float)
 signal ui_zoom_reset
 signal unit_scout_requested(x: int, y: int, band_entity_bits: int)
-signal unit_found_camp_requested(x: int, y: int)
 signal herd_follow_requested(herd_id: String)
 signal forage_requested(x: int, y: int, module_key: String)
 signal next_turn_requested(steps: int)
@@ -897,8 +896,8 @@ func _assemble_roster(tile_info: Dictionary) -> void:
     if not _selected_herd.is_empty() and _find_roster_herd(String(_selected_herd.get("id", ""))).is_empty():
         _roster_herds.append(_selected_herd)
 
-## The Tile card: the place. Terrain rows + the Forage action (its only action —
-## Found Camp is retired). Kind stays "Tile" even when an occupant is selected.
+## The Tile card: the place. Terrain rows + the Forage action (its only action).
+## Kind stays "Tile" even when an occupant is selected.
 func _render_tile_card(tile_info: Dictionary) -> void:
     if tile_panel == null or tile_detail == null:
         return
