@@ -72,6 +72,30 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 - **Vectors**: `rivers: [RiverSegment]` with polylines and edge tracking
 - **Tiles**: `hydrology_id`, `substrate_material`, `terrain_type`, `TerrainTags`
 
+### Tile Temperature — latitude + elevation climate model
+`Tile.temperature` is a real climate, **not** the old `(x+y)%4` element checkerboard. The single
+source is `systems::climate_temperature(y, grid_height, above_sea_normalized, element, &ClimateConfig)`:
+
+```
+temperature = latitude_base(y, H) − elevation_lapse(elev) + element_jitter(element)
+```
+
+- **`latitude_base`** — equator-in-the-**middle**: `lat_frac = |y − (H−1)/2| / ((H−1)/2)` ∈ [0,1]
+  (0 = center/equator, 1 = top *or* bottom edge/pole), `equator_temp − lat_frac·(equator_temp −
+  polar_temp)`. Symmetric: the top and bottom edges are equally cold; the temperate band (~18°)
+  lands at mid-latitudes (lat_frac ≈ 0.34).
+- **`elevation_lapse`** — `ElevationField::above_sea_normalized` (height above sea remapped to [0,1])
+  × `elevation_lapse_span`; higher ground is colder.
+- **`element_jitter`** — the element's `thermal_bias` × `element_jitter_scale`, kept small (~±1.5°)
+  so it is local texture, not the driver.
+
+Config lives in the `climate` block of `simulation_config.json` (`equator_temp` 30.0, `polar_temp`
+-5.0, `elevation_lapse_span` 12.0, `element_jitter_scale` 0.25). Worldgen seeds each tile at exactly
+this value **after** elevation exists (a `climate_elevation` field with sea level attached), and
+`simulate_materials` relaxes each turn toward the *same* recomputed climate temperature (no longer
+the element target), so turn 1 has no jump. On an 80×52 map: equator ≈ 29–30°, mid-latitude ≈ 18°,
+pole = −5° at sea level (mountains up to 12° colder).
+
 ### Map Presets (`map_presets.json`)
 Presets control: `seed_policy`, `dimensions`, `sea_level`, `continent_scale`, `mountain_scale`, `moisture_scale`, `river_density`, `terrain_tag_targets`, `locked_terrain_tags`, `biome_weights`.
 
@@ -289,7 +313,12 @@ Starvation is deliberately **not** a morale cause — it stays on the days-of-fo
 place-based (negative) terms come from the shared **`tile_morale_pressure(terrain, temperature,
 &MoralePressureConfig)`** helper (`systems.rs`), which returns the tile-intrinsic per-turn morale
 drain (terrain + cold, ≥ 0; KarstCavernMouth ≈ 0.0825 at ambient temperature) so the sim and the
-snapshot read from one source. These fields are **derived per-turn, not snapshot-persisted** (a
+snapshot read from one source. The cold term has a **tolerance dead-band**: `max(0, |temp − ambient|
+− temperature_morale_tolerance) × temperature_morale_penalty` (config `temperature_morale_tolerance`
+= 9.0 in `simulation_config.json`), so temperate mid-latitudes (|Δ| ≤ 9°) bleed **zero** climate
+morale and only genuine extremes (poles/high-alt/equator) drain — e.g. at ambient 18° a −5° pole
+(|Δ| = 23°) drains `(23−9)·0.004 = 0.056`, a 30° equator (|Δ| = 12°) drains `0.012`. Habitability
+reuses this helper, so most of the map rates Hospitable/Fair and only extremes read Harsh/Hostile. These fields are **derived per-turn, not snapshot-persisted** (a
 rehydrated cohort reads `0`/`None` until the next turn). Exported as `PopulationCohortState.moraleDelta`
 (fixed-point `long`, `FIXED_POINT_SCALE` = 1e6) + `moraleCause:ubyte` (`0=None, 1=Terrain, 2=Cold,
 3=Unrest`). `TileState.habitability:long` carries the band-independent `tile_morale_pressure` total

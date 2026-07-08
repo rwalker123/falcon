@@ -125,11 +125,21 @@ func _ready() -> void:
 
 func _settle() -> void:
 	await get_tree().process_frame
-	await RenderingServer.frame_post_draw
+	# Force a synchronous frame rather than awaiting `RenderingServer.frame_post_draw`.
+	# Under the dummy rendering backend (which `--headless` selects on Godot 4.5) no
+	# real draw ever posts, so that await never returns and the harness hangs. force_draw
+	# just no-ops there, so a stray headless run fails fast in `_save` instead of hanging.
+	RenderingServer.force_draw()
 	await get_tree().process_frame
 
 func _save(name: String) -> void:
 	var image := get_viewport().get_texture().get_image()
+	if image == null:
+		# No image to read back — the dummy renderer (i.e. someone ran this with
+		# `--headless`, which selects it on Godot 4.5). Capture is impossible, but
+		# the compile/scene gate still passed. Run WITHOUT `--headless` for PNGs.
+		push_warning("ui_preview: null image (dummy renderer?) — skipping %s.png; run without --headless to capture" % name)
+		return
 	var err := image.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
 		push_error("ui_preview: failed to save %s (err %d)" % [name, err])
@@ -175,6 +185,8 @@ func _low_morale_band_fixture() -> Dictionary:
 		"visibility_state": "active",
 		# Cavern habitability (~0.0825) lands in the Harsh band → amber Tile-card row.
 		"habitability": 0.0825,
+		# High-latitude cold ~-2° → "Polar" climate band (neutral Tile-card row).
+		"temperature": -2.0,
 		"food_module": "",
 		"food_module_label": "None",
 	}
@@ -210,6 +222,8 @@ func _food_tile_fixture() -> Dictionary:
 		"visibility_state": "active",
 		# Fertile steppe: low drain → "Hospitable" (green Tile-card row).
 		"habitability": 0.01,
+		# Mid-latitude ~18° → "Temperate" climate band (neutral Tile-card row).
+		"temperature": 18.0,
 		"food_module": "savanna_grassland",
 		"food_module_label": "Savanna Grassland",
 		"food_module_weight": 1.0,

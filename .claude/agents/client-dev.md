@@ -77,10 +77,15 @@ registered), catching scene/autoload errors that a parse-only `--check` misses.
 Run it from the repo root:
 
 ```bash
-# a) Reimport if you touched ANY .gd or .tscn, or you'll render the stale version:
+# a) Reimport if you touched ANY .gd or .tscn, or you'll render the stale version.
+#    Import needs no GPU, so --headless is fine (and faster) here:
 godot --headless --path clients/godot_thin_client --import
-# b) Render the preview states to PNGs:
-godot --headless --path clients/godot_thin_client res://tools/ui_preview.tscn
+# b) Render the preview states to PNGs. Do NOT pass --headless: on Godot 4.5 it
+#    selects the dummy rendering backend, which has no viewport texture to read
+#    back — the render then HANGS on the first capture (frame_post_draw never
+#    posts). Running windowed opens a Godot window for a few seconds and writes
+#    real PNGs:
+godot --path clients/godot_thin_client res://tools/ui_preview.tscn
 ```
 
 Then **actually look** — `Read` the relevant PNG(s) in
@@ -100,10 +105,11 @@ That `update_*/show_*` → `_settle` → `_save` triple is the whole contract.
 **Gotchas** (put these to use, don't relearn them):
 - Always reimport before rendering when scenes/scripts changed — the build-number
   label in the corner of the frame is a quick stale-vs-fresh sanity check.
-- Headless viewport→image capture can hang on some setups. If it doesn't exit
-  within ~30s, kill it — PNGs for states that completed before the hang are
-  already written, so partial output is still usable. This is environmental, not
-  a code error; note it and use what rendered.
+- Do NOT render with `--headless` (see step b) — on Godot 4.5 that loads the
+  dummy renderer, and the capture hangs (or, if it gets past `_settle`, reads a
+  null texture). The harness now fails fast with a warning instead of hanging in
+  that case, but you still get zero PNGs. Render windowed to capture. Only the
+  `--import` step (step a) uses `--headless`.
 - This is HUD-only. Seeing the whole app against a live sim is a different,
   heavier path (`scripts/run_stack.sh --client-only` with a server up). For
   "what does the UI look like," the preview harness is the fast loop — prefer it.

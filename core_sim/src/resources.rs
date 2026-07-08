@@ -43,6 +43,23 @@ pub struct MapTopology {
     pub wrap_vertical: bool,
 }
 
+/// Latitude + elevation climate model levers. Tile temperature is
+/// `latitude_base(y) − elevation_lapse(elev) + element_jitter(element)` (see `systems::climate_temperature`),
+/// replacing the old `(x+y)%4` element checkerboard. Stored as `f32` because the climate math is
+/// pure floating-point and only the final temperature is converted to `Scalar`.
+#[derive(Debug, Clone, Copy)]
+pub struct ClimateConfig {
+    /// Temperature (°) at the equator (center row).
+    pub equator_temp: f32,
+    /// Temperature (°) at the poles (top/bottom rows).
+    pub polar_temp: f32,
+    /// How much colder (°) a full-height mountain is than sea level at the same latitude.
+    pub elevation_lapse_span: f32,
+    /// Multiplier applied to the element's `thermal_bias` to keep it a small local jitter (~±1.5°)
+    /// rather than the temperature driver.
+    pub element_jitter_scale: f32,
+}
+
 /// Global configuration parameters for the headless simulation prototype.
 #[derive(Resource, Debug, Clone)]
 pub struct SimulationConfig {
@@ -55,11 +72,16 @@ pub struct SimulationConfig {
     pub hydrology: HydrologyOverrides,
     pub ambient_temperature: Scalar,
     pub temperature_lerp: Scalar,
+    /// Latitude + elevation climate model levers (see `ClimateConfig`).
+    pub climate: ClimateConfig,
     pub logistics_flow_gain: Scalar,
     pub base_link_capacity: Scalar,
     pub mass_bounds: (Scalar, Scalar),
     pub population_growth_rate: Scalar,
     pub temperature_morale_penalty: Scalar,
+    /// Dead-band (°) around `ambient_temperature` within which climate contributes **zero** morale
+    /// drain — only the excess beyond this tolerance is penalized.
+    pub temperature_morale_tolerance: Scalar,
     pub population_cluster_stride: u32,
     pub population_cap: u32,
     pub power_adjust_rate: Scalar,
@@ -200,11 +222,15 @@ struct SimulationConfigData {
     hydrology: Option<HydrologyOverridesData>,
     ambient_temperature: f32,
     temperature_lerp: f32,
+    #[serde(default)]
+    climate: ClimateConfigData,
     logistics_flow_gain: f32,
     base_link_capacity: f32,
     mass_bounds: MassBoundsData,
     population_growth_rate: f32,
     temperature_morale_penalty: f32,
+    #[serde(default = "default_temperature_morale_tolerance")]
+    temperature_morale_tolerance: f32,
     population_cluster_stride: u32,
     population_cap: u32,
     power_adjust_rate: f32,
@@ -246,6 +272,60 @@ struct SimulationConfigData {
 struct GridSizeData {
     x: u32,
     y: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClimateConfigData {
+    #[serde(default = "default_equator_temp")]
+    equator_temp: f32,
+    #[serde(default = "default_polar_temp")]
+    polar_temp: f32,
+    #[serde(default = "default_elevation_lapse_span")]
+    elevation_lapse_span: f32,
+    #[serde(default = "default_element_jitter_scale")]
+    element_jitter_scale: f32,
+}
+
+impl Default for ClimateConfigData {
+    fn default() -> Self {
+        Self {
+            equator_temp: default_equator_temp(),
+            polar_temp: default_polar_temp(),
+            elevation_lapse_span: default_elevation_lapse_span(),
+            element_jitter_scale: default_element_jitter_scale(),
+        }
+    }
+}
+
+impl ClimateConfigData {
+    fn into_config(self) -> ClimateConfig {
+        ClimateConfig {
+            equator_temp: self.equator_temp,
+            polar_temp: self.polar_temp,
+            elevation_lapse_span: self.elevation_lapse_span,
+            element_jitter_scale: self.element_jitter_scale,
+        }
+    }
+}
+
+fn default_equator_temp() -> f32 {
+    30.0
+}
+
+fn default_polar_temp() -> f32 {
+    -5.0
+}
+
+fn default_elevation_lapse_span() -> f32 {
+    12.0
+}
+
+fn default_element_jitter_scale() -> f32 {
+    0.25
+}
+
+fn default_temperature_morale_tolerance() -> f32 {
+    9.0
 }
 
 #[derive(Debug, Deserialize)]
@@ -303,6 +383,7 @@ impl SimulationConfigData {
                 .unwrap_or_default(),
             ambient_temperature: scalar_from_f32(self.ambient_temperature),
             temperature_lerp: scalar_from_f32(self.temperature_lerp),
+            climate: self.climate.into_config(),
             logistics_flow_gain: scalar_from_f32(self.logistics_flow_gain),
             base_link_capacity: scalar_from_f32(self.base_link_capacity),
             mass_bounds: (
@@ -311,6 +392,7 @@ impl SimulationConfigData {
             ),
             population_growth_rate: scalar_from_f32(self.population_growth_rate),
             temperature_morale_penalty: scalar_from_f32(self.temperature_morale_penalty),
+            temperature_morale_tolerance: scalar_from_f32(self.temperature_morale_tolerance),
             population_cluster_stride: self.population_cluster_stride,
             population_cap: self.population_cap,
             power_adjust_rate: scalar_from_f32(self.power_adjust_rate),
