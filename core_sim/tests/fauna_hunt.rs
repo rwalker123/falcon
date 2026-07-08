@@ -6,10 +6,10 @@ use core_sim::{
     advance_fauna_pursuits, advance_herds, scalar_one, scalar_zero, spawn_initial_herds,
     spawn_initial_world, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
     FactionInventory, FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode, FogRevealLedger,
-    GenerationId, HerdDensityMap, HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle,
-    PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    GenerationId, HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets,
+    MapPresetsHandle, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
+    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, FOOD,
 };
 
 /// Build a land-rich world with herds spawned (mirrors `fauna_spawn.rs` setup).
@@ -87,7 +87,7 @@ fn hunt_pursuit_takes_biomass_and_yields() {
                 children: scalar_zero(),
                 working: scalar_zero(),
                 elders: scalar_zero(),
-                food_store: scalar_zero(),
+                stores: LocalStore::new(),
                 morale: scalar_one(),
                 age_turns: 0,
                 generation: 0 as GenerationId,
@@ -128,7 +128,7 @@ fn hunt_pursuit_takes_biomass_and_yields() {
     let food_store = app
         .world
         .get::<PopulationCohort>(band)
-        .map(|c| c.food_store.to_f32())
+        .map(|c| c.stores.get(FOOD).to_f32())
         .unwrap_or(0.0);
     assert!(
         food_store > 0.0,

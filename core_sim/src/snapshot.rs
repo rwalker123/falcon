@@ -7,8 +7,8 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use log::warn;
 use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
-    AccessibleStockpileEntryState, AccessibleStockpileState, AxisBiasState, CommandEventState,
-    CorruptionLedger, CorruptionSubsystem, CrisisGaugeState,
+    AccessibleStockpileEntryState, AccessibleStockpileState, AxisBiasState, CohortStoreState,
+    CommandEventState, CorruptionLedger, CorruptionSubsystem, CrisisGaugeState,
     CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
@@ -32,8 +32,8 @@ use sim_runtime::{
 use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, HarvestAssignment,
-        HarvestTaskKind, LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort,
-        PowerNode, ScoutAssignment, Tile, TradeLink,
+        HarvestTaskKind, LocalStore, LogisticsLink, MountainMetadata, PendingMigration,
+        PopulationCohort, PowerNode, ScoutAssignment, Tile, TradeLink,
     },
     culture::{
         CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
@@ -1804,6 +1804,10 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             .get(&(cohort_state.current_x, cohort_state.current_y))
             .copied()
             .unwrap_or(home_entity);
+        let mut stores = LocalStore::new();
+        for entry in &cohort_state.stores {
+            stores.set(&entry.item, Scalar::from_raw(entry.quantity));
+        }
         let mut spawned = world.spawn(PopulationCohort {
             home: home_entity,
             current_tile,
@@ -1811,7 +1815,7 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             children: Scalar::from_raw(cohort_state.children),
             working: Scalar::from_raw(cohort_state.working),
             elders: Scalar::from_raw(cohort_state.elders),
-            food_store: Scalar::from_raw(cohort_state.food_store),
+            stores,
             morale: Scalar::from_raw(cohort_state.morale),
             age_turns: cohort_state.age_turns,
             generation: cohort_state.generation,
@@ -3493,7 +3497,14 @@ fn population_state(
         children: cohort.children.raw(),
         working: cohort.working.raw(),
         elders: cohort.elders.raw(),
-        food_store: cohort.food_store.raw(),
+        stores: cohort
+            .stores
+            .iter()
+            .map(|(item, qty)| CohortStoreState {
+                item: item.to_string(),
+                quantity: qty.raw(),
+            })
+            .collect(),
         age_turns: cohort.age_turns,
         morale: cohort.morale.raw(),
         generation: cohort.generation,
@@ -4200,7 +4211,7 @@ mod tests {
                 children: 0,
                 working: 0,
                 elders: 0,
-                food_store: 0,
+                stores: Vec::new(),
                 age_turns: 0,
                 morale: Scalar::from_f32(0.3).raw(),
                 generation: 0,
@@ -4221,7 +4232,7 @@ mod tests {
                 children: 0,
                 working: 0,
                 elders: 0,
-                food_store: 0,
+                stores: Vec::new(),
                 age_turns: 0,
                 morale: Scalar::from_f32(0.8).raw(),
                 generation: 0,
@@ -4315,7 +4326,7 @@ mod tests {
                 children: 0,
                 working: 0,
                 elders: 0,
-                food_store: 0,
+                stores: Vec::new(),
                 age_turns: 0,
                 morale: Scalar::from_f32(0.5).raw(),
                 generation: 0,
@@ -4340,7 +4351,7 @@ mod tests {
                 children: 0,
                 working: 0,
                 elders: 0,
-                food_store: 0,
+                stores: Vec::new(),
                 age_turns: 0,
                 morale: Scalar::from_f32(0.7).raw(),
                 generation: 0,

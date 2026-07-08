@@ -42,6 +42,8 @@ mod sedentarization_config;
 mod snapshot;
 mod snapshot_overlays_config;
 mod start_profile;
+mod supply;
+mod supply_network_config;
 mod systems;
 mod terrain;
 mod turn_pipeline_config;
@@ -60,8 +62,8 @@ use bevy::prelude::*;
 
 pub use components::{
     ElementKind, FaunaPursuit, FaunaPursuitMode, FollowPolicy, HarvestAssignment, HarvestTaskKind,
-    KnowledgeFragment, LogisticsLink, PendingMigration, PopulationCohort, PowerNode,
-    ScoutAssignment, Settlement, StartingUnit, Tile, TownCenter, TradeLink,
+    KnowledgeFragment, LocalStore, LogisticsLink, PendingMigration, PopulationCohort, PowerNode,
+    ScoutAssignment, Settlement, StartingUnit, Tile, TownCenter, TradeLink, FOOD,
 };
 pub use crisis::{
     ActiveCrisisLedger, CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot,
@@ -143,6 +145,11 @@ pub use start_profile::{
     StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
     StartProfileKnowledgeTagsMetadata, StartProfileLookup, StartProfileOverrides,
     StartProfilesHandle, StartProfilesMetadata, StartingUnitSpec,
+};
+pub use supply::balance_supply_networks;
+pub use supply_network_config::{
+    load_supply_network_config_from_env, SupplyNetworkConfig, SupplyNetworkConfigHandle,
+    SupplyNetworkConfigMetadata,
 };
 pub use turn_pipeline_config::{
     load_turn_pipeline_config_from_env, LogisticsPhaseConfig, PopulationPhaseConfig,
@@ -316,6 +323,10 @@ pub fn build_headless_app() -> App {
         demographics_config::load_demographics_config_from_env();
     let demographics_handle =
         demographics_config::DemographicsConfigHandle::new(demographics_config);
+    let (supply_network_config, supply_network_metadata) =
+        supply_network_config::load_supply_network_config_from_env();
+    let supply_network_handle =
+        supply_network_config::SupplyNetworkConfigHandle::new(supply_network_config);
     let culture_effects = CultureEffectsCache::default();
     let espionage_catalog =
         espionage::EspionageCatalog::load_builtin().expect("espionage catalog should parse");
@@ -370,6 +381,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(sedentarization::SedentarizationScore::default())
         .insert_resource(demographics_handle)
         .insert_resource(demographics_metadata)
+        .insert_resource(supply_network_handle)
+        .insert_resource(supply_network_metadata)
         .insert_resource(visibility::VisibilityLedger::default())
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(visibility::ViewerFaction::default())
@@ -470,6 +483,7 @@ pub fn build_headless_app() -> App {
                 advance_herds,
                 repopulate_fauna,
                 advance_husbandry,
+                supply::balance_supply_networks,
                 systems::trade_knowledge_diffusion,
             )
                 .chain()

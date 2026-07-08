@@ -11,10 +11,10 @@ use core_sim::{
     spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FaunaPursuit,
     FaunaPursuitMode, FogRevealLedger, FollowPolicy, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle, PopulationCohort,
-    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets, MapPresetsHandle,
+    PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
 };
 
 fn spawn_world() -> App {
@@ -109,7 +109,7 @@ fn spawn_follower(
                 children: scalar_zero(),
                 working: scalar_zero(),
                 elders: scalar_zero(),
-                food_store: scalar_zero(),
+                stores: LocalStore::new(),
                 morale: scalar_one(),
                 age_turns: 0,
                 generation: 0 as GenerationId,

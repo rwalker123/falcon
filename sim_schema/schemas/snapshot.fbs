@@ -440,8 +440,14 @@ table PopulationCohortState {
   children:long = 0;
   working:long = 0;
   elders:long = 0;
-  foodStore:long = 0;
+  stores:[CohortStore];
   ageTurns:uint = 0;
+}
+
+// One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
+table CohortStore {
+  item:string;
+  quantity:long = 0;
 }
 
 table PendingMigration {

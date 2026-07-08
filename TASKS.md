@@ -233,6 +233,15 @@ lean-to and an arcology (and a 400k town vs a 5M city) are the same engine at di
   distribution deferred to Phase 3). Brackets + larder persist in the snapshot (rollback), and a
   per-faction age-structure + dependency-ratio HUD readout ships (`PopulationDemographicsState`,
   wired like `SedentarizationState`). Localized (per band) from day one.
+- [x] Supply network (Phase 1↔3 bridge). Band goods moved to a commodity-keyed `LocalStore`;
+  `balance_supply_networks` (`supply.rs`, `TurnStage::Logistics`) unions same-faction bands within a
+  configurable reach into networks that auto-balance stored goods per-capita each turn,
+  throughput-limited + friction (`supply_network_config.json`) — a gatherer band can feed a nearby
+  scout band. Reuses `grid_utils::wrapped_distance_sq`; the connected-components pass seeds Phase 4
+  settlements. **Overlaps the unbuilt `RouteNetwork`/`RouteRightsTreaty` backlog below — coordinate
+  when trade lands.** **`TradeLink`/`trade_knowledge_diffusion` are deprecated** (dormant; slated to
+  become a trade *policy* on this network — consent gate + priced return flow — and removed then;
+  fixes the latent logistics-snapshot-empty bug from the `TradeLink`-gated query).
 - [ ] Phase 2 — Labor pool + hybrid allocation. Working-age → a local labor supply; a
   demand/allocation system (auto by priority + player override) across tending/construction/
   military/knowledge; client labor readout.

@@ -42,6 +42,7 @@ cargo run -p core_sim --bin server
 | `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) / `market` (commercial-hunt take + trade multiplier) tuning |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus/morale_floor), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
+| `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -284,15 +285,34 @@ hunt/follow (`advance_fauna_pursuits`), and husbandry (`advance_husbandry`, spli
 owner's bands) income now credit the acting band's `food_store`. At Startup
 (`seed_cohort_demographics`) each band is seeded with `startup.food_reserve_days` turns of its own
 demand (`food_demand`, shared with the consumption path) plus a well-fed morale bonus — no faction
-provisions grant to distribute. Inter-band **sharing** and storage-pit **distribution** are
-deferred to Phase 3 — a band presently feeds only from its own larder, and starvation is
-deficit-capped (a 10% shortfall kills at most 10%) so a dry larder bleeds down over several turns
-rather than in one.
+provisions grant to distribute. Bands **share** via the supply network (below); storage-pit
+distribution is a later addition. Starvation is deficit-capped (a 10% shortfall kills at most 10%)
+so a dry larder bleeds down over several turns rather than in one.
 
-Brackets + larder persist in the snapshot (`PopulationCohortState`) so rollback restores the exact
-structure. A per-faction age-structure + dependency-ratio HUD readout ships as
+Each band's goods live in a `LocalStore` (`components.rs`) — a commodity-keyed bag (food under the
+`FOOD` = `"provisions"` key) held on `PopulationCohort.stores`, so the same store carries any future
+good. Brackets + store persist in the snapshot (`PopulationCohortState.stores`) so rollback restores
+the exact larder. A per-faction age-structure + dependency-ratio HUD readout ships as
 `PopulationDemographicsState` (new `.fbs` table aggregated at capture, wired through
 sim_schema/snapshot/native/`Hud.gd` exactly like `SedentarizationState`).
+
+### Supply Network (logistics from turn 0)
+Bands are small logistics nodes: `balance_supply_networks` (`supply.rs`, `TurnStage::Logistics`,
+before Population consumes) connects **same-faction** bands within `reach_tiles` (via
+`grid_utils::wrapped_distance_sq`) into **supply networks** (union-find connected components) and
+each turn moves every commodity toward a **population-weighted per-capita balance** across the
+network. Transfers are **throughput-limited** (`throughput_per_turn` per node) and lose `friction`
+in transit; sub-`min_transfer` moves are dropped. So a gatherer band automatically feeds a scout
+band it's near (you can specialize labor), while a band beyond reach lives off its own larder.
+Reach decides *who* shares, throughput *how fast*, friction the leak — "free neighbor sharing" is
+just the high-throughput/low-friction limit. The per-commodity math is the pure, unit-tested
+`balance_commodity`. Config: `supply_network_config.json`.
+
+This is the general mechanism the arc scales: raise reach/throughput for settlements/cities, and a
+future **trade policy** adds a consent gate + a priced return flow on *cross-faction* edges (see the
+Trade note below). *v1:* population is the universal balancing weight, so a zero-population storage
+node would compute a 0 fair share — revisit (→ capacity weight) when storage-pits land. The
+connected-components pass is also what Phase 4 will use to derive settlement clusters.
 
 ### Sedentarization
 The emergent per-faction "pressure to root in place" — the first slice of the pastoral→
@@ -432,6 +452,16 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 ---
 
 ## Trade-Fueled Knowledge Diffusion
+
+> **Deprecated / to be replaced.** `TradeLink` is dormant on a live game — nothing attaches it at
+> runtime (only snapshot rehydration does; its establishment path was never built), so
+> `trade_knowledge_diffusion` iterates an empty set and its test is `#[ignore]`d. The Settlement &
+> Population arc reframes this: inter-faction trade becomes a **trade *policy* on the supply
+> network** (see "Supply Network") — a consent gate + a priced return flow on cross-faction edges —
+> and the knowledge-leak-via-open-trade behavior re-homes onto those rails. `TradeLink` /
+> `trade_knowledge_diffusion` are slated for removal in that slice (not now, to avoid schema churn +
+> a coherent-behavior gap). Latent bug to fix then: the logistics snapshot query requires
+> `TradeLink`, so the logistics overlay is empty on a live game.
 
 `TradeLinkState` carries throughput, tariff, `TradeLinkKnowledge` (openness, leak_timer, decay). `trade_knowledge_diffusion` runs after logistics, emits `TradeDiffusionEvent`s, applies progress to `DiscoveryProgressLedger`.
 

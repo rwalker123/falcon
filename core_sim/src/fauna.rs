@@ -7,7 +7,7 @@ use sim_runtime::TerrainTags;
 use tracing::info;
 
 use crate::{
-    components::{PopulationCohort, Tile},
+    components::{PopulationCohort, Tile, FOOD},
     fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle, SizeClass},
     food::{classify_food_module, FoodModule},
     mapgen::WorldGenSeed,
@@ -748,7 +748,9 @@ pub fn advance_husbandry(
             band_counts.get(&cohort.faction),
         ) {
             if count > 0 {
-                cohort.food_store += Scalar::from_i64(total) / Scalar::from_u32(count);
+                cohort
+                    .stores
+                    .add(FOOD, Scalar::from_i64(total) / Scalar::from_u32(count));
             }
         }
     }
