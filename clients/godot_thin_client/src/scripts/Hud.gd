@@ -865,6 +865,53 @@ func _herd_matches_selected_tile(herd_data: Dictionary) -> bool:
 ## place (terrain + Forage), the Occupants card is the selectable band/wildlife
 ## roster + a detail drawer for the chosen occupant. The `*_data` params mirror
 ## the members the show_*/pending flows already set; the members are authoritative.
+## Re-render the selection panel for the still-selected occupant/tile using fresh
+## snapshot data (called from Main after each snapshot via MapView.refresh_selection_payload).
+## Unlike the show_* entry points this runs NO click-time side effects — no pending-scout
+## dispatch, no forage/hunt/follow consumption — so refreshing every turn can't misfire a
+## pending command. Keeps the panel live across turn advances instead of going stale until
+## the user reselects the hex. "none" means the selected band/herd is gone → drop to its
+## tile if we still have one, else hide the cards (without cancelling pending forage).
+func reapply_selection(kind: String, data: Dictionary) -> void:
+    match kind:
+        "unit":
+            _selected_unit = data.duplicate(true) if data is Dictionary else {}
+            _selected_herd.clear()
+            _adopt_tile_info_from(_selected_unit)
+            _render_selection_panel(_selected_tile_info, _selected_unit, {})
+        "herd":
+            _selected_herd = data.duplicate(true) if data is Dictionary else {}
+            _selected_unit.clear()
+            _adopt_tile_info_from(_selected_herd)
+            _render_selection_panel(_selected_tile_info, {}, _selected_herd)
+        "tile":
+            _selected_tile_info = data.duplicate(true) if data is Dictionary else {}
+            _selected_unit.clear()
+            _selected_herd.clear()
+            _selected_food_module = String(_selected_tile_info.get("food_module", "")).strip_edges()
+            _render_selection_panel(_selected_tile_info, {}, {})
+        _:
+            # Selected occupant vanished (e.g. the band expired). Drop to its last tile
+            # if known, else hide both cards. Intentionally does not touch pending state.
+            _selected_unit.clear()
+            _selected_herd.clear()
+            if _selected_tile_info.is_empty():
+                if tile_panel != null:
+                    tile_panel.visible = false
+                if forage_button != null:
+                    forage_button.visible = false
+                _set_occupants_relevant(false)
+            else:
+                _render_selection_panel(_selected_tile_info, {}, {})
+
+## Pull the fresh tile_info a refresh payload carries alongside the occupant, so the tile
+## card + roster render against the same snapshot the occupant came from.
+func _adopt_tile_info_from(occupant: Dictionary) -> void:
+    var ti_variant: Variant = occupant.get("tile_info", {})
+    if ti_variant is Dictionary and not (ti_variant as Dictionary).is_empty():
+        _selected_tile_info = (ti_variant as Dictionary).duplicate(true)
+    _selected_food_module = String(_selected_tile_info.get("food_module", "")).strip_edges()
+
 func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _herd_data: Dictionary) -> void:
     if tile_panel == null or tile_detail == null:
         return

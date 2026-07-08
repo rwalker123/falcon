@@ -235,6 +235,7 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
                 inspector.call("update_capability_flags", int(snapshot["capability_flags"]))
         if inspector.has_method("set_streaming_active"):
             inspector.call("set_streaming_active", streaming_mode)
+    _refresh_hud_selection()
     _camera_initialized = true
     if script_host_manager != null and script_host_manager.has_host():
         if is_delta:
@@ -262,6 +263,19 @@ func _emit_victory_analytics(data: Dictionary) -> void:
         label = mode
     var faction: int = int(winner.get("faction", -1))
     print("[analytics] victory mode=\"%s\" label=\"%s\" faction=%d tick=%d" % [mode, label, faction, tick])
+
+## After each snapshot re-renders the map, refresh the HUD selection panel with the
+## selected occupant's/tile's fresh data so it stays live across turn advances instead
+## of going stale until the user reselects the hex. Routes through `reapply_selection`,
+## NOT the click handlers, so it never re-consumes pending forage/scout/hunt/follow.
+func _refresh_hud_selection() -> void:
+    if map_view == null or hud == null or not map_view.has_method("refresh_selection_payload"):
+        return
+    var payload_variant: Variant = map_view.call("refresh_selection_payload")
+    if not (payload_variant is Dictionary):
+        return
+    var payload: Dictionary = payload_variant
+    _hud_invoke("reapply_selection", [String(payload.get("kind", "none")), payload.get("data", {})])
 
 func _on_map_unit_selected(unit: Dictionary) -> void:
     _hud_invoke("show_unit_selection", [unit])

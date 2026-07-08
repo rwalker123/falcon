@@ -1682,6 +1682,39 @@ func select_occupant(kind: String, id) -> void:
 		selected_unit_id = -1
 	queue_redraw()
 
+## Re-resolve the current selection against the freshly-rebuilt markers/tiles so the
+## HUD panel can refresh after a snapshot without the user reselecting the hex.
+## Returns {"kind": "unit"|"herd"|"tile"|"none", "data": {...}}, mirroring the payload
+## shape each selection path emits. A selected band/herd that no longer exists in the
+## new snapshot clears its ring and falls through to its tile ("tile") or "none".
+func refresh_selection_payload() -> Dictionary:
+	if selected_unit_id >= 0:
+		for unit in units:
+			if int(unit.get("entity", -1)) == selected_unit_id:
+				var payload: Dictionary = (unit as Dictionary).duplicate(true)
+				var pos := Array(payload.get("pos", []))
+				var ux := int(pos[0]) if pos.size() == 2 else selected_tile.x
+				var uy := int(pos[1]) if pos.size() == 2 else selected_tile.y
+				payload["tile_info"] = _tile_info_at(ux, uy)
+				return {"kind": "unit", "data": payload}
+		# The selected band left/expired — drop the ring and fall through.
+		selected_unit_id = -1
+	if selected_herd_id != "":
+		for herd in herds:
+			if String(herd.get("id", "")) == selected_herd_id:
+				var payload: Dictionary = (herd as Dictionary).duplicate(true)
+				var hx := int(payload.get("x", selected_tile.x))
+				var hy := int(payload.get("y", selected_tile.y))
+				payload["tile_info"] = _tile_info_at(hx, hy)
+				return {"kind": "herd", "data": payload}
+		selected_herd_id = ""
+	if selected_tile.x >= 0 and selected_tile.y >= 0:
+		var info := _apply_visibility_to_info(
+			_tile_info_at(selected_tile.x, selected_tile.y), selected_tile.x, selected_tile.y
+		)
+		return {"kind": "tile", "data": info}
+	return {"kind": "none"}
+
 func _handle_entity_selection(col: int, row: int) -> void:
 	# Check for units on this tile
 	var units_here := _units_on_tile(col, row)
