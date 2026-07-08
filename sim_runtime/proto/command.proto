@@ -218,6 +218,7 @@ message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
   reserved 24;
+  reserved "found_camp";
 
   oneof command {
     TurnCommand turn = 1;
