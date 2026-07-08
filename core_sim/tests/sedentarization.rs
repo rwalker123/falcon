@@ -7,13 +7,13 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    scalar_from_f32, scalar_one, scalar_zero, sedentarization_tick, spawn_initial_herds,
-    spawn_initial_world, CommandEventKind, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger,
-    GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, MapPresets,
-    MapPresetsHandle, PopulationCohort, SedentarizationConfigHandle, SedentarizationScore,
-    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    scalar_one, scalar_zero, sedentarization_tick, spawn_initial_herds, spawn_initial_world,
+    CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
+    FactionInventory, FaunaConfigHandle, FogRevealLedger, GenerationId, GenerationRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle, PopulationCohort,
+    Scalar, SedentarizationConfigHandle, SedentarizationScore, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle,
 };
 
 fn spawn_world() -> App {
@@ -85,7 +85,7 @@ fn set_surplus(app: &mut App, faction: FactionId, amount: u32) {
     let mut query = app.world.query::<&mut PopulationCohort>();
     for mut cohort in query.iter_mut(&mut app.world) {
         if cohort.faction == faction {
-            cohort.food_store = scalar_from_f32(amount as f32);
+            cohort.food_store = Scalar::from_u32(amount);
         }
     }
 }

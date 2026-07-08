@@ -13,7 +13,7 @@ use crate::{
     mapgen::WorldGenSeed,
     orders::FactionId,
     resources::{SimulationConfig, SimulationTick, StartLocation, TileRegistry},
-    scalar::scalar_from_f32,
+    scalar::Scalar,
 };
 
 /// RNG salt for per-turn immigration, kept distinct from the initial-spawn salt so the
@@ -748,7 +748,7 @@ pub fn advance_husbandry(
             band_counts.get(&cohort.faction),
         ) {
             if count > 0 {
-                cohort.food_store += scalar_from_f32(total as f32 / count as f32);
+                cohort.food_store += Scalar::from_i64(total) / Scalar::from_u32(count);
             }
         }
     }
