@@ -901,6 +901,13 @@ pub struct KnownTechFragment {
     pub fidelity: i64,
 }
 
+/// One commodity entry in a band's local goods store (fixed-point raw quantity).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CohortStoreState {
+    pub item: String,
+    pub quantity: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct PopulationCohortState {
     pub entity: u64,
@@ -920,13 +927,26 @@ pub struct PopulationCohortState {
     pub working: i64,
     #[serde(default)]
     pub elders: i64,
-    /// The band's local food larder (fixed-point raw).
+    /// The band's local goods store — one entry per commodity (food under `"provisions"`),
+    /// fixed-point raw quantities. Persisted so a rollback restores the exact larder.
     #[serde(default)]
-    pub food_store: i64,
+    pub stores: Vec<CohortStoreState>,
     /// Turns this band has been simulated (settled duration). Gates knowledge-migration so a
     /// freshly-spawned band can't emigrate immediately; persisted so rollback preserves the gate.
     #[serde(default)]
     pub age_turns: u32,
+    /// How many turns the band's current food larder covers (`food / demand`); `999.0` means
+    /// "not food-limited" (a zero-population cohort with no demand). Computed at capture.
+    #[serde(default)]
+    pub days_of_food: f32,
+    /// The command the band is running: one of `idle | harvest | hunt | follow | scout`.
+    #[serde(default)]
+    pub activity: String,
+    /// Which supply network this band belongs to this turn: `0` = not in a multi-band network,
+    /// `>= 1` = a per-snapshot id shared by all bands in the same connected component. Derived and
+    /// recomputed every turn (not persisted for rollback).
+    #[serde(default)]
+    pub supply_network_id: u32,
     pub morale: i64,
     pub generation: u16,
     pub faction: u32,
@@ -2524,6 +2544,25 @@ fn create_populations<'a>(
             } else {
                 Some(create_known_fragments(builder, &cohort.knowledge_fragments))
             };
+            let stores = if cohort.stores.is_empty() {
+                None
+            } else {
+                let entries: Vec<_> = cohort
+                    .stores
+                    .iter()
+                    .map(|entry| {
+                        let item = builder.create_string(&entry.item);
+                        fb::CohortStore::create(
+                            builder,
+                            &fb::CohortStoreArgs {
+                                item: Some(item),
+                                quantity: entry.quantity,
+                            },
+                        )
+                    })
+                    .collect();
+                Some(builder.create_vector(&entries))
+            };
             let migration = cohort.migration.as_ref().map(|pending| {
                 let fragments = if pending.fragments.is_empty() {
                     None
@@ -2580,6 +2619,7 @@ fn create_populations<'a>(
                     },
                 )
             });
+            let activity = Some(builder.create_string(&cohort.activity));
             let accessible_stockpile_fb = cohort.accessible_stockpile.as_ref().map(|stockpile| {
                 let entries = if stockpile.entries.is_empty() {
                     None
@@ -2617,8 +2657,11 @@ fn create_populations<'a>(
                     children: cohort.children,
                     working: cohort.working,
                     elders: cohort.elders,
-                    foodStore: cohort.food_store,
+                    stores,
                     ageTurns: cohort.age_turns,
+                    daysOfFood: cohort.days_of_food,
+                    activity,
+                    supplyNetworkId: cohort.supply_network_id,
                 },
             )
         })

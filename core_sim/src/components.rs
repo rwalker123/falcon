@@ -1,3 +1,5 @@
+use std::cmp::min;
+use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use bevy::{math::UVec2, prelude::*};
@@ -128,6 +130,59 @@ pub struct LogisticsLink {
     pub flow: Scalar,
 }
 
+/// Commodity key for a band's food larder. `"provisions"` is the reward name foraging, hunt, and
+/// husbandry income deposit into the band's local `stores` — provisions left `FactionInventory`
+/// entirely (only trade goods stay faction-global); kept as a stable constant.
+pub const FOOD: &str = "provisions";
+
+/// A location-local store of goods held by a band (and, later, a populated tile or storage pit).
+/// Keyed by commodity so the supply network can balance *any* good; a `BTreeMap` keeps iteration
+/// deterministic for balancing and snapshotting. Quantities are fixed-point (`Scalar`) so small
+/// per-turn flows accumulate without rounding to zero. An absent key reads as zero, and setting a
+/// key to zero prunes it, so two stores with the same goods always compare equal.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LocalStore {
+    goods: BTreeMap<String, Scalar>,
+}
+
+impl LocalStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Current quantity of `item` (zero if absent).
+    pub fn get(&self, item: &str) -> Scalar {
+        self.goods.get(item).copied().unwrap_or_else(scalar_zero)
+    }
+
+    /// Add `amount` (may be negative) to `item`, flooring the result at zero.
+    pub fn add(&mut self, item: &str, amount: Scalar) {
+        let updated = self.get(item) + amount;
+        self.set(item, updated);
+    }
+
+    /// Set `item` to `amount` (floored at zero; a zero value prunes the key).
+    pub fn set(&mut self, item: &str, amount: Scalar) {
+        if amount > scalar_zero() {
+            self.goods.insert(item.to_string(), amount);
+        } else {
+            self.goods.remove(item);
+        }
+    }
+
+    /// Remove up to `amount` of `item`, returning how much was actually taken.
+    pub fn take(&mut self, item: &str, amount: Scalar) -> Scalar {
+        let taken = min(amount.max(scalar_zero()), self.get(item));
+        self.add(item, -taken);
+        taken
+    }
+
+    /// `(item, quantity)` pairs in deterministic (sorted-key) order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, Scalar)> {
+        self.goods.iter().map(|(k, v)| (k.as_str(), *v))
+    }
+}
+
 /// Population representation bound to a home tile.
 #[derive(Component, Debug, Clone)]
 pub struct PopulationCohort {
@@ -144,10 +199,11 @@ pub struct PopulationCohort {
     pub working: Scalar,
     /// Elders — dependents again, then mortality.
     pub elders: Scalar,
-    /// The band's carried food larder (provisions). Filled by this band's foraging, drawn down
-    /// per-capita each turn. Local from day one — the same store a settlement/storage-pit will
-    /// hold later at larger scale (`docs/plan_settlement_population.md`).
-    pub food_store: Scalar,
+    /// The band's carried goods store (food under the `FOOD` key, plus any future commodity).
+    /// Filled by this band's foraging, drawn down per-capita each turn, and rebalanced with nearby
+    /// bands by the supply network. Local from day one — the same store a settlement/storage-pit
+    /// will hold later at larger scale (`docs/plan_settlement_population.md`).
+    pub stores: LocalStore,
     pub morale: Scalar,
     /// Turns this band has been simulated. Gates knowledge-migration (`simulate_population`) so a
     /// freshly-spawned band must settle for `migration_min_settled_turns` before its population can

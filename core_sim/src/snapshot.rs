@@ -7,8 +7,8 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use log::warn;
 use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
-    AccessibleStockpileEntryState, AccessibleStockpileState, AxisBiasState, CommandEventState,
-    CorruptionLedger, CorruptionSubsystem, CrisisGaugeState,
+    AccessibleStockpileEntryState, AccessibleStockpileState, AxisBiasState, CohortStoreState,
+    CommandEventState, CorruptionLedger, CorruptionSubsystem, CrisisGaugeState,
     CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
@@ -31,15 +31,17 @@ use sim_runtime::{
 
 use crate::{
     components::{
-        fragments_from_contract, fragments_to_contract, ElementKind, HarvestAssignment,
-        HarvestTaskKind, LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort,
-        PowerNode, ScoutAssignment, Tile, TradeLink,
+        fragments_from_contract, fragments_to_contract, ElementKind, FaunaPursuit,
+        FaunaPursuitMode, HarvestAssignment, HarvestTaskKind, LocalStore, LogisticsLink,
+        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ScoutAssignment, Tile,
+        TradeLink, FOOD,
     },
     culture::{
         CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
         CultureManager, CultureOwner, CultureTensionKind as SimCultureTensionKind,
         CultureTensionRecord, CultureTraitAxis as SimCultureTraitAxis,
     },
+    demographics_config::{DemographicsConfig, DemographicsConfigHandle},
     fauna::HerdTelemetry,
     food::{FoodModule, FoodModuleTag},
     generations::{GenerationProfile, GenerationRegistry},
@@ -72,6 +74,8 @@ use crate::{
     sedentarization::SedentarizationScore,
     snapshot_overlays_config::{SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle},
     start_profile::{snapshot_profiles, CampaignLabel, FogMode, StartProfilesHandle},
+    supply::SupplyNetworkMembership,
+    systems::food_demand,
     victory::VictoryState,
 };
 
@@ -121,6 +125,8 @@ pub struct SnapshotContext<'w> {
     pub capability_flags: Res<'w, CapabilityFlags>,
     pub visibility_ledger: Res<'w, crate::visibility::VisibilityLedger>,
     pub viewer_faction: Res<'w, crate::visibility::ViewerFaction>,
+    pub demographics: Res<'w, DemographicsConfigHandle>,
+    pub supply_membership: Res<'w, SupplyNetworkMembership>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -1181,17 +1187,24 @@ impl SnapshotHistory {
     }
 }
 
+type PopulationSnapshotQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static PopulationCohort,
+        Option<&'static HarvestAssignment>,
+        Option<&'static ScoutAssignment>,
+        Option<&'static FaunaPursuit>,
+    ),
+>;
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn capture_snapshot(
     ctx: SnapshotContext,
     tiles: Query<(Entity, &Tile, Option<&FoodModuleTag>)>,
     logistics_links: Query<(Entity, &LogisticsLink, &TradeLink)>,
-    populations: Query<(
-        Entity,
-        &PopulationCohort,
-        Option<&HarvestAssignment>,
-        Option<&ScoutAssignment>,
-    )>,
+    populations: PopulationSnapshotQuery,
     power_nodes: Query<(Entity, &PowerNode)>,
     power_grid: Res<PowerGridState>,
     knowledge_ledger: Res<KnowledgeLedger>,
@@ -1228,6 +1241,8 @@ pub fn capture_snapshot(
         capability_flags,
         visibility_ledger,
         viewer_faction,
+        demographics,
+        supply_membership,
     } = ctx;
     let overlays_config = overlays.get();
     history.set_capacity(config.snapshot_history_limit.max(1));
@@ -1272,9 +1287,10 @@ pub fn capture_snapshot(
     logistics_states.sort_unstable_by_key(|state| state.entity);
     trade_states.sort_unstable_by_key(|state| state.entity);
 
+    let demographics_config = demographics.get();
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
-        .map(|(entity, cohort, harvest, scout)| {
+        .map(|(entity, cohort, harvest, scout, pursuit)| {
             let home_pos = tile_positions.get(&cohort.home.to_bits()).copied();
             let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
             let is_traveling = harvest.map(|h| h.travel_remaining > 0).unwrap_or(false)
@@ -1284,12 +1300,15 @@ pub fn capture_snapshot(
                 cohort,
                 harvest,
                 scout,
+                pursuit,
                 home_pos,
                 current_pos,
                 is_traveling,
                 stockpile_radius,
                 start_position,
                 &faction_inventory,
+                &demographics_config,
+                &supply_membership,
             )
         })
         .collect();
@@ -1804,6 +1823,10 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             .get(&(cohort_state.current_x, cohort_state.current_y))
             .copied()
             .unwrap_or(home_entity);
+        let mut stores = LocalStore::new();
+        for entry in &cohort_state.stores {
+            stores.set(&entry.item, Scalar::from_raw(entry.quantity));
+        }
         let mut spawned = world.spawn(PopulationCohort {
             home: home_entity,
             current_tile,
@@ -1811,7 +1834,7 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             children: Scalar::from_raw(cohort_state.children),
             working: Scalar::from_raw(cohort_state.working),
             elders: Scalar::from_raw(cohort_state.elders),
-            food_store: Scalar::from_raw(cohort_state.food_store),
+            stores,
             morale: Scalar::from_raw(cohort_state.morale),
             age_turns: cohort_state.age_turns,
             generation: cohort_state.generation,
@@ -3469,20 +3492,54 @@ fn discovery_progress_entries(ledger: &DiscoveryProgressLedger) -> Vec<Discovery
     entries
 }
 
+/// `days_of_food` sentinel for a cohort with no food demand (e.g. zero population): its larder
+/// covers an unbounded number of turns, so the client reads it as "not food-limited".
+const NOT_FOOD_LIMITED_DAYS: f32 = 999.0;
+
 #[allow(clippy::too_many_arguments)]
 fn population_state(
     entity: Entity,
     cohort: &PopulationCohort,
     harvest: Option<&HarvestAssignment>,
     scout: Option<&ScoutAssignment>,
+    pursuit: Option<&FaunaPursuit>,
     home_position: Option<UVec2>,
     current_position: Option<UVec2>,
     is_traveling: bool,
     stockpile_radius: u32,
     start_position: Option<UVec2>,
     inventory: &FactionInventory,
+    demographics: &DemographicsConfig,
+    supply_membership: &SupplyNetworkMembership,
 ) -> PopulationCohortState {
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
+    let demand = food_demand(
+        cohort.children,
+        cohort.working,
+        cohort.elders,
+        &demographics.consumption,
+    );
+    let days_of_food = if demand.raw() <= 0 {
+        NOT_FOOD_LIMITED_DAYS
+    } else {
+        (cohort.stores.get(FOOD) / demand).to_f32()
+    };
+    let activity = if let Some(harvest) = harvest {
+        match harvest.kind {
+            HarvestTaskKind::Harvest => "harvest",
+            HarvestTaskKind::Hunt => "hunt",
+        }
+    } else if let Some(pursuit) = pursuit {
+        match pursuit.mode {
+            FaunaPursuitMode::Hunt => "hunt",
+            FaunaPursuitMode::Follow { .. } => "follow",
+        }
+    } else if scout.is_some() {
+        "scout"
+    } else {
+        "idle"
+    }
+    .to_string();
     PopulationCohortState {
         entity: entity.to_bits(),
         home: cohort.home.to_bits(),
@@ -3493,8 +3550,18 @@ fn population_state(
         children: cohort.children.raw(),
         working: cohort.working.raw(),
         elders: cohort.elders.raw(),
-        food_store: cohort.food_store.raw(),
+        stores: cohort
+            .stores
+            .iter()
+            .map(|(item, qty)| CohortStoreState {
+                item: item.to_string(),
+                quantity: qty.raw(),
+            })
+            .collect(),
         age_turns: cohort.age_turns,
+        days_of_food,
+        activity,
+        supply_network_id: supply_membership.network_of(entity),
         morale: cohort.morale.raw(),
         generation: cohort.generation,
         faction: cohort.faction.0,
@@ -4200,8 +4267,11 @@ mod tests {
                 children: 0,
                 working: 0,
                 elders: 0,
-                food_store: 0,
+                stores: Vec::new(),
                 age_turns: 0,
+                days_of_food: 0.0,
+                activity: String::new(),
+                supply_network_id: 0,
                 morale: Scalar::from_f32(0.3).raw(),
                 generation: 0,
                 faction: 0,
@@ -4221,8 +4291,11 @@ mod tests {
                 children: 0,
                 working: 0,
                 elders: 0,
-                food_store: 0,
+                stores: Vec::new(),
                 age_turns: 0,
+                days_of_food: 0.0,
+                activity: String::new(),
+                supply_network_id: 0,
                 morale: Scalar::from_f32(0.8).raw(),
                 generation: 0,
                 faction: 1,
@@ -4315,8 +4388,11 @@ mod tests {
                 children: 0,
                 working: 0,
                 elders: 0,
-                food_store: 0,
+                stores: Vec::new(),
                 age_turns: 0,
+                days_of_food: 0.0,
+                activity: String::new(),
+                supply_network_id: 0,
                 morale: Scalar::from_f32(0.5).raw(),
                 generation: 0,
                 faction: 0,
@@ -4340,8 +4416,11 @@ mod tests {
                 children: 0,
                 working: 0,
                 elders: 0,
-                food_store: 0,
+                stores: Vec::new(),
                 age_turns: 0,
+                days_of_food: 0.0,
+                activity: String::new(),
+                supply_network_id: 0,
                 morale: Scalar::from_f32(0.7).raw(),
                 generation: 0,
                 faction: 1,

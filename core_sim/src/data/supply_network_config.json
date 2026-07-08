@@ -1,0 +1,6 @@
+{
+  "reach_tiles": 3,
+  "throughput_per_turn": 50.0,
+  "friction": 0.05,
+  "min_transfer": 0.5
+}

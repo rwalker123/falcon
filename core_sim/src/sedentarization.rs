@@ -14,7 +14,7 @@ use bevy::prelude::*;
 use tracing::info;
 
 use crate::{
-    components::PopulationCohort,
+    components::{PopulationCohort, FOOD},
     fauna::{HerdDensityMap, HerdRegistry},
     orders::FactionId,
     resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
@@ -125,7 +125,7 @@ pub fn sedentarization_tick(
     let mut surplus: HashMap<FactionId, f32> = HashMap::new();
     for cohort in cohorts.iter() {
         *population.entry(cohort.faction).or_insert(0) += cohort.size as u64;
-        *surplus.entry(cohort.faction).or_insert(0.0) += cohort.food_store.to_f32().max(0.0);
+        *surplus.entry(cohort.faction).or_insert(0.0) += cohort.stores.get(FOOD).to_f32().max(0.0);
     }
 
     // Map-wide game richness (v1 environmental baseline; per-faction-local density is a

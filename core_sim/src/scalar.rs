@@ -67,8 +67,12 @@ impl Scalar {
         Self(((self.0 + half) / Self::SCALE) * Self::SCALE)
     }
 
+    pub fn to_i64_whole(self) -> i64 {
+        self.round().0.div_euclid(Self::SCALE)
+    }
+
     pub fn to_u32(self) -> u32 {
-        self.round().0.div_euclid(Self::SCALE) as u32
+        self.to_i64_whole() as u32
     }
 }
 

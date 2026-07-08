@@ -3498,6 +3498,20 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("morale", fixed64_to_f64(cohort.morale()));
     let _ = dict.insert("generation", cohort.generation() as i64);
     let _ = dict.insert("faction", cohort.faction() as i64);
+    let _ = dict.insert("days_of_food", cohort.daysOfFood() as f64);
+    if let Some(activity) = cohort.activity() {
+        let _ = dict.insert("activity", activity);
+    }
+    let _ = dict.insert("supply_network_id", cohort.supplyNetworkId() as i64);
+    if let Some(stores) = cohort.stores() {
+        let mut stores_dict = VarDictionary::new();
+        for store in stores {
+            if let Some(item) = store.item() {
+                let _ = stores_dict.insert(item, fixed64_to_f64(store.quantity()));
+            }
+        }
+        let _ = dict.insert("stores", stores_dict);
+    }
 
     if let Some(fragments) = cohort.knowledgeFragments() {
         let mut array = VarArray::new();

@@ -15,8 +15,8 @@ use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, FaunaPursuit,
         FaunaPursuitMode, FollowPolicy, HarvestAssignment, HarvestTaskKind, KnowledgeFragment,
-        LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort, PowerNode,
-        ScoutAssignment, StartingUnit, Tile, TradeLink,
+        LocalStore, LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort, PowerNode,
+        ScoutAssignment, StartingUnit, Tile, TradeLink, FOOD,
     },
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
@@ -935,7 +935,7 @@ fn seed_cohort_demographics(
             cohort.elders,
             &config.consumption,
         );
-        cohort.food_store = demand * reserve_days;
+        cohort.stores.set(FOOD, demand * reserve_days);
         cohort.morale = (cohort.morale + morale_bonus).clamp(scalar_zero(), scalar_one());
     }
 }
@@ -2624,7 +2624,7 @@ fn spawn_population_entity(
         children: scalar_zero(),
         working: scalar_zero(),
         elders: scalar_zero(),
-        food_store: scalar_zero(),
+        stores: LocalStore::new(),
         morale: scalar_from_f32(0.6),
         age_turns: 0,
         generation,
@@ -2957,7 +2957,7 @@ struct DemographicState {
 /// One turn's food demand for the given age brackets: per-capita draw × weighted mouths
 /// (dependents eat less than a working adult). Shared by consumption and the campaign-start
 /// larder seeding so they can never drift apart.
-fn food_demand(
+pub(crate) fn food_demand(
     children: Scalar,
     working: Scalar,
     elders: Scalar,
@@ -3163,7 +3163,7 @@ pub fn simulate_population(
                 children: cohort.children,
                 working: cohort.working,
                 elders: cohort.elders,
-                food_store: cohort.food_store,
+                food_store: cohort.stores.get(FOOD),
             },
             cohort.morale,
             temp_diff,
@@ -3173,7 +3173,7 @@ pub fn simulate_population(
         cohort.children = outcome.children;
         cohort.working = outcome.working;
         cohort.elders = outcome.elders;
-        cohort.food_store = outcome.food_store;
+        cohort.stores.set(FOOD, outcome.food_store);
         cohort.sync_size();
 
         // A band's population only emigrates once it has settled for a while — this gates the
@@ -3323,7 +3323,9 @@ pub fn advance_harvest_assignments(
         // Provisions the band forages go into its own local larder (carried food), not the
         // faction pool. Trade goods remain a faction-global stockpile.
         if assignment.provisions_reward > 0 {
-            cohort.food_store += Scalar::from_i64(assignment.provisions_reward);
+            cohort
+                .stores
+                .add(FOOD, Scalar::from_i64(assignment.provisions_reward));
         }
         if assignment.trade_goods_reward > 0 {
             inventory.add_stockpile(
@@ -3594,7 +3596,7 @@ pub fn advance_fauna_pursuits(
         let trade_goods = (take * hunt.trade_goods_per_biomass * trade_multiplier).round() as i64;
         // The pursuing band carries its kill in its own larder; trade goods are faction-global.
         if provisions > 0 {
-            cohort.food_store += Scalar::from_i64(provisions);
+            cohort.stores.add(FOOD, Scalar::from_i64(provisions));
         }
         if trade_goods > 0 {
             inventory.add_stockpile(pursuit.faction, "trade_goods", trade_goods);
@@ -4732,7 +4734,7 @@ mod inventory_effect_tests {
                 continue;
             }
             // Well-fed morale bonus lifts the 0.6 spawn baseline, and the band carries food.
-            if cohort.morale > scalar_from_f32(0.6) && cohort.food_store > scalar_zero() {
+            if cohort.morale > scalar_from_f32(0.6) && cohort.stores.get(FOOD) > scalar_zero() {
                 seeded = true;
                 break;
             }

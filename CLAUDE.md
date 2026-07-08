@@ -35,12 +35,60 @@ This repository uses a layered documentation structure:
 
 ---
 
+## Git, Branches & PRs — READ BEFORE ANY GIT COMMAND
+
+This repo is worked by **multiple concurrent sessions committing to the same branch/PR**,
+and the human owns all git topology. Violating the rules below has cost real work.
+
+- **Never create a branch, or open / close / merge a PR, without an explicit, current
+  "yes" from the human.** "Do the work", "go implement", "fix this" do **not** authorize a
+  branch or PR. Announcing a plan ("I'll branch off X and stack it…") is **not** approval —
+  stop and ask which branch the work lands on. Default to committing on the branch already
+  checked out.
+- **Never `git add` broad paths** — no `git add -A`, `git add .`, or `git add <dir>`.
+  Another session (or the human) often has unrelated uncommitted edits in the same working
+  tree; a broad add silently sweeps their work into your commit and onto the wrong branch.
+  **Stage only the specific files you changed, by explicit path.** If unsure what's yours,
+  run `git status` and ask.
+- **The human merges PRs** through their own review flow — you never merge.
+- Before every commit, `git status` and confirm each staged path is one you intended.
+
 ## PR Expectations for Agents
 - Mention in summaries which document(s) were touched and why
 - Verify narrative additions remain consistent with implementation notes
 - When modifying subsystem code, check if the corresponding CLAUDE.md needs updates
 
 Stay consistent with this flow to keep design intent and engineering execution aligned.
+
+---
+
+## Delegating Implementation to Coder Agents
+
+Long sessions fill the orchestrator's context fast because writing code churns
+through file reads, builds, and test output. Two subagents in `.claude/agents/`
+absorb that churn — they do the read → edit → build → test loop in their own
+context and return only a terse report:
+
+- **`server-dev`** — Rust side (`core_sim`, `sim_runtime`, `sim_schema`, `xtask`).
+  Self-verifies with `cargo fmt` + `clippy -D warnings` + `cargo test`.
+- **`client-dev`** — Godot/GDScript + native extension (`clients/godot_thin_client`).
+  Self-verifies with `cargo xtask godot-build` + the ui_preview PNG harness (it
+  reads the rendered frames).
+
+**The workflow:** the orchestrator owns design and produces a *complete,
+comprehensive spec* — decided approach, files to touch, contracts, edge cases,
+config levers — and the agent just implements it. Design and architecture
+decisions stay with the orchestrator; only settled specs are delegated. Do **not**
+hand an agent an open-ended or ambiguous task — if the spec isn't complete enough
+to implement without further design judgment, it isn't ready to delegate.
+
+Guidance:
+- Split cross-cutting work: `server-dev` does the schema/sim half, `client-dev`
+  consumes it; each flags the other's remaining work in its report.
+- Continue the *same* agent (via SendMessage) for iterative follow-ups so its
+  context persists, rather than cold-starting a fresh one and re-explaining.
+- Agents don't branch or commit — they leave the tree changed and report; git
+  stays with the orchestrator.
 
 ---
 

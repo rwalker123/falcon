@@ -24,18 +24,17 @@ use core_sim::{
     CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
     CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, EspionageAgentHandle,
     EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
-    EspionageMissionTemplate, EspionageRoster, FactionId, FactionInventory, FactionOrders,
-    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode,
-    FogRevealLedger, FollowPolicy, FoodModule, FoodModuleTag, GenerationId, GenerationRegistry,
-    HarvestAssignment, HerdRegistry, InfluencerImpacts, InfluentialRoster, MapPresetsHandle,
-    PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams, Scalar,
-    ScoutAssignment, SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
-    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
-    SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
-    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
-    DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
+    EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
+    FactionSecurityPolicies, FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode, FogRevealLedger,
+    FollowPolicy, FoodModule, FoodModuleTag, GenerationId, GenerationRegistry, HarvestAssignment,
+    HerdRegistry, InfluencerImpacts, InfluentialRoster, MapPresetsHandle, PendingCrisisSpawns,
+    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, ScoutAssignment,
+    SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig, SimulationConfigMetadata,
+    SimulationTick, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
+    StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry,
+    TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata,
+    TurnQueue, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS, FOOD,
 };
 use core_sim::{
     resolve_active_profile, ActiveStartProfile, CampaignLabel, HarvestTaskKind,
@@ -1250,10 +1249,9 @@ fn handle_scout_area(
         return;
     };
 
-    if !consume_inventory_item(
+    if !consume_faction_provisions(
         app,
         faction,
-        "provisions",
         SCOUT_PROVISION_COST,
         "scout_area",
         CommandEventKind::Scout,
@@ -1466,10 +1464,9 @@ fn handle_found_camp(
     ) else {
         return;
     };
-    if !consume_inventory_item(
+    if !consume_faction_provisions(
         app,
         faction,
-        "provisions",
         CAMP_PROVISION_COST,
         "found_camp",
         CommandEventKind::FoundCamp,
@@ -1578,10 +1575,9 @@ fn handle_found_settlement(
         return;
     };
 
-    if !consume_inventory_item(
+    if !consume_faction_provisions(
         app,
         faction,
-        "provisions",
         SETTLEMENT_PROVISION_COST,
         "found_settlement",
         CommandEventKind::FoundSettlement,
@@ -2982,10 +2978,13 @@ fn starting_unit_label(app: &bevy::prelude::App, entity: Entity) -> String {
         .unwrap_or_else(|| format!("starting_unit:{}", entity.index()))
 }
 
-fn consume_inventory_item(
+/// Charge a provisions cost from the faction's bands' local larders (food is band-local now — the
+/// supply network keeps networked bands topped up). Sums the faction's carried food; on shortfall
+/// rejects with a command-feed failure, otherwise draws the cost greedily across bands in a
+/// deterministic order.
+fn consume_faction_provisions(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    item: &str,
     amount: i64,
     command_label: &str,
     event_kind: CommandEventKind,
@@ -2993,22 +2992,28 @@ fn consume_inventory_item(
     if amount <= 0 {
         return true;
     }
-    let available = {
-        let inventory = app.world.resource::<FactionInventory>();
-        inventory
-            .stockpile(faction)
-            .and_then(|entries| entries.get(item))
-            .copied()
-            .unwrap_or(0)
-    };
-    if available < amount {
+    let mut bands: Vec<(Entity, Scalar)> = Vec::new();
+    {
+        let mut query = app.world.query::<(Entity, &PopulationCohort)>();
+        for (entity, cohort) in query.iter(&app.world) {
+            if cohort.faction == faction {
+                bands.push((entity, cohort.stores.get(FOOD)));
+            }
+        }
+    }
+    bands.sort_by_key(|(entity, _)| entity.to_bits());
+    let available = bands
+        .iter()
+        .fold(Scalar::from_i64(0), |acc, (_, food)| acc + *food);
+    let cost = Scalar::from_i64(amount);
+    if available < cost {
         warn!(
             target: "shadow_scale::command",
             command = command_label,
             faction = %faction.0,
-            item,
+            item = "provisions",
             required = amount,
-            available,
+            available = available.to_i64_whole(),
             "command.inventory.rejected=insufficient"
         );
         emit_command_failure(
@@ -3016,15 +3021,21 @@ fn consume_inventory_item(
             event_kind,
             faction,
             format!(
-                "{} {} required but only {} available.",
-                amount, item, available
+                "{} provisions required but only {} available.",
+                amount,
+                available.to_i64_whole()
             ),
         );
         return false;
     }
-    {
-        let mut inventory = app.world.resource_mut::<FactionInventory>();
-        inventory.take_stockpile(faction, item, amount);
+    let mut remaining = cost;
+    for (entity, _) in bands {
+        if remaining <= Scalar::from_i64(0) {
+            break;
+        }
+        if let Some(mut cohort) = app.world.get_mut::<PopulationCohort>(entity) {
+            remaining -= cohort.stores.take(FOOD, remaining);
+        }
     }
     true
 }

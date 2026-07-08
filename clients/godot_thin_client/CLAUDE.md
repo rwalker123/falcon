@@ -48,7 +48,8 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the hydrology rivers toggle. Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` via `set_map_view`. The nested Map-Overlays section keeps its own `OverlayPanel` script |
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
 | `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the Terrain-tab command buttons. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`; scout/found emit `tile_scout_requested`/`tile_found_camp_requested` (coordinator resolves the faction + sends, like FaunaPanel); gated by `set_command_connected` + `set_construction_available` (CAP_CONSTRUCTION) |
-| `Hud.gd` | HUD layer, legend, selection panel, turn readout |
+| `Hud.gd` | HUD layer, legend, selection panel (incl. band food line), band **Alerts** panel, turn readout |
+| `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping, shared by MapView's band dot and Hud's food line/alerts |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
 | `ui/MinimapPanel.gd` | Minimap component for the 2D map view (click-to-pan, aspect ratio sizing) |
@@ -319,6 +320,24 @@ easy-to-miss "select a band…" line in the selection panel.
   head-count, the three brackets, and the **dependency ratio** `(children+elders)/working` per 100
   workers, tinted amber when dependents outnumber workers / cyan on a healthy labor surplus. Hidden
   until the faction has population. See `core_sim` Campaign Loop — Population & Demographics.
+- **Band food status** (snapshot `PopulationCohortState.daysOfFood` / `activity` / `supplyNetworkId` /
+  `stores[]`, decoded in `native/src/lib.rs` `population_to_dict` as `days_of_food` / `activity` /
+  `supply_network_id` / `stores{item:qty}`): the green/amber/red warn·critical thresholds and the
+  day→color mapping live in one place, `ui/BandFoodStatus.gd` (config `src/config/band_status_config.json`,
+  key `food_days.{warn,critical}`; `999` = not food-limited → ∞). Surfaced three ways:
+  (1) `MapView._draw_band_status` draws a food-days dot + a per-`activity` ring on each **player** band
+  (`_is_player_unit`; idle bands draw no ring); (2) `Hud._band_food_line` adds a `Food  <N>  (<D> days)`
+  row to the band selection panel, tinted by the thresholds via `_format_detail_bbcode`;
+  (3) `MapView._draw_supply_links` faint-chains player bands sharing a `supply_network_id` (`0` = solo).
+- **Alerts panel** (`Hud.gd` `update_band_alerts`, dispatched from `Main.gd` on the snapshot
+  `populations`): a left-dock `PanelCard` (`AlertsPanel`/`%AlertsLabel`, priority 15) that rebuilds each
+  snapshot from the player faction's bands — **starving** (`days_of_food` < critical, red),
+  **losing population** (`size` dropped vs the previous snapshot, tracked in `_prev_band_sizes`, amber),
+  and **idle** (`activity == idle`, quiet dim). Alerts are (band, type) deduped by construction and clear
+  when resolved; each row is a `[url=x,y]` link whose `meta_clicked` emits `alert_focus_requested(x,y)` →
+  `MapView.focus_on_tile` (shared minimap centering machinery). Hidden via the dock until an alert exists.
+  NOTE: cohorts carry no top-level band label in the snapshot — names fall back to harvest/scout
+  `band_label` then a positional "Band N"; a server-side band-label field would make names authoritative.
 - **HUD owns the state** (`Hud.gd` `_pending_forage` / `_pending_scout_unit` /
   `_pending_hunt` / `_pending_follow` — only one active at a time via
   `_clear_other_pending`) and derives a descriptor via `_current_targeting_info()`

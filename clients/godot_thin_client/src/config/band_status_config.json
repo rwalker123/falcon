@@ -1,0 +1,6 @@
+{
+  "food_days": {
+    "warn": 10.0,
+    "critical": 5.0
+  }
+}

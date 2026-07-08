@@ -12,12 +12,15 @@ signal next_turn_requested(steps: int)
 ## ({} when inactive) that Main forwards to MapView so the map can draw the
 ## reticle / valid-target glow / hover ETA.
 signal targeting_changed(info: Dictionary)
+## Emitted when the player clicks a band alert; Main forwards it to
+## MapView.focus_on_tile so the map pans to the band that raised the alert.
+signal alert_focus_requested(x: int, y: int)
 
 ## Build identifier of THIS client (GDScript/native). **Bump on client-affecting
 ## changes.** Shown in the lower-left version overlay next to the server build (streamed
 ## in the snapshot header) so the running client+server builds can be confirmed at a
 ## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-07.8"
+const CLIENT_BUILD := "2026-07-08.1"
 var _build_label: Label = null
 var _server_build: String = "?"
 
@@ -38,6 +41,8 @@ var _server_build: String = "?"
 @onready var terrain_legend_description: Label = %LegendDescription
 @onready var victory_panel: PanelContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/VictoryPanel
 @onready var victory_status_label: RichTextLabel = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/VictoryPanel/Margin/VictoryLabel
+@onready var alerts_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/AlertsPanel as PanelCard
+@onready var alerts_label: RichTextLabel = %AlertsLabel
 @onready var command_feed_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel as PanelCard
 @onready var command_feed_scroll: ScrollContainer = %CommandFeedScroll
 @onready var command_feed_label: RichTextLabel = %CommandFeedLabel
@@ -99,6 +104,15 @@ const FOOD_MODULE_LABELS := {
 }
 const FOOD_ACTION_FORAGE := "forage"
 const FOOD_ACTION_HUNT := "hunt"
+# Band-status alert types, ordered high → low priority (rendered in this order).
+const ALERT_TYPE_STARVING := "starving"
+const ALERT_TYPE_LOSING_POPULATION := "losing_population"
+const ALERT_TYPE_IDLE := "idle"
+const ALERT_PRIORITY := [ALERT_TYPE_STARVING, ALERT_TYPE_LOSING_POPULATION, ALERT_TYPE_IDLE]
+const BAND_ACTIVITY_IDLE := "idle"
+# Provisions is the food item under a band's larder `stores`.
+const STORE_ITEM_PROVISIONS := "provisions"
+const FOOD_UNLIMITED_GLYPH := "∞"
 const UI_BALANCE_CONFIG_PATH := "res://src/config/ui_balance.json"
 const DEFAULT_TRAVEL_SPEED := 3.0
 const DEFAULT_TRAVEL_PREVIEW_LIMIT := 12
@@ -109,11 +123,17 @@ var campaign_label: Dictionary = {}
 var victory_state: Dictionary = {}
 var _command_feed_entries: Array = []
 var _command_feed_signatures: Dictionary = {}
+# Previous per-band size (entity id -> size) so we can detect population loss
+# across snapshots for the "losing population" alert.
+var _prev_band_sizes: Dictionary = {}
 var _selected_tile_info: Dictionary = {}
 var _selected_unit: Dictionary = {}
 var _selected_herd: Dictionary = {}
 var _selected_food_module: String = ""
 var _selected_food_is_hunt: bool = false
+# Days-of-food of the currently-selected band's larder, so the detail formatter
+# can threshold-tint the Food row. NAN when no band is selected.
+var _selected_band_food_days: float = NAN
 var _pending_forage: Dictionary = {}
 var _pending_scout_unit: Dictionary = {}
 var _pending_hunt: Dictionary = {}
@@ -145,8 +165,10 @@ func _ready() -> void:
     left_dock = PanelDock.new(left_stack)
     right_dock = PanelDock.new(right_stack)
     left_dock.add(selection_panel, 10)
+    left_dock.add(alerts_panel, 15)
     left_dock.add(stockpile_panel, 20)
     left_dock.add(command_feed_panel, 30)
+    _connect_alerts_panel()
     right_dock.add(victory_panel, 10)
     right_dock.add(terrain_legend_panel, 20)
     if stockpile_panel != null:
@@ -824,6 +846,9 @@ func _herd_matches_selected_tile(herd_data: Dictionary) -> bool:
 func _render_selection_panel(tile_info: Dictionary, unit_data: Dictionary, herd_data: Dictionary) -> void:
     if selection_panel == null or selection_detail == null:
         return
+    # Reset the band-food tint context; `_unit_summary_lines` re-sets it if a band
+    # is being rendered.
+    _selected_band_food_days = NAN
     selection_panel.visible = true
     # Title carries a colored "kind" eyebrow (TILE / BAND / HERD) plus a concise
     # identifier — the new Tile Banner look.
@@ -942,6 +967,7 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
     lines.append("Unit: %s" % label)
     var size_value: int = int(unit_data.get("size", 0))
     lines.append("Size: %d" % size_value)
+    lines.append(_band_food_line(unit_data))
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
@@ -963,6 +989,26 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
             lines.append("")
             lines.append_array(stockpile_lines)
     return lines
+
+## Selection-panel band food row: "Food  <provisions>  (<days>)" — provisions from
+## the band's larder stores, days from `days_of_food` (∞ when not food-limited).
+## Stashes the days on `_selected_band_food_days` so `_format_detail_bbcode` can
+## tint the value by the shared warn/critical thresholds.
+func _band_food_line(unit_data: Dictionary) -> String:
+    var days: float = float(unit_data.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
+    _selected_band_food_days = days
+    var provisions := 0
+    var stores_variant: Variant = unit_data.get("stores", {})
+    if stores_variant is Dictionary:
+        provisions = int(round(float((stores_variant as Dictionary).get(STORE_ITEM_PROVISIONS, 0.0))))
+    return "Food: %d  (%s)" % [provisions, _food_days_text(days)]
+
+## Human-readable days-of-food: the ∞ glyph when the band is not food-limited,
+## otherwise a whole-day count.
+func _food_days_text(days: float) -> String:
+    if not BandFoodStatus.is_limited(days):
+        return FOOD_UNLIMITED_GLYPH
+    return "%d days" % int(round(days))
 
 func _harvest_summary_lines(harvest: Dictionary) -> Array[String]:
     var lines: Array[String] = []
@@ -1235,7 +1281,14 @@ func _format_detail_bbcode(lines: Array) -> String:
                 table_open = true
             var value_hex := HudStyle.INK_HEX
             if String(kv[0]) == "Food":
-                value_hex = HudStyle.WARN_HEX
+                # The band larder row (its value carries a day count or the ∞
+                # glyph) tints by the food-days thresholds; a tile's food source
+                # keeps the neutral amber.
+                var food_value := String(kv[1])
+                if not is_nan(_selected_band_food_days) and (food_value.contains("day") or food_value.contains(FOOD_UNLIMITED_GLYPH)):
+                    value_hex = BandFoodStatus.hex_for_days(_selected_band_food_days)
+                else:
+                    value_hex = HudStyle.WARN_HEX
             elif String(kv[0]) == "Ecology":
                 value_hex = _ecology_value_hex(String(kv[1]))
             elif String(kv[0]) == "Husbandry":
@@ -1412,6 +1465,114 @@ func ingest_command_events(events_variant: Variant) -> void:
         _command_feed_signatures[signature] = true
         _append_command_feed_entry(tick, kind, label, detail)
     _render_command_feed()
+
+## Wire the alerts panel's link clicks and hide it until the first alert arrives.
+func _connect_alerts_panel() -> void:
+    if alerts_label != null and not alerts_label.is_connected("meta_clicked", Callable(self, "_on_alert_meta_clicked")):
+        alerts_label.meta_clicked.connect(_on_alert_meta_clicked)
+    if left_dock != null and alerts_panel != null:
+        left_dock.set_relevant(alerts_panel, false)
+
+## Rebuild the actionable-alerts list from the player faction's bands each
+## snapshot. Alerts are (band, type) deduped by construction — each band yields at
+## most one of each type — and cleared automatically when the condition resolves
+## (the list is rebuilt from scratch). Population loss is detected against the
+## per-band sizes remembered from the previous snapshot.
+func update_band_alerts(populations_variant: Variant) -> void:
+    if not (populations_variant is Array):
+        return
+    var populations: Array = populations_variant
+    var new_sizes: Dictionary = {}
+    var alerts: Array = []
+    var band_index := 0
+    for entry_variant in populations:
+        if not (entry_variant is Dictionary):
+            continue
+        var entry: Dictionary = entry_variant
+        if int(entry.get("faction", -1)) != PLAYER_FACTION_ID:
+            continue
+        band_index += 1
+        var entity := int(entry.get("entity", -1))
+        var size := int(entry.get("size", 0))
+        var days := float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
+        var activity := String(entry.get("activity", "")).strip_edges()
+        var x := int(entry.get("current_x", -1))
+        var y := int(entry.get("current_y", -1))
+        var band_name := _band_display_name(entry, band_index)
+        new_sizes[entity] = size
+        if BandFoodStatus.is_critical(days):
+            alerts.append({"type": ALERT_TYPE_STARVING, "band": band_name, "x": x, "y": y, "days": days})
+        if _prev_band_sizes.has(entity) and size < int(_prev_band_sizes[entity]):
+            alerts.append({"type": ALERT_TYPE_LOSING_POPULATION, "band": band_name, "x": x, "y": y})
+        if activity == BAND_ACTIVITY_IDLE:
+            alerts.append({"type": ALERT_TYPE_IDLE, "band": band_name, "x": x, "y": y})
+    _prev_band_sizes = new_sizes
+    _render_alerts(alerts)
+
+## Best-effort readable band name: the label carried on an active harvest/scout
+## task, else a positional "Band N". (Cohorts carry no top-level band label in the
+## snapshot yet — see the server-side follow-up.)
+func _band_display_name(entry: Dictionary, index: int) -> String:
+    for task_key in ["harvest", "scout"]:
+        var task_variant: Variant = entry.get(task_key, {})
+        if task_variant is Dictionary:
+            var label := String((task_variant as Dictionary).get("band_label", "")).strip_edges()
+            if label != "":
+                return label
+    return "Band %d" % index
+
+func _render_alerts(alerts: Array) -> void:
+    if alerts_panel == null or alerts_label == null:
+        return
+    if alerts.is_empty():
+        if left_dock != null:
+            left_dock.set_relevant(alerts_panel, false)
+        else:
+            alerts_panel.visible = false
+        return
+    alerts.sort_custom(func(a, b): return ALERT_PRIORITY.find(String(a.get("type"))) < ALERT_PRIORITY.find(String(b.get("type"))))
+    var lines := PackedStringArray()
+    for alert_variant in alerts:
+        lines.append(_format_alert_line(alert_variant))
+    alerts_label.text = "\n".join(lines)
+    if left_dock != null:
+        left_dock.set_relevant(alerts_panel, true)
+    else:
+        alerts_panel.visible = true
+
+## One clickable alert row: a `[url=x,y]` link (so a click focuses the map on the
+## band) colored by severity — starving red, population-loss amber, idle quiet dim.
+func _format_alert_line(alert: Dictionary) -> String:
+    var type := String(alert.get("type", ""))
+    var band_name := String(alert.get("band", "Band"))
+    var x := int(alert.get("x", -1))
+    var y := int(alert.get("y", -1))
+    var meta := "%d,%d" % [x, y]
+    var text := ""
+    var color_hex := HudStyle.INK_HEX
+    match type:
+        ALERT_TYPE_STARVING:
+            text = "⚠ %s starving — %s" % [band_name, _food_days_text(float(alert.get("days", 0.0)))]
+            color_hex = HudStyle.DANGER_HEX
+        ALERT_TYPE_LOSING_POPULATION:
+            text = "⚠ %s losing population" % band_name
+            color_hex = HudStyle.WARN_HEX
+        ALERT_TYPE_IDLE:
+            text = "%s idle" % band_name
+            color_hex = HudStyle.INK_DIM_HEX
+        _:
+            text = band_name
+    return "[url=%s][color=#%s]%s[/color][/url]" % [meta, color_hex, text]
+
+func _on_alert_meta_clicked(meta: Variant) -> void:
+    var parts := String(meta).split(",")
+    if parts.size() != 2:
+        return
+    var x := int(parts[0])
+    var y := int(parts[1])
+    if x < 0 or y < 0:
+        return
+    emit_signal("alert_focus_requested", x, y)
 
 func _append_command_feed_entry(tick: int, kind: String, label: String, detail: String) -> void:
     var prefix := kind.capitalize() if kind != "" else "Command"

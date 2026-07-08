@@ -146,6 +146,16 @@ held until the prior merges (small, focused PRs, matching the Wildlife & Hunting
   the snapshot (rollback); a per-faction age-structure + dependency-ratio HUD readout ships
   (`PopulationDemographicsState`, wired like `SedentarizationState`). Migration unchanged (the
   larder rides along with the cohort).
+- **Supply network (Phase 1↔3 bridge).** ✅ **Shipped.** Bands are small logistics nodes: each
+  band's food (and any commodity) lives in a commodity-keyed `LocalStore`, and
+  `balance_supply_networks` (`supply.rs`, `TurnStage::Logistics`) connects same-faction bands within
+  a configurable **reach** into supply networks that **auto-balance** stored goods per-capita each
+  turn, **throughput-limited** with friction (`supply_network_config.json`). So you can specialize a
+  gatherer band to feed a nearby scout band, while a band beyond reach lives off its own larder.
+  "Logistics from turn 0, scaled by config" — the same engine grows into settlement/city
+  distribution, and its connected-components pass is what Phase 4 uses to derive settlements. A
+  future **trade policy** adds a consent gate + priced return flow on cross-faction edges (retiring
+  the dormant `TradeLink`/`trade_knowledge_diffusion`). Client readout deferred.
 - **Phase 2 — Labor pool + hybrid allocation.** Working-age → a local labor supply; a
   demand/allocation system (auto by priority + player override); client labor readout.
 - **Phase 3 — Improvement catalog + building + knowledge-gating.** The `Improvement` component +

@@ -10,10 +10,10 @@ use core_sim::{
     scalar_one, scalar_zero, sedentarization_tick, spawn_initial_herds, spawn_initial_world,
     CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
     FactionInventory, FaunaConfigHandle, FogRevealLedger, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle, PopulationCohort,
-    Scalar, SedentarizationConfigHandle, SedentarizationScore, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets, MapPresetsHandle,
+    PopulationCohort, Scalar, SedentarizationConfigHandle, SedentarizationScore, SimulationConfig,
+    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, FOOD,
 };
 
 fn spawn_world() -> App {
@@ -70,7 +70,7 @@ fn spawn_cohort(app: &mut App, faction: FactionId, size: u32) {
         children: scalar_zero(),
         working: scalar_zero(),
         elders: scalar_zero(),
-        food_store: scalar_zero(),
+        stores: LocalStore::new(),
         morale: scalar_one(),
         age_turns: 0,
         generation: 0 as GenerationId,
@@ -86,7 +86,7 @@ fn set_surplus(app: &mut App, faction: FactionId, amount: u32) {
     let mut query = app.world.query::<&mut PopulationCohort>();
     for mut cohort in query.iter_mut(&mut app.world) {
         if cohort.faction == faction {
-            cohort.food_store = Scalar::from_u32(amount);
+            cohort.stores.set(FOOD, Scalar::from_u32(amount));
         }
     }
 }

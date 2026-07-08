@@ -11,10 +11,10 @@ use core_sim::{
     spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FaunaPursuit,
     FaunaPursuitMode, FogRevealLedger, FollowPolicy, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle, PopulationCohort,
-    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets, MapPresetsHandle,
+    PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, FOOD,
 };
 
 fn spawn_world() -> App {
@@ -97,7 +97,7 @@ fn spawn_follower(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::p
                 children: scalar_zero(),
                 working: scalar_zero(),
                 elders: scalar_zero(),
-                food_store: scalar_zero(),
+                stores: LocalStore::new(),
                 morale: scalar_one(),
                 age_turns: 0,
                 generation: 0 as GenerationId,
@@ -154,7 +154,7 @@ fn provisions(app: &mut App) -> i64 {
     let mut query = app.world.query::<&PopulationCohort>();
     for cohort in query.iter(&app.world) {
         if cohort.faction == FactionId(0) {
-            total += cohort.food_store.to_f32();
+            total += cohort.stores.get(FOOD).to_f32();
         }
     }
     total.round() as i64
