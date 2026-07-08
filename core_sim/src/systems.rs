@@ -3315,7 +3315,7 @@ pub fn advance_harvest_assignments(
         // Provisions the band forages go into its own local larder (carried food), not the
         // faction pool. Trade goods remain a faction-global stockpile.
         if assignment.provisions_reward > 0 {
-            cohort.food_store += scalar_from_f32(assignment.provisions_reward as f32);
+            cohort.food_store += Scalar::from_i64(assignment.provisions_reward);
         }
         if assignment.trade_goods_reward > 0 {
             inventory.add_stockpile(
@@ -3586,7 +3586,7 @@ pub fn advance_fauna_pursuits(
         let trade_goods = (take * hunt.trade_goods_per_biomass * trade_multiplier).round() as i64;
         // The pursuing band carries its kill in its own larder; trade goods are faction-global.
         if provisions > 0 {
-            cohort.food_store += scalar_from_f32(provisions as f32);
+            cohort.food_store += Scalar::from_i64(provisions);
         }
         if trade_goods > 0 {
             inventory.add_stockpile(pursuit.faction, "trade_goods", trade_goods);

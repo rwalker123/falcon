@@ -272,7 +272,7 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
    own larder; shortfall is the food **deficit**.
 2. **Deaths** — starvation scales with the deficit (dependents more vulnerable via `scarcity`
    weights); cold kills across brackets past `cold.temp_tolerance`.
-3. **Births → children** — `birth_rate × working × fed_ratio × morale_signal × (1 + surplus_bonus)`.
+3. **Births → children** — `birth_rate × working × fed_ratio × morale_signal × (1 + surplus_bonus × surplus_ratio)`.
 4. **Maturation** children→working, **aging** working→elders, **elder mortality**. All flows use
    the turn's *opening* values and apply together (a newborn doesn't mature the same turn); the
    total is clamped to `population_cap`. The **dependency ratio** `(children+elders)/working` is

@@ -165,7 +165,7 @@ impl PopulationCohort {
     /// Split a head-count into the three brackets by the configured fractions and resync `size`.
     /// Used when spawning a fresh cohort (rehydration restores exact brackets from the snapshot).
     pub fn set_brackets_from_size(&mut self, size: u32, children: f32, working: f32, elders: f32) {
-        let total = scalar_from_f32(size as f32);
+        let total = Scalar::from_u32(size);
         self.children = total * scalar_from_f32(children);
         self.working = total * scalar_from_f32(working);
         self.elders = total * scalar_from_f32(elders);
