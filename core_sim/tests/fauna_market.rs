@@ -7,13 +7,14 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_fauna_pursuits, advance_herds, advance_husbandry, scalar_one, spawn_initial_herds,
-    spawn_initial_world, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
-    FactionInventory, FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode, FogRevealLedger,
-    FollowPolicy, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    MapPresets, MapPresetsHandle, PopulationCohort, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
+    advance_fauna_pursuits, advance_herds, advance_husbandry, scalar_one, scalar_zero,
+    spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FaunaPursuit,
+    FaunaPursuitMode, FogRevealLedger, FollowPolicy, GenerationId, GenerationRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle, PopulationCohort,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
+    TileRegistry,
 };
 
 fn spawn_world() -> App {
@@ -105,6 +106,10 @@ fn spawn_follower(
                 home: tile,
                 current_tile: tile,
                 size: 30,
+                children: scalar_zero(),
+                working: scalar_zero(),
+                elders: scalar_zero(),
+                food_store: scalar_zero(),
                 morale: scalar_one(),
                 generation: 0 as GenerationId,
                 faction,

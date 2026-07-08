@@ -1,0 +1,32 @@
+{
+  "initial_distribution": {
+    "children": 0.30,
+    "working": 0.55,
+    "elders": 0.15
+  },
+  "consumption": {
+    "per_capita_draw": 0.5,
+    "child_factor": 0.6,
+    "working_factor": 1.0,
+    "elder_factor": 0.8
+  },
+  "births": {
+    "birth_rate": 0.03,
+    "surplus_bonus": 0.5,
+    "morale_floor": 0.2
+  },
+  "maturation_rate": 0.05,
+  "aging_rate": 0.025,
+  "elder_mortality_rate": 0.06,
+  "scarcity": {
+    "starvation_mortality": 0.5,
+    "child_vulnerability": 1.5,
+    "working_vulnerability": 1.0,
+    "elder_vulnerability": 1.5
+  },
+  "cold": {
+    "temp_tolerance": 12.0,
+    "mortality_scale": 0.02,
+    "max_mortality": 0.1
+  }
+}

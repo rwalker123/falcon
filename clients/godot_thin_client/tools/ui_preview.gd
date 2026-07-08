@@ -41,6 +41,9 @@ func _ready() -> void:
 	# Top-bar Sedentarization meter (faction 0, soft band) — visible across all frames.
 	_hud.update_sedentarization([{"faction": 0, "score": 62.0, "stage": "soft"}])
 
+	# Top-bar demographics readout (faction 0 age structure + dependency ratio).
+	_hud.update_demographics([{"faction": 0, "children": 34, "working": 51, "elders": 15}])
+
 	# State 1 — a band selected (BAND eyebrow, primary Scout / ghost Found Camp).
 	_hud.show_unit_selection(_band_fixture())
 	await _settle()

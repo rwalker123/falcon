@@ -3,13 +3,13 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_fauna_pursuits, advance_herds, scalar_one, spawn_initial_herds, spawn_initial_world,
-    CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory,
-    FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode, FogRevealLedger, GenerationId,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle, PopulationCohort,
-    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry,
+    advance_fauna_pursuits, advance_herds, scalar_one, scalar_zero, spawn_initial_herds,
+    spawn_initial_world, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
+    FactionInventory, FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode, FogRevealLedger,
+    GenerationId, HerdDensityMap, HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle,
+    PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
 };
 
 /// Build a land-rich world with herds spawned (mirrors `fauna_spawn.rs` setup).
@@ -84,6 +84,10 @@ fn hunt_pursuit_takes_biomass_and_yields() {
                 home: tile_entity,
                 current_tile: tile_entity,
                 size: 30,
+                children: scalar_zero(),
+                working: scalar_zero(),
+                elders: scalar_zero(),
+                food_store: scalar_zero(),
                 morale: scalar_one(),
                 generation: 0 as GenerationId,
                 faction,
@@ -119,14 +123,16 @@ fn hunt_pursuit_takes_biomass_and_yields() {
         "expected biomass to drop (before {biomass_before}, after {biomass_after})"
     );
 
-    // Provisions accrued to the hunting faction.
-    let provisions = app
+    // Provisions accrued to the hunting band's local larder (food is band-local now).
+    let food_store = app
         .world
-        .resource::<FactionInventory>()
-        .stockpile(faction)
-        .and_then(|s| s.get("provisions").copied())
-        .unwrap_or(0);
-    assert!(provisions > 0, "expected provisions from the hunt, got 0");
+        .get::<PopulationCohort>(band)
+        .map(|c| c.food_store.to_f32())
+        .unwrap_or(0.0);
+    assert!(
+        food_store > 0.0,
+        "expected provisions in the band larder from the hunt, got {food_store}"
+    );
 
     // The one-shot pursuit is consumed (component removed).
     assert!(

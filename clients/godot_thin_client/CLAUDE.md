@@ -313,6 +313,12 @@ easy-to-miss "select a band…" line in the selection panel.
   `TurnBlock`), tinted amber (soft) / cyan (hard) by stage and hidden until the score is
   meaningful. The soft/hard threshold prompts themselves arrive in the command feed
   (`CommandEventKind::SedentarizationPrompt`). See `core_sim` Campaign Loop — Sedentarization.
+- **Demographics readout** (`Hud.gd` `update_demographics`, dispatched from `Main.gd`): the player
+  faction's age structure from `PopulationDemographicsState` (snapshot `demographics[]`) shows as a
+  top-bar line (`Pop 100  👶34 🛠51 🧓15  dep 96/100`, `DemographicsLabel` in `TurnBlock`) — total
+  head-count, the three brackets, and the **dependency ratio** `(children+elders)/working` per 100
+  workers, tinted amber when dependents outnumber workers / cyan on a healthy labor surplus. Hidden
+  until the faction has population. See `core_sim` Campaign Loop — Population & Demographics.
 - **HUD owns the state** (`Hud.gd` `_pending_forage` / `_pending_scout_unit` /
   `_pending_hunt` / `_pending_follow` — only one active at a time via
   `_clear_other_pending`) and derives a descriptor via `_current_targeting_info()`

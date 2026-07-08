@@ -17,9 +17,7 @@ use crate::{
     components::PopulationCohort,
     fauna::{HerdDensityMap, HerdRegistry},
     orders::FactionId,
-    resources::{
-        CommandEventEntry, CommandEventKind, CommandEventLog, FactionInventory, SimulationTick,
-    },
+    resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
     sedentarization_config::{SedentarizationConfig, SedentarizationConfigHandle},
 };
 
@@ -115,17 +113,19 @@ pub fn sedentarization_tick(
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
     config: Res<SedentarizationConfigHandle>,
-    inventory: Res<FactionInventory>,
     herds: Res<HerdRegistry>,
     density: Res<HerdDensityMap>,
     cohorts: Query<&PopulationCohort>,
 ) {
     let cfg = config.get();
 
-    // Per-faction total population (the set of active factions to score).
+    // Per-faction total population + carried food surplus (the set of active factions to score).
+    // Food is band-local, so the faction's surplus is the sum of its bands' larders.
     let mut population: HashMap<FactionId, u64> = HashMap::new();
+    let mut surplus: HashMap<FactionId, f32> = HashMap::new();
     for cohort in cohorts.iter() {
         *population.entry(cohort.faction).or_insert(0) += cohort.size as u64;
+        *surplus.entry(cohort.faction).or_insert(0.0) += cohort.food_store.to_f32().max(0.0);
     }
 
     // Map-wide game richness (v1 environmental baseline; per-faction-local density is a
@@ -146,15 +146,10 @@ pub fn sedentarization_tick(
     for faction in factions {
         let pop = population[&faction];
         let domesticated = herds.domesticated_count(faction) as f32;
-        let surplus = inventory
-            .stockpile(faction)
-            .and_then(|items| items.get("provisions"))
-            .copied()
-            .unwrap_or(0)
-            .max(0) as f32;
+        let faction_surplus = surplus.get(&faction).copied().unwrap_or(0.0);
 
         let dom_norm = (domesticated / (refs.domesticated_herds.max(1) as f32)).clamp(0.0, 1.0);
-        let sur_norm = (surplus / refs.surplus.max(f32::EPSILON)).clamp(0.0, 1.0);
+        let sur_norm = (faction_surplus / refs.surplus.max(f32::EPSILON)).clamp(0.0, 1.0);
         let pop_norm = (pop as f32 / refs.population.max(f32::EPSILON)).clamp(0.0, 1.0);
 
         let raw = 100.0

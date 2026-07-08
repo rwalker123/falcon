@@ -77,6 +77,19 @@ pub struct SedentarizationState {
     pub stage: String,
 }
 
+/// Per-faction age structure aggregated over the faction's population cohorts. The client
+/// derives the dependency ratio `(children + elders) / working` for its HUD readout.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PopulationDemographicsState {
+    pub faction: u32,
+    #[serde(default)]
+    pub children: u32,
+    #[serde(default)]
+    pub working: u32,
+    #[serde(default)]
+    pub elders: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HerdTelemetryState {
     pub id: String,
@@ -899,6 +912,17 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub is_traveling: bool,
     pub size: u32,
+    /// Age brackets (fixed-point raw, `Scalar::SCALE` = 1.0) — persisted so a rollback restores
+    /// the exact demographic structure. `children + working + elders` rounds to `size`.
+    #[serde(default)]
+    pub children: i64,
+    #[serde(default)]
+    pub working: i64,
+    #[serde(default)]
+    pub elders: i64,
+    /// The band's local food larder (fixed-point raw).
+    #[serde(default)]
+    pub food_store: i64,
     pub morale: i64,
     pub generation: u16,
     pub faction: u32,
@@ -1371,6 +1395,8 @@ pub struct WorldSnapshot {
     pub faction_inventory: Vec<FactionInventoryState>,
     #[serde(default)]
     pub sedentarization: Vec<SedentarizationState>,
+    #[serde(default)]
+    pub demographics: Vec<PopulationDemographicsState>,
     pub moisture_raster: FloatRasterState,
     pub hydrology_overlay: HydrologyOverlayState,
     pub elevation_overlay: ElevationOverlayState,
@@ -1425,6 +1451,7 @@ pub struct WorldDelta {
     pub food_modules: Option<Vec<FoodModuleState>>,
     pub faction_inventory: Option<Vec<FactionInventoryState>>,
     pub sedentarization: Option<Vec<SedentarizationState>>,
+    pub demographics: Option<Vec<PopulationDemographicsState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub hydrology_overlay: Option<HydrologyOverlayState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
@@ -1627,6 +1654,7 @@ fn build_snapshot_flatbuffer<'a>(
     let food_modules_vec = create_food_modules(builder, &snapshot.food_modules);
     let faction_inventory_vec = create_faction_inventory(builder, &snapshot.faction_inventory);
     let sedentarization_vec = create_sedentarization(builder, &snapshot.sedentarization);
+    let demographics_vec = create_demographics(builder, &snapshot.demographics);
     let hydrology_overlay = create_hydrology_overlay(builder, &snapshot.hydrology_overlay);
     let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
     let elevation_overlay = create_elevation_overlay(builder, &snapshot.elevation_overlay);
@@ -1686,6 +1714,7 @@ fn build_snapshot_flatbuffer<'a>(
             foodModules: Some(food_modules_vec),
             factionInventory: Some(faction_inventory_vec),
             sedentarization: Some(sedentarization_vec),
+            demographics: Some(demographics_vec),
             moistureRaster: Some(moisture_raster),
             hydrologyOverlay: Some(hydrology_overlay),
             elevationOverlay: Some(elevation_overlay),
@@ -1743,6 +1772,10 @@ fn build_delta_flatbuffer<'a>(
         .sedentarization
         .as_ref()
         .map(|entries| create_sedentarization(builder, entries));
+    let demographics = delta
+        .demographics
+        .as_ref()
+        .map(|entries| create_demographics(builder, entries));
     let command_events = delta
         .command_events
         .as_ref()
@@ -1922,6 +1955,7 @@ fn build_delta_flatbuffer<'a>(
             foodModules: food_modules,
             factionInventory: faction_inventory,
             sedentarization,
+            demographics,
             moistureRaster: moisture_raster,
             elevationOverlay: elevation_overlay,
             axisBias: axis_bias,
@@ -2230,6 +2264,26 @@ fn create_sedentarization<'a>(
                 faction: state.faction,
                 score: state.score,
                 stage: Some(stage),
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+fn create_demographics<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[PopulationDemographicsState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::PopulationDemographicsState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let entry = fb::PopulationDemographicsState::create(
+            builder,
+            &fb::PopulationDemographicsStateArgs {
+                faction: state.faction,
+                children: state.children,
+                working: state.working,
+                elders: state.elders,
             },
         );
         entries.push(entry);
@@ -2556,6 +2610,10 @@ fn create_populations<'a>(
                     harvestTask: harvest,
                     scoutTask: scout,
                     accessibleStockpile: accessible_stockpile_fb,
+                    children: cohort.children,
+                    working: cohort.working,
+                    elders: cohort.elders,
+                    foodStore: cohort.food_store,
                 },
             )
         })

@@ -19,8 +19,9 @@ use sim_runtime::{
     GreatDiscoveryState, GreatDiscoveryTelemetryState, HarvestTaskState, HerdTelemetryState,
     HydrologyOverlayState, InfluentialIndividualState, KnowledgeLedgerEntryState,
     KnowledgeMetricsState, KnowledgeTimelineEventState, LogisticsLinkState, MountainKind,
-    PendingMigrationState, PopulationCohortState, PowerIncidentSeverity, PowerIncidentState,
-    PowerNodeState, PowerTelemetryState, ScalarRasterState, ScoutTaskState,
+    PendingMigrationState, PopulationCohortState,
+    PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
+    PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState, ScoutTaskState,
     SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState, SnapshotHeader,
     StartMarkerState, TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge,
@@ -205,6 +206,7 @@ pub struct SnapshotHistory {
     capability_flags: u32,
     faction_inventory: Vec<SchemaFactionInventoryState>,
     sedentarization: Vec<SchemaSedentarizationState>,
+    demographics: Vec<SchemaPopulationDemographicsState>,
     command_events: Vec<CommandEventState>,
     herds: Vec<HerdTelemetryState>,
     food_modules: Vec<FoodModuleState>,
@@ -266,6 +268,7 @@ impl SnapshotHistory {
             capability_flags: 0,
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
+            demographics: Vec::new(),
             command_events: Vec::new(),
             herds: Vec::new(),
             food_modules: Vec::new(),
@@ -549,6 +552,12 @@ impl SnapshotHistory {
         } else {
             Some(sedentarization_state.clone())
         };
+        let demographics_state = snapshot.demographics.clone();
+        let demographics_delta = if self.demographics == demographics_state {
+            None
+        } else {
+            Some(demographics_state.clone())
+        };
         let command_events_state = snapshot.command_events.clone();
         let command_events_delta = if self.command_events == command_events_state {
             None
@@ -602,6 +611,7 @@ impl SnapshotHistory {
             command_events: command_events_delta.clone(),
             faction_inventory: faction_inventory_delta.clone(),
             sedentarization: sedentarization_delta.clone(),
+            demographics: demographics_delta.clone(),
             herds: herds_delta.clone(),
             food_modules: food_modules_delta.clone(),
             knowledge_timeline: knowledge_timeline_delta.clone(),
@@ -675,6 +685,7 @@ impl SnapshotHistory {
         self.capability_flags = capability_flags_state;
         self.faction_inventory = faction_inventory_state;
         self.sedentarization = sedentarization_state;
+        self.demographics = demographics_state;
         self.command_events = command_events_state;
         self.herds = herd_state;
         self.food_modules = food_modules_state;
@@ -753,6 +764,7 @@ impl SnapshotHistory {
         self.victory = entry.snapshot.victory.clone();
         self.faction_inventory = entry.snapshot.faction_inventory.clone();
         self.sedentarization = entry.snapshot.sedentarization.clone();
+        self.demographics = entry.snapshot.demographics.clone();
         self.command_events = entry.snapshot.command_events.clone();
         self.herds = entry.snapshot.herds.clone();
         self.food_modules = entry.snapshot.food_modules.clone();
@@ -845,6 +857,7 @@ impl SnapshotHistory {
             food_modules: None,
             faction_inventory: None,
             sedentarization: None,
+            demographics: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -990,6 +1003,7 @@ impl SnapshotHistory {
             food_modules: None,
             faction_inventory: None,
             sedentarization: None,
+            demographics: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1096,6 +1110,7 @@ impl SnapshotHistory {
             food_modules: None,
             faction_inventory: None,
             sedentarization: None,
+            demographics: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1542,6 +1557,7 @@ pub fn capture_snapshot(
     let herd_states = herd_snapshot_entries(&herds);
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
+    let demographics_state = snapshot_demographics(&population_states);
     let command_events_state = command_events_to_state(&command_events);
     let victory_snapshot_state = victory_snapshot_from_resource(&victory);
     let capability_bits = capability_flags.bits();
@@ -1572,6 +1588,7 @@ pub fn capture_snapshot(
         campaign_profiles: campaign_profiles_state,
         faction_inventory: faction_inventory_state.clone(),
         sedentarization: sedentarization_state.clone(),
+        demographics: demographics_state.clone(),
         command_events: command_events_state.clone(),
         capability_flags: capability_bits,
         axis_bias: axis_bias_state,
@@ -1791,6 +1808,10 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             home: home_entity,
             current_tile,
             size: cohort_state.size,
+            children: Scalar::from_raw(cohort_state.children),
+            working: Scalar::from_raw(cohort_state.working),
+            elders: Scalar::from_raw(cohort_state.elders),
+            food_store: Scalar::from_raw(cohort_state.food_store),
             morale: Scalar::from_raw(cohort_state.morale),
             generation: cohort_state.generation,
             faction: FactionId(cohort_state.faction),
@@ -3468,6 +3489,10 @@ fn population_state(
         current_y: current_position.map(|p| p.y).unwrap_or(0),
         is_traveling,
         size: cohort.size,
+        children: cohort.children.raw(),
+        working: cohort.working.raw(),
+        elders: cohort.elders.raw(),
+        food_store: cohort.food_store.raw(),
         morale: cohort.morale.raw(),
         generation: cohort.generation,
         faction: cohort.faction.0,
@@ -3637,6 +3662,33 @@ fn snapshot_sedentarization(score: &SedentarizationScore) -> Vec<SchemaSedentari
         .collect()
 }
 
+/// Aggregate the per-cohort age brackets into a per-faction age structure for the HUD readout.
+/// Sums the fixed-point brackets (from the already-built cohort states) in a stable faction
+/// order, then rounds each to a whole head-count.
+fn snapshot_demographics(
+    cohorts: &[PopulationCohortState],
+) -> Vec<SchemaPopulationDemographicsState> {
+    let mut by_faction: std::collections::BTreeMap<u32, (i64, i64, i64)> =
+        std::collections::BTreeMap::new();
+    for cohort in cohorts {
+        let entry = by_faction.entry(cohort.faction).or_insert((0, 0, 0));
+        entry.0 += cohort.children;
+        entry.1 += cohort.working;
+        entry.2 += cohort.elders;
+    }
+    by_faction
+        .into_iter()
+        .map(
+            |(faction, (children, working, elders))| SchemaPopulationDemographicsState {
+                faction,
+                children: Scalar::from_raw(children).to_u32(),
+                working: Scalar::from_raw(working).to_u32(),
+                elders: Scalar::from_raw(elders).to_u32(),
+            },
+        )
+        .collect()
+}
+
 fn herd_snapshot_entries(telemetry: &HerdTelemetry) -> Vec<HerdTelemetryState> {
     telemetry
         .entries
@@ -3737,6 +3789,7 @@ mod tests {
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
+            demographics: Vec::new(),
             terrain: overlay,
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
@@ -3793,6 +3846,7 @@ mod tests {
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
+            demographics: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
@@ -3844,6 +3898,7 @@ mod tests {
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
+            demographics: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
@@ -4140,6 +4195,10 @@ mod tests {
                 current_y: 0,
                 is_traveling: false,
                 size: 120,
+                children: 0,
+                working: 0,
+                elders: 0,
+                food_store: 0,
                 morale: Scalar::from_f32(0.3).raw(),
                 generation: 0,
                 faction: 0,
@@ -4156,6 +4215,10 @@ mod tests {
                 current_y: 0,
                 is_traveling: false,
                 size: 80,
+                children: 0,
+                working: 0,
+                elders: 0,
+                food_store: 0,
                 morale: Scalar::from_f32(0.8).raw(),
                 generation: 0,
                 faction: 1,
@@ -4245,6 +4308,10 @@ mod tests {
                 current_y: 0,
                 is_traveling: false,
                 size: 150,
+                children: 0,
+                working: 0,
+                elders: 0,
+                food_store: 0,
                 morale: Scalar::from_f32(0.5).raw(),
                 generation: 0,
                 faction: 0,
@@ -4265,6 +4332,10 @@ mod tests {
                 current_y: 0,
                 is_traveling: false,
                 size: 60,
+                children: 0,
+                working: 0,
+                elders: 0,
+                food_store: 0,
                 morale: Scalar::from_f32(0.7).raw(),
                 generation: 0,
                 faction: 1,

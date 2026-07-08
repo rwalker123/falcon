@@ -17,7 +17,7 @@ signal targeting_changed(info: Dictionary)
 ## changes.** Shown in the lower-left version overlay next to the server build (streamed
 ## in the snapshot header) so the running client+server builds can be confirmed at a
 ## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-07.7"
+const CLIENT_BUILD := "2026-07-07.8"
 var _build_label: Label = null
 var _server_build: String = "?"
 
@@ -27,6 +27,7 @@ var _server_build: String = "?"
 @onready var turn_label: Label = $LayoutRoot/RootColumn/TopBar/TurnBlock/TurnLabel
 @onready var metrics_label: Label = $LayoutRoot/RootColumn/TopBar/TurnBlock/MetricsLabel
 @onready var sedentarization_label: Label = %SedentarizationLabel
+@onready var demographics_label: Label = %DemographicsLabel
 @onready var zoom_controls: HBoxContainer = $LayoutRoot/RootColumn/TopBar/ZoomControls
 @onready var zoom_out_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomOutButton
 @onready var zoom_reset_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomResetButton
@@ -400,6 +401,47 @@ func update_sedentarization(sedentarization_variant: Variant) -> void:
     var suffix := "" if stage == "" or stage == "none" else " · %s" % stage
     sedentarization_label.text = "Sedentarization  %s  %d/100%s" % [_meter_bar(score), int(round(score)), suffix]
     sedentarization_label.add_theme_color_override("font_color", _sedentarization_color(stage))
+
+## Show the player faction's age structure (children / working / elders) and the dependency
+## ratio — the core demographic tension. Hidden until the faction has population.
+func update_demographics(demographics_variant: Variant) -> void:
+    if demographics_label == null:
+        return
+    var children := 0
+    var working := 0
+    var elders := 0
+    var found := false
+    if demographics_variant is Array:
+        for entry in demographics_variant:
+            if entry is Dictionary and int(entry.get("faction", -1)) == PLAYER_FACTION_ID:
+                children = int(entry.get("children", 0))
+                working = int(entry.get("working", 0))
+                elders = int(entry.get("elders", 0))
+                found = true
+                break
+    var total := children + working + elders
+    if not found or total <= 0:
+        demographics_label.visible = false
+        return
+    demographics_label.visible = true
+    # Dependency ratio = dependents (children + elders) per 100 working-age.
+    var dependency := 0
+    if working > 0:
+        dependency = int(round(float(children + elders) / float(working) * 100.0))
+    else:
+        dependency = 999
+    demographics_label.text = "Pop %d  👶%d 🛠%d 🧓%d  dep %d/100" % [total, children, working, elders, dependency]
+    # A high dependency ratio (more mouths than hands) is the warning state.
+    demographics_label.add_theme_color_override("font_color", _dependency_color(working, dependency))
+
+## Tint the dependency readout: amber when dependents outnumber workers, cyan when there is a
+## healthy labor surplus, neutral otherwise.
+func _dependency_color(working: int, dependency: int) -> Color:
+    if working <= 0 or dependency >= 100:
+        return HudStyle.WARN
+    if dependency <= 60:
+        return HudStyle.SIGNAL
+    return HudStyle.INK_DIM
 
 ## A 10-cell block-glyph bar for a 0–100 score.
 func _meter_bar(score: float) -> String:
