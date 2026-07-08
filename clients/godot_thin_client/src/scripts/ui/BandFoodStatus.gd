@@ -13,16 +13,28 @@ class_name BandFoodStatus
 ##   warn > days >= critical → WARN (amber)
 ##   days < critical   → DANGER (red)
 ## A band that is not food-limited reports `UNLIMITED_DAYS` and reads as HEALTHY.
+##
+## Morale is a separate 0–1 scalar (no "unlimited" sentinel): a harsh tile erodes
+## it until births collapse below the constant elder-mortality drain, so a band can
+## shrink while well-fed. Same green/amber/red palette, mirrored helpers:
+##   morale >= warn      → HEALTHY (green)
+##   warn > morale >= critical → WARN (amber)
+##   morale < critical   → DANGER (red)
 
 const CONFIG_PATH := "res://src/config/band_status_config.json"
 const DEFAULT_WARN_DAYS := 10.0
 const DEFAULT_CRITICAL_DAYS := 5.0
 # Server sentinel (snapshot `daysOfFood`) meaning "not food-limited".
 const UNLIMITED_DAYS := 999.0
+# Morale (0–1) thresholds; the birth floor is ~0.20, so these sit just above it.
+const DEFAULT_WARN_MORALE := 0.40
+const DEFAULT_CRITICAL_MORALE := 0.25
 
 static var _loaded := false
 static var _warn_days := DEFAULT_WARN_DAYS
 static var _critical_days := DEFAULT_CRITICAL_DAYS
+static var _warn_morale := DEFAULT_WARN_MORALE
+static var _critical_morale := DEFAULT_CRITICAL_MORALE
 
 static func _ensure_loaded() -> void:
 	if _loaded:
@@ -43,6 +55,11 @@ static func _ensure_loaded() -> void:
 		var food_days: Dictionary = food_days_variant
 		_warn_days = float(food_days.get("warn", DEFAULT_WARN_DAYS))
 		_critical_days = float(food_days.get("critical", DEFAULT_CRITICAL_DAYS))
+	var morale_variant: Variant = (data as Dictionary).get("morale", {})
+	if morale_variant is Dictionary:
+		var morale: Dictionary = morale_variant
+		_warn_morale = float(morale.get("warn", DEFAULT_WARN_MORALE))
+		_critical_morale = float(morale.get("critical", DEFAULT_CRITICAL_MORALE))
 
 static func warn_days() -> float:
 	_ensure_loaded()
@@ -79,5 +96,31 @@ static func hex_for_days(days: float) -> String:
 	if days < _critical_days:
 		return HudStyle.DANGER_HEX
 	if days < _warn_days:
+		return HudStyle.WARN_HEX
+	return HudStyle.HEALTHY_HEX
+
+static func warn_morale() -> float:
+	_ensure_loaded()
+	return _warn_morale
+
+static func critical_morale() -> float:
+	_ensure_loaded()
+	return _critical_morale
+
+## Morale is a plain 0–1 scalar (no "unlimited" sentinel): tiers mirror the days
+## helpers against the morale warn/critical thresholds.
+static func color_for_morale(m: float) -> Color:
+	_ensure_loaded()
+	if m < _critical_morale:
+		return HudStyle.DANGER
+	if m < _warn_morale:
+		return HudStyle.WARN
+	return HudStyle.HEALTHY
+
+static func hex_for_morale(m: float) -> String:
+	_ensure_loaded()
+	if m < _critical_morale:
+		return HudStyle.DANGER_HEX
+	if m < _warn_morale:
 		return HudStyle.WARN_HEX
 	return HudStyle.HEALTHY_HEX

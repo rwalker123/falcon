@@ -1621,6 +1621,7 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"id": label,
 			"is_traveling": is_traveling,
 			"days_of_food": float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS)),
+			"morale": float(entry.get("morale", 1.0)),
 			"activity": String(entry.get("activity", "")),
 			"supply_network_id": int(entry.get("supply_network_id", 0)),
 		}

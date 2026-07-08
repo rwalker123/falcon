@@ -2,5 +2,9 @@
   "food_days": {
     "warn": 10.0,
     "critical": 5.0
+  },
+  "morale": {
+    "warn": 0.40,
+    "critical": 0.25
   }
 }
