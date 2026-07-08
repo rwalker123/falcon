@@ -176,12 +176,6 @@ message FollowHerdCommand {
   optional uint64 band_entity_bits = 4;
 }
 
-message FoundCampCommand {
-  uint32 faction_id = 1;
-  uint32 target_x = 2;
-  uint32 target_y = 3;
-}
-
 message FoundSettlementCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
@@ -223,6 +217,9 @@ message ExportMapCommand {
 message CommandEnvelope {
   optional uint64 correlation_id = 15;
 
+  reserved 24;
+  reserved "found_camp";
+
   oneof command {
     TurnCommand turn = 1;
     ResetMapCommand reset_map = 11;
@@ -246,7 +243,6 @@ message CommandEnvelope {
     SetStartProfileCommand set_start_profile = 21;
     ScoutAreaCommand scout_area = 22;
     FollowHerdCommand follow_herd = 23;
-    FoundCampCommand found_camp = 24;
     ForageTileCommand forage_tile = 25;
     HuntGameCommand hunt_game = 26;
     FoundSettlementCommand found_settlement = 27;

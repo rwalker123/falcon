@@ -44,7 +44,7 @@ func _ready() -> void:
 	# Top-bar demographics readout (faction 0 age structure + dependency ratio).
 	_hud.update_demographics([{"faction": 0, "children": 34, "working": 51, "elders": 15}])
 
-	# State 1 — a band selected (BAND eyebrow, primary Scout / ghost Found Camp).
+	# State 1 — a single band selected: the Occupants roster + drawer (primary Scout).
 	# The band fixture carries a warn-tier larder, so the Food line reads amber.
 	_hud.show_unit_selection(_band_fixture())
 	await _settle()
@@ -78,6 +78,21 @@ func _ready() -> void:
 	_hud.show_herd_selection(_domesticated_herd_fixture())
 	await _settle()
 	await _save("herd_domesticated")
+
+	# State 3d — a populated hex: the Tile card + the Occupants roster split. Three
+	# player bands (days_of_food 15 / 7 / 2 → green / amber / red vitality dots, with
+	# harvest / scout / idle activity glyphs) under Bands (3), and one stressed herd
+	# (amber ecology dot) under Wildlife (1). Auto-selects the first band, so the
+	# drawer shows its Rations and the Scout verb.
+	_hud.show_tile_selection(_occupied_tile_fixture())
+	await _settle()
+	await _save("occupants_band")
+
+	# State 3e — the same hex with the wildlife row selected: the drawer swaps to the
+	# herd's Species / Biomass and the Hunt / Follow + policy verbs.
+	_hud.show_herd_selection(_occupied_herd_fixture())
+	await _settle()
+	await _save("occupants_herd")
 
 	# State 4 — targeting active: pending harvest raises the top-centre banner
 	# and flips the button to the armed "Cancel Harvest" treatment.
@@ -180,6 +195,54 @@ func _herd_fixture() -> Dictionary:
 		"route_length": 3,
 		"tile_info": _food_tile_fixture(),
 	}
+
+## A hex with an occupant stack: 3 player bands + 1 herd, for the Occupants roster.
+func _occupied_tile_fixture() -> Dictionary:
+	return {
+		"x": 58, "y": 24,
+		"terrain_label": "Prairie Steppe",
+		"tags_text": "Fertile",
+		"visibility_state": "active",
+		"food_module": "savanna_grassland",
+		"food_module_label": "Savanna Grassland",
+		"food_module_weight": 1.0,
+		"food_kind": "savanna_track",
+		"units": _occupied_units_fixture(),
+		"herds": [_occupied_herd_only()],
+	}
+
+## Three player bands sharing the hex, spanning the food-status tiers (green /
+## amber / red) and distinct activities (harvest / scout / idle glyphs).
+func _occupied_units_fixture() -> Array:
+	return [
+		{"id": "Band Fen", "entity": 301, "faction": 0, "size": 120, "pos": [58, 24],
+			"days_of_food": 15.0, "activity": "harvest", "stores": {"provisions": 180.0}},
+		{"id": "Band Ash", "entity": 302, "faction": 0, "size": 86, "pos": [58, 24],
+			"days_of_food": 7.0, "activity": "scout", "stores": {"provisions": 40.0}},
+		{"id": "Band Bryn", "entity": 303, "faction": 0, "size": 54, "pos": [58, 24],
+			"days_of_food": 2.0, "activity": "idle", "stores": {"provisions": 8.0}},
+	]
+
+## The stressed herd sharing the occupied hex (amber ecology dot).
+func _occupied_herd_only() -> Dictionary:
+	return {
+		"id": "game_bison_02",
+		"label": "Steppe Bison (game_bison_02)",
+		"species": "Steppe Bison",
+		"size_class": "big",
+		"huntable": true,
+		"ecology_phase": "stressed",
+		"domestication": 0.0,
+		"biomass": 240.0,
+		"x": 58, "y": 24,
+	}
+
+## The occupied hex's herd carrying its tile_info, so show_herd_selection renders
+## the full roster with the wildlife row selected.
+func _occupied_herd_fixture() -> Dictionary:
+	var herd := _occupied_herd_only()
+	herd["tile_info"] = _occupied_tile_fixture()
+	return herd
 
 func _collapsing_herd_fixture() -> Dictionary:
 	var fixture := _herd_fixture()

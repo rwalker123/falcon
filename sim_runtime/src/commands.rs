@@ -117,11 +117,6 @@ pub enum CommandPayload {
         policy: Option<String>,
         band_entity_bits: Option<u64>,
     },
-    FoundCamp {
-        faction_id: u32,
-        target_x: u32,
-        target_y: u32,
-    },
     FoundSettlement {
         faction_id: u32,
         target_x: u32,
@@ -413,15 +408,6 @@ impl CommandEnvelope {
                 policy: policy.clone(),
                 band_entity_bits: *band_entity_bits,
             }),
-            CommandPayload::FoundCamp {
-                faction_id,
-                target_x,
-                target_y,
-            } => pb::command_envelope::Command::FoundCamp(pb::FoundCampCommand {
-                faction_id: *faction_id,
-                target_x: *target_x,
-                target_y: *target_y,
-            }),
             CommandPayload::FoundSettlement {
                 faction_id,
                 target_x,
@@ -655,11 +641,6 @@ impl CommandEnvelope {
                 herd_id: cmd.herd_id,
                 policy: cmd.policy,
                 band_entity_bits: cmd.band_entity_bits,
-            },
-            pb::command_envelope::Command::FoundCamp(cmd) => CommandPayload::FoundCamp {
-                faction_id: cmd.faction_id,
-                target_x: cmd.target_x,
-                target_y: cmd.target_y,
             },
             pb::command_envelope::Command::FoundSettlement(cmd) => {
                 CommandPayload::FoundSettlement {

@@ -3,14 +3,14 @@ class_name TerrainInspectorPanel
 
 ## Inspector "Terrain" tab: the map-inspection surface. Owns the biome histogram, the
 ## biome drill-down, the tile list + detail, the runtime terrain-highlight dropdown, and
-## the Terrain-tab command buttons (export map / scout / found camp).
+## the Terrain-tab command buttons (export map / scout).
 ##
 ## Snapshot-driven (in _tab_panels): apply_update() ingests tiles / tile_updates /
 ## tile_removed / food_modules and renders. Collaborators:
 ##  - set_map_view: terrain-highlight (set_terrain_highlight) + tile height readout.
-##  - set_command_hooks: export_map sends directly; scout/found emit signals so the
+##  - set_command_hooks: export_map sends directly; scout emits a signal so the
 ##    coordinator can resolve the active faction (like FaunaPanel).
-##  - set_command_connected / set_construction_available: gate the tile action buttons.
+##  - set_command_connected: gate the tile action buttons.
 ##  - set_terrain_palette / set_terrain_tag_labels: the biome palette + tag labels arrive
 ##    on the `overlays` snapshot key, which the coordinator fans out (also to Overlay/Crisis).
 ##  - focus_tile_from_map: inbound MapView hex-selection (coordinator forwards it).
@@ -57,7 +57,6 @@ const TERRAIN_BIOME_SAMPLE_LIMIT = 6
 @onready var terrain_tile_list: ItemList = $TerrainVBox/TileSection/TileList
 @onready var terrain_tile_detail_text: RichTextLabel = $TerrainVBox/TileSection/TileDetailText
 @onready var tile_scout_button: Button = $TerrainVBox/TileSection/TileActionRow/TileScoutButton
-@onready var tile_found_camp_button: Button = $TerrainVBox/TileSection/TileActionRow/TileFoundCampButton
 
 var _terrain_highlight_dropdown: OptionButton = null
 
@@ -85,11 +84,9 @@ var _send: Callable = Callable()
 ## Command-log sink: (entry: String) -> void.
 var _append_log_sink: Callable = Callable()
 var _connected: bool = false
-var _construction_available: bool = false
 
 ## Panel -> coordinator: faction-needing tile commands (coordinator resolves faction, sends).
 signal tile_scout_requested(x: int, y: int)
-signal tile_found_camp_requested(x: int, y: int)
 
 func _ready() -> void:
 	_connect_terrain_ui()
@@ -98,8 +95,6 @@ func _ready() -> void:
 		export_map_button.pressed.connect(_on_export_map_button_pressed)
 	if tile_scout_button != null:
 		tile_scout_button.pressed.connect(_on_tile_scout_button_pressed)
-	if tile_found_camp_button != null:
-		tile_found_camp_button.pressed.connect(_on_tile_found_button_pressed)
 	_render_terrain()
 	_apply_enabled()
 
@@ -150,7 +145,7 @@ func apply_typography() -> void:
 	# Interactive controls: match MapPanel/OverlayPanel so the buttons + terrain-highlight
 	# dropdown carry the same STYLE_CONTROL sizing as every other inspector panel.
 	for control in [
-		export_map_button, tile_scout_button, tile_found_camp_button,
+		export_map_button, tile_scout_button,
 		_terrain_highlight_dropdown
 	]:
 		if control != null:
@@ -181,11 +176,6 @@ func set_command_connected(connected: bool) -> void:
 	_connected = connected
 	_apply_enabled()
 
-## Coordinator collaborator: the Found-Camp action is construction-gated (CAP_CONSTRUCTION).
-func set_construction_available(available: bool) -> void:
-	_construction_available = available
-	_apply_enabled()
-
 ## Coordinator collaborator: the biome palette (arrives on the overlays snapshot key).
 ## Re-render so biome labels refresh if the palette lands after tiles (or on reload) —
 ## otherwise the histogram/drill-down stay on the "Terrain N" fallback until the next tile update.
@@ -208,8 +198,6 @@ func _apply_enabled() -> void:
 	var has_tile_target := _selected_tile_coords.x >= 0 and _selected_tile_coords.y >= 0
 	if tile_scout_button != null:
 		tile_scout_button.disabled = not (_connected and has_tile_target)
-	if tile_found_camp_button != null:
-		tile_found_camp_button.disabled = not (_connected and has_tile_target and _construction_available)
 
 func _connect_terrain_ui() -> void:
 	if terrain_biome_list != null:
@@ -981,9 +969,3 @@ func _on_tile_scout_button_pressed() -> void:
 		_call_log("Select a tile before issuing a scout order.")
 		return
 	tile_scout_requested.emit(_selected_tile_coords.x, _selected_tile_coords.y)
-
-func _on_tile_found_button_pressed() -> void:
-	if _selected_tile_coords.x < 0 or _selected_tile_coords.y < 0:
-		_call_log("Select a tile before founding a camp.")
-		return
-	tile_found_camp_requested.emit(_selected_tile_coords.x, _selected_tile_coords.y)

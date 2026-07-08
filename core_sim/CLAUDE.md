@@ -256,7 +256,7 @@ longer surfaces).
 
 ### Start Flow
 - **Data**: `StartProfile` records with `starting_units`, `starting_knowledge_tags`, `inventory`, `survey_radius`, `fog_mode`
-- **Spawn**: Worldgen seeds 2-3 bands, unlocks `ScoutArea`, `FollowHerd`, `FoundCamp`
+- **Spawn**: Worldgen seeds 2-3 bands, unlocks `ScoutArea`, `FollowHerd`
 - **Camps**: Transient settlement-likes with `PortableBuildings`, `CampStorage`, `DecayOnAbandon` (backlog — not yet built)
 - **Sedentarization**: implemented — see the dedicated section below.
 - **Founding**: `Command::FoundSettlement { q, r }` requires Founders unit, consumes provisions, spawns Settlement

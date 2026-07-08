@@ -43,12 +43,12 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/LogsPanel.gd` | Logs tab panel — owns the LogStreamClient + polling + filters + tick sparkline; emits `log_entry_received` (coordinator dispatches to Knowledge/Trade); fed synthetic lines via `append_entry` |
 | `ui/inspector/InfluencerPanel.gd` | Influencers tab panel — owns the influencer roster; capability-gated (`CAP_INDUSTRY_T1`/`T2`) via `set_available`; exposes `aggregate_resonance()` (coordinator feeds it into the Culture tab) and `get_influencers()` (coordinator's still-inline influencer command controls read the roster back). The influencer *command* controls stay coordinator-owned |
 | `ui/inspector/CorruptionPanel.gd` | Corruption tab panel — display-only ledger (reputation modifier, audit capacity, incidents); not capability-gated |
-| `ui/inspector/CommandsPanel.gd` | Commands tab panel — the designer/debug console (axis-bias, influencer/channel/spawn, corruption inject, heat, config reload, scenario scout/follow/camp, autoplay row, command status/log). Outbound: issues verbs via `set_command_hooks` and logs via the sink; the command transport + autoplay timer + turn-sending stay in the coordinator. Couplings are coordinator-mediated: emits `axis_bias_apply_requested` (coordinator owns `_axis_bias`, pushes back via `set_axis_bias`), `autoplay_toggled`/`autoplay_interval_changed` (coordinator drives the timer, mirrors via `set_autoplay_active`); fed the roster via `set_influencer_roster` and gated via `set_command_connected`. NOT in `_tab_panels` (no snapshot inputs) |
+| `ui/inspector/CommandsPanel.gd` | Commands tab panel — the designer/debug console (axis-bias, influencer/channel/spawn, corruption inject, heat, config reload, scenario scout/follow, autoplay row, command status/log). Outbound: issues verbs via `set_command_hooks` and logs via the sink; the command transport + autoplay timer + turn-sending stay in the coordinator. Couplings are coordinator-mediated: emits `axis_bias_apply_requested` (coordinator owns `_axis_bias`, pushes back via `set_axis_bias`), `autoplay_toggled`/`autoplay_interval_changed` (coordinator drives the timer, mirrors via `set_autoplay_active`); fed the roster via `set_influencer_roster` and gated via `set_command_connected`. NOT in `_tab_panels` (no snapshot inputs) |
 | `ui/inspector/OverlayPanel.gd` | "Map Overlays" section (nested inside the Map tab, attached to `OverlaySection`) — owns the overlay-channel selector (built at runtime), channel metadata, and the culture/military readouts; drives `MapView.set_overlay_channel`. Fed via `set_map_view` + `ingest(overlay_dict, terrain_tag_labels)` (the coordinator re-homes the palette → Terrain and crisis_annotations → Crisis side-routes that share the `overlays` key, and passes Terrain's tag labels since the terrain-tags channel depends on them). NOT in `_tab_panels` |
 | `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the hydrology rivers toggle. Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` via `set_map_view`. The nested Map-Overlays section keeps its own `OverlayPanel` script |
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
-| `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the Terrain-tab command buttons. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`; scout/found emit `tile_scout_requested`/`tile_found_camp_requested` (coordinator resolves the faction + sends, like FaunaPanel); gated by `set_command_connected` + `set_construction_available` (CAP_CONSTRUCTION) |
-| `Hud.gd` | HUD layer, legend, selection panel (incl. band food line), band **Alerts** panel, turn readout |
+| `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the Terrain-tab command buttons. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`; scout emits `tile_scout_requested` (coordinator resolves the faction + sends, like FaunaPanel); gated by `set_command_connected` |
+| `Hud.gd` | HUD layer, legend, the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + Forage) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer + Scout / Hunt / Follow verbs), band **Alerts** panel, turn readout. Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) live here; roster selection emits `roster_occupant_selected` |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping, shared by MapView's band dot and Hud's food line/alerts |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
@@ -271,7 +271,8 @@ spilling under a sideways scrollbar (which reads as unpolished for a game HUD).
 the scene (`HudLayer.tscn`); both docks use `AUTO`, so a scrollbar appears only
 when the stack actually overflows.
 
-**Migration status:** `SelectionPanel`, `CommandFeedPanel`, and
+**Migration status:** `TilePanel`, `OccupantsPanel` (the split selection cards),
+`CommandFeedPanel`, and
 `TerrainLegendPanel` are now `PanelCard`s (the last two dropped the bespoke
 `AutoSizingPanel` height math and the legend's absolute `PRESET_TOP_RIGHT`
 positioning that used to overlap the Victory panel). `StockpilePanel` and
@@ -286,9 +287,32 @@ Commands that need a target (Harvest / Hunt / Follow a herd all need a band; Sco
 needs a tile) run through an explicit **targeting mode** instead of the old
 easy-to-miss "select a band…" line in the selection panel.
 
+- **Selection split — Tile card + Occupants roster** (`Hud.gd`): the old single
+  selection panel is now **two left-dock `PanelCard`s driven by one script**. The
+  **Tile card** (`TilePanel`/`%TileDetail`, priority 10) is the *place* — terrain
+  rows (Biome/Height/Tags + the gather module relabeled `Forage:`) and its one
+  action, the `ForageButton`. The **Occupants card** (`OccupantsPanel`, priority 12,
+  hidden via the dock on an empty hex) is a **selectable roster** of the bands +
+  wildlife on the hex, built at runtime into `%RosterList` as two sub-groups
+  (`Bands (N)` / `Wildlife (N)`); each row is a `Button` hosting a mouse-transparent
+  HBox — a selection accent, a **vitality dot**, name, size, and (bands) an
+  activity glyph. Below the roster, `%OccupantDetail` is the selected occupant's
+  **detail drawer** (band → `_unit_summary_lines` + Scout; herd → `_herd_summary_lines`
+  + Hunt/Follow+policy). Selecting a row (`_on_roster_row_selected`) re-homes the
+  selection and emits `roster_occupant_selected(kind, id)`; **Main forwards it to
+  `MapView.select_occupant`, which moves the map selection ring** (sets
+  `selected_unit_id`/`selected_herd_id`) with no hex click. A fresh tile click
+  auto-selects the first occupant through the same path. The **vitality dot is
+  unified** across map/roster/drawer: a band's dot uses `BandFoodStatus.color_for_days`
+  (`days_of_food` → green/amber/red), a herd's uses `_ecology_tier_color`
+  (`ecology_phase` → thriving green / stressed amber / collapsing red), sharing the
+  exact `HudStyle` HEALTHY/WARN/DANGER constants. Non-player bands list with a neutral
+  dot and no activity/Scout (their larder/orders aren't ours to see). (The Tile card
+  has no camp action — the `found_camp` command was removed end-to-end.)
 - **Selection-panel verbs** (`Hud.gd`): a hex can surface **Harvest** (tile gather
-  module, `ForageButton`) *and* **Hunt** / **Follow** (a fauna group on the same
-  hex) together — `show_herd_selection` falls back to the current tile so the
+  module, `ForageButton` on the Tile card) *and* **Hunt** / **Follow** (a fauna group
+  selected in the Occupants roster) together —
+  `show_herd_selection` falls back to the current tile so the
   combined panel renders all applicable groups (`_update_herd_buttons` +
   `_update_food_buttons`). Hunt is gated on the herd's `huntable` snapshot flag;
   **Follow** carries a policy from a Sustain/Surplus/Market/Eradicate picker
@@ -379,7 +403,7 @@ See `docs/godot_inspector_plan.md` for full roadmap.
 | Logs | Streaming tracing feed, level/target/text filters, duration sparkline |
 | Commands | Turn/rollback/autoplay, axis bias, spawn utilities, debug hooks |
 
-**Capability gating** (`Inspector._apply_capability_gating`): most tabs enable only when the matching `CapabilityFlags` bit is set. **Terrain is exempt** — it is an always-available inspection tab (the one construction *action* inside it, Found Camp, stays separately gated). **Migrated tab panels don't grey out** — instead of disabling the tab (confusing: a dead tab with no explanation), the coordinator calls `panel.set_available(has_flag)` and the panel stays clickable, rendering a "🔒 Locked — unlocks via …" message while gated (see `PowerPanel`). `_set_tab_enabled` is still used for tabs not yet migrated to the panel contract. Its **terrain-type highlight** dropdown lists every defined terrain (via `TerrainDefinitions`), and selecting one calls `MapView.set_terrain_highlight(id)`, which outlines/tints all matching hexes map-wide (ignoring Fog of War) — handy for spotting a biome or confirming one is absent. Selecting "none" (`-1`) clears it.
+**Capability gating** (`Inspector._apply_capability_gating`): most tabs enable only when the matching `CapabilityFlags` bit is set. **Terrain is exempt** — it is an always-available inspection tab with no capability-gated actions (the former Found Camp action + its CAP_CONSTRUCTION gate were removed with the retired `found_camp` command). **Migrated tab panels don't grey out** — instead of disabling the tab (confusing: a dead tab with no explanation), the coordinator calls `panel.set_available(has_flag)` and the panel stays clickable, rendering a "🔒 Locked — unlocks via …" message while gated (see `PowerPanel`). `_set_tab_enabled` is still used for tabs not yet migrated to the panel contract. Its **terrain-type highlight** dropdown lists every defined terrain (via `TerrainDefinitions`), and selecting one calls `MapView.set_terrain_highlight(id)`, which outlines/tints all matching hexes map-wide (ignoring Fog of War) — handy for spotting a biome or confirming one is absent. Selecting "none" (`-1`) clears it.
 
 The overview text draws a **full biome histogram** (`_render_terrain` → `_histogram_bar`): every present biome, sorted by count, with a monospace `[code]` bar scaled to the most common biome plus its tile count and percentage — all computed client-side from the streamed `_terrain_counts`. The **Export Map** button (`_on_export_map_button_pressed`) sends the fire-and-forget `export_map` runtime command; the server writes the current map (terrain snapshot + resolved seed) to its `exports/` scratch dir as JSON (see `sim_schema` `MapExport`). Tile coordinates shown here as `@x,y` (`_format_tile_coords`) index straight into the export's row-major samples, so the same coordinate names a hex in the client, in the export file, and in tests.
 
@@ -456,7 +480,7 @@ resolution for Fauna/Terrain, influencer resonance → Culture, the `overlays` f
 junction routing palette→Terrain / annotations→Crisis / channels→Overlay).
 
 **Commands tab (designer/debug console).** The `Commands` tab (axis-bias, heat,
-config-reload, scenario scout/follow/camp, autoplay row, influencer/corruption command
+config-reload, scenario scout/follow, autoplay row, influencer/corruption command
 buttons, command status/log) is now `CommandsPanel` (see the key-scripts table). Its
 subtree once went missing in the 2025-11-21 scene split (`Main.tscn` → instanced
 `InspectorLayer.tscn`) and sat dead for months — the coordinator's
@@ -465,7 +489,7 @@ subtree once went missing in the 2025-11-21 scene split (`Main.tscn` → instanc
 tab-panel contract. The **command hub stays in the coordinator**: `_send_command` →
 `command_client`, `_ensure_command_connection`, the `autoplay_timer`, and turn-sending
 are shared with the turn controls in `RootPanel/CommandToolbar` (outside the
-`TabContainer`) and the scout/found_camp buttons in the Terrain tab. The panel issues
+`TabContainer`) and the scout button in the Terrain tab. The panel issues
 verbs through `set_command_hooks` and is connection-gated via `set_command_connected`.
 Autoplay is split: the toggle+interval widgets live in the panel (relayed as
 `autoplay_toggled`/`autoplay_interval_changed`), while the timer that steps turns and

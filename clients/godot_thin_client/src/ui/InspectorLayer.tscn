@@ -256,10 +256,6 @@ theme_override_constants/separation = 8
 layout_mode = 2
 text = "Scout Tile"
 
-[node name="TileFoundCampButton" type="Button" parent="RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileActionRow"]
-layout_mode = 2
-text = "Found Camp Here"
-
 [node name="Map" type="ScrollContainer" parent="RootPanel/TabContainer"]
 visible = false
 layout_mode = 2
@@ -1435,31 +1431,6 @@ placeholder_text = "herd id (e.g. trail_herd_a)"
 [node name="FollowHerdButton" type="Button" parent="RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow"]
 layout_mode = 2
 text = "Follow"
-
-[node name="CampRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/ScenarioCommands"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-
-[node name="CampLabel" type="Label" parent="RootPanel/TabContainer/Commands/ScenarioCommands/CampRow"]
-layout_mode = 2
-text = "Found Camp"
-
-[node name="CampXSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/ScenarioCommands/CampRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-max_value = 512.0
-step = 1.0
-
-[node name="CampYSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/ScenarioCommands/CampRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-max_value = 512.0
-step = 1.0
-
-[node name="CampExecuteButton" type="Button" parent="RootPanel/TabContainer/Commands/ScenarioCommands/CampRow"]
-layout_mode = 2
-text = "Found"
 
 [node name="ConfigControls" type="VBoxContainer" parent="RootPanel/TabContainer/Commands"]
 layout_mode = 2

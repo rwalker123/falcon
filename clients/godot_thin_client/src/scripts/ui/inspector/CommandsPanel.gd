@@ -3,7 +3,7 @@ class_name CommandsInspectorPanel
 
 ## Inspector "Commands" tab: the designer/debug console. Owns all the runtime command
 ## controls (axis-bias, influencer support/suppress/channel/spawn, corruption inject,
-## heat delta, config reload, scenario scout/follow/camp, the autoplay row) plus the
+## heat delta, config reload, scenario scout/follow, the autoplay row) plus the
 ## command status/log display.
 ##
 ## Outbound/command-driven: it issues verbs through an injected command hook and logs
@@ -85,9 +85,6 @@ const COMMAND_LOG_LIMIT := 40
 @onready var scout_execute_button: Button = $ScenarioCommands/ScoutRow/ScoutExecuteButton
 @onready var follow_herd_field: LineEdit = $ScenarioCommands/FollowRow/FollowHerdField
 @onready var follow_herd_button: Button = $ScenarioCommands/FollowRow/FollowHerdButton
-@onready var camp_x_spin: SpinBox = $ScenarioCommands/CampRow/CampXSpin
-@onready var camp_y_spin: SpinBox = $ScenarioCommands/CampRow/CampYSpin
-@onready var camp_execute_button: Button = $ScenarioCommands/CampRow/CampExecuteButton
 
 var _command_log: Array[String] = []
 ## Display mirror of the coordinator-owned axis bias, pushed via set_axis_bias().
@@ -203,8 +200,6 @@ func _ready() -> void:
 	if follow_herd_button != null:
 		follow_herd_button.pressed.connect(_on_follow_herd_button_pressed)
 		follow_herd_button.tooltip_text = "Teleport bands to the selected herd and gain morale, supplies, fauna lore, and a fog reveal pulse."
-	if camp_execute_button != null:
-		camp_execute_button.pressed.connect(_on_camp_command_pressed)
 	# Autoplay row (timer + turn-sending live in the coordinator; these only relay state)
 	if autoplay_toggle != null:
 		autoplay_toggle.toggled.connect(_on_autoplay_toggle_local)
@@ -258,7 +253,7 @@ func apply_typography() -> void:
 		corruption_dropdown, corruption_intensity_spin, corruption_exposure_spin, corruption_inject_button,
 		heat_entity_spin, heat_delta_spin, heat_apply_button,
 		scenario_faction_spin, scout_x_spin, scout_y_spin, scout_execute_button,
-		follow_herd_field, follow_herd_button, camp_x_spin, camp_y_spin, camp_execute_button,
+		follow_herd_field, follow_herd_button,
 		config_path_edit, turn_pipeline_reload_button, snapshot_overlays_reload_button
 	]:
 		if control != null:
@@ -602,15 +597,6 @@ func _on_follow_herd_button_pressed() -> void:
 	var message := "Follow herd '%s' requested for faction %d." % [herd_id, faction]
 	_send.call("follow_herd %d %s sustain" % [faction, normalized], message)
 
-func _on_camp_command_pressed() -> void:
-	if camp_x_spin == null or camp_y_spin == null:
-		return
-	var x := int(camp_x_spin.value)
-	var y := int(camp_y_spin.value)
-	var faction := get_scenario_faction()
-	var message := "Found camp request for faction %d at (%d, %d)." % [faction, x, y]
-	_send.call("found_camp %d %d %d" % [faction, x, y], message)
-
 # --- Connection gating (the moving half of the coordinator's old
 # _update_command_controls_enabled) ---
 
@@ -664,12 +650,6 @@ func _apply_enabled() -> void:
 		follow_herd_field.editable = connected
 	if follow_herd_button != null:
 		follow_herd_button.disabled = not connected
-	if camp_x_spin != null:
-		camp_x_spin.editable = connected
-	if camp_y_spin != null:
-		camp_y_spin.editable = connected
-	if camp_execute_button != null:
-		camp_execute_button.disabled = not connected
 	if turn_pipeline_reload_button != null:
 		turn_pipeline_reload_button.disabled = not connected
 	if snapshot_overlays_reload_button != null:

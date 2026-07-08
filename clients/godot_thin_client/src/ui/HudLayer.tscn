@@ -171,9 +171,15 @@ bbcode_enabled = true
 scroll_active = false
 text = "[b]Victory[/b]\n[i]Awaiting telemetry.[/i]"
 
-[node name="SelectionPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]
+[node name="TilePanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]
 script = ExtResource("4")
-card_title = "Selection"
+card_title = "Tile"
+custom_minimum_size = Vector2(320, 0)
+visible = false
+
+[node name="OccupantsPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]
+script = ExtResource("4")
+card_title = "Occupants"
 custom_minimum_size = Vector2(320, 0)
 visible = false
 
@@ -196,11 +202,11 @@ text = "Stockpiles"
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel"]
+[node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel"]
 size_flags_horizontal = 3
 theme_override_constants/separation = 8
 
-[node name="SelectionDetail" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent"]
+[node name="TileDetail" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
 bbcode_enabled = true
@@ -208,59 +214,71 @@ fit_content = true
 scroll_active = false
 autowrap_mode = 2
 
-[node name="UnitButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent"]
+[node name="TileActionButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+
+[node name="ForageButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/TileActionButtons"]
+unique_name_in_owner = true
+text = "Harvest"
+
+[node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="RosterList" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="OccupantDetail" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+bbcode_enabled = true
+fit_content = true
+scroll_active = false
+autowrap_mode = 2
+
+[node name="UnitButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
 visible = false
 
-[node name="UnitScoutButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/UnitButtons"]
+[node name="UnitScoutButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/UnitButtons"]
 unique_name_in_owner = true
 text = "Scout Area"
 
-[node name="UnitCampButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/UnitButtons"]
-unique_name_in_owner = true
-text = "Found Camp"
-
-[node name="HerdButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent"]
+[node name="HerdButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
 visible = false
 
-[node name="HuntHerdButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons"]
+[node name="HuntHerdButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons"]
 unique_name_in_owner = true
 text = "Hunt"
 
-[node name="FollowHerdButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons"]
+[node name="FollowHerdButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons"]
 unique_name_in_owner = true
 text = "Follow"
 
-[node name="FollowPolicyButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons"]
+[node name="FollowPolicyButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons"]
 unique_name_in_owner = true
 
-[node name="FollowSustainButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons/FollowPolicyButtons"]
+[node name="FollowSustainButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/FollowPolicyButtons"]
 unique_name_in_owner = true
 text = "Sustain"
 
-[node name="FollowSurplusButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons/FollowPolicyButtons"]
+[node name="FollowSurplusButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/FollowPolicyButtons"]
 unique_name_in_owner = true
 text = "Surplus"
 
-[node name="FollowMarketButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons/FollowPolicyButtons"]
+[node name="FollowMarketButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/FollowPolicyButtons"]
 unique_name_in_owner = true
 text = "Market"
 
-[node name="FollowEradicateButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/HerdButtons/FollowPolicyButtons"]
+[node name="FollowEradicateButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/FollowPolicyButtons"]
 unique_name_in_owner = true
 text = "Eradicate"
-
-[node name="FoodButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent"]
-unique_name_in_owner = true
-size_flags_horizontal = 3
-visible = false
-
-[node name="ForageButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel/CardContent/FoodButtons"]
-unique_name_in_owner = true
-text = "Harvest"
 
 
 [node name="AlertsPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]

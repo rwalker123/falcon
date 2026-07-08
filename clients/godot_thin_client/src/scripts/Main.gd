@@ -122,12 +122,12 @@ func _ready() -> void:
             hud.connect("ui_zoom_reset", Callable(self, "_on_hud_zoom_reset"))
         if hud.has_signal("unit_scout_requested") and not hud.is_connected("unit_scout_requested", Callable(self, "_on_hud_unit_scout")):
             hud.connect("unit_scout_requested", Callable(self, "_on_hud_unit_scout"))
-        if hud.has_signal("unit_found_camp_requested") and not hud.is_connected("unit_found_camp_requested", Callable(self, "_on_hud_unit_found_camp")):
-            hud.connect("unit_found_camp_requested", Callable(self, "_on_hud_unit_found_camp"))
         if hud.has_signal("herd_follow_requested") and not hud.is_connected("herd_follow_requested", Callable(self, "_on_hud_follow_herd")):
             hud.connect("herd_follow_requested", Callable(self, "_on_hud_follow_herd"))
         if hud.has_signal("next_turn_requested") and not hud.is_connected("next_turn_requested", Callable(self, "_on_hud_next_turn")):
             hud.connect("next_turn_requested", Callable(self, "_on_hud_next_turn"))
+        if hud.has_signal("roster_occupant_selected") and not hud.is_connected("roster_occupant_selected", Callable(self, "_on_hud_roster_occupant_selected")):
+            hud.connect("roster_occupant_selected", Callable(self, "_on_hud_roster_occupant_selected"))
     if inspector != null and inspector.has_method("attach_map_view"):
         inspector.call("attach_map_view", map_view)
     if map_view != null and inspector != null and map_view.has_signal("hex_selected") and inspector.has_method("focus_tile_from_map"):
@@ -235,6 +235,7 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
                 inspector.call("update_capability_flags", int(snapshot["capability_flags"]))
         if inspector.has_method("set_streaming_active"):
             inspector.call("set_streaming_active", streaming_mode)
+    _refresh_hud_selection()
     _camera_initialized = true
     if script_host_manager != null and script_host_manager.has_host():
         if is_delta:
@@ -263,6 +264,19 @@ func _emit_victory_analytics(data: Dictionary) -> void:
     var faction: int = int(winner.get("faction", -1))
     print("[analytics] victory mode=\"%s\" label=\"%s\" faction=%d tick=%d" % [mode, label, faction, tick])
 
+## After each snapshot re-renders the map, refresh the HUD selection panel with the
+## selected occupant's/tile's fresh data so it stays live across turn advances instead
+## of going stale until the user reselects the hex. Routes through `reapply_selection`,
+## NOT the click handlers, so it never re-consumes pending forage/scout/hunt/follow.
+func _refresh_hud_selection() -> void:
+    if map_view == null or hud == null or not map_view.has_method("refresh_selection_payload"):
+        return
+    var payload_variant: Variant = map_view.call("refresh_selection_payload")
+    if not (payload_variant is Dictionary):
+        return
+    var payload: Dictionary = payload_variant
+    _hud_invoke("reapply_selection", [String(payload.get("kind", "none")), payload.get("data", {})])
+
 func _on_map_unit_selected(unit: Dictionary) -> void:
     _hud_invoke("show_unit_selection", [unit])
     var forage_variant: Variant = _hud_invoke("consume_pending_forage", [unit])
@@ -277,6 +291,12 @@ func _on_map_unit_selected(unit: Dictionary) -> void:
 
 func _on_map_herd_selected(herd: Dictionary) -> void:
     _hud_invoke("show_herd_selection", [herd])
+
+## Roster-row selection in the HUD Occupants card drives the map selection ring to
+## the chosen band/herd (no hex click).
+func _on_hud_roster_occupant_selected(kind: String, id: Variant) -> void:
+    if map_view != null and map_view.has_method("select_occupant"):
+        map_view.call("select_occupant", kind, id)
 
 func _on_map_herd_follow_shortcut(herd_id: String) -> void:
     _on_hud_follow_herd(herd_id)
@@ -298,10 +318,6 @@ func _on_hud_unit_scout(x: int, y: int, band_bits: int) -> void:
         parts.append(str(band_bits))
     var line := " ".join(parts)
     _send_runtime_command(line, "Scout order queued at (%d, %d)." % [x, y])
-
-func _on_hud_unit_found_camp(x: int, y: int) -> void:
-    var line := "found_camp %d %d %d" % [PLAYER_FACTION_ID, x, y]
-    _send_runtime_command(line, "Found camp request at (%d, %d)." % [x, y])
 
 func _on_hud_follow_herd(herd_id: String) -> void:
     if herd_id.is_empty():

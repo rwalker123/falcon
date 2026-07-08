@@ -4,7 +4,6 @@ class_name HudLayer
 signal ui_zoom_delta(delta: float)
 signal ui_zoom_reset
 signal unit_scout_requested(x: int, y: int, band_entity_bits: int)
-signal unit_found_camp_requested(x: int, y: int)
 signal herd_follow_requested(herd_id: String)
 signal forage_requested(x: int, y: int, module_key: String)
 signal next_turn_requested(steps: int)
@@ -15,6 +14,11 @@ signal targeting_changed(info: Dictionary)
 ## Emitted when the player clicks a band alert; Main forwards it to
 ## MapView.focus_on_tile so the map pans to the band that raised the alert.
 signal alert_focus_requested(x: int, y: int)
+## Emitted when a roster row (band or wildlife) is selected in the Occupants card.
+## `kind` is "unit" (id = entity_id int) or "herd" (id = herd_id String). Main
+## forwards it to MapView.select_occupant so the map selection ring follows the
+## chosen occupant without a hex click.
+signal roster_occupant_selected(kind: String, id: Variant)
 
 ## Build identifier of THIS client (GDScript/native). **Bump on client-affecting
 ## changes.** Shown in the lower-left version overlay next to the server build (streamed
@@ -47,11 +51,13 @@ var _server_build: String = "?"
 @onready var command_feed_scroll: ScrollContainer = %CommandFeedScroll
 @onready var command_feed_label: RichTextLabel = %CommandFeedLabel
 @onready var left_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll
-@onready var selection_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/SelectionPanel as PanelCard
-@onready var selection_detail: RichTextLabel = %SelectionDetail
+@onready var tile_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel as PanelCard
+@onready var tile_detail: RichTextLabel = %TileDetail
+@onready var occupants_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel as PanelCard
+@onready var occupant_detail: RichTextLabel = %OccupantDetail
+@onready var roster_list: VBoxContainer = %RosterList
 @onready var unit_buttons: HBoxContainer = %UnitButtons
 @onready var unit_scout_button: Button = %UnitScoutButton
-@onready var unit_camp_button: Button = %UnitCampButton
 @onready var herd_buttons: HBoxContainer = %HerdButtons
 @onready var hunt_herd_button: Button = %HuntHerdButton
 @onready var follow_herd_button: Button = %FollowHerdButton
@@ -60,7 +66,6 @@ var _server_build: String = "?"
 @onready var follow_surplus_button: Button = %FollowSurplusButton
 @onready var follow_market_button: Button = %FollowMarketButton
 @onready var follow_eradicate_button: Button = %FollowEradicateButton
-@onready var food_buttons: HBoxContainer = %FoodButtons
 @onready var forage_button: Button = %ForageButton
 @onready var stockpile_panel: PanelContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel
 @onready var stockpile_title: Label = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin/StockpileVBox/StockpileTitle
@@ -110,6 +115,22 @@ const ALERT_TYPE_LOSING_POPULATION := "losing_population"
 const ALERT_TYPE_IDLE := "idle"
 const ALERT_PRIORITY := [ALERT_TYPE_STARVING, ALERT_TYPE_LOSING_POPULATION, ALERT_TYPE_IDLE]
 const BAND_ACTIVITY_IDLE := "idle"
+# Occupants roster row chrome.
+const ROSTER_DOT_SIZE := 9.0
+const ROSTER_ROW_MIN_HEIGHT := 30.0
+const ROSTER_ROW_SEPARATION := 8
+const ROSTER_ROW_H_PADDING := 10.0
+const ROSTER_ACCENT_WIDTH := 3.0
+const ROSTER_HEADER_FONT_SIZE := 10
+# Per-activity glyph for a player band's roster row (activity string from the
+# snapshot: idle | harvest | hunt | follow | scout).
+const ACTIVITY_GLYPHS := {
+    "idle": "·",
+    "harvest": "🌾",
+    "hunt": "🏹",
+    "follow": "🦌",
+    "scout": "🧭",
+}
 # Provisions is the food item under a band's larder `stores`.
 const STORE_ITEM_PROVISIONS := "provisions"
 const FOOD_UNLIMITED_GLYPH := "∞"
@@ -129,6 +150,11 @@ var _prev_band_sizes: Dictionary = {}
 var _selected_tile_info: Dictionary = {}
 var _selected_unit: Dictionary = {}
 var _selected_herd: Dictionary = {}
+# The assembled Occupants roster for the current hex: full unit markers and herd
+# dicts (from `_selected_tile_info`, plus the selected occupant if the tile_info
+# doesn't list it — e.g. an inspector-driven herd selection). Rebuilt each render.
+var _roster_units: Array = []
+var _roster_herds: Array = []
 var _selected_food_module: String = ""
 var _selected_food_is_hunt: bool = false
 # Days-of-food of the currently-selected band's larder, so the detail formatter
@@ -164,7 +190,8 @@ func _ready() -> void:
     _connect_control_buttons()
     left_dock = PanelDock.new(left_stack)
     right_dock = PanelDock.new(right_stack)
-    left_dock.add(selection_panel, 10)
+    left_dock.add(tile_panel, 10)
+    left_dock.add(occupants_panel, 12)
     left_dock.add(alerts_panel, 15)
     left_dock.add(stockpile_panel, 20)
     left_dock.add(command_feed_panel, 30)
@@ -183,13 +210,13 @@ func _ready() -> void:
 ## action buttons, tint the detail text, and bring the two plain PanelContainers
 ## (stockpile, victory) up to the same card chrome the PanelCards already use.
 func _apply_hud_style() -> void:
-    if selection_detail != null:
-        selection_detail.add_theme_color_override("default_color", HudStyle.INK_DIM)
-        selection_detail.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
-        selection_detail.add_theme_constant_override("table_h_separation", 16)
-        selection_detail.add_theme_constant_override("table_v_separation", 3)
+    for detail in [tile_detail, occupant_detail]:
+        if detail != null:
+            detail.add_theme_color_override("default_color", HudStyle.INK_DIM)
+            detail.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
+            detail.add_theme_constant_override("table_h_separation", 16)
+            detail.add_theme_constant_override("table_v_separation", 3)
     HudStyle.apply_button(unit_scout_button, "primary")
-    HudStyle.apply_button(unit_camp_button, "ghost")
     HudStyle.apply_button(hunt_herd_button, "primary")
     HudStyle.apply_button(follow_herd_button, "ghost")
     HudStyle.apply_button(forage_button, "primary")
@@ -548,8 +575,6 @@ func _connect_zoom_controls() -> void:
 func _connect_selection_buttons() -> void:
     if unit_scout_button != null and not unit_scout_button.is_connected("pressed", Callable(self, "_on_unit_scout_pressed")):
         unit_scout_button.pressed.connect(_on_unit_scout_pressed)
-    if unit_camp_button != null and not unit_camp_button.is_connected("pressed", Callable(self, "_on_unit_camp_pressed")):
-        unit_camp_button.pressed.connect(_on_unit_camp_pressed)
     if hunt_herd_button != null and not hunt_herd_button.is_connected("pressed", Callable(self, "_on_hunt_herd_pressed")):
         hunt_herd_button.pressed.connect(_on_hunt_herd_pressed)
         hunt_herd_button.tooltip_text = "Send a band to hunt the selected herd once (a portion of its biomass → provisions/trade)."
@@ -602,14 +627,6 @@ func _on_unit_scout_pressed() -> void:
     if not _selected_tile_info.is_empty():
         _try_dispatch_pending_scout(_selected_tile_info)
     _refresh_targeting()
-
-func _on_unit_camp_pressed() -> void:
-    if _selected_unit.is_empty():
-        return
-    var position: Array = Array(_selected_unit.get("pos", []))
-    if position.size() != 2:
-        return
-    emit_signal("unit_found_camp_requested", int(position[0]), int(position[1]))
 
 func _on_hunt_herd_pressed() -> void:
     if _selected_herd.is_empty():
@@ -843,48 +860,140 @@ func _herd_matches_selected_tile(herd_data: Dictionary) -> bool:
     return int(_selected_tile_info.get("x", -1)) == int(herd_data.get("x", -2)) \
         and int(_selected_tile_info.get("y", -1)) == int(herd_data.get("y", -2))
 
-func _render_selection_panel(tile_info: Dictionary, unit_data: Dictionary, herd_data: Dictionary) -> void:
-    if selection_panel == null or selection_detail == null:
+## Coordinator: render both left-dock cards from the current selection state.
+## The two cards are two scene nodes driven by one script — the Tile card is the
+## place (terrain + Forage), the Occupants card is the selectable band/wildlife
+## roster + a detail drawer for the chosen occupant. The `*_data` params mirror
+## the members the show_*/pending flows already set; the members are authoritative.
+## Re-render the selection panel for the still-selected occupant/tile using fresh
+## snapshot data (called from Main after each snapshot via MapView.refresh_selection_payload).
+## Unlike the show_* entry points this runs NO click-time side effects — no pending-scout
+## dispatch, no forage/hunt/follow consumption — so refreshing every turn can't misfire a
+## pending command. Keeps the panel live across turn advances instead of going stale until
+## the user reselects the hex. "none" means the selected band/herd is gone → drop to its
+## tile if we still have one, else hide the cards (without cancelling pending forage).
+func reapply_selection(kind: String, data: Dictionary) -> void:
+    match kind:
+        "unit":
+            _selected_unit = data.duplicate(true) if data is Dictionary else {}
+            _selected_herd.clear()
+            _adopt_tile_info_from(_selected_unit)
+            _render_selection_panel(_selected_tile_info, _selected_unit, {})
+        "herd":
+            _selected_herd = data.duplicate(true) if data is Dictionary else {}
+            _selected_unit.clear()
+            _adopt_tile_info_from(_selected_herd)
+            _render_selection_panel(_selected_tile_info, {}, _selected_herd)
+        "tile":
+            _selected_tile_info = data.duplicate(true) if data is Dictionary else {}
+            _selected_unit.clear()
+            _selected_herd.clear()
+            _selected_food_module = String(_selected_tile_info.get("food_module", "")).strip_edges()
+            _render_selection_panel(_selected_tile_info, {}, {})
+        _:
+            # Selected occupant vanished (e.g. the band expired). Drop to its last tile
+            # if known, else hide both cards. Intentionally does not touch pending state.
+            _selected_unit.clear()
+            _selected_herd.clear()
+            if _selected_tile_info.is_empty():
+                if tile_panel != null:
+                    tile_panel.visible = false
+                if forage_button != null:
+                    forage_button.visible = false
+                _set_occupants_relevant(false)
+            else:
+                _render_selection_panel(_selected_tile_info, {}, {})
+
+## Pull the fresh tile_info a refresh payload carries alongside the occupant, so the tile
+## card + roster render against the same snapshot the occupant came from.
+func _adopt_tile_info_from(occupant: Dictionary) -> void:
+    var ti_variant: Variant = occupant.get("tile_info", {})
+    if ti_variant is Dictionary and not (ti_variant as Dictionary).is_empty():
+        _selected_tile_info = (ti_variant as Dictionary).duplicate(true)
+    _selected_food_module = String(_selected_tile_info.get("food_module", "")).strip_edges()
+
+func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _herd_data: Dictionary) -> void:
+    if tile_panel == null or tile_detail == null:
         return
     # Reset the band-food tint context; `_unit_summary_lines` re-sets it if a band
-    # is being rendered.
+    # is being rendered into the drawer.
     _selected_band_food_days = NAN
-    selection_panel.visible = true
-    # Title carries a colored "kind" eyebrow (TILE / BAND / HERD) plus a concise
-    # identifier — the new Tile Banner look.
-    var kind_text := "Tile"
+    _assemble_roster(_selected_tile_info)
+    _render_tile_card(_selected_tile_info)
+    _render_occupants_card()
+
+## Assemble the roster for the current hex from the tile's `units`/`herds`, then
+## ensure the currently-selected occupant is represented even when the tile_info
+## doesn't list it (an inspector-driven herd selection carries an empty tile_info).
+func _assemble_roster(tile_info: Dictionary) -> void:
+    _roster_units = []
+    _roster_herds = []
+    var units_variant: Variant = tile_info.get("units", [])
+    if units_variant is Array:
+        for entry in units_variant:
+            if entry is Dictionary:
+                _roster_units.append(entry)
+    var herds_variant: Variant = tile_info.get("herds", [])
+    if herds_variant is Array:
+        for entry in herds_variant:
+            if entry is Dictionary:
+                _roster_herds.append(entry)
+    if not _selected_unit.is_empty() and _find_roster_unit(int(_selected_unit.get("entity", -1))).is_empty():
+        _roster_units.append(_selected_unit)
+    if not _selected_herd.is_empty() and _find_roster_herd(String(_selected_herd.get("id", ""))).is_empty():
+        _roster_herds.append(_selected_herd)
+
+## The Tile card: the place. Terrain rows + the Forage action (its only action).
+## Kind stays "Tile" even when an occupant is selected.
+func _render_tile_card(tile_info: Dictionary) -> void:
+    if tile_panel == null or tile_detail == null:
+        return
+    tile_panel.visible = true
+    tile_panel.set_card_kind("Tile")
     var title_text := "—"
     if not tile_info.is_empty():
-        var x := int(tile_info.get("x", -1))
-        var y := int(tile_info.get("y", -1))
-        title_text = "(%d, %d)" % [x, y]
-    if not unit_data.is_empty():
-        kind_text = "Band"
-        title_text = String(unit_data.get("id", "Band"))
-    elif not herd_data.is_empty():
-        kind_text = "Herd"
-        title_text = String(herd_data.get("id", "Herd"))
-    selection_panel.set_card_kind(kind_text)
-    selection_panel.set_card_title(title_text)
-    var detail_lines: Array[String] = _tile_summary_lines(tile_info)
-    if not unit_data.is_empty():
-        if not detail_lines.is_empty():
-            detail_lines.append("")
-        detail_lines.append_array(_unit_summary_lines(unit_data))
-    elif not herd_data.is_empty():
-        if not detail_lines.is_empty():
-            detail_lines.append("")
-        detail_lines.append_array(_herd_summary_lines(herd_data))
-    selection_detail.text = _format_detail_bbcode(detail_lines)
-    if unit_buttons != null:
-        unit_buttons.visible = not unit_data.is_empty()
-    if herd_buttons != null:
-        herd_buttons.visible = not herd_data.is_empty()
-    _update_herd_buttons(herd_data)
-    _update_food_buttons(tile_info, not unit_data.is_empty())
+        title_text = "(%d, %d)" % [int(tile_info.get("x", -1)), int(tile_info.get("y", -1))]
+    tile_panel.set_card_title(title_text)
+    tile_detail.text = _format_detail_bbcode(_tile_terrain_lines(tile_info))
+    _update_food_buttons(tile_info)
 
+## The Occupants card: a selectable roster of bands + wildlife on the hex, plus a
+## detail drawer for the selected occupant. Hidden (dock reflows) on an empty hex.
+func _render_occupants_card() -> void:
+    if occupants_panel == null:
+        return
+    if _roster_units.is_empty() and _roster_herds.is_empty():
+        _set_occupants_relevant(false)
+        if unit_buttons != null:
+            unit_buttons.visible = false
+        if herd_buttons != null:
+            herd_buttons.visible = false
+        return
+    _set_occupants_relevant(true)
+    occupants_panel.set_card_kind("Occupants")
+    occupants_panel.set_card_title("on this hex")
+    # Auto-select the first occupant on a fresh tile click (nothing selected yet),
+    # driving the drawer + the map ring through the same signal a click would.
+    if _selected_unit.is_empty() and _selected_herd.is_empty():
+        if not _roster_units.is_empty():
+            _selected_unit = (_roster_units[0] as Dictionary).duplicate(true)
+            emit_signal("roster_occupant_selected", "unit", int(_selected_unit.get("entity", -1)))
+        else:
+            _selected_herd = (_roster_herds[0] as Dictionary).duplicate(true)
+            emit_signal("roster_occupant_selected", "herd", String(_selected_herd.get("id", "")))
+    _rebuild_roster()
+    _render_occupant_drawer()
 
-func _tile_summary_lines(tile_info: Dictionary) -> Array[String]:
+func _set_occupants_relevant(relevant: bool) -> void:
+    if left_dock != null:
+        left_dock.set_relevant(occupants_panel, relevant)
+    elif occupants_panel != null:
+        occupants_panel.visible = relevant
+
+## Terrain-only tile readout: FoW redaction, Biome/Height/Tags, and the tile's
+## gather module relabeled `Forage:` (occupant/harvester/scout listings moved to
+## the roster + drawer). Keeps the forage-pending hint here (Forage is a tile action).
+func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     var lines: Array[String] = []
     if tile_info.is_empty():
         lines.append("Hover or click a tile to inspect details.")
@@ -911,55 +1020,210 @@ func _tile_summary_lines(tile_info: Dictionary) -> Array[String]:
         food_label = "None"
     var weight: float = float(tile_info.get("food_module_weight", 0.0))
     var food_kind := String(tile_info.get("food_kind", "")).strip_edges()
-    var food_line := "Food: %s" % food_label
+    var food_line := "Forage: %s" % food_label
     if food_kind != "":
         food_line = "%s — %s" % [food_line, _format_food_kind_label(food_kind)]
     if weight > 0.0:
         food_line += " (weight %.2f)" % weight
     lines.append(food_line)
-    var unit_entries_variant: Variant = tile_info.get("units", [])
-    if unit_entries_variant is Array:
-        var unit_entries: Array = unit_entries_variant
-        if not unit_entries.is_empty():
-            lines.append("Units (%d): %s" % [unit_entries.size(), _format_unit_list(unit_entries)])
-    var herd_entries_variant: Variant = tile_info.get("herds", [])
-    if herd_entries_variant is Array:
-        var herd_entries: Array = herd_entries_variant
-        if not herd_entries.is_empty():
-            lines.append("Herds (%d): %s" % [herd_entries.size(), _format_herd_list(herd_entries)])
-    var harvest_entries_variant: Variant = tile_info.get("harvest_tasks", [])
-    if harvest_entries_variant is Array:
-        var harvest_entries: Array = harvest_entries_variant
-        if not harvest_entries.is_empty():
-            var labels := PackedStringArray()
-            for entry in harvest_entries:
-                if not (entry is Dictionary):
-                    continue
-                var entry_dict: Dictionary = entry
-                var module_key := String(entry_dict.get("module", ""))
-                var module_label := _format_food_module_label(module_key)
-                var action := String(entry_dict.get("action", "harvest")).strip_edges()
-                if action == FOOD_ACTION_HUNT:
-                    labels.append("%s (Hunt)" % module_label)
-                else:
-                    labels.append(module_label)
-            if not labels.is_empty():
-                lines.append("Harvesters (%d): %s" % [labels.size(), ", ".join(labels)])
-    var scout_entries_variant: Variant = tile_info.get("scout_tasks", [])
-    if scout_entries_variant is Array:
-        var scout_entries: Array = scout_entries_variant
-        if not scout_entries.is_empty():
-            lines.append("Scouts (%d)" % scout_entries.size())
     if _pending_forage_matches_tile(tile_info):
         var pending_action := _pending_forage_action()
         var verb := "Hunt" if pending_action == FOOD_ACTION_HUNT else "Harvest"
         lines.append("%s pending: select a band to send here." % verb)
-    if _pending_scout_active():
-        lines.append("Scout pending: choose a tile to survey.")
-    var travel_line := _travel_eta_line(tile_info)
-    if travel_line != "":
-        lines.append(travel_line)
     return lines
+
+# ---- Occupants roster ------------------------------------------------------
+
+## Rebuild the roster rows: a `Bands (N)` sub-group and a `Wildlife (N)` sub-group,
+## each a dim uppercase header + one selectable row per occupant. The row matching
+## the current selection is styled as selected.
+func _rebuild_roster() -> void:
+    if roster_list == null:
+        return
+    for child in roster_list.get_children():
+        child.queue_free()
+    if not _roster_units.is_empty():
+        roster_list.add_child(_roster_group_header("Bands", _roster_units.size()))
+        for unit in _roster_units:
+            roster_list.add_child(_build_band_row(unit))
+    if not _roster_herds.is_empty():
+        roster_list.add_child(_roster_group_header("Wildlife", _roster_herds.size()))
+        for herd in _roster_herds:
+            roster_list.add_child(_build_herd_row(herd))
+
+func _roster_group_header(title: String, count: int) -> Label:
+    var label := Label.new()
+    label.text = "%s (%d)" % [title.to_upper(), count]
+    label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+    label.add_theme_font_size_override("font_size", ROSTER_HEADER_FONT_SIZE)
+    return label
+
+## One selectable band row. A Button (row click) hosts a mouse-transparent HBox
+## laying out: a selection accent, a vitality dot (BandFoodStatus color for a
+## player band, neutral for others), the name, the size, and an activity glyph.
+func _build_band_row(unit: Dictionary) -> Button:
+    var entity_id := int(unit.get("entity", -1))
+    var is_player := _is_player_unit(unit)
+    var selected := not _selected_unit.is_empty() and int(_selected_unit.get("entity", -1)) == entity_id
+    # Neutral tint for a non-player band's vitality dot (we can't see their larder).
+    var dot_color := HudStyle.INK_FAINT
+    var glyph := ""
+    if is_player:
+        dot_color = BandFoodStatus.color_for_days(float(unit.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS)))
+        glyph = _activity_glyph(String(unit.get("activity", "")))
+    var button := _make_roster_button(selected)
+    var row := _make_roster_row(selected, dot_color)
+    row.add_child(_roster_name_label(String(unit.get("id", "Band")), selected))
+    row.add_child(_roster_meta_label(str(int(unit.get("size", 0)))))
+    if glyph != "":
+        row.add_child(_roster_glyph_label(glyph, String(unit.get("activity", "")) == BAND_ACTIVITY_IDLE))
+    button.add_child(row)
+    button.pressed.connect(_on_roster_row_selected.bind("unit", entity_id))
+    return button
+
+## One selectable wildlife row: an ecology-tier dot, the species glyph + name, and
+## the size-class label. Selecting it drives the drawer + the map ring to the herd.
+func _build_herd_row(herd: Dictionary) -> Button:
+    var herd_id := String(herd.get("id", ""))
+    var selected := not _selected_herd.is_empty() and String(_selected_herd.get("id", "")) == herd_id
+    var dot_color := _ecology_tier_color(String(herd.get("ecology_phase", "")))
+    var button := _make_roster_button(selected)
+    var row := _make_roster_row(selected, dot_color)
+    var label := String(herd.get("label", herd.get("id", "Herd")))
+    var glyph := FoodIcons.for_herd(label)
+    var name_text := String(herd.get("species", label))
+    row.add_child(_roster_name_label("%s %s" % [glyph, name_text], selected))
+    var size_class := String(herd.get("size_class", "")).strip_edges()
+    if size_class != "":
+        row.add_child(_roster_meta_label("%s game" % size_class.capitalize()))
+    button.tooltip_text = label
+    button.add_child(row)
+    button.pressed.connect(_on_roster_row_selected.bind("herd", herd_id))
+    return button
+
+## A roster row's clickable Button shell: selected rows read as "primary", others
+## as "ghost". Toggle_mode is off — selection is driven by a rebuild, not the
+## button's own toggle state, so re-clicking the selected row can't un-highlight it.
+func _make_roster_button(selected: bool) -> Button:
+    var button := Button.new()
+    button.focus_mode = Control.FOCUS_NONE
+    button.custom_minimum_size = Vector2(0, ROSTER_ROW_MIN_HEIGHT)
+    HudStyle.apply_button(button, "primary" if selected else "ghost")
+    return button
+
+## The mouse-transparent HBox overlaying a roster button, anchored to fill it,
+## carrying the left selection accent + the vitality/ecology dot.
+func _make_roster_row(selected: bool, dot_color: Color) -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    row.set_anchors_preset(Control.PRESET_FULL_RECT)
+    row.offset_left = ROSTER_ROW_H_PADDING
+    row.offset_right = -ROSTER_ROW_H_PADDING
+    row.add_theme_constant_override("separation", ROSTER_ROW_SEPARATION)
+    var accent := ColorRect.new()
+    accent.custom_minimum_size = Vector2(ROSTER_ACCENT_WIDTH, 0)
+    accent.color = HudStyle.SIGNAL if selected else Color(0, 0, 0, 0)
+    accent.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    row.add_child(accent)
+    var dot := ColorRect.new()
+    dot.custom_minimum_size = Vector2(ROSTER_DOT_SIZE, ROSTER_DOT_SIZE)
+    dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+    dot.color = dot_color
+    dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    row.add_child(dot)
+    return row
+
+func _roster_name_label(text: String, selected: bool) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    label.add_theme_color_override("font_color", HudStyle.INK if selected else HudStyle.INK_DIM)
+    return label
+
+func _roster_meta_label(text: String) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    label.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    return label
+
+func _roster_glyph_label(glyph: String, dim: bool) -> Label:
+    var label := Label.new()
+    label.text = glyph
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    label.add_theme_color_override("font_color", HudStyle.INK_FAINT if dim else HudStyle.INK_DIM)
+    return label
+
+func _activity_glyph(activity: String) -> String:
+    return String(ACTIVITY_GLYPHS.get(activity.strip_edges().to_lower(), ACTIVITY_GLYPHS[BAND_ACTIVITY_IDLE]))
+
+## Shared green/amber/red tier for a herd's ecology phase, matching the band
+## food dot so map/roster/drawer agree: thriving→green, stressed→amber,
+## collapsing→red. Matched on the phase stems from `EcologyPhase::as_str`.
+func _ecology_tier_color(phase: String) -> Color:
+    var normalized := phase.strip_edges().to_lower()
+    if normalized.contains("collaps"):
+        return HudStyle.DANGER
+    if normalized.contains("stress"):
+        return HudStyle.WARN
+    return HudStyle.HEALTHY
+
+func _find_roster_unit(entity_id: int) -> Dictionary:
+    for unit in _roster_units:
+        if unit is Dictionary and int((unit as Dictionary).get("entity", -1)) == entity_id:
+            return unit
+    return {}
+
+func _find_roster_herd(herd_id: String) -> Dictionary:
+    if herd_id == "":
+        return {}
+    for herd in _roster_herds:
+        if herd is Dictionary and String((herd as Dictionary).get("id", "")) == herd_id:
+            return herd
+    return {}
+
+## A roster row was clicked: make it the selected occupant, refresh the cards, and
+## notify the map so the selection ring follows.
+func _on_roster_row_selected(kind: String, id: Variant) -> void:
+    _select_roster_occupant(kind, id)
+    emit_signal("roster_occupant_selected", kind, id)
+
+func _select_roster_occupant(kind: String, id: Variant) -> void:
+    if kind == "unit":
+        _selected_unit = _find_roster_unit(int(id)).duplicate(true)
+        _selected_herd = {}
+    else:
+        _selected_herd = _find_roster_herd(String(id)).duplicate(true)
+        _selected_unit = {}
+    _selected_band_food_days = NAN
+    _rebuild_roster()
+    _render_occupant_drawer()
+
+## The detail drawer + action buttons for the currently-selected occupant.
+func _render_occupant_drawer() -> void:
+    if occupant_detail == null:
+        return
+    _selected_band_food_days = NAN
+    var lines: Array[String] = []
+    if not _selected_unit.is_empty():
+        lines = _unit_summary_lines(_selected_unit)
+    elif not _selected_herd.is_empty():
+        lines = _herd_summary_lines(_selected_herd)
+    occupant_detail.text = _format_detail_bbcode(lines)
+    var is_band := not _selected_unit.is_empty()
+    var is_herd := not _selected_herd.is_empty()
+    if unit_buttons != null:
+        # Scout is a player-band action only.
+        unit_buttons.visible = is_band and _is_player_unit(_selected_unit)
+    if herd_buttons != null:
+        herd_buttons.visible = is_herd
+    if is_herd:
+        _update_herd_buttons(_selected_herd)
+
+## Player-faction check for a roster/drawer band (mirrors MapView._is_player_unit).
+func _is_player_unit(unit: Dictionary) -> bool:
+    return int(unit.get("faction", PLAYER_FACTION_ID)) == PLAYER_FACTION_ID
 
 func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
     var lines: Array[String] = []
@@ -1220,34 +1484,6 @@ func _husbandry_value_hex(value: String) -> String:
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
 
-func _format_unit_list(entries: Array) -> String:
-    var labels := PackedStringArray()
-    for entry in entries:
-        if not (entry is Dictionary):
-            continue
-        labels.append(_unit_label(entry))
-    if labels.is_empty():
-        return "—"
-    return ", ".join(labels)
-
-func _format_herd_list(entries: Array) -> String:
-    var labels := PackedStringArray()
-    for entry in entries:
-        if not (entry is Dictionary):
-            continue
-        var label: String = String(entry.get("label", entry.get("id", "Herd")))
-        labels.append(label)
-    if labels.is_empty():
-        return "—"
-    return ", ".join(labels)
-
-func _unit_label(entry: Dictionary) -> String:
-    var label := String(entry.get("id", "Band"))
-    var size_value: int = int(entry.get("size", 0))
-    if size_value > 0:
-        return "%s[%d]" % [label, size_value]
-    return label
-
 func _join_lines(lines: Array) -> String:
     var packed := PackedStringArray()
     for line in lines:
@@ -1281,14 +1517,14 @@ func _format_detail_bbcode(lines: Array) -> String:
                 table_open = true
             var value_hex := HudStyle.INK_HEX
             if String(kv[0]) == "Food":
-                # The band larder row (its value carries a day count or the ∞
-                # glyph) tints by the food-days thresholds; a tile's food source
-                # keeps the neutral amber.
+                # The band larder row (drawer) tints by the food-days thresholds;
+                # its value carries a day count or the ∞ glyph.
                 var food_value := String(kv[1])
                 if not is_nan(_selected_band_food_days) and (food_value.contains("day") or food_value.contains(FOOD_UNLIMITED_GLYPH)):
                     value_hex = BandFoodStatus.hex_for_days(_selected_band_food_days)
-                else:
-                    value_hex = HudStyle.WARN_HEX
+            elif String(kv[0]) == "Forage":
+                # The tile's gather module reads in the success/ETA amber.
+                value_hex = HudStyle.WARN_HEX
             elif String(kv[0]) == "Ecology":
                 value_hex = _ecology_value_hex(String(kv[1]))
             elif String(kv[0]) == "Husbandry":
@@ -1335,12 +1571,12 @@ func _update_herd_buttons(herd_data: Dictionary) -> void:
         follow_herd_button.text = "Cancel Follow" if follow_pending else "Follow"
     _refresh_follow_policy_buttons()
 
-func _update_food_buttons(tile_info: Dictionary, has_unit: bool) -> void:
-    if food_buttons == null or forage_button == null:
+func _update_food_buttons(tile_info: Dictionary) -> void:
+    if forage_button == null:
         return
     var module_key := String(tile_info.get("food_module", "")).strip_edges()
     if module_key == "":
-        food_buttons.visible = false
+        forage_button.visible = false
         _selected_food_module = ""
         _selected_food_is_hunt = false
         return
@@ -1365,7 +1601,7 @@ func _update_food_buttons(tile_info: Dictionary, has_unit: bool) -> void:
             hint = "Select a band after clicking to send them here."
         forage_button.tooltip_text = hint
     forage_button.disabled = false
-    food_buttons.visible = true
+    forage_button.visible = true
 
 func clear_selection() -> void:
     _selected_unit.clear()
@@ -1376,29 +1612,17 @@ func clear_selection() -> void:
         _cancel_pending_forage(false)
     # keep pending scout so user can still choose a tile after deselecting
     if _selected_tile_info.is_empty():
-        if selection_panel != null:
-            selection_panel.visible = false
-        if food_buttons != null:
-            food_buttons.visible = false
+        if tile_panel != null:
+            tile_panel.visible = false
+        if forage_button != null:
+            forage_button.visible = false
+        _set_occupants_relevant(false)
     else:
         _render_selection_panel(_selected_tile_info, {}, {})
     if unit_buttons != null:
         unit_buttons.visible = false
     if herd_buttons != null:
         herd_buttons.visible = false
-
-func _travel_eta_line(tile_info: Dictionary) -> String:
-    var distance := int(tile_info.get("nearest_unit_distance", -1))
-    if distance < 0:
-        return ""
-    var label := String(tile_info.get("nearest_unit_label", "")).strip_edges()
-    if label == "":
-        label = "Band"
-    var turns := _estimate_travel_turns(distance)
-    if turns < 0:
-        return ""
-    var travel_text := "Nearest band: %s — %d tiles (~%d turns)" % [label, distance, turns]
-    return travel_text
 
 func _travel_eta_hint(tile_info: Dictionary) -> String:
     var distance := int(tile_info.get("nearest_unit_distance", -1))
@@ -1726,9 +1950,6 @@ func _pending_forage_action() -> String:
     if _pending_forage.is_empty():
         return FOOD_ACTION_FORAGE
     return String(_pending_forage.get("action", FOOD_ACTION_FORAGE))
-
-func _pending_scout_active() -> bool:
-    return not _pending_scout_unit.is_empty()
 
 func _pending_scout_for_entity(entity_id: int) -> bool:
     if entity_id < 0 or _pending_scout_unit.is_empty():
