@@ -149,6 +149,10 @@ pub struct PopulationCohort {
     /// hold later at larger scale (`docs/plan_settlement_population.md`).
     pub food_store: Scalar,
     pub morale: Scalar,
+    /// Turns this band has been simulated. Gates knowledge-migration (`simulate_population`) so a
+    /// freshly-spawned band must settle for `migration_min_settled_turns` before its population can
+    /// emigrate to a neighbor. Persisted in the snapshot so rollback preserves the gate.
+    pub age_turns: u32,
     pub generation: GenerationId,
     pub faction: FactionId,
     pub knowledge: Vec<KnowledgeFragment>,

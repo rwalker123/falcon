@@ -21,7 +21,8 @@
     "attrition_morale_scale": 0.5,
     "growth_clamp": 0.06,
     "migration_morale_threshold": 0.78,
-    "migration_eta_ticks": 2
+    "migration_eta_ticks": 2,
+    "migration_min_settled_turns": 5
   },
   "power": {
     "efficiency_adjust_scale": 0.01,

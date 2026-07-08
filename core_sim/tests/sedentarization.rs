@@ -72,6 +72,7 @@ fn spawn_cohort(app: &mut App, faction: FactionId, size: u32) {
         elders: scalar_zero(),
         food_store: scalar_zero(),
         morale: scalar_one(),
+        age_turns: 0,
         generation: 0 as GenerationId,
         faction,
         knowledge: Vec::new(),

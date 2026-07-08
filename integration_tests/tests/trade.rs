@@ -55,7 +55,17 @@ fn trade_diffusion_leaks_after_timer() {
     );
 
     let telemetry = app.world.resource::<TradeTelemetry>();
-    assert_eq!(telemetry.tech_diffusion_applied, 1);
+    // `tech_diffusion_applied` also counts completed cohort migrations (starting bands carry
+    // knowledge and migrate), so isolate the trade-leak diffusions this test spawned.
+    let trade_diffusions = telemetry
+        .records
+        .iter()
+        .filter(|record| !record.via_migration)
+        .count();
+    assert_eq!(
+        trade_diffusions, 1,
+        "exactly one trade (non-migration) diffusion should be applied, got {trade_diffusions}"
+    );
     assert!(
         telemetry
             .records
@@ -85,6 +95,9 @@ fn migration_seeding_transfers_knowledge() {
             .expect("population cohort available");
         cohort.faction = FactionId(0);
         cohort.morale = scalar_from_f32(0.9);
+        // Mark the band as long-settled so it clears the migration_min_settled_turns gate — this
+        // test exercises an established band's emigration, not a freshly-spawned one.
+        cohort.age_turns = 100;
         cohort.knowledge = vec![KnowledgeFragment::new(
             7,
             scalar_from_f32(0.6),

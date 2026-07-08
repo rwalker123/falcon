@@ -441,6 +441,7 @@ table PopulationCohortState {
   working:long = 0;
   elders:long = 0;
   foodStore:long = 0;
+  ageTurns:uint = 0;
 }
 
 table PendingMigration {

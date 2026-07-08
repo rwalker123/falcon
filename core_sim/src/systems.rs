@@ -2626,6 +2626,7 @@ fn spawn_population_entity(
         elders: scalar_zero(),
         food_store: scalar_zero(),
         morale: scalar_from_f32(0.6),
+        age_turns: 0,
         generation,
         faction: FactionId(0),
         knowledge: knowledge.to_vec(),
@@ -3133,6 +3134,9 @@ pub fn simulate_population(
     let demo = demographics.get();
     let max_cap_scalar = scalar_from_u32(config.population_cap);
     for mut cohort in cohorts.iter_mut() {
+        // Age the band every turn (before any early-out) so the migration gate below sees an
+        // accurate settled duration even for cohorts whose home tile briefly can't be resolved.
+        cohort.age_turns = cohort.age_turns.saturating_add(1);
         let Ok(tile) = tiles.get(cohort.home) else {
             cohort.morale = scalar_zero();
             continue;
@@ -3172,7 +3176,11 @@ pub fn simulate_population(
         cohort.food_store = outcome.food_store;
         cohort.sync_size();
 
+        // A band's population only emigrates once it has settled for a while — this gates the
+        // high-morale knowledge-migration so a freshly-spawned (e.g. well-fed starting) band can't
+        // defect to a neighbor on turn one.
         if cohort.migration.is_none()
+            && cohort.age_turns >= population_cfg.migration_min_settled_turns() as u32
             && cohort.morale > population_cfg.migration_morale_threshold()
             && !cohort.knowledge.is_empty()
         {

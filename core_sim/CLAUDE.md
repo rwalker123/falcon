@@ -435,9 +435,16 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 
 `TradeLinkState` carries throughput, tariff, `TradeLinkKnowledge` (openness, leak_timer, decay). `trade_knowledge_diffusion` runs after logistics, emits `TradeDiffusionEvent`s, applies progress to `DiscoveryProgressLedger`.
 
-**Migration**: `PendingMigration` payloads carry scaled knowledge fragments. On arrival, fragments merge into destination ledger.
+**Migration**: `PendingMigration` payloads carry scaled knowledge fragments; on arrival they merge
+into the destination ledger and the whole band emigrates (`cohort.faction = destination`) — the
+high-morale "brain-drain" / Cultural Osmosis vector. `simulate_population` gates it on **both** high
+morale (`migration_morale_threshold`) **and** a settled duration: a band must have been simulated at
+least `migration_min_settled_turns` turns (`PopulationCohort.age_turns`, incremented each turn and
+snapshot-persisted) before its population can emigrate. This stops a freshly-spawned, well-fed
+starting band from defecting on turn one (the `well_fed_morale_bonus` alone would otherwise clear the
+morale threshold immediately).
 
-**Config**: `trade_leak_min/max_ticks`, `trade_leak_exponent`, `trade_openness_decay`, `migration_fragment_scaling`.
+**Config**: `trade_leak_min/max_ticks`, `trade_leak_exponent`, `trade_openness_decay`, `migration_fragment_scaling`; migration gating (`migration_morale_threshold`, `migration_eta_ticks`, `migration_min_settled_turns`) lives in the `population` block of `turn_pipeline_config.json`.
 
 ---
 

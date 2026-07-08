@@ -99,6 +99,7 @@ fn spawn_follower(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::p
                 elders: scalar_zero(),
                 food_store: scalar_zero(),
                 morale: scalar_one(),
+                age_turns: 0,
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),

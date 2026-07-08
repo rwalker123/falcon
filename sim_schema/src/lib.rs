@@ -923,6 +923,10 @@ pub struct PopulationCohortState {
     /// The band's local food larder (fixed-point raw).
     #[serde(default)]
     pub food_store: i64,
+    /// Turns this band has been simulated (settled duration). Gates knowledge-migration so a
+    /// freshly-spawned band can't emigrate immediately; persisted so rollback preserves the gate.
+    #[serde(default)]
+    pub age_turns: u32,
     pub morale: i64,
     pub generation: u16,
     pub faction: u32,
@@ -2614,6 +2618,7 @@ fn create_populations<'a>(
                     working: cohort.working,
                     elders: cohort.elders,
                     foodStore: cohort.food_store,
+                    ageTurns: cohort.age_turns,
                 },
             )
         })
