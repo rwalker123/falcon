@@ -41,7 +41,7 @@ cargo run -p core_sim --bin server
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
 | `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) / `market` (commercial-hunt take + trade multiplier) tuning |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
-| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `births` (rate/surplus_bonus/morale_floor), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability), `cold` (temperature-death) |
+| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus/morale_floor), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -281,9 +281,13 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
 **Food is band-local from day one** (the same store a settlement/storage-pit will hold later at
 scale). Provisions **left `FactionInventory` entirely**: foraging (`advance_harvest_assignments`),
 hunt/follow (`advance_fauna_pursuits`), and husbandry (`advance_husbandry`, split across the
-owner's bands) income now credit the acting band's `food_store`; the start grant seeds larders at
-Startup (`apply_starting_inventory_effects`). Inter-band **sharing** and storage-pit
-**distribution** are deferred to Phase 3 — a band presently feeds only from its own larder.
+owner's bands) income now credit the acting band's `food_store`. At Startup
+(`seed_cohort_demographics`) each band is seeded with `startup.food_reserve_days` turns of its own
+demand (`food_demand`, shared with the consumption path) plus a well-fed morale bonus — no faction
+provisions grant to distribute. Inter-band **sharing** and storage-pit **distribution** are
+deferred to Phase 3 — a band presently feeds only from its own larder, and starvation is
+deficit-capped (a 10% shortfall kills at most 10%) so a dry larder bleeds down over several turns
+rather than in one.
 
 Brackets + larder persist in the snapshot (`PopulationCohortState`) so rollback restores the exact
 structure. A per-faction age-structure + dependency-ratio HUD readout ships as

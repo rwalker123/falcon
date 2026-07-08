@@ -228,7 +228,8 @@ lean-to and an arcology (and a 400k town vs a 5M city) are the same engine at di
   food/morale/environment (`advance_demographics`, `systems.rs`), replacing the old growth clamp;
   rates in `demographics_config.json`. **Food is band-local from day one** — a per-cohort
   `food_store` larder that foraging/hunt/husbandry income fills and per-capita consumption drains
-  (scarcity → deaths); provisions left `FactionInventory` (inter-band sharing + storage-pit
+  (deficit-capped starvation → deaths); each band opens with `startup.food_reserve_days` of food
+  seeded per-capita; provisions left `FactionInventory` (inter-band sharing + storage-pit
   distribution deferred to Phase 3). Brackets + larder persist in the snapshot (rollback), and a
   per-faction age-structure + dependency-ratio HUD readout ships (`PopulationDemographicsState`,
   wired like `SedentarizationState`). Localized (per band) from day one.

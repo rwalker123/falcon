@@ -5,10 +5,14 @@
     "elders": 0.15
   },
   "consumption": {
-    "per_capita_draw": 0.5,
+    "per_capita_draw": 0.03,
     "child_factor": 0.6,
     "working_factor": 1.0,
     "elder_factor": 0.8
+  },
+  "startup": {
+    "food_reserve_days": 20.0,
+    "well_fed_morale_bonus": 0.2
   },
   "births": {
     "birth_rate": 0.03,
@@ -19,7 +23,7 @@
   "aging_rate": 0.025,
   "elder_mortality_rate": 0.06,
   "scarcity": {
-    "starvation_mortality": 0.5,
+    "starvation_mortality": 0.2,
     "child_vulnerability": 1.5,
     "working_vulnerability": 1.0,
     "elder_vulnerability": 1.5

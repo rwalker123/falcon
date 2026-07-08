@@ -53,10 +53,29 @@ pub struct DemographicsConsumption {
 impl Default for DemographicsConsumption {
     fn default() -> Self {
         Self {
-            per_capita_draw: 0.5,
+            per_capita_draw: 0.03,
             child_factor: 0.6,
             working_factor: 1.0,
             elder_factor: 0.8,
+        }
+    }
+}
+
+/// Campaign-start seeding. Each freshly spawned band starts with `food_reserve_days` turns of
+/// its own food demand carried in its larder (food is band-local from day one — no faction pool)
+/// and a `well_fed_morale_bonus` for opening the game provisioned.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct DemographicsStartup {
+    pub food_reserve_days: f32,
+    pub well_fed_morale_bonus: f32,
+}
+
+impl Default for DemographicsStartup {
+    fn default() -> Self {
+        Self {
+            food_reserve_days: 20.0,
+            well_fed_morale_bonus: 0.2,
         }
     }
 }
@@ -83,8 +102,10 @@ impl Default for DemographicsBirths {
 }
 
 /// Starvation tuning. When food demand outruns the larder, each bracket loses
-/// `deficit_fraction × starvation_mortality × <bracket>_vulnerability` of its head-count
-/// (dependents typically more vulnerable than working-age).
+/// `deficit_fraction × starvation_mortality × <bracket>_vulnerability` of its head-count per turn
+/// (dependents typically more vulnerable than working-age) — but never more than the deficit
+/// itself, so a 10% food shortfall impacts at most 10% of a bracket. Keep `starvation_mortality`
+/// well below 1 so shortfalls bleed the population down over several turns rather than in one.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct DemographicsScarcity {
@@ -97,7 +118,7 @@ pub struct DemographicsScarcity {
 impl Default for DemographicsScarcity {
     fn default() -> Self {
         Self {
-            starvation_mortality: 0.5,
+            starvation_mortality: 0.2,
             child_vulnerability: 1.5,
             working_vulnerability: 1.0,
             elder_vulnerability: 1.5,
@@ -131,6 +152,7 @@ impl Default for DemographicsCold {
 pub struct DemographicsConfig {
     pub initial_distribution: DemographicsDistribution,
     pub consumption: DemographicsConsumption,
+    pub startup: DemographicsStartup,
     pub births: DemographicsBirths,
     /// Fraction of children that mature into the working bracket each turn.
     pub maturation_rate: f32,
@@ -147,6 +169,7 @@ impl Default for DemographicsConfig {
         Self {
             initial_distribution: DemographicsDistribution::default(),
             consumption: DemographicsConsumption::default(),
+            startup: DemographicsStartup::default(),
             births: DemographicsBirths::default(),
             maturation_rate: 0.05,
             aging_rate: 0.025,
@@ -306,5 +329,7 @@ mod tests {
         }
         assert!(config.cold.max_mortality <= 1.0);
         assert!(config.scarcity.starvation_mortality >= 0.0);
+        // Bands must open the game with a positive food reserve.
+        assert!(config.startup.food_reserve_days > 0.0);
     }
 }
