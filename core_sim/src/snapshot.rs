@@ -1187,19 +1187,24 @@ impl SnapshotHistory {
     }
 }
 
+type PopulationSnapshotQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static PopulationCohort,
+        Option<&'static HarvestAssignment>,
+        Option<&'static ScoutAssignment>,
+        Option<&'static FaunaPursuit>,
+    ),
+>;
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
-#[allow(clippy::type_complexity)]
 pub fn capture_snapshot(
     ctx: SnapshotContext,
     tiles: Query<(Entity, &Tile, Option<&FoodModuleTag>)>,
     logistics_links: Query<(Entity, &LogisticsLink, &TradeLink)>,
-    populations: Query<(
-        Entity,
-        &PopulationCohort,
-        Option<&HarvestAssignment>,
-        Option<&ScoutAssignment>,
-        Option<&FaunaPursuit>,
-    )>,
+    populations: PopulationSnapshotQuery,
     power_nodes: Query<(Entity, &PowerNode)>,
     power_grid: Res<PowerGridState>,
     knowledge_ledger: Res<KnowledgeLedger>,

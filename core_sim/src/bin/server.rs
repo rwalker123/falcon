@@ -3013,7 +3013,7 @@ fn consume_faction_provisions(
             faction = %faction.0,
             item = "provisions",
             required = amount,
-            available = available.to_u32(),
+            available = available.to_i64_whole(),
             "command.inventory.rejected=insufficient"
         );
         emit_command_failure(
@@ -3023,7 +3023,7 @@ fn consume_faction_provisions(
             format!(
                 "{} provisions required but only {} available.",
                 amount,
-                available.to_u32()
+                available.to_i64_whole()
             ),
         );
         return false;
