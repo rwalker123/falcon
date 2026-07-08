@@ -356,7 +356,9 @@ func _current_targeting_info() -> Dictionary:
     if not _pending_follow.is_empty():
         return {
             "active": true,
-            "command": "follow",
+            # Persistence is a Hunt policy now (the standalone "Follow" verb is retired);
+            # the chosen policy rides in context_label, e.g. "HUNT … · Sustain".
+            "command": "hunt",
             "need": "band",
             "origin_x": int(_pending_follow.get("x", -1)),
             "origin_y": int(_pending_follow.get("y", -1)),

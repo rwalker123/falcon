@@ -599,8 +599,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 				tile_lookup[entity_id] = Vector2i(x, y)
 				if tile_dict.has("habitability"):
 					tile_habitability[Vector2i(x, y)] = float(tile_dict["habitability"])
-					if tile_dict.has("temperature"):
-						tile_temperature[Vector2i(x, y)] = float(tile_dict["temperature"])
+				if tile_dict.has("temperature"):
+					tile_temperature[Vector2i(x, y)] = float(tile_dict["temperature"])
 				if culture_layer_grid.size() > 0:
 					if x >= 0 and x < grid_width and y >= 0 and y < grid_height:
 						var index: int = y * grid_width + x
@@ -1857,11 +1857,11 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 	if relative_height >= 0:
 		info["relative_height"] = relative_height
 		info["height_display"] = format_height(relative_height)
-	var habitability_key := Vector2i(col, row)
-	if tile_habitability.has(habitability_key):
-		info["habitability"] = float(tile_habitability[habitability_key])
-	if tile_temperature.has(habitability_key):
-		info["temperature"] = float(tile_temperature[habitability_key])
+	var tile_key := Vector2i(col, row)
+	if tile_habitability.has(tile_key):
+		info["habitability"] = float(tile_habitability[tile_key])
+	if tile_temperature.has(tile_key):
+		info["temperature"] = float(tile_temperature[tile_key])
 	var mask := _tag_mask_at(col, row)
 	info["tags_mask"] = mask
 	var tag_labels := _tag_names_for_mask(mask)
