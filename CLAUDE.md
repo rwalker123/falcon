@@ -44,5 +44,35 @@ Stay consistent with this flow to keep design intent and engineering execution a
 
 ---
 
+## Delegating Implementation to Coder Agents
+
+Long sessions fill the orchestrator's context fast because writing code churns
+through file reads, builds, and test output. Two subagents in `.claude/agents/`
+absorb that churn — they do the read → edit → build → test loop in their own
+context and return only a terse report:
+
+- **`server-dev`** — Rust side (`core_sim`, `sim_runtime`, `sim_schema`, `xtask`).
+  Self-verifies with `cargo fmt` + `clippy -D warnings` + `cargo test`.
+- **`client-dev`** — Godot/GDScript + native extension (`clients/godot_thin_client`).
+  Self-verifies with `cargo xtask godot-build` + the ui_preview PNG harness (it
+  reads the rendered frames).
+
+**The workflow:** the orchestrator owns design and produces a *complete,
+comprehensive spec* — decided approach, files to touch, contracts, edge cases,
+config levers — and the agent just implements it. Design and architecture
+decisions stay with the orchestrator; only settled specs are delegated. Do **not**
+hand an agent an open-ended or ambiguous task — if the spec isn't complete enough
+to implement without further design judgment, it isn't ready to delegate.
+
+Guidance:
+- Split cross-cutting work: `server-dev` does the schema/sim half, `client-dev`
+  consumes it; each flags the other's remaining work in its report.
+- Continue the *same* agent (via SendMessage) for iterative follow-ups so its
+  context persists, rather than cold-starting a fresh one and re-explaining.
+- Agents don't branch or commit — they leave the tree changed and report; git
+  stays with the orchestrator.
+
+---
+
 ## UI Panel Sizing
 Reuse the shared helper at `clients/godot_thin_client/src/scripts/ui/AutoSizingPanel.gd` for any HUD panels that need to expand to fit content (e.g., selection panel, command feed, future hex-info widgets). Attach the script to the panel node and call `fit_to_content` from the owning script; this prevents each panel from reimplementing bespoke height/scroll logic.
