@@ -50,6 +50,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the Terrain-tab command buttons. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`; scout emits `tile_scout_requested` (coordinator resolves the faction + sends, like FaunaPanel); gated by `set_command_connected` |
 | `Hud.gd` | HUD layer, legend, the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + Forage) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer + Scout / Hunt-with-policy verbs), band **Alerts** panel, turn readout. Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) live here; roster selection emits `roster_occupant_selected` |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale warn/critical thresholds + `color_for_morale`/`hex_for_morale`), shared by MapView's band dot and Hud's food/morale lines + alerts |
+| `ui/TileHabitability.gd` | Single source of truth for the Tile-card Habitability rating: buckets `TileState.habitability` (band-independent per-turn morale drain) into Hospitable/Fair/Harsh/Hostile via `tile_habitability_config.json` thresholds, with the HEALTHY/INK/WARN/DANGER color / `hex_for_rating` mapping. Consumed by `Hud._tile_terrain_lines` + `_format_detail_bbcode` |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
 | `ui/MinimapPanel.gd` | Minimap component for the 2D map view (click-to-pan, aspect ratio sizing) |
@@ -369,13 +370,37 @@ easy-to-miss "select a band…" line in the selection panel.
   "unlimited" sentinel). `Hud._band_morale_line` adds a `Morale: <N>%` row to the drawer **for player
   bands only** (`_is_player_unit`), tinted by `hex_for_morale` via `_format_detail_bbcode` (same
   stash-then-tint pattern as the Food row, using `_selected_band_morale`).
+- **Morale trend + named cause** (snapshot `PopulationCohortState.moraleDelta` / `moraleCause`, decoded in
+  `native/src/lib.rs` `population_to_dict` as `morale_delta` (raw Scalar/1e6, signed) / `morale_cause`
+  (int; `0=None,1=Terrain,2=Cold,3=Unrest`), flowed into the MapView unit marker): "low morale" named the
+  symptom, not the cause — the morale drivers live server-side and were discarded each turn until the
+  cohort started exporting the per-turn trend + dominant negative driver. `Hud._band_morale_line` appends
+  a trend arrow (`▼` falling / `▲` rising / none when `|morale_delta| < MORALE_TREND_EPSILON`) and, when
+  falling, the plain-language cause via `_morale_cause_label` — `Terrain`→"harsh terrain", `Cold`→"harsh
+  climate" (the server penalty fires on hot **or** cold deviation, so not literally "cold"),
+  `Unrest`→"unrest". `Terrain` appends the band's `_selected_tile_info.terrain_label` in parens
+  (`Morale: 22% ▼ — harsh terrain (Karst Cavern Mouth)`) — the "it's the hex you're on" payload. A
+  rehydrated save reports `morale_delta 0 / cause None` for one turn (the sim doesn't persist them); the
+  row degrades to a bare percentage.
+- **Tile-card Habitability** (snapshot `TileState.habitability`, decoded in `native/src/lib.rs`
+  `tile_to_dict` as `habitability` (raw Scalar/1e6; band-independent per-turn morale drain of the tile's
+  terrain + temperature, ≥0, bigger = harsher), stored in `MapView.tile_habitability` keyed by
+  `Vector2i` and copied onto the `_tile_info_at` dict): `Hud._tile_terrain_lines` adds a
+  `Habitability: <rating>` row (before the FoW discovered/unexplored returns — it's terrain-intrinsic, so
+  fine on a remembered tile; only shown when the field is present). `ui/TileHabitability.gd` is the single
+  source of truth — config `src/config/tile_habitability_config.json` (`habitability.{hospitable_max,
+  fair_max,harsh_max}` = `0.02`/`0.05`/`0.09`) buckets the drain into Hospitable/Fair/Harsh/Hostile,
+  tinted HEALTHY/INK/WARN/DANGER via `hex_for_rating` in `_format_detail_bbcode` (mirrors the
+  `BandFoodStatus` bucketing pattern). The Karst Cavern Mouth (~0.0825) reads "Harsh" (amber).
 - **Alerts panel** (`Hud.gd` `update_band_alerts`, dispatched from `Main.gd` on the snapshot
   `populations`): a left-dock `PanelCard` (`AlertsPanel`/`%AlertsLabel`, priority 15) that rebuilds each
   snapshot from the player faction's bands — **starving** (`days_of_food` < critical, red),
   **losing population** (`size` dropped vs the previous snapshot, tracked in `_prev_band_sizes`, amber),
   and **idle** (`activity == idle`, quiet dim). The losing-population alert names its cause via
-  `_decline_reason(days, morale)`: `days < critical` → `— starving`, else `morale < warn` → `— low morale`,
-  else no suffix (unknown/other, e.g. cold). Alerts are (band, type) deduped by construction and clear
+  `_decline_reason(days, morale_cause)`: `days < critical` → `— starving` (first), else the dominant
+  `morale_cause` maps to the same plain-language labels as the drawer (`— harsh terrain` / `— harsh
+  climate` / `— unrest`), falling back to `— low morale` when the cause is `None` (e.g. a rehydrated
+  save). Alerts are (band, type) deduped by construction and clear
   when resolved; each row is a `[url=x,y]` link whose `meta_clicked` emits `alert_focus_requested(x,y)` →
   `MapView.focus_on_tile` (shared minimap centering machinery). Hidden via the dock until an alert exists.
   NOTE: cohorts carry no top-level band label in the snapshot — names fall back to harvest/scout

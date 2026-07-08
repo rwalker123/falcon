@@ -280,6 +280,23 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
    total is clamped to `population_cap`. The **dependency ratio** `(children+elders)/working` is
    the core tension.
 
+**Morale attribution (why morale/population falls).** `simulate_population` records on each
+`PopulationCohort` this turn's signed `last_morale_delta` plus a `last_morale_cause`
+(`MoraleCause` ∈ `None | Terrain | Cold | Unrest`) = the **dominant negative** morale contributor
+when the delta is negative, else `None`. Drivers: `Terrain` = terrain attrition + logistics
+hardness, `Cold` = temperature-difference penalty, `Unrest` = crisis impacts + cultural sentiment.
+Starvation is deliberately **not** a morale cause — it stays on the days-of-food path. The two
+place-based (negative) terms come from the shared **`tile_morale_pressure(terrain, temperature,
+&MoralePressureConfig)`** helper (`systems.rs`), which returns the tile-intrinsic per-turn morale
+drain (terrain + cold, ≥ 0; KarstCavernMouth ≈ 0.0825 at ambient temperature) so the sim and the
+snapshot read from one source. These fields are **derived per-turn, not snapshot-persisted** (a
+rehydrated cohort reads `0`/`None` until the next turn). Exported as `PopulationCohortState.moraleDelta`
+(fixed-point `long`, `FIXED_POINT_SCALE` = 1e6) + `moraleCause:ubyte` (`0=None, 1=Terrain, 2=Cold,
+3=Unrest`). `TileState.habitability:long` carries the band-independent `tile_morale_pressure` total
+for the tile (same fixed-point scale) so the client can rate a hex's harshness. All three are wired
+through `sim_schema`/`snapshot.rs`; the client consumes them for a morale trend arrow + named cause
+and a Tile-card Habitability line (client half).
+
 **Food is band-local from day one** (the same store a settlement/storage-pit will hold later at
 scale). Provisions **left `FactionInventory` entirely**: foraging (`advance_harvest_assignments`),
 hunt/follow (`advance_fauna_pursuits`), and husbandry (`advance_husbandry`, split across the

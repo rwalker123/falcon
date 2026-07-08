@@ -33,8 +33,8 @@ use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, FaunaPursuit,
         FaunaPursuitMode, HarvestAssignment, HarvestTaskKind, LocalStore, LogisticsLink,
-        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ScoutAssignment, Tile,
-        TradeLink, FOOD,
+        MoraleCause, MountainMetadata, PendingMigration, PopulationCohort, PowerNode,
+        ScoutAssignment, Tile, TradeLink, FOOD,
     },
     culture::{
         CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
@@ -70,12 +70,14 @@ use crate::{
         DiscoveryProgressLedger, FactionInventory, FogRevealLedger, MoistureRaster,
         SentimentAxisBias, SimulationConfig, SimulationTick, StartLocation, TileRegistry,
     },
-    scalar::Scalar,
+    scalar::{scalar_zero, Scalar},
     sedentarization::SedentarizationScore,
     snapshot_overlays_config::{SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle},
     start_profile::{snapshot_profiles, CampaignLabel, FogMode, StartProfilesHandle},
     supply::SupplyNetworkMembership,
-    systems::food_demand,
+    systems::{food_demand, tile_morale_pressure, MoralePressureConfig},
+    terrain::terrain_definition,
+    turn_pipeline_config::TurnPipelineConfigHandle,
     victory::VictoryState,
 };
 
@@ -127,6 +129,7 @@ pub struct SnapshotContext<'w> {
     pub viewer_faction: Res<'w, crate::visibility::ViewerFaction>,
     pub demographics: Res<'w, DemographicsConfigHandle>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
+    pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -1243,9 +1246,19 @@ pub fn capture_snapshot(
         viewer_faction,
         demographics,
         supply_membership,
+        pipeline_config,
     } = ctx;
     let overlays_config = overlays.get();
     history.set_capacity(config.snapshot_history_limit.max(1));
+
+    let population_cfg = pipeline_config.config().population();
+    // Same place-based morale config the sim uses, so `habitability` matches the applied drain.
+    let morale_pressure_cfg = MoralePressureConfig {
+        ambient_temperature: config.ambient_temperature,
+        temperature_morale_penalty: config.temperature_morale_penalty,
+        attrition_penalty_scale: population_cfg.attrition_penalty_scale(),
+        hardness_penalty_scale: population_cfg.hardness_penalty_scale(),
+    };
 
     let mut tile_states: Vec<TileState> = Vec::new();
     let mut food_module_states: Vec<FoodModuleState> = Vec::new();
@@ -1255,7 +1268,7 @@ pub fn capture_snapshot(
         .stockpile_access_radius
         .unwrap_or(DEFAULT_STOCKPILE_ACCESS_RADIUS);
     for (entity, tile, _) in tiles.iter() {
-        tile_states.push(tile_state(entity, tile));
+        tile_states.push(tile_state(entity, tile, &morale_pressure_cfg));
     }
     for site in food_sites.sites() {
         food_module_states.push(FoodModuleState {
@@ -1836,6 +1849,9 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             elders: Scalar::from_raw(cohort_state.elders),
             stores,
             morale: Scalar::from_raw(cohort_state.morale),
+            // Derived per-turn (not snapshot-persisted); recomputed on the next `simulate_population`.
+            last_morale_delta: scalar_zero(),
+            last_morale_cause: MoraleCause::None,
             age_turns: cohort_state.age_turns,
             generation: cohort_state.generation,
             faction: FactionId(cohort_state.faction),
@@ -3316,11 +3332,23 @@ fn sentiment_raster_from_populations(
     }
 }
 
-fn tile_state(entity: Entity, tile: &Tile) -> TileState {
+fn tile_state(
+    entity: Entity,
+    tile: &Tile,
+    morale_pressure_cfg: &MoralePressureConfig,
+) -> TileState {
     let (mountain_kind, mountain_relief) = match tile.mountain {
         Some(meta) => (map_mountain_kind(meta.kind), meta.relief),
         None => (MountainKind::None, 1.0),
     };
+    // Band-independent tile harshness — the same `tile_morale_pressure` the sim applies to morale.
+    let habitability = tile_morale_pressure(
+        &terrain_definition(tile.terrain),
+        tile.temperature,
+        morale_pressure_cfg,
+    )
+    .total()
+    .raw();
     TileState {
         entity: entity.to_bits(),
         x: tile.position.x,
@@ -3333,6 +3361,7 @@ fn tile_state(entity: Entity, tile: &Tile) -> TileState {
         culture_layer: 0,
         mountain_kind,
         mountain_relief,
+        habitability,
     }
 }
 
@@ -3562,6 +3591,8 @@ fn population_state(
         days_of_food,
         activity,
         supply_network_id: supply_membership.network_of(entity),
+        morale_delta: cohort.last_morale_delta.raw(),
+        morale_cause: cohort.last_morale_cause.as_u8(),
         morale: cohort.morale.raw(),
         generation: cohort.generation,
         faction: cohort.faction.0,
@@ -3823,6 +3854,7 @@ mod tests {
             culture_layer: 0,
             mountain_kind: MountainKind::None,
             mountain_relief: 1.0,
+            habitability: 0,
         }
     }
 
@@ -4059,6 +4091,7 @@ mod tests {
             culture_layer: 0,
             mountain_kind: MountainKind::None,
             mountain_relief: 1.0,
+            habitability: 0,
         };
         let base_overlay = TerrainOverlayState {
             width: 1,
@@ -4272,6 +4305,8 @@ mod tests {
                 days_of_food: 0.0,
                 activity: String::new(),
                 supply_network_id: 0,
+                morale_delta: 0,
+                morale_cause: 0,
                 morale: Scalar::from_f32(0.3).raw(),
                 generation: 0,
                 faction: 0,
@@ -4296,6 +4331,8 @@ mod tests {
                 days_of_food: 0.0,
                 activity: String::new(),
                 supply_network_id: 0,
+                morale_delta: 0,
+                morale_cause: 0,
                 morale: Scalar::from_f32(0.8).raw(),
                 generation: 0,
                 faction: 1,
@@ -4393,6 +4430,8 @@ mod tests {
                 days_of_food: 0.0,
                 activity: String::new(),
                 supply_network_id: 0,
+                morale_delta: 0,
+                morale_cause: 0,
                 morale: Scalar::from_f32(0.5).raw(),
                 generation: 0,
                 faction: 0,
@@ -4421,6 +4460,8 @@ mod tests {
                 days_of_food: 0.0,
                 activity: String::new(),
                 supply_network_id: 0,
+                morale_delta: 0,
+                morale_cause: 0,
                 morale: Scalar::from_f32(0.7).raw(),
                 generation: 0,
                 faction: 1,

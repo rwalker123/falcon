@@ -15,8 +15,8 @@ use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, FaunaPursuit,
         FaunaPursuitMode, FollowPolicy, HarvestAssignment, HarvestTaskKind, KnowledgeFragment,
-        LocalStore, LogisticsLink, MountainMetadata, PendingMigration, PopulationCohort, PowerNode,
-        ScoutAssignment, StartingUnit, Tile, TradeLink, FOOD,
+        LocalStore, LogisticsLink, MoraleCause, MountainMetadata, PendingMigration,
+        PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink, FOOD,
     },
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
@@ -53,7 +53,7 @@ use crate::{
         FoodModulePreference, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
         StartProfileOverrides, StartingUnitSpec,
     },
-    terrain::{terrain_definition, terrain_for_position_with_classifier},
+    terrain::{terrain_definition, terrain_for_position_with_classifier, TerrainDefinition},
     turn_pipeline_config::TurnPipelineConfigHandle,
 };
 use sim_runtime::{
@@ -2626,6 +2626,8 @@ fn spawn_population_entity(
         elders: scalar_zero(),
         stores: LocalStore::new(),
         morale: scalar_from_f32(0.6),
+        last_morale_delta: scalar_zero(),
+        last_morale_cause: MoraleCause::None,
         age_turns: 0,
         generation,
         faction: FactionId(0),
@@ -3114,6 +3116,53 @@ fn advance_demographics(
     }
 }
 
+/// Config levers for [`tile_morale_pressure`] — the place-based (negative) morale terms. Pulled
+/// from `SimulationConfig` (temperature) and the population block of `turn_pipeline_config.json`
+/// (terrain scales) so the sim and the snapshot's `habitability` read from one source.
+pub struct MoralePressureConfig {
+    pub ambient_temperature: Scalar,
+    pub temperature_morale_penalty: Scalar,
+    pub attrition_penalty_scale: Scalar,
+    pub hardness_penalty_scale: Scalar,
+}
+
+/// The tile-intrinsic, per-turn morale *drain* broken into its two place-based drivers (each ≥ 0;
+/// bigger = worse). This is the "how harsh is it to live on this tile" signal — it excludes base
+/// growth and crisis/sentiment (unrest), which are not properties of the place.
+pub struct TileMoralePressure {
+    /// Terrain attrition + logistics-hardness drain.
+    pub terrain: Scalar,
+    /// Temperature-difference (comfort) drain.
+    pub cold: Scalar,
+}
+
+impl TileMoralePressure {
+    /// Total tile-intrinsic morale drain (`terrain + cold`, ≥ 0). This is the snapshot's
+    /// `habitability` value.
+    pub fn total(&self) -> Scalar {
+        self.terrain + self.cold
+    }
+}
+
+/// Compute the tile-intrinsic per-turn morale drain for a tile's terrain + temperature. Shared by
+/// `simulate_population` (for the actual morale update + dominant-cause attribution) and the
+/// snapshot's `habitability` export so the two never drift.
+pub fn tile_morale_pressure(
+    terrain: &TerrainDefinition,
+    temperature: Scalar,
+    cfg: &MoralePressureConfig,
+) -> TileMoralePressure {
+    let terrain_attrition_penalty =
+        scalar_from_f32(terrain.attrition_rate) * cfg.attrition_penalty_scale;
+    let hardness_excess = (terrain.logistics_penalty - 1.0).max(0.0);
+    let terrain_hardness_penalty = scalar_from_f32(hardness_excess) * cfg.hardness_penalty_scale;
+    let temp_diff = (temperature - cfg.ambient_temperature).abs();
+    TileMoralePressure {
+        terrain: terrain_attrition_penalty + terrain_hardness_penalty,
+        cold: temp_diff * cfg.temperature_morale_penalty,
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn simulate_population(
     config: Res<SimulationConfig>,
@@ -3133,6 +3182,12 @@ pub fn simulate_population(
     let population_cfg = pipeline_config.config().population();
     let demo = demographics.get();
     let max_cap_scalar = scalar_from_u32(config.population_cap);
+    let morale_pressure_cfg = MoralePressureConfig {
+        ambient_temperature: config.ambient_temperature,
+        temperature_morale_penalty: config.temperature_morale_penalty,
+        attrition_penalty_scale: population_cfg.attrition_penalty_scale(),
+        hardness_penalty_scale: population_cfg.hardness_penalty_scale(),
+    };
     for mut cohort in cohorts.iter_mut() {
         // Age the band every turn (before any early-out) so the migration gate below sees an
         // accurate settled duration even for cohorts whose home tile briefly can't be resolved.
@@ -3143,17 +3198,33 @@ pub fn simulate_population(
         };
         let terrain_profile = terrain_definition(tile.terrain);
         let temp_diff = (tile.temperature - config.ambient_temperature).abs();
-        let terrain_attrition_penalty = scalar_from_f32(terrain_profile.attrition_rate)
-            * population_cfg.attrition_penalty_scale();
-        let hardness_excess = (terrain_profile.logistics_penalty - 1.0).max(0.0);
-        let terrain_hardness_penalty =
-            scalar_from_f32(hardness_excess) * population_cfg.hardness_penalty_scale();
-        let morale_delta = config.population_growth_rate
-            - temp_diff * config.temperature_morale_penalty
-            + impacts.morale_delta
-            + effects.morale_bias
-            - terrain_attrition_penalty
-            - terrain_hardness_penalty;
+        // Place-based (negative) morale terms, from the one shared source (also the snapshot's
+        // `habitability`), so sim and snapshot never drift.
+        let pressure =
+            tile_morale_pressure(&terrain_profile, tile.temperature, &morale_pressure_cfg);
+        // Crisis impacts + cultural sentiment — the "unrest" driver (signed; may be positive).
+        let unrest = impacts.morale_delta + effects.morale_bias;
+        let morale_delta = config.population_growth_rate + unrest - pressure.total();
+        // Attribute the dominant *negative* driver when morale fell (else `None`). Starvation is
+        // intentionally excluded — it is surfaced through the days-of-food path, not morale.
+        cohort.last_morale_delta = morale_delta;
+        cohort.last_morale_cause = if morale_delta < scalar_zero() {
+            let terrain_mag = pressure.terrain;
+            let cold_mag = pressure.cold;
+            // `unrest` only counts as a negative driver when it is itself negative.
+            let unrest_mag = (-unrest).max(scalar_zero());
+            if terrain_mag >= cold_mag && terrain_mag >= unrest_mag && terrain_mag > scalar_zero() {
+                MoraleCause::Terrain
+            } else if cold_mag >= unrest_mag && cold_mag > scalar_zero() {
+                MoraleCause::Cold
+            } else if unrest_mag > scalar_zero() {
+                MoraleCause::Unrest
+            } else {
+                MoraleCause::None
+            }
+        } else {
+            MoraleCause::None
+        };
         cohort.morale = (cohort.morale + morale_delta).clamp(scalar_zero(), scalar_one());
 
         // Demographic model: consume the band's local food, then resolve deaths, births,
@@ -4067,6 +4138,53 @@ pub fn process_corruption(
     }
 
     telemetry.active_incidents = ledger.entry_count();
+}
+
+#[cfg(test)]
+mod tile_morale_pressure_tests {
+    use super::*;
+    use crate::scalar::scalar_from_f32;
+    use sim_runtime::TerrainType;
+
+    /// Config matching the shipped defaults (`turn_pipeline_config.json` population block +
+    /// `simulation_config.json` temperature levers) so the assertions track real tuning.
+    fn shipped_cfg(ambient: f32) -> MoralePressureConfig {
+        MoralePressureConfig {
+            ambient_temperature: scalar_from_f32(ambient),
+            temperature_morale_penalty: scalar_from_f32(0.004),
+            attrition_penalty_scale: scalar_from_f32(0.2),
+            hardness_penalty_scale: scalar_from_f32(0.05),
+        }
+    }
+
+    #[test]
+    fn karst_cavern_mouth_is_harsh() {
+        let terrain = terrain_definition(TerrainType::KarstCavernMouth);
+        let ambient = 0.5;
+        // Temperature matches ambient → cold term is zero, so the total is the terrain drain.
+        let pressure =
+            tile_morale_pressure(&terrain, scalar_from_f32(ambient), &shipped_cfg(ambient));
+        assert_eq!(pressure.cold, scalar_zero());
+        // attrition 0.30 * 0.2 + (1.45 - 1.0) * 0.05 = 0.0825.
+        let expected = scalar_from_f32(0.0825);
+        assert!(
+            (pressure.total() - expected).abs() < scalar_from_f32(0.0005),
+            "cavern habitability {:?} should be ~0.0825",
+            pressure.total().to_f32()
+        );
+    }
+
+    #[test]
+    fn temperature_difference_drives_cold_term() {
+        let terrain = terrain_definition(TerrainType::AlluvialPlain);
+        let ambient = 0.5;
+        let cold_tile = scalar_from_f32(ambient + 0.25);
+        let pressure = tile_morale_pressure(&terrain, cold_tile, &shipped_cfg(ambient));
+        // temp_diff 0.25 * 0.004 = 0.001.
+        assert!(pressure.cold > scalar_zero());
+        let expected = scalar_from_f32(0.001);
+        assert!((pressure.cold - expected).abs() < scalar_from_f32(0.0002));
+    }
 }
 
 #[cfg(test)]

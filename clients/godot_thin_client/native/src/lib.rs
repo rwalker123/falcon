@@ -3496,6 +3496,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("is_traveling", cohort.isTraveling());
     let _ = dict.insert("size", cohort.size() as i64);
     let _ = dict.insert("morale", fixed64_to_f64(cohort.morale()));
+    // Signed per-turn morale trend + the dominant negative driver when falling
+    // (0=None, 1=Terrain, 2=Cold, 3=Unrest). A rehydrated save reports 0/None for
+    // one turn (the sim doesn't persist them) — the HUD handles that gracefully.
+    let _ = dict.insert("morale_delta", fixed64_to_f64(cohort.moraleDelta()));
+    let _ = dict.insert("morale_cause", i64::from(cohort.moraleCause()));
     let _ = dict.insert("generation", cohort.generation() as i64);
     let _ = dict.insert("faction", cohort.faction() as i64);
     let _ = dict.insert("days_of_food", cohort.daysOfFood() as f64);
@@ -3816,6 +3821,9 @@ fn tile_to_dict(tile: fb::TileState<'_>) -> VarDictionary {
     let _ = dict.insert("element", tile.element() as i64);
     let _ = dict.insert("mass", fixed64_to_f64(tile.mass()));
     let _ = dict.insert("temperature", fixed64_to_f64(tile.temperature()));
+    // Band-independent per-turn morale drain of living on this tile's terrain +
+    // temperature (>=0; bigger = harsher). Bucketed into a Habitability rating in Hud.
+    let _ = dict.insert("habitability", fixed64_to_f64(tile.habitability()));
     let _ = dict.insert("terrain", tile.terrain().0 as i64);
     let _ = dict.insert("terrain_tags", tile.terrainTags() as i64);
     let _ = dict.insert("culture_layer", tile.cultureLayer() as i64);

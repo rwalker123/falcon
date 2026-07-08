@@ -861,6 +861,10 @@ pub struct TileState {
     pub mountain_kind: MountainKind,
     #[serde(default = "default_relief_scale")]
     pub mountain_relief: f32,
+    /// Tile-intrinsic per-turn morale drain (fixed-point raw, `Scalar::SCALE` = 1.0; `>= 0`,
+    /// bigger = harsher). Band-independent — a property of the place. Derived at capture.
+    #[serde(default)]
+    pub habitability: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -947,6 +951,14 @@ pub struct PopulationCohortState {
     /// recomputed every turn (not persisted for rollback).
     #[serde(default)]
     pub supply_network_id: u32,
+    /// This turn's signed morale delta (fixed-point raw, `Scalar::SCALE` = 1.0). The client renders
+    /// it as a rising/falling trend arrow. Derived at capture (not persisted for rollback).
+    #[serde(default)]
+    pub morale_delta: i64,
+    /// Dominant negative morale driver this turn: `0 = None, 1 = Terrain, 2 = Cold, 3 = Unrest`.
+    /// Names *why* morale is falling. Derived at capture (not persisted for rollback).
+    #[serde(default)]
+    pub morale_cause: u8,
     pub morale: i64,
     pub generation: u16,
     pub faction: u32,
@@ -2463,6 +2475,7 @@ fn create_tiles<'a>(
                     cultureLayer: tile.culture_layer,
                     mountainKind: to_fb_mountain_kind(tile.mountain_kind),
                     mountainRelief: tile.mountain_relief,
+                    habitability: tile.habitability,
                 },
             )
         })
@@ -2662,6 +2675,8 @@ fn create_populations<'a>(
                     daysOfFood: cohort.days_of_food,
                     activity,
                     supplyNetworkId: cohort.supply_network_id,
+                    moraleDelta: cohort.morale_delta,
+                    moraleCause: cohort.morale_cause,
                 },
             )
         })

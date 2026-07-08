@@ -118,6 +118,20 @@ const BAND_ACTIVITY_IDLE := "idle"
 # Why a band is losing population — appended to the losing_population alert label.
 const DECLINE_REASON_STARVING := "starving"
 const DECLINE_REASON_LOW_MORALE := "low morale"
+# Per-cohort morale cause (snapshot PopulationCohortState.moraleCause; 0 = None).
+const MORALE_CAUSE_NONE := 0
+const MORALE_CAUSE_TERRAIN := 1
+const MORALE_CAUSE_COLD := 2
+const MORALE_CAUSE_UNREST := 3
+# Plain-language cause labels, shared by the drawer morale line and the alert reason.
+# Cold reads "harsh climate" because the server penalty fires on hot OR cold deviation.
+const MORALE_CAUSE_LABEL_TERRAIN := "harsh terrain"
+const MORALE_CAUSE_LABEL_COLD := "harsh climate"
+const MORALE_CAUSE_LABEL_UNREST := "unrest"
+# Morale-trend arrow glyphs; |morale_delta| below this reads as flat (no arrow).
+const MORALE_TREND_EPSILON := 0.0005
+const MORALE_TREND_FALLING_GLYPH := "▼"
+const MORALE_TREND_RISING_GLYPH := "▲"
 # Occupants roster row chrome.
 const ROSTER_DOT_SIZE := 9.0
 const ROSTER_ROW_MIN_HEIGHT := 30.0
@@ -1027,6 +1041,12 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         lines.append("Height: %s" % String(tile_info["height_display"]))
     var tags_text := String(tile_info.get("tags_text", "none"))
     lines.append("Tags: %s" % tags_text)
+    # Habitability is terrain-intrinsic (band-independent), so it's fine on a remembered
+    # tile — surface it before the discovered early-return. Only when the snapshot carries
+    # the field (a rehydrated tile may lack it) so we never invent a rating.
+    if tile_info.has("habitability"):
+        var drain := float(tile_info["habitability"])
+        lines.append("Habitability: %s" % TileHabitability.rating_for(drain))
     if visibility_state == "discovered":
         lines.append("Last seen — information incomplete. Scout to update.")
         return lines
@@ -1288,14 +1308,43 @@ func _band_food_line(unit_data: Dictionary) -> String:
         provisions = int(round(float((stores_variant as Dictionary).get(STORE_ITEM_PROVISIONS, 0.0))))
     return "Food: %d  (%s)" % [provisions, _food_days_text(days)]
 
-## Selection-panel band morale row: "Morale: 41%" — morale from the snapshot cohort
-## dict (0–1, decoded in `native/src/lib.rs population_to_dict`). Stashes the value on
-## `_selected_band_morale` so `_format_detail_bbcode` can tint it by the shared
-## warn/critical morale thresholds.
+## Selection-panel band morale row: "Morale: 41% ▼ — harsh terrain (Karst Cavern Mouth)".
+## Morale, its per-turn trend, and the dominant cause come from the snapshot cohort dict
+## (decoded in `native/src/lib.rs population_to_dict`). A falling trend appends the named
+## cause; Terrain names the band's tile (the "it's the hex you're on" payload). A rehydrated
+## save reports delta 0 / cause None for one turn, so the row degrades to a bare percentage.
+## Stashes morale on `_selected_band_morale` so `_format_detail_bbcode` tints the value.
 func _band_morale_line(unit_data: Dictionary) -> String:
     var morale: float = float(unit_data.get("morale", 1.0))
     _selected_band_morale = morale
-    return "Morale: %d%%" % int(round(morale * 100.0))
+    var text := "Morale: %d%%" % int(round(morale * 100.0))
+    var delta: float = float(unit_data.get("morale_delta", 0.0))
+    if delta <= -MORALE_TREND_EPSILON:
+        text += " %s" % MORALE_TREND_FALLING_GLYPH
+        var cause := int(unit_data.get("morale_cause", MORALE_CAUSE_NONE))
+        var cause_label := _morale_cause_label(cause)
+        if cause_label != "":
+            if cause == MORALE_CAUSE_TERRAIN:
+                var terrain_label := String(_selected_tile_info.get("terrain_label", "")).strip_edges()
+                if terrain_label != "":
+                    cause_label = "%s (%s)" % [cause_label, terrain_label]
+            text += " — %s" % cause_label
+    elif delta >= MORALE_TREND_EPSILON:
+        text += " %s" % MORALE_TREND_RISING_GLYPH
+    return text
+
+## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest); "" for None
+## or unknown. Shared by the drawer morale line and the losing-population alert reason.
+func _morale_cause_label(cause: int) -> String:
+    match cause:
+        MORALE_CAUSE_TERRAIN:
+            return MORALE_CAUSE_LABEL_TERRAIN
+        MORALE_CAUSE_COLD:
+            return MORALE_CAUSE_LABEL_COLD
+        MORALE_CAUSE_UNREST:
+            return MORALE_CAUSE_LABEL_UNREST
+        _:
+            return ""
 
 ## Human-readable days-of-food: the ∞ glyph when the band is not food-limited,
 ## otherwise a whole-day count.
@@ -1559,6 +1608,9 @@ func _format_detail_bbcode(lines: Array) -> String:
             elif String(kv[0]) == "Forage":
                 # The tile's gather module reads in the success/ETA amber.
                 value_hex = HudStyle.WARN_HEX
+            elif String(kv[0]) == "Habitability":
+                # The tile's habitability rating tints by its bucket (green→red).
+                value_hex = TileHabitability.hex_for_rating(String(kv[1]))
             elif String(kv[0]) == "Ecology":
                 value_hex = _ecology_value_hex(String(kv[1]))
             elif String(kv[0]) == "Husbandry":
@@ -1758,6 +1810,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
         var size := int(entry.get("size", 0))
         var days := float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
         var morale := float(entry.get("morale", 1.0))
+        var morale_cause := int(entry.get("morale_cause", MORALE_CAUSE_NONE))
         var activity := String(entry.get("activity", "")).strip_edges()
         var x := int(entry.get("current_x", -1))
         var y := int(entry.get("current_y", -1))
@@ -1768,19 +1821,25 @@ func update_band_alerts(populations_variant: Variant) -> void:
         if _prev_band_sizes.has(entity) and size < int(_prev_band_sizes[entity]):
             alerts.append({
                 "type": ALERT_TYPE_LOSING_POPULATION, "band": band_name, "x": x, "y": y,
-                "reason": _decline_reason(days, morale),
+                "reason": _decline_reason(days, morale, morale_cause),
             })
         if activity == BAND_ACTIVITY_IDLE:
             alerts.append({"type": ALERT_TYPE_IDLE, "band": band_name, "x": x, "y": y})
     _prev_band_sizes = new_sizes
     _render_alerts(alerts)
 
-## Why a band is shrinking: a food crisis (larder below critical) reads "starving";
-## otherwise low morale (harsh terrain suppressing births) reads "low morale"; else
-## "" (unknown/other, e.g. cold) so the alert stays plain.
-func _decline_reason(days: float, morale: float) -> String:
+## Why a band is shrinking: a food crisis (larder below critical) reads "starving" first;
+## otherwise the dominant morale cause names it in plain language ("harsh terrain" /
+## "harsh climate" / "unrest"). When no cause is attributed (morale steady/rising — e.g.
+## a rehydrated save, or shrinkage from cold deaths / an aging cohort at healthy morale)
+## only say "low morale" if morale is actually low, else leave it plain rather than
+## asserting a false reason.
+func _decline_reason(days: float, morale: float, morale_cause: int) -> String:
     if BandFoodStatus.is_limited(days) and days < BandFoodStatus.critical_days():
         return DECLINE_REASON_STARVING
+    var cause_label := _morale_cause_label(morale_cause)
+    if cause_label != "":
+        return cause_label
     if morale < BandFoodStatus.warn_morale():
         return DECLINE_REASON_LOW_MORALE
     return ""

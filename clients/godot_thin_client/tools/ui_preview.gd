@@ -164,11 +164,17 @@ func _low_morale_band_fixture() -> Dictionary:
 	fixture["days_of_food"] = 999.0
 	fixture["stores"] = {"provisions": 260.0}
 	fixture["morale"] = 0.22
+	# Falling morale driven by the harsh cavern terrain: the drawer shows
+	# "Morale: 22% ▼ — harsh terrain (Karst Cavern Mouth)".
+	fixture["morale_delta"] = -0.006
+	fixture["morale_cause"] = 1  # Terrain
 	fixture["tile_info"] = {
 		"x": 44, "y": 61,
 		"terrain_label": "Karst Cavern Mouth",
 		"tags_text": "Subsurface, Harsh",
 		"visibility_state": "active",
+		# Cavern habitability (~0.0825) lands in the Harsh band → amber Tile-card row.
+		"habitability": 0.0825,
 		"food_module": "",
 		"food_module_label": "None",
 	}
@@ -188,9 +194,9 @@ func _band_alert_fixture() -> Array:
 		# Starving: 3 days of food (< critical) → red alert.
 		{"faction": 0, "entity": 101, "size": 60, "days_of_food": 3.0, "activity": "harvest", "current_x": 71, "current_y": 18,
 			"harvest": {"band_label": "Band Fen"}},
-		# Losing population from low morale: size 90 → 78, well-fed (∞) but morale 0.30
-		# (< warn) → amber alert reading "losing population — low morale".
-		{"faction": 0, "entity": 102, "size": 78, "days_of_food": 999.0, "morale": 0.30, "activity": "hunt", "current_x": 40, "current_y": 22,
+		# Losing population from harsh terrain: size 90 → 78, well-fed (∞) but the
+		# dominant morale cause is Terrain → amber alert "losing population — harsh terrain".
+		{"faction": 0, "entity": 102, "size": 78, "days_of_food": 999.0, "morale": 0.30, "morale_cause": 1, "activity": "hunt", "current_x": 40, "current_y": 22,
 			"harvest": {"band_label": "Band Ash"}},
 		# Idle labor: quiet low-priority alert.
 		{"faction": 0, "entity": 103, "size": 45, "days_of_food": 999.0, "activity": "idle", "current_x": 12, "current_y": 9},
@@ -202,6 +208,8 @@ func _food_tile_fixture() -> Dictionary:
 		"terrain_label": "Prairie Steppe",
 		"tags_text": "Fertile",
 		"visibility_state": "active",
+		# Fertile steppe: low drain → "Hospitable" (green Tile-card row).
+		"habitability": 0.01,
 		"food_module": "savanna_grassland",
 		"food_module_label": "Savanna Grassland",
 		"food_module_weight": 1.0,
