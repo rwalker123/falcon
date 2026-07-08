@@ -146,7 +146,7 @@ pub use start_profile::{
     StartProfileKnowledgeTagsMetadata, StartProfileLookup, StartProfileOverrides,
     StartProfilesHandle, StartProfilesMetadata, StartingUnitSpec,
 };
-pub use supply::balance_supply_networks;
+pub use supply::{balance_supply_networks, SupplyNetworkMembership};
 pub use supply_network_config::{
     load_supply_network_config_from_env, SupplyNetworkConfig, SupplyNetworkConfigHandle,
     SupplyNetworkConfigMetadata,
@@ -383,6 +383,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(demographics_metadata)
         .insert_resource(supply_network_handle)
         .insert_resource(supply_network_metadata)
+        .insert_resource(supply::SupplyNetworkMembership::default())
         .insert_resource(visibility::VisibilityLedger::default())
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(visibility::ViewerFaction::default())

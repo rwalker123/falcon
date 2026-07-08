@@ -2957,7 +2957,7 @@ struct DemographicState {
 /// One turn's food demand for the given age brackets: per-capita draw × weighted mouths
 /// (dependents eat less than a working adult). Shared by consumption and the campaign-start
 /// larder seeding so they can never drift apart.
-fn food_demand(
+pub(crate) fn food_demand(
     children: Scalar,
     working: Scalar,
     elders: Scalar,

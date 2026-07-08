@@ -264,7 +264,8 @@ longer surfaces).
 ### Population & Demographics (Settlement & Population Economy — Phase 1)
 The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a band — the first
 "location"; tile-housed population arrives in Phase 3) carries three fixed-point **age brackets** —
-**children / working-age / elders** — plus a local **`food_store`** larder. `size` is a derived
+**children / working-age / elders** — plus a local **`stores`** larder (food under the `FOOD` key).
+`size` is a derived
 `u32` cache of the bracket sum. Design: `docs/plan_settlement_population.md`.
 
 `simulate_population` (`systems.rs`, `TurnStage::Population`) delegates each cohort to the pure
@@ -282,7 +283,7 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
 **Food is band-local from day one** (the same store a settlement/storage-pit will hold later at
 scale). Provisions **left `FactionInventory` entirely**: foraging (`advance_harvest_assignments`),
 hunt/follow (`advance_fauna_pursuits`), and husbandry (`advance_husbandry`, split across the
-owner's bands) income now credit the acting band's `food_store`. At Startup
+owner's bands) income now credit the acting band's local `stores` (food under the `FOOD` key). At Startup
 (`seed_cohort_demographics`) each band is seeded with `startup.food_reserve_days` turns of its own
 demand (`food_demand`, shared with the consumption path) plus a well-fed morale bonus — no faction
 provisions grant to distribute. Bands **share** via the supply network (below); storage-pit
@@ -308,6 +309,18 @@ Reach decides *who* shares, throughput *how fast*, friction the leak — "free n
 just the high-throughput/low-friction limit. The per-commodity math is the pure, unit-tested
 `balance_commodity`. Config: `supply_network_config.json`.
 
+Each turn the same pass also records **network membership** in the `SupplyNetworkMembership`
+resource (`entity → id`, cleared and rebuilt every turn): each connected component with ≥ 2 bands
+gets a stable id (`1, 2, …` in the BTreeMap's sorted-root order), singletons get none. The capture
+reads it into each cohort's snapshot field `supplyNetworkId:uint` (`0` = not in a multi-band
+network, `>= 1` = shared id) so the client can draw supply links between co-networked bands. It is
+derived, not snapshot-persisted — a rehydrated cohort reads `0` until the next turn's balance.
+
+The cohort snapshot also carries two derived per-band food-readout fields the client renders:
+`daysOfFood:float` (`larder / one-turn food_demand`; `999.0` = a zero-demand cohort, "not
+food-limited") and `activity:string` (`idle | harvest | hunt | follow | scout`, derived from the
+band's task components). Both are computed at capture in `population_state`.
+
 This is the general mechanism the arc scales: raise reach/throughput for settlements/cities, and a
 future **trade policy** adds a consent gate + a priced return flow on *cross-faction* edges (see the
 Trade note below). *v1:* population is the universal balancing weight, so a zero-population storage
@@ -323,7 +336,7 @@ settlement chain, and the consumer of Phase E's domestication seam.
 a config-weighted blend of normalized inputs, then **EMA-smooths** it (`smoothing`):
 - **domestication** = `HerdRegistry::domesticated_count(faction) / references.domesticated_herds`
   (the Phase E seam),
-- **surplus** = Σ band `food_store` larders / `references.surplus` (band-local food, Phase 1),
+- **surplus** = Σ band `stores` food larders / `references.surplus` (band-local food, Phase 1),
 - **resource density** = `HerdDensityMap::normalized_average()` (map-wide game richness — a v1
   baseline; per-faction-local density is a future refinement),
 - **population** = Σ cohort size / `references.population`.

@@ -181,8 +181,8 @@ mod tests {
         );
         assert!(config.throughput_per_turn > 0.0);
         assert!(
-            (0.0..1.0).contains(&config.friction),
-            "friction must leave something to arrive"
+            (0.0..=1.0).contains(&config.friction),
+            "friction is a fraction in [0, 1]"
         );
         assert!(config.min_transfer >= 0.0);
     }

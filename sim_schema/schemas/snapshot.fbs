@@ -442,6 +442,9 @@ table PopulationCohortState {
   elders:long = 0;
   stores:[CohortStore];
   ageTurns:uint = 0;
+  daysOfFood:float = 0;
+  activity:string;
+  supplyNetworkId:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

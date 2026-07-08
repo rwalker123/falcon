@@ -130,8 +130,9 @@ pub struct LogisticsLink {
     pub flow: Scalar,
 }
 
-/// Commodity key for a band's food larder. Matches the `FactionInventory` item name that
-/// foraging / hunt income already deposits, so the string is stable across the economy.
+/// Commodity key for a band's food larder. `"provisions"` is the reward name foraging, hunt, and
+/// husbandry income deposit into the band's local `stores` — provisions left `FactionInventory`
+/// entirely (only trade goods stay faction-global); kept as a stable constant.
 pub const FOOD: &str = "provisions";
 
 /// A location-local store of goods held by a band (and, later, a populated tile or storage pit).

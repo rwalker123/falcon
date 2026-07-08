@@ -13,7 +13,7 @@
 //! `docs/plan_settlement_population.md`.
 
 use std::cmp::min;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use bevy::math::UVec2;
 use bevy::prelude::*;
@@ -26,6 +26,26 @@ use crate::{
     scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar},
     supply_network_config::SupplyNetworkConfigHandle,
 };
+
+/// Per-turn supply-network membership: `entity → network id`. Recomputed every turn by
+/// `balance_supply_networks`. `id >= 1` is a stable-per-snapshot id shared by every band in the
+/// same multi-band connected component; a band absent from the map (singleton/isolated) reads `0`.
+/// Not snapshot-persisted — it is a derived readout the capture reads to tag each cohort so the
+/// client can draw supply links between members of the same network.
+#[derive(Resource, Default)]
+pub struct SupplyNetworkMembership(pub HashMap<Entity, u32>);
+
+impl SupplyNetworkMembership {
+    /// The network id for a band this turn: `0` when it is not in a multi-band network.
+    pub fn network_of(&self, entity: Entity) -> u32 {
+        self.0.get(&entity).copied().unwrap_or(0)
+    }
+}
+
+/// A band in a single-member component is not part of a shared network.
+const MIN_NETWORK_MEMBERS: usize = 2;
+/// First multi-band network's id (singletons read `0`).
+const FIRST_NETWORK_ID: u32 = 1;
 
 /// One band participating in the supply network this turn (a snapshot taken before any transfers,
 /// so all flows resolve against the turn's opening stores).
@@ -100,11 +120,22 @@ fn balance_commodity(
         return deltas;
     }
     let pool = total_sends * (scalar_one() - friction);
+    // Receivers can absorb at most `total_wants` in aggregate (each capped at its own want),
+    // so only `deliverable` actually arrives; senders must ship `deliverable / (1 - friction)`
+    // to deliver it — never more, or the surplus is destroyed beyond friction.
+    let deliverable = min(pool, total_wants);
+    let one_minus_friction = scalar_one() - friction;
+    let shipped = if one_minus_friction > scalar_zero() {
+        min(deliverable / one_minus_friction, total_sends)
+    } else {
+        scalar_zero()
+    };
+    let ship_ratio = shipped / total_sends; // total_sends > 0 here (guarded above); ≤ 1
     for i in 0..n {
         if sends[i] > scalar_zero() {
-            deltas[i] = -sends[i];
+            deltas[i] = -(sends[i] * ship_ratio);
         } else if wants[i] > scalar_zero() {
-            deltas[i] = min(pool * (wants[i] / total_wants), wants[i]);
+            deltas[i] = min(deliverable * (wants[i] / total_wants), wants[i]);
         }
     }
     deltas
@@ -116,7 +147,10 @@ pub fn balance_supply_networks(
     tile_registry: Res<TileRegistry>,
     tiles: Query<&Tile>,
     mut cohorts: Query<(Entity, &mut PopulationCohort)>,
+    mut membership: ResMut<SupplyNetworkMembership>,
 ) {
+    // Recomputed from scratch every turn; a 0/1-band map (early return below) leaves it empty.
+    membership.0.clear();
     let cfg = config.get();
     let reach_sq = (cfg.reach_tiles * cfg.reach_tiles) as i32;
     let width = tile_registry.width;
@@ -149,18 +183,57 @@ pub fn balance_supply_networks(
     // Deterministic node order for the union-find and all downstream iteration.
     nodes.sort_by_key(|node| node.entity.to_bits());
 
-    // Union same-faction nodes whose tiles are within reach into supply networks.
+    // Union same-faction nodes within reach into supply networks. Rather than an O(n²) all-pairs
+    // scan, bin nodes into a spatial hash of `cell_size`-tile cells (cell_size = reach, so any two
+    // nodes within reach fall in the same or an adjacent cell) keyed by faction, then compare each
+    // node only against candidates in its neighbouring cells.
     let count = nodes.len();
     let mut parent: Vec<usize> = (0..count).collect();
+
+    let cell_size = cfg.reach_tiles.max(1);
+    let num_cells_x = width.div_ceil(cell_size).max(1) as i32;
+    let cell_of =
+        |pos: UVec2| -> (i32, i32) { ((pos.x / cell_size) as i32, (pos.y / cell_size) as i32) };
+    let mut bins: HashMap<(FactionId, i32, i32), Vec<usize>> = HashMap::new();
+    for (idx, node) in nodes.iter().enumerate() {
+        let (cx, cy) = cell_of(node.pos);
+        bins.entry((node.faction, cx, cy)).or_default().push(idx);
+    }
+    // With horizontal wrap, a runt seam cell (when width isn't a multiple of cell_size) can leave
+    // two within-reach nodes two cells apart across the seam, so search ±2 in x (folded into range)
+    // when wrapping, ±1 otherwise. y never wraps.
+    let x_offsets: &[i32] = if wrap {
+        &[-2, -1, 0, 1, 2]
+    } else {
+        &[-1, 0, 1]
+    };
     for i in 0..count {
-        for j in (i + 1)..count {
-            if nodes[i].faction != nodes[j].faction {
-                continue;
-            }
-            if wrapped_distance_sq(nodes[i].pos, nodes[j].pos, width, wrap) <= reach_sq {
-                let (a, b) = (find(&mut parent, i), find(&mut parent, j));
-                if a != b {
-                    parent[a] = b;
+        let (cx, cy) = cell_of(nodes[i].pos);
+        let mut seen_cells: BTreeSet<(i32, i32)> = BTreeSet::new();
+        for &dcy in &[-1, 0, 1] {
+            for &dcx in x_offsets {
+                let ncx = if wrap {
+                    (cx + dcx).rem_euclid(num_cells_x)
+                } else {
+                    cx + dcx
+                };
+                let ncy = cy + dcy;
+                if !seen_cells.insert((ncx, ncy)) {
+                    continue; // wrap folding can repeat a cell on tiny maps
+                }
+                let Some(candidates) = bins.get(&(nodes[i].faction, ncx, ncy)) else {
+                    continue;
+                };
+                for &j in candidates {
+                    if j <= i {
+                        continue; // each unordered pair once; also skips self
+                    }
+                    if wrapped_distance_sq(nodes[i].pos, nodes[j].pos, width, wrap) <= reach_sq {
+                        let (a, b) = (find(&mut parent, i), find(&mut parent, j));
+                        if a != b {
+                            parent[a] = b;
+                        }
+                    }
                 }
             }
         }
@@ -171,10 +244,25 @@ pub fn balance_supply_networks(
         components.entry(root).or_default().push(i);
     }
 
+    // Assign each multi-band component a stable id (BTreeMap root order → deterministic), then
+    // record `entity → id` for its members so the snapshot can group bands by network. Singletons
+    // get no entry and read 0.
+    let mut next_network_id = FIRST_NETWORK_ID;
+    for members in components.values() {
+        if members.len() < MIN_NETWORK_MEMBERS {
+            continue;
+        }
+        let network_id = next_network_id;
+        next_network_id += 1;
+        for &m in members {
+            membership.0.insert(nodes[m].entity, network_id);
+        }
+    }
+
     // Compute all transfers against the opening snapshot, then apply them once at the end.
     let mut applied: Vec<(Entity, String, Scalar)> = Vec::new();
     for members in components.values() {
-        if members.len() < 2 {
+        if members.len() < MIN_NETWORK_MEMBERS {
             continue;
         }
         let weights: Vec<Scalar> = members.iter().map(|&m| nodes[m].weight).collect();
@@ -300,6 +388,39 @@ mod tests {
         );
         assert!(d[0].to_f32().abs() < 1e-6, "no churn: {}", d[0].to_f32());
         assert!(d[1].to_f32().abs() < 1e-6);
+    }
+
+    /// Aggregate send capacity can exceed one throughput-capped receiver's demand; the network must
+    /// only lose `friction × shipped`, never destroy the un-absorbed surplus. (Regression: senders
+    /// used to ship their full surplus even when receivers couldn't take it.)
+    #[test]
+    fn excess_supply_is_not_destroyed() {
+        let friction = 0.05_f32;
+        let d = balance_commodity(
+            &[s(1.0), s(1.0), s(1.0)],
+            &[s(40.0), s(40.0), s(0.0)],
+            s(50.0), // throughput caps the single receiver
+            s(friction),
+            s(0.0),
+        );
+        let shipped: f32 = d
+            .iter()
+            .map(|x| x.to_f32())
+            .filter(|&v| v < 0.0)
+            .map(|v| -v)
+            .sum();
+        let net: f32 = d.iter().map(|x| x.to_f32()).sum();
+        // Only friction is lost — not the un-absorbable surplus.
+        assert!(
+            (net + friction * shipped).abs() < 1e-2,
+            "network should lose only friction×shipped; net={net}, shipped={shipped}"
+        );
+        // And the receiver actually gained something.
+        assert!(
+            d[2].to_f32() > 0.0,
+            "receiver got nothing: {}",
+            d[2].to_f32()
+        );
     }
 
     /// An already-balanced network is a no-op.

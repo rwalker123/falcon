@@ -935,6 +935,18 @@ pub struct PopulationCohortState {
     /// freshly-spawned band can't emigrate immediately; persisted so rollback preserves the gate.
     #[serde(default)]
     pub age_turns: u32,
+    /// How many turns the band's current food larder covers (`food / demand`); `999.0` means
+    /// "not food-limited" (a zero-population cohort with no demand). Computed at capture.
+    #[serde(default)]
+    pub days_of_food: f32,
+    /// The command the band is running: one of `idle | harvest | hunt | follow | scout`.
+    #[serde(default)]
+    pub activity: String,
+    /// Which supply network this band belongs to this turn: `0` = not in a multi-band network,
+    /// `>= 1` = a per-snapshot id shared by all bands in the same connected component. Derived and
+    /// recomputed every turn (not persisted for rollback).
+    #[serde(default)]
+    pub supply_network_id: u32,
     pub morale: i64,
     pub generation: u16,
     pub faction: u32,
@@ -2607,6 +2619,7 @@ fn create_populations<'a>(
                     },
                 )
             });
+            let activity = Some(builder.create_string(&cohort.activity));
             let accessible_stockpile_fb = cohort.accessible_stockpile.as_ref().map(|stockpile| {
                 let entries = if stockpile.entries.is_empty() {
                     None
@@ -2646,6 +2659,9 @@ fn create_populations<'a>(
                     elders: cohort.elders,
                     stores,
                     ageTurns: cohort.age_turns,
+                    daysOfFood: cohort.days_of_food,
+                    activity,
+                    supplyNetworkId: cohort.supply_network_id,
                 },
             )
         })

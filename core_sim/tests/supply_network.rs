@@ -13,7 +13,7 @@ use core_sim::{
     LocalStore, MapPresets, MapPresetsHandle, PopulationCohort, Scalar, SimulationConfig,
     SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
     StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, SupplyNetworkConfigHandle,
-    TileRegistry, FOOD,
+    SupplyNetworkMembership, TileRegistry, FOOD,
 };
 
 /// A distinct faction for the test bands so they never network with the spawned starting bands.
@@ -48,6 +48,8 @@ fn spawn_world() -> App {
     ));
     app.world
         .insert_resource(SupplyNetworkConfigHandle::default());
+    app.world
+        .insert_resource(SupplyNetworkMembership::default());
 
     app.add_systems(bevy::app::Startup, spawn_initial_world);
     app.update();
@@ -112,6 +114,78 @@ fn nearby_bands_share_food() {
         food_of(&app, fed) < 1_000.0,
         "the fed band should have shipped some of its surplus"
     );
+
+    // Both bands land in the same multi-band supply network (a shared, non-zero id).
+    let membership = app.world.resource::<SupplyNetworkMembership>();
+    let fed_net = membership.network_of(fed);
+    assert!(fed_net >= 1, "networked band should have a non-zero id");
+    assert_eq!(
+        fed_net,
+        membership.network_of(empty),
+        "bands that share food should carry the same supply-network id"
+    );
+}
+
+/// Two same-faction bands straddling the horizontal wrap seam (wrapped distance 2 ≤ reach 3) still
+/// share — guards the spatial-hash wrap folding (a band at the map's right edge networks with one
+/// just past the left edge).
+#[test]
+fn seam_bands_share_food() {
+    let mut app = spawn_world();
+    app.world
+        .resource_mut::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal = true;
+    let (w, h) = {
+        let reg = app.world.resource::<TileRegistry>();
+        (reg.width, reg.height)
+    };
+    let cy = h / 2;
+    let fed = spawn_band(&mut app, w - 1, cy, 1_000);
+    let empty = spawn_band(&mut app, 1, cy, 0);
+
+    app.world.run_system_once(balance_supply_networks);
+
+    assert!(
+        food_of(&app, empty) > 0.0,
+        "a band just past the seam should receive food, got {}",
+        food_of(&app, empty)
+    );
+    assert!(
+        food_of(&app, fed) < 1_000.0,
+        "the fed band across the seam should have shipped some of its surplus"
+    );
+}
+
+/// Beyond-reach control across the seam: wrapped distance 6 > reach 3, so nothing is shared even
+/// with wrap on.
+#[test]
+fn seam_bands_beyond_reach_do_not_share() {
+    let mut app = spawn_world();
+    app.world
+        .resource_mut::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal = true;
+    let (w, h) = {
+        let reg = app.world.resource::<TileRegistry>();
+        (reg.width, reg.height)
+    };
+    let cy = h / 2;
+    let fed = spawn_band(&mut app, w - 1, cy, 1_000);
+    let empty = spawn_band(&mut app, 5, cy, 0);
+
+    app.world.run_system_once(balance_supply_networks);
+
+    assert_eq!(
+        food_of(&app, empty),
+        0.0,
+        "a band beyond reach across the seam should receive nothing"
+    );
+    assert_eq!(
+        food_of(&app, fed),
+        1_000.0,
+        "the fed band keeps all its food when no one is in reach across the seam"
+    );
 }
 
 /// A band ten tiles away (beyond reach) shares nothing — it's on its own larder.
@@ -138,4 +212,13 @@ fn distant_bands_do_not_share() {
         1_000.0,
         "the fed band keeps all its food when no one is in reach"
     );
+
+    // Isolated bands are singletons — no shared network, so both read 0.
+    let membership = app.world.resource::<SupplyNetworkMembership>();
+    assert_eq!(
+        membership.network_of(fed),
+        0,
+        "a band beyond reach is not in a multi-band network"
+    );
+    assert_eq!(membership.network_of(empty), 0);
 }
