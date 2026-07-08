@@ -437,6 +437,11 @@ table PopulationCohortState {
   harvestTask:HarvestTask;
   scoutTask:ScoutTask;
   accessibleStockpile:AccessibleStockpile;
+  children:long = 0;
+  working:long = 0;
+  elders:long = 0;
+  foodStore:long = 0;
+  ageTurns:uint = 0;
 }
 
 table PendingMigration {
@@ -638,6 +643,15 @@ table SedentarizationState {
   stage:string;
 }
 
+// Per-faction age structure (children / working-age / elders head-counts), aggregated over the
+// faction's population cohorts. The client derives the dependency ratio for its HUD readout.
+table PopulationDemographicsState {
+  faction:uint;
+  children:uint = 0;
+  working:uint = 0;
+  elders:uint = 0;
+}
+
 table HerdTelemetryState {
   id:string;
   label:string;
@@ -787,6 +801,7 @@ table WorldSnapshot {
   foodModules:[FoodModuleState];
   factionInventory:[FactionInventoryState];
   sedentarization:[SedentarizationState];
+  demographics:[PopulationDemographicsState];
   moistureRaster:FloatRaster;
   hydrologyOverlay:HydrologyOverlay; // rivers/streams polylines
   elevationOverlay:ElevationOverlay;
@@ -839,6 +854,7 @@ table WorldDelta {
   foodModules:[FoodModuleState];
   factionInventory:[FactionInventoryState];
   sedentarization:[SedentarizationState];
+  demographics:[PopulationDemographicsState];
   moistureRaster:FloatRaster;
   axisBias:AxisBiasState;
   sentiment:SentimentTelemetryState;

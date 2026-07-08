@@ -14,6 +14,7 @@ mod crisis;
 mod crisis_config;
 mod culture;
 mod culture_corruption_config;
+mod demographics_config;
 mod espionage;
 mod fauna;
 mod fauna_config;
@@ -84,6 +85,10 @@ pub use culture::{
 pub use culture_corruption_config::{
     CorruptionSeverityConfig, CultureCorruptionConfig, CultureCorruptionConfigHandle,
     CultureSeverityConfig, CultureTensionTuning, BUILTIN_CULTURE_CORRUPTION_CONFIG,
+};
+pub use demographics_config::{
+    load_demographics_config_from_env, DemographicsConfig, DemographicsConfigHandle,
+    DemographicsConfigMetadata,
 };
 pub use espionage::{
     AgentAssignment, CounterIntelBudgets, EspionageAgentHandle, EspionageCatalog,
@@ -307,6 +312,10 @@ pub fn build_headless_app() -> App {
         sedentarization_config::load_sedentarization_config_from_env();
     let sedentarization_handle =
         sedentarization_config::SedentarizationConfigHandle::new(sedentarization_config);
+    let (demographics_config, demographics_metadata) =
+        demographics_config::load_demographics_config_from_env();
+    let demographics_handle =
+        demographics_config::DemographicsConfigHandle::new(demographics_config);
     let culture_effects = CultureEffectsCache::default();
     let espionage_catalog =
         espionage::EspionageCatalog::load_builtin().expect("espionage catalog should parse");
@@ -359,6 +368,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(sedentarization_handle)
         .insert_resource(sedentarization_metadata)
         .insert_resource(sedentarization::SedentarizationScore::default())
+        .insert_resource(demographics_handle)
+        .insert_resource(demographics_metadata)
         .insert_resource(visibility::VisibilityLedger::default())
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(visibility::ViewerFaction::default())

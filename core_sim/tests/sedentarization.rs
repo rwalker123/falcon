@@ -7,11 +7,11 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    scalar_one, sedentarization_tick, spawn_initial_herds, spawn_initial_world, CommandEventKind,
-    CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory,
-    FaunaConfigHandle, FogRevealLedger, GenerationId, GenerationRegistry, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle, PopulationCohort,
-    SedentarizationConfigHandle, SedentarizationScore, SimulationConfig, SimulationTick,
+    scalar_one, scalar_zero, sedentarization_tick, spawn_initial_herds, spawn_initial_world,
+    CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
+    FactionInventory, FaunaConfigHandle, FogRevealLedger, GenerationId, GenerationRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle, PopulationCohort,
+    Scalar, SedentarizationConfigHandle, SedentarizationScore, SimulationConfig, SimulationTick,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle,
 };
@@ -67,12 +67,28 @@ fn spawn_cohort(app: &mut App, faction: FactionId, size: u32) {
         home: tile,
         current_tile: tile,
         size,
+        children: scalar_zero(),
+        working: scalar_zero(),
+        elders: scalar_zero(),
+        food_store: scalar_zero(),
         morale: scalar_one(),
+        age_turns: 0,
         generation: 0 as GenerationId,
         faction,
         knowledge: Vec::new(),
         migration: None,
     });
+}
+
+/// Set the faction's carried food surplus (the sedentarization surplus input now reads the
+/// bands' local larders, not the faction pool).
+fn set_surplus(app: &mut App, faction: FactionId, amount: u32) {
+    let mut query = app.world.query::<&mut PopulationCohort>();
+    for mut cohort in query.iter_mut(&mut app.world) {
+        if cohort.faction == faction {
+            cohort.food_store = Scalar::from_u32(amount);
+        }
+    }
 }
 
 /// Claim `count` herds as domesticated for `faction` (drives the domestication input).
@@ -110,9 +126,7 @@ fn score_rises_with_domestication_and_surplus() {
 
     // Build the pastoral base: 3 domesticated herds + full provisions surplus.
     domesticate(&mut app, FactionId(0), 3);
-    app.world
-        .resource_mut::<FactionInventory>()
-        .add_stockpile(FactionId(0), "provisions", 300);
+    set_surplus(&mut app, FactionId(0), 300);
     for _ in 0..6 {
         run_tick(&mut app);
     }
@@ -131,9 +145,7 @@ fn prompts_fire_once_on_rising_crossings() {
     // Max out the per-faction inputs so the score climbs across both thresholds.
     spawn_cohort(&mut app, FactionId(0), 300);
     domesticate(&mut app, FactionId(0), 3);
-    app.world
-        .resource_mut::<FactionInventory>()
-        .add_stockpile(FactionId(0), "provisions", 300);
+    set_surplus(&mut app, FactionId(0), 300);
 
     for _ in 0..8 {
         run_tick(&mut app);
@@ -163,11 +175,7 @@ fn score_is_bounded() {
     let mut app = spawn_world();
     spawn_cohort(&mut app, FactionId(0), 100_000);
     domesticate(&mut app, FactionId(0), 6);
-    app.world.resource_mut::<FactionInventory>().add_stockpile(
-        FactionId(0),
-        "provisions",
-        1_000_000,
-    );
+    set_surplus(&mut app, FactionId(0), 1_000_000);
     for _ in 0..20 {
         run_tick(&mut app);
     }
@@ -181,9 +189,7 @@ fn score_is_ema_smoothed() {
     let mut app = spawn_world();
     spawn_cohort(&mut app, FactionId(0), 300);
     domesticate(&mut app, FactionId(0), 3);
-    app.world
-        .resource_mut::<FactionInventory>()
-        .add_stockpile(FactionId(0), "provisions", 300);
+    set_surplus(&mut app, FactionId(0), 300);
 
     run_tick(&mut app);
     let after_one = score(&app, FactionId(0));

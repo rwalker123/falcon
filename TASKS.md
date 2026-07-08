@@ -223,10 +223,16 @@ lean-to and an arcology (and a 400k town vs a 5M city) are the same engine at di
 - [x] Phase 0 — Design doc. Authored `docs/plan_settlement_population.md` (population/labor/
   improvements/settlements model + phasing) and cross-linked it (manual §Organic Settlement,
   `plan_wildlife_hunting_overlay.md`, `core_sim/CLAUDE.md`).
-- [ ] Phase 1 — Demographic population. Give `PopulationCohort` a 3-bracket age structure
-  (children/working/elders) with per-turn births/aging/deaths modulated by food/morale/environment,
-  replacing/extending `simulate_population`; config rates; snapshot + client population/age readout.
-  Localized (per band/tile) from day one.
+- [x] Phase 1 — Demographic population. `PopulationCohort` gained a 3-bracket age structure
+  (children/working/elders, fixed-point) with per-turn births/aging/deaths modulated by
+  food/morale/environment (`advance_demographics`, `systems.rs`), replacing the old growth clamp;
+  rates in `demographics_config.json`. **Food is band-local from day one** — a per-cohort
+  `food_store` larder that foraging/hunt/husbandry income fills and per-capita consumption drains
+  (deficit-capped starvation → deaths); each band opens with `startup.food_reserve_days` of food
+  seeded per-capita; provisions left `FactionInventory` (inter-band sharing + storage-pit
+  distribution deferred to Phase 3). Brackets + larder persist in the snapshot (rollback), and a
+  per-faction age-structure + dependency-ratio HUD readout ships (`PopulationDemographicsState`,
+  wired like `SedentarizationState`). Localized (per band) from day one.
 - [ ] Phase 2 — Labor pool + hybrid allocation. Working-age → a local labor supply; a
   demand/allocation system (auto by priority + player override) across tending/construction/
   military/knowledge; client labor readout.

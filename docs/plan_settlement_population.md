@@ -136,10 +136,16 @@ Each phase is independently shippable — its own PR (or small PR-group), landed
 held until the prior merges (small, focused PRs, matching the Wildlife & Hunting Overlay cadence).
 
 - **Phase 0 — Design doc (this document).** Capture the model; cross-link; seed `TASKS.md`.
-- **Phase 1 — Demographic population.** `PopulationCohort` (bands = the first "locations") gains
-  the 3-bracket age structure + births/aging/deaths modulated by food/morale/environment,
-  replacing/extending `simulate_population`. Config rates, snapshot + client population/age
-  readout. Migration minimal.
+- **Phase 1 — Demographic population.** ✅ **Shipped.** `PopulationCohort` (bands = the first
+  "locations") gained the 3-bracket age structure (children/working/elders, fixed-point) +
+  births/aging/deaths modulated by food/morale/environment (`advance_demographics`), replacing the
+  old growth clamp. Rates in `demographics_config.json`. **Food is band-local from day one** — a
+  per-cohort `food_store` larder filled by foraging/hunt/husbandry income and drained by per-capita
+  consumption (deficit → scarcity deaths); provisions left the faction-global `FactionInventory`
+  entirely. Inter-band sharing + storage-pit distribution are Phase 3. Brackets + larder persist in
+  the snapshot (rollback); a per-faction age-structure + dependency-ratio HUD readout ships
+  (`PopulationDemographicsState`, wired like `SedentarizationState`). Migration unchanged (the
+  larder rides along with the cohort).
 - **Phase 2 — Labor pool + hybrid allocation.** Working-age → a local labor supply; a
   demand/allocation system (auto by priority + player override); client labor readout.
 - **Phase 3 — Improvement catalog + building + knowledge-gating.** The `Improvement` component +

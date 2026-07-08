@@ -21,7 +21,6 @@
         "portable_forge"
       ],
       "inventory": [
-        { "item": "provisions", "quantity": 120 },
         { "item": "trade_goods", "quantity": 40 }
       ],
       "food_modules": {

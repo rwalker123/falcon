@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
@@ -6,12 +7,13 @@ use sim_runtime::TerrainTags;
 use tracing::info;
 
 use crate::{
-    components::Tile,
+    components::{PopulationCohort, Tile},
     fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle, SizeClass},
     food::{classify_food_module, FoodModule},
     mapgen::WorldGenSeed,
     orders::FactionId,
-    resources::{FactionInventory, SimulationConfig, SimulationTick, StartLocation, TileRegistry},
+    resources::{SimulationConfig, SimulationTick, StartLocation, TileRegistry},
+    scalar::Scalar,
 };
 
 /// RNG salt for per-turn immigration, kept distinct from the initial-spawn salt so the
@@ -702,11 +704,15 @@ pub fn repopulate_fauna(
 /// `progress_per_turn - decay_per_turn` while an untended one only decays.
 pub fn advance_husbandry(
     mut registry: ResMut<HerdRegistry>,
-    mut inventory: ResMut<FactionInventory>,
     fauna_config: Res<FaunaConfigHandle>,
+    mut cohorts: Query<&mut PopulationCohort>,
 ) {
     let fauna = fauna_config.get();
     let husbandry = &fauna.husbandry;
+    // Accumulate each owner's managed-livestock yield, then feed it into that faction's bands'
+    // larders — the pastoral counterpart of foraging income. Food is band-local from day one;
+    // an even split across the owner's bands is a v1 (Phase 3 corrals will make it place-local).
+    let mut yields: HashMap<FactionId, i64> = HashMap::new();
     for herd in registry.herds.iter_mut() {
         if herd.is_domesticated() {
             let Some(owner) = herd.owner else {
@@ -714,7 +720,7 @@ pub fn advance_husbandry(
             };
             let provisions = (herd.biomass * husbandry.provisions_per_biomass).round() as i64;
             if provisions > 0 {
-                inventory.add_stockpile(owner, "provisions", provisions);
+                *yields.entry(owner).or_insert(0) += provisions;
                 info!(
                     target: "shadow_scale::analytics",
                     event = "husbandry_yield",
@@ -725,6 +731,25 @@ pub fn advance_husbandry(
             }
         } else {
             herd.decay_domestication(husbandry.decay_per_turn);
+        }
+    }
+    if yields.is_empty() {
+        return;
+    }
+    let mut band_counts: HashMap<FactionId, u32> = HashMap::new();
+    for cohort in cohorts.iter() {
+        if yields.contains_key(&cohort.faction) {
+            *band_counts.entry(cohort.faction).or_insert(0) += 1;
+        }
+    }
+    for mut cohort in cohorts.iter_mut() {
+        if let (Some(&total), Some(&count)) = (
+            yields.get(&cohort.faction),
+            band_counts.get(&cohort.faction),
+        ) {
+            if count > 0 {
+                cohort.food_store += Scalar::from_i64(total) / Scalar::from_u32(count);
+            }
         }
     }
 }

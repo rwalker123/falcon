@@ -134,12 +134,52 @@ pub struct PopulationCohort {
     pub home: Entity,
     /// Current position during travel (equals home when stationary).
     pub current_tile: Entity,
+    /// Cached total head-count (`= round(children + working + elders)`), kept in sync by
+    /// `simulate_population` so the many `.size` readers stay valid.
     pub size: u32,
+    /// Dependents — fed and housed, no labor. Fractional (fixed-point) so small per-turn flows
+    /// accumulate without rounding to zero on a small band.
+    pub children: Scalar,
+    /// Working-age — the labor pool (the only bracket that produces).
+    pub working: Scalar,
+    /// Elders — dependents again, then mortality.
+    pub elders: Scalar,
+    /// The band's carried food larder (provisions). Filled by this band's foraging, drawn down
+    /// per-capita each turn. Local from day one — the same store a settlement/storage-pit will
+    /// hold later at larger scale (`docs/plan_settlement_population.md`).
+    pub food_store: Scalar,
     pub morale: Scalar,
+    /// Turns this band has been simulated. Gates knowledge-migration (`simulate_population`) so a
+    /// freshly-spawned band must settle for `migration_min_settled_turns` before its population can
+    /// emigrate to a neighbor. Persisted in the snapshot so rollback preserves the gate.
+    pub age_turns: u32,
     pub generation: GenerationId,
     pub faction: FactionId,
     pub knowledge: Vec<KnowledgeFragment>,
     pub migration: Option<PendingMigration>,
+}
+
+impl PopulationCohort {
+    /// Fixed-point sum of the three age brackets (the authoritative head-count; `size` is its
+    /// rounded `u32` cache).
+    pub fn total(&self) -> Scalar {
+        self.children + self.working + self.elders
+    }
+
+    /// Split a head-count into the three brackets by the configured fractions and resync `size`.
+    /// Used when spawning a fresh cohort (rehydration restores exact brackets from the snapshot).
+    pub fn set_brackets_from_size(&mut self, size: u32, children: f32, working: f32, elders: f32) {
+        let total = Scalar::from_u32(size);
+        self.children = total * scalar_from_f32(children);
+        self.working = total * scalar_from_f32(working);
+        self.elders = total * scalar_from_f32(elders);
+        self.size = self.total().to_u32();
+    }
+
+    /// Recompute the `size` cache from the current brackets.
+    pub fn sync_size(&mut self) {
+        self.size = self.total().to_u32();
+    }
 }
 
 /// Power node metadata bound to a tile entity.

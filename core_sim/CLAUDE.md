@@ -41,6 +41,7 @@ cargo run -p core_sim --bin server
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
 | `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) / `market` (commercial-hunt take + trade multiplier) tuning |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
+| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus/morale_floor), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -259,6 +260,40 @@ longer surfaces).
 - **Sedentarization**: implemented — see the dedicated section below.
 - **Founding**: `Command::FoundSettlement { q, r }` requires Founders unit, consumes provisions, spawns Settlement
 
+### Population & Demographics (Settlement & Population Economy — Phase 1)
+The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a band — the first
+"location"; tile-housed population arrives in Phase 3) carries three fixed-point **age brackets** —
+**children / working-age / elders** — plus a local **`food_store`** larder. `size` is a derived
+`u32` cache of the bracket sum. Design: `docs/plan_settlement_population.md`.
+
+`simulate_population` (`systems.rs`, `TurnStage::Population`) delegates each cohort to the pure
+`advance_demographics` (config: `demographics_config.json`):
+1. **Consume** — draw `per_capita_draw × weighted_mouths` (dependents eat less) from the band's
+   own larder; shortfall is the food **deficit**.
+2. **Deaths** — starvation scales with the deficit (dependents more vulnerable via `scarcity`
+   weights); cold kills across brackets past `cold.temp_tolerance`.
+3. **Births → children** — `birth_rate × working × fed_ratio × morale_signal × (1 + surplus_bonus × surplus_ratio)`.
+4. **Maturation** children→working, **aging** working→elders, **elder mortality**. All flows use
+   the turn's *opening* values and apply together (a newborn doesn't mature the same turn); the
+   total is clamped to `population_cap`. The **dependency ratio** `(children+elders)/working` is
+   the core tension.
+
+**Food is band-local from day one** (the same store a settlement/storage-pit will hold later at
+scale). Provisions **left `FactionInventory` entirely**: foraging (`advance_harvest_assignments`),
+hunt/follow (`advance_fauna_pursuits`), and husbandry (`advance_husbandry`, split across the
+owner's bands) income now credit the acting band's `food_store`. At Startup
+(`seed_cohort_demographics`) each band is seeded with `startup.food_reserve_days` turns of its own
+demand (`food_demand`, shared with the consumption path) plus a well-fed morale bonus — no faction
+provisions grant to distribute. Inter-band **sharing** and storage-pit **distribution** are
+deferred to Phase 3 — a band presently feeds only from its own larder, and starvation is
+deficit-capped (a 10% shortfall kills at most 10%) so a dry larder bleeds down over several turns
+rather than in one.
+
+Brackets + larder persist in the snapshot (`PopulationCohortState`) so rollback restores the exact
+structure. A per-faction age-structure + dependency-ratio HUD readout ships as
+`PopulationDemographicsState` (new `.fbs` table aggregated at capture, wired through
+sim_schema/snapshot/native/`Hud.gd` exactly like `SedentarizationState`).
+
 ### Sedentarization
 The emergent per-faction "pressure to root in place" — the first slice of the pastoral→
 settlement chain, and the consumer of Phase E's domestication seam.
@@ -268,7 +303,7 @@ settlement chain, and the consumer of Phase E's domestication seam.
 a config-weighted blend of normalized inputs, then **EMA-smooths** it (`smoothing`):
 - **domestication** = `HerdRegistry::domesticated_count(faction) / references.domesticated_herds`
   (the Phase E seam),
-- **surplus** = provisions stockpile / `references.surplus`,
+- **surplus** = Σ band `food_store` larders / `references.surplus` (band-local food, Phase 1),
 - **resource density** = `HerdDensityMap::normalized_average()` (map-wide game richness — a v1
   baseline; per-faction-local density is a future refinement),
 - **population** = Σ cohort size / `references.population`.
@@ -400,9 +435,16 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 
 `TradeLinkState` carries throughput, tariff, `TradeLinkKnowledge` (openness, leak_timer, decay). `trade_knowledge_diffusion` runs after logistics, emits `TradeDiffusionEvent`s, applies progress to `DiscoveryProgressLedger`.
 
-**Migration**: `PendingMigration` payloads carry scaled knowledge fragments. On arrival, fragments merge into destination ledger.
+**Migration**: `PendingMigration` payloads carry scaled knowledge fragments; on arrival they merge
+into the destination ledger and the whole band emigrates (`cohort.faction = destination`) — the
+high-morale "brain-drain" / Cultural Osmosis vector. `simulate_population` gates it on **both** high
+morale (`migration_morale_threshold`) **and** a settled duration: a band must have been simulated at
+least `migration_min_settled_turns` turns (`PopulationCohort.age_turns`, incremented each turn and
+snapshot-persisted) before its population can emigrate. This stops a freshly-spawned, well-fed
+starting band from defecting on turn one (the `well_fed_morale_bonus` alone would otherwise clear the
+morale threshold immediately).
 
-**Config**: `trade_leak_min/max_ticks`, `trade_leak_exponent`, `trade_openness_decay`, `migration_fragment_scaling`.
+**Config**: `trade_leak_min/max_ticks`, `trade_leak_exponent`, `trade_openness_decay`, `migration_fragment_scaling`; migration gating (`migration_morale_threshold`, `migration_eta_ticks`, `migration_min_settled_turns`) lives in the `population` block of `turn_pipeline_config.json`.
 
 ---
 

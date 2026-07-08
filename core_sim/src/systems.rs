@@ -1,5 +1,5 @@
 use std::{
-    cmp::{max, Ordering},
+    cmp::{max, min, Ordering},
     collections::{HashMap, HashSet, VecDeque},
 };
 
@@ -24,6 +24,7 @@ use crate::{
         CULTURE_TRAIT_AXES,
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
+    demographics_config::{DemographicsConfig, DemographicsConfigHandle, DemographicsConsumption},
     fauna::{net_biomass_delta, EcologyPhase, HerdDensityMap, HerdRegistry},
     fauna_config::FaunaConfigHandle,
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
@@ -903,14 +904,40 @@ pub fn spawn_initial_world(
     let _ = culture.take_tension_events();
 }
 
-/// Apply consumable inventory overrides (provisions, trade goods) to early-game systems.
+/// Seed each freshly spawned cohort's demographics (age brackets + a carried food larder) and
+/// apply the starting trade-goods bonus. Food is band-local from day one — every band opens the
+/// game carrying its own reserve, so there is no faction provisions pool to distribute.
 pub fn apply_starting_inventory_effects(
     mut inventory: ResMut<FactionInventory>,
+    demographics: Res<DemographicsConfigHandle>,
     mut cohorts: Query<&mut PopulationCohort>,
     mut trade_links: Query<&mut TradeLink>,
 ) {
-    apply_provisions_bonus(&mut inventory, &mut cohorts);
+    seed_cohort_demographics(&demographics.get(), &mut cohorts);
     apply_trade_goods_bonus(&mut inventory, &mut trade_links);
+}
+
+/// Split each cohort's head-count into the three age brackets, seed its larder with
+/// `startup.food_reserve_days` turns of its own food demand, and apply the well-fed morale bonus.
+fn seed_cohort_demographics(
+    config: &DemographicsConfig,
+    cohorts: &mut Query<&mut PopulationCohort>,
+) {
+    let dist = &config.initial_distribution;
+    let reserve_days = scalar_from_f32(config.startup.food_reserve_days);
+    let morale_bonus = scalar_from_f32(config.startup.well_fed_morale_bonus);
+    for mut cohort in cohorts.iter_mut() {
+        let size = cohort.size;
+        cohort.set_brackets_from_size(size, dist.children, dist.working, dist.elders);
+        let demand = food_demand(
+            cohort.children,
+            cohort.working,
+            cohort.elders,
+            &config.consumption,
+        );
+        cohort.food_store = demand * reserve_days;
+        cohort.morale = (cohort.morale + morale_bonus).clamp(scalar_zero(), scalar_one());
+    }
 }
 
 /// Drop expired fog-reveal pulses queued by scouting commands.
@@ -919,41 +946,6 @@ pub fn decay_fog_reveals(mut reveals: ResMut<FogRevealLedger>, tick: Res<Simulat
         return;
     }
     reveals.prune_expired(tick.0);
-}
-
-fn apply_provisions_bonus(
-    inventory: &mut FactionInventory,
-    cohorts: &mut Query<&mut PopulationCohort>,
-) {
-    const PROVISIONS_TO_MORALE: f32 = 1.0 / 900.0;
-    const MORALE_CAP: f32 = 0.2;
-    let provisions = inventory
-        .stockpile(PLAYER_FACTION)
-        .and_then(|s| s.get("provisions").copied())
-        .unwrap_or(0);
-    if provisions <= 0 {
-        return;
-    }
-    let morale_delta =
-        Scalar::from_f32((provisions as f32 * PROVISIONS_TO_MORALE).clamp(0.0, MORALE_CAP));
-    if morale_delta <= Scalar::zero() {
-        return;
-    }
-    let mut affected = 0u32;
-    for mut cohort in cohorts.iter_mut() {
-        if cohort.faction != PLAYER_FACTION {
-            continue;
-        }
-        cohort.morale = (cohort.morale + morale_delta).clamp(Scalar::zero(), Scalar::one());
-        affected = affected.saturating_add(1);
-    }
-    info!(
-        target: "shadow_scale::campaign",
-        "start_profile.inventory.provisions_applied provisions={} morale_delta={} cohorts={}",
-        provisions,
-        morale_delta.to_f32(),
-        affected
-    );
 }
 
 fn apply_trade_goods_bonus(
@@ -2622,11 +2614,19 @@ fn spawn_population_entity(
 ) {
     let generation = registry.assign_for_index(*cohort_index);
     *cohort_index = cohort_index.saturating_add(1);
+    // Brackets and larder are seeded at Startup by `apply_starting_inventory_effects`
+    // (it splits `size` via the demographics config distribution and distributes start-grant
+    // provisions into larders) — spawn them empty here.
     let mut entity = commands.spawn(PopulationCohort {
         home: tile_entity,
         current_tile: tile_entity,
         size,
+        children: scalar_zero(),
+        working: scalar_zero(),
+        elders: scalar_zero(),
+        food_store: scalar_zero(),
         morale: scalar_from_f32(0.6),
+        age_turns: 0,
         generation,
         faction: FactionId(0),
         knowledge: knowledge.to_vec(),
@@ -2945,7 +2945,175 @@ pub fn publish_trade_telemetry(telemetry: Res<TradeTelemetry>, tick: Res<Simulat
     }
 }
 
-/// Update population cohorts based on environmental conditions.
+/// A cohort's age brackets + food larder at the start of a demographic turn.
+#[derive(Debug, Clone, Copy)]
+struct DemographicState {
+    children: Scalar,
+    working: Scalar,
+    elders: Scalar,
+    food_store: Scalar,
+}
+
+/// One turn's food demand for the given age brackets: per-capita draw × weighted mouths
+/// (dependents eat less than a working adult). Shared by consumption and the campaign-start
+/// larder seeding so they can never drift apart.
+fn food_demand(
+    children: Scalar,
+    working: Scalar,
+    elders: Scalar,
+    consumption: &DemographicsConsumption,
+) -> Scalar {
+    let weighted_mouths = children * scalar_from_f32(consumption.child_factor)
+        + working * scalar_from_f32(consumption.working_factor)
+        + elders * scalar_from_f32(consumption.elder_factor);
+    scalar_from_f32(consumption.per_capita_draw) * weighted_mouths
+}
+
+/// Combined per-turn death fraction for one age bracket: a starvation term plus a uniform cold
+/// term, capped at 1.0. The starvation term scales with the food `deficit_fraction` and this
+/// bracket's vulnerability but is **never allowed to exceed the deficit itself** — a 10% food
+/// shortfall impacts at most 10% of the bracket. Cold is a separate, non-food mortality.
+fn death_fraction(
+    deficit_fraction: Scalar,
+    starvation_rate: Scalar,
+    vulnerability: f32,
+    cold_fraction: Scalar,
+) -> Scalar {
+    let starvation = min(
+        deficit_fraction * starvation_rate * scalar_from_f32(vulnerability),
+        deficit_fraction,
+    );
+    min(starvation + cold_fraction, scalar_one())
+}
+
+/// One turn of the demographic model for a single cohort (pure — no ECS): draw per-capita food
+/// from the local larder, then resolve scarcity/cold deaths, births, maturation, aging, and
+/// elder mortality. All bracket flows use the *opening* bracket values and are applied together,
+/// so a newborn does not mature the same turn. The total is clamped to the global cap.
+fn advance_demographics(
+    state: DemographicState,
+    morale: Scalar,
+    temp_diff: Scalar,
+    max_cap: Scalar,
+    demo: &DemographicsConfig,
+) -> DemographicState {
+    let DemographicState {
+        children: children0,
+        working: working0,
+        elders: elders0,
+        food_store,
+    } = state;
+
+    // 1. Food consumption from the band's own larder (dependents eat less than a worker).
+    let demand = food_demand(children0, working0, elders0, &demo.consumption);
+    let consumed = min(demand, food_store);
+    let remaining_food = food_store - consumed;
+    let has_demand = demand > scalar_zero();
+    let deficit = demand - consumed; // >= 0 (consumed <= demand)
+    let deficit_fraction = if has_demand {
+        deficit / demand
+    } else {
+        scalar_zero()
+    };
+    let fed_ratio = if has_demand {
+        consumed / demand
+    } else {
+        scalar_one()
+    };
+    // Larder buffer beyond one turn's demand → fertility bonus.
+    let surplus_ratio = if has_demand {
+        min(remaining_food / demand, scalar_one())
+    } else {
+        scalar_one()
+    };
+
+    // 2. Deaths: starvation (scales with the food deficit, dependents more vulnerable, but never
+    // more than the deficit itself) plus cold (temperature deviation beyond tolerance).
+    let scarcity = &demo.scarcity;
+    let starvation_rate = scalar_from_f32(scarcity.starvation_mortality);
+    let cold = &demo.cold;
+    let cold_excess = temp_diff - scalar_from_f32(cold.temp_tolerance);
+    let cold_fraction = if cold_excess > scalar_zero() {
+        min(
+            cold_excess * scalar_from_f32(cold.mortality_scale),
+            scalar_from_f32(cold.max_mortality),
+        )
+    } else {
+        scalar_zero()
+    };
+    let child_deaths = children0
+        * death_fraction(
+            deficit_fraction,
+            starvation_rate,
+            scarcity.child_vulnerability,
+            cold_fraction,
+        );
+    let working_deaths = working0
+        * death_fraction(
+            deficit_fraction,
+            starvation_rate,
+            scarcity.working_vulnerability,
+            cold_fraction,
+        );
+    let elder_deaths = elders0
+        * death_fraction(
+            deficit_fraction,
+            starvation_rate,
+            scarcity.elder_vulnerability,
+            cold_fraction,
+        );
+
+    // 3. Births → children, from the working (reproductive) bracket, gated by food and morale.
+    let births_cfg = &demo.births;
+    let morale_floor = scalar_from_f32(births_cfg.morale_floor);
+    let morale_span = scalar_one() - morale_floor;
+    let morale_signal = if morale > morale_floor && morale_span > scalar_zero() {
+        ((morale - morale_floor) / morale_span).clamp(scalar_zero(), scalar_one())
+    } else {
+        scalar_zero()
+    };
+    let fertility = scalar_from_f32(births_cfg.birth_rate)
+        * fed_ratio
+        * morale_signal
+        * (scalar_one() + scalar_from_f32(births_cfg.surplus_bonus) * surplus_ratio);
+    let births = working0 * fertility;
+
+    // 4. Aging flows.
+    let maturation = children0 * scalar_from_f32(demo.maturation_rate);
+    let aging = working0 * scalar_from_f32(demo.aging_rate);
+    let elder_mortality = elders0 * scalar_from_f32(demo.elder_mortality_rate);
+
+    // Apply all flows simultaneously, flooring each bracket at zero.
+    let mut children = max(
+        children0 + births - maturation - child_deaths,
+        scalar_zero(),
+    );
+    let mut working = max(
+        working0 + maturation - aging - working_deaths,
+        scalar_zero(),
+    );
+    let mut elders = max(
+        elders0 + aging - elder_mortality - elder_deaths,
+        scalar_zero(),
+    );
+
+    // Aggregate safety clamp to the global population cap.
+    let total = children + working + elders;
+    if total > max_cap && total > scalar_zero() {
+        let scale = max_cap / total;
+        children *= scale;
+        working *= scale;
+        elders *= scale;
+    }
+
+    DemographicState {
+        children,
+        working,
+        elders,
+        food_store: remaining_food,
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn simulate_population(
     config: Res<SimulationConfig>,
@@ -2953,6 +3121,7 @@ pub fn simulate_population(
     impacts: Res<InfluencerImpacts>,
     effects: Res<CultureEffectsCache>,
     pipeline_config: Res<TurnPipelineConfigHandle>,
+    demographics: Res<DemographicsConfigHandle>,
     tiles: Query<&Tile>,
     mut cohorts: Query<&mut PopulationCohort>,
     mut discovery: ResMut<DiscoveryProgressLedger>,
@@ -2962,8 +3131,12 @@ pub fn simulate_population(
     tick: Res<SimulationTick>,
 ) {
     let population_cfg = pipeline_config.config().population();
+    let demo = demographics.get();
     let max_cap_scalar = scalar_from_u32(config.population_cap);
     for mut cohort in cohorts.iter_mut() {
+        // Age the band every turn (before any early-out) so the migration gate below sees an
+        // accurate settled duration even for cohorts whose home tile briefly can't be resolved.
+        cohort.age_turns = cohort.age_turns.saturating_add(1);
         let Ok(tile) = tiles.get(cohort.home) else {
             cohort.morale = scalar_zero();
             continue;
@@ -2983,19 +3156,31 @@ pub fn simulate_population(
             - terrain_hardness_penalty;
         cohort.morale = (cohort.morale + morale_delta).clamp(scalar_zero(), scalar_one());
 
-        let growth_base = config.population_growth_rate
-            - temp_diff * population_cfg.temperature_growth_penalty()
-            + impacts.morale_delta * population_cfg.morale_influence_scale()
-            + effects.morale_bias * population_cfg.culture_bias_scale()
-            - terrain_attrition_penalty * population_cfg.attrition_morale_scale();
-        let growth_clamp = population_cfg.growth_clamp();
-        let growth_factor = growth_base.clamp(-growth_clamp, growth_clamp);
-        let current_size = scalar_from_u32(cohort.size);
-        let new_size =
-            (current_size * (scalar_one() + growth_factor)).clamp(scalar_zero(), max_cap_scalar);
-        cohort.size = new_size.to_u32();
+        // Demographic model: consume the band's local food, then resolve deaths, births,
+        // maturation, and aging (see `advance_demographics`).
+        let outcome = advance_demographics(
+            DemographicState {
+                children: cohort.children,
+                working: cohort.working,
+                elders: cohort.elders,
+                food_store: cohort.food_store,
+            },
+            cohort.morale,
+            temp_diff,
+            max_cap_scalar,
+            &demo,
+        );
+        cohort.children = outcome.children;
+        cohort.working = outcome.working;
+        cohort.elders = outcome.elders;
+        cohort.food_store = outcome.food_store;
+        cohort.sync_size();
 
+        // A band's population only emigrates once it has settled for a while — this gates the
+        // high-morale knowledge-migration so a freshly-spawned (e.g. well-fed starting) band can't
+        // defect to a neighbor on turn one.
         if cohort.migration.is_none()
+            && cohort.age_turns >= population_cfg.migration_min_settled_turns() as u32
             && cohort.morale > population_cfg.migration_morale_threshold()
             && !cohort.knowledge.is_empty()
         {
@@ -3135,12 +3320,10 @@ pub fn advance_harvest_assignments(
             continue;
         }
 
+        // Provisions the band forages go into its own local larder (carried food), not the
+        // faction pool. Trade goods remain a faction-global stockpile.
         if assignment.provisions_reward > 0 {
-            inventory.add_stockpile(
-                assignment.faction,
-                "provisions",
-                assignment.provisions_reward,
-            );
+            cohort.food_store += Scalar::from_i64(assignment.provisions_reward);
         }
         if assignment.trade_goods_reward > 0 {
             inventory.add_stockpile(
@@ -3409,8 +3592,9 @@ pub fn advance_fauna_pursuits(
         };
         let provisions = (take * hunt.provisions_per_biomass).round() as i64;
         let trade_goods = (take * hunt.trade_goods_per_biomass * trade_multiplier).round() as i64;
+        // The pursuing band carries its kill in its own larder; trade goods are faction-global.
         if provisions > 0 {
-            inventory.add_stockpile(pursuit.faction, "provisions", provisions);
+            cohort.food_store += Scalar::from_i64(provisions);
         }
         if trade_goods > 0 {
             inventory.add_stockpile(pursuit.faction, "trade_goods", trade_goods);
@@ -4530,26 +4714,43 @@ mod inventory_effect_tests {
         world.insert_resource(SnapshotOverlaysConfigHandle::new(
             SnapshotOverlaysConfig::builtin(),
         ));
+        world.insert_resource(DemographicsConfigHandle::default());
         world
     }
 
+    /// Startup seeds every band with a carried food larder (its own multi-turn reserve) and a
+    /// well-fed morale bonus — food is band-local, so nothing sits in the faction provisions pool.
     #[test]
-    fn provisions_boost_starting_morale() {
-        let mut world = configured_world(200, 0);
+    fn startup_seeds_larder_and_morale() {
+        let mut world = configured_world(0, 0);
         world.run_system_once(crate::systems::spawn_initial_world);
         world.run_system_once(crate::systems::apply_starting_inventory_effects);
         let mut query = world.query::<&PopulationCohort>();
-        let mut boosted = false;
+        let mut seeded = false;
         for cohort in query.iter(&world) {
             if cohort.faction != PLAYER_FACTION {
                 continue;
             }
-            if cohort.morale > scalar_from_f32(0.6) {
-                boosted = true;
+            // Well-fed morale bonus lifts the 0.6 spawn baseline, and the band carries food.
+            if cohort.morale > scalar_from_f32(0.6) && cohort.food_store > scalar_zero() {
+                seeded = true;
                 break;
             }
         }
-        assert!(boosted, "expected provisions to raise morale");
+        assert!(
+            seeded,
+            "expected startup to seed a food larder and raise morale"
+        );
+        // The faction provisions pool stays empty — food lives in the bands' larders.
+        let provisions = world
+            .resource::<FactionInventory>()
+            .stockpile(PLAYER_FACTION)
+            .and_then(|s| s.get("provisions").copied())
+            .unwrap_or(0);
+        assert_eq!(
+            provisions, 0,
+            "provisions should not sit in the faction pool"
+        );
     }
 
     #[test]
@@ -4801,5 +5002,157 @@ mod power_tests {
         assert!(node_c.deficit.to_f32().abs() < 1e-6);
         assert!(node_c.surplus.to_f32().abs() < 1e-6);
         assert_eq!(grid_state.instability_alerts, 0);
+    }
+}
+
+#[cfg(test)]
+mod demographics_tests {
+    use super::{advance_demographics, death_fraction, DemographicState};
+    use crate::demographics_config::DemographicsConfig;
+    use crate::scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero};
+
+    const MILD_TEMP: f32 = 0.0;
+    const HIGH_MORALE: f32 = 1.0;
+    const NO_CAP: u32 = 1_000_000_000;
+
+    fn state(children: f32, working: f32, elders: f32, food: f32) -> DemographicState {
+        DemographicState {
+            children: scalar_from_f32(children),
+            working: scalar_from_f32(working),
+            elders: scalar_from_f32(elders),
+            food_store: scalar_from_f32(food),
+        }
+    }
+
+    fn total(s: &DemographicState) -> f32 {
+        (s.children + s.working + s.elders).to_f32()
+    }
+
+    fn run(s: DemographicState, morale: f32, temp: f32) -> DemographicState {
+        advance_demographics(
+            s,
+            scalar_from_f32(morale),
+            scalar_from_f32(temp),
+            scalar_from_u32(NO_CAP),
+            &DemographicsConfig::default(),
+        )
+    }
+
+    /// A well-fed, high-morale, temperate cohort grows and eats from its larder.
+    #[test]
+    fn fed_cohort_grows_and_consumes_food() {
+        let start = state(30.0, 55.0, 15.0, 1_000.0);
+        let out = run(start, HIGH_MORALE, MILD_TEMP);
+        assert!(
+            total(&out) > 100.0,
+            "a fed cohort should grow: {}",
+            total(&out)
+        );
+        assert!(
+            out.food_store.to_f32() < 1_000.0,
+            "food should be consumed from the larder"
+        );
+        // Births land in the children bracket.
+        assert!(out.children.to_f32() > 30.0, "births should raise children");
+    }
+
+    /// With an empty larder the cohort starves — deaths across brackets, no births, larder stays 0.
+    #[test]
+    fn empty_larder_starves_the_cohort() {
+        let start = state(30.0, 55.0, 15.0, 0.0);
+        let out = run(start, HIGH_MORALE, MILD_TEMP);
+        assert!(
+            total(&out) < 80.0,
+            "starvation should sharply cut population: {}",
+            total(&out)
+        );
+        assert!(out.food_store.to_f32().abs() < 1e-4, "larder stays empty");
+        // Dependents (1.5× vulnerability) fall harder than working-age (1.0×).
+        let child_survival = out.children.to_f32() / 30.0;
+        let working_survival = out.working.to_f32() / 55.0;
+        assert!(
+            child_survival < working_survival,
+            "children should die faster than workers: {child_survival} vs {working_survival}"
+        );
+    }
+
+    /// Extreme cold kills across brackets even when the larder is full.
+    #[test]
+    fn cold_kills_even_when_fed() {
+        let warm = run(state(30.0, 55.0, 15.0, 1_000.0), HIGH_MORALE, MILD_TEMP);
+        let cold = run(state(30.0, 55.0, 15.0, 1_000.0), HIGH_MORALE, 40.0);
+        assert!(
+            total(&cold) < total(&warm),
+            "cold should reduce population vs temperate: {} vs {}",
+            total(&cold),
+            total(&warm)
+        );
+    }
+
+    /// Low morale (below the floor) suppresses births.
+    #[test]
+    fn low_morale_suppresses_births() {
+        let start = state(30.0, 55.0, 15.0, 1_000.0);
+        let out = run(start, 0.1, MILD_TEMP); // below default morale_floor 0.2
+        assert!(
+            out.children.to_f32() <= 30.0 - 1e-3,
+            "no births at low morale, only maturation drain: {}",
+            out.children.to_f32()
+        );
+    }
+
+    /// The aggregate cap scales an over-large population back down.
+    #[test]
+    fn population_cap_clamps_total() {
+        let start = state(100.0, 100.0, 100.0, 10_000.0);
+        let out = advance_demographics(
+            start,
+            scalar_from_f32(HIGH_MORALE),
+            scalar_from_f32(MILD_TEMP),
+            scalar_from_u32(50),
+            &DemographicsConfig::default(),
+        );
+        assert!(
+            (total(&out) - 50.0).abs() < 1.0,
+            "total should clamp to the cap of 50: {}",
+            total(&out)
+        );
+    }
+
+    /// Starvation deaths scale with the deficit × vulnerability but never exceed the deficit;
+    /// cold adds on top, and the whole thing caps at 1.0.
+    #[test]
+    fn death_fraction_is_bounded_by_deficit_and_one() {
+        // Full deficit, rate 0.2, vuln 1.5 → 0.30 (< deficit 1.0), no cold.
+        let f = death_fraction(scalar_one(), scalar_from_f32(0.2), 1.5, scalar_zero());
+        assert!((f.to_f32() - 0.30).abs() < 1e-4);
+        // A 10% deficit with a steep rate×vuln (0.8×1.5=1.2) is still capped at the 10% deficit.
+        let bounded = death_fraction(
+            scalar_from_f32(0.1),
+            scalar_from_f32(0.8),
+            1.5,
+            scalar_zero(),
+        );
+        assert!(
+            (bounded.to_f32() - 0.1).abs() < 1e-4,
+            "a 10% deficit must impact at most 10%: {}",
+            bounded.to_f32()
+        );
+        // Full deficit + max cold overflow → capped at 1.0.
+        let capped = death_fraction(
+            scalar_one(),
+            scalar_from_f32(0.8),
+            1.5,
+            scalar_from_f32(0.5),
+        );
+        assert!((capped.to_f32() - 1.0).abs() < 1e-4);
+    }
+
+    /// A childless cohort matures no one, but working-age still ages into elders.
+    #[test]
+    fn aging_moves_workers_into_elders() {
+        let start = state(0.0, 100.0, 0.0, 10_000.0);
+        let out = run(start, HIGH_MORALE, MILD_TEMP);
+        assert!(out.elders.to_f32() > 0.0, "workers should age into elders");
     }
 }

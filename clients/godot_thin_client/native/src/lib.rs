@@ -1164,6 +1164,10 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
         let _ = dict.insert("sedentarization", sedentarization_to_array(sedentarization));
     }
 
+    if let Some(demographics) = delta.demographics() {
+        let _ = dict.insert("demographics", demographics_to_array(demographics));
+    }
+
     if let Some(definitions) = delta.greatDiscoveryDefinitions() {
         let _ = dict.insert(
             "great_discovery_definitions",
@@ -2659,6 +2663,10 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         let _ = dict.insert("sedentarization", sedentarization_to_array(sedentarization));
     }
 
+    if let Some(demographics) = snapshot.demographics() {
+        let _ = dict.insert("demographics", demographics_to_array(demographics));
+    }
+
     if let Some(axis_bias) = snapshot.axisBias() {
         let _ = dict.insert("axis_bias", axis_bias_to_dict(axis_bias));
     }
@@ -2907,6 +2915,21 @@ fn sedentarization_to_array(
         if let Some(stage) = state.stage() {
             let _ = dict.insert("stage", stage);
         }
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn demographics_to_array(
+    states: Vector<'_, ForwardsUOffset<fb::PopulationDemographicsState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for state in states {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("faction", state.faction() as i64);
+        let _ = dict.insert("children", state.children() as i64);
+        let _ = dict.insert("working", state.working() as i64);
+        let _ = dict.insert("elders", state.elders() as i64);
         array.push(&dict.to_variant());
     }
     array

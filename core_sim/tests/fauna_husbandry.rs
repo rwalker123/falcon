@@ -7,13 +7,14 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_fauna_pursuits, advance_herds, advance_husbandry, scalar_one, spawn_initial_herds,
-    spawn_initial_world, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
-    FactionInventory, FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode, FogRevealLedger,
-    FollowPolicy, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    MapPresets, MapPresetsHandle, PopulationCohort, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
+    advance_fauna_pursuits, advance_herds, advance_husbandry, scalar_one, scalar_zero,
+    spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FaunaPursuit,
+    FaunaPursuitMode, FogRevealLedger, FollowPolicy, GenerationId, GenerationRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, MapPresets, MapPresetsHandle, PopulationCohort,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
+    TileRegistry,
 };
 
 fn spawn_world() -> App {
@@ -93,7 +94,12 @@ fn spawn_follower(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::p
                 home: tile,
                 current_tile: tile,
                 size: 30,
+                children: scalar_zero(),
+                working: scalar_zero(),
+                elders: scalar_zero(),
+                food_store: scalar_zero(),
                 morale: scalar_one(),
+                age_turns: 0,
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
@@ -141,13 +147,17 @@ fn progress_of(app: &App, id: &str) -> f32 {
         .unwrap_or(0.0)
 }
 
-fn provisions(app: &App) -> i64 {
-    app.world
-        .resource::<FactionInventory>()
-        .stockpile(FactionId(0))
-        .and_then(|m| m.get("provisions"))
-        .copied()
-        .unwrap_or(0)
+/// Total provisions carried by faction 0's bands (food is band-local now, so the husbandry
+/// yield lands in the owner's cohort larders, not the faction pool).
+fn provisions(app: &mut App) -> i64 {
+    let mut total = 0.0f32;
+    let mut query = app.world.query::<&PopulationCohort>();
+    for cohort in query.iter(&app.world) {
+        if cohort.faction == FactionId(0) {
+            total += cohort.food_store.to_f32();
+        }
+    }
+    total.round() as i64
 }
 
 /// A sustained Sustain-follow on a Thriving herd tames it: progress climbs to 1.0
@@ -253,12 +263,12 @@ fn domesticated_herd_yields_provisions() {
         herd.claim_domestication(FactionId(0));
         herd.biomass
     };
-    assert_eq!(provisions(&app), 0);
+    assert_eq!(provisions(&mut app), 0);
 
     app.world.run_system_once(advance_husbandry);
 
     assert!(
-        provisions(&app) > 0,
+        provisions(&mut app) > 0,
         "a domesticated herd should pay its owner provisions"
     );
     // The yield is a sustainable harvest — it does not reduce the herd.
