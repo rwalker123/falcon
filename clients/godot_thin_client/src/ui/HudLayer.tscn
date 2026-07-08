@@ -257,26 +257,26 @@ visible = false
 unique_name_in_owner = true
 text = "Hunt"
 
-[node name="FollowHerdButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons"]
-unique_name_in_owner = true
-text = "Follow"
-
-[node name="FollowPolicyButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons"]
+[node name="HuntPolicyButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons"]
 unique_name_in_owner = true
 
-[node name="FollowSustainButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/FollowPolicyButtons"]
+[node name="FollowSingleButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/HuntPolicyButtons"]
+unique_name_in_owner = true
+text = "Single"
+
+[node name="FollowSustainButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/HuntPolicyButtons"]
 unique_name_in_owner = true
 text = "Sustain"
 
-[node name="FollowSurplusButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/FollowPolicyButtons"]
+[node name="FollowSurplusButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/HuntPolicyButtons"]
 unique_name_in_owner = true
 text = "Surplus"
 
-[node name="FollowMarketButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/FollowPolicyButtons"]
+[node name="FollowMarketButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/HuntPolicyButtons"]
 unique_name_in_owner = true
 text = "Market"
 
-[node name="FollowEradicateButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/FollowPolicyButtons"]
+[node name="FollowEradicateButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/HuntPolicyButtons"]
 unique_name_in_owner = true
 text = "Eradicate"
 

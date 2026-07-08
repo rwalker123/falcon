@@ -243,6 +243,9 @@ var food_site_lookup: Dictionary = {}
 var harvest_sites: Dictionary = {}
 var scout_sites: Dictionary = {}
 var tile_lookup: Dictionary = {}
+# Per-tile habitability (band-independent morale drain, decoded from TileState),
+# keyed by Vector2i(x, y); read by `_tile_info_at` for the Tile-card Habitability row.
+var tile_habitability: Dictionary = {}
 var trade_links_overlay: Array = []
 var trade_overlay_enabled: bool = false
 var selected_trade_entity: int = -1
@@ -571,6 +574,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 					scout_sites[scout_key] = scout_existing
 
 	tile_lookup.clear()
+	tile_habitability.clear()
 	if grid_width > 0 and grid_height > 0:
 		var total: int = grid_width * grid_height
 		culture_layer_grid = PackedInt32Array()
@@ -589,6 +593,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 				var x: int = int(tile_dict.get("x", 0))
 				var y: int = int(tile_dict.get("y", 0))
 				tile_lookup[entity_id] = Vector2i(x, y)
+				if tile_dict.has("habitability"):
+					tile_habitability[Vector2i(x, y)] = float(tile_dict["habitability"])
 				if culture_layer_grid.size() > 0:
 					if x >= 0 and x < grid_width and y >= 0 and y < grid_height:
 						var index: int = y * grid_width + x
@@ -1621,6 +1627,9 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"id": label,
 			"is_traveling": is_traveling,
 			"days_of_food": float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS)),
+			"morale": float(entry.get("morale", 1.0)),
+			"morale_delta": float(entry.get("morale_delta", 0.0)),
+			"morale_cause": int(entry.get("morale_cause", 0)),
 			"activity": String(entry.get("activity", "")),
 			"supply_network_id": int(entry.get("supply_network_id", 0)),
 		}
@@ -1842,6 +1851,9 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 	if relative_height >= 0:
 		info["relative_height"] = relative_height
 		info["height_display"] = format_height(relative_height)
+	var habitability_key := Vector2i(col, row)
+	if tile_habitability.has(habitability_key):
+		info["habitability"] = float(tile_habitability[habitability_key])
 	var mask := _tag_mask_at(col, row)
 	info["tags_mask"] = mask
 	var tag_labels := _tag_names_for_mask(mask)

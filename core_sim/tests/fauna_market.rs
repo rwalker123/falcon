@@ -12,7 +12,7 @@ use core_sim::{
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FaunaPursuit,
     FaunaPursuitMode, FogRevealLedger, FollowPolicy, GenerationId, GenerationRegistry,
     HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets, MapPresetsHandle,
-    PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
 };
@@ -111,6 +111,8 @@ fn spawn_follower(
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
+                last_morale_delta: scalar_zero(),
+                last_morale_cause: MoraleCause::None,
                 age_turns: 0,
                 generation: 0 as GenerationId,
                 faction,

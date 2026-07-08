@@ -1,0 +1,7 @@
+{
+  "habitability": {
+    "hospitable_max": 0.02,
+    "fair_max": 0.05,
+    "harsh_max": 0.09
+  }
+}

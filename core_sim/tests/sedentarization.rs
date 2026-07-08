@@ -11,9 +11,9 @@ use core_sim::{
     CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
     FactionInventory, FaunaConfigHandle, FogRevealLedger, GenerationId, GenerationRegistry,
     HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets, MapPresetsHandle,
-    PopulationCohort, Scalar, SedentarizationConfigHandle, SedentarizationScore, SimulationConfig,
-    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, FOOD,
+    MoraleCause, PopulationCohort, Scalar, SedentarizationConfigHandle, SedentarizationScore,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, FOOD,
 };
 
 fn spawn_world() -> App {
@@ -72,6 +72,8 @@ fn spawn_cohort(app: &mut App, faction: FactionId, size: u32) {
         elders: scalar_zero(),
         stores: LocalStore::new(),
         morale: scalar_one(),
+        last_morale_delta: scalar_zero(),
+        last_morale_cause: MoraleCause::None,
         age_turns: 0,
         generation: 0 as GenerationId,
         faction,

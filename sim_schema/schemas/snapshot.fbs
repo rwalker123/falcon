@@ -412,6 +412,9 @@ table TileState {
   cultureLayer:uint;
   mountainKind:MountainKind = None;
   mountainRelief:float = 1.0;
+  // Tile-intrinsic per-turn morale drain (fixed-point, FIXED_POINT_SCALE = 1e6; >= 0, bigger =
+  // harsher). Band-independent property of the place — the sim's `tile_morale_pressure` total.
+  habitability:long = 0;
 }
 
 table LogisticsLinkState {
@@ -445,6 +448,10 @@ table PopulationCohortState {
   daysOfFood:float = 0;
   activity:string;
   supplyNetworkId:uint = 0;
+  // This turn's signed morale delta (fixed-point, FIXED_POINT_SCALE = 1e6) — trend arrow source.
+  moraleDelta:long = 0;
+  // Dominant negative morale driver when falling: 0=None, 1=Terrain, 2=Cold, 3=Unrest.
+  moraleCause:ubyte = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

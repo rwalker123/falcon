@@ -62,8 +62,8 @@ use bevy::prelude::*;
 
 pub use components::{
     ElementKind, FaunaPursuit, FaunaPursuitMode, FollowPolicy, HarvestAssignment, HarvestTaskKind,
-    KnowledgeFragment, LocalStore, LogisticsLink, PendingMigration, PopulationCohort, PowerNode,
-    ScoutAssignment, Settlement, StartingUnit, Tile, TownCenter, TradeLink, FOOD,
+    KnowledgeFragment, LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort,
+    PowerNode, ScoutAssignment, Settlement, StartingUnit, Tile, TownCenter, TradeLink, FOOD,
 };
 pub use crisis::{
     ActiveCrisisLedger, CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot,

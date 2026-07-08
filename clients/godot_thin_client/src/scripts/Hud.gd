@@ -60,8 +60,8 @@ var _server_build: String = "?"
 @onready var unit_scout_button: Button = %UnitScoutButton
 @onready var herd_buttons: HBoxContainer = %HerdButtons
 @onready var hunt_herd_button: Button = %HuntHerdButton
-@onready var follow_herd_button: Button = %FollowHerdButton
-@onready var follow_policy_buttons: HBoxContainer = %FollowPolicyButtons
+@onready var hunt_policy_buttons: HBoxContainer = %HuntPolicyButtons
+@onready var single_button: Button = %FollowSingleButton
 @onready var follow_sustain_button: Button = %FollowSustainButton
 @onready var follow_surplus_button: Button = %FollowSurplusButton
 @onready var follow_market_button: Button = %FollowMarketButton
@@ -115,6 +115,24 @@ const ALERT_TYPE_LOSING_POPULATION := "losing_population"
 const ALERT_TYPE_IDLE := "idle"
 const ALERT_PRIORITY := [ALERT_TYPE_STARVING, ALERT_TYPE_LOSING_POPULATION, ALERT_TYPE_IDLE]
 const BAND_ACTIVITY_IDLE := "idle"
+# Why a band is losing population — appended to the losing_population alert label.
+const DECLINE_REASON_STARVING := "starving"
+const DECLINE_REASON_LOW_MORALE := "low morale"
+# Per-cohort morale cause (snapshot PopulationCohortState.moraleCause; 0 = None).
+const MORALE_CAUSE_NONE := 0
+const MORALE_CAUSE_TERRAIN := 1
+const MORALE_CAUSE_COLD := 2
+const MORALE_CAUSE_UNREST := 3
+# Plain-language cause labels, shared by the drawer morale line and the alert reason.
+# Cold reads "harsh climate" because the server penalty fires on hot OR cold deviation.
+const MORALE_CAUSE_LABEL_TERRAIN := "harsh terrain"
+const MORALE_CAUSE_LABEL_COLD := "harsh climate"
+const MORALE_CAUSE_LABEL_UNREST := "unrest"
+# Morale-trend arrow glyphs; |morale_delta| below this (0.5%/turn) reads as flat (no
+# arrow), so trivial drift — nearly every tile bleeds a hair today — isn't shown as a decline.
+const MORALE_TREND_EPSILON := 0.005
+const MORALE_TREND_FALLING_GLYPH := "▼"
+const MORALE_TREND_RISING_GLYPH := "▲"
 # Occupants roster row chrome.
 const ROSTER_DOT_SIZE := 9.0
 const ROSTER_ROW_MIN_HEIGHT := 30.0
@@ -160,12 +178,19 @@ var _selected_food_is_hunt: bool = false
 # Days-of-food of the currently-selected band's larder, so the detail formatter
 # can threshold-tint the Food row. NAN when no band is selected.
 var _selected_band_food_days: float = NAN
+# Morale (0–1) of the currently-selected player band, so the detail formatter can
+# threshold-tint the Morale row. NAN when no player band is selected.
+var _selected_band_morale: float = NAN
 var _pending_forage: Dictionary = {}
 var _pending_scout_unit: Dictionary = {}
 var _pending_hunt: Dictionary = {}
 var _pending_follow: Dictionary = {}
-var _follow_policy: String = "sustain"
-const FOLLOW_POLICIES := ["sustain", "surplus", "market", "eradicate"]
+# The herd action is one Hunt verb + a policy radio led by "single". Single = a
+# one-shot `hunt_fauna`; every other policy = a persistent `follow_herd <policy>`
+# that auto-hunts each turn. Default is the one-shot Single.
+const HUNT_POLICY_SINGLE := "single"
+const HUNT_POLICIES := ["single", "sustain", "surplus", "market", "eradicate"]
+var _hunt_policy: String = HUNT_POLICY_SINGLE
 var _targeting_banner: PanelContainer = null
 var _targeting_banner_label: RichTextLabel = null
 var _stockpile_totals: Dictionary = {}
@@ -218,9 +243,8 @@ func _apply_hud_style() -> void:
             detail.add_theme_constant_override("table_v_separation", 3)
     HudStyle.apply_button(unit_scout_button, "primary")
     HudStyle.apply_button(hunt_herd_button, "primary")
-    HudStyle.apply_button(follow_herd_button, "ghost")
     HudStyle.apply_button(forage_button, "primary")
-    _refresh_follow_policy_buttons()
+    _refresh_hunt_policy_buttons()
     if stockpile_panel != null:
         stockpile_panel.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
     if victory_panel != null:
@@ -577,22 +601,22 @@ func _connect_selection_buttons() -> void:
         unit_scout_button.pressed.connect(_on_unit_scout_pressed)
     if hunt_herd_button != null and not hunt_herd_button.is_connected("pressed", Callable(self, "_on_hunt_herd_pressed")):
         hunt_herd_button.pressed.connect(_on_hunt_herd_pressed)
-        hunt_herd_button.tooltip_text = "Send a band to hunt the selected herd once (a portion of its biomass → provisions/trade)."
-    if follow_herd_button != null and not follow_herd_button.is_connected("pressed", Callable(self, "_on_follow_herd_pressed")):
-        follow_herd_button.pressed.connect(_on_follow_herd_pressed)
-        follow_herd_button.tooltip_text = "Shadow the selected herd and auto-hunt each turn per the chosen policy, plus a tracking fog pulse."
-    if follow_sustain_button != null and not follow_sustain_button.is_connected("pressed", Callable(self, "_on_follow_policy_pressed")):
-        follow_sustain_button.pressed.connect(_on_follow_policy_pressed.bind("sustain"))
-        follow_sustain_button.tooltip_text = "Sustain: take ≈ regrowth — the group stays roughly stable."
-    if follow_surplus_button != null and not follow_surplus_button.is_connected("pressed", Callable(self, "_on_follow_policy_pressed")):
-        follow_surplus_button.pressed.connect(_on_follow_policy_pressed.bind("surplus"))
-        follow_surplus_button.tooltip_text = "Surplus: take extra for provisions/trade — the group slowly declines."
-    if follow_market_button != null and not follow_market_button.is_connected("pressed", Callable(self, "_on_follow_policy_pressed")):
-        follow_market_button.pressed.connect(_on_follow_policy_pressed.bind("market"))
-        follow_market_button.tooltip_text = "Market: commercially over-harvest for a big trade-goods windfall — the group declines fast toward collapse."
-    if follow_eradicate_button != null and not follow_eradicate_button.is_connected("pressed", Callable(self, "_on_follow_policy_pressed")):
-        follow_eradicate_button.pressed.connect(_on_follow_policy_pressed.bind("eradicate"))
-        follow_eradicate_button.tooltip_text = "Eradicate: take the maximum — drives the group toward local extinction."
+        hunt_herd_button.tooltip_text = "Send a band to hunt the selected herd."
+    if single_button != null and not single_button.is_connected("pressed", Callable(self, "_on_hunt_policy_pressed")):
+        single_button.pressed.connect(_on_hunt_policy_pressed.bind("single"))
+        single_button.tooltip_text = "One hunt, then the band goes idle."
+    if follow_sustain_button != null and not follow_sustain_button.is_connected("pressed", Callable(self, "_on_hunt_policy_pressed")):
+        follow_sustain_button.pressed.connect(_on_hunt_policy_pressed.bind("sustain"))
+        follow_sustain_button.tooltip_text = "Hunt each turn at ≈ regrowth — the herd stays roughly stable."
+    if follow_surplus_button != null and not follow_surplus_button.is_connected("pressed", Callable(self, "_on_hunt_policy_pressed")):
+        follow_surplus_button.pressed.connect(_on_hunt_policy_pressed.bind("surplus"))
+        follow_surplus_button.tooltip_text = "Hunt extra each turn for provisions/trade — the herd slowly declines."
+    if follow_market_button != null and not follow_market_button.is_connected("pressed", Callable(self, "_on_hunt_policy_pressed")):
+        follow_market_button.pressed.connect(_on_hunt_policy_pressed.bind("market"))
+        follow_market_button.tooltip_text = "Commercially over-hunt each turn for a trade windfall — the herd declines fast."
+    if follow_eradicate_button != null and not follow_eradicate_button.is_connected("pressed", Callable(self, "_on_hunt_policy_pressed")):
+        follow_eradicate_button.pressed.connect(_on_hunt_policy_pressed.bind("eradicate"))
+        follow_eradicate_button.tooltip_text = "Hunt maximally each turn — drives the herd toward local extinction."
     if forage_button != null and not forage_button.is_connected("pressed", Callable(self, "_on_forage_pressed")):
         forage_button.pressed.connect(_on_forage_pressed)
 
@@ -628,40 +652,50 @@ func _on_unit_scout_pressed() -> void:
         _try_dispatch_pending_scout(_selected_tile_info)
     _refresh_targeting()
 
+## The single Hunt verb, routed by the active policy: Single → a one-shot
+## `hunt_fauna` (`_pending_hunt`); any other policy → a persistent `follow_herd`
+## (`_pending_follow`). Toggling the button while *either* kind is pending for this
+## herd cancels it (matching the unified "Cancel Hunt" label), regardless of policy.
 func _on_hunt_herd_pressed() -> void:
     if _selected_herd.is_empty():
         return
     var herd_id := String(_selected_herd.get("id", ""))
     if herd_id == "":
         return
+    # The button reads "Cancel Hunt" whenever *either* pending kind is active for
+    # this herd (see _update_herd_buttons), so honor that contract: cancel any
+    # pending hunt/follow before routing by policy, rather than only the kind that
+    # happens to match the current policy (which would re-target instead of cancel).
     if not _pending_hunt.is_empty() and String(_pending_hunt.get("herd_id", "")) == herd_id:
         _cancel_pending_hunt(true)
-        return
-    _begin_pending_hunt(herd_id)
-
-func _on_follow_herd_pressed() -> void:
-    if _selected_herd.is_empty():
-        return
-    var herd_id := String(_selected_herd.get("id", ""))
-    if herd_id == "":
         return
     if not _pending_follow.is_empty() and String(_pending_follow.get("herd_id", "")) == herd_id:
         _cancel_pending_follow(true)
         return
-    _begin_pending_follow(herd_id, _follow_policy)
+    if _hunt_policy == HUNT_POLICY_SINGLE:
+        _begin_pending_hunt(herd_id)
+    else:
+        _begin_pending_follow(herd_id, _hunt_policy)
 
-func _on_follow_policy_pressed(policy: String) -> void:
-    if policy in FOLLOW_POLICIES:
-        _follow_policy = policy
-    _refresh_follow_policy_buttons()
-    # If a follow is already being targeted, update its policy in place.
-    if not _pending_follow.is_empty():
-        _pending_follow["policy"] = _follow_policy
-        _refresh_targeting()
+func _on_hunt_policy_pressed(policy: String) -> void:
+    if policy in HUNT_POLICIES:
+        _hunt_policy = policy
+    _refresh_hunt_policy_buttons()
+    # If a hunt is already being targeted, switching policy re-derives the pending
+    # action through the same begin path — this converts single↔persistent in place
+    # (dropping the other pending kind) so the banner matches the new policy.
+    if not _selected_herd.is_empty() and (not _pending_hunt.is_empty() or not _pending_follow.is_empty()):
+        var herd_id := String(_selected_herd.get("id", ""))
+        if herd_id != "":
+            if _hunt_policy == HUNT_POLICY_SINGLE:
+                _begin_pending_hunt(herd_id)
+            else:
+                _begin_pending_follow(herd_id, _hunt_policy)
 
-## Restyle the three policy buttons so the active one reads as selected.
-func _refresh_follow_policy_buttons() -> void:
+## Restyle the policy radio so the active policy reads as selected.
+func _refresh_hunt_policy_buttons() -> void:
     var buttons := {
+        "single": single_button,
         "sustain": follow_sustain_button,
         "surplus": follow_surplus_button,
         "market": follow_market_button,
@@ -671,7 +705,7 @@ func _refresh_follow_policy_buttons() -> void:
         var btn: Button = buttons[policy]
         if btn == null:
             continue
-        HudStyle.apply_button(btn, "primary" if policy == _follow_policy else "ghost")
+        HudStyle.apply_button(btn, "primary" if policy == _hunt_policy else "ghost")
 
 func _on_forage_pressed() -> void:
     if _selected_food_module == "":
@@ -915,9 +949,10 @@ func _adopt_tile_info_from(occupant: Dictionary) -> void:
 func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _herd_data: Dictionary) -> void:
     if tile_panel == null or tile_detail == null:
         return
-    # Reset the band-food tint context; `_unit_summary_lines` re-sets it if a band
-    # is being rendered into the drawer.
+    # Reset the band-food/morale tint context; `_unit_summary_lines` re-sets it if
+    # a band is being rendered into the drawer.
     _selected_band_food_days = NAN
+    _selected_band_morale = NAN
     _assemble_roster(_selected_tile_info)
     _render_tile_card(_selected_tile_info)
     _render_occupants_card()
@@ -1012,6 +1047,12 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         lines.append("Height: %s" % String(tile_info["height_display"]))
     var tags_text := String(tile_info.get("tags_text", "none"))
     lines.append("Tags: %s" % tags_text)
+    # Habitability is terrain-intrinsic (band-independent), so it's fine on a remembered
+    # tile — surface it before the discovered early-return. Only when the snapshot carries
+    # the field (a rehydrated tile may lack it) so we never invent a rating.
+    if tile_info.has("habitability"):
+        var drain := float(tile_info["habitability"])
+        lines.append("Habitability: %s" % TileHabitability.rating_for(drain))
     if visibility_state == "discovered":
         lines.append("Last seen — information incomplete. Scout to update.")
         return lines
@@ -1197,6 +1238,7 @@ func _select_roster_occupant(kind: String, id: Variant) -> void:
         _selected_herd = _find_roster_herd(String(id)).duplicate(true)
         _selected_unit = {}
     _selected_band_food_days = NAN
+    _selected_band_morale = NAN
     _rebuild_roster()
     _render_occupant_drawer()
 
@@ -1205,6 +1247,7 @@ func _render_occupant_drawer() -> void:
     if occupant_detail == null:
         return
     _selected_band_food_days = NAN
+    _selected_band_morale = NAN
     var lines: Array[String] = []
     if not _selected_unit.is_empty():
         lines = _unit_summary_lines(_selected_unit)
@@ -1232,6 +1275,10 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
     var size_value: int = int(unit_data.get("size", 0))
     lines.append("Size: %d" % size_value)
     lines.append(_band_food_line(unit_data))
+    # Morale is our own bands' business only (a non-player band's morale isn't ours
+    # to see); a harsh tile erodes it until births can't offset elder mortality.
+    if _is_player_unit(unit_data):
+        lines.append(_band_morale_line(unit_data))
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
@@ -1266,6 +1313,48 @@ func _band_food_line(unit_data: Dictionary) -> String:
     if stores_variant is Dictionary:
         provisions = int(round(float((stores_variant as Dictionary).get(STORE_ITEM_PROVISIONS, 0.0))))
     return "Food: %d  (%s)" % [provisions, _food_days_text(days)]
+
+## Selection-panel band morale row: "Morale: 41% ▼ — harsh terrain (Karst Cavern Mouth)".
+## Morale, its per-turn trend, and the dominant cause come from the snapshot cohort dict
+## (decoded in `native/src/lib.rs population_to_dict`). A falling trend appends the named
+## cause; Terrain names the band's tile (the "it's the hex you're on" payload). A rehydrated
+## save reports delta 0 / cause None for one turn, so the row degrades to a bare percentage.
+## Stashes morale on `_selected_band_morale` so `_format_detail_bbcode` tints the value.
+func _band_morale_line(unit_data: Dictionary) -> String:
+    var morale: float = float(unit_data.get("morale", 1.0))
+    _selected_band_morale = morale
+    var text := "Morale: %d%%" % int(round(morale * 100.0))
+    var delta: float = float(unit_data.get("morale_delta", 0.0))
+    if delta <= -MORALE_TREND_EPSILON:
+        text += " %s" % MORALE_TREND_FALLING_GLYPH
+        # Name the cause only when morale is actually concerning — a healthy band
+        # drifting slowly (nearly every tile bleeds a little today) shouldn't be
+        # branded "harsh climate/terrain". Below the warn threshold, spell it out.
+        if morale < BandFoodStatus.warn_morale():
+            var cause := int(unit_data.get("morale_cause", MORALE_CAUSE_NONE))
+            var cause_label := _morale_cause_label(cause)
+            if cause_label != "":
+                if cause == MORALE_CAUSE_TERRAIN:
+                    var terrain_label := String(_selected_tile_info.get("terrain_label", "")).strip_edges()
+                    if terrain_label != "":
+                        cause_label = "%s (%s)" % [cause_label, terrain_label]
+                text += " — %s" % cause_label
+    elif delta >= MORALE_TREND_EPSILON:
+        text += " %s" % MORALE_TREND_RISING_GLYPH
+    return text
+
+## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest); "" for None
+## or unknown. Shared by the drawer morale line and the losing-population alert reason.
+func _morale_cause_label(cause: int) -> String:
+    match cause:
+        MORALE_CAUSE_TERRAIN:
+            return MORALE_CAUSE_LABEL_TERRAIN
+        MORALE_CAUSE_COLD:
+            return MORALE_CAUSE_LABEL_COLD
+        MORALE_CAUSE_UNREST:
+            return MORALE_CAUSE_LABEL_UNREST
+        _:
+            return ""
 
 ## Human-readable days-of-food: the ∞ glyph when the band is not food-limited,
 ## otherwise a whole-day count.
@@ -1522,9 +1611,16 @@ func _format_detail_bbcode(lines: Array) -> String:
                 var food_value := String(kv[1])
                 if not is_nan(_selected_band_food_days) and (food_value.contains("day") or food_value.contains(FOOD_UNLIMITED_GLYPH)):
                     value_hex = BandFoodStatus.hex_for_days(_selected_band_food_days)
+            elif String(kv[0]) == "Morale":
+                # The player band's morale row tints by the morale thresholds.
+                if not is_nan(_selected_band_morale):
+                    value_hex = BandFoodStatus.hex_for_morale(_selected_band_morale)
             elif String(kv[0]) == "Forage":
                 # The tile's gather module reads in the success/ETA amber.
                 value_hex = HudStyle.WARN_HEX
+            elif String(kv[0]) == "Habitability":
+                # The tile's habitability rating tints by its bucket (green→red).
+                value_hex = TileHabitability.hex_for_rating(String(kv[1]))
             elif String(kv[0]) == "Ecology":
                 value_hex = _ecology_value_hex(String(kv[1]))
             elif String(kv[0]) == "Husbandry":
@@ -1553,23 +1649,27 @@ func _split_detail_kv(line: String) -> Array:
         return []
     return [key, value]
 
-## Herd verbs: Hunt (gated on `huntable`) + Follow with a policy picker. Both enter
-## targeting mode to pick a band; the button flips to a Cancel affordance while pending.
+## Herd action: one Hunt verb (gated on `huntable`) + the policy radio. The button
+## enters targeting mode to pick a band and flips to a unified "Cancel Hunt" while
+## either the one-shot (`_pending_hunt`) or persistent (`_pending_follow`) hunt is pending.
 func _update_herd_buttons(herd_data: Dictionary) -> void:
     if herd_data.is_empty():
         return
     var herd_id := String(herd_data.get("id", ""))
+    # Fail closed: only offer Hunt when the snapshot explicitly allows it. The Hunt
+    # button and its policy radio hide together on a non-huntable herd, so the radio
+    # never orphans without a button to commit it (Single/Sustain/… all hunt).
+    var huntable := bool(herd_data.get("huntable", false))
     if hunt_herd_button != null:
-        # Fail closed: only offer Hunt when the snapshot explicitly allows it.
-        hunt_herd_button.visible = bool(herd_data.get("huntable", false))
+        hunt_herd_button.visible = huntable
         var hunt_pending := not _pending_hunt.is_empty() and String(_pending_hunt.get("herd_id", "")) == herd_id
-        HudStyle.apply_button(hunt_herd_button, "armed" if hunt_pending else "primary")
-        hunt_herd_button.text = "Cancel Hunt" if hunt_pending else "Hunt"
-    if follow_herd_button != null:
         var follow_pending := not _pending_follow.is_empty() and String(_pending_follow.get("herd_id", "")) == herd_id
-        HudStyle.apply_button(follow_herd_button, "armed" if follow_pending else "ghost")
-        follow_herd_button.text = "Cancel Follow" if follow_pending else "Follow"
-    _refresh_follow_policy_buttons()
+        var pending := hunt_pending or follow_pending
+        HudStyle.apply_button(hunt_herd_button, "armed" if pending else "primary")
+        hunt_herd_button.text = "Cancel Hunt" if pending else "Hunt"
+    if hunt_policy_buttons != null:
+        hunt_policy_buttons.visible = huntable
+    _refresh_hunt_policy_buttons()
 
 func _update_food_buttons(tile_info: Dictionary) -> void:
     if forage_button == null:
@@ -1719,6 +1819,8 @@ func update_band_alerts(populations_variant: Variant) -> void:
         var entity := int(entry.get("entity", -1))
         var size := int(entry.get("size", 0))
         var days := float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
+        var morale := float(entry.get("morale", 1.0))
+        var morale_cause := int(entry.get("morale_cause", MORALE_CAUSE_NONE))
         var activity := String(entry.get("activity", "")).strip_edges()
         var x := int(entry.get("current_x", -1))
         var y := int(entry.get("current_y", -1))
@@ -1727,11 +1829,30 @@ func update_band_alerts(populations_variant: Variant) -> void:
         if BandFoodStatus.is_critical(days):
             alerts.append({"type": ALERT_TYPE_STARVING, "band": band_name, "x": x, "y": y, "days": days})
         if _prev_band_sizes.has(entity) and size < int(_prev_band_sizes[entity]):
-            alerts.append({"type": ALERT_TYPE_LOSING_POPULATION, "band": band_name, "x": x, "y": y})
+            alerts.append({
+                "type": ALERT_TYPE_LOSING_POPULATION, "band": band_name, "x": x, "y": y,
+                "reason": _decline_reason(days, morale, morale_cause),
+            })
         if activity == BAND_ACTIVITY_IDLE:
             alerts.append({"type": ALERT_TYPE_IDLE, "band": band_name, "x": x, "y": y})
     _prev_band_sizes = new_sizes
     _render_alerts(alerts)
+
+## Why a band is shrinking: a food crisis (larder below critical) reads "starving" first;
+## otherwise the dominant morale cause names it in plain language ("harsh terrain" /
+## "harsh climate" / "unrest"). When no cause is attributed (morale steady/rising — e.g.
+## a rehydrated save, or shrinkage from cold deaths / an aging cohort at healthy morale)
+## only say "low morale" if morale is actually low, else leave it plain rather than
+## asserting a false reason.
+func _decline_reason(days: float, morale: float, morale_cause: int) -> String:
+    if BandFoodStatus.is_limited(days) and days < BandFoodStatus.critical_days():
+        return DECLINE_REASON_STARVING
+    var cause_label := _morale_cause_label(morale_cause)
+    if cause_label != "":
+        return cause_label
+    if morale < BandFoodStatus.warn_morale():
+        return DECLINE_REASON_LOW_MORALE
+    return ""
 
 ## Best-effort readable band name: the label carried on an active harvest/scout
 ## task, else a positional "Band N". (Cohorts carry no top-level band label in the
@@ -1780,6 +1901,9 @@ func _format_alert_line(alert: Dictionary) -> String:
             color_hex = HudStyle.DANGER_HEX
         ALERT_TYPE_LOSING_POPULATION:
             text = "⚠ %s losing population" % band_name
+            var reason := String(alert.get("reason", ""))
+            if reason != "":
+                text += " — %s" % reason
             color_hex = HudStyle.WARN_HEX
         ALERT_TYPE_IDLE:
             text = "%s idle" % band_name
@@ -2051,7 +2175,7 @@ func _begin_pending_follow(herd_id: String, policy: String) -> void:
     _clear_other_pending("follow")
     _pending_follow = {
         "herd_id": herd_id,
-        "policy": policy if policy in FOLLOW_POLICIES else "sustain",
+        "policy": policy if (policy in HUNT_POLICIES and policy != HUNT_POLICY_SINGLE) else "sustain",
         "x": int(_selected_herd.get("x", -1)),
         "y": int(_selected_herd.get("y", -1)),
         "label": String(_selected_herd.get("label", herd_id)),

@@ -7,8 +7,8 @@ use core_sim::{
     spawn_initial_world, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
     FactionInventory, FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode, FogRevealLedger,
     GenerationId, HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets,
-    MapPresetsHandle, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, FOOD,
 };
 
@@ -89,6 +89,8 @@ fn hunt_pursuit_takes_biomass_and_yields() {
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
+                last_morale_delta: scalar_zero(),
+                last_morale_cause: MoraleCause::None,
                 age_turns: 0,
                 generation: 0 as GenerationId,
                 faction,

@@ -205,6 +205,14 @@ pub struct PopulationCohort {
     /// will hold later at larger scale (`docs/plan_settlement_population.md`).
     pub stores: LocalStore,
     pub morale: Scalar,
+    /// This turn's signed morale delta (before clamping into `[0, 1]`). Derived each turn by
+    /// `simulate_population`; the client renders it as a rising/falling trend arrow. Not
+    /// snapshot-persisted — a rehydrated cohort reads `0` until the next turn recomputes it.
+    pub last_morale_delta: Scalar,
+    /// The dominant *negative* driver behind `last_morale_delta` when morale fell this turn
+    /// (`None` when it rose or held), so the client can name *why* — e.g. "harsh terrain". Derived
+    /// each turn alongside `last_morale_delta`; not snapshot-persisted.
+    pub last_morale_cause: MoraleCause,
     /// Turns this band has been simulated. Gates knowledge-migration (`simulate_population`) so a
     /// freshly-spawned band must settle for `migration_min_settled_turns` before its population can
     /// emigrate to a neighbor. Persisted in the snapshot so rollback preserves the gate.
@@ -213,6 +221,37 @@ pub struct PopulationCohort {
     pub faction: FactionId,
     pub knowledge: Vec<KnowledgeFragment>,
     pub migration: Option<PendingMigration>,
+}
+
+/// The dominant negative driver of a cohort's morale on a given turn, surfaced so the client can
+/// name *why* morale (and thus population) is falling instead of reporting a vague "low morale".
+/// Starvation is deliberately excluded — it is surfaced through the days-of-food path, not morale.
+///
+/// Snapshot wire encoding (see [`MoraleCause::as_u8`]): `0 = None, 1 = Terrain, 2 = Cold,
+/// 3 = Unrest`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MoraleCause {
+    /// Morale rose or held this turn — no dominant negative driver.
+    #[default]
+    None,
+    /// Terrain attrition + logistics hardness dominated — the hex is harsh to live on.
+    Terrain,
+    /// The temperature-difference penalty dominated.
+    Cold,
+    /// Crisis impacts + cultural sentiment (unrest) dominated.
+    Unrest,
+}
+
+impl MoraleCause {
+    /// Encode for the snapshot's `moraleCause:ubyte` field: `0=None, 1=Terrain, 2=Cold, 3=Unrest`.
+    pub fn as_u8(self) -> u8 {
+        match self {
+            MoraleCause::None => 0,
+            MoraleCause::Terrain => 1,
+            MoraleCause::Cold => 2,
+            MoraleCause::Unrest => 3,
+        }
+    }
 }
 
 impl PopulationCohort {

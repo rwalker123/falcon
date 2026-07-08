@@ -10,10 +10,10 @@ use bevy::MinimalPlugins;
 use core_sim::{
     balance_supply_networks, scalar_zero, spawn_initial_world, CultureManager,
     DiscoveryProgressLedger, FactionId, FactionInventory, GenerationId, GenerationRegistry,
-    LocalStore, MapPresets, MapPresetsHandle, PopulationCohort, Scalar, SimulationConfig,
-    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, SupplyNetworkConfigHandle,
-    SupplyNetworkMembership, TileRegistry, FOOD,
+    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, Scalar,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    SupplyNetworkConfigHandle, SupplyNetworkMembership, TileRegistry, FOOD,
 };
 
 /// A distinct faction for the test bands so they never network with the spawned starting bands.
@@ -75,6 +75,8 @@ fn spawn_band(app: &mut App, x: u32, y: u32, food: i64) -> Entity {
             elders: scalar_zero(),
             stores,
             morale: scalar_zero(),
+            last_morale_delta: scalar_zero(),
+            last_morale_cause: MoraleCause::None,
             age_turns: 0,
             generation: 0 as GenerationId,
             faction: TEST_FACTION,
