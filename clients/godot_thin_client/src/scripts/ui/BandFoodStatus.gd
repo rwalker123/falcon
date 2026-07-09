@@ -26,15 +26,27 @@ const DEFAULT_WARN_DAYS := 10.0
 const DEFAULT_CRITICAL_DAYS := 5.0
 # Server sentinel (snapshot `daysOfFood`) meaning "not food-limited".
 const UNLIMITED_DAYS := 999.0
-# Morale (0–1) thresholds; the birth floor is ~0.20, so these sit just above it.
+# Morale (0–1) UI warn/critical thresholds. Morale drives productivity + migration
+# (not births, which are morale-independent); these bracket the migration onset
+# (~0.25) so a band reads amber/red as it approaches "people start leaving".
 const DEFAULT_WARN_MORALE := 0.40
 const DEFAULT_CRITICAL_MORALE := 0.25
+# Output-multiplier (0–1) tint buckets (Civilization Wellbeing productivity readout; the
+# row only appears below 1.0). output >= warn reads ink (near-full), warn > o >= critical
+# reads amber, o < critical reads red.
+const DEFAULT_WARN_OUTPUT := 0.85
+const DEFAULT_CRITICAL_OUTPUT := 0.60
+# Per-turn morale-contribution magnitude below which a breakdown row is trivial and hidden.
+const DEFAULT_MORALE_BREAKDOWN_EPSILON := 0.002
 
 static var _loaded := false
 static var _warn_days := DEFAULT_WARN_DAYS
 static var _critical_days := DEFAULT_CRITICAL_DAYS
 static var _warn_morale := DEFAULT_WARN_MORALE
 static var _critical_morale := DEFAULT_CRITICAL_MORALE
+static var _warn_output := DEFAULT_WARN_OUTPUT
+static var _critical_output := DEFAULT_CRITICAL_OUTPUT
+static var _morale_breakdown_epsilon := DEFAULT_MORALE_BREAKDOWN_EPSILON
 
 static func _ensure_loaded() -> void:
 	if _loaded:
@@ -60,6 +72,12 @@ static func _ensure_loaded() -> void:
 		var morale: Dictionary = morale_variant
 		_warn_morale = float(morale.get("warn", DEFAULT_WARN_MORALE))
 		_critical_morale = float(morale.get("critical", DEFAULT_CRITICAL_MORALE))
+		_morale_breakdown_epsilon = float(morale.get("breakdown_epsilon", DEFAULT_MORALE_BREAKDOWN_EPSILON))
+	var output_variant: Variant = (data as Dictionary).get("output", {})
+	if output_variant is Dictionary:
+		var output: Dictionary = output_variant
+		_warn_output = float(output.get("warn", DEFAULT_WARN_OUTPUT))
+		_critical_output = float(output.get("critical", DEFAULT_CRITICAL_OUTPUT))
 
 static func warn_days() -> float:
 	_ensure_loaded()
@@ -124,3 +142,19 @@ static func hex_for_morale(m: float) -> String:
 	if m < _warn_morale:
 		return HudStyle.WARN_HEX
 	return HudStyle.HEALTHY_HEX
+
+## Output multiplier (0–1) tint for the productivity readout. Below full the row grades
+## ink → amber → red as discontent bites harder. Distinct from the morale/food palette:
+## near-full output reads neutral ink (not green) — it's a productivity note, not a "good".
+static func hex_for_output(o: float) -> String:
+	_ensure_loaded()
+	if o < _critical_output:
+		return HudStyle.DANGER_HEX
+	if o < _warn_output:
+		return HudStyle.WARN_HEX
+	return HudStyle.INK_HEX
+
+## Minimum |per-turn morale contribution| worth listing in the itemized breakdown.
+static func morale_breakdown_epsilon() -> float:
+	_ensure_loaded()
+	return _morale_breakdown_epsilon

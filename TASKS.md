@@ -260,6 +260,34 @@ lean-to and an arcology (and a 400k town vs a 5M city) are the same engine at di
   governance** (settlement → town → city → nation). Border-claiming, territory, and government are
   a later arc; the link is documented in `docs/plan_settlement_population.md`.
 
+### Civilization Wellbeing (Morale → Discontent → Consequences)
+
+Design: `docs/plan_civ_wellbeing.md`. Morale is a persistent, multi-factor civilization stat built
+on the Phase-1 `PopulationCohort`: named factors → morale → discontent → consequences
+(productivity, migration, [future] revolution). Extensible by design — every Phase-2 item below is
+an addition to an existing seam, never a rewrite. Morale never causes faction population loss and
+never gates births. **Phase 2 is deferred: those systems (government, tech, revolutions) live past
+the early-turn loop currently being tuned.**
+
+- [x] Phase 1 — the spine (PR #89). Morale via a named factor-contributor set
+  (settling/terrain/climate/unrest; `MoraleContributions`); births decoupled from morale; discontent
+  fraction + a **persisted `grievance` severity×duration accumulator** (populated, wired to no
+  consequence yet); productivity as an `output_multiplier` **modifier stack** (discontent = entry #1),
+  applied at every yield payout; tech-gated relocate-or-stay **migration**
+  (`advance_population_migration`); `core_sim/src/data/wellbeing_config.json` levers; client
+  Output%/itemized-morale-breakdown/recovery-guidance/"people leaving" readouts.
+- [ ] Phase 2a — **Revolution** consequence off the `grievance` accumulator (sustained, trapped,
+  rock-bottom grievance → uprising / loss of control / band schism). Seam:
+  `PopulationCohort.grievance` (already persisted); wire a trigger + effect. (Owner: TBD; Deps: none —
+  the state is live.)
+- [ ] Phase 2b — **Additional morale factors**: nutrition/food, education, technology, government
+  type, culture. Seam: add a `MoraleFactor` variant + one contributor line in `simulate_population`.
+- [ ] Phase 2c — **Additional productivity modifiers** (education/tech/government). Seam: one line in
+  `output_multiplier()`'s stack (the `// future:` comment marks the spot).
+- [ ] Phase 2d — **Migration richness**: reach tied to concrete movement-tech tiers (replace the 1.0
+  stub at the `TODO(phase2)` hook in `advance_population_migration`); cross-faction / settlement
+  destinations.
+
 ### Early Diplomacy & Route Network
 - [ ] Derive `RouteNetwork` overlay from movement/logistics traversals (Owner: TBD, Estimate: 2d; Deps: movement/logistics stage hooks). Description: Record adjacent-hex segment hits during movement/logistics; maintain exponentially decaying occupancy counters (fixed-point); surface segments above threshold via telemetry. Do not build a separate path graph.
 - [ ] `RouteRightsTreaty` diplomacy primitive and pathing integration (Owner: TBD, Estimate: 2d; Deps: diplomacy system). Description: Treaties attach to traversal-derived segment keys (or named seasonal circuits); path cost/conflict checkers consult treaty state for friction/toll modifiers.

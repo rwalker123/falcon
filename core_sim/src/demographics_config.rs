@@ -80,15 +80,15 @@ impl Default for DemographicsStartup {
     }
 }
 
-/// Birth tuning. `births = birth_rate × working × fed_ratio × morale_signal ×
-/// (1 + surplus_bonus × surplus_ratio)`, added to children. `morale_floor` is the morale below
-/// which no births occur.
+/// Birth tuning. `births = birth_rate × working × fed_ratio ×
+/// (1 + surplus_bonus × surplus_ratio)`, added to children. Births are **morale-independent**
+/// (Civilization Wellbeing model, `docs/plan_civ_wellbeing.md`): contentment doesn't change
+/// procreation — low morale relocates people or drags output, never suppresses births.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct DemographicsBirths {
     pub birth_rate: f32,
     pub surplus_bonus: f32,
-    pub morale_floor: f32,
 }
 
 impl Default for DemographicsBirths {
@@ -96,7 +96,6 @@ impl Default for DemographicsBirths {
         Self {
             birth_rate: 0.03,
             surplus_bonus: 0.5,
-            morale_floor: 0.2,
         }
     }
 }

@@ -33,8 +33,8 @@ use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, FaunaPursuit,
         FaunaPursuitMode, HarvestAssignment, HarvestTaskKind, LocalStore, LogisticsLink,
-        MoraleCause, MountainMetadata, PendingMigration, PopulationCohort, PowerNode,
-        ScoutAssignment, Tile, TradeLink, FOOD,
+        MoraleCause, MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort,
+        PowerNode, ScoutAssignment, Tile, TradeLink, FOOD,
     },
     culture::{
         CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
@@ -128,6 +128,7 @@ pub struct SnapshotContext<'w> {
     pub visibility_ledger: Res<'w, crate::visibility::VisibilityLedger>,
     pub viewer_faction: Res<'w, crate::visibility::ViewerFaction>,
     pub demographics: Res<'w, DemographicsConfigHandle>,
+    pub wellbeing: Res<'w, crate::wellbeing_config::WellbeingConfigHandle>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
 }
@@ -1245,6 +1246,7 @@ pub fn capture_snapshot(
         visibility_ledger,
         viewer_faction,
         demographics,
+        wellbeing,
         supply_membership,
         pipeline_config,
     } = ctx;
@@ -1302,6 +1304,7 @@ pub fn capture_snapshot(
     trade_states.sort_unstable_by_key(|state| state.entity);
 
     let demographics_config = demographics.get();
+    let wellbeing_config = wellbeing.get();
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
         .map(|(entity, cohort, harvest, scout, pursuit)| {
@@ -1322,6 +1325,7 @@ pub fn capture_snapshot(
                 start_position,
                 &faction_inventory,
                 &demographics_config,
+                &wellbeing_config,
                 &supply_membership,
             )
         })
@@ -1853,6 +1857,13 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             // Derived per-turn (not snapshot-persisted); recomputed on the next `simulate_population`.
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
+            last_morale_contributions: MoraleContributions::default(),
+            discontent_fraction: scalar_zero(),
+            // Grievance is a multi-turn accumulator, so it IS persisted (like `age_turns`) — a
+            // rollback must not silently wipe brewing unrest.
+            grievance: Scalar::from_raw(cohort_state.grievance),
+            last_emigrated: 0,
+            last_immigrated: 0,
             age_turns: cohort_state.age_turns,
             generation: cohort_state.generation,
             faction: FactionId(cohort_state.faction),
@@ -3540,6 +3551,7 @@ fn population_state(
     start_position: Option<UVec2>,
     inventory: &FactionInventory,
     demographics: &DemographicsConfig,
+    wellbeing: &crate::wellbeing_config::WellbeingConfig,
     supply_membership: &SupplyNetworkMembership,
 ) -> PopulationCohortState {
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
@@ -3594,6 +3606,15 @@ fn population_state(
         supply_network_id: supply_membership.network_of(entity),
         morale_delta: cohort.last_morale_delta.raw(),
         morale_cause: cohort.last_morale_cause.as_u8(),
+        output_multiplier: crate::systems::output_multiplier(cohort, wellbeing).raw(),
+        discontent_fraction: cohort.discontent_fraction.raw(),
+        last_emigrated: cohort.last_emigrated,
+        last_immigrated: cohort.last_immigrated,
+        grievance: cohort.grievance.raw(),
+        morale_settling: cohort.last_morale_contributions.settling.raw(),
+        morale_terrain: cohort.last_morale_contributions.terrain.raw(),
+        morale_climate: cohort.last_morale_contributions.climate.raw(),
+        morale_unrest: cohort.last_morale_contributions.unrest.raw(),
         morale: cohort.morale.raw(),
         generation: cohort.generation,
         faction: cohort.faction.0,
@@ -4316,6 +4337,7 @@ mod tests {
                 harvest_task: None,
                 scout_task: None,
                 accessible_stockpile: None,
+                ..Default::default()
             },
             PopulationCohortState {
                 entity: 101,
@@ -4342,6 +4364,7 @@ mod tests {
                 harvest_task: None,
                 scout_task: None,
                 accessible_stockpile: None,
+                ..Default::default()
             },
         ];
 
@@ -4445,6 +4468,7 @@ mod tests {
                 harvest_task: None,
                 scout_task: None,
                 accessible_stockpile: None,
+                ..Default::default()
             },
             PopulationCohortState {
                 entity: 201,
@@ -4471,6 +4495,7 @@ mod tests {
                 harvest_task: None,
                 scout_task: None,
                 accessible_stockpile: None,
+                ..Default::default()
             },
         ];
 

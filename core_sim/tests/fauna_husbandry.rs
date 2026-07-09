@@ -14,7 +14,7 @@ use core_sim::{
     HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets, MapPresetsHandle,
     MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, FOOD,
+    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
 };
 
 fn spawn_world() -> App {
@@ -51,6 +51,7 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.insert_resource(FogRevealLedger::default());
     app.world.run_system_once(spawn_initial_herds);
@@ -101,6 +102,11 @@ fn spawn_follower(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::p
                 morale: scalar_one(),
                 last_morale_delta: scalar_zero(),
                 last_morale_cause: MoraleCause::None,
+                last_morale_contributions: Default::default(),
+                discontent_fraction: scalar_zero(),
+                grievance: scalar_zero(),
+                last_emigrated: 0,
+                last_immigrated: 0,
                 age_turns: 0,
                 generation: 0 as GenerationId,
                 faction: FactionId(0),

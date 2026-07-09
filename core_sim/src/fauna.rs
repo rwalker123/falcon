@@ -14,6 +14,8 @@ use crate::{
     orders::FactionId,
     resources::{SimulationConfig, SimulationTick, StartLocation, TileRegistry},
     scalar::Scalar,
+    systems::output_multiplier,
+    wellbeing_config::WellbeingConfigHandle,
 };
 
 /// RNG salt for per-turn immigration, kept distinct from the initial-spawn salt so the
@@ -705,9 +707,11 @@ pub fn repopulate_fauna(
 pub fn advance_husbandry(
     mut registry: ResMut<HerdRegistry>,
     fauna_config: Res<FaunaConfigHandle>,
+    wellbeing_config: Res<WellbeingConfigHandle>,
     mut cohorts: Query<&mut PopulationCohort>,
 ) {
     let fauna = fauna_config.get();
+    let wellbeing = wellbeing_config.get();
     let husbandry = &fauna.husbandry;
     // Accumulate each owner's managed-livestock yield, then feed it into that faction's bands'
     // larders — the pastoral counterpart of foraging income. Food is band-local from day one;
@@ -748,9 +752,11 @@ pub fn advance_husbandry(
             band_counts.get(&cohort.faction),
         ) {
             if count > 0 {
-                cohort
-                    .stores
-                    .add(FOOD, Scalar::from_i64(total) / Scalar::from_u32(count));
+                // Productivity modifier stack (wellbeing): a discontented band tends the herd
+                // less effectively — scale its even share by its output multiplier at PAYOUT.
+                let share = Scalar::from_i64(total) / Scalar::from_u32(count);
+                let mult = output_multiplier(&cohort, &wellbeing);
+                cohort.stores.add(FOOD, share * mult);
             }
         }
     }

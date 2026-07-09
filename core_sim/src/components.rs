@@ -213,6 +213,25 @@ pub struct PopulationCohort {
     /// (`None` when it rose or held), so the client can name *why* — e.g. "harsh terrain". Derived
     /// each turn alongside `last_morale_delta`; not snapshot-persisted.
     pub last_morale_cause: MoraleCause,
+    /// The Layer-1 named morale contributors whose signed sum IS `last_morale_delta` (the wellbeing
+    /// model's per-band morale breakdown — see `docs/plan_civ_wellbeing.md`). Derived each turn by
+    /// `simulate_population`; not snapshot-persisted.
+    pub last_morale_contributions: MoraleContributions,
+    /// Layer 2 — the share of the band that is unhappy this turn, `g(morale)` (working-weighted at
+    /// the migration/grievance stage). `0` = content, `1` = fully discontented. Drives the
+    /// productivity modifier stack and migration. Derived each turn; not snapshot-persisted.
+    pub discontent_fraction: Scalar,
+    /// Layer 2 — the severity × duration grievance accumulator: rises with sustained discontent
+    /// (faster when trapped with nowhere to migrate), decays while content. Phase 1 only populates
+    /// it (reserved for a future revolution consequence — no consequence reads it yet). Persisted
+    /// in the snapshot so rollback preserves the accumulation.
+    pub grievance: Scalar,
+    /// How many people emigrated **from** this band last turn via discontent-driven migration
+    /// (relocated to a happier same-faction band). `0` = none. Derived each turn; not persisted.
+    pub last_emigrated: u32,
+    /// How many people immigrated **into** this band last turn (a high-morale band is a magnet).
+    /// `0` = none. Derived each turn; not persisted.
+    pub last_immigrated: u32,
     /// Turns this band has been simulated. Gates knowledge-migration (`simulate_population`) so a
     /// freshly-spawned band must settle for `migration_min_settled_turns` before its population can
     /// emigrate to a neighbor. Persisted in the snapshot so rollback preserves the gate.
@@ -250,6 +269,82 @@ impl MoraleCause {
             MoraleCause::Terrain => 1,
             MoraleCause::Cold => 2,
             MoraleCause::Unrest => 3,
+        }
+    }
+}
+
+/// Layer 1 of the Civilization Wellbeing model (`docs/plan_civ_wellbeing.md`): the named factors
+/// that converge into a band's morale. Morale trends by the **signed sum** of the active
+/// contributions each turn; adding a future factor (nutrition/education/technology/government/…)
+/// is a new variant plus one contribution — the morale update itself never gets rewritten. The
+/// contribution set *is* the per-band morale breakdown the client can itemize.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoraleFactor {
+    /// Base settling growth (`+population_growth_rate`) — always non-negative.
+    Settling,
+    /// Terrain attrition + logistics hardness drain (≤ 0).
+    Terrain,
+    /// Temperature-vs-tolerance climate drain (≤ 0).
+    Climate,
+    /// Crisis impacts + cultural sentiment (signed).
+    Unrest,
+}
+
+/// The Phase-1 named morale contributions for a cohort this turn (each signed; their sum IS
+/// `last_morale_delta`). A fixed struct rather than a `Vec` to stay allocation-free; a future
+/// factor adds a field + a `MoraleFactor` variant. Surfaced in the snapshot so the client can
+/// itemize *why* morale is moving.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MoraleContributions {
+    /// `+population_growth_rate` (base settling growth).
+    pub settling: Scalar,
+    /// `−terrain pressure` (≤ 0).
+    pub terrain: Scalar,
+    /// `−climate/cold pressure` (≤ 0).
+    pub climate: Scalar,
+    /// crisis impacts + cultural sentiment bias (signed).
+    pub unrest: Scalar,
+}
+
+impl MoraleContributions {
+    /// The active contributions as `(factor, signed value)` pairs — the itemized breakdown the
+    /// client can render and the single source both `total` and cause attribution iterate. Ordered
+    /// by the historical tie-break priority (Terrain ≥ Climate ≥ Unrest) so the dominant-cause scan
+    /// is a stable first-max.
+    pub fn contributions(&self) -> [(MoraleFactor, Scalar); 4] {
+        [
+            (MoraleFactor::Terrain, self.terrain),
+            (MoraleFactor::Climate, self.climate),
+            (MoraleFactor::Unrest, self.unrest),
+            (MoraleFactor::Settling, self.settling),
+        ]
+    }
+
+    /// The signed morale delta this turn — the sum of every contribution.
+    pub fn total(&self) -> Scalar {
+        self.contributions()
+            .iter()
+            .fold(scalar_zero(), |acc, (_, value)| acc + *value)
+    }
+
+    /// The dominant *negative* contributor as a [`MoraleCause`] (the "why morale fell" label). The
+    /// most-negative labeled contribution wins; `Settling` is base growth (never a negative cause),
+    /// and ties resolve by `contributions()` order (Terrain ≥ Climate ≥ Unrest).
+    pub fn dominant_negative_cause(&self) -> MoraleCause {
+        let mut best: Option<(MoraleFactor, Scalar)> = None;
+        for (factor, value) in self.contributions() {
+            if matches!(factor, MoraleFactor::Settling) || value >= scalar_zero() {
+                continue;
+            }
+            if best.is_none_or(|(_, worst)| value < worst) {
+                best = Some((factor, value));
+            }
+        }
+        match best {
+            Some((MoraleFactor::Terrain, _)) => MoraleCause::Terrain,
+            Some((MoraleFactor::Climate, _)) => MoraleCause::Cold,
+            Some((MoraleFactor::Unrest, _)) => MoraleCause::Unrest,
+            _ => MoraleCause::None,
         }
     }
 }

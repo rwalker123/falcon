@@ -41,8 +41,9 @@ cargo run -p core_sim --bin server
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
 | `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) / `market` (commercial-hunt take + trade multiplier) tuning |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
-| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus/morale_floor), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
+| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
+| `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -298,17 +299,24 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
    own larder; shortfall is the food **deficit**.
 2. **Deaths** — starvation scales with the deficit (dependents more vulnerable via `scarcity`
    weights); cold kills across brackets past `cold.temp_tolerance`.
-3. **Births → children** — `birth_rate × working × fed_ratio × morale_signal × (1 + surplus_bonus × surplus_ratio)`.
+3. **Births → children** — `birth_rate × working × fed_ratio × (1 + surplus_bonus × surplus_ratio)`.
+   Births are **morale-independent** (Civilization Wellbeing — see below): contentment doesn't
+   change procreation, and morale **never** causes faction population loss. `advance_demographics`
+   no longer takes morale; the retired `births.morale_floor` lever is gone.
 4. **Maturation** children→working, **aging** working→elders, **elder mortality**. All flows use
    the turn's *opening* values and apply together (a newborn doesn't mature the same turn); the
    total is clamped to `population_cap`. The **dependency ratio** `(children+elders)/working` is
    the core tension.
 
-**Morale attribution (why morale/population falls).** `simulate_population` records on each
-`PopulationCohort` this turn's signed `last_morale_delta` plus a `last_morale_cause`
-(`MoraleCause` ∈ `None | Terrain | Cold | Unrest`) = the **dominant negative** morale contributor
-when the delta is negative, else `None`. Drivers: `Terrain` = terrain attrition + logistics
-hardness, `Cold` = temperature-difference penalty, `Unrest` = crisis impacts + cultural sentiment.
+**Morale attribution (why morale/population falls).** Morale is now computed as the signed sum of a
+**named contributor set** (`MoraleContributions` on the cohort — the Layer-1 spine of Civilization
+Wellbeing, below): `settling` (`+population_growth_rate`), `terrain` (`−terrain pressure`),
+`climate` (`−cold pressure`), `unrest` (crisis impacts + cultural sentiment, signed). Their sum IS
+`last_morale_delta`; adding a future factor is a new `MoraleFactor` variant + one field, not a
+rewrite of the morale update. The dominant *negative* contributor becomes `last_morale_cause`
+(`MoraleCause` ∈ `None | Terrain | Cold | Unrest`) when the delta is negative, else `None`. Drivers:
+`Terrain` = terrain attrition + logistics hardness, `Cold` = temperature-difference penalty,
+`Unrest` = crisis impacts + cultural sentiment.
 Starvation is deliberately **not** a morale cause — it stays on the days-of-food path. The two
 place-based (negative) terms come from the shared **`tile_morale_pressure(terrain, temperature,
 &MoralePressureConfig)`** helper (`systems.rs`), which returns the tile-intrinsic per-turn morale
@@ -399,6 +407,50 @@ in `data/sedentarization_config.json` (`sedentarization_config.rs`).
 > discrete founding), and `SedentarizationScore` becomes an emergent readout of accumulated
 > *tether* rather than a gate. See that design doc for the population/labor/improvement model
 > this score ultimately feeds.
+
+### Civilization Wellbeing (Morale → Discontent → Consequences)
+The three-layer spine **factors → morale → discontent → consequences** (Phase 1). Authoritative
+design: `docs/plan_civ_wellbeing.md`. Config: `wellbeing_config.rs` / `data/wellbeing_config.json`.
+Extension seams are present and empty — future factors/consequences slot in without a rewrite.
+
+- **Layer 1 — factors → morale.** `simulate_population` builds `MoraleContributions` (see morale
+  attribution above); morale trends by their signed sum. Adding a factor = a new `MoraleFactor`
+  variant + one field. The contributor set doubles as the client's itemized morale breakdown.
+- **Layer 2 — discontent state (productivity only).** Each turn the cohort's `discontent_fraction =
+  clamp((content_morale − morale) / (content_morale − floor_morale), 0, 1)` (0 at ≥`content_morale`
+  0.6, 1 at ≤`floor_morale` 0.1). This drives **productivity only** — migration has its own onset
+  (Layer 3b). A `grievance` accumulator (severity × duration) rises by `grievance_gain ×
+  discontent_fraction` (× `trapped_multiplier` when *trapped* — below the migration threshold with no
+  reachable destination) and decays by `grievance_decay` while content. **Phase 1 only populates
+  `grievance`** — no consequence reads it (reserved for a future revolution trigger); it IS
+  snapshot-**persisted** (like `age_turns`) so a rollback preserves brewing unrest.
+- **Layer 3a — productivity modifier stack.** `output_multiplier(cohort, cfg) = Π(modifiers)`
+  (`systems.rs`). Phase 1 has one entry, `discontent_output_modifier = max(floor_mult, 1 −
+  discontent_fraction × discontent_weight)` (floor 0.5, weight 1.0). Applied at **payout** at every
+  yield site via a single `output_multiplier` call — forage/hunt (`advance_harvest_assignments`),
+  follow/hunt take (`advance_fauna_pursuits`), husbandry (`advance_husbandry`, `fauna.rs`). Adding
+  an education/tech/government modifier is one line in `output_multiplier`, not per-site edits.
+- **Layer 3b — tech-gated migration (own morale onset).** `advance_population_migration`
+  (`systems.rs`, `TurnStage::Population`, **after** demographics + this turn's payouts).
+  **Decoupled from `discontent_fraction`** — migration has its own morale-scaled onset at
+  `migration.morale_threshold` (0.25): each band sheds `total × move_fraction`, where
+  `move_fraction = max_rate × clamp((morale_threshold − morale) / morale_threshold, 0, 1)` — 0 at
+  morale ≥ 0.25, 7.5% at 0.125, up to `max_rate` (0.15) at rock-bottom (gentle at onset, ramping to
+  the cap). The total is split across brackets ∝ `bracket_size × weight` (working = 1.0, dependents
+  = `dependent_weight` 0.4), so leavers are mostly workers while the headline fraction stays exact.
+  They seek the **highest-morale eligible same-faction band within reach** (`base_reach` 4 hexes ×
+  a movement-tech factor). *No concrete movement/transport tech signal exists yet, so the factor is
+  stubbed at 1.0 with a `TODO(phase2)` hook.* Eligible = `morale ≥ attractive_morale` (0.5) AND
+  `morale > source + min_morale_gap` (0.05). Found → **relocate** (source shrinks, destination
+  grows; `last_emigrated`/`last_immigrated` recorded); none reachable → **stay** (grievance accrues
+  faster via the trapped bonus). **Morale never causes faction population loss** — population is
+  conserved within the faction; loss stays with starvation/cold only. Destinations are chosen from
+  one pre-migration snapshot and all moves are computed before any is applied, so relocation is
+  order-independent.
+- **Snapshot.** `PopulationCohortState` gains `outputMultiplier`, `discontentFraction`, `grievance`,
+  `lastEmigrated`/`lastImmigrated`, and the four itemized contributions
+  `moraleSettling/Terrain/Climate/Unrest` (surfaced so the client can render the breakdown). All
+  fixed-point except the two head-counts; all derived per-turn except `grievance` (persisted).
 
 ### Capability Flags
 `CapabilityFlags` bitflags: `AlwaysOn`, `Construction`, `IndustryT1/T2`, `Power`, `NavalOps`, `AirOps`, `EspionageT2`, `Megaprojects`. Systems are inert until corresponding flag is set.

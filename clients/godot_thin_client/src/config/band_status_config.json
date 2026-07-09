@@ -5,6 +5,11 @@
   },
   "morale": {
     "warn": 0.40,
-    "critical": 0.25
+    "critical": 0.25,
+    "breakdown_epsilon": 0.002
+  },
+  "output": {
+    "warn": 0.85,
+    "critical": 0.60
   }
 }

@@ -959,6 +959,35 @@ pub struct PopulationCohortState {
     /// Names *why* morale is falling. Derived at capture (not persisted for rollback).
     #[serde(default)]
     pub morale_cause: u8,
+    /// Civilization Wellbeing (`docs/plan_civ_wellbeing.md`). Productivity modifier-stack result
+    /// (`output = base × Π(modifiers)`), fixed-point raw (`Scalar::SCALE` = 100% output). Derived.
+    #[serde(default = "default_output_multiplier")]
+    pub output_multiplier: i64,
+    /// Discontented share of the band this turn, fixed-point raw 0..1 (`Scalar::SCALE` = fully
+    /// discontented). Derived at capture.
+    #[serde(default)]
+    pub discontent_fraction: i64,
+    /// People who emigrated from / immigrated into this band last turn (discontent-driven
+    /// migration). Derived at capture.
+    #[serde(default)]
+    pub last_emigrated: u32,
+    #[serde(default)]
+    pub last_immigrated: u32,
+    /// Severity × duration grievance accumulator, fixed-point raw. Reserved for a future revolution
+    /// consequence (Phase 1 only surfaces it). **Persisted** for rollback (unlike the other derived
+    /// wellbeing fields here) so brewing unrest survives a rewind.
+    #[serde(default)]
+    pub grievance: i64,
+    /// Layer-1 named morale contributions whose signed sum IS `morale_delta` — the itemized
+    /// breakdown. Fixed-point raw. Derived at capture.
+    #[serde(default)]
+    pub morale_settling: i64,
+    #[serde(default)]
+    pub morale_terrain: i64,
+    #[serde(default)]
+    pub morale_climate: i64,
+    #[serde(default)]
+    pub morale_unrest: i64,
     pub morale: i64,
     pub generation: u16,
     pub faction: u32,
@@ -983,6 +1012,12 @@ pub struct PendingMigrationState {
 
 fn default_harvest_task_kind() -> String {
     "harvest".to_string()
+}
+
+/// Fixed-point 100% output (`Scalar::SCALE` = 1e6) — the neutral productivity multiplier a snapshot
+/// without a `output_multiplier` field (pre-wellbeing) decodes to.
+fn default_output_multiplier() -> i64 {
+    1_000_000
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -2677,6 +2712,15 @@ fn create_populations<'a>(
                     supplyNetworkId: cohort.supply_network_id,
                     moraleDelta: cohort.morale_delta,
                     moraleCause: cohort.morale_cause,
+                    outputMultiplier: cohort.output_multiplier,
+                    discontentFraction: cohort.discontent_fraction,
+                    lastEmigrated: cohort.last_emigrated,
+                    lastImmigrated: cohort.last_immigrated,
+                    grievance: cohort.grievance,
+                    moraleSettling: cohort.morale_settling,
+                    moraleTerrain: cohort.morale_terrain,
+                    moraleClimate: cohort.morale_climate,
+                    moraleUnrest: cohort.morale_unrest,
                 },
             )
         })
