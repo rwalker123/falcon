@@ -1314,7 +1314,8 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
     lines.append("Size: %d" % size_value)
     lines.append(_band_food_line(unit_data))
     # Morale is our own bands' business only (a non-player band's morale isn't ours
-    # to see); a harsh tile erodes it until births can't offset elder mortality.
+    # to see); morale drives productivity + migration (a harsh tile erodes it until
+    # people begin leaving), while deaths stay starvation/cold-driven.
     if _is_player_unit(unit_data):
         lines.append(_band_morale_line(unit_data))
         # Productivity ties visibly to morale: show the Output row when discontent is

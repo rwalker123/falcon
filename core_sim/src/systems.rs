@@ -3920,7 +3920,7 @@ pub fn advance_population_migration(
         move_children: Scalar,
         move_elders: Scalar,
     }
-    let bands: Vec<Band> = cohorts
+    let mut bands: Vec<Band> = cohorts
         .iter()
         .map(|(entity, cohort)| {
             let move_fraction = migration_move_fraction(cohort.morale, mig_cfg);
@@ -3951,6 +3951,10 @@ pub fn advance_population_migration(
             }
         })
         .collect();
+    // Bevy query iteration order is not guaranteed stable across runs/rollback, but turn
+    // resolution must be deterministic. Sort by entity id so the destination tie-break
+    // (first-encountered wins on a morale tie) is reproducible.
+    bands.sort_by_key(|b| b.entity.to_bits());
 
     // For each band that wants to move (morale below the migration threshold), find the
     // highest-morale eligible same-faction band within reach.

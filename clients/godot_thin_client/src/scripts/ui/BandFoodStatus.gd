@@ -26,7 +26,9 @@ const DEFAULT_WARN_DAYS := 10.0
 const DEFAULT_CRITICAL_DAYS := 5.0
 # Server sentinel (snapshot `daysOfFood`) meaning "not food-limited".
 const UNLIMITED_DAYS := 999.0
-# Morale (0–1) thresholds; the birth floor is ~0.20, so these sit just above it.
+# Morale (0–1) UI warn/critical thresholds. Morale drives productivity + migration
+# (not births, which are morale-independent); these bracket the migration onset
+# (~0.25) so a band reads amber/red as it approaches "people start leaving".
 const DEFAULT_WARN_MORALE := 0.40
 const DEFAULT_CRITICAL_MORALE := 0.25
 # Output-multiplier (0–1) tint buckets (Civilization Wellbeing productivity readout; the

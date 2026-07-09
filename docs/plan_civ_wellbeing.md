@@ -48,9 +48,10 @@ rewritten.
 ### Layer 2 — Discontent (aggregate state)
 Derived from morale, but a **first-class, accumulating state** — this is the seam that lets
 revolution arrive later without restructuring.
-- `discontent_fraction = g(morale)` — the share of the band that is unhappy, **weighted toward the
-  working (fertility) bracket** (mobile, prospect-seeking); dependents (children/elders) are
-  affected at a reduced fraction.
+- `discontent_fraction = g(morale)` — the share of the band that is unhappy, a direct linear map of
+  band morale (0 at/above `content_morale`, 1 at/below `floor_morale`). It drives **productivity
+  only**; bracket composition is not weighted here. (Migration, Layer 3, weights leavers toward the
+  working bracket via its own `dependent_weight`.)
 - `grievance` — a **severity × duration accumulator**: how bad, for how long. Phase 1 only *feeds*
   productivity + migration and is *read* nowhere else; it exists so that a later phase can trigger
   **revolution** on sustained, trapped, rock-bottom grievance without adding new plumbing.
@@ -76,8 +77,8 @@ Each keys off the discontent state independently; adding one doesn't touch the o
 
 **Phase 1 (this branch) — the spine + the first factor/consequences.**
 - Morale computed through the Layer-1 **contributor structure** populated with today's real inputs.
-- Discontent fraction (working-weighted) + the `grievance` accumulator (populated, feeds only
-  productivity + migration).
+- Discontent fraction (direct morale map, drives productivity) + the `grievance` accumulator
+  (populated, feeds only productivity + migration).
 - Productivity **modifier stack** with discontent as the sole current entry.
 - Tech-gated **migration** (relocate-or-stay; conserved within faction).
 - Births decoupled from morale; **no** morale-driven faction population loss.
