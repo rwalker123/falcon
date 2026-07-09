@@ -2589,7 +2589,7 @@ fn spawn_profile_population(
                     commands,
                     registry,
                     tiles[idx],
-                    900,
+                    spec.band_size(),
                     cohort_index,
                     Some(marker),
                     knowledge,

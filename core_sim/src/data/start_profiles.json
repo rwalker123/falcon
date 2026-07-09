@@ -12,9 +12,7 @@
         "loc_key": "campaign.trail_sovereigns.subtitle"
       },
       "starting_units": [
-        { "kind": "BandScout", "count": 2 },
-        { "kind": "BandCrafter", "count": 1 },
-        { "kind": "BandGuardian", "count": 1 }
+        { "kind": "BandScout", "count": 1, "band_size": 30 }
       ],
       "starting_knowledge_tags": [
         "nomadic_wayfinding",

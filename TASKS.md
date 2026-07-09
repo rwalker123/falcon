@@ -277,9 +277,11 @@ equipment is consumable inventory; you allocate working-age labor across roles.
   fractionally — kill the round-to-0 that zeroes sub-1-per-source yields (the literal Issue-2 bug).
   Nothing else in M1 works without this. (`systems.rs` provisions math, `advance_fauna_pursuits`,
   larder store.)
-- [ ] **Config-driven small start.** Retire the hardcoded `900` in `spawn_profile_population`;
-  spawn **1 band, ~30 people** via start-profile/demographics config, with carry-capacity headroom
-  (cap ≳ start pop) and starter TOEs. Tuning dials, not literals.
+- [x] **Config-driven small start.** Retired the hardcoded `900` in `spawn_profile_population`;
+  `late_forager_tribe` now spawns **1 band of 30** via a per-unit `band_size` lever in
+  `start_profiles.json` (default const `DEFAULT_STARTING_BAND_SIZE = 30` in `start_profile.rs`).
+  Bracket split (initial_distribution) + `food_reserve_days` seeding flow through unchanged.
+  _Carry-capacity headroom and starter TOEs land with their own slices below, not here._
 - [ ] **Labor pool + role allocation (sim).** Working-age partitioned across Foraging/Hunting/
   Scouting/Warrior; per-role throughput = f(workers assigned, equipment on hand). Replaces the
   band's single-task `reassign_band` model with concurrent role staffing. (M1a slice.)
