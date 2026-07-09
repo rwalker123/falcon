@@ -3924,12 +3924,16 @@ pub fn advance_population_migration(
         .iter()
         .map(|(entity, cohort)| {
             let move_fraction = migration_move_fraction(cohort.morale, mig_cfg);
-            let total_leaving = cohort.total() * move_fraction;
             // Weighted bracket masses; the total is apportioned in proportion to these.
             let w_working = cohort.working;
             let w_children = cohort.children * dependent_weight;
             let w_elders = cohort.elders * dependent_weight;
             let denom = w_working + w_children + w_elders;
+            // Clamp the headline leaving amount to the weighted denominator so no bracket can be
+            // over-drafted (`move_x ≤ w_x ≤ bracket_x`), preserving faction population conservation.
+            // A no-op under shipped tuning (`total × max_rate ≤ denom` always), but a safety net for
+            // extreme-but-valid config (e.g. a very low `dependent_weight` on a dependent-heavy band).
+            let total_leaving = (cohort.total() * move_fraction).min(denom);
             let (move_working, move_children, move_elders) = if denom > scalar_zero() {
                 (
                     total_leaving * w_working / denom,
