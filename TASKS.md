@@ -273,7 +273,7 @@ equipment is consumable inventory; you allocate working-age labor across roles.
 - [x] Design doc. Authored `docs/plan_early_game_labor.md` (labor-pool / TOE / carry-cap model +
   decisions + milestone breakdown); cross-linked (manual §Start of Game + §Wildlife/Sustain,
   `plan_settlement_population.md` Phase 2, `plan_wildlife_hunting_overlay.md`).
-- [ ] **Fractional food (step zero).** Hunt/forage/husbandry yields and the band larder accumulate
+- [x] **Fractional food (step zero).** Hunt/forage/husbandry yields and the band larder accumulate
   fractionally — kill the round-to-0 that zeroes sub-1-per-source yields (the literal Issue-2 bug).
   Nothing else in M1 works without this. (`systems.rs` provisions math, `advance_fauna_pursuits`,
   larder store.)

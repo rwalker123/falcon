@@ -3588,7 +3588,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         let _ = harvest_dict.insert("travel_total", harvest.travelTotal() as i64);
         let _ = harvest_dict.insert("gather_remaining", harvest.gatherRemaining() as i64);
         let _ = harvest_dict.insert("gather_total", harvest.gatherTotal() as i64);
-        let _ = harvest_dict.insert("provisions_reward", harvest.provisionsReward());
+        let _ = harvest_dict.insert(
+            "provisions_reward",
+            fixed64_to_f64(harvest.provisionsReward()),
+        );
         let _ = harvest_dict.insert("trade_goods_reward", harvest.tradeGoodsReward());
         let _ = harvest_dict.insert("started_tick", harvest.startedTick() as i64);
         let _ = dict.insert("harvest", harvest_dict);

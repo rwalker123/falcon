@@ -66,6 +66,25 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_cancel_scout")
 
+	# State 1d2 — a band foraging: the drawer's harvest summary shows the fractional
+	# provisions reward (now fixed-point on the wire; sub-1 rewards must not round to 0).
+	var foraging_band := _band_fixture()
+	foraging_band["activity"] = "harvest"
+	foraging_band["harvest"] = {
+		"action": "forage",
+		"food_module": "grass_forage",
+		"food_module_label": "Grassland Forage",
+		"travel_remaining": 0,
+		"travel_total": 2,
+		"gather_remaining": 1,
+		"gather_total": 3,
+		"provisions_reward": 0.3,
+		"trade_goods_reward": 0,
+	}
+	_hud.show_unit_selection(foraging_band)
+	await _settle()
+	await _save("band_forage_reward")
+
 	# State 1e — optimistic cancel in flight: the band is still on a task in the
 	# snapshot but its entity is pre-seeded into the pending-transition map with
 	# before == its current activity, so the button holds the disabled "Cancelling…"
