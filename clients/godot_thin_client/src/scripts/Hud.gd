@@ -164,7 +164,7 @@ const RECOVERY_GUIDANCE_GLYPH := "↑"
 const RECOVERY_GUIDANCE_TEXT := "↑ Recover: move to Hospitable ground · Scout · Hunt"
 # Positive-lever morale hints on the action buttons (tooltip suffixes).
 const MORALE_HINT_SCOUT := "Scout unknown ground — reveals nearby tiles and lifts the band's spirits (+morale)."
-const MORALE_HINT_PERSISTENT := "  Following a herd also lifts morale each turn (+morale/turn)."
+const MORALE_HINT_PERSISTENT := "  Hunting a herd also lifts morale each turn (+morale/turn)."
 # Occupants roster row chrome.
 const ROSTER_DOT_SIZE := 9.0
 const ROSTER_ROW_MIN_HEIGHT := 30.0

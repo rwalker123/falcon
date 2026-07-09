@@ -1107,7 +1107,7 @@ bbcode_enabled = true
 [node name="FaunaFollowButton" type="Button" parent="RootPanel/TabContainer/Fauna"]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Follow Herd"
+text = "Hunt"
 
 [node name="GreatDiscoveries" type="ScrollContainer" parent="RootPanel/TabContainer"]
 visible = false
@@ -1421,7 +1421,7 @@ theme_override_constants/separation = 6
 
 [node name="FollowLabel" type="Label" parent="RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow"]
 layout_mode = 2
-text = "Follow Herd"
+text = "Hunt"
 
 [node name="FollowHerdField" type="LineEdit" parent="RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow"]
 layout_mode = 2
@@ -1430,7 +1430,7 @@ placeholder_text = "herd id (e.g. trail_herd_a)"
 
 [node name="FollowHerdButton" type="Button" parent="RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow"]
 layout_mode = 2
-text = "Follow"
+text = "Hunt"
 
 [node name="ConfigControls" type="VBoxContainer" parent="RootPanel/TabContainer/Commands"]
 layout_mode = 2

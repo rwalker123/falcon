@@ -140,7 +140,7 @@ func _herd_reward_summary_lines(biomass: float) -> Array[String]:
 		consumption * HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS,
 		HERD_KNOWLEDGE_PROGRESS_CAP
 	)
-	lines.append("[b]Follow Herd rewards[/b]")
+	lines.append("[b]Hunt rewards[/b]")
 	lines.append("• Morale +%.2f per band" % HERD_FOLLOW_MORALE_GAIN)
 	if provisions > 0 or trade_goods > 0:
 		lines.append("• Supplies: +%d provisions, +%d trade goods" % [int(provisions), int(trade_goods)])

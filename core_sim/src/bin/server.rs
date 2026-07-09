@@ -1424,7 +1424,7 @@ fn handle_follow_herd(
         tick,
         CommandEventKind::FollowHerd,
         faction,
-        format!("{} follow -> {}", band.label, herd_id),
+        format!("{} Hunt (ongoing) -> {}", band.label, herd_id),
         Some(detail),
     );
 }
@@ -1874,7 +1874,7 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
             CommandEventKind::Domesticate,
             faction,
             format!(
-                "You are not tending {}. Sustain-follow it to build husbandry before claiming it.",
+                "You are not tending {}. Sustain-hunt it to build husbandry before claiming it.",
                 herd_id
             ),
         ),
@@ -1883,7 +1883,7 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
             CommandEventKind::Domesticate,
             faction,
             format!(
-                "{} is not tame enough to domesticate ({}%). Keep Sustain-following it to build husbandry.",
+                "{} is not tame enough to domesticate ({}%). Keep Sustain-hunting it to build husbandry.",
                 herd_id,
                 (progress * 100.0).round() as i64
             ),
@@ -3016,7 +3016,7 @@ fn emit_command_failure(
 fn command_kind_display(kind: CommandEventKind) -> &'static str {
     match kind {
         CommandEventKind::Scout => "Scout",
-        CommandEventKind::FollowHerd => "Follow herd",
+        CommandEventKind::FollowHerd => "Hunt (ongoing)",
         CommandEventKind::FoundSettlement => "Found settlement",
         CommandEventKind::CampaignFounded => "Campaign founded",
         CommandEventKind::CampaignMilestone => "Campaign milestone",

@@ -130,7 +130,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "follow_herd",
         aliases: &[],
-        summary: "Order a band to follow a herd, auto-hunting per policy each turn.",
+        summary: "Order a band to hunt a herd continuously, auto-hunting per policy each turn.",
         usage: "follow_herd <faction_id> <herd_id> [policy] [band_entity_bits]",
     },
     CommandVerbHelp {
@@ -154,13 +154,13 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "domesticate",
         aliases: &[],
-        summary: "Claim a tame-enough herd as domesticated livestock (needs husbandry progress from a Sustain follow).",
+        summary: "Claim a tame-enough herd as domesticated livestock (needs husbandry progress from a Sustain hunt).",
         usage: "domesticate <faction_id> <herd_id>",
     },
     CommandVerbHelp {
         verb: "cancel_order",
         aliases: &[],
-        summary: "Cancel a band's current task (scout / forage / hunt / follow) and return it to idle.",
+        summary: "Cancel a band's current task (scout / forage / hunt) and return it to idle.",
         usage: "cancel_order <faction_id> [band_entity_bits]",
     },
     CommandVerbHelp {

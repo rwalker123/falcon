@@ -335,7 +335,7 @@ func _on_hud_follow_herd(herd_id: String) -> void:
     # Quick-follow (map double-click / inspector) uses the default policy; the
     # server auto-picks a band when none is supplied.
     var line := "follow_herd %d %s sustain" % [PLAYER_FACTION_ID, herd_id]
-    _send_runtime_command(line, "Follow herd request for %s." % herd_id)
+    _send_runtime_command(line, "Hunt request for %s." % herd_id)
 
 func _issue_hunt_command(payload: Dictionary) -> void:
     var herd_id := String(payload.get("herd_id", "")).strip_edges()
@@ -358,7 +358,7 @@ func _issue_follow_command(payload: Dictionary) -> void:
     var bits_variant: Variant = payload.get("band_entity_bits", null)
     if typeof(bits_variant) == TYPE_INT and int(bits_variant) >= 0:
         parts.append(str(int(bits_variant)))
-    _send_runtime_command(" ".join(parts), "Follow order (%s) for herd %s." % [policy, herd_id])
+    _send_runtime_command(" ".join(parts), "Hunt order (%s) for herd %s." % [policy, herd_id])
 
 func _on_hud_next_turn(steps: int) -> void:
     var clamped_steps: int = max(1, steps)
