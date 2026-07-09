@@ -563,7 +563,7 @@ impl GreatDiscoveryReadiness {
             entry.insert(id, progress);
         }
 
-        for (_faction, entries) in self.per_faction.iter_mut() {
+        for entries in self.per_faction.values_mut() {
             for definition in registry.definitions() {
                 entries
                     .entry(definition.id)
