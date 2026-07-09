@@ -4686,7 +4686,7 @@ mod terrain_tag_tests {
             }
         }
 
-        for (name, _) in preset.terrain_tag_targets.iter() {
+        for name in preset.terrain_tag_targets.keys() {
             let tag = tag_from_name(name);
             if tag == TerrainTags::empty() {
                 continue;
