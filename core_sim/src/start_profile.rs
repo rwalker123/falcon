@@ -218,6 +218,12 @@ pub enum KnowledgeTagCatalogError {
     },
 }
 
+/// People in a starting band when a profile's unit omits `band_size`. The band is a
+/// labor pool (see `docs/plan_early_game_labor.md`): one food source sustainably feeds
+/// ~10, so a starting band is a small group whose working-age bracket is the labor pool,
+/// not a 900-person settlement. Overridable per starting unit via `band_size`.
+pub const DEFAULT_STARTING_BAND_SIZE: u32 = 30;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct StartingUnitSpec {
     pub kind: String,
@@ -227,6 +233,20 @@ pub struct StartingUnitSpec {
     pub position: Option<[i32; 2]>,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Head-count each spawned band of this kind starts with. Falls back to
+    /// [`DEFAULT_STARTING_BAND_SIZE`] when unset. Brackets + larder are seeded from
+    /// `demographics_config.json` (`initial_distribution` + `startup.food_reserve_days`).
+    #[serde(default)]
+    pub band_size: Option<u32>,
+}
+
+impl StartingUnitSpec {
+    /// Resolved starting head-count for this unit, applying the default when unset.
+    /// Clamped to at least 1 (mirroring `count.max(1)` in `spawn_profile_population`) so a
+    /// misconfigured `band_size: 0` yields a 1-person band rather than a degenerate empty cohort.
+    pub fn band_size(&self) -> u32 {
+        self.band_size.unwrap_or(DEFAULT_STARTING_BAND_SIZE).max(1)
+    }
 }
 
 impl Default for StartingUnitSpec {
@@ -236,6 +256,7 @@ impl Default for StartingUnitSpec {
             count: default_unit_count(),
             position: None,
             tags: Vec::new(),
+            band_size: None,
         }
     }
 }
