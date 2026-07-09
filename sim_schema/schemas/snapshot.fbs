@@ -470,10 +470,28 @@ table PopulationCohortState {
   moraleTerrain:long = 0;
   moraleClimate:long = 0;
   moraleUnrest:long = 0;
-  // Band's live fauna-pursuit sub-mode: "single" (one-shot hunt) or the follow policy
-  // (sustain|surplus|market|eradicate); empty string when not pursuing. Appended last (see
+  // Band's live hunt sub-mode summary: the take policy of the largest Hunt assignment
+  // (sustain|surplus|market|eradicate); empty string when not hunting. Appended last (see
   // append-only schema discipline). Client labels the cancel affordance from it.
   huntMode:string;
+  // Early-Game Labor (slice 3a): the band's per-source labor allocation — one entry per staffed
+  // Forage tile / Hunt herd / Scout / Warrior demand. Client renders the allocation panel from it;
+  // also the rollback-persisted staffing. Appended last (append-only schema discipline).
+  laborAssignments:[LaborAssignment];
+  // Whole working-age workers left unassigned (idle: eat but produce nothing). Derived.
+  idleWorkers:uint = 0;
+  // Whole assignable working-age workers this band supplies (the Σ-invariant ceiling). Derived.
+  workingAge:uint = 0;
+}
+
+// One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
+table LaborAssignment {
+  kind:string;       // "forage" | "hunt" | "scout" | "warrior"
+  workers:uint = 0;
+  targetX:uint = 0;  // Forage tile / Hunt herd position readout
+  targetY:uint = 0;
+  faunaId:string;    // Hunt target herd id
+  policy:string;     // Hunt take policy (sustain|surplus|market|eradicate)
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

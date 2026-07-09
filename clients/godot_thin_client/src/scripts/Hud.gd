@@ -3,12 +3,19 @@ class_name HudLayer
 
 signal ui_zoom_delta(delta: float)
 signal ui_zoom_reset
-signal unit_scout_requested(x: int, y: int, band_entity_bits: int)
-## Emitted when the player cancels a band's active task; carries the band dict so
-## Main can extract faction + entity bits for the `cancel_order` command.
+## Emitted when the player clears ALL of a band's labor assignments (the "Clear all"
+## affordance); carries the band dict so Main can extract faction + entity bits for the
+## repurposed `cancel_order` command (now a clear-all → fully idle).
 signal cancel_order_requested(band: Dictionary)
-signal herd_follow_requested(herd_id: String)
-signal forage_requested(x: int, y: int, module_key: String)
+## Early-Game Labor (docs/plan_early_game_labor.md, slice 3b): assign/unassign
+## working-age workers to a source or band-wide role. Payload keys:
+## { faction, band, kind ("forage"|"hunt"|"scout"|"warrior"), workers,
+##   x, y (forage/hunt readout), herd_id, policy (hunt) }. Main formats the
+## `assign_labor …` text command. workers==0 removes/zeroes the assignment.
+signal assign_labor_requested(payload: Dictionary)
+## Emitted after the player picks a destination tile for the selected band's move.
+## Payload keys: { faction, band, x, y }. Main formats the `move_band …` command.
+signal move_band_requested(payload: Dictionary)
 signal next_turn_requested(steps: int)
 ## Emitted whenever the active command-targeting state changes. Carries a dict
 ## ({} when inactive) that Main forwards to MapView so the map can draw the
@@ -27,7 +34,7 @@ signal roster_occupant_selected(kind: String, id: Variant)
 ## changes.** Shown in the lower-left version overlay next to the server build (streamed
 ## in the snapshot header) so the running client+server builds can be confirmed at a
 ## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-08.1"
+const CLIENT_BUILD := "2026-07-09.1"
 var _build_label: Label = null
 var _server_build: String = "?"
 
@@ -59,18 +66,12 @@ var _server_build: String = "?"
 @onready var occupants_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel as PanelCard
 @onready var occupant_detail: RichTextLabel = %OccupantDetail
 @onready var roster_list: VBoxContainer = %RosterList
-@onready var unit_buttons: HBoxContainer = %UnitButtons
-@onready var unit_scout_button: Button = %UnitScoutButton
-@onready var unit_cancel_button: Button = %UnitCancelButton
-@onready var herd_buttons: HBoxContainer = %HerdButtons
-@onready var hunt_herd_button: Button = %HuntHerdButton
-@onready var hunt_policy_buttons: HBoxContainer = %HuntPolicyButtons
-@onready var single_button: Button = %FollowSingleButton
-@onready var follow_sustain_button: Button = %FollowSustainButton
-@onready var follow_surplus_button: Button = %FollowSurplusButton
-@onready var follow_market_button: Button = %FollowMarketButton
-@onready var follow_eradicate_button: Button = %FollowEradicateButton
-@onready var forage_button: Button = %ForageButton
+# Early-Game Labor allocation UI (slice 3b), all runtime-populated containers:
+# the band's allocation panel (Working/Idle + assignment rows + Scout/Warrior + Move/Clear),
+# the herd "assign hunters" controls, and the tile "assign foragers" controls.
+@onready var allocation_panel: VBoxContainer = %AllocationPanel
+@onready var herd_assign_controls: VBoxContainer = %HerdAssignControls
+@onready var forage_assign_controls: VBoxContainer = %ForageAssignControls
 @onready var stockpile_panel: PanelContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel
 @onready var stockpile_title: Label = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin/StockpileVBox/StockpileTitle
 @onready var stockpile_list: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin/StockpileVBox/StockpileList
@@ -172,14 +173,17 @@ const ROSTER_ROW_SEPARATION := 8
 const ROSTER_ROW_H_PADDING := 10.0
 const ROSTER_ACCENT_WIDTH := 3.0
 const ROSTER_HEADER_FONT_SIZE := 10
-# Per-activity glyph for a player band's roster row (activity string from the
-# snapshot: idle | harvest | hunt | follow | scout).
+# Per-activity glyph for a player band's roster row. `activity` is the kind with the
+# most workers (Early-Game Labor): idle | forage | hunt | scout | warrior. `harvest` /
+# `follow` are retained for older snapshots but the live enum emits forage/hunt.
 const ACTIVITY_GLYPHS := {
     "idle": "·",
+    "forage": "🌾",
     "harvest": "🌾",
     "hunt": "🏹",
     "follow": "🦌",
     "scout": "🧭",
+    "warrior": "🛡",
 }
 # Provisions is the food item under a band's larder `stores`.
 const STORE_ITEM_PROVISIONS := "provisions"
@@ -216,22 +220,39 @@ var _selected_band_morale: float = NAN
 # Output multiplier (0–1) of the currently-selected player band, so the detail formatter
 # can threshold-tint the Output row. NAN when no band with a below-full output is selected.
 var _selected_band_output: float = NAN
-var _pending_forage: Dictionary = {}
-var _pending_scout_unit: Dictionary = {}
-var _pending_hunt: Dictionary = {}
-var _pending_follow: Dictionary = {}
-# HUD-local optimistic map of bands with an order transition in flight (start OR
-# cancel — same pattern: wait for `activity` to change). Keyed by band `entity`,
-# value `{ "before": <normalized activity at dispatch>, "label": <button text> }`.
-# An entry clears itself the first render the band's activity differs from `before`
-# (the server confirm), whereupon the normal Scout/Cancel state renders.
-var _pending_transition_bands: Dictionary = {}
-# The herd action is one Hunt verb + a policy radio led by "single". Single = a
-# one-shot `hunt_fauna`; every other policy = a persistent `follow_herd <policy>`
-# that auto-hunts each turn. Default is the one-shot Single.
-const HUNT_POLICY_SINGLE := "single"
-const HUNT_POLICIES := ["single", "sustain", "surplus", "market", "eradicate"]
-var _hunt_policy: String = HUNT_POLICY_SINGLE
+# Early-Game Labor (docs/plan_early_game_labor.md, slice 3b). Assignment kinds mirror
+# the sim's LaborAssignment.kind; the source-centric allocation targets the single
+# player band captured from each snapshot (there is exactly one player band today).
+const LABOR_KIND_FORAGE := "forage"
+const LABOR_KIND_HUNT := "hunt"
+const LABOR_KIND_SCOUT := "scout"
+const LABOR_KIND_WARRIOR := "warrior"
+# Hunt take policies a labor Hunt assignment can carry (no "single" one-shot anymore).
+const LABOR_HUNT_POLICIES := ["sustain", "surplus", "market", "eradicate"]
+const DEFAULT_HUNT_POLICY := "sustain"
+# One worker per −/+ stepper press.
+const WORKER_STEP := 1
+# Worker-stepper row chrome: the fixed-width −/+ buttons, the centered count column,
+# and the row separation.
+const WORKER_STEPPER_BUTTON_WIDTH := 28.0
+const WORKER_STEPPER_VALUE_WIDTH := 32.0
+const WORKER_STEPPER_SEPARATION := 6
+# The single player band, captured from the latest snapshot populations (there is exactly
+# one player band in the current start). assign_labor / move_band / clear-all target it; the
+# herd/tile assign controls also read its labor_assignments to show the current staffing.
+var _player_band: Dictionary = {}
+# Move-band targeting: the pending band-relocation tile pick. {} when inactive. Holds the
+# band dict whose move is being targeted.
+var _pending_move_band: Dictionary = {}
+# Compose state for the herd/tile "Assign" controls — the in-progress worker count (and, for
+# hunts, the policy) the player is dialing before pressing Assign. Keyed to the source so a
+# per-snapshot re-render preserves the count, but re-initializes from current staffing when
+# the selected source changes.
+var _forage_assign_key: String = ""
+var _forage_assign_count: int = 0
+var _hunt_assign_key: String = ""
+var _hunt_assign_count: int = 0
+var _hunt_assign_policy: String = DEFAULT_HUNT_POLICY
 var _targeting_banner: PanelContainer = null
 var _targeting_banner_label: RichTextLabel = null
 var _stockpile_totals: Dictionary = {}
@@ -282,11 +303,6 @@ func _apply_hud_style() -> void:
             detail.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
             detail.add_theme_constant_override("table_h_separation", 16)
             detail.add_theme_constant_override("table_v_separation", 3)
-    HudStyle.apply_button(unit_scout_button, "primary")
-    HudStyle.apply_button(unit_cancel_button, "armed")
-    HudStyle.apply_button(hunt_herd_button, "primary")
-    HudStyle.apply_button(forage_button, "primary")
-    _refresh_hunt_policy_buttons()
     if stockpile_panel != null:
         stockpile_panel.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
     if victory_panel != null:
@@ -363,51 +379,21 @@ func _refresh_targeting() -> void:
 
 ## The active targeting descriptor, or {} when nothing is targeting. A pending
 ## harvest/hunt needs a band; a pending scout needs a tile.
+## The active targeting descriptor, or {} when nothing is targeting. Move-band is the
+## one remaining targeting flow (the single-task Harvest/Hunt/Scout flows were retired
+## with the labor-allocation model): it needs a destination tile.
 func _current_targeting_info() -> Dictionary:
-    if not _pending_forage.is_empty():
-        var action := _pending_forage_action()
+    if not _pending_move_band.is_empty():
+        var pos: Array = Array(_pending_move_band.get("pos", []))
+        var ox := int(pos[0]) if pos.size() == 2 else int(_pending_move_band.get("current_x", -1))
+        var oy := int(pos[1]) if pos.size() == 2 else int(_pending_move_band.get("current_y", -1))
         return {
             "active": true,
-            "command": "hunt" if action == FOOD_ACTION_HUNT else "harvest",
-            "need": "band",
-            "origin_x": int(_pending_forage.get("x", -1)),
-            "origin_y": int(_pending_forage.get("y", -1)),
-            "context_label": String(_pending_forage.get("module_label", "food source")),
-        }
-    if not _pending_scout_unit.is_empty():
-        var pos: Array = Array(_pending_scout_unit.get("pos", []))
-        var ox := int(pos[0]) if pos.size() == 2 else -1
-        var oy := int(pos[1]) if pos.size() == 2 else -1
-        return {
-            "active": true,
-            "command": "scout",
+            "command": "move",
             "need": "tile",
             "origin_x": ox,
             "origin_y": oy,
-            "context_label": String(_pending_scout_unit.get("id", "Band")),
-        }
-    if not _pending_hunt.is_empty():
-        return {
-            "active": true,
-            "command": "hunt",
-            "need": "band",
-            "origin_x": int(_pending_hunt.get("x", -1)),
-            "origin_y": int(_pending_hunt.get("y", -1)),
-            "context_label": String(_pending_hunt.get("label", "herd")),
-        }
-    if not _pending_follow.is_empty():
-        return {
-            "active": true,
-            # Persistence is a Hunt policy now (the standalone "Follow" verb is retired);
-            # the chosen policy rides in context_label, e.g. "HUNT … · Sustain".
-            "command": "hunt",
-            "need": "band",
-            "origin_x": int(_pending_follow.get("x", -1)),
-            "origin_y": int(_pending_follow.get("y", -1)),
-            "context_label": "%s · %s" % [
-                String(_pending_follow.get("label", "herd")),
-                String(_pending_follow.get("policy", "sustain")).capitalize(),
-            ],
+            "context_label": String(_pending_move_band.get("id", "Band")),
         }
     return {}
 
@@ -420,35 +406,20 @@ func _targeting_banner_bbcode(info: Dictionary) -> String:
         loc = "  [color=#%s](%d, %d)[/color]" % [
             HudStyle.INK_DIM_HEX, int(info.get("origin_x", 0)), int(info.get("origin_y", 0)),
         ]
-    var instruction := "click a band to send it here" if need == "band" else "click a tile to survey"
+    var instruction := ""
+    if need == "band":
+        instruction = "click a band to send it here"
+    elif cmd == "MOVE":
+        instruction = "click a destination tile"
+    else:
+        instruction = "click a tile to survey"
     return "[color=#%s]%s[/color]  [color=#%s]%s[/color]%s   [color=#%s]— %s[/color]" % [
         HudStyle.SIGNAL_HEX, cmd, HudStyle.INK_HEX, ctx, loc, HudStyle.INK_DIM_HEX, instruction,
     ]
 
-## Cancel whichever command is currently targeting (banner Cancel / Esc /
-## right-click all route here).
+## Cancel the active targeting (banner Cancel / Esc / right-click all route here).
 func cancel_active_targeting() -> void:
-    var changed := false
-    if not _pending_forage.is_empty():
-        _cancel_pending_forage(false)
-        changed = true
-    if not _pending_scout_unit.is_empty():
-        _cancel_pending_scout()
-        changed = true
-    if not _pending_hunt.is_empty():
-        _cancel_pending_hunt(false)
-        changed = true
-    if not _pending_follow.is_empty():
-        _cancel_pending_follow(false)
-        changed = true
-    # Re-render whenever anything is selected — not just a tile — so cancelling a
-    # pending Hunt/Follow on an inspector-selected herd (empty tile_info) still
-    # clears the buttons' "Cancel …" state.
-    if changed and (not _selected_tile_info.is_empty() or not _selected_herd.is_empty() or not _selected_unit.is_empty()):
-        _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
-    # Note: _cancel_pending_forage / _cancel_pending_scout already call
-    # _refresh_targeting(), so no extra refresh (and duplicate targeting_changed
-    # emission) is needed here.
+    _cancel_pending_move_band()
 
 ## Lower-left version overlay showing the client build and the streamed server build,
 ## so the running builds can be confirmed at a glance. Mouse-transparent so it never
@@ -640,34 +611,11 @@ func _connect_zoom_controls() -> void:
     if zoom_in_button != null and not zoom_in_button.is_connected("pressed", Callable(self, "_on_zoom_in_pressed")):
         zoom_in_button.pressed.connect(_on_zoom_in_pressed)
 
+## The labor-allocation UI (allocation panel, herd/tile assign controls) is built at
+## runtime with its own per-widget signal connections, so there are no static selection
+## buttons left to wire here. Kept as a hook for future static selection controls.
 func _connect_selection_buttons() -> void:
-    if unit_scout_button != null and not unit_scout_button.is_connected("pressed", Callable(self, "_on_unit_scout_pressed")):
-        unit_scout_button.pressed.connect(_on_unit_scout_pressed)
-        # Scouting is a positive morale lever (docs/plan_civ_wellbeing.md) — surface it.
-        unit_scout_button.tooltip_text = MORALE_HINT_SCOUT
-    if unit_cancel_button != null and not unit_cancel_button.is_connected("pressed", Callable(self, "_on_unit_cancel_pressed")):
-        unit_cancel_button.pressed.connect(_on_unit_cancel_pressed)
-        unit_cancel_button.tooltip_text = "Stop the band's current task and return it to idle."
-    if hunt_herd_button != null and not hunt_herd_button.is_connected("pressed", Callable(self, "_on_hunt_herd_pressed")):
-        hunt_herd_button.pressed.connect(_on_hunt_herd_pressed)
-        hunt_herd_button.tooltip_text = "Send a band to hunt the selected herd."
-    if single_button != null and not single_button.is_connected("pressed", Callable(self, "_on_hunt_policy_pressed")):
-        single_button.pressed.connect(_on_hunt_policy_pressed.bind("single"))
-        single_button.tooltip_text = "One hunt, then the band goes idle."
-    if follow_sustain_button != null and not follow_sustain_button.is_connected("pressed", Callable(self, "_on_hunt_policy_pressed")):
-        follow_sustain_button.pressed.connect(_on_hunt_policy_pressed.bind("sustain"))
-        follow_sustain_button.tooltip_text = "Hunt each turn at ≈ regrowth — the herd stays roughly stable." + MORALE_HINT_PERSISTENT
-    if follow_surplus_button != null and not follow_surplus_button.is_connected("pressed", Callable(self, "_on_hunt_policy_pressed")):
-        follow_surplus_button.pressed.connect(_on_hunt_policy_pressed.bind("surplus"))
-        follow_surplus_button.tooltip_text = "Hunt extra each turn for provisions/trade — the herd slowly declines." + MORALE_HINT_PERSISTENT
-    if follow_market_button != null and not follow_market_button.is_connected("pressed", Callable(self, "_on_hunt_policy_pressed")):
-        follow_market_button.pressed.connect(_on_hunt_policy_pressed.bind("market"))
-        follow_market_button.tooltip_text = "Commercially over-hunt each turn for a trade windfall — the herd declines fast." + MORALE_HINT_PERSISTENT
-    if follow_eradicate_button != null and not follow_eradicate_button.is_connected("pressed", Callable(self, "_on_hunt_policy_pressed")):
-        follow_eradicate_button.pressed.connect(_on_hunt_policy_pressed.bind("eradicate"))
-        follow_eradicate_button.tooltip_text = "Hunt maximally each turn — drives the herd toward local extinction." + MORALE_HINT_PERSISTENT
-    if forage_button != null and not forage_button.is_connected("pressed", Callable(self, "_on_forage_pressed")):
-        forage_button.pressed.connect(_on_forage_pressed)
+    pass
 
 func _connect_control_buttons() -> void:
     if next_turn_button != null and not next_turn_button.is_connected("pressed", Callable(self, "_on_next_turn_pressed")):
@@ -685,178 +633,338 @@ func _on_zoom_in_pressed() -> void:
 func _on_next_turn_pressed() -> void:
     emit_signal("next_turn_requested", 1)
 
-func _on_unit_scout_pressed() -> void:
-    if _selected_unit.is_empty():
-        _cancel_pending_scout()
+# ---- Early-Game Labor allocation (slice 3b) --------------------------------
+# Source-centric worker allocation for the single player band. The allocation panel
+# (band drawer), the herd "assign hunters" controls, and the tile "assign foragers"
+# controls are all built at runtime here; each emits `assign_labor_requested` (Main
+# formats the `assign_labor …` command). Clear-all reuses `cancel_order_requested`.
+
+## Resolve the band that assignment/move/clear commands target. The selected band when
+## it is a player band; otherwise the single player band captured from the snapshot (so
+## herd/tile assign controls still target it while a herd/tile is selected). {} if none.
+func _resolve_assign_band() -> Dictionary:
+    if not _selected_unit.is_empty() and _is_player_unit(_selected_unit):
+        return _selected_unit
+    return _player_band
+
+func _labor_assignments_of(band: Dictionary) -> Array:
+    var v: Variant = band.get("labor_assignments", [])
+    return v if v is Array else []
+
+## Workers currently on a band-wide role (scout/warrior); 0 when unstaffed.
+func _workers_for_role(band: Dictionary, kind: String) -> int:
+    for entry in _labor_assignments_of(band):
+        if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == kind:
+            return int((entry as Dictionary).get("workers", 0))
+    return 0
+
+## Workers currently foraging a specific in-range tile; 0 when unstaffed.
+func _workers_for_forage(band: Dictionary, x: int, y: int) -> int:
+    for entry in _labor_assignments_of(band):
+        if not (entry is Dictionary):
+            continue
+        var a: Dictionary = entry
+        if String(a.get("kind", "")).to_lower() == LABOR_KIND_FORAGE \
+                and int(a.get("target_x", -1)) == x and int(a.get("target_y", -1)) == y:
+            return int(a.get("workers", 0))
+    return 0
+
+## Workers currently hunting a specific herd; 0 when unstaffed.
+func _workers_for_hunt(band: Dictionary, herd_id: String) -> int:
+    for entry in _labor_assignments_of(band):
+        if not (entry is Dictionary):
+            continue
+        var a: Dictionary = entry
+        if String(a.get("kind", "")).to_lower() == LABOR_KIND_HUNT and String(a.get("fauna_id", "")) == herd_id:
+            return int(a.get("workers", 0))
+    return 0
+
+## The take policy of the band's existing hunt on `herd_id`, else the default.
+func _policy_for_hunt(band: Dictionary, herd_id: String) -> String:
+    for entry in _labor_assignments_of(band):
+        if not (entry is Dictionary):
+            continue
+        var a: Dictionary = entry
+        if String(a.get("kind", "")).to_lower() == LABOR_KIND_HUNT and String(a.get("fauna_id", "")) == herd_id:
+            var policy := String(a.get("policy", "")).strip_edges().to_lower()
+            if policy in LABOR_HUNT_POLICIES:
+                return policy
+    return DEFAULT_HUNT_POLICY
+
+## A friendlier label for a herd id — the roster/selected herd's label when known.
+func _herd_label_for_id(herd_id: String) -> String:
+    var herd := _find_roster_herd(herd_id)
+    if not herd.is_empty():
+        return String(herd.get("species", herd.get("label", herd_id)))
+    if String(_selected_herd.get("id", "")) == herd_id:
+        return String(_selected_herd.get("species", _selected_herd.get("label", herd_id)))
+    return herd_id
+
+## Emit an assign_labor request for the given band. Main formats the text command.
+func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String, policy: String) -> void:
+    var bits := int(band.get("entity", -1))
+    if bits < 0:
         return
-    var entity_id := int(_selected_unit.get("entity", -1))
-    if entity_id < 0:
+    emit_signal("assign_labor_requested", {
+        "faction": int(band.get("faction", PLAYER_FACTION_ID)),
+        "band": bits,
+        "kind": kind,
+        "workers": max(0, workers),
+        "x": x,
+        "y": y,
+        "herd_id": herd_id,
+        "policy": policy,
+    })
+
+## A "<label>   − N +" worker-count row. `on_change` is called with the new count
+## when either stepper is pressed. `plus_enabled` gates the + (e.g. no idle workers).
+func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable) -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    var name_label := Label.new()
+    name_label.text = label_text
+    name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    name_label.add_theme_color_override("font_color", HudStyle.INK)
+    row.add_child(name_label)
+    var minus := Button.new()
+    minus.text = "−"
+    minus.custom_minimum_size = Vector2(WORKER_STEPPER_BUTTON_WIDTH, 0)
+    HudStyle.apply_button(minus, "ghost")
+    minus.disabled = count <= 0
+    minus.pressed.connect(func() -> void: on_change.call(count - WORKER_STEP))
+    row.add_child(minus)
+    var value := Label.new()
+    value.text = str(count)
+    value.custom_minimum_size = Vector2(WORKER_STEPPER_VALUE_WIDTH, 0)
+    value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    value.add_theme_color_override("font_color", HudStyle.INK if count > 0 else HudStyle.INK_FAINT)
+    row.add_child(value)
+    var plus := Button.new()
+    plus.text = "+"
+    plus.custom_minimum_size = Vector2(WORKER_STEPPER_BUTTON_WIDTH, 0)
+    HudStyle.apply_button(plus, "ghost")
+    plus.disabled = not plus_enabled
+    plus.pressed.connect(func() -> void: on_change.call(count + WORKER_STEP))
+    row.add_child(plus)
+    return row
+
+## The band allocation panel: Working/Idle header, one −/+ row per staffed Forage/Hunt
+## source, the always-present Scout + Warrior band-wide role rows, and Move / Clear-all.
+## Each source/role row re-sends assign_labor with the new count (0 removes).
+func _build_allocation_panel(band: Dictionary) -> void:
+    if allocation_panel == null:
         return
-    if not _pending_scout_unit.is_empty() and int(_pending_scout_unit.get("entity", -1)) == entity_id:
-        _cancel_pending_scout()
+    for child in allocation_panel.get_children():
+        child.queue_free()
+    var is_player := not band.is_empty() and _is_player_unit(band)
+    allocation_panel.visible = is_player
+    if not is_player:
         return
-    _clear_other_pending("scout")
-    _pending_scout_unit = _selected_unit.duplicate(true)
-    if not _selected_tile_info.is_empty():
-        _try_dispatch_pending_scout(_selected_tile_info)
+    var working := int(band.get("working_age", 0))
+    var idle := int(band.get("idle_workers", 0))
+    var can_add := idle > 0
+    var header := Label.new()
+    header.text = "Working: %d    Idle: %d" % [working, idle]
+    header.add_theme_color_override("font_color", HudStyle.SIGNAL if can_add else HudStyle.INK_DIM)
+    allocation_panel.add_child(header)
+    var assignments := _labor_assignments_of(band)
+    var has_source := false
+    for entry in assignments:
+        if not (entry is Dictionary):
+            continue
+        var a: Dictionary = entry
+        var kind := String(a.get("kind", "")).strip_edges().to_lower()
+        var workers := int(a.get("workers", 0))
+        if kind == LABOR_KIND_FORAGE:
+            has_source = true
+            var fx := int(a.get("target_x", -1))
+            var fy := int(a.get("target_y", -1))
+            allocation_panel.add_child(_build_worker_stepper(
+                "Forage (%d, %d)" % [fx, fy], workers, can_add,
+                func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_FORAGE, n, fx, fy, "", "")))
+        elif kind == LABOR_KIND_HUNT:
+            has_source = true
+            var herd_id := String(a.get("fauna_id", ""))
+            var hx := int(a.get("target_x", -1))
+            var hy := int(a.get("target_y", -1))
+            var policy := _policy_for_hunt(band, herd_id)
+            allocation_panel.add_child(_build_worker_stepper(
+                "Hunt %s [%s]" % [_herd_label_for_id(herd_id), policy], workers, can_add,
+                func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_HUNT, n, hx, hy, herd_id, policy)))
+    # Scout + Warrior are band-wide roles: always shown (even at 0 workers).
+    allocation_panel.add_child(_build_worker_stepper(
+        "Scout", _workers_for_role(band, LABOR_KIND_SCOUT), can_add,
+        func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_SCOUT, n, -1, -1, "", "")))
+    allocation_panel.add_child(_build_worker_stepper(
+        "Warrior", _workers_for_role(band, LABOR_KIND_WARRIOR), can_add,
+        func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_WARRIOR, n, -1, -1, "", "")))
+    var actions := HBoxContainer.new()
+    actions.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    var move_btn := Button.new()
+    move_btn.text = "Move"
+    HudStyle.apply_button(move_btn, "primary")
+    move_btn.tooltip_text = "Relocate the band, then click a destination tile."
+    move_btn.pressed.connect(_on_move_band_pressed)
+    actions.add_child(move_btn)
+    var clear_btn := Button.new()
+    clear_btn.text = "Clear all"
+    HudStyle.apply_button(clear_btn, "ghost")
+    clear_btn.tooltip_text = "Return every worker to idle (clears all assignments)."
+    clear_btn.disabled = not has_source and idle >= working
+    clear_btn.pressed.connect(_on_clear_all_pressed.bind(band))
+    actions.add_child(clear_btn)
+    allocation_panel.add_child(actions)
+
+## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown
+## only for a huntable herd while a player band exists to staff it.
+func _build_herd_assign_controls(herd: Dictionary) -> void:
+    if herd_assign_controls == null:
+        return
+    for child in herd_assign_controls.get_children():
+        child.queue_free()
+    var band := _resolve_assign_band()
+    var can_assign := bool(herd.get("huntable", false)) and not band.is_empty()
+    herd_assign_controls.visible = can_assign
+    if not can_assign:
+        return
+    var herd_id := String(herd.get("id", ""))
+    # (Re)seed the compose count/policy when the selected herd changes; preserve it
+    # across per-snapshot re-renders of the same herd.
+    if _hunt_assign_key != herd_id:
+        _hunt_assign_key = herd_id
+        var staffed := _workers_for_hunt(band, herd_id)
+        _hunt_assign_count = staffed if staffed > 0 else WORKER_STEP
+        _hunt_assign_policy = _policy_for_hunt(band, herd_id)
+    var current := _workers_for_hunt(band, herd_id)
+    var title := Label.new()
+    title.text = "Assign hunters" + ("  (now %d)" % current if current > 0 else "")
+    title.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    herd_assign_controls.add_child(title)
+    var working := int(band.get("working_age", 0))
+    herd_assign_controls.add_child(_build_worker_stepper(
+        "Hunters", _hunt_assign_count, _hunt_assign_count < working,
+        func(n: int) -> void:
+            _hunt_assign_count = clampi(n, 0, working)
+            _build_herd_assign_controls(herd)))
+    herd_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
+        _hunt_assign_policy = policy
+        _build_herd_assign_controls(herd)))
+    var assign_btn := Button.new()
+    assign_btn.text = "Assign"
+    HudStyle.apply_button(assign_btn, "primary")
+    assign_btn.pressed.connect(func() -> void:
+        _emit_assign_labor(band, LABOR_KIND_HUNT, _hunt_assign_count,
+            int(herd.get("x", -1)), int(herd.get("y", -1)), herd_id, _hunt_assign_policy))
+    herd_assign_controls.add_child(assign_btn)
+
+## A sustain/surplus/market/eradicate policy radio; `on_pick` fires with the chosen policy.
+func _build_policy_picker(on_pick: Callable) -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    for policy in LABOR_HUNT_POLICIES:
+        var btn := Button.new()
+        btn.text = String(policy).capitalize()
+        HudStyle.apply_button(btn, "primary" if policy == _hunt_assign_policy else "ghost")
+        btn.pressed.connect(func() -> void: on_pick.call(policy))
+        row.add_child(btn)
+    return row
+
+## The tile "Assign foragers" controls (compose a count, then Assign). Shown only for a
+## tile with a food module while a player band exists to staff it.
+func _build_forage_assign_controls(tile_info: Dictionary) -> void:
+    if forage_assign_controls == null:
+        return
+    for child in forage_assign_controls.get_children():
+        child.queue_free()
+    var module_key := String(tile_info.get("food_module", "")).strip_edges()
+    var band := _resolve_assign_band()
+    var can_assign := module_key != "" and not band.is_empty()
+    forage_assign_controls.visible = can_assign
+    if not can_assign:
+        return
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
+    var key := "%d,%d" % [x, y]
+    if _forage_assign_key != key:
+        _forage_assign_key = key
+        var staffed := _workers_for_forage(band, x, y)
+        _forage_assign_count = staffed if staffed > 0 else WORKER_STEP
+    var current := _workers_for_forage(band, x, y)
+    var label := String(tile_info.get("food_module_label", module_key)).strip_edges()
+    if label == "":
+        label = module_key.capitalize()
+    var title := Label.new()
+    title.text = "Assign foragers — %s" % label + ("  (now %d)" % current if current > 0 else "")
+    title.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    forage_assign_controls.add_child(title)
+    var working := int(band.get("working_age", 0))
+    forage_assign_controls.add_child(_build_worker_stepper(
+        "Foragers", _forage_assign_count, _forage_assign_count < working,
+        func(n: int) -> void:
+            _forage_assign_count = clampi(n, 0, working)
+            _build_forage_assign_controls(tile_info)))
+    var assign_btn := Button.new()
+    assign_btn.text = "Assign"
+    HudStyle.apply_button(assign_btn, "primary")
+    assign_btn.pressed.connect(func() -> void:
+        _emit_assign_labor(band, LABOR_KIND_FORAGE, _forage_assign_count, x, y, "", ""))
+    forage_assign_controls.add_child(assign_btn)
+
+## Move-band: enter tile-targeting; the destination click emits move_band_requested.
+func _on_move_band_pressed() -> void:
+    var band := _resolve_assign_band()
+    if band.is_empty():
+        return
+    _pending_move_band = band.duplicate(true)
     _refresh_targeting()
 
-func _on_unit_cancel_pressed() -> void:
-    if _selected_unit.is_empty():
+func _cancel_pending_move_band() -> void:
+    if _pending_move_band.is_empty():
         return
-    # Optimistic feedback: mark a transition whose `before` is the band's current
-    # (task) activity, so the disabled "Cancelling <phrase>…" holds until the snapshot
-    # reports the band idle (activity changed) and the panel reverts to Scout.
-    var phrase := _task_action_phrase(
-        String(_selected_unit.get("activity", "")).strip_edges().to_lower(),
-        String(_selected_unit.get("hunt_mode", "")))
-    _begin_band_transition(_selected_unit, CANCEL_ORDER_PENDING_VERB, phrase)
-    emit_signal("cancel_order_requested", _selected_unit)
+    _pending_move_band = {}
+    _refresh_targeting()
 
-## Register an optimistic order transition for `band` and, if that band's drawer is
-## the one on screen, flip the cancel button to the disabled in-flight label
-## ("<verb> <phrase>…") immediately (no wait for the confirming render). Shared by
-## start (Scout/Forage) and cancel — both wait for the band's `activity` to change
-## from its dispatch value.
-func _begin_band_transition(band: Dictionary, verb: String, phrase: String) -> void:
-    var entity_id := int(band.get("entity", -1))
-    if entity_id < 0:
+func _try_dispatch_pending_move_band(tile_info: Dictionary) -> void:
+    if _pending_move_band.is_empty() or tile_info.is_empty():
         return
-    var label := "%s %s…" % [verb, phrase]
-    var before := String(band.get("activity", "")).strip_edges().to_lower()
-    _pending_transition_bands[entity_id] = {"before": before, "label": label}
-    if int(_selected_unit.get("entity", -1)) != entity_id:
-        return
-    if unit_scout_button != null:
-        unit_scout_button.visible = false
-    if unit_cancel_button != null:
-        unit_cancel_button.visible = true
-        unit_cancel_button.disabled = true
-        unit_cancel_button.text = label
-
-## The bare action phrase for a band's task, keyed off its coarse `activity` and
-## (for fauna pursuit) its `hunt_mode` sub-mode: "Scouting" / "Foraging" /
-## "<Mode> Hunt" / "Hunt" / "Task". Single source of truth for both the active
-## "Cancel <phrase>" button and the in-flight "Cancelling <phrase>…" transition.
-func _task_action_phrase(activity: String, hunt_mode: String) -> String:
-    match activity:
-        "scout":
-            return "Scouting"
-        "harvest":
-            return "Foraging"
-        "hunt", "follow":
-            var mode := hunt_mode.strip_edges()
-            if mode == "":
-                return "Hunt"
-            return "%s Hunt" % mode.capitalize()
-        _:
-            return "Task"
-
-## Text for the active cancel button — "Cancel " + the shared action phrase.
-func _cancel_label_for(activity: String, hunt_mode: String) -> String:
-    return "Cancel %s" % _task_action_phrase(activity, hunt_mode)
-
-## Toggle a player band's action buttons by task state: idle bands offer the
-## default Scout action; bands on any task offer a single labelled Cancel button.
-func _update_unit_task_buttons(unit: Dictionary) -> void:
-    var entity_id := int(unit.get("entity", -1))
-    var activity := String(unit.get("activity", "")).strip_edges().to_lower()
-    var on_task := activity != "" and activity != BAND_ACTIVITY_IDLE
-    # Optimistic order transition (start OR cancel) in flight for this band: hold the
-    # disabled in-flight label while the band's activity still matches its dispatch
-    # value; once it changes (server confirm) clear the entry and fall through to the
-    # normal Scout/Cancel state.
-    if entity_id >= 0 and _pending_transition_bands.has(entity_id):
-        var transition: Dictionary = _pending_transition_bands[entity_id]
-        if activity == String(transition.get("before", "")):
-            if unit_scout_button != null:
-                unit_scout_button.visible = false
-            if unit_cancel_button != null:
-                unit_cancel_button.visible = true
-                unit_cancel_button.disabled = true
-                unit_cancel_button.text = String(transition.get("label", ""))
-            return
-        _pending_transition_bands.erase(entity_id)
-    if unit_scout_button != null:
-        unit_scout_button.visible = not on_task
-    if unit_cancel_button != null:
-        # Re-enable in case this button was left disabled by a prior band's transition.
-        unit_cancel_button.disabled = false
-        unit_cancel_button.visible = on_task
-        if on_task:
-            unit_cancel_button.text = _cancel_label_for(activity, String(unit.get("hunt_mode", "")))
-
-## The single Hunt verb, routed by the active policy: Single → a one-shot
-## `hunt_fauna` (`_pending_hunt`); any other policy → a persistent `follow_herd`
-## (`_pending_follow`). Toggling the button while *either* kind is pending for this
-## herd cancels it (matching the unified "Cancel Hunt" label), regardless of policy.
-func _on_hunt_herd_pressed() -> void:
-    if _selected_herd.is_empty():
-        return
-    var herd_id := String(_selected_herd.get("id", ""))
-    if herd_id == "":
-        return
-    # The button reads "Cancel Hunt" whenever *either* pending kind is active for
-    # this herd (see _update_herd_buttons), so honor that contract: cancel any
-    # pending hunt/follow before routing by policy, rather than only the kind that
-    # happens to match the current policy (which would re-target instead of cancel).
-    if not _pending_hunt.is_empty() and String(_pending_hunt.get("herd_id", "")) == herd_id:
-        _cancel_pending_hunt(true)
-        return
-    if not _pending_follow.is_empty() and String(_pending_follow.get("herd_id", "")) == herd_id:
-        _cancel_pending_follow(true)
-        return
-    if _hunt_policy == HUNT_POLICY_SINGLE:
-        _begin_pending_hunt(herd_id)
-    else:
-        _begin_pending_follow(herd_id, _hunt_policy)
-
-func _on_hunt_policy_pressed(policy: String) -> void:
-    if policy in HUNT_POLICIES:
-        _hunt_policy = policy
-    _refresh_hunt_policy_buttons()
-    # If a hunt is already being targeted, switching policy re-derives the pending
-    # action through the same begin path — this converts single↔persistent in place
-    # (dropping the other pending kind) so the banner matches the new policy.
-    if not _selected_herd.is_empty() and (not _pending_hunt.is_empty() or not _pending_follow.is_empty()):
-        var herd_id := String(_selected_herd.get("id", ""))
-        if herd_id != "":
-            if _hunt_policy == HUNT_POLICY_SINGLE:
-                _begin_pending_hunt(herd_id)
-            else:
-                _begin_pending_follow(herd_id, _hunt_policy)
-
-## Restyle the policy radio so the active policy reads as selected.
-func _refresh_hunt_policy_buttons() -> void:
-    var buttons := {
-        "single": single_button,
-        "sustain": follow_sustain_button,
-        "surplus": follow_surplus_button,
-        "market": follow_market_button,
-        "eradicate": follow_eradicate_button,
-    }
-    for policy in buttons:
-        var btn: Button = buttons[policy]
-        if btn == null:
-            continue
-        HudStyle.apply_button(btn, "primary" if policy == _hunt_policy else "ghost")
-
-func _on_forage_pressed() -> void:
-    if _selected_food_module == "":
-        return
-    var x := int(_selected_tile_info.get("x", -1))
-    var y := int(_selected_tile_info.get("y", -1))
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
     if x < 0 or y < 0:
         return
-    var module_key := _selected_food_module
-    var action := FOOD_ACTION_HUNT if _selected_food_is_hunt else FOOD_ACTION_FORAGE
-    if _pending_forage_matches_coords(x, y, module_key):
-        if _pending_forage_action() == action:
-            _cancel_pending_forage(true)
-        else:
-            _begin_pending_forage(x, y, module_key, action)
-    else:
-        _begin_pending_forage(x, y, module_key, action)
+    var band := _pending_move_band
+    emit_signal("move_band_requested", {
+        "faction": int(band.get("faction", PLAYER_FACTION_ID)),
+        "band": int(band.get("entity", -1)),
+        "x": x,
+        "y": y,
+    })
+    _pending_move_band = {}
+    _refresh_targeting()
+
+## Clear-all: return every worker to idle (repurposed cancel_order).
+func _on_clear_all_pressed(band: Dictionary) -> void:
+    if band.is_empty():
+        return
+    emit_signal("cancel_order_requested", band)
+
+## Map double-click convenience (Main forwards `MapView.herd_quick_hunt_requested`): assign
+## ALL of the player band's currently-idle workers to hunt `herd_id` at the default Sustain
+## policy. A no-op (with a command-feed note) when there's no player band or no idle workers,
+## so the shortcut never silently does nothing.
+func quick_assign_hunters(herd_id: String) -> void:
+    if herd_id.strip_edges() == "":
+        return
+    var band := _resolve_assign_band()
+    if band.is_empty():
+        _note_command_feed("Quick-hunt", "No player band to assign.")
+        return
+    var idle := int(band.get("idle_workers", 0))
+    if idle <= 0:
+        _note_command_feed("Quick-hunt", "No idle workers to assign to %s." % herd_id)
+        return
+    _emit_assign_labor(band, LABOR_KIND_HUNT, idle,
+        int(band.get("current_x", -1)), int(band.get("current_y", -1)), herd_id, DEFAULT_HUNT_POLICY)
 
 
 func update_overlay_legend(legend: Dictionary) -> void:
@@ -983,12 +1091,12 @@ func show_tile_selection(tile_info: Dictionary) -> void:
     _selected_herd.clear()
     _selected_food_module = String(_selected_tile_info.get("food_module", "")).strip_edges()
     _render_selection_panel(_selected_tile_info, {}, {})
-    _try_dispatch_pending_scout(_selected_tile_info)
+    _try_dispatch_pending_move_band(_selected_tile_info)
 
 func notify_hex_selected(tile_info: Dictionary) -> void:
     if tile_info.is_empty():
         return
-    _try_dispatch_pending_scout(tile_info)
+    _try_dispatch_pending_move_band(tile_info)
 
 func show_unit_selection(unit_data: Dictionary) -> void:
     var tile_info: Dictionary = {}
@@ -1066,8 +1174,8 @@ func reapply_selection(kind: String, data: Dictionary) -> void:
             if _selected_tile_info.is_empty():
                 if tile_panel != null:
                     tile_panel.visible = false
-                if forage_button != null:
-                    forage_button.visible = false
+                if forage_assign_controls != null:
+                    forage_assign_controls.visible = false
                 _set_occupants_relevant(false)
             else:
                 _render_selection_panel(_selected_tile_info, {}, {})
@@ -1113,8 +1221,8 @@ func _assemble_roster(tile_info: Dictionary) -> void:
     if not _selected_herd.is_empty() and _find_roster_herd(String(_selected_herd.get("id", ""))).is_empty():
         _roster_herds.append(_selected_herd)
 
-## The Tile card: the place. Terrain rows + the Forage action (its only action).
-## Kind stays "Tile" even when an occupant is selected.
+## The Tile card: the place. Terrain rows + the "Assign foragers" controls (its only
+## action). Kind stays "Tile" even when an occupant is selected.
 func _render_tile_card(tile_info: Dictionary) -> void:
     if tile_panel == null or tile_detail == null:
         return
@@ -1125,7 +1233,7 @@ func _render_tile_card(tile_info: Dictionary) -> void:
         title_text = "(%d, %d)" % [int(tile_info.get("x", -1)), int(tile_info.get("y", -1))]
     tile_panel.set_card_title(title_text)
     tile_detail.text = _format_detail_bbcode(_tile_terrain_lines(tile_info))
-    _update_food_buttons(tile_info)
+    _build_forage_assign_controls(tile_info)
 
 ## The Occupants card: a selectable roster of bands + wildlife on the hex, plus a
 ## detail drawer for the selected occupant. Hidden (dock reflows) on an empty hex.
@@ -1134,10 +1242,10 @@ func _render_occupants_card() -> void:
         return
     if _roster_units.is_empty() and _roster_herds.is_empty():
         _set_occupants_relevant(false)
-        if unit_buttons != null:
-            unit_buttons.visible = false
-        if herd_buttons != null:
-            herd_buttons.visible = false
+        if allocation_panel != null:
+            allocation_panel.visible = false
+        if herd_assign_controls != null:
+            herd_assign_controls.visible = false
         return
     _set_occupants_relevant(true)
     occupants_panel.set_card_kind("Occupants")
@@ -1208,10 +1316,6 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     if weight > 0.0:
         food_line += " (weight %.2f)" % weight
     lines.append(food_line)
-    if _pending_forage_matches_tile(tile_info):
-        var pending_action := _pending_forage_action()
-        var verb := "Hunt" if pending_action == FOOD_ACTION_HUNT else "Harvest"
-        lines.append("%s pending: select a band to send here." % verb)
     return lines
 
 # ---- Occupants roster ------------------------------------------------------
@@ -1399,16 +1503,16 @@ func _render_occupant_drawer() -> void:
     occupant_detail.text = _format_detail_bbcode(lines)
     var is_band := not _selected_unit.is_empty()
     var is_herd := not _selected_herd.is_empty()
-    if unit_buttons != null:
-        # Scout is a player-band action only.
-        var is_player_band := is_band and _is_player_unit(_selected_unit)
-        unit_buttons.visible = is_player_band
-        if is_player_band:
-            _update_unit_task_buttons(_selected_unit)
-    if herd_buttons != null:
-        herd_buttons.visible = is_herd
+    # Band → labor allocation panel (player bands only); herd → assign-hunters controls.
+    # The two are mutually exclusive with the current occupant selection.
+    if is_band and _is_player_unit(_selected_unit):
+        _build_allocation_panel(_selected_unit)
+    elif allocation_panel != null:
+        allocation_panel.visible = false
     if is_herd:
-        _update_herd_buttons(_selected_herd)
+        _build_herd_assign_controls(_selected_herd)
+    elif herd_assign_controls != null:
+        herd_assign_controls.visible = false
 
 ## Player-faction check for a roster/drawer band (mirrors MapView._is_player_unit).
 func _is_player_unit(unit: Dictionary) -> bool:
@@ -1437,17 +1541,8 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
-    if _pending_scout_for_entity(int(unit_data.get("entity", -1))):
-        lines.append("")
-        lines.append("Scout pending: select a target tile.")
-    var harvest_variant: Variant = unit_data.get("harvest", {})
-    if harvest_variant is Dictionary and not (harvest_variant as Dictionary).is_empty():
-        lines.append("")
-        lines.append_array(_harvest_summary_lines(harvest_variant))
-    var scout_variant: Variant = unit_data.get("scout", {})
-    if scout_variant is Dictionary and not (scout_variant as Dictionary).is_empty():
-        lines.append("")
-        lines.append_array(_scout_summary_lines(scout_variant))
+    # Per-source labor is now shown by the allocation panel (a real −/+ control set),
+    # not as drawer text; the old single-task harvest/scout summaries are retired.
     var stockpile_variant: Variant = unit_data.get("accessible_stockpile", {})
     if stockpile_variant is Dictionary:
         var stockpile_lines := _accessible_stockpile_lines(stockpile_variant)
@@ -1569,42 +1664,6 @@ func _food_days_text(days: float) -> String:
         return FOOD_UNLIMITED_GLYPH
     return "%d days" % int(round(days))
 
-func _harvest_summary_lines(harvest: Dictionary) -> Array[String]:
-    var lines: Array[String] = []
-    var module_key := String(harvest.get("module", "")).strip_edges()
-    var module_label := _format_food_module_label(module_key)
-    var action := String(harvest.get("action", FOOD_ACTION_FORAGE)).strip_edges()
-    var action_label := "Harvest" if action != FOOD_ACTION_HUNT else "Hunt"
-    var status := action_label
-    var travel_remaining := int(harvest.get("travel_remaining", 0))
-    var travel_total: int = max(int(harvest.get("travel_total", 0)), travel_remaining)
-    var gather_remaining := int(harvest.get("gather_remaining", 0))
-    var gather_total: int = max(int(harvest.get("gather_total", 0)), gather_remaining)
-    if travel_remaining > 0:
-        status = "Traveling"
-    elif gather_remaining > 0:
-        status = action_label
-    else:
-        status = "Finishing"
-    lines.append("%s: %s" % [status, module_label])
-    if travel_total > 0:
-        lines.append("Travel: %d/%d turns" % [travel_total - travel_remaining, travel_total])
-    if gather_total > 0:
-        lines.append("Gather: %d/%d turns" % [gather_total - gather_remaining, gather_total])
-    var eta: int = max(travel_remaining, 0) + max(gather_remaining, 0)
-    if eta > 0:
-        lines.append("ETA: %d turn%s" % [eta, "s" if eta != 1 else ""])
-    var provisions := float(harvest.get("provisions_reward", 0.0))
-    var trade_goods := int(harvest.get("trade_goods_reward", 0))
-    var reward_parts: Array[String] = []
-    if provisions > 0.0:
-        reward_parts.append("+%.1f provisions" % provisions)
-    if trade_goods > 0:
-        reward_parts.append("+%d trade goods" % trade_goods)
-    if not reward_parts.is_empty():
-        lines.append("Reward: %s" % ", ".join(reward_parts))
-    return lines
-
 func _format_food_module_label(module_key: String) -> String:
     if module_key == "":
         return "Unknown"
@@ -1693,23 +1752,6 @@ func _format_food_kind_label(kind_value: String) -> String:
     if parts.is_empty():
         return kind_value.capitalize()
     return " ".join(parts)
-
-func _scout_summary_lines(task: Dictionary) -> Array[String]:
-    var lines: Array[String] = []
-    var travel_remaining: int = int(task.get("travel_remaining", 0))
-    var travel_total: int = max(int(task.get("travel_total", 0)), travel_remaining)
-    var status := "Scouting"
-    if travel_remaining > 0:
-        status = "Traveling"
-    lines.append("%s" % status)
-    lines.append("Travel: %d/%d turns" % [travel_total - travel_remaining, travel_total])
-    var radius := int(task.get("reveal_radius", 0))
-    if radius > 0:
-        lines.append("Reveal radius: %d" % radius)
-    var morale := float(task.get("morale_gain", 0.0))
-    if morale > 0.0:
-        lines.append("Morale +%.2f" % morale)
-    return lines
 
 func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     var lines: Array[String] = []
@@ -1871,80 +1913,24 @@ func _split_detail_kv(line: String) -> Array:
         return []
     return [key, value]
 
-## Herd action: one Hunt verb (gated on `huntable`) + the policy radio. The button
-## enters targeting mode to pick a band and flips to a unified "Cancel Hunt" while
-## either the one-shot (`_pending_hunt`) or persistent (`_pending_follow`) hunt is pending.
-func _update_herd_buttons(herd_data: Dictionary) -> void:
-    if herd_data.is_empty():
-        return
-    var herd_id := String(herd_data.get("id", ""))
-    # Fail closed: only offer Hunt when the snapshot explicitly allows it. The Hunt
-    # button and its policy radio hide together on a non-huntable herd, so the radio
-    # never orphans without a button to commit it (Single/Sustain/… all hunt).
-    var huntable := bool(herd_data.get("huntable", false))
-    if hunt_herd_button != null:
-        hunt_herd_button.visible = huntable
-        var hunt_pending := not _pending_hunt.is_empty() and String(_pending_hunt.get("herd_id", "")) == herd_id
-        var follow_pending := not _pending_follow.is_empty() and String(_pending_follow.get("herd_id", "")) == herd_id
-        var pending := hunt_pending or follow_pending
-        HudStyle.apply_button(hunt_herd_button, "armed" if pending else "primary")
-        hunt_herd_button.text = "Cancel Hunt" if pending else "Hunt"
-    if hunt_policy_buttons != null:
-        hunt_policy_buttons.visible = huntable
-    _refresh_hunt_policy_buttons()
-
-func _update_food_buttons(tile_info: Dictionary) -> void:
-    if forage_button == null:
-        return
-    var module_key := String(tile_info.get("food_module", "")).strip_edges()
-    if module_key == "":
-        forage_button.visible = false
-        _selected_food_module = ""
-        _selected_food_is_hunt = false
-        return
-    _selected_food_module = module_key
-    _selected_food_is_hunt = false
-    var label := String(tile_info.get("food_module_label", "Harvest")).strip_edges()
-    if label == "":
-        label = module_key.capitalize()
-    var pending_active := _pending_forage_matches_tile(tile_info)
-    HudStyle.apply_button(forage_button, "armed" if pending_active else "primary")
-    if pending_active:
-        forage_button.text = "Cancel Harvest"
-        forage_button.tooltip_text = "Cancel the pending harvest assignment for this tile."
-    else:
-        var turns := _travel_turns_for_tile(tile_info)
-        var button_text := "Harvest %s" % label
-        if turns > 0:
-            button_text += " (~%d turns)" % turns
-        forage_button.text = "%s  %s" % [FoodIcons.for_site(module_key, false), button_text]
-        var hint := _travel_eta_hint(tile_info)
-        if hint == "":
-            hint = "Select a band after clicking to send them here."
-        forage_button.tooltip_text = hint
-    forage_button.disabled = false
-    forage_button.visible = true
-
 func clear_selection() -> void:
     _selected_unit.clear()
     _selected_herd.clear()
     _selected_food_module = ""
     _selected_food_is_hunt = false
-    if not _pending_forage.is_empty():
-        _cancel_pending_forage(false)
-    # keep pending scout so user can still choose a tile after deselecting
+    # Keep pending move-band so the user can still choose a destination after deselecting.
     if _selected_tile_info.is_empty():
         if tile_panel != null:
             tile_panel.visible = false
-        if forage_button != null:
-            forage_button.visible = false
+        if forage_assign_controls != null:
+            forage_assign_controls.visible = false
         _set_occupants_relevant(false)
     else:
         _render_selection_panel(_selected_tile_info, {}, {})
-    if unit_buttons != null:
-        unit_buttons.visible = false
-    if herd_buttons != null:
-        herd_buttons.visible = false
+    if allocation_panel != null:
+        allocation_panel.visible = false
+    if herd_assign_controls != null:
+        herd_assign_controls.visible = false
 
 func _travel_eta_hint(tile_info: Dictionary) -> String:
     var distance := int(tile_info.get("nearest_unit_distance", -1))
@@ -2031,6 +2017,9 @@ func update_band_alerts(populations_variant: Variant) -> void:
     var new_sizes: Dictionary = {}
     var alerts: Array = []
     var band_index := 0
+    # Capture the single player band each snapshot; the labor-allocation UI targets it
+    # (assign/move/clear) and reads its labor_assignments for the herd/tile assign controls.
+    var player_band: Dictionary = {}
     for entry_variant in populations:
         if not (entry_variant is Dictionary):
             continue
@@ -2038,6 +2027,8 @@ func update_band_alerts(populations_variant: Variant) -> void:
         if int(entry.get("faction", -1)) != PLAYER_FACTION_ID:
             continue
         band_index += 1
+        if player_band.is_empty():
+            player_band = entry
         var entity := int(entry.get("entity", -1))
         var size := int(entry.get("size", 0))
         var days := float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
@@ -2059,6 +2050,14 @@ func update_band_alerts(populations_variant: Variant) -> void:
         if activity == BAND_ACTIVITY_IDLE:
             alerts.append({"type": ALERT_TYPE_IDLE, "band": band_name, "x": x, "y": y})
     _prev_band_sizes = new_sizes
+    _player_band = player_band
+    # Keep the on-screen allocation panel / assign controls live as the band's staffing
+    # changes turn to turn (the coordinator re-renders occupant/tile cards separately, but
+    # a herd/tile selection reads _player_band, which only just refreshed here).
+    if not _selected_herd.is_empty():
+        _build_herd_assign_controls(_selected_herd)
+    elif not _selected_tile_info.is_empty() and _selected_unit.is_empty():
+        _build_forage_assign_controls(_selected_tile_info)
     _render_alerts(alerts)
 
 ## Why a band is shrinking: a food crisis (larder below critical) reads "starving" first;
@@ -2081,16 +2080,9 @@ func _decline_reason(days: float, morale: float, morale_cause: int, last_emigrat
         return DECLINE_REASON_LOW_MORALE
     return ""
 
-## Best-effort readable band name: the label carried on an active harvest/scout
-## task, else a positional "Band N". (Cohorts carry no top-level band label in the
-## snapshot yet — see the server-side follow-up.)
-func _band_display_name(entry: Dictionary, index: int) -> String:
-    for task_key in ["harvest", "scout"]:
-        var task_variant: Variant = entry.get(task_key, {})
-        if task_variant is Dictionary:
-            var label := String((task_variant as Dictionary).get("band_label", "")).strip_edges()
-            if label != "":
-                return label
+## Best-effort readable band name: a positional "Band N". (Cohorts carry no top-level
+## band label in the snapshot yet — see the server-side follow-up.)
+func _band_display_name(_entry: Dictionary, index: int) -> String:
     return "Band %d" % index
 
 func _render_alerts(alerts: Array) -> void:
@@ -2148,6 +2140,13 @@ func _on_alert_meta_clicked(meta: Variant) -> void:
     if x < 0 or y < 0:
         return
     emit_signal("alert_focus_requested", x, y)
+
+## Post a short local note to the command feed (no server round-trip) — used when a
+## client-side shortcut can't act (e.g. quick-hunt with no idle workers) so it never
+## silently no-ops.
+func _note_command_feed(label: String, detail: String) -> void:
+    _append_command_feed_entry(-1, "", label, detail)
+    _render_command_feed()
 
 func _append_command_feed_entry(tick: int, kind: String, label: String, detail: String) -> void:
     var prefix := kind.capitalize() if kind != "" else "Command"
@@ -2251,208 +2250,6 @@ func _format_victory_label(raw: String) -> String:
     for i in range(parts.size()):
         parts[i] = String(parts[i]).capitalize()
     return String(" ".join(parts)).strip_edges()
-
-func consume_pending_forage(unit_data: Dictionary) -> Dictionary:
-    if _pending_forage.is_empty():
-        return {}
-    var x := int(_pending_forage.get("x", -1))
-    var y := int(_pending_forage.get("y", -1))
-    var module_key := String(_pending_forage.get("module", "")).strip_edges()
-    var action := String(_pending_forage.get("action", FOOD_ACTION_FORAGE))
-    if x < 0 or y < 0 or (module_key == "" and action != FOOD_ACTION_HUNT):
-        _pending_forage.clear()
-        _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
-        _refresh_targeting()
-        return {}
-    var payload := _pending_forage.duplicate(true)
-    payload["action"] = action
-    var unit_label := String(unit_data.get("id", unit_data.get("entity", "Band")))
-    payload["unit_label"] = unit_label
-    var entity_bits_variant: Variant = unit_data.get("entity", -1)
-    if typeof(entity_bits_variant) == TYPE_INT:
-        payload["band_entity_bits"] = int(entity_bits_variant)
-    payload["unit_id"] = entity_bits_variant
-    _pending_forage.clear()
-    # Forage/Hunt-game is dispatched to the just-selected band: show "Starting
-    # Foraging…" (or "Starting Hunt…" for the hunt-game variant) until its activity
-    # flips to the ordered task. Phrases route through `_task_action_phrase` (no bare
-    # literals). `_selected_unit` is this band (set by the preceding show_unit_selection),
-    # so the transition renders on the drawer below.
-    var start_phrase := _task_action_phrase("hunt", "") if action == FOOD_ACTION_HUNT else _task_action_phrase("harvest", "")
-    _begin_band_transition(unit_data, START_ORDER_PENDING_VERB, start_phrase)
-    _render_selection_panel(_selected_tile_info, unit_data, _selected_herd)
-    _refresh_targeting()
-    return payload
-
-func _pending_forage_matches_tile(tile_info: Dictionary) -> bool:
-    if tile_info.is_empty():
-        return false
-    var module_key := String(tile_info.get("food_module", "")).strip_edges()
-    var x := int(tile_info.get("x", -1))
-    var y := int(tile_info.get("y", -1))
-    return _pending_forage_matches_coords(x, y, module_key)
-
-func _pending_forage_matches_coords(x: int, y: int, module_key: String) -> bool:
-    if _pending_forage.is_empty():
-        return false
-    if x != int(_pending_forage.get("x", -1)) or y != int(_pending_forage.get("y", -1)):
-        return false
-    var pending_module := String(_pending_forage.get("module", "")).strip_edges()
-    if pending_module == "":
-        return module_key == "" or module_key == pending_module
-    if module_key == "":
-        return true
-    return module_key == pending_module
-
-func _pending_forage_action() -> String:
-    if _pending_forage.is_empty():
-        return FOOD_ACTION_FORAGE
-    return String(_pending_forage.get("action", FOOD_ACTION_FORAGE))
-
-func _pending_scout_for_entity(entity_id: int) -> bool:
-    if entity_id < 0 or _pending_scout_unit.is_empty():
-        return false
-    return int(_pending_scout_unit.get("entity", -1)) == entity_id
-
-func _cancel_pending_scout() -> void:
-    if _pending_scout_unit.is_empty():
-        return
-    _pending_scout_unit.clear()
-    _refresh_targeting()
-
-func _try_dispatch_pending_scout(tile_info: Dictionary) -> void:
-    if _pending_scout_unit.is_empty() or tile_info.is_empty():
-        return
-    var target_x := int(tile_info.get("x", -1))
-    var target_y := int(tile_info.get("y", -1))
-    if target_x < 0 or target_y < 0:
-        return
-    var unit_pos: Array = Array(_pending_scout_unit.get("pos", []))
-    if unit_pos.size() == 2 and target_x == int(unit_pos[0]) and target_y == int(unit_pos[1]):
-        return
-    var band_bits := int(_pending_scout_unit.get("entity", -1))
-    if band_bits < 0:
-        return
-    emit_signal("unit_scout_requested", target_x, target_y, band_bits)
-    # Scout is a band-panel order for the still-selected band: show "Starting
-    # Scouting…" from the moment the command is dispatched (not while picking the tile).
-    _begin_band_transition(_pending_scout_unit, START_ORDER_PENDING_VERB, _task_action_phrase("scout", ""))
-    _pending_scout_unit.clear()
-    _refresh_targeting()
-
-func _begin_pending_forage(x: int, y: int, module_key: String, action: String) -> void:
-    _clear_other_pending("forage")
-    var module_label := String(_selected_tile_info.get("food_module_label", module_key)).strip_edges()
-    if module_label == "":
-        module_label = module_key.capitalize()
-    _pending_forage = {
-        "x": x,
-        "y": y,
-        "module": module_key,
-        "module_label": module_label,
-        "action": action if action != "" else FOOD_ACTION_FORAGE,
-    }
-    _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
-    _refresh_targeting()
-
-func _cancel_pending_forage(refresh: bool) -> void:
-    _pending_forage.clear()
-    if refresh:
-        _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
-    _refresh_targeting()
-
-## Only one command targets at a time — clear any other pending action so the
-## banner + band glow are unambiguous.
-func _clear_other_pending(keep: String) -> void:
-    if keep != "forage":
-        _pending_forage.clear()
-    if keep != "scout":
-        _pending_scout_unit.clear()
-    if keep != "hunt":
-        _pending_hunt.clear()
-    if keep != "follow":
-        _pending_follow.clear()
-
-func _begin_pending_hunt(herd_id: String) -> void:
-    _clear_other_pending("hunt")
-    _pending_hunt = {
-        "herd_id": herd_id,
-        "x": int(_selected_herd.get("x", -1)),
-        "y": int(_selected_herd.get("y", -1)),
-        "label": String(_selected_herd.get("label", herd_id)),
-    }
-    _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
-    _refresh_targeting()
-
-func _cancel_pending_hunt(refresh: bool) -> void:
-    _pending_hunt.clear()
-    if refresh:
-        _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
-    _refresh_targeting()
-
-func consume_pending_hunt(unit_data: Dictionary) -> Dictionary:
-    if _pending_hunt.is_empty():
-        return {}
-    var herd_id := String(_pending_hunt.get("herd_id", ""))
-    if herd_id == "":
-        _pending_hunt.clear()
-        _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
-        _refresh_targeting()
-        return {}
-    var payload := {"herd_id": herd_id}
-    var entity_bits_variant: Variant = unit_data.get("entity", -1)
-    if typeof(entity_bits_variant) == TYPE_INT:
-        payload["band_entity_bits"] = int(entity_bits_variant)
-    _pending_hunt.clear()
-    # One-shot hunt dispatched to the just-selected band (its live hunt_mode is
-    # "single"): show "Starting Single Hunt…" until the snapshot confirms the task.
-    _begin_band_transition(unit_data, START_ORDER_PENDING_VERB, _task_action_phrase("hunt", HUNT_POLICY_SINGLE))
-    _render_selection_panel(_selected_tile_info, unit_data, _selected_herd)
-    _refresh_targeting()
-    return payload
-
-func _begin_pending_follow(herd_id: String, policy: String) -> void:
-    _clear_other_pending("follow")
-    _pending_follow = {
-        "herd_id": herd_id,
-        "policy": policy if (policy in HUNT_POLICIES and policy != HUNT_POLICY_SINGLE) else "sustain",
-        "x": int(_selected_herd.get("x", -1)),
-        "y": int(_selected_herd.get("y", -1)),
-        "label": String(_selected_herd.get("label", herd_id)),
-    }
-    _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
-    _refresh_targeting()
-
-func _cancel_pending_follow(refresh: bool) -> void:
-    _pending_follow.clear()
-    if refresh:
-        _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
-    _refresh_targeting()
-
-func consume_pending_follow(unit_data: Dictionary) -> Dictionary:
-    if _pending_follow.is_empty():
-        return {}
-    var herd_id := String(_pending_follow.get("herd_id", ""))
-    if herd_id == "":
-        _pending_follow.clear()
-        _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
-        _refresh_targeting()
-        return {}
-    var policy := String(_pending_follow.get("policy", "sustain"))
-    var payload := {
-        "herd_id": herd_id,
-        "policy": policy,
-    }
-    var entity_bits_variant: Variant = unit_data.get("entity", -1)
-    if typeof(entity_bits_variant) == TYPE_INT:
-        payload["band_entity_bits"] = int(entity_bits_variant)
-    _pending_follow.clear()
-    # Persistent follow-hunt dispatched to the just-selected band (its live activity
-    # is "follow" + hunt_mode=<policy>): show "Starting <Policy> Hunt…" until confirmed.
-    _begin_band_transition(unit_data, START_ORDER_PENDING_VERB, _task_action_phrase("follow", policy))
-    _render_selection_panel(_selected_tile_info, unit_data, _selected_herd)
-    _refresh_targeting()
-    return payload
 
 func _resolve_localized_field(field: String) -> String:
     var text := String(campaign_label.get(field, ""))

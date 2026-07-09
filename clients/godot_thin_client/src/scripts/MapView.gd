@@ -8,14 +8,13 @@ signal tile_selected(info: Dictionary)
 signal overlay_legend_changed(legend: Dictionary)
 signal unit_selected(unit: Dictionary)
 signal herd_selected(herd: Dictionary)
-signal herd_follow_shortcut(herd_id: String)
-signal herd_scout_shortcut(herd_id: String, col: int, row: int)
+## Double-click on a herd (Early-Game Labor slice 3b): a convenience that assigns the
+## player band's idle workers to hunt this herd (Main → Hud.quick_assign_hunters). The
+## old shift+double-click "scout" shortcut was retired with the single-task scout command.
+signal herd_quick_hunt_requested(herd_id: String)
 signal tile_hovered(info: Dictionary)
 signal selection_cleared()
 signal next_turn_requested(steps: int)
-signal unit_scout_requested(x: int, y: int, band_entity_bits: int)
-signal herd_follow_requested(herd_id: String)
-signal forage_requested(x: int, y: int, module_key: String)
 signal targeting_cancel_requested()
 
 const LOGISTICS_COLOR := Color(0.15, 0.45, 1.0, 1.0)
@@ -1190,13 +1189,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			var herd_hit: Dictionary = _herd_at_point(local_position)
 			if mouse_event.double_click and not herd_hit.is_empty():
 				var shortcut_id := String(herd_hit.get("id", ""))
-				var herd_col := int(herd_hit.get("x", col))
-				var herd_row := int(herd_hit.get("y", row))
 				if shortcut_id != "":
-					if mouse_event.shift_pressed:
-						emit_signal("herd_scout_shortcut", shortcut_id, herd_col, herd_row)
-					else:
-						emit_signal("herd_follow_shortcut", shortcut_id)
+					# Double-click a herd -> quick-assign idle hunters (Sustain). The old
+					# shift+double-click scout shortcut was retired with the scout command.
+					emit_signal("herd_quick_hunt_requested", shortcut_id)
 			_mark_input_handled()
 			return
 	elif event is InputEventMouseMotion:

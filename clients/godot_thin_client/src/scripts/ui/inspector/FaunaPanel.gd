@@ -1,11 +1,10 @@
 extends VBoxContainer
 class_name FaunaInspectorPanel
 
-## Inspector "Fauna" tab. Lists herds, shows per-herd detail + follow rewards, and
-## requests a follow-herd command. The follow command needs the active faction
-## (coordinator-owned), so the button emits follow_herd_requested and the coordinator
-## resolves the faction + issues the command. herd_selected mirrors the selection into
-## the Commands-tab follow field.
+## Inspector "Fauna" tab. Display-only herd telemetry: lists herds and shows per-herd
+## detail + estimated hunt yields. The follow-herd command it used to issue was retired
+## with the single-task fauna commands (Early-Game Labor slice 3a) — hunting is now labor
+## allocation via the HUD, so this tab no longer emits any command.
 ##
 ## Follows the tab-panel contract established by PowerPanel (see
 ## clients/godot_thin_client/CLAUDE.md).
@@ -17,25 +16,15 @@ const HERD_FOLLOW_MORALE_GAIN := 0.03
 const HERD_KNOWLEDGE_PROGRESS_PER_BIOMASS := 0.0004
 const HERD_KNOWLEDGE_PROGRESS_CAP := 0.25
 
-## Emitted when the user asks to follow the selected herd; the coordinator resolves
-## the active faction and issues the command.
-signal follow_herd_requested(herd_id: String)
-## Emitted on selection so the coordinator can mirror the id into the Commands follow field.
-signal herd_selected(herd_id: String)
-
 @onready var _list: ItemList = %FaunaList
 @onready var _detail_text: RichTextLabel = %FaunaDetail
-@onready var _follow_button: Button = %FaunaFollowButton
 
 var _entries: Array = []
 var _selected_herd_id: String = ""
-var _connected: bool = false
 
 func _ready() -> void:
 	if _list != null:
 		_list.item_selected.connect(_on_item_selected)
-	if _follow_button != null:
-		_follow_button.pressed.connect(_on_follow_pressed)
 	_render()
 
 ## Coordinator contract: read the herds key; re-render.
@@ -52,11 +41,10 @@ func reset() -> void:
 	_selected_herd_id = ""
 	_render()
 
-## Coordinator collaborator: command-socket connection state. The follow button is
-## enabled only while connected AND a herd is selected.
-func set_command_connected(connected: bool) -> void:
-	_connected = connected
-	_update_follow_button()
+## Coordinator contract: command-socket connection state. This tab no longer issues any
+## command, so this is a no-op kept for the coordinator's connection-gating fan-out.
+func set_command_connected(_connected: bool) -> void:
+	pass
 
 func _render() -> void:
 	if _list == null or _detail_text == null:
@@ -65,7 +53,6 @@ func _render() -> void:
 	_selected_herd_id = ""
 	if _entries.is_empty():
 		_detail_text.text = "[i]Awaiting telemetry.[/i]"
-		_update_follow_button()
 		return
 	for herd_variant in _entries:
 		if not (herd_variant is Dictionary):
@@ -79,7 +66,6 @@ func _render() -> void:
 		var item_index := _list.add_item(entry_label)
 		_list.set_item_metadata(item_index, herd)
 	_detail_text.text = "[i]Select a herd to view details.[/i]"
-	_update_follow_button()
 
 func _on_item_selected(index: int) -> void:
 	if _list == null or _detail_text == null:
@@ -88,7 +74,6 @@ func _on_item_selected(index: int) -> void:
 	if not (meta is Dictionary):
 		_detail_text.text = "[i]No herd details available.[/i]"
 		_selected_herd_id = ""
-		_update_follow_button()
 		return
 	var info: Dictionary = meta
 	_selected_herd_id = String(info.get("id", ""))
@@ -115,17 +100,6 @@ func _on_item_selected(index: int) -> void:
 		lines.append("")
 		lines.append("Next waypoint (%d, %d)" % [next_x, next_y])
 	_detail_text.text = "\n".join(lines)
-	herd_selected.emit(String(info.get("id", "")))
-	_update_follow_button()
-
-func _on_follow_pressed() -> void:
-	if _selected_herd_id == "":
-		return
-	follow_herd_requested.emit(_selected_herd_id)
-
-func _update_follow_button() -> void:
-	if _follow_button != null:
-		_follow_button.disabled = not (_connected and _selected_herd_id != "")
 
 func _herd_reward_summary_lines(biomass: float) -> Array[String]:
 	var lines: Array[String] = []

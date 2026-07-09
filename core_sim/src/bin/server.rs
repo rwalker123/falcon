@@ -1,7 +1,6 @@
 use std::io::{self, BufReader, Read};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -17,29 +16,27 @@ use core_sim::log_stream::start_log_stream_server;
 use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
-    build_headless_app, command_events_to_state, restore_world_from_snapshot, run_turn,
-    scalar_from_f32, scalar_zero, AgentAssignment, CommandEventEntry, CommandEventKind,
-    CommandEventLog, CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog,
-    CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata, CrisisModifierCatalog,
-    CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata, CrisisTelemetry,
-    CrisisTelemetryConfig, CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata,
-    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
-    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
-    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode,
-    FogRevealLedger, FollowPolicy, FoodModule, FoodModuleTag, GenerationId, GenerationRegistry,
-    HarvestAssignment, HerdRegistry, InfluencerImpacts, InfluentialRoster, MapPresetsHandle,
-    PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams, Scalar,
-    ScoutAssignment, SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
-    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
-    SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
-    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
-    DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS, FOOD,
+    available_workers, resolve_active_profile, ActiveStartProfile, BandTravel, CampaignLabel,
+    LaborAllocation, LaborTarget, StartProfileOverrides,
 };
 use core_sim::{
-    resolve_active_profile, ActiveStartProfile, CampaignLabel, HarvestTaskKind,
-    StartProfileOverrides,
+    build_headless_app, command_events_to_state, restore_world_from_snapshot, run_turn,
+    scalar_from_f32, AgentAssignment, CommandEventEntry, CommandEventKind, CommandEventLog,
+    CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
+    CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
+    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
+    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, EspionageAgentHandle,
+    EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
+    EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
+    FactionSecurityPolicies, FaunaConfigHandle, FogRevealLedger, FollowPolicy, GenerationId,
+    GenerationRegistry, HerdRegistry, InfluencerImpacts, InfluentialRoster, MapPresetsHandle,
+    PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams, Scalar,
+    SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig, SimulationConfigMetadata,
+    SimulationTick, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
+    StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry,
+    TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata,
+    TurnQueue, FOOD,
 };
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
@@ -55,10 +52,7 @@ use sim_schema::{encode_map_export_json, MapExport};
 const DEFAULT_EXPORT_DIR: &str = "exports";
 
 const MIN_SCOUT_REVEAL_RADIUS: u32 = 2;
-const DEFAULT_SCOUT_REVEAL_RADIUS: u32 = 3;
 const SCOUT_REVEAL_DURATION_TURNS: u64 = 8;
-const SCOUT_MORALE_GAIN: f32 = 0.02;
-const SCOUT_PROVISION_COST: i64 = 10;
 const SETTLEMENT_PROVISION_COST: i64 = 80;
 const SETTLEMENT_CONSTRUCTION_RADIUS: u32 = 3;
 const SETTLEMENT_LOGISTICS_RADIUS: u32 = 4;
@@ -484,21 +478,35 @@ fn main() {
             Command::SetStartProfile { profile_id } => {
                 handle_set_start_profile(&mut app, profile_id);
             }
-            Command::ScoutArea {
+            Command::AssignLabor {
                 faction,
+                band_entity_bits,
+                role,
+                workers,
                 target_x,
                 target_y,
-                band_entity_bits,
-            } => {
-                handle_scout_area(&mut app, faction, target_x, target_y, band_entity_bits);
-            }
-            Command::FollowHerd {
-                faction,
-                herd_id,
+                fauna_id,
                 policy,
-                band_entity_bits,
             } => {
-                handle_follow_herd(&mut app, faction, herd_id, policy, band_entity_bits);
+                handle_assign_labor(
+                    &mut app,
+                    faction,
+                    band_entity_bits,
+                    role,
+                    workers,
+                    target_x,
+                    target_y,
+                    fauna_id,
+                    policy,
+                );
+            }
+            Command::MoveBand {
+                faction,
+                band_entity_bits,
+                target_x,
+                target_y,
+            } => {
+                handle_move_band(&mut app, faction, band_entity_bits, target_x, target_y);
             }
             Command::FoundSettlement {
                 faction,
@@ -506,37 +514,6 @@ fn main() {
                 target_y,
             } => {
                 handle_found_settlement(&mut app, faction, target_x, target_y);
-            }
-            Command::ForageTile {
-                faction,
-                target_x,
-                target_y,
-                module,
-                band_entity_bits,
-            } => {
-                handle_forage_tile(
-                    &mut app,
-                    faction,
-                    target_x,
-                    target_y,
-                    module,
-                    band_entity_bits,
-                );
-            }
-            Command::HuntGame {
-                faction,
-                target_x,
-                target_y,
-                band_entity_bits,
-            } => {
-                handle_hunt_game(&mut app, faction, target_x, target_y, band_entity_bits);
-            }
-            Command::HuntFauna {
-                faction,
-                herd_id,
-                band_entity_bits,
-            } => {
-                handle_hunt_fauna(&mut app, faction, herd_id, band_entity_bits);
             }
             Command::Domesticate { faction, herd_id } => {
                 handle_domesticate(&mut app, faction, herd_id);
@@ -630,40 +607,26 @@ enum Command {
     SetStartProfile {
         profile_id: String,
     },
-    ScoutArea {
+    AssignLabor {
         faction: FactionId,
+        band_entity_bits: Option<u64>,
+        role: String,
+        workers: u32,
+        target_x: Option<u32>,
+        target_y: Option<u32>,
+        fauna_id: Option<String>,
+        policy: Option<String>,
+    },
+    MoveBand {
+        faction: FactionId,
+        band_entity_bits: Option<u64>,
         target_x: u32,
         target_y: u32,
-        band_entity_bits: Option<u64>,
-    },
-    FollowHerd {
-        faction: FactionId,
-        herd_id: String,
-        policy: FollowPolicy,
-        band_entity_bits: Option<u64>,
     },
     FoundSettlement {
         faction: FactionId,
         target_x: u32,
         target_y: u32,
-    },
-    ForageTile {
-        faction: FactionId,
-        target_x: u32,
-        target_y: u32,
-        module: String,
-        band_entity_bits: Option<u64>,
-    },
-    HuntGame {
-        faction: FactionId,
-        target_x: u32,
-        target_y: u32,
-        band_entity_bits: Option<u64>,
-    },
-    HuntFauna {
-        faction: FactionId,
-        herd_id: String,
-        band_entity_bits: Option<u64>,
     },
     Domesticate {
         faction: FactionId,
@@ -1219,120 +1182,6 @@ fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {
     }
 }
 
-fn handle_scout_area(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    target_x: u32,
-    target_y: u32,
-    band_entity_bits: Option<u64>,
-) {
-    let target = UVec2::new(target_x, target_y);
-    let Some(tile_entity) = ensure_land_tile(
-        app,
-        faction,
-        target,
-        "scout_area",
-        Some(CommandEventKind::Scout),
-    ) else {
-        return;
-    };
-
-    let Some(band) = select_starting_band(
-        app,
-        faction,
-        band_entity_bits,
-        "scout_area",
-        CommandEventKind::Scout,
-    ) else {
-        return;
-    };
-
-    if !consume_faction_provisions(
-        app,
-        faction,
-        SCOUT_PROVISION_COST,
-        "scout_area",
-        CommandEventKind::Scout,
-    ) {
-        return;
-    }
-
-    // Orders replace orders: this scout takes over the band from any prior task.
-    reassign_band(app, band.entity);
-
-    let home_coords = {
-        let cohort = match app.world.get::<PopulationCohort>(band.entity) {
-            Some(cohort) => cohort,
-            None => {
-                warn!(
-                    target: "shadow_scale::command",
-                    command = "scout_area",
-                    faction = %faction.0,
-                    band = %band.label,
-                    "command.scout_area.rejected=band_missing"
-                );
-                return;
-            }
-        };
-        app.world
-            .get::<Tile>(cohort.home)
-            .map(|tile| tile.position)
-            .unwrap_or(target)
-    };
-
-    let radius_override = {
-        let config = app.world.resource::<SimulationConfig>();
-        config.start_profile_overrides.survey_radius
-    };
-    let reveal_radius = radius_override
-        .unwrap_or(DEFAULT_SCOUT_REVEAL_RADIUS)
-        .max(MIN_SCOUT_REVEAL_RADIUS);
-    let tick = app.world.resource::<SimulationTick>().0;
-    let distance = home_coords.x.abs_diff(target.x) + home_coords.y.abs_diff(target.y);
-    let travel_turns = estimate_travel_turns(distance);
-    let assignment = ScoutAssignment {
-        faction,
-        band_label: band.label.clone(),
-        target_tile: tile_entity,
-        target_coords: target,
-        travel_remaining: travel_turns,
-        travel_total: travel_turns,
-        reveal_radius,
-        reveal_duration: SCOUT_REVEAL_DURATION_TURNS,
-        morale_gain: SCOUT_MORALE_GAIN.max(0.0),
-        started_tick: tick,
-    };
-    app.world.entity_mut(band.entity).insert(assignment);
-    let detail = format!(
-        "band={} radius={} travel_turns={} morale_boost={:.2}",
-        band.label,
-        reveal_radius,
-        travel_turns,
-        SCOUT_MORALE_GAIN.max(0.0)
-    );
-
-    info!(
-        target: "shadow_scale::command",
-        command = "scout_area",
-        faction = %faction.0,
-        x = target_x,
-        y = target_y,
-        band = %band.label,
-        radius = reveal_radius,
-        travel_turns,
-        "command.scout_area.enqueued"
-    );
-
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::Scout,
-        faction,
-        format!("{} -> ({}, {})", band.label, target_x, target_y),
-        Some(detail),
-    );
-}
-
 /// Parse a follow policy string, warning (and defaulting to Sustain) when a
 /// non-empty value fails to parse so a typo like `surpluss` is diagnosable rather
 /// than silently accepted.
@@ -1349,101 +1198,6 @@ fn parse_follow_policy(policy: Option<&str>) -> FollowPolicy {
         }),
         _ => FollowPolicy::default(),
     }
-}
-
-fn handle_follow_herd(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    herd_id: String,
-    policy: FollowPolicy,
-    band_entity_bits: Option<u64>,
-) {
-    let Some(herd_position) = app
-        .world
-        .get_resource::<HerdRegistry>()
-        .and_then(|registry| registry.find(&herd_id))
-        .map(|herd| herd.position())
-    else {
-        warn!(
-            target: "shadow_scale::command",
-            command = "follow_herd",
-            faction = %faction.0,
-            herd = %herd_id,
-            "command.follow_herd.rejected=unknown_herd"
-        );
-        emit_command_failure(
-            app,
-            CommandEventKind::FollowHerd,
-            faction,
-            format!("Herd '{}' no longer exists.", herd_id),
-        );
-        return;
-    };
-
-    let Some(band) = select_starting_band(
-        app,
-        faction,
-        band_entity_bits,
-        "follow_herd",
-        CommandEventKind::FollowHerd,
-    ) else {
-        return;
-    };
-
-    // Orders replace orders: a band holds exactly one task at a time.
-    reassign_band(app, band.entity);
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    app.world.entity_mut(band.entity).insert(FaunaPursuit {
-        faction,
-        band_label: band.label.clone(),
-        fauna_id: herd_id.clone(),
-        mode: FaunaPursuitMode::Follow { policy },
-        elapsed_turns: 0,
-        started_tick: tick,
-    });
-
-    let detail = format!(
-        "status=queued action=follow policy={} band={} herd={} herd_x={} herd_y={}",
-        policy.as_str(),
-        band.label,
-        herd_id,
-        herd_position.x,
-        herd_position.y
-    );
-    info!(
-        target: "shadow_scale::command",
-        command = "follow_herd",
-        faction = %faction.0,
-        band = %band.label,
-        herd = %herd_id,
-        policy = policy.as_str(),
-        "command.follow_herd.queued"
-    );
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::FollowHerd,
-        faction,
-        format!("{} Hunt (ongoing) -> {}", band.label, herd_id),
-        Some(detail),
-    );
-}
-
-/// Orders replace orders: strip any single-band task (fauna pursuit / harvest /
-/// scout) so a newly issued verb fully takes over the band.
-fn reassign_band(app: &mut bevy::prelude::App, band: Entity) {
-    let mut entity = app.world.entity_mut(band);
-    // Snap the travel origin to where the band actually is before dropping its old
-    // task: ETA/pathing (`queue_food_assignment`, scout) and `simulate_population`
-    // key off `cohort.home`, so a band re-tasked mid-travel must not fall back to a
-    // stale home tile (which would "snap" it back and mis-compute distances).
-    if let Some(mut cohort) = entity.get_mut::<PopulationCohort>() {
-        cohort.home = cohort.current_tile;
-    }
-    entity.remove::<FaunaPursuit>();
-    entity.remove::<HarvestAssignment>();
-    entity.remove::<ScoutAssignment>();
 }
 
 fn handle_found_settlement(
@@ -1578,200 +1332,179 @@ fn handle_found_settlement(
     );
 }
 
-fn handle_forage_tile(
+/// Fetch (or insert a default) mutable [`LaborAllocation`] on a band entity.
+fn band_allocation_mut(
+    app: &mut bevy::prelude::App,
+    band: Entity,
+) -> bevy::prelude::Mut<'_, LaborAllocation> {
+    if app.world.get::<LaborAllocation>(band).is_none() {
+        app.world
+            .entity_mut(band)
+            .insert(LaborAllocation::default());
+    }
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("labor allocation inserted above")
+}
+
+/// Set the worker count for one labor target on a band (idempotent; `0` unassigns; clamps to the
+/// band's free working-age headroom). Text forms:
+///   `assign_labor <faction> <band> forage <x> <y> <workers>`
+///   `assign_labor <faction> <band> hunt <herd_id> <policy> <workers>`
+///   `assign_labor <faction> <band> scout <workers>`
+///   `assign_labor <faction> <band> warrior <workers>`
+#[allow(clippy::too_many_arguments)]
+fn handle_assign_labor(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    target_x: u32,
-    target_y: u32,
-    module_key: String,
     band_entity_bits: Option<u64>,
+    role: String,
+    workers: u32,
+    target_x: Option<u32>,
+    target_y: Option<u32>,
+    fauna_id: Option<String>,
+    policy: Option<String>,
 ) {
-    let coords = UVec2::new(target_x, target_y);
-    let module = match FoodModule::from_str(module_key.trim()) {
-        Ok(module) => module,
-        Err(_) => {
-            warn!(
-                target: "shadow_scale::command",
-                command = "forage",
-                faction = %faction.0,
-                module = %module_key,
-                "command.forage.rejected=invalid_module"
-            );
+    let target = match role.to_ascii_lowercase().as_str() {
+        "forage" => match (target_x, target_y) {
+            (Some(x), Some(y)) => LaborTarget::Forage {
+                tile: UVec2::new(x, y),
+            },
+            _ => {
+                emit_command_failure(
+                    app,
+                    CommandEventKind::Forage,
+                    faction,
+                    "assign_labor forage requires <x> <y>.".to_string(),
+                );
+                return;
+            }
+        },
+        "hunt" => match fauna_id {
+            Some(id) if !id.trim().is_empty() => LaborTarget::Hunt {
+                fauna_id: id,
+                policy: parse_follow_policy(policy.as_deref()),
+            },
+            _ => {
+                emit_command_failure(
+                    app,
+                    CommandEventKind::Hunt,
+                    faction,
+                    "assign_labor hunt requires <herd_id>.".to_string(),
+                );
+                return;
+            }
+        },
+        "scout" => LaborTarget::Scout,
+        "warrior" => LaborTarget::Warrior,
+        other => {
             emit_command_failure(
                 app,
-                CommandEventKind::Forage,
+                CommandEventKind::CancelOrder,
                 faction,
-                format!("Unknown food module '{}'.", module_key.trim()),
+                format!("Unknown labor role '{}'.", other),
             );
             return;
         }
     };
-    let tile_entity = {
-        let registry = app.world.resource::<TileRegistry>();
-        registry.index(target_x, target_y)
+
+    let event_kind = match &target {
+        LaborTarget::Forage { .. } => CommandEventKind::Forage,
+        LaborTarget::Hunt { .. } => CommandEventKind::Hunt,
+        LaborTarget::Scout => CommandEventKind::Scout,
+        LaborTarget::Warrior => CommandEventKind::CancelOrder,
     };
-    let Some(tile_entity) = tile_entity else {
-        log_tile_rejection(
-            app,
-            faction,
-            coords,
-            "forage",
-            "out_of_bounds",
-            Some(CommandEventKind::Forage),
-        );
+
+    let Some(band) =
+        select_starting_band(app, faction, band_entity_bits, "assign_labor", event_kind)
+    else {
         return;
     };
-    let (tag_module, seasonal_weight) = {
-        let entity_ref = app.world.entity(tile_entity);
-        match entity_ref.get::<FoodModuleTag>() {
-            Some(tag) => (tag.module, tag.seasonal_weight.max(0.0)),
-            None => {
-                log_tile_rejection(
-                    app,
-                    faction,
-                    coords,
-                    "forage",
-                    "no_food_module",
-                    Some(CommandEventKind::Forage),
-                );
-                return;
-            }
-        }
+
+    let available = app
+        .world
+        .get::<PopulationCohort>(band.entity)
+        .map(|cohort| available_workers(cohort.working))
+        .unwrap_or(0);
+
+    let kind_label = target.kind();
+    let (applied, assigned_total) = {
+        let mut allocation = band_allocation_mut(app, band.entity);
+        let applied = allocation.set_assignment(target, workers, available);
+        (applied, allocation.assigned_total())
     };
-    if tag_module != module {
-        log_tile_rejection(
-            app,
-            faction,
-            coords,
-            "forage",
-            "module_mismatch",
-            Some(CommandEventKind::Forage),
-        );
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    let clamp_note = if applied < workers {
+        format!(" (clamped from {} — only {} idle)", workers, available)
+    } else {
+        String::new()
+    };
+    push_command_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        format!("{} {} x{}{}", band.label, kind_label, applied, clamp_note),
+        Some(format!(
+            "status=applied role={} workers={} assigned_total={} available={}",
+            kind_label, applied, assigned_total, available
+        )),
+    );
+}
+
+/// Order a band to travel toward a target tile at `band_move_tiles_per_turn`/turn (Early-Game
+/// Labor). In-range sources update as the band moves; Forage assignments naturally read 0 while
+/// out of range. Text form: `move_band <faction> <band> <x> <y>`.
+fn handle_move_band(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_entity_bits: Option<u64>,
+    target_x: u32,
+    target_y: u32,
+) {
+    let target = UVec2::new(target_x, target_y);
+    if ensure_land_tile(
+        app,
+        faction,
+        target,
+        "move_band",
+        Some(CommandEventKind::CancelOrder),
+    )
+    .is_none()
+    {
         return;
     }
-    queue_food_assignment(
-        app,
-        faction,
-        target_x,
-        target_y,
-        tile_entity,
-        module,
-        seasonal_weight,
-        band_entity_bits,
-        "forage",
-        "Harvest",
-        CommandEventKind::Forage,
-        HarvestTaskKind::Harvest,
-    );
-}
-
-fn handle_hunt_game(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    _target_x: u32,
-    _target_y: u32,
-    _band_entity_bits: Option<u64>,
-) {
-    // Tile-based hunting retired alongside `game_trail` (Wildlife & Hunting Overlay,
-    // Phase A). Hunt is being reworked to target wild-game fauna groups in Phase B;
-    // the command stays registered but has no tile target to resolve until then.
-    warn!(
-        target: "shadow_scale::command",
-        command = "hunt_game",
-        faction = %faction.0,
-        "command.hunt_game.rejected=tile_hunting_retired"
-    );
-    emit_command_failure(
-        app,
-        CommandEventKind::Hunt,
-        faction,
-        "Tile hunting is retired; use `hunt_fauna <faction> <herd_id>` to hunt a fauna group.",
-    );
-}
-
-/// Order a band to pursue and hunt a fauna group (herd) by id. Validates the herd,
-/// resolves the band (auto-picks the first faction cohort when none is given),
-/// rejects a busy band, then attaches a `FaunaPursuit` component. The pursuit itself
-/// (travel to ≤1 tile, then take biomass → provisions/trade) resolves each turn in
-/// `advance_fauna_pursuits`.
-fn handle_hunt_fauna(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    herd_id: String,
-    band_entity_bits: Option<u64>,
-) {
-    let Some(herd_position) = app
-        .world
-        .get_resource::<HerdRegistry>()
-        .and_then(|registry| registry.find(&herd_id))
-        .map(|herd| herd.position())
-    else {
-        warn!(
-            target: "shadow_scale::command",
-            command = "hunt_fauna",
-            faction = %faction.0,
-            herd = %herd_id,
-            "command.hunt_fauna.rejected=unknown_herd"
-        );
-        emit_command_failure(
-            app,
-            CommandEventKind::Hunt,
-            faction,
-            format!("Herd '{}' no longer exists.", herd_id),
-        );
-        return;
-    };
-
     let Some(band) = select_starting_band(
         app,
         faction,
         band_entity_bits,
-        "hunt_fauna",
-        CommandEventKind::Hunt,
+        "move_band",
+        CommandEventKind::CancelOrder,
     ) else {
         return;
     };
-
-    // Orders replace orders: this hunt takes over the band from any prior task.
-    reassign_band(app, band.entity);
+    app.world
+        .entity_mut(band.entity)
+        .insert(BandTravel { target });
 
     let tick = app.world.resource::<SimulationTick>().0;
-    app.world.entity_mut(band.entity).insert(FaunaPursuit {
-        faction,
-        band_label: band.label.clone(),
-        fauna_id: herd_id.clone(),
-        mode: FaunaPursuitMode::Hunt,
-        elapsed_turns: 0,
-        started_tick: tick,
-    });
-
-    let detail = format!(
-        "status=queued action=hunt band={} herd={} herd_x={} herd_y={}",
-        band.label, herd_id, herd_position.x, herd_position.y
-    );
-    info!(
-        target: "shadow_scale::command",
-        command = "hunt_fauna",
-        faction = %faction.0,
-        band = %band.label,
-        herd = %herd_id,
-        "command.hunt_fauna.queued"
-    );
     push_command_event(
         app,
         tick,
-        CommandEventKind::Hunt,
+        CommandEventKind::CancelOrder,
         faction,
-        format!("{} Hunt -> {}", band.label, herd_id),
-        Some(detail),
+        format!("{} moving -> ({}, {})", band.label, target_x, target_y),
+        Some(format!(
+            "status=queued action=move_band band={}",
+            band.label
+        )),
     );
 }
 
-/// Cancel a band's current task (scout / forage / hunt / follow), returning it to idle.
-/// Resolves the band the same way the band-order commands do (`select_starting_band`:
-/// explicit `band_entity_bits`, else the faction's first band) and strips its assignment via
-/// `reassign_band` — a rejected/absent band is handled by `select_starting_band` (feed entry,
-/// no panic).
+/// Clear every labor assignment on a band and stop any in-progress move — the band goes fully
+/// idle (the repurposed per-source unassign of the retired single-task `cancel_order`). Rejects an
+/// already-idle band so a stray invocation reports a failure rather than a misleading "stood down".
 fn handle_cancel_order(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -1787,13 +1520,14 @@ fn handle_cancel_order(
         return;
     };
 
-    // Nothing to cancel: an already-idle band should report a failure, not a
-    // misleading "stood down" entry (guards text-input / desync invocations).
     let has_task = {
         let entity = app.world.entity(band.entity);
-        entity.contains::<FaunaPursuit>()
-            || entity.contains::<HarvestAssignment>()
-            || entity.contains::<ScoutAssignment>()
+        entity.contains::<BandTravel>()
+            || app
+                .world
+                .get::<LaborAllocation>(band.entity)
+                .map(|allocation| !allocation.assignments.is_empty())
+                .unwrap_or(false)
     };
     if !has_task {
         emit_command_failure(
@@ -1805,7 +1539,13 @@ fn handle_cancel_order(
         return;
     }
 
-    reassign_band(app, band.entity);
+    {
+        let mut entity = app.world.entity_mut(band.entity);
+        entity.remove::<BandTravel>();
+        if let Some(mut allocation) = entity.get_mut::<LaborAllocation>() {
+            allocation.clear();
+        }
+    }
 
     let tick = app.world.resource::<SimulationTick>().0;
     let detail = format!("status=cancelled band={}", band.label);
@@ -1929,115 +1669,6 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
             );
         }
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn queue_food_assignment(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    target_x: u32,
-    target_y: u32,
-    tile_entity: Entity,
-    module: FoodModule,
-    raw_weight: f32,
-    band_entity_bits: Option<u64>,
-    command_label: &str,
-    label_prefix: &str,
-    event_kind: CommandEventKind,
-    task_kind: HarvestTaskKind,
-) {
-    let coords = UVec2::new(target_x, target_y);
-    let seasonal_weight = raw_weight.max(0.0);
-    let Some(band) =
-        select_starting_band(app, faction, band_entity_bits, command_label, event_kind)
-    else {
-        return;
-    };
-
-    // Orders replace orders: this harvest takes over the band from any prior task.
-    reassign_band(app, band.entity);
-
-    let home_coords = app
-        .world
-        .get::<PopulationCohort>(band.entity)
-        .and_then(|cohort| app.world.get::<Tile>(cohort.home).map(|tile| tile.position))
-        .unwrap_or(coords);
-    let distance = home_coords.x.abs_diff(coords.x) + home_coords.y.abs_diff(coords.y);
-    let travel_turns = estimate_travel_turns(distance);
-    let gather_turns = DEFAULT_HARVEST_WORK_TURNS.max(1);
-
-    let overlays_handle = app.world.resource::<SnapshotOverlaysConfigHandle>();
-    let food_config = overlays_handle.get();
-    let food_cfg = food_config.food();
-    // FOOD income is fully fractional at source: keep the forage reward as a `Scalar` so a
-    // low-seasonal-weight site that yields < 1 provisions still credits the band's larder.
-    let provisions_gain = scalar_from_f32(seasonal_weight * food_cfg.provisions_per_weight());
-    let trade_weight = food_cfg.trade_goods_per_weight() + food_cfg.trade_bonus_for(&module);
-    let trade_goods_gain = (seasonal_weight * trade_weight).round() as i64;
-    if provisions_gain <= scalar_zero() && trade_goods_gain <= 0 {
-        log_tile_rejection(
-            app,
-            faction,
-            coords,
-            command_label,
-            "no_yield",
-            Some(event_kind),
-        );
-        return;
-    }
-
-    let tick = app.world.resource::<SimulationTick>().0;
-    let eta_turns = travel_turns + gather_turns;
-    {
-        let assignment = HarvestAssignment {
-            faction,
-            band_label: band.label.clone(),
-            module,
-            target_tile: tile_entity,
-            target_coords: coords,
-            travel_remaining: travel_turns,
-            travel_total: travel_turns,
-            gather_remaining: gather_turns,
-            gather_total: gather_turns,
-            provisions_reward: provisions_gain.max(scalar_zero()),
-            trade_goods_reward: trade_goods_gain.max(0),
-            started_tick: tick,
-            kind: task_kind,
-        };
-        app.world.entity_mut(band.entity).insert(assignment);
-    }
-
-    let detail = format!(
-        "status=queued action={} module={} band={} provisions={} trade_goods={} travel_turns={} gather_turns={}",
-        task_kind.as_str(),
-        module.as_str(),
-        band.label,
-        provisions_gain.max(scalar_zero()),
-        trade_goods_gain.max(0),
-        travel_turns,
-        gather_turns
-    );
-    info!(
-        target: "shadow_scale::command",
-        command = command_label,
-        faction = %faction.0,
-        band = %band.label,
-        x = target_x,
-        y = target_y,
-        module = module.as_str(),
-        travel_turns,
-        gather_turns,
-        eta_turns,
-        "command.food.queued"
-    );
-    push_command_event(
-        app,
-        tick,
-        event_kind,
-        faction,
-        format!("{} -> ({}, {})", label_prefix, target_x, target_y),
-        Some(detail),
-    );
 }
 
 fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<String>) {
@@ -2648,27 +2279,35 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
         ProtoCommandPayload::SetStartProfile { profile_id } => {
             Some(Command::SetStartProfile { profile_id })
         }
-        ProtoCommandPayload::ScoutArea {
+        ProtoCommandPayload::AssignLabor {
             faction_id,
+            band_entity_bits,
+            role,
+            workers,
             target_x,
             target_y,
-            band_entity_bits,
-        } => Some(Command::ScoutArea {
-            faction: FactionId(faction_id),
-            target_x,
-            target_y,
-            band_entity_bits,
-        }),
-        ProtoCommandPayload::FollowHerd {
-            faction_id,
-            herd_id,
+            fauna_id,
             policy,
-            band_entity_bits,
-        } => Some(Command::FollowHerd {
+        } => Some(Command::AssignLabor {
             faction: FactionId(faction_id),
-            herd_id,
-            policy: parse_follow_policy(policy.as_deref()),
             band_entity_bits,
+            role,
+            workers,
+            target_x,
+            target_y,
+            fauna_id,
+            policy,
+        }),
+        ProtoCommandPayload::MoveBand {
+            faction_id,
+            band_entity_bits,
+            target_x,
+            target_y,
+        } => Some(Command::MoveBand {
+            faction: FactionId(faction_id),
+            band_entity_bits,
+            target_x,
+            target_y,
         }),
         ProtoCommandPayload::FoundSettlement {
             faction_id,
@@ -2679,39 +2318,19 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             target_x,
             target_y,
         }),
-        ProtoCommandPayload::ForageTile {
-            faction_id,
-            target_x,
-            target_y,
-            module,
-            band_entity_bits,
-        } => Some(Command::ForageTile {
-            faction: FactionId(faction_id),
-            target_x,
-            target_y,
-            module,
-            band_entity_bits,
-        }),
-        ProtoCommandPayload::HuntGame {
-            faction_id,
-            target_x,
-            target_y,
-            band_entity_bits,
-        } => Some(Command::HuntGame {
-            faction: FactionId(faction_id),
-            target_x,
-            target_y,
-            band_entity_bits,
-        }),
-        ProtoCommandPayload::HuntFauna {
-            faction_id,
-            herd_id,
-            band_entity_bits,
-        } => Some(Command::HuntFauna {
-            faction: FactionId(faction_id),
-            herd_id,
-            band_entity_bits,
-        }),
+        // Retired single-task band orders (Early-Game Labor slice 3a): the source-centric
+        // `assign_labor` / `move_band` replace them. Ignored if a stale client still sends one.
+        ProtoCommandPayload::ScoutArea { .. }
+        | ProtoCommandPayload::FollowHerd { .. }
+        | ProtoCommandPayload::ForageTile { .. }
+        | ProtoCommandPayload::HuntGame { .. }
+        | ProtoCommandPayload::HuntFauna { .. } => {
+            warn!(
+                target: "shadow_scale::server",
+                "command.retired=ignored (replaced by assign_labor/move_band)"
+            );
+            None
+        }
         ProtoCommandPayload::Domesticate {
             faction_id,
             herd_id,
@@ -3112,14 +2731,6 @@ fn broadcast_command_events_if_needed(
             server.broadcast(flat.as_ref());
         }
     }
-}
-
-fn estimate_travel_turns(distance: u32) -> u32 {
-    if distance == 0 {
-        return 0;
-    }
-    let speed = DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN.max(0.25);
-    ((distance as f32 / speed).ceil() as u32).max(1)
 }
 
 fn handle_order_submission(

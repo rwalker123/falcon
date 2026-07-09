@@ -6,7 +6,6 @@ use bevy::{math::UVec2, prelude::*};
 use sim_runtime::{KnownTechFragment as ContractKnowledgeFragment, TerrainTags, TerrainType};
 
 use crate::{
-    food::FoodModule,
     generations::GenerationId,
     mapgen::MountainType,
     orders::FactionId,
@@ -416,62 +415,146 @@ pub struct TownCenter {
     pub logistics_radius: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum HarvestTaskKind {
-    #[default]
-    Harvest,
-    Hunt,
+/// Whole assignable workers a band's working-age bracket supplies this turn. Only *whole*
+/// people can be staffed onto a source, so this floors the fractional `working` Scalar (which
+/// otherwise carries sub-person demographic precision). The `Σ assignments ≤ available` invariant
+/// on [`LaborAllocation`] is enforced against this count.
+pub fn available_workers(working: Scalar) -> u32 {
+    (working.raw().max(0) / Scalar::SCALE) as u32
 }
 
-impl HarvestTaskKind {
-    pub fn as_str(self) -> &'static str {
+/// A single labor demand a band can staff from its working-age pool (Early-Game Labor, slice 3a):
+/// an in-range food source (Forage tile / Hunt herd) or a band-wide role (Scout / Warrior).
+/// The band is a labor pool drawing subsistence from many sources at once
+/// (`docs/plan_early_game_labor.md`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum LaborTarget {
+    /// Gather food from a food-module tile within `band_work_range`. Stored as coordinates (not an
+    /// entity) so a moving band re-resolves the tile each turn — an out-of-range tile simply
+    /// yields 0 that turn without dropping the assignment.
+    Forage { tile: UVec2 },
+    /// Hunt a fauna group by id under a take policy. The band tracks a roaming herd up to
+    /// `band_work_range + hunt_leash_tiles` (leashed follow); past that the assignment lapses.
+    Hunt {
+        fauna_id: String,
+        policy: FollowPolicy,
+    },
+    /// Reveal fog outward from the band (band-wide role, no food yield).
+    Scout,
+    /// Guard the band (band-wide role). Inert until the predator slice consumes it — it only
+    /// occupies workers against the Σ invariant.
+    Warrior,
+}
+
+impl LaborTarget {
+    /// The stable role key (also the snapshot `kind` string and the `activity` summary).
+    pub fn kind(&self) -> &'static str {
         match self {
-            HarvestTaskKind::Harvest => "harvest",
-            HarvestTaskKind::Hunt => "hunt",
+            LaborTarget::Forage { .. } => "forage",
+            LaborTarget::Hunt { .. } => "hunt",
+            LaborTarget::Scout => "scout",
+            LaborTarget::Warrior => "warrior",
+        }
+    }
+
+    /// Whether two targets name the **same source** (so re-assigning replaces rather than
+    /// duplicates). Forage is keyed by tile, Hunt by herd id (the take policy is a mutable
+    /// property of the same source), and the band-wide roles are singletons.
+    pub fn same_source(&self, other: &LaborTarget) -> bool {
+        match (self, other) {
+            (LaborTarget::Forage { tile: a }, LaborTarget::Forage { tile: b }) => a == b,
+            (LaborTarget::Hunt { fauna_id: a, .. }, LaborTarget::Hunt { fauna_id: b, .. }) => {
+                a == b
+            }
+            (LaborTarget::Scout, LaborTarget::Scout) => true,
+            (LaborTarget::Warrior, LaborTarget::Warrior) => true,
+            _ => false,
         }
     }
 }
 
-impl FromStr for HarvestTaskKind {
-    type Err = ();
+/// One staffed labor demand: a target and the whole-worker head-count assigned to it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaborAssignment {
+    pub target: LaborTarget,
+    pub workers: u32,
+}
 
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "hunt" | "hunt_game" => Ok(HarvestTaskKind::Hunt),
-            _ => Ok(HarvestTaskKind::Harvest),
+/// A band's partition of its working-age pool across labor demands. Replaces the retired
+/// single-task model (`HarvestAssignment`/`ScoutAssignment`/`FaunaPursuit`): a band now draws from
+/// many sources at once, with the invariant `Σ assignments.workers ≤ available_workers(working)`.
+/// Unassigned workers are **idle** — they eat but produce nothing (no auto-forage).
+#[derive(Component, Debug, Clone, Default, PartialEq)]
+pub struct LaborAllocation {
+    pub assignments: Vec<LaborAssignment>,
+}
+
+impl LaborAllocation {
+    /// Total workers currently staffed across all assignments.
+    pub fn assigned_total(&self) -> u32 {
+        self.assignments.iter().map(|a| a.workers).sum()
+    }
+
+    /// Set/replace the worker count for `target`, keeping `Σ ≤ available`. `workers == 0` removes
+    /// the assignment (per-source unassign — the new "cancel"). An over-budget request is
+    /// **clamped** to the free headroom (not rejected). Returns the worker count actually applied
+    /// so the caller can report a clamp.
+    pub fn set_assignment(&mut self, target: LaborTarget, workers: u32, available: u32) -> u32 {
+        // Free headroom excludes any existing assignment on the same source (it is being replaced).
+        let others: u32 = self
+            .assignments
+            .iter()
+            .filter(|a| !a.target.same_source(&target))
+            .map(|a| a.workers)
+            .sum();
+        let headroom = available.saturating_sub(others);
+        let applied = workers.min(headroom);
+        // Drop any prior assignment on this source, then re-add if non-zero (captures a new policy).
+        self.assignments.retain(|a| !a.target.same_source(&target));
+        if applied > 0 {
+            self.assignments.push(LaborAssignment { target, workers });
+            // Re-store the clamped count (the push above used the requested value).
+            if let Some(last) = self.assignments.last_mut() {
+                last.workers = applied;
+            }
         }
+        applied
+    }
+
+    /// Trim assignments so `Σ ≤ available` (called each turn in case `working` shrank). Reduces
+    /// from the last assignment(s) first, dropping any that reach zero.
+    pub fn normalize(&mut self, available: u32) {
+        let mut total = self.assigned_total();
+        while total > available {
+            let mut excess = total - available;
+            let Some(last) = self.assignments.last_mut() else {
+                break;
+            };
+            if last.workers > excess {
+                last.workers -= excess;
+                excess = 0;
+            } else {
+                excess -= last.workers;
+                self.assignments.pop();
+            }
+            total = self.assigned_total();
+            let _ = excess;
+        }
+    }
+
+    /// Clear every assignment (the repurposed `cancel_order` — band goes fully idle).
+    pub fn clear(&mut self) {
+        self.assignments.clear();
     }
 }
 
-#[derive(Component, Debug, Clone)]
-pub struct HarvestAssignment {
-    pub faction: FactionId,
-    pub band_label: String,
-    pub module: FoodModule,
-    pub target_tile: Entity,
-    pub target_coords: UVec2,
-    pub travel_remaining: u32,
-    pub travel_total: u32,
-    pub gather_remaining: u32,
-    pub gather_total: u32,
-    pub provisions_reward: Scalar,
-    pub trade_goods_reward: i64,
-    pub started_tick: u64,
-    pub kind: HarvestTaskKind,
-}
-
-#[derive(Component, Debug, Clone)]
-pub struct ScoutAssignment {
-    pub faction: FactionId,
-    pub band_label: String,
-    pub target_tile: Entity,
-    pub target_coords: UVec2,
-    pub travel_remaining: u32,
-    pub travel_total: u32,
-    pub reveal_radius: u32,
-    pub reveal_duration: u64,
-    pub morale_gain: f32,
-    pub started_tick: u64,
+/// A pending `move_band` order: the band advances toward `target` at
+/// `band_move_tiles_per_turn`/turn, updating `current_tile`/`home` until it arrives, then the
+/// component is removed. Not snapshot-persisted (a rollback mid-move cancels the travel), mirroring
+/// the retired pursuit's non-persistence.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BandTravel {
+    pub target: UVec2,
 }
 
 /// Auto-hunt policy for a Follow: how much biomass the band takes each turn once
@@ -510,39 +593,6 @@ impl FromStr for FollowPolicy {
             _ => Err(()),
         }
     }
-}
-
-/// What a band does once it catches the fauna group it is pursuing. `Hunt` is a
-/// one-shot take (Phase B); `Follow` shadows the group and auto-hunts per policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum FaunaPursuitMode {
-    #[default]
-    Hunt,
-    Follow {
-        policy: FollowPolicy,
-    },
-}
-
-impl FaunaPursuitMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            FaunaPursuitMode::Hunt => "single",
-            FaunaPursuitMode::Follow { policy } => policy.as_str(),
-        }
-    }
-}
-
-/// A band pursuing a moving fauna **group** (herd) by id. Unlike `HarvestAssignment`
-/// (fixed tile, precomputed reward), the target and yield are resolved against the
-/// live `HerdRegistry` each turn, so the band chases a genuinely moving herd.
-#[derive(Component, Debug, Clone)]
-pub struct FaunaPursuit {
-    pub faction: FactionId,
-    pub band_label: String,
-    pub fauna_id: String,
-    pub mode: FaunaPursuitMode,
-    pub elapsed_turns: u32,
-    pub started_tick: u64,
 }
 
 impl Default for PowerNode {

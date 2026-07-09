@@ -105,11 +105,10 @@ func _ready() -> void:
 		map_panel.set_command_hooks(Callable(self, "_send_command"), Callable(self, "_append_command_log"))
 	if culture_panel != null:
 		culture_panel.set_log_hook(Callable(self, "_append_log_entry"))
-	# Terrain owns tile selection + its command buttons; export_map sends directly via the
-	# hook, scout emits a signal so the coordinator resolves the active faction.
+	# Terrain owns tile selection + its Export Map button; export_map sends directly via the
+	# hook. (The tile scout button was retired with the single-task `scout` command.)
 	if terrain_panel != null:
 		terrain_panel.set_command_hooks(Callable(self, "_send_command"), Callable(self, "_append_command_log"))
-		terrain_panel.tile_scout_requested.connect(_on_terrain_tile_scout_requested)
 	if logs_panel != null:
 		logs_panel.log_entry_received.connect(_on_log_stream_entry)
 	if crisis_panel != null:
@@ -124,11 +123,9 @@ func _ready() -> void:
 		)
 	if victory_panel != null:
 		victory_panel.set_log_hook(Callable(self, "_append_command_log"))
-	# Fauna owns selection; the coordinator resolves the active faction + issues the
-	# follow-herd command, and mirrors the selection into the Commands follow field.
-	if fauna_panel != null:
-		fauna_panel.follow_herd_requested.connect(_on_fauna_follow_herd_requested)
-		fauna_panel.herd_selected.connect(_on_fauna_herd_selected)
+	# Fauna is now display-only telemetry (herd list + detail). The follow-herd command it
+	# used to emit was retired with the single-task fauna commands (Early-Game Labor slice 3a);
+	# hunting is now labor allocation via the HUD.
 	# Commands tab owns the runtime command controls; the hub (_send_command / autoplay
 	# timer / command_client) stays here. Axis bias apply routes back so _axis_bias stays
 	# coordinator-owned (Sentiment depends on it); autoplay relays to the coordinator timer.
@@ -734,26 +731,6 @@ func _on_axis_bias_apply_requested(axis_idx: int, value: float) -> void:
 			sentiment_panel.set_axis_bias(_axis_bias)
 		if commands_panel != null:
 			commands_panel.set_axis_bias(_axis_bias)
-
-# FaunaPanel owns herd selection; the coordinator resolves the active faction (from the
-# Commands tab) and issues the follow-herd command, mirroring the selection into the
-# Commands follow field.
-func _on_fauna_follow_herd_requested(herd_id: String) -> void:
-	if herd_id == "":
-		return
-	var faction := commands_panel.get_scenario_faction() if commands_panel != null else 0
-	var message := "Hunt '%s' requested for faction %d." % [herd_id, faction]
-	_send_command("follow_herd %d %s sustain" % [faction, herd_id], message)
-
-func _on_fauna_herd_selected(herd_id: String) -> void:
-	if commands_panel != null:
-		commands_panel.set_follow_herd(herd_id)
-
-# TerrainPanel owns tile selection; the scout button emits this so the coordinator
-# resolves the active faction (from the Commands tab) and issues the command.
-func _on_terrain_tile_scout_requested(x: int, y: int) -> void:
-	var faction := commands_panel.get_scenario_faction() if commands_panel != null else 0
-	_send_command("scout %d %d %d" % [faction, x, y], "Scout order queued for faction %d at (%d, %d)." % [faction, x, y])
 
 func _ingest_command_events(events_variant: Variant) -> void:
 	if not (events_variant is Array):

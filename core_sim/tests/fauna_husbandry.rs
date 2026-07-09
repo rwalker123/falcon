@@ -1,21 +1,26 @@
-//! Phase E husbandry: a sustained Sustain-follow on a Thriving herd tames it into
-//! domesticated livestock (emergent accrual + decay), which then yields steady provisions
-//! and is immune to the overhunting collapse. Mirrors `fauna_follow.rs` setup.
+//! Phase E husbandry: a sustained Sustain hunt on a Thriving herd tames it into domesticated
+//! livestock (emergent accrual + decay), which then yields steady provisions and is immune to the
+//! overhunting collapse. Uses the source-centric labor allocation (a Hunt assignment) that replaced
+//! the retired persistent follow.
 
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_fauna_pursuits, advance_herds, advance_husbandry, scalar_one, scalar_zero,
-    spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FaunaPursuit,
-    FaunaPursuitMode, FogRevealLedger, FollowPolicy, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    advance_herds, advance_husbandry, advance_labor_allocation, scalar_from_f32, scalar_one,
+    scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger,
+    FollowPolicy, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
 };
+
+/// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
+/// never binds, so a Sustain hunt takes exactly the net regrowth (herd stays Thriving → accrues).
+const HUNT_WORKERS: u32 = 5000;
 
 fn spawn_world() -> App {
     let mut app = App::new();
@@ -51,6 +56,7 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    app.world.insert_resource(LaborConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.insert_resource(FogRevealLedger::default());
@@ -77,7 +83,7 @@ fn prime_thriving_herd(app: &mut App) -> String {
     id
 }
 
-fn spawn_follower(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::prelude::Entity {
+fn spawn_hunter(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::prelude::Entity {
     let pos = app
         .world
         .resource::<HerdRegistry>()
@@ -96,7 +102,7 @@ fn spawn_follower(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::p
                 current_tile: tile,
                 size: 30,
                 children: scalar_zero(),
-                working: scalar_zero(),
+                working: scalar_from_f32(HUNT_WORKERS as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -117,25 +123,26 @@ fn spawn_follower(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::p
                 kind: "BandHunter".to_string(),
                 tags: Vec::new(),
             },
-            FaunaPursuit {
-                faction: FactionId(0),
-                band_label: "Test Band".to_string(),
-                fauna_id: herd_id.to_string(),
-                mode: FaunaPursuitMode::Follow { policy },
-                elapsed_turns: 0,
-                started_tick: 0,
+            LaborAllocation {
+                assignments: vec![LaborAssignment {
+                    target: LaborTarget::Hunt {
+                        fauna_id: herd_id.to_string(),
+                        policy,
+                    },
+                    workers: HUNT_WORKERS,
+                }],
             },
         ))
         .id()
 }
 
-/// One full turn's fauna pipeline in real stage order: Logistics (herds regrow, husbandry
-/// upkeep) then Population (pursuits resolve + accrue).
-fn run_turns_with_follow(app: &mut App, turns: u32) {
+/// One full turn's fauna pipeline in real stage order: Logistics (herds regrow, husbandry upkeep)
+/// then Population (labor allocation resolves the hunt + accrues husbandry).
+fn run_turns_with_hunt(app: &mut App, turns: u32) {
     for _ in 0..turns {
         app.world.run_system_once(advance_herds);
         app.world.run_system_once(advance_husbandry);
-        app.world.run_system_once(advance_fauna_pursuits);
+        app.world.run_system_once(advance_labor_allocation);
     }
 }
 
@@ -155,21 +162,14 @@ fn progress_of(app: &App, id: &str) -> f32 {
         .unwrap_or(0.0)
 }
 
-/// Total provisions carried by faction 0's bands (food is band-local now, so the husbandry
-/// yield lands in the owner's cohort larders, not the faction pool).
+/// Total provisions carried by faction 0's bands (food is band-local now, so the husbandry yield
+/// lands in the owner's cohort larders, not the faction pool).
 fn provisions(app: &mut App) -> i64 {
-    let mut total = 0.0f32;
-    let mut query = app.world.query::<&PopulationCohort>();
-    for cohort in query.iter(&app.world) {
-        if cohort.faction == FactionId(0) {
-            total += cohort.stores.get(FOOD).to_f32();
-        }
-    }
-    total.round() as i64
+    provisions_f32(app).round() as i64
 }
 
-/// Un-rounded total FOOD carried by faction 0's bands — needed to observe sub-1 fractional
-/// yields that the rounding `provisions` helper would collapse to zero.
+/// Un-rounded total FOOD carried by faction 0's bands — needed to observe sub-1 fractional yields
+/// that the rounding `provisions` helper would collapse to zero.
 fn provisions_f32(app: &mut App) -> f32 {
     let mut total = 0.0f32;
     let mut query = app.world.query::<&PopulationCohort>();
@@ -181,35 +181,35 @@ fn provisions_f32(app: &mut App) -> f32 {
     total
 }
 
-/// A sustained Sustain-follow on a Thriving herd tames it: progress climbs to 1.0
-/// (domesticated) and the follower's faction owns it.
+/// A sustained Sustain hunt on a Thriving herd tames it: progress climbs to 1.0 (domesticated) and
+/// the hunter's faction owns it.
 #[test]
-fn sustain_follow_domesticates_thriving_herd() {
+fn sustain_hunt_domesticates_thriving_herd() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    spawn_follower(&mut app, &id, FollowPolicy::Sustain);
+    spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
 
     // net accrual = progress_per_turn(0.04) - decay(0.01) = 0.03/turn → ~34 turns to 1.0.
-    run_turns_with_follow(&mut app, 45);
+    run_turns_with_hunt(&mut app, 45);
 
     let registry = app.world.resource::<HerdRegistry>();
     let herd = registry.find(&id).expect("domesticated herd persists");
     assert!(
         herd.is_domesticated(),
-        "sustained Sustain-follow should domesticate: progress {}",
+        "sustained Sustain hunt should domesticate: progress {}",
         herd.domestication_progress
     );
-    assert_eq!(herd.owner, Some(FactionId(0)), "the follower owns the herd");
+    assert_eq!(herd.owner, Some(FactionId(0)), "the hunter owns the herd");
     assert_eq!(registry.domesticated_count(FactionId(0)), 1);
 }
 
-/// Only a Sustain follow tames; an Eradicate follow never accrues husbandry.
+/// Only a Sustain hunt tames; an Eradicate hunt never accrues husbandry.
 #[test]
-fn eradicate_follow_does_not_domesticate() {
+fn eradicate_hunt_does_not_domesticate() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    spawn_follower(&mut app, &id, FollowPolicy::Eradicate);
-    run_turns_with_follow(&mut app, 10);
+    spawn_hunter(&mut app, &id, FollowPolicy::Eradicate);
+    run_turns_with_hunt(&mut app, 10);
     assert_eq!(
         progress_of(&app, &id),
         0.0,
@@ -219,15 +219,15 @@ fn eradicate_follow_does_not_domesticate() {
 
 /// Husbandry progress decays and ownership lapses once the herd isn't being tended.
 #[test]
-fn progress_decays_without_sustained_follow() {
+fn progress_decays_without_sustained_hunt() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    let band = spawn_follower(&mut app, &id, FollowPolicy::Sustain);
-    run_turns_with_follow(&mut app, 6);
+    let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+    run_turns_with_hunt(&mut app, 6);
     let built = progress_of(&app, &id);
     assert!(built > 0.0, "some progress should have accrued");
 
-    // Stop following, then let husbandry decay run.
+    // Stop hunting, then let husbandry decay run.
     app.world.despawn(band);
     run_turns_untended(&mut app, 6);
     let decayed = progress_of(&app, &id);
@@ -244,8 +244,8 @@ fn progress_decays_without_sustained_follow() {
     assert_eq!(herd.owner, None, "ownership lapses at zero progress");
 }
 
-/// A domesticated (managed) herd is immune to the overhunting collapse: driven below the
-/// Allee threshold it recovers logistically instead of crashing to extinction.
+/// A domesticated (managed) herd is immune to the overhunting collapse: driven below the Allee
+/// threshold it recovers logistically instead of crashing to extinction.
 #[test]
 fn domesticated_herd_is_collapse_immune() {
     let mut app = spawn_world();
@@ -307,8 +307,7 @@ fn domesticated_herd_yields_provisions() {
 
 /// Regression (fully-fractional FOOD income): a domesticated herd whose per-turn yield is below
 /// 1.0 provisions (biomass 30 × `provisions_per_biomass` 0.01 = 0.3) must still credit the owner's
-/// larder. The old `(biomass * rate).round() as i64` path dropped this sub-1 yield to zero — the
-/// reported starvation bug — so the band never accrued the sustainable income.
+/// larder.
 #[test]
 fn sub_unit_husbandry_yield_credits_larder() {
     const SUB_UNIT_BIOMASS: f32 = 30.0;
@@ -319,7 +318,6 @@ fn sub_unit_husbandry_yield_credits_larder() {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.claim_domestication(FactionId(0));
-        // A small managed herd whose per-turn yield (0.3) rounds to zero under the old integer path.
         herd.biomass = SUB_UNIT_BIOMASS;
     }
     assert_eq!(provisions_f32(&mut app), 0.0, "larder starts empty");

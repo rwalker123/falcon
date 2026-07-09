@@ -39,6 +39,7 @@ cargo run -p core_sim --bin server
 | `src/data/influencer_config.json` | Roster caps, decay factors, scope thresholds |
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
+| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (Chebyshev radius of in-range sources), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage.per_worker_yield`, `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.reveal_radius`/`reveal_duration_turns` |
 | `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) / `market` (commercial-hunt take + trade multiplier) tuning |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
@@ -205,16 +206,25 @@ turn it also grants a small non-food benefit — a `FogRevealLedger` tracking pu
 `follow` and `market` blocks of `fauna_config.json`. The old one-shot teleport follow (and its
 `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
 
-**Orders replace orders** — a band holds exactly one task. Issuing Harvest / Hunt /
-Follow / Scout calls `reassign_band` (`server.rs`) first, stripping any existing
-`FaunaPursuit` / `HarvestAssignment` / `ScoutAssignment` before attaching the new one
-(this also fixes a latent harvest+follow double-assignment). To stop following, order
-the band to do something else — or issue `cancel_order <faction> [band_entity_bits]`
-(`handle_cancel_order`, `server.rs`), which calls `reassign_band` to strip the current
-task and return the band to idle (feed entry via `CommandEventKind::CancelOrder`). The
-band's live pursuit mode is exported in the snapshot as `PopulationCohortState.huntMode`
-(`single` for a one-shot hunt, else the follow policy; empty string when not pursuing),
-so the client can label the cancel affordance.
+**Retired: single-task model → labor allocation (Early-Game Labor slice 3a).** The
+one-task-per-band model (`reassign_band` + `HarvestAssignment`/`ScoutAssignment`/`FaunaPursuit`
+and their systems `advance_harvest_assignments`/`advance_scout_assignments`/`advance_fauna_pursuits`,
+plus the `scout`/`forage`/`hunt_fauna`/`follow_herd` command handlers) is **removed**. A band is now a
+**labor pool**: a `LaborAllocation` component (`components.rs`) partitions its whole working-age workers
+(`available_workers(working)` = `floor`) across `LaborTarget`s — `Forage { tile }`, `Hunt { fauna_id,
+policy }`, `Scout`, `Warrior` — with the invariant `Σ workers ≤ available`. `advance_labor_allocation`
+(`systems.rs`, Population stage, replacing the three retired systems) resolves per-worker yields each
+turn: Forage = `workers × per_worker_yield × seasonal_weight` from an in-range `FoodModuleTag` tile;
+Hunt take = `min(workers × per_worker_biomass_capacity, policy_ceiling)` (reusing the per-policy ecology
+ceilings — Sustain under-hunting lets a herd grow), tracking a roaming herd out to `band_work_range +
+hunt_leash_tiles` before the assignment lapses (feed entry). Scout reveals fog; Warrior is inert until
+the predator slice. `move_band <faction> <band> <x> <y>` sets a `BandTravel` component that
+`advance_band_movement` steps at `band_move_tiles_per_turn`/turn. `assign_labor` sets one target's
+worker count (0 unassigns; clamps to free headroom); `cancel_order` clears all assignments + stops
+movement (fully idle). The snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`, and still
+summarizes `activity` (target-kind with most workers) + `huntMode` (largest Hunt's policy) for the
+pre-3b client. Husbandry re-homes here: a Sustain Hunt on a Thriving herd accrues domestication. Config:
+`labor_config.json`. Client allocation panel is PR 3b.
 
 **Ecology — critical-depensation collapse (Phase D)** — `advance_herds` applies one
 turn of `net_biomass_delta` (`fauna.rs`) toward each group's per-species carrying
@@ -233,7 +243,7 @@ collapse reaches zero in finite turns. So a hunt/follow draws a group down in
 `ecology.stressed_fraction`/`collapse_fraction` (`classify_ecology_phase`) and exported in
 the snapshot (`HerdTelemetryState.ecologyPhase`) so the client warns the player before a
 group is doomed. This derived state also **gates domestication** (below): husbandry
-progress accrues only while a `Thriving` herd is Sustain-followed.
+progress accrues only while a `Thriving` herd is Sustain-hunted (a Sustain Hunt assignment).
 
 **Immigration** — `repopulate_fauna` (`fauna.rs`, `TurnStage::Logistics` right after
 `advance_herds`) gives a low per-turn chance (`immigration.chance_per_turn`) to respawn one
@@ -246,8 +256,8 @@ elsewhere). Seeded per-turn from `map_seed ^ tick ^ salt` (deterministic under r
 **Domestication / husbandry (Phase E)** — the pastoral counter-force to depletion. A
 `Herd` carries `domestication_progress` (0–1, `1.0` = domesticated) and `owner:
 Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
-- *Emergent accrual*: in `advance_fauna_pursuits` (Population), a **Sustain** follow on a
-  **Thriving** herd adds `husbandry.progress_per_turn` for the following faction (sets
+- *Emergent accrual*: in `advance_labor_allocation` (Population), a **Sustain** Hunt assignment on a
+  **Thriving** herd adds `husbandry.progress_per_turn` for the acting faction (sets
   `owner` on first accrual; only the owner accrues). At `1.0` the herd auto-domesticates.
 - *Decay + yield*: `advance_husbandry` (`fauna.rs`, `TurnStage::Logistics` after
   `advance_herds` — runs *before* the same turn's accrual, so a Sustain-followed herd nets
@@ -340,8 +350,8 @@ through `sim_schema`/`snapshot.rs`; the client consumes them for a morale trend 
 and a Tile-card Habitability line (client half).
 
 **Food is band-local from day one** (the same store a settlement/storage-pit will hold later at
-scale). Provisions **left `FactionInventory` entirely**: foraging (`advance_harvest_assignments`),
-hunt/follow (`advance_fauna_pursuits`), and husbandry (`advance_husbandry`, split across the
+scale). Provisions **left `FactionInventory` entirely**: labor income (forage + hunt, in
+`advance_labor_allocation`) and husbandry (`advance_husbandry`, split across the
 owner's bands) income now credit the acting band's local `stores` (food under the `FOOD` key). At Startup
 (`seed_cohort_demographics`) each band is seeded with `startup.food_reserve_days` turns of its own
 demand (`food_demand`, shared with the consumption path) plus a well-fed morale bonus — no faction
@@ -377,8 +387,9 @@ derived, not snapshot-persisted — a rehydrated cohort reads `0` until the next
 
 The cohort snapshot also carries two derived per-band food-readout fields the client renders:
 `daysOfFood:float` (`larder / one-turn food_demand`; `999.0` = a zero-demand cohort, "not
-food-limited") and `activity:string` (`idle | harvest | hunt | follow | scout`, derived from the
-band's task components). Both are computed at capture in `population_state`.
+food-limited") and `activity:string` (`idle | forage | hunt | scout | warrior`, the target-kind
+with the most workers in the band's `LaborAllocation`). Both are computed at capture in
+`population_state`; alongside them the snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`.
 
 This is the general mechanism the arc scales: raise reach/throughput for settlements/cities, and a
 future **trade policy** adds a consent gate + a priced return flow on *cross-faction* edges (see the
@@ -391,7 +402,7 @@ The emergent per-faction "pressure to root in place" — the first slice of the 
 settlement chain, and the consumer of Phase E's domestication seam.
 
 `sedentarization_tick` (`sedentarization.rs`, `TurnStage::Population` after
-`advance_fauna_pursuits`) computes a per-faction 0–100 **`SedentarizationScore`** each turn as
+`advance_labor_allocation`) computes a per-faction 0–100 **`SedentarizationScore`** each turn as
 a config-weighted blend of normalized inputs, then **EMA-smooths** it (`smoothing`):
 - **domestication** = `HerdRegistry::domesticated_count(faction) / references.domesticated_herds`
   (the Phase E seam),
@@ -432,8 +443,8 @@ Extension seams are present and empty — future factors/consequences slot in wi
 - **Layer 3a — productivity modifier stack.** `output_multiplier(cohort, cfg) = Π(modifiers)`
   (`systems.rs`). Phase 1 has one entry, `discontent_output_modifier = max(floor_mult, 1 −
   discontent_fraction × discontent_weight)` (floor 0.5, weight 1.0). Applied at **payout** at every
-  yield site via a single `output_multiplier` call — forage/hunt (`advance_harvest_assignments`),
-  follow/hunt take (`advance_fauna_pursuits`), husbandry (`advance_husbandry`, `fauna.rs`). Adding
+  yield site via a single `output_multiplier` call — forage + hunt take (`advance_labor_allocation`),
+  husbandry (`advance_husbandry`, `fauna.rs`). Adding
   an education/tech/government modifier is one line in `output_multiplier`, not per-site edits.
 - **Layer 3b — tech-gated migration (own morale onset).** `advance_population_migration`
   (`systems.rs`, `TurnStage::Population`, **after** demographics + this turn's payouts).

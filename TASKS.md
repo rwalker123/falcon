@@ -282,9 +282,19 @@ equipment is consumable inventory; you allocate working-age labor across roles.
   `start_profiles.json` (default const `DEFAULT_STARTING_BAND_SIZE = 30` in `start_profile.rs`).
   Bracket split (initial_distribution) + `food_reserve_days` seeding flow through unchanged.
   _Carry-capacity headroom and starter TOEs land with their own slices below, not here._
-- [ ] **Labor pool + role allocation (sim).** Working-age partitioned across Foraging/Hunting/
-  Scouting/Warrior; per-role throughput = f(workers assigned, equipment on hand). Replaces the
-  band's single-task `reassign_band` model with concurrent role staffing. (M1a slice.)
+- [ ] **Labor allocation — sim (slice 3a).** Source-centric model: per-band assignment set
+  (`{in-range source or band-role → workers}`, Σ ≤ working-age); **band work range `R`** (config,
+  default 2) + a **move-band** command; **Forage** (in-range food-module tiles) + **Hunt** (in-range
+  herds, with a **leashed follow** — bounded reuse of `FaunaPursuit` past `R`, lapses beyond the
+  leash) yielding food **scaled by assigned workers** (the fix: `working` becomes a real producer —
+  today no yield reads it); **Scout** (reveal outward) + **Warrior** (staffable, inert until the
+  predator slice) as band-wide roles. Retires `reassign_band`'s one-task model + target-tile Harvest
+  / whole-band Follow chase. Snapshot widened from the single `activity` string to a structured
+  assignment set (schema + snapshot). Flat per-worker tier only (TOE multipliers = the TOE slice).
+- [ ] **Labor allocation — client (slice 3b).** Allocation panel: assign/unassign workers per
+  in-range source (**per-source unassign is the new "cancel"** — supersedes the Issue-1 single-Cancel
+  UI; command plumbing/optimistic-feedback pattern carries over); move-band command; role/worker
+  readout. Consumes the widened snapshot assignment set.
 - [ ] **Equipment / TOE model.** Per-role consumable equipment inventory; equipped/unequipped
   throughput tiers; **durability cliff** (full performance until expiry, then drop to unequipped);
   starter kit lasts ~15–20 turns (matched to `startup.food_reserve_days`); no crafting/replacement
@@ -296,8 +306,6 @@ equipment is consumable inventory; you allocate working-age labor across roles.
 - [ ] **Food ledger (client).** Per-band income/outflow breakdown (+forage/+hunt/+network/
   −consumption = net/turn → days to empty) + population-vs-carry-cap readout. Load-bearing
   legibility for the equilibrium/settle loop, not cosmetic.
-- [ ] **Labor allocation UI (client).** Assign working-age workers to roles; show each role's
-  equipped/unequipped tier + kit remaining.
 - [ ] **M1-threats — minimal predators.** Predator pressure on the band / unguarded foragers &
   hunters, resolved against Warrior strength (equipped vs bare-handed) → casualties or yield loss.
   Folded into M1 (cheaper to build the Warrior↔threat interface now than retrofit); distinct slice
