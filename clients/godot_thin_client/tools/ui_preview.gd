@@ -65,6 +65,21 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_idle")
 
+	# State 1p — optimistic pending feedback: a fresh forage assignment (6 workers to a new
+	# tile) is in flight before the snapshot confirms. The panel shows an amber "· pending"
+	# Forage row and the Idle count reflects it immediately (16 − [5+4+2+2+6=19] clamps to 0).
+	# (Seeds the HUD-local pending map directly to mimic a just-issued assign_labor.)
+	_hud._pending_labor = {
+		904: {
+			"turn": 0,
+			"assign": {"forage:64,20": {"kind": "forage", "workers": 6, "x": 64, "y": 20, "herd_id": "", "policy": ""}},
+		}
+	}
+	_hud.show_unit_selection(_band_fixture())
+	await _settle()
+	await _save("band_pending")
+	_hud._pending_labor = {}
+
 	# State 1a — a well-fed but demoralized band: healthy food (∞) yet morale 0.22
 	# (< critical), so the drawer's Morale line reads a red 22%. Discontent drags
 	# Output to 56% (red) and the itemized morale breakdown + recovery guidance show.

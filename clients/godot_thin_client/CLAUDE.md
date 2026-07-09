@@ -320,14 +320,24 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   all target it. Three runtime-built control sets replace the retired single-task Scout/Cancel,
   Hunt/policy, and Forage buttons:
   - **`%AllocationPanel`** (band drawer, player band only, `_build_allocation_panel`): reads as a
-    "current actions" report — a `Working: N   Idle: M` header, a **Current actions** section with one
-    `−/+` **worker-stepper** row per staffed Forage tile / Hunt herd (from the cohort's
-    `labor_assignments`; an empty-state hint when none), then a **Band roles** section with the
-    always-shown **Scout** + **Warrior** rows (even at 0), each with a one-line hint so the `−/+`
-    steppers read as "this is how you staff this standing role" (Scout's hint shows the live
+    "current actions" report — a `Population <size> · Workers <working_age> (Idle <n>)` header (spells
+    out that only the ~16 working-age labor, not the 30 people — children/elders are dependents), a
+    **Current actions** section with one `−/+` **worker-stepper** row per staffed Forage tile / Hunt
+    herd (from the cohort's `labor_assignments`; an empty-state hint when none), then a **Band roles**
+    section with the always-shown **Scout** + **Warrior** rows (even at 0), each with a one-line hint so
+    the `−/+` steppers read as "this is how you staff this standing role" (Scout's hint shows the live
     `scout_reveal_radius`; there is no targeted scout map-action anymore). Then **Move** / **Clear all**.
-    Each stepper re-sends `assign_labor_requested` with the new count (0 removes); `+` is gated on
-    `idle_workers > 0`.
+    Each stepper re-sends `assign_labor_requested` with the new count (0 removes); `+` is gated on idle.
+  - **Optimistic pending feedback** (slice 3b UX): assigning workers or moving the band shows
+    immediately, before the next snapshot. `_emit_assign_labor` / `_try_dispatch_pending_move_band`
+    record a HUD-local **pending** entry per band entity (`_pending_labor[entity] = {turn, assign:{key→…},
+    move:{x,y}}`) and re-render. In the panel, a pending source row reads **amber with a "· pending"
+    suffix** and the header **Idle** counts optimistically (`_effective_idle` = working-age − effective
+    assigned, overlaying pending). **Reconciliation is turn-based:** each pending entry is tagged with the
+    snapshot `turn` (header tick, set in `update_overlay`); `_reconcile_pending` (called from
+    `update_band_alerts` each snapshot) drops entries issued on an OLDER turn — a newer-turn snapshot is
+    authoritative confirmation and cleanly absorbs server-side clamping (the snapshot shows the real
+    count). Pending is emitted to MapView via `labor_pending_changed` → `set_labor_pending`.
   - **Selected-band map highlights** (`MapView._draw_band_work_highlights`, drawn when a player band
     is selected, cleared on deselect): the **worked forage tiles** (strong green fill on each
     `forage` assignment's `target_x/y`), the **work-range ring** (thin cyan outline on every tile
@@ -338,7 +348,11 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     work-range square), and the **hunted herds** (red ring on the herd tile + a band→herd link, drawn
     wherever the herd is since hunt reach = `work_range` + leash). New snapshot fields `work_range` /
     `scout_reveal_radius` are decoded in `native/src/lib.rs population_to_dict` and flowed onto the
-    MapView unit marker in `_rebuild_unit_markers` (alongside `labor_assignments`).
+    MapView unit marker in `_rebuild_unit_markers` (alongside `labor_assignments`). **Optimistic pending**
+    actions for the selected band draw in a distinct **dashed-amber** style (`_draw_band_pending`, fed by
+    `set_labor_pending`) — the pending forage tile, the pending hunted herd (dashed ring-hex + dashed
+    band→herd link), and the pending move destination (dashed hex + dashed link) — clearly apart from the
+    solid confirmed styles, cleared when the snapshot confirms.
   - **`%HerdAssignControls`** (herd drawer, huntable herds, `_build_herd_assign_controls`): an
     "Assign hunters" **compose** control — a Hunters `−/+` count (`_hunt_assign_count`), a
     sustain/surplus/market/eradicate **policy picker** (`_build_policy_picker`, `_hunt_assign_policy`,
@@ -583,12 +597,10 @@ Optional contract hooks a panel adds only if it needs them:
   — axis bias belongs to the Commands axis controls (which mutate it optimistically),
   so the coordinator pushes it to the Sentiment view at both the snapshot and the
   optimistic-write sites, instead of the panel owning the key.
-- Command-issuing via a signal when the command needs coordinator-only context:
-  `FaunaPanel` emits `follow_herd_requested(herd_id)` (the follow command needs the
-  active faction, which lives in the coordinator) rather than taking `set_command_hooks`;
-  it also emits `herd_selected(herd_id)` so the coordinator can mirror the Commands
-  follow field. `set_log_hook(append_log)` is the log-only variant of `set_command_hooks`
-  (`VictoryPanel`'s one-shot victory announcement).
+- Command-issuing via a signal when the command needs coordinator-only context (pattern
+  reference; the Fauna/Terrain examples were retired with the single-task commands — FaunaPanel
+  is now display-only and TerrainPanel's Scout button is gone). `set_log_hook(append_log)` is the
+  log-only variant of `set_command_hooks` (`VictoryPanel`'s one-shot victory announcement).
 
 The coordinator collects extracted panels in `_tab_panels` and fans `apply_update`
 out to them at the **end** of `_apply_update`, after its own key routing (e.g.
@@ -608,8 +620,9 @@ resolution for Fauna/Terrain, influencer resonance → Culture, the `overlays` f
 junction routing palette→Terrain / annotations→Crisis / channels→Overlay).
 
 **Commands tab (designer/debug console).** The `Commands` tab (axis-bias, heat,
-config-reload, scenario scout/follow, autoplay row, influencer/corruption command
-buttons, command status/log) is now `CommandsPanel` (see the key-scripts table). Its
+config-reload, autoplay row, influencer/corruption command
+buttons, command status/log; the scenario scout/follow rows were removed with the retired
+single-task commands) is now `CommandsPanel` (see the key-scripts table). Its
 subtree once went missing in the 2025-11-21 scene split (`Main.tscn` → instanced
 `InspectorLayer.tscn`) and sat dead for months — the coordinator's
 `get_node_or_null("RootPanel/TabContainer/Commands/…")` refs silently resolved to
@@ -617,7 +630,7 @@ subtree once went missing in the 2025-11-21 scene split (`Main.tscn` → instanc
 tab-panel contract. The **command hub stays in the coordinator**: `_send_command` →
 `command_client`, `_ensure_command_connection`, the `autoplay_timer`, and turn-sending
 are shared with the turn controls in `RootPanel/CommandToolbar` (outside the
-`TabContainer`) and the scout button in the Terrain tab. The panel issues
+`TabContainer`) and the Terrain tab's Export Map button. The panel issues
 verbs through `set_command_hooks` and is connection-gated via `set_command_connected`.
 Autoplay is split: the toggle+interval widgets live in the panel (relayed as
 `autoplay_toggled`/`autoplay_interval_changed`), while the timer that steps turns and

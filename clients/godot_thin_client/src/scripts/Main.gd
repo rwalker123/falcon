@@ -162,6 +162,11 @@ func _ready() -> void:
         if hud != null and hud.has_signal("alert_focus_requested") and map_view.has_method("focus_on_tile"):
             if not hud.is_connected("alert_focus_requested", Callable(map_view, "focus_on_tile")):
                 hud.connect("alert_focus_requested", Callable(map_view, "focus_on_tile"))
+        # Optimistic pending-labor: HUD publishes the per-band pending map, MapView draws the
+        # dashed-amber pending hexes for the selected band.
+        if hud != null and hud.has_signal("labor_pending_changed") and map_view.has_method("set_labor_pending"):
+            if not hud.is_connected("labor_pending_changed", Callable(map_view, "set_labor_pending")):
+                hud.connect("labor_pending_changed", Callable(map_view, "set_labor_pending"))
     if map_view != null and map_view.has_signal("overlay_legend_changed") and hud != null and hud.has_method("update_overlay_legend"):
         map_view.connect("overlay_legend_changed", Callable(self, "_on_overlay_legend_changed"))
         if map_view.has_method("refresh_overlay_legend"):

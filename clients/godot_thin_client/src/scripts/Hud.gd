@@ -16,6 +16,10 @@ signal assign_labor_requested(payload: Dictionary)
 ## Emitted after the player picks a destination tile for the selected band's move.
 ## Payload keys: { faction, band, x, y }. Main formats the `move_band …` command.
 signal move_band_requested(payload: Dictionary)
+## Optimistic pending-labor state changed (Early-Game Labor slice 3b UX): carries the
+## per-band pending map so MapView can draw the pending-action hex highlights. Main forwards
+## it to `MapView.set_labor_pending`.
+signal labor_pending_changed(pending: Dictionary)
 signal next_turn_requested(steps: int)
 ## Emitted whenever the active command-targeting state changes. Carries a dict
 ## ({} when inactive) that Main forwards to MapView so the map can draw the
@@ -247,10 +251,25 @@ const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd 
 const SCOUT_ROLE_HINT := "Reveals the area around the band (radius %d). Staff with −/+."
 const SCOUT_ROLE_HINT_NO_RADIUS := "Reveals the area around the band. Staff with −/+."
 const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
+# Suffix marking an optimistic (not-yet-confirmed) allocation row, tinted amber to tie it to
+# the amber pending hex on the map.
+const PENDING_ROW_SUFFIX := "  · pending"
 # The single player band, captured from the latest snapshot populations (there is exactly
 # one player band in the current start). assign_labor / move_band / clear-all target it; the
 # herd/tile assign controls also read its labor_assignments to show the current staffing.
 var _player_band: Dictionary = {}
+# The authoritative snapshot turn (header tick), set from update_overlay each snapshot. Used
+# to reconcile optimistic pending actions (a newer turn means the server has processed them).
+var _current_turn: int = -1
+# Optimistic pending labor actions per band entity (Early-Game Labor slice 3b UX): assign/move
+# clicks show immediately in the panel AND on the map, then reconcile when a newer-turn snapshot
+# confirms them (the snapshot is authoritative — this cleanly absorbs server-side clamping).
+#   _pending_labor[entity] = {
+#     "turn": <snapshot turn at issue>,
+#     "assign": { key -> {kind, workers, x, y, herd_id, policy} },   # key via _pending_key
+#     "move": {x, y},                                                # optional
+#   }
+var _pending_labor: Dictionary = {}
 # Move-band targeting: the pending band-relocation tile pick. {} when inactive. Holds the
 # band dict whose move is being targeted.
 var _pending_move_band: Dictionary = {}
@@ -473,6 +492,9 @@ func update_victory_state(state: Dictionary) -> void:
     _refresh_victory_status()
 
 func update_overlay(turn: int, metrics: Dictionary) -> void:
+    # Authoritative snapshot turn — drives optimistic-pending reconciliation (see
+    # _reconcile_pending, called from update_band_alerts later in the same snapshot cycle).
+    _current_turn = turn
     turn_label.text = "Turn %d" % turn
     var unit_count: int = int(metrics.get("unit_count", 0))
     var avg_logistics: float = float(metrics.get("avg_logistics", 0.0))
@@ -710,32 +732,154 @@ func _herd_label_for_id(herd_id: String) -> String:
         return String(_selected_herd.get("species", _selected_herd.get("label", herd_id)))
     return herd_id
 
-## Emit an assign_labor request for the given band. Main formats the text command.
+## Emit an assign_labor request for the given band, and record it as an OPTIMISTIC pending
+## action so the panel + map reflect the change immediately (reconciled by the next
+## newer-turn snapshot). Main formats the text command from the emitted payload.
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String, policy: String) -> void:
     var bits := int(band.get("entity", -1))
     if bits < 0:
         return
+    var clamped: int = max(0, workers)
     emit_signal("assign_labor_requested", {
         "faction": int(band.get("faction", PLAYER_FACTION_ID)),
         "band": bits,
         "kind": kind,
-        "workers": max(0, workers),
+        "workers": clamped,
         "x": x,
         "y": y,
         "herd_id": herd_id,
         "policy": policy,
     })
+    _record_pending_assign(bits, kind, clamped, x, y, herd_id, policy)
+    _after_pending_change()
+
+# ---- Optimistic pending labor (slice 3b UX) --------------------------------
+
+## Stable key identifying a source/role within a band's assignment set.
+func _pending_key(kind: String, x: int, y: int, herd_id: String) -> String:
+    match kind:
+        LABOR_KIND_FORAGE:
+            return "forage:%d,%d" % [x, y]
+        LABOR_KIND_HUNT:
+            return "hunt:%s" % herd_id
+        _:
+            return kind  # scout / warrior — one band-wide role each
+
+func _record_pending_assign(entity: int, kind: String, workers: int, x: int, y: int, herd_id: String, policy: String) -> void:
+    if entity < 0:
+        return
+    var entry: Dictionary = _pending_labor.get(entity, {})
+    entry["turn"] = _current_turn
+    var assigns: Dictionary = entry.get("assign", {})
+    assigns[_pending_key(kind, x, y, herd_id)] = {
+        "kind": kind, "workers": max(0, workers), "x": x, "y": y, "herd_id": herd_id, "policy": policy,
+    }
+    entry["assign"] = assigns
+    _pending_labor[entity] = entry
+
+func _record_pending_move(entity: int, x: int, y: int) -> void:
+    if entity < 0:
+        return
+    var entry: Dictionary = _pending_labor.get(entity, {})
+    entry["turn"] = _current_turn
+    entry["move"] = {"x": x, "y": y}
+    _pending_labor[entity] = entry
+
+## Re-render the current selection (so pending shows in the panel) and push the pending map
+## to MapView (so pending hexes show), after any optimistic change.
+func _after_pending_change() -> void:
+    if not _selected_tile_info.is_empty() or not _selected_unit.is_empty() or not _selected_herd.is_empty():
+        _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
+    emit_signal("labor_pending_changed", _pending_labor)
+
+## Drop pending entries the server has already processed: a snapshot with a turn NEWER than
+## the entry's issue turn is authoritative confirmation (and reflects any clamping). Called
+## each snapshot from update_band_alerts, after update_overlay has set _current_turn.
+func _reconcile_pending() -> void:
+    if _pending_labor.is_empty():
+        return
+    var changed := false
+    for entity in _pending_labor.keys():
+        var entry: Dictionary = _pending_labor[entity]
+        if int(entry.get("turn", -1)) < _current_turn:
+            _pending_labor.erase(entity)
+            changed = true
+    if changed:
+        emit_signal("labor_pending_changed", _pending_labor)
+
+func _pending_assigns_for(entity: int) -> Dictionary:
+    var e: Variant = _pending_labor.get(entity, {})
+    if not (e is Dictionary):
+        return {}
+    var a: Variant = (e as Dictionary).get("assign", {})
+    return a if a is Dictionary else {}
+
+## Confirmed labor assignments overlaid with this band's pending assigns, keyed by source/role.
+## Each value: {kind, workers, x, y, herd_id, policy, pending: bool}.
+func _effective_worker_map(band: Dictionary) -> Dictionary:
+    var merged: Dictionary = {}
+    for a in _labor_assignments_of(band):
+        if not (a is Dictionary):
+            continue
+        var kind := String((a as Dictionary).get("kind", "")).strip_edges().to_lower()
+        var key := _pending_key(kind, int(a.get("target_x", -1)), int(a.get("target_y", -1)), String(a.get("fauna_id", "")))
+        merged[key] = {
+            "kind": kind, "workers": int(a.get("workers", 0)),
+            "x": int(a.get("target_x", -1)), "y": int(a.get("target_y", -1)),
+            "herd_id": String(a.get("fauna_id", "")), "policy": String(a.get("policy", "")), "pending": false,
+        }
+    var pend := _pending_assigns_for(int(band.get("entity", -1)))
+    for key in pend:
+        var pd: Dictionary = pend[key]
+        merged[key] = {
+            "kind": String(pd.get("kind", "")), "workers": int(pd.get("workers", 0)),
+            "x": int(pd.get("x", -1)), "y": int(pd.get("y", -1)),
+            "herd_id": String(pd.get("herd_id", "")), "policy": String(pd.get("policy", "")), "pending": true,
+        }
+    return merged
+
+## Effective worker count for one role/source, overlaying any pending value.
+func _effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
+    var key := _pending_key(kind, -1, -1, "")
+    var pend := _pending_assigns_for(int(band.get("entity", -1)))
+    if pend.has(key):
+        return {"workers": int((pend[key] as Dictionary).get("workers", 0)), "pending": true}
+    return {"workers": _workers_for_role(band, kind), "pending": false}
+
+func _effective_forage_workers(band: Dictionary, x: int, y: int) -> int:
+    var pend := _pending_assigns_for(int(band.get("entity", -1)))
+    var key := _pending_key(LABOR_KIND_FORAGE, x, y, "")
+    if pend.has(key):
+        return int((pend[key] as Dictionary).get("workers", 0))
+    return _workers_for_forage(band, x, y)
+
+func _effective_hunt_workers(band: Dictionary, herd_id: String) -> int:
+    var pend := _pending_assigns_for(int(band.get("entity", -1)))
+    var key := _pending_key(LABOR_KIND_HUNT, -1, -1, herd_id)
+    if pend.has(key):
+        return int((pend[key] as Dictionary).get("workers", 0))
+    return _workers_for_hunt(band, herd_id)
+
+## Optimistic idle = working-age minus the sum of effective worker counts.
+func _effective_idle(band: Dictionary) -> int:
+    var assigned := 0
+    var merged := _effective_worker_map(band)
+    for key in merged:
+        assigned += int((merged[key] as Dictionary).get("workers", 0))
+    return max(0, int(band.get("working_age", 0)) - assigned)
 
 ## A "<label>   − N +" worker-count row. `on_change` is called with the new count
 ## when either stepper is pressed. `plus_enabled` gates the + (e.g. no idle workers).
-func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable) -> HBoxContainer:
+## `pending` marks an optimistic (not-yet-confirmed) row: the label reads amber with a
+## "· pending" suffix, tying it to the amber pending hex on the map.
+func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false) -> HBoxContainer:
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
     var name_label := Label.new()
-    name_label.text = label_text
+    name_label.text = label_text + (PENDING_ROW_SUFFIX if pending else "")
     name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    name_label.add_theme_color_override("font_color", HudStyle.INK)
+    name_label.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK)
     row.add_child(name_label)
     var minus := Button.new()
     minus.text = "−"
@@ -789,53 +933,69 @@ func _build_allocation_panel(band: Dictionary) -> void:
     allocation_panel.visible = is_player
     if not is_player:
         return
+    var population := int(band.get("size", 0))
     var working := int(band.get("working_age", 0))
-    var idle := int(band.get("idle_workers", 0))
+    # Idle counts OPTIMISTICALLY (confirmed idle overlaid with any pending changes) so the
+    # math reflects a just-issued assignment immediately.
+    var idle := _effective_idle(band)
     var can_add := idle > 0
+    # Clarified header: population (all people) vs the working-age labor split, so nobody
+    # expects "Idle" to equal the 30 people — only the ~16 workers labor (children/elders eat
+    # but don't work). E.g. "Population 30 · Workers 16 (Idle 16)".
     var header := Label.new()
-    header.text = "Working: %d    Idle: %d" % [working, idle]
+    header.text = "Population %d · Workers %d (Idle %d)" % [population, working, idle]
     header.add_theme_color_override("font_color", HudStyle.SIGNAL if can_add else HudStyle.INK_DIM)
+    header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     allocation_panel.add_child(header)
-    # "Current actions" — the report of what each group is doing.
+    # "Current actions" — the report of what each group is doing (confirmed + optimistic).
     allocation_panel.add_child(_alloc_section_label(ALLOC_HEADER_ACTIONS))
-    var assignments := _labor_assignments_of(band)
+    var merged := _effective_worker_map(band)
     var has_source := false
-    for entry in assignments:
-        if not (entry is Dictionary):
-            continue
-        var a: Dictionary = entry
-        var kind := String(a.get("kind", "")).strip_edges().to_lower()
-        var workers := int(a.get("workers", 0))
-        if kind == LABOR_KIND_FORAGE:
+    for key in merged:
+        var m: Dictionary = merged[key]
+        var kind := String(m.get("kind", "")).strip_edges().to_lower()
+        var workers := int(m.get("workers", 0))
+        var pending := bool(m.get("pending", false))
+        # Show a source row when it's staffed, or while its removal/change is still pending.
+        if kind == LABOR_KIND_FORAGE and (workers > 0 or pending):
             has_source = true
-            var fx := int(a.get("target_x", -1))
-            var fy := int(a.get("target_y", -1))
+            var fx := int(m.get("x", -1))
+            var fy := int(m.get("y", -1))
             allocation_panel.add_child(_build_worker_stepper(
                 "Forage (%d, %d)" % [fx, fy], workers, can_add,
-                func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_FORAGE, n, fx, fy, "", "")))
-        elif kind == LABOR_KIND_HUNT:
+                func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_FORAGE, n, fx, fy, "", ""),
+                pending))
+        elif kind == LABOR_KIND_HUNT and (workers > 0 or pending):
             has_source = true
-            var herd_id := String(a.get("fauna_id", ""))
-            var hx := int(a.get("target_x", -1))
-            var hy := int(a.get("target_y", -1))
-            var policy := _policy_for_hunt(band, herd_id)
+            var herd_id := String(m.get("herd_id", ""))
+            var hx := int(m.get("x", -1))
+            var hy := int(m.get("y", -1))
+            var policy := String(m.get("policy", ""))
+            if not (policy in LABOR_HUNT_POLICIES):
+                policy = _policy_for_hunt(band, herd_id)
             allocation_panel.add_child(_build_worker_stepper(
                 "Hunt %s [%s]" % [_herd_label_for_id(herd_id), policy], workers, can_add,
-                func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_HUNT, n, hx, hy, herd_id, policy)))
+                func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_HUNT, n, hx, hy, herd_id, policy),
+                pending))
     if not has_source:
         allocation_panel.add_child(_alloc_hint_label(ALLOC_NO_SOURCES_HINT))
     # Scout + Warrior are standing band-wide roles: always shown (even at 0 workers), each
     # with a one-line hint so the −/+ steppers read as "this is how you staff this role".
     allocation_panel.add_child(_alloc_section_label(ALLOC_HEADER_ROLES))
+    var scout_eff := _effective_role_workers(band, LABOR_KIND_SCOUT)
     allocation_panel.add_child(_build_worker_stepper(
-        "Scout", _workers_for_role(band, LABOR_KIND_SCOUT), can_add,
-        func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_SCOUT, n, -1, -1, "", "")))
+        "Scout", int(scout_eff.get("workers", 0)), can_add,
+        func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_SCOUT, n, -1, -1, "", ""),
+        bool(scout_eff.get("pending", false))))
     var scout_radius := int(band.get("scout_reveal_radius", 0))
     allocation_panel.add_child(_alloc_hint_label(
         (SCOUT_ROLE_HINT % scout_radius) if scout_radius > 0 else SCOUT_ROLE_HINT_NO_RADIUS))
+    var warrior_eff := _effective_role_workers(band, LABOR_KIND_WARRIOR)
     allocation_panel.add_child(_build_worker_stepper(
-        "Warrior", _workers_for_role(band, LABOR_KIND_WARRIOR), can_add,
-        func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_WARRIOR, n, -1, -1, "", "")))
+        "Warrior", int(warrior_eff.get("workers", 0)), can_add,
+        func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_WARRIOR, n, -1, -1, "", ""),
+        bool(warrior_eff.get("pending", false))))
     allocation_panel.add_child(_alloc_hint_label(WARRIOR_ROLE_HINT))
     var actions := HBoxContainer.new()
     actions.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
@@ -874,10 +1034,12 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         var staffed := _workers_for_hunt(band, herd_id)
         _hunt_assign_count = staffed if staffed > 0 else WORKER_STEP
         _hunt_assign_policy = _policy_for_hunt(band, herd_id)
-    var current := _workers_for_hunt(band, herd_id)
+    # Show the effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
+    var current := _effective_hunt_workers(band, herd_id)
+    var pending := _pending_assigns_for(int(band.get("entity", -1))).has(_pending_key(LABOR_KIND_HUNT, -1, -1, herd_id))
     var title := Label.new()
-    title.text = "Assign hunters" + ("  (now %d)" % current if current > 0 else "")
-    title.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    title.text = "Assign hunters" + ("  (now %d%s)" % [current, " · pending" if pending else ""] if current > 0 or pending else "")
+    title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK_DIM)
     herd_assign_controls.add_child(title)
     var working := int(band.get("working_age", 0))
     herd_assign_controls.add_child(_build_worker_stepper(
@@ -928,13 +1090,15 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
         _forage_assign_key = key
         var staffed := _workers_for_forage(band, x, y)
         _forage_assign_count = staffed if staffed > 0 else WORKER_STEP
-    var current := _workers_for_forage(band, x, y)
+    # Effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
+    var current := _effective_forage_workers(band, x, y)
+    var pending := _pending_assigns_for(int(band.get("entity", -1))).has(_pending_key(LABOR_KIND_FORAGE, x, y, ""))
     var label := String(tile_info.get("food_module_label", module_key)).strip_edges()
     if label == "":
         label = module_key.capitalize()
     var title := Label.new()
-    title.text = "Assign foragers — %s" % label + ("  (now %d)" % current if current > 0 else "")
-    title.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    title.text = "Assign foragers — %s" % label + ("  (now %d%s)" % [current, " · pending" if pending else ""] if current > 0 or pending else "")
+    title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK_DIM)
     forage_assign_controls.add_child(title)
     var working := int(band.get("working_age", 0))
     forage_assign_controls.add_child(_build_worker_stepper(
@@ -971,14 +1135,18 @@ func _try_dispatch_pending_move_band(tile_info: Dictionary) -> void:
     if x < 0 or y < 0:
         return
     var band := _pending_move_band
+    var bits := int(band.get("entity", -1))
     emit_signal("move_band_requested", {
         "faction": int(band.get("faction", PLAYER_FACTION_ID)),
-        "band": int(band.get("entity", -1)),
+        "band": bits,
         "x": x,
         "y": y,
     })
     _pending_move_band = {}
     _refresh_targeting()
+    # Optimistic feedback: mark the destination pending until a newer-turn snapshot confirms.
+    _record_pending_move(bits, x, y)
+    _after_pending_change()
 
 ## Clear-all: return every worker to idle (repurposed cancel_order).
 func _on_clear_all_pressed(band: Dictionary) -> void:
@@ -2089,6 +2257,9 @@ func update_band_alerts(populations_variant: Variant) -> void:
             alerts.append({"type": ALERT_TYPE_IDLE, "band": band_name, "x": x, "y": y})
     _prev_band_sizes = new_sizes
     _player_band = player_band
+    # This snapshot is authoritative: drop optimistic pending actions the server has now
+    # processed (issued on an older turn), then let the panels render the confirmed state.
+    _reconcile_pending()
     # Keep the on-screen allocation panel / assign controls live as the band's staffing
     # changes turn to turn (the coordinator re-renders occupant/tile cards separately, but
     # a herd/tile selection reads _player_band, which only just refreshed here).

@@ -49,6 +49,21 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_band_scout")
 
+	# State C — optimistic pending overlay: a just-issued forage assign (new tile) + a pending
+	# move destination show in a distinct dashed-amber style, over the confirmed highlights.
+	_map.display_snapshot(_snapshot_work())
+	_map.selected_unit_id = BAND_ENTITY
+	_map.set_labor_pending({
+		BAND_ENTITY: {
+			"turn": 0,
+			"assign": {"forage:6,7": {"kind": "forage", "x": 6, "y": 7, "herd_id": ""}},
+			"move": {"x": 8, "y": 9},
+		}
+	})
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_band_pending")
+
 	get_tree().quit()
 
 func _settle() -> void:

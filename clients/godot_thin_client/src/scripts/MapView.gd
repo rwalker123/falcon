@@ -107,6 +107,14 @@ const HUNT_WORKED_RING_FACTOR := 0.62   # of hex radius
 const HUNT_WORKED_RING_WIDTH := 3.0
 const HUNT_WORKED_LINK_COLOR := Color(0.92, 0.34, 0.30, 0.60)
 const HUNT_WORKED_LINK_WIDTH := 2.5
+# Optimistic PENDING actions (Early-Game Labor slice 3b UX): a distinct amber DASHED style
+# (clearly apart from the solid confirmed green/cyan/blue/red) marks a just-issued assign/move
+# that the snapshot hasn't confirmed yet. Ties to the amber "· pending" rows in the HUD panel.
+const LABOR_PENDING_COLOR := Color(0.98, 0.80, 0.30, 0.98)  # amber/gold
+const LABOR_PENDING_WIDTH := 2.6
+const LABOR_PENDING_DASH := 10.0
+const LABOR_PENDING_GAP := 7.0
+const LABOR_PENDING_LINK_ALPHA := 0.7
 # Supply-link overlay: faint lines connecting bands sharing a supply network.
 const SUPPLY_LINK_COLOR := Color(0.310, 0.878, 0.812, 0.28)  # dim SIGNAL cyan
 const SUPPLY_LINK_WIDTH := 2.0
@@ -337,6 +345,9 @@ var faction_colors: Dictionary = {
 
 var selected_unit_id: int = -1
 var selected_herd_id: String = ""
+# Optimistic pending-labor map (per band entity), pushed from the HUD via set_labor_pending.
+# Drawn for the selected band in a distinct dashed-amber style until the snapshot confirms.
+var _labor_pending: Dictionary = {}
 var biome_color_buffer: PackedColorArray = PackedColorArray()
 var _hovered_tile: Vector2i = Vector2i(-1, -1)
 var _fow_enabled: bool = false
@@ -1435,6 +1446,79 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			if absf(band_center.x - hc.x) <= last_map_size.x * 0.4:
 				draw_line(band_center, hc, HUNT_WORKED_LINK_COLOR, HUNT_WORKED_LINK_WIDTH)
 			draw_arc(hc, radius * HUNT_WORKED_RING_FACTOR, 0, TAU, 28, HUNT_WORKED_COLOR, HUNT_WORKED_RING_WIDTH)
+
+	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
+	#    the snapshot hasn't confirmed yet. Drawn last so it reads on top of the confirmed styles.
+	_draw_band_pending(band, band_col, band_row, eff_col, band_center, radius, origin)
+
+## Draw the dashed-amber pending overlay for a band: pending forage tiles, pending hunted herds
+## (dashed ring + dashed link), and a pending move destination (dashed tile + dashed link).
+func _draw_band_pending(band: Dictionary, band_col: int, band_row: int, eff_col: int, band_center: Vector2, radius: float, origin: Vector2) -> void:
+	var entity := int(band.get("entity", -1))
+	var pend_variant: Variant = _labor_pending.get(entity, {})
+	if not (pend_variant is Dictionary):
+		return
+	var pend: Dictionary = pend_variant
+	var link_color := LABOR_PENDING_COLOR
+	link_color.a = LABOR_PENDING_LINK_ALPHA
+	var assigns_variant: Variant = pend.get("assign", {})
+	if assigns_variant is Dictionary:
+		for key in (assigns_variant as Dictionary):
+			var a: Dictionary = (assigns_variant as Dictionary)[key]
+			var kind := String(a.get("kind", "")).strip_edges().to_lower()
+			if kind == LABOR_KIND_FORAGE:
+				var trow := int(a.get("y", -1))
+				if trow < 0 or trow >= grid_height:
+					continue
+				var tcol := eff_col + _wrapped_col_delta(band_col, int(a.get("x", -1)))
+				_draw_dashed_hex(tcol, trow, radius, origin, LABOR_PENDING_COLOR, LABOR_PENDING_WIDTH)
+			elif kind == LABOR_KIND_HUNT:
+				var herd := _herd_by_id(String(a.get("herd_id", "")))
+				if herd.is_empty():
+					continue
+				var hrow := int(herd.get("y", -1))
+				if hrow < 0 or hrow >= grid_height:
+					continue
+				var hcol := eff_col + _wrapped_col_delta(band_col, int(herd.get("x", -1)))
+				var hc := _hex_center(hcol, hrow, radius, origin)
+				_draw_dashed_hex(hcol, hrow, radius, origin, LABOR_PENDING_COLOR, LABOR_PENDING_WIDTH)
+				if absf(band_center.x - hc.x) <= last_map_size.x * 0.4:
+					_draw_dashed_line(band_center, hc, link_color, LABOR_PENDING_WIDTH, LABOR_PENDING_DASH, LABOR_PENDING_GAP)
+	var move_variant: Variant = pend.get("move", {})
+	if move_variant is Dictionary and not (move_variant as Dictionary).is_empty():
+		var mrow := int((move_variant as Dictionary).get("y", -1))
+		if mrow >= 0 and mrow < grid_height:
+			var mcol := eff_col + _wrapped_col_delta(band_col, int((move_variant as Dictionary).get("x", -1)))
+			var mc := _hex_center(mcol, mrow, radius, origin)
+			_draw_dashed_hex(mcol, mrow, radius, origin, LABOR_PENDING_COLOR, LABOR_PENDING_WIDTH)
+			if absf(band_center.x - mc.x) <= last_map_size.x * 0.4:
+				_draw_dashed_line(band_center, mc, link_color, LABOR_PENDING_WIDTH, LABOR_PENDING_DASH, LABOR_PENDING_GAP)
+
+## Coordinator push (Hud.labor_pending_changed → Main → here): the per-band optimistic pending
+## map. Stored + redrawn; the selected band's pending shows in a dashed-amber style.
+func set_labor_pending(pending: Dictionary) -> void:
+	_labor_pending = pending if pending is Dictionary else {}
+	queue_redraw()
+
+## A dashed line a→b (used for pending links). `dash`/`gap` are pixel lengths.
+func _draw_dashed_line(a: Vector2, b: Vector2, color: Color, width: float, dash: float, gap: float) -> void:
+	var delta := b - a
+	var length := delta.length()
+	if length <= 0.001:
+		return
+	var dir := delta / length
+	var pos := 0.0
+	while pos < length:
+		var seg_end: float = minf(pos + dash, length)
+		draw_line(a + dir * pos, a + dir * seg_end, color, width)
+		pos = seg_end + gap
+
+## A hex outline drawn as dashed edges (pending-tile marker).
+func _draw_dashed_hex(col: int, row: int, radius: float, origin: Vector2, color: Color, width: float) -> void:
+	var center := _hex_center(col, row, radius, origin)
+	var pts := _hex_points(center, radius)
+	for i in range(6):
+		_draw_dashed_line(pts[i], pts[(i + 1) % 6], color, width, LABOR_PENDING_DASH, LABOR_PENDING_GAP)
 
 ## The selected band, if it is one of the player's own; {} otherwise.
 func _selected_player_band() -> Dictionary:
