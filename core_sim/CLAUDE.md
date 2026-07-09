@@ -389,7 +389,10 @@ The cohort snapshot also carries two derived per-band food-readout fields the cl
 `daysOfFood:float` (`larder / one-turn food_demand`; `999.0` = a zero-demand cohort, "not
 food-limited") and `activity:string` (`idle | forage | hunt | scout | warrior`, the target-kind
 with the most workers in the band's `LaborAllocation`). Both are computed at capture in
-`population_state`; alongside them the snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`.
+`population_state`; alongside them the snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`,
+plus `workRange`/`scoutRevealRadius` (read from `labor_config.json` `band_work_range` /
+`scout.reveal_radius` — global config today, surfaced per-band so the client draws the selected
+band's work-range ring and scouted area).
 
 This is the general mechanism the arc scales: raise reach/throughput for settlements/cities, and a
 future **trade policy** adds a consent gate + a priced return flow on *cross-faction* edges (see the

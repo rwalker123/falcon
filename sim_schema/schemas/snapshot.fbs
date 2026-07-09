@@ -482,6 +482,12 @@ table PopulationCohortState {
   idleWorkers:uint = 0;
   // Whole assignable working-age workers this band supplies (the Σ-invariant ceiling). Derived.
   workingAge:uint = 0;
+  // Band's Chebyshev work radius (LaborConfig.band_work_range) — client draws the work-range ring.
+  // Global config today (same every band); surfaced per-band so the client reads it off the
+  // selected band. Appended last (append-only schema discipline).
+  workRange:uint = 0;
+  // Scout reveal radius (LaborConfig.scout.reveal_radius) — client draws the scouted area.
+  scoutRevealRadius:uint = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

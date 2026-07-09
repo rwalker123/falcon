@@ -59,6 +59,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, and `apply_button(btn, "primary"/"ghost"/"armed")`. Every HUD surface styles through here |
 | `ui/FoodIcons.gd` | Shared map-marker emoji glyphs — food modules (`for_site`) and fauna herds (`for_herd`, species keyword matched in the herd label, longest-first). Covers migratory species plus wild game (deer/boar/rabbit/fowl). Used by the Harvest/Hunt button (`Hud.gd`) and the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`) so a source always reads the same |
 | `tools/ui_preview.gd` / `.tscn` | Dev-only preview harness: instances the real `HudLayer` with canned selection/targeting data, renders each state, and saves PNGs to `ui_preview_out/` (gitignored). Iterate on HUD styling without a server: `godot --path . res://tools/ui_preview.tscn` |
+| `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link / scouted radius) without a server: `godot --path . res://tools/map_preview.tscn` |
 | `assets/terrain/TerrainTextureManager.gd` | Autoload singleton for terrain texture loading |
 | `assets/terrain/TerrainDefinitions.gd` | Single source of truth for terrain definitions |
 
@@ -318,11 +319,26 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   into `_player_band` (first player-faction cohort in `update_band_alerts`); assign/move/clear
   all target it. Three runtime-built control sets replace the retired single-task Scout/Cancel,
   Hunt/policy, and Forage buttons:
-  - **`%AllocationPanel`** (band drawer, player band only, `_build_allocation_panel`): a
-    `Working: N   Idle: M` header, one `−/+` **worker-stepper** row per staffed Forage tile /
-    Hunt herd (from the cohort's `labor_assignments`), the always-shown **Scout** + **Warrior**
-    band-wide role rows (even at 0), and **Move** / **Clear all**. Each stepper re-sends
-    `assign_labor_requested` with the new count (0 removes); `+` is gated on `idle_workers > 0`.
+  - **`%AllocationPanel`** (band drawer, player band only, `_build_allocation_panel`): reads as a
+    "current actions" report — a `Working: N   Idle: M` header, a **Current actions** section with one
+    `−/+` **worker-stepper** row per staffed Forage tile / Hunt herd (from the cohort's
+    `labor_assignments`; an empty-state hint when none), then a **Band roles** section with the
+    always-shown **Scout** + **Warrior** rows (even at 0), each with a one-line hint so the `−/+`
+    steppers read as "this is how you staff this standing role" (Scout's hint shows the live
+    `scout_reveal_radius`; there is no targeted scout map-action anymore). Then **Move** / **Clear all**.
+    Each stepper re-sends `assign_labor_requested` with the new count (0 removes); `+` is gated on
+    `idle_workers > 0`.
+  - **Selected-band map highlights** (`MapView._draw_band_work_highlights`, drawn when a player band
+    is selected, cleared on deselect): the **worked forage tiles** (strong green fill on each
+    `forage` assignment's `target_x/y`), the **work-range ring** (thin cyan outline on every tile
+    within `work_range`, replicating the sim's **Chebyshev** `max(|dx|,|dy|) <= work_range` on integer
+    offset coords — truthful-over-pretty, so highlighted == actually-assignable), the **scouted radius**
+    (faint blue shading over the reveal disc when a scout is staffed — a **Euclidean** `dx²+dy² <= r²`
+    disc, matching the sim's `clear_circle` fog reveal, deliberately a different metric from the
+    work-range square), and the **hunted herds** (red ring on the herd tile + a band→herd link, drawn
+    wherever the herd is since hunt reach = `work_range` + leash). New snapshot fields `work_range` /
+    `scout_reveal_radius` are decoded in `native/src/lib.rs population_to_dict` and flowed onto the
+    MapView unit marker in `_rebuild_unit_markers` (alongside `labor_assignments`).
   - **`%HerdAssignControls`** (herd drawer, huntable herds, `_build_herd_assign_controls`): an
     "Assign hunters" **compose** control — a Hunters `−/+` count (`_hunt_assign_count`), a
     sustain/surplus/market/eradicate **policy picker** (`_build_policy_picker`, `_hunt_assign_policy`,

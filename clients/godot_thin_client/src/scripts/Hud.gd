@@ -237,6 +237,16 @@ const WORKER_STEP := 1
 const WORKER_STEPPER_BUTTON_WIDTH := 28.0
 const WORKER_STEPPER_VALUE_WIDTH := 32.0
 const WORKER_STEPPER_SEPARATION := 6
+# Allocation-panel section headers + role hints (make the panel read as a "current actions"
+# report and make the standing Scout/Warrior roles discoverable — the −/+ steppers ARE how
+# you staff a scout mission now; there is no targeted map action).
+const ALLOC_SECTION_FONT_SIZE := 10
+const ALLOC_HEADER_ACTIONS := "Current actions"
+const ALLOC_HEADER_ROLES := "Band roles"
+const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd to assign foragers/hunters."
+const SCOUT_ROLE_HINT := "Reveals the area around the band (radius %d). Staff with −/+."
+const SCOUT_ROLE_HINT_NO_RADIUS := "Reveals the area around the band. Staff with −/+."
+const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
 # The single player band, captured from the latest snapshot populations (there is exactly
 # one player band in the current start). assign_labor / move_band / clear-all target it; the
 # herd/tile assign controls also read its labor_assignments to show the current staffing.
@@ -752,6 +762,24 @@ func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, o
 ## The band allocation panel: Working/Idle header, one −/+ row per staffed Forage/Hunt
 ## source, the always-present Scout + Warrior band-wide role rows, and Move / Clear-all.
 ## Each source/role row re-sends assign_labor with the new count (0 removes).
+## A dim uppercase section header inside the allocation panel ("Current actions" / "Band roles").
+func _alloc_section_label(text: String) -> Label:
+    var label := Label.new()
+    label.text = text.to_upper()
+    label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+    label.add_theme_font_size_override("font_size", ALLOC_SECTION_FONT_SIZE)
+    return label
+
+## A dim wrapping hint line (role explanation / empty-state prompt).
+func _alloc_hint_label(text: String) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+    label.add_theme_font_size_override("font_size", ALLOC_SECTION_FONT_SIZE)
+    label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    return label
+
 func _build_allocation_panel(band: Dictionary) -> void:
     if allocation_panel == null:
         return
@@ -768,6 +796,8 @@ func _build_allocation_panel(band: Dictionary) -> void:
     header.text = "Working: %d    Idle: %d" % [working, idle]
     header.add_theme_color_override("font_color", HudStyle.SIGNAL if can_add else HudStyle.INK_DIM)
     allocation_panel.add_child(header)
+    # "Current actions" — the report of what each group is doing.
+    allocation_panel.add_child(_alloc_section_label(ALLOC_HEADER_ACTIONS))
     var assignments := _labor_assignments_of(band)
     var has_source := false
     for entry in assignments:
@@ -792,13 +822,21 @@ func _build_allocation_panel(band: Dictionary) -> void:
             allocation_panel.add_child(_build_worker_stepper(
                 "Hunt %s [%s]" % [_herd_label_for_id(herd_id), policy], workers, can_add,
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_HUNT, n, hx, hy, herd_id, policy)))
-    # Scout + Warrior are band-wide roles: always shown (even at 0 workers).
+    if not has_source:
+        allocation_panel.add_child(_alloc_hint_label(ALLOC_NO_SOURCES_HINT))
+    # Scout + Warrior are standing band-wide roles: always shown (even at 0 workers), each
+    # with a one-line hint so the −/+ steppers read as "this is how you staff this role".
+    allocation_panel.add_child(_alloc_section_label(ALLOC_HEADER_ROLES))
     allocation_panel.add_child(_build_worker_stepper(
         "Scout", _workers_for_role(band, LABOR_KIND_SCOUT), can_add,
         func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_SCOUT, n, -1, -1, "", "")))
+    var scout_radius := int(band.get("scout_reveal_radius", 0))
+    allocation_panel.add_child(_alloc_hint_label(
+        (SCOUT_ROLE_HINT % scout_radius) if scout_radius > 0 else SCOUT_ROLE_HINT_NO_RADIUS))
     allocation_panel.add_child(_build_worker_stepper(
         "Warrior", _workers_for_role(band, LABOR_KIND_WARRIOR), can_add,
         func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_WARRIOR, n, -1, -1, "", "")))
+    allocation_panel.add_child(_alloc_hint_label(WARRIOR_ROLE_HINT))
     var actions := HBoxContainer.new()
     actions.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
     var move_btn := Button.new()

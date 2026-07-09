@@ -129,6 +129,7 @@ pub struct SnapshotContext<'w> {
     pub viewer_faction: Res<'w, crate::visibility::ViewerFaction>,
     pub demographics: Res<'w, DemographicsConfigHandle>,
     pub wellbeing: Res<'w, crate::wellbeing_config::WellbeingConfigHandle>,
+    pub labor: Res<'w, crate::labor_config::LaborConfigHandle>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
 }
@@ -1246,6 +1247,7 @@ pub fn capture_snapshot(
         viewer_faction,
         demographics,
         wellbeing,
+        labor,
         supply_membership,
         pipeline_config,
     } = ctx;
@@ -1304,6 +1306,11 @@ pub fn capture_snapshot(
 
     let demographics_config = demographics.get();
     let wellbeing_config = wellbeing.get();
+    let labor_config = labor.get();
+    // Global labor config today (identical for every band); surfaced per-band so the client reads
+    // the work-range ring / scouted area off the selected band (future-proof if bands diverge).
+    let band_work_range = labor_config.band_work_range;
+    let scout_reveal_radius = labor_config.scout.reveal_radius;
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
         .map(|(entity, cohort, allocation, travel)| {
@@ -1326,6 +1333,8 @@ pub fn capture_snapshot(
                 &demographics_config,
                 &wellbeing_config,
                 &supply_membership,
+                band_work_range,
+                scout_reveal_radius,
             )
         })
         .collect();
@@ -3566,6 +3575,8 @@ fn population_state(
     demographics: &DemographicsConfig,
     wellbeing: &crate::wellbeing_config::WellbeingConfig,
     supply_membership: &SupplyNetworkMembership,
+    work_range: u32,
+    scout_reveal_radius: u32,
 ) -> PopulationCohortState {
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let demand = food_demand(
@@ -3616,6 +3627,8 @@ fn population_state(
         labor_assignments,
         idle_workers,
         working_age,
+        work_range,
+        scout_reveal_radius,
         supply_network_id: supply_membership.network_of(entity),
         morale_delta: cohort.last_morale_delta.raw(),
         morale_cause: cohort.last_morale_cause.as_u8(),

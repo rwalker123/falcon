@@ -188,6 +188,8 @@ func _band_fixture() -> Dictionary:
 		# Forage tile, a Hunt herd, and the Scout + Warrior band-wide roles.
 		"working_age": 16,
 		"idle_workers": 3,
+		"work_range": 2,
+		"scout_reveal_radius": 2,
 		"activity": "forage",
 		"labor_assignments": [
 			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18},

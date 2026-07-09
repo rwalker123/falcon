@@ -83,6 +83,30 @@ const BAND_ACTIVITY_COLORS := {
 }
 const BAND_ACTIVITY_DEFAULT_COLOR := Color(0.70, 0.70, 0.70, BAND_ACTIVITY_RING_ALPHA)
 const BAND_ACTIVITY_IDLE := "idle"
+# Selected-player-band labor highlights (Early-Game Labor slice 3b). Distinct styles so
+# the four layers read apart: the work-range reach (thin cyan outlines = "reachable"), the
+# scouted disc (faint blue shading = "an area"), the worked forage tiles (strong green
+# fill = "being worked"), and the hunted herds (red ring + link). See _draw_band_work_highlights.
+const LABOR_KIND_FORAGE := "forage"
+const LABOR_KIND_HUNT := "hunt"
+const LABOR_KIND_SCOUT := "scout"
+# Work-range ring: outline every in-range tile (Chebyshev square), no fill — reads as the
+# reachable-forage cluster without competing with the worked-tile fills.
+const WORK_RANGE_OUTLINE := Color(0.310, 0.878, 0.812, 0.34)  # faint SIGNAL cyan
+const WORK_RANGE_OUTLINE_WIDTH := 1.5
+# Scouted radius: faint blue shading over the reveal disc (Euclidean).
+const SCOUT_REVEAL_FILL := Color(0.30, 0.60, 0.90, 0.16)
+# Worked forage tiles: strong green fill + bold outline (the tiles actually being harvested).
+const FORAGE_WORKED_FILL := Color(0.30, 0.80, 0.30, 0.34)
+const FORAGE_WORKED_OUTLINE := Color(0.46, 0.96, 0.46, 0.95)
+const FORAGE_WORKED_OUTLINE_WIDTH := 3.0
+# Hunted herds: red ring on the herd tile + a thin band→herd link (the herd can sit well
+# outside the work-range ring — hunt reach = work_range + leash).
+const HUNT_WORKED_COLOR := Color(0.92, 0.34, 0.30, 0.95)
+const HUNT_WORKED_RING_FACTOR := 0.62   # of hex radius
+const HUNT_WORKED_RING_WIDTH := 3.0
+const HUNT_WORKED_LINK_COLOR := Color(0.92, 0.34, 0.30, 0.60)
+const HUNT_WORKED_LINK_WIDTH := 2.5
 # Supply-link overlay: faint lines connecting bands sharing a supply network.
 const SUPPLY_LINK_COLOR := Color(0.310, 0.878, 0.812, 0.28)  # dim SIGNAL cyan
 const SUPPLY_LINK_WIDTH := 2.0
@@ -762,6 +786,11 @@ func _draw() -> void:
 	_draw_crisis_annotations(radius, origin)
 	_draw_start_marker(radius, origin)
 
+	# Selected player band: highlight what it's working (forage tiles / hunted herds),
+	# its assignable reach (work-range ring), and its scouted area. Drawn before the
+	# unit/herd markers so those sit on top of the tile tints.
+	_draw_band_work_highlights(radius, origin)
+
 	_draw_supply_links(radius, origin)
 	for unit in units:
 		_draw_unit(unit, radius, origin)
@@ -1324,6 +1353,148 @@ func _draw_band_status(unit: Dictionary, center: Vector2, marker_radius: float) 
 		var ring_color: Color = BAND_ACTIVITY_COLORS.get(activity, BAND_ACTIVITY_DEFAULT_COLOR)
 		draw_arc(center, marker_radius * BAND_ACTIVITY_RING_FACTOR, 0, TAU, 28, ring_color, BAND_ACTIVITY_RING_WIDTH)
 
+## When a player band is selected, surface what it is working (Early-Game Labor slice 3b):
+##  - work-range ring: outline every tile within `work_range` (Chebyshev = king-move) of the
+##    band = the assignable forage area. Replicates the sim's `chebyshev_tiles` EXACTLY
+##    (`max(|dx|,|dy|) <= work_range` on integer offset (col,row) coords) so highlighted ==
+##    actually-assignable, even where the king-move square looks irregular on the hex grid.
+##  - worked forage tiles: strong green fill on each `forage` assignment's target tile.
+##  - scouted radius: faint blue shading over the reveal disc when a scout is staffed. This
+##    ring is a EUCLIDEAN disc (`dx*dx + dy*dy <= r*r`), matching the sim's `clear_circle`
+##    fog reveal — deliberately a different metric from the work-range square.
+##  - hunted herds: a red ring on the herd tile + a band→herd link (the herd can sit outside
+##    the work-range ring — hunt reach = work_range + leash).
+## All cleared automatically when the band is deselected (selected_unit_id < 0 → early out).
+func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
+	if selected_unit_id < 0:
+		return
+	var band := _selected_player_band()
+	if band.is_empty():
+		return
+	var pos: Array = Array(band.get("pos", []))
+	if pos.size() != 2:
+		return
+	var band_col := int(pos[0])
+	var band_row := int(pos[1])
+	# Render neighbours in the band's wrapped column frame so the ring stays contiguous
+	# across the horizontal seam.
+	var eff_col := _band_effective_col(band_col, radius, origin)
+	var band_center := _hex_center(eff_col, band_row, radius, origin)
+
+	# 1. Scouted radius (drawn first, under the rest): Euclidean disc, only when a scout is staffed.
+	var scout_radius := int(band.get("scout_reveal_radius", 0))
+	if scout_radius > 0 and _labor_workers_for_kind(band, LABOR_KIND_SCOUT) > 0:
+		var rsq := scout_radius * scout_radius
+		for drow in range(-scout_radius, scout_radius + 1):
+			var row := band_row + drow
+			if row < 0 or row >= grid_height:
+				continue
+			for dcol in range(-scout_radius, scout_radius + 1):
+				if dcol * dcol + drow * drow > rsq:
+					continue
+				_fill_hex(eff_col + dcol, row, radius, origin, SCOUT_REVEAL_FILL)
+
+	# 2. Work-range ring: Chebyshev square outline (max(|dcol|,|drow|) <= work_range).
+	var work_range := int(band.get("work_range", 0))
+	if work_range > 0:
+		for drow in range(-work_range, work_range + 1):
+			var row := band_row + drow
+			if row < 0 or row >= grid_height:
+				continue
+			for dcol in range(-work_range, work_range + 1):
+				if dcol == 0 and drow == 0:
+					continue
+				_outline_hex(eff_col + dcol, row, radius, origin, WORK_RANGE_OUTLINE, WORK_RANGE_OUTLINE_WIDTH)
+
+	# 3. Worked forage tiles + 4. hunted herds, from the band's assignments.
+	for entry_variant in _labor_assignments_of_marker(band):
+		if not (entry_variant is Dictionary):
+			continue
+		var entry: Dictionary = entry_variant
+		var kind := String(entry.get("kind", "")).strip_edges().to_lower()
+		if int(entry.get("workers", 0)) <= 0:
+			continue
+		if kind == LABOR_KIND_FORAGE:
+			var tcol := eff_col + _wrapped_col_delta(band_col, int(entry.get("target_x", -1)))
+			var trow := int(entry.get("target_y", -1))
+			if trow < 0 or trow >= grid_height:
+				continue
+			_fill_hex(tcol, trow, radius, origin, FORAGE_WORKED_FILL)
+			_outline_hex(tcol, trow, radius, origin, FORAGE_WORKED_OUTLINE, FORAGE_WORKED_OUTLINE_WIDTH)
+		elif kind == LABOR_KIND_HUNT:
+			var herd := _herd_by_id(String(entry.get("fauna_id", "")))
+			var herd_col := int(entry.get("target_x", -1))
+			var herd_row := int(entry.get("target_y", -1))
+			if not herd.is_empty():
+				herd_col = int(herd.get("x", herd_col))
+				herd_row = int(herd.get("y", herd_row))
+			if herd_col < 0 or herd_row < 0 or herd_row >= grid_height:
+				continue
+			var hc := _hex_center(eff_col + _wrapped_col_delta(band_col, herd_col), herd_row, radius, origin)
+			# Link the band to the herd it is hunting (skip a wrap-spanning artifact).
+			if absf(band_center.x - hc.x) <= last_map_size.x * 0.4:
+				draw_line(band_center, hc, HUNT_WORKED_LINK_COLOR, HUNT_WORKED_LINK_WIDTH)
+			draw_arc(hc, radius * HUNT_WORKED_RING_FACTOR, 0, TAU, 28, HUNT_WORKED_COLOR, HUNT_WORKED_RING_WIDTH)
+
+## The selected band, if it is one of the player's own; {} otherwise.
+func _selected_player_band() -> Dictionary:
+	if selected_unit_id < 0:
+		return {}
+	for unit in units:
+		if int(unit.get("entity", -1)) == selected_unit_id and _is_player_unit(unit):
+			return unit
+	return {}
+
+func _labor_assignments_of_marker(band: Dictionary) -> Array:
+	var v: Variant = band.get("labor_assignments", [])
+	return v if v is Array else []
+
+func _labor_workers_for_kind(band: Dictionary, kind: String) -> int:
+	var total := 0
+	for entry in _labor_assignments_of_marker(band):
+		if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == kind:
+			total += int((entry as Dictionary).get("workers", 0))
+	return total
+
+func _herd_by_id(herd_id: String) -> Dictionary:
+	if herd_id == "":
+		return {}
+	for herd in herds:
+		if herd is Dictionary and String((herd as Dictionary).get("id", "")) == herd_id:
+			return herd
+	return {}
+
+## Band's wrapped column: the copy of `col` nearest the viewport centre (matches
+## `_hex_center_wrapped`), so highlights render contiguous with the band across the seam.
+func _band_effective_col(col: int, radius: float, origin: Vector2) -> int:
+	if not (_wrap_horizontal and grid_width > 0):
+		return col
+	var viewport_size: Vector2 = _get_adjusted_viewport_size()
+	var center_world_x: float = viewport_size.x * 0.5 - origin.x
+	var col_width: float = SQRT3 * radius
+	var center_col: float = center_world_x / col_width
+	var wrap_offset: int = int(round((center_col - float(col)) / float(grid_width)))
+	return col + wrap_offset * grid_width
+
+## Shortest signed column delta from `from_col` to `to_col`, honoring horizontal wrap, so a
+## target tile renders adjacent to the band rather than across the whole map.
+func _wrapped_col_delta(from_col: int, to_col: int) -> int:
+	var d := to_col - from_col
+	if _wrap_horizontal and grid_width > 0:
+		d -= int(round(float(d) / float(grid_width))) * grid_width
+	return d
+
+func _fill_hex(col: int, row: int, radius: float, origin: Vector2, fill: Color) -> void:
+	var center := _hex_center(col, row, radius, origin)
+	var pts := _hex_points(center, radius)
+	draw_polygon(pts, PackedColorArray([fill, fill, fill, fill, fill, fill]))
+
+func _outline_hex(col: int, row: int, radius: float, origin: Vector2, color: Color, width: float) -> void:
+	var center := _hex_center(col, row, radius, origin)
+	var pts := _hex_points(center, radius)
+	var outline := PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[4], pts[5], pts[0]])
+	draw_polyline(outline, color, width, true)
+
 func _travel_arrow_color(task_kind: String) -> Color:
 	match task_kind:
 		"harvest":
@@ -1648,6 +1819,12 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			# drawer + roster so "Cancel <Mode> Hunt" can label a live hunting band.
 			"hunt_mode": String(entry.get("hunt_mode", "")),
 			"supply_network_id": int(entry.get("supply_network_id", 0)),
+			# Early-Game Labor (slice 3b): what the band is working + its reach, for the
+			# selected-band map highlights (work-range ring / worked forage tiles / hunted
+			# herds / scouted radius).
+			"work_range": int(entry.get("work_range", 0)),
+			"scout_reveal_radius": int(entry.get("scout_reveal_radius", 0)),
+			"labor_assignments": (entry.get("labor_assignments", []) as Array).duplicate(true) if entry.get("labor_assignments", []) is Array else [],
 		}
 		var stores_variant: Variant = entry.get("stores", {})
 		if stores_variant is Dictionary:

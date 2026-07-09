@@ -980,6 +980,16 @@ pub struct PopulationCohortState {
     /// Whole assignable working-age workers this band supplies (the Σ-invariant ceiling). Derived.
     #[serde(default)]
     pub working_age: u32,
+    /// The band's Chebyshev work radius (`LaborConfig.band_work_range`). Global labor config today
+    /// (identical for every band); surfaced per-band so the client reads it off the selected band
+    /// to draw the work-range ring. Sourced from `labor_config.json` at capture.
+    #[serde(default)]
+    pub work_range: u32,
+    /// The scout reveal radius (`LaborConfig.scout.reveal_radius`). Global labor config today;
+    /// surfaced per-band so the client draws the scouted area off the selected band. Sourced from
+    /// `labor_config.json` at capture.
+    #[serde(default)]
+    pub scout_reveal_radius: u32,
     /// Which supply network this band belongs to this turn: `0` = not in a multi-band network,
     /// `>= 1` = a per-snapshot id shared by all bands in the same connected component. Derived and
     /// recomputed every turn (not persisted for rollback).
@@ -2785,6 +2795,8 @@ fn create_populations<'a>(
                     laborAssignments: labor_assignments,
                     idleWorkers: cohort.idle_workers,
                     workingAge: cohort.working_age,
+                    workRange: cohort.work_range,
+                    scoutRevealRadius: cohort.scout_reveal_radius,
                     supplyNetworkId: cohort.supply_network_id,
                     moraleDelta: cohort.morale_delta,
                     moraleCause: cohort.morale_cause,

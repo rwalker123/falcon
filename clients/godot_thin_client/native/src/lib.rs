@@ -3593,6 +3593,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     }
     let _ = dict.insert("idle_workers", cohort.idleWorkers() as i64);
     let _ = dict.insert("working_age", cohort.workingAge() as i64);
+    // Forage work radius (Chebyshev tiles) + what a scout assignment reveals. Drive the
+    // MapView band-selection highlights (work-range ring / scouted radius).
+    let _ = dict.insert("work_range", cohort.workRange() as i64);
+    let _ = dict.insert("scout_reveal_radius", cohort.scoutRevealRadius() as i64);
 
     if let Some(access) = cohort.accessibleStockpile() {
         let mut stock_dict = VarDictionary::new();
