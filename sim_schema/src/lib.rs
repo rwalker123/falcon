@@ -2673,7 +2673,11 @@ fn create_populations<'a>(
                 )
             });
             let activity = Some(builder.create_string(&cohort.activity));
-            let hunt_mode = Some(builder.create_string(&cohort.hunt_mode));
+            let hunt_mode = if cohort.hunt_mode.is_empty() {
+                None
+            } else {
+                Some(builder.create_string(&cohort.hunt_mode))
+            };
             let accessible_stockpile_fb = cohort.accessible_stockpile.as_ref().map(|stockpile| {
                 let entries = if stockpile.entries.is_empty() {
                     None

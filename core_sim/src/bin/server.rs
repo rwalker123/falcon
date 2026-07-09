@@ -1786,6 +1786,24 @@ fn handle_cancel_order(
         return;
     };
 
+    // Nothing to cancel: an already-idle band should report a failure, not a
+    // misleading "stood down" entry (guards text-input / desync invocations).
+    let has_task = {
+        let entity = app.world.entity(band.entity);
+        entity.contains::<FaunaPursuit>()
+            || entity.contains::<HarvestAssignment>()
+            || entity.contains::<ScoutAssignment>()
+    };
+    if !has_task {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!("{} has no active order to cancel.", band.label),
+        );
+        return;
+    }
+
     reassign_band(app, band.entity);
 
     let tick = app.world.resource::<SimulationTick>().0;
