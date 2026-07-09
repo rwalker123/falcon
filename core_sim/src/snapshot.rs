@@ -3779,30 +3779,53 @@ fn snapshot_sedentarization(score: &SedentarizationScore) -> Vec<SchemaSedentari
         .collect()
 }
 
-/// Aggregate the per-cohort age brackets into a per-faction age structure for the HUD readout.
-/// Sums the fixed-point brackets (from the already-built cohort states) in a stable faction
-/// order, then rounds each to a whole head-count.
+/// Aggregate the per-cohort age brackets into a per-faction age structure for the HUD readout,
+/// reconciled so the three emitted head-counts agree with the per-band selection panel.
+///
+/// `working` is the sum of each cohort's floored `available_workers` (the exact assignable-worker
+/// count the band panel shows), and the total head-count is the sum of each cohort's authoritative
+/// `size`. Dependents (`total − working`, clamped ≥ 0) are split into `children` + `elders` in
+/// proportion to the summed fixed-point child/elder masses, rounded so they sum *exactly* to the
+/// dependents (round-half on children, elders takes the remainder). This guarantees
+/// `children + working + elders == Σ size` and `working == Σ available_workers`, so the client's
+/// `Pop = children + working + elders` matches the summed band sizes with no independent-rounding
+/// overshoot.
 fn snapshot_demographics(
     cohorts: &[PopulationCohortState],
 ) -> Vec<SchemaPopulationDemographicsState> {
-    let mut by_faction: std::collections::BTreeMap<u32, (i64, i64, i64)> =
+    // Per faction: (Σ size, Σ available_workers, Σ children mass, Σ elders mass).
+    let mut by_faction: std::collections::BTreeMap<u32, (u64, u64, i128, i128)> =
         std::collections::BTreeMap::new();
     for cohort in cohorts {
-        let entry = by_faction.entry(cohort.faction).or_insert((0, 0, 0));
-        entry.0 += cohort.children;
-        entry.1 += cohort.working;
-        entry.2 += cohort.elders;
+        let entry = by_faction.entry(cohort.faction).or_insert((0, 0, 0, 0));
+        entry.0 += u64::from(cohort.size);
+        entry.1 += u64::from(available_workers(Scalar::from_raw(cohort.working)));
+        entry.2 += i128::from(cohort.children.max(0));
+        entry.3 += i128::from(cohort.elders.max(0));
     }
     by_faction
         .into_iter()
-        .map(
-            |(faction, (children, working, elders))| SchemaPopulationDemographicsState {
+        .map(|(faction, (total, workers, children_mass, elders_mass))| {
+            // Clamp workers to the head-count so dependents never go negative.
+            let working = workers.min(total);
+            let dependents = total - working;
+            let dependent_mass = children_mass + elders_mass;
+            // Split dependents ∝ child:elder mass, round-half on children so the two brackets
+            // sum exactly to `dependents`. i128 keeps the product overflow-free.
+            let children = if dependent_mass == 0 {
+                0
+            } else {
+                let dep = dependents as i128;
+                ((dep * children_mass + dependent_mass / 2) / dependent_mass) as u64
+            };
+            let elders = dependents - children;
+            SchemaPopulationDemographicsState {
                 faction,
-                children: Scalar::from_raw(children).to_u32(),
-                working: Scalar::from_raw(working).to_u32(),
-                elders: Scalar::from_raw(elders).to_u32(),
-            },
-        )
+                children: children as u32,
+                working: working as u32,
+                elders: elders as u32,
+            }
+        })
         .collect()
 }
 
@@ -4575,5 +4598,75 @@ mod tests {
 
         assert_eq!(fog.samples[0], Scalar::zero().raw());
         assert_eq!(fog.samples[1], Scalar::one().raw());
+    }
+
+    fn demographics_cohort(
+        faction: u32,
+        size: u32,
+        children: f32,
+        working: f32,
+        elders: f32,
+    ) -> PopulationCohortState {
+        PopulationCohortState {
+            faction,
+            size,
+            children: Scalar::from_f32(children).raw(),
+            working: Scalar::from_f32(working).raw(),
+            elders: Scalar::from_f32(elders).raw(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn snapshot_demographics_reconciles_with_band_totals() {
+        // Independent rounding of 8.9/16.5/4.6 would overshoot to 9+17+5 = 31, but the band's
+        // authoritative size is 30 and available_workers floors 16.5 to 16.
+        let cohorts = vec![demographics_cohort(0, 30, 8.9, 16.5, 4.6)];
+        let demographics = snapshot_demographics(&cohorts);
+        assert_eq!(demographics.len(), 1);
+        let d = &demographics[0];
+        assert_eq!(d.faction, 0);
+        assert_eq!(d.working, 16, "working matches Σ available_workers (floor)");
+        assert_eq!(
+            d.children + d.working + d.elders,
+            30,
+            "brackets sum to Σ size (client Pop matches band size)"
+        );
+        // Dependents 14 split ∝ 8.9:4.6 → children round(9.23)=9, elders remainder 5.
+        assert_eq!(d.children, 9);
+        assert_eq!(d.elders, 5);
+    }
+
+    #[test]
+    fn snapshot_demographics_sums_multiple_bands_per_faction() {
+        let cohorts = vec![
+            demographics_cohort(2, 30, 8.9, 16.5, 4.6),
+            demographics_cohort(2, 20, 5.4, 10.5, 4.1),
+            // A different faction stays separate.
+            demographics_cohort(7, 10, 2.0, 6.5, 1.5),
+        ];
+        let demographics = snapshot_demographics(&cohorts);
+        assert_eq!(demographics.len(), 2);
+
+        let f2 = demographics.iter().find(|d| d.faction == 2).unwrap();
+        // Σ available_workers = floor(16.5) + floor(10.5) = 16 + 10 = 26.
+        assert_eq!(f2.working, 26);
+        // Σ size = 50.
+        assert_eq!(f2.children + f2.working + f2.elders, 50);
+
+        let f7 = demographics.iter().find(|d| d.faction == 7).unwrap();
+        assert_eq!(f7.working, 6);
+        assert_eq!(f7.children + f7.working + f7.elders, 10);
+    }
+
+    #[test]
+    fn snapshot_demographics_clamps_workers_above_headcount() {
+        // Degenerate: floored workers exceed size — dependents must clamp to zero, not underflow.
+        let cohorts = vec![demographics_cohort(1, 5, 0.0, 9.9, 0.0)];
+        let demographics = snapshot_demographics(&cohorts);
+        let d = &demographics[0];
+        assert_eq!(d.working, 5);
+        assert_eq!(d.children, 0);
+        assert_eq!(d.elders, 0);
     }
 }
