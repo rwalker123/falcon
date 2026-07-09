@@ -444,7 +444,7 @@ easy-to-miss "select a band…" line in the selection panel.
     (▲ = HEALTHY green, ▼ = WARN amber — deliberately not a rainbow); the indented breakdown lines
     are intercepted before the KV split.
   - **Recovery guidance** (`RECOVERY_GUIDANCE_TEXT`): a dim `↑ Recover: move to Hospitable ground ·
-    Scout · Follow a herd` line (the real levers, NOT harvest), appended under the breakdown.
+    Scout · Hunt` line (the real levers, NOT harvest), appended under the breakdown.
     `_split_detail_kv` skips lines beginning with `↑` so it renders as a dim sentence, not a KV row.
   - **Action morale hints**: the Scout button tooltip (`MORALE_HINT_SCOUT`, "(+morale)") and the four
     persistent Hunt/Follow policy tooltips (Sustain/Surplus/Market/Eradicate get `MORALE_HINT_PERSISTENT`
