@@ -209,7 +209,12 @@ turn it also grants a small non-food benefit — a `FogRevealLedger` tracking pu
 Follow / Scout calls `reassign_band` (`server.rs`) first, stripping any existing
 `FaunaPursuit` / `HarvestAssignment` / `ScoutAssignment` before attaching the new one
 (this also fixes a latent harvest+follow double-assignment). To stop following, order
-the band to do something else.
+the band to do something else — or issue `cancel_order <faction> [band_entity_bits]`
+(`handle_cancel_order`, `server.rs`), which calls `reassign_band` to strip the current
+task and return the band to idle (feed entry via `CommandEventKind::CancelOrder`). The
+band's live pursuit mode is exported in the snapshot as `PopulationCohortState.huntMode`
+(`single` for a one-shot hunt, else the follow policy; empty string when not pursuing),
+so the client can label the cancel affordance.
 
 **Ecology — critical-depensation collapse (Phase D)** — `advance_herds` applies one
 turn of `net_biomass_delta` (`fauna.rs`) toward each group's per-species carrying

@@ -50,6 +50,58 @@ func _ready() -> void:
 	await _settle()
 	await _save("band")
 
+	# State 1c — a band on a market-hunt task: the drawer hides "Scout Area" and shows
+	# the armed "Cancel Market Hunt" button (activity=follow + hunt_mode=market).
+	var hunting_band := _band_fixture()
+	hunting_band["activity"] = "follow"
+	hunting_band["hunt_mode"] = "market"
+	_hud.show_unit_selection(hunting_band)
+	await _settle()
+	await _save("band_cancel_hunt")
+
+	# State 1d — a band scouting: the armed "Cancel Scouting" button replaces Scout.
+	var scouting_band := _band_fixture()
+	scouting_band["activity"] = "scout"
+	_hud.show_unit_selection(scouting_band)
+	await _settle()
+	await _save("band_cancel_scout")
+
+	# State 1e — optimistic cancel in flight: the band is still on a task in the
+	# snapshot but its entity is pre-seeded into the pending-transition map with
+	# before == its current activity, so the button holds the disabled "Cancelling…"
+	# state until a snapshot changes the activity (confirming idle).
+	var cancelling_band := _band_fixture()
+	cancelling_band["activity"] = "follow"
+	cancelling_band["hunt_mode"] = "market"
+	_hud._pending_transition_bands[int(cancelling_band["entity"])] = {"before": "follow", "label": "Cancelling Market Hunt…"}
+	_hud.show_unit_selection(cancelling_band)
+	await _settle()
+	await _save("band_cancelling")
+	_hud._pending_transition_bands.clear()
+
+	# State 1f — optimistic start in flight: an idle band whose entity is pre-seeded
+	# with before == "idle" (its current activity), so the button shows the disabled
+	# action-specific "Starting Scouting…" state until a snapshot flips the activity.
+	var starting_band := _band_fixture()
+	starting_band["activity"] = "idle"
+	_hud._pending_transition_bands[int(starting_band["entity"])] = {"before": "idle", "label": "Starting Scouting…"}
+	_hud.show_unit_selection(starting_band)
+	await _settle()
+	await _save("band_starting")
+	_hud._pending_transition_bands.clear()
+
+	# State 1g — Fix 1 end-to-end: an idle band gets a follow-hunt dispatched to it via
+	# the real consume_pending_follow path (not a hand-seeded transition). It should flip
+	# to the disabled "Starting Sustain Hunt…" until the snapshot reports the follow task.
+	var follow_target := _band_fixture()
+	follow_target["activity"] = "idle"
+	_hud.show_unit_selection(follow_target)
+	_hud._pending_follow = {"herd_id": "herd_ci", "policy": "sustain", "x": 71, "y": 18, "label": "Reindeer"}
+	_hud.consume_pending_follow(follow_target)
+	await _settle()
+	await _save("band_starting_hunt")
+	_hud._pending_transition_bands.clear()
+
 	# State 1a — a well-fed but demoralized band: healthy food (∞) yet morale 0.22
 	# (< critical), so the drawer's Morale line reads a red 22%. Discontent drags
 	# Output to 56% (red) and the itemized morale breakdown + recovery guidance show.

@@ -124,6 +124,8 @@ func _ready() -> void:
             hud.connect("unit_scout_requested", Callable(self, "_on_hud_unit_scout"))
         if hud.has_signal("herd_follow_requested") and not hud.is_connected("herd_follow_requested", Callable(self, "_on_hud_follow_herd")):
             hud.connect("herd_follow_requested", Callable(self, "_on_hud_follow_herd"))
+        if hud.has_signal("cancel_order_requested") and not hud.is_connected("cancel_order_requested", Callable(self, "_on_hud_cancel_order")):
+            hud.connect("cancel_order_requested", Callable(self, "_on_hud_cancel_order"))
         if hud.has_signal("next_turn_requested") and not hud.is_connected("next_turn_requested", Callable(self, "_on_hud_next_turn")):
             hud.connect("next_turn_requested", Callable(self, "_on_hud_next_turn"))
         if hud.has_signal("roster_occupant_selected") and not hud.is_connected("roster_occupant_selected", Callable(self, "_on_hud_roster_occupant_selected")):
@@ -318,6 +320,14 @@ func _on_hud_unit_scout(x: int, y: int, band_bits: int) -> void:
         parts.append(str(band_bits))
     var line := " ".join(parts)
     _send_runtime_command(line, "Scout order queued at (%d, %d)." % [x, y])
+
+func _on_hud_cancel_order(band: Dictionary) -> void:
+    var band_bits := int(band.get("entity", -1))
+    if band_bits < 0:
+        return
+    var faction := int(band.get("faction", PLAYER_FACTION_ID))
+    var line := "cancel_order %d %d" % [faction, band_bits]
+    _send_runtime_command(line, "Cancel order for band.")
 
 func _on_hud_follow_herd(herd_id: String) -> void:
     if herd_id.is_empty():

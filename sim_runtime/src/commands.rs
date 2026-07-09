@@ -144,6 +144,10 @@ pub enum CommandPayload {
         faction_id: u32,
         herd_id: String,
     },
+    CancelOrder {
+        faction_id: u32,
+        band_entity_bits: Option<u64>,
+    },
     ExportMap {
         path: Option<String>,
     },
@@ -457,6 +461,13 @@ impl CommandEnvelope {
                 faction_id: *faction_id,
                 herd_id: herd_id.clone(),
             }),
+            CommandPayload::CancelOrder {
+                faction_id,
+                band_entity_bits,
+            } => pb::command_envelope::Command::CancelOrder(pb::CancelOrderCommand {
+                faction_id: *faction_id,
+                band_entity_bits: *band_entity_bits,
+            }),
             CommandPayload::ExportMap { path } => {
                 pb::command_envelope::Command::ExportMap(pb::ExportMapCommand {
                     path: path.clone(),
@@ -670,6 +681,10 @@ impl CommandEnvelope {
             pb::command_envelope::Command::Domesticate(cmd) => CommandPayload::Domesticate {
                 faction_id: cmd.faction_id,
                 herd_id: cmd.herd_id,
+            },
+            pb::command_envelope::Command::CancelOrder(cmd) => CommandPayload::CancelOrder {
+                faction_id: cmd.faction_id,
+                band_entity_bits: cmd.band_entity_bits,
             },
             pb::command_envelope::Command::ExportMap(cmd) => {
                 CommandPayload::ExportMap { path: cmd.path }

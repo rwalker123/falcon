@@ -158,6 +158,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "domesticate <faction_id> <herd_id>",
     },
     CommandVerbHelp {
+        verb: "cancel_order",
+        aliases: &[],
+        summary: "Cancel a band's current task (scout / forage / hunt / follow) and return it to idle.",
+        usage: "cancel_order <faction_id> [band_entity_bits]",
+    },
+    CommandVerbHelp {
         verb: "export_map",
         aliases: &["export"],
         summary: "Write the current world map (terrain + seed) to a JSON file for inspection and tests.",
@@ -693,6 +699,19 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             Ok(CommandPayload::Domesticate {
                 faction_id: parse_u32(faction_str, "domesticate faction")?,
                 herd_id: herd_id.to_string(),
+            })
+        }
+        "cancel_order" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_bits = parts.next();
+            Ok(CommandPayload::CancelOrder {
+                faction_id: parse_u32(faction_str, "cancel_order faction")?,
+                band_entity_bits: match band_bits {
+                    Some(raw) => Some(parse_u64(raw, "cancel_order band_entity_bits")?),
+                    None => None,
+                },
             })
         }
         "export" | "export_map" => {

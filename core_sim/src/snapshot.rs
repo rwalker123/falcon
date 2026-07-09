@@ -3582,6 +3582,9 @@ fn population_state(
         "idle"
     }
     .to_string();
+    let hunt_mode = pursuit
+        .map(|pursuit| pursuit.mode.as_str().to_string())
+        .unwrap_or_default();
     PopulationCohortState {
         entity: entity.to_bits(),
         home: cohort.home.to_bits(),
@@ -3603,6 +3606,7 @@ fn population_state(
         age_turns: cohort.age_turns,
         days_of_food,
         activity,
+        hunt_mode,
         supply_network_id: supply_membership.network_of(entity),
         morale_delta: cohort.last_morale_delta.raw(),
         morale_cause: cohort.last_morale_cause.as_u8(),

@@ -447,6 +447,7 @@ table PopulationCohortState {
   ageTurns:uint = 0;
   daysOfFood:float = 0;
   activity:string;
+  huntMode:string;
   supplyNetworkId:uint = 0;
   // This turn's signed morale delta (fixed-point, FIXED_POINT_SCALE = 1e6) — trend arrow source.
   moraleDelta:long = 0;

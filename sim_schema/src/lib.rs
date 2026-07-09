@@ -946,6 +946,11 @@ pub struct PopulationCohortState {
     /// The command the band is running: one of `idle | harvest | hunt | follow | scout`.
     #[serde(default)]
     pub activity: String,
+    /// The band's hunt/follow mode when pursuing fauna: `single` (one-shot hunt) or the follow
+    /// policy (`sustain | surplus | market | eradicate`). Empty string when the band isn't
+    /// pursuing fauna. Lets the client label a cancel button with the specific mode.
+    #[serde(default)]
+    pub hunt_mode: String,
     /// Which supply network this band belongs to this turn: `0` = not in a multi-band network,
     /// `>= 1` = a per-snapshot id shared by all bands in the same connected component. Derived and
     /// recomputed every turn (not persisted for rollback).
@@ -2668,6 +2673,7 @@ fn create_populations<'a>(
                 )
             });
             let activity = Some(builder.create_string(&cohort.activity));
+            let hunt_mode = Some(builder.create_string(&cohort.hunt_mode));
             let accessible_stockpile_fb = cohort.accessible_stockpile.as_ref().map(|stockpile| {
                 let entries = if stockpile.entries.is_empty() {
                     None
@@ -2709,6 +2715,7 @@ fn create_populations<'a>(
                     ageTurns: cohort.age_turns,
                     daysOfFood: cohort.days_of_food,
                     activity,
+                    huntMode: hunt_mode,
                     supplyNetworkId: cohort.supply_network_id,
                     moraleDelta: cohort.morale_delta,
                     moraleCause: cohort.morale_cause,

@@ -1648,6 +1648,9 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"morale_climate": float(entry.get("morale_climate", 0.0)),
 			"morale_unrest": float(entry.get("morale_unrest", 0.0)),
 			"activity": String(entry.get("activity", "")),
+			# Fauna-pursuit sub-mode (single/sustain/surplus/market/eradicate); flows to the
+			# drawer + roster so "Cancel <Mode> Hunt" can label a live hunting band.
+			"hunt_mode": String(entry.get("hunt_mode", "")),
 			"supply_network_id": int(entry.get("supply_network_id", 0)),
 		}
 		var stores_variant: Variant = entry.get("stores", {})
