@@ -168,6 +168,19 @@ fn provisions(app: &mut App) -> i64 {
     total.round() as i64
 }
 
+/// Un-rounded total FOOD carried by faction 0's bands — needed to observe sub-1 fractional
+/// yields that the rounding `provisions` helper would collapse to zero.
+fn provisions_f32(app: &mut App) -> f32 {
+    let mut total = 0.0f32;
+    let mut query = app.world.query::<&PopulationCohort>();
+    for cohort in query.iter(&app.world) {
+        if cohort.faction == FactionId(0) {
+            total += cohort.stores.get(FOOD).to_f32();
+        }
+    }
+    total
+}
+
 /// A sustained Sustain-follow on a Thriving herd tames it: progress climbs to 1.0
 /// (domesticated) and the follower's faction owns it.
 #[test]
@@ -289,5 +302,33 @@ fn domesticated_herd_yields_provisions() {
     assert_eq!(
         after, biomass_before,
         "husbandry yield must not deplete biomass"
+    );
+}
+
+/// Regression (fully-fractional FOOD income): a domesticated herd whose per-turn yield is below
+/// 1.0 provisions (biomass 30 × `provisions_per_biomass` 0.01 = 0.3) must still credit the owner's
+/// larder. The old `(biomass * rate).round() as i64` path dropped this sub-1 yield to zero — the
+/// reported starvation bug — so the band never accrued the sustainable income.
+#[test]
+fn sub_unit_husbandry_yield_credits_larder() {
+    const SUB_UNIT_BIOMASS: f32 = 30.0;
+
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.claim_domestication(FactionId(0));
+        // A small managed herd whose per-turn yield (0.3) rounds to zero under the old integer path.
+        herd.biomass = SUB_UNIT_BIOMASS;
+    }
+    assert_eq!(provisions_f32(&mut app), 0.0, "larder starts empty");
+
+    app.world.run_system_once(advance_husbandry);
+
+    let larder = provisions_f32(&mut app);
+    assert!(
+        larder > 0.0 && larder < 1.0,
+        "a sub-1 husbandry yield must credit a positive fractional amount (got {larder})"
     );
 }

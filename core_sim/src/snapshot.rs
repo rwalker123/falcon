@@ -3488,7 +3488,7 @@ fn harvest_assignment_from_state(
         travel_total: state.travel_total.max(state.travel_remaining),
         gather_remaining: state.gather_remaining,
         gather_total: state.gather_total.max(state.gather_remaining),
-        provisions_reward: state.provisions_reward,
+        provisions_reward: Scalar::from_raw(state.provisions_reward),
         trade_goods_reward: state.trade_goods_reward,
         started_tick: state.started_tick,
         kind,
@@ -3648,7 +3648,7 @@ fn harvest_assignment_to_state(assignment: &HarvestAssignment) -> HarvestTaskSta
         travel_total: assignment.travel_total,
         gather_remaining: assignment.gather_remaining,
         gather_total: assignment.gather_total,
-        provisions_reward: assignment.provisions_reward,
+        provisions_reward: assignment.provisions_reward.raw(),
         trade_goods_reward: assignment.trade_goods_reward,
         started_tick: assignment.started_tick,
     }

@@ -3520,7 +3520,9 @@ pub fn advance_harvest_assignments(
         // multiplier at PAYOUT (discontent drags labor). One call — future modifiers slot into
         // `output_multiplier`, not here.
         let mult = output_multiplier(&cohort, &wellbeing);
-        let provisions = (Scalar::from_i64(assignment.provisions_reward.max(0)) * mult).round();
+        // FOOD income is fully fractional end-to-end: the reward is already `Scalar` (fractional at
+        // source), so don't re-round the payout — a sub-1 forage yield must still reach the larder.
+        let provisions = assignment.provisions_reward.max(scalar_zero()) * mult;
         let trade_goods = (Scalar::from_i64(assignment.trade_goods_reward.max(0)) * mult)
             .round()
             .to_i64_whole();
@@ -3796,12 +3798,14 @@ pub fn advance_fauna_pursuits(
         // Productivity modifier stack (wellbeing): a discontented band works its kill less
         // effectively — scale the take's payout by the band's output multiplier at PAYOUT.
         let mult = output_multiplier(&cohort, &wellbeing).to_f32();
-        let provisions = (take * hunt.provisions_per_biomass * mult).round() as i64;
+        // FOOD income is fully fractional: a sustainable take that yields < 1 provisions/turn must
+        // still credit the larder (a Sustain follow yields ~0.3 food/turn — rounding drops it).
+        let provisions = scalar_from_f32(take * hunt.provisions_per_biomass * mult);
         let trade_goods =
             (take * hunt.trade_goods_per_biomass * trade_multiplier * mult).round() as i64;
         // The pursuing band carries its kill in its own larder; trade goods are faction-global.
-        if provisions > 0 {
-            cohort.stores.add(FOOD, Scalar::from_i64(provisions));
+        if provisions > scalar_zero() {
+            cohort.stores.add(FOOD, provisions);
         }
         if trade_goods > 0 {
             inventory.add_stockpile(pursuit.faction, "trade_goods", trade_goods);
@@ -3816,7 +3820,7 @@ pub fn advance_fauna_pursuits(
                     species,
                     take,
                     biomass_left,
-                    provisions.max(0),
+                    provisions.max(scalar_zero()),
                     trade_goods.max(0),
                     pursuit.elapsed_turns,
                     pursuit.started_tick
@@ -3845,7 +3849,7 @@ pub fn advance_fauna_pursuits(
                     species = %species,
                     take,
                     biomass_left,
-                    provisions = provisions.max(0),
+                    provisions = %provisions.max(scalar_zero()),
                     trade_goods = trade_goods.max(0),
                 );
                 // Reset the give-up counter and grant the small non-food tracking

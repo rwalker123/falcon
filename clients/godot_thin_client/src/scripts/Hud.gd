@@ -1594,11 +1594,11 @@ func _harvest_summary_lines(harvest: Dictionary) -> Array[String]:
     var eta: int = max(travel_remaining, 0) + max(gather_remaining, 0)
     if eta > 0:
         lines.append("ETA: %d turn%s" % [eta, "s" if eta != 1 else ""])
-    var provisions := int(harvest.get("provisions_reward", 0))
+    var provisions := float(harvest.get("provisions_reward", 0.0))
     var trade_goods := int(harvest.get("trade_goods_reward", 0))
     var reward_parts: Array[String] = []
-    if provisions > 0:
-        reward_parts.append("+%d provisions" % provisions)
+    if provisions > 0.0:
+        reward_parts.append("+%.1f provisions" % provisions)
     if trade_goods > 0:
         reward_parts.append("+%d trade goods" % trade_goods)
     if not reward_parts.is_empty():
