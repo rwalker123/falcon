@@ -1905,9 +1905,13 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"supply_network_id": int(entry.get("supply_network_id", 0)),
 			# Early-Game Labor (slice 3b): what the band is working + its reach, for the
 			# selected-band map highlights (work-range ring / worked forage tiles / hunted
-			# herds / scouted radius).
+			# herds / scouted radius) AND the allocation panel's Population/Workers/Idle
+			# header (the drawer reads _selected_unit, which is a copy of this marker — so
+			# these must be carried here or the panel reads 0).
 			"work_range": int(entry.get("work_range", 0)),
 			"scout_reveal_radius": int(entry.get("scout_reveal_radius", 0)),
+			"working_age": int(entry.get("working_age", 0)),
+			"idle_workers": int(entry.get("idle_workers", 0)),
 			"labor_assignments": (entry.get("labor_assignments", []) as Array).duplicate(true) if entry.get("labor_assignments", []) is Array else [],
 		}
 		var stores_variant: Variant = entry.get("stores", {})

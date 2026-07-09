@@ -3,11 +3,17 @@
 //! Provides deterministic ECS systems that resolve a single turn of the
 //! simulation when [`run_turn`] is invoked.
 
-/// Human-readable build identifier for the server binary. **Bump this on every
-/// server-affecting change.** It is stamped onto each snapshot header
-/// (`SnapshotHeader::server_build`) and shown in the client's version overlay so the
-/// running server build can be confirmed at a glance. Format: `YYYY-MM-DD.N`.
-pub(crate) const BUILD_ID: &str = "2026-07-05.6";
+/// Human-readable build identifier for the server binary, **auto-generated at
+/// compile time** by `build.rs` as `<commit-date>-<short-hash>` (e.g.
+/// `2026-07-09-a1b2c3d`) so it always reflects the actual build and can never be
+/// a stale hand-bumped constant. It is stamped onto each snapshot header
+/// (`SnapshotHeader::server_build`) and shown in the client's version overlay so
+/// the running server build can be confirmed at a glance. Falls back to
+/// `dev-unknown` when git metadata is unavailable (offline/CI/exported source).
+pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
+    Some(v) => v,
+    None => "dev-unknown",
+};
 
 mod components;
 mod crisis;
