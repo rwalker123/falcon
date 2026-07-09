@@ -118,6 +118,9 @@ const BAND_ACTIVITY_IDLE := "idle"
 # Why a band is losing population — appended to the losing_population alert label.
 const DECLINE_REASON_STARVING := "starving"
 const DECLINE_REASON_LOW_MORALE := "low morale"
+# Morale-driven loss is now emigration/relocation (people don't die of low morale —
+# see docs/plan_civ_wellbeing.md), so a shrink with emigrants last turn reads this.
+const DECLINE_REASON_PEOPLE_LEAVING := "people leaving"
 # Per-cohort morale cause (snapshot PopulationCohortState.moraleCause; 0 = None).
 const MORALE_CAUSE_NONE := 0
 const MORALE_CAUSE_TERRAIN := 1
@@ -133,6 +136,25 @@ const MORALE_CAUSE_LABEL_UNREST := "unrest"
 const MORALE_TREND_EPSILON := 0.005
 const MORALE_TREND_FALLING_GLYPH := "▼"
 const MORALE_TREND_RISING_GLYPH := "▲"
+# Civilization Wellbeing (docs/plan_civ_wellbeing.md). Productivity readout: output is the
+# modifier-stack result (1.0 = full); the Output row only appears below full, tinted by the
+# output.{warn,critical} buckets in BandFoodStatus.
+const OUTPUT_FULL := 1.0
+# Itemized morale breakdown — the four signed Layer-1 contributions (their sum IS
+# morale_delta) rendered as indented sub-lines under the Morale headline when morale is
+# concerning or declining. Tinted by sign (▲ positive = healthy, ▼ negative = amber).
+const MORALE_BREAKDOWN_INDENT := "    "
+const MORALE_CONTRIB_POSITIVE_GLYPH := "▲"
+const MORALE_CONTRIB_NEGATIVE_GLYPH := "▼"
+const MORALE_CONTRIB_LABEL_SETTLING := "settling"
+# Positive unrest contribution reads as "culture" (cohesion), negative as "unrest".
+const MORALE_CONTRIB_LABEL_CULTURE := "culture"
+# Recovery guidance — a dim line naming the real levers (NOT harvest) when morale is concerning.
+const RECOVERY_GUIDANCE_GLYPH := "↑"
+const RECOVERY_GUIDANCE_TEXT := "↑ Recover: move to Hospitable ground · Scout · Follow a herd"
+# Positive-lever morale hints on the action buttons (tooltip suffixes).
+const MORALE_HINT_SCOUT := "Scout unknown ground — reveals nearby tiles and lifts the band's spirits (+morale)."
+const MORALE_HINT_PERSISTENT := "  Following a herd also lifts morale each turn (+morale/turn)."
 # Occupants roster row chrome.
 const ROSTER_DOT_SIZE := 9.0
 const ROSTER_ROW_MIN_HEIGHT := 30.0
@@ -181,6 +203,9 @@ var _selected_band_food_days: float = NAN
 # Morale (0–1) of the currently-selected player band, so the detail formatter can
 # threshold-tint the Morale row. NAN when no player band is selected.
 var _selected_band_morale: float = NAN
+# Output multiplier (0–1) of the currently-selected player band, so the detail formatter
+# can threshold-tint the Output row. NAN when no band with a below-full output is selected.
+var _selected_band_output: float = NAN
 var _pending_forage: Dictionary = {}
 var _pending_scout_unit: Dictionary = {}
 var _pending_hunt: Dictionary = {}
@@ -601,6 +626,8 @@ func _connect_zoom_controls() -> void:
 func _connect_selection_buttons() -> void:
     if unit_scout_button != null and not unit_scout_button.is_connected("pressed", Callable(self, "_on_unit_scout_pressed")):
         unit_scout_button.pressed.connect(_on_unit_scout_pressed)
+        # Scouting is a positive morale lever (docs/plan_civ_wellbeing.md) — surface it.
+        unit_scout_button.tooltip_text = MORALE_HINT_SCOUT
     if hunt_herd_button != null and not hunt_herd_button.is_connected("pressed", Callable(self, "_on_hunt_herd_pressed")):
         hunt_herd_button.pressed.connect(_on_hunt_herd_pressed)
         hunt_herd_button.tooltip_text = "Send a band to hunt the selected herd."
@@ -609,16 +636,16 @@ func _connect_selection_buttons() -> void:
         single_button.tooltip_text = "One hunt, then the band goes idle."
     if follow_sustain_button != null and not follow_sustain_button.is_connected("pressed", Callable(self, "_on_hunt_policy_pressed")):
         follow_sustain_button.pressed.connect(_on_hunt_policy_pressed.bind("sustain"))
-        follow_sustain_button.tooltip_text = "Hunt each turn at ≈ regrowth — the herd stays roughly stable."
+        follow_sustain_button.tooltip_text = "Hunt each turn at ≈ regrowth — the herd stays roughly stable." + MORALE_HINT_PERSISTENT
     if follow_surplus_button != null and not follow_surplus_button.is_connected("pressed", Callable(self, "_on_hunt_policy_pressed")):
         follow_surplus_button.pressed.connect(_on_hunt_policy_pressed.bind("surplus"))
-        follow_surplus_button.tooltip_text = "Hunt extra each turn for provisions/trade — the herd slowly declines."
+        follow_surplus_button.tooltip_text = "Hunt extra each turn for provisions/trade — the herd slowly declines." + MORALE_HINT_PERSISTENT
     if follow_market_button != null and not follow_market_button.is_connected("pressed", Callable(self, "_on_hunt_policy_pressed")):
         follow_market_button.pressed.connect(_on_hunt_policy_pressed.bind("market"))
-        follow_market_button.tooltip_text = "Commercially over-hunt each turn for a trade windfall — the herd declines fast."
+        follow_market_button.tooltip_text = "Commercially over-hunt each turn for a trade windfall — the herd declines fast." + MORALE_HINT_PERSISTENT
     if follow_eradicate_button != null and not follow_eradicate_button.is_connected("pressed", Callable(self, "_on_hunt_policy_pressed")):
         follow_eradicate_button.pressed.connect(_on_hunt_policy_pressed.bind("eradicate"))
-        follow_eradicate_button.tooltip_text = "Hunt maximally each turn — drives the herd toward local extinction."
+        follow_eradicate_button.tooltip_text = "Hunt maximally each turn — drives the herd toward local extinction." + MORALE_HINT_PERSISTENT
     if forage_button != null and not forage_button.is_connected("pressed", Callable(self, "_on_forage_pressed")):
         forage_button.pressed.connect(_on_forage_pressed)
 
@@ -951,10 +978,11 @@ func _adopt_tile_info_from(occupant: Dictionary) -> void:
 func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _herd_data: Dictionary) -> void:
     if tile_panel == null or tile_detail == null:
         return
-    # Reset the band-food/morale tint context; `_unit_summary_lines` re-sets it if
+    # Reset the band-food/morale/output tint context; `_unit_summary_lines` re-sets it if
     # a band is being rendered into the drawer.
     _selected_band_food_days = NAN
     _selected_band_morale = NAN
+    _selected_band_output = NAN
     _assemble_roster(_selected_tile_info)
     _render_tile_card(_selected_tile_info)
     _render_occupants_card()
@@ -1247,6 +1275,7 @@ func _select_roster_occupant(kind: String, id: Variant) -> void:
         _selected_unit = {}
     _selected_band_food_days = NAN
     _selected_band_morale = NAN
+    _selected_band_output = NAN
     _rebuild_roster()
     _render_occupant_drawer()
 
@@ -1256,6 +1285,7 @@ func _render_occupant_drawer() -> void:
         return
     _selected_band_food_days = NAN
     _selected_band_morale = NAN
+    _selected_band_output = NAN
     var lines: Array[String] = []
     if not _selected_unit.is_empty():
         lines = _unit_summary_lines(_selected_unit)
@@ -1287,6 +1317,14 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
     # to see); a harsh tile erodes it until births can't offset elder mortality.
     if _is_player_unit(unit_data):
         lines.append(_band_morale_line(unit_data))
+        # Productivity ties visibly to morale: show the Output row when discontent is
+        # dragging yield below full (near Morale, tinted by how low it is).
+        var output_line := _band_output_line(unit_data)
+        if output_line != "":
+            lines.append(output_line)
+        # When morale is concerning/declining, itemize why (the Layer-1 contributions)
+        # and name the real recovery levers.
+        lines.append_array(_morale_breakdown_lines(unit_data))
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
@@ -1350,6 +1388,57 @@ func _band_morale_line(unit_data: Dictionary) -> String:
     elif delta >= MORALE_TREND_EPSILON:
         text += " %s" % MORALE_TREND_RISING_GLYPH
     return text
+
+## Selection-panel band productivity row: "Output: 56%" — the modifier-stack result
+## (snapshot `output_multiplier`, discontent being Phase 1's sole modifier). Only shown
+## below full output; stashes the value on `_selected_band_output` so `_format_detail_bbcode`
+## tints it by the output.{warn,critical} buckets (ink → amber → red).
+func _band_output_line(unit_data: Dictionary) -> String:
+    var output: float = float(unit_data.get("output_multiplier", OUTPUT_FULL))
+    if output >= OUTPUT_FULL:
+        return ""
+    _selected_band_output = output
+    return "Output: %d%%" % int(round(output * 100.0))
+
+## True when the band's morale warrants surfacing the itemized breakdown + recovery
+## guidance: below the warn threshold, or falling by more than the trend epsilon.
+func _morale_is_concerning(unit_data: Dictionary) -> bool:
+    var morale := float(unit_data.get("morale", 1.0))
+    var delta := float(unit_data.get("morale_delta", 0.0))
+    return morale < BandFoodStatus.warn_morale() or delta <= -MORALE_TREND_EPSILON
+
+## Itemized morale breakdown: the four signed Layer-1 contributions (their sum IS
+## morale_delta) as indented sub-lines, plus a recovery-guidance line. Shown only when
+## morale is concerning/declining. Each contribution above the breakdown epsilon renders
+## as `    ▲ +1.0%  settling`; `_format_detail_bbcode` tints the row by its sign glyph.
+func _morale_breakdown_lines(unit_data: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    if not _morale_is_concerning(unit_data):
+        return lines
+    var terrain_label := String(_selected_tile_info.get("terrain_label", "")).strip_edges()
+    var terrain_row_label := MORALE_CAUSE_LABEL_TERRAIN
+    if terrain_label != "":
+        terrain_row_label = "%s (%s)" % [MORALE_CAUSE_LABEL_TERRAIN, terrain_label]
+    var unrest_value := float(unit_data.get("morale_unrest", 0.0))
+    # (value, label) in the display order of the spec: settling, terrain, climate, unrest.
+    var contributions := [
+        [float(unit_data.get("morale_settling", 0.0)), MORALE_CONTRIB_LABEL_SETTLING],
+        [float(unit_data.get("morale_terrain", 0.0)), terrain_row_label],
+        [float(unit_data.get("morale_climate", 0.0)), MORALE_CAUSE_LABEL_COLD],
+        [unrest_value, MORALE_CONTRIB_LABEL_CULTURE if unrest_value > 0.0 else MORALE_CAUSE_LABEL_UNREST],
+    ]
+    var epsilon := BandFoodStatus.morale_breakdown_epsilon()
+    for entry in contributions:
+        var value: float = entry[0]
+        if absf(value) < epsilon:
+            continue
+        var glyph := MORALE_CONTRIB_POSITIVE_GLYPH if value > 0.0 else MORALE_CONTRIB_NEGATIVE_GLYPH
+        var sign_str := "+" if value > 0.0 else "−"
+        lines.append("%s%s %s%.1f%%  %s" % [
+            MORALE_BREAKDOWN_INDENT, glyph, sign_str, absf(value) * 100.0, entry[1],
+        ])
+    lines.append(RECOVERY_GUIDANCE_TEXT)
+    return lines
 
 ## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest); "" for None
 ## or unknown. Shared by the drawer morale line and the losing-population alert reason.
@@ -1602,6 +1691,15 @@ func _format_detail_bbcode(lines: Array) -> String:
                 table_open = false
             out += "\n"
             continue
+        # Itemized morale breakdown sub-lines render full-width, tinted by their sign
+        # glyph (▲ positive = healthy, ▼ negative = amber) — kept two-tone, not a rainbow.
+        if line.begins_with(MORALE_BREAKDOWN_INDENT):
+            if table_open:
+                out += "[/table]"
+                table_open = false
+            var row_hex := HudStyle.HEALTHY_HEX if line.contains(MORALE_CONTRIB_POSITIVE_GLYPH) else HudStyle.WARN_HEX
+            out += "[color=#%s]%s[/color]\n" % [row_hex, line]
+            continue
         var kv := _split_detail_kv(line)
         if kv.is_empty():
             if table_open:
@@ -1623,6 +1721,10 @@ func _format_detail_bbcode(lines: Array) -> String:
                 # The player band's morale row tints by the morale thresholds.
                 if not is_nan(_selected_band_morale):
                     value_hex = BandFoodStatus.hex_for_morale(_selected_band_morale)
+            elif String(kv[0]) == "Output":
+                # The productivity row tints by the output buckets (ink → amber → red).
+                if not is_nan(_selected_band_output):
+                    value_hex = BandFoodStatus.hex_for_output(_selected_band_output)
             elif String(kv[0]) == "Forage":
                 # The tile's gather module reads in the success/ETA amber.
                 value_hex = HudStyle.WARN_HEX
@@ -1645,6 +1747,9 @@ func _format_detail_bbcode(lines: Array) -> String:
 ## full-width rather than becoming a lopsided table row.
 func _split_detail_kv(line: String) -> Array:
     if line.ends_with("."):
+        return []
+    # The recovery-guidance line reads as a dim sentence, not a lopsided table row.
+    if line.begins_with(RECOVERY_GUIDANCE_GLYPH):
         return []
     var idx := line.find(": ")
     if idx <= 0:
@@ -1829,6 +1934,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
         var days := float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
         var morale := float(entry.get("morale", 1.0))
         var morale_cause := int(entry.get("morale_cause", MORALE_CAUSE_NONE))
+        var last_emigrated := int(entry.get("last_emigrated", 0))
         var activity := String(entry.get("activity", "")).strip_edges()
         var x := int(entry.get("current_x", -1))
         var y := int(entry.get("current_y", -1))
@@ -1839,7 +1945,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
         if _prev_band_sizes.has(entity) and size < int(_prev_band_sizes[entity]):
             alerts.append({
                 "type": ALERT_TYPE_LOSING_POPULATION, "band": band_name, "x": x, "y": y,
-                "reason": _decline_reason(days, morale, morale_cause),
+                "reason": _decline_reason(days, morale, morale_cause, last_emigrated),
             })
         if activity == BAND_ACTIVITY_IDLE:
             alerts.append({"type": ALERT_TYPE_IDLE, "band": band_name, "x": x, "y": y})
@@ -1847,14 +1953,18 @@ func update_band_alerts(populations_variant: Variant) -> void:
     _render_alerts(alerts)
 
 ## Why a band is shrinking: a food crisis (larder below critical) reads "starving" first;
-## otherwise the dominant morale cause names it in plain language ("harsh terrain" /
+## then, since morale no longer kills (discontent relocates people — see
+## docs/plan_civ_wellbeing.md), a shrink with emigrants last turn reads "people leaving".
+## Otherwise the dominant morale cause names it in plain language ("harsh terrain" /
 ## "harsh climate" / "unrest"). When no cause is attributed (morale steady/rising — e.g.
 ## a rehydrated save, or shrinkage from cold deaths / an aging cohort at healthy morale)
 ## only say "low morale" if morale is actually low, else leave it plain rather than
 ## asserting a false reason.
-func _decline_reason(days: float, morale: float, morale_cause: int) -> String:
+func _decline_reason(days: float, morale: float, morale_cause: int, last_emigrated: int) -> String:
     if BandFoodStatus.is_limited(days) and days < BandFoodStatus.critical_days():
         return DECLINE_REASON_STARVING
+    if last_emigrated > 0:
+        return DECLINE_REASON_PEOPLE_LEAVING
     var cause_label := _morale_cause_label(morale_cause)
     if cause_label != "":
         return cause_label

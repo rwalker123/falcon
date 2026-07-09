@@ -1636,6 +1636,17 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"morale": float(entry.get("morale", 1.0)),
 			"morale_delta": float(entry.get("morale_delta", 0.0)),
 			"morale_cause": int(entry.get("morale_cause", 0)),
+			# Civilization Wellbeing (docs/plan_civ_wellbeing.md): productivity, discontent,
+			# migration counters, and the four signed Layer-1 morale contributions that feed
+			# the band drawer's itemized breakdown + "people leaving" alert reason.
+			"output_multiplier": float(entry.get("output_multiplier", 1.0)),
+			"discontent_fraction": float(entry.get("discontent_fraction", 0.0)),
+			"last_emigrated": int(entry.get("last_emigrated", 0)),
+			"last_immigrated": int(entry.get("last_immigrated", 0)),
+			"morale_settling": float(entry.get("morale_settling", 0.0)),
+			"morale_terrain": float(entry.get("morale_terrain", 0.0)),
+			"morale_climate": float(entry.get("morale_climate", 0.0)),
+			"morale_unrest": float(entry.get("morale_unrest", 0.0)),
 			"activity": String(entry.get("activity", "")),
 			"supply_network_id": int(entry.get("supply_network_id", 0)),
 		}

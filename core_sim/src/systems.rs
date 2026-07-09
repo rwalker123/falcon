@@ -15,8 +15,9 @@ use crate::{
     components::{
         fragments_from_contract, fragments_to_contract, ElementKind, FaunaPursuit,
         FaunaPursuitMode, FollowPolicy, HarvestAssignment, HarvestTaskKind, KnowledgeFragment,
-        LocalStore, LogisticsLink, MoraleCause, MountainMetadata, PendingMigration,
-        PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile, TradeLink, FOOD,
+        LocalStore, LogisticsLink, MoraleCause, MoraleContributions, MountainMetadata,
+        PendingMigration, PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile,
+        TradeLink, FOOD,
     },
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
@@ -55,6 +56,7 @@ use crate::{
     },
     terrain::{terrain_definition, terrain_for_position_with_classifier, TerrainDefinition},
     turn_pipeline_config::TurnPipelineConfigHandle,
+    wellbeing_config::{ProductivityConfig, WellbeingConfig, WellbeingConfigHandle},
 };
 use sim_runtime::{
     apply_openness_decay, merge_fragment_payload, scale_migration_fragments, CorruptionSubsystem,
@@ -2644,6 +2646,11 @@ fn spawn_population_entity(
         morale: scalar_from_f32(0.6),
         last_morale_delta: scalar_zero(),
         last_morale_cause: MoraleCause::None,
+        last_morale_contributions: MoraleContributions::default(),
+        discontent_fraction: scalar_zero(),
+        grievance: scalar_zero(),
+        last_emigrated: 0,
+        last_immigrated: 0,
         age_turns: 0,
         generation,
         faction: FactionId(0),
@@ -3059,7 +3066,6 @@ fn death_fraction(
 /// so a newborn does not mature the same turn. The total is clamped to the global cap.
 fn advance_demographics(
     state: DemographicState,
-    morale: Scalar,
     temp_diff: Scalar,
     max_cap: Scalar,
     demo: &DemographicsConfig,
@@ -3130,18 +3136,13 @@ fn advance_demographics(
             cold_fraction,
         );
 
-    // 3. Births → children, from the working (reproductive) bracket, gated by food and morale.
+    // 3. Births → children, from the working (reproductive) bracket, gated by food + surplus.
+    // Births are morale-INDEPENDENT (wellbeing model, `docs/plan_civ_wellbeing.md`): contentment
+    // doesn't change procreation — low morale relocates people or drags output, it never suppresses
+    // births or causes faction population loss.
     let births_cfg = &demo.births;
-    let morale_floor = scalar_from_f32(births_cfg.morale_floor);
-    let morale_span = scalar_one() - morale_floor;
-    let morale_signal = if morale > morale_floor && morale_span > scalar_zero() {
-        ((morale - morale_floor) / morale_span).clamp(scalar_zero(), scalar_one())
-    } else {
-        scalar_zero()
-    };
     let fertility = scalar_from_f32(births_cfg.birth_rate)
         * fed_ratio
-        * morale_signal
         * (scalar_one() + scalar_from_f32(births_cfg.surplus_bonus) * surplus_ratio);
     let births = working0 * fertility;
 
@@ -3232,6 +3233,57 @@ pub fn tile_morale_pressure(
     }
 }
 
+/// Layer 2 (wellbeing) — map a band's morale to its discontented share. `0` at/above
+/// `content_morale`, rising linearly to `1` at/below `floor_morale`. See
+/// `docs/plan_civ_wellbeing.md`.
+pub fn discontent_fraction(
+    morale: Scalar,
+    cfg: &crate::wellbeing_config::DiscontentConfig,
+) -> Scalar {
+    let content = scalar_from_f32(cfg.content_morale);
+    let floor = scalar_from_f32(cfg.floor_morale);
+    let span = content - floor;
+    if span <= scalar_zero() {
+        return scalar_zero();
+    }
+    ((content - morale) / span).clamp(scalar_zero(), scalar_one())
+}
+
+/// Layer 3a (wellbeing) — the discontent entry of the productivity modifier stack:
+/// `max(floor_mult, 1 − discontent_fraction × discontent_weight)`. A fully-discontented band still
+/// produces `floor_mult` of its base output (morale drags labor, never zeroes it).
+pub fn discontent_output_modifier(discontent_fraction: Scalar, cfg: &ProductivityConfig) -> Scalar {
+    (scalar_one() - discontent_fraction * scalar_from_f32(cfg.discontent_weight))
+        .max(scalar_from_f32(cfg.floor_mult))
+}
+
+/// Layer 3a (wellbeing) — the band's output multiplier: the **product** of every active
+/// productivity modifier (`output = base × Π(modifiers)`). Phase 1 has one entry (discontent);
+/// future education / technology / government modifiers multiply in here with a one-line addition,
+/// so every yield site (forage/hunt/follow/husbandry) stays a single `output_multiplier` call.
+pub fn output_multiplier(cohort: &PopulationCohort, cfg: &WellbeingConfig) -> Scalar {
+    let mut m = scalar_one();
+    m *= discontent_output_modifier(cohort.discontent_fraction, &cfg.productivity);
+    // future: education, technology, government modifiers multiply in here.
+    m
+}
+
+/// Layer 3b (wellbeing) — migration's morale-scaled move fraction (decoupled from
+/// `discontent_fraction`, which is productivity-only): `max_rate × clamp((morale_threshold − morale)
+/// / morale_threshold, 0, 1)`. `0` at morale ≥ `morale_threshold` (0.25), ramping to `max_rate`
+/// (0.15) at rock-bottom morale. The band sheds `total × move_fraction` people this turn.
+pub fn migration_move_fraction(
+    morale: Scalar,
+    cfg: &crate::wellbeing_config::MigrationConfig,
+) -> Scalar {
+    let threshold = scalar_from_f32(cfg.morale_threshold);
+    if threshold <= scalar_zero() {
+        return scalar_zero();
+    }
+    let ramp = ((threshold - morale) / threshold).clamp(scalar_zero(), scalar_one());
+    scalar_from_f32(cfg.max_rate) * ramp
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn simulate_population(
     config: Res<SimulationConfig>,
@@ -3240,6 +3292,7 @@ pub fn simulate_population(
     effects: Res<CultureEffectsCache>,
     pipeline_config: Res<TurnPipelineConfigHandle>,
     demographics: Res<DemographicsConfigHandle>,
+    wellbeing_config: Res<WellbeingConfigHandle>,
     tiles: Query<&Tile>,
     mut cohorts: Query<&mut PopulationCohort>,
     mut discovery: ResMut<DiscoveryProgressLedger>,
@@ -3250,6 +3303,7 @@ pub fn simulate_population(
 ) {
     let population_cfg = pipeline_config.config().population();
     let demo = demographics.get();
+    let wellbeing = wellbeing_config.get();
     let max_cap_scalar = scalar_from_u32(config.population_cap);
     let morale_pressure_cfg = MoralePressureConfig {
         ambient_temperature: config.ambient_temperature,
@@ -3272,30 +3326,32 @@ pub fn simulate_population(
         // `habitability`), so sim and snapshot never drift.
         let pressure =
             tile_morale_pressure(&terrain_profile, tile.temperature, &morale_pressure_cfg);
-        // Crisis impacts + cultural sentiment — the "unrest" driver (signed; may be positive).
-        let unrest = impacts.morale_delta + effects.morale_bias;
-        let morale_delta = config.population_growth_rate + unrest - pressure.total();
+        // Layer 1 (wellbeing): the morale delta is the signed sum of named contributors, so a
+        // future factor is a new `MoraleFactor` variant + one field here — not a rewrite. The
+        // contribution set doubles as the client's per-band morale breakdown. `unrest` = crisis
+        // impacts + cultural sentiment (signed; may be positive).
+        let contributions = MoraleContributions {
+            settling: config.population_growth_rate,
+            terrain: -pressure.terrain,
+            climate: -pressure.cold,
+            unrest: impacts.morale_delta + effects.morale_bias,
+        };
+        let morale_delta = contributions.total();
         // Attribute the dominant *negative* driver when morale fell (else `None`). Starvation is
         // intentionally excluded — it is surfaced through the days-of-food path, not morale.
         cohort.last_morale_delta = morale_delta;
         cohort.last_morale_cause = if morale_delta < scalar_zero() {
-            let terrain_mag = pressure.terrain;
-            let cold_mag = pressure.cold;
-            // `unrest` only counts as a negative driver when it is itself negative.
-            let unrest_mag = (-unrest).max(scalar_zero());
-            if terrain_mag >= cold_mag && terrain_mag >= unrest_mag && terrain_mag > scalar_zero() {
-                MoraleCause::Terrain
-            } else if cold_mag >= unrest_mag && cold_mag > scalar_zero() {
-                MoraleCause::Cold
-            } else if unrest_mag > scalar_zero() {
-                MoraleCause::Unrest
-            } else {
-                MoraleCause::None
-            }
+            contributions.dominant_negative_cause()
         } else {
             MoraleCause::None
         };
+        cohort.last_morale_contributions = contributions;
         cohort.morale = (cohort.morale + morale_delta).clamp(scalar_zero(), scalar_one());
+
+        // Layer 2 (wellbeing): map morale → the discontented share of the band. `0` at/above
+        // `content_morale`, rising to `1` at/below `floor_morale`. Drives the productivity
+        // modifier stack (this turn's payouts) and discontent-driven migration (below).
+        cohort.discontent_fraction = discontent_fraction(cohort.morale, &wellbeing.discontent);
 
         // Demographic model: consume the band's local food, then resolve deaths, births,
         // maturation, and aging (see `advance_demographics`).
@@ -3306,7 +3362,6 @@ pub fn simulate_population(
                 elders: cohort.elders,
                 food_store: cohort.stores.get(FOOD),
             },
-            cohort.morale,
             temp_diff,
             max_cap_scalar,
             &demo,
@@ -3420,15 +3475,18 @@ fn interpolate_tile_position(from: UVec2, to: UVec2, remaining: u32, total: u32)
     )
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_harvest_assignments(
     mut commands: Commands,
     mut inventory: ResMut<FactionInventory>,
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
     tile_registry: Res<TileRegistry>,
+    wellbeing_config: Res<WellbeingConfigHandle>,
     tiles: Query<&Tile>,
     mut cohorts: Query<(Entity, &mut PopulationCohort, &mut HarvestAssignment)>,
 ) {
+    let wellbeing = wellbeing_config.get();
     for (entity, mut cohort, mut assignment) in cohorts.iter_mut() {
         if assignment.travel_remaining > 0 {
             assignment.travel_remaining -= 1;
@@ -3461,19 +3519,22 @@ pub fn advance_harvest_assignments(
             continue;
         }
 
+        // Productivity modifier stack (wellbeing): scale the yield by the band's current output
+        // multiplier at PAYOUT (discontent drags labor). One call — future modifiers slot into
+        // `output_multiplier`, not here.
+        let mult = output_multiplier(&cohort, &wellbeing);
+        let provisions = (Scalar::from_i64(assignment.provisions_reward.max(0)) * mult).round();
+        let trade_goods = (Scalar::from_i64(assignment.trade_goods_reward.max(0)) * mult)
+            .round()
+            .to_i64_whole();
+
         // Provisions the band forages go into its own local larder (carried food), not the
         // faction pool. Trade goods remain a faction-global stockpile.
-        if assignment.provisions_reward > 0 {
-            cohort
-                .stores
-                .add(FOOD, Scalar::from_i64(assignment.provisions_reward));
+        if provisions > scalar_zero() {
+            cohort.stores.add(FOOD, provisions);
         }
-        if assignment.trade_goods_reward > 0 {
-            inventory.add_stockpile(
-                assignment.faction,
-                "trade_goods",
-                assignment.trade_goods_reward,
-            );
+        if trade_goods > 0 {
+            inventory.add_stockpile(assignment.faction, "trade_goods", trade_goods);
         }
 
         let (event_kind, label_display) = match assignment.kind {
@@ -3484,8 +3545,8 @@ pub fn advance_harvest_assignments(
             "status=complete action={} module={} provisions={} trade_goods={} travel_turns={} gather_turns={} started_tick={}",
             assignment.kind.as_str(),
             assignment.module.as_str(),
-            assignment.provisions_reward.max(0),
-            assignment.trade_goods_reward.max(0),
+            provisions.round().to_i64_whole().max(0),
+            trade_goods.max(0),
             assignment.travel_total,
             assignment.gather_total,
             assignment.started_tick
@@ -3615,10 +3676,12 @@ pub fn advance_fauna_pursuits(
     tick: Res<SimulationTick>,
     tile_registry: Res<TileRegistry>,
     fauna_config: Res<FaunaConfigHandle>,
+    wellbeing_config: Res<WellbeingConfigHandle>,
     tiles: Query<&Tile>,
     mut cohorts: Query<(Entity, &mut PopulationCohort, &mut FaunaPursuit)>,
 ) {
     let fauna = fauna_config.get();
+    let wellbeing = wellbeing_config.get();
     let hunt = &fauna.hunt;
     let follow = &fauna.follow;
     let ecology = &fauna.ecology;
@@ -3733,8 +3796,12 @@ pub fn advance_fauna_pursuits(
         } else {
             1.0
         };
-        let provisions = (take * hunt.provisions_per_biomass).round() as i64;
-        let trade_goods = (take * hunt.trade_goods_per_biomass * trade_multiplier).round() as i64;
+        // Productivity modifier stack (wellbeing): a discontented band works its kill less
+        // effectively — scale the take's payout by the band's output multiplier at PAYOUT.
+        let mult = output_multiplier(&cohort, &wellbeing).to_f32();
+        let provisions = (take * hunt.provisions_per_biomass * mult).round() as i64;
+        let trade_goods =
+            (take * hunt.trade_goods_per_biomass * trade_multiplier * mult).round() as i64;
         // The pursuing band carries its kill in its own larder; trade goods are faction-global.
         if provisions > 0 {
             cohort.stores.add(FOOD, Scalar::from_i64(provisions));
@@ -3795,6 +3862,195 @@ pub fn advance_fauna_pursuits(
                 let expires_at = tick.0.saturating_add(follow.reveal_duration_turns);
                 fog.queue(herd_pos, follow.reveal_radius, expires_at);
             }
+        }
+    }
+}
+
+/// Layer 3b (wellbeing) — tech-gated migration: relocate-or-stay, population conserved within the
+/// faction (`docs/plan_civ_wellbeing.md`). Runs in the Population stage **after** demographics so
+/// morale is current. **Decoupled from `discontent_fraction`** (productivity-only): migration has its
+/// own morale-scaled onset at `migration.morale_threshold` (0.25). Each band below the threshold
+/// sheds `total × migration_move_fraction(morale)` people, composed mostly of working-age (the total
+/// is split across brackets ∝ `bracket_size × weight`, working = 1.0, dependents =
+/// `migration.dependent_weight`), who seek the highest-morale eligible same-faction band within
+/// reach; found → they **relocate** (source shrinks, destination grows), none reachable → they
+/// **stay** (grievance accrues faster via the trapped bonus). Morale NEVER causes faction population
+/// loss.
+///
+/// Destinations are chosen from a single **pre-migration snapshot** of this turn's post-demographics
+/// morale/brackets, and every move is computed before any is applied — so relocation is
+/// order-independent (a band that receives immigrants this turn isn't re-evaluated as a fuller
+/// source, and a source's outflow is unaffected by another source feeding it).
+pub fn advance_population_migration(
+    sim_config: Res<SimulationConfig>,
+    wellbeing_config: Res<WellbeingConfigHandle>,
+    tile_registry: Res<TileRegistry>,
+    tiles: Query<&Tile>,
+    mut cohorts: Query<(Entity, &mut PopulationCohort)>,
+) {
+    let wellbeing = wellbeing_config.get();
+    let disc_cfg = &wellbeing.discontent;
+    let mig_cfg = &wellbeing.migration;
+    let width = tile_registry.width;
+    let wrap = sim_config.map_topology.wrap_horizontal;
+
+    // Movement-tech reach factor. No concrete movement/transport tech signal exists in the sim yet
+    // (capability flags cover construction/industry/power/naval/air/espionage/megaprojects, none of
+    // which is a mobility tier), so Phase 1 keeps this at 1.0.
+    // TODO(phase2): scale by the civilization's movement/transport tech tier (design doc defers
+    // concrete tiers) so advanced factions send emigrants farther.
+    let movement_tech_factor = 1.0_f32;
+    let reach = mig_cfg.base_reach * movement_tech_factor;
+    let reach_sq = (reach * reach) as i32;
+    let attractive_morale = scalar_from_f32(mig_cfg.attractive_morale);
+    let min_gap = scalar_from_f32(mig_cfg.min_morale_gap);
+    let dependent_weight = scalar_from_f32(mig_cfg.dependent_weight);
+    let morale_threshold = scalar_from_f32(mig_cfg.morale_threshold);
+
+    // Pre-migration snapshot: everything the destination search + would-move sizing reads. The total
+    // leaving is `total × move_fraction`, split across brackets ∝ `bracket_size × weight` so the
+    // headline fraction is exact while working-age dominates the composition.
+    struct Band {
+        entity: Entity,
+        faction: FactionId,
+        pos: Option<UVec2>,
+        morale: Scalar,
+        wants_to_move: bool,
+        move_working: Scalar,
+        move_children: Scalar,
+        move_elders: Scalar,
+    }
+    let bands: Vec<Band> = cohorts
+        .iter()
+        .map(|(entity, cohort)| {
+            let move_fraction = migration_move_fraction(cohort.morale, mig_cfg);
+            let total_leaving = cohort.total() * move_fraction;
+            // Weighted bracket masses; the total is apportioned in proportion to these.
+            let w_working = cohort.working;
+            let w_children = cohort.children * dependent_weight;
+            let w_elders = cohort.elders * dependent_weight;
+            let denom = w_working + w_children + w_elders;
+            let (move_working, move_children, move_elders) = if denom > scalar_zero() {
+                (
+                    total_leaving * w_working / denom,
+                    total_leaving * w_children / denom,
+                    total_leaving * w_elders / denom,
+                )
+            } else {
+                (scalar_zero(), scalar_zero(), scalar_zero())
+            };
+            Band {
+                entity,
+                faction: cohort.faction,
+                pos: tiles.get(cohort.home).ok().map(|tile| tile.position),
+                morale: cohort.morale,
+                wants_to_move: total_leaving > scalar_zero(),
+                move_working,
+                move_children,
+                move_elders,
+            }
+        })
+        .collect();
+
+    // For each band that wants to move (morale below the migration threshold), find the
+    // highest-morale eligible same-faction band within reach.
+    let mut destination_of: Vec<Option<usize>> = vec![None; bands.len()];
+    for i in 0..bands.len() {
+        if !bands[i].wants_to_move {
+            continue;
+        }
+        let Some(src_pos) = bands[i].pos else {
+            continue;
+        };
+        let mut best: Option<(usize, Scalar)> = None;
+        for (j, dest) in bands.iter().enumerate() {
+            if j == i || dest.faction != bands[i].faction {
+                continue;
+            }
+            let Some(dest_pos) = dest.pos else {
+                continue;
+            };
+            // Eligible = meaningfully happier than a bare threshold AND than the source.
+            if dest.morale < attractive_morale || dest.morale <= bands[i].morale + min_gap {
+                continue;
+            }
+            if crate::grid_utils::wrapped_distance_sq(src_pos, dest_pos, width, wrap) > reach_sq {
+                continue;
+            }
+            if best.is_none_or(|(_, m)| dest.morale > m) {
+                best = Some((j, dest.morale));
+            }
+        }
+        destination_of[i] = best.map(|(j, _)| j);
+    }
+
+    // Accumulate per-band bracket deltas + head-count tallies from all moves (computed against the
+    // snapshot), then apply in one mutating pass so relocation is order-independent.
+    let mut deltas: HashMap<Entity, (Scalar, Scalar, Scalar)> = HashMap::new();
+    let mut emigrated: HashMap<Entity, u32> = HashMap::new();
+    let mut immigrated: HashMap<Entity, u32> = HashMap::new();
+    for (i, dest) in destination_of.iter().enumerate() {
+        let Some(j) = *dest else { continue };
+        let src_entity = bands[i].entity;
+        let dest_entity = bands[j].entity;
+        let (mw, mc, me) = (
+            bands[i].move_working,
+            bands[i].move_children,
+            bands[i].move_elders,
+        );
+        let moved_head = (mw + mc + me).round().to_u32();
+        if moved_head == 0 {
+            continue;
+        }
+        let src = deltas.entry(src_entity).or_default();
+        src.0 -= mw;
+        src.1 -= mc;
+        src.2 -= me;
+        let dst = deltas.entry(dest_entity).or_default();
+        dst.0 += mw;
+        dst.1 += mc;
+        dst.2 += me;
+        *emigrated.entry(src_entity).or_default() += moved_head;
+        *immigrated.entry(dest_entity).or_default() += moved_head;
+    }
+
+    // Apply relocation + refresh the derived per-turn emigrant/immigrant readouts + accrue/decay
+    // the grievance accumulator. Base accrual is `grievance_gain × discontent_fraction` (the 0.6
+    // discontent onset, unchanged); the trapped bonus applies specifically when the band is below
+    // the migration threshold (people *want* to leave) AND has no reachable destination.
+    let trapped_multiplier = scalar_from_f32(disc_cfg.trapped_multiplier);
+    let grievance_gain = scalar_from_f32(disc_cfg.grievance_gain);
+    let grievance_decay = scalar_from_f32(disc_cfg.grievance_decay);
+    let index_of: HashMap<Entity, usize> = bands
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (b.entity, i))
+        .collect();
+    for (entity, mut cohort) in cohorts.iter_mut() {
+        cohort.last_emigrated = emigrated.get(&entity).copied().unwrap_or(0);
+        cohort.last_immigrated = immigrated.get(&entity).copied().unwrap_or(0);
+        if let Some((dw, dc, de)) = deltas.get(&entity) {
+            cohort.working = (cohort.working + *dw).max(scalar_zero());
+            cohort.children = (cohort.children + *dc).max(scalar_zero());
+            cohort.elders = (cohort.elders + *de).max(scalar_zero());
+            cohort.sync_size();
+        }
+        if cohort.discontent_fraction <= scalar_zero() {
+            cohort.grievance = (cohort.grievance - grievance_decay).max(scalar_zero());
+        } else {
+            // Trapped = wants to migrate (morale < threshold) but nowhere reachable to go.
+            let trapped = cohort.morale < morale_threshold
+                && index_of
+                    .get(&entity)
+                    .map(|&i| destination_of[i].is_none())
+                    .unwrap_or(true);
+            let mult = if trapped {
+                trapped_multiplier
+            } else {
+                scalar_one()
+            };
+            let gain = grievance_gain * cohort.discontent_fraction * mult;
+            cohort.grievance += gain;
         }
     }
 }
@@ -5277,7 +5533,6 @@ mod demographics_tests {
     use crate::scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero};
 
     const MILD_TEMP: f32 = 0.0;
-    const HIGH_MORALE: f32 = 1.0;
     const NO_CAP: u32 = 1_000_000_000;
 
     fn state(children: f32, working: f32, elders: f32, food: f32) -> DemographicState {
@@ -5293,21 +5548,20 @@ mod demographics_tests {
         (s.children + s.working + s.elders).to_f32()
     }
 
-    fn run(s: DemographicState, morale: f32, temp: f32) -> DemographicState {
+    fn run(s: DemographicState, temp: f32) -> DemographicState {
         advance_demographics(
             s,
-            scalar_from_f32(morale),
             scalar_from_f32(temp),
             scalar_from_u32(NO_CAP),
             &DemographicsConfig::default(),
         )
     }
 
-    /// A well-fed, high-morale, temperate cohort grows and eats from its larder.
+    /// A well-fed, temperate cohort grows and eats from its larder.
     #[test]
     fn fed_cohort_grows_and_consumes_food() {
         let start = state(30.0, 55.0, 15.0, 1_000.0);
-        let out = run(start, HIGH_MORALE, MILD_TEMP);
+        let out = run(start, MILD_TEMP);
         assert!(
             total(&out) > 100.0,
             "a fed cohort should grow: {}",
@@ -5325,7 +5579,7 @@ mod demographics_tests {
     #[test]
     fn empty_larder_starves_the_cohort() {
         let start = state(30.0, 55.0, 15.0, 0.0);
-        let out = run(start, HIGH_MORALE, MILD_TEMP);
+        let out = run(start, MILD_TEMP);
         assert!(
             total(&out) < 80.0,
             "starvation should sharply cut population: {}",
@@ -5344,8 +5598,8 @@ mod demographics_tests {
     /// Extreme cold kills across brackets even when the larder is full.
     #[test]
     fn cold_kills_even_when_fed() {
-        let warm = run(state(30.0, 55.0, 15.0, 1_000.0), HIGH_MORALE, MILD_TEMP);
-        let cold = run(state(30.0, 55.0, 15.0, 1_000.0), HIGH_MORALE, 40.0);
+        let warm = run(state(30.0, 55.0, 15.0, 1_000.0), MILD_TEMP);
+        let cold = run(state(30.0, 55.0, 15.0, 1_000.0), 40.0);
         assert!(
             total(&cold) < total(&warm),
             "cold should reduce population vs temperate: {} vs {}",
@@ -5354,14 +5608,17 @@ mod demographics_tests {
         );
     }
 
-    /// Low morale (below the floor) suppresses births.
+    /// Births are morale-INDEPENDENT (wellbeing model): `advance_demographics` no longer takes
+    /// morale, so a fed cohort still grows regardless of contentment — morale acts only through
+    /// productivity + migration, never on births. This is the same fed grow case as
+    /// `fed_cohort_grows_and_consumes_food`; it exists to lock the decoupling in place.
     #[test]
-    fn low_morale_suppresses_births() {
+    fn births_are_morale_independent() {
         let start = state(30.0, 55.0, 15.0, 1_000.0);
-        let out = run(start, 0.1, MILD_TEMP); // below default morale_floor 0.2
+        let out = run(start, MILD_TEMP);
         assert!(
-            out.children.to_f32() <= 30.0 - 1e-3,
-            "no births at low morale, only maturation drain: {}",
+            out.children.to_f32() > 30.0,
+            "a fed cohort must still bear children with morale removed from the formula: {}",
             out.children.to_f32()
         );
     }
@@ -5372,7 +5629,6 @@ mod demographics_tests {
         let start = state(100.0, 100.0, 100.0, 10_000.0);
         let out = advance_demographics(
             start,
-            scalar_from_f32(HIGH_MORALE),
             scalar_from_f32(MILD_TEMP),
             scalar_from_u32(50),
             &DemographicsConfig::default(),
@@ -5417,7 +5673,270 @@ mod demographics_tests {
     #[test]
     fn aging_moves_workers_into_elders() {
         let start = state(0.0, 100.0, 0.0, 10_000.0);
-        let out = run(start, HIGH_MORALE, MILD_TEMP);
+        let out = run(start, MILD_TEMP);
         assert!(out.elders.to_f32() > 0.0, "workers should age into elders");
+    }
+}
+
+#[cfg(test)]
+mod wellbeing_tests {
+    use super::{
+        advance_population_migration, discontent_fraction, discontent_output_modifier,
+        migration_move_fraction, output_multiplier,
+    };
+    use crate::components::{MoraleCause, MoraleContributions, PopulationCohort, Tile};
+    use crate::orders::FactionId;
+    use crate::resources::{SimulationConfig, TileRegistry};
+    use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
+    use crate::wellbeing_config::{WellbeingConfig, WellbeingConfigHandle};
+    use crate::LocalStore;
+    use bevy::prelude::{Entity, World};
+    use bevy_ecs::system::RunSystemOnce;
+
+    fn cfg() -> WellbeingConfig {
+        WellbeingConfig::default()
+    }
+
+    /// Layer 2 discontent curve: 0 at/above `content_morale` (0.6), 1 at/below `floor_morale`
+    /// (0.1), linear between. Locks the worked numbers reported for morale 0.9/0.6/0.38/0.25/0.1.
+    #[test]
+    fn discontent_fraction_curve() {
+        let d = &cfg().discontent;
+        let f = |m: f32| discontent_fraction(scalar_from_f32(m), d).to_f32();
+        assert!((f(0.9) - 0.0).abs() < 1e-4, "content above 0.6");
+        assert!((f(0.6) - 0.0).abs() < 1e-4, "content at the threshold");
+        assert!(
+            (f(0.38) - 0.44).abs() < 1e-3,
+            "partial discontent: {}",
+            f(0.38)
+        );
+        assert!(
+            (f(0.25) - 0.70).abs() < 1e-3,
+            "partial discontent: {}",
+            f(0.25)
+        );
+        assert!(
+            (f(0.1) - 1.0).abs() < 1e-4,
+            "fully discontented at the floor"
+        );
+    }
+
+    /// Layer 3a output stack: 100% at zero discontent, floored at `floor_mult` (0.5) once
+    /// discontent × weight would push output below the floor.
+    #[test]
+    fn output_modifier_stack_bounds() {
+        let p = &cfg().productivity;
+        assert!((discontent_output_modifier(scalar_zero(), p).to_f32() - 1.0).abs() < 1e-4);
+        // 44% discontent, weight 1.0 → 56% output.
+        assert!(
+            (discontent_output_modifier(scalar_from_f32(0.44), p).to_f32() - 0.56).abs() < 1e-3
+        );
+        // 70% discontent would give 30% but is floored to 50%.
+        assert!((discontent_output_modifier(scalar_from_f32(0.70), p).to_f32() - 0.5).abs() < 1e-4);
+        assert!((discontent_output_modifier(scalar_one(), p).to_f32() - 0.5).abs() < 1e-4);
+    }
+
+    /// Layer 3b migration onset (decoupled from discontent): `max_rate × clamp((0.25 − morale)/0.25,
+    /// 0, 1)`. 0 at/above the 0.25 threshold, 7.5% at 0.125, 15% at rock-bottom. A morale-0.38 band
+    /// (discontented for productivity, but above the migration onset) sheds nobody.
+    #[test]
+    fn migration_move_fraction_curve() {
+        let m = &cfg().migration;
+        let f = |v: f32| migration_move_fraction(scalar_from_f32(v), m).to_f32();
+        assert!(
+            (f(0.38) - 0.0).abs() < 1e-6,
+            "above onset → stays: {}",
+            f(0.38)
+        );
+        assert!((f(0.25) - 0.0).abs() < 1e-6, "exactly at onset → 0");
+        assert!(
+            (f(0.24) - 0.006).abs() < 1e-4,
+            "just below onset: {}",
+            f(0.24)
+        );
+        assert!((f(0.125) - 0.075).abs() < 1e-4, "half-ramp: {}", f(0.125));
+        assert!((f(0.05) - 0.12).abs() < 1e-4, "steep: {}", f(0.05));
+        assert!(
+            (f(0.0) - 0.15).abs() < 1e-6,
+            "cap at rock-bottom: {}",
+            f(0.0)
+        );
+    }
+
+    fn band(home: Entity, faction: u32, morale: f32, working: f32) -> PopulationCohort {
+        let m = scalar_from_f32(morale);
+        let mut cohort = PopulationCohort {
+            home,
+            current_tile: home,
+            size: 0,
+            children: scalar_zero(),
+            working: scalar_from_f32(working),
+            elders: scalar_zero(),
+            stores: LocalStore::new(),
+            morale: m,
+            last_morale_delta: scalar_zero(),
+            last_morale_cause: MoraleCause::None,
+            last_morale_contributions: MoraleContributions::default(),
+            discontent_fraction: discontent_fraction(m, &cfg().discontent),
+            grievance: scalar_zero(),
+            last_emigrated: 0,
+            last_immigrated: 0,
+            age_turns: 10,
+            generation: 0,
+            faction: FactionId(faction),
+            knowledge: Vec::new(),
+            migration: None,
+        };
+        cohort.sync_size();
+        cohort
+    }
+
+    fn world_with_tiles(positions: &[(u32, u32)], width: u32) -> (World, Vec<Entity>) {
+        let mut world = World::default();
+        let mut config = SimulationConfig::builtin();
+        config.map_topology.wrap_horizontal = false;
+        world.insert_resource(config);
+        world.insert_resource(WellbeingConfigHandle::default());
+        let tiles: Vec<Entity> = positions
+            .iter()
+            .map(|&(x, y)| {
+                let tile = Tile {
+                    position: bevy::math::UVec2::new(x, y),
+                    ..Default::default()
+                };
+                world.spawn(tile).id()
+            })
+            .collect();
+        world.insert_resource(TileRegistry {
+            tiles: tiles.clone(),
+            width,
+            height: 1,
+        });
+        (world, tiles)
+    }
+
+    /// Migration relocates the morale-scaled would-move head-count from a below-threshold band to
+    /// the best reachable eligible same-faction band, and the faction total is conserved (morale
+    /// never kills). At morale 0.1 the move fraction is `0.15 × (0.25−0.1)/0.25 = 0.09` → ~81 of 900.
+    #[test]
+    fn migration_relocates_and_conserves() {
+        let (mut world, tiles) = world_with_tiles(&[(0, 0), (2, 0)], 8);
+        let src = world.spawn(band(tiles[0], 0, 0.1, 900.0)).id();
+        let dst = world.spawn(band(tiles[1], 0, 0.70, 900.0)).id();
+        let before: f32 = {
+            let a = world.get::<PopulationCohort>(src).unwrap();
+            let b = world.get::<PopulationCohort>(dst).unwrap();
+            a.total().to_f32() + b.total().to_f32()
+        };
+        world.run_system_once(advance_population_migration);
+        let a = world.get::<PopulationCohort>(src).unwrap();
+        let b = world.get::<PopulationCohort>(dst).unwrap();
+        assert!(a.last_emigrated > 0, "source should shed emigrants");
+        assert!(
+            (a.last_emigrated as f32 - 81.0).abs() <= 1.0,
+            "≈9% of 900 leave: {}",
+            a.last_emigrated
+        );
+        assert_eq!(
+            b.last_immigrated, a.last_emigrated,
+            "everyone who left arrives — nobody vanishes"
+        );
+        assert!(
+            a.working.to_f32() < 900.0 && b.working.to_f32() > 900.0,
+            "source shrinks, destination grows"
+        );
+        let after = a.total().to_f32() + b.total().to_f32();
+        assert!(
+            (after - before).abs() < 1.0,
+            "faction population conserved: {before} -> {after}"
+        );
+    }
+
+    /// A band that is discontented (for productivity) but ABOVE the migration onset stays entirely
+    /// put — morale 0.38 → discontent 0.44 (output 56%) yet move fraction 0.
+    #[test]
+    fn above_migration_threshold_stays() {
+        let (mut world, tiles) = world_with_tiles(&[(0, 0), (2, 0)], 8);
+        let src = world.spawn(band(tiles[0], 0, 0.38, 900.0)).id();
+        let _dst = world.spawn(band(tiles[1], 0, 0.70, 900.0)).id();
+        world.run_system_once(advance_population_migration);
+        let a = world.get::<PopulationCohort>(src).unwrap();
+        assert_eq!(a.last_emigrated, 0, "above the 0.25 onset → nobody leaves");
+        assert!(
+            (a.working.to_f32() - 900.0).abs() < 1e-3,
+            "population stays put"
+        );
+    }
+
+    /// Below-threshold band with no eligible/reachable destination → people STAY (no move) and
+    /// grievance rises via the trapped multiplier.
+    #[test]
+    fn no_destination_stays_and_grievance_rises() {
+        // Source below the migration onset; the only other band is not attractive (< 0.5).
+        let (mut world, tiles) = world_with_tiles(&[(0, 0), (2, 0)], 8);
+        let a = world.spawn(band(tiles[0], 0, 0.15, 900.0)).id();
+        let _b = world.spawn(band(tiles[1], 0, 0.30, 900.0)).id();
+        let working_before = world.get::<PopulationCohort>(a).unwrap().working.to_f32();
+        world.run_system_once(advance_population_migration);
+        let cohort = world.get::<PopulationCohort>(a).unwrap();
+        assert_eq!(cohort.last_emigrated, 0, "nowhere to go → nobody leaves");
+        assert!(
+            (cohort.working.to_f32() - working_before).abs() < 1e-3,
+            "population stays put"
+        );
+        // Trapped accrual = grievance_gain × discontent(0.15) × trapped_multiplier.
+        let disc = &cfg().discontent;
+        let f = discontent_fraction(scalar_from_f32(0.15), disc);
+        let expected =
+            scalar_from_f32(disc.grievance_gain) * f * scalar_from_f32(disc.trapped_multiplier);
+        assert!(
+            (cohort.grievance - expected).to_f32().abs() < 1e-4,
+            "trapped grievance accrues at the boosted rate: {} vs {}",
+            cohort.grievance.to_f32(),
+            expected.to_f32()
+        );
+    }
+
+    /// A discontented band with a reachable happier band accrues grievance at the un-trapped rate,
+    /// strictly less than the trapped band above — the two rates differ by the trapped multiplier.
+    #[test]
+    fn grievance_trapped_bonus() {
+        let disc = &cfg().discontent;
+        let f = discontent_fraction(scalar_from_f32(0.25), disc).to_f32();
+        let untrapped = disc.grievance_gain * f;
+        let trapped = disc.grievance_gain * f * disc.trapped_multiplier;
+        assert!(trapped > untrapped, "trapped grievance accrues faster");
+    }
+
+    /// Grievance decays while the band is content (discontent_fraction == 0).
+    #[test]
+    fn grievance_decays_when_content() {
+        let (mut world, tiles) = world_with_tiles(&[(0, 0)], 8);
+        let e = {
+            let mut c = band(tiles[0], 0, 0.9, 900.0);
+            c.grievance = scalar_from_f32(0.5);
+            world.spawn(c).id()
+        };
+        world.run_system_once(advance_population_migration);
+        let cohort = world.get::<PopulationCohort>(e).unwrap();
+        assert!(
+            cohort.grievance < scalar_from_f32(0.5),
+            "content bands bleed off grievance"
+        );
+    }
+
+    /// The output multiplier reads a cohort's discontent through the stack (integration of §4).
+    #[test]
+    fn output_multiplier_reads_discontent() {
+        let content = band(Entity::from_raw(0), 0, 0.9, 100.0);
+        let miserable = band(Entity::from_raw(1), 0, 0.1, 100.0);
+        let wb = cfg();
+        assert!(
+            (output_multiplier(&content, &wb) - scalar_one())
+                .to_f32()
+                .abs()
+                < 1e-4
+        );
+        assert!(output_multiplier(&miserable, &wb) < scalar_one());
     }
 }

@@ -51,6 +51,7 @@ mod victory;
 mod visibility;
 mod visibility_config;
 mod visibility_systems;
+mod wellbeing_config;
 
 use std::sync::Arc;
 
@@ -168,6 +169,10 @@ pub use visibility_config::{
     load_visibility_config_from_env, DecayConfig, ElevationConfig, LineOfSightConfig,
     SightRangeConfig, TerrainModifierConfig, VisibilityConfig, VisibilityConfigHandle,
     VisibilityConfigMetadata, BUILTIN_VISIBILITY_CONFIG,
+};
+pub use wellbeing_config::{
+    load_wellbeing_config_from_env, DiscontentConfig, MigrationConfig, ProductivityConfig,
+    WellbeingConfig, WellbeingConfigHandle, WellbeingConfigMetadata, BUILTIN_WELLBEING_CONFIG,
 };
 
 pub use metrics::SimulationMetrics;
@@ -327,6 +332,8 @@ pub fn build_headless_app() -> App {
         supply_network_config::load_supply_network_config_from_env();
     let supply_network_handle =
         supply_network_config::SupplyNetworkConfigHandle::new(supply_network_config);
+    let (wellbeing_config, wellbeing_metadata) = wellbeing_config::load_wellbeing_config_from_env();
+    let wellbeing_handle = wellbeing_config::WellbeingConfigHandle::new(wellbeing_config);
     let culture_effects = CultureEffectsCache::default();
     let espionage_catalog =
         espionage::EspionageCatalog::load_builtin().expect("espionage catalog should parse");
@@ -383,6 +390,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(demographics_metadata)
         .insert_resource(supply_network_handle)
         .insert_resource(supply_network_metadata)
+        .insert_resource(wellbeing_handle)
+        .insert_resource(wellbeing_metadata)
         .insert_resource(supply::SupplyNetworkMembership::default())
         .insert_resource(visibility::VisibilityLedger::default())
         .insert_resource(visibility::VisibilitySweepTracker::default())
@@ -535,6 +544,10 @@ pub fn build_headless_app() -> App {
                 systems::advance_harvest_assignments,
                 systems::advance_scout_assignments,
                 systems::advance_fauna_pursuits,
+                // Wellbeing migration runs after demographics + this turn's yield payouts so
+                // morale/discontent are current and productivity has already been applied at each
+                // yield site; it then relocates discontented people (population conserved).
+                systems::advance_population_migration,
                 sedentarization::sedentarization_tick,
                 systems::publish_trade_telemetry,
             )

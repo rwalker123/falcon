@@ -51,7 +51,8 @@ func _ready() -> void:
 	await _save("band")
 
 	# State 1a — a well-fed but demoralized band: healthy food (∞) yet morale 0.22
-	# (< critical), so the drawer's Morale line reads a red 22%.
+	# (< critical), so the drawer's Morale line reads a red 22%. Discontent drags
+	# Output to 56% (red) and the itemized morale breakdown + recovery guidance show.
 	_hud.show_unit_selection(_low_morale_band_fixture())
 	await _settle()
 	await _save("band_low_morale")
@@ -176,8 +177,18 @@ func _low_morale_band_fixture() -> Dictionary:
 	fixture["morale"] = 0.22
 	# Falling morale driven by the harsh cavern terrain: the drawer shows
 	# "Morale: 22% ▼ — harsh terrain (Karst Cavern Mouth)".
-	fixture["morale_delta"] = -0.006
+	fixture["morale_delta"] = -0.010
 	fixture["morale_cause"] = 1  # Terrain
+	# Civilization Wellbeing (docs/plan_civ_wellbeing.md): discontent drags Output to 56%
+	# (< critical → red), and the four signed Layer-1 contributions (sum = morale_delta)
+	# drive the itemized breakdown. People are relocating (last_emigrated > 0).
+	fixture["output_multiplier"] = 0.56
+	fixture["discontent_fraction"] = 0.44
+	fixture["last_emigrated"] = 6
+	fixture["morale_settling"] = 0.010   # +1.0%  settling (positive base growth)
+	fixture["morale_terrain"] = -0.012   # −1.2%  harsh terrain
+	fixture["morale_climate"] = -0.008   # −0.8%  harsh climate
+	fixture["morale_unrest"] = 0.0       # below epsilon → row omitted
 	fixture["tile_info"] = {
 		"x": 44, "y": 61,
 		"terrain_label": "Karst Cavern Mouth",
@@ -206,9 +217,9 @@ func _band_alert_fixture() -> Array:
 		# Starving: 3 days of food (< critical) → red alert.
 		{"faction": 0, "entity": 101, "size": 60, "days_of_food": 3.0, "activity": "harvest", "current_x": 71, "current_y": 18,
 			"harvest": {"band_label": "Band Fen"}},
-		# Losing population from harsh terrain: size 90 → 78, well-fed (∞) but the
-		# dominant morale cause is Terrain → amber alert "losing population — harsh terrain".
-		{"faction": 0, "entity": 102, "size": 78, "days_of_food": 999.0, "morale": 0.30, "morale_cause": 1, "activity": "hunt", "current_x": 40, "current_y": 22,
+		# Losing population to relocation: size 90 → 78, well-fed (∞) but discontented and
+		# 12 people emigrated last turn → amber alert "losing population — people leaving".
+		{"faction": 0, "entity": 102, "size": 78, "days_of_food": 999.0, "morale": 0.30, "morale_cause": 1, "last_emigrated": 12, "activity": "hunt", "current_x": 40, "current_y": 22,
 			"harvest": {"band_label": "Band Ash"}},
 		# Idle labor: quiet low-priority alert.
 		{"faction": 0, "entity": 103, "size": 45, "days_of_food": 999.0, "activity": "idle", "current_x": 12, "current_y": 9},

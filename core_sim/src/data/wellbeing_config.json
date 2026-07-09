@@ -1,0 +1,21 @@
+{
+  "discontent": {
+    "content_morale": 0.6,
+    "floor_morale": 0.1,
+    "grievance_gain": 0.05,
+    "grievance_decay": 0.1,
+    "trapped_multiplier": 1.5
+  },
+  "productivity": {
+    "floor_mult": 0.5,
+    "discontent_weight": 1.0
+  },
+  "migration": {
+    "morale_threshold": 0.25,
+    "max_rate": 0.15,
+    "base_reach": 4.0,
+    "attractive_morale": 0.5,
+    "min_morale_gap": 0.05,
+    "dependent_weight": 0.4
+  }
+}

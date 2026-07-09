@@ -383,6 +383,33 @@ easy-to-miss "select a band…" line in the selection panel.
   (`Morale: 22% ▼ — harsh terrain (Karst Cavern Mouth)`) — the "it's the hex you're on" payload. A
   rehydrated save reports `morale_delta 0 / cause None` for one turn (the sim doesn't persist them); the
   row degrades to a bare percentage.
+- **Civilization Wellbeing — productivity, itemized morale, recovery** (see
+  `docs/plan_civ_wellbeing.md`; snapshot `PopulationCohortState.outputMultiplier` /
+  `discontentFraction` / `lastEmigrated` / `lastImmigrated` / `grievance` + the four signed
+  Layer-1 contributions `moraleSettling` / `moraleTerrain` / `moraleClimate` / `moraleUnrest`,
+  decoded in `native/src/lib.rs population_to_dict` as `output_multiplier` / `discontent_fraction`
+  / `last_emigrated` / `last_immigrated` / `grievance` (telemetry only, not displayed in P1) /
+  `morale_settling` / `morale_terrain` / `morale_climate` / `morale_unrest`, all flowed onto the
+  MapView unit marker in `_rebuild_unit_markers`). Player-band drawer only (`_unit_summary_lines`):
+  - **Output row** (`_band_output_line`): `Output: N%` shown when `output_multiplier < OUTPUT_FULL`
+    (1.0), placed just under Morale. Tinted ink → amber → red by `BandFoodStatus.hex_for_output`
+    (config `band_status_config.json` `output.{warn,critical}` = `0.85`/`0.60`; near-full reads
+    neutral ink, *not* green — it's a productivity note, not a "good"). Ties productivity to morale.
+  - **Itemized morale breakdown** (`_morale_breakdown_lines`): the four signed contributions
+    (their sum IS `morale_delta`) as indented sub-lines (e.g. `    ▲ +1.0%  settling`), shown when
+    morale is concerning (`_morale_is_concerning`: below warn **or** falling past
+    `MORALE_TREND_EPSILON`). Only contributions above `BandFoodStatus.morale_breakdown_epsilon()`
+    (config `morale.breakdown_epsilon` = `0.002`) list. Labels: `settling`,
+    `harsh terrain (<terrain_label>)` (matches the headline cause treatment), `harsh climate`, and
+    `unrest`/`culture` by sign. `_format_detail_bbcode` tints each row two-tone by its sign glyph
+    (▲ = HEALTHY green, ▼ = WARN amber — deliberately not a rainbow); the indented breakdown lines
+    are intercepted before the KV split.
+  - **Recovery guidance** (`RECOVERY_GUIDANCE_TEXT`): a dim `↑ Recover: move to Hospitable ground ·
+    Scout · Follow a herd` line (the real levers, NOT harvest), appended under the breakdown.
+    `_split_detail_kv` skips lines beginning with `↑` so it renders as a dim sentence, not a KV row.
+  - **Action morale hints**: the Scout button tooltip (`MORALE_HINT_SCOUT`, "(+morale)") and the four
+    persistent Hunt/Follow policy tooltips (Sustain/Surplus/Market/Eradicate get `MORALE_HINT_PERSISTENT`
+    appended, "(+morale/turn)") advertise the positive levers; the one-shot Single policy does not.
 - **Tile-card Habitability** (snapshot `TileState.habitability`, decoded in `native/src/lib.rs`
   `tile_to_dict` as `habitability` (raw Scalar/1e6; band-independent per-turn morale drain of the tile's
   terrain + temperature, ≥0, bigger = harsher), stored in `MapView.tile_habitability` keyed by
@@ -414,10 +441,12 @@ easy-to-miss "select a band…" line in the selection panel.
   snapshot from the player faction's bands — **starving** (`days_of_food` < critical, red),
   **losing population** (`size` dropped vs the previous snapshot, tracked in `_prev_band_sizes`, amber),
   and **idle** (`activity == idle`, quiet dim). The losing-population alert names its cause via
-  `_decline_reason(days, morale_cause)`: `days < critical` → `— starving` (first), else the dominant
-  `morale_cause` maps to the same plain-language labels as the drawer (`— harsh terrain` / `— harsh
-  climate` / `— unrest`), falling back to `— low morale` when the cause is `None` (e.g. a rehydrated
-  save). Alerts are (band, type) deduped by construction and clear
+  `_decline_reason(days, morale, morale_cause, last_emigrated)`: `days < critical` → `— starving`
+  (first), then `last_emigrated > 0` → `— people leaving` (morale no longer kills — discontent
+  relocates people; see `docs/plan_civ_wellbeing.md`), else the dominant `morale_cause` maps to the
+  same plain-language labels as the drawer (`— harsh terrain` / `— harsh climate` / `— unrest`),
+  falling back to `— low morale` when the cause is `None` (e.g. a rehydrated save). Alerts are
+  (band, type) deduped by construction and clear
   when resolved; each row is a `[url=x,y]` link whose `meta_clicked` emits `alert_focus_requested(x,y)` →
   `MapView.focus_on_tile` (shared minimap centering machinery). Hidden via the dock until an alert exists.
   NOTE: cohorts carry no top-level band label in the snapshot — names fall back to harvest/scout

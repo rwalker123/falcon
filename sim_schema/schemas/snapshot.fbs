@@ -452,6 +452,24 @@ table PopulationCohortState {
   moraleDelta:long = 0;
   // Dominant negative morale driver when falling: 0=None, 1=Terrain, 2=Cold, 3=Unrest.
   moraleCause:ubyte = 0;
+  // Civilization Wellbeing (docs/plan_civ_wellbeing.md). All fixed-point (FIXED_POINT_SCALE = 1e6)
+  // except the two head-counts. Derived per-turn unless noted.
+  // Productivity modifier stack result (`output = base × Π(modifiers)`): 1e6 = 100% output.
+  outputMultiplier:long = 1000000;
+  // Discontented share of the band this turn, 0..1 (1e6 = fully discontented).
+  discontentFraction:long = 0;
+  // People who emigrated from / immigrated into this band last turn (discontent-driven migration).
+  lastEmigrated:uint = 0;
+  lastImmigrated:uint = 0;
+  // Severity × duration grievance accumulator (reserved for a future revolution consequence;
+  // Phase 1 only surfaces it). PERSISTED for rollback (unlike the other derived fields here).
+  grievance:long = 0;
+  // Layer-1 named morale contributions whose signed sum IS moraleDelta (the itemized breakdown):
+  // settling (base growth, ≥0), terrain/climate (≤0), unrest (signed).
+  moraleSettling:long = 0;
+  moraleTerrain:long = 0;
+  moraleClimate:long = 0;
+  moraleUnrest:long = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

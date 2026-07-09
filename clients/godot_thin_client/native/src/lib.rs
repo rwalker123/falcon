@@ -3501,6 +3501,25 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // one turn (the sim doesn't persist them) — the HUD handles that gracefully.
     let _ = dict.insert("morale_delta", fixed64_to_f64(cohort.moraleDelta()));
     let _ = dict.insert("morale_cause", i64::from(cohort.moraleCause()));
+    // Civilization Wellbeing (docs/plan_civ_wellbeing.md). Productivity + discontent +
+    // migration counters + the four signed Layer-1 morale contributions (their sum IS
+    // morale_delta) that drive the itemized morale breakdown in the band drawer.
+    let _ = dict.insert(
+        "output_multiplier",
+        fixed64_to_f64(cohort.outputMultiplier()),
+    );
+    let _ = dict.insert(
+        "discontent_fraction",
+        fixed64_to_f64(cohort.discontentFraction()),
+    );
+    let _ = dict.insert("last_emigrated", cohort.lastEmigrated() as i64);
+    let _ = dict.insert("last_immigrated", cohort.lastImmigrated() as i64);
+    // grievance: telemetry only (reserved for a future revolution consequence) — not displayed in P1.
+    let _ = dict.insert("grievance", fixed64_to_f64(cohort.grievance()));
+    let _ = dict.insert("morale_settling", fixed64_to_f64(cohort.moraleSettling()));
+    let _ = dict.insert("morale_terrain", fixed64_to_f64(cohort.moraleTerrain()));
+    let _ = dict.insert("morale_climate", fixed64_to_f64(cohort.moraleClimate()));
+    let _ = dict.insert("morale_unrest", fixed64_to_f64(cohort.moraleUnrest()));
     let _ = dict.insert("generation", cohort.generation() as i64);
     let _ = dict.insert("faction", cohort.faction() as i64);
     let _ = dict.insert("days_of_food", cohort.daysOfFood() as f64);

@@ -16,8 +16,7 @@
   },
   "births": {
     "birth_rate": 0.03,
-    "surplus_bonus": 0.5,
-    "morale_floor": 0.2
+    "surplus_bonus": 0.5
   },
   "maturation_rate": 0.05,
   "aging_rate": 0.025,
