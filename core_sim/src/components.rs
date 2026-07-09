@@ -523,6 +523,15 @@ pub enum FaunaPursuitMode {
     },
 }
 
+impl FaunaPursuitMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FaunaPursuitMode::Hunt => "single",
+            FaunaPursuitMode::Follow { policy } => policy.as_str(),
+        }
+    }
+}
+
 /// A band pursuing a moving fauna **group** (herd) by id. Unlike `HarvestAssignment`
 /// (fixed tile, precomputed reward), the target and yield are resolved against the
 /// live `HerdRegistry` each turn, so the band chases a genuinely moving herd.

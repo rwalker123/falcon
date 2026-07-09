@@ -470,6 +470,10 @@ table PopulationCohortState {
   moraleTerrain:long = 0;
   moraleClimate:long = 0;
   moraleUnrest:long = 0;
+  // Band's live fauna-pursuit sub-mode: "single" (one-shot hunt) or the follow policy
+  // (sustain|surplus|market|eradicate); empty string when not pursuing. Appended last (see
+  // append-only schema discipline). Client labels the cancel affordance from it.
+  huntMode:string;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

@@ -4,6 +4,9 @@ class_name HudLayer
 signal ui_zoom_delta(delta: float)
 signal ui_zoom_reset
 signal unit_scout_requested(x: int, y: int, band_entity_bits: int)
+## Emitted when the player cancels a band's active task; carries the band dict so
+## Main can extract faction + entity bits for the `cancel_order` command.
+signal cancel_order_requested(band: Dictionary)
 signal herd_follow_requested(herd_id: String)
 signal forage_requested(x: int, y: int, module_key: String)
 signal next_turn_requested(steps: int)
@@ -58,6 +61,7 @@ var _server_build: String = "?"
 @onready var roster_list: VBoxContainer = %RosterList
 @onready var unit_buttons: HBoxContainer = %UnitButtons
 @onready var unit_scout_button: Button = %UnitScoutButton
+@onready var unit_cancel_button: Button = %UnitCancelButton
 @onready var herd_buttons: HBoxContainer = %HerdButtons
 @onready var hunt_herd_button: Button = %HuntHerdButton
 @onready var hunt_policy_buttons: HBoxContainer = %HuntPolicyButtons
@@ -115,6 +119,12 @@ const ALERT_TYPE_LOSING_POPULATION := "losing_population"
 const ALERT_TYPE_IDLE := "idle"
 const ALERT_PRIORITY := [ALERT_TYPE_STARVING, ALERT_TYPE_LOSING_POPULATION, ALERT_TYPE_IDLE]
 const BAND_ACTIVITY_IDLE := "idle"
+# Verb prefixes for the optimistic in-flight label on the disabled cancel button,
+# composed with the task action phrase as "<verb> <phrase>…" (e.g. "Cancelling
+# Market Hunt…", "Starting Foraging…"). Shown from dispatch until the snapshot
+# confirms the band's `activity` CHANGED from its value at dispatch.
+const CANCEL_ORDER_PENDING_VERB := "Cancelling"
+const START_ORDER_PENDING_VERB := "Starting"
 # Why a band is losing population — appended to the losing_population alert label.
 const DECLINE_REASON_STARVING := "starving"
 const DECLINE_REASON_LOW_MORALE := "low morale"
@@ -151,10 +161,10 @@ const MORALE_CONTRIB_LABEL_SETTLING := "settling"
 const MORALE_CONTRIB_LABEL_CULTURE := "culture"
 # Recovery guidance — a dim line naming the real levers (NOT harvest) when morale is concerning.
 const RECOVERY_GUIDANCE_GLYPH := "↑"
-const RECOVERY_GUIDANCE_TEXT := "↑ Recover: move to Hospitable ground · Scout · Follow a herd"
+const RECOVERY_GUIDANCE_TEXT := "↑ Recover: move to Hospitable ground · Scout · Hunt"
 # Positive-lever morale hints on the action buttons (tooltip suffixes).
 const MORALE_HINT_SCOUT := "Scout unknown ground — reveals nearby tiles and lifts the band's spirits (+morale)."
-const MORALE_HINT_PERSISTENT := "  Following a herd also lifts morale each turn (+morale/turn)."
+const MORALE_HINT_PERSISTENT := "  Hunting a herd also lifts morale each turn (+morale/turn)."
 # Occupants roster row chrome.
 const ROSTER_DOT_SIZE := 9.0
 const ROSTER_ROW_MIN_HEIGHT := 30.0
@@ -210,6 +220,12 @@ var _pending_forage: Dictionary = {}
 var _pending_scout_unit: Dictionary = {}
 var _pending_hunt: Dictionary = {}
 var _pending_follow: Dictionary = {}
+# HUD-local optimistic map of bands with an order transition in flight (start OR
+# cancel — same pattern: wait for `activity` to change). Keyed by band `entity`,
+# value `{ "before": <normalized activity at dispatch>, "label": <button text> }`.
+# An entry clears itself the first render the band's activity differs from `before`
+# (the server confirm), whereupon the normal Scout/Cancel state renders.
+var _pending_transition_bands: Dictionary = {}
 # The herd action is one Hunt verb + a policy radio led by "single". Single = a
 # one-shot `hunt_fauna`; every other policy = a persistent `follow_herd <policy>`
 # that auto-hunts each turn. Default is the one-shot Single.
@@ -267,6 +283,7 @@ func _apply_hud_style() -> void:
             detail.add_theme_constant_override("table_h_separation", 16)
             detail.add_theme_constant_override("table_v_separation", 3)
     HudStyle.apply_button(unit_scout_button, "primary")
+    HudStyle.apply_button(unit_cancel_button, "armed")
     HudStyle.apply_button(hunt_herd_button, "primary")
     HudStyle.apply_button(forage_button, "primary")
     _refresh_hunt_policy_buttons()
@@ -628,6 +645,9 @@ func _connect_selection_buttons() -> void:
         unit_scout_button.pressed.connect(_on_unit_scout_pressed)
         # Scouting is a positive morale lever (docs/plan_civ_wellbeing.md) — surface it.
         unit_scout_button.tooltip_text = MORALE_HINT_SCOUT
+    if unit_cancel_button != null and not unit_cancel_button.is_connected("pressed", Callable(self, "_on_unit_cancel_pressed")):
+        unit_cancel_button.pressed.connect(_on_unit_cancel_pressed)
+        unit_cancel_button.tooltip_text = "Stop the band's current task and return it to idle."
     if hunt_herd_button != null and not hunt_herd_button.is_connected("pressed", Callable(self, "_on_hunt_herd_pressed")):
         hunt_herd_button.pressed.connect(_on_hunt_herd_pressed)
         hunt_herd_button.tooltip_text = "Send a band to hunt the selected herd."
@@ -680,6 +700,91 @@ func _on_unit_scout_pressed() -> void:
     if not _selected_tile_info.is_empty():
         _try_dispatch_pending_scout(_selected_tile_info)
     _refresh_targeting()
+
+func _on_unit_cancel_pressed() -> void:
+    if _selected_unit.is_empty():
+        return
+    # Optimistic feedback: mark a transition whose `before` is the band's current
+    # (task) activity, so the disabled "Cancelling <phrase>…" holds until the snapshot
+    # reports the band idle (activity changed) and the panel reverts to Scout.
+    var phrase := _task_action_phrase(
+        String(_selected_unit.get("activity", "")).strip_edges().to_lower(),
+        String(_selected_unit.get("hunt_mode", "")))
+    _begin_band_transition(_selected_unit, CANCEL_ORDER_PENDING_VERB, phrase)
+    emit_signal("cancel_order_requested", _selected_unit)
+
+## Register an optimistic order transition for `band` and, if that band's drawer is
+## the one on screen, flip the cancel button to the disabled in-flight label
+## ("<verb> <phrase>…") immediately (no wait for the confirming render). Shared by
+## start (Scout/Forage) and cancel — both wait for the band's `activity` to change
+## from its dispatch value.
+func _begin_band_transition(band: Dictionary, verb: String, phrase: String) -> void:
+    var entity_id := int(band.get("entity", -1))
+    if entity_id < 0:
+        return
+    var label := "%s %s…" % [verb, phrase]
+    var before := String(band.get("activity", "")).strip_edges().to_lower()
+    _pending_transition_bands[entity_id] = {"before": before, "label": label}
+    if int(_selected_unit.get("entity", -1)) != entity_id:
+        return
+    if unit_scout_button != null:
+        unit_scout_button.visible = false
+    if unit_cancel_button != null:
+        unit_cancel_button.visible = true
+        unit_cancel_button.disabled = true
+        unit_cancel_button.text = label
+
+## The bare action phrase for a band's task, keyed off its coarse `activity` and
+## (for fauna pursuit) its `hunt_mode` sub-mode: "Scouting" / "Foraging" /
+## "<Mode> Hunt" / "Hunt" / "Task". Single source of truth for both the active
+## "Cancel <phrase>" button and the in-flight "Cancelling <phrase>…" transition.
+func _task_action_phrase(activity: String, hunt_mode: String) -> String:
+    match activity:
+        "scout":
+            return "Scouting"
+        "harvest":
+            return "Foraging"
+        "hunt", "follow":
+            var mode := hunt_mode.strip_edges()
+            if mode == "":
+                return "Hunt"
+            return "%s Hunt" % mode.capitalize()
+        _:
+            return "Task"
+
+## Text for the active cancel button — "Cancel " + the shared action phrase.
+func _cancel_label_for(activity: String, hunt_mode: String) -> String:
+    return "Cancel %s" % _task_action_phrase(activity, hunt_mode)
+
+## Toggle a player band's action buttons by task state: idle bands offer the
+## default Scout action; bands on any task offer a single labelled Cancel button.
+func _update_unit_task_buttons(unit: Dictionary) -> void:
+    var entity_id := int(unit.get("entity", -1))
+    var activity := String(unit.get("activity", "")).strip_edges().to_lower()
+    var on_task := activity != "" and activity != BAND_ACTIVITY_IDLE
+    # Optimistic order transition (start OR cancel) in flight for this band: hold the
+    # disabled in-flight label while the band's activity still matches its dispatch
+    # value; once it changes (server confirm) clear the entry and fall through to the
+    # normal Scout/Cancel state.
+    if entity_id >= 0 and _pending_transition_bands.has(entity_id):
+        var transition: Dictionary = _pending_transition_bands[entity_id]
+        if activity == String(transition.get("before", "")):
+            if unit_scout_button != null:
+                unit_scout_button.visible = false
+            if unit_cancel_button != null:
+                unit_cancel_button.visible = true
+                unit_cancel_button.disabled = true
+                unit_cancel_button.text = String(transition.get("label", ""))
+            return
+        _pending_transition_bands.erase(entity_id)
+    if unit_scout_button != null:
+        unit_scout_button.visible = not on_task
+    if unit_cancel_button != null:
+        # Re-enable in case this button was left disabled by a prior band's transition.
+        unit_cancel_button.disabled = false
+        unit_cancel_button.visible = on_task
+        if on_task:
+            unit_cancel_button.text = _cancel_label_for(activity, String(unit.get("hunt_mode", "")))
 
 ## The single Hunt verb, routed by the active policy: Single → a one-shot
 ## `hunt_fauna` (`_pending_hunt`); any other policy → a persistent `follow_herd`
@@ -1296,7 +1401,10 @@ func _render_occupant_drawer() -> void:
     var is_herd := not _selected_herd.is_empty()
     if unit_buttons != null:
         # Scout is a player-band action only.
-        unit_buttons.visible = is_band and _is_player_unit(_selected_unit)
+        var is_player_band := is_band and _is_player_unit(_selected_unit)
+        unit_buttons.visible = is_player_band
+        if is_player_band:
+            _update_unit_task_buttons(_selected_unit)
     if herd_buttons != null:
         herd_buttons.visible = is_herd
     if is_herd:
@@ -2165,6 +2273,13 @@ func consume_pending_forage(unit_data: Dictionary) -> Dictionary:
         payload["band_entity_bits"] = int(entity_bits_variant)
     payload["unit_id"] = entity_bits_variant
     _pending_forage.clear()
+    # Forage/Hunt-game is dispatched to the just-selected band: show "Starting
+    # Foraging…" (or "Starting Hunt…" for the hunt-game variant) until its activity
+    # flips to the ordered task. Phrases route through `_task_action_phrase` (no bare
+    # literals). `_selected_unit` is this band (set by the preceding show_unit_selection),
+    # so the transition renders on the drawer below.
+    var start_phrase := _task_action_phrase("hunt", "") if action == FOOD_ACTION_HUNT else _task_action_phrase("harvest", "")
+    _begin_band_transition(unit_data, START_ORDER_PENDING_VERB, start_phrase)
     _render_selection_panel(_selected_tile_info, unit_data, _selected_herd)
     _refresh_targeting()
     return payload
@@ -2219,6 +2334,9 @@ func _try_dispatch_pending_scout(tile_info: Dictionary) -> void:
     if band_bits < 0:
         return
     emit_signal("unit_scout_requested", target_x, target_y, band_bits)
+    # Scout is a band-panel order for the still-selected band: show "Starting
+    # Scouting…" from the moment the command is dispatched (not while picking the tile).
+    _begin_band_transition(_pending_scout_unit, START_ORDER_PENDING_VERB, _task_action_phrase("scout", ""))
     _pending_scout_unit.clear()
     _refresh_targeting()
 
@@ -2286,6 +2404,9 @@ func consume_pending_hunt(unit_data: Dictionary) -> Dictionary:
     if typeof(entity_bits_variant) == TYPE_INT:
         payload["band_entity_bits"] = int(entity_bits_variant)
     _pending_hunt.clear()
+    # One-shot hunt dispatched to the just-selected band (its live hunt_mode is
+    # "single"): show "Starting Single Hunt…" until the snapshot confirms the task.
+    _begin_band_transition(unit_data, START_ORDER_PENDING_VERB, _task_action_phrase("hunt", HUNT_POLICY_SINGLE))
     _render_selection_panel(_selected_tile_info, unit_data, _selected_herd)
     _refresh_targeting()
     return payload
@@ -2317,14 +2438,18 @@ func consume_pending_follow(unit_data: Dictionary) -> Dictionary:
         _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
         _refresh_targeting()
         return {}
+    var policy := String(_pending_follow.get("policy", "sustain"))
     var payload := {
         "herd_id": herd_id,
-        "policy": String(_pending_follow.get("policy", "sustain")),
+        "policy": policy,
     }
     var entity_bits_variant: Variant = unit_data.get("entity", -1)
     if typeof(entity_bits_variant) == TYPE_INT:
         payload["band_entity_bits"] = int(entity_bits_variant)
     _pending_follow.clear()
+    # Persistent follow-hunt dispatched to the just-selected band (its live activity
+    # is "follow" + hunt_mode=<policy>): show "Starting <Policy> Hunt…" until confirmed.
+    _begin_band_transition(unit_data, START_ORDER_PENDING_VERB, _task_action_phrase("follow", policy))
     _render_selection_panel(_selected_tile_info, unit_data, _selected_herd)
     _refresh_targeting()
     return payload

@@ -3526,6 +3526,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     if let Some(activity) = cohort.activity() {
         let _ = dict.insert("activity", activity);
     }
+    // Fauna-pursuit sub-mode: "single" (one-shot) or "sustain"/"surplus"/"market"/
+    // "eradicate" (follow policies); empty when the band isn't hunting. Mirrors `activity`.
+    if let Some(hunt_mode) = cohort.huntMode() {
+        let _ = dict.insert("hunt_mode", hunt_mode);
+    }
     let _ = dict.insert("supply_network_id", cohort.supplyNetworkId() as i64);
     if let Some(stores) = cohort.stores() {
         let mut stores_dict = VarDictionary::new();

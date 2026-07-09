@@ -540,6 +540,12 @@ fn main() {
             Command::Domesticate { faction, herd_id } => {
                 handle_domesticate(&mut app, faction, herd_id);
             }
+            Command::CancelOrder {
+                faction,
+                band_entity_bits,
+            } => {
+                handle_cancel_order(&mut app, faction, band_entity_bits);
+            }
         }
 
         broadcast_command_events_if_needed(&mut app, bin_server, flat_server);
@@ -661,6 +667,10 @@ enum Command {
     Domesticate {
         faction: FactionId,
         herd_id: String,
+    },
+    CancelOrder {
+        faction: FactionId,
+        band_entity_bits: Option<u64>,
     },
     ExportMap {
         path: Option<String>,
@@ -1414,7 +1424,7 @@ fn handle_follow_herd(
         tick,
         CommandEventKind::FollowHerd,
         faction,
-        format!("{} follow -> {}", band.label, herd_id),
+        format!("{} Hunt (ongoing) -> {}", band.label, herd_id),
         Some(detail),
     );
 }
@@ -1756,6 +1766,65 @@ fn handle_hunt_fauna(
     );
 }
 
+/// Cancel a band's current task (scout / forage / hunt / follow), returning it to idle.
+/// Resolves the band the same way the band-order commands do (`select_starting_band`:
+/// explicit `band_entity_bits`, else the faction's first band) and strips its assignment via
+/// `reassign_band` — a rejected/absent band is handled by `select_starting_band` (feed entry,
+/// no panic).
+fn handle_cancel_order(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_entity_bits: Option<u64>,
+) {
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        band_entity_bits,
+        "cancel_order",
+        CommandEventKind::CancelOrder,
+    ) else {
+        return;
+    };
+
+    // Nothing to cancel: an already-idle band should report a failure, not a
+    // misleading "stood down" entry (guards text-input / desync invocations).
+    let has_task = {
+        let entity = app.world.entity(band.entity);
+        entity.contains::<FaunaPursuit>()
+            || entity.contains::<HarvestAssignment>()
+            || entity.contains::<ScoutAssignment>()
+    };
+    if !has_task {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!("{} has no active order to cancel.", band.label),
+        );
+        return;
+    }
+
+    reassign_band(app, band.entity);
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    let detail = format!("status=cancelled band={}", band.label);
+    info!(
+        target: "shadow_scale::command",
+        command = "cancel_order",
+        faction = %faction.0,
+        band = %band.label,
+        "command.cancel_order.applied"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::CancelOrder,
+        faction,
+        format!("{} stood down", band.label),
+        Some(detail),
+    );
+}
+
 /// Claim a herd as domesticated livestock. Requires the faction to have built husbandry
 /// progress by Sustain-following it (so it owns the herd) and for that progress to have
 /// reached `husbandry.claim_threshold`; otherwise the command is rejected. On success the
@@ -1823,7 +1892,7 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
             CommandEventKind::Domesticate,
             faction,
             format!(
-                "You are not tending {}. Sustain-follow it to build husbandry before claiming it.",
+                "You are not tending {}. Sustain-hunt it to build husbandry before claiming it.",
                 herd_id
             ),
         ),
@@ -1832,7 +1901,7 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
             CommandEventKind::Domesticate,
             faction,
             format!(
-                "{} is not tame enough to domesticate ({}%). Keep Sustain-following it to build husbandry.",
+                "{} is not tame enough to domesticate ({}%). Keep Sustain-hunting it to build husbandry.",
                 herd_id,
                 (progress * 100.0).round() as i64
             ),
@@ -2647,6 +2716,13 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             faction: FactionId(faction_id),
             herd_id,
         }),
+        ProtoCommandPayload::CancelOrder {
+            faction_id,
+            band_entity_bits,
+        } => Some(Command::CancelOrder {
+            faction: FactionId(faction_id),
+            band_entity_bits,
+        }),
         ProtoCommandPayload::ExportMap { path } => Some(Command::ExportMap { path }),
     }
 }
@@ -2958,7 +3034,7 @@ fn emit_command_failure(
 fn command_kind_display(kind: CommandEventKind) -> &'static str {
     match kind {
         CommandEventKind::Scout => "Scout",
-        CommandEventKind::FollowHerd => "Follow herd",
+        CommandEventKind::FollowHerd => "Hunt (ongoing)",
         CommandEventKind::FoundSettlement => "Found settlement",
         CommandEventKind::CampaignFounded => "Campaign founded",
         CommandEventKind::CampaignMilestone => "Campaign milestone",
@@ -2966,6 +3042,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Forage => "Harvest",
         CommandEventKind::Hunt => "Hunt",
         CommandEventKind::Domesticate => "Domesticate",
+        CommandEventKind::CancelOrder => "Cancel order",
         CommandEventKind::SedentarizationPrompt => "Sedentarization",
     }
 }

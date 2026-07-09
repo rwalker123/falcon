@@ -130,7 +130,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "follow_herd",
         aliases: &[],
-        summary: "Order a band to follow a herd, auto-hunting per policy each turn.",
+        summary: "Order a band to hunt a herd continuously, auto-hunting per policy each turn.",
         usage: "follow_herd <faction_id> <herd_id> [policy] [band_entity_bits]",
     },
     CommandVerbHelp {
@@ -154,8 +154,14 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "domesticate",
         aliases: &[],
-        summary: "Claim a tame-enough herd as domesticated livestock (needs husbandry progress from a Sustain follow).",
+        summary: "Claim a tame-enough herd as domesticated livestock (needs husbandry progress from a Sustain hunt).",
         usage: "domesticate <faction_id> <herd_id>",
+    },
+    CommandVerbHelp {
+        verb: "cancel_order",
+        aliases: &[],
+        summary: "Cancel a band's current task (scout / forage / hunt) and return it to idle.",
+        usage: "cancel_order <faction_id> [band_entity_bits]",
     },
     CommandVerbHelp {
         verb: "export_map",
@@ -693,6 +699,19 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             Ok(CommandPayload::Domesticate {
                 faction_id: parse_u32(faction_str, "domesticate faction")?,
                 herd_id: herd_id.to_string(),
+            })
+        }
+        "cancel_order" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_bits = parts.next();
+            Ok(CommandPayload::CancelOrder {
+                faction_id: parse_u32(faction_str, "cancel_order faction")?,
+                band_entity_bits: match band_bits {
+                    Some(raw) => Some(parse_u64(raw, "cancel_order band_entity_bits")?),
+                    None => None,
+                },
             })
         }
         "export" | "export_map" => {

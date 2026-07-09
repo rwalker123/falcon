@@ -248,6 +248,11 @@ visible = false
 unique_name_in_owner = true
 text = "Scout Area"
 
+[node name="UnitCancelButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/UnitButtons"]
+unique_name_in_owner = true
+visible = false
+text = "Cancel Task"
+
 [node name="HerdButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent"]
 unique_name_in_owner = true
 size_flags_horizontal = 3

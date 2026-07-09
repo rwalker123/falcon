@@ -2748,12 +2748,9 @@ fn find_nearest_land_tile(
 ) -> Option<(u32, u32)> {
     let mut queue = VecDeque::new();
     let mut visited = vec![false; width * height];
-    if let Some(idx) = tile_index_from_coords(start_x, start_y, width, height) {
-        queue.push_back((start_x, start_y, idx));
-        visited[idx] = true;
-    } else {
-        return None;
-    }
+    let idx = tile_index_from_coords(start_x, start_y, width, height)?;
+    queue.push_back((start_x, start_y, idx));
+    visited[idx] = true;
     const NEIGHBORS: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
     while let Some((x, y, idx)) = queue.pop_front() {
         let tags = tags_grid.get(idx).copied().unwrap_or_default();
@@ -4689,7 +4686,7 @@ mod terrain_tag_tests {
             }
         }
 
-        for (name, _) in preset.terrain_tag_targets.iter() {
+        for name in preset.terrain_tag_targets.keys() {
             let tag = tag_from_name(name);
             if tag == TerrainTags::empty() {
                 continue;

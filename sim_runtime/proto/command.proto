@@ -208,6 +208,11 @@ message DomesticateCommand {
   string herd_id = 2;
 }
 
+message CancelOrderCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_entity_bits = 2;
+}
+
 message ExportMapCommand {
   // Optional destination path. When absent the server writes a
   // timestamped file into the gitignored exports/ scratch directory.
@@ -249,5 +254,6 @@ message CommandEnvelope {
     ExportMapCommand export_map = 28;
     HuntFaunaCommand hunt_fauna = 29;
     DomesticateCommand domesticate = 30;
+    CancelOrderCommand cancel_order = 31;
   }
 }

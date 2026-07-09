@@ -335,6 +335,45 @@ easy-to-miss "select a band…" line in the selection panel.
   that `_format_detail_bbcode` tints amber / red (`_ecology_value_hex`, `HudStyle.WARN_HEX`
   / `DANGER_HEX`). A `Collapsing` herd has been overhunted past the point of no return and
   is crashing to local extinction (see `core_sim` Fauna & Wild Game — depensation collapse).
+- **Band cancel-order affordance** (`Hud.gd` `_update_unit_task_buttons` /
+  `_cancel_label_for` / `_task_action_phrase`, `%UnitCancelButton` beside
+  `%UnitScoutButton` in the `UnitButtons` HBox): a player band on any task hides the
+  default **Scout Area** button and shows one armed **"Cancel <phrase>"** button whose
+  phrase comes from `_task_action_phrase(activity, hunt_mode)` — the single source of
+  truth for the task wording: `scout`→"Scouting", `harvest`→"Foraging", and for fauna
+  pursuit (`hunt`/`follow`) its `hunt_mode` sub-mode (snapshot
+  `PopulationCohortState.huntMode`, decoded in `native/src/lib.rs` `population_to_dict`
+  as `hunt_mode`; `single|sustain|surplus|market|eradicate` → "<Mode> Hunt", empty →
+  "Hunt"), fallback "Task". `_cancel_label_for` is just `"Cancel " + phrase`. Idle bands
+  (`activity` idle/empty) show Scout Area unchanged. Pressing it emits
+  `cancel_order_requested(band)`; `Main._on_hud_cancel_order` sends
+  `cancel_order <faction> <band_bits>`, returning the band to idle (the next snapshot
+  reports `activity == idle` and the panel reverts to Scout). Player-band only via the
+  existing `_is_player_unit` gate. **Optimistic transition feedback** (`_begin_band_transition`,
+  HUD-local `_pending_transition_bands` map keyed by band `entity` → `{before, label}`):
+  starting *and* cancelling an order are the same pattern — a pending wait for the band's
+  `activity` to CHANGE from its value at dispatch — so both share one mechanism. On dispatch
+  the band's current activity is stored as `before` and the button flips immediately to a
+  disabled, action-specific `"<verb> <phrase>…"` label (Scout hidden), composed from a verb
+  prefix (`CANCEL_ORDER_PENDING_VERB` "Cancelling" / `START_ORDER_PENDING_VERB` "Starting")
+  plus the phrase: cancel reuses `_task_action_phrase` (e.g. "Cancelling Market Hunt…"),
+  starts pass the known action at the dispatch commit point — every phrase routes through
+  `_task_action_phrase` (no bare action-word literals at the call sites): Scout
+  (`_try_dispatch_pending_scout`, after the target tile is chosen — not while targeting →
+  `_task_action_phrase("scout", "")` → "Starting Scouting…") and Forage/Hunt-game
+  (`consume_pending_forage`, the just-selected target band → `_task_action_phrase("harvest", "")`
+  → "Starting Foraging…" / `_task_action_phrase("hunt", "")` → "Starting Hunt…"), and herd-panel
+  hunts on the just-selected target band — `consume_pending_hunt` (one-shot →
+  `_task_action_phrase("hunt", "single")` → "Starting Single Hunt…") and `consume_pending_follow`
+  (persistent → `_task_action_phrase("follow", <policy>)` → e.g. "Starting Sustain Hunt…").
+  `_update_unit_task_buttons` holds the stored label while the band's activity still equals
+  `before` and clears the entry (re-enabling → normal Scout/Cancel) the first render the activity
+  differs (server confirm). The map is keyed per-entity so switching bands preserves each band's
+  state. Caveat: no timeout — relies on the deterministic snapshot changing the activity. Note:
+  for the confirmed-hunt "Cancel <Mode> Hunt" label to render live, `hunt_mode` must flow to the
+  drawer — `MapView._rebuild_unit_markers` copies `hunt_mode` onto the unit marker next to
+  `activity`, and both `refresh_selection_payload` / `_handle_entity_selection` duplicate the full
+  marker into `_selected_unit`.
 - **Herd husbandry readout** (`Hud.gd` `_herd_summary_lines`): when a herd's
   `domestication` (snapshot `HerdTelemetryState.domestication`, 0–1) is above 0, a
   **Husbandry** row shows "Domesticating N%" while it's being tamed and "🐄 Domesticated"
@@ -405,7 +444,7 @@ easy-to-miss "select a band…" line in the selection panel.
     (▲ = HEALTHY green, ▼ = WARN amber — deliberately not a rainbow); the indented breakdown lines
     are intercepted before the KV split.
   - **Recovery guidance** (`RECOVERY_GUIDANCE_TEXT`): a dim `↑ Recover: move to Hospitable ground ·
-    Scout · Follow a herd` line (the real levers, NOT harvest), appended under the breakdown.
+    Scout · Hunt` line (the real levers, NOT harvest), appended under the breakdown.
     `_split_detail_kv` skips lines beginning with `↑` so it renders as a dim sentence, not a KV row.
   - **Action morale hints**: the Scout button tooltip (`MORALE_HINT_SCOUT`, "(+morale)") and the four
     persistent Hunt/Follow policy tooltips (Sustain/Surplus/Market/Eradicate get `MORALE_HINT_PERSISTENT`

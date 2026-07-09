@@ -590,11 +590,11 @@ func _on_follow_herd_button_pressed() -> void:
 		return
 	var herd_id := follow_herd_field.text.strip_edges()
 	if herd_id.is_empty():
-		_append_log_sink.call("Provide a herd id before issuing Follow Herd.")
+		_append_log_sink.call("Provide a herd id before issuing Hunt.")
 		return
 	var normalized := herd_id.to_lower().replace(" ", "_")
 	var faction := get_scenario_faction()
-	var message := "Follow herd '%s' requested for faction %d." % [herd_id, faction]
+	var message := "Hunt '%s' requested for faction %d." % [herd_id, faction]
 	_send.call("follow_herd %d %s sustain" % [faction, normalized], message)
 
 # --- Connection gating (the moving half of the coordinator's old
