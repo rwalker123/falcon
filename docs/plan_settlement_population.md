@@ -158,6 +158,13 @@ held until the prior merges (small, focused PRs, matching the Wildlife & Hunting
   the dormant `TradeLink`/`trade_knowledge_diffusion`). Client readout deferred.
 - **Phase 2 — Labor pool + hybrid allocation.** Working-age → a local labor supply; a
   demand/allocation system (auto by priority + player override); client labor readout.
+  **Brought forward and concretized for the early game by `docs/plan_early_game_labor.md`** —
+  a single ~30-person band partitions its working-age pool across four equipment-gated **roles**
+  (Foraging/Hunting/Scouting/Warrior), introducing two concepts this arc lacked: **equipment
+  (TOE)** — consumable, tiered (equipped/unequipped), the seam a future Crafter role fills — and a
+  **carry-capacity population cap** that storage-class improvements (Phase 3) lift, making the
+  nomad→settle transition mechanical. The four roles are the first concrete labor demands; the
+  tending/construction/knowledge demands slot into the same allocator.
 - **Phase 3 — Improvement catalog + building + knowledge-gating.** The `Improvement` component +
   data-driven catalog + `build` command (stockpiles + knowledge prereq + labor over turns) +
   footprint (multiple per tile) + dwellings housing tile population + tending draw + decay. Sets
@@ -189,6 +196,8 @@ government) is a **later arc**, out of scope for the phases above.
 
 ## See Also
 
+- `docs/plan_early_game_labor.md` — realizes/extends Phase 2 for the first few turns (band as a
+  labor pool; TOE/equipment; carry-capacity population cap; the early-game roles).
 - `shadow_scale_strategy_game_concept_technical_plan_v_0.md` — §"Organic Settlement —
   Sedentarization" (lines 64–72), the era ladder (Forager → Pastoralist / Tended Patches →
   Agrarian Towns …, line 88), §Ecosystem Food Modules (the storage-hook catalog).

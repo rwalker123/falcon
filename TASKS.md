@@ -206,7 +206,7 @@
 
 ### Nomadic Start Prototype
 - [ ] Define default `late_forager_tribe` StartProfile (Owner: TBD, Estimate: 0.5d; Deps: StartProfile loader). Description: 2–3 bands, no permanent buildings, enable Nomadic commands; victory modes enabled: Hegemony, Cultural Diffusion, Stewardship, Survival.
-- [ ] Implement `Band` units and roles (`Scout`, `Hunter`, `Crafter`/`Guardian`) (Owner: TBD, Estimate: 2d; Deps: unit registry). Description: Movement profiles, inventory capacity, fatigue, discovery throughput.
+- [ ] Implement `Band` units and roles (`Scout`, `Hunter`, `Crafter`/`Guardian`) (Owner: TBD, Estimate: 2d; Deps: unit registry). Description: Movement profiles, inventory capacity, fatigue, discovery throughput. **Reframed** by `docs/plan_early_game_labor.md`: the Scout/Hunter/Guardian *bands* become intra-band **roles** (a labor pool partitioned across Foraging/Hunting/Scouting/Warrior), not separate unit types — see the Early-Game Labor section below.
 - [ ] ~~Implement `Camp` entity with portable buildings, light queue, storage, decay~~ **Superseded** by the Settlement & Population Economy arc (`docs/plan_settlement_population.md`): camps/settlements are **derived** from clustered populated tiles + tended improvements, not a discrete `Camp` entity. See the phase breakdown below.
 - [ ] Commands: `FoundSeasonalCamp`, `AbandonCamp`, `SplitClan`, `MergeClan` (Owner: TBD; Deps: command plumbing). Note: reframed under the Settlement & Population Economy arc — camp lifecycle emerges from building/decay + migration rather than discrete found/abandon commands (clan split/merge becomes migration between locations).
 - [x] Add `SedentarizationScore` resource and per-turn computation. `sedentarization_tick` (`sedentarization.rs`, `TurnStage::Population`) computes a per-faction 0–100 score — a config-weighted (`sedentarization_config.json`), EMA-smoothed blend of domestication (`HerdRegistry::domesticated_count`, the Phase E seam), provisions surplus, map resource density, and population — and pushes a `CommandEventKind::SedentarizationPrompt` on rising soft(~40)/hard(~70) crossings (edge-gated). Exported per-faction (`SedentarizationState`) + client HUD meter. _Remaining inputs deferred:_ storage/spoilage modifiers, trade-hub potential, travel fatigue, security; and per-faction-local (vs map-wide) resource density.
@@ -259,6 +259,50 @@ lean-to and an arcology (and a 400k town vs a 5M city) are the same engine at di
   with borders**; a city *is* its (fluid) borders and the population within them → **government/
   governance** (settlement → town → city → nation). Border-claiming, territory, and government are
   a later arc; the link is documented in `docs/plan_settlement_population.md`.
+
+### Early-Game Labor (Milestone 1)
+
+Design: `docs/plan_early_game_labor.md`. Makes the first few turns playable by modeling the band
+as a **labor pool** partitioned across equipment-gated **roles**, replacing the broken
+"one band (~900) = one task" opening (a single food source sustainably feeds only ~10 people).
+Realizes/concretizes Phase 2 (labor) of the Settlement & Population arc and adds two new concepts:
+**equipment (TOE)** and a **carry-capacity population cap**. Everything config-driven (no hardcoded
+literals). One uniform rule: each role has an *unequipped* and an *equipped* throughput tier;
+equipment is consumable inventory; you allocate working-age labor across roles.
+
+- [x] Design doc. Authored `docs/plan_early_game_labor.md` (labor-pool / TOE / carry-cap model +
+  decisions + milestone breakdown); cross-linked (manual §Start of Game + §Wildlife/Sustain,
+  `plan_settlement_population.md` Phase 2, `plan_wildlife_hunting_overlay.md`).
+- [ ] **Fractional food (step zero).** Hunt/forage/husbandry yields and the band larder accumulate
+  fractionally — kill the round-to-0 that zeroes sub-1-per-source yields (the literal Issue-2 bug).
+  Nothing else in M1 works without this. (`systems.rs` provisions math, `advance_fauna_pursuits`,
+  larder store.)
+- [ ] **Config-driven small start.** Retire the hardcoded `900` in `spawn_profile_population`;
+  spawn **1 band, ~30 people** via start-profile/demographics config, with carry-capacity headroom
+  (cap ≳ start pop) and starter TOEs. Tuning dials, not literals.
+- [ ] **Labor pool + role allocation (sim).** Working-age partitioned across Foraging/Hunting/
+  Scouting/Warrior; per-role throughput = f(workers assigned, equipment on hand). Replaces the
+  band's single-task `reassign_band` model with concurrent role staffing. (M1a slice.)
+- [ ] **Equipment / TOE model.** Per-role consumable equipment inventory; equipped/unequipped
+  throughput tiers; **durability cliff** (full performance until expiry, then drop to unequipped);
+  starter kit lasts ~15–20 turns (matched to `startup.food_reserve_days`); no crafting/replacement
+  yet. Role-specific effects (baskets → forage yield + carry capacity; spears → hunt take; weapons
+  → combat strength).
+- [ ] **Carry-capacity population cap.** Band carry capacity gates population (births stop at cap,
+  independent of food production); baskets and (future Phase-3) storage improvements raise it —
+  the mechanical nomad→settle bridge.
+- [ ] **Food ledger (client).** Per-band income/outflow breakdown (+forage/+hunt/+network/
+  −consumption = net/turn → days to empty) + population-vs-carry-cap readout. Load-bearing
+  legibility for the equilibrium/settle loop, not cosmetic.
+- [ ] **Labor allocation UI (client).** Assign working-age workers to roles; show each role's
+  equipped/unequipped tier + kit remaining.
+- [ ] **M1-threats — minimal predators.** Predator pressure on the band / unguarded foragers &
+  hunters, resolved against Warrior strength (equipped vs bare-handed) → casualties or yield loss.
+  Folded into M1 (cheaper to build the Warrior↔threat interface now than retrofit); distinct slice
+  so M1 can land without it if scope demands. Threat *variety* (barbarians, rival civs) deferred.
+- [ ] Deferred (M2+): **Crafter role + crafting** to replenish/upgrade TOEs (the depletion pull);
+  **larder spoilage + storage tiers** (spoilage matters once storage lets food sit); richer threats;
+  the Settlement arc's Phase 3 improvement catalog (storage improvements consume the carry-cap seam).
 
 ### Civilization Wellbeing (Morale → Discontent → Consequences)
 

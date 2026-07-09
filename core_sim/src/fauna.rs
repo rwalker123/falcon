@@ -13,7 +13,7 @@ use crate::{
     mapgen::WorldGenSeed,
     orders::FactionId,
     resources::{SimulationConfig, SimulationTick, StartLocation, TileRegistry},
-    scalar::Scalar,
+    scalar::{scalar_from_f32, scalar_zero, Scalar},
     systems::output_multiplier,
     wellbeing_config::WellbeingConfigHandle,
 };
@@ -716,21 +716,24 @@ pub fn advance_husbandry(
     // Accumulate each owner's managed-livestock yield, then feed it into that faction's bands'
     // larders — the pastoral counterpart of foraging income. Food is band-local from day one;
     // an even split across the owner's bands is a v1 (Phase 3 corrals will make it place-local).
-    let mut yields: HashMap<FactionId, i64> = HashMap::new();
+    // FOOD income is fully fractional: accumulate each owner's yield as `Scalar` so a small or
+    // near-cap herd whose per-turn yield is < 1 provisions still credits the larder (rounding to an
+    // i64 dropped it entirely).
+    let mut yields: HashMap<FactionId, Scalar> = HashMap::new();
     for herd in registry.herds.iter_mut() {
         if herd.is_domesticated() {
             let Some(owner) = herd.owner else {
                 continue;
             };
-            let provisions = (herd.biomass * husbandry.provisions_per_biomass).round() as i64;
-            if provisions > 0 {
-                *yields.entry(owner).or_insert(0) += provisions;
+            let provisions = scalar_from_f32(herd.biomass * husbandry.provisions_per_biomass);
+            if provisions > scalar_zero() {
+                *yields.entry(owner).or_insert_with(scalar_zero) += provisions;
                 info!(
                     target: "shadow_scale::analytics",
                     event = "husbandry_yield",
                     herd = %herd.id,
                     faction = owner.0,
-                    provisions,
+                    provisions = %provisions,
                 );
             }
         } else {
@@ -754,7 +757,7 @@ pub fn advance_husbandry(
             if count > 0 {
                 // Productivity modifier stack (wellbeing): a discontented band tends the herd
                 // less effectively — scale its even share by its output multiplier at PAYOUT.
-                let share = Scalar::from_i64(total) / Scalar::from_u32(count);
+                let share = total / Scalar::from_u32(count);
                 let mult = output_multiplier(&cohort, &wellbeing);
                 cohort.stores.add(FOOD, share * mult);
             }

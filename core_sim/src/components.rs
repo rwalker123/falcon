@@ -454,7 +454,7 @@ pub struct HarvestAssignment {
     pub travel_total: u32,
     pub gather_remaining: u32,
     pub gather_total: u32,
-    pub provisions_reward: i64,
+    pub provisions_reward: Scalar,
     pub trade_goods_reward: i64,
     pub started_tick: u64,
     pub kind: HarvestTaskKind,

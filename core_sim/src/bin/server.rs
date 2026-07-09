@@ -18,23 +18,24 @@ use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
     build_headless_app, command_events_to_state, restore_world_from_snapshot, run_turn,
-    scalar_from_f32, AgentAssignment, CommandEventEntry, CommandEventKind, CommandEventLog,
-    CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
-    CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
-    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
-    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, EspionageAgentHandle,
-    EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
-    EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
-    FactionSecurityPolicies, FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode, FogRevealLedger,
-    FollowPolicy, FoodModule, FoodModuleTag, GenerationId, GenerationRegistry, HarvestAssignment,
-    HerdRegistry, InfluencerImpacts, InfluentialRoster, MapPresetsHandle, PendingCrisisSpawns,
-    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, ScoutAssignment,
-    SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig, SimulationConfigMetadata,
-    SimulationTick, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
-    StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry,
-    TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata,
-    TurnQueue, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS, FOOD,
+    scalar_from_f32, scalar_zero, AgentAssignment, CommandEventEntry, CommandEventKind,
+    CommandEventLog, CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog,
+    CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata, CrisisModifierCatalog,
+    CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata, CrisisTelemetry,
+    CrisisTelemetryConfig, CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata,
+    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
+    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
+    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode,
+    FogRevealLedger, FollowPolicy, FoodModule, FoodModuleTag, GenerationId, GenerationRegistry,
+    HarvestAssignment, HerdRegistry, InfluencerImpacts, InfluentialRoster, MapPresetsHandle,
+    PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams, Scalar,
+    ScoutAssignment, SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
+    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
+    SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
+    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue,
+    DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS, FOOD,
 };
 use core_sim::{
     resolve_active_profile, ActiveStartProfile, CampaignLabel, HarvestTaskKind,
@@ -1968,10 +1969,12 @@ fn queue_food_assignment(
     let overlays_handle = app.world.resource::<SnapshotOverlaysConfigHandle>();
     let food_config = overlays_handle.get();
     let food_cfg = food_config.food();
-    let provisions_gain = (seasonal_weight * food_cfg.provisions_per_weight()).round() as i64;
+    // FOOD income is fully fractional at source: keep the forage reward as a `Scalar` so a
+    // low-seasonal-weight site that yields < 1 provisions still credits the band's larder.
+    let provisions_gain = scalar_from_f32(seasonal_weight * food_cfg.provisions_per_weight());
     let trade_weight = food_cfg.trade_goods_per_weight() + food_cfg.trade_bonus_for(&module);
     let trade_goods_gain = (seasonal_weight * trade_weight).round() as i64;
-    if provisions_gain <= 0 && trade_goods_gain <= 0 {
+    if provisions_gain <= scalar_zero() && trade_goods_gain <= 0 {
         log_tile_rejection(
             app,
             faction,
@@ -1996,7 +1999,7 @@ fn queue_food_assignment(
             travel_total: travel_turns,
             gather_remaining: gather_turns,
             gather_total: gather_turns,
-            provisions_reward: provisions_gain.max(0),
+            provisions_reward: provisions_gain.max(scalar_zero()),
             trade_goods_reward: trade_goods_gain.max(0),
             started_tick: tick,
             kind: task_kind,
@@ -2009,7 +2012,7 @@ fn queue_food_assignment(
         task_kind.as_str(),
         module.as_str(),
         band.label,
-        provisions_gain.max(0),
+        provisions_gain.max(scalar_zero()),
         trade_goods_gain.max(0),
         travel_turns,
         gather_turns
