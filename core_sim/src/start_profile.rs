@@ -242,8 +242,10 @@ pub struct StartingUnitSpec {
 
 impl StartingUnitSpec {
     /// Resolved starting head-count for this unit, applying the default when unset.
+    /// Clamped to at least 1 (mirroring `count.max(1)` in `spawn_profile_population`) so a
+    /// misconfigured `band_size: 0` yields a 1-person band rather than a degenerate empty cohort.
     pub fn band_size(&self) -> u32 {
-        self.band_size.unwrap_or(DEFAULT_STARTING_BAND_SIZE)
+        self.band_size.unwrap_or(DEFAULT_STARTING_BAND_SIZE).max(1)
     }
 }
 
