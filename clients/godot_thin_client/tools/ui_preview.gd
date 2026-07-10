@@ -94,15 +94,17 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_alerts")
 
-	# State 2 — a food tile selected: the Tile card's "Assign foragers" controls (a
-	# Foragers −/+ count + the Assign button) target the single player band.
+	# State 2 — a food tile selected: the Tile card's "Assign foragers" controls (a "Band:"
+	# dropdown naming the actor band + a Foragers −/+ count + the Assign button). With one
+	# player band the dropdown is a single item ("Band 1").
 	_hud.show_tile_selection(_food_tile_fixture())
 	await _settle()
 	await _save("food_tile")
 
 	# State 3 — a huntable herd selected on a food tile: the "Assign hunters" controls
-	# (a Hunters −/+ count, the sustain/surplus/market/eradicate policy picker, and the
-	# Assign button). A Thriving herd shows a neutral ecology readout in the drawer.
+	# (a "Band:" dropdown naming the actor band, a Hunters −/+ count, the
+	# sustain/surplus/market/eradicate policy picker, and the Assign button). A Thriving herd
+	# shows a neutral ecology readout in the drawer.
 	_hud.show_herd_selection(_herd_fixture())
 	await _settle()
 	await _save("herd_verbs")
@@ -116,6 +118,32 @@ func _ready() -> void:
 	_hud.show_herd_selection(_domesticated_herd_fixture())
 	await _settle()
 	await _save("herd_domesticated")
+
+	# State 3f — TWO player bands: the "Assign hunters" controls' "Band:" dropdown lists both
+	# (positional "Band 1" / "Band 2"). Default selection is the resolved band (Band 1, 12 idle);
+	# the Hunters count is dialed up to 8 (< cap 12, so + stays enabled).
+	_hud._player_bands = _two_player_bands()
+	_hud._player_band = _hud._player_bands[0]
+	_hud._hunt_assign_key = ""   # force a fresh seed so the default selection = resolved band
+	_hud.show_herd_selection(_herd_fixture())
+	_hud._hunt_assign_count = 8
+	_hud._build_herd_assign_controls(_herd_fixture())
+	await _settle()
+	await _save("herd_band_picker")
+
+	# State 3g — same, after switching the dropdown to Band 2 (only 2 idle): the picker path
+	# re-caps the Hunters count to the newly-selected band's assignable workers (8 → 2, + now
+	# disabled), demonstrating selection → actor band → stepper re-cap.
+	var second_band: Dictionary = _two_player_bands()[1]
+	_hud._hunt_assign_band = int(second_band["entity"])
+	_hud._hunt_assign_count = clampi(
+		_hud._hunt_assign_count, 0, _hud._assignable_hunt_workers(second_band, _herd_fixture()["id"]))
+	_hud._build_herd_assign_controls(_herd_fixture())
+	await _settle()
+	await _save("herd_band_picker_b")
+	# Reset so later states render their usual single-band dropdown.
+	_hud._player_bands = []
+	_hud._hunt_assign_key = ""
 
 	# State 3d — a populated hex: the Tile card + the Occupants roster split. Three
 	# player bands (days_of_food 15 / 7 / 2 → green / amber / red vitality dots, with
@@ -279,6 +307,17 @@ func _band_alert_fixture() -> Array:
 			"harvest": {"band_label": "Band Ash"}},
 		# Idle labor: quiet low-priority alert.
 		{"faction": 0, "entity": 103, "size": 45, "days_of_food": 999.0, "activity": "idle", "current_x": 12, "current_y": 9},
+	]
+
+## Two player bands (multi-band split is deferred, but the assign controls' band-picker must
+## handle N). Different idle_workers so switching the dropdown visibly re-caps the worker
+## stepper; neither hunts the deer herd, so the cap for a fresh source == idle_workers.
+func _two_player_bands() -> Array:
+	return [
+		{"entity": 801, "faction": 0, "size": 120, "current_x": 66, "current_y": 10,
+			"working_age": 14, "idle_workers": 12, "activity": "forage", "labor_assignments": []},
+		{"entity": 802, "faction": 0, "size": 40, "current_x": 68, "current_y": 12,
+			"working_age": 6, "idle_workers": 2, "activity": "hunt", "labor_assignments": []},
 	]
 
 func _food_tile_fixture() -> Dictionary:

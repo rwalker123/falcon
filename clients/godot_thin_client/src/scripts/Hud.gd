@@ -236,6 +236,8 @@ const LABOR_HUNT_POLICIES := ["sustain", "surplus", "market", "eradicate"]
 const DEFAULT_HUNT_POLICY := "sustain"
 # One worker per −/+ stepper press.
 const WORKER_STEP := 1
+# Leading label on the assign controls' band-picker dropdown ("which band supplies the workers").
+const BAND_PICKER_LABEL := "Band:"
 # Worker-stepper row chrome: the fixed-width −/+ buttons, the centered count column,
 # and the row separation.
 const WORKER_STEPPER_BUTTON_WIDTH := 28.0
@@ -258,6 +260,10 @@ const PENDING_ROW_SUFFIX := "  · pending"
 # one player band in the current start). assign_labor / move_band / clear-all target it; the
 # herd/tile assign controls also read its labor_assignments to show the current staffing.
 var _player_band: Dictionary = {}
+# Every player-faction band from the latest snapshot (in roster order; first == _player_band).
+# The assign controls' band-picker dropdown lists these so an assignment explicitly names WHICH
+# band supplies the workers. One entry today (multi-band split is deferred), but built for N.
+var _player_bands: Array = []
 # The authoritative snapshot turn (header tick), set from update_overlay each snapshot. Used
 # to reconcile optimistic pending actions (a newer turn means the server has processed them).
 var _current_turn: int = -1
@@ -282,6 +288,11 @@ var _forage_assign_count: int = 0
 var _hunt_assign_key: String = ""
 var _hunt_assign_count: int = 0
 var _hunt_assign_policy: String = DEFAULT_HUNT_POLICY
+# The band-picker selection (actor band entity) for each assign control, persisted across the
+# per-snapshot re-renders of the same source. Re-defaults to _resolve_assign_band() when the
+# selected source changes; -1 means "fall back to the resolved band".
+var _hunt_assign_band: int = -1
+var _forage_assign_band: int = -1
 var _targeting_banner: PanelContainer = null
 var _targeting_banner_label: RichTextLabel = null
 var _stockpile_totals: Dictionary = {}
@@ -679,6 +690,61 @@ func _resolve_assign_band() -> Dictionary:
         return _selected_unit
     return _player_band
 
+## The player bands the band-picker lists. Normally `_player_bands` (captured each snapshot);
+## falls back to `[_player_band]` when only the single band was seeded (e.g. the ui_preview
+## harness, or before the first alerts pass) so the dropdown is always populated.
+func _current_player_bands() -> Array:
+    if not _player_bands.is_empty():
+        return _player_bands
+    return [_player_band] if not _player_band.is_empty() else []
+
+## Resolve a listed player band by its entity id; {} if it is no longer present.
+func _player_band_by_entity(entity: int) -> Dictionary:
+    for b in _current_player_bands():
+        if b is Dictionary and int((b as Dictionary).get("entity", -1)) == entity:
+            return b
+    return {}
+
+## Max workers a band can commit to ONE source: its idle workers plus any it already has on
+## that source (the assign REPLACES that count, so re-editing an existing assignment isn't
+## capped below its current staffing). Reduces to `idle_workers` for a fresh source.
+func _assignable_hunt_workers(band: Dictionary, herd_id: String) -> int:
+    return int(band.get("idle_workers", 0)) + _workers_for_hunt(band, herd_id)
+
+func _assignable_forage_workers(band: Dictionary, x: int, y: int) -> int:
+    return int(band.get("idle_workers", 0)) + _workers_for_forage(band, x, y)
+
+## A "Band: [▼]" dropdown row for the assign controls: lists every player band (positional
+## "Band N" names, matching the roster) and selects `selected_band`; `on_pick` fires with the
+## chosen band dict. The actor band is always explicit — shown even with one band (single-item
+## dropdown). NOTE: lists ALL player bands; in-range filtering (Forage within work_range / Hunt
+## within work_range + leash) is deferred to the multi-band slice (needs the hunt-leash reach in
+## the snapshot, and can't be exercised until a 2nd band can exist).
+func _build_band_picker(selected_band: Dictionary, on_pick: Callable) -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    var name_label := Label.new()
+    name_label.text = BAND_PICKER_LABEL
+    name_label.add_theme_color_override("font_color", HudStyle.INK)
+    row.add_child(name_label)
+    var picker := OptionButton.new()
+    picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    var bands := _current_player_bands()
+    var selected_entity := int(selected_band.get("entity", -1))
+    var selected_idx := 0
+    for i in bands.size():
+        var b: Dictionary = bands[i]
+        picker.add_item(_band_display_name(b, i + 1))
+        picker.set_item_metadata(i, int(b.get("entity", -1)))
+        if int(b.get("entity", -1)) == selected_entity:
+            selected_idx = i
+    picker.select(selected_idx)
+    picker.item_selected.connect(func(idx: int) -> void:
+        on_pick.call(_player_band_by_entity(int(picker.get_item_metadata(idx)))))
+    row.add_child(picker)
+    return row
+
 func _labor_assignments_of(band: Dictionary) -> Array:
     var v: Variant = band.get("labor_assignments", [])
     return v if v is Array else []
@@ -1021,16 +1087,25 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         return
     for child in herd_assign_controls.get_children():
         child.queue_free()
-    var band := _resolve_assign_band()
-    var can_assign := bool(herd.get("huntable", false)) and not band.is_empty()
+    var resolved := _resolve_assign_band()
+    var can_assign := bool(herd.get("huntable", false)) and not resolved.is_empty()
     herd_assign_controls.visible = can_assign
     if not can_assign:
         return
     var herd_id := String(herd.get("id", ""))
-    # (Re)seed the compose count/policy when the selected herd changes; preserve it
+    # When the selected herd changes, default the actor band to the resolved band (and re-seed
+    # the compose count/policy from its staffing); otherwise preserve the picked band + count
     # across per-snapshot re-renders of the same herd.
-    if _hunt_assign_key != herd_id:
+    var source_changed := _hunt_assign_key != herd_id
+    if source_changed:
         _hunt_assign_key = herd_id
+        _hunt_assign_band = int(resolved.get("entity", -1))
+    # The actor is the band-picker selection; fall back to the resolved band if it has vanished.
+    var band := _player_band_by_entity(_hunt_assign_band)
+    if band.is_empty():
+        band = resolved
+        _hunt_assign_band = int(band.get("entity", -1))
+    if source_changed:
         var staffed := _workers_for_hunt(band, herd_id)
         _hunt_assign_count = staffed if staffed > 0 else WORKER_STEP
         _hunt_assign_policy = _policy_for_hunt(band, herd_id)
@@ -1041,11 +1116,17 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     title.text = "Assign hunters" + ("  (now %d%s)" % [current, " · pending" if pending else ""] if current > 0 or pending else "")
     title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK_DIM)
     herd_assign_controls.add_child(title)
-    var working := int(band.get("working_age", 0))
+    # Which band supplies the hunters (above the worker stepper, so it reads "which band →
+    # how many workers"). Switching bands re-caps the count to the new band's assignable workers.
+    herd_assign_controls.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
+        _hunt_assign_band = int(picked.get("entity", -1))
+        _hunt_assign_count = clampi(_hunt_assign_count, 0, _assignable_hunt_workers(picked, herd_id))
+        _build_herd_assign_controls(herd)))
+    var cap := _assignable_hunt_workers(band, herd_id)
     herd_assign_controls.add_child(_build_worker_stepper(
-        "Hunters", _hunt_assign_count, _hunt_assign_count < working,
+        "Hunters", _hunt_assign_count, _hunt_assign_count < cap,
         func(n: int) -> void:
-            _hunt_assign_count = clampi(n, 0, working)
+            _hunt_assign_count = clampi(n, 0, cap)
             _build_herd_assign_controls(herd)))
     herd_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _hunt_assign_policy = policy
@@ -1078,16 +1159,26 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     for child in forage_assign_controls.get_children():
         child.queue_free()
     var module_key := String(tile_info.get("food_module", "")).strip_edges()
-    var band := _resolve_assign_band()
-    var can_assign := module_key != "" and not band.is_empty()
+    var resolved := _resolve_assign_band()
+    var can_assign := module_key != "" and not resolved.is_empty()
     forage_assign_controls.visible = can_assign
     if not can_assign:
         return
     var x := int(tile_info.get("x", -1))
     var y := int(tile_info.get("y", -1))
     var key := "%d,%d" % [x, y]
-    if _forage_assign_key != key:
+    # When the selected tile changes, default the actor band to the resolved band (and re-seed
+    # the count from its staffing); otherwise preserve the picked band + count across the
+    # per-snapshot re-renders of the same tile.
+    var source_changed := _forage_assign_key != key
+    if source_changed:
         _forage_assign_key = key
+        _forage_assign_band = int(resolved.get("entity", -1))
+    var band := _player_band_by_entity(_forage_assign_band)
+    if band.is_empty():
+        band = resolved
+        _forage_assign_band = int(band.get("entity", -1))
+    if source_changed:
         var staffed := _workers_for_forage(band, x, y)
         _forage_assign_count = staffed if staffed > 0 else WORKER_STEP
     # Effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
@@ -1100,11 +1191,17 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     title.text = "Assign foragers — %s" % label + ("  (now %d%s)" % [current, " · pending" if pending else ""] if current > 0 or pending else "")
     title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK_DIM)
     forage_assign_controls.add_child(title)
-    var working := int(band.get("working_age", 0))
+    # Which band supplies the foragers (above the stepper). Switching re-caps the count to the
+    # new band's assignable workers.
+    forage_assign_controls.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
+        _forage_assign_band = int(picked.get("entity", -1))
+        _forage_assign_count = clampi(_forage_assign_count, 0, _assignable_forage_workers(picked, x, y))
+        _build_forage_assign_controls(tile_info)))
+    var cap := _assignable_forage_workers(band, x, y)
     forage_assign_controls.add_child(_build_worker_stepper(
-        "Foragers", _forage_assign_count, _forage_assign_count < working,
+        "Foragers", _forage_assign_count, _forage_assign_count < cap,
         func(n: int) -> void:
-            _forage_assign_count = clampi(n, 0, working)
+            _forage_assign_count = clampi(n, 0, cap)
             _build_forage_assign_controls(tile_info)))
     var assign_btn := Button.new()
     assign_btn.text = "Assign"
@@ -2223,9 +2320,11 @@ func update_band_alerts(populations_variant: Variant) -> void:
     var new_sizes: Dictionary = {}
     var alerts: Array = []
     var band_index := 0
-    # Capture the single player band each snapshot; the labor-allocation UI targets it
-    # (assign/move/clear) and reads its labor_assignments for the herd/tile assign controls.
+    # Capture the player bands each snapshot; the labor-allocation UI targets them (assign/move/
+    # clear) and reads their labor_assignments for the herd/tile assign controls. `player_band`
+    # (first) stays the default actor; `player_bands` backs the assign controls' band-picker.
     var player_band: Dictionary = {}
+    var player_bands: Array = []
     for entry_variant in populations:
         if not (entry_variant is Dictionary):
             continue
@@ -2235,6 +2334,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
         band_index += 1
         if player_band.is_empty():
             player_band = entry
+        player_bands.append(entry)
         var entity := int(entry.get("entity", -1))
         var size := int(entry.get("size", 0))
         var days := float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
@@ -2257,6 +2357,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
             alerts.append({"type": ALERT_TYPE_IDLE, "band": band_name, "x": x, "y": y})
     _prev_band_sizes = new_sizes
     _player_band = player_band
+    _player_bands = player_bands
     # This snapshot is authoritative: drop optimistic pending actions the server has now
     # processed (issued on an older turn), then let the panels render the confirmed state.
     _reconcile_pending()

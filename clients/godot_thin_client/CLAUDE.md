@@ -48,7 +48,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the hydrology rivers toggle. Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` via `set_map_view`. The nested Map-Overlays section keeps its own `OverlayPanel` script |
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
 | `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the **Export Map** button (the tile Scout button was retired with the single-task `scout` command). Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`, gated by `set_command_connected` |
-| `Hud.gd` | HUD layer, legend, the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + the `%ForageAssignControls` "assign foragers" stepper) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer; a player band shows the `%AllocationPanel` labor-allocation UI, a herd the `%HerdAssignControls` "assign hunters" stepper+policy picker), band **Alerts** panel, turn readout. Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) + the snapshot-captured `_player_band` live here; roster selection emits `roster_occupant_selected`; labor edits emit `assign_labor_requested` / `move_band_requested` / `cancel_order_requested` (clear-all) |
+| `Hud.gd` | HUD layer, legend, the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + the `%ForageAssignControls` "assign foragers" stepper) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer; a player band shows the `%AllocationPanel` labor-allocation UI, a herd the `%HerdAssignControls` "assign hunters" stepper+policy picker), band **Alerts** panel, turn readout. Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) + the snapshot-captured `_player_band` (and `_player_bands`, the full player-faction list backing the assign controls' band-picker dropdown) live here; roster selection emits `roster_occupant_selected`; labor edits emit `assign_labor_requested` / `move_band_requested` / `cancel_order_requested` (clear-all) |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale warn/critical thresholds + `color_for_morale`/`hex_for_morale`), shared by MapView's band dot and Hud's food/morale lines + alerts |
 | `ui/TileHabitability.gd` | Single source of truth for the Tile-card Habitability rating: buckets `TileState.habitability` (band-independent per-turn morale drain) into Hospitable/Fair/Harsh/Hostile via `tile_habitability_config.json` thresholds, with the HEALTHY/INK/WARN/DANGER color / `hex_for_rating` mapping. Consumed by `Hud._tile_terrain_lines` + `_format_detail_bbcode` |
 | `ui/TileClimate.gd` | Single source of truth for the Tile-card Climate band: maps `TileState.temperature` (°, a latitude+elevation climate, equator-in-the-middle) into Tropical/Warm/Temperate/Cool/Polar via `tile_climate_config.json` cutoffs. INFORMATIONAL only — deliberately no HEALTHY/WARN/DANGER tint (renders neutral ink), so it doesn't compete with the Habitability row's semantic palette. Consumed by `Hud._tile_terrain_lines` |
@@ -318,7 +318,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   the band is a **labor pool** whose working-age workers are assigned source-centrically to
   in-range sources/roles. There is **exactly one player band today**, captured each snapshot
   into `_player_band` (first player-faction cohort in `update_band_alerts`); assign/move/clear
-  all target it. Three runtime-built control sets replace the retired single-task Scout/Cancel,
+  all target it. Every player band is also collected into `_player_bands`, which backs the
+  **band-picker dropdown** on the herd/tile assign controls (see `%HerdAssignControls` /
+  `%ForageAssignControls` below) — an assignment explicitly names WHICH band supplies the
+  workers (built for N even though only one exists live). Three runtime-built control sets replace the retired single-task Scout/Cancel,
   Hunt/policy, and Forage buttons:
   - **`%AllocationPanel`** (band drawer, player band only, `_build_allocation_panel`): reads as a
     "current actions" report — a `Population <size> · Workers <working_age> (Idle <n>)` header (spells
@@ -354,13 +357,25 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `set_labor_pending`) — the pending forage tile, the pending hunted herd (dashed ring-hex + dashed
     band→herd link), and the pending move destination (dashed hex + dashed link) — clearly apart from the
     solid confirmed styles, cleared when the snapshot confirms.
-  - **`%HerdAssignControls`** (herd drawer, huntable herds, `_build_herd_assign_controls`): an
-    "Assign hunters" **compose** control — a Hunters `−/+` count (`_hunt_assign_count`), a
+  - **Band-picker dropdown** (`_build_band_picker`, on BOTH assign controls, above the worker
+    stepper so it reads "which band → how many workers"): a `Band:` `OptionButton` listing every
+    `_player_bands` cohort by positional name ("Band N", via `_band_display_name`; the cohort has
+    no label field), item metadata = the band `entity`. The selection is the **actor band**:
+    `_hunt_assign_band` / `_forage_assign_band` hold the picked entity (defaulting to
+    `_resolve_assign_band()` when the selected source changes, else persisted across re-renders);
+    the worker stepper's cap is that band's `_assignable_hunt_workers` / `_assignable_forage_workers`
+    (its `idle_workers` + any it already staffs on that source, so re-editing isn't capped below
+    current staffing), and the Assign emit + optimistic pending key off the picked band. Switching
+    the dropdown re-caps the stepper and re-renders. Always shown (single-item with one band, so the
+    actor is explicit). Lists **all** player bands — in-range filtering (Forage `work_range` / Hunt
+    `work_range` + leash) is deferred to the multi-band slice (needs hunt-leash reach in the snapshot).
+  - **`%HerdAssignControls`** (herd drawer, huntable herds, `_build_herd_assign_controls`): the
+    band-picker, then an "Assign hunters" **compose** control — a Hunters `−/+` count (`_hunt_assign_count`), a
     sustain/surplus/market/eradicate **policy picker** (`_build_policy_picker`, `_hunt_assign_policy`,
     `LABOR_HUNT_POLICIES`, default `sustain`), and an **Assign** button → `assign_labor hunt <herd_id>
     <policy> <workers>`. Compose state re-seeds from current staffing when the selected herd changes.
-  - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): an
-    "Assign foragers" Foragers `−/+` count (`_forage_assign_count`) + **Assign** → `assign_labor
+  - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): the
+    band-picker, then an "Assign foragers" Foragers `−/+` count (`_forage_assign_count`) + **Assign** → `assign_labor
     forage <x> <y> <workers>`.
 
   All emit `assign_labor_requested(payload)` (payload: `faction/band/kind/workers/x/y/herd_id/policy`);
