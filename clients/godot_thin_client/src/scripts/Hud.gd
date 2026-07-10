@@ -250,7 +250,7 @@ const ALLOC_SECTION_FONT_SIZE := 10
 const ALLOC_HEADER_ACTIONS := "Current actions"
 const ALLOC_HEADER_ROLES := "Band roles"
 const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd to assign foragers/hunters."
-const SCOUT_ROLE_HINT := "Extends the band's sight — more scouts see further. Staff with −/+."
+const SCOUT_ROLE_HINT := "Posts scouts that see around obstacles — more scouts range farther. Staff with −/+."
 const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
 # Suffix marking an optimistic (not-yet-confirmed) allocation row, tinted amber to tie it to
 # the amber pending hex on the map.

@@ -342,6 +342,14 @@ role). Sequenced: local scout (small fix) → sites subsystem (foundation) → e
   Sites along its path (+ optional small flavor roll) + permanent map reveal. Reuses move-band
   travel + `FogRevealLedger`/knowledge-fragment machinery; shares the deferred breakaway/split
   detached-party machinery.
+- [ ] **Hunting expedition** (build with the scouting-expedition work — same detached-party
+  machinery; design `docs/plan_exploration_and_sites.md` §2b). A detached hunting party that
+  **follows a migratory herd beyond the leash** (which today lapses a Hunt at `band_work_range +
+  hunt_leash_tiles`), takes food each turn in reach (reusing the Hunt take math), **carries** it up
+  to a carry capacity, and **drops it off at the band** when the herd's circuit brings it near OR
+  the party is **full** — so you can exploit a herd's whole migratory circuit. Open at build time:
+  self-provisioning vs living off kills; "full" = the band carry-capacity concept?; auto-relaunch
+  vs re-issue; risk/failure (deferred like the scout expedition).
 - [ ] Deferred / documented: expedition **risk/failure** (peril, non-return); **scouting-TOE**
   gating (with the TOE slice); **regional (multi-tile) sites**; richer per-category rewards;
   **tribes as real civilizations**.

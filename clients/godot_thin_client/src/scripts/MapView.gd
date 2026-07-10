@@ -1364,10 +1364,11 @@ func _draw_band_status(unit: Dictionary, center: Vector2, marker_radius: float) 
 		draw_arc(center, marker_radius * BAND_ACTIVITY_RING_FACTOR, 0, TAU, 28, ring_color, BAND_ACTIVITY_RING_WIDTH)
 
 ## When a player band is selected, surface what it is working (Early-Game Labor slice 3b):
-##  - work-range ring: outline every tile within `work_range` (Chebyshev = king-move) of the
-##    band = the assignable forage area. Replicates the sim's `chebyshev_tiles` EXACTLY
-##    (`max(|dx|,|dy|) <= work_range` on integer offset (col,row) coords) so highlighted ==
-##    actually-assignable, even where the king-move square looks irregular on the hex grid.
+##  - work-range ring: outline every tile within `work_range` of the band = the assignable
+##    forage area. Replicates the sim's true **odd-r hex distance** EXACTLY (offset→axial cube
+##    distance via _hex_distance, matching `hex_distance_wrapped`) so highlighted ==
+##    actually-assignable. This is a real hexagonal ring (19 tiles at range 2), NOT the old
+##    Chebyshev/king-move square whose diagonal corners were 3 hex-steps away yet wrongly lit.
 ##  - worked forage tiles: strong green fill on each `forage` assignment's target tile.
 ##  - hunted herds: a red ring on the herd tile + a band→herd link (the herd can sit outside
 ##    the work-range ring — hunt reach = work_range + leash).
@@ -1388,12 +1389,15 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 	var eff_col := _band_effective_col(band_col, radius, origin)
 	var band_center := _hex_center(eff_col, band_row, radius, origin)
 
-	# Scouting no longer draws a disc: `scout_reveal_radius` is now the band's sight-range bonus
-	# (extra tiles beyond base), and its effect is visible directly in the fog (staffed scouts
-	# re-reveal a wider Active radius each turn). The client can't draw the true extended ring
-	# (it doesn't know the band's server-side `base_range`), so nothing is drawn here.
+	# Scouting no longer draws a disc: `scout_reveal_radius` now carries the band's scout vantage
+	# distance (how far forward-observer vantages are posted, `0` with no scouts), and its effect is
+	# visible directly in the fog — staffed scouts reveal LOS from vantages that see around obstacles.
+	# The client can't reconstruct the true revealed area (it doesn't know the server-side LOS/terrain),
+	# so nothing is drawn here.
 
-	# 1. Work-range ring: Chebyshev square outline (max(|dcol|,|drow|) <= work_range).
+	# 1. Work-range ring: true odd-r hex-distance outline (matches the sim's hex_distance_wrapped).
+	# Iterate a ±work_range col/row bounding box (a superset of the hex disc) and outline only
+	# tiles whose hex distance from the band is <= work_range — a hexagonal ring, not a square.
 	var work_range := int(band.get("work_range", 0))
 	if work_range > 0:
 		for drow in range(-work_range, work_range + 1):
@@ -1404,6 +1408,10 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 				if dcol == 0 and drow == 0:
 					continue
 				var col := eff_col + dcol
+				# Both tiles already share the band's effective column frame, so the delta is
+				# seam-correct — measure hex distance and skip anything beyond work_range.
+				if _hex_distance(eff_col, band_row, col, row) > work_range:
+					continue
 				# Without horizontal wrap, edge columns fall off the map — don't outline
 				# nonexistent tiles (mirrors the grid_height row clamp above).
 				if not _wrap_horizontal and (col < 0 or col >= grid_width):
@@ -3206,6 +3214,17 @@ func _draw_targeting_hover_label(unit: Dictionary, radius: float, origin: Vector
 	draw_rect(rect, Color(0.03, 0.055, 0.06, 0.95))
 	draw_rect(rect, HudStyle.SIGNAL, false, 1.0)
 	draw_string(font, box_pos + Vector2(pad.x, pad.y + text_size.y * 0.8), text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.87, 0.98, 0.96))
+
+## True odd-r hex distance between two offset (col,row) tiles, mirroring the sim's
+## `hex_distance_wrapped` (offset→axial via _offset_to_axial, then cube distance). Callers
+## must first bring both tiles into a common column frame (e.g. via _wrapped_col_delta /
+## _band_effective_col) so the seam is handled before this row-parity-sensitive conversion.
+func _hex_distance(a_col: int, a_row: int, b_col: int, b_row: int) -> int:
+	var a := _offset_to_axial(a_col, a_row)
+	var b := _offset_to_axial(b_col, b_row)
+	var dq: int = a.x - b.x
+	var dr: int = a.y - b.y
+	return int((abs(dq) + abs(dr) + abs(dq + dr)) / 2)
 
 func _targeting_distance(col: int, row: int) -> int:
 	var ox := int(_targeting.get("origin_x", -1))

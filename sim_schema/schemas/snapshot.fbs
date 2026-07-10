@@ -486,9 +486,10 @@ table PopulationCohortState {
   // Global config today (same every band); surfaced per-band so the client reads it off the
   // selected band. Appended last (append-only schema discipline).
   workRange:uint = 0;
-  // Band's effective scout sight bonus — extra sight-range tiles its staffed scouts add beyond
-  // base sight (min(scouts * sight_bonus_per_scout, max_sight_bonus) from LaborConfig.scout), 0 with
-  // no scouts. Field name retained for wire compat; the "scouted area" is now the sight extension.
+  // Band's effective scout vantage distance — how far the forward-observer vantage ring is posted
+  // out from the band (min(vantage_distance_base + scouts * vantage_distance_per_scout,
+  // vantage_distance_max) from LaborConfig.scout), 0 with no scouts. Field name retained for wire
+  // compat; scouts now reveal by posting vantage points that see around obstacles, not a flat ring.
   scoutRevealRadius:uint = 0;
 }
 

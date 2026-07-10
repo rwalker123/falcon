@@ -2,7 +2,7 @@
 
 Status: **Design approved; partially implemented** (local scout shipped — see §1; scouting
 expeditions and Wondrous Sites not yet implemented). The exploration layer of the early game:
-**local scouting** (extend the band's live sight), **scouting expeditions** (a provisioned
+**local scouting** (forward-observer vantages that see around obstacles), **scouting expeditions** (a provisioned
 traveling party that explores distant territory and returns), and the **Wondrous Sites**
 subsystem — a data-driven catalog of things worth finding that tiles can hold and that
 exploration discovers. Sites are the *reason* to scout and to send expeditions. Companion to
@@ -19,26 +19,54 @@ observable. And more deeply: exploration had **nothing to find** — the fog hid
 
 Two distinct exploration actions, and the subsystem that gives them a point:
 
-## 1. Local scout — extend the band's live sight (a fix, not a new system)
+## 1. Local scout — forward observers that see *around* obstacles (a fix, not a new system)
 
-> **Status: implemented.** Staffed scouts extend the band's sight range in `calculate_visibility`
-> (`base_range + min(scouts × sight_bonus_per_scout, max_sight_bonus)`, config in `labor_config.json`
-> `scout`); the old radius-2 `FogRevealLedger` pulse and `reveal_radius`/`reveal_duration_turns` are
-> retired. The snapshot `scoutRevealRadius` field now carries the effective scout sight bonus.
-> The client Scout row hint reads "Extends the band's sight — more scouts see further."
+> **Status: implemented (vantage model).** Staffed scouts are **forward observers**: with ≥1 scout,
+> `calculate_visibility` posts vantage points out from the band in all six hex directions and
+> computes line-of-sight from each, so scouts reveal *around* ridges/forest — not merely farther.
+> Config in `labor_config.json` `scout` (`vantage_distance_base`, `vantage_distance_per_scout`,
+> `vantage_distance_max`, `vantage_range`). The old radius-2 `FogRevealLedger` pulse and
+> `reveal_radius`/`reveal_duration_turns` are retired, as is the earlier pure range-bump
+> (`sight_bonus_per_scout`/`max_sight_bonus`). The snapshot `scoutRevealRadius` field now carries the
+> effective **vantage distance** (0 with no scouts). The client Scout row hint reads "Posts scouts
+> that see around obstacles — more scouts range farther."
 
-The Scout labor role should **raise the band's effective sight range** in the visibility system,
-scaled by staffed scouts, so the extended radius is re-marked **Active** every turn while scouts
-are assigned (keeping the surroundings currently-visible, not lapsing to the stale "Discovered"
-cloudy state). This replaces the useless radius-2 `FogRevealLedger` pulse.
+The earlier "just add to `base_range`" fix was insufficient: visibility still cast LOS from the
+single band-center hex, so the extra range was eaten by any blocking ridge/elevation between the
+band and the frontier — scouts saw "slightly more," nothing past a ridge. Extending the radius from
+one vantage point cannot see around obstacles.
 
-- Mechanism: in `calculate_visibility`, a band's sight range = `base_range +
-  min(scouts × sight_bonus_per_scout, max_sight_bonus)` (read the cohort's `LaborAllocation`
-  Scout worker count). Config levers in `labor_config.json` `scout` (`sight_bonus_per_scout`,
-  `max_sight_bonus`); the old `reveal_radius`/`reveal_duration_turns` become obsolete for this.
-- Client: the Scout row hint changes from "Reveals the area…" to "Extends the band's sight; more
-  scouts see further."
+The Scout role instead **posts forward observers**: with scouts staffed, place vantage tiles *out*
+from the band and compute the band's normal LOS reveal **from those tiles**, unioned into the
+faction visibility map and re-marked **Active** every turn while scouts are assigned. The band's own
+base-range LOS from its center is unchanged; scouts are additive.
+
+- Mechanism (in `calculate_visibility`, reading the cohort's `LaborAllocation` Scout head-count):
+  - **Vantages ring the band in all 6 hex directions** (perimeter awareness — the standing role,
+    not an aimed expedition). More scouts push the ring farther: `vantage_distance =
+    min(vantage_distance_base + scouts × vantage_distance_per_scout, vantage_distance_max)`.
+  - **Placement** steps `vantage_distance` tiles along each hex direction (reusing `hex_neighbor`),
+    **pulling back** to the last on-map, passable (non-water) tile so foot scouts stop at
+    ocean/edge; a boxed-in direction collapses to the band tile (no-op).
+  - **Each vantage reveals with `vantage_range`** via the *same* per-source LOS reveal
+    (`reveal_tiles_in_range`, elevation/terrain modifiers included) the band already uses.
+  - Config levers in `labor_config.json` `scout` (`vantage_distance_base` 2, `vantage_distance_per_scout`
+    1, `vantage_distance_max` 6, `vantage_range` 2). The old `reveal_radius`/`reveal_duration_turns`
+    and the range-bump levers are obsolete.
+- Client: the Scout row hint changes to "Posts scouts that see around obstacles; more scouts range
+  farther."
 - Small, no new UI; completes the Scout role that Early-Game Labor shipped inert.
+
+### 1a. Worked sources provide visibility (implemented)
+
+Scouting isn't the only source of sight. A band's **workers are physically out at the sources they
+work** — foragers stand on the forage tile, hunters are at the herd — so those spots should reveal
+fog too, just like the band center and scout vantages. `calculate_visibility` adds, **for each
+assignment** in the cohort's `LaborAllocation`, a worked source tile: a **Forage** assignment's
+`tile`, or a **Hunt** assignment's herd's **current tile** (resolved live from `HerdRegistry`; an
+unresolved/extinct herd is skipped). Each reveals at `worked_source_sight_range` (`labor_config.json`,
+default 2) via the *same* `reveal_tiles_in_range` LOS path — additive to the band center + vantages,
+re-marked Active every turn while staffed. Scout/Warrior are band-wide roles, not tile sources.
 
 ## 2. Scouting expedition — a provisioned party that goes out and comes back
 
@@ -60,6 +88,28 @@ The Lewis-and-Clark action: a deliberate, outfitted venture, distinct from the s
   core prize is the real sites it uncovers. Plus the permanent map reveal of everything it crossed.
 - **Deferred but documented:** **risk/failure** (peril — losing members to starvation/threats,
   an expedition that never returns) is a great later layer; v1 is deterministic success.
+
+### 2b. Hunting expedition — a long-range hunt that follows migratory game (deferred, documented)
+
+The hunting analogue of the scouting expedition, and the answer to migratory herds the **leashed
+follow can't reach**. Today a Hunt assignment lapses once the herd roams past `band_work_range +
+hunt_leash_tiles`. A hunting expedition instead sends a **detached hunting party** that *keeps
+following* a migratory herd far from the band, accumulates food, and **drops it off** at the band —
+so you can exploit a herd's whole migratory circuit instead of only what wanders into work range.
+
+- **Same machinery as the scouting expedition** (§2): a visible detached party (own marker) that
+  travels, using move-band stepping + the detached-party model. Build it as part of the expedition
+  work — one traveling-party system, two verbs (scout / hunt).
+- **Follows the herd** beyond the leash, taking food each turn it's in reach (reusing the per-turn
+  Hunt take math), and **carries** what it takes up to a **carry capacity** ("full").
+- **Drops off food at the band when EITHER:** (a) the herd's migratory circuit brings it back
+  **near the band** (party is close enough to run the food home), OR (b) the party is **full**
+  (carry capacity reached) — at which point it returns, deposits into the larder, and (design
+  choice at build time) either re-launches or ends.
+- **Open questions to settle at build time (not now):** does the party carry **provisions** for
+  itself (like the scout expedition) or live off its own kills; is "full" tied to the same
+  **carry-capacity** concept as the band; does it auto-relaunch on drop-off or require re-issue;
+  and **risk/failure** (a party that starves or is lost) — deferred like the scouting expedition's.
 
 ## 3. Wondrous Sites — the data-driven catalog of what exploration finds
 
@@ -112,7 +162,7 @@ local scout) pay off, before expeditions exist.
 
 ## Cross-cutting touchpoints
 
-- **Visibility** (`visibility_systems.rs`): local scout adds to a band's sight range; expeditions
+- **Visibility** (`visibility_systems.rs`): local scout posts forward-observer vantages (LOS from each); expeditions
   and sites hook the reveal path (`FogRevealLedger` / `FactionVisibilityMap`).
 - **Tiles / schema** (`sim_schema`): the per-tile site reference + the discovered-sites registry,
   wired through the snapshot like other tile fields; a new `sites_config.json` + loader.

@@ -96,6 +96,46 @@ pub fn wrapped_distance_sq(from: UVec2, to: UVec2, width: u32, wrap_horizontal: 
     dx * dx + dy * dy
 }
 
+/// Convert odd-r offset coordinates `(col, row)` to axial `(q, r)`.
+///
+/// Matches the **odd-r** convention `hex_neighbor` steps in (pointy-top, odd rows shoved
+/// right — see `HEX_NEIGHBOR_OFFSETS`), so a hex distance computed from these agrees exactly
+/// with the six single-step neighbors. `col` may be negative (a wrapped column brought into a
+/// reference tile's local frame); `(row - (row & 1))` is even and non-negative, so the `/ 2`
+/// is exact regardless of `col`'s sign.
+#[inline]
+fn offset_to_axial(col: i32, row: i32) -> (i32, i32) {
+    let q = col - (row - (row & 1)) / 2;
+    (q, row)
+}
+
+/// Cube distance between two axial coordinates: `(|dq| + |dr| + |ds|) / 2` with `s = -q - r`.
+#[inline]
+fn axial_distance(a: (i32, i32), b: (i32, i32)) -> u32 {
+    let (aq, ar) = a;
+    let (bq, br) = b;
+    let (a_s, b_s) = (-aq - ar, -bq - br);
+    let sum = (aq - bq).unsigned_abs() + (ar - br).unsigned_abs() + (a_s - b_s).unsigned_abs();
+    sum / 2
+}
+
+/// True hex-grid distance (in hex steps) between two tiles, honoring horizontal wrap.
+///
+/// Uses the **odd-r** offset↔axial convention `hex_neighbor` steps in, so this metric agrees
+/// with the neighbor stepping: the 6 immediate neighbors are distance 1, the next ring is
+/// distance 2, and — unlike Chebyshev on offset coords, which measures a *square* whose corners
+/// are actually 3 hex-steps away — the corner of a Chebyshev range-2 box is correctly distance 3.
+///
+/// Wrap: the shortest wrapped column delta (`shortest_delta_x`) brings `b` into `a`'s local
+/// column frame first, so a tile just across the seam is near (not `width`-far). Y never wraps.
+#[inline]
+pub fn hex_distance_wrapped(a: UVec2, b: UVec2, width: u32, wrap: bool) -> u32 {
+    let b_col = a.x as i32 + shortest_delta_x(a.x, b.x, width, wrap);
+    let a_axial = offset_to_axial(a.x as i32, a.y as i32);
+    let b_axial = offset_to_axial(b_col, b.y as i32);
+    axial_distance(a_axial, b_axial)
+}
+
 /// Get the six hex neighbors in odd-r offset coordinates, with optional horizontal wrap.
 ///
 /// Returns up to 6 valid neighbor coordinates. Neighbors that would be outside
@@ -122,47 +162,66 @@ pub fn hex_neighbors_wrapped(
     height: u32,
     wrap_horizontal: bool,
 ) -> impl Iterator<Item = (u32, u32)> {
-    // Neighbor offsets for odd-r coordinates
-    // Format: (dx_even, dx_odd, dy) for each direction
-    const NEIGHBOR_OFFSETS: [(i32, i32, i32); 6] = [
-        (1, 1, 0),   // E
-        (0, 1, 1),   // SE
-        (-1, 0, 1),  // SW
-        (-1, -1, 0), // W
-        (-1, 0, -1), // NW
-        (0, 1, -1),  // NE
-    ];
+    // Reuse the single-direction step for each of the 6 directions, dropping any that
+    // fall off the map — keeping one authoritative offset table (`HEX_NEIGHBOR_OFFSETS`).
+    (0..HEX_DIRECTION_COUNT)
+        .filter_map(move |dir| hex_neighbor(x, y, dir, width, height, wrap_horizontal))
+}
 
-    let is_odd_row = (y % 2) == 1;
-    let xi = x as i32;
-    let yi = y as i32;
-    let w = width as i32;
-    let h = height as i32;
+/// Number of hex directions (odd-r), i.e. the six neighbors around any tile.
+pub const HEX_DIRECTION_COUNT: usize = 6;
 
-    NEIGHBOR_OFFSETS
-        .into_iter()
-        .filter_map(move |(dx_even, dx_odd, dy)| {
-            let dx = if is_odd_row { dx_odd } else { dx_even };
-            let nx = xi + dx;
-            let ny = yi + dy;
+/// Odd-r neighbor offsets, one row per hex direction (clockwise from E).
+/// Format: `(dx_even, dx_odd, dy)` — the x-shift depends on the source row's parity.
+/// Single source of truth for both `hex_neighbor` and `hex_neighbors_wrapped`.
+const HEX_NEIGHBOR_OFFSETS: [(i32, i32, i32); HEX_DIRECTION_COUNT] = [
+    (1, 1, 0),   // 0: E
+    (0, 1, 1),   // 1: SE
+    (-1, 0, 1),  // 2: SW
+    (-1, -1, 0), // 3: W
+    (-1, 0, -1), // 4: NW
+    (0, 1, -1),  // 5: NE
+];
 
-            // Y must be in bounds (no vertical wrap)
-            if ny < 0 || ny >= h {
-                return None;
-            }
+/// Step one tile from `(x, y)` in hex direction `dir` (`0..HEX_DIRECTION_COUNT`,
+/// clockwise from E — see `hex_neighbors_wrapped`), honoring horizontal wrap.
+///
+/// Returns `None` when the step leaves the map: off the top/bottom edge (no vertical
+/// wrap), or — when `wrap_horizontal` is false — past the left/right edge. This is the
+/// single-direction primitive used to walk a straight hex line outward (e.g. posting a
+/// scout vantage), where each successive step must re-read the *current* tile's row
+/// parity rather than assuming a fixed dx.
+#[inline]
+pub fn hex_neighbor(
+    x: u32,
+    y: u32,
+    dir: usize,
+    width: u32,
+    height: u32,
+    wrap_horizontal: bool,
+) -> Option<(u32, u32)> {
+    // Return `None` for an out-of-range direction rather than panicking — this is a
+    // `pub` primitive, and callers already treat `None` as "step left the map".
+    let &(dx_even, dx_odd, dy) = HEX_NEIGHBOR_OFFSETS.get(dir)?;
+    let dx = if (y % 2) == 1 { dx_odd } else { dx_even };
+    let nx = x as i32 + dx;
+    let ny = y as i32 + dy;
 
-            // Handle X coordinate
-            let final_x = if wrap_horizontal {
-                wrap_x(nx, width, true)
-            } else {
-                if nx < 0 || nx >= w {
-                    return None;
-                }
-                nx as u32
-            };
+    // Y must be in bounds (no vertical wrap).
+    if ny < 0 || ny >= height as i32 {
+        return None;
+    }
 
-            Some((final_x, ny as u32))
-        })
+    let final_x = if wrap_horizontal {
+        wrap_x(nx, width, true)
+    } else {
+        if nx < 0 || nx >= width as i32 {
+            return None;
+        }
+        nx as u32
+    };
+
+    Some((final_x, ny as u32))
 }
 
 /// Get 4-connected (cardinal) neighbors with optional horizontal wrap.
@@ -434,6 +493,98 @@ mod tests {
         // Top edge
         let neighbors: Vec<_> = neighbors4_wrapped(40, 0, 80, 52, true).collect();
         assert_eq!(neighbors.len(), 3); // Loses N
+    }
+
+    #[test]
+    fn hex_distance_matches_neighbor_stepping() {
+        // The 6 tiles at hex distance 1 are exactly the `hex_neighbor` set — the metric
+        // agrees with the odd-r stepping. Checked on both row parities.
+        const W: u32 = 80;
+        const H: u32 = 52;
+        for &center in &[UVec2::new(40, 24), UVec2::new(40, 25)] {
+            let neighbors: Vec<UVec2> = (0..HEX_DIRECTION_COUNT)
+                .filter_map(|dir| hex_neighbor(center.x, center.y, dir, W, H, true))
+                .map(|(x, y)| UVec2::new(x, y))
+                .collect();
+            assert_eq!(neighbors.len(), 6);
+            for n in &neighbors {
+                assert_eq!(
+                    hex_distance_wrapped(center, *n, W, true),
+                    1,
+                    "neighbor {n:?} of {center:?} must be hex distance 1"
+                );
+            }
+
+            // Exactly 6 tiles in the surrounding area are distance 1, and 12 are distance 2.
+            let mut ring1 = 0u32;
+            let mut ring2 = 0u32;
+            for dy in -3i32..=3 {
+                for dx in -3i32..=3 {
+                    let (x, y) = (center.x as i32 + dx, center.y as i32 + dy);
+                    if y < 0 || y >= H as i32 {
+                        continue;
+                    }
+                    let t = UVec2::new(x as u32, y as u32);
+                    match hex_distance_wrapped(center, t, W, true) {
+                        1 => ring1 += 1,
+                        2 => ring2 += 1,
+                        _ => {}
+                    }
+                }
+            }
+            assert_eq!(ring1, 6, "hex ring 1 has 6 tiles around {center:?}");
+            assert_eq!(ring2, 12, "hex ring 2 has 12 tiles around {center:?}");
+        }
+    }
+
+    #[test]
+    fn hex_distance_chebyshev_corner_is_three_not_two() {
+        // The bug: the corner of the old Chebyshev range-2 (5×5) square reads Chebyshev-2 but
+        // is really 3 hex-steps away. All four diagonal corners are distance 3, so a range-2
+        // work check correctly excludes them (playtest: "corners are 3 hexes away").
+        const W: u32 = 80;
+        let center = UVec2::new(40, 24);
+        for &corner in &[
+            UVec2::new(42, 26),
+            UVec2::new(38, 26),
+            UVec2::new(42, 22),
+            UVec2::new(38, 22),
+        ] {
+            // Chebyshev would call these distance 2.
+            assert_eq!(
+                corner.x.abs_diff(center.x).max(corner.y.abs_diff(center.y)),
+                2
+            );
+            // True hex distance is 3 — out of range at work_range 2.
+            assert_eq!(
+                hex_distance_wrapped(center, corner, W, true),
+                3,
+                "Chebyshev-corner {corner:?} is 3 hex-steps from {center:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hex_distance_wraps_across_seam() {
+        // A tile just across the horizontal seam is near, not `width`-far.
+        const W: u32 = 80;
+        let a = UVec2::new(79, 24);
+        let b = UVec2::new(0, 24); // one column across the wrap
+        assert_eq!(hex_distance_wrapped(a, b, W, true), 1);
+        // Without wrap the same pair is far (79 columns apart).
+        assert_eq!(hex_distance_wrapped(a, b, W, false), 79);
+    }
+
+    #[test]
+    fn hex_distance_is_symmetric_and_zero_on_self() {
+        const W: u32 = 80;
+        let a = UVec2::new(10, 7);
+        let b = UVec2::new(14, 11);
+        assert_eq!(hex_distance_wrapped(a, a, W, true), 0);
+        assert_eq!(
+            hex_distance_wrapped(a, b, W, true),
+            hex_distance_wrapped(b, a, W, true)
+        );
     }
 
     #[test]

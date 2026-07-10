@@ -44,7 +44,8 @@ use crate::{
         LaborAllocation, LaborTarget, LogisticsLink, PopulationCohort, Settlement, StartingUnit,
         Tile, TownCenter, TradeLink,
     },
-    grid_utils::{shortest_delta_x, wrap_x, wrapped_distance_x},
+    fauna::HerdRegistry,
+    grid_utils::{hex_neighbor, shortest_delta_x, wrap_x, wrapped_distance_x, HEX_DIRECTION_COUNT},
     heightfield::ElevationField,
     labor_config::LaborConfigHandle,
     orders::FactionId,
@@ -107,9 +108,11 @@ pub fn calculate_visibility(
     sim_config: Res<SimulationConfig>,
     tick: Res<SimulationTick>,
     elevation: Option<Res<ElevationField>>,
+    // Resolves a Hunt assignment's herd id to the herd's current tile (a worked visibility source).
+    herds: Res<HerdRegistry>,
     tiles: Query<&Tile>,
     // Population cohorts with StartingUnit marker for unit type. The optional LaborAllocation
-    // supplies the band's Scout head-count, which extends its live sight range.
+    // supplies the band's Scout head-count, which posts forward-observer vantages (see below).
     cohorts: Query<(
         Entity,
         &PopulationCohort,
@@ -168,12 +171,9 @@ pub fn calculate_visibility(
     for (entity, cohort, unit, allocation) in cohorts.iter() {
         cohort_count += 1;
         let range_def = cfg.sight_range_for(&unit.kind);
-        // Local scout: staffed scouts extend the band's live sight range, scaled by head-count
-        // and capped, so the wider ring is re-marked Active every turn while scouts are assigned.
-        let scout_workers = allocation
-            .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
-            .unwrap_or(0);
-        let base_range = range_def.base_range + labor.scout.sight_bonus(scout_workers);
+        // The band's own base-range LOS from its center is unchanged; scouts are additive
+        // forward observers layered on top (posted below).
+        let base_range = range_def.base_range;
         // Get position from current tile (tracks travel position)
         if let Ok(current_tile) = tiles.get(cohort.current_tile) {
             let current_pos = current_tile.position;
@@ -198,6 +198,63 @@ pub fn calculate_visibility(
                     base_range,
                     range_def.elevation_bonus_factor,
                 ));
+            }
+            // Local scout (forward observers): with scouts staffed, post vantage tiles out
+            // from the band in every hex direction and reveal from each with `vantage_range`,
+            // so scouts see *around* obstacles (ridges/forest) rather than merely farther. The
+            // vantages ride the SAME per-source LOS reveal below (elevation/terrain modifiers
+            // included) — no separate raycast.
+            let scout_workers = allocation
+                .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
+                .unwrap_or(0);
+            let vantage_distance = labor.scout.vantage_distance(scout_workers);
+            if vantage_distance > 0 {
+                for vantage in scout_vantage_tiles(
+                    current_pos,
+                    vantage_distance,
+                    &terrain_tags,
+                    width,
+                    height,
+                    wrap_horizontal,
+                ) {
+                    sources.push((
+                        cohort.faction,
+                        vantage,
+                        labor.scout.vantage_range,
+                        range_def.elevation_bonus_factor,
+                    ));
+                }
+            }
+            // Worked sources: a band's foragers stand on the forage tile and its hunters are
+            // out at the herd, so those spots see fog too — additive to the band-center reveal
+            // and scout vantages, riding the SAME per-source LOS path below at
+            // `worked_source_sight_range`. All assignments carry ≥1 worker, so no head-count
+            // gate is needed. Scout/Warrior are band-wide roles, not tile sources — skipped.
+            if let Some(alloc) = allocation {
+                for assignment in &alloc.assignments {
+                    let worked_tile = match &assignment.target {
+                        LaborTarget::Forage { tile } => Some(*tile),
+                        // Resolve the herd's live tile; a despawned/extinct herd yields no source.
+                        LaborTarget::Hunt { fauna_id, .. } => {
+                            herds.find(fauna_id).map(|herd| herd.position())
+                        }
+                        LaborTarget::Scout | LaborTarget::Warrior => None,
+                    };
+                    // A Forage assignment carries raw command-supplied coords (see
+                    // `handle_assign_labor`), so guard the bounds before pushing — an OOB tile
+                    // would panic in `reveal_tiles_in_range`'s `elevation.sample`. Herd tiles are
+                    // always on-map, but this check is cheap and covers every worked source.
+                    if let Some(tile) = worked_tile {
+                        if tile.x < width && tile.y < height {
+                            sources.push((
+                                cohort.faction,
+                                tile,
+                                labor.worked_source_sight_range,
+                                range_def.elevation_bonus_factor,
+                            ));
+                        }
+                    }
+                }
             }
             sweep.record(entity, current_pos);
         }
@@ -350,6 +407,50 @@ fn corridor_tiles(
     }
     push(logical_x, y, &mut tiles);
     tiles
+}
+
+/// Post scout vantage tiles: step `vantage_distance` tiles out from `center` along each of
+/// the six hex directions, pulling each vantage back to the last on-map, passable
+/// (non-`WATER`) tile so foot scouts stop at ocean/edge instead of standing in the sea or
+/// off the map. Returns the distinct vantages that lie off the band's own tile — a
+/// direction the band can't step out at all (boxed in by water/edge) collapses to `center`
+/// and is dropped as a no-op, and two directions pulling back to the same tile dedupe.
+///
+/// Reuses `hex_neighbor` for the single-direction walk (each step re-reads the current
+/// tile's row parity), so the vantage line stays a proper odd-r hex ray — no bespoke
+/// stepping. Bounded work: ≤ 6 directions × `vantage_distance` steps.
+fn scout_vantage_tiles(
+    center: UVec2,
+    vantage_distance: u32,
+    terrain_tags: &[TerrainTags],
+    width: u32,
+    height: u32,
+    wrap_horizontal: bool,
+) -> Vec<UVec2> {
+    let passable = |x: u32, y: u32| -> bool {
+        let idx = (y * width + x) as usize;
+        terrain_tags
+            .get(idx)
+            .map(|tags| !tags.contains(TerrainTags::WATER))
+            .unwrap_or(false)
+    };
+
+    let mut vantages: Vec<UVec2> = Vec::with_capacity(HEX_DIRECTION_COUNT);
+    for dir in 0..HEX_DIRECTION_COUNT {
+        let mut cur = center;
+        for _ in 0..vantage_distance {
+            match hex_neighbor(cur.x, cur.y, dir, width, height, wrap_horizontal) {
+                // Advance only onto an on-map, passable tile.
+                Some((nx, ny)) if passable(nx, ny) => cur = UVec2::new(nx, ny),
+                // Off-map (edge) or impassable (ocean): stop at the last good tile.
+                _ => break,
+            }
+        }
+        if cur != center && !vantages.contains(&cur) {
+            vantages.push(cur);
+        }
+    }
+    vantages
 }
 
 /// Build a grid of terrain tags from tile entities.
@@ -772,7 +873,7 @@ mod tests {
     }
 
     #[test]
-    fn scouts_extend_band_sight_range() {
+    fn scouts_reveal_around_obstacle() {
         use std::sync::Arc;
 
         use crate::components::{
@@ -785,20 +886,24 @@ mod tests {
         use crate::visibility_config::VisibilityConfig;
 
         const WIDTH: u32 = 40;
-        const HEIGHT: u32 = 15;
-        const BAND: UVec2 = UVec2::new(20, 7);
-        // A probe tile 8 tiles east of the band: beyond base sight (BandScout base_range 6)
-        // but inside the scout-extended sight (6 + capped bonus 4 = 10).
-        const PROBE: UVec2 = UVec2::new(28, 7);
+        const HEIGHT: u32 = 21;
+        const BAND: UVec2 = UVec2::new(10, 10);
+        // A blocking HIGHLAND ridge tile directly east of the band, on the sight line to
+        // the target. Passable to foot scouts (not water) — a vantage steps *past* it.
+        const RIDGE: UVec2 = UVec2::new(13, 10);
+        // Target 5 tiles east: inside BandScout base range (6) but behind the ridge, so the
+        // band's own center LOS can't see it. A scout vantage posted past the ridge can.
+        const TARGET: UVec2 = UVec2::new(15, 10);
 
-        // Returns the probe tile's visibility state for a band staffing `scouts` workers.
+        // Returns the target tile's visibility state for a band staffing `scouts` workers.
         fn probe_state(scouts: u32) -> VisibilityState {
             let mut world = World::new();
 
-            // Flat terrain, elevation/LoS disabled so the only range driver is the scout bonus.
+            // Flat elevation (so only the terrain-tag ridge blocks) but LINE OF SIGHT ON, so
+            // the ridge blocks the band's center view and only a forward vantage sees around it.
             let mut vis = VisibilityConfig::default();
             vis.elevation.enabled = false;
-            vis.line_of_sight.enabled = false;
+            vis.line_of_sight.enabled = true;
             world.insert_resource(VisibilityConfigHandle::new(Arc::new(vis)));
             world.insert_resource(LaborConfigHandle::default());
 
@@ -808,6 +913,7 @@ mod tests {
             world.insert_resource(SimulationTick(1));
             world.insert_resource(VisibilityLedger::default());
             world.insert_resource(VisibilitySweepTracker::default());
+            world.insert_resource(HerdRegistry::default());
             world.insert_resource(ElevationField::new(
                 WIDTH,
                 HEIGHT,
@@ -820,6 +926,12 @@ mod tests {
                     ..Default::default()
                 })
                 .id();
+            // The ridge: a HIGHLAND (default blocking) tile between band and target.
+            world.spawn(Tile {
+                position: RIDGE,
+                terrain_tags: TerrainTags::HIGHLAND,
+                ..Default::default()
+            });
 
             let mut allocation = LaborAllocation::default();
             if scouts > 0 {
@@ -859,13 +971,252 @@ mod tests {
 
             world
                 .resource::<VisibilityLedger>()
-                .visibility_state(FactionId(0), PROBE.x, PROBE.y)
+                .visibility_state(FactionId(0), TARGET.x, TARGET.y)
         }
 
-        // 0 scouts: sight is exactly base_range, so the distance-8 probe stays Unexplored.
+        // 0 scouts: the ridge blocks the band's center LOS, so the target stays Unexplored —
+        // extra *radius* alone could never see past it.
         assert_eq!(probe_state(0), VisibilityState::Unexplored);
-        // 4 scouts: bonus caps at max_sight_bonus (4) → range 10 reveals the probe as Active.
+        // 4 scouts: vantage_distance caps at 6, so the east vantage steps past the ridge and
+        // reveals the target as Active — scouts seeing *around* the obstacle.
         assert_eq!(probe_state(4), VisibilityState::Active);
+    }
+
+    /// Runs `calculate_visibility` for a single BandCrafter band (base_range 2, no scouts) at
+    /// `BAND`, given a `LaborAllocation` and any herds to seed into the registry, and returns
+    /// the resulting ledger. A worked source reveals at `worked_source_sight_range` (2), while
+    /// the band center's own reach (2) can't see the far worked tiles — so any reveal there is
+    /// attributable to the worked source alone.
+    #[cfg(test)]
+    fn run_worked_visibility(
+        allocation: LaborAllocation,
+        herds: Vec<crate::fauna::Herd>,
+    ) -> VisibilityLedger {
+        use std::sync::Arc;
+
+        use crate::components::{LocalStore, MoraleCause, MoraleContributions, PopulationCohort};
+        use crate::labor_config::LaborConfigHandle;
+        use crate::scalar::{scalar_from_f32, scalar_zero};
+        use crate::visibility_config::VisibilityConfig;
+
+        const WIDTH: u32 = 40;
+        const HEIGHT: u32 = 21;
+        const BAND: UVec2 = UVec2::new(20, 10);
+
+        let mut world = World::new();
+
+        // Flat elevation, LOS on but no blockers → clean reveal; isolates the worked source.
+        let mut vis = VisibilityConfig::default();
+        vis.elevation.enabled = false;
+        vis.line_of_sight.enabled = true;
+        world.insert_resource(VisibilityConfigHandle::new(Arc::new(vis)));
+        world.insert_resource(LaborConfigHandle::default());
+
+        let mut sim = SimulationConfig::builtin();
+        sim.map_topology.wrap_horizontal = false;
+        world.insert_resource(sim);
+        world.insert_resource(SimulationTick(1));
+        world.insert_resource(VisibilityLedger::default());
+        world.insert_resource(VisibilitySweepTracker::default());
+        world.insert_resource(HerdRegistry { herds });
+        world.insert_resource(ElevationField::new(
+            WIDTH,
+            HEIGHT,
+            vec![0.5; (WIDTH * HEIGHT) as usize],
+        ));
+
+        let tile = world
+            .spawn(Tile {
+                position: BAND,
+                ..Default::default()
+            })
+            .id();
+
+        world.spawn((
+            PopulationCohort {
+                home: tile,
+                current_tile: tile,
+                size: 0,
+                children: scalar_zero(),
+                working: scalar_from_f32(4.0),
+                elders: scalar_zero(),
+                stores: LocalStore::new(),
+                morale: scalar_zero(),
+                last_morale_delta: scalar_zero(),
+                last_morale_cause: MoraleCause::None,
+                last_morale_contributions: MoraleContributions::default(),
+                discontent_fraction: scalar_zero(),
+                grievance: scalar_zero(),
+                last_emigrated: 0,
+                last_immigrated: 0,
+                age_turns: 10,
+                generation: 0,
+                faction: FactionId(0),
+                knowledge: Vec::new(),
+                migration: None,
+            },
+            // BandCrafter: base_range 2, so the band center can't reveal the far worked tiles.
+            StartingUnit::new("BandCrafter".to_string(), vec![]),
+            allocation,
+        ));
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(calculate_visibility);
+        schedule.run(&mut world);
+        world.remove_resource::<VisibilityLedger>().unwrap()
+    }
+
+    #[test]
+    fn forage_worked_tile_provides_visibility() {
+        use crate::components::{LaborAllocation, LaborTarget};
+
+        // A forage tile 7 tiles north of the band — far beyond the band center's base_range (2),
+        // so only the forager standing on it can reveal it.
+        const FORAGE: UVec2 = UVec2::new(20, 3);
+
+        // No assignment: the far forage tile is never revealed by the band center alone.
+        let idle = run_worked_visibility(LaborAllocation::default(), Vec::new());
+        assert_eq!(
+            idle.visibility_state(FactionId(0), FORAGE.x, FORAGE.y),
+            VisibilityState::Unexplored,
+            "an unworked far tile is not a visibility source"
+        );
+
+        // Staff a forager on it: the worked tile and its immediate neighbors go Active.
+        let mut allocation = LaborAllocation::default();
+        allocation.set_assignment(LaborTarget::Forage { tile: FORAGE }, 2, 4);
+        let worked = run_worked_visibility(allocation, Vec::new());
+        assert_eq!(
+            worked.visibility_state(FactionId(0), FORAGE.x, FORAGE.y),
+            VisibilityState::Active,
+            "the worked forage tile reveals itself"
+        );
+        // A neighbor within worked_source_sight_range (2) is revealed too.
+        assert_eq!(
+            worked.visibility_state(FactionId(0), FORAGE.x, FORAGE.y + 1),
+            VisibilityState::Active,
+            "worked_source_sight_range reveals around the forage tile"
+        );
+    }
+
+    #[test]
+    fn hunt_worked_herd_tile_provides_visibility() {
+        use crate::components::{FollowPolicy, LaborAllocation, LaborTarget};
+        use crate::fauna::Herd;
+        use crate::fauna_config::SizeClass;
+
+        // A herd parked 7 tiles south of the band — beyond the band center's base_range (2).
+        const HERD_TILE: UVec2 = UVec2::new(20, 17);
+        let herd = Herd::new(
+            "herd-1".to_string(),
+            "Red Deer".to_string(),
+            SizeClass::Big,
+            vec![HERD_TILE],
+            100.0,
+            100.0,
+        );
+
+        let mut allocation = LaborAllocation::default();
+        allocation.set_assignment(
+            LaborTarget::Hunt {
+                fauna_id: "herd-1".to_string(),
+                policy: FollowPolicy::Sustain,
+            },
+            2,
+            4,
+        );
+        let worked = run_worked_visibility(allocation, vec![herd]);
+        assert_eq!(
+            worked.visibility_state(FactionId(0), HERD_TILE.x, HERD_TILE.y),
+            VisibilityState::Active,
+            "the hunted herd's current tile is a visibility source"
+        );
+    }
+
+    #[test]
+    fn hunt_unresolved_herd_adds_no_source_and_does_not_panic() {
+        use crate::components::{FollowPolicy, LaborAllocation, LaborTarget};
+
+        // A Hunt on a herd id absent from the registry (despawned/extinct) must be skipped
+        // silently — no source, no panic.
+        let mut allocation = LaborAllocation::default();
+        allocation.set_assignment(
+            LaborTarget::Hunt {
+                fauna_id: "ghost".to_string(),
+                policy: FollowPolicy::Sustain,
+            },
+            2,
+            4,
+        );
+        let ledger = run_worked_visibility(allocation, Vec::new());
+        // The band center still reveals its own tile — the pass ran to completion.
+        assert_eq!(
+            ledger.visibility_state(FactionId(0), 20, 10),
+            VisibilityState::Active,
+        );
+    }
+
+    #[test]
+    fn scout_vantage_tiles_pulls_back_from_water_and_edge() {
+        // Band near a coast: a seaward/edge vantage must pull back to the last passable
+        // on-map tile — never posted in the ocean or off the grid (no panic, no OOB).
+        const WIDTH: u32 = 10;
+        const HEIGHT: u32 = 10;
+        let idx = |x: u32, y: u32| (y * WIDTH + x) as usize;
+        let mut terrain_tags = vec![TerrainTags::empty(); (WIDTH * HEIGHT) as usize];
+        // Flood the two westmost columns with ocean.
+        for y in 0..HEIGHT {
+            terrain_tags[idx(0, y)] = TerrainTags::WATER;
+            terrain_tags[idx(1, y)] = TerrainTags::WATER;
+        }
+
+        let band = UVec2::new(3, 5);
+        // A generous reach so vantages would run into the water / off the east edge if unclamped.
+        let vantages = scout_vantage_tiles(band, 6, &terrain_tags, WIDTH, HEIGHT, false);
+
+        assert!(
+            !vantages.is_empty(),
+            "band is not boxed in — some vantage posts"
+        );
+        for v in &vantages {
+            assert!(v.x < WIDTH && v.y < HEIGHT, "vantage {v:?} is off-map");
+            assert!(
+                !terrain_tags[idx(v.x, v.y)].contains(TerrainTags::WATER),
+                "vantage {v:?} was posted in the ocean"
+            );
+            assert_ne!(*v, band, "the band tile itself is not a vantage");
+        }
+    }
+
+    #[test]
+    fn scout_vantage_tiles_scale_with_distance() {
+        // On open terrain the ring posts a vantage in every hex direction, and a larger
+        // vantage_distance pushes them farther out from the band.
+        const WIDTH: u32 = 40;
+        const HEIGHT: u32 = 40;
+        let terrain_tags = vec![TerrainTags::empty(); (WIDTH * HEIGHT) as usize];
+        let band = UVec2::new(20, 20);
+
+        let near = scout_vantage_tiles(band, 2, &terrain_tags, WIDTH, HEIGHT, false);
+        let far = scout_vantage_tiles(band, 6, &terrain_tags, WIDTH, HEIGHT, false);
+
+        assert_eq!(
+            near.len(),
+            HEX_DIRECTION_COUNT,
+            "one vantage per hex direction"
+        );
+        assert_eq!(far.len(), HEX_DIRECTION_COUNT);
+
+        let max_reach = |ring: &[UVec2]| -> u32 {
+            ring.iter()
+                .map(|v| v.x.abs_diff(band.x).max(v.y.abs_diff(band.y)))
+                .max()
+                .unwrap_or(0)
+        };
+        assert!(
+            max_reach(&far) > max_reach(&near),
+            "more scouts push the vantage ring farther out"
+        );
     }
 
     #[test]
