@@ -495,6 +495,17 @@ impl LaborAllocation {
         self.assignments.iter().map(|a| a.workers).sum()
     }
 
+    /// Total workers staffed on the given source (matched by [`LaborTarget::same_source`], so a
+    /// singleton role like `Scout`/`Warrior` sums its one assignment). Used by the visibility pass
+    /// to read a band's Scout head-count for its sight-range bonus.
+    pub fn workers_on(&self, target: &LaborTarget) -> u32 {
+        self.assignments
+            .iter()
+            .filter(|a| a.target.same_source(target))
+            .map(|a| a.workers)
+            .sum()
+    }
+
     /// Set/replace the worker count for `target`, keeping `Σ ≤ available`. `workers == 0` removes
     /// the assignment (per-source unassign — the new "cancel"). An over-budget request is
     /// **clamped** to the free headroom (not rejected). Returns the worker count actually applied
@@ -526,19 +537,16 @@ impl LaborAllocation {
     pub fn normalize(&mut self, available: u32) {
         let mut total = self.assigned_total();
         while total > available {
-            let mut excess = total - available;
+            let excess = total - available;
             let Some(last) = self.assignments.last_mut() else {
                 break;
             };
             if last.workers > excess {
                 last.workers -= excess;
-                excess = 0;
             } else {
-                excess -= last.workers;
                 self.assignments.pop();
             }
             total = self.assigned_total();
-            let _ = excess;
         }
     }
 
@@ -711,5 +719,24 @@ impl Default for Tile {
             terrain_tags: TerrainTags::empty(),
             mountain: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workers_on_counts_scout_headcount() {
+        let mut allocation = LaborAllocation::default();
+        // No Scout assignment → zero scouts.
+        assert_eq!(allocation.workers_on(&LaborTarget::Scout), 0);
+
+        let available = 10;
+        allocation.set_assignment(LaborTarget::Scout, 3, available);
+        allocation.set_assignment(LaborTarget::Warrior, 2, available);
+        // Only the Scout assignment is counted (Warrior is a different singleton source).
+        assert_eq!(allocation.workers_on(&LaborTarget::Scout), 3);
+        assert_eq!(allocation.workers_on(&LaborTarget::Warrior), 2);
     }
 }

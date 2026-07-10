@@ -9,7 +9,7 @@
     "per_worker_biomass_capacity": 40.0
   },
   "scout": {
-    "reveal_radius": 2,
-    "reveal_duration_turns": 3
+    "sight_bonus_per_scout": 1,
+    "max_sight_bonus": 4
   }
 }

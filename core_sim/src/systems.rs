@@ -3516,7 +3516,6 @@ pub fn advance_labor_allocation(
     mut registry: ResMut<HerdRegistry>,
     mut inventory: ResMut<FactionInventory>,
     mut event_log: ResMut<CommandEventLog>,
-    mut fog: ResMut<FogRevealLedger>,
     tick: Res<SimulationTick>,
     tile_registry: Res<TileRegistry>,
     fauna_config: Res<FaunaConfigHandle>,
@@ -3661,9 +3660,9 @@ pub fn advance_labor_allocation(
                     }
                 }
                 LaborTarget::Scout => {
-                    // Presence of ≥ 1 scout reveals fog outward from the band; no resource yield.
-                    let expires_at = tick.0.saturating_add(labor.scout.reveal_duration_turns);
-                    fog.queue(band_pos, labor.scout.reveal_radius, expires_at);
+                    // Scouts extend the band's live sight range in `calculate_visibility`
+                    // (`labor.scout.sight_bonus(scouts)`), re-marked Active every turn — no work
+                    // is done here (the old fog-pulse was a no-op inside passive sight).
                 }
                 LaborTarget::Warrior => {
                     // Inert this slice — the predator slice consumes Warrior strength.

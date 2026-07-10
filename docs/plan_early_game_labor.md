@@ -254,6 +254,9 @@ numbers convention.
 
 ## See Also
 
+- `docs/plan_exploration_and_sites.md` — the exploration layer built on the Scout role: **local
+  scout** (extend the band's sight — the fix for the currently-inert Scout role), **scouting
+  expeditions** (a provisioned traveling party), and the **Wondrous Sites** catalog they discover.
 - `docs/plan_settlement_population.md` — the arc this realizes/extends (Phase 2 labor; Phase 3
   improvements/storage; emergent settlements). Carry capacity + storage are the bridge.
 - `docs/plan_wildlife_hunting_overlay.md` — the herds/Sustain yields this subsistence model draws

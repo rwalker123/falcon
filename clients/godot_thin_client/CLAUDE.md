@@ -59,7 +59,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, and `apply_button(btn, "primary"/"ghost"/"armed")`. Every HUD surface styles through here |
 | `ui/FoodIcons.gd` | Shared map-marker emoji glyphs — food modules (`for_site`) and fauna herds (`for_herd`, species keyword matched in the herd label, longest-first). Covers migratory species plus wild game (deer/boar/rabbit/fowl). Used by the Harvest/Hunt button (`Hud.gd`) and the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`) so a source always reads the same |
 | `tools/ui_preview.gd` / `.tscn` | Dev-only preview harness: instances the real `HudLayer` with canned selection/targeting data, renders each state, and saves PNGs to `ui_preview_out/` (gitignored). Iterate on HUD styling without a server: `godot --path . res://tools/ui_preview.tscn` |
-| `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link / scouted radius) without a server: `godot --path . res://tools/map_preview.tscn` |
+| `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link; scouting draws no disc — it extends sight in the fog) without a server: `godot --path . res://tools/map_preview.tscn` |
 | `tools/marker_field_guard.gd` / `.tscn` | Headless **regression guard** for the "unit marker drops a panel-consumed field" bug class (twice hit: `hunt_mode`, then `working_age`/`idle_workers`). Feeds one realistic population entry through the real `MapView._rebuild_unit_markers` and asserts the produced marker is a superset of `PANEL_CONSUMED_KEYS` (the keys `Hud._unit_summary_lines` + `_build_allocation_panel` read off `_selected_unit`) and that the drop-prone fields round-trip (not defaulted). Exits non-zero on failure (CI-usable). No rendering, so headless: `godot --headless --path . res://tools/marker_field_guard.tscn`. When the panel starts reading a new marker field, add it to `PANEL_CONSUMED_KEYS`. |
 | `assets/terrain/TerrainTextureManager.gd` | Autoload singleton for terrain texture loading |
 | `assets/terrain/TerrainDefinitions.gd` | Single source of truth for terrain definitions |
@@ -329,8 +329,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     **Current actions** section with one `−/+` **worker-stepper** row per staffed Forage tile / Hunt
     herd (from the cohort's `labor_assignments`; an empty-state hint when none), then a **Band roles**
     section with the always-shown **Scout** + **Warrior** rows (even at 0), each with a one-line hint so
-    the `−/+` steppers read as "this is how you staff this standing role" (Scout's hint shows the live
-    `scout_reveal_radius`; there is no targeted scout map-action anymore). Then **Move** / **Clear all**.
+    the `−/+` steppers read as "this is how you staff this standing role" (Scout's hint reads "Extends
+    the band's sight — more scouts see further"; more staffed scouts extend the band's actual sight
+    range, so the effect shows directly in the fog, not as a map-action or a reveal disc). Then
+    **Move** / **Clear all**.
     Each stepper re-sends `assign_labor_requested` with the new count (0 removes); `+` is gated on idle.
   - **Optimistic pending feedback** (slice 3b UX): assigning workers or moving the band shows
     immediately, before the next snapshot. `_emit_assign_labor` / `_try_dispatch_pending_move_band`
@@ -346,13 +348,16 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     is selected, cleared on deselect): the **worked forage tiles** (strong green fill on each
     `forage` assignment's `target_x/y`), the **work-range ring** (thin cyan outline on every tile
     within `work_range`, replicating the sim's **Chebyshev** `max(|dx|,|dy|) <= work_range` on integer
-    offset coords — truthful-over-pretty, so highlighted == actually-assignable), the **scouted radius**
-    (faint blue shading over the reveal disc when a scout is staffed — a **Euclidean** `dx²+dy² <= r²`
-    disc, matching the sim's `clear_circle` fog reveal, deliberately a different metric from the
-    work-range square), and the **hunted herds** (red ring on the herd tile + a band→herd link, drawn
-    wherever the herd is since hunt reach = `work_range` + leash). New snapshot fields `work_range` /
-    `scout_reveal_radius` are decoded in `native/src/lib.rs population_to_dict` and flowed onto the
-    MapView unit marker in `_rebuild_unit_markers` (alongside `labor_assignments`). **Optimistic pending**
+    offset coords — truthful-over-pretty, so highlighted == actually-assignable), and the **hunted
+    herds** (red ring on the herd tile + a band→herd link, drawn wherever the herd is since hunt reach
+    = `work_range` + leash). **Scouting draws no map highlight** — staffed scouts extend the band's
+    real sight range (visible directly in the fog as a wider Active radius); the old faint-blue scouted
+    disc was removed because `scout_reveal_radius` no longer means a reveal-disc radius — it now carries
+    the band's effective sight-range bonus (extra tiles beyond base, `0` when no scouts), which the
+    client can't turn into a true ring without the server-side `base_range`. New snapshot fields
+    `work_range` / `scout_reveal_radius` are decoded in `native/src/lib.rs population_to_dict` and flowed
+    onto the MapView unit marker in `_rebuild_unit_markers` (alongside `labor_assignments`);
+    `scout_reveal_radius` is still carried (it documents the field) but no longer drawn. **Optimistic pending**
     actions for the selected band draw in a distinct **dashed-amber** style (`_draw_band_pending`, fed by
     `set_labor_pending`) — the pending forage tile, the pending hunted herd (dashed ring-hex + dashed
     band→herd link), and the pending move destination (dashed hex + dashed link) — clearly apart from the

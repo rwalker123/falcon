@@ -250,8 +250,7 @@ const ALLOC_SECTION_FONT_SIZE := 10
 const ALLOC_HEADER_ACTIONS := "Current actions"
 const ALLOC_HEADER_ROLES := "Band roles"
 const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd to assign foragers/hunters."
-const SCOUT_ROLE_HINT := "Reveals the area around the band (radius %d). Staff with −/+."
-const SCOUT_ROLE_HINT_NO_RADIUS := "Reveals the area around the band. Staff with −/+."
+const SCOUT_ROLE_HINT := "Extends the band's sight — more scouts see further. Staff with −/+."
 const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
 # Suffix marking an optimistic (not-yet-confirmed) allocation row, tinted amber to tie it to
 # the amber pending hex on the map.
@@ -1054,9 +1053,7 @@ func _build_allocation_panel(band: Dictionary) -> void:
         "Scout", int(scout_eff.get("workers", 0)), can_add,
         func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_SCOUT, n, -1, -1, "", ""),
         bool(scout_eff.get("pending", false))))
-    var scout_radius := int(band.get("scout_reveal_radius", 0))
-    allocation_panel.add_child(_alloc_hint_label(
-        (SCOUT_ROLE_HINT % scout_radius) if scout_radius > 0 else SCOUT_ROLE_HINT_NO_RADIUS))
+    allocation_panel.add_child(_alloc_hint_label(SCOUT_ROLE_HINT))
     var warrior_eff := _effective_role_workers(band, LABOR_KIND_WARRIOR)
     allocation_panel.add_child(_build_worker_stepper(
         "Warrior", int(warrior_eff.get("workers", 0)), can_add,

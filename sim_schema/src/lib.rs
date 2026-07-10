@@ -985,9 +985,11 @@ pub struct PopulationCohortState {
     /// to draw the work-range ring. Sourced from `labor_config.json` at capture.
     #[serde(default)]
     pub work_range: u32,
-    /// The scout reveal radius (`LaborConfig.scout.reveal_radius`). Global labor config today;
-    /// surfaced per-band so the client draws the scouted area off the selected band. Sourced from
-    /// `labor_config.json` at capture.
+    /// The band's effective **scout sight bonus** — the extra sight-range tiles its staffed scouts
+    /// add beyond base sight (`min(scouts × sight_bonus_per_scout, max_sight_bonus)` from
+    /// `LaborConfig.scout`), `0` with no scouts. Derived per-band at capture. (Field name retained
+    /// for wire compatibility; the "scouted area" is now the band's sight extension — the retired
+    /// fog-pulse radius it once carried is gone.)
     #[serde(default)]
     pub scout_reveal_radius: u32,
     /// Which supply network this band belongs to this turn: `0` = not in a multi-band network,

@@ -5,7 +5,7 @@ extends Node2D
 ## Instances the real MapView, feeds a canned snapshot via display_snapshot(), selects a
 ## player band, renders each state, and saves a PNG to ui_preview_out/. Lets us visually
 ## verify the selected-band labor highlights (work-range ring / worked forage tiles /
-## hunted-herd ring + link / scouted radius) without a server. Run windowed (NOT headless —
+## hunted-herd ring + link) without a server. Run windowed (NOT headless —
 ## the dummy renderer can't read back the viewport):
 ##
 ##   godot --path . res://tools/map_preview.tscn
@@ -41,8 +41,10 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_band_work")
 
-	# State B — the same band with scouts staffed: the scouted radius (Euclidean disc)
-	# shades blue around the band, distinct from the cyan work-range outlines.
+	# State B — the same band with scouts staffed: scouting no longer draws a map highlight
+	# (its effect is the extended sight visible in the fog; `scout_reveal_radius` is a
+	# sight-range bonus, not a reveal disc). This state is a regression guard that NO blue
+	# scouted disc appears — only the work-range ring + the single worked forage tile.
 	_map.display_snapshot(_snapshot_scout())
 	_map.selected_unit_id = BAND_ENTITY
 	_map._fit_map_to_view()

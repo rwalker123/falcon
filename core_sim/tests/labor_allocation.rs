@@ -163,7 +163,7 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
         "band_move_tiles_per_turn": 1,
         "forage": { "per_worker_yield": 0.25 },
         "hunt": { "per_worker_biomass_capacity": 0.05 },
-        "scout": { "reveal_radius": 2, "reveal_duration_turns": 3 }
+        "scout": { "sight_bonus_per_scout": 1, "max_sight_bonus": 4 }
     }"#;
     app.world.insert_resource(LaborConfigHandle::new(Arc::new(
         LaborConfig::from_json_str(json).expect("custom labor config parses"),

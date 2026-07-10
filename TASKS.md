@@ -314,6 +314,38 @@ equipment is consumable inventory; you allocate working-age labor across roles.
   **larder spoilage + storage tiers** (spoilage matters once storage lets food sit); richer threats;
   the Settlement arc's Phase 3 improvement catalog (storage improvements consume the carry-cap seam).
 
+### Exploration & Wondrous Sites
+
+Design: `docs/plan_exploration_and_sites.md`. The early-game exploration layer — makes scouting
+real and gives exploration something to find. Companion to the Early-Game Labor arc (the Scout
+role). Sequenced: local scout (small fix) → sites subsystem (foundation) → expeditions.
+
+- [x] Design doc. Authored `docs/plan_exploration_and_sites.md` (local scout / expeditions /
+  Wondrous Sites catalog); cross-linked from `plan_early_game_labor.md`.
+- [ ] **Local scout — extend band sight.** The Scout labor role currently no-ops (radius-2 fog
+  pulse < the band's passive sight 6, and unscaled). Make a band's sight range in
+  `calculate_visibility` = `base_range + min(scouts × sight_bonus_per_scout, max_sight_bonus)` (read
+  the cohort's `LaborAllocation` Scout count), so staffed scouts extend the live (Active) radius.
+  New `labor_config.json scout` levers; retire the obsolete `reveal_radius`/`reveal_duration` use;
+  client Scout hint → "Extends the band's sight; more scouts see further."
+- [ ] **Wondrous Sites (minimal).** Data-driven site catalog (`sites_config.json` + loader,
+  fauna-config pattern): `{id, category, display, placement_rule, discovery_reward}`. An optional
+  per-tile site reference (schema + component), hidden under fog until discovered. Generic
+  discovery: any vision source (band sight / local scout / expedition) reveals in-range sites → a
+  discovered-sites registry → map marker + a **Discoveries** readout. Per-category reward hooks
+  (settle-site / riches / tribe / landmark). **Point sites v1** (single tile; landmark = named
+  point on its prominent tile); per-category placement (landmarks emergent from terrain at worldgen,
+  riches from deposits, settle-sites derived, tribes seeded). Seed 2–3 site types.
+- [ ] **Scouting expedition.** A visible detached party (own map marker) outfitted with workers +
+  provisions (larder-drawn, scaled by size × distance), sent to a target; treks revealing fog along
+  its path, reaches the objective, **returns**. **Deterministic finds** — reveals the real Wondrous
+  Sites along its path (+ optional small flavor roll) + permanent map reveal. Reuses move-band
+  travel + `FogRevealLedger`/knowledge-fragment machinery; shares the deferred breakaway/split
+  detached-party machinery.
+- [ ] Deferred / documented: expedition **risk/failure** (peril, non-return); **scouting-TOE**
+  gating (with the TOE slice); **regional (multi-tile) sites**; richer per-category rewards;
+  **tribes as real civilizations**.
+
 ### Civilization Wellbeing (Morale → Discontent → Consequences)
 
 Design: `docs/plan_civ_wellbeing.md`. Morale is a persistent, multi-factor civilization stat built

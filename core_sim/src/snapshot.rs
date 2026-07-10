@@ -1307,10 +1307,9 @@ pub fn capture_snapshot(
     let demographics_config = demographics.get();
     let wellbeing_config = wellbeing.get();
     let labor_config = labor.get();
-    // Global labor config today (identical for every band); surfaced per-band so the client reads
-    // the work-range ring / scouted area off the selected band (future-proof if bands diverge).
+    // Global labor config today (identical for every band); the work-range ring is surfaced
+    // per-band so the client reads it off the selected band (future-proof if bands diverge).
     let band_work_range = labor_config.band_work_range;
-    let scout_reveal_radius = labor_config.scout.reveal_radius;
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
         .map(|(entity, cohort, allocation, travel)| {
@@ -1320,6 +1319,13 @@ pub fn capture_snapshot(
             let is_traveling = travel
                 .map(|t| current_pos.map(|p| p != t.target).unwrap_or(true))
                 .unwrap_or(false);
+            // Local scout: the "scouted area" is now the band's sight extension. Carry the band's
+            // effective scout sight bonus (extra tiles beyond base sight, `0` with no scouts), using
+            // the same helper the visibility pass applies, so the client highlight stays meaningful.
+            let scout_workers = allocation
+                .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
+                .unwrap_or(0);
+            let scout_sight_bonus = labor_config.scout.sight_bonus(scout_workers);
             population_state(
                 entity,
                 cohort,
@@ -1334,7 +1340,7 @@ pub fn capture_snapshot(
                 &wellbeing_config,
                 &supply_membership,
                 band_work_range,
-                scout_reveal_radius,
+                scout_sight_bonus,
             )
         })
         .collect();
@@ -3462,8 +3468,10 @@ fn pending_migration_from_state(state: &PendingMigrationState) -> PendingMigrati
 }
 
 /// Rebuild a [`LaborAllocation`] from its snapshot state (rollback restores the exact allocation,
-/// as `harvest_task`/`scout_task` did for the retired single-task model). Unknown role strings and
-/// hunts with an unparseable policy are skipped defensively.
+/// as `harvest_task`/`scout_task` did for the retired single-task model). Unknown role strings are
+/// skipped defensively; a hunt with an unparseable policy falls back to `FollowPolicy::Sustain`
+/// (the assignment is kept, not dropped — we serialize valid policy strings, so this only guards
+/// against a corrupt/forward-incompatible snapshot).
 fn labor_allocation_from_state(states: &[LaborAssignmentState]) -> LaborAllocation {
     let assignments = states
         .iter()
@@ -3576,7 +3584,7 @@ fn population_state(
     wellbeing: &crate::wellbeing_config::WellbeingConfig,
     supply_membership: &SupplyNetworkMembership,
     work_range: u32,
-    scout_reveal_radius: u32,
+    scout_sight_bonus: u32,
 ) -> PopulationCohortState {
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let demand = food_demand(
@@ -3628,7 +3636,9 @@ fn population_state(
         idle_workers,
         working_age,
         work_range,
-        scout_reveal_radius,
+        // Repurposed: carries the band's effective scout sight bonus (extra tiles beyond base
+        // sight), not the retired fog-pulse radius. See the field doc in `sim_schema`.
+        scout_reveal_radius: scout_sight_bonus,
         supply_network_id: supply_membership.network_of(entity),
         morale_delta: cohort.last_morale_delta.raw(),
         morale_cause: cohort.last_morale_cause.as_u8(),

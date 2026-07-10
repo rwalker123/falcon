@@ -35,13 +35,24 @@ pub struct HuntLaborConfig {
     pub per_worker_biomass_capacity: f32,
 }
 
-/// Band-wide scout role tuning (reveal only — no resource yield).
+/// Band-wide scout role tuning: staffed scouts extend the band's live sight range
+/// (re-marked Active every turn), scaled by head-count and capped. No resource yield.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ScoutLaborConfig {
-    /// Fog reveal radius around the band when ≥ 1 scout is assigned.
-    pub reveal_radius: u32,
-    /// How many turns each scout reveal pulse stays active.
-    pub reveal_duration_turns: u64,
+    /// Extra sight-range tiles each staffed scout adds to the band's base sight.
+    pub sight_bonus_per_scout: u32,
+    /// Upper bound on the scout sight bonus regardless of head-count.
+    pub max_sight_bonus: u32,
+}
+
+impl ScoutLaborConfig {
+    /// The sight-range bonus for a band staffing `scouts` workers on the Scout role:
+    /// `min(scouts × sight_bonus_per_scout, max_sight_bonus)`. Zero scouts → zero bonus.
+    pub fn sight_bonus(&self, scouts: u32) -> u32 {
+        scouts
+            .saturating_mul(self.sight_bonus_per_scout)
+            .min(self.max_sight_bonus)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -191,11 +202,35 @@ mod tests {
         assert!(config.band_move_tiles_per_turn >= 1);
         assert!(config.forage.per_worker_yield > 0.0);
         assert!(config.hunt.per_worker_biomass_capacity > 0.0);
-        assert!(config.scout.reveal_radius >= 1);
-        assert!(config.scout.reveal_duration_turns >= 1);
+        assert!(config.scout.sight_bonus_per_scout >= 1);
+        assert!(config.scout.max_sight_bonus >= config.scout.sight_bonus_per_scout);
         assert_eq!(
             config.hunt_reach(),
             config.band_work_range + config.hunt_leash_tiles
         );
+    }
+
+    #[test]
+    fn scout_sight_bonus_scales_with_headcount_and_caps() {
+        // The effective band sight range is `base_range + sight_bonus(scouts)`, where the
+        // bonus scales linearly per scout and clamps at `max_sight_bonus`.
+        let scout = ScoutLaborConfig {
+            sight_bonus_per_scout: 1,
+            max_sight_bonus: 4,
+        };
+        const BASE_RANGE: u32 = 6; // visibility_config BandScout base_range.
+
+        // 0 scouts → no bonus → sight is exactly the base range.
+        assert_eq!(scout.sight_bonus(0), 0);
+        assert_eq!(BASE_RANGE + scout.sight_bonus(0), BASE_RANGE);
+
+        // N scouts below the cap → base_range + N × per-scout.
+        assert_eq!(scout.sight_bonus(3), 3);
+        assert_eq!(BASE_RANGE + scout.sight_bonus(3), BASE_RANGE + 3);
+
+        // Above the cap → clamped to max_sight_bonus (never grows past it).
+        assert_eq!(scout.sight_bonus(4), 4);
+        assert_eq!(scout.sight_bonus(99), 4);
+        assert_eq!(BASE_RANGE + scout.sight_bonus(99), BASE_RANGE + 4);
     }
 }

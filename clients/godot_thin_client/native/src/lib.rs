@@ -3571,8 +3571,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // Early-Game Labor (slice 3b): the band's source-centric labor allocation. Each entry is a
     // staffed Forage tile / Hunt herd / Scout / Warrior demand. `harvestTask`/`scoutTask` are now
     // always null server-side and no longer decoded.
+    // Always insert `labor_assignments` (empty array when the vector is absent) so the client
+    // sees a stable band-dict shape regardless of whether the server serialized an empty vector.
+    let mut array = VarArray::new();
     if let Some(assignments) = cohort.laborAssignments() {
-        let mut array = VarArray::new();
         for assignment in assignments {
             let mut entry = VarDictionary::new();
             if let Some(kind) = assignment.kind() {
@@ -3589,8 +3591,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             }
             array.push(&entry.to_variant());
         }
-        let _ = dict.insert("labor_assignments", array);
     }
+    let _ = dict.insert("labor_assignments", array);
     let _ = dict.insert("idle_workers", cohort.idleWorkers() as i64);
     let _ = dict.insert("working_age", cohort.workingAge() as i64);
     // Forage work radius (Chebyshev tiles) + what a scout assignment reveals. Drive the

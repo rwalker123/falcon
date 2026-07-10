@@ -486,7 +486,9 @@ table PopulationCohortState {
   // Global config today (same every band); surfaced per-band so the client reads it off the
   // selected band. Appended last (append-only schema discipline).
   workRange:uint = 0;
-  // Scout reveal radius (LaborConfig.scout.reveal_radius) — client draws the scouted area.
+  // Band's effective scout sight bonus — extra sight-range tiles its staffed scouts add beyond
+  // base sight (min(scouts * sight_bonus_per_scout, max_sight_bonus) from LaborConfig.scout), 0 with
+  // no scouts. Field name retained for wire compat; the "scouted area" is now the sight extension.
   scoutRevealRadius:uint = 0;
 }
 

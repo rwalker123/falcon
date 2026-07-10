@@ -84,18 +84,17 @@ const BAND_ACTIVITY_COLORS := {
 const BAND_ACTIVITY_DEFAULT_COLOR := Color(0.70, 0.70, 0.70, BAND_ACTIVITY_RING_ALPHA)
 const BAND_ACTIVITY_IDLE := "idle"
 # Selected-player-band labor highlights (Early-Game Labor slice 3b). Distinct styles so
-# the four layers read apart: the work-range reach (thin cyan outlines = "reachable"), the
-# scouted disc (faint blue shading = "an area"), the worked forage tiles (strong green
-# fill = "being worked"), and the hunted herds (red ring + link). See _draw_band_work_highlights.
+# the layers read apart: the work-range reach (thin cyan outlines = "reachable"), the worked
+# forage tiles (strong green fill = "being worked"), and the hunted herds (red ring + link).
+# (Scouting no longer draws a disc — it extends the band's real sight, visible directly in the
+# fog; `scout_reveal_radius` is now a sight-range bonus, not a reveal-disc radius.)
+# See _draw_band_work_highlights.
 const LABOR_KIND_FORAGE := "forage"
 const LABOR_KIND_HUNT := "hunt"
-const LABOR_KIND_SCOUT := "scout"
 # Work-range ring: outline every in-range tile (Chebyshev square), no fill — reads as the
 # reachable-forage cluster without competing with the worked-tile fills.
 const WORK_RANGE_OUTLINE := Color(0.310, 0.878, 0.812, 0.34)  # faint SIGNAL cyan
 const WORK_RANGE_OUTLINE_WIDTH := 1.5
-# Scouted radius: faint blue shading over the reveal disc (Euclidean).
-const SCOUT_REVEAL_FILL := Color(0.30, 0.60, 0.90, 0.16)
 # Worked forage tiles: strong green fill + bold outline (the tiles actually being harvested).
 const FORAGE_WORKED_FILL := Color(0.30, 0.80, 0.30, 0.34)
 const FORAGE_WORKED_OUTLINE := Color(0.46, 0.96, 0.46, 0.95)
@@ -797,8 +796,8 @@ func _draw() -> void:
 	_draw_crisis_annotations(radius, origin)
 	_draw_start_marker(radius, origin)
 
-	# Selected player band: highlight what it's working (forage tiles / hunted herds),
-	# its assignable reach (work-range ring), and its scouted area. Drawn before the
+	# Selected player band: highlight what it's working (forage tiles / hunted herds) and
+	# its assignable reach (work-range ring). Drawn before the
 	# unit/herd markers so those sit on top of the tile tints.
 	_draw_band_work_highlights(radius, origin)
 
@@ -1370,9 +1369,6 @@ func _draw_band_status(unit: Dictionary, center: Vector2, marker_radius: float) 
 ##    (`max(|dx|,|dy|) <= work_range` on integer offset (col,row) coords) so highlighted ==
 ##    actually-assignable, even where the king-move square looks irregular on the hex grid.
 ##  - worked forage tiles: strong green fill on each `forage` assignment's target tile.
-##  - scouted radius: faint blue shading over the reveal disc when a scout is staffed. This
-##    ring is a EUCLIDEAN disc (`dx*dx + dy*dy <= r*r`), matching the sim's `clear_circle`
-##    fog reveal — deliberately a different metric from the work-range square.
 ##  - hunted herds: a red ring on the herd tile + a band→herd link (the herd can sit outside
 ##    the work-range ring — hunt reach = work_range + leash).
 ## All cleared automatically when the band is deselected (selected_unit_id < 0 → early out).
@@ -1392,20 +1388,12 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 	var eff_col := _band_effective_col(band_col, radius, origin)
 	var band_center := _hex_center(eff_col, band_row, radius, origin)
 
-	# 1. Scouted radius (drawn first, under the rest): Euclidean disc, only when a scout is staffed.
-	var scout_radius := int(band.get("scout_reveal_radius", 0))
-	if scout_radius > 0 and _labor_workers_for_kind(band, LABOR_KIND_SCOUT) > 0:
-		var rsq := scout_radius * scout_radius
-		for drow in range(-scout_radius, scout_radius + 1):
-			var row := band_row + drow
-			if row < 0 or row >= grid_height:
-				continue
-			for dcol in range(-scout_radius, scout_radius + 1):
-				if dcol * dcol + drow * drow > rsq:
-					continue
-				_fill_hex(eff_col + dcol, row, radius, origin, SCOUT_REVEAL_FILL)
+	# Scouting no longer draws a disc: `scout_reveal_radius` is now the band's sight-range bonus
+	# (extra tiles beyond base), and its effect is visible directly in the fog (staffed scouts
+	# re-reveal a wider Active radius each turn). The client can't draw the true extended ring
+	# (it doesn't know the band's server-side `base_range`), so nothing is drawn here.
 
-	# 2. Work-range ring: Chebyshev square outline (max(|dcol|,|drow|) <= work_range).
+	# 1. Work-range ring: Chebyshev square outline (max(|dcol|,|drow|) <= work_range).
 	var work_range := int(band.get("work_range", 0))
 	if work_range > 0:
 		for drow in range(-work_range, work_range + 1):
@@ -1417,7 +1405,7 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 					continue
 				_outline_hex(eff_col + dcol, row, radius, origin, WORK_RANGE_OUTLINE, WORK_RANGE_OUTLINE_WIDTH)
 
-	# 3. Worked forage tiles + 4. hunted herds, from the band's assignments.
+	# 2. Worked forage tiles + 3. hunted herds, from the band's assignments.
 	for entry_variant in _labor_assignments_of_marker(band):
 		if not (entry_variant is Dictionary):
 			continue
@@ -1532,13 +1520,6 @@ func _selected_player_band() -> Dictionary:
 func _labor_assignments_of_marker(band: Dictionary) -> Array:
 	var v: Variant = band.get("labor_assignments", [])
 	return v if v is Array else []
-
-func _labor_workers_for_kind(band: Dictionary, kind: String) -> int:
-	var total := 0
-	for entry in _labor_assignments_of_marker(band):
-		if entry is Dictionary and String((entry as Dictionary).get("kind", "")).to_lower() == kind:
-			total += int((entry as Dictionary).get("workers", 0))
-	return total
 
 func _herd_by_id(herd_id: String) -> Dictionary:
 	if herd_id == "":
@@ -1905,9 +1886,10 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"supply_network_id": int(entry.get("supply_network_id", 0)),
 			# Early-Game Labor (slice 3b): what the band is working + its reach, for the
 			# selected-band map highlights (work-range ring / worked forage tiles / hunted
-			# herds / scouted radius) AND the allocation panel's Population/Workers/Idle
-			# header (the drawer reads _selected_unit, which is a copy of this marker — so
-			# these must be carried here or the panel reads 0).
+			# herds) AND the allocation panel's Population/Workers/Idle header (the drawer
+			# reads _selected_unit, which is a copy of this marker — so these must be carried
+			# here or the panel reads 0). `scout_reveal_radius` (now the band's sight-range
+			# bonus, not a reveal-disc radius) is still carried but no longer drawn.
 			"work_range": int(entry.get("work_range", 0)),
 			"scout_reveal_radius": int(entry.get("scout_reveal_radius", 0)),
 			"working_age": int(entry.get("working_age", 0)),
