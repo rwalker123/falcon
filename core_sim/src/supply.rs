@@ -19,7 +19,7 @@ use bevy::math::UVec2;
 use bevy::prelude::*;
 
 use crate::{
-    components::{PopulationCohort, Tile},
+    components::{PopulationCohort, ResidentBand, Tile},
     grid_utils::wrapped_distance_sq,
     orders::FactionId,
     resources::{SimulationConfig, TileRegistry},
@@ -146,7 +146,9 @@ pub fn balance_supply_networks(
     sim_config: Res<SimulationConfig>,
     tile_registry: Res<TileRegistry>,
     tiles: Query<&Tile>,
-    mut cohorts: Query<(Entity, &mut PopulationCohort)>,
+    // `With<ResidentBand>`: an expedition manages its own larder — its drop-off is the explicit
+    // fold-back on arrival, not a passive supply-network leak — so it is excluded here.
+    mut cohorts: Query<(Entity, &mut PopulationCohort), With<ResidentBand>>,
     mut membership: ResMut<SupplyNetworkMembership>,
 ) {
     // Recomputed from scratch every turn; a 0/1-band map (early return below) leaves it empty.

@@ -10,7 +10,7 @@ use bevy::MinimalPlugins;
 use core_sim::{
     balance_supply_networks, scalar_zero, spawn_initial_world, CultureManager,
     DiscoveryProgressLedger, FactionId, FactionInventory, GenerationId, GenerationRegistry,
-    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, Scalar,
+    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
     SupplyNetworkConfigHandle, SupplyNetworkMembership, TileRegistry, FOOD,
@@ -66,28 +66,32 @@ fn spawn_band(app: &mut App, x: u32, y: u32, food: i64) -> Entity {
     let mut stores = LocalStore::new();
     stores.set(FOOD, Scalar::from_i64(food));
     app.world
-        .spawn(PopulationCohort {
-            home: tile,
-            current_tile: tile,
-            size: BAND_POP,
-            children: scalar_zero(),
-            working: Scalar::from_u32(BAND_POP),
-            elders: scalar_zero(),
-            stores,
-            morale: scalar_zero(),
-            last_morale_delta: scalar_zero(),
-            last_morale_cause: MoraleCause::None,
-            last_morale_contributions: Default::default(),
-            discontent_fraction: scalar_zero(),
-            grievance: scalar_zero(),
-            last_emigrated: 0,
-            last_immigrated: 0,
-            age_turns: 0,
-            generation: 0 as GenerationId,
-            faction: TEST_FACTION,
-            knowledge: Vec::new(),
-            migration: None,
-        })
+        .spawn((
+            PopulationCohort {
+                home: tile,
+                current_tile: tile,
+                size: BAND_POP,
+                children: scalar_zero(),
+                working: Scalar::from_u32(BAND_POP),
+                elders: scalar_zero(),
+                stores,
+                morale: scalar_zero(),
+                last_morale_delta: scalar_zero(),
+                last_morale_cause: MoraleCause::None,
+                last_morale_contributions: Default::default(),
+                discontent_fraction: scalar_zero(),
+                grievance: scalar_zero(),
+                last_emigrated: 0,
+                last_immigrated: 0,
+                age_turns: 0,
+                generation: 0 as GenerationId,
+                faction: TEST_FACTION,
+                knowledge: Vec::new(),
+                migration: None,
+            },
+            // Real bands carry `ResidentBand`; the supply network filters `With<ResidentBand>`.
+            ResidentBand,
+        ))
         .id()
 }
 

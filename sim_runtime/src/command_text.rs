@@ -176,6 +176,18 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "move_band <faction_id> <band> <x> <y>",
     },
     CommandVerbHelp {
+        verb: "send_expedition",
+        aliases: &[],
+        summary: "Outfit a detached scouting party (workers + provisions) and send it to a target.",
+        usage: "send_expedition <faction_id> <band> <party_workers> <x> <y>",
+    },
+    CommandVerbHelp {
+        verb: "recall_expedition",
+        aliases: &[],
+        summary: "Order an in-flight expedition home (folds workers + provisions back on arrival).",
+        usage: "recall_expedition <faction_id> <expedition_entity_bits>",
+    },
+    CommandVerbHelp {
         verb: "export_map",
         aliases: &["export"],
         summary: "Write the current world map (terrain + seed) to a JSON file for inspection and tests.",
@@ -819,6 +831,45 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 band_entity_bits: Some(parse_u64(band_str, "move_band band_entity_bits")?),
                 target_x: parse_u32(x_str, "move_band target_x")?,
                 target_y: parse_u32(y_str, "move_band target_y")?,
+            })
+        }
+        "send_expedition" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_entity_bits"))?;
+            let workers_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("party_workers"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            Ok(CommandPayload::SendExpedition {
+                faction_id: parse_u32(faction_str, "send_expedition faction")?,
+                band_entity_bits: Some(parse_u64(band_str, "send_expedition band_entity_bits")?),
+                party_workers: parse_u32(workers_str, "send_expedition party_workers")?,
+                target_x: parse_u32(x_str, "send_expedition target_x")?,
+                target_y: parse_u32(y_str, "send_expedition target_y")?,
+            })
+        }
+        "recall_expedition" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let expedition_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("expedition_entity_bits"))?;
+            Ok(CommandPayload::RecallExpedition {
+                faction_id: parse_u32(faction_str, "recall_expedition faction")?,
+                expedition_entity_bits: parse_u64(
+                    expedition_str,
+                    "recall_expedition expedition_entity_bits",
+                )?,
             })
         }
         "export" | "export_map" => {

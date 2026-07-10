@@ -33,9 +33,10 @@ use sim_runtime::{
 use crate::{
     components::{
         available_workers, fragments_from_contract, fragments_to_contract, BandTravel, ElementKind,
-        FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, LogisticsLink,
-        MoraleCause, MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort,
-        PowerNode, Tile, TradeLink, FOOD,
+        Expedition, ExpeditionMission, ExpeditionPhase, FollowPolicy, LaborAllocation,
+        LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause, MoraleContributions,
+        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ResidentBand, Tile,
+        TradeLink, FOOD,
     },
     culture::{
         CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
@@ -135,6 +136,7 @@ pub struct SnapshotContext<'w> {
     pub demographics: Res<'w, DemographicsConfigHandle>,
     pub wellbeing: Res<'w, crate::wellbeing_config::WellbeingConfigHandle>,
     pub labor: Res<'w, crate::labor_config::LaborConfigHandle>,
+    pub expedition: Res<'w, crate::expedition_config::ExpeditionConfigHandle>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
 }
@@ -1219,6 +1221,7 @@ type PopulationSnapshotQuery<'w, 's> = Query<
         &'static PopulationCohort,
         Option<&'static LaborAllocation>,
         Option<&'static BandTravel>,
+        Option<&'static Expedition>,
     ),
 >;
 
@@ -1269,6 +1272,7 @@ pub fn capture_snapshot(
         demographics,
         wellbeing,
         labor,
+        expedition,
         supply_membership,
         pipeline_config,
     } = ctx;
@@ -1331,9 +1335,14 @@ pub fn capture_snapshot(
     // Global labor config today (identical for every band); the work-range ring is surfaced
     // per-band so the client reads it off the selected band (future-proof if bands diverge).
     let band_work_range = labor_config.band_work_range;
+    // Server-side hard cap on an expedition party (`expedition_config.json`). Echoed per-cohort —
+    // same idiom as `band_work_range` — so the client's outfit stepper can pre-clamp to
+    // `min(idle_workers, max_expedition_party_size)` (the stepper lives on the resident-band panel,
+    // so it's populated for every cohort, not just expeditions).
+    let max_expedition_party_size = expedition.get().max_party_size;
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
-        .map(|(entity, cohort, allocation, travel)| {
+        .map(|(entity, cohort, allocation, travel, expedition)| {
             let home_pos = tile_positions.get(&cohort.home.to_bits()).copied();
             let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
             // A band is "traveling" while a `move_band` order is still en route to its target.
@@ -1352,6 +1361,7 @@ pub fn capture_snapshot(
                 entity,
                 cohort,
                 allocation,
+                expedition,
                 home_pos,
                 current_pos,
                 is_traveling,
@@ -1363,6 +1373,7 @@ pub fn capture_snapshot(
                 &supply_membership,
                 band_work_range,
                 scout_vantage_distance,
+                max_expedition_party_size,
             )
         })
         .collect();
@@ -1881,7 +1892,12 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         }
     }
 
-    // Rebuild population cohorts.
+    // Rebuild population cohorts. Track old→new cohort entity mapping so an expedition's
+    // `home_band` (stored as the OLD band's entity bits) can be resolved to the freshly-spawned
+    // band in a second pass (the home band may spawn after the expedition in the list).
+    let mut cohort_entity_lookup: HashMap<u64, Entity> =
+        HashMap::with_capacity(snapshot.populations.len());
+    let mut deferred_expeditions: Vec<(Entity, &PopulationCohortState)> = Vec::new();
     for cohort_state in &snapshot.populations {
         let Some(&home_entity) = tile_entity_lookup.get(&cohort_state.home) else {
             warn!(
@@ -1931,6 +1947,43 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         // Restore the labor allocation (rollback → exact per-source staffing). Every band carries
         // one; an empty vector rehydrates to a fully-idle band.
         spawned.insert(labor_allocation_from_state(&cohort_state.labor_assignments));
+        let new_entity = spawned.id();
+        cohort_entity_lookup.insert(cohort_state.entity, new_entity);
+        if cohort_state.is_expedition {
+            // Expedition markers are re-attached in the second pass (home band must exist first).
+            deferred_expeditions.push((new_entity, cohort_state));
+        } else {
+            // Positive `ResidentBand` marker — a real band participating in the population/settlement
+            // arc (demographics/migration/sedentarization/supply). Restored so the `With<ResidentBand>`
+            // systems keep running after a rollback.
+            spawned.insert(ResidentBand);
+        }
+    }
+
+    // Second pass: re-attach `Expedition` to rolled-back in-flight parties, resolving `home_band`
+    // from the OLD band's entity bits via the mapping above. A missing home band is logged and
+    // skipped (the party rehydrates as a bare cohort) rather than panicking.
+    for (entity, cohort_state) in deferred_expeditions {
+        let Some(&home_band) = cohort_entity_lookup.get(&cohort_state.home_band_entity) else {
+            warn!(
+                "Skipping expedition {} re-attach: home band {} not found in snapshot",
+                cohort_state.entity, cohort_state.home_band_entity
+            );
+            continue;
+        };
+        let pending_reveal = cohort_state
+            .pending_reveal_x
+            .iter()
+            .zip(cohort_state.pending_reveal_y.iter())
+            .map(|(&x, &y)| UVec2::new(x, y))
+            .collect();
+        world.entity_mut(entity).insert(Expedition {
+            home_band,
+            mission: ExpeditionMission::from_wire(&cohort_state.expedition_mission),
+            phase: ExpeditionPhase::from_wire(&cohort_state.expedition_phase),
+            announced: cohort_state.expedition_announced,
+            pending_reveal,
+        });
     }
 
     // Update tile registry.
@@ -3618,6 +3671,7 @@ fn population_state(
     entity: Entity,
     cohort: &PopulationCohort,
     allocation: Option<&LaborAllocation>,
+    expedition: Option<&Expedition>,
     home_position: Option<UVec2>,
     current_position: Option<UVec2>,
     is_traveling: bool,
@@ -3629,6 +3683,7 @@ fn population_state(
     supply_membership: &SupplyNetworkMembership,
     work_range: u32,
     scout_vantage_distance: u32,
+    max_expedition_party_size: u32,
 ) -> PopulationCohortState {
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let demand = food_demand(
@@ -3654,6 +3709,35 @@ fn population_state(
                 .collect()
         })
         .unwrap_or_default();
+    // Expedition discriminators + persistence fields (empty/false for a normal band).
+    let (
+        is_expedition,
+        expedition_mission,
+        expedition_phase,
+        home_band_entity,
+        expedition_announced,
+        pending_reveal_x,
+        pending_reveal_y,
+    ) = match expedition {
+        Some(exp) => (
+            true,
+            exp.mission.as_str().to_string(),
+            exp.phase.as_str().to_string(),
+            exp.home_band.to_bits(),
+            exp.announced,
+            exp.pending_reveal.iter().map(|p| p.x).collect(),
+            exp.pending_reveal.iter().map(|p| p.y).collect(),
+        ),
+        None => (
+            false,
+            String::new(),
+            String::new(),
+            0,
+            false,
+            Vec::new(),
+            Vec::new(),
+        ),
+    };
     PopulationCohortState {
         entity: entity.to_bits(),
         home: cohort.home.to_bits(),
@@ -3684,6 +3768,14 @@ fn population_state(
         // observer vantage ring is posted, `0` with no scouts), not the retired fog-pulse radius.
         // See the field doc in `sim_schema`.
         scout_reveal_radius: scout_vantage_distance,
+        is_expedition,
+        expedition_mission,
+        expedition_phase,
+        home_band_entity,
+        expedition_announced,
+        pending_reveal_x,
+        pending_reveal_y,
+        max_expedition_party_size,
         supply_network_id: supply_membership.network_of(entity),
         morale_delta: cohort.last_morale_delta.raw(),
         morale_cause: cohort.last_morale_cause.as_u8(),

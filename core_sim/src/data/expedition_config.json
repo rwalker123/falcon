@@ -1,0 +1,8 @@
+{
+  "max_party_size": 8,
+  "comm_range_tiles": 2,
+  "comm_range_tech_factor": 1.0,
+  "observe_sight_range": 6,
+  "provision_draw_per_worker_per_tile": 1.0,
+  "provision_upkeep_per_worker": 0.5
+}

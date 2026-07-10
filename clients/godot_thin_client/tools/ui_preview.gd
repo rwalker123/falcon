@@ -90,6 +90,35 @@ func _ready() -> void:
 	await _save("band_pending")
 	_hud._pending_labor = {}
 
+	# State 1e — a scouting expedition selected in its awaiting-orders phase: the drawer shows the
+	# dedicated expedition readout (Mission / Phase "Awaiting orders" / Party / Provisions) and the
+	# Recall + Move panel with the amber awaiting callout, instead of the labor-allocation UI.
+	_hud.show_unit_selection(_expedition_fixture())
+	await _settle()
+	await _save("expedition_panel")
+
+	# State 1f — the same expedition after Recall, now in its returning phase: the panel's button
+	# reads "Returning" (disabled) instead of a grayed-out "Recall", and the awaiting callout is
+	# gone. The drawer Phase row reads "Returning".
+	var returning_expedition := _expedition_fixture()
+	returning_expedition["expedition_phase"] = "returning"
+	_hud.show_unit_selection(returning_expedition)
+	await _settle()
+	await _save("expedition_returning")
+
+	# State 1g — outfit party cap: a resident band with 16 idle workers but a server party cap of 8.
+	# The "Send scouting expedition" Party stepper maxes at min(idle 16, cap 8) = 8 — dialed to 8, the
+	# + is disabled, confirming the stepper clamps to the CAP, not to idle.
+	var cap_band := _band_fixture()
+	cap_band["idle_workers"] = 16
+	cap_band["max_expedition_party_size"] = 8
+	cap_band["labor_assignments"] = []   # all 16 working-age workers read idle
+	_hud._send_expedition_count = 8
+	_hud.show_unit_selection(cap_band)
+	await _settle()
+	await _save("expedition_outfit_cap")
+	_hud._send_expedition_count = 1   # reset so later states render a fresh party stepper
+
 	# State 1a — a well-fed but demoralized band: healthy food (∞) yet morale 0.22
 	# (< critical), so the drawer's Morale line reads a red 22%. Discontent drags
 	# Output to 56% (red) and the itemized morale breakdown + recovery guidance show.
@@ -250,6 +279,9 @@ func _band_fixture() -> Dictionary:
 		# Forage tile, a Hunt herd, and the Scout + Warrior band-wide roles.
 		"working_age": 16,
 		"idle_workers": 3,
+		# Server's hard party-size cap (expedition config, default 8) — the outfit stepper maxes at
+		# min(idle, this).
+		"max_expedition_party_size": 8,
 		"work_range": 2,
 		"scout_reveal_radius": 2,
 		"activity": "forage",
@@ -263,6 +295,31 @@ func _band_fixture() -> Dictionary:
 			"x": 71, "y": 18,
 			"terrain_label": "Freshwater Marsh",
 			"tags_text": "Freshwater, Wetland",
+			"visibility_state": "active",
+			"food_module": "",
+			"food_module_label": "None",
+		},
+	}
+
+## A scouting expedition (docs/plan_exploration_and_sites.md §2) in its awaiting-orders phase:
+## a detached party (is_expedition) carrying a mission/phase + party size + provisions. The drawer
+## renders the dedicated expedition readout + Recall/Move panel, not the labor-allocation UI.
+func _expedition_fixture() -> Dictionary:
+	return {
+		"id": "Scouts 1",
+		"size": 6,
+		"entity": 7001,
+		"faction": 0,
+		"pos": [80, 30],
+		"days_of_food": 9.0,
+		"stores": {"provisions": 48.0},
+		"is_expedition": true,
+		"expedition_mission": "scout",
+		"expedition_phase": "awaiting",
+		"tile_info": {
+			"x": 80, "y": 30,
+			"terrain_label": "Highland Tundra",
+			"tags_text": "Cold, Exposed",
 			"visibility_state": "active",
 			"food_module": "",
 			"food_module_label": "None",

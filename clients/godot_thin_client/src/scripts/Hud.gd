@@ -16,6 +16,13 @@ signal assign_labor_requested(payload: Dictionary)
 ## Emitted after the player picks a destination tile for the selected band's move.
 ## Payload keys: { faction, band, x, y }. Main formats the `move_band …` command.
 signal move_band_requested(payload: Dictionary)
+## Scouting expedition (docs/plan_exploration_and_sites.md §2). Sent after the player outfits a
+## party on a resident band (a party-size stepper) and clicks a target tile. Payload keys:
+## { faction, band, party_workers, x, y }. Main formats the `send_expedition …` command.
+signal send_expedition_requested(payload: Dictionary)
+## Emitted when the player recalls the selected in-flight expedition (folds it home). Payload
+## keys: { faction, expedition }. Main formats the `recall_expedition …` command.
+signal recall_expedition_requested(payload: Dictionary)
 ## Optimistic pending-labor state changed (Early-Game Labor slice 3b UX): carries the
 ## per-band pending map so MapView can draw the pending-action hex highlights. Main forwards
 ## it to `MapView.set_labor_pending`.
@@ -38,7 +45,7 @@ signal roster_occupant_selected(kind: String, id: Variant)
 ## changes.** Shown in the lower-left version overlay next to the server build (streamed
 ## in the snapshot header) so the running client+server builds can be confirmed at a
 ## glance. Format: `YYYY-MM-DD.N`.
-const CLIENT_BUILD := "2026-07-09.2"
+const CLIENT_BUILD := "2026-07-10.1"
 var _build_label: Label = null
 var _server_build: String = "?"
 
@@ -255,6 +262,25 @@ const ALLOC_HEADER_ROLES := "Band roles"
 const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd to assign foragers/hunters."
 const SCOUT_ROLE_HINT := "Posts scouts that see around obstacles — more scouts range farther. Staff with −/+."
 const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
+# Scouting expedition (docs/plan_exploration_and_sites.md §2). A detached party is a cohort
+# tagged Expedition flowing through the same populations[] array as a band; it carries no labor
+# in v1, so its drawer shows a dedicated mission/phase/party/provisions readout + Recall/Move
+# instead of the labor-allocation panel. The outfit affordance (party stepper + send) lives on a
+# resident band's allocation panel.
+const EXPEDITION_MISSION_SCOUT := "scout"
+const EXPEDITION_PHASE_AWAITING := "awaiting"
+const EXPEDITION_PHASE_RETURNING := "returning"
+const EXPEDITION_MISSION_LABELS := {
+	"scout": "Scouting expedition",
+}
+const EXPEDITION_PHASE_LABELS := {
+	"outbound": "Outbound",
+	"awaiting": "Awaiting orders",
+	"returning": "Returning",
+}
+const SEND_EXPEDITION_TITLE := "Send scouting expedition"
+const SEND_EXPEDITION_HINT := "Detach a party to scout distant territory, then click a target tile."
+const SEND_EXPEDITION_BUTTON := "Send scouting expedition…"
 # Suffix marking an optimistic (not-yet-confirmed) allocation row, tinted amber to tie it to
 # the amber pending hex on the map.
 const PENDING_ROW_SUFFIX := "  · pending"
@@ -281,6 +307,12 @@ var _pending_labor: Dictionary = {}
 # Move-band targeting: the pending band-relocation tile pick. {} when inactive. Holds the
 # band dict whose move is being targeted.
 var _pending_move_band: Dictionary = {}
+# Send-expedition targeting: the pending expedition-launch tile pick. {} when inactive. Holds the
+# resident band being outfitted plus the chosen party size (mirrors `_pending_move_band`).
+var _pending_send_expedition: Dictionary = {}
+# Compose state for the send-expedition party stepper (workers to detach), preserved across the
+# resident band's per-snapshot allocation-panel re-renders.
+var _send_expedition_count: int = WORKER_STEP
 # Compose state for the herd/tile "Assign" controls — the in-progress worker count (and, for
 # hunts, the policy) the player is dialing before pressing Assign. Keyed to the source so a
 # per-snapshot re-render preserves the count, but re-initializes from current staffing when
@@ -437,6 +469,21 @@ func _current_targeting_info() -> Dictionary:
             "origin_y": oy,
             "context_label": String(_pending_move_band.get("id", "Band")),
         }
+    if not _pending_send_expedition.is_empty():
+        var band: Dictionary = _pending_send_expedition.get("band", {})
+        var pos: Array = Array(band.get("pos", []))
+        var ox := int(pos[0]) if pos.size() == 2 else int(band.get("current_x", -1))
+        var oy := int(pos[1]) if pos.size() == 2 else int(band.get("current_y", -1))
+        return {
+            "active": true,
+            "command": "expedition",
+            "need": "tile",
+            "origin_x": ox,
+            "origin_y": oy,
+            "context_label": "%s · %d" % [
+                String(band.get("id", "Band")), int(_pending_send_expedition.get("party_workers", 0)),
+            ],
+        }
     return {}
 
 func _targeting_banner_bbcode(info: Dictionary) -> String:
@@ -453,6 +500,8 @@ func _targeting_banner_bbcode(info: Dictionary) -> String:
         instruction = "click a band to send it here"
     elif cmd == "MOVE":
         instruction = "click a destination tile"
+    elif cmd == "EXPEDITION":
+        instruction = "click a target tile to scout"
     else:
         instruction = "click a tile to survey"
     return "[color=#%s]%s[/color]  [color=#%s]%s[/color]%s   [color=#%s]— %s[/color]" % [
@@ -462,6 +511,7 @@ func _targeting_banner_bbcode(info: Dictionary) -> String:
 ## Cancel the active targeting (banner Cancel / Esc / right-click all route here).
 func cancel_active_targeting() -> void:
     _cancel_pending_move_band()
+    _cancel_pending_send_expedition()
 
 ## Lower-left version overlay showing the client build and the streamed server build,
 ## so the running builds can be confirmed at a glance. Mouse-transparent so it never
@@ -1110,6 +1160,84 @@ func _build_allocation_panel(band: Dictionary) -> void:
     clear_btn.pressed.connect(_on_clear_all_pressed.bind(band))
     actions.add_child(clear_btn)
     allocation_panel.add_child(actions)
+    # Outfit affordance: detach a party from this band's idle workers as a scouting expedition.
+    _build_send_expedition_controls(band, idle)
+
+## Outfit affordance on a resident band's allocation panel (docs/plan_exploration_and_sites.md §2):
+## a party-size stepper (1..idle) + a "Send scouting expedition" button that enters tile-targeting;
+## the target click emits `send_expedition_requested`. Hidden when the band has no idle workers to
+## spare. The server enforces the hard max party-size cap and rejects an over-cap request with a
+## feed message — clamping to idle is sufficient here.
+func _build_send_expedition_controls(band: Dictionary, idle: int) -> void:
+    if allocation_panel == null or idle <= 0:
+        return
+    allocation_panel.add_child(_alloc_section_label(SEND_EXPEDITION_TITLE))
+    # The party max is the smaller of the band's idle workers and the server's hard party-size cap
+    # (from the expedition config). Guard defensively: a missing/0 cap (older server, or the field
+    # absent) falls back to idle so the stepper is never clamped to 0.
+    var cap := int(band.get("max_expedition_party_size", 0))
+    var party_max: int = mini(idle, cap) if cap > 0 else idle
+    # Clamp the persisted party size into 1..party_max (both can shrink between renders).
+    _send_expedition_count = clampi(_send_expedition_count, WORKER_STEP, party_max)
+    allocation_panel.add_child(_build_worker_stepper(
+        "Party", _send_expedition_count, _send_expedition_count < party_max,
+        func(n: int) -> void:
+            _send_expedition_count = clampi(n, WORKER_STEP, party_max)
+            _build_allocation_panel(band)))
+    var send_btn := Button.new()
+    send_btn.text = SEND_EXPEDITION_BUTTON
+    HudStyle.apply_button(send_btn, "primary")
+    send_btn.tooltip_text = SEND_EXPEDITION_HINT
+    send_btn.pressed.connect(func() -> void: _on_send_expedition_pressed(band, _send_expedition_count))
+    allocation_panel.add_child(send_btn)
+
+## The dedicated panel for a selected in-flight expedition (no labor in v1): an awaiting-orders
+## callout (echoing the pulsing map ring) plus Move (retarget via move_band on the expedition
+## entity) and Recall. Reuses the allocation-panel host; player expeditions only.
+func _build_expedition_panel(expedition: Dictionary) -> void:
+    if allocation_panel == null:
+        return
+    for child in allocation_panel.get_children():
+        child.queue_free()
+    var is_player := not expedition.is_empty() and _is_player_unit(expedition)
+    allocation_panel.visible = is_player
+    if not is_player:
+        return
+    var phase := String(expedition.get("expedition_phase", "")).strip_edges().to_lower()
+    if phase == EXPEDITION_PHASE_AWAITING:
+        var callout := _alloc_hint_label("Reached its objective — Recall it home, or Move it onward.")
+        callout.add_theme_color_override("font_color", HudStyle.WARN)
+        allocation_panel.add_child(callout)
+    var actions := HBoxContainer.new()
+    actions.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    var move_btn := Button.new()
+    move_btn.text = "Move"
+    HudStyle.apply_button(move_btn, "ghost")
+    move_btn.tooltip_text = "Send the expedition onward, then click a target tile."
+    move_btn.pressed.connect(_on_move_band_pressed)
+    actions.add_child(move_btn)
+    # Already homeward-bound: the button reads its state ("Returning", disabled) rather than a
+    # mysterious grayed-out "Recall". Otherwise it's an enabled "Recall" that folds the party home.
+    var returning := phase == EXPEDITION_PHASE_RETURNING
+    var recall_btn := Button.new()
+    recall_btn.text = "Returning" if returning else "Recall"
+    HudStyle.apply_button(recall_btn, "primary")
+    recall_btn.tooltip_text = "Heading home — folds workers + provisions back on arrival." if returning \
+        else "Order the expedition home (folds workers + provisions back on arrival)."
+    recall_btn.disabled = returning
+    recall_btn.pressed.connect(_on_recall_expedition_pressed.bind(expedition))
+    actions.add_child(recall_btn)
+    allocation_panel.add_child(actions)
+
+## Recall the selected in-flight expedition (folds it home). Emits recall_expedition_requested;
+## Main formats the `recall_expedition …` command.
+func _on_recall_expedition_pressed(expedition: Dictionary) -> void:
+    if expedition.is_empty():
+        return
+    emit_signal("recall_expedition_requested", {
+        "faction": int(expedition.get("faction", PLAYER_FACTION_ID)),
+        "expedition": int(expedition.get("entity", -1)),
+    })
 
 ## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown
 ## only for a huntable herd while a player band exists to staff it.
@@ -1276,6 +1404,38 @@ func _try_dispatch_pending_move_band(tile_info: Dictionary) -> void:
     _record_pending_move(bits, x, y)
     _after_pending_change()
 
+## Send-expedition: outfit `band` with `party_workers` and enter tile-targeting; the next tile
+## click emits send_expedition_requested. Mirrors the move-band pending flow.
+func _on_send_expedition_pressed(band: Dictionary, party_workers: int) -> void:
+    if band.is_empty() or party_workers <= 0:
+        return
+    _pending_send_expedition = {"band": band.duplicate(true), "party_workers": party_workers}
+    _refresh_targeting()
+
+func _cancel_pending_send_expedition() -> void:
+    if _pending_send_expedition.is_empty():
+        return
+    _pending_send_expedition = {}
+    _refresh_targeting()
+
+func _try_dispatch_pending_send_expedition(tile_info: Dictionary) -> void:
+    if _pending_send_expedition.is_empty() or tile_info.is_empty():
+        return
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
+    if x < 0 or y < 0:
+        return
+    var band: Dictionary = _pending_send_expedition.get("band", {})
+    emit_signal("send_expedition_requested", {
+        "faction": int(band.get("faction", PLAYER_FACTION_ID)),
+        "band": int(band.get("entity", -1)),
+        "party_workers": int(_pending_send_expedition.get("party_workers", 0)),
+        "x": x,
+        "y": y,
+    })
+    _pending_send_expedition = {}
+    _refresh_targeting()
+
 ## Clear-all: return every worker to idle (repurposed cancel_order).
 func _on_clear_all_pressed(band: Dictionary) -> void:
     if band.is_empty():
@@ -1426,11 +1586,13 @@ func show_tile_selection(tile_info: Dictionary) -> void:
     _selected_food_module = String(_selected_tile_info.get("food_module", "")).strip_edges()
     _render_selection_panel(_selected_tile_info, {}, {})
     _try_dispatch_pending_move_band(_selected_tile_info)
+    _try_dispatch_pending_send_expedition(_selected_tile_info)
 
 func notify_hex_selected(tile_info: Dictionary) -> void:
     if tile_info.is_empty():
         return
     _try_dispatch_pending_move_band(tile_info)
+    _try_dispatch_pending_send_expedition(tile_info)
 
 func show_unit_selection(unit_data: Dictionary) -> void:
     var tile_info: Dictionary = {}
@@ -1842,9 +2004,11 @@ func _render_occupant_drawer() -> void:
     occupant_detail.text = _format_detail_bbcode(lines)
     var is_band := not _selected_unit.is_empty()
     var is_herd := not _selected_herd.is_empty()
-    # Band → labor allocation panel (player bands only); herd → assign-hunters controls.
-    # The two are mutually exclusive with the current occupant selection.
-    if is_band and _is_player_unit(_selected_unit):
+    # Expedition → dedicated Recall/Move panel (no labor in v1); player band → labor allocation
+    # panel; herd → assign-hunters controls. All mutually exclusive with the current selection.
+    if is_band and bool(_selected_unit.get("is_expedition", false)):
+        _build_expedition_panel(_selected_unit)
+    elif is_band and _is_player_unit(_selected_unit):
         _build_allocation_panel(_selected_unit)
     elif allocation_panel != null:
         allocation_panel.visible = false
@@ -1858,6 +2022,8 @@ func _is_player_unit(unit: Dictionary) -> bool:
     return int(unit.get("faction", PLAYER_FACTION_ID)) == PLAYER_FACTION_ID
 
 func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
+    if bool(unit_data.get("is_expedition", false)):
+        return _expedition_summary_lines(unit_data)
     var lines: Array[String] = []
     var label := String(unit_data.get("id", "Band"))
     lines.append("Unit: %s" % label)
@@ -1889,6 +2055,46 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
             lines.append("")
             lines.append_array(stockpile_lines)
     return lines
+
+## Drawer readout for a selected scouting expedition (docs/plan_exploration_and_sites.md §2):
+## mission, humanized phase, party size, and provisions (from daysOfFood). Expeditions have no
+## labor in v1, so this replaces the band's labor/morale rows entirely.
+func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    lines.append("Unit: %s" % String(unit_data.get("id", "Expedition")))
+    lines.append("Mission: %s" % _expedition_mission_label(String(unit_data.get("expedition_mission", ""))))
+    var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
+    if phase != "":
+        lines.append("Phase: %s" % _expedition_phase_label(phase))
+    lines.append("Party: %d" % int(unit_data.get("size", 0)))
+    # Provisions carried (larder-drawn), days from daysOfFood — reuse the food-days tint context
+    # (`_selected_band_food_days`, read back in `_format_detail_bbcode`).
+    var days: float = float(unit_data.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
+    _selected_band_food_days = days
+    var provisions := 0
+    var stores_variant: Variant = unit_data.get("stores", {})
+    if stores_variant is Dictionary:
+        provisions = int(round(float((stores_variant as Dictionary).get(STORE_ITEM_PROVISIONS, 0.0))))
+    lines.append("Provisions: %d  (%s)" % [provisions, _food_days_text(days)])
+    var pos_array: Array = Array(unit_data.get("pos", []))
+    if pos_array.size() == 2:
+        lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
+    return lines
+
+## Humanize an expedition mission id ("scout" → "Scouting expedition"); falls back to a
+## capitalized token for an unknown/future mission (e.g. PR 2's "hunt").
+func _expedition_mission_label(mission: String) -> String:
+    var key := mission.strip_edges().to_lower()
+    if EXPEDITION_MISSION_LABELS.has(key):
+        return EXPEDITION_MISSION_LABELS[key]
+    return key.capitalize() if key != "" else "Expedition"
+
+## Humanize an expedition phase id ("awaiting" → "Awaiting orders").
+func _expedition_phase_label(phase: String) -> String:
+    var key := phase.strip_edges().to_lower()
+    if EXPEDITION_PHASE_LABELS.has(key):
+        return EXPEDITION_PHASE_LABELS[key]
+    return key.capitalize()
 
 ## Selection-panel band food row: "Food  <provisions>  (<days>)" — provisions from
 ## the band's larder stores, days from `days_of_food` (∞ when not food-limited).
@@ -2201,8 +2407,8 @@ func _format_detail_bbcode(lines: Array) -> String:
                 out += "[table=2]"
                 table_open = true
             var value_hex := HudStyle.INK_HEX
-            if String(kv[0]) == "Food":
-                # The band larder row (drawer) tints by the food-days thresholds;
+            if String(kv[0]) == "Food" or String(kv[0]) == "Provisions":
+                # The band larder / expedition provisions row tints by the food-days thresholds;
                 # its value carries a day count or the ∞ glyph.
                 var food_value := String(kv[1])
                 if not is_nan(_selected_band_food_days) and (food_value.contains("day") or food_value.contains(FOOD_UNLIMITED_GLYPH)):

@@ -164,6 +164,17 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
     },
+    SendExpedition {
+        faction_id: u32,
+        band_entity_bits: Option<u64>,
+        party_workers: u32,
+        target_x: u32,
+        target_y: u32,
+    },
+    RecallExpedition {
+        faction_id: u32,
+        expedition_entity_bits: u64,
+    },
     ExportMap {
         path: Option<String>,
     },
@@ -514,6 +525,26 @@ impl CommandEnvelope {
                 target_x: *target_x,
                 target_y: *target_y,
             }),
+            CommandPayload::SendExpedition {
+                faction_id,
+                band_entity_bits,
+                party_workers,
+                target_x,
+                target_y,
+            } => pb::command_envelope::Command::SendExpedition(pb::SendExpeditionCommand {
+                faction_id: *faction_id,
+                band_entity_bits: *band_entity_bits,
+                party_workers: *party_workers,
+                target_x: *target_x,
+                target_y: *target_y,
+            }),
+            CommandPayload::RecallExpedition {
+                faction_id,
+                expedition_entity_bits,
+            } => pb::command_envelope::Command::RecallExpedition(pb::RecallExpeditionCommand {
+                faction_id: *faction_id,
+                expedition_entity_bits: *expedition_entity_bits,
+            }),
             CommandPayload::ExportMap { path } => {
                 pb::command_envelope::Command::ExportMap(pb::ExportMapCommand {
                     path: path.clone(),
@@ -748,6 +779,19 @@ impl CommandEnvelope {
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
             },
+            pb::command_envelope::Command::SendExpedition(cmd) => CommandPayload::SendExpedition {
+                faction_id: cmd.faction_id,
+                band_entity_bits: cmd.band_entity_bits,
+                party_workers: cmd.party_workers,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+            },
+            pb::command_envelope::Command::RecallExpedition(cmd) => {
+                CommandPayload::RecallExpedition {
+                    faction_id: cmd.faction_id,
+                    expedition_entity_bits: cmd.expedition_entity_bits,
+                }
+            }
             pb::command_envelope::Command::ExportMap(cmd) => {
                 CommandPayload::ExportMap { path: cmd.path }
             }

@@ -1015,6 +1015,10 @@ pub enum CommandEventKind {
     CancelOrder,
     SedentarizationPrompt,
     SiteDiscovered,
+    ExpeditionSent,
+    ExpeditionArrived,
+    ExpeditionRecalled,
+    ExpeditionReturned,
 }
 
 impl CommandEventKind {
@@ -1032,6 +1036,10 @@ impl CommandEventKind {
             CommandEventKind::CancelOrder => "cancel_order",
             CommandEventKind::SedentarizationPrompt => "sedentarization_prompt",
             CommandEventKind::SiteDiscovered => "site_discovered",
+            CommandEventKind::ExpeditionSent => "expedition_sent",
+            CommandEventKind::ExpeditionArrived => "expedition_arrived",
+            CommandEventKind::ExpeditionRecalled => "expedition_recalled",
+            CommandEventKind::ExpeditionReturned => "expedition_returned",
         }
     }
 }

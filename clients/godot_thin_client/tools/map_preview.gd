@@ -86,6 +86,17 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_sites_fogged")
 
+	# State F — scouting expeditions (docs/plan_exploration_and_sites.md §2): alongside the
+	# resident band (solid faction dot, unchanged) two detached parties render as hollow
+	# flag discs — one Outbound, one Awaiting-orders (pulsing amber ring). Verifies the distinct
+	# marker + idle indicator without disturbing resident-band rendering.
+	_map.set_fow_enabled(false)
+	_map.display_snapshot(_snapshot_expeditions())
+	_map.selected_unit_id = -1
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_expeditions")
+
 	get_tree().quit()
 
 func _settle() -> void:
@@ -165,6 +176,29 @@ func _sites_state() -> Array:
 func _snapshot_sites() -> Dictionary:
 	var snap := _base_snapshot(_band([], 2, 2), [_deer_herd()])
 	snap["discovered_sites"] = _sites_state()
+	return snap
+
+## A detached scouting party (docs/plan_exploration_and_sites.md §2): a cohort tagged Expedition
+## flowing through the same populations[] array as a band. `awaiting` drives the pulsing idle ring.
+func _expedition(entity: int, x: int, y: int, phase: String) -> Dictionary:
+	return {
+		"entity": entity,
+		"faction": 0,
+		"current_x": x,
+		"current_y": y,
+		"size": 6,
+		"id": "Scouts",
+		"is_expedition": true,
+		"expedition_mission": "scout",
+		"expedition_phase": phase,
+		"is_traveling": phase != "awaiting",
+	}
+
+func _snapshot_expeditions() -> Dictionary:
+	var snap := _base_snapshot(_band([], 2, 2), [])
+	# Two expeditions alongside the resident band: one outbound, one awaiting (pulsing ring).
+	snap["populations"].append(_expedition(9101, 11, 3, "outbound"))
+	snap["populations"].append(_expedition(9102, 5, 9, "awaiting"))
 	return snap
 
 func _snapshot_sites_fogged() -> Dictionary:

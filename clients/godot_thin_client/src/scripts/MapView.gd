@@ -87,6 +87,25 @@ const BAND_ACTIVITY_COLORS := {
 }
 const BAND_ACTIVITY_DEFAULT_COLOR := Color(0.70, 0.70, 0.70, BAND_ACTIVITY_RING_ALPHA)
 const BAND_ACTIVITY_IDLE := "idle"
+
+# --- Scouting-expedition marker (docs/plan_exploration_and_sites.md §2) ---
+# A detached party reads as a hollow, flag-marked disc — deliberately distinct from a resident
+# band's SOLID faction dot, so an expedition says "party out on a venture, not a settlement-band"
+# at a glance. Sized relative to the band marker radius so it scales with zoom.
+const EXPEDITION_GLYPH := "⚑"                    # flag motif = a venture staked out on the map
+const EXPEDITION_DISC_ALPHA := 0.55              # dark backing disc (glyph legibility over terrain)
+const EXPEDITION_RING_FACTOR := 1.02             # faction-tinted outer ring radius, of marker radius
+const EXPEDITION_RING_WIDTH := 3.0
+const EXPEDITION_GLYPH_SIZE_FACTOR := 1.15       # glyph size, of marker radius
+const EXPEDITION_GLYPH_COLOR := Color(0.96, 0.97, 0.92, 1.0)
+# Awaiting-orders idle indicator: a pulsing amber (WARN) ring signalling the party has reached its
+# objective and needs a command. `expeditionPhase == "awaiting"` drives it; the pulse is animated
+# from `_expedition_time` in _process.
+const EXPEDITION_PHASE_AWAITING := "awaiting"
+const EXPEDITION_AWAITING_RING_FACTOR := 1.35    # pulsing ring base radius, of marker radius
+const EXPEDITION_AWAITING_PULSE_AMPLITUDE := 0.22
+const EXPEDITION_AWAITING_PULSE_SPEED := 3.2
+const EXPEDITION_AWAITING_RING_WIDTH := 2.5
 # Selected-player-band labor highlights (Early-Game Labor slice 3b). Distinct styles so
 # the layers read apart: the work-range reach (thin cyan outlines = "reachable"), the worked
 # forage tiles (strong green fill = "being worked"), and the hunted herds (red ring + link).
@@ -317,6 +336,10 @@ var selected_tile: Vector2i = Vector2i(-1, -1)
 # Keys: active(bool), need("band"|"tile"), command(String), origin_x/origin_y(int).
 var _targeting: Dictionary = {}
 var _targeting_time: float = 0.0
+# Animates the awaiting-orders pulse on expedition markers. Advanced (and a redraw requested)
+# only while at least one expedition is in the "awaiting" phase, tracked at marker-rebuild time.
+var _expedition_time: float = 0.0
+var _has_awaiting_expedition: bool = false
 
 var last_hex_radius: float = 48.0
 var last_origin: Vector2 = Vector2.ZERO
@@ -1314,13 +1337,18 @@ func _draw_unit(unit: Dictionary, radius: float, origin: Vector2) -> void:
 	var center: Vector2 = _hex_center_wrapped(int(position[0]), int(position[1]), radius, origin)
 	var marker_radius: float = radius * 0.45
 	var color: Color = faction_colors.get(unit.get("faction", ""), Color(0.9, 0.9, 0.9, 1.0))
-	draw_circle(center, marker_radius, color)
-	draw_arc(center, marker_radius, 0, TAU, 12, Color(0, 0, 0, 0.4), 2.5)
 
-	# Band food + activity indicators (player bands only — other factions' larders
-	# and orders aren't ours to see).
-	if _is_player_unit(unit):
-		_draw_band_status(unit, center, marker_radius)
+	if bool(unit.get("is_expedition", false)):
+		# A detached scouting party — distinct hollow flag disc + awaiting-orders pulse.
+		_draw_expedition_body(unit, center, marker_radius, color)
+	else:
+		draw_circle(center, marker_radius, color)
+		draw_arc(center, marker_radius, 0, TAU, 12, Color(0, 0, 0, 0.4), 2.5)
+
+		# Band food + activity indicators (player bands only — other factions' larders
+		# and orders aren't ours to see).
+		if _is_player_unit(unit):
+			_draw_band_status(unit, center, marker_radius)
 
 	var label: String = str(unit.get("id", ""))
 	if label != "":
@@ -1345,6 +1373,30 @@ func _draw_unit(unit: Dictionary, radius: float, origin: Vector2) -> void:
 	if int(unit.get("entity", -1)) == selected_unit_id:
 		var highlight_color := Color(1.0, 1.0, 1.0, 0.9)
 		draw_arc(center, marker_radius + 4.0, 0, TAU, 24, highlight_color, 3.0)
+
+## Draw a scouting expedition's map body (docs/plan_exploration_and_sites.md §2): a hollow,
+## faction-tinted flag disc — visually distinct from a resident band's solid dot — plus, when the
+## party is idle-at-objective (`expedition_phase == "awaiting"`), a pulsing amber ring signalling
+## it needs an order. The shared label / travel arrow / selection ring stay in `_draw_unit`.
+func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: float, color: Color) -> void:
+	# Dark backing disc keeps the glyph legible over any terrain (mirrors the site/herd markers).
+	draw_circle(center, marker_radius, Color(0.04, 0.06, 0.07, EXPEDITION_DISC_ALPHA))
+	# Hollow faction ring — no solid fill, so it never reads as a resident band's dot.
+	draw_arc(center, marker_radius * EXPEDITION_RING_FACTOR, 0, TAU, 24, color, EXPEDITION_RING_WIDTH)
+	# Flag glyph at the center.
+	var font: Font = ThemeDB.fallback_font
+	if font != null:
+		var glyph_size: int = int(maxf(12.0, marker_radius * EXPEDITION_GLYPH_SIZE_FACTOR * 2.0))
+		var text_size: Vector2 = font.get_string_size(EXPEDITION_GLYPH, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size)
+		var pos := Vector2(center.x - text_size.x * 0.5, center.y + glyph_size * 0.34)
+		draw_string(font, pos, EXPEDITION_GLYPH, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size, EXPEDITION_GLYPH_COLOR)
+
+	# Awaiting-orders idle indicator: a pulsing amber ring (needs a command).
+	if String(unit.get("expedition_phase", "")) == EXPEDITION_PHASE_AWAITING:
+		var pulse: float = 0.5 + 0.5 * sin(_expedition_time * EXPEDITION_AWAITING_PULSE_SPEED)
+		var ring_radius: float = marker_radius * (EXPEDITION_AWAITING_RING_FACTOR + EXPEDITION_AWAITING_PULSE_AMPLITUDE * pulse)
+		var ring_color := Color(HudStyle.WARN.r, HudStyle.WARN.g, HudStyle.WARN.b, 0.45 + 0.4 * pulse)
+		draw_arc(center, ring_radius, 0, TAU, 28, ring_color, EXPEDITION_AWAITING_RING_WIDTH)
 
 ## Faint links between the player's bands that share a supply network (bands
 ## auto-share goods by reach, grouped server-side by `supply_network_id`). Drawn
@@ -1906,6 +1958,7 @@ func _terrain_id_at(x: int, y: int) -> int:
 
 func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 	units = []
+	_has_awaiting_expedition = false
 	var population_variant: Variant = snapshot.get("populations", [])
 	if not (population_variant is Array):
 		return
@@ -1974,6 +2027,17 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"scout_reveal_radius": int(entry.get("scout_reveal_radius", 0)),
 			"working_age": int(entry.get("working_age", 0)),
 			"idle_workers": int(entry.get("idle_workers", 0)),
+			# Scouting expedition (docs/plan_exploration_and_sites.md §2): a detached party is a
+			# cohort tagged Expedition flowing through this same populations[] array. These three
+			# discriminator fields drive the distinct expedition marker (_draw_unit), its
+			# awaiting-orders idle indicator, and the HUD expedition panel. Default false/"" so
+			# resident-band markers are unaffected.
+			"is_expedition": bool(entry.get("is_expedition", false)),
+			"expedition_mission": String(entry.get("expedition_mission", "")),
+			"expedition_phase": String(entry.get("expedition_phase", "")),
+			# Hard party-size cap (from the expedition config); the resident-band outfit stepper
+			# clamps its max to min(idle_workers, this).
+			"max_expedition_party_size": int(entry.get("max_expedition_party_size", 0)),
 			"labor_assignments": (entry.get("labor_assignments", []) as Array).duplicate(true) if entry.get("labor_assignments", []) is Array else [],
 		}
 		var stores_variant: Variant = entry.get("stores", {})
@@ -1999,6 +2063,9 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 		var stockpile_variant: Variant = entry.get("accessible_stockpile", {})
 		if stockpile_variant is Dictionary:
 			marker["accessible_stockpile"] = (stockpile_variant as Dictionary).duplicate(true)
+		if bool(marker.get("is_expedition", false)) \
+				and String(marker.get("expedition_phase", "")) == EXPEDITION_PHASE_AWAITING:
+			_has_awaiting_expedition = true
 		units.append(marker)
 		counter += 1
 
@@ -3208,6 +3275,10 @@ func _process(delta: float) -> void:
 	# being targeted.
 	if _targeting.get("active", false):
 		_targeting_time += delta
+		queue_redraw()
+	# Animate the awaiting-orders pulse on any expedition idle at its objective.
+	if _has_awaiting_expedition:
+		_expedition_time += delta
 		queue_redraw()
 
 ## Mirror the HUD's pending command-targeting state so the map can draw the

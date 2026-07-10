@@ -46,6 +46,7 @@ cargo run -p core_sim --bin server
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
 | `src/data/sites_config.json` | Wondrous Sites catalog (`catalog`: per-`site_id` `category`/`display_name`/`glyph`/`placement_rule`/`discovery_reward.morale_bonus`) + `placement` rules (per-rule `max_sites`, `min_spacing`, and the union of rule inputs: `min_relief`, `max_habitability_pressure`, `min_food_weight`). Loader `sites_config.rs`, env override `SITES_CONFIG_PATH`. Not wired into the `reload_config` hot-reload path (mirrors `fauna_config.json`) |
+| `src/data/expedition_config.json` | Scouting-expedition tuning: `max_party_size`, `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this). Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`) |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -347,6 +348,78 @@ catalog), mirroring `SedentarizationState`. Wire shape:
 `discoveredSites:[DiscoveredSitesState{ faction:uint, sites:[DiscoveredSite{ x, y, site_id,
 category, display_name, glyph }] }]` on both `WorldSnapshot` and `WorldDelta` (`snapshot.fbs`,
 `sim_schema`). See "Visibility Systems" for the discovery hook in the turn flow.
+
+---
+
+## Scouting Expeditions
+
+A **detached traveling party** a faction outfits and drives out to explore, then folds back. v1 =
+sim + snapshot producer (client marker/outfit/recall UI is a separate slice). Authoritative design:
+`docs/plan_exploration_and_sites.md` §2 + "Implementation model (expeditions)". Config
+`src/data/expedition_config.json`, loader `expedition_config.rs` (`EXPEDITION_CONFIG_PATH` override,
+not on the hot-reload path).
+
+**An expedition is another `StartingUnit` band.** It reuses `PopulationCohort` + `BandTravel` /
+`advance_band_movement` + `LaborAllocation` + `StartingUnit`, tagged with the `Expedition` component
+(`components.rs`: `home_band`, `mission: ExpeditionMission::Scout`, `phase: Outbound|AwaitingOrders|
+Returning`, `announced`, `pending_reveal: Vec<UVec2>`) and **deliberately lacking `ResidentBand`**.
+Carrying `StartingUnit` is required: it makes the party a moving snapshot marker and lets `move_band`
+retarget it — but it is **excluded from live faction fog reveal** (`Without<Expedition>` in
+`calculate_visibility`), because discovery is comm-range gated.
+
+**Isolation via the positive `ResidentBand` marker.** Every real band gets `ResidentBand` at spawn
+(`spawn_population_entity`) and on rollback restore; expeditions never do. Systems that must not see
+expeditions filter `With<ResidentBand>`: `simulate_population`, `advance_population_migration`,
+`sedentarization_tick`, `apply_starting_inventory_effects`, `balance_supply_networks`, and the
+default-band command pickers (`select_starting_band` / `select_founder_band` `None`-bits branch).
+Left **bare** (expeditions included): `advance_band_movement`, `advance_expeditions`,
+`advance_labor_allocation`, the snapshot capture query, `collect_metrics`, `discover_sites`,
+`advance_husbandry`. So expeditions are excluded **by construction** — the safe default survives new
+settlement-arc systems. (A future breakaway-to-new-band is an expedition that drops `Expedition` and
+gains `ResidentBand`.)
+
+**`advance_expeditions`** (`systems.rs`, `TurnStage::Population`, registered right after
+`advance_band_movement`, before the Visibility stage's `discover_sites`) runs per expedition each
+turn: **(a) observe** the tiles in `observe_sight_range` LOS of its current tile into the private
+`pending_reveal` buffer (reusing `visibility_systems::visible_tiles_in_range` — the pure geometry
+behind `reveal_tiles_in_range` — **without** touching the faction map); **(b) comm check + flush** —
+when within `effective_comm_range()` (= `comm_range_tiles × comm_range_tech_factor`, rounded) hex
+distance of the home band's **live** tile, promote every buffered tile to `Discovered` on the faction
+map (`FactionVisibilityMap::discover`, Unexplored→Discovered, never downgrading `Active`) and clear
+the buffer — so the map lights up **as a lump on return**, and `discover_sites` records any `SiteTag`
+on the flushed tiles for free; **(c) provisions** drain by `party × provision_upkeep_per_worker`
+(non-fatal at zero in v1); **(d) phase transitions** — `Outbound` + arrived (no `BandTravel`) →
+`AwaitingOrders` + one-shot `ExpeditionArrived` feed; `Returning` → chase the home band's live tile
+(refresh `BandTravel`) and, once within comm range, fold workers + leftover provisions back into the
+band + despawn (`ExpeditionReturned`, after the flush so the final findings report); `AwaitingOrders`
+waits.
+
+**Commands** (full proto/runtime/text/server plumbing, mirroring `move_band`):
+- `send_expedition <faction> <band> <party_workers> <x> <y>` — validates land target + `1 ≤
+  party_workers ≤ min(available_workers, max_party_size)`, draws `party × distance ×
+  provision_draw_per_worker_per_tile` provisions from the band larder (partial OK), removes the
+  workers from `band.working`, and spawns the detached `Expedition` cohort. Feed `ExpeditionSent`.
+- `recall_expedition <faction> <expedition_entity_bits>` — resolves the entity via
+  `resolve_expedition_entity` (checks the `Expedition` component + faction), sets `phase = Returning`.
+  Feed `ExpeditionRecalled`.
+- **Retargeting a waypoint is just `move_band` on the expedition entity** — `handle_move_band` has a
+  hook that re-arms a moved expedition to `Outbound` + `announced = false`.
+- New `CommandEventKind` variants: `ExpeditionSent`, `ExpeditionArrived`, `ExpeditionRecalled`,
+  `ExpeditionReturned` (in `as_str` + the server label map).
+
+**Snapshot.** `PopulationCohortState` gains client discriminators `isExpedition` / `expeditionMission`
+/ `expeditionPhase` and persistence-only `homeBandEntity` / `expeditionAnnounced` / `pendingRevealX`
+/ `pendingRevealY` (`snapshot.fbs`, `sim_schema`). Capture fills them from `Option<&Expedition>`;
+`restore_world_from_snapshot` re-attaches `Expedition` for a rolled-back in-flight party (resolving
+`home_band` from `homeBandEntity` via the cohort entity-remap; missing home band → log + skip) and
+re-attaches `ResidentBand` to every non-expedition cohort so the `With<ResidentBand>` systems keep
+running after a rollback. `PopulationCohortState` also echoes `maxExpeditionPartySize` per cohort
+(from `expedition_config.max_party_size`, same idiom as `workRange` — a global lever surfaced
+per-band, populated for every cohort) so the client outfit stepper pre-clamps to
+`min(idle_workers, max_expedition_party_size)`.
+
+See Also: `docs/plan_exploration_and_sites.md` §2 (design), "Wondrous Sites" (discovery rides the
+flushed tiles), "Visibility Systems" (the `Without<Expedition>` gate).
 
 ---
 
