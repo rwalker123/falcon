@@ -89,6 +89,28 @@ The Lewis-and-Clark action: a deliberate, outfitted venture, distinct from the s
 - **Deferred but documented:** **risk/failure** (peril — losing members to starvation/threats,
   an expedition that never returns) is a great later layer; v1 is deterministic success.
 
+### 2b. Hunting expedition — a long-range hunt that follows migratory game (deferred, documented)
+
+The hunting analogue of the scouting expedition, and the answer to migratory herds the **leashed
+follow can't reach**. Today a Hunt assignment lapses once the herd roams past `band_work_range +
+hunt_leash_tiles`. A hunting expedition instead sends a **detached hunting party** that *keeps
+following* a migratory herd far from the band, accumulates food, and **drops it off** at the band —
+so you can exploit a herd's whole migratory circuit instead of only what wanders into work range.
+
+- **Same machinery as the scouting expedition** (§2): a visible detached party (own marker) that
+  travels, using move-band stepping + the detached-party model. Build it as part of the expedition
+  work — one traveling-party system, two verbs (scout / hunt).
+- **Follows the herd** beyond the leash, taking food each turn it's in reach (reusing the per-turn
+  Hunt take math), and **carries** what it takes up to a **carry capacity** ("full").
+- **Drops off food at the band when EITHER:** (a) the herd's migratory circuit brings it back
+  **near the band** (party is close enough to run the food home), OR (b) the party is **full**
+  (carry capacity reached) — at which point it returns, deposits into the larder, and (design
+  choice at build time) either re-launches or ends.
+- **Open questions to settle at build time (not now):** does the party carry **provisions** for
+  itself (like the scout expedition) or live off its own kills; is "full" tied to the same
+  **carry-capacity** concept as the band; does it auto-relaunch on drop-off or require re-issue;
+  and **risk/failure** (a party that starves or is lost) — deferred like the scouting expedition's.
+
 ## 3. Wondrous Sites — the data-driven catalog of what exploration finds
 
 The hub subsystem. Exploration is the input; config-defined rewards fan out into settlement,
