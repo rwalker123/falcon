@@ -67,7 +67,8 @@ impl ScoutLaborConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LaborConfig {
-    /// Chebyshev radius of in-range assignable sources around the band's tile.
+    /// True odd-r **hex-distance** radius (`grid_utils::hex_distance_wrapped`, wrap-aware)
+    /// of in-range assignable sources around the band's tile.
     pub band_work_range: u32,
     /// Sight range (tiles) each worked source tile (a Forage tile or a Hunt herd's current
     /// tile) reveals via the band's normal LOS in `calculate_visibility`. Workers stand at

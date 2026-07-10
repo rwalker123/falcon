@@ -240,13 +240,19 @@ pub fn calculate_visibility(
                         }
                         LaborTarget::Scout | LaborTarget::Warrior => None,
                     };
+                    // A Forage assignment carries raw command-supplied coords (see
+                    // `handle_assign_labor`), so guard the bounds before pushing — an OOB tile
+                    // would panic in `reveal_tiles_in_range`'s `elevation.sample`. Herd tiles are
+                    // always on-map, but this check is cheap and covers every worked source.
                     if let Some(tile) = worked_tile {
-                        sources.push((
-                            cohort.faction,
-                            tile,
-                            labor.worked_source_sight_range,
-                            range_def.elevation_bonus_factor,
-                        ));
+                        if tile.x < width && tile.y < height {
+                            sources.push((
+                                cohort.faction,
+                                tile,
+                                labor.worked_source_sight_range,
+                                range_def.elevation_bonus_factor,
+                            ));
+                        }
                     }
                 }
             }

@@ -200,7 +200,9 @@ pub fn hex_neighbor(
     height: u32,
     wrap_horizontal: bool,
 ) -> Option<(u32, u32)> {
-    let (dx_even, dx_odd, dy) = HEX_NEIGHBOR_OFFSETS[dir];
+    // Return `None` for an out-of-range direction rather than panicking — this is a
+    // `pub` primitive, and callers already treat `None` as "step left the map".
+    let &(dx_even, dx_odd, dy) = HEX_NEIGHBOR_OFFSETS.get(dir)?;
     let dx = if (y % 2) == 1 { dx_odd } else { dx_even };
     let nx = x as i32 + dx;
     let ny = y as i32 + dy;

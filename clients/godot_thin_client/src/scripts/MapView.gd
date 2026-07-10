@@ -1389,10 +1389,11 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 	var eff_col := _band_effective_col(band_col, radius, origin)
 	var band_center := _hex_center(eff_col, band_row, radius, origin)
 
-	# Scouting no longer draws a disc: `scout_reveal_radius` is now the band's sight-range bonus
-	# (extra tiles beyond base), and its effect is visible directly in the fog (staffed scouts
-	# re-reveal a wider Active radius each turn). The client can't draw the true extended ring
-	# (it doesn't know the band's server-side `base_range`), so nothing is drawn here.
+	# Scouting no longer draws a disc: `scout_reveal_radius` now carries the band's scout vantage
+	# distance (how far forward-observer vantages are posted, `0` with no scouts), and its effect is
+	# visible directly in the fog — staffed scouts reveal LOS from vantages that see around obstacles.
+	# The client can't reconstruct the true revealed area (it doesn't know the server-side LOS/terrain),
+	# so nothing is drawn here.
 
 	# 1. Work-range ring: true odd-r hex-distance outline (matches the sim's hex_distance_wrapped).
 	# Iterate a ±work_range col/row bounding box (a superset of the hex disc) and outline only
