@@ -1582,6 +1582,19 @@ fn handle_send_expedition(
     ) else {
         return;
     };
+    // `select_starting_band` only filters `With<ResidentBand>` on the None-bits fallback; an
+    // explicit `band_entity_bits` resolves on `StartingUnit` alone, which an expedition also carries
+    // (kept so `move_band` can retarget it). A party can only be outfitted *from* a resident band —
+    // reject anything else so `send_expedition` can't spawn a party off another expedition.
+    if app.world.get::<ResidentBand>(band.entity).is_none() {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            "send_expedition: band is not a resident band.",
+        );
+        return;
+    }
 
     let grid_width = app.world.resource::<TileRegistry>().width;
     let wrap_horizontal = app

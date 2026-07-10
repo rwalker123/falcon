@@ -3538,6 +3538,11 @@ pub fn advance_expeditions(
     )>,
     mut bands: Query<&mut PopulationCohort, Without<Expedition>>,
 ) {
+    // The common turn has zero expeditions — bail before building the O(w×h) terrain grid so a
+    // normal game pays nothing for this system.
+    if expeditions.is_empty() {
+        return;
+    }
     // No elevation field means worldgen hasn't run — nothing to observe from (mirrors
     // `calculate_visibility`'s early bail).
     let Some(elevation) = elevation else {

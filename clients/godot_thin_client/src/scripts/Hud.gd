@@ -1164,10 +1164,10 @@ func _build_allocation_panel(band: Dictionary) -> void:
     _build_send_expedition_controls(band, idle)
 
 ## Outfit affordance on a resident band's allocation panel (docs/plan_exploration_and_sites.md §2):
-## a party-size stepper (1..idle) + a "Send scouting expedition" button that enters tile-targeting;
-## the target click emits `send_expedition_requested`. Hidden when the band has no idle workers to
-## spare. The server enforces the hard max party-size cap and rejects an over-cap request with a
-## feed message — clamping to idle is sufficient here.
+## a party-size stepper (1..party_max, where party_max = min(idle_workers, max_expedition_party_size))
+## + a "Send scouting expedition" button that enters tile-targeting; the target click emits
+## `send_expedition_requested`. Hidden when the band has no idle workers to spare. The server still
+## rejects a genuinely over-cap request with a feed message as a backstop.
 func _build_send_expedition_controls(band: Dictionary, idle: int) -> void:
     if allocation_panel == null or idle <= 0:
         return
