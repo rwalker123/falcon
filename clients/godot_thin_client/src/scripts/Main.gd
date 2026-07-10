@@ -216,6 +216,8 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_sedentarization", [snapshot["sedentarization"]])
     if snapshot.has("demographics"):
         _hud_invoke("update_demographics", [snapshot["demographics"]])
+    if snapshot.has("discovered_sites"):
+        _hud_invoke("update_discoveries", [snapshot["discovered_sites"]])
     if snapshot.has("populations"):
         _hud_invoke("update_band_alerts", [snapshot["populations"]])
     if not is_delta:

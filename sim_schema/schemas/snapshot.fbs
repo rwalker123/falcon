@@ -708,6 +708,23 @@ table SedentarizationState {
   stage:string;
 }
 
+// One discovered Wondrous Site in a faction's registry. `category`/`display_name`/`glyph` are
+// resolved from the sites catalog at capture so the client needs no config. Only sites the
+// faction has revealed appear here (undiscovered sites are NOT in TileState — no fog leak).
+table DiscoveredSite {
+  x:uint;
+  y:uint;
+  site_id:string;
+  category:string;
+  display_name:string;
+  glyph:string;
+}
+
+table DiscoveredSitesState {
+  faction:uint;
+  sites:[DiscoveredSite];
+}
+
 // Per-faction age structure (children / working-age / elders head-counts), aggregated over the
 // faction's population cohorts. The client derives the dependency ratio for its HUD readout.
 table PopulationDemographicsState {
@@ -866,6 +883,7 @@ table WorldSnapshot {
   foodModules:[FoodModuleState];
   factionInventory:[FactionInventoryState];
   sedentarization:[SedentarizationState];
+  discoveredSites:[DiscoveredSitesState];
   demographics:[PopulationDemographicsState];
   moistureRaster:FloatRaster;
   hydrologyOverlay:HydrologyOverlay; // rivers/streams polylines
@@ -919,6 +937,7 @@ table WorldDelta {
   foodModules:[FoodModuleState];
   factionInventory:[FactionInventoryState];
   sedentarization:[SedentarizationState];
+  discoveredSites:[DiscoveredSitesState];
   demographics:[PopulationDemographicsState];
   moistureRaster:FloatRaster;
   axisBias:AxisBiasState;

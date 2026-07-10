@@ -12,8 +12,9 @@ use sim_runtime::{
     CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
-    CultureTraitEntry, DiscoveryProgressEntry, ElevationOverlayState,
-    FactionInventoryEntryState as SchemaFactionInventoryEntryState,
+    CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,
+    DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry,
+    ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FoodModuleState,
     GenerationState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
     GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdTelemetryState, HydrologyOverlayState,
@@ -72,6 +73,8 @@ use crate::{
     },
     scalar::{scalar_zero, Scalar},
     sedentarization::SedentarizationScore,
+    sites::DiscoveredSites,
+    sites_config::SitesConfigHandle,
     snapshot_overlays_config::{SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle},
     start_profile::{snapshot_profiles, CampaignLabel, FogMode, StartProfilesHandle},
     supply::SupplyNetworkMembership,
@@ -122,6 +125,8 @@ pub struct SnapshotContext<'w> {
     pub victory: Res<'w, VictoryState>,
     pub faction_inventory: Res<'w, FactionInventory>,
     pub sedentarization: Res<'w, SedentarizationScore>,
+    pub discovered_sites: Res<'w, DiscoveredSites>,
+    pub sites_config: Res<'w, SitesConfigHandle>,
     pub food_sites: Res<'w, FoodSiteRegistry>,
     pub command_events: Res<'w, CommandEventLog>,
     pub capability_flags: Res<'w, CapabilityFlags>,
@@ -217,6 +222,7 @@ pub struct SnapshotHistory {
     capability_flags: u32,
     faction_inventory: Vec<SchemaFactionInventoryState>,
     sedentarization: Vec<SchemaSedentarizationState>,
+    discovered_sites: Vec<SchemaDiscoveredSitesState>,
     demographics: Vec<SchemaPopulationDemographicsState>,
     command_events: Vec<CommandEventState>,
     herds: Vec<HerdTelemetryState>,
@@ -279,6 +285,7 @@ impl SnapshotHistory {
             capability_flags: 0,
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
+            discovered_sites: Vec::new(),
             demographics: Vec::new(),
             command_events: Vec::new(),
             herds: Vec::new(),
@@ -563,6 +570,12 @@ impl SnapshotHistory {
         } else {
             Some(sedentarization_state.clone())
         };
+        let discovered_sites_state = snapshot.discovered_sites.clone();
+        let discovered_sites_delta = if self.discovered_sites == discovered_sites_state {
+            None
+        } else {
+            Some(discovered_sites_state.clone())
+        };
         let demographics_state = snapshot.demographics.clone();
         let demographics_delta = if self.demographics == demographics_state {
             None
@@ -622,6 +635,7 @@ impl SnapshotHistory {
             command_events: command_events_delta.clone(),
             faction_inventory: faction_inventory_delta.clone(),
             sedentarization: sedentarization_delta.clone(),
+            discovered_sites: discovered_sites_delta.clone(),
             demographics: demographics_delta.clone(),
             herds: herds_delta.clone(),
             food_modules: food_modules_delta.clone(),
@@ -696,6 +710,7 @@ impl SnapshotHistory {
         self.capability_flags = capability_flags_state;
         self.faction_inventory = faction_inventory_state;
         self.sedentarization = sedentarization_state;
+        self.discovered_sites = discovered_sites_state;
         self.demographics = demographics_state;
         self.command_events = command_events_state;
         self.herds = herd_state;
@@ -775,6 +790,7 @@ impl SnapshotHistory {
         self.victory = entry.snapshot.victory.clone();
         self.faction_inventory = entry.snapshot.faction_inventory.clone();
         self.sedentarization = entry.snapshot.sedentarization.clone();
+        self.discovered_sites = entry.snapshot.discovered_sites.clone();
         self.demographics = entry.snapshot.demographics.clone();
         self.command_events = entry.snapshot.command_events.clone();
         self.herds = entry.snapshot.herds.clone();
@@ -868,6 +884,7 @@ impl SnapshotHistory {
             food_modules: None,
             faction_inventory: None,
             sedentarization: None,
+            discovered_sites: None,
             demographics: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
@@ -1014,6 +1031,7 @@ impl SnapshotHistory {
             food_modules: None,
             faction_inventory: None,
             sedentarization: None,
+            discovered_sites: None,
             demographics: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
@@ -1121,6 +1139,7 @@ impl SnapshotHistory {
             food_modules: None,
             faction_inventory: None,
             sedentarization: None,
+            discovered_sites: None,
             demographics: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
@@ -1240,6 +1259,8 @@ pub fn capture_snapshot(
         victory,
         faction_inventory,
         sedentarization,
+        discovered_sites,
+        sites_config,
         food_sites,
         command_events,
         capability_flags,
@@ -1609,6 +1630,7 @@ pub fn capture_snapshot(
     let herd_states = herd_snapshot_entries(&herds);
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
+    let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
     let demographics_state = snapshot_demographics(&population_states);
     let command_events_state = command_events_to_state(&command_events);
     let victory_snapshot_state = victory_snapshot_from_resource(&victory);
@@ -1640,6 +1662,7 @@ pub fn capture_snapshot(
         campaign_profiles: campaign_profiles_state,
         faction_inventory: faction_inventory_state.clone(),
         sedentarization: sedentarization_state.clone(),
+        discovered_sites: discovered_sites_state.clone(),
         demographics: demographics_state.clone(),
         command_events: command_events_state.clone(),
         capability_flags: capability_bits,
@@ -1720,6 +1743,26 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
     // tracker is cleared too so corridor sweeps don't reference pre-rollback tiles.
     world.insert_resource(crate::visibility::VisibilityLedger::default());
     world.insert_resource(crate::visibility::VisibilitySweepTracker::default());
+
+    // Rebuild the per-faction discovered-sites registry from the snapshot so a rollback neither
+    // un-discovers a site nor retains discoveries made after the restore point (the same
+    // future-knowledge concern as the fog reset above). The `SiteTag`s themselves are worldgen
+    // tile tags (like `FoodModuleTag`) and are not rebuilt here; the registry is the durable
+    // record of what has been found.
+    let restored_sites = snapshot.discovered_sites.iter().flat_map(|state| {
+        let faction = FactionId(state.faction);
+        state
+            .sites
+            .iter()
+            .map(move |site| (faction, UVec2::new(site.x, site.y), site.site_id.clone()))
+    });
+    if let Some(mut discovered) = world.get_resource_mut::<DiscoveredSites>() {
+        discovered.rebuild_from(restored_sites);
+    } else {
+        let mut discovered = DiscoveredSites::default();
+        discovered.rebuild_from(restored_sites);
+        world.insert_resource(discovered);
+    }
 
     // Despawn existing entities.
     let existing_tiles: Vec<Entity> = {
@@ -3791,6 +3834,44 @@ fn snapshot_sedentarization(score: &SedentarizationScore) -> Vec<SchemaSedentari
         .collect()
 }
 
+/// Per-faction discovered-sites registry for the snapshot. Each record's `category`/`display_name`/
+/// `glyph` is resolved from the sites catalog (missing entries fall back to the raw `site_id` so a
+/// pruned catalog never drops a discovery). Records are emitted in a stable `(y, x, site_id)` order
+/// so the snapshot is deterministic.
+fn snapshot_discovered_sites(
+    discovered: &DiscoveredSites,
+    sites_config: &SitesConfigHandle,
+) -> Vec<SchemaDiscoveredSitesState> {
+    let cfg = sites_config.get();
+    discovered
+        .iter_sorted()
+        .into_iter()
+        .map(|(faction, records)| {
+            let mut sites: Vec<SchemaDiscoveredSiteState> = records
+                .iter()
+                .map(|record| {
+                    let def = cfg.site(&record.site_id);
+                    SchemaDiscoveredSiteState {
+                        x: record.pos.x,
+                        y: record.pos.y,
+                        site_id: record.site_id.clone(),
+                        category: def.map(|d| d.category.clone()).unwrap_or_default(),
+                        display_name: def
+                            .map(|d| d.display_name.clone())
+                            .unwrap_or_else(|| record.site_id.clone()),
+                        glyph: def.map(|d| d.glyph.clone()).unwrap_or_default(),
+                    }
+                })
+                .collect();
+            sites.sort_by(|a, b| (a.y, a.x, &a.site_id).cmp(&(b.y, b.x, &b.site_id)));
+            SchemaDiscoveredSitesState {
+                faction: faction.0,
+                sites,
+            }
+        })
+        .collect()
+}
+
 /// Aggregate the per-cohort age brackets into a per-faction age structure for the HUD readout,
 /// reconciled so the three emitted head-counts agree with the per-band selection panel.
 ///
@@ -3942,6 +4023,7 @@ mod tests {
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
+            discovered_sites: Vec::new(),
             demographics: Vec::new(),
             terrain: overlay,
             moisture_raster: FloatRasterState::default(),
@@ -3999,6 +4081,7 @@ mod tests {
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
+            discovered_sites: Vec::new(),
             demographics: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
@@ -4051,6 +4134,7 @@ mod tests {
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
+            discovered_sites: Vec::new(),
             demographics: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),

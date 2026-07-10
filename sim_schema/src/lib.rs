@@ -77,6 +77,31 @@ pub struct SedentarizationState {
     pub stage: String,
 }
 
+/// One discovered Wondrous Site (position + catalog-resolved display fields) in a faction's
+/// registry. Only sites the faction has revealed appear here — undiscovered sites never leave
+/// the sim, so there is no fog leak.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct DiscoveredSiteState {
+    pub x: u32,
+    pub y: u32,
+    #[serde(default)]
+    pub site_id: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub glyph: String,
+}
+
+/// Per-faction discovered-sites registry (mirrors `SedentarizationState`'s per-faction shape).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct DiscoveredSitesState {
+    pub faction: u32,
+    #[serde(default)]
+    pub sites: Vec<DiscoveredSiteState>,
+}
+
 /// Per-faction age structure aggregated over the faction's population cohorts. The client
 /// derives the dependency ratio `(children + elders) / working` for its HUD readout.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -1513,6 +1538,8 @@ pub struct WorldSnapshot {
     #[serde(default)]
     pub sedentarization: Vec<SedentarizationState>,
     #[serde(default)]
+    pub discovered_sites: Vec<DiscoveredSitesState>,
+    #[serde(default)]
     pub demographics: Vec<PopulationDemographicsState>,
     pub moisture_raster: FloatRasterState,
     pub hydrology_overlay: HydrologyOverlayState,
@@ -1568,6 +1595,7 @@ pub struct WorldDelta {
     pub food_modules: Option<Vec<FoodModuleState>>,
     pub faction_inventory: Option<Vec<FactionInventoryState>>,
     pub sedentarization: Option<Vec<SedentarizationState>>,
+    pub discovered_sites: Option<Vec<DiscoveredSitesState>>,
     pub demographics: Option<Vec<PopulationDemographicsState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub hydrology_overlay: Option<HydrologyOverlayState>,
@@ -1771,6 +1799,7 @@ fn build_snapshot_flatbuffer<'a>(
     let food_modules_vec = create_food_modules(builder, &snapshot.food_modules);
     let faction_inventory_vec = create_faction_inventory(builder, &snapshot.faction_inventory);
     let sedentarization_vec = create_sedentarization(builder, &snapshot.sedentarization);
+    let discovered_sites_vec = create_discovered_sites(builder, &snapshot.discovered_sites);
     let demographics_vec = create_demographics(builder, &snapshot.demographics);
     let hydrology_overlay = create_hydrology_overlay(builder, &snapshot.hydrology_overlay);
     let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
@@ -1831,6 +1860,7 @@ fn build_snapshot_flatbuffer<'a>(
             foodModules: Some(food_modules_vec),
             factionInventory: Some(faction_inventory_vec),
             sedentarization: Some(sedentarization_vec),
+            discoveredSites: Some(discovered_sites_vec),
             demographics: Some(demographics_vec),
             moistureRaster: Some(moisture_raster),
             hydrologyOverlay: Some(hydrology_overlay),
@@ -1889,6 +1919,10 @@ fn build_delta_flatbuffer<'a>(
         .sedentarization
         .as_ref()
         .map(|entries| create_sedentarization(builder, entries));
+    let discovered_sites = delta
+        .discovered_sites
+        .as_ref()
+        .map(|entries| create_discovered_sites(builder, entries));
     let demographics = delta
         .demographics
         .as_ref()
@@ -2072,6 +2106,7 @@ fn build_delta_flatbuffer<'a>(
             foodModules: food_modules,
             factionInventory: faction_inventory,
             sedentarization,
+            discoveredSites: discovered_sites,
             demographics,
             moistureRaster: moisture_raster,
             elevationOverlay: elevation_overlay,
@@ -2381,6 +2416,44 @@ fn create_sedentarization<'a>(
                 faction: state.faction,
                 score: state.score,
                 stage: Some(stage),
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+fn create_discovered_sites<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[DiscoveredSitesState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::DiscoveredSitesState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let mut site_offsets = Vec::with_capacity(state.sites.len());
+        for site in &state.sites {
+            let site_id = builder.create_string(site.site_id.as_str());
+            let category = builder.create_string(site.category.as_str());
+            let display_name = builder.create_string(site.display_name.as_str());
+            let glyph = builder.create_string(site.glyph.as_str());
+            let site_offset = fb::DiscoveredSite::create(
+                builder,
+                &fb::DiscoveredSiteArgs {
+                    x: site.x,
+                    y: site.y,
+                    site_id: Some(site_id),
+                    display_name: Some(display_name),
+                    category: Some(category),
+                    glyph: Some(glyph),
+                },
+            );
+            site_offsets.push(site_offset);
+        }
+        let sites_vec = builder.create_vector(&site_offsets);
+        let entry = fb::DiscoveredSitesState::create(
+            builder,
+            &fb::DiscoveredSitesStateArgs {
+                faction: state.faction,
+                sites: Some(sites_vec),
             },
         );
         entries.push(entry);

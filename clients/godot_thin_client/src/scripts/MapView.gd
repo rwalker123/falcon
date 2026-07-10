@@ -38,6 +38,10 @@ const HEIGHT_DEFAULT_SEA_LEVEL := 0.6
 const HEIGHT_BAR_SEGMENTS := 10
 # Bright outline/fill used by the Terrain-tab "highlight all tiles of type" tool.
 const TERRAIN_HIGHLIGHT_COLOR := Color(1.0, 0.25, 0.9, 1.0)
+# Wondrous-site marker: backing-disc radius factor + the upward hex-radius offset applied
+# when the tile already carries a food/herd marker, so the two glyphs don't stack illegibly.
+const DISCOVERED_SITE_DISC_FACTOR := 0.42
+const DISCOVERED_SITE_STACK_OFFSET := 0.62
 const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
 const GRID_LINE_COLOR := Color(0.4, 0.4, 0.4, 0.7)
 const SQRT3 := 1.7320508075688772
@@ -270,6 +274,10 @@ var herds: Array = []
 var herd_trails: Dictionary = {}
 var food_sites: Array = []
 var food_site_lookup: Dictionary = {}
+# Wondrous Sites the player faction has discovered (per-faction snapshot field). Each entry:
+# { x, y, site_id, category, display_name, glyph }. Rendered as glyph markers on the map.
+var discovered_sites: Array = []
+var discovered_site_lookup: Dictionary = {}
 var harvest_sites: Dictionary = {}
 var scout_sites: Dictionary = {}
 var tile_lookup: Dictionary = {}
@@ -581,6 +589,28 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 			var y_site: int = int(site.get("y", -1))
 			if x_site >= 0 and y_site >= 0:
 				food_site_lookup[Vector2i(x_site, y_site)] = site
+		discovered_sites = []
+		discovered_site_lookup.clear()
+		var sites_variant: Variant = snapshot.get("discovered_sites", [])
+		if sites_variant is Array:
+			for entry in sites_variant:
+				if not (entry is Dictionary):
+					continue
+				var faction_entry: Dictionary = entry
+				if int(faction_entry.get("faction", -1)) != PLAYER_FACTION_ID:
+					continue
+				var faction_sites: Variant = faction_entry.get("sites", [])
+				if not (faction_sites is Array):
+					continue
+				for site_entry in faction_sites:
+					if not (site_entry is Dictionary):
+						continue
+					var wsite: Dictionary = (site_entry as Dictionary).duplicate(true)
+					discovered_sites.append(wsite)
+					var wx: int = int(wsite.get("x", -1))
+					var wy: int = int(wsite.get("y", -1))
+					if wx >= 0 and wy >= 0:
+						discovered_site_lookup[Vector2i(wx, wy)] = wsite
 	var population_variant: Variant = snapshot.get("populations", [])
 	if population_variant is Array:
 		for entry in population_variant:
@@ -810,6 +840,8 @@ func _draw() -> void:
 	for site in food_sites:
 		_draw_food_site(site, radius, origin)
 		_draw_food_highlight(site, radius, origin)
+	for wsite in discovered_sites:
+		_draw_discovered_site(wsite, radius, origin)
 
 	_draw_harvest_markers(radius, origin)
 	_draw_scout_markers(radius, origin)
@@ -1650,6 +1682,41 @@ func _draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 		var pos: Vector2 = Vector2(center.x - text_size.x * 0.5, center.y + icon_size * 0.34)
 		draw_string(icon_font, pos, icon, HORIZONTAL_ALIGNMENT_LEFT, -1, icon_size, Color(0.96, 0.97, 0.92))
 
+func _draw_discovered_site(site: Dictionary, radius: float, origin: Vector2) -> void:
+	var x: int = int(site.get("x", -1))
+	var y: int = int(site.get("y", -1))
+	if x < 0 or y < 0:
+		return
+	# A discovered site is permanent geographic knowledge, not current-state info — unlike a
+	# herd (moves) or food site (Active-only). Persist its marker on any known/remembered tile
+	# (Discovered or Active), not only Active, so it stays visible once found even under fog.
+	if _visibility_state_at(x, y) == "unexplored":
+		return
+	var glyph := String(site.get("glyph", ""))
+	if glyph == "":
+		return
+	var center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
+	# Nudge up when a food/herd marker already sits on this hex so the glyphs stay legible.
+	if _tile_has_food_or_herd_marker(x, y):
+		center.y -= radius * DISCOVERED_SITE_STACK_OFFSET
+	# Dark backing disc so the (monochrome) glyph reads over any terrain.
+	draw_circle(center, radius * DISCOVERED_SITE_DISC_FACTOR, Color(0.04, 0.06, 0.07, 0.55))
+	var glyph_font: Font = ThemeDB.fallback_font
+	if glyph_font != null:
+		var glyph_size: int = int(maxf(12.0, radius * 1.05))
+		var text_size: Vector2 = glyph_font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size)
+		var pos: Vector2 = Vector2(center.x - text_size.x * 0.5, center.y + glyph_size * 0.34)
+		draw_string(glyph_font, pos, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size, Color(0.96, 0.97, 0.92))
+
+func _tile_has_food_or_herd_marker(x: int, y: int) -> bool:
+	var key := Vector2i(x, y)
+	if food_site_lookup.has(key):
+		return true
+	for herd in herds:
+		if int((herd as Dictionary).get("x", -1)) == x and int((herd as Dictionary).get("y", -1)) == y:
+			return true
+	return false
+
 func _draw_food_highlight(site: Dictionary, radius: float, origin: Vector2) -> void:
 	var x: int = int(site.get("x", -1))
 	var y: int = int(site.get("y", -1))
@@ -2128,6 +2195,9 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["relative_height"] = relative_height
 		info["height_display"] = format_height(relative_height)
 	var tile_key := Vector2i(col, row)
+	if discovered_site_lookup.has(tile_key):
+		var wsite: Dictionary = discovered_site_lookup[tile_key]
+		info["site_name"] = String(wsite.get("display_name", ""))
 	if tile_habitability.has(tile_key):
 		info["habitability"] = float(tile_habitability[tile_key])
 	if tile_temperature.has(tile_key):

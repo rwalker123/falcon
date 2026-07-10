@@ -2666,6 +2666,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Domesticate => "Domesticate",
         CommandEventKind::CancelOrder => "Cancel order",
         CommandEventKind::SedentarizationPrompt => "Sedentarization",
+        CommandEventKind::SiteDiscovered => "Site discovered",
     }
 }
 

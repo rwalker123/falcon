@@ -49,6 +49,7 @@ var _server_build: String = "?"
 @onready var metrics_label: Label = $LayoutRoot/RootColumn/TopBar/TurnBlock/MetricsLabel
 @onready var sedentarization_label: Label = %SedentarizationLabel
 @onready var demographics_label: Label = %DemographicsLabel
+@onready var discoveries_label: Label = %DiscoveriesLabel
 @onready var zoom_controls: HBoxContainer = $LayoutRoot/RootColumn/TopBar/ZoomControls
 @onready var zoom_out_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomOutButton
 @onready var zoom_reset_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomResetButton
@@ -104,6 +105,8 @@ const COMMAND_FEED_LIMIT := 6
 const COMMAND_FEED_MIN_HEIGHT := 72.0
 const COMMAND_FEED_BOTTOM_MARGIN := 12.0
 const PLAYER_FACTION_ID := 0
+# Top-bar glyph for the discovered-Wondrous-Sites readout (a faceted-gem marker).
+const DISCOVERIES_GLYPH := "◈"
 const FOOD_MODULE_LABELS := {
     "coastal_littoral": "Coastal Littoral",
     "riverine_delta": "Riverine Delta",
@@ -563,6 +566,37 @@ func update_demographics(demographics_variant: Variant) -> void:
     demographics_label.text = "Pop %d  👶%d 🛠%d 🧓%d  dep %d/100" % [total, children, working, elders, dependency]
     # A high dependency ratio (more mouths than hands) is the warning state.
     demographics_label.add_theme_color_override("font_color", _dependency_color(working, dependency))
+
+## Show the player faction's count of discovered Wondrous Sites as a compact top-bar readout
+## (`◈ Discoveries N  ⛰ ⛲`, appending the distinct site glyphs so landmark vs settle_site reads
+## at a glance). Hidden until at least one site is known.
+func update_discoveries(discovered_variant: Variant) -> void:
+    if discoveries_label == null:
+        return
+    var sites: Array = []
+    if discovered_variant is Array:
+        for entry in discovered_variant:
+            if entry is Dictionary and int(entry.get("faction", -1)) == PLAYER_FACTION_ID:
+                var faction_sites: Variant = entry.get("sites", [])
+                if faction_sites is Array:
+                    sites = faction_sites
+                break
+    if sites.is_empty():
+        discoveries_label.visible = false
+        return
+    discoveries_label.visible = true
+    var glyphs: Array[String] = []
+    for site in sites:
+        if not (site is Dictionary):
+            continue
+        var glyph := String((site as Dictionary).get("glyph", "")).strip_edges()
+        if glyph != "" and not glyphs.has(glyph):
+            glyphs.append(glyph)
+    var suffix := ""
+    if not glyphs.is_empty():
+        suffix = "  %s" % " ".join(glyphs)
+    discoveries_label.text = "%s Discoveries %d%s" % [DISCOVERIES_GLYPH, sites.size(), suffix]
+    discoveries_label.add_theme_color_override("font_color", HudStyle.SIGNAL)
 
 ## Tint the dependency readout: amber when dependents outnumber workers, cyan when there is a
 ## healthy labor surplus, neutral otherwise.
@@ -1602,6 +1636,11 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     if tile_info.has("temperature"):
         var temperature := float(tile_info["temperature"])
         lines.append("Climate: %s" % TileClimate.band_for(temperature))
+    # A discovered Wondrous Site is known knowledge — fine on a remembered tile — so surface
+    # it before the discovered early-return. Only when the field is present.
+    var site_name := String(tile_info.get("site_name", "")).strip_edges()
+    if site_name != "":
+        lines.append("Site: %s" % site_name)
     if visibility_state == "discovered":
         lines.append("Last seen — information incomplete. Scout to update.")
         return lines

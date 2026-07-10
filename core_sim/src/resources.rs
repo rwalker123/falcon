@@ -1014,6 +1014,7 @@ pub enum CommandEventKind {
     Domesticate,
     CancelOrder,
     SedentarizationPrompt,
+    SiteDiscovered,
 }
 
 impl CommandEventKind {
@@ -1030,6 +1031,7 @@ impl CommandEventKind {
             CommandEventKind::Domesticate => "domesticate",
             CommandEventKind::CancelOrder => "cancel_order",
             CommandEventKind::SedentarizationPrompt => "sedentarization_prompt",
+            CommandEventKind::SiteDiscovered => "site_discovered",
         }
     }
 }

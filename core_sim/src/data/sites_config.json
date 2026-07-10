@@ -1,0 +1,35 @@
+{
+  "catalog": {
+    "great_peak": {
+      "category": "landmark",
+      "display_name": "Great Peak",
+      "glyph": "⛰",
+      "placement_rule": "prominent_mountain",
+      "discovery_reward": {
+        "morale_bonus": 0.05
+      }
+    },
+    "verdant_basin": {
+      "category": "settle_site",
+      "display_name": "Verdant Basin",
+      "glyph": "⛲",
+      "placement_rule": "fertile_settle",
+      "discovery_reward": {
+        "morale_bonus": 0.02
+      }
+    }
+  },
+  "placement": {
+    "prominent_mountain": {
+      "max_sites": 5,
+      "min_spacing": 4,
+      "min_relief": 1.4
+    },
+    "fertile_settle": {
+      "max_sites": 5,
+      "min_spacing": 4,
+      "max_habitability_pressure": 0.02,
+      "min_food_weight": 0.8
+    }
+  }
+}
