@@ -1403,7 +1403,12 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			for dcol in range(-work_range, work_range + 1):
 				if dcol == 0 and drow == 0:
 					continue
-				_outline_hex(eff_col + dcol, row, radius, origin, WORK_RANGE_OUTLINE, WORK_RANGE_OUTLINE_WIDTH)
+				var col := eff_col + dcol
+				# Without horizontal wrap, edge columns fall off the map — don't outline
+				# nonexistent tiles (mirrors the grid_height row clamp above).
+				if not _wrap_horizontal and (col < 0 or col >= grid_width):
+					continue
+				_outline_hex(col, row, radius, origin, WORK_RANGE_OUTLINE, WORK_RANGE_OUTLINE_WIDTH)
 
 	# 2. Worked forage tiles + 3. hunted herds, from the band's assignments.
 	for entry_variant in _labor_assignments_of_marker(band):

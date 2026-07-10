@@ -1,6 +1,7 @@
 # Plan: Exploration & Wondrous Sites
 
-Status: **Design approved, not yet implemented.** The exploration layer of the early game:
+Status: **Design approved; partially implemented** (local scout shipped — see §1; scouting
+expeditions and Wondrous Sites not yet implemented). The exploration layer of the early game:
 **local scouting** (extend the band's live sight), **scouting expeditions** (a provisioned
 traveling party that explores distant territory and returns), and the **Wondrous Sites**
 subsystem — a data-driven catalog of things worth finding that tiles can hold and that
@@ -24,7 +25,7 @@ Two distinct exploration actions, and the subsystem that gives them a point:
 > (`base_range + min(scouts × sight_bonus_per_scout, max_sight_bonus)`, config in `labor_config.json`
 > `scout`); the old radius-2 `FogRevealLedger` pulse and `reveal_radius`/`reveal_duration_turns` are
 > retired. The snapshot `scoutRevealRadius` field now carries the effective scout sight bonus.
-> Remaining client-side: update the Scout row hint text.
+> The client Scout row hint reads "Extends the band's sight — more scouts see further."
 
 The Scout labor role should **raise the band's effective sight range** in the visibility system,
 scaled by staffed scouts, so the extended radius is re-marked **Active** every turn while scouts

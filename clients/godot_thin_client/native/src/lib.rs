@@ -3595,8 +3595,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("labor_assignments", array);
     let _ = dict.insert("idle_workers", cohort.idleWorkers() as i64);
     let _ = dict.insert("working_age", cohort.workingAge() as i64);
-    // Forage work radius (Chebyshev tiles) + what a scout assignment reveals. Drive the
-    // MapView band-selection highlights (work-range ring / scouted radius).
+    // Forage work radius (Chebyshev tiles) drives the MapView band-selection work-range ring.
+    // scout_reveal_radius is now the band's effective sight-range bonus (extra tiles beyond
+    // base, 0 when no scouts) — its effect shows directly in the fog, NOT as a drawn disc.
     let _ = dict.insert("work_range", cohort.workRange() as i64);
     let _ = dict.insert("scout_reveal_radius", cohort.scoutRevealRadius() as i64);
 
