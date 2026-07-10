@@ -45,6 +45,7 @@ cargo run -p core_sim --bin server
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
+| `src/data/sites_config.json` | Wondrous Sites catalog (`catalog`: per-`site_id` `category`/`display_name`/`glyph`/`placement_rule`/`discovery_reward.morale_bonus`) + `placement` rules (per-rule `max_sites`, `min_spacing`, and the union of rule inputs: `min_relief`, `max_habitability_pressure`, `min_food_weight`). Loader `sites_config.rs`, env override `SITES_CONFIG_PATH`. Not wired into the `reload_config` hot-reload path (mirrors `fauna_config.json`) |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -291,6 +292,61 @@ Market hunting shipped as the `Market` follow policy; `SedentarizationScore` shi
 the `Camp` entity + corrals, and wiring the sedentarization hard prompt to an actual
 `found_settlement`. The tile-based `HuntGame` handler stays neutralized (its client button no
 longer surfaces).
+
+---
+
+## Wondrous Sites
+
+Data-driven catalog of notable map features tiles can hold, hidden under fog until a faction's
+vision reveals them, then recorded in a per-faction registry. v1 = sim + snapshot producer (the
+client markers/readout are a separate slice). Authoritative design:
+`docs/plan_exploration_and_sites.md` §3. Catalog `src/data/sites_config.json`, loader
+`sites_config.rs` (mirrors `fauna_config.rs`: baked-in builtin + `SITES_CONFIG_PATH` override).
+
+**Catalog** (`SitesConfig`): `catalog` keyed by `site_id` — each `SiteDef` carries `category`
+(`landmark`/`settle_site`, free-form so new categories need no schema change), `display_name`,
+`glyph`, `placement_rule`, and a `discovery_reward` (v1: a single `morale_bonus` lever, a struct
+so future per-category rewards slot in). `placement` holds the per-rule tuning (`max_sites`,
+`min_spacing`, and the union of rule inputs). Shipped: `great_peak` (landmark, rule
+`prominent_mountain`) + `verdant_basin` (settle_site, rule `fertile_settle`).
+
+**Placement** (`sites::place_wondrous_sites`, Startup after `spawn_initial_world` +
+`apply_tag_budget_solver`): for each catalog entry, run its `placement_rule` against the tiles and
+stamp a `SiteTag { site_id }` on the chosen tile entities, capped at `max_sites`, spaced by
+`min_spacing` (Chebyshev), one site per tile. Deterministic under the map seed (`WorldGenSeed ^
+SITE_PLACEMENT_SEED_SALT`; idempotent — a world that already carries `SiteTag`s is skipped).
+- `prominent_mountain`: tiles whose `Tile.mountain` relief `>= min_relief`, tallest-first (ties by
+  position), greedily placed.
+- `fertile_settle`: tiles whose habitability pressure (`tile_morale_pressure` total — the same
+  helper the snapshot's `habitability` uses) `<= max_habitability_pressure` **and** that carry a
+  `FoodModuleTag` with `seasonal_weight >= min_food_weight`, shuffled (seeded) then greedily placed.
+- On an 80×52 earthlike map both rules hit their `max_sites` cap (5 `great_peak` + 5 `verdant_basin`).
+
+**Discovery** (`sites::discover_sites`, `TurnStage::Visibility` **after** `calculate_visibility`):
+sites are rare, so it iterates the (few) `Query<(&Tile, &SiteTag)>` × the `VisibilityLedger`'s
+factions. If a site's tile is `Discovered`/`Active` (ever seen, `is_discovered`) for faction F and
+`(F, pos)` not already in `DiscoveredSites` → record it, apply the reward, push a feed entry.
+Newly-found sites are processed in a stable `(faction, y, x, site_id)` order so the feed/reward are
+deterministic.
+- **Reward (v1):** `discovery_reward.morale_bonus` added once to each of F's `PopulationCohort`
+  bands (clamped 0..1). Config-driven — the extension hook for settlement/resource/diplomacy rewards.
+- **Command feed:** `CommandEventKind::SiteDiscovered` (`site_discovered`) with label = site display
+  name, detail = `category=<c> at (x,y)`.
+
+**Registry + persistence.** `DiscoveredSites` resource: per-faction `Vec<DiscoveredSiteRecord {
+pos, site_id }>` + a `seen` set backing an O(1) `contains(faction, pos)`. **Snapshot-persisted** —
+`restore_world_from_snapshot` rebuilds it from the snapshot (like the fog reset) so a rollback
+neither un-discovers a site nor retains discoveries made after the restore point. (The `SiteTag`s
+themselves are worldgen tile tags and, like `FoodModuleTag`, are **not** rebuilt on rollback — the
+registry is the durable record.)
+
+**Snapshot (per-faction, no tile leak).** Undiscovered sites are **never** in `TileState`, so the
+fog can't leak them. Instead the capture exports a per-faction `discoveredSites`
+(`snapshot_discovered_sites`, resolving each record's `category`/`display_name`/`glyph` from the
+catalog), mirroring `SedentarizationState`. Wire shape:
+`discoveredSites:[DiscoveredSitesState{ faction:uint, sites:[DiscoveredSite{ x, y, site_id,
+category, display_name, glyph }] }]` on both `WorldSnapshot` and `WorldDelta` (`snapshot.fbs`,
+`sim_schema`). See "Visibility Systems" for the discovery hook in the turn flow.
 
 ---
 
@@ -558,6 +614,7 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 3. `calculate_visibility` - Compute visibility from units/settlements
 4. `apply_trade_route_visibility` - Mark active trade-route tiles as Active
 5. `apply_visibility_decay` - Decay old Discovered tiles to Unexplored (disabled by default; permanent memory)
+6. `discover_sites` - Record any `SiteTag` tile a faction has ever seen into `DiscoveredSites`, apply the reward, push a `SiteDiscovered` feed entry (see "Wondrous Sites")
 
 **Visibility Sources**:
 - **Units**: `PopulationCohort` with `StartingUnit` marker provides sight from its

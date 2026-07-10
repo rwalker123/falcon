@@ -66,6 +66,26 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_band_pending")
 
+	# State D — Wondrous Sites: a landmark (⛰) and a settle-site (⛲) glyph marker, plus one
+	# placed on the herd tile to exercise the overlap nudge (offset up so both stay legible).
+	_map.set_labor_pending({})  # clear State C's pending overlay so this frame reads clean
+	_map.set_fow_enabled(false)
+	_map.display_snapshot(_snapshot_sites())
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_sites")
+
+	# State E — persistence under fog: FoW on, every tile only Discovered (remembered) except the
+	# band's own hex (Active). A discovered site is permanent knowledge, so all three glyph markers
+	# must STILL render on the fogged/remembered tiles (unlike the Active-only herd/food markers).
+	_map.set_fow_enabled(true)
+	_map.display_snapshot(_snapshot_sites_fogged())
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_sites_fogged")
+
 	get_tree().quit()
 
 func _settle() -> void:
@@ -130,3 +150,33 @@ func _snapshot_scout() -> Dictionary:
 		{"kind": "forage", "workers": 3, "target_x": 7, "target_y": 6},
 	]
 	return _base_snapshot(_band(assignments, 2, 2), [_deer_herd()])
+
+func _sites_state() -> Array:
+	return [{
+		"faction": 0,
+		"sites": [
+			{"x": 6, "y": 5, "site_id": "great_peak", "category": "landmark", "display_name": "Great Peak", "glyph": "⛰"},
+			{"x": 10, "y": 7, "site_id": "verdant_basin", "category": "settle_site", "display_name": "Verdant Basin", "glyph": "⛲"},
+			# On the deer-herd tile → exercises the overlap nudge (marker offset up).
+			{"x": 13, "y": 6, "site_id": "sky_arch", "category": "landmark", "display_name": "Sky Arch", "glyph": "⛰"},
+		],
+	}]
+
+func _snapshot_sites() -> Dictionary:
+	var snap := _base_snapshot(_band([], 2, 2), [_deer_herd()])
+	snap["discovered_sites"] = _sites_state()
+	return snap
+
+func _snapshot_sites_fogged() -> Dictionary:
+	var snap := _snapshot_sites()
+	# Visibility raster (raw encoding: 0.0 unexplored / 0.5 discovered / 1.0 active). All tiles
+	# Discovered except the band's own hex Active, so the site markers sit on remembered tiles.
+	var vis := PackedFloat32Array()
+	vis.resize(GRID_W * GRID_H)
+	vis.fill(0.5)
+	vis[BAND_Y * GRID_W + BAND_X] = 1.0
+	snap["overlays"] = {
+		"terrain": _terrain_array(),
+		"channels": {"visibility": {"raw": vis, "normalized": vis, "label": "Visibility"}},
+	}
+	return snap

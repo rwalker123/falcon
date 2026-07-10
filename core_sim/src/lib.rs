@@ -46,6 +46,8 @@ mod resources;
 mod scalar;
 mod sedentarization;
 mod sedentarization_config;
+mod sites;
+mod sites_config;
 mod snapshot;
 mod snapshot_overlays_config;
 mod start_profile;
@@ -146,6 +148,13 @@ pub use sedentarization::{
 pub use sedentarization_config::{
     load_sedentarization_config_from_env, SedentarizationConfig, SedentarizationConfigHandle,
     SedentarizationConfigMetadata,
+};
+pub use sites::{
+    discover_sites, place_wondrous_sites, DiscoveredSiteRecord, DiscoveredSites, SiteTag,
+};
+pub use sites_config::{
+    load_sites_config_from_env, DiscoveryReward, PlacementRuleCfg, SiteDef, SitesConfig,
+    SitesConfigHandle, SitesConfigMetadata, BUILTIN_SITES_CONFIG,
 };
 pub use snapshot_overlays_config::{
     load_snapshot_overlays_config_from_env, CorruptionOverlayConfig, CultureOverlayConfig,
@@ -337,6 +346,8 @@ pub fn build_headless_app() -> App {
         sedentarization_config::load_sedentarization_config_from_env();
     let sedentarization_handle =
         sedentarization_config::SedentarizationConfigHandle::new(sedentarization_config);
+    let (sites_config, sites_metadata) = sites_config::load_sites_config_from_env();
+    let sites_handle = sites_config::SitesConfigHandle::new(sites_config);
     let (demographics_config, demographics_metadata) =
         demographics_config::load_demographics_config_from_env();
     let demographics_handle =
@@ -401,6 +412,9 @@ pub fn build_headless_app() -> App {
         .insert_resource(sedentarization_handle)
         .insert_resource(sedentarization_metadata)
         .insert_resource(sedentarization::SedentarizationScore::default())
+        .insert_resource(sites_handle)
+        .insert_resource(sites_metadata)
+        .insert_resource(sites::DiscoveredSites::default())
         .insert_resource(demographics_handle)
         .insert_resource(demographics_metadata)
         .insert_resource(supply_network_handle)
@@ -484,6 +498,7 @@ pub fn build_headless_app() -> App {
                 systems::apply_starting_inventory_effects,
                 hydrology::generate_hydrology,
                 systems::apply_tag_budget_solver,
+                sites::place_wondrous_sites,
                 spawn_initial_herds,
                 espionage::initialise_espionage_roster,
             )
@@ -584,6 +599,7 @@ pub fn build_headless_app() -> App {
                 visibility_systems::calculate_visibility,
                 visibility_systems::apply_trade_route_visibility,
                 visibility_systems::apply_visibility_decay,
+                sites::discover_sites,
             )
                 .chain()
                 .in_set(TurnStage::Visibility)

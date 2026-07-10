@@ -405,6 +405,7 @@ pub mod knowledge {
                 food_modules: Vec::new(),
                 faction_inventory: Vec::new(),
                 sedentarization: Vec::new(),
+                discovered_sites: Vec::new(),
                 demographics: Vec::new(),
                 moisture_raster: FloatRasterState::default(),
                 terrain: TerrainOverlayState::default(),

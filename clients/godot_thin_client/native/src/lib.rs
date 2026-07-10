@@ -1168,6 +1168,13 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
         let _ = dict.insert("demographics", demographics_to_array(demographics));
     }
 
+    if let Some(discovered_sites) = delta.discoveredSites() {
+        let _ = dict.insert(
+            "discovered_sites",
+            discovered_sites_to_array(discovered_sites),
+        );
+    }
+
     if let Some(definitions) = delta.greatDiscoveryDefinitions() {
         let _ = dict.insert(
             "great_discovery_definitions",
@@ -2667,6 +2674,13 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         let _ = dict.insert("demographics", demographics_to_array(demographics));
     }
 
+    if let Some(discovered_sites) = snapshot.discoveredSites() {
+        let _ = dict.insert(
+            "discovered_sites",
+            discovered_sites_to_array(discovered_sites),
+        );
+    }
+
     if let Some(axis_bias) = snapshot.axisBias() {
         let _ = dict.insert("axis_bias", axis_bias_to_dict(axis_bias));
     }
@@ -2915,6 +2929,40 @@ fn sedentarization_to_array(
         if let Some(stage) = state.stage() {
             let _ = dict.insert("stage", stage);
         }
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn discovered_sites_to_array(
+    states: Vector<'_, ForwardsUOffset<fb::DiscoveredSitesState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for state in states {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("faction", state.faction() as i64);
+        let mut sites = VarArray::new();
+        if let Some(entries) = state.sites() {
+            for site in entries {
+                let mut site_dict = VarDictionary::new();
+                let _ = site_dict.insert("x", site.x() as i64);
+                let _ = site_dict.insert("y", site.y() as i64);
+                if let Some(site_id) = site.site_id() {
+                    let _ = site_dict.insert("site_id", site_id);
+                }
+                if let Some(category) = site.category() {
+                    let _ = site_dict.insert("category", category);
+                }
+                if let Some(display_name) = site.display_name() {
+                    let _ = site_dict.insert("display_name", display_name);
+                }
+                if let Some(glyph) = site.glyph() {
+                    let _ = site_dict.insert("glyph", glyph);
+                }
+                sites.push(&site_dict.to_variant());
+            }
+        }
+        let _ = dict.insert("sites", sites);
         array.push(&dict.to_variant());
     }
     array

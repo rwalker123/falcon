@@ -431,6 +431,25 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   head-count, the three brackets, and the **dependency ratio** `(children+elders)/working` per 100
   workers, tinted amber when dependents outnumber workers / cyan on a healthy labor surplus. Hidden
   until the faction has population. See `core_sim` Campaign Loop — Population & Demographics.
+- **Wondrous Sites (discovered)** (snapshot `discovered_sites[]`, per-faction like
+  `sedentarization`/`demographics`; each entry `{faction, sites:[{x,y,site_id,category,display_name,
+  glyph}]}` with `category`/`display_name`/`glyph` resolved server-side — client renders the provided
+  glyph/name, no client-side site config; undiscovered sites are never sent). Decoded in
+  `native/src/lib.rs discovered_sites_to_array` into both the full-snapshot and delta dicts under
+  `discovered_sites`. Surfaced three ways, all filtered to `PLAYER_FACTION_ID`:
+  (1) **Top-bar readout** (`Hud.gd update_discoveries`, dispatched from `Main.gd`): a compact
+  `◈ Discoveries N  <distinct glyphs>` line (`DiscoveriesLabel` in `TurnBlock`, cyan), hidden when 0.
+  (2) **Map glyph markers** (`MapView.gd`): ingested into `discovered_sites` + a `discovered_site_lookup`
+  (`Vector2i → site`) mirroring `food_modules`; `_draw_discovered_site` draws a dark backing disc + the
+  site's `glyph` via `draw_string`, gated on `_visibility_state_at != "unexplored"` (persists on any
+  known/remembered tile — Discovered OR Active — since a site is permanent geographic knowledge, unlike
+  the Active-only food-site/herd markers), nudged up (`DISCOVERED_SITE_STACK_OFFSET`) when a food/herd
+  marker shares the tile.
+  (3) **Tile card** (`Hud._tile_terrain_lines`): a `Site: <display_name>` row (from `_tile_info_at`'s
+  `discovered_site_lookup` cross-ref → `site_name`), shown before the FoW discovered early-return since
+  it's known knowledge. The server also pushes a `SiteDiscovered` command-feed entry, which renders
+  generically via the server-provided `kind`/`label` (no client kind→label map needed). See
+  `core_sim` — Wondrous Sites.
 - **Band food status** (snapshot `PopulationCohortState.daysOfFood` / `activity` / `supplyNetworkId` /
   `stores[]`, decoded in `native/src/lib.rs` `population_to_dict` as `days_of_food` / `activity` /
   `supply_network_id` / `stores{item:qty}`): the green/amber/red warn·critical thresholds and the

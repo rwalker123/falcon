@@ -44,6 +44,16 @@ func _ready() -> void:
 	# Top-bar demographics readout (faction 0 age structure + dependency ratio).
 	_hud.update_demographics([{"faction": 0, "children": 34, "working": 51, "elders": 15}])
 
+	# Top-bar Wondrous-Sites discoveries readout (faction 0): a landmark + a settle-site, so
+	# the count reads `◈ Discoveries 2  ⛰ ⛲` and the distinct glyphs show.
+	_hud.update_discoveries([{
+		"faction": 0,
+		"sites": [
+			{"x": 12, "y": 8, "site_id": "great_peak", "category": "landmark", "display_name": "Great Peak", "glyph": "⛰"},
+			{"x": 20, "y": 14, "site_id": "verdant_basin", "category": "settle_site", "display_name": "Verdant Basin", "glyph": "⛲"},
+		],
+	}])
+
 	# The labor-allocation UI (Early-Game Labor slice 3b) targets the single player band;
 	# seed it so the herd/tile "assign" controls resolve a band to staff.
 	_hud._player_band = _band_fixture()
@@ -93,6 +103,15 @@ func _ready() -> void:
 	_hud.update_band_alerts(_band_alert_fixture())
 	await _settle()
 	await _save("band_alerts")
+
+	# State 1c — Wondrous Sites: the top-bar `◈ Discoveries` readout plus a `SiteDiscovered`
+	# command-feed entry (server-provided kind/label render generically). Confirms both surfaces.
+	_hud.ingest_command_events([
+		{"tick": 42, "kind": "site_discovered", "label": "Discovered Verdant Basin", "detail": "A settle-site revealed at (20, 14)."},
+	])
+	_hud.clear_selection()
+	await _settle()
+	await _save("discoveries")
 
 	# State 2 — a food tile selected: the Tile card's "Assign foragers" controls (a "Band:"
 	# dropdown naming the actor band + a Foragers −/+ count + the Assign button). With one
@@ -334,6 +353,8 @@ func _food_tile_fixture() -> Dictionary:
 		"food_module_label": "Savanna Grassland",
 		"food_module_weight": 1.0,
 		"food_kind": "savanna_track",
+		# A discovered Wondrous Site on this tile → the Tile card shows a "Site: …" line.
+		"site_name": "Verdant Basin",
 	}
 
 func _herd_fixture() -> Dictionary:
