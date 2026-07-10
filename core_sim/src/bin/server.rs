@@ -1630,10 +1630,12 @@ fn handle_send_expedition(
     );
     let party_scalar = Scalar::from_u32(party_workers);
     let drawn = {
-        let mut band_cohort = app
-            .world
-            .get_mut::<PopulationCohort>(band.entity)
-            .expect("home band cohort exists");
+        // The `get`-guard above already confirmed the component; a synchronous handler can't
+        // despawn it mid-call, so this re-fetch is unreachable-None. Match the sibling guards'
+        // let-else style (no `expect` on a server path) and early-return if it somehow fails.
+        let Some(mut band_cohort) = app.world.get_mut::<PopulationCohort>(band.entity) else {
+            return;
+        };
         let drawn = band_cohort.stores.take(FOOD, requested);
         band_cohort.working -= party_scalar;
         band_cohort.sync_size();

@@ -3573,7 +3573,12 @@ pub fn advance_expeditions(
             .and_then(|band| tiles.get(band.current_tile).ok())
             .map(|tile| tile.position);
 
-        // a. Observe into the private buffer (dedup) — no faction-map mutation here.
+        // a. Observe into the private buffer — no faction-map mutation here. The buffer grows
+        // ~100+ tiles/turn while out of comm range, so dedup against an O(1) `HashSet` scratch
+        // (built once from the current buffer) instead of an O(n) `Vec::contains` per tile. The
+        // `Vec` is kept as the authoritative ordered buffer (snapshot `pendingRevealX/Y` needs it);
+        // the set is per-turn scratch only.
+        let mut seen: HashSet<UVec2> = expedition.pending_reveal.iter().copied().collect();
         for pos in crate::visibility_systems::visible_tiles_in_range(
             exp_pos,
             cfg.observe_sight_range,
@@ -3584,7 +3589,7 @@ pub fn advance_expeditions(
             blocking_tags,
             wrap_horizontal,
         ) {
-            if !expedition.pending_reveal.contains(&pos) {
+            if seen.insert(pos) {
                 expedition.pending_reveal.push(pos);
             }
         }

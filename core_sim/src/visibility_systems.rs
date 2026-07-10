@@ -505,7 +505,10 @@ fn reveal_tiles_in_range(
     blocking_tags: TerrainTags,
     wrap_horizontal: bool,
 ) {
-    for pos in visible_tiles_in_range(
+    // Mark each visible tile Active **inline** — this runs for every vision source every turn, so
+    // it must not allocate a Vec on the reveal hot path (the shared geometry hands us tiles via the
+    // closure instead of collecting them).
+    for_each_visible_tile_in_range(
         center,
         base_range,
         elevation,
@@ -514,15 +517,17 @@ fn reveal_tiles_in_range(
         terrain_modifiers,
         blocking_tags,
         wrap_horizontal,
-    ) {
-        map.mark_active(pos.x, pos.y, current_turn);
-    }
+        |pos| map.mark_active(pos.x, pos.y, current_turn),
+    );
 }
 
 /// The tiles a source at `center` with `base_range` can see (elevation/terrain/LOS applied) — the
-/// pure geometry behind [`reveal_tiles_in_range`], factored out so a caller can observe **without**
-/// mutating a faction map. `advance_expeditions` uses this to accumulate a comm-range-gated
-/// pending-reveal buffer (an expedition observes but does not live-reveal fog).
+/// pure geometry behind [`reveal_tiles_in_range`], collected into a `Vec` so a caller can observe
+/// **without** mutating a faction map. `advance_expeditions` uses this to accumulate a
+/// comm-range-gated pending-reveal buffer (an expedition observes but does not live-reveal fog).
+/// The allocation here is fine — this path is the (rare) expedition observation, not the per-source
+/// reveal, which streams through [`for_each_visible_tile_in_range`] allocation-free.
+// Args are inherent: it threads the LOS/elevation/terrain config through the shared reveal geometry.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn visible_tiles_in_range(
     center: UVec2,
@@ -535,6 +540,37 @@ pub(crate) fn visible_tiles_in_range(
     wrap_horizontal: bool,
 ) -> Vec<UVec2> {
     let mut visible = Vec::new();
+    for_each_visible_tile_in_range(
+        center,
+        base_range,
+        elevation,
+        los_enabled,
+        terrain_tags,
+        terrain_modifiers,
+        blocking_tags,
+        wrap_horizontal,
+        |pos| visible.push(pos),
+    );
+    visible
+}
+
+/// Shared per-tile visibility geometry (elevation bounding box + circular range + terrain modifier +
+/// LOS ray-cast), invoking `f(pos)` for each visible tile. Holds the geometry once so both the
+/// allocation-free reveal path ([`reveal_tiles_in_range`], marks inline) and the collecting
+/// observation path ([`visible_tiles_in_range`], pushes to a `Vec`) stay DRY.
+// Args are inherent: it threads the LOS/elevation/terrain config through the shared reveal geometry.
+#[allow(clippy::too_many_arguments)]
+fn for_each_visible_tile_in_range(
+    center: UVec2,
+    base_range: u32,
+    elevation: &ElevationField,
+    los_enabled: bool,
+    terrain_tags: &[TerrainTags],
+    terrain_modifiers: &TerrainModifierConfig,
+    blocking_tags: TerrainTags,
+    wrap_horizontal: bool,
+    mut f: impl FnMut(UVec2),
+) {
     let width = elevation.width;
     let height = elevation.height;
 
@@ -614,10 +650,9 @@ pub(crate) fn visible_tiles_in_range(
             }
 
             // Tile is visible from this source.
-            visible.push(UVec2::new(x, y));
+            f(UVec2::new(x, y));
         }
     }
-    visible
 }
 
 /// Convert string terrain tag names to a combined TerrainTags bitfield.
