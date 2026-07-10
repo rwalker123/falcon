@@ -44,82 +44,41 @@ func _ready() -> void:
 	# Top-bar demographics readout (faction 0 age structure + dependency ratio).
 	_hud.update_demographics([{"faction": 0, "children": 34, "working": 51, "elders": 15}])
 
-	# State 1 — a single band selected: the Occupants roster + drawer (primary Scout).
-	# The band fixture carries a warn-tier larder, so the Food line reads amber.
+	# The labor-allocation UI (Early-Game Labor slice 3b) targets the single player band;
+	# seed it so the herd/tile "assign" controls resolve a band to staff.
+	_hud._player_band = _band_fixture()
+
+	# State 1 — a single band selected: the Occupants roster + the labor allocation panel
+	# (Working/Idle header, Forage + Hunt assignment rows with −/+ steppers, the always-on
+	# Scout + Warrior role rows, and the Move / Clear-all affordances).
 	_hud.show_unit_selection(_band_fixture())
 	await _settle()
 	await _save("band")
 
-	# State 1c — a band on a market-hunt task: the drawer hides "Scout Area" and shows
-	# the armed "Cancel Market Hunt" button (activity=follow + hunt_mode=market).
-	var hunting_band := _band_fixture()
-	hunting_band["activity"] = "follow"
-	hunting_band["hunt_mode"] = "market"
-	_hud.show_unit_selection(hunting_band)
+	# State 1b — an all-idle band: no assignments, every worker idle. The allocation panel
+	# shows just the Scout + Warrior rows (both at 0) under the Working/Idle header.
+	var idle_band := _band_fixture()
+	idle_band["activity"] = "idle"
+	idle_band["idle_workers"] = 16
+	idle_band["labor_assignments"] = []
+	_hud.show_unit_selection(idle_band)
 	await _settle()
-	await _save("band_cancel_hunt")
+	await _save("band_idle")
 
-	# State 1d — a band scouting: the armed "Cancel Scouting" button replaces Scout.
-	var scouting_band := _band_fixture()
-	scouting_band["activity"] = "scout"
-	_hud.show_unit_selection(scouting_band)
-	await _settle()
-	await _save("band_cancel_scout")
-
-	# State 1d2 — a band foraging: the drawer's harvest summary shows the fractional
-	# provisions reward (now fixed-point on the wire; sub-1 rewards must not round to 0).
-	var foraging_band := _band_fixture()
-	foraging_band["activity"] = "harvest"
-	foraging_band["harvest"] = {
-		"action": "forage",
-		"food_module": "grass_forage",
-		"food_module_label": "Grassland Forage",
-		"travel_remaining": 0,
-		"travel_total": 2,
-		"gather_remaining": 1,
-		"gather_total": 3,
-		"provisions_reward": 0.3,
-		"trade_goods_reward": 0,
+	# State 1p — optimistic pending feedback: a fresh forage assignment (6 workers to a new
+	# tile) is in flight before the snapshot confirms. The panel shows an amber "· pending"
+	# Forage row and the Idle count reflects it immediately (16 − [5+4+2+2+6=19] clamps to 0).
+	# (Seeds the HUD-local pending map directly to mimic a just-issued assign_labor.)
+	_hud._pending_labor = {
+		904: {
+			"turn": 0,
+			"assign": {"forage:64,20": {"kind": "forage", "workers": 6, "x": 64, "y": 20, "herd_id": "", "policy": ""}},
+		}
 	}
-	_hud.show_unit_selection(foraging_band)
+	_hud.show_unit_selection(_band_fixture())
 	await _settle()
-	await _save("band_forage_reward")
-
-	# State 1e — optimistic cancel in flight: the band is still on a task in the
-	# snapshot but its entity is pre-seeded into the pending-transition map with
-	# before == its current activity, so the button holds the disabled "Cancelling…"
-	# state until a snapshot changes the activity (confirming idle).
-	var cancelling_band := _band_fixture()
-	cancelling_band["activity"] = "follow"
-	cancelling_band["hunt_mode"] = "market"
-	_hud._pending_transition_bands[int(cancelling_band["entity"])] = {"before": "follow", "label": "Cancelling Market Hunt…"}
-	_hud.show_unit_selection(cancelling_band)
-	await _settle()
-	await _save("band_cancelling")
-	_hud._pending_transition_bands.clear()
-
-	# State 1f — optimistic start in flight: an idle band whose entity is pre-seeded
-	# with before == "idle" (its current activity), so the button shows the disabled
-	# action-specific "Starting Scouting…" state until a snapshot flips the activity.
-	var starting_band := _band_fixture()
-	starting_band["activity"] = "idle"
-	_hud._pending_transition_bands[int(starting_band["entity"])] = {"before": "idle", "label": "Starting Scouting…"}
-	_hud.show_unit_selection(starting_band)
-	await _settle()
-	await _save("band_starting")
-	_hud._pending_transition_bands.clear()
-
-	# State 1g — Fix 1 end-to-end: an idle band gets a follow-hunt dispatched to it via
-	# the real consume_pending_follow path (not a hand-seeded transition). It should flip
-	# to the disabled "Starting Sustain Hunt…" until the snapshot reports the follow task.
-	var follow_target := _band_fixture()
-	follow_target["activity"] = "idle"
-	_hud.show_unit_selection(follow_target)
-	_hud._pending_follow = {"herd_id": "herd_ci", "policy": "sustain", "x": 71, "y": 18, "label": "Reindeer"}
-	_hud.consume_pending_follow(follow_target)
-	await _settle()
-	await _save("band_starting_hunt")
-	_hud._pending_transition_bands.clear()
+	await _save("band_pending")
+	_hud._pending_labor = {}
 
 	# State 1a — a well-fed but demoralized band: healthy food (∞) yet morale 0.22
 	# (< critical), so the drawer's Morale line reads a red 22%. Discontent drags
@@ -135,14 +94,17 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_alerts")
 
-	# State 2 — a food tile selected (primary Harvest button).
+	# State 2 — a food tile selected: the Tile card's "Assign foragers" controls (a "Band:"
+	# dropdown naming the actor band + a Foragers −/+ count + the Assign button). With one
+	# player band the dropdown is a single item ("Band 1").
 	_hud.show_tile_selection(_food_tile_fixture())
 	await _settle()
 	await _save("food_tile")
 
-	# State 3 — a herd selected on a food tile: Harvest + Hunt + Follow verbs plus
-	# the Sustain/Surplus/Eradicate policy picker all surface together. A Thriving
-	# herd shows a neutral ecology readout.
+	# State 3 — a huntable herd selected on a food tile: the "Assign hunters" controls
+	# (a "Band:" dropdown naming the actor band, a Hunters −/+ count, the
+	# sustain/surplus/market/eradicate policy picker, and the Assign button). A Thriving herd
+	# shows a neutral ecology readout in the drawer.
 	_hud.show_herd_selection(_herd_fixture())
 	await _settle()
 	await _save("herd_verbs")
@@ -156,6 +118,32 @@ func _ready() -> void:
 	_hud.show_herd_selection(_domesticated_herd_fixture())
 	await _settle()
 	await _save("herd_domesticated")
+
+	# State 3f — TWO player bands: the "Assign hunters" controls' "Band:" dropdown lists both
+	# (positional "Band 1" / "Band 2"). Default selection is the resolved band (Band 1, 12 idle);
+	# the Hunters count is dialed up to 8 (< cap 12, so + stays enabled).
+	_hud._player_bands = _two_player_bands()
+	_hud._player_band = _hud._player_bands[0]
+	_hud._hunt_assign_key = ""   # force a fresh seed so the default selection = resolved band
+	_hud.show_herd_selection(_herd_fixture())
+	_hud._hunt_assign_count = 8
+	_hud._build_herd_assign_controls(_herd_fixture())
+	await _settle()
+	await _save("herd_band_picker")
+
+	# State 3g — same, after switching the dropdown to Band 2 (only 2 idle): the picker path
+	# re-caps the Hunters count to the newly-selected band's assignable workers (8 → 2, + now
+	# disabled), demonstrating selection → actor band → stepper re-cap.
+	var second_band: Dictionary = _two_player_bands()[1]
+	_hud._hunt_assign_band = int(second_band["entity"])
+	_hud._hunt_assign_count = clampi(
+		_hud._hunt_assign_count, 0, _hud._assignable_hunt_workers(second_band, _herd_fixture()["id"]))
+	_hud._build_herd_assign_controls(_herd_fixture())
+	await _settle()
+	await _save("herd_band_picker_b")
+	# Reset so later states render their usual single-band dropdown.
+	_hud._player_bands = []
+	_hud._hunt_assign_key = ""
 
 	# State 3d — a populated hex: the Tile card + the Occupants roster split. Three
 	# player bands (days_of_food 15 / 7 / 2 → green / amber / red vitality dots, with
@@ -172,12 +160,23 @@ func _ready() -> void:
 	await _settle()
 	await _save("occupants_herd")
 
-	# State 4 — targeting active: pending harvest raises the top-centre banner
-	# and flips the button to the armed "Cancel Harvest" treatment.
-	_hud.show_tile_selection(_food_tile_fixture())
-	_hud._begin_pending_forage(66, 10, "savanna_grassland", "forage")
+	# State 4 — targeting active: pressing "Move" on the band allocation panel enters
+	# tile-targeting, raising the top-centre banner ("MOVE … click a destination tile").
+	_hud.show_unit_selection(_band_fixture())
+	_hud._on_move_band_pressed()
 	await _settle()
 	await _save("targeting_banner")
+
+	# State 5 — quick-hunt convenience (map double-click a herd): with idle workers it
+	# assigns them to hunt; with none it posts a command-feed note instead of silently
+	# no-opping. Seed a fully-staffed band (0 idle) so the note renders in the Command Feed.
+	var staffed_band := _band_fixture()
+	staffed_band["idle_workers"] = 0
+	_hud._player_band = staffed_band
+	_hud.show_tile_selection(_food_tile_fixture())
+	_hud.quick_assign_hunters("game_bison_02")
+	await _settle()
+	await _save("quick_hunt_note")
 
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
@@ -223,10 +222,24 @@ func _band_fixture() -> Dictionary:
 		"id": "Band 2",
 		"size": 148,
 		"entity": 904,
+		"faction": 0,
 		"pos": [71, 18],
 		"days_of_food": 7.0,
 		"morale": 0.82,
 		"stores": {"provisions": 84.0},
+		# Early-Game Labor (slice 3b): 16 working-age workers, 3 idle, split across a
+		# Forage tile, a Hunt herd, and the Scout + Warrior band-wide roles.
+		"working_age": 16,
+		"idle_workers": 3,
+		"work_range": 2,
+		"scout_reveal_radius": 2,
+		"activity": "forage",
+		"labor_assignments": [
+			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18},
+			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17},
+			{"kind": "scout", "workers": 2},
+			{"kind": "warrior", "workers": 2},
+		],
 		"tile_info": {
 			"x": 71, "y": 18,
 			"terrain_label": "Freshwater Marsh",
@@ -294,6 +307,17 @@ func _band_alert_fixture() -> Array:
 			"harvest": {"band_label": "Band Ash"}},
 		# Idle labor: quiet low-priority alert.
 		{"faction": 0, "entity": 103, "size": 45, "days_of_food": 999.0, "activity": "idle", "current_x": 12, "current_y": 9},
+	]
+
+## Two player bands (multi-band split is deferred, but the assign controls' band-picker must
+## handle N). Different idle_workers so switching the dropdown visibly re-caps the worker
+## stepper; neither hunts the deer herd, so the cap for a fresh source == idle_workers.
+func _two_player_bands() -> Array:
+	return [
+		{"entity": 801, "faction": 0, "size": 120, "current_x": 66, "current_y": 10,
+			"working_age": 14, "idle_workers": 12, "activity": "forage", "labor_assignments": []},
+		{"entity": 802, "faction": 0, "size": 40, "current_x": 68, "current_y": 12,
+			"working_age": 6, "idle_workers": 2, "activity": "hunt", "labor_assignments": []},
 	]
 
 func _food_tile_fixture() -> Dictionary:

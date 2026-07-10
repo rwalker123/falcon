@@ -1,0 +1,15 @@
+{
+  "band_work_range": 2,
+  "hunt_leash_tiles": 3,
+  "band_move_tiles_per_turn": 1,
+  "forage": {
+    "per_worker_yield": 0.25
+  },
+  "hunt": {
+    "per_worker_biomass_capacity": 40.0
+  },
+  "scout": {
+    "sight_bonus_per_scout": 1,
+    "max_sight_bonus": 4
+  }
+}

@@ -247,15 +247,6 @@ size_flags_horizontal = 3
 bbcode_enabled = true
 fit_content = true
 
-[node name="TileActionRow" type="HBoxContainer" parent="RootPanel/TabContainer/Terrain/TerrainVBox/TileSection"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 8
-
-[node name="TileScoutButton" type="Button" parent="RootPanel/TabContainer/Terrain/TerrainVBox/TileSection/TileActionRow"]
-layout_mode = 2
-text = "Scout Tile"
-
 [node name="Map" type="ScrollContainer" parent="RootPanel/TabContainer"]
 visible = false
 layout_mode = 2
@@ -1104,11 +1095,6 @@ layout_mode = 2
 size_flags_vertical = 3
 bbcode_enabled = true
 
-[node name="FaunaFollowButton" type="Button" parent="RootPanel/TabContainer/Fauna"]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Hunt"
-
 [node name="GreatDiscoveries" type="ScrollContainer" parent="RootPanel/TabContainer"]
 visible = false
 layout_mode = 2
@@ -1363,74 +1349,6 @@ value = 100000.0
 [node name="HeatApplyButton" type="Button" parent="RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
 layout_mode = 2
 text = "Apply Heat"
-
-[node name="ScenarioCommands" type="VBoxContainer" parent="RootPanel/TabContainer/Commands"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-
-[node name="ScenarioCommandLabel" type="Label" parent="RootPanel/TabContainer/Commands/ScenarioCommands"]
-layout_mode = 2
-text = "Scenario Commands"
-
-[node name="ScenarioFactionRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/ScenarioCommands"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-
-[node name="ScenarioFactionLabel" type="Label" parent="RootPanel/TabContainer/Commands/ScenarioCommands/ScenarioFactionRow"]
-layout_mode = 2
-text = "Faction"
-
-[node name="ScenarioFactionSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/ScenarioCommands/ScenarioFactionRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-min_value = 0.0
-max_value = 16.0
-step = 1.0
-
-[node name="ScoutRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/ScenarioCommands"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-
-[node name="ScoutLabel" type="Label" parent="RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow"]
-layout_mode = 2
-text = "Scout"
-
-[node name="ScoutXSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-max_value = 512.0
-step = 1.0
-
-[node name="ScoutYSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-max_value = 512.0
-step = 1.0
-
-[node name="ScoutExecuteButton" type="Button" parent="RootPanel/TabContainer/Commands/ScenarioCommands/ScoutRow"]
-layout_mode = 2
-text = "Scout Hex"
-
-[node name="FollowRow" type="HBoxContainer" parent="RootPanel/TabContainer/Commands/ScenarioCommands"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-
-[node name="FollowLabel" type="Label" parent="RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow"]
-layout_mode = 2
-text = "Hunt"
-
-[node name="FollowHerdField" type="LineEdit" parent="RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-placeholder_text = "herd id (e.g. trail_herd_a)"
-
-[node name="FollowHerdButton" type="Button" parent="RootPanel/TabContainer/Commands/ScenarioCommands/FollowRow"]
-layout_mode = 2
-text = "Hunt"
 
 [node name="ConfigControls" type="VBoxContainer" parent="RootPanel/TabContainer/Commands"]
 layout_mode = 2

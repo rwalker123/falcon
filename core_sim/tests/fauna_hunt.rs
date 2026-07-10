@@ -3,14 +3,19 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_fauna_pursuits, advance_herds, scalar_one, scalar_zero, spawn_initial_herds,
-    spawn_initial_world, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
-    FactionInventory, FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode, FogRevealLedger,
-    GenerationId, HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    advance_herds, advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero,
+    spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger,
+    FollowPolicy, GenerationId, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
 };
+
+/// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
+/// never binds, so the take is set by the policy ceiling.
+const HUNT_WORKERS: u32 = 5000;
 
 /// Build a land-rich world with herds spawned (mirrors `fauna_spawn.rs` setup).
 fn spawn_world() -> App {
@@ -47,6 +52,7 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    app.world.insert_resource(LaborConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.insert_resource(FogRevealLedger::default());
@@ -54,9 +60,9 @@ fn spawn_world() -> App {
     app
 }
 
-/// A band adjacent to a herd hunts it: biomass drops and provisions/trade accrue.
+/// A band adjacent to a herd hunts it: biomass drops and provisions accrue to its larder.
 #[test]
-fn hunt_pursuit_takes_biomass_and_yields() {
+fn hunt_assignment_takes_biomass_and_yields() {
     let mut app = spawn_world();
 
     // Pick a short-range game herd and note its id / tile / biomass.
@@ -76,7 +82,7 @@ fn hunt_pursuit_takes_biomass_and_yields() {
         .index(herd_pos.x, herd_pos.y)
         .expect("herd tile should resolve");
 
-    // Spawn a band already standing on the herd's tile with a hunt pursuit attached.
+    // Spawn a band standing on the herd's tile with an Eradicate Hunt assignment.
     let faction = FactionId(0);
     let band = app
         .world
@@ -86,7 +92,7 @@ fn hunt_pursuit_takes_biomass_and_yields() {
                 current_tile: tile_entity,
                 size: 30,
                 children: scalar_zero(),
-                working: scalar_zero(),
+                working: scalar_from_f32(HUNT_WORKERS as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -107,18 +113,19 @@ fn hunt_pursuit_takes_biomass_and_yields() {
                 kind: "BandHunter".to_string(),
                 tags: Vec::new(),
             },
-            FaunaPursuit {
-                faction,
-                band_label: "Test Band".to_string(),
-                fauna_id: herd_id.clone(),
-                mode: FaunaPursuitMode::Hunt,
-                elapsed_turns: 0,
-                started_tick: 0,
+            LaborAllocation {
+                assignments: vec![LaborAssignment {
+                    target: LaborTarget::Hunt {
+                        fauna_id: herd_id.clone(),
+                        policy: FollowPolicy::Eradicate,
+                    },
+                    workers: HUNT_WORKERS,
+                }],
             },
         ))
         .id();
 
-    app.world.run_system_once(advance_fauna_pursuits);
+    app.world.run_system_once(advance_labor_allocation);
 
     // Herd biomass dropped by the take.
     let biomass_after = app
@@ -143,10 +150,19 @@ fn hunt_pursuit_takes_biomass_and_yields() {
         "expected provisions in the band larder from the hunt, got {food_store}"
     );
 
-    // The one-shot pursuit is consumed (component removed).
+    // The Hunt assignment persists (the band keeps hunting while in range).
+    let still_hunting = app
+        .world
+        .get::<LaborAllocation>(band)
+        .map(|a| {
+            a.assignments
+                .iter()
+                .any(|x| matches!(x.target, LaborTarget::Hunt { .. }))
+        })
+        .unwrap_or(false);
     assert!(
-        app.world.get::<FaunaPursuit>(band).is_none(),
-        "FaunaPursuit should be removed after resolving"
+        still_hunting,
+        "Hunt assignment should persist while in range"
     );
 }
 
@@ -168,13 +184,9 @@ fn biomass_regrows_and_extinct_group_despawns() {
 
     let low_biomass = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
-        // Draw herd 0 down to half its cap: below capacity so logistic regrowth is
-        // clearly positive, but above the Phase D collapse threshold so it recovers
-        // rather than crashing.
         let cap = registry.herds[0].carrying_capacity;
         let low = (cap * 0.5).max(1.0);
         registry.herds[0].biomass = low;
-        // Zero out herd 1 -> local extinction.
         registry.herds[1].biomass = 0.0;
         low
     };

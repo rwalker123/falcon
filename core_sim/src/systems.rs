@@ -13,11 +13,10 @@ use crate::map_preset::{MapPreset, MapPresetsHandle, TerrainClassifierConfig};
 use crate::snapshot_overlays_config::SnapshotOverlaysConfig;
 use crate::{
     components::{
-        fragments_from_contract, fragments_to_contract, ElementKind, FaunaPursuit,
-        FaunaPursuitMode, FollowPolicy, HarvestAssignment, HarvestTaskKind, KnowledgeFragment,
-        LocalStore, LogisticsLink, MoraleCause, MoraleContributions, MountainMetadata,
-        PendingMigration, PopulationCohort, PowerNode, ScoutAssignment, StartingUnit, Tile,
-        TradeLink, FOOD,
+        available_workers, fragments_from_contract, fragments_to_contract, BandTravel, ElementKind,
+        FollowPolicy, KnowledgeFragment, LaborAllocation, LaborTarget, LocalStore, LogisticsLink,
+        MoraleCause, MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort,
+        PowerNode, StartingUnit, Tile, TradeLink, FOOD,
     },
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
@@ -33,6 +32,7 @@ use crate::{
     heightfield::{build_elevation_field, ElevationField},
     hydrology::HydrologyState,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
+    labor_config::LaborConfigHandle,
     mapgen::MountainType,
     mapgen::{build_bands, validate_bands, TerrainBand, WorldGenSeed},
     orders::{FactionId, FactionRegistry},
@@ -2657,6 +2657,9 @@ fn spawn_population_entity(
         knowledge: knowledge.to_vec(),
         migration: None,
     });
+    // Every band carries a labor allocation (default empty = fully idle). The client drives
+    // assignment; the startup food reserve covers the ramp before the first orders land.
+    entity.insert(LaborAllocation::default());
     if let Some(marker) = marker {
         entity.insert(marker);
     }
@@ -3457,192 +3460,219 @@ pub fn simulate_population(
     }
 }
 
-/// Compute the tile position at a given progress fraction along a line.
-fn interpolate_tile_position(from: UVec2, to: UVec2, remaining: u32, total: u32) -> UVec2 {
-    if total == 0 || remaining >= total {
-        return from;
+/// Advance any `move_band` order one step toward its target. The band travels at
+/// `band_move_tiles_per_turn` tiles/turn; `current_tile` (and `home`, since a nomad band has no
+/// fixed origin) follow it so labor reads the updated in-range source set, and on arrival the
+/// `BandTravel` component is removed. Movement is the only way a band repositions — hunting uses a
+/// bounded leash, never a whole-band chase.
+pub fn advance_band_movement(
+    mut commands: Commands,
+    labor_config: Res<LaborConfigHandle>,
+    tile_registry: Res<TileRegistry>,
+    tiles: Query<&Tile>,
+    mut cohorts: Query<(Entity, &mut PopulationCohort, &BandTravel)>,
+) {
+    let labor = labor_config.get();
+    for (entity, mut cohort, travel) in cohorts.iter_mut() {
+        let current = tiles
+            .get(cohort.current_tile)
+            .map(|tile| tile.position)
+            .unwrap_or(travel.target);
+        if current == travel.target {
+            commands.entity(entity).remove::<BandTravel>();
+            continue;
+        }
+        let next = step_toward(current, travel.target, labor.band_move_tiles_per_turn);
+        if let Some(tile_entity) = tile_registry.index(next.x, next.y) {
+            cohort.current_tile = tile_entity;
+            cohort.home = tile_entity;
+        }
+        if next == travel.target {
+            commands.entity(entity).remove::<BandTravel>();
+        }
     }
-    if remaining == 0 {
-        return to;
-    }
-    let progress = 1.0 - (remaining as f32 / total as f32);
-    UVec2::new(
-        (from.x as f32 + (to.x as f32 - from.x as f32) * progress).round() as u32,
-        (from.y as f32 + (to.y as f32 - from.y as f32) * progress).round() as u32,
-    )
 }
 
+/// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired
+/// single-task systems (`advance_harvest_assignments` / `advance_scout_assignments` /
+/// `advance_fauna_pursuits`): a band now draws subsistence from *many* in-range sources at once,
+/// with yield scaled by the workers assigned to each. Runs in the Population stage after
+/// consumption drains the larder, so labor income lands the same turn (matching the old timing).
+///
+/// - **Forage** `{ tile }`: within `band_work_range` of the band and carrying a `FoodModuleTag` →
+///   `workers × per_worker_yield × seasonal_weight` provisions (× output multiplier). Out of range
+///   or module-less → 0 this turn, but the assignment is kept (the band may move back).
+/// - **Hunt** `{ fauna_id, policy }`: reuses the per-policy ecology ceiling; the take is
+///   `min(workers × per_worker_biomass_capacity, policy_ceiling)`, so under-hunting a Sustain herd
+///   (`worker_cap < regrowth`) lets it GROW. Tracks a roaming herd out to `band_work_range +
+///   hunt_leash_tiles` (leashed follow); past that — or if the herd is gone — the assignment lapses
+///   and its workers return to the pool (feed entry).
+/// - **Scout**: reveals fog outward from the band. **Warrior**: inert (occupies workers only).
+///
+/// Husbandry (Phase E) re-homes here: a Sustain hunt on a Thriving herd accrues domestication for
+/// the acting faction, exactly as the retired follow did.
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
-pub fn advance_harvest_assignments(
-    mut commands: Commands,
+pub fn advance_labor_allocation(
+    mut registry: ResMut<HerdRegistry>,
     mut inventory: ResMut<FactionInventory>,
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
     tile_registry: Res<TileRegistry>,
+    fauna_config: Res<FaunaConfigHandle>,
+    labor_config: Res<LaborConfigHandle>,
     wellbeing_config: Res<WellbeingConfigHandle>,
     tiles: Query<&Tile>,
-    mut cohorts: Query<(Entity, &mut PopulationCohort, &mut HarvestAssignment)>,
+    food_modules: Query<&FoodModuleTag>,
+    mut cohorts: Query<(&mut PopulationCohort, &mut LaborAllocation)>,
 ) {
+    let fauna = fauna_config.get();
+    let labor = labor_config.get();
     let wellbeing = wellbeing_config.get();
-    for (entity, mut cohort, mut assignment) in cohorts.iter_mut() {
-        if assignment.travel_remaining > 0 {
-            assignment.travel_remaining -= 1;
+    let hunt = &fauna.hunt;
+    let follow = &fauna.follow;
+    let ecology = &fauna.ecology;
+    let husbandry = &fauna.husbandry;
+    let market = &fauna.market;
+    let work_range = labor.band_work_range;
+    let hunt_reach = labor.hunt_reach();
 
-            // Update current_tile to interpolated position
-            if let Ok(home_tile) = tiles.get(cohort.home) {
-                let current_pos = interpolate_tile_position(
-                    home_tile.position,
-                    assignment.target_coords,
-                    assignment.travel_remaining,
-                    assignment.travel_total,
-                );
-                if let Some(tile_entity) = tile_registry.index(current_pos.x, current_pos.y) {
-                    cohort.current_tile = tile_entity;
-                }
-            }
-
-            if assignment.travel_remaining == 0 {
-                cohort.home = assignment.target_tile;
-                cohort.current_tile = assignment.target_tile;
-            }
+    for (mut cohort, mut allocation) in cohorts.iter_mut() {
+        // Normalize each turn: if `working` shrank, trim assignments so Σ ≤ available.
+        let available = available_workers(cohort.working);
+        allocation.normalize(available);
+        if allocation.assignments.is_empty() {
             continue;
         }
-        if assignment.gather_remaining > 0 {
-            assignment.gather_remaining -= 1;
-            if assignment.gather_remaining > 0 {
+        let faction = cohort.faction;
+        let Ok(band_pos) = tiles.get(cohort.current_tile).map(|tile| tile.position) else {
+            continue;
+        };
+        // Productivity modifier stack (wellbeing): scale every yield by the band's output
+        // multiplier at PAYOUT. One call — future modifiers slot into `output_multiplier`.
+        let mult = output_multiplier(&cohort, &wellbeing);
+        let mult_f = mult.to_f32();
+
+        let mut lapsed: Vec<usize> = Vec::new();
+        for (idx, assignment) in allocation.assignments.iter().enumerate() {
+            let workers = assignment.workers;
+            if workers == 0 {
                 continue;
             }
-        } else {
-            continue;
-        }
-
-        // Productivity modifier stack (wellbeing): scale the yield by the band's current output
-        // multiplier at PAYOUT (discontent drags labor). One call — future modifiers slot into
-        // `output_multiplier`, not here.
-        let mult = output_multiplier(&cohort, &wellbeing);
-        // FOOD income is fully fractional end-to-end: the reward is already `Scalar` (fractional at
-        // source), so don't re-round the payout — a sub-1 forage yield must still reach the larder.
-        let provisions = assignment.provisions_reward.max(scalar_zero()) * mult;
-        let trade_goods = (Scalar::from_i64(assignment.trade_goods_reward.max(0)) * mult)
-            .round()
-            .to_i64_whole();
-
-        // Provisions the band forages go into its own local larder (carried food), not the
-        // faction pool. Trade goods remain a faction-global stockpile.
-        if provisions > scalar_zero() {
-            cohort.stores.add(FOOD, provisions);
-        }
-        if trade_goods > 0 {
-            inventory.add_stockpile(assignment.faction, "trade_goods", trade_goods);
-        }
-
-        let (event_kind, label_display) = match assignment.kind {
-            HarvestTaskKind::Harvest => (CommandEventKind::Forage, "Harvest"),
-            HarvestTaskKind::Hunt => (CommandEventKind::Hunt, "Hunt"),
-        };
-        let detail = format!(
-            "status=complete action={} module={} provisions={} trade_goods={} travel_turns={} gather_turns={} started_tick={}",
-            assignment.kind.as_str(),
-            assignment.module.as_str(),
-            provisions.round().to_i64_whole().max(0),
-            trade_goods.max(0),
-            assignment.travel_total,
-            assignment.gather_total,
-            assignment.started_tick
-        );
-
-        event_log.push(CommandEventEntry::new(
-            tick.0,
-            event_kind,
-            assignment.faction,
-            format!(
-                "{} {} -> ({}, {})",
-                assignment.band_label,
-                label_display.to_lowercase(),
-                assignment.target_coords.x,
-                assignment.target_coords.y
-            ),
-            Some(detail),
-        ));
-
-        commands.entity(entity).remove::<HarvestAssignment>();
-    }
-}
-
-pub fn advance_scout_assignments(
-    mut commands: Commands,
-    mut fog: ResMut<FogRevealLedger>,
-    mut event_log: ResMut<CommandEventLog>,
-    tick: Res<SimulationTick>,
-    tile_registry: Res<TileRegistry>,
-    tiles: Query<&Tile>,
-    mut cohorts: Query<(Entity, &mut PopulationCohort, &mut ScoutAssignment)>,
-) {
-    for (entity, mut cohort, mut assignment) in cohorts.iter_mut() {
-        if assignment.travel_remaining > 0 {
-            assignment.travel_remaining -= 1;
-
-            // Update current_tile to interpolated position
-            if let Ok(home_tile) = tiles.get(cohort.home) {
-                let current_pos = interpolate_tile_position(
-                    home_tile.position,
-                    assignment.target_coords,
-                    assignment.travel_remaining,
-                    assignment.travel_total,
-                );
-                if let Some(tile_entity) = tile_registry.index(current_pos.x, current_pos.y) {
-                    cohort.current_tile = tile_entity;
+            match &assignment.target {
+                LaborTarget::Forage { tile } => {
+                    // Out of range this turn → no yield, but keep the assignment (the band may
+                    // move back into range). No tile depletion in this slice (a later refinement).
+                    if chebyshev_tiles(band_pos, *tile) > work_range {
+                        continue;
+                    }
+                    let Some(tile_entity) = tile_registry.index(tile.x, tile.y) else {
+                        continue;
+                    };
+                    let Ok(module) = food_modules.get(tile_entity) else {
+                        continue; // module lost → 0 this turn.
+                    };
+                    let seasonal = module.seasonal_weight.max(0.0);
+                    // FOOD income is fully fractional: a few foragers may yield < 1/turn.
+                    let provisions =
+                        scalar_from_f32(workers as f32 * labor.forage.per_worker_yield * seasonal)
+                            * mult;
+                    if provisions > scalar_zero() {
+                        cohort.stores.add(FOOD, provisions);
+                    }
+                }
+                LaborTarget::Hunt { fauna_id, policy } => {
+                    let Some(herd_pos) = registry.find(fauna_id).map(|herd| herd.position()) else {
+                        // Herd despawned (extinction / another hunter) → lapse.
+                        lapsed.push(idx);
+                        event_log.push(CommandEventEntry::new(
+                            tick.0,
+                            CommandEventKind::Hunt,
+                            faction,
+                            format!("hunters lost {} (herd dispersed)", fauna_id),
+                            Some("status=lapsed reason=herd_gone".to_string()),
+                        ));
+                        continue;
+                    };
+                    let distance = chebyshev_tiles(band_pos, herd_pos);
+                    if distance > hunt_reach {
+                        // Past the leash → the assignment lapses; workers return to the pool.
+                        lapsed.push(idx);
+                        event_log.push(CommandEventEntry::new(
+                            tick.0,
+                            CommandEventKind::Hunt,
+                            faction,
+                            format!("hunters lost the {} — it ranged too far", fauna_id),
+                            Some(format!(
+                                "status=lapsed reason=out_of_leash distance={} reach={}",
+                                distance, hunt_reach
+                            )),
+                        ));
+                        continue;
+                    }
+                    let Some(herd) = registry.herds.iter_mut().find(|herd| herd.id == *fauna_id)
+                    else {
+                        continue;
+                    };
+                    // Per-policy ecology ceiling (reused wholesale from the retired follow): Sustain
+                    // = one turn's net regrowth (a collapsing group gives nothing), etc.
+                    let policy_ceiling = match policy {
+                        FollowPolicy::Sustain => {
+                            net_biomass_delta(herd.biomass, herd.carrying_capacity, ecology)
+                                .max(0.0)
+                        }
+                        FollowPolicy::Surplus => {
+                            net_biomass_delta(herd.biomass, herd.carrying_capacity, ecology)
+                                .max(0.0)
+                                * follow.surplus_multiplier
+                        }
+                        FollowPolicy::Market => market.take_fraction * herd.biomass,
+                        FollowPolicy::Eradicate => hunt.take_from(herd.biomass),
+                    };
+                    // The hunting group's throughput caps the take; if it is below the Sustain
+                    // ceiling the herd nets positive growth (correct under-hunting behavior).
+                    let worker_cap = workers as f32 * labor.hunt.per_worker_biomass_capacity;
+                    let take = worker_cap
+                        .min(policy_ceiling)
+                        .max(0.0)
+                        .clamp(0.0, herd.biomass);
+                    herd.biomass -= take;
+                    // Phase E husbandry: a Sustain hunt on a Thriving group tames it over time.
+                    if matches!(policy, FollowPolicy::Sustain)
+                        && herd.ecology_phase == EcologyPhase::Thriving
+                    {
+                        herd.accrue_domestication(faction, husbandry.progress_per_turn);
+                    }
+                    let trade_multiplier = if matches!(policy, FollowPolicy::Market) {
+                        market.trade_goods_multiplier
+                    } else {
+                        1.0
+                    };
+                    // FOOD income is fully fractional; trade goods stay integer → FactionInventory.
+                    let provisions = scalar_from_f32(take * hunt.provisions_per_biomass * mult_f);
+                    let trade_goods =
+                        (take * hunt.trade_goods_per_biomass * trade_multiplier * mult_f).round()
+                            as i64;
+                    if provisions > scalar_zero() {
+                        cohort.stores.add(FOOD, provisions);
+                    }
+                    if trade_goods > 0 {
+                        inventory.add_stockpile(faction, "trade_goods", trade_goods);
+                    }
+                }
+                LaborTarget::Scout => {
+                    // Scouts extend the band's live sight range in `calculate_visibility`
+                    // (`labor.scout.sight_bonus(scouts)`), re-marked Active every turn — no work
+                    // is done here (the old fog-pulse was a no-op inside passive sight).
+                }
+                LaborTarget::Warrior => {
+                    // Inert this slice — the predator slice consumes Warrior strength.
                 }
             }
-
-            if assignment.travel_remaining == 0 {
-                cohort.home = assignment.target_tile;
-                cohort.current_tile = assignment.target_tile;
-            }
-            continue;
         }
-
-        let expires_at = tick.0.saturating_add(assignment.reveal_duration);
-        fog.queue(
-            assignment.target_coords,
-            assignment.reveal_radius,
-            expires_at,
-        );
-
-        if assignment.morale_gain > 0.0 {
-            cohort.morale = (cohort.morale + Scalar::from_f32(assignment.morale_gain))
-                .clamp(Scalar::zero(), Scalar::one());
+        // Drop lapsed hunts (reverse order to keep indices valid); workers return to the pool.
+        for idx in lapsed.into_iter().rev() {
+            allocation.assignments.remove(idx);
         }
-
-        let detail = format!(
-            "status=complete radius={} morale_boost={:.2} travel_turns={} started_tick={}",
-            assignment.reveal_radius,
-            assignment.morale_gain,
-            assignment.travel_total,
-            assignment.started_tick
-        );
-
-        event_log.push(CommandEventEntry::new(
-            tick.0,
-            CommandEventKind::Scout,
-            assignment.faction,
-            format!(
-                "{} -> ({}, {})",
-                assignment.band_label, assignment.target_coords.x, assignment.target_coords.y
-            ),
-            Some(detail.clone()),
-        ));
-
-        info!(
-            "command.scout_area.completed faction={} band={} x={} y={} radius={}",
-            assignment.faction.0,
-            assignment.band_label,
-            assignment.target_coords.x,
-            assignment.target_coords.y,
-            assignment.reveal_radius
-        );
-
-        commands.entity(entity).remove::<ScoutAssignment>();
     }
 }
 
@@ -3658,213 +3688,6 @@ fn step_toward(from: UVec2, to: UVec2, max_step: u32) -> UVec2 {
         (f as i64 + delta).max(0) as u32
     };
     UVec2::new(axis(from.x, to.x), axis(from.y, to.y))
-}
-
-/// Advance fauna hunt pursuits: each turn the band re-targets the herd's *live*
-/// position (herds already moved in `TurnStage::Logistics`), steps toward it, and on
-/// closing to within `pursuit_radius` resolves a one-shot take of biomass →
-/// provisions/trade. The group's biomass draws down here and regrows in `advance_herds`;
-/// a group taken to zero despawns there (local extinction).
-#[allow(clippy::too_many_arguments)]
-pub fn advance_fauna_pursuits(
-    mut commands: Commands,
-    mut registry: ResMut<HerdRegistry>,
-    mut inventory: ResMut<FactionInventory>,
-    mut event_log: ResMut<CommandEventLog>,
-    mut fog: ResMut<FogRevealLedger>,
-    tick: Res<SimulationTick>,
-    tile_registry: Res<TileRegistry>,
-    fauna_config: Res<FaunaConfigHandle>,
-    wellbeing_config: Res<WellbeingConfigHandle>,
-    tiles: Query<&Tile>,
-    mut cohorts: Query<(Entity, &mut PopulationCohort, &mut FaunaPursuit)>,
-) {
-    let fauna = fauna_config.get();
-    let wellbeing = wellbeing_config.get();
-    let hunt = &fauna.hunt;
-    let follow = &fauna.follow;
-    let ecology = &fauna.ecology;
-    let husbandry = &fauna.husbandry;
-    let market = &fauna.market;
-    for (entity, mut cohort, mut pursuit) in cohorts.iter_mut() {
-        // Herd still around? (may have despawned via extinction or another hunter).
-        let Some(herd_pos) = registry.find(&pursuit.fauna_id).map(|herd| herd.position()) else {
-            event_log.push(CommandEventEntry::new(
-                tick.0,
-                CommandEventKind::Hunt,
-                pursuit.faction,
-                format!(
-                    "{} lost {} (herd dispersed)",
-                    pursuit.band_label, pursuit.fauna_id
-                ),
-                Some("status=cancelled reason=herd_gone".to_string()),
-            ));
-            commands.entity(entity).remove::<FaunaPursuit>();
-            continue;
-        };
-
-        pursuit.elapsed_turns += 1;
-        if pursuit.elapsed_turns > hunt.max_pursuit_turns {
-            event_log.push(CommandEventEntry::new(
-                tick.0,
-                CommandEventKind::Hunt,
-                pursuit.faction,
-                format!(
-                    "{} gave up chasing {}",
-                    pursuit.band_label, pursuit.fauna_id
-                ),
-                Some("status=cancelled reason=elusive".to_string()),
-            ));
-            commands.entity(entity).remove::<FaunaPursuit>();
-            continue;
-        }
-
-        let band_pos = tiles
-            .get(cohort.current_tile)
-            .map(|tile| tile.position)
-            .unwrap_or(herd_pos);
-
-        // Not close enough: step toward the herd's live tile and wait for next turn.
-        // Keep `home` on the band's real position so per-turn systems that read it
-        // (e.g. `simulate_population`'s environmental inputs) don't use the stale
-        // origin as the band ranges across the map.
-        if chebyshev_tiles(band_pos, herd_pos) > hunt.pursuit_radius {
-            let next = step_toward(band_pos, herd_pos, hunt.pursuit_tiles_per_turn);
-            if let Some(tile_entity) = tile_registry.index(next.x, next.y) {
-                cohort.current_tile = tile_entity;
-                cohort.home = tile_entity;
-            }
-            continue;
-        }
-
-        // Close enough: resolve the take against the herd's live biomass. Hunt is a
-        // one-shot; Follow keeps shadowing and auto-hunts per policy each turn.
-        let Some(herd) = registry
-            .herds
-            .iter_mut()
-            .find(|herd| herd.id == pursuit.fauna_id)
-        else {
-            commands.entity(entity).remove::<FaunaPursuit>();
-            continue;
-        };
-        let take = match pursuit.mode {
-            FaunaPursuitMode::Hunt => hunt.take_from(herd.biomass),
-            // Sustain/Surplus take is sized off the group's net regrowth; a collapsing
-            // (sub-threshold) group has no surplus to give, so `.max(0.0)` yields zero.
-            FaunaPursuitMode::Follow { policy } => match policy {
-                FollowPolicy::Sustain => {
-                    net_biomass_delta(herd.biomass, herd.carrying_capacity, ecology).max(0.0)
-                }
-                FollowPolicy::Surplus => {
-                    net_biomass_delta(herd.biomass, herd.carrying_capacity, ecology).max(0.0)
-                        * follow.surplus_multiplier
-                }
-                // Market: a large commercial share each turn — drives the group down fast
-                // (into the Phase D collapse) but yields boosted trade goods (see below).
-                FollowPolicy::Market => market.take_fraction * herd.biomass,
-                FollowPolicy::Eradicate => hunt.take_from(herd.biomass),
-            },
-        }
-        .clamp(0.0, herd.biomass);
-        herd.biomass -= take;
-        // Phase E husbandry: a Sustain follow on a Thriving group tames it over time.
-        // Progress accrues here (Population) for the following faction; untended groups
-        // decay in `advance_husbandry` (Logistics), so domestication needs a *sustained*
-        // Sustain-follow. Once progress reaches 1.0 the group is domesticated.
-        if matches!(
-            pursuit.mode,
-            FaunaPursuitMode::Follow {
-                policy: FollowPolicy::Sustain
-            }
-        ) && herd.ecology_phase == EcologyPhase::Thriving
-        {
-            herd.accrue_domestication(pursuit.faction, husbandry.progress_per_turn);
-        }
-        let biomass_left = herd.biomass;
-        let species = herd.species.clone();
-
-        // Market hunting sells its harvest — boosted trade goods; every other mode uses
-        // the normal rate. Provisions stay at the normal rate for all modes.
-        let trade_multiplier = if matches!(
-            pursuit.mode,
-            FaunaPursuitMode::Follow {
-                policy: FollowPolicy::Market
-            }
-        ) {
-            market.trade_goods_multiplier
-        } else {
-            1.0
-        };
-        // Productivity modifier stack (wellbeing): a discontented band works its kill less
-        // effectively — scale the take's payout by the band's output multiplier at PAYOUT.
-        let mult = output_multiplier(&cohort, &wellbeing).to_f32();
-        // FOOD income is fully fractional: a sustainable take that yields < 1 provisions/turn must
-        // still credit the larder (a Sustain follow yields ~0.3 food/turn — rounding drops it).
-        let provisions = scalar_from_f32(take * hunt.provisions_per_biomass * mult);
-        let trade_goods =
-            (take * hunt.trade_goods_per_biomass * trade_multiplier * mult).round() as i64;
-        // The pursuing band carries its kill in its own larder; trade goods are faction-global.
-        if provisions > scalar_zero() {
-            cohort.stores.add(FOOD, provisions);
-        }
-        if trade_goods > 0 {
-            inventory.add_stockpile(pursuit.faction, "trade_goods", trade_goods);
-        }
-
-        match pursuit.mode {
-            FaunaPursuitMode::Hunt => {
-                // One-shot: a Hunt completion is a notable event → command feed.
-                let detail = format!(
-                    "status=complete action=hunt herd={} species={} take={:.0} biomass_left={:.0} provisions={} trade_goods={} elapsed_turns={} started_tick={}",
-                    pursuit.fauna_id,
-                    species,
-                    take,
-                    biomass_left,
-                    provisions.max(scalar_zero()),
-                    trade_goods.max(0),
-                    pursuit.elapsed_turns,
-                    pursuit.started_tick
-                );
-                event_log.push(CommandEventEntry::new(
-                    tick.0,
-                    CommandEventKind::Hunt,
-                    pursuit.faction,
-                    format!("{} hunt -> {}", pursuit.band_label, pursuit.fauna_id),
-                    Some(detail),
-                ));
-                cohort.home = cohort.current_tile;
-                commands.entity(entity).remove::<FaunaPursuit>();
-            }
-            FaunaPursuitMode::Follow { .. } => {
-                // A follow yields every turn; log the tick to the analytics stream
-                // rather than the small command feed (it would otherwise crowd out
-                // one-shot events like harvest/scout/hunt completions). The queued
-                // FollowHerd event (handle_follow_herd) already announces the order,
-                // and cancellations still surface in the feed above.
-                tracing::info!(
-                    target: "shadow_scale::analytics",
-                    event = "follow_tick",
-                    herd = %pursuit.fauna_id,
-                    band = %pursuit.band_label,
-                    species = %species,
-                    take,
-                    biomass_left,
-                    provisions = %provisions.max(scalar_zero()),
-                    trade_goods = trade_goods.max(0),
-                );
-                // Reset the give-up counter and grant the small non-food tracking
-                // benefit (fog reveal pulse + morale). Keep `home` on the band's
-                // current tile so a persistent follow's population/environment inputs
-                // track its real location rather than the starting tile.
-                cohort.home = cohort.current_tile;
-                pursuit.elapsed_turns = 0;
-                cohort.morale = (cohort.morale + Scalar::from_f32(follow.morale_gain))
-                    .clamp(Scalar::zero(), Scalar::one());
-                let expires_at = tick.0.saturating_add(follow.reveal_duration_turns);
-                fog.queue(herd_pos, follow.reveal_radius, expires_at);
-            }
-        }
-    }
 }
 
 /// Layer 3b (wellbeing) — tech-gated migration: relocate-or-stay, population conserved within the

@@ -38,17 +38,17 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/TradePanel.gd` | Trade tab panel — `set_map_view` (overlay), owns the Map-tab overlay toggle, and emits `knowledge_events_produced` (the coordinator forwards it to KnowledgePanel — panels stay decoupled) |
 | `ui/inspector/SentimentPanel.gd` | Sentiment tab panel — display; axis bias is coordinator-owned and pushed in via `set_axis_bias` |
 | `ui/inspector/VictoryPanel.gd` | Victory tab panel — display + one-shot "victory achieved" log via `set_log_hook` |
-| `ui/inspector/FaunaPanel.gd` | Fauna tab panel — herd list/detail; emits `follow_herd_requested` + `herd_selected` (coordinator resolves faction, issues command, mirrors the Commands follow field); `set_command_connected` gates the follow button |
+| `ui/inspector/FaunaPanel.gd` | Fauna tab panel — **display-only** herd list/detail + estimated hunt yields. The follow-herd command it used to emit was retired with the single-task fauna commands (Early-Game Labor slice 3a; hunting is now HUD labor allocation), so it issues no command; `set_command_connected` is a contract no-op |
 | `ui/inspector/GreatDiscoveriesPanel.gd` | GreatDiscoveries tab panel — large, self-contained (ledger + progress + definition catalog + details); capability-gated (`CAP_MEGAPROJECTS`), no command/log/MapView coupling |
 | `ui/inspector/LogsPanel.gd` | Logs tab panel — owns the LogStreamClient + polling + filters + tick sparkline; emits `log_entry_received` (coordinator dispatches to Knowledge/Trade); fed synthetic lines via `append_entry` |
 | `ui/inspector/InfluencerPanel.gd` | Influencers tab panel — owns the influencer roster; capability-gated (`CAP_INDUSTRY_T1`/`T2`) via `set_available`; exposes `aggregate_resonance()` (coordinator feeds it into the Culture tab) and `get_influencers()` (coordinator's still-inline influencer command controls read the roster back). The influencer *command* controls stay coordinator-owned |
 | `ui/inspector/CorruptionPanel.gd` | Corruption tab panel — display-only ledger (reputation modifier, audit capacity, incidents); not capability-gated |
-| `ui/inspector/CommandsPanel.gd` | Commands tab panel — the designer/debug console (axis-bias, influencer/channel/spawn, corruption inject, heat, config reload, scenario scout/follow, autoplay row, command status/log). Outbound: issues verbs via `set_command_hooks` and logs via the sink; the command transport + autoplay timer + turn-sending stay in the coordinator. Couplings are coordinator-mediated: emits `axis_bias_apply_requested` (coordinator owns `_axis_bias`, pushes back via `set_axis_bias`), `autoplay_toggled`/`autoplay_interval_changed` (coordinator drives the timer, mirrors via `set_autoplay_active`); fed the roster via `set_influencer_roster` and gated via `set_command_connected`. NOT in `_tab_panels` (no snapshot inputs) |
+| `ui/inspector/CommandsPanel.gd` | Commands tab panel — the designer/debug console (axis-bias, influencer/channel/spawn, corruption inject, heat, config reload, autoplay row, command status/log; the scenario scout/follow rows were removed with the retired single-task commands). Outbound: issues verbs via `set_command_hooks` and logs via the sink; the command transport + autoplay timer + turn-sending stay in the coordinator. Couplings are coordinator-mediated: emits `axis_bias_apply_requested` (coordinator owns `_axis_bias`, pushes back via `set_axis_bias`), `autoplay_toggled`/`autoplay_interval_changed` (coordinator drives the timer, mirrors via `set_autoplay_active`); fed the roster via `set_influencer_roster` and gated via `set_command_connected`. NOT in `_tab_panels` (no snapshot inputs) |
 | `ui/inspector/OverlayPanel.gd` | "Map Overlays" section (nested inside the Map tab, attached to `OverlaySection`) — owns the overlay-channel selector (built at runtime), channel metadata, and the culture/military readouts; drives `MapView.set_overlay_channel`. Fed via `set_map_view` + `ingest(overlay_dict, terrain_tag_labels)` (the coordinator re-homes the palette → Terrain and crisis_annotations → Crisis side-routes that share the `overlays` key, and passes Terrain's tag labels since the terrain-tags channel depends on them). NOT in `_tab_panels` |
 | `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the hydrology rivers toggle. Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` via `set_map_view`. The nested Map-Overlays section keeps its own `OverlayPanel` script |
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
-| `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the Terrain-tab command buttons. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`; scout emits `tile_scout_requested` (coordinator resolves the faction + sends, like FaunaPanel); gated by `set_command_connected` |
-| `Hud.gd` | HUD layer, legend, the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + Forage) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer + Scout / Hunt-with-policy verbs), band **Alerts** panel, turn readout. Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) live here; roster selection emits `roster_occupant_selected` |
+| `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the **Export Map** button (the tile Scout button was retired with the single-task `scout` command). Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`, gated by `set_command_connected` |
+| `Hud.gd` | HUD layer, legend, the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + the `%ForageAssignControls` "assign foragers" stepper) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer; a player band shows the `%AllocationPanel` labor-allocation UI, a herd the `%HerdAssignControls` "assign hunters" stepper+policy picker), band **Alerts** panel, turn readout. Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) + the snapshot-captured `_player_band` (and `_player_bands`, the full player-faction list backing the assign controls' band-picker dropdown) live here; roster selection emits `roster_occupant_selected`; labor edits emit `assign_labor_requested` / `move_band_requested` / `cancel_order_requested` (clear-all) |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale warn/critical thresholds + `color_for_morale`/`hex_for_morale`), shared by MapView's band dot and Hud's food/morale lines + alerts |
 | `ui/TileHabitability.gd` | Single source of truth for the Tile-card Habitability rating: buckets `TileState.habitability` (band-independent per-turn morale drain) into Hospitable/Fair/Harsh/Hostile via `tile_habitability_config.json` thresholds, with the HEALTHY/INK/WARN/DANGER color / `hex_for_rating` mapping. Consumed by `Hud._tile_terrain_lines` + `_format_detail_bbcode` |
 | `ui/TileClimate.gd` | Single source of truth for the Tile-card Climate band: maps `TileState.temperature` (°, a latitude+elevation climate, equator-in-the-middle) into Tropical/Warm/Temperate/Cool/Polar via `tile_climate_config.json` cutoffs. INFORMATIONAL only — deliberately no HEALTHY/WARN/DANGER tint (renders neutral ink), so it doesn't compete with the Habitability row's semantic palette. Consumed by `Hud._tile_terrain_lines` |
@@ -59,6 +59,8 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, and `apply_button(btn, "primary"/"ghost"/"armed")`. Every HUD surface styles through here |
 | `ui/FoodIcons.gd` | Shared map-marker emoji glyphs — food modules (`for_site`) and fauna herds (`for_herd`, species keyword matched in the herd label, longest-first). Covers migratory species plus wild game (deer/boar/rabbit/fowl). Used by the Harvest/Hunt button (`Hud.gd`) and the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`) so a source always reads the same |
 | `tools/ui_preview.gd` / `.tscn` | Dev-only preview harness: instances the real `HudLayer` with canned selection/targeting data, renders each state, and saves PNGs to `ui_preview_out/` (gitignored). Iterate on HUD styling without a server: `godot --path . res://tools/ui_preview.tscn` |
+| `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link; scouting draws no disc — it extends sight in the fog) without a server: `godot --path . res://tools/map_preview.tscn` |
+| `tools/marker_field_guard.gd` / `.tscn` | Headless **regression guard** for the "unit marker drops a panel-consumed field" bug class (twice hit: `hunt_mode`, then `working_age`/`idle_workers`). Feeds one realistic population entry through the real `MapView._rebuild_unit_markers` and asserts the produced marker is a superset of `PANEL_CONSUMED_KEYS` (the keys `Hud._unit_summary_lines` + `_build_allocation_panel` read off `_selected_unit`) and that the drop-prone fields round-trip (not defaulted). Exits non-zero on failure (CI-usable). No rendering, so headless: `godot --headless --path . res://tools/marker_field_guard.tscn`. When the panel starts reading a new marker field, add it to `PANEL_CONSUMED_KEYS`. |
 | `assets/terrain/TerrainTextureManager.gd` | Autoload singleton for terrain texture loading |
 | `assets/terrain/TerrainDefinitions.gd` | Single source of truth for terrain definitions |
 
@@ -285,22 +287,23 @@ not yet cards). `AutoSizingPanel.gd` remains only for the Inspector.
 
 ## Command Targeting
 
-Commands that need a target (Harvest / Hunt a herd all need a band; Scout
-needs a tile) run through an explicit **targeting mode** instead of the old
-easy-to-miss "select a band…" line in the selection panel.
+Labor allocation is source-centric (assign workers to a source/role, see the **Labor
+allocation UI** bullet below). The one remaining **targeting mode** is **move-band** —
+picking a destination tile — replacing the old easy-to-miss "select a band…" line.
 
 - **Selection split — Tile card + Occupants roster** (`Hud.gd`): the old single
   selection panel is now **two left-dock `PanelCard`s driven by one script**. The
   **Tile card** (`TilePanel`/`%TileDetail`, priority 10) is the *place* — terrain
-  rows (Biome/Height/Tags + the gather module relabeled `Forage:`) and its one
-  action, the `ForageButton`. The **Occupants card** (`OccupantsPanel`, priority 12,
+  rows (Biome/Height/Tags + the gather module relabeled `Forage:`) and, on a
+  food-module tile, the `%ForageAssignControls` "assign foragers" stepper. The
+  **Occupants card** (`OccupantsPanel`, priority 12,
   hidden via the dock on an empty hex) is a **selectable roster** of the bands +
   wildlife on the hex, built at runtime into `%RosterList` as two sub-groups
   (`Bands (N)` / `Wildlife (N)`); each row is a `Button` hosting a mouse-transparent
   HBox — a selection accent, a **vitality dot**, name, size, and (bands) an
   activity glyph. Below the roster, `%OccupantDetail` is the selected occupant's
-  **detail drawer** (band → `_unit_summary_lines` + Scout; herd → `_herd_summary_lines`
-  + Hunt + policy radio). Selecting a row (`_on_roster_row_selected`) re-homes the
+  **detail drawer** (player band → `_unit_summary_lines` + `%AllocationPanel`; herd →
+  `_herd_summary_lines` + `%HerdAssignControls`). Selecting a row (`_on_roster_row_selected`) re-homes the
   selection and emits `roster_occupant_selected(kind, id)`; **Main forwards it to
   `MapView.select_occupant`, which moves the map selection ring** (sets
   `selected_unit_id`/`selected_herd_id`) with no hex click. A fresh tile click
@@ -309,71 +312,105 @@ easy-to-miss "select a band…" line in the selection panel.
   (`days_of_food` → green/amber/red), a herd's uses `_ecology_tier_color`
   (`ecology_phase` → thriving green / stressed amber / collapsing red), sharing the
   exact `HudStyle` HEALTHY/WARN/DANGER constants. Non-player bands list with a neutral
-  dot and no activity/Scout (their larder/orders aren't ours to see). (The Tile card
+  dot and no allocation panel (their larder/orders aren't ours to see). (The Tile card
   has no camp action — the `found_camp` command was removed end-to-end.)
-- **Selection-panel verbs** (`Hud.gd`): a hex can surface **Harvest** (tile gather
-  module, `ForageButton` on the Tile card) *and* **Hunt** (a fauna group
-  selected in the Occupants roster) together —
-  `show_herd_selection` falls back to the current tile so the
-  combined panel renders all applicable groups (`_update_herd_buttons` +
-  `_update_food_buttons`). Hunt is gated on the herd's `huntable` snapshot flag.
-  The herd action is **one Hunt verb + a policy radio led by Single**
-  (`HuntPolicyButtons`, `HUNT_POLICIES = [single, sustain, surplus, market, eradicate]`,
-  `_hunt_policy`, default `single`; restyled via `HudStyle.apply_button`). The policy
-  routes persistence: **Single → a one-shot `hunt_fauna`** (`_pending_hunt`); **any
-  other policy → a persistent `follow_herd <policy>`** that auto-hunts each turn
-  (`_pending_follow`; Market = commercial over-hunt, sent as `follow_herd … market`).
-  The separate **"Follow" verb is retired from the UI** — persistence is now a property
-  of the chosen policy, not a distinct button. Switching policy while a hunt is pending
-  re-derives it in place (single↔persistent) via the same begin path. The Hunt button
-  enters band-targeting and flips to a unified **"Cancel Hunt"** affordance while either
-  pending kind is active. (The **Fauna inspector tab** still has its own follow-herd
-  buttons — a consistency follow-up, not yet reframed.)
+- **Labor allocation UI** (`Hud.gd`, Early-Game Labor slice 3b — `docs/plan_early_game_labor.md`):
+  the band is a **labor pool** whose working-age workers are assigned source-centrically to
+  in-range sources/roles. There is **exactly one player band today**, captured each snapshot
+  into `_player_band` (first player-faction cohort in `update_band_alerts`); assign/move/clear
+  all target it. Every player band is also collected into `_player_bands`, which backs the
+  **band-picker dropdown** on the herd/tile assign controls (see `%HerdAssignControls` /
+  `%ForageAssignControls` below) — an assignment explicitly names WHICH band supplies the
+  workers (built for N even though only one exists live). Three runtime-built control sets replace the retired single-task Scout/Cancel,
+  Hunt/policy, and Forage buttons:
+  - **`%AllocationPanel`** (band drawer, player band only, `_build_allocation_panel`): reads as a
+    "current actions" report — a `Population <size> · Workers <working_age> (Idle <n>)` header (spells
+    out that only the ~16 working-age labor, not the 30 people — children/elders are dependents), a
+    **Current actions** section with one `−/+` **worker-stepper** row per staffed Forage tile / Hunt
+    herd (from the cohort's `labor_assignments`; an empty-state hint when none), then a **Band roles**
+    section with the always-shown **Scout** + **Warrior** rows (even at 0), each with a one-line hint so
+    the `−/+` steppers read as "this is how you staff this standing role" (Scout's hint reads "Extends
+    the band's sight — more scouts see further"; more staffed scouts extend the band's actual sight
+    range, so the effect shows directly in the fog, not as a map-action or a reveal disc). Then
+    **Move** / **Clear all**.
+    Each stepper re-sends `assign_labor_requested` with the new count (0 removes); `+` is gated on idle.
+  - **Optimistic pending feedback** (slice 3b UX): assigning workers or moving the band shows
+    immediately, before the next snapshot. `_emit_assign_labor` / `_try_dispatch_pending_move_band`
+    record a HUD-local **pending** entry per band entity (`_pending_labor[entity] = {turn, assign:{key→…},
+    move:{x,y}}`) and re-render. In the panel, a pending source row reads **amber with a "· pending"
+    suffix** and the header **Idle** counts optimistically (`_effective_idle` = working-age − effective
+    assigned, overlaying pending). **Reconciliation is turn-based:** each pending entry is tagged with the
+    snapshot `turn` (header tick, set in `update_overlay`); `_reconcile_pending` (called from
+    `update_band_alerts` each snapshot) drops entries issued on an OLDER turn — a newer-turn snapshot is
+    authoritative confirmation and cleanly absorbs server-side clamping (the snapshot shows the real
+    count). Pending is emitted to MapView via `labor_pending_changed` → `set_labor_pending`.
+  - **Selected-band map highlights** (`MapView._draw_band_work_highlights`, drawn when a player band
+    is selected, cleared on deselect): the **worked forage tiles** (strong green fill on each
+    `forage` assignment's `target_x/y`), the **work-range ring** (thin cyan outline on every tile
+    within `work_range`, replicating the sim's **Chebyshev** `max(|dx|,|dy|) <= work_range` on integer
+    offset coords — truthful-over-pretty, so highlighted == actually-assignable), and the **hunted
+    herds** (red ring on the herd tile + a band→herd link, drawn wherever the herd is since hunt reach
+    = `work_range` + leash). **Scouting draws no map highlight** — staffed scouts extend the band's
+    real sight range (visible directly in the fog as a wider Active radius); the old faint-blue scouted
+    disc was removed because `scout_reveal_radius` no longer means a reveal-disc radius — it now carries
+    the band's effective sight-range bonus (extra tiles beyond base, `0` when no scouts), which the
+    client can't turn into a true ring without the server-side `base_range`. New snapshot fields
+    `work_range` / `scout_reveal_radius` are decoded in `native/src/lib.rs population_to_dict` and flowed
+    onto the MapView unit marker in `_rebuild_unit_markers` (alongside `labor_assignments`);
+    `scout_reveal_radius` is still carried (it documents the field) but no longer drawn. **Optimistic pending**
+    actions for the selected band draw in a distinct **dashed-amber** style (`_draw_band_pending`, fed by
+    `set_labor_pending`) — the pending forage tile, the pending hunted herd (dashed ring-hex + dashed
+    band→herd link), and the pending move destination (dashed hex + dashed link) — clearly apart from the
+    solid confirmed styles, cleared when the snapshot confirms.
+  - **Band-picker dropdown** (`_build_band_picker`, on BOTH assign controls, above the worker
+    stepper so it reads "which band → how many workers"): a `Band:` `OptionButton` listing every
+    `_player_bands` cohort by positional name ("Band N", via `_band_display_name`; the cohort has
+    no label field), item metadata = the band `entity`. The selection is the **actor band**:
+    `_hunt_assign_band` / `_forage_assign_band` hold the picked entity (defaulting to
+    `_resolve_assign_band()` when the selected source changes, else persisted across re-renders);
+    the worker stepper's cap is that band's `_assignable_hunt_workers` / `_assignable_forage_workers`
+    (its `idle_workers` + any it already staffs on that source, so re-editing isn't capped below
+    current staffing), and the Assign emit + optimistic pending key off the picked band. Switching
+    the dropdown re-caps the stepper and re-renders. Always shown (single-item with one band, so the
+    actor is explicit). Lists **all** player bands — in-range filtering (Forage `work_range` / Hunt
+    `work_range` + leash) is deferred to the multi-band slice (needs hunt-leash reach in the snapshot).
+  - **`%HerdAssignControls`** (herd drawer, huntable herds, `_build_herd_assign_controls`): the
+    band-picker, then an "Assign hunters" **compose** control — a Hunters `−/+` count (`_hunt_assign_count`), a
+    sustain/surplus/market/eradicate **policy picker** (`_build_policy_picker`, `_hunt_assign_policy`,
+    `LABOR_HUNT_POLICIES`, default `sustain`), and an **Assign** button → `assign_labor hunt <herd_id>
+    <policy> <workers>`. Compose state re-seeds from current staffing when the selected herd changes.
+  - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): the
+    band-picker, then an "Assign foragers" Foragers `−/+` count (`_forage_assign_count`) + **Assign** → `assign_labor
+    forage <x> <y> <workers>`.
+
+  All emit `assign_labor_requested(payload)` (payload: `faction/band/kind/workers/x/y/herd_id/policy`);
+  `Main._on_hud_assign_labor` formats the `assign_labor …` text command. **Clear all** emits
+  `cancel_order_requested` (the repurposed `cancel_order` = clear-all → fully idle). The roster
+  glyph / map activity ring keep reading the still-populated `activity` (now the largest-worker
+  kind: `idle|forage|hunt|scout|warrior`) and `hunt_mode`. `harvestTask`/`scoutTask` are always
+  null server-side and no longer decoded. **Convenience shortcut:** double-clicking a herd on the
+  map (`MapView.herd_quick_hunt_requested` → `Main._on_map_herd_quick_hunt` → `Hud.quick_assign_hunters`)
+  assigns the player band's idle workers to hunt that herd at Sustain — a no-op with a command-feed
+  note when there are no idle workers (never silently nothing).
 - **Herd ecology readout** (`Hud.gd` `_herd_summary_lines`): the selection panel shows
   the group's `ecology_phase` (snapshot `HerdTelemetryState.ecologyPhase`) as an
   **Ecology** row — a neutral "Thriving", or a warned "⚠ Stressed" / "⚠ Collapsing"
   that `_format_detail_bbcode` tints amber / red (`_ecology_value_hex`, `HudStyle.WARN_HEX`
   / `DANGER_HEX`). A `Collapsing` herd has been overhunted past the point of no return and
   is crashing to local extinction (see `core_sim` Fauna & Wild Game — depensation collapse).
-- **Band cancel-order affordance** (`Hud.gd` `_update_unit_task_buttons` /
-  `_cancel_label_for` / `_task_action_phrase`, `%UnitCancelButton` beside
-  `%UnitScoutButton` in the `UnitButtons` HBox): a player band on any task hides the
-  default **Scout Area** button and shows one armed **"Cancel <phrase>"** button whose
-  phrase comes from `_task_action_phrase(activity, hunt_mode)` — the single source of
-  truth for the task wording: `scout`→"Scouting", `harvest`→"Foraging", and for fauna
-  pursuit (`hunt`/`follow`) its `hunt_mode` sub-mode (snapshot
-  `PopulationCohortState.huntMode`, decoded in `native/src/lib.rs` `population_to_dict`
-  as `hunt_mode`; `single|sustain|surplus|market|eradicate` → "<Mode> Hunt", empty →
-  "Hunt"), fallback "Task". `_cancel_label_for` is just `"Cancel " + phrase`. Idle bands
-  (`activity` idle/empty) show Scout Area unchanged. Pressing it emits
-  `cancel_order_requested(band)`; `Main._on_hud_cancel_order` sends
-  `cancel_order <faction> <band_bits>`, returning the band to idle (the next snapshot
-  reports `activity == idle` and the panel reverts to Scout). Player-band only via the
-  existing `_is_player_unit` gate. **Optimistic transition feedback** (`_begin_band_transition`,
-  HUD-local `_pending_transition_bands` map keyed by band `entity` → `{before, label}`):
-  starting *and* cancelling an order are the same pattern — a pending wait for the band's
-  `activity` to CHANGE from its value at dispatch — so both share one mechanism. On dispatch
-  the band's current activity is stored as `before` and the button flips immediately to a
-  disabled, action-specific `"<verb> <phrase>…"` label (Scout hidden), composed from a verb
-  prefix (`CANCEL_ORDER_PENDING_VERB` "Cancelling" / `START_ORDER_PENDING_VERB` "Starting")
-  plus the phrase: cancel reuses `_task_action_phrase` (e.g. "Cancelling Market Hunt…"),
-  starts pass the known action at the dispatch commit point — every phrase routes through
-  `_task_action_phrase` (no bare action-word literals at the call sites): Scout
-  (`_try_dispatch_pending_scout`, after the target tile is chosen — not while targeting →
-  `_task_action_phrase("scout", "")` → "Starting Scouting…") and Forage/Hunt-game
-  (`consume_pending_forage`, the just-selected target band → `_task_action_phrase("harvest", "")`
-  → "Starting Foraging…" / `_task_action_phrase("hunt", "")` → "Starting Hunt…"), and herd-panel
-  hunts on the just-selected target band — `consume_pending_hunt` (one-shot →
-  `_task_action_phrase("hunt", "single")` → "Starting Single Hunt…") and `consume_pending_follow`
-  (persistent → `_task_action_phrase("follow", <policy>)` → e.g. "Starting Sustain Hunt…").
-  `_update_unit_task_buttons` holds the stored label while the band's activity still equals
-  `before` and clears the entry (re-enabling → normal Scout/Cancel) the first render the activity
-  differs (server confirm). The map is keyed per-entity so switching bands preserves each band's
-  state. Caveat: no timeout — relies on the deterministic snapshot changing the activity. Note:
-  for the confirmed-hunt "Cancel <Mode> Hunt" label to render live, `hunt_mode` must flow to the
-  drawer — `MapView._rebuild_unit_markers` copies `hunt_mode` onto the unit marker next to
-  `activity`, and both `refresh_selection_payload` / `_handle_entity_selection` duplicate the full
-  marker into `_selected_unit`.
+- **Clear-all / move-band** (`Hud.gd`, Early-Game Labor slice 3b): the single-task
+  Scout/Cancel affordance + its optimistic `_pending_transition_bands` machinery were
+  **retired** with the labor-allocation model. There is no longer a band-global task to
+  cancel — you staff a source down to 0 (`assign_labor … 0`). The **Clear all** button on
+  `%AllocationPanel` emits `cancel_order_requested`; `Main._on_hud_cancel_order` sends the
+  **repurposed** `cancel_order <faction> <band_bits>` (now clears ALL assignments → fully
+  idle). **Move band** is the one remaining targeting flow: the panel's **Move** button
+  (`_on_move_band_pressed`) enters tile-targeting (`_pending_move_band` → `_current_targeting_info`
+  returns `command: "move", need: "tile"`), the top-centre banner reads "MOVE … click a
+  destination tile", and the destination click (`_try_dispatch_pending_move_band`, via
+  `show_tile_selection` / `notify_hex_selected`) emits `move_band_requested(payload)` →
+  `Main._on_hud_move_band` → `move_band <faction> <band> <x> <y>`. Esc/right-click cancel
+  via `cancel_active_targeting` → `_cancel_pending_move_band`.
 - **Herd husbandry readout** (`Hud.gd` `_herd_summary_lines`): when a herd's
   `domestication` (snapshot `HerdTelemetryState.domestication`, 0–1) is above 0, a
   **Husbandry** row shows "Domesticating N%" while it's being tamed and "🐄 Domesticated"
@@ -488,31 +525,29 @@ easy-to-miss "select a band…" line in the selection panel.
   (band, type) deduped by construction and clear
   when resolved; each row is a `[url=x,y]` link whose `meta_clicked` emits `alert_focus_requested(x,y)` →
   `MapView.focus_on_tile` (shared minimap centering machinery). Hidden via the dock until an alert exists.
-  NOTE: cohorts carry no top-level band label in the snapshot — names fall back to harvest/scout
-  `band_label` then a positional "Band N"; a server-side band-label field would make names authoritative.
-- **HUD owns the state** (`Hud.gd` `_pending_forage` / `_pending_scout_unit` /
-  `_pending_hunt` / `_pending_follow` — only one active at a time via
-  `_clear_other_pending`) and derives a descriptor via `_current_targeting_info()`
-  (`{active, command, need: "band"|"tile", origin_x/y, context_label}`). Any pending change calls
-  `_refresh_targeting()`, which shows the floating **targeting banner**
-  (top-centre of the map, `HudStyle.banner_stylebox()`: cyan reticle glyph +
-  command + what to click + Cancel) and emits `targeting_changed(info)`.
+  NOTE: cohorts carry no top-level band label in the snapshot — names fall back to a positional
+  "Band N"; a server-side band-label field would make names authoritative.
+- **Targeting is now move-band only** (`Hud.gd`): the single-task forage/scout/hunt/follow
+  `_pending_*` flows were retired with labor allocation. `_current_targeting_info()` returns a
+  descriptor (`{active, command: "move", need: "tile", origin_x/y, context_label}`) only while
+  `_pending_move_band` is set; `_refresh_targeting()` shows the floating **targeting banner**
+  (top-centre, `HudStyle.banner_stylebox()`: cyan reticle + command + "click a destination tile"
+  + Cancel) and emits `targeting_changed(info)`.
 - **Main forwards** `hud.targeting_changed → map_view.set_targeting` and
   `map_view.targeting_cancel_requested → hud.cancel_active_targeting`.
-- **MapView draws** the overlay (`_draw_targeting`): `need == "band"` pulses a
-  cyan ring on each of the player's own bands (`_is_player_unit`) and shows a
-  hover distance-in-tiles label (`_targeting_distance` via `_offset_to_axial`);
-  `need == "tile"` draws a reticle on the hovered hex.
-  Esc / right-click during targeting emit `targeting_cancel_requested` instead of
-  panning. The pulse is animated from the existing `_process`.
-- **Resolution**: a left-click selects the band, which `consume_pending_forage` /
-  `consume_pending_hunt` / `consume_pending_follow` (fanned out in `Main._on_map_unit_selected`)
-  binds to the pending action → `_issue_forage_command` / `_issue_hunt_command`
-  (`hunt_fauna …`) / `_issue_follow_command` (`follow_herd … <policy> <band>`); or a
-  tile click that `_try_dispatch_pending_scout` sends. Targeting mode is the
-  *feedback* layer on top of the pending flows; cancel routes to `cancel_active_targeting`.
-  Quick-follow (double-click herd / Fauna tab) still fires `follow_herd … sustain`
-  with no band (server auto-picks) — now framed as a persistent Sustain hunt, no code change.
+- **MapView draws** the overlay (`_draw_targeting`): `need == "tile"` draws a reticle on the
+  hovered hex (the `need == "band"` path is now unused). Esc / right-click during targeting emit
+  `targeting_cancel_requested` instead of panning; the pulse is animated from `_process`.
+- **Resolution**: the destination tile click (`_try_dispatch_pending_move_band`) emits
+  `move_band_requested` → `Main._on_hud_move_band` → `move_band …`.
+- **Retired verbs (Early-Game Labor slice 3a):** the server now parses-but-ignores
+  `follow_herd` / `scout` / `forage` / `hunt_fauna` / `hunt_game`. Every client control that
+  emitted them was removed or repointed so nothing is silently dead: the map double-click
+  `scout` shortcut was dropped and `follow` repointed to quick-assign hunters; Main's
+  `_issue_*`/`_on_hud_follow_herd`/`_on_hud_unit_scout` builders are gone; the Fauna tab's
+  follow button, the Terrain tab's Scout Tile button, and the Commands tab's scenario
+  Scout/Follow rows were removed (script + `InspectorLayer.tscn` nodes). No code path in
+  `Main.gd`/`Hud.gd`/`MapView.gd`/`Inspector.gd` builds any of those five lines.
 
 ## Inspector Panels
 
@@ -522,7 +557,7 @@ See `docs/godot_inspector_plan.md` for full roadmap.
 |-----|---------|
 | Map | Overlay selector, logistics toggle, map size dropdown, Generate Map button |
 | Terrain | Full biome histogram, tag histograms, tile drill-down, terrain-type highlight dropdown, **Export Map** button |
-| Fauna | Herd registry, follow-herd commands, density telemetry |
+| Fauna | Herd registry + density telemetry (display-only; follow-herd command retired) |
 | Culture | Layer trait vectors, divergence meters, resonance pushes |
 | Military | Readiness heatmaps, cohort summaries |
 | Power | Grid metrics, node list, incident feed |
@@ -583,12 +618,10 @@ Optional contract hooks a panel adds only if it needs them:
   — axis bias belongs to the Commands axis controls (which mutate it optimistically),
   so the coordinator pushes it to the Sentiment view at both the snapshot and the
   optimistic-write sites, instead of the panel owning the key.
-- Command-issuing via a signal when the command needs coordinator-only context:
-  `FaunaPanel` emits `follow_herd_requested(herd_id)` (the follow command needs the
-  active faction, which lives in the coordinator) rather than taking `set_command_hooks`;
-  it also emits `herd_selected(herd_id)` so the coordinator can mirror the Commands
-  follow field. `set_log_hook(append_log)` is the log-only variant of `set_command_hooks`
-  (`VictoryPanel`'s one-shot victory announcement).
+- Command-issuing via a signal when the command needs coordinator-only context (pattern
+  reference; the Fauna/Terrain examples were retired with the single-task commands — FaunaPanel
+  is now display-only and TerrainPanel's Scout button is gone). `set_log_hook(append_log)` is the
+  log-only variant of `set_command_hooks` (`VictoryPanel`'s one-shot victory announcement).
 
 The coordinator collects extracted panels in `_tab_panels` and fans `apply_update`
 out to them at the **end** of `_apply_update`, after its own key routing (e.g.
@@ -608,8 +641,9 @@ resolution for Fauna/Terrain, influencer resonance → Culture, the `overlays` f
 junction routing palette→Terrain / annotations→Crisis / channels→Overlay).
 
 **Commands tab (designer/debug console).** The `Commands` tab (axis-bias, heat,
-config-reload, scenario scout/follow, autoplay row, influencer/corruption command
-buttons, command status/log) is now `CommandsPanel` (see the key-scripts table). Its
+config-reload, autoplay row, influencer/corruption command
+buttons, command status/log; the scenario scout/follow rows were removed with the retired
+single-task commands) is now `CommandsPanel` (see the key-scripts table). Its
 subtree once went missing in the 2025-11-21 scene split (`Main.tscn` → instanced
 `InspectorLayer.tscn`) and sat dead for months — the coordinator's
 `get_node_or_null("RootPanel/TabContainer/Commands/…")` refs silently resolved to
@@ -617,7 +651,7 @@ subtree once went missing in the 2025-11-21 scene split (`Main.tscn` → instanc
 tab-panel contract. The **command hub stays in the coordinator**: `_send_command` →
 `command_client`, `_ensure_command_connection`, the `autoplay_timer`, and turn-sending
 are shared with the turn controls in `RootPanel/CommandToolbar` (outside the
-`TabContainer`) and the scout button in the Terrain tab. The panel issues
+`TabContainer`) and the Terrain tab's Export Map button. The panel issues
 verbs through `set_command_hooks` and is connection-gated via `set_command_connected`.
 Autoplay is split: the toggle+interval widgets live in the panel (relayed as
 `autoplay_toggled`/`autoplay_interval_changed`), while the timer that steps turns and
@@ -692,8 +726,7 @@ QuickJS sandbox for user scripts.
 | `T` | Toggle terrain textures |
 | `I` | Hide/show inspector |
 | `L` | Collapse/restore legend |
-| Double-click herd | Issue `FollowHerd` |
-| Shift+double-click herd | Queue `ScoutArea` |
+| Double-click herd | Quick-assign the player band's idle workers to hunt it (Sustain) |
 
 ---
 

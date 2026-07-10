@@ -3,11 +3,17 @@
 //! Provides deterministic ECS systems that resolve a single turn of the
 //! simulation when [`run_turn`] is invoked.
 
-/// Human-readable build identifier for the server binary. **Bump this on every
-/// server-affecting change.** It is stamped onto each snapshot header
-/// (`SnapshotHeader::server_build`) and shown in the client's version overlay so the
-/// running server build can be confirmed at a glance. Format: `YYYY-MM-DD.N`.
-pub(crate) const BUILD_ID: &str = "2026-07-05.6";
+/// Human-readable build identifier for the server binary, **auto-generated at
+/// compile time** by `build.rs` as `<commit-date>-<short-hash>` (e.g.
+/// `2026-07-09-a1b2c3d`) so it always reflects the actual build and can never be
+/// a stale hand-bumped constant. It is stamped onto each snapshot header
+/// (`SnapshotHeader::server_build`) and shown in the client's version overlay so
+/// the running server build can be confirmed at a glance. Falls back to
+/// `dev-unknown` when git metadata is unavailable (offline/CI/exported source).
+pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
+    Some(v) => v,
+    None => "dev-unknown",
+};
 
 mod components;
 mod crisis;
@@ -27,6 +33,7 @@ mod heightfield;
 mod hydrology;
 mod influencers;
 mod knowledge_ledger;
+mod labor_config;
 pub mod log_stream;
 mod map_preset;
 mod mapgen;
@@ -62,9 +69,9 @@ use crate::start_profile::{
 use bevy::prelude::*;
 
 pub use components::{
-    ElementKind, FaunaPursuit, FaunaPursuitMode, FollowPolicy, HarvestAssignment, HarvestTaskKind,
-    KnowledgeFragment, LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort,
-    PowerNode, ScoutAssignment, Settlement, StartingUnit, Tile, TownCenter, TradeLink, FOOD,
+    available_workers, BandTravel, ElementKind, FollowPolicy, KnowledgeFragment, LaborAllocation,
+    LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause, PendingMigration,
+    PopulationCohort, PowerNode, Settlement, StartingUnit, Tile, TownCenter, TradeLink, FOOD,
 };
 pub use crisis::{
     ActiveCrisisLedger, CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot,
@@ -127,6 +134,10 @@ pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
     KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle, KnowledgeLedgerEntry, KnowledgeModifier,
     KnowledgeTimelineEvent, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
+};
+pub use labor_config::{
+    load_labor_config_from_env, LaborConfig, LaborConfigHandle, LaborConfigMetadata,
+    BUILTIN_LABOR_CONFIG,
 };
 pub use map_preset::{MapPreset, MapPresets, MapPresetsHandle};
 pub use sedentarization::{
@@ -198,8 +209,8 @@ pub use snapshot::{
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
-    advance_fauna_pursuits, simulate_power, MigrationKnowledgeEvent, PowerSimParams,
-    TradeDiffusionEvent,
+    advance_band_movement, advance_labor_allocation, simulate_power, MigrationKnowledgeEvent,
+    PowerSimParams, TradeDiffusionEvent,
 };
 pub use terrain::{
     classify_terrain, terrain_definition, terrain_for_position, MovementProfile, TerrainDefinition,
@@ -320,6 +331,8 @@ pub fn build_headless_app() -> App {
     let visibility_handle = visibility_config::VisibilityConfigHandle::new(visibility_config);
     let (fauna_config, fauna_metadata) = fauna_config::load_fauna_config_from_env();
     let fauna_handle = fauna_config::FaunaConfigHandle::new(fauna_config);
+    let (labor_config, labor_metadata) = labor_config::load_labor_config_from_env();
+    let labor_handle = labor_config::LaborConfigHandle::new(labor_config);
     let (sedentarization_config, sedentarization_metadata) =
         sedentarization_config::load_sedentarization_config_from_env();
     let sedentarization_handle =
@@ -383,6 +396,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility_metadata)
         .insert_resource(fauna_handle)
         .insert_resource(fauna_metadata)
+        .insert_resource(labor_handle)
+        .insert_resource(labor_metadata)
         .insert_resource(sedentarization_handle)
         .insert_resource(sedentarization_metadata)
         .insert_resource(sedentarization::SedentarizationScore::default())
@@ -541,9 +556,10 @@ pub fn build_headless_app() -> App {
             Update,
             (
                 systems::simulate_population,
-                systems::advance_harvest_assignments,
-                systems::advance_scout_assignments,
-                systems::advance_fauna_pursuits,
+                // Move first so the band's `current_tile` is current before labor reads its
+                // in-range sources, then resolve per-worker Forage/Hunt/Scout yields.
+                systems::advance_band_movement,
+                systems::advance_labor_allocation,
                 // Wellbeing migration runs after demographics + this turn's yield payouts so
                 // morale/discontent are current and productivity has already been applied at each
                 // yield site; it then relocates discontented people (population conserved).

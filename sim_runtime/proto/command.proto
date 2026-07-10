@@ -213,6 +213,27 @@ message CancelOrderCommand {
   optional uint64 band_entity_bits = 2;
 }
 
+// Early-Game Labor (slice 3a): set the worker count for one labor target on a band
+// (idempotent; 0 unassigns; clamped to the band's free working-age headroom).
+message AssignLaborCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_entity_bits = 2;
+  string role = 3;              // "forage" | "hunt" | "scout" | "warrior"
+  uint32 workers = 4;
+  optional uint32 target_x = 5; // forage tile
+  optional uint32 target_y = 6;
+  optional string fauna_id = 7; // hunt target herd
+  optional string policy = 8;   // hunt take policy (sustain|surplus|market|eradicate)
+}
+
+// Travel a band toward a target tile at band_move_tiles_per_turn/turn.
+message MoveBandCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_entity_bits = 2;
+  uint32 target_x = 3;
+  uint32 target_y = 4;
+}
+
 message ExportMapCommand {
   // Optional destination path. When absent the server writes a
   // timestamped file into the gitignored exports/ scratch directory.
@@ -255,5 +276,7 @@ message CommandEnvelope {
     HuntFaunaCommand hunt_fauna = 29;
     DomesticateCommand domesticate = 30;
     CancelOrderCommand cancel_order = 31;
+    AssignLaborCommand assign_labor = 32;
+    MoveBandCommand move_band = 33;
   }
 }

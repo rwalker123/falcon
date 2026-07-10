@@ -3,15 +3,20 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_fauna_pursuits, advance_herds, scalar_one, scalar_zero, spawn_initial_herds,
-    spawn_initial_world, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
-    FactionInventory, FaunaConfigHandle, FaunaPursuit, FaunaPursuitMode, FogRevealLedger,
+    advance_herds, advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero,
+    spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger,
     FollowPolicy, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig,
-    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
-    WellbeingConfigHandle,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle,
 };
+
+/// Whole-worker head-count assigned to the hunt in these ecology tests. Large enough that the
+/// per-worker biomass cap never binds, so the take is set entirely by the policy ceiling (matching
+/// the retired persistent-follow behavior these tests were written against).
+const HUNT_WORKERS: u32 = 5000;
 
 fn spawn_world() -> App {
     let mut app = App::new();
@@ -47,6 +52,7 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    app.world.insert_resource(LaborConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.insert_resource(FogRevealLedger::default());
@@ -54,9 +60,8 @@ fn spawn_world() -> App {
     app
 }
 
-/// Pick a **stationary** game herd (route length 1) so the follower stays adjacent
-/// every turn, set its biomass to half its cap for a clear regrowth signal, and
-/// return `(id, starting_biomass)`.
+/// Pick a **stationary** game herd (route length 1) so the hunting band stays adjacent every turn,
+/// set its biomass to half its cap for a clear regrowth signal, and return `(id, starting_biomass)`.
 fn prime_stationary_herd(app: &mut App) -> (String, f32) {
     let id = {
         let registry = app.world.resource::<HerdRegistry>();
@@ -74,8 +79,8 @@ fn prime_stationary_herd(app: &mut App) -> (String, f32) {
     (id, herd.biomass)
 }
 
-/// Spawn a band standing on the herd's tile with a Follow pursuit of `policy`.
-fn spawn_follower(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::prelude::Entity {
+/// Spawn a band standing on the herd's tile with a Hunt labor assignment under `policy`.
+fn spawn_hunter(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::prelude::Entity {
     let pos = app
         .world
         .resource::<HerdRegistry>()
@@ -94,7 +99,8 @@ fn spawn_follower(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::p
                 current_tile: tile,
                 size: 30,
                 children: scalar_zero(),
-                working: scalar_zero(),
+                // Plenty of working-age so the assignment's whole-worker head-count is available.
+                working: scalar_from_f32(HUNT_WORKERS as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -115,13 +121,14 @@ fn spawn_follower(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::p
                 kind: "BandHunter".to_string(),
                 tags: Vec::new(),
             },
-            FaunaPursuit {
-                faction: FactionId(0),
-                band_label: "Test Band".to_string(),
-                fauna_id: herd_id.to_string(),
-                mode: FaunaPursuitMode::Follow { policy },
-                elapsed_turns: 0,
-                started_tick: 0,
+            LaborAllocation {
+                assignments: vec![LaborAssignment {
+                    target: LaborTarget::Hunt {
+                        fauna_id: herd_id.to_string(),
+                        policy,
+                    },
+                    workers: HUNT_WORKERS,
+                }],
             },
         ))
         .id()
@@ -130,7 +137,7 @@ fn spawn_follower(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::p
 fn run_turns(app: &mut App, turns: u32) {
     for _ in 0..turns {
         app.world.run_system_once(advance_herds);
-        app.world.run_system_once(advance_fauna_pursuits);
+        app.world.run_system_once(advance_labor_allocation);
     }
 }
 
@@ -141,11 +148,22 @@ fn biomass_of(app: &App, herd_id: &str) -> Option<f32> {
         .map(|h| h.biomass)
 }
 
+fn has_hunt_assignment(app: &App, band: bevy::prelude::Entity) -> bool {
+    app.world
+        .get::<LaborAllocation>(band)
+        .map(|a| {
+            a.assignments
+                .iter()
+                .any(|x| matches!(x.target, LaborTarget::Hunt { .. }))
+        })
+        .unwrap_or(false)
+}
+
 #[test]
-fn sustain_follow_keeps_biomass_stable() {
+fn sustain_hunt_keeps_biomass_stable() {
     let mut app = spawn_world();
     let (id, start) = prime_stationary_herd(&mut app);
-    let band = spawn_follower(&mut app, &id, FollowPolicy::Sustain);
+    let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
     run_turns(&mut app, 10);
 
     let after = biomass_of(&app, &id).expect("sustained herd should survive");
@@ -153,18 +171,18 @@ fn sustain_follow_keeps_biomass_stable() {
         after > start * 0.6 && after <= start * 1.4,
         "sustain should keep biomass ~stable: start {start}, after {after}"
     );
-    // Follow persists across resolves (unlike a one-shot Hunt).
+    // The Hunt assignment persists while the herd is in range.
     assert!(
-        app.world.get::<FaunaPursuit>(band).is_some(),
-        "Follow pursuit should persist"
+        has_hunt_assignment(&app, band),
+        "Hunt assignment should persist"
     );
 }
 
 #[test]
-fn surplus_follow_declines() {
+fn surplus_hunt_declines() {
     let mut app = spawn_world();
     let (id, start) = prime_stationary_herd(&mut app);
-    spawn_follower(&mut app, &id, FollowPolicy::Surplus);
+    spawn_hunter(&mut app, &id, FollowPolicy::Surplus);
     run_turns(&mut app, 10);
 
     let after = biomass_of(&app, &id).expect("surplus herd should still exist after 10 turns");
@@ -175,19 +193,19 @@ fn surplus_follow_declines() {
 }
 
 #[test]
-fn eradicate_follow_drives_extinction() {
+fn eradicate_hunt_drives_extinction() {
     let mut app = spawn_world();
     let (id, _start) = prime_stationary_herd(&mut app);
-    let band = spawn_follower(&mut app, &id, FollowPolicy::Eradicate);
+    let band = spawn_hunter(&mut app, &id, FollowPolicy::Eradicate);
     run_turns(&mut app, 40);
 
     assert!(
         biomass_of(&app, &id).is_none(),
         "eradicate should drive the group to local extinction"
     );
-    // Once the herd is gone the pursuit cancels itself.
+    // Once the herd is gone the assignment lapses.
     assert!(
-        app.world.get::<FaunaPursuit>(band).is_none(),
-        "pursuit should be cleared after the herd despawns"
+        !has_hunt_assignment(&app, band),
+        "assignment should lapse after the herd despawns"
     );
 }

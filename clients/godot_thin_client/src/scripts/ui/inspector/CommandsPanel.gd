@@ -3,8 +3,8 @@ class_name CommandsInspectorPanel
 
 ## Inspector "Commands" tab: the designer/debug console. Owns all the runtime command
 ## controls (axis-bias, influencer support/suppress/channel/spawn, corruption inject,
-## heat delta, config reload, scenario scout/follow, the autoplay row) plus the
-## command status/log display.
+## heat delta, config reload, the autoplay row) plus the command status/log display.
+## (The scenario scout/follow rows were removed with the retired single-task commands.)
 ##
 ## Outbound/command-driven: it issues verbs through an injected command hook and logs
 ## through an injected sink — the command transport (command_client), the autoplay
@@ -78,13 +78,8 @@ const COMMAND_LOG_LIMIT := 40
 @onready var config_path_edit: LineEdit = $ConfigControls/ConfigRow/ConfigPathEdit
 @onready var turn_pipeline_reload_button: Button = $ConfigControls/ConfigRow/TurnPipelineReloadButton
 @onready var snapshot_overlays_reload_button: Button = $ConfigControls/ConfigRow/SnapshotOverlaysReloadButton
-# Scenario commands
-@onready var scenario_faction_spin: SpinBox = $ScenarioCommands/ScenarioFactionRow/ScenarioFactionSpin
-@onready var scout_x_spin: SpinBox = $ScenarioCommands/ScoutRow/ScoutXSpin
-@onready var scout_y_spin: SpinBox = $ScenarioCommands/ScoutRow/ScoutYSpin
-@onready var scout_execute_button: Button = $ScenarioCommands/ScoutRow/ScoutExecuteButton
-@onready var follow_herd_field: LineEdit = $ScenarioCommands/FollowRow/FollowHerdField
-@onready var follow_herd_button: Button = $ScenarioCommands/FollowRow/FollowHerdButton
+# The scenario Scout/Follow-herd rows were removed with the retired single-task `scout` /
+# `follow_herd` commands (Early-Game Labor slice 3a).
 
 var _command_log: Array[String] = []
 ## Display mirror of the coordinator-owned axis bias, pushed via set_axis_bias().
@@ -194,12 +189,6 @@ func _ready() -> void:
 		turn_pipeline_reload_button.pressed.connect(_on_turn_pipeline_reload_button_pressed)
 	if snapshot_overlays_reload_button != null:
 		snapshot_overlays_reload_button.pressed.connect(_on_snapshot_overlays_reload_button_pressed)
-	# Scenario controls
-	if scout_execute_button != null:
-		scout_execute_button.pressed.connect(_on_scout_command_pressed)
-	if follow_herd_button != null:
-		follow_herd_button.pressed.connect(_on_follow_herd_button_pressed)
-		follow_herd_button.tooltip_text = "Teleport bands to the selected herd and gain morale, supplies, fauna lore, and a fog reveal pulse."
 	# Autoplay row (timer + turn-sending live in the coordinator; these only relay state)
 	if autoplay_toggle != null:
 		autoplay_toggle.toggled.connect(_on_autoplay_toggle_local)
@@ -252,8 +241,6 @@ func apply_typography() -> void:
 		spawn_scope_dropdown, spawn_generation_spin, spawn_button,
 		corruption_dropdown, corruption_intensity_spin, corruption_exposure_spin, corruption_inject_button,
 		heat_entity_spin, heat_delta_spin, heat_apply_button,
-		scenario_faction_spin, scout_x_spin, scout_y_spin, scout_execute_button,
-		follow_herd_field, follow_herd_button,
 		config_path_edit, turn_pipeline_reload_button, snapshot_overlays_reload_button
 	]:
 		if control != null:
@@ -294,15 +281,6 @@ func append_log(entry: String) -> void:
 func set_status(text: String) -> void:
 	if command_status_label != null:
 		command_status_label.text = text
-
-## Coordinator collaborator: the faction the scenario/fauna commands act on.
-func get_scenario_faction() -> int:
-	return int(scenario_faction_spin.value) if scenario_faction_spin != null else 0
-
-## Coordinator collaborator: mirror the Fauna-selected herd into the follow field.
-func set_follow_herd(herd_id: String) -> void:
-	if follow_herd_field != null:
-		follow_herd_field.text = herd_id
 
 ## Coordinator collaborator: mirror the toolbar Play/Pause into the tab toggle without
 ## re-emitting autoplay_toggled.
@@ -574,29 +552,6 @@ func _on_snapshot_overlays_reload_button_pressed() -> void:
 		summary = "Snapshot overlays config reload requested (%s)." % path
 	_send.call(command_line, summary)
 
-# --- Scenario commands ---
-
-func _on_scout_command_pressed() -> void:
-	if scout_x_spin == null or scout_y_spin == null:
-		return
-	var x := int(scout_x_spin.value)
-	var y := int(scout_y_spin.value)
-	var faction := get_scenario_faction()
-	var message := "Scout order queued for faction %d at (%d, %d)." % [faction, x, y]
-	_send.call("scout %d %d %d" % [faction, x, y], message)
-
-func _on_follow_herd_button_pressed() -> void:
-	if follow_herd_field == null:
-		return
-	var herd_id := follow_herd_field.text.strip_edges()
-	if herd_id.is_empty():
-		_append_log_sink.call("Provide a herd id before issuing Hunt.")
-		return
-	var normalized := herd_id.to_lower().replace(" ", "_")
-	var faction := get_scenario_faction()
-	var message := "Hunt '%s' requested for faction %d." % [herd_id, faction]
-	_send.call("follow_herd %d %s sustain" % [faction, normalized], message)
-
 # --- Connection gating (the moving half of the coordinator's old
 # _update_command_controls_enabled) ---
 
@@ -638,18 +593,6 @@ func _apply_enabled() -> void:
 		heat_entity_spin.editable = connected
 	if heat_delta_spin != null:
 		heat_delta_spin.editable = connected
-	if scenario_faction_spin != null:
-		scenario_faction_spin.editable = connected
-	if scout_x_spin != null:
-		scout_x_spin.editable = connected
-	if scout_y_spin != null:
-		scout_y_spin.editable = connected
-	if scout_execute_button != null:
-		scout_execute_button.disabled = not connected
-	if follow_herd_field != null:
-		follow_herd_field.editable = connected
-	if follow_herd_button != null:
-		follow_herd_button.disabled = not connected
 	if turn_pipeline_reload_button != null:
 		turn_pipeline_reload_button.disabled = not connected
 	if snapshot_overlays_reload_button != null:

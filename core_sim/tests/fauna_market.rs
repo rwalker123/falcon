@@ -1,21 +1,25 @@
 //! Market hunting: the commercial `FollowPolicy::Market` over-harvests a herd for boosted
-//! trade goods, declining it much faster than Surplus into the Phase D collapse. Mirrors
-//! `fauna_follow.rs` setup.
+//! trade goods, declining it much faster than Surplus into the Phase D collapse. Uses the
+//! source-centric labor allocation (a Hunt assignment) that replaced the retired persistent follow.
 
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_fauna_pursuits, advance_herds, advance_husbandry, scalar_one, scalar_zero,
-    spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FaunaPursuit,
-    FaunaPursuitMode, FogRevealLedger, FollowPolicy, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    advance_herds, advance_husbandry, advance_labor_allocation, scalar_from_f32, scalar_one,
+    scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger,
+    FollowPolicy, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle,
 };
+
+/// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
+/// never binds, so the take is set entirely by the policy ceiling.
+const HUNT_WORKERS: u32 = 5000;
 
 fn spawn_world() -> App {
     let mut app = App::new();
@@ -51,6 +55,7 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
+    app.world.insert_resource(LaborConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.insert_resource(FogRevealLedger::default());
@@ -58,10 +63,9 @@ fn spawn_world() -> App {
     app
 }
 
-/// Two distinct stationary game herds (route length 1) primed to a large half-capacity
-/// size (Thriving) for side-by-side policy comparison. The size is inflated so the
-/// per-turn take is big enough that integer trade/provisions yields don't quantize to
-/// zero (small warrens otherwise round down every turn).
+/// Two distinct stationary game herds (route length 1) primed to a large half-capacity size
+/// (Thriving) for side-by-side policy comparison. The size is inflated so the per-turn take is big
+/// enough that integer trade/provisions yields don't quantize to zero.
 fn prime_two_stationary_herds(app: &mut App) -> (String, String) {
     const CAP: f32 = 4000.0;
     let ids: Vec<String> = {
@@ -84,7 +88,7 @@ fn prime_two_stationary_herds(app: &mut App) -> (String, String) {
     (ids[0].clone(), ids[1].clone())
 }
 
-fn spawn_follower(
+fn spawn_hunter(
     app: &mut App,
     herd_id: &str,
     policy: FollowPolicy,
@@ -108,7 +112,7 @@ fn spawn_follower(
                 current_tile: tile,
                 size: 30,
                 children: scalar_zero(),
-                working: scalar_zero(),
+                working: scalar_from_f32(HUNT_WORKERS as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -129,13 +133,14 @@ fn spawn_follower(
                 kind: "BandHunter".to_string(),
                 tags: Vec::new(),
             },
-            FaunaPursuit {
-                faction,
-                band_label: "Test Band".to_string(),
-                fauna_id: herd_id.to_string(),
-                mode: FaunaPursuitMode::Follow { policy },
-                elapsed_turns: 0,
-                started_tick: 0,
+            LaborAllocation {
+                assignments: vec![LaborAssignment {
+                    target: LaborTarget::Hunt {
+                        fauna_id: herd_id.to_string(),
+                        policy,
+                    },
+                    workers: HUNT_WORKERS,
+                }],
             },
         ))
         .id()
@@ -145,7 +150,7 @@ fn run_turns(app: &mut App, turns: u32) {
     for _ in 0..turns {
         app.world.run_system_once(advance_herds);
         app.world.run_system_once(advance_husbandry);
-        app.world.run_system_once(advance_fauna_pursuits);
+        app.world.run_system_once(advance_labor_allocation);
     }
 }
 
@@ -165,6 +170,17 @@ fn trade_goods(app: &App, faction: FactionId) -> i64 {
         .unwrap_or(0)
 }
 
+fn has_hunt_assignment(app: &App, band: bevy::prelude::Entity) -> bool {
+    app.world
+        .get::<LaborAllocation>(band)
+        .map(|a| {
+            a.assignments
+                .iter()
+                .any(|x| matches!(x.target, LaborTarget::Hunt { .. }))
+        })
+        .unwrap_or(false)
+}
+
 #[test]
 fn market_policy_string_round_trips() {
     assert_eq!("market".parse::<FollowPolicy>(), Ok(FollowPolicy::Market));
@@ -176,8 +192,8 @@ fn market_policy_string_round_trips() {
 fn market_declines_faster_and_earns_more_trade_than_surplus() {
     let mut app = spawn_world();
     let (market_herd, surplus_herd) = prime_two_stationary_herds(&mut app);
-    spawn_follower(&mut app, &market_herd, FollowPolicy::Market, FactionId(0));
-    spawn_follower(&mut app, &surplus_herd, FollowPolicy::Surplus, FactionId(1));
+    spawn_hunter(&mut app, &market_herd, FollowPolicy::Market, FactionId(0));
+    spawn_hunter(&mut app, &surplus_herd, FollowPolicy::Surplus, FactionId(1));
 
     run_turns(&mut app, 6);
 
@@ -198,29 +214,29 @@ fn market_declines_faster_and_earns_more_trade_than_surplus() {
 
 /// Sustained market hunting drives the group to local extinction (Phase D collapse reuse).
 #[test]
-fn market_follow_drives_collapse() {
+fn market_hunt_drives_collapse() {
     let mut app = spawn_world();
     let (herd, _other) = prime_two_stationary_herds(&mut app);
-    let band = spawn_follower(&mut app, &herd, FollowPolicy::Market, FactionId(0));
+    let band = spawn_hunter(&mut app, &herd, FollowPolicy::Market, FactionId(0));
     run_turns(&mut app, 40);
 
     assert!(
         app.world.resource::<HerdRegistry>().find(&herd).is_none(),
         "market hunting should drive the group extinct"
     );
-    // Once the herd is gone the pursuit cancels itself.
+    // Once the herd is gone the assignment lapses.
     assert!(
-        app.world.get::<FaunaPursuit>(band).is_none(),
-        "pursuit should clear after the herd despawns"
+        !has_hunt_assignment(&app, band),
+        "assignment should lapse after the herd despawns"
     );
 }
 
 /// Market hunting never tames a herd — only Sustain accrues husbandry.
 #[test]
-fn market_follow_does_not_domesticate() {
+fn market_hunt_does_not_domesticate() {
     let mut app = spawn_world();
     let (herd, _other) = prime_two_stationary_herds(&mut app);
-    spawn_follower(&mut app, &herd, FollowPolicy::Market, FactionId(0));
+    spawn_hunter(&mut app, &herd, FollowPolicy::Market, FactionId(0));
     run_turns(&mut app, 4);
     let progress = app
         .world

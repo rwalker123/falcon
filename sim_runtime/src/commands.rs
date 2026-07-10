@@ -148,6 +148,22 @@ pub enum CommandPayload {
         faction_id: u32,
         band_entity_bits: Option<u64>,
     },
+    AssignLabor {
+        faction_id: u32,
+        band_entity_bits: Option<u64>,
+        role: String,
+        workers: u32,
+        target_x: Option<u32>,
+        target_y: Option<u32>,
+        fauna_id: Option<String>,
+        policy: Option<String>,
+    },
+    MoveBand {
+        faction_id: u32,
+        band_entity_bits: Option<u64>,
+        target_x: u32,
+        target_y: u32,
+    },
     ExportMap {
         path: Option<String>,
     },
@@ -468,6 +484,36 @@ impl CommandEnvelope {
                 faction_id: *faction_id,
                 band_entity_bits: *band_entity_bits,
             }),
+            CommandPayload::AssignLabor {
+                faction_id,
+                band_entity_bits,
+                role,
+                workers,
+                target_x,
+                target_y,
+                fauna_id,
+                policy,
+            } => pb::command_envelope::Command::AssignLabor(pb::AssignLaborCommand {
+                faction_id: *faction_id,
+                band_entity_bits: *band_entity_bits,
+                role: role.clone(),
+                workers: *workers,
+                target_x: *target_x,
+                target_y: *target_y,
+                fauna_id: fauna_id.clone(),
+                policy: policy.clone(),
+            }),
+            CommandPayload::MoveBand {
+                faction_id,
+                band_entity_bits,
+                target_x,
+                target_y,
+            } => pb::command_envelope::Command::MoveBand(pb::MoveBandCommand {
+                faction_id: *faction_id,
+                band_entity_bits: *band_entity_bits,
+                target_x: *target_x,
+                target_y: *target_y,
+            }),
             CommandPayload::ExportMap { path } => {
                 pb::command_envelope::Command::ExportMap(pb::ExportMapCommand {
                     path: path.clone(),
@@ -685,6 +731,22 @@ impl CommandEnvelope {
             pb::command_envelope::Command::CancelOrder(cmd) => CommandPayload::CancelOrder {
                 faction_id: cmd.faction_id,
                 band_entity_bits: cmd.band_entity_bits,
+            },
+            pb::command_envelope::Command::AssignLabor(cmd) => CommandPayload::AssignLabor {
+                faction_id: cmd.faction_id,
+                band_entity_bits: cmd.band_entity_bits,
+                role: cmd.role,
+                workers: cmd.workers,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+                fauna_id: cmd.fauna_id,
+                policy: cmd.policy,
+            },
+            pb::command_envelope::Command::MoveBand(cmd) => CommandPayload::MoveBand {
+                faction_id: cmd.faction_id,
+                band_entity_bits: cmd.band_entity_bits,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
             },
             pb::command_envelope::Command::ExportMap(cmd) => {
                 CommandPayload::ExportMap { path: cmd.path }

@@ -16,12 +16,12 @@ use sim_runtime::{
     FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FoodModuleState,
     GenerationState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
-    GreatDiscoveryState, GreatDiscoveryTelemetryState, HarvestTaskState, HerdTelemetryState,
-    HydrologyOverlayState, InfluentialIndividualState, KnowledgeLedgerEntryState,
-    KnowledgeMetricsState, KnowledgeTimelineEventState, LogisticsLinkState, MountainKind,
+    GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdTelemetryState, HydrologyOverlayState,
+    InfluentialIndividualState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
+    KnowledgeTimelineEventState, LaborAssignmentState, LogisticsLinkState, MountainKind,
     PendingMigrationState, PopulationCohortState,
     PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
-    PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState, ScoutTaskState,
+    PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState,
     SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState, SnapshotHeader,
     StartMarkerState, TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge,
@@ -31,10 +31,10 @@ use sim_runtime::{
 
 use crate::{
     components::{
-        fragments_from_contract, fragments_to_contract, ElementKind, FaunaPursuit,
-        FaunaPursuitMode, HarvestAssignment, HarvestTaskKind, LocalStore, LogisticsLink,
+        available_workers, fragments_from_contract, fragments_to_contract, BandTravel, ElementKind,
+        FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, LogisticsLink,
         MoraleCause, MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort,
-        PowerNode, ScoutAssignment, Tile, TradeLink, FOOD,
+        PowerNode, Tile, TradeLink, FOOD,
     },
     culture::{
         CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
@@ -43,7 +43,7 @@ use crate::{
     },
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
     fauna::HerdTelemetry,
-    food::{FoodModule, FoodModuleTag},
+    food::FoodModuleTag,
     generations::{GenerationProfile, GenerationRegistry},
     great_discovery::{
         snapshot_definitions, snapshot_discoveries, snapshot_progress, snapshot_telemetry,
@@ -129,6 +129,7 @@ pub struct SnapshotContext<'w> {
     pub viewer_faction: Res<'w, crate::visibility::ViewerFaction>,
     pub demographics: Res<'w, DemographicsConfigHandle>,
     pub wellbeing: Res<'w, crate::wellbeing_config::WellbeingConfigHandle>,
+    pub labor: Res<'w, crate::labor_config::LaborConfigHandle>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
 }
@@ -1197,9 +1198,8 @@ type PopulationSnapshotQuery<'w, 's> = Query<
     (
         Entity,
         &'static PopulationCohort,
-        Option<&'static HarvestAssignment>,
-        Option<&'static ScoutAssignment>,
-        Option<&'static FaunaPursuit>,
+        Option<&'static LaborAllocation>,
+        Option<&'static BandTravel>,
     ),
 >;
 
@@ -1247,6 +1247,7 @@ pub fn capture_snapshot(
         viewer_faction,
         demographics,
         wellbeing,
+        labor,
         supply_membership,
         pipeline_config,
     } = ctx;
@@ -1305,19 +1306,30 @@ pub fn capture_snapshot(
 
     let demographics_config = demographics.get();
     let wellbeing_config = wellbeing.get();
+    let labor_config = labor.get();
+    // Global labor config today (identical for every band); the work-range ring is surfaced
+    // per-band so the client reads it off the selected band (future-proof if bands diverge).
+    let band_work_range = labor_config.band_work_range;
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
-        .map(|(entity, cohort, harvest, scout, pursuit)| {
+        .map(|(entity, cohort, allocation, travel)| {
             let home_pos = tile_positions.get(&cohort.home.to_bits()).copied();
             let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
-            let is_traveling = harvest.map(|h| h.travel_remaining > 0).unwrap_or(false)
-                || scout.map(|s| s.travel_remaining > 0).unwrap_or(false);
+            // A band is "traveling" while a `move_band` order is still en route to its target.
+            let is_traveling = travel
+                .map(|t| current_pos.map(|p| p != t.target).unwrap_or(true))
+                .unwrap_or(false);
+            // Local scout: the "scouted area" is now the band's sight extension. Carry the band's
+            // effective scout sight bonus (extra tiles beyond base sight, `0` with no scouts), using
+            // the same helper the visibility pass applies, so the client highlight stays meaningful.
+            let scout_workers = allocation
+                .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
+                .unwrap_or(0);
+            let scout_sight_bonus = labor_config.scout.sight_bonus(scout_workers);
             population_state(
                 entity,
                 cohort,
-                harvest,
-                scout,
-                pursuit,
+                allocation,
                 home_pos,
                 current_pos,
                 is_traveling,
@@ -1327,6 +1339,8 @@ pub fn capture_snapshot(
                 &demographics_config,
                 &wellbeing_config,
                 &supply_membership,
+                band_work_range,
+                scout_sight_bonus,
             )
         })
         .collect();
@@ -1870,27 +1884,9 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             knowledge: fragments_from_contract(&cohort_state.knowledge_fragments),
             migration,
         });
-        if let Some(task_state) = cohort_state.harvest_task.as_ref() {
-            if let Some(&target_entity) = tile_entity_lookup.get(&task_state.target_tile) {
-                if let Some(assignment) = harvest_assignment_from_state(
-                    task_state,
-                    FactionId(cohort_state.faction),
-                    target_entity,
-                ) {
-                    spawned.insert(assignment);
-                }
-            }
-        }
-        if let Some(task_state) = cohort_state.scout_task.as_ref() {
-            if let Some(&target_entity) = tile_entity_lookup.get(&task_state.target_tile) {
-                let assignment = scout_assignment_from_state(
-                    task_state,
-                    FactionId(cohort_state.faction),
-                    target_entity,
-                );
-                spawned.insert(assignment);
-            }
-        }
+        // Restore the labor allocation (rollback → exact per-source staffing). Every band carries
+        // one; an empty vector rehydrates to a fully-idle band.
+        spawned.insert(labor_allocation_from_state(&cohort_state.labor_assignments));
     }
 
     // Update tile registry.
@@ -3471,47 +3467,55 @@ fn pending_migration_from_state(state: &PendingMigrationState) -> PendingMigrati
     }
 }
 
-fn harvest_assignment_from_state(
-    state: &HarvestTaskState,
-    faction: FactionId,
-    target_tile: Entity,
-) -> Option<HarvestAssignment> {
-    let module = FoodModule::from_str(state.module.as_str()).ok()?;
-    let kind = HarvestTaskKind::from_str(state.kind.as_str()).unwrap_or(HarvestTaskKind::Harvest);
-    Some(HarvestAssignment {
-        faction,
-        band_label: state.band_label.clone(),
-        module,
-        target_tile,
-        target_coords: UVec2::new(state.target_x, state.target_y),
-        travel_remaining: state.travel_remaining,
-        travel_total: state.travel_total.max(state.travel_remaining),
-        gather_remaining: state.gather_remaining,
-        gather_total: state.gather_total.max(state.gather_remaining),
-        provisions_reward: Scalar::from_raw(state.provisions_reward),
-        trade_goods_reward: state.trade_goods_reward,
-        started_tick: state.started_tick,
-        kind,
-    })
+/// Rebuild a [`LaborAllocation`] from its snapshot state (rollback restores the exact allocation,
+/// as `harvest_task`/`scout_task` did for the retired single-task model). Unknown role strings are
+/// skipped defensively; a hunt with an unparseable policy falls back to `FollowPolicy::Sustain`
+/// (the assignment is kept, not dropped — we serialize valid policy strings, so this only guards
+/// against a corrupt/forward-incompatible snapshot).
+fn labor_allocation_from_state(states: &[LaborAssignmentState]) -> LaborAllocation {
+    let assignments = states
+        .iter()
+        .filter_map(|state| {
+            let target = match state.kind.as_str() {
+                "forage" => LaborTarget::Forage {
+                    tile: UVec2::new(state.target_x, state.target_y),
+                },
+                "hunt" => LaborTarget::Hunt {
+                    fauna_id: state.fauna_id.clone(),
+                    policy: FollowPolicy::from_str(&state.policy).unwrap_or_default(),
+                },
+                "scout" => LaborTarget::Scout,
+                "warrior" => LaborTarget::Warrior,
+                _ => return None,
+            };
+            Some(LaborAssignment {
+                target,
+                workers: state.workers,
+            })
+        })
+        .collect();
+    LaborAllocation { assignments }
 }
 
-fn scout_assignment_from_state(
-    state: &ScoutTaskState,
-    faction: FactionId,
-    target_tile: Entity,
-) -> ScoutAssignment {
-    ScoutAssignment {
-        faction,
-        band_label: state.band_label.clone(),
-        target_tile,
-        target_coords: UVec2::new(state.target_x, state.target_y),
-        travel_remaining: state.travel_remaining,
-        travel_total: state.travel_total.max(state.travel_remaining),
-        reveal_radius: state.reveal_radius,
-        reveal_duration: state.reveal_duration.max(1),
-        morale_gain: state.morale_gain,
-        started_tick: state.started_tick,
+/// Serialize one labor assignment for the snapshot (client readout + rollback persistence).
+fn labor_assignment_to_state(assignment: &LaborAssignment) -> LaborAssignmentState {
+    let mut state = LaborAssignmentState {
+        kind: assignment.target.kind().to_string(),
+        workers: assignment.workers,
+        ..Default::default()
+    };
+    match &assignment.target {
+        LaborTarget::Forage { tile } => {
+            state.target_x = tile.x;
+            state.target_y = tile.y;
+        }
+        LaborTarget::Hunt { fauna_id, policy } => {
+            state.fauna_id = fauna_id.clone();
+            state.policy = policy.as_str().to_string();
+        }
+        LaborTarget::Scout | LaborTarget::Warrior => {}
     }
+    state
 }
 
 fn discovery_progress_entries(ledger: &DiscoveryProgressLedger) -> Vec<DiscoveryProgressEntry> {
@@ -3537,13 +3541,39 @@ fn discovery_progress_entries(ledger: &DiscoveryProgressLedger) -> Vec<Discovery
 /// covers an unbounded number of turns, so the client reads it as "not food-limited".
 const NOT_FOOD_LIMITED_DAYS: f32 = 999.0;
 
+/// Summarize a band's labor allocation into the legacy `activity`/`hunt_mode` strings (so the
+/// pre-3b client keeps rendering): `activity` = the target-kind with the most workers (else
+/// `"idle"`), `hunt_mode` = the policy of the largest Hunt assignment (else empty).
+fn allocation_summary(allocation: Option<&LaborAllocation>) -> (String, String) {
+    let Some(allocation) = allocation else {
+        return ("idle".to_string(), String::new());
+    };
+    let dominant = allocation
+        .assignments
+        .iter()
+        .filter(|a| a.workers > 0)
+        .max_by_key(|a| a.workers);
+    let activity = dominant
+        .map(|a| a.target.kind().to_string())
+        .unwrap_or_else(|| "idle".to_string());
+    let hunt_mode = allocation
+        .assignments
+        .iter()
+        .filter_map(|a| match &a.target {
+            LaborTarget::Hunt { policy, .. } if a.workers > 0 => Some((a.workers, policy)),
+            _ => None,
+        })
+        .max_by_key(|(workers, _)| *workers)
+        .map(|(_, policy)| policy.as_str().to_string())
+        .unwrap_or_default();
+    (activity, hunt_mode)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn population_state(
     entity: Entity,
     cohort: &PopulationCohort,
-    harvest: Option<&HarvestAssignment>,
-    scout: Option<&ScoutAssignment>,
-    pursuit: Option<&FaunaPursuit>,
+    allocation: Option<&LaborAllocation>,
     home_position: Option<UVec2>,
     current_position: Option<UVec2>,
     is_traveling: bool,
@@ -3553,6 +3583,8 @@ fn population_state(
     demographics: &DemographicsConfig,
     wellbeing: &crate::wellbeing_config::WellbeingConfig,
     supply_membership: &SupplyNetworkMembership,
+    work_range: u32,
+    scout_sight_bonus: u32,
 ) -> PopulationCohortState {
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let demand = food_demand(
@@ -3566,24 +3598,17 @@ fn population_state(
     } else {
         (cohort.stores.get(FOOD) / demand).to_f32()
     };
-    let activity = if let Some(harvest) = harvest {
-        match harvest.kind {
-            HarvestTaskKind::Harvest => "harvest",
-            HarvestTaskKind::Hunt => "hunt",
-        }
-    } else if let Some(pursuit) = pursuit {
-        match pursuit.mode {
-            FaunaPursuitMode::Hunt => "hunt",
-            FaunaPursuitMode::Follow { .. } => "follow",
-        }
-    } else if scout.is_some() {
-        "scout"
-    } else {
-        "idle"
-    }
-    .to_string();
-    let hunt_mode = pursuit
-        .map(|pursuit| pursuit.mode.as_str().to_string())
+    let (activity, hunt_mode) = allocation_summary(allocation);
+    let working_age = available_workers(cohort.working);
+    let assigned = allocation.map(|a| a.assigned_total()).unwrap_or(0);
+    let idle_workers = working_age.saturating_sub(assigned);
+    let labor_assignments = allocation
+        .map(|a| {
+            a.assignments
+                .iter()
+                .map(labor_assignment_to_state)
+                .collect()
+        })
         .unwrap_or_default();
     PopulationCohortState {
         entity: entity.to_bits(),
@@ -3607,6 +3632,13 @@ fn population_state(
         days_of_food,
         activity,
         hunt_mode,
+        labor_assignments,
+        idle_workers,
+        working_age,
+        work_range,
+        // Repurposed: carries the band's effective scout sight bonus (extra tiles beyond base
+        // sight), not the retired fog-pulse radius. See the field doc in `sim_schema`.
+        scout_reveal_radius: scout_sight_bonus,
         supply_network_id: supply_membership.network_of(entity),
         morale_delta: cohort.last_morale_delta.raw(),
         morale_cause: cohort.last_morale_cause.as_u8(),
@@ -3624,8 +3656,10 @@ fn population_state(
         faction: cohort.faction.0,
         knowledge_fragments: fragments_to_contract(&cohort.knowledge),
         migration,
-        harvest_task: harvest.map(harvest_assignment_to_state),
-        scout_task: scout.map(scout_assignment_to_state),
+        // Retired single-task fields (kept in the schema for append-only compatibility; the
+        // labor allocation replaces them). Always empty now.
+        harvest_task: None,
+        scout_task: None,
         accessible_stockpile: accessible_stockpile_state(
             inventory,
             cohort.faction,
@@ -3633,24 +3667,6 @@ fn population_state(
             start_position,
             stockpile_radius,
         ),
-    }
-}
-
-fn harvest_assignment_to_state(assignment: &HarvestAssignment) -> HarvestTaskState {
-    HarvestTaskState {
-        kind: assignment.kind.as_str().to_string(),
-        module: assignment.module.as_str().to_string(),
-        band_label: assignment.band_label.clone(),
-        target_tile: assignment.target_tile.to_bits(),
-        target_x: assignment.target_coords.x,
-        target_y: assignment.target_coords.y,
-        travel_remaining: assignment.travel_remaining,
-        travel_total: assignment.travel_total,
-        gather_remaining: assignment.gather_remaining,
-        gather_total: assignment.gather_total,
-        provisions_reward: assignment.provisions_reward.raw(),
-        trade_goods_reward: assignment.trade_goods_reward,
-        started_tick: assignment.started_tick,
     }
 }
 
@@ -3682,21 +3698,6 @@ fn accessible_stockpile_state(
         return None;
     }
     Some(AccessibleStockpileState { radius, entries })
-}
-
-fn scout_assignment_to_state(assignment: &ScoutAssignment) -> ScoutTaskState {
-    ScoutTaskState {
-        band_label: assignment.band_label.clone(),
-        target_tile: assignment.target_tile.to_bits(),
-        target_x: assignment.target_coords.x,
-        target_y: assignment.target_coords.y,
-        travel_remaining: assignment.travel_remaining,
-        travel_total: assignment.travel_total,
-        reveal_radius: assignment.reveal_radius,
-        reveal_duration: assignment.reveal_duration,
-        morale_gain: assignment.morale_gain,
-        started_tick: assignment.started_tick,
-    }
 }
 
 fn power_state(entity: Entity, node: &PowerNode) -> PowerNodeState {
@@ -3788,30 +3789,53 @@ fn snapshot_sedentarization(score: &SedentarizationScore) -> Vec<SchemaSedentari
         .collect()
 }
 
-/// Aggregate the per-cohort age brackets into a per-faction age structure for the HUD readout.
-/// Sums the fixed-point brackets (from the already-built cohort states) in a stable faction
-/// order, then rounds each to a whole head-count.
+/// Aggregate the per-cohort age brackets into a per-faction age structure for the HUD readout,
+/// reconciled so the three emitted head-counts agree with the per-band selection panel.
+///
+/// `working` is the sum of each cohort's floored `available_workers` (the exact assignable-worker
+/// count the band panel shows), and the total head-count is the sum of each cohort's authoritative
+/// `size`. Dependents (`total − working`, clamped ≥ 0) are split into `children` + `elders` in
+/// proportion to the summed fixed-point child/elder masses, rounded so they sum *exactly* to the
+/// dependents (round-half on children, elders takes the remainder). This guarantees
+/// `children + working + elders == Σ size` and `working == Σ available_workers`, so the client's
+/// `Pop = children + working + elders` matches the summed band sizes with no independent-rounding
+/// overshoot.
 fn snapshot_demographics(
     cohorts: &[PopulationCohortState],
 ) -> Vec<SchemaPopulationDemographicsState> {
-    let mut by_faction: std::collections::BTreeMap<u32, (i64, i64, i64)> =
+    // Per faction: (Σ size, Σ available_workers, Σ children mass, Σ elders mass).
+    let mut by_faction: std::collections::BTreeMap<u32, (u64, u64, i128, i128)> =
         std::collections::BTreeMap::new();
     for cohort in cohorts {
-        let entry = by_faction.entry(cohort.faction).or_insert((0, 0, 0));
-        entry.0 += cohort.children;
-        entry.1 += cohort.working;
-        entry.2 += cohort.elders;
+        let entry = by_faction.entry(cohort.faction).or_insert((0, 0, 0, 0));
+        entry.0 += u64::from(cohort.size);
+        entry.1 += u64::from(available_workers(Scalar::from_raw(cohort.working)));
+        entry.2 += i128::from(cohort.children.max(0));
+        entry.3 += i128::from(cohort.elders.max(0));
     }
     by_faction
         .into_iter()
-        .map(
-            |(faction, (children, working, elders))| SchemaPopulationDemographicsState {
+        .map(|(faction, (total, workers, children_mass, elders_mass))| {
+            // Clamp workers to the head-count so dependents never go negative.
+            let working = workers.min(total);
+            let dependents = total - working;
+            let dependent_mass = children_mass + elders_mass;
+            // Split dependents ∝ child:elder mass, round-half on children so the two brackets
+            // sum exactly to `dependents`. i128 keeps the product overflow-free.
+            let children = if dependent_mass == 0 {
+                0
+            } else {
+                let dep = dependents as i128;
+                ((dep * children_mass + dependent_mass / 2) / dependent_mass) as u64
+            };
+            let elders = dependents - children;
+            SchemaPopulationDemographicsState {
                 faction,
-                children: Scalar::from_raw(children).to_u32(),
-                working: Scalar::from_raw(working).to_u32(),
-                elders: Scalar::from_raw(elders).to_u32(),
-            },
-        )
+                children: children as u32,
+                working: working as u32,
+                elders: elders as u32,
+            }
+        })
         .collect()
 }
 
@@ -4584,5 +4608,75 @@ mod tests {
 
         assert_eq!(fog.samples[0], Scalar::zero().raw());
         assert_eq!(fog.samples[1], Scalar::one().raw());
+    }
+
+    fn demographics_cohort(
+        faction: u32,
+        size: u32,
+        children: f32,
+        working: f32,
+        elders: f32,
+    ) -> PopulationCohortState {
+        PopulationCohortState {
+            faction,
+            size,
+            children: Scalar::from_f32(children).raw(),
+            working: Scalar::from_f32(working).raw(),
+            elders: Scalar::from_f32(elders).raw(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn snapshot_demographics_reconciles_with_band_totals() {
+        // Independent rounding of 8.9/16.5/4.6 would overshoot to 9+17+5 = 31, but the band's
+        // authoritative size is 30 and available_workers floors 16.5 to 16.
+        let cohorts = vec![demographics_cohort(0, 30, 8.9, 16.5, 4.6)];
+        let demographics = snapshot_demographics(&cohorts);
+        assert_eq!(demographics.len(), 1);
+        let d = &demographics[0];
+        assert_eq!(d.faction, 0);
+        assert_eq!(d.working, 16, "working matches Σ available_workers (floor)");
+        assert_eq!(
+            d.children + d.working + d.elders,
+            30,
+            "brackets sum to Σ size (client Pop matches band size)"
+        );
+        // Dependents 14 split ∝ 8.9:4.6 → children round(9.23)=9, elders remainder 5.
+        assert_eq!(d.children, 9);
+        assert_eq!(d.elders, 5);
+    }
+
+    #[test]
+    fn snapshot_demographics_sums_multiple_bands_per_faction() {
+        let cohorts = vec![
+            demographics_cohort(2, 30, 8.9, 16.5, 4.6),
+            demographics_cohort(2, 20, 5.4, 10.5, 4.1),
+            // A different faction stays separate.
+            demographics_cohort(7, 10, 2.0, 6.5, 1.5),
+        ];
+        let demographics = snapshot_demographics(&cohorts);
+        assert_eq!(demographics.len(), 2);
+
+        let f2 = demographics.iter().find(|d| d.faction == 2).unwrap();
+        // Σ available_workers = floor(16.5) + floor(10.5) = 16 + 10 = 26.
+        assert_eq!(f2.working, 26);
+        // Σ size = 50.
+        assert_eq!(f2.children + f2.working + f2.elders, 50);
+
+        let f7 = demographics.iter().find(|d| d.faction == 7).unwrap();
+        assert_eq!(f7.working, 6);
+        assert_eq!(f7.children + f7.working + f7.elders, 10);
+    }
+
+    #[test]
+    fn snapshot_demographics_clamps_workers_above_headcount() {
+        // Degenerate: floored workers exceed size — dependents must clamp to zero, not underflow.
+        let cohorts = vec![demographics_cohort(1, 5, 0.0, 9.9, 0.0)];
+        let demographics = snapshot_demographics(&cohorts);
+        let d = &demographics[0];
+        assert_eq!(d.working, 5);
+        assert_eq!(d.children, 0);
+        assert_eq!(d.elders, 0);
     }
 }

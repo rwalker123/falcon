@@ -120,12 +120,12 @@ func _ready() -> void:
             hud.connect("ui_zoom_delta", Callable(self, "_on_hud_zoom_delta"))
         if not hud.is_connected("ui_zoom_reset", Callable(self, "_on_hud_zoom_reset")):
             hud.connect("ui_zoom_reset", Callable(self, "_on_hud_zoom_reset"))
-        if hud.has_signal("unit_scout_requested") and not hud.is_connected("unit_scout_requested", Callable(self, "_on_hud_unit_scout")):
-            hud.connect("unit_scout_requested", Callable(self, "_on_hud_unit_scout"))
-        if hud.has_signal("herd_follow_requested") and not hud.is_connected("herd_follow_requested", Callable(self, "_on_hud_follow_herd")):
-            hud.connect("herd_follow_requested", Callable(self, "_on_hud_follow_herd"))
         if hud.has_signal("cancel_order_requested") and not hud.is_connected("cancel_order_requested", Callable(self, "_on_hud_cancel_order")):
             hud.connect("cancel_order_requested", Callable(self, "_on_hud_cancel_order"))
+        if hud.has_signal("assign_labor_requested") and not hud.is_connected("assign_labor_requested", Callable(self, "_on_hud_assign_labor")):
+            hud.connect("assign_labor_requested", Callable(self, "_on_hud_assign_labor"))
+        if hud.has_signal("move_band_requested") and not hud.is_connected("move_band_requested", Callable(self, "_on_hud_move_band")):
+            hud.connect("move_band_requested", Callable(self, "_on_hud_move_band"))
         if hud.has_signal("next_turn_requested") and not hud.is_connected("next_turn_requested", Callable(self, "_on_hud_next_turn")):
             hud.connect("next_turn_requested", Callable(self, "_on_hud_next_turn"))
         if hud.has_signal("roster_occupant_selected") and not hud.is_connected("roster_occupant_selected", Callable(self, "_on_hud_roster_occupant_selected")):
@@ -139,10 +139,8 @@ func _ready() -> void:
             map_view.connect("unit_selected", Callable(self, "_on_map_unit_selected"))
         if map_view.has_signal("herd_selected") and not map_view.is_connected("herd_selected", Callable(self, "_on_map_herd_selected")):
             map_view.connect("herd_selected", Callable(self, "_on_map_herd_selected"))
-        if map_view.has_signal("herd_follow_shortcut") and not map_view.is_connected("herd_follow_shortcut", Callable(self, "_on_map_herd_follow_shortcut")):
-            map_view.connect("herd_follow_shortcut", Callable(self, "_on_map_herd_follow_shortcut"))
-        if map_view.has_signal("herd_scout_shortcut") and not map_view.is_connected("herd_scout_shortcut", Callable(self, "_on_map_herd_scout_shortcut")):
-            map_view.connect("herd_scout_shortcut", Callable(self, "_on_map_herd_scout_shortcut"))
+        if map_view.has_signal("herd_quick_hunt_requested") and not map_view.is_connected("herd_quick_hunt_requested", Callable(self, "_on_map_herd_quick_hunt")):
+            map_view.connect("herd_quick_hunt_requested", Callable(self, "_on_map_herd_quick_hunt"))
         if map_view.has_signal("selection_cleared") and not map_view.is_connected("selection_cleared", Callable(self, "_on_map_selection_cleared")):
             map_view.connect("selection_cleared", Callable(self, "_on_map_selection_cleared"))
         if map_view.has_signal("tile_selected"):
@@ -164,6 +162,11 @@ func _ready() -> void:
         if hud != null and hud.has_signal("alert_focus_requested") and map_view.has_method("focus_on_tile"):
             if not hud.is_connected("alert_focus_requested", Callable(map_view, "focus_on_tile")):
                 hud.connect("alert_focus_requested", Callable(map_view, "focus_on_tile"))
+        # Optimistic pending-labor: HUD publishes the per-band pending map, MapView draws the
+        # dashed-amber pending hexes for the selected band.
+        if hud != null and hud.has_signal("labor_pending_changed") and map_view.has_method("set_labor_pending"):
+            if not hud.is_connected("labor_pending_changed", Callable(map_view, "set_labor_pending")):
+                hud.connect("labor_pending_changed", Callable(map_view, "set_labor_pending"))
     if map_view != null and map_view.has_signal("overlay_legend_changed") and hud != null and hud.has_method("update_overlay_legend"):
         map_view.connect("overlay_legend_changed", Callable(self, "_on_overlay_legend_changed"))
         if map_view.has_method("refresh_overlay_legend"):
@@ -281,15 +284,6 @@ func _refresh_hud_selection() -> void:
 
 func _on_map_unit_selected(unit: Dictionary) -> void:
     _hud_invoke("show_unit_selection", [unit])
-    var forage_variant: Variant = _hud_invoke("consume_pending_forage", [unit])
-    if forage_variant is Dictionary and not (forage_variant as Dictionary).is_empty():
-        _issue_forage_command(forage_variant)
-    var hunt_variant: Variant = _hud_invoke("consume_pending_hunt", [unit])
-    if hunt_variant is Dictionary and not (hunt_variant as Dictionary).is_empty():
-        _issue_hunt_command(hunt_variant)
-    var follow_variant: Variant = _hud_invoke("consume_pending_follow", [unit])
-    if follow_variant is Dictionary and not (follow_variant as Dictionary).is_empty():
-        _issue_follow_command(follow_variant)
 
 func _on_map_herd_selected(herd: Dictionary) -> void:
     _hud_invoke("show_herd_selection", [herd])
@@ -300,12 +294,10 @@ func _on_hud_roster_occupant_selected(kind: String, id: Variant) -> void:
     if map_view != null and map_view.has_method("select_occupant"):
         map_view.call("select_occupant", kind, id)
 
-func _on_map_herd_follow_shortcut(herd_id: String) -> void:
-    _on_hud_follow_herd(herd_id)
-
-func _on_map_herd_scout_shortcut(herd_id: String, x: int, y: int) -> void:
-    var line := "scout %d %d %d" % [PLAYER_FACTION_ID, x, y]
-    _send_runtime_command(line, "Scout herd '%s' at (%d, %d)." % [herd_id, x, y])
+## Double-click a herd on the map → the HUD assigns the player band's idle workers to
+## hunt it (Sustain). All the band/idle-worker resolution lives in the HUD.
+func _on_map_herd_quick_hunt(herd_id: String) -> void:
+    _hud_invoke("quick_assign_hunters", [herd_id])
 
 func _on_map_selection_cleared() -> void:
     _hud_invoke("clear_selection")
@@ -314,94 +306,70 @@ func _on_map_tile_selected(tile_info: Dictionary) -> void:
     _hud_invoke("show_tile_selection", [tile_info])
     _hud_invoke("notify_hex_selected", [tile_info])
 
-func _on_hud_unit_scout(x: int, y: int, band_bits: int) -> void:
-    var parts: Array[String] = ["scout", str(PLAYER_FACTION_ID), str(x), str(y)]
-    if band_bits >= 0:
-        parts.append(str(band_bits))
-    var line := " ".join(parts)
-    _send_runtime_command(line, "Scout order queued at (%d, %d)." % [x, y])
-
 func _on_hud_cancel_order(band: Dictionary) -> void:
     var band_bits := int(band.get("entity", -1))
     if band_bits < 0:
         return
     var faction := int(band.get("faction", PLAYER_FACTION_ID))
+    # cancel_order is repurposed (Early-Game Labor slice 3a) to clear ALL of a band's
+    # labor assignments — the "Clear all" affordance returns the band fully idle.
     var line := "cancel_order %d %d" % [faction, band_bits]
-    _send_runtime_command(line, "Cancel order for band.")
+    _send_runtime_command(line, "Clear all labor assignments for band.")
 
-func _on_hud_follow_herd(herd_id: String) -> void:
-    if herd_id.is_empty():
+## Early-Game Labor (slice 3b): assign/unassign working-age workers to a source or a
+## band-wide role. workers==0 removes/zeroes the assignment; the server clamps totals
+## to available working-age. Payload built by the HUD allocation panel / assign controls.
+func _on_hud_assign_labor(payload: Dictionary) -> void:
+    var band_bits := int(payload.get("band", -1))
+    if band_bits < 0:
         return
-    # Quick-follow (map double-click / inspector) uses the default policy; the
-    # server auto-picks a band when none is supplied.
-    var line := "follow_herd %d %s sustain" % [PLAYER_FACTION_ID, herd_id]
-    _send_runtime_command(line, "Hunt request for %s." % herd_id)
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var kind := String(payload.get("kind", "")).strip_edges().to_lower()
+    var workers: int = max(0, int(payload.get("workers", 0)))
+    var line := ""
+    var message := ""
+    match kind:
+        "forage":
+            var fx := int(payload.get("x", -1))
+            var fy := int(payload.get("y", -1))
+            if fx < 0 or fy < 0:
+                return
+            line = "assign_labor %d %d forage %d %d %d" % [faction, band_bits, fx, fy, workers]
+            message = "Assign %d forager%s to (%d, %d)." % [workers, "" if workers == 1 else "s", fx, fy]
+        "hunt":
+            var herd_id := String(payload.get("herd_id", "")).strip_edges()
+            if herd_id == "":
+                return
+            var policy := String(payload.get("policy", "sustain")).strip_edges().to_lower()
+            if policy == "":
+                policy = "sustain"
+            line = "assign_labor %d %d hunt %s %s %d" % [faction, band_bits, herd_id, policy, workers]
+            message = "Assign %d hunter%s to %s (%s)." % [workers, "" if workers == 1 else "s", herd_id, policy]
+        "scout", "warrior":
+            line = "assign_labor %d %d %s %d" % [faction, band_bits, kind, workers]
+            message = "Assign %d worker%s to %s." % [workers, "" if workers == 1 else "s", kind]
+        _:
+            return
+    _send_runtime_command(line, message)
 
-func _issue_hunt_command(payload: Dictionary) -> void:
-    var herd_id := String(payload.get("herd_id", "")).strip_edges()
-    if herd_id == "":
+## Early-Game Labor (slice 3b): relocate the band to a destination tile picked on the map.
+func _on_hud_move_band(payload: Dictionary) -> void:
+    var band_bits := int(payload.get("band", -1))
+    if band_bits < 0:
         return
-    var parts: Array[String] = ["hunt_fauna", str(PLAYER_FACTION_ID), herd_id]
-    var bits_variant: Variant = payload.get("band_entity_bits", null)
-    if typeof(bits_variant) == TYPE_INT and int(bits_variant) >= 0:
-        parts.append(str(int(bits_variant)))
-    _send_runtime_command(" ".join(parts), "Hunt order for herd %s." % herd_id)
-
-func _issue_follow_command(payload: Dictionary) -> void:
-    var herd_id := String(payload.get("herd_id", "")).strip_edges()
-    if herd_id == "":
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if x < 0 or y < 0:
         return
-    var policy := String(payload.get("policy", "sustain")).strip_edges().to_lower()
-    if policy == "":
-        policy = "sustain"
-    var parts: Array[String] = ["follow_herd", str(PLAYER_FACTION_ID), herd_id, policy]
-    var bits_variant: Variant = payload.get("band_entity_bits", null)
-    if typeof(bits_variant) == TYPE_INT and int(bits_variant) >= 0:
-        parts.append(str(int(bits_variant)))
-    _send_runtime_command(" ".join(parts), "Hunt order (%s) for herd %s." % [policy, herd_id])
+    var line := "move_band %d %d %d %d" % [faction, band_bits, x, y]
+    _send_runtime_command(line, "Move band to (%d, %d)." % [x, y])
 
 func _on_hud_next_turn(steps: int) -> void:
     var clamped_steps: int = max(1, steps)
     var line := "turn %d" % clamped_steps
     var suffix := "s" if clamped_steps != 1 else ""
     _send_runtime_command(line, "Advance %d turn%s." % [clamped_steps, suffix])
-
-func _issue_forage_command(payload: Dictionary) -> void:
-    var x := int(payload.get("x", -1))
-    var y := int(payload.get("y", -1))
-    var module_key := String(payload.get("module", "")).strip_edges()
-    var action := String(payload.get("action", "forage"))
-    if x < 0 or y < 0 or (action != "hunt" and module_key == ""):
-        return
-    var unit_label := String(payload.get("unit_label", "Band")).strip_edges()
-    if unit_label == "":
-        unit_label = "Band"
-    var parts: Array[String] = []
-    if action == "hunt":
-        parts.append_array([
-            "hunt_game",
-            str(PLAYER_FACTION_ID),
-            str(x),
-            str(y),
-        ])
-    else:
-        parts.append_array([
-            "forage",
-            str(PLAYER_FACTION_ID),
-            str(x),
-            str(y),
-            module_key.to_lower(),
-        ])
-    var bits_variant: Variant = payload.get("band_entity_bits", null)
-    if typeof(bits_variant) == TYPE_INT and int(bits_variant) >= 0:
-        parts.append(str(int(bits_variant)))
-    var line := " ".join(parts)
-    var message := ""
-    if action == "hunt":
-        message = "Hunt order: %s -> (%d, %d)." % [unit_label, x, y]
-    else:
-        message = "Harvest order: %s -> (%d, %d)." % [unit_label, x, y]
-    _send_runtime_command(line, message)
 
 func _send_runtime_command(line: String, message: String) -> void:
     if inspector != null and inspector.has_method("send_runtime_command"):

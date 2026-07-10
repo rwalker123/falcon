@@ -912,6 +912,24 @@ pub struct CohortStoreState {
     pub quantity: i64,
 }
 
+/// One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a). `kind` is the
+/// role (`"forage" | "hunt" | "scout" | "warrior"`); `target_x`/`target_y` locate a Forage tile or
+/// a Hunt herd's position readout; `fauna_id`/`policy` carry the Hunt target + take policy. Doubles
+/// as the client's allocation readout and the rollback-persisted staffing.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct LaborAssignmentState {
+    pub kind: String,
+    pub workers: u32,
+    #[serde(default)]
+    pub target_x: u32,
+    #[serde(default)]
+    pub target_y: u32,
+    #[serde(default)]
+    pub fauna_id: String,
+    #[serde(default)]
+    pub policy: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct PopulationCohortState {
     pub entity: u64,
@@ -951,6 +969,29 @@ pub struct PopulationCohortState {
     /// pursuing fauna. Lets the client label a cancel button with the specific mode.
     #[serde(default)]
     pub hunt_mode: String,
+    /// The band's per-source labor allocation (Early-Game Labor, slice 3a): one entry per staffed
+    /// Forage tile / Hunt herd / Scout / Warrior demand. Doubles as the client readout and the
+    /// rollback-persisted staffing.
+    #[serde(default)]
+    pub labor_assignments: Vec<LaborAssignmentState>,
+    /// Whole working-age workers left unassigned (idle — they eat but produce nothing). Derived.
+    #[serde(default)]
+    pub idle_workers: u32,
+    /// Whole assignable working-age workers this band supplies (the Σ-invariant ceiling). Derived.
+    #[serde(default)]
+    pub working_age: u32,
+    /// The band's Chebyshev work radius (`LaborConfig.band_work_range`). Global labor config today
+    /// (identical for every band); surfaced per-band so the client reads it off the selected band
+    /// to draw the work-range ring. Sourced from `labor_config.json` at capture.
+    #[serde(default)]
+    pub work_range: u32,
+    /// The band's effective **scout sight bonus** — the extra sight-range tiles its staffed scouts
+    /// add beyond base sight (`min(scouts × sight_bonus_per_scout, max_sight_bonus)` from
+    /// `LaborConfig.scout`), `0` with no scouts. Derived per-band at capture. (Field name retained
+    /// for wire compatibility; the "scouted area" is now the band's sight extension — the retired
+    /// fog-pulse radius it once carried is gone.)
+    #[serde(default)]
+    pub scout_reveal_radius: u32,
     /// Which supply network this band belongs to this turn: `0` = not in a multi-band network,
     /// `>= 1` = a per-snapshot id shared by all bands in the same connected component. Derived and
     /// recomputed every turn (not persisted for rollback).
@@ -2678,6 +2719,39 @@ fn create_populations<'a>(
             } else {
                 Some(builder.create_string(&cohort.hunt_mode))
             };
+            let labor_assignments = if cohort.labor_assignments.is_empty() {
+                None
+            } else {
+                let entries: Vec<_> = cohort
+                    .labor_assignments
+                    .iter()
+                    .map(|assignment| {
+                        let kind = builder.create_string(&assignment.kind);
+                        let fauna_id = if assignment.fauna_id.is_empty() {
+                            None
+                        } else {
+                            Some(builder.create_string(&assignment.fauna_id))
+                        };
+                        let policy = if assignment.policy.is_empty() {
+                            None
+                        } else {
+                            Some(builder.create_string(&assignment.policy))
+                        };
+                        fb::LaborAssignment::create(
+                            builder,
+                            &fb::LaborAssignmentArgs {
+                                kind: Some(kind),
+                                workers: assignment.workers,
+                                targetX: assignment.target_x,
+                                targetY: assignment.target_y,
+                                faunaId: fauna_id,
+                                policy,
+                            },
+                        )
+                    })
+                    .collect();
+                Some(builder.create_vector(&entries))
+            };
             let accessible_stockpile_fb = cohort.accessible_stockpile.as_ref().map(|stockpile| {
                 let entries = if stockpile.entries.is_empty() {
                     None
@@ -2720,6 +2794,11 @@ fn create_populations<'a>(
                     daysOfFood: cohort.days_of_food,
                     activity,
                     huntMode: hunt_mode,
+                    laborAssignments: labor_assignments,
+                    idleWorkers: cohort.idle_workers,
+                    workingAge: cohort.working_age,
+                    workRange: cohort.work_range,
+                    scoutRevealRadius: cohort.scout_reveal_radius,
                     supplyNetworkId: cohort.supply_network_id,
                     moraleDelta: cohort.morale_delta,
                     moraleCause: cohort.morale_cause,

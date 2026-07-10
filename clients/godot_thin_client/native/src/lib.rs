@@ -3568,51 +3568,39 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         let _ = dict.insert("migration", migration_dict);
     }
 
-    if let Some(harvest) = cohort.harvestTask() {
-        let mut harvest_dict = VarDictionary::new();
-        if let Some(kind) = harvest.kind() {
-            // "action" used by Hud.gd, "kind" used by MapView.gd for arrow colors
-            let _ = harvest_dict.insert("action", kind);
-            let _ = harvest_dict.insert("kind", kind);
+    // Early-Game Labor (slice 3b): the band's source-centric labor allocation. Each entry is a
+    // staffed Forage tile / Hunt herd / Scout / Warrior demand. `harvestTask`/`scoutTask` are now
+    // always null server-side and no longer decoded.
+    // Always insert `labor_assignments` (empty array when the vector is absent) so the client
+    // sees a stable band-dict shape regardless of whether the server serialized an empty vector.
+    let mut array = VarArray::new();
+    if let Some(assignments) = cohort.laborAssignments() {
+        for assignment in assignments {
+            let mut entry = VarDictionary::new();
+            if let Some(kind) = assignment.kind() {
+                let _ = entry.insert("kind", kind);
+            }
+            let _ = entry.insert("workers", assignment.workers() as i64);
+            let _ = entry.insert("target_x", assignment.targetX() as i64);
+            let _ = entry.insert("target_y", assignment.targetY() as i64);
+            if let Some(fauna_id) = assignment.faunaId() {
+                let _ = entry.insert("fauna_id", fauna_id);
+            }
+            if let Some(policy) = assignment.policy() {
+                let _ = entry.insert("policy", policy);
+            }
+            array.push(&entry.to_variant());
         }
-        if let Some(module) = harvest.module() {
-            let _ = harvest_dict.insert("module", module);
-        }
-        if let Some(label) = harvest.bandLabel() {
-            let _ = harvest_dict.insert("band_label", label);
-        }
-        let _ = harvest_dict.insert("target_tile", harvest.targetTile() as i64);
-        let _ = harvest_dict.insert("target_x", harvest.targetX() as i64);
-        let _ = harvest_dict.insert("target_y", harvest.targetY() as i64);
-        let _ = harvest_dict.insert("travel_remaining", harvest.travelRemaining() as i64);
-        let _ = harvest_dict.insert("travel_total", harvest.travelTotal() as i64);
-        let _ = harvest_dict.insert("gather_remaining", harvest.gatherRemaining() as i64);
-        let _ = harvest_dict.insert("gather_total", harvest.gatherTotal() as i64);
-        let _ = harvest_dict.insert(
-            "provisions_reward",
-            fixed64_to_f64(harvest.provisionsReward()),
-        );
-        let _ = harvest_dict.insert("trade_goods_reward", harvest.tradeGoodsReward());
-        let _ = harvest_dict.insert("started_tick", harvest.startedTick() as i64);
-        let _ = dict.insert("harvest", harvest_dict);
     }
+    let _ = dict.insert("labor_assignments", array);
+    let _ = dict.insert("idle_workers", cohort.idleWorkers() as i64);
+    let _ = dict.insert("working_age", cohort.workingAge() as i64);
+    // Forage work radius (Chebyshev tiles) drives the MapView band-selection work-range ring.
+    // scout_reveal_radius is now the band's effective sight-range bonus (extra tiles beyond
+    // base, 0 when no scouts) — its effect shows directly in the fog, NOT as a drawn disc.
+    let _ = dict.insert("work_range", cohort.workRange() as i64);
+    let _ = dict.insert("scout_reveal_radius", cohort.scoutRevealRadius() as i64);
 
-    if let Some(scout) = cohort.scoutTask() {
-        let mut scout_dict = VarDictionary::new();
-        if let Some(label) = scout.bandLabel() {
-            let _ = scout_dict.insert("band_label", label);
-        }
-        let _ = scout_dict.insert("target_tile", scout.targetTile() as i64);
-        let _ = scout_dict.insert("target_x", scout.targetX() as i64);
-        let _ = scout_dict.insert("target_y", scout.targetY() as i64);
-        let _ = scout_dict.insert("travel_remaining", scout.travelRemaining() as i64);
-        let _ = scout_dict.insert("travel_total", scout.travelTotal() as i64);
-        let _ = scout_dict.insert("reveal_radius", scout.revealRadius() as i64);
-        let _ = scout_dict.insert("reveal_duration", scout.revealDuration() as i64);
-        let _ = scout_dict.insert("morale_gain", scout.moraleGain());
-        let _ = scout_dict.insert("started_tick", scout.startedTick() as i64);
-        let _ = dict.insert("scout", scout_dict);
-    }
     if let Some(access) = cohort.accessibleStockpile() {
         let mut stock_dict = VarDictionary::new();
         let _ = stock_dict.insert("radius", access.radius() as i64);

@@ -64,6 +64,39 @@ on them is a worker *not* feeding the band. **That opportunity cost is the whole
 opening:** put everyone on food and you're blind and undefended; scout/guard too much and you
 starve.
 
+### Labor allocation, band range, and movement (the mechanism)
+
+Allocation is **source-centric**, not abstract sliders. Once a band stops moving it is
+effectively a **city working its surrounding tiles**:
+
+- **Band work range `R`** — a radius (config lever, default **2** tiles; *never* hardcoded) around
+  the band's position. `R` + the wildlife/forage density overlay is how the player reads "is this a
+  good place to park." You reposition via a **move-band command**; the in-range source set updates.
+- **Assignable sources in range** — tiles with a food module (→ **Forage** work) and herds
+  (→ **Hunt** work). The player **assigns workers from the labor pool to a specific source**
+  (this herd, that patch), with the invariant **Σ assignments ≤ working-age**. A small band
+  (~16 workers, `R`=2) has only a handful of in-range sources, so this is placing 2–5 assignments,
+  not micromanaging tiles.
+- **Yield scales with assigned headcount.** This is the core fix: today no yield reads the
+  `working` bracket (it is an inert demographic number) while consumption is fully headcount-scaled
+  — so a 30- and a 300-person band foraging the same tile earn identically but eat 10× apart. Under
+  allocation, each source's per-turn yield is a function of the workers assigned to it (times the
+  role's equipped/unequipped tier), credited to the band larder.
+- **Band-wide roles** — **Scout** (reveal outward from the band, staffed) and **Warrior** (guard
+  the band, staffed) are not tied to a source; they draw from the same pool.
+- **"Cancel" becomes per-source unassign.** There is no longer a single band-global task to
+  cancel; you staff a source down to zero, returning those workers to the pool. The Issue-1
+  command plumbing / optimistic-feedback pattern largely carries over; the single-Cancel-button UI
+  is replaced by the allocation panel.
+
+**Migratory game — a leashed follow.** Herds roam, so an in-range herd can wander out. An assigned
+hunting group **tracks a roaming herd up to a bounded leash distance** beyond `R` (config), bringing
+food back to the band; past the leash the assignment lapses and its workers return to the pool.
+This is bounded **reuse of the existing `FaunaPursuit` chase machinery** — no whole-band migration,
+no unbounded detachments. **Deferred but documented:** a hunting party that follows distant game and
+*settles as a new band* is a **band split** (the SplitClan/migration seam), its own later slice — the
+right home for genuinely exploiting far-off migratory herds without dragging the whole tribe along.
+
 ### Equipment / TOE — consumable, start-stocked, not yet craftable
 A TOE is the equipment set that lifts a role from its *unequipped* to its *equipped* tier.
 
@@ -149,6 +182,9 @@ between Warrior and threats is the thing that is cheaper to get right now than t
 | 9 | **Fractional food** | Non-negotiable at sub-1-per-source scale; the literal Issue-2 fix. |
 | 10 | **Minimal predator threat in M1** | Warrior needs a consumer to be designed right; cheaper now than retrofitting combat onto an untested role. |
 | 11 | **Spoilage deferred** | Carry-cap gives storage its purpose without spoilage; spoilage matters only once storage lets food *sit* (M2), combined with time-in-storage. |
+| 12 | **Source-centric allocation** (assign workers to a specific in-range source), not abstract sliders | Matches the player's mental model ("assign workers to *that* herd/patch"); tractable at ~16 workers × `R`=2; picking *which* source is more interesting than a slider. |
+| 13 | **Band work range `R`** (config, default 2) | Once a band stops it *is* a city working its surrounding tiles; `R` + the density overlay is how the player reads a parking spot. Repositioning is a move-band command. |
+| 14 | Migratory game = **leashed follow** (bounded reuse of `FaunaPursuit`); **breakaway-to-new-band deferred** | Keeps migratory hunting without whole-band chase or unbounded detachments; genuinely-distant game is a band *split* (its own slice). |
 
 ## Starting state (all config-driven — no hardcoded literals)
 
@@ -179,17 +215,35 @@ allocation) at the earliest scale, and **extends** it:
 
 ## Milestone breakdown
 
-- **M1 — the labor-pool opening (this doc).** Fractional food; band-as-labor-pool with
-  working-age allocation across Foraging/Hunting/Scouting/Warrior; equipped/unequipped tiers +
-  consumable starter TOEs (durability cliff); carry-capacity population cap; food ledger; single
-  ~30-person start via config. **Split candidates:** M1a data+sim (labor allocation, tiers,
-  fractional food, carry cap), M1b client (allocation UI + food ledger + carry-cap readout).
-- **M1-threats — minimal predators.** Predator pressure + Warrior combat resolution
-  (equipped/unequipped). Folded into M1 because it is cheaper to build the Warrior↔threat
-  interface now than to retrofit it. (Kept as a distinct work-slice so M1 can land without it if
-  scope demands.)
-- **Deferred (M2+).** Crafter role + crafting to replenish/upgrade TOEs; larder spoilage +
-  storage tiers; richer threats (barbarians, rival civs); the arc's Phase 3 improvement catalog.
+Landing as sequential slices (each its own PR), in dependency order:
+
+1. ✅ **Fractional food (step zero)** — shipped (PR #91). Kills the round-to-0 that zeroes sub-1
+   yields.
+2. ✅ **Config-driven small start** — shipped (PR #92). One band of 30 via a `band_size` lever.
+3. **Labor allocation (this slice).** The source-centric allocation model: per-band assignment set
+   (`{source-or-role → workers}`, Σ ≤ working-age); **band work range `R`** (config, default 2) +
+   a **move-band** command; **Forage** (in-range tiles) + **Hunt** (in-range herds, with the
+   **leashed follow**) yielding food **scaled by assigned workers**; **Scout** (reveal outward) and
+   **Warrior** (staffable, inert until predators) as band-wide roles; snapshot widened from the
+   single `activity` string to a structured assignment set; retires `reassign_band`'s one-task
+   model + the target-tile Harvest / whole-band Follow chase. **Sub-PRs:** (3a) ✅ **sim shipped** —
+   `LaborAllocation` component + `labor_config.json`, `advance_labor_allocation` + `advance_band_movement`
+   replacing the three single-task systems, leashed-follow lapse, `assign_labor`/`move_band` commands
+   (`cancel_order` repurposed to clear-all), snapshot widened with `laborAssignments`/`idleWorkers`/
+   `workingAge` (see `core_sim/CLAUDE.md`); (3b) client — allocation panel (assign/unassign per source
+   = the new "cancel"), move-band, role/worker readout. *Flat per-worker tier only — TOE multipliers
+   are a later slice.*
+4. **Carry-capacity population cap.** Band carry capacity gates population; baskets + storage lift
+   it. The mechanical nomad→settle bridge.
+5. **TOE / equipment.** Consumable per-role kit; equipped/unequipped tiers (durability cliff);
+   starter stock; role-specific effects. Turns the flat tier from slice 3 into two tiers.
+6. **Minimal predators.** Predator pressure + Warrior combat resolution — lights up the Warrior
+   role built inert in slice 3.
+7. **Food ledger.** Per-band income/outflow breakdown + population-vs-cap readout (can land earlier
+   if useful for debugging the yield math).
+- **Deferred (M2+), documented.** Crafter role + crafting to replenish/upgrade TOEs; larder
+  spoilage + storage tiers; **breakaway-to-new-band** (a band split, the SplitClan/migration seam);
+  richer threats (barbarians, rival civs); the settlement arc's Phase 3 improvement catalog.
 
 ## Open tuning dials (to settle live)
 
@@ -200,6 +254,9 @@ numbers convention.
 
 ## See Also
 
+- `docs/plan_exploration_and_sites.md` — the exploration layer built on the Scout role: **local
+  scout** (extend the band's sight — the fix for the currently-inert Scout role), **scouting
+  expeditions** (a provisioned traveling party), and the **Wondrous Sites** catalog they discover.
 - `docs/plan_settlement_population.md` — the arc this realizes/extends (Phase 2 labor; Phase 3
   improvements/storage; emergent settlements). Carry capacity + storage are the bridge.
 - `docs/plan_wildlife_hunting_overlay.md` — the herds/Sustain yields this subsistence model draws

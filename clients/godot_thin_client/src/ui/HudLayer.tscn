@@ -214,13 +214,11 @@ fit_content = true
 scroll_active = false
 autowrap_mode = 2
 
-[node name="TileActionButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent"]
+[node name="ForageAssignControls" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
-
-[node name="ForageButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel/CardContent/TileActionButtons"]
-unique_name_in_owner = true
-text = "Harvest"
+theme_override_constants/separation = 6
+visible = false
 
 [node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel"]
 size_flags_horizontal = 3
@@ -239,51 +237,17 @@ fit_content = true
 scroll_active = false
 autowrap_mode = 2
 
-[node name="UnitButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent"]
+[node name="AllocationPanel" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
+theme_override_constants/separation = 6
 visible = false
 
-[node name="UnitScoutButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/UnitButtons"]
-unique_name_in_owner = true
-text = "Scout Area"
-
-[node name="UnitCancelButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/UnitButtons"]
-unique_name_in_owner = true
-visible = false
-text = "Cancel Task"
-
-[node name="HerdButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent"]
+[node name="HerdAssignControls" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent"]
 unique_name_in_owner = true
 size_flags_horizontal = 3
+theme_override_constants/separation = 6
 visible = false
-
-[node name="HuntHerdButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons"]
-unique_name_in_owner = true
-text = "Hunt"
-
-[node name="HuntPolicyButtons" type="HBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons"]
-unique_name_in_owner = true
-
-[node name="FollowSingleButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/HuntPolicyButtons"]
-unique_name_in_owner = true
-text = "Single"
-
-[node name="FollowSustainButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/HuntPolicyButtons"]
-unique_name_in_owner = true
-text = "Sustain"
-
-[node name="FollowSurplusButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/HuntPolicyButtons"]
-unique_name_in_owner = true
-text = "Surplus"
-
-[node name="FollowMarketButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/HuntPolicyButtons"]
-unique_name_in_owner = true
-text = "Market"
-
-[node name="FollowEradicateButton" type="Button" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/OccupantsPanel/CardContent/HerdButtons/HuntPolicyButtons"]
-unique_name_in_owner = true
-text = "Eradicate"
 
 
 [node name="AlertsPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]

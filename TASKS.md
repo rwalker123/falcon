@@ -282,9 +282,19 @@ equipment is consumable inventory; you allocate working-age labor across roles.
   `start_profiles.json` (default const `DEFAULT_STARTING_BAND_SIZE = 30` in `start_profile.rs`).
   Bracket split (initial_distribution) + `food_reserve_days` seeding flow through unchanged.
   _Carry-capacity headroom and starter TOEs land with their own slices below, not here._
-- [ ] **Labor pool + role allocation (sim).** Working-age partitioned across Foraging/Hunting/
-  Scouting/Warrior; per-role throughput = f(workers assigned, equipment on hand). Replaces the
-  band's single-task `reassign_band` model with concurrent role staffing. (M1a slice.)
+- [ ] **Labor allocation — sim (slice 3a).** Source-centric model: per-band assignment set
+  (`{in-range source or band-role → workers}`, Σ ≤ working-age); **band work range `R`** (config,
+  default 2) + a **move-band** command; **Forage** (in-range food-module tiles) + **Hunt** (in-range
+  herds, with a **leashed follow** — bounded reuse of `FaunaPursuit` past `R`, lapses beyond the
+  leash) yielding food **scaled by assigned workers** (the fix: `working` becomes a real producer —
+  today no yield reads it); **Scout** (reveal outward) + **Warrior** (staffable, inert until the
+  predator slice) as band-wide roles. Retires `reassign_band`'s one-task model + target-tile Harvest
+  / whole-band Follow chase. Snapshot widened from the single `activity` string to a structured
+  assignment set (schema + snapshot). Flat per-worker tier only (TOE multipliers = the TOE slice).
+- [ ] **Labor allocation — client (slice 3b).** Allocation panel: assign/unassign workers per
+  in-range source (**per-source unassign is the new "cancel"** — supersedes the Issue-1 single-Cancel
+  UI; command plumbing/optimistic-feedback pattern carries over); move-band command; role/worker
+  readout. Consumes the widened snapshot assignment set.
 - [ ] **Equipment / TOE model.** Per-role consumable equipment inventory; equipped/unequipped
   throughput tiers; **durability cliff** (full performance until expiry, then drop to unequipped);
   starter kit lasts ~15–20 turns (matched to `startup.food_reserve_days`); no crafting/replacement
@@ -296,8 +306,6 @@ equipment is consumable inventory; you allocate working-age labor across roles.
 - [ ] **Food ledger (client).** Per-band income/outflow breakdown (+forage/+hunt/+network/
   −consumption = net/turn → days to empty) + population-vs-carry-cap readout. Load-bearing
   legibility for the equilibrium/settle loop, not cosmetic.
-- [ ] **Labor allocation UI (client).** Assign working-age workers to roles; show each role's
-  equipped/unequipped tier + kit remaining.
 - [ ] **M1-threats — minimal predators.** Predator pressure on the band / unguarded foragers &
   hunters, resolved against Warrior strength (equipped vs bare-handed) → casualties or yield loss.
   Folded into M1 (cheaper to build the Warrior↔threat interface now than retrofit); distinct slice
@@ -305,6 +313,38 @@ equipment is consumable inventory; you allocate working-age labor across roles.
 - [ ] Deferred (M2+): **Crafter role + crafting** to replenish/upgrade TOEs (the depletion pull);
   **larder spoilage + storage tiers** (spoilage matters once storage lets food sit); richer threats;
   the Settlement arc's Phase 3 improvement catalog (storage improvements consume the carry-cap seam).
+
+### Exploration & Wondrous Sites
+
+Design: `docs/plan_exploration_and_sites.md`. The early-game exploration layer — makes scouting
+real and gives exploration something to find. Companion to the Early-Game Labor arc (the Scout
+role). Sequenced: local scout (small fix) → sites subsystem (foundation) → expeditions.
+
+- [x] Design doc. Authored `docs/plan_exploration_and_sites.md` (local scout / expeditions /
+  Wondrous Sites catalog); cross-linked from `plan_early_game_labor.md`.
+- [ ] **Local scout — extend band sight.** The Scout labor role currently no-ops (radius-2 fog
+  pulse < the band's passive sight 6, and unscaled). Make a band's sight range in
+  `calculate_visibility` = `base_range + min(scouts × sight_bonus_per_scout, max_sight_bonus)` (read
+  the cohort's `LaborAllocation` Scout count), so staffed scouts extend the live (Active) radius.
+  New `labor_config.json scout` levers; retire the obsolete `reveal_radius`/`reveal_duration` use;
+  client Scout hint → "Extends the band's sight; more scouts see further."
+- [ ] **Wondrous Sites (minimal).** Data-driven site catalog (`sites_config.json` + loader,
+  fauna-config pattern): `{id, category, display, placement_rule, discovery_reward}`. An optional
+  per-tile site reference (schema + component), hidden under fog until discovered. Generic
+  discovery: any vision source (band sight / local scout / expedition) reveals in-range sites → a
+  discovered-sites registry → map marker + a **Discoveries** readout. Per-category reward hooks
+  (settle-site / riches / tribe / landmark). **Point sites v1** (single tile; landmark = named
+  point on its prominent tile); per-category placement (landmarks emergent from terrain at worldgen,
+  riches from deposits, settle-sites derived, tribes seeded). Seed 2–3 site types.
+- [ ] **Scouting expedition.** A visible detached party (own map marker) outfitted with workers +
+  provisions (larder-drawn, scaled by size × distance), sent to a target; treks revealing fog along
+  its path, reaches the objective, **returns**. **Deterministic finds** — reveals the real Wondrous
+  Sites along its path (+ optional small flavor roll) + permanent map reveal. Reuses move-band
+  travel + `FogRevealLedger`/knowledge-fragment machinery; shares the deferred breakaway/split
+  detached-party machinery.
+- [ ] Deferred / documented: expedition **risk/failure** (peril, non-return); **scouting-TOE**
+  gating (with the TOE slice); **regional (multi-tile) sites**; richer per-category rewards;
+  **tribes as real civilizations**.
 
 ### Civilization Wellbeing (Morale → Discontent → Consequences)
 

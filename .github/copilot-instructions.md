@@ -28,7 +28,7 @@ The repository is a Cargo workspace: a Bevy-based headless ECS simulation (`core
 The schema in `sim_schema/schemas/snapshot.fbs` is the authoritative contract between the simulation and all clients.
 
 - After editing a `.fbs`, regenerate: `cargo build -p shadow_scale_flatbuffers`, then `rustfmt shadow_scale_flatbuffers/src/generated/snapshot_generated.rs`, and rebuild the Godot native extension with `cargo xtask godot-build` so the client decoder matches.
-- The generated bindings must exist and be committed (CI fails if `shadow_scale_flatbuffers/src/generated/snapshot_generated.rs` is missing or unformatted).
+- The generated bindings are **not committed** — `shadow_scale_flatbuffers/src/generated/snapshot_generated.rs` is gitignored (`.gitignore`) and regenerated from the schema by `build.rs` (`cargo:rerun-if-changed` on the `.fbs`). CI rebuilds and rustfmts it, then fails if it ends up missing or unformatted. Do not add the generated file to a commit, and do not treat its absence from the checkout as a defect.
 - Schema evolution should be additive and back-compatible where possible (append new fields/tables; don't renumber or repurpose existing fields). Flag breaking reorderings.
 
 ## 4. `core_sim` — Simulation Engine (Bevy ECS)

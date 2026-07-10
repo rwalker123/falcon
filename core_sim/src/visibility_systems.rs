@@ -41,10 +41,12 @@ use sim_runtime::TerrainTags;
 
 use crate::{
     components::{
-        LogisticsLink, PopulationCohort, Settlement, StartingUnit, Tile, TownCenter, TradeLink,
+        LaborAllocation, LaborTarget, LogisticsLink, PopulationCohort, Settlement, StartingUnit,
+        Tile, TownCenter, TradeLink,
     },
     grid_utils::{shortest_delta_x, wrap_x, wrapped_distance_x},
     heightfield::ElevationField,
+    labor_config::LaborConfigHandle,
     orders::FactionId,
     resources::{SimulationConfig, SimulationTick},
     visibility::{VisibilityLedger, VisibilityState, VisibilitySweepTracker},
@@ -101,16 +103,24 @@ pub fn calculate_visibility(
     mut ledger: ResMut<VisibilityLedger>,
     mut sweep: ResMut<VisibilitySweepTracker>,
     config: Res<VisibilityConfigHandle>,
+    labor_config: Res<LaborConfigHandle>,
     sim_config: Res<SimulationConfig>,
     tick: Res<SimulationTick>,
     elevation: Option<Res<ElevationField>>,
     tiles: Query<&Tile>,
-    // Population cohorts with StartingUnit marker for unit type
-    cohorts: Query<(Entity, &PopulationCohort, &StartingUnit)>,
+    // Population cohorts with StartingUnit marker for unit type. The optional LaborAllocation
+    // supplies the band's Scout head-count, which extends its live sight range.
+    cohorts: Query<(
+        Entity,
+        &PopulationCohort,
+        &StartingUnit,
+        Option<&LaborAllocation>,
+    )>,
     // Settlements with TownCenter
     settlements: Query<(&Settlement, &TownCenter)>,
 ) {
     let cfg = config.0.as_ref();
+    let labor = labor_config.get();
     let current_turn = tick.0;
     let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
 
@@ -155,9 +165,15 @@ pub fn calculate_visibility(
     let mut settlement_count = 0u32;
 
     // Units (population cohorts with StartingUnit marker)
-    for (entity, cohort, unit) in cohorts.iter() {
+    for (entity, cohort, unit, allocation) in cohorts.iter() {
         cohort_count += 1;
         let range_def = cfg.sight_range_for(&unit.kind);
+        // Local scout: staffed scouts extend the band's live sight range, scaled by head-count
+        // and capped, so the wider ring is re-marked Active every turn while scouts are assigned.
+        let scout_workers = allocation
+            .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
+            .unwrap_or(0);
+        let base_range = range_def.base_range + labor.scout.sight_bonus(scout_workers);
         // Get position from current tile (tracks travel position)
         if let Ok(current_tile) = tiles.get(cohort.current_tile) {
             let current_pos = current_tile.position;
@@ -179,7 +195,7 @@ pub fn calculate_visibility(
                 sources.push((
                     cohort.faction,
                     pos,
-                    range_def.base_range,
+                    base_range,
                     range_def.elevation_bonus_factor,
                 ));
             }
@@ -753,6 +769,103 @@ mod tests {
         let sweep = world.resource::<VisibilitySweepTracker>();
         assert_eq!(sweep.previous(live), Some(UVec2::new(1, 1)));
         assert_eq!(sweep.previous(despawned), None);
+    }
+
+    #[test]
+    fn scouts_extend_band_sight_range() {
+        use std::sync::Arc;
+
+        use crate::components::{
+            LaborAllocation, LaborTarget, LocalStore, MoraleCause, MoraleContributions,
+            PopulationCohort,
+        };
+        use crate::labor_config::LaborConfigHandle;
+        use crate::scalar::{scalar_from_f32, scalar_zero};
+        use crate::visibility::VisibilityLedger;
+        use crate::visibility_config::VisibilityConfig;
+
+        const WIDTH: u32 = 40;
+        const HEIGHT: u32 = 15;
+        const BAND: UVec2 = UVec2::new(20, 7);
+        // A probe tile 8 tiles east of the band: beyond base sight (BandScout base_range 6)
+        // but inside the scout-extended sight (6 + capped bonus 4 = 10).
+        const PROBE: UVec2 = UVec2::new(28, 7);
+
+        // Returns the probe tile's visibility state for a band staffing `scouts` workers.
+        fn probe_state(scouts: u32) -> VisibilityState {
+            let mut world = World::new();
+
+            // Flat terrain, elevation/LoS disabled so the only range driver is the scout bonus.
+            let mut vis = VisibilityConfig::default();
+            vis.elevation.enabled = false;
+            vis.line_of_sight.enabled = false;
+            world.insert_resource(VisibilityConfigHandle::new(Arc::new(vis)));
+            world.insert_resource(LaborConfigHandle::default());
+
+            let mut sim = SimulationConfig::builtin();
+            sim.map_topology.wrap_horizontal = false;
+            world.insert_resource(sim);
+            world.insert_resource(SimulationTick(1));
+            world.insert_resource(VisibilityLedger::default());
+            world.insert_resource(VisibilitySweepTracker::default());
+            world.insert_resource(ElevationField::new(
+                WIDTH,
+                HEIGHT,
+                vec![0.5; (WIDTH * HEIGHT) as usize],
+            ));
+
+            let tile = world
+                .spawn(Tile {
+                    position: BAND,
+                    ..Default::default()
+                })
+                .id();
+
+            let mut allocation = LaborAllocation::default();
+            if scouts > 0 {
+                allocation.set_assignment(LaborTarget::Scout, scouts, scouts);
+            }
+
+            world.spawn((
+                PopulationCohort {
+                    home: tile,
+                    current_tile: tile,
+                    size: 0,
+                    children: scalar_zero(),
+                    working: scalar_from_f32(scouts.max(1) as f32),
+                    elders: scalar_zero(),
+                    stores: LocalStore::new(),
+                    morale: scalar_zero(),
+                    last_morale_delta: scalar_zero(),
+                    last_morale_cause: MoraleCause::None,
+                    last_morale_contributions: MoraleContributions::default(),
+                    discontent_fraction: scalar_zero(),
+                    grievance: scalar_zero(),
+                    last_emigrated: 0,
+                    last_immigrated: 0,
+                    age_turns: 10,
+                    generation: 0,
+                    faction: FactionId(0),
+                    knowledge: Vec::new(),
+                    migration: None,
+                },
+                StartingUnit::new("BandScout".to_string(), vec![]),
+                allocation,
+            ));
+
+            let mut schedule = Schedule::default();
+            schedule.add_systems(calculate_visibility);
+            schedule.run(&mut world);
+
+            world
+                .resource::<VisibilityLedger>()
+                .visibility_state(FactionId(0), PROBE.x, PROBE.y)
+        }
+
+        // 0 scouts: sight is exactly base_range, so the distance-8 probe stays Unexplored.
+        assert_eq!(probe_state(0), VisibilityState::Unexplored);
+        // 4 scouts: bonus caps at max_sight_bonus (4) → range 10 reveals the probe as Active.
+        assert_eq!(probe_state(4), VisibilityState::Active);
     }
 
     #[test]

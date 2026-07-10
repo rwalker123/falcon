@@ -160,8 +160,20 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "cancel_order",
         aliases: &[],
-        summary: "Cancel a band's current task (scout / forage / hunt) and return it to idle.",
+        summary: "Clear all of a band's labor assignments and stop movement (fully idle).",
         usage: "cancel_order <faction_id> [band_entity_bits]",
+    },
+    CommandVerbHelp {
+        verb: "assign_labor",
+        aliases: &[],
+        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle).",
+        usage: "assign_labor <faction_id> <band> forage <x> <y> <workers> | hunt <herd_id> <policy> <workers> | scout <workers> | warrior <workers>",
+    },
+    CommandVerbHelp {
+        verb: "move_band",
+        aliases: &[],
+        summary: "Travel a band toward a target tile at the band move rate.",
+        usage: "move_band <faction_id> <band> <x> <y>",
     },
     CommandVerbHelp {
         verb: "export_map",
@@ -714,6 +726,101 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 },
             })
         }
+        "assign_labor" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_entity_bits"))?;
+            let role = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("role"))?
+                .to_ascii_lowercase();
+            let faction_id = parse_u32(faction_str, "assign_labor faction")?;
+            let band = parse_u64(band_str, "assign_labor band_entity_bits")?;
+            let (workers, target_x, target_y, fauna_id, policy) = match role.as_str() {
+                "forage" => {
+                    let x = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("target_x"))?;
+                    let y = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("target_y"))?;
+                    let w = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("workers"))?;
+                    (
+                        parse_u32(w, "assign_labor workers")?,
+                        Some(parse_u32(x, "assign_labor target_x")?),
+                        Some(parse_u32(y, "assign_labor target_y")?),
+                        None,
+                        None,
+                    )
+                }
+                "hunt" => {
+                    let herd = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("herd_id"))?;
+                    let pol = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("policy"))?;
+                    let w = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("workers"))?;
+                    (
+                        parse_u32(w, "assign_labor workers")?,
+                        None,
+                        None,
+                        Some(herd.to_string()),
+                        Some(pol.to_string()),
+                    )
+                }
+                "scout" | "warrior" => {
+                    let w = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("workers"))?;
+                    (
+                        parse_u32(w, "assign_labor workers")?,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                }
+                _ => return Err(CommandParseError::UnexpectedToken(role)),
+            };
+            Ok(CommandPayload::AssignLabor {
+                faction_id,
+                band_entity_bits: Some(band),
+                role,
+                workers,
+                target_x,
+                target_y,
+                fauna_id,
+                policy,
+            })
+        }
+        "move_band" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_entity_bits"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            Ok(CommandPayload::MoveBand {
+                faction_id: parse_u32(faction_str, "move_band faction")?,
+                band_entity_bits: Some(parse_u64(band_str, "move_band band_entity_bits")?),
+                target_x: parse_u32(x_str, "move_band target_x")?,
+                target_y: parse_u32(y_str, "move_band target_y")?,
+            })
+        }
         "export" | "export_map" => {
             // Remaining tokens (if any) form the destination path; join so
             // paths containing spaces survive whitespace tokenization.
@@ -893,6 +1000,116 @@ mod tests {
         assert!(matches!(
             parse_command_line("domesticate 0"),
             Err(CommandParseError::MissingArgument("herd_id"))
+        ));
+    }
+
+    #[test]
+    fn parse_assign_labor_forage() {
+        assert_eq!(
+            parse_command_line("assign_labor 0 904 forage 3 5 6").unwrap(),
+            CommandPayload::AssignLabor {
+                faction_id: 0,
+                band_entity_bits: Some(904),
+                role: "forage".to_string(),
+                workers: 6,
+                target_x: Some(3),
+                target_y: Some(5),
+                fauna_id: None,
+                policy: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_assign_labor_hunt_each_policy() {
+        for policy in ["sustain", "surplus", "market", "eradicate"] {
+            assert_eq!(
+                parse_command_line(&format!("assign_labor 0 904 hunt game_deer_07 {policy} 4"))
+                    .unwrap(),
+                CommandPayload::AssignLabor {
+                    faction_id: 0,
+                    band_entity_bits: Some(904),
+                    role: "hunt".to_string(),
+                    workers: 4,
+                    target_x: None,
+                    target_y: None,
+                    fauna_id: Some("game_deer_07".to_string()),
+                    policy: Some(policy.to_string()),
+                },
+                "policy {policy} should round-trip"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_assign_labor_scout_and_warrior() {
+        assert_eq!(
+            parse_command_line("assign_labor 0 904 scout 5").unwrap(),
+            CommandPayload::AssignLabor {
+                faction_id: 0,
+                band_entity_bits: Some(904),
+                role: "scout".to_string(),
+                workers: 5,
+                target_x: None,
+                target_y: None,
+                fauna_id: None,
+                policy: None,
+            }
+        );
+        assert_eq!(
+            parse_command_line("assign_labor 0 904 warrior 2").unwrap(),
+            CommandPayload::AssignLabor {
+                faction_id: 0,
+                band_entity_bits: Some(904),
+                role: "warrior".to_string(),
+                workers: 2,
+                target_x: None,
+                target_y: None,
+                fauna_id: None,
+                policy: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_move_band_command() {
+        assert_eq!(
+            parse_command_line("move_band 0 904 12 7").unwrap(),
+            CommandPayload::MoveBand {
+                faction_id: 0,
+                band_entity_bits: Some(904),
+                target_x: 12,
+                target_y: 7,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_assign_labor_and_move_band_rejects_malformed() {
+        // Missing the trailing worker count on a forage assignment.
+        assert!(matches!(
+            parse_command_line("assign_labor 0 904 forage 3 5"),
+            Err(CommandParseError::MissingArgument("workers"))
+        ));
+        // Missing the hunt policy token (herd present, nothing after).
+        assert!(matches!(
+            parse_command_line("assign_labor 0 904 hunt game_deer_07"),
+            Err(CommandParseError::MissingArgument("policy"))
+        ));
+        // Unknown role → rejected, not a silent wrong payload.
+        assert!(matches!(
+            parse_command_line("assign_labor 0 904 fish 3"),
+            Err(CommandParseError::UnexpectedToken(role)) if role == "fish"
+        ));
+        // Non-numeric worker count.
+        assert!(matches!(
+            parse_command_line("assign_labor 0 904 scout abc"),
+            Err(CommandParseError::InvalidInteger { .. })
+        ));
+        // move_band missing the y coordinate.
+        assert!(matches!(
+            parse_command_line("move_band 0 904 12"),
+            Err(CommandParseError::MissingArgument("target_y"))
         ));
     }
 
