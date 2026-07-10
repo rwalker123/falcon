@@ -1,5 +1,6 @@
 {
   "band_work_range": 2,
+  "worked_source_sight_range": 2,
   "hunt_leash_tiles": 3,
   "band_move_tiles_per_turn": 1,
   "forage": {

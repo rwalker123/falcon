@@ -3518,6 +3518,7 @@ pub fn advance_labor_allocation(
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
     tile_registry: Res<TileRegistry>,
+    sim_config: Res<SimulationConfig>,
     fauna_config: Res<FaunaConfigHandle>,
     labor_config: Res<LaborConfigHandle>,
     wellbeing_config: Res<WellbeingConfigHandle>,
@@ -3535,6 +3536,10 @@ pub fn advance_labor_allocation(
     let market = &fauna.market;
     let work_range = labor.band_work_range;
     let hunt_reach = labor.hunt_reach();
+    // In-range checks use true hex distance (not Chebyshev on offset coords, whose square
+    // corners are actually 3 hex-steps away), wrap-aware to match the rest of the sim.
+    let grid_width = tile_registry.width;
+    let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
 
     for (mut cohort, mut allocation) in cohorts.iter_mut() {
         // Normalize each turn: if `working` shrank, trim assignments so Σ ≤ available.
@@ -3562,7 +3567,13 @@ pub fn advance_labor_allocation(
                 LaborTarget::Forage { tile } => {
                     // Out of range this turn → no yield, but keep the assignment (the band may
                     // move back into range). No tile depletion in this slice (a later refinement).
-                    if chebyshev_tiles(band_pos, *tile) > work_range {
+                    if crate::grid_utils::hex_distance_wrapped(
+                        band_pos,
+                        *tile,
+                        grid_width,
+                        wrap_horizontal,
+                    ) > work_range
+                    {
                         continue;
                     }
                     let Some(tile_entity) = tile_registry.index(tile.x, tile.y) else {
@@ -3593,7 +3604,12 @@ pub fn advance_labor_allocation(
                         ));
                         continue;
                     };
-                    let distance = chebyshev_tiles(band_pos, herd_pos);
+                    let distance = crate::grid_utils::hex_distance_wrapped(
+                        band_pos,
+                        herd_pos,
+                        grid_width,
+                        wrap_horizontal,
+                    );
                     if distance > hunt_reach {
                         // Past the leash → the assignment lapses; workers return to the pool.
                         lapsed.push(idx);
@@ -3674,11 +3690,6 @@ pub fn advance_labor_allocation(
             allocation.assignments.remove(idx);
         }
     }
-}
-
-/// Chebyshev (king-move) distance in tiles.
-fn chebyshev_tiles(a: UVec2, b: UVec2) -> u32 {
-    a.x.abs_diff(b.x).max(a.y.abs_diff(b.y))
 }
 
 /// One pursuit step: move each axis toward `to` by up to `max_step` tiles.

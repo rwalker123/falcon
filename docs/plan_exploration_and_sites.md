@@ -57,6 +57,17 @@ base-range LOS from its center is unchanged; scouts are additive.
   farther."
 - Small, no new UI; completes the Scout role that Early-Game Labor shipped inert.
 
+### 1a. Worked sources provide visibility (implemented)
+
+Scouting isn't the only source of sight. A band's **workers are physically out at the sources they
+work** — foragers stand on the forage tile, hunters are at the herd — so those spots should reveal
+fog too, just like the band center and scout vantages. `calculate_visibility` adds, **for each
+assignment** in the cohort's `LaborAllocation`, a worked source tile: a **Forage** assignment's
+`tile`, or a **Hunt** assignment's herd's **current tile** (resolved live from `HerdRegistry`; an
+unresolved/extinct herd is skipped). Each reveals at `worked_source_sight_range` (`labor_config.json`,
+default 2) via the *same* `reveal_tiles_in_range` LOS path — additive to the band center + vantages,
+re-marked Active every turn while staffed. Scout/Warrior are band-wide roles, not tile sources.
+
 ## 2. Scouting expedition — a provisioned party that goes out and comes back
 
 The Lewis-and-Clark action: a deliberate, outfitted venture, distinct from the standing role.

@@ -69,6 +69,11 @@ impl ScoutLaborConfig {
 pub struct LaborConfig {
     /// Chebyshev radius of in-range assignable sources around the band's tile.
     pub band_work_range: u32,
+    /// Sight range (tiles) each worked source tile (a Forage tile or a Hunt herd's current
+    /// tile) reveals via the band's normal LOS in `calculate_visibility`. Workers stand at
+    /// the sources they exploit, so those spots provide fog reveal like the band center and
+    /// scout vantages do.
+    pub worked_source_sight_range: u32,
     /// Extra distance beyond `band_work_range` a Hunt assignment reaches (leashed
     /// follow) before it lapses and returns its workers to the pool.
     pub hunt_leash_tiles: u32,
@@ -208,6 +213,7 @@ mod tests {
     fn builtin_config_parses() {
         let config = LaborConfig::builtin();
         assert!(config.band_work_range >= 1);
+        assert!(config.worked_source_sight_range >= 1);
         assert!(config.hunt_leash_tiles >= 1);
         assert!(config.band_move_tiles_per_turn >= 1);
         assert!(config.forage.per_worker_yield > 0.0);

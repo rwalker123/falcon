@@ -44,6 +44,7 @@ use crate::{
         LaborAllocation, LaborTarget, LogisticsLink, PopulationCohort, Settlement, StartingUnit,
         Tile, TownCenter, TradeLink,
     },
+    fauna::HerdRegistry,
     grid_utils::{hex_neighbor, shortest_delta_x, wrap_x, wrapped_distance_x, HEX_DIRECTION_COUNT},
     heightfield::ElevationField,
     labor_config::LaborConfigHandle,
@@ -107,6 +108,8 @@ pub fn calculate_visibility(
     sim_config: Res<SimulationConfig>,
     tick: Res<SimulationTick>,
     elevation: Option<Res<ElevationField>>,
+    // Resolves a Hunt assignment's herd id to the herd's current tile (a worked visibility source).
+    herds: Res<HerdRegistry>,
     tiles: Query<&Tile>,
     // Population cohorts with StartingUnit marker for unit type. The optional LaborAllocation
     // supplies the band's Scout head-count, which posts forward-observer vantages (see below).
@@ -220,6 +223,31 @@ pub fn calculate_visibility(
                         labor.scout.vantage_range,
                         range_def.elevation_bonus_factor,
                     ));
+                }
+            }
+            // Worked sources: a band's foragers stand on the forage tile and its hunters are
+            // out at the herd, so those spots see fog too — additive to the band-center reveal
+            // and scout vantages, riding the SAME per-source LOS path below at
+            // `worked_source_sight_range`. All assignments carry ≥1 worker, so no head-count
+            // gate is needed. Scout/Warrior are band-wide roles, not tile sources — skipped.
+            if let Some(alloc) = allocation {
+                for assignment in &alloc.assignments {
+                    let worked_tile = match &assignment.target {
+                        LaborTarget::Forage { tile } => Some(*tile),
+                        // Resolve the herd's live tile; a despawned/extinct herd yields no source.
+                        LaborTarget::Hunt { fauna_id, .. } => {
+                            herds.find(fauna_id).map(|herd| herd.position())
+                        }
+                        LaborTarget::Scout | LaborTarget::Warrior => None,
+                    };
+                    if let Some(tile) = worked_tile {
+                        sources.push((
+                            cohort.faction,
+                            tile,
+                            labor.worked_source_sight_range,
+                            range_def.elevation_bonus_factor,
+                        ));
+                    }
                 }
             }
             sweep.record(entity, current_pos);
@@ -879,6 +907,7 @@ mod tests {
             world.insert_resource(SimulationTick(1));
             world.insert_resource(VisibilityLedger::default());
             world.insert_resource(VisibilitySweepTracker::default());
+            world.insert_resource(HerdRegistry::default());
             world.insert_resource(ElevationField::new(
                 WIDTH,
                 HEIGHT,
@@ -945,6 +974,180 @@ mod tests {
         // 4 scouts: vantage_distance caps at 6, so the east vantage steps past the ridge and
         // reveals the target as Active — scouts seeing *around* the obstacle.
         assert_eq!(probe_state(4), VisibilityState::Active);
+    }
+
+    /// Runs `calculate_visibility` for a single BandCrafter band (base_range 2, no scouts) at
+    /// `BAND`, given a `LaborAllocation` and any herds to seed into the registry, and returns
+    /// the resulting ledger. A worked source reveals at `worked_source_sight_range` (2), while
+    /// the band center's own reach (2) can't see the far worked tiles — so any reveal there is
+    /// attributable to the worked source alone.
+    #[cfg(test)]
+    fn run_worked_visibility(
+        allocation: LaborAllocation,
+        herds: Vec<crate::fauna::Herd>,
+    ) -> VisibilityLedger {
+        use std::sync::Arc;
+
+        use crate::components::{LocalStore, MoraleCause, MoraleContributions, PopulationCohort};
+        use crate::labor_config::LaborConfigHandle;
+        use crate::scalar::{scalar_from_f32, scalar_zero};
+        use crate::visibility_config::VisibilityConfig;
+
+        const WIDTH: u32 = 40;
+        const HEIGHT: u32 = 21;
+        const BAND: UVec2 = UVec2::new(20, 10);
+
+        let mut world = World::new();
+
+        // Flat elevation, LOS on but no blockers → clean reveal; isolates the worked source.
+        let mut vis = VisibilityConfig::default();
+        vis.elevation.enabled = false;
+        vis.line_of_sight.enabled = true;
+        world.insert_resource(VisibilityConfigHandle::new(Arc::new(vis)));
+        world.insert_resource(LaborConfigHandle::default());
+
+        let mut sim = SimulationConfig::builtin();
+        sim.map_topology.wrap_horizontal = false;
+        world.insert_resource(sim);
+        world.insert_resource(SimulationTick(1));
+        world.insert_resource(VisibilityLedger::default());
+        world.insert_resource(VisibilitySweepTracker::default());
+        world.insert_resource(HerdRegistry { herds });
+        world.insert_resource(ElevationField::new(
+            WIDTH,
+            HEIGHT,
+            vec![0.5; (WIDTH * HEIGHT) as usize],
+        ));
+
+        let tile = world
+            .spawn(Tile {
+                position: BAND,
+                ..Default::default()
+            })
+            .id();
+
+        world.spawn((
+            PopulationCohort {
+                home: tile,
+                current_tile: tile,
+                size: 0,
+                children: scalar_zero(),
+                working: scalar_from_f32(4.0),
+                elders: scalar_zero(),
+                stores: LocalStore::new(),
+                morale: scalar_zero(),
+                last_morale_delta: scalar_zero(),
+                last_morale_cause: MoraleCause::None,
+                last_morale_contributions: MoraleContributions::default(),
+                discontent_fraction: scalar_zero(),
+                grievance: scalar_zero(),
+                last_emigrated: 0,
+                last_immigrated: 0,
+                age_turns: 10,
+                generation: 0,
+                faction: FactionId(0),
+                knowledge: Vec::new(),
+                migration: None,
+            },
+            // BandCrafter: base_range 2, so the band center can't reveal the far worked tiles.
+            StartingUnit::new("BandCrafter".to_string(), vec![]),
+            allocation,
+        ));
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(calculate_visibility);
+        schedule.run(&mut world);
+        world.remove_resource::<VisibilityLedger>().unwrap()
+    }
+
+    #[test]
+    fn forage_worked_tile_provides_visibility() {
+        use crate::components::{LaborAllocation, LaborTarget};
+
+        // A forage tile 7 tiles north of the band — far beyond the band center's base_range (2),
+        // so only the forager standing on it can reveal it.
+        const FORAGE: UVec2 = UVec2::new(20, 3);
+
+        // No assignment: the far forage tile is never revealed by the band center alone.
+        let idle = run_worked_visibility(LaborAllocation::default(), Vec::new());
+        assert_eq!(
+            idle.visibility_state(FactionId(0), FORAGE.x, FORAGE.y),
+            VisibilityState::Unexplored,
+            "an unworked far tile is not a visibility source"
+        );
+
+        // Staff a forager on it: the worked tile and its immediate neighbors go Active.
+        let mut allocation = LaborAllocation::default();
+        allocation.set_assignment(LaborTarget::Forage { tile: FORAGE }, 2, 4);
+        let worked = run_worked_visibility(allocation, Vec::new());
+        assert_eq!(
+            worked.visibility_state(FactionId(0), FORAGE.x, FORAGE.y),
+            VisibilityState::Active,
+            "the worked forage tile reveals itself"
+        );
+        // A neighbor within worked_source_sight_range (2) is revealed too.
+        assert_eq!(
+            worked.visibility_state(FactionId(0), FORAGE.x, FORAGE.y + 1),
+            VisibilityState::Active,
+            "worked_source_sight_range reveals around the forage tile"
+        );
+    }
+
+    #[test]
+    fn hunt_worked_herd_tile_provides_visibility() {
+        use crate::components::{FollowPolicy, LaborAllocation, LaborTarget};
+        use crate::fauna::Herd;
+        use crate::fauna_config::SizeClass;
+
+        // A herd parked 7 tiles south of the band — beyond the band center's base_range (2).
+        const HERD_TILE: UVec2 = UVec2::new(20, 17);
+        let herd = Herd::new(
+            "herd-1".to_string(),
+            "Red Deer".to_string(),
+            SizeClass::Big,
+            vec![HERD_TILE],
+            100.0,
+            100.0,
+        );
+
+        let mut allocation = LaborAllocation::default();
+        allocation.set_assignment(
+            LaborTarget::Hunt {
+                fauna_id: "herd-1".to_string(),
+                policy: FollowPolicy::Sustain,
+            },
+            2,
+            4,
+        );
+        let worked = run_worked_visibility(allocation, vec![herd]);
+        assert_eq!(
+            worked.visibility_state(FactionId(0), HERD_TILE.x, HERD_TILE.y),
+            VisibilityState::Active,
+            "the hunted herd's current tile is a visibility source"
+        );
+    }
+
+    #[test]
+    fn hunt_unresolved_herd_adds_no_source_and_does_not_panic() {
+        use crate::components::{FollowPolicy, LaborAllocation, LaborTarget};
+
+        // A Hunt on a herd id absent from the registry (despawned/extinct) must be skipped
+        // silently — no source, no panic.
+        let mut allocation = LaborAllocation::default();
+        allocation.set_assignment(
+            LaborTarget::Hunt {
+                fauna_id: "ghost".to_string(),
+                policy: FollowPolicy::Sustain,
+            },
+            2,
+            4,
+        );
+        let ledger = run_worked_visibility(allocation, Vec::new());
+        // The band center still reveals its own tile — the pass ran to completion.
+        assert_eq!(
+            ledger.visibility_state(FactionId(0), 20, 10),
+            VisibilityState::Active,
+        );
     }
 
     #[test]

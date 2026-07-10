@@ -347,8 +347,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   - **Selected-band map highlights** (`MapView._draw_band_work_highlights`, drawn when a player band
     is selected, cleared on deselect): the **worked forage tiles** (strong green fill on each
     `forage` assignment's `target_x/y`), the **work-range ring** (thin cyan outline on every tile
-    within `work_range`, replicating the sim's **Chebyshev** `max(|dx|,|dy|) <= work_range` on integer
-    offset coords — truthful-over-pretty, so highlighted == actually-assignable), and the **hunted
+    within `work_range`, replicating the sim's true **odd-r hex distance** `hex_distance_wrapped`
+    via `MapView._hex_distance` — a real hexagonal ring of 19 tiles at range 2, so highlighted ==
+    actually-assignable; the old Chebyshev square wrongly lit its diagonal corners, which are 3
+    hex-steps away), and the **hunted
     herds** (red ring on the herd tile + a band→herd link, drawn wherever the herd is since hunt reach
     = `work_range` + leash). **Scouting draws no map highlight** — staffed scouts extend the band's
     real sight range (visible directly in the fog as a wider Active radius); the old faint-blue scouted

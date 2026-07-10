@@ -159,6 +159,7 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
     // Tiny per-worker biomass cap so `worker_cap < net regrowth` at any sane worker count.
     let json = r#"{
         "band_work_range": 2,
+        "worked_source_sight_range": 2,
         "hunt_leash_tiles": 3,
         "band_move_tiles_per_turn": 1,
         "forage": { "per_worker_yield": 0.25 },
