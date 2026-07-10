@@ -9,7 +9,9 @@
     "per_worker_biomass_capacity": 40.0
   },
   "scout": {
-    "sight_bonus_per_scout": 1,
-    "max_sight_bonus": 4
+    "vantage_distance_base": 2,
+    "vantage_distance_per_scout": 1,
+    "vantage_distance_max": 6,
+    "vantage_range": 2
   }
 }

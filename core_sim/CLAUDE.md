@@ -39,7 +39,7 @@ cargo run -p core_sim --bin server
 | `src/data/influencer_config.json` | Roster caps, decay factors, scope thresholds |
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
-| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (Chebyshev radius of in-range sources), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage.per_worker_yield`, `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.sight_bonus_per_scout`/`scout.max_sight_bonus` (staffed scouts extend the band's live sight range in `calculate_visibility`, capped) |
+| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (Chebyshev radius of in-range sources), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage.per_worker_yield`, `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles) |
 | `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) / `market` (commercial-hunt take + trade multiplier) tuning |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
@@ -218,8 +218,9 @@ turn: Forage = `workers × per_worker_yield × seasonal_weight` from an in-range
 Hunt take = `min(workers × per_worker_biomass_capacity, policy_ceiling)` (reusing the per-policy ecology
 ceilings — Sustain under-hunting lets a herd grow), tracking a roaming herd out to `band_work_range +
 hunt_leash_tiles` before the assignment lapses (feed entry). Scout extends the band's live sight range
-in `calculate_visibility` (`base_range + scout.sight_bonus(scouts)`, capped — re-marked Active every
-turn while scouts are staffed, scaling with head-count); Warrior is inert until the predator slice. `move_band <faction> <band> <x> <y>` sets a `BandTravel` component that
+in `calculate_visibility` by posting forward-observer vantages (`scout.vantage_distance(scouts)` out
+in all 6 hex directions, LOS revealed from each — re-marked Active every turn while scouts are
+staffed, scaling with head-count); Warrior is inert until the predator slice. `move_band <faction> <band> <x> <y>` sets a `BandTravel` component that
 `advance_band_movement` steps at `band_move_tiles_per_turn`/turn. `assign_labor` sets one target's
 worker count (0 unassigns; clamps to free headroom); `cancel_order` clears all assignments + stops
 movement (fully idle). The snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`, and still
@@ -393,8 +394,9 @@ with the most workers in the band's `LaborAllocation`). Both are computed at cap
 `population_state`; alongside them the snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`,
 plus `workRange` (from `labor_config.json` `band_work_range`, global config today, surfaced per-band
 for the work-range ring) and `scoutRevealRadius` (**repurposed**: now carries the band's effective
-**scout sight bonus** — `min(scouts × sight_bonus_per_scout, max_sight_bonus)`, `0` with no scouts —
-since the "scouted area" is now the band's live sight extension; field name kept for wire compat).
+**scout vantage distance** — `scout.vantage_distance(scouts)` = `min(vantage_distance_base + scouts ×
+vantage_distance_per_scout, vantage_distance_max)`, `0` with no scouts — since scouts now reveal by
+posting forward-observer vantages that see around obstacles; field name kept for wire compat).
 
 This is the general mechanism the arc scales: raise reach/throughput for settlements/cities, and a
 future **trade policy** adds a consent gate + a priced return flow on *cross-faction* edges (see the
@@ -570,10 +572,16 @@ Per-faction visibility tracking with three states: `Unexplored` (never seen), `D
 - **Elevation**: Higher elevation grants sight bonus (configurable per 100m)
 - **Terrain**: Water tiles grant bonus range; forest/wetland tiles apply penalty
 - **Line of Sight**: Bresenham ray-cast checks for blocking terrain
-- **Local scout** (labor): a band's effective `base_range` gains `labor_config.json`
-  `scout.sight_bonus(scouts)` = `min(scouts × sight_bonus_per_scout, max_sight_bonus)`, read from the
-  cohort's `LaborAllocation` Scout head-count (`workers_on(&LaborTarget::Scout)`). Applied in
-  `calculate_visibility`, so the extended ring is re-marked Active every turn while scouts are staffed.
+- **Local scout** (labor): staffed scouts are **forward observers** — with ≥1 scout (from the
+  cohort's `LaborAllocation` head-count, `workers_on(&LaborTarget::Scout)`), `calculate_visibility`
+  posts vantage tiles out from the band in all 6 hex directions (`scout_vantage_tiles`, reusing
+  `grid_utils::hex_neighbor`) at `scout.vantage_distance(scouts)` = `min(vantage_distance_base +
+  scouts × vantage_distance_per_scout, vantage_distance_max)`, pulling each back to the last on-map,
+  passable (non-`WATER`) tile. Each vantage reveals with `vantage_range` via the *same* per-source
+  LOS reveal the band uses (`reveal_tiles_in_range`), so scouts see **around** ridges/forest, not
+  merely farther. The band's own base-range LOS from its center is unchanged (scouts are additive);
+  the vantages are re-marked Active every turn while scouts are staffed. Config: `labor_config.json`
+  `scout`.
 
 **Config** (`visibility_config.json`):
 - `decay`: `enabled` (default `false` — permanent memory; Discovered tiles never revert to Unexplored), `threshold_turns` (turns before Discovered → Unexplored when enabled)

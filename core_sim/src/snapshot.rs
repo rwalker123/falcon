@@ -1319,13 +1319,14 @@ pub fn capture_snapshot(
             let is_traveling = travel
                 .map(|t| current_pos.map(|p| p != t.target).unwrap_or(true))
                 .unwrap_or(false);
-            // Local scout: the "scouted area" is now the band's sight extension. Carry the band's
-            // effective scout sight bonus (extra tiles beyond base sight, `0` with no scouts), using
-            // the same helper the visibility pass applies, so the client highlight stays meaningful.
+            // Local scout: scouts are now forward observers posting vantage points out from the
+            // band. Carry the effective vantage distance (how far the vantage ring is posted, `0`
+            // with no scouts), using the same helper the visibility pass applies, so the field
+            // stays coherent for the client.
             let scout_workers = allocation
                 .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
                 .unwrap_or(0);
-            let scout_sight_bonus = labor_config.scout.sight_bonus(scout_workers);
+            let scout_vantage_distance = labor_config.scout.vantage_distance(scout_workers);
             population_state(
                 entity,
                 cohort,
@@ -1340,7 +1341,7 @@ pub fn capture_snapshot(
                 &wellbeing_config,
                 &supply_membership,
                 band_work_range,
-                scout_sight_bonus,
+                scout_vantage_distance,
             )
         })
         .collect();
@@ -3584,7 +3585,7 @@ fn population_state(
     wellbeing: &crate::wellbeing_config::WellbeingConfig,
     supply_membership: &SupplyNetworkMembership,
     work_range: u32,
-    scout_sight_bonus: u32,
+    scout_vantage_distance: u32,
 ) -> PopulationCohortState {
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let demand = food_demand(
@@ -3636,9 +3637,10 @@ fn population_state(
         idle_workers,
         working_age,
         work_range,
-        // Repurposed: carries the band's effective scout sight bonus (extra tiles beyond base
-        // sight), not the retired fog-pulse radius. See the field doc in `sim_schema`.
-        scout_reveal_radius: scout_sight_bonus,
+        // Repurposed: carries the band's effective scout vantage distance (how far the forward-
+        // observer vantage ring is posted, `0` with no scouts), not the retired fog-pulse radius.
+        // See the field doc in `sim_schema`.
+        scout_reveal_radius: scout_vantage_distance,
         supply_network_id: supply_membership.network_of(entity),
         morale_delta: cohort.last_morale_delta.raw(),
         morale_cause: cohort.last_morale_cause.as_u8(),

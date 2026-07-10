@@ -3660,9 +3660,9 @@ pub fn advance_labor_allocation(
                     }
                 }
                 LaborTarget::Scout => {
-                    // Scouts extend the band's live sight range in `calculate_visibility`
-                    // (`labor.scout.sight_bonus(scouts)`), re-marked Active every turn — no work
-                    // is done here (the old fog-pulse was a no-op inside passive sight).
+                    // Scouts act as forward observers in `calculate_visibility`: staffed scouts
+                    // post vantage points out from the band (`labor.scout.vantage_distance(scouts)`)
+                    // and reveal from each, re-marked Active every turn — no work is done here.
                 }
                 LaborTarget::Warrior => {
                     // Inert this slice — the predator slice consumes Warrior strength.

@@ -122,47 +122,64 @@ pub fn hex_neighbors_wrapped(
     height: u32,
     wrap_horizontal: bool,
 ) -> impl Iterator<Item = (u32, u32)> {
-    // Neighbor offsets for odd-r coordinates
-    // Format: (dx_even, dx_odd, dy) for each direction
-    const NEIGHBOR_OFFSETS: [(i32, i32, i32); 6] = [
-        (1, 1, 0),   // E
-        (0, 1, 1),   // SE
-        (-1, 0, 1),  // SW
-        (-1, -1, 0), // W
-        (-1, 0, -1), // NW
-        (0, 1, -1),  // NE
-    ];
+    // Reuse the single-direction step for each of the 6 directions, dropping any that
+    // fall off the map — keeping one authoritative offset table (`HEX_NEIGHBOR_OFFSETS`).
+    (0..HEX_DIRECTION_COUNT)
+        .filter_map(move |dir| hex_neighbor(x, y, dir, width, height, wrap_horizontal))
+}
 
-    let is_odd_row = (y % 2) == 1;
-    let xi = x as i32;
-    let yi = y as i32;
-    let w = width as i32;
-    let h = height as i32;
+/// Number of hex directions (odd-r), i.e. the six neighbors around any tile.
+pub const HEX_DIRECTION_COUNT: usize = 6;
 
-    NEIGHBOR_OFFSETS
-        .into_iter()
-        .filter_map(move |(dx_even, dx_odd, dy)| {
-            let dx = if is_odd_row { dx_odd } else { dx_even };
-            let nx = xi + dx;
-            let ny = yi + dy;
+/// Odd-r neighbor offsets, one row per hex direction (clockwise from E).
+/// Format: `(dx_even, dx_odd, dy)` — the x-shift depends on the source row's parity.
+/// Single source of truth for both `hex_neighbor` and `hex_neighbors_wrapped`.
+const HEX_NEIGHBOR_OFFSETS: [(i32, i32, i32); HEX_DIRECTION_COUNT] = [
+    (1, 1, 0),   // 0: E
+    (0, 1, 1),   // 1: SE
+    (-1, 0, 1),  // 2: SW
+    (-1, -1, 0), // 3: W
+    (-1, 0, -1), // 4: NW
+    (0, 1, -1),  // 5: NE
+];
 
-            // Y must be in bounds (no vertical wrap)
-            if ny < 0 || ny >= h {
-                return None;
-            }
+/// Step one tile from `(x, y)` in hex direction `dir` (`0..HEX_DIRECTION_COUNT`,
+/// clockwise from E — see `hex_neighbors_wrapped`), honoring horizontal wrap.
+///
+/// Returns `None` when the step leaves the map: off the top/bottom edge (no vertical
+/// wrap), or — when `wrap_horizontal` is false — past the left/right edge. This is the
+/// single-direction primitive used to walk a straight hex line outward (e.g. posting a
+/// scout vantage), where each successive step must re-read the *current* tile's row
+/// parity rather than assuming a fixed dx.
+#[inline]
+pub fn hex_neighbor(
+    x: u32,
+    y: u32,
+    dir: usize,
+    width: u32,
+    height: u32,
+    wrap_horizontal: bool,
+) -> Option<(u32, u32)> {
+    let (dx_even, dx_odd, dy) = HEX_NEIGHBOR_OFFSETS[dir];
+    let dx = if (y % 2) == 1 { dx_odd } else { dx_even };
+    let nx = x as i32 + dx;
+    let ny = y as i32 + dy;
 
-            // Handle X coordinate
-            let final_x = if wrap_horizontal {
-                wrap_x(nx, width, true)
-            } else {
-                if nx < 0 || nx >= w {
-                    return None;
-                }
-                nx as u32
-            };
+    // Y must be in bounds (no vertical wrap).
+    if ny < 0 || ny >= height as i32 {
+        return None;
+    }
 
-            Some((final_x, ny as u32))
-        })
+    let final_x = if wrap_horizontal {
+        wrap_x(nx, width, true)
+    } else {
+        if nx < 0 || nx >= width as i32 {
+            return None;
+        }
+        nx as u32
+    };
+
+    Some((final_x, ny as u32))
 }
 
 /// Get 4-connected (cardinal) neighbors with optional horizontal wrap.

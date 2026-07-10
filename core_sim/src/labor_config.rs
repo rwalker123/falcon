@@ -35,23 +35,33 @@ pub struct HuntLaborConfig {
     pub per_worker_biomass_capacity: f32,
 }
 
-/// Band-wide scout role tuning: staffed scouts extend the band's live sight range
-/// (re-marked Active every turn), scaled by head-count and capped. No resource yield.
+/// Band-wide scout role tuning: staffed scouts act as **forward observers**. Instead of
+/// bumping the band's sight radius, they post vantage points out from the band in all six
+/// hex directions and compute line-of-sight from each, so scouting reveals *around*
+/// obstacles (ridges/forest), not just farther. No resource yield.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ScoutLaborConfig {
-    /// Extra sight-range tiles each staffed scout adds to the band's base sight.
-    pub sight_bonus_per_scout: u32,
-    /// Upper bound on the scout sight bonus regardless of head-count.
-    pub max_sight_bonus: u32,
+    /// Base distance (tiles) a vantage is posted out from the band with ≥1 scout.
+    pub vantage_distance_base: u32,
+    /// Additional vantage distance per staffed scout (more scouts → ring farther out).
+    pub vantage_distance_per_scout: u32,
+    /// Upper bound on how far a vantage is posted regardless of head-count.
+    pub vantage_distance_max: u32,
+    /// Sight range (tiles) each posted vantage reveals via the band's normal LOS.
+    pub vantage_range: u32,
 }
 
 impl ScoutLaborConfig {
-    /// The sight-range bonus for a band staffing `scouts` workers on the Scout role:
-    /// `min(scouts × sight_bonus_per_scout, max_sight_bonus)`. Zero scouts → zero bonus.
-    pub fn sight_bonus(&self, scouts: u32) -> u32 {
-        scouts
-            .saturating_mul(self.sight_bonus_per_scout)
-            .min(self.max_sight_bonus)
+    /// How far vantages are posted out from the band for a cohort staffing `scouts`
+    /// workers: `min(vantage_distance_base + scouts × vantage_distance_per_scout,
+    /// vantage_distance_max)`. Zero scouts → `0` (no vantages posted).
+    pub fn vantage_distance(&self, scouts: u32) -> u32 {
+        if scouts == 0 {
+            return 0;
+        }
+        self.vantage_distance_base
+            .saturating_add(scouts.saturating_mul(self.vantage_distance_per_scout))
+            .min(self.vantage_distance_max)
     }
 }
 
@@ -202,8 +212,9 @@ mod tests {
         assert!(config.band_move_tiles_per_turn >= 1);
         assert!(config.forage.per_worker_yield > 0.0);
         assert!(config.hunt.per_worker_biomass_capacity > 0.0);
-        assert!(config.scout.sight_bonus_per_scout >= 1);
-        assert!(config.scout.max_sight_bonus >= config.scout.sight_bonus_per_scout);
+        assert!(config.scout.vantage_distance_base >= 1);
+        assert!(config.scout.vantage_distance_max >= config.scout.vantage_distance_base);
+        assert!(config.scout.vantage_range >= 1);
         assert_eq!(
             config.hunt_reach(),
             config.band_work_range + config.hunt_leash_tiles
@@ -211,26 +222,25 @@ mod tests {
     }
 
     #[test]
-    fn scout_sight_bonus_scales_with_headcount_and_caps() {
-        // The effective band sight range is `base_range + sight_bonus(scouts)`, where the
-        // bonus scales linearly per scout and clamps at `max_sight_bonus`.
+    fn scout_vantage_distance_scales_with_headcount_and_caps() {
+        // Vantages are posted `vantage_distance(scouts)` tiles out from the band, scaling
+        // linearly per scout and clamping at `vantage_distance_max`.
         let scout = ScoutLaborConfig {
-            sight_bonus_per_scout: 1,
-            max_sight_bonus: 4,
+            vantage_distance_base: 2,
+            vantage_distance_per_scout: 1,
+            vantage_distance_max: 6,
+            vantage_range: 2,
         };
-        const BASE_RANGE: u32 = 6; // visibility_config BandScout base_range.
 
-        // 0 scouts → no bonus → sight is exactly the base range.
-        assert_eq!(scout.sight_bonus(0), 0);
-        assert_eq!(BASE_RANGE + scout.sight_bonus(0), BASE_RANGE);
+        // 0 scouts → no vantages posted at all.
+        assert_eq!(scout.vantage_distance(0), 0);
 
-        // N scouts below the cap → base_range + N × per-scout.
-        assert_eq!(scout.sight_bonus(3), 3);
-        assert_eq!(BASE_RANGE + scout.sight_bonus(3), BASE_RANGE + 3);
+        // N scouts below the cap → base + N × per-scout.
+        assert_eq!(scout.vantage_distance(1), 3);
+        assert_eq!(scout.vantage_distance(3), 5);
 
-        // Above the cap → clamped to max_sight_bonus (never grows past it).
-        assert_eq!(scout.sight_bonus(4), 4);
-        assert_eq!(scout.sight_bonus(99), 4);
-        assert_eq!(BASE_RANGE + scout.sight_bonus(99), BASE_RANGE + 4);
+        // Above the cap → clamped to vantage_distance_max (never grows past it).
+        assert_eq!(scout.vantage_distance(4), 6);
+        assert_eq!(scout.vantage_distance(99), 6);
     }
 }
