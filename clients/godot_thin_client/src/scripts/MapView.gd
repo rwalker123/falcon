@@ -168,18 +168,6 @@ const PLAYER_FACTION_ID := 0
 # Sit relative to the band marker radius so they scale with zoom.
 const BAND_FOOD_DOT_RADIUS_FACTOR := 0.28   # of the band marker radius
 const BAND_FOOD_DOT_OFFSET_FACTOR := 0.9    # dot center offset up-right from marker center
-const BAND_ACTIVITY_RING_FACTOR := 0.72     # activity ring radius, of marker radius
-const BAND_ACTIVITY_RING_WIDTH := 2.0
-const BAND_ACTIVITY_RING_ALPHA := 0.7
-# Per-activity ring tint; "idle" bands never reach here (they draw no ring).
-const BAND_ACTIVITY_COLORS := {
-	"harvest": Color(0.30, 0.80, 0.30, BAND_ACTIVITY_RING_ALPHA),  # green — gathering
-	"hunt": Color(0.80, 0.30, 0.30, BAND_ACTIVITY_RING_ALPHA),     # red — hunting
-	"follow": Color(0.98, 0.58, 0.18, BAND_ACTIVITY_RING_ALPHA),   # amber — following a herd
-	"scout": Color(0.30, 0.60, 0.90, BAND_ACTIVITY_RING_ALPHA),    # blue — scouting
-}
-const BAND_ACTIVITY_DEFAULT_COLOR := Color(0.70, 0.70, 0.70, BAND_ACTIVITY_RING_ALPHA)
-const BAND_ACTIVITY_IDLE := "idle"
 
 # --- Scouting-expedition marker (docs/plan_exploration_and_sites.md §2) ---
 # A detached party reads as a hollow, flag-marked disc — deliberately distinct from a resident
@@ -420,7 +408,6 @@ var selected_trade_entity: int = -1
 var crisis_annotations: Array = []
 var hydrology_rivers: Array = []
 var highlight_rivers: bool = false
-var start_marker: Vector2i = Vector2i(-1, -1)
 
 # Terrain texture system for 2D view (textures loaded via TerrainTextureManager autoload)
 var _hex_texture_cache: Dictionary = {}  # terrain_id -> ImageTexture (hex-masked)
@@ -710,12 +697,6 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 		for entry in rivers_variant:
 			if entry is Dictionary:
 				hydrology_rivers.append((entry as Dictionary).duplicate(true))
-	var start_marker_variant: Variant = overlays.get("start_marker", null)
-	if start_marker_variant is Dictionary:
-		var marker_dict: Dictionary = start_marker_variant
-		start_marker = Vector2i(int(marker_dict.get("x", -1)), int(marker_dict.get("y", -1)))
-	else:
-		start_marker = Vector2i(-1, -1)
 	routes = Array(snapshot.get("orders", []))
 	food_sites = []
 	food_site_lookup.clear()
@@ -967,7 +948,6 @@ func _draw() -> void:
 	_draw_trade_overlay(radius, origin)
 	_draw_hydrology(radius, origin)
 	_draw_crisis_annotations(radius, origin)
-	_draw_start_marker(radius, origin)
 
 	# Selected + hovered hex outlines (drawn under the markers).
 	_draw_tile_selection_highlight(radius, origin)
@@ -1676,9 +1656,8 @@ func _draw_supply_links(radius: float, origin: Vector2) -> void:
 				continue
 			draw_line(a, b, SUPPLY_LINK_COLOR, SUPPLY_LINK_WIDTH)
 
-## Two decorations on a player band marker: a food-days dot (green/amber/red by
-## the shared BandFoodStatus thresholds) up-and-right of the marker, and — when
-## the band is on a command (activity != idle) — a subtle activity-tinted ring.
+## One decoration on a player band marker: a food-days dot (green/amber/red by
+## the shared BandFoodStatus thresholds) up-and-right of the marker.
 func _draw_band_status(unit: Dictionary, center: Vector2, marker_radius: float) -> void:
 	var days: float = float(unit.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
 	var dot_color := BandFoodStatus.color_for_days(days)
@@ -1686,11 +1665,6 @@ func _draw_band_status(unit: Dictionary, center: Vector2, marker_radius: float) 
 	var dot_center := center + Vector2(marker_radius, -marker_radius) * BAND_FOOD_DOT_OFFSET_FACTOR
 	draw_circle(dot_center, dot_radius, dot_color)
 	draw_arc(dot_center, dot_radius, 0, TAU, 10, Color(0, 0, 0, 0.5), 1.0)
-
-	var activity := String(unit.get("activity", "")).strip_edges()
-	if activity != "" and activity != BAND_ACTIVITY_IDLE:
-		var ring_color: Color = BAND_ACTIVITY_COLORS.get(activity, BAND_ACTIVITY_DEFAULT_COLOR)
-		draw_arc(center, marker_radius * BAND_ACTIVITY_RING_FACTOR, 0, TAU, 28, ring_color, BAND_ACTIVITY_RING_WIDTH)
 
 ## When a player band is selected, surface what it is working (Early-Game Labor slice 3b):
 ##  - work-range ring: outline every tile within `work_range` of the band = the assignable
@@ -3357,16 +3331,6 @@ func _draw_hydrology(radius: float, origin: Vector2) -> void:
 func set_highlight_rivers(enabled: bool) -> void:
 	highlight_rivers = enabled
 	queue_redraw()
-
-func _draw_start_marker(radius: float, origin: Vector2) -> void:
-	if start_marker.x < 0 or start_marker.y < 0:
-		return
-	var center := _hex_center_wrapped(start_marker.x, start_marker.y, radius, origin)
-	var size := radius * 0.3
-	var color := Color(1.0, 0.86, 0.2, 0.9)
-	var points := PackedVector2Array([center + Vector2(size, 0), center + Vector2(0, size), center + Vector2(-size, 0), center + Vector2(0, -size)])
-	draw_polyline(points, color, 3.0, true)
-	_emit_overlay_legend()
 
 func toggle_terrain_mode() -> void:
 	set_overlay_channel("")

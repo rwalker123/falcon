@@ -608,7 +608,6 @@ fn snapshot_dict(
     terrain: TerrainSlices<'_>,
     crisis_annotations: &[CrisisAnnotationRecord],
     hydrology_rivers: Option<&VarArray>,
-    start_marker: Option<(u32, u32)>,
     campaign_label: Option<VarDictionary>,
     campaign_profiles: Option<VarArray>,
     victory_state: Option<VarDictionary>,
@@ -1010,12 +1009,6 @@ fn snapshot_dict(
     if let Some(rivers) = hydrology_rivers {
         let _ = overlays.insert("hydrology_rivers", &rivers.clone());
     }
-    if let Some((sx, sy)) = start_marker {
-        let mut marker = VarDictionary::new();
-        let _ = marker.insert("x", sx as i64);
-        let _ = marker.insert("y", sy as i64);
-        let _ = overlays.insert("start_marker", &marker);
-    }
 
     let _ = dict.insert("overlays", &overlays);
 
@@ -1142,9 +1135,6 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
     }
     if let Some(raster) = delta.moistureRaster() {
         agg.apply_moisture_raster(raster);
-    }
-    if let Some(marker) = delta.startMarker() {
-        agg.start_marker = Some((marker.x(), marker.y()));
     }
     let mut dict = agg.into_dictionary();
 
@@ -1353,7 +1343,6 @@ struct DeltaAggregator {
     moisture_height: u32,
     moisture_samples: Vec<f32>,
     crisis_annotations: Vec<CrisisAnnotationRecord>,
-    start_marker: Option<(u32, u32)>,
 }
 
 impl DeltaAggregator {
@@ -1620,7 +1609,6 @@ impl DeltaAggregator {
             moisture_height,
             moisture_samples,
             crisis_annotations,
-            start_marker,
         } = self;
 
         let mut final_width = terrain_width
@@ -1870,7 +1858,6 @@ impl DeltaAggregator {
             },
             &crisis_annotations,
             None,
-            start_marker,
             None,
             None,
             None,
@@ -2605,10 +2592,6 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         }
     }
 
-    let start_marker_tuple = snapshot
-        .startMarker()
-        .map(|marker| (marker.x(), marker.y()));
-
     let campaign_label_dict = header.campaignLabel().map(campaign_label_to_dict);
     let mut campaign_profiles_array: Option<VarArray> = None;
     if let Some(profiles) = snapshot.campaignProfiles() {
@@ -2655,7 +2638,6 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         } else {
             Some(&hydrology_rivers)
         },
-        start_marker_tuple,
         campaign_label_dict,
         campaign_profiles_array,
         victory_dict,

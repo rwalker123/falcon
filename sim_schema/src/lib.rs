@@ -1870,10 +1870,6 @@ fn build_snapshot_flatbuffer<'a>(
     let hydrology_overlay = create_hydrology_overlay(builder, &snapshot.hydrology_overlay);
     let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
     let elevation_overlay = create_elevation_overlay(builder, &snapshot.elevation_overlay);
-    let start_marker = snapshot
-        .start_marker
-        .as_ref()
-        .map(|marker| create_start_marker(builder, marker));
     let terrain_overlay = create_terrain_overlay(builder, &snapshot.terrain);
     let logistics_raster = create_scalar_raster(builder, &snapshot.logistics_raster);
     let sentiment_raster = create_scalar_raster(builder, &snapshot.sentiment_raster);
@@ -1931,7 +1927,6 @@ fn build_snapshot_flatbuffer<'a>(
             moistureRaster: Some(moisture_raster),
             hydrologyOverlay: Some(hydrology_overlay),
             elevationOverlay: Some(elevation_overlay),
-            startMarker: start_marker,
             terrainOverlay: Some(terrain_overlay),
             logisticsRaster: Some(logistics_raster),
             sentimentRaster: Some(sentiment_raster),
@@ -2076,10 +2071,6 @@ fn build_delta_flatbuffer<'a>(
         .elevation_overlay
         .as_ref()
         .map(|overlay| create_elevation_overlay(builder, overlay));
-    let start_marker = delta
-        .start_marker
-        .as_ref()
-        .map(|marker| create_start_marker(builder, marker));
     let terrain_overlay = delta
         .terrain
         .as_ref()
@@ -2185,7 +2176,6 @@ fn build_delta_flatbuffer<'a>(
             removedInfluencers: Some(removed_influencers_vec),
             terrainOverlay: terrain_overlay,
             hydrologyOverlay: hydrology_overlay,
-            startMarker: start_marker,
             logisticsRaster: logistics_raster,
             sentimentRaster: sentiment_raster,
             corruptionRaster: corruption_raster,
@@ -2259,19 +2249,6 @@ fn create_elevation_overlay<'a>(
             maxValue: overlay.max_value,
             samples: Some(samples_vec),
             seaLevel: overlay.sea_level,
-        },
-    )
-}
-
-fn create_start_marker<'a>(
-    builder: &mut FbBuilder<'a>,
-    marker: &StartMarkerState,
-) -> WIPOffset<fb::StartMarker<'a>> {
-    fb::StartMarker::create(
-        builder,
-        &fb::StartMarkerArgs {
-            x: marker.x,
-            y: marker.y,
         },
     )
 }

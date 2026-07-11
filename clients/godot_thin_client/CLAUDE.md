@@ -313,7 +313,7 @@ are grouped near the top of `MapView.gd`, after the FoW/height consts.)
   selection ring** (the hex selection outline marks the tile); `BAND_STACK_BEHIND_TINT` is the
   single lever for the recede effect (RGB<1 darkens, alpha<1 fades — swap between the two there).
   Beyond 3, a `×N` count pill folded onto the **right end of the banner** (nameplate-with-count).
-  Food/activity decorations + the travel arrow draw on the active card only.
+  Food-days dot + the travel arrow draw on the active card only.
 - **SECONDARY — herds / food sites / wondrous sites** ring the hex in **fixed edge slots**
   (`SECONDARY_SLOT_OFFSETS`, near the hex corners), computed once per frame in
   `_compute_secondary_slots` by category priority **wonder → food → herd** (sequential fill,
@@ -439,7 +439,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   All emit `assign_labor_requested(payload)` (payload: `faction/band/kind/workers/x/y/herd_id/policy`);
   `Main._on_hud_assign_labor` formats the `assign_labor …` text command. **Clear all** emits
   `cancel_order_requested` (the repurposed `cancel_order` = clear-all → fully idle). The roster
-  glyph / map activity ring keep reading the still-populated `activity` (now the largest-worker
+  glyph keeps reading the still-populated `activity` (now the largest-worker
   kind: `idle|forage|hunt|scout|warrior`) and `hunt_mode`. `harvestTask`/`scoutTask` are always
   null server-side and no longer decoded. **Convenience shortcut:** double-clicking a herd on the
   map (`MapView.herd_quick_hunt_requested` → `Main._on_map_herd_quick_hunt` → `Hud.quick_assign_hunters`)
@@ -505,8 +505,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `supply_network_id` / `stores{item:qty}`): the green/amber/red warn·critical thresholds and the
   day→color mapping live in one place, `ui/BandFoodStatus.gd` (config `src/config/band_status_config.json`,
   key `food_days.{warn,critical}`; `999` = not food-limited → ∞). Surfaced three ways:
-  (1) `MapView._draw_band_status` draws a food-days dot + a per-`activity` ring on each **player** band
-  (`_is_player_unit`; idle bands draw no ring); (2) `Hud._band_food_line` adds a `Food  <N>  (<D> days)`
+  (1) `MapView._draw_band_status` draws a food-days dot on each **player** band
+  (`_is_player_unit`); (2) `Hud._band_food_line` adds a `Food  <N>  (<D> days)`
   row to the band selection panel, tinted by the thresholds via `_format_detail_bbcode`;
   (3) `MapView._draw_supply_links` faint-chains player bands sharing a `supply_network_id` (`0` = solo).
 - **Band morale readout** (snapshot `PopulationCohortState.morale`, decoded in `native/src/lib.rs`

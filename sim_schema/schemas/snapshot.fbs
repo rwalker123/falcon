@@ -933,7 +933,6 @@ table WorldSnapshot {
   moistureRaster:FloatRaster;
   hydrologyOverlay:HydrologyOverlay; // rivers/streams polylines
   elevationOverlay:ElevationOverlay;
-  startMarker:StartMarker;
   terrainOverlay:TerrainOverlay;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
@@ -995,7 +994,6 @@ table WorldDelta {
   terrainOverlay:TerrainOverlay;
   hydrologyOverlay:HydrologyOverlay;
   elevationOverlay:ElevationOverlay;
-  startMarker:StartMarker;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
   corruptionRaster:ScalarRaster;
@@ -1021,11 +1019,6 @@ table RiverSegment {
 
 table HydrologyOverlay {
   rivers:[RiverSegment];
-}
-
-table StartMarker {
-  x:uint;
-  y:uint;
 }
 
 union SnapshotPayload {
