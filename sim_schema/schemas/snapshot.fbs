@@ -508,14 +508,6 @@ table PopulationCohortState {
   isExpedition:bool = false;
   expeditionMission:string;   // "scout" | "hunt"; empty for normal bands.
   expeditionPhase:string;     // "outbound"|"awaiting"|"returning"|"hunting"|"delivering"; empty for normal bands.
-  // Hunt mission only: the target herd id (`HerdRegistry` fauna_id). Empty for scout/normal bands.
-  // A string (not uint) because herd ids are non-numeric (e.g. "herd_3_00") — matches
-  // LaborAssignment.faunaId. Persisted so a rollback reconstructs `Hunt { fauna_id }`.
-  expeditionTargetHerd:string;
-  // Hunt mission only: the take policy (sustain|surplus|market|eradicate; mirrors huntMode). Empty
-  // for scout/normal bands. Persisted so a rollback reconstructs `Hunt { fauna_id, policy }`; drives
-  // the client's per-policy behaviour label + policy picker default.
-  expeditionHuntPolicy:string;
   // Persistence-only (rollback restores an in-flight expedition + its unreported findings):
   homeBandEntity:ulong = 0;   // the real band that outfitted this party (entity bits).
   expeditionAnnounced:bool = false; // whether the arrival feed line has fired for this AwaitingOrders latch.
@@ -535,6 +527,15 @@ table PopulationCohortState {
   // provisions ceiling the party fills to before auto-Delivering). Capture-only, `0` for scouts +
   // normal bands. The client shows carried/cap (carried = stores/daysOfFood) + a FULL state.
   expeditionCarryCap:float = 0;
+  // Hunt mission only: the target herd id (`HerdRegistry` fauna_id). Empty for scout/normal bands.
+  // A string (not uint) because herd ids are non-numeric (e.g. "herd_3_00") — matches
+  // LaborAssignment.faunaId. Persisted so a rollback reconstructs `Hunt { fauna_id }`. Appended last
+  // (append-only schema discipline — must follow every field shipped in earlier PRs).
+  expeditionTargetHerd:string;
+  // Hunt mission only: the take policy (sustain|surplus|market|eradicate; mirrors huntMode). Empty
+  // for scout/normal bands. Persisted so a rollback reconstructs `Hunt { fauna_id, policy }`; drives
+  // the client's per-policy behaviour label + policy picker default. Appended last.
+  expeditionHuntPolicy:string;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

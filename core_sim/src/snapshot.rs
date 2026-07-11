@@ -3882,14 +3882,16 @@ fn population_state(
         is_expedition,
         expedition_mission,
         expedition_phase,
-        expedition_target_herd,
-        expedition_hunt_policy,
         home_band_entity,
         expedition_announced,
         pending_reveal_x,
         pending_reveal_y,
         max_expedition_party_size,
         expedition_carry_cap,
+        // Appended after every earlier-shipped field (append-only wire discipline; matches the
+        // `.fbs` slot order for `expeditionTargetHerd`/`expeditionHuntPolicy`).
+        expedition_target_herd,
+        expedition_hunt_policy,
         supply_network_id: supply_membership.network_of(entity),
         morale_delta: cohort.last_morale_delta.raw(),
         morale_cause: cohort.last_morale_cause.as_u8(),
