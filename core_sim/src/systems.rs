@@ -3655,7 +3655,9 @@ pub fn advance_expeditions(
                 workers as f32 * cfg.provision_upkeep_per_worker * cfg.replenish.low_turns as f32,
             );
             if cohort.stores.get(FOOD) < low_buffer {
-                let nearest = herds.herds.iter().position(|herd| {
+                // First huntable herd within replenish reach (not necessarily the closest —
+                // `position` returns the first match).
+                let in_range = herds.herds.iter().position(|herd| {
                     crate::grid_utils::hex_distance_wrapped(
                         exp_pos,
                         herd.position(),
@@ -3663,9 +3665,18 @@ pub fn advance_expeditions(
                         wrap_horizontal,
                     ) <= cfg.replenish.reach_tiles
                 });
-                if let Some(idx) = nearest {
+                if let Some(idx) = in_range {
                     // A scout only nibbles the sustainable surplus off passing game (Sustain
-                    // ceiling), not the productive hunt the hunt verb runs.
+                    // ceiling), not the productive hunt the hunt verb runs. Cap the take at the
+                    // biomass the scout can actually top up with (conservation — the herd loses only
+                    // what's kept), by inverting `provisions_per_biomass`.
+                    let room = (low_buffer - cohort.stores.get(FOOD)).max(scalar_zero());
+                    let provisions_per_biomass = fauna.hunt.provisions_per_biomass;
+                    let carry_room_biomass = if provisions_per_biomass > 0.0 {
+                        room.to_f32() / provisions_per_biomass
+                    } else {
+                        f32::INFINITY
+                    };
                     let provisions = hunt_take(
                         &mut herds.herds[idx],
                         workers,
@@ -3673,9 +3684,9 @@ pub fn advance_expeditions(
                         per_worker_biomass,
                         &fauna,
                         1.0,
+                        carry_room_biomass,
                     );
-                    let room = low_buffer - cohort.stores.get(FOOD);
-                    let added = provisions.min(room.max(scalar_zero()));
+                    let added = provisions.min(room);
                     if added > scalar_zero() {
                         cohort.stores.add(FOOD, added);
                     }
@@ -3762,16 +3773,31 @@ pub fn advance_expeditions(
                                 cfg.hunt.sustain_floor_fraction,
                                 fauna.ecology.collapse_fraction,
                             );
+                            let provisions_per_biomass = fauna.hunt.provisions_per_biomass;
+                            // Conservation: a non-Eradicate party can only take the biomass it can
+                            // actually carry home. Cap the take at the biomass equivalent of the
+                            // remaining carry room (invert `provisions_per_biomass`), so the herd
+                            // loses exactly what the party keeps — no over-depletion of unhunted
+                            // biomass. Eradicate is uncapped (it's driving the herd extinct).
+                            let carry_room_biomass = if matches!(policy, FollowPolicy::Eradicate)
+                                || provisions_per_biomass <= 0.0
+                            {
+                                f32::INFINITY
+                            } else {
+                                (cap - cohort.stores.get(FOOD)).max(scalar_zero()).to_f32()
+                                    / provisions_per_biomass
+                            };
                             let herd = &mut herds.herds[idx];
                             let worker_cap = workers as f32 * per_worker_biomass;
-                            let take_biomass = worker_cap.min((herd.biomass - floor).max(0.0));
+                            let take_biomass = worker_cap
+                                .min((herd.biomass - floor).max(0.0))
+                                .min(carry_room_biomass);
                             herd.biomass -= take_biomass;
                             if !matches!(policy, FollowPolicy::Eradicate) {
                                 let carried = cohort.stores.get(FOOD);
                                 let room = (cap - carried).max(scalar_zero());
-                                let provisions = scalar_from_f32(
-                                    take_biomass * fauna.hunt.provisions_per_biomass,
-                                );
+                                let provisions =
+                                    scalar_from_f32(take_biomass * provisions_per_biomass);
                                 let added = provisions.min(room);
                                 if added > scalar_zero() {
                                     cohort.stores.add(FOOD, added);
@@ -3916,6 +3942,7 @@ pub(crate) fn hunt_take(
     per_worker_biomass_capacity: f32,
     fauna: &FaunaConfig,
     output_multiplier: f32,
+    carry_room_biomass: f32,
 ) -> Scalar {
     let ecology = &fauna.ecology;
     let follow = &fauna.follow;
@@ -3935,11 +3962,15 @@ pub(crate) fn hunt_take(
         FollowPolicy::Eradicate => hunt.take_from(herd.biomass),
     };
     // The hunting group's throughput caps the take; below the Sustain ceiling the herd nets growth.
+    // `carry_room_biomass` additionally caps the take at the biomass the caller can carry home
+    // (conservation — the herd loses only what's kept); the band Hunt passes `f32::INFINITY`
+    // (no carry limit — it eats/banks the whole take, behaviour unchanged).
     let worker_cap = workers as f32 * per_worker_biomass_capacity;
     let take = worker_cap
         .min(policy_ceiling)
         .max(0.0)
-        .clamp(0.0, herd.biomass);
+        .clamp(0.0, herd.biomass)
+        .min(carry_room_biomass.max(0.0));
     herd.biomass -= take;
     // FOOD income is fully fractional (a few hunters may yield < 1/turn).
     scalar_from_f32(take * hunt.provisions_per_biomass * output_multiplier)
@@ -4083,6 +4114,8 @@ pub fn advance_labor_allocation(
                     // biomass→provisions, × the band's productivity multiplier). Read biomass
                     // before/after for the raw take that trade goods + husbandry are scaled from.
                     let biomass_before = herd.biomass;
+                    // The band has no carry room — it eats/banks the whole take, so pass an
+                    // unbounded carry cap (behaviour unchanged from before the expedition clamp).
                     let provisions = hunt_take(
                         herd,
                         workers,
@@ -4090,6 +4123,7 @@ pub fn advance_labor_allocation(
                         labor.hunt.per_worker_biomass_capacity,
                         &fauna,
                         mult_f,
+                        f32::INFINITY,
                     );
                     let take = biomass_before - herd.biomass;
                     // Phase E husbandry: a Sustain hunt on a Thriving group tames it over time.
