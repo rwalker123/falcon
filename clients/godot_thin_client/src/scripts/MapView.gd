@@ -17,8 +17,9 @@ signal selection_cleared()
 signal next_turn_requested(steps: int)
 signal targeting_cancel_requested()
 ## Emitted whenever the map zoom factor changes (rail button, wheel, Q/E, or fit).
-## The HUD renders the live zoom readout from it. Emitted only when the factor
-## actually changed (both producers below early-return / reset before emitting).
+## The HUD renders the live zoom readout from it. `_apply_zoom` emits only on a
+## real change (it early-returns on a no-op); `_fit_map_to_view` also emits after
+## resetting zoom + pan, so a fit re-syncs the readout even when already at 1.0×.
 signal zoom_changed(zoom_factor: float)
 
 const LOGISTICS_COLOR := Color(0.15, 0.45, 1.0, 1.0)
