@@ -250,6 +250,16 @@ message RecallExpeditionCommand {
   uint64 expedition_entity_bits = 2;
 }
 
+// Outfit and launch a hunting expedition: draw party_workers off the home band and send a detached
+// party to follow the herd fauna_id (lives off its kills — no provisions drawn).
+message SendHuntExpeditionCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_entity_bits = 2;
+  uint32 party_workers = 3;
+  string fauna_id = 4;
+  optional string policy = 5; // sustain|surplus|market|eradicate; default sustain when omitted
+}
+
 message ExportMapCommand {
   // Optional destination path. When absent the server writes a
   // timestamped file into the gitignored exports/ scratch directory.
@@ -296,5 +306,6 @@ message CommandEnvelope {
     MoveBandCommand move_band = 33;
     SendExpeditionCommand send_expedition = 34;
     RecallExpeditionCommand recall_expedition = 35;
+    SendHuntExpeditionCommand send_hunt_expedition = 36;
   }
 }

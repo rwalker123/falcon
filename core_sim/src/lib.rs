@@ -226,7 +226,8 @@ pub use resources::{
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{
-    command_events_to_state, restore_world_from_snapshot, SnapshotHistory, StoredSnapshot,
+    command_events_to_state, recapture_snapshot_in_place, restore_world_from_snapshot,
+    SnapshotHistory, StoredSnapshot,
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
@@ -465,6 +466,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(CommandEventLog::default())
         .insert_resource(FoodSiteRegistry::default())
         .insert_resource(snapshot_history)
+        .insert_resource(snapshot::SnapshotCaptureMode::default())
         .insert_resource(generation_registry)
         .insert_resource(espionage_catalog)
         .insert_resource(espionage_roster)

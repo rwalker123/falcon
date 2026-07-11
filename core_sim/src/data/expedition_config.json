@@ -4,5 +4,16 @@
   "comm_range_tech_factor": 1.0,
   "observe_sight_range": 6,
   "provision_draw_per_worker_per_tile": 1.0,
-  "provision_upkeep_per_worker": 0.5
+  "provision_upkeep_per_worker": 0.5,
+  "hunt": {
+    "per_worker_carry": 4.0,
+    "reach_tiles": 1,
+    "drop_off_within_tiles": 3,
+    "sustain_floor_fraction": 0.7,
+    "min_deliver_fraction": 0.5
+  },
+  "replenish": {
+    "low_turns": 3,
+    "reach_tiles": 1
+  }
 }

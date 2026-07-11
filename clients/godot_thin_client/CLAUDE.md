@@ -598,16 +598,18 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `MapView.focus_on_tile` (shared minimap centering machinery). Hidden via the dock until an alert exists.
   NOTE: cohorts carry no top-level band label in the snapshot — names fall back to a positional
   "Band N"; a server-side band-label field would make names authoritative.
-- **Targeting: move-band + send-expedition** (`Hud.gd`): the single-task forage/scout/hunt/follow
-  `_pending_*` flows were retired with labor allocation. Two tile-targeting flows remain, both
-  built on the same `_pending_*` → `_current_targeting_info()` → `_refresh_targeting()` machinery:
-  `_pending_move_band` (`command: "move"`) and `_pending_send_expedition` (`command: "expedition"`,
-  carries the outfitted band + chosen party size). `_current_targeting_info()` returns a descriptor
-  (`{active, command, need: "tile", origin_x/y, context_label}`) for whichever is set;
-  `_refresh_targeting()` shows the floating **targeting banner** (top-centre,
-  `HudStyle.banner_stylebox()`: cyan reticle + command + instruction + Cancel) and emits
-  `targeting_changed(info)`. Both `show_tile_selection` + `notify_hex_selected` dispatch both
-  pending flows on the tile click.
+- **Targeting: move-band + send-expedition + send-hunt-expedition** (`Hud.gd`): the single-task
+  forage/scout/hunt/follow `_pending_*` flows were retired with labor allocation. Three targeting
+  flows remain, all built on the same `_pending_*` → `_current_targeting_info()` →
+  `_refresh_targeting()` machinery: `_pending_move_band` (`command: "move"`, `need: "tile"`),
+  `_pending_send_expedition` (`command: "expedition"`, `need: "tile"`, carries the outfitted band +
+  party size), and `_pending_send_hunt_expedition` (`command: "hunt_expedition"`, `need: "herd"`).
+  `_current_targeting_info()` returns a descriptor (`{active, command, need, origin_x/y,
+  context_label}`) for whichever is set; `_refresh_targeting()` shows the floating **targeting
+  banner** (top-centre, `HudStyle.banner_stylebox()`: cyan reticle + command + instruction + Cancel)
+  and emits `targeting_changed(info)`. `show_tile_selection` + `notify_hex_selected` dispatch all
+  three pending flows on the click (the tile click carries `tile_info.herds`, which the hunt flow
+  resolves its target from).
 - **Main forwards** `hud.targeting_changed → map_view.set_targeting` and
   `map_view.targeting_cancel_requested → hud.cancel_active_targeting`.
 - **MapView draws** the overlay (`_draw_targeting`): `need == "tile"` draws a reticle on the
@@ -644,6 +646,36 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   (4) The `marker_field_guard` covers the four new marker keys (`is_expedition`,
   `expedition_mission`, `expedition_phase`, `max_expedition_party_size`). The server still rejects
   a genuinely over-cap request with a feed message as a backstop.
+- **Hunting expedition** (PR 2, `docs/plan_exploration_and_sites.md` §2b; snapshot
+  `PopulationCohortState.expeditionTargetHerd` (string fauna_id) / `expeditionHuntPolicy` (string
+  `sustain|surplus|market|eradicate`) / `expeditionCarryCap` (float), decoded as
+  `expedition_target_herd` / `expedition_hunt_policy` / `expedition_carry_cap` and flowed onto the
+  marker; `expedition_mission` also takes `"hunt"`, `expedition_phase` also takes
+  `"hunting"`/`"delivering"`). A hunt party follows a migratory herd, accumulates food up to a carry
+  cap, and drops it at the band — the second verb on the same expedition machinery. Surfaced:
+  (1) **Distinct map marker** (`MapView._draw_expedition_body`): a hollow 🏹 **bow disc** (vs the
+  scout's ⚑ flag), keyed on `expedition_mission == "hunt"`. Phase read: `hunting` (gathering) draws a
+  small red "working" cue ring; `delivering`/`returning` (hauling home) draw a green food pip.
+  (2) **Hunt drawer panel** (`Hud._expedition_summary_lines` branches on mission): Mission "Hunting
+  expedition", **Target** herd (`expedition_target_herd`, species via `_herd_label_for_id` → raw id
+  fallback), **Policy** (`expedition_hunt_policy`, capitalized), humanized **Phase**
+  (Hunting/Delivering/Returning), Party, and **Carried X / cap** (`stores` total vs
+  `expedition_carry_cap`, days from `daysOfFood`) with a **· FULL** badge at the ceiling. Reuses
+  `_build_expedition_panel` (Recall + Move, "Returning"-when-returning treatment — mission-agnostic,
+  so hunt parties get it too).
+  (3) **Outfit UI** (`Hud._build_send_expedition_controls`): under the shared "Send expedition"
+  section (party stepper + "Send scouting expedition"), a **hunt policy radio**
+  (`_build_policy_picker(…, _send_hunt_policy)`, Sustain/Surplus/Market/Eradicate, default Sustain)
+  with a one-line behaviour hint (`SEND_HUNT_POLICY_HINTS`), then "Send hunting expedition". It enters
+  a HERD-targeting pending mode (`_pending_send_hunt_expedition`, `command: "hunt_expedition"`,
+  `need: "herd"`) carrying band + party + policy; the target click resolves to a huntable herd on the
+  clicked hex (`_huntable_herd_id_on_tile` reads `tile_info.herds`) and emits
+  `send_hunt_expedition_requested` → `Main._on_hud_send_hunt_expedition` →
+  `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [policy]` (trailing policy;
+  server defaults Sustain). No huntable herd on the hex → a command-feed nudge, stays in targeting.
+  `MapView._draw_targeting` glows huntable herds + reticles the hovered hex for `need == "herd"`.
+  (4) `marker_field_guard` covers `expedition_target_herd` / `expedition_hunt_policy` /
+  `expedition_carry_cap`. Recall is the unchanged `recall_expedition` (works for hunt parties too).
 - **Retired verbs (Early-Game Labor slice 3a):** the server now parses-but-ignores
   `follow_herd` / `scout` / `forage` / `hunt_fauna` / `hunt_game`. Every client control that
   emitted them was removed or repointed so nothing is silently dead: the map double-click

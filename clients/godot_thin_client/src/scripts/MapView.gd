@@ -199,6 +199,21 @@ const EXPEDITION_AWAITING_RING_FACTOR := 1.35    # pulsing ring base radius, of 
 const EXPEDITION_AWAITING_PULSE_AMPLITUDE := 0.22
 const EXPEDITION_AWAITING_PULSE_SPEED := 3.2
 const EXPEDITION_AWAITING_RING_WIDTH := 2.5
+# --- Hunting-expedition marker (PR 2, docs/plan_exploration_and_sites.md §2b) ---
+# A hunt party (`expedition_mission == "hunt"`) reads as a bow disc — a clearly different motif from
+# the scout's flag — so scout vs hunt parties are distinguishable at a glance.
+const EXPEDITION_HUNT_MISSION := "hunt"
+const EXPEDITION_HUNT_GLYPH := "🏹"              # bow motif = a hunting party following game
+# Hunt phase read: HUNTING (gathering at the herd) shows a small red "working" cue ring; DELIVERING
+# and RETURNING (hauling a haul home) show a green food pip. So gathering vs hauling read at a glance.
+const EXPEDITION_PHASE_HUNTING := "hunting"
+const EXPEDITION_PHASE_DELIVERING := "delivering"
+const EXPEDITION_PHASE_RETURNING := "returning"
+const EXPEDITION_DELIVER_PIP_FACTOR := 0.34      # green food-pip radius, of marker radius
+const EXPEDITION_DELIVER_PIP_OFFSET := 0.85      # pip offset down-right from marker center, of marker radius
+const EXPEDITION_GATHER_CUE_FACTOR := 0.30       # red gathering-cue ring radius, of marker radius
+const EXPEDITION_GATHER_CUE_OFFSET := 0.85       # cue offset down-right from marker center, of marker radius
+const EXPEDITION_GATHER_CUE_WIDTH := 2.0
 # Selected-player-band labor highlights (Early-Game Labor slice 3b). Distinct styles so
 # the layers read apart: the work-range reach (thin cyan outlines = "reachable"), the worked
 # forage tiles (strong green fill = "being worked"), and the hunted herds (red ring + link).
@@ -1587,25 +1602,41 @@ func _draw_band_task_arrow(unit: Dictionary, center: Vector2, radius: float, ori
 	draw_line(center, dest_center, arrow_color, BAND_TASK_ARROW_WIDTH)
 	_draw_arrowhead(center, dest_center, arrow_color)
 
-## Draw a scouting expedition's map body (docs/plan_exploration_and_sites.md §2): a hollow,
-## faction-tinted flag disc — visually distinct from a resident band's solid dot — plus, when the
-## party is idle-at-objective (`expedition_phase == "awaiting"`), a pulsing amber ring signalling
-## it needs an order. Called from `_draw_band_token` for an `is_expedition` unit (in place of the
-## settlement-stage glyph); the travel arrow still draws via `_draw_band_task_arrow`.
+## Draw an expedition's map body (docs/plan_exploration_and_sites.md §2 / §2b): a hollow,
+## faction-tinted disc — visually distinct from a resident band's solid dot — carrying a mission
+## glyph (scout = ⚑ flag, hunt = 🏹 bow). Phase decorations: a scout `awaiting` party pulses an
+## amber ring (needs a command); a hunt `delivering` party shows a green food pip (carrying a haul
+## home). The shared label / travel arrow / selection ring stay in `_draw_unit`.
 func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: float, color: Color) -> void:
+	var is_hunt := String(unit.get("expedition_mission", "")) == EXPEDITION_HUNT_MISSION
+	var glyph := EXPEDITION_HUNT_GLYPH if is_hunt else EXPEDITION_GLYPH
 	# Dark backing disc keeps the glyph legible over any terrain (mirrors the site/herd markers).
 	draw_circle(center, marker_radius, Color(0.04, 0.06, 0.07, EXPEDITION_DISC_ALPHA))
 	# Hollow faction ring — no solid fill, so it never reads as a resident band's dot.
 	draw_arc(center, marker_radius * EXPEDITION_RING_FACTOR, 0, TAU, 24, color, EXPEDITION_RING_WIDTH)
-	# Flag glyph at the center.
+	# Mission glyph at the center.
 	var font: Font = ThemeDB.fallback_font
 	if font != null:
 		var glyph_size: int = int(maxf(12.0, marker_radius * EXPEDITION_GLYPH_SIZE_FACTOR * 2.0))
-		var text_size: Vector2 = font.get_string_size(EXPEDITION_GLYPH, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size)
+		var text_size: Vector2 = font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size)
 		var pos := Vector2(center.x - text_size.x * 0.5, center.y + glyph_size * 0.34)
-		draw_string(font, pos, EXPEDITION_GLYPH, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size, EXPEDITION_GLYPH_COLOR)
+		draw_string(font, pos, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size, EXPEDITION_GLYPH_COLOR)
 
-	# Awaiting-orders idle indicator: a pulsing amber ring (needs a command).
+	# Hunt phase decoration: hauling a haul home (delivering/returning) → a solid green food pip;
+	# gathering at the herd (hunting) → a small red "working" cue ring. Mutually exclusive phases.
+	if is_hunt:
+		var hphase := String(unit.get("expedition_phase", ""))
+		if hphase == EXPEDITION_PHASE_DELIVERING or hphase == EXPEDITION_PHASE_RETURNING:
+			var pip_center := center + Vector2(marker_radius, marker_radius) * EXPEDITION_DELIVER_PIP_OFFSET
+			var pip_radius := marker_radius * EXPEDITION_DELIVER_PIP_FACTOR
+			draw_circle(pip_center, pip_radius, HudStyle.HEALTHY)
+			draw_arc(pip_center, pip_radius, 0, TAU, 10, Color(0, 0, 0, 0.5), 1.0)
+		elif hphase == EXPEDITION_PHASE_HUNTING:
+			var cue_center := center + Vector2(marker_radius, marker_radius) * EXPEDITION_GATHER_CUE_OFFSET
+			var cue_radius := marker_radius * EXPEDITION_GATHER_CUE_FACTOR
+			draw_arc(cue_center, cue_radius, 0, TAU, 12, HudStyle.DANGER, EXPEDITION_GATHER_CUE_WIDTH)
+
+	# Awaiting-orders idle indicator (scout): a pulsing amber ring (needs a command).
 	if String(unit.get("expedition_phase", "")) == EXPEDITION_PHASE_AWAITING:
 		var pulse: float = 0.5 + 0.5 * sin(_expedition_time * EXPEDITION_AWAITING_PULSE_SPEED)
 		var ring_radius: float = marker_radius * (EXPEDITION_AWAITING_RING_FACTOR + EXPEDITION_AWAITING_PULSE_AMPLITUDE * pulse)
@@ -2326,6 +2357,11 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"is_expedition": bool(entry.get("is_expedition", false)),
 			"expedition_mission": String(entry.get("expedition_mission", "")),
 			"expedition_phase": String(entry.get("expedition_phase", "")),
+			# Hunt expedition (PR 2): the herd (fauna_id) a hunt party follows; "" for scouts.
+			"expedition_target_herd": String(entry.get("expedition_target_herd", "")),
+			# Hunt party take policy (sustain|surplus|market|eradicate; "" for scouts) + carry cap.
+			"expedition_hunt_policy": String(entry.get("expedition_hunt_policy", "")),
+			"expedition_carry_cap": float(entry.get("expedition_carry_cap", 0.0)),
 			# Hard party-size cap (from the expedition config); the resident-band outfit stepper
 			# clamps its max to min(idle_workers, this).
 			"max_expedition_party_size": int(entry.get("max_expedition_party_size", 0)),
@@ -3629,6 +3665,23 @@ func _draw_targeting(radius: float, origin: Vector2) -> void:
 				if hpos.size() == 2 and int(hpos[0]) == _hovered_tile.x and int(hpos[1]) == _hovered_tile.y:
 					_draw_targeting_hover_label(unit, radius, origin)
 					break
+	elif need == "herd":
+		# Hunt-expedition targeting: glow every huntable herd (the valid targets) + reticle the
+		# hovered hex, so it reads "click on a herd".
+		for herd in herds:
+			if not bool(herd.get("huntable", false)):
+				continue
+			var hx := int(herd.get("x", -1))
+			var hy := int(herd.get("y", -1))
+			if hx < 0 or hy < 0:
+				continue
+			var hcenter: Vector2 = _hex_center_wrapped(hx, hy, radius, origin)
+			var hring_radius: float = radius * (0.55 + 0.10 * pulse)
+			var hring_color := Color(cyan.r, cyan.g, cyan.b, 0.5 + 0.35 * pulse)
+			draw_arc(hcenter, hring_radius, 0, TAU, 32, hring_color, 2.5)
+		if _hovered_tile.x >= 0 and _hovered_tile.y >= 0:
+			var herd_reticle: Vector2 = _hex_center_wrapped(_hovered_tile.x, _hovered_tile.y, radius, origin)
+			_draw_reticle(herd_reticle, radius * 0.82, cyan, pulse)
 	elif need == "tile":
 		if _hovered_tile.x >= 0 and _hovered_tile.y >= 0:
 			var reticle_center: Vector2 = _hex_center_wrapped(_hovered_tile.x, _hovered_tile.y, radius, origin)

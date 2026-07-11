@@ -26,7 +26,7 @@ use core_sim::{
     LaborTarget, LocalStore, ResidentBand, StartProfileOverrides,
 };
 use core_sim::{
-    build_headless_app, command_events_to_state, restore_world_from_snapshot, run_turn,
+    build_headless_app, recapture_snapshot_in_place, restore_world_from_snapshot, run_turn,
     scalar_from_f32, AgentAssignment, CommandEventEntry, CommandEventKind, CommandEventLog,
     CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
     CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
@@ -536,6 +536,22 @@ fn main() {
             } => {
                 handle_recall_expedition(&mut app, faction, expedition_entity_bits);
             }
+            Command::SendHuntExpedition {
+                faction,
+                band_entity_bits,
+                party_workers,
+                fauna_id,
+                policy,
+            } => {
+                handle_send_hunt_expedition(
+                    &mut app,
+                    faction,
+                    band_entity_bits,
+                    party_workers,
+                    fauna_id,
+                    policy,
+                );
+            }
             Command::FoundSettlement {
                 faction,
                 target_x,
@@ -554,7 +570,10 @@ fn main() {
             }
         }
 
-        broadcast_command_events_if_needed(&mut app, bin_server, flat_server);
+        // Re-capture + broadcast the fresh world (incl. the feed) so an immediate, synchronous
+        // command mutation (expedition launch, move_band, assign_labor, …) reaches the client now,
+        // not only at the next turn (replaces the feed-only splice that reused last turn's world).
+        recapture_and_broadcast(&mut app, bin_server, flat_server);
     }
 }
 
@@ -661,6 +680,13 @@ enum Command {
     RecallExpedition {
         faction: FactionId,
         expedition_entity_bits: u64,
+    },
+    SendHuntExpedition {
+        faction: FactionId,
+        band_entity_bits: Option<u64>,
+        party_workers: u32,
+        fauna_id: String,
+        policy: Option<String>,
     },
     FoundSettlement {
         faction: FactionId,
@@ -1693,10 +1719,152 @@ fn handle_send_expedition(
         faction,
         format!("{} expedition -> ({}, {})", band.label, target_x, target_y),
         Some(format!(
-            "status=queued workers={} provisions_drawn={} distance={} expedition={}",
+            "status=applied workers={} provisions_drawn={} distance={} expedition={}",
             party_workers,
             drawn.to_i64_whole(),
             distance,
+            expedition_entity.to_bits()
+        )),
+    );
+}
+
+/// Outfit and launch a hunting expedition (PR 2): draw `party_workers` off the resolved home band
+/// and send a detached party to follow the herd `fauna_id` under `policy` (Sustain when omitted).
+/// Unlike the scouting expedition it draws **no** provisions (it lives off its kills) and starts in
+/// the `Hunting` phase heading for the herd's live tile. Text form:
+/// `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [policy]`.
+fn handle_send_hunt_expedition(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_entity_bits: Option<u64>,
+    party_workers: u32,
+    fauna_id: String,
+    policy: Option<String>,
+) {
+    // Take policy — parsed via `FollowPolicy::from_str`, default Sustain (conservative) when omitted.
+    let policy: FollowPolicy = policy
+        .as_deref()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(FollowPolicy::Sustain);
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        band_entity_bits,
+        "send_hunt_expedition",
+        CommandEventKind::ExpeditionSent,
+    ) else {
+        return;
+    };
+    // Same resident-band gate as `send_expedition`: a party can only be outfitted from a real band.
+    if app.world.get::<ResidentBand>(band.entity).is_none() {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            "send_hunt_expedition: band is not a resident band.",
+        );
+        return;
+    }
+
+    // The target must resolve to a live herd; capture its current tile as the initial travel target.
+    let herd_pos = {
+        let registry = app.world.resource::<HerdRegistry>();
+        registry.find(&fauna_id).map(|herd| herd.position())
+    };
+    let Some(herd_pos) = herd_pos else {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!("send_hunt_expedition: no live herd '{}'.", fauna_id),
+        );
+        return;
+    };
+
+    let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
+    let Some(band_cohort) = app.world.get::<PopulationCohort>(band.entity) else {
+        return;
+    };
+    let band_working = band_cohort.working;
+    let mut expedition_cohort = band_cohort.clone();
+    let (unit_kind, unit_tags) = app
+        .world
+        .get::<StartingUnit>(band.entity)
+        .map(|unit| (unit.kind.clone(), unit.tags.clone()))
+        .unwrap_or_else(|| ("expedition".to_string(), Vec::new()));
+
+    let available = available_workers(band_working);
+    let max_party = available.min(cfg.max_party_size);
+    if party_workers < 1 || party_workers > max_party {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!(
+                "Party of {} workers invalid — {} can outfit 1..{} workers.",
+                party_workers, band.label, max_party
+            ),
+        );
+        return;
+    }
+
+    // Remove the party from the band's pool — but draw NO provisions (it lives off its kills).
+    let party_scalar = Scalar::from_u32(party_workers);
+    {
+        let Some(mut band_cohort) = app.world.get_mut::<PopulationCohort>(band.entity) else {
+            return;
+        };
+        band_cohort.working -= party_scalar;
+        band_cohort.sync_size();
+    }
+
+    // Retask the cloned cohort into a detached party co-located with the band, empty larder.
+    expedition_cohort.children = Scalar::from_i64(0);
+    expedition_cohort.working = party_scalar;
+    expedition_cohort.elders = Scalar::from_i64(0);
+    expedition_cohort.stores = LocalStore::new();
+    expedition_cohort.age_turns = 0;
+    expedition_cohort.migration = None;
+    expedition_cohort.grievance = Scalar::from_i64(0);
+    expedition_cohort.sync_size();
+
+    let expedition_entity = app
+        .world
+        .spawn((
+            expedition_cohort,
+            LaborAllocation::default(),
+            StartingUnit::new(unit_kind, unit_tags),
+            Expedition {
+                home_band: band.entity,
+                mission: ExpeditionMission::Hunt {
+                    fauna_id: fauna_id.clone(),
+                    policy,
+                },
+                phase: ExpeditionPhase::Hunting,
+                announced: false,
+                pending_reveal: Vec::new(),
+            },
+            BandTravel { target: herd_pos },
+        ))
+        .id();
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::ExpeditionSent,
+        faction,
+        format!(
+            "{} hunting expedition ({}) -> herd {}",
+            band.label,
+            policy.as_str(),
+            fauna_id
+        ),
+        Some(format!(
+            "status=applied mission=hunt policy={} workers={} herd={} expedition={}",
+            policy.as_str(),
+            party_workers,
+            fauna_id,
             expedition_entity.to_bits()
         )),
     );
@@ -2645,6 +2813,19 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             faction: FactionId(faction_id),
             expedition_entity_bits,
         }),
+        ProtoCommandPayload::SendHuntExpedition {
+            faction_id,
+            band_entity_bits,
+            party_workers,
+            fauna_id,
+            policy,
+        } => Some(Command::SendHuntExpedition {
+            faction: FactionId(faction_id),
+            band_entity_bits,
+            party_workers,
+            fauna_id,
+            policy,
+        }),
         ProtoCommandPayload::FoundSettlement {
             faction_id,
             target_x,
@@ -3056,23 +3237,30 @@ fn describe_tile_rejection(reason: &str) -> &'static str {
     }
 }
 
-fn broadcast_command_events_if_needed(
+/// Re-capture a fresh world snapshot (current ECS state, **including** the command-event feed) and
+/// broadcast it — WITHOUT advancing the turn or pushing a rollback ring entry. Runs after every
+/// dispatched command so a world-mutating command (expedition launch, `move_band`, `assign_labor`,
+/// …) is reflected in the client's snapshot immediately, not only after the next turn resolves.
+/// Toggles `SnapshotCaptureMode::refresh_in_place` so `capture_snapshot` refreshes the latest
+/// broadcast + back ring entry in place instead of recording a new ring entry. Re-capturing on a
+/// genuinely non-mutating command is merely slightly wasteful (commands are human-issued, low
+/// frequency) — the robust uniform path, no hand-curated "which commands mutate" list.
+fn recapture_and_broadcast(
     app: &mut bevy::prelude::App,
     snapshot_server_bin: Option<&SnapshotServer>,
     snapshot_server_flat: Option<&SnapshotServer>,
 ) {
-    let events_state = {
-        let log = app.world.resource::<CommandEventLog>();
-        command_events_to_state(log)
-    };
+    recapture_snapshot_in_place(&mut app.world);
 
-    let mut history = app.world.resource_mut::<SnapshotHistory>();
-    if let Some((binary, flat)) = history.update_command_events(events_state) {
-        if let Some(server) = snapshot_server_bin {
-            server.broadcast(binary.as_ref());
+    let history = app.world.resource::<SnapshotHistory>();
+    if let Some(server) = snapshot_server_bin {
+        if let Some(bytes) = history.encoded_snapshot.as_ref() {
+            server.broadcast(bytes.as_ref());
         }
-        if let Some(server) = snapshot_server_flat {
-            server.broadcast(flat.as_ref());
+    }
+    if let Some(server) = snapshot_server_flat {
+        if let Some(bytes) = history.encoded_snapshot_flat.as_ref() {
+            server.broadcast(bytes.as_ref());
         }
     }
 }

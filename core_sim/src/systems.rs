@@ -14,10 +14,10 @@ use crate::snapshot_overlays_config::SnapshotOverlaysConfig;
 use crate::{
     components::{
         available_workers, fragments_from_contract, fragments_to_contract, BandTravel, ElementKind,
-        Expedition, ExpeditionPhase, FollowPolicy, KnowledgeFragment, LaborAllocation, LaborTarget,
-        LocalStore, LogisticsLink, MoraleCause, MoraleContributions, MountainMetadata,
-        PendingMigration, PopulationCohort, PowerNode, ResidentBand, StartingUnit, Tile, TradeLink,
-        FOOD,
+        Expedition, ExpeditionMission, ExpeditionPhase, FollowPolicy, KnowledgeFragment,
+        LaborAllocation, LaborTarget, LocalStore, LogisticsLink, MoraleCause, MoraleContributions,
+        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
+        StartingUnit, Tile, TradeLink, FOOD,
     },
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
@@ -26,8 +26,8 @@ use crate::{
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
     demographics_config::{DemographicsConfig, DemographicsConfigHandle, DemographicsConsumption},
-    fauna::{net_biomass_delta, EcologyPhase, HerdDensityMap, HerdRegistry},
-    fauna_config::FaunaConfigHandle,
+    fauna::{net_biomass_delta, EcologyPhase, Herd, HerdDensityMap, HerdRegistry},
+    fauna_config::{FaunaConfig, FaunaConfigHandle},
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     generations::GenerationRegistry,
     heightfield::{build_elevation_field, ElevationField},
@@ -3523,12 +3523,15 @@ pub fn advance_expeditions(
     mut commands: Commands,
     expedition_config: Res<crate::expedition_config::ExpeditionConfigHandle>,
     visibility_config: Res<crate::visibility_config::VisibilityConfigHandle>,
+    fauna_config: Res<FaunaConfigHandle>,
+    labor_config: Res<LaborConfigHandle>,
     sim_config: Res<SimulationConfig>,
     tile_registry: Res<TileRegistry>,
     tick: Res<SimulationTick>,
     elevation: Option<Res<ElevationField>>,
     mut ledger: ResMut<crate::visibility::VisibilityLedger>,
     mut event_log: ResMut<CommandEventLog>,
+    mut herds: ResMut<HerdRegistry>,
     tiles: Query<&Tile>,
     mut expeditions: Query<(
         Entity,
@@ -3549,11 +3552,14 @@ pub fn advance_expeditions(
         return;
     };
     let cfg = expedition_config.get();
+    let fauna = fauna_config.get();
+    let labor = labor_config.get();
     let vis_cfg = visibility_config.0.as_ref();
     let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
     let grid_width = tile_registry.width;
     let current_turn = tick.0;
     let comm_range = cfg.effective_comm_range();
+    let per_worker_biomass = labor.hunt.per_worker_biomass_capacity;
 
     // Shared LOS inputs (built once per turn for the few expeditions).
     let terrain_tags = crate::visibility_systems::build_terrain_tags_grid(
@@ -3570,61 +3576,118 @@ pub fn advance_expeditions(
             continue;
         };
         let faction = cohort.faction;
-        // Home band's LIVE tile (bands are nomadic): drives both the comm check and the return
-        // target. An orphaned expedition (home band gone) simply can't report or fold back.
+        let workers = available_workers(cohort.working);
+        // Home band's LIVE tile (bands are nomadic): drives the comm check, the return target, and
+        // the hunt drop-off. An orphaned expedition (home band gone) simply can't report/deliver.
         let home_pos = bands
             .get(expedition.home_band)
             .ok()
             .and_then(|band| tiles.get(band.current_tile).ok())
             .map(|tile| tile.position);
-
-        // a. Observe into the private buffer — no faction-map mutation here. The buffer grows
-        // ~100+ tiles/turn while out of comm range, so dedup against an O(1) `HashSet` scratch
-        // (built once from the current buffer) instead of an O(n) `Vec::contains` per tile. The
-        // `Vec` is kept as the authoritative ordered buffer (snapshot `pendingRevealX/Y` needs it);
-        // the set is per-turn scratch only.
-        let mut seen: HashSet<UVec2> = expedition.pending_reveal.iter().copied().collect();
-        for pos in crate::visibility_systems::visible_tiles_in_range(
-            exp_pos,
-            cfg.observe_sight_range,
-            &elevation,
-            vis_cfg.line_of_sight.enabled,
-            &terrain_tags,
-            &vis_cfg.terrain_modifiers,
-            blocking_tags,
-            wrap_horizontal,
-        ) {
-            if seen.insert(pos) {
-                expedition.pending_reveal.push(pos);
-            }
-        }
-
-        // b. Comm check + flush: in range of home → report the buffer as Discovered, then clear.
-        let in_comm_range = home_pos
+        // "Near enough to run home" — the shared proximity for the scout fold-back, hunt delivery,
+        // and comm-range flush.
+        let near_home = home_pos
             .map(|home| {
                 crate::grid_utils::hex_distance_wrapped(exp_pos, home, grid_width, wrap_horizontal)
                     <= comm_range
             })
             .unwrap_or(false);
-        if in_comm_range {
-            let map = ledger.ensure_faction(faction, elevation.width, elevation.height);
-            for pos in expedition.pending_reveal.drain(..) {
-                map.discover(pos.x, pos.y, current_turn);
+        let mission = expedition.mission.clone();
+
+        // A hunt party whose herd is lost/extinct flips to Returning (folds back via the shared
+        // arm below), with a feed line — knowledge/food it carries still comes home.
+        if let ExpeditionMission::Hunt { fauna_id, .. } = &mission {
+            if herds.find(fauna_id).is_none()
+                && !matches!(expedition.phase, ExpeditionPhase::Returning)
+            {
+                expedition.phase = ExpeditionPhase::Returning;
+                event_log.push(CommandEventEntry::new(
+                    current_turn,
+                    CommandEventKind::Hunt,
+                    faction,
+                    format!("Hunting expedition lost the {} — returning home", fauna_id),
+                    Some(format!(
+                        "status=returning reason=herd_gone expedition={}",
+                        entity.to_bits()
+                    )),
+                ));
             }
         }
 
-        // c. Provisions depletion (non-fatal at zero in v1).
-        let upkeep = scalar_from_f32(
-            available_workers(cohort.working) as f32 * cfg.provision_upkeep_per_worker,
-        );
-        if upkeep > scalar_zero() {
-            cohort.stores.take(FOOD, upkeep);
+        // ---- Scout mission: observe + comm flush + upkeep + opportunistic replenish ----
+        if matches!(mission, ExpeditionMission::Scout) {
+            // a. Observe into the private buffer — no faction-map mutation here. Dedup against an
+            // O(1) `HashSet` scratch (built once) instead of an O(n) `Vec::contains` per tile.
+            let mut seen: HashSet<UVec2> = expedition.pending_reveal.iter().copied().collect();
+            for pos in crate::visibility_systems::visible_tiles_in_range(
+                exp_pos,
+                cfg.observe_sight_range,
+                &elevation,
+                vis_cfg.line_of_sight.enabled,
+                &terrain_tags,
+                &vis_cfg.terrain_modifiers,
+                blocking_tags,
+                wrap_horizontal,
+            ) {
+                if seen.insert(pos) {
+                    expedition.pending_reveal.push(pos);
+                }
+            }
+
+            // b. Comm check + flush: in range of home → report the buffer as Discovered, then clear.
+            if near_home {
+                let map = ledger.ensure_faction(faction, elevation.width, elevation.height);
+                for pos in expedition.pending_reveal.drain(..) {
+                    map.discover(pos.x, pos.y, current_turn);
+                }
+            }
+
+            // c. Provisions depletion (scouts only — hunt parties live off their kills). Non-fatal.
+            let upkeep = scalar_from_f32(workers as f32 * cfg.provision_upkeep_per_worker);
+            if upkeep > scalar_zero() {
+                cohort.stores.take(FOOD, upkeep);
+            }
+
+            // Opportunistic replenish: when provisions fall below `party × upkeep × low_turns` and a
+            // huntable herd is within reach, top up off it via the shared `hunt_take` primitive
+            // (capped at the low-water buffer so it doesn't overfill). Same code path as the hunt.
+            let low_buffer = scalar_from_f32(
+                workers as f32 * cfg.provision_upkeep_per_worker * cfg.replenish.low_turns as f32,
+            );
+            if cohort.stores.get(FOOD) < low_buffer {
+                let nearest = herds.herds.iter().position(|herd| {
+                    crate::grid_utils::hex_distance_wrapped(
+                        exp_pos,
+                        herd.position(),
+                        grid_width,
+                        wrap_horizontal,
+                    ) <= cfg.replenish.reach_tiles
+                });
+                if let Some(idx) = nearest {
+                    // A scout only nibbles the sustainable surplus off passing game (Sustain
+                    // ceiling), not the productive hunt the hunt verb runs.
+                    let provisions = hunt_take(
+                        &mut herds.herds[idx],
+                        workers,
+                        FollowPolicy::Sustain,
+                        per_worker_biomass,
+                        &fauna,
+                        1.0,
+                    );
+                    let room = low_buffer - cohort.stores.get(FOOD);
+                    let added = provisions.min(room.max(scalar_zero()));
+                    if added > scalar_zero() {
+                        cohort.stores.add(FOOD, added);
+                    }
+                }
+            }
         }
 
-        // d. Phase transitions.
+        // ---- Phase machine ----
         match expedition.phase {
             ExpeditionPhase::Outbound => {
-                // Arrived when `advance_band_movement` (earlier this turn) removed the travel order.
+                // Scout arrived when `advance_band_movement` (earlier this turn) removed the travel
+                // order → awaiting orders (the decision point) + a one-shot feed line.
                 if travel.is_none() {
                     expedition.phase = ExpeditionPhase::AwaitingOrders;
                     if !expedition.announced {
@@ -3642,10 +3705,13 @@ pub fn advance_expeditions(
                     }
                 }
             }
+            ExpeditionPhase::AwaitingOrders => {
+                // Wait — a `move_band` order flips the party back to Outbound (server-side hook).
+            }
             ExpeditionPhase::Returning => {
-                if in_comm_range {
-                    // Close enough to run home: fold workers + leftover provisions back in (after
-                    // the flush above, so the final findings reported), then despawn.
+                if near_home {
+                    // Close enough to run home: fold workers + carried food back in (after the scout
+                    // flush above, so the final findings reported), then despawn.
                     if let Ok(mut home) = bands.get_mut(expedition.home_band) {
                         home.working += cohort.working;
                         let leftover = cohort.stores.get(FOOD);
@@ -3670,11 +3736,213 @@ pub fn advance_expeditions(
                     commands.entity(entity).insert(BandTravel { target: home });
                 }
             }
-            ExpeditionPhase::AwaitingOrders => {
-                // Wait — a `move_band` order flips the party back to Outbound (server-side hook).
+            ExpeditionPhase::Hunting => {
+                // Chase the herd and, when in reach, take a **productive** hunt's worth of biomass
+                // (`workers × per_worker_biomass_capacity`, floored per policy) → provisions up to the
+                // carry cap. Then, per policy, decide whether the trip is complete.
+                if let ExpeditionMission::Hunt { fauna_id, policy } = &mission {
+                    if let Some(idx) = herds.herds.iter().position(|herd| herd.id == *fauna_id) {
+                        let policy = *policy;
+                        let herd_pos = herds.herds[idx].position();
+                        let carrying_capacity = herds.herds[idx].carrying_capacity;
+                        let cap = scalar_from_f32(workers as f32 * cfg.hunt.per_worker_carry);
+                        let in_reach = crate::grid_utils::hex_distance_wrapped(
+                            exp_pos,
+                            herd_pos,
+                            grid_width,
+                            wrap_horizontal,
+                        ) <= cfg.hunt.reach_tiles;
+                        if in_reach {
+                            // Productive take: workers × per-hunter capacity biomass, never below the
+                            // policy's biomass floor. Eradicate carries no food (denial) — it only
+                            // depletes the herd.
+                            let floor = hunt_expedition_floor(
+                                policy,
+                                carrying_capacity,
+                                cfg.hunt.sustain_floor_fraction,
+                                fauna.ecology.collapse_fraction,
+                            );
+                            let herd = &mut herds.herds[idx];
+                            let worker_cap = workers as f32 * per_worker_biomass;
+                            let take_biomass = worker_cap.min((herd.biomass - floor).max(0.0));
+                            herd.biomass -= take_biomass;
+                            if !matches!(policy, FollowPolicy::Eradicate) {
+                                let carried = cohort.stores.get(FOOD);
+                                let room = (cap - carried).max(scalar_zero());
+                                let provisions = scalar_from_f32(
+                                    take_biomass * fauna.hunt.provisions_per_biomass,
+                                );
+                                let added = provisions.min(room);
+                                if added > scalar_zero() {
+                                    cohort.stores.add(FOOD, added);
+                                }
+                            }
+                        }
+
+                        // Trip-completion + early-delivery decision.
+                        let carried = cohort.stores.get(FOOD);
+                        let full = carried >= cap;
+                        let herd_biomass = herds.herds[idx].biomass;
+                        let sustain_floor = cfg.hunt.sustain_floor_fraction * carrying_capacity;
+                        let min_deliver = scalar_from_f32(
+                            workers as f32
+                                * cfg.hunt.per_worker_carry
+                                * cfg.hunt.min_deliver_fraction,
+                        );
+                        let herd_near_band = home_pos
+                            .map(|home| {
+                                crate::grid_utils::hex_distance_wrapped(
+                                    herd_pos,
+                                    home,
+                                    grid_width,
+                                    wrap_horizontal,
+                                ) <= cfg.hunt.drop_off_within_tiles
+                            })
+                            .unwrap_or(false);
+                        // Worthwhile-load early delivery: fixes the empty-larder flip-flop bug.
+                        let near_band_gate = herd_near_band && carried >= min_deliver;
+
+                        // `done` = deliver then fold back + despawn (one trip); `relaunch` = deliver
+                        // then resume Hunting (Market's repeated trips).
+                        let (done, relaunch) = match policy {
+                            FollowPolicy::Sustain => (
+                                herd_biomass <= sustain_floor || full || near_band_gate,
+                                false,
+                            ),
+                            FollowPolicy::Surplus => (full || near_band_gate, false),
+                            FollowPolicy::Market => (false, full || near_band_gate),
+                            // Eradicate never delivers — it grinds to extinction (→ lost-herd guard).
+                            FollowPolicy::Eradicate => (false, false),
+                        };
+
+                        if done {
+                            // Deliver + fold back via the shared Returning arm (deposits carried food).
+                            expedition.phase = ExpeditionPhase::Returning;
+                            event_log.push(CommandEventEntry::new(
+                                current_turn,
+                                CommandEventKind::Hunt,
+                                faction,
+                                format!(
+                                    "Hunting expedition harvested {} provisions — returning home",
+                                    carried.to_i64_whole()
+                                ),
+                                Some(format!(
+                                    "status=harvest_complete policy={} expedition={}",
+                                    policy.as_str(),
+                                    entity.to_bits()
+                                )),
+                            ));
+                            if let Some(home) = home_pos {
+                                commands.entity(entity).insert(BandTravel { target: home });
+                            }
+                        } else if relaunch {
+                            expedition.phase = ExpeditionPhase::Delivering;
+                            if let Some(home) = home_pos {
+                                commands.entity(entity).insert(BandTravel { target: home });
+                            }
+                        } else {
+                            // Keep hunting: chase the herd's live tile.
+                            commands
+                                .entity(entity)
+                                .insert(BandTravel { target: herd_pos });
+                        }
+                    }
+                }
+            }
+            ExpeditionPhase::Delivering => {
+                // Market only: run carried food to the band's live tile; on arrival deposit it and
+                // auto-relaunch to Hunting (repeated trips). Sustain/Surplus deliver via Returning.
+                if let Some(home) = home_pos {
+                    commands.entity(entity).insert(BandTravel { target: home });
+                }
+                if near_home {
+                    let delivered = {
+                        let carried = cohort.stores.get(FOOD);
+                        cohort.stores.take(FOOD, carried)
+                    };
+                    if let Ok(mut home) = bands.get_mut(expedition.home_band) {
+                        if delivered > scalar_zero() {
+                            home.stores.add(FOOD, delivered);
+                        }
+                    }
+                    event_log.push(CommandEventEntry::new(
+                        current_turn,
+                        CommandEventKind::Hunt,
+                        faction,
+                        format!(
+                            "Hunting expedition dropped off {} provisions",
+                            delivered.to_i64_whole()
+                        ),
+                        Some(format!("status=delivered expedition={}", entity.to_bits())),
+                    ));
+                    // Auto-relaunch: back to Hunting (retargets the herd next turn).
+                    expedition.phase = ExpeditionPhase::Hunting;
+                }
             }
         }
     }
+}
+
+/// The shared **"take food from a nearby source"** primitive (`docs/plan_exploration_and_sites.md`
+/// §2b). Resolves the per-policy ecology ceiling, caps it by the hunting group's throughput
+/// (`workers × per_worker_biomass_capacity`), clamps to the herd's biomass, **subtracts it from the
+/// herd**, and converts the take to provisions (× the caller's productivity `output_multiplier`),
+/// returning the provisions taken. One code path for three callers: the band Hunt labor
+/// (`advance_labor_allocation`, which additionally credits trade goods + husbandry from the same
+/// take — it reads `herd.biomass` before/after for the raw biomass amount), the hunting expedition,
+/// and the scout's opportunistic replenish (`advance_expeditions`, `output_multiplier = 1.0`).
+/// The biomass floor a hunting expedition's productive take won't cross, per policy
+/// (`docs/plan_exploration_and_sites.md` §2b): **Sustain** stops at `sustain_floor_fraction ×
+/// carrying_capacity` (herd left robust); **Surplus/Market** stop at the ecology collapse/Allee
+/// threshold (`collapse_fraction × carrying_capacity` — draw toward but not below it, so overhunting
+/// can't directly trigger the irreversible crash); **Eradicate** has no floor (drives extinction).
+fn hunt_expedition_floor(
+    policy: FollowPolicy,
+    carrying_capacity: f32,
+    sustain_floor_fraction: f32,
+    collapse_fraction: f32,
+) -> f32 {
+    match policy {
+        FollowPolicy::Sustain => sustain_floor_fraction * carrying_capacity,
+        FollowPolicy::Surplus | FollowPolicy::Market => collapse_fraction * carrying_capacity,
+        FollowPolicy::Eradicate => 0.0,
+    }
+}
+
+pub(crate) fn hunt_take(
+    herd: &mut Herd,
+    workers: u32,
+    policy: FollowPolicy,
+    per_worker_biomass_capacity: f32,
+    fauna: &FaunaConfig,
+    output_multiplier: f32,
+) -> Scalar {
+    let ecology = &fauna.ecology;
+    let follow = &fauna.follow;
+    let market = &fauna.market;
+    let hunt = &fauna.hunt;
+    // Per-policy ecology ceiling: Sustain = one turn's net regrowth (a collapsing group gives
+    // nothing), Surplus = that × multiplier, Market = a commercial share, Eradicate = max take.
+    let policy_ceiling = match policy {
+        FollowPolicy::Sustain => {
+            net_biomass_delta(herd.biomass, herd.carrying_capacity, ecology).max(0.0)
+        }
+        FollowPolicy::Surplus => {
+            net_biomass_delta(herd.biomass, herd.carrying_capacity, ecology).max(0.0)
+                * follow.surplus_multiplier
+        }
+        FollowPolicy::Market => market.take_fraction * herd.biomass,
+        FollowPolicy::Eradicate => hunt.take_from(herd.biomass),
+    };
+    // The hunting group's throughput caps the take; below the Sustain ceiling the herd nets growth.
+    let worker_cap = workers as f32 * per_worker_biomass_capacity;
+    let take = worker_cap
+        .min(policy_ceiling)
+        .max(0.0)
+        .clamp(0.0, herd.biomass);
+    herd.biomass -= take;
+    // FOOD income is fully fractional (a few hunters may yield < 1/turn).
+    scalar_from_f32(take * hunt.provisions_per_biomass * output_multiplier)
 }
 
 /// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired
@@ -3714,8 +3982,6 @@ pub fn advance_labor_allocation(
     let labor = labor_config.get();
     let wellbeing = wellbeing_config.get();
     let hunt = &fauna.hunt;
-    let follow = &fauna.follow;
-    let ecology = &fauna.ecology;
     let husbandry = &fauna.husbandry;
     let market = &fauna.market;
     let work_range = labor.band_work_range;
@@ -3813,29 +4079,19 @@ pub fn advance_labor_allocation(
                     else {
                         continue;
                     };
-                    // Per-policy ecology ceiling (reused wholesale from the retired follow): Sustain
-                    // = one turn's net regrowth (a collapsing group gives nothing), etc.
-                    let policy_ceiling = match policy {
-                        FollowPolicy::Sustain => {
-                            net_biomass_delta(herd.biomass, herd.carrying_capacity, ecology)
-                                .max(0.0)
-                        }
-                        FollowPolicy::Surplus => {
-                            net_biomass_delta(herd.biomass, herd.carrying_capacity, ecology)
-                                .max(0.0)
-                                * follow.surplus_multiplier
-                        }
-                        FollowPolicy::Market => market.take_fraction * herd.biomass,
-                        FollowPolicy::Eradicate => hunt.take_from(herd.biomass),
-                    };
-                    // The hunting group's throughput caps the take; if it is below the Sustain
-                    // ceiling the herd nets positive growth (correct under-hunting behavior).
-                    let worker_cap = workers as f32 * labor.hunt.per_worker_biomass_capacity;
-                    let take = worker_cap
-                        .min(policy_ceiling)
-                        .max(0.0)
-                        .clamp(0.0, herd.biomass);
-                    herd.biomass -= take;
+                    // Take food via the shared primitive (per-policy ceiling + worker-cap +
+                    // biomass→provisions, × the band's productivity multiplier). Read biomass
+                    // before/after for the raw take that trade goods + husbandry are scaled from.
+                    let biomass_before = herd.biomass;
+                    let provisions = hunt_take(
+                        herd,
+                        workers,
+                        *policy,
+                        labor.hunt.per_worker_biomass_capacity,
+                        &fauna,
+                        mult_f,
+                    );
+                    let take = biomass_before - herd.biomass;
                     // Phase E husbandry: a Sustain hunt on a Thriving group tames it over time.
                     if matches!(policy, FollowPolicy::Sustain)
                         && herd.ecology_phase == EcologyPhase::Thriving
@@ -3848,7 +4104,6 @@ pub fn advance_labor_allocation(
                         1.0
                     };
                     // FOOD income is fully fractional; trade goods stay integer → FactionInventory.
-                    let provisions = scalar_from_f32(take * hunt.provisions_per_biomass * mult_f);
                     let trade_goods =
                         (take * hunt.trade_goods_per_biomass * trade_multiplier * mult_f).round()
                             as i64;

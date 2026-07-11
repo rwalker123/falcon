@@ -119,6 +119,45 @@ func _ready() -> void:
 	await _save("expedition_outfit_cap")
 	_hud._send_expedition_count = 1   # reset so later states render a fresh party stepper
 
+	# State 1h — a hunting expedition (PR 2, §2b) selected in its Hunting phase: the panel shows the
+	# hunt readout (Mission "Hunting expedition", Target herd, Policy, Carried 8 / 16, Party) +
+	# Recall/Move.
+	_hud.show_unit_selection(_hunt_expedition_fixture())
+	await _settle()
+	await _save("expedition_hunt_panel")
+
+	# State 1i — a FULL hunt party (carried at the carry ceiling): the Carried row reads "16 / 16 …
+	# · FULL" and the Phase is Delivering (it heads home when full).
+	var full_hunt := _hunt_expedition_fixture()
+	full_hunt["expedition_phase"] = "delivering"
+	full_hunt["stores"] = {"provisions": 16.0}
+	full_hunt["days_of_food"] = 8.0
+	_hud.show_unit_selection(full_hunt)
+	await _settle()
+	await _save("expedition_hunt_full")
+
+	# State 1j — a recalled hunt party in its Returning phase: the Phase reads "Returning" and the
+	# panel's Recall button flips to a disabled "Returning" (same treatment as the scout panel).
+	var returning_hunt := _hunt_expedition_fixture()
+	returning_hunt["expedition_phase"] = "returning"
+	returning_hunt["stores"] = {"provisions": 12.0}
+	returning_hunt["days_of_food"] = 6.0
+	_hud.show_unit_selection(returning_hunt)
+	await _settle()
+	await _save("expedition_hunt_returning")
+
+	# State 1k — the hunt launch policy picker: an idle band (short allocation panel) showing the
+	# "Send expedition" outfit block — the party stepper, the scout + hunt send buttons, and the hunt
+	# POLICY radio (Market selected here) with its one-line behaviour hint.
+	var launch_band := _band_fixture()
+	launch_band["idle_workers"] = 12
+	launch_band["labor_assignments"] = []
+	_hud._send_hunt_policy = "market"
+	_hud.show_unit_selection(launch_band)
+	await _settle()
+	await _save("expedition_launch_policy")
+	_hud._send_hunt_policy = "sustain"
+
 	# State 1a — a well-fed but demoralized band: healthy food (∞) yet morale 0.22
 	# (< critical), so the drawer's Morale line reads a red 22%. Discontent drags
 	# Output to 56% (red) and the itemized morale breakdown + recovery guidance show.
@@ -320,6 +359,35 @@ func _expedition_fixture() -> Dictionary:
 			"x": 80, "y": 30,
 			"terrain_label": "Highland Tundra",
 			"tags_text": "Cold, Exposed",
+			"visibility_state": "active",
+			"food_module": "",
+			"food_module_label": "None",
+		},
+	}
+
+## A hunting expedition (PR 2, docs/plan_exploration_and_sites.md §2b): a detached party following a
+## migratory herd. mission "hunt" + a target herd + carried food (its own kills). The drawer renders
+## the hunt readout (target herd + carried food + phase) + Recall/Move.
+func _hunt_expedition_fixture() -> Dictionary:
+	return {
+		"id": "Hunters 1",
+		"size": 5,
+		"entity": 7101,
+		"faction": 0,
+		"pos": [64, 22],
+		"days_of_food": 4.0,
+		# Carried 8 of a 16 carry cap → "Carried 8 / 16".
+		"stores": {"provisions": 8.0},
+		"is_expedition": true,
+		"expedition_mission": "hunt",
+		"expedition_phase": "hunting",
+		"expedition_target_herd": "game_deer_07",
+		"expedition_hunt_policy": "surplus",
+		"expedition_carry_cap": 16.0,
+		"tile_info": {
+			"x": 64, "y": 22,
+			"terrain_label": "Prairie Steppe",
+			"tags_text": "Fertile",
 			"visibility_state": "active",
 			"food_module": "",
 			"food_module_label": "None",

@@ -128,6 +128,8 @@ func _ready() -> void:
             hud.connect("move_band_requested", Callable(self, "_on_hud_move_band"))
         if hud.has_signal("send_expedition_requested") and not hud.is_connected("send_expedition_requested", Callable(self, "_on_hud_send_expedition")):
             hud.connect("send_expedition_requested", Callable(self, "_on_hud_send_expedition"))
+        if hud.has_signal("send_hunt_expedition_requested") and not hud.is_connected("send_hunt_expedition_requested", Callable(self, "_on_hud_send_hunt_expedition")):
+            hud.connect("send_hunt_expedition_requested", Callable(self, "_on_hud_send_hunt_expedition"))
         if hud.has_signal("recall_expedition_requested") and not hud.is_connected("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition")):
             hud.connect("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition"))
         if hud.has_signal("next_turn_requested") and not hud.is_connected("next_turn_requested", Callable(self, "_on_hud_next_turn")):
@@ -386,6 +388,24 @@ func _on_hud_send_expedition(payload: Dictionary) -> void:
         return
     var line := "send_expedition %d %d %d %d %d" % [faction, band_bits, party_workers, x, y]
     _send_runtime_command(line, "Send scouting expedition (%d) to (%d, %d)." % [party_workers, x, y])
+
+## Hunting expedition (docs/plan_exploration_and_sites.md §2b): outfit a party off a resident band
+## and send it to follow a herd. The 4th arg is a herd id string, not tile coords.
+func _on_hud_send_hunt_expedition(payload: Dictionary) -> void:
+    var band_bits := int(payload.get("band", -1))
+    if band_bits < 0:
+        return
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var party_workers := int(payload.get("party_workers", 0))
+    var fauna_id := String(payload.get("fauna_id", "")).strip_edges()
+    if party_workers <= 0 or fauna_id == "":
+        return
+    # Optional trailing policy (sustain|surplus|market|eradicate); server defaults Sustain if omitted.
+    var policy := String(payload.get("policy", "")).strip_edges()
+    var line := "send_hunt_expedition %d %d %d %s" % [faction, band_bits, party_workers, fauna_id]
+    if policy != "":
+        line += " %s" % policy
+    _send_runtime_command(line, "Send hunting expedition (%d, %s) after %s." % [party_workers, policy if policy != "" else "sustain", fauna_id])
 
 ## Recall an in-flight expedition home (folds workers + provisions back on arrival).
 func _on_hud_recall_expedition(payload: Dictionary) -> void:

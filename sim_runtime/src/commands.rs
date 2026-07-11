@@ -175,6 +175,13 @@ pub enum CommandPayload {
         faction_id: u32,
         expedition_entity_bits: u64,
     },
+    SendHuntExpedition {
+        faction_id: u32,
+        band_entity_bits: Option<u64>,
+        party_workers: u32,
+        fauna_id: String,
+        policy: Option<String>,
+    },
     ExportMap {
         path: Option<String>,
     },
@@ -545,6 +552,19 @@ impl CommandEnvelope {
                 faction_id: *faction_id,
                 expedition_entity_bits: *expedition_entity_bits,
             }),
+            CommandPayload::SendHuntExpedition {
+                faction_id,
+                band_entity_bits,
+                party_workers,
+                fauna_id,
+                policy,
+            } => pb::command_envelope::Command::SendHuntExpedition(pb::SendHuntExpeditionCommand {
+                faction_id: *faction_id,
+                band_entity_bits: *band_entity_bits,
+                party_workers: *party_workers,
+                fauna_id: fauna_id.clone(),
+                policy: policy.clone(),
+            }),
             CommandPayload::ExportMap { path } => {
                 pb::command_envelope::Command::ExportMap(pb::ExportMapCommand {
                     path: path.clone(),
@@ -790,6 +810,15 @@ impl CommandEnvelope {
                 CommandPayload::RecallExpedition {
                     faction_id: cmd.faction_id,
                     expedition_entity_bits: cmd.expedition_entity_bits,
+                }
+            }
+            pb::command_envelope::Command::SendHuntExpedition(cmd) => {
+                CommandPayload::SendHuntExpedition {
+                    faction_id: cmd.faction_id,
+                    band_entity_bits: cmd.band_entity_bits,
+                    party_workers: cmd.party_workers,
+                    fauna_id: cmd.fauna_id,
+                    policy: cmd.policy,
                 }
             }
             pb::command_envelope::Command::ExportMap(cmd) => {

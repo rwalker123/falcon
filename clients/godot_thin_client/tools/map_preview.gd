@@ -182,6 +182,17 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_stage_glyphs")
 
+	# State M — hunting expeditions (PR 2, §2b): alongside the resident band (solid dot) and a scout
+	# party (hollow ⚑ flag), two hunt parties render as hollow 🏹 bow discs — one Hunting, one
+	# Delivering (with a green food pip, "carrying a haul home"). Verifies hunt vs scout markers +
+	# the Hunting-vs-Delivering distinction.
+	_map.set_fow_enabled(false)
+	_map.display_snapshot(_snapshot_hunt_expeditions())
+	_map.selected_unit_id = -1
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_hunt_expeditions")
+
 	get_tree().quit()
 
 func _settle() -> void:
@@ -385,6 +396,24 @@ func _snapshot_far_zoom() -> Dictionary:
 		"herds": [{"id": "game_deer_09", "label": "Red Deer (game_deer_09)", "x": cx + 1, "y": cy, "biomass": 600.0, "huntable": true}],
 		"food_modules": [{"x": cx - 1, "y": cy + 1, "module": "berry_patch", "kind": "forage"}],
 	}
+
+## A detached hunting party (PR 2, §2b): mission "hunt" → the bow-disc marker; "delivering" phase
+## adds the green food pip. Shares the expedition marker path with the scout party.
+func _hunt_expedition(entity: int, x: int, y: int, phase: String) -> Dictionary:
+	var party := _expedition(entity, x, y, phase)
+	party["expedition_mission"] = "hunt"
+	party["expedition_target_herd"] = "game_deer_07"
+	return party
+
+func _snapshot_hunt_expeditions() -> Dictionary:
+	var snap := _base_snapshot(_band([], 2, 2), [_deer_herd()])
+	# A scout party (flag) + three hunt parties (bow): Hunting (red gathering cue), Delivering and
+	# Returning (both hauling home → green food pip).
+	snap["populations"].append(_expedition(9201, 11, 3, "outbound"))
+	snap["populations"].append(_hunt_expedition(9202, 5, 9, "hunting"))
+	snap["populations"].append(_hunt_expedition(9203, 10, 8, "delivering"))
+	snap["populations"].append(_hunt_expedition(9204, 3, 4, "returning"))
+	return snap
 
 func _snapshot_sites_fogged() -> Dictionary:
 	var snap := _snapshot_sites()

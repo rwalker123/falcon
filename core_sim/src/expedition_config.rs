@@ -45,8 +45,46 @@ pub struct ExpeditionConfig {
     /// this`.
     pub provision_draw_per_worker_per_tile: f32,
     /// Provisions the party consumes per turn = `party × this`. Non-fatal at zero in v1
-    /// (deterministic success).
+    /// (deterministic success). Scouts only — a hunting party lives off its own kills.
     pub provision_upkeep_per_worker: f32,
+    /// Hunting-expedition (PR 2) tuning — how a party follows a herd, harvests, and delivers.
+    pub hunt: HuntExpeditionConfig,
+    /// Scout opportunistic-replenish (PR 2) tuning — when/where a scout tops up off passing game.
+    pub replenish: ReplenishConfig,
+}
+
+/// Hunting-expedition levers (`docs/plan_exploration_and_sites.md` §2b). A hunt party follows a
+/// migratory herd, takes a **productive** hunt's worth of biomass each turn (`workers ×
+/// per_worker_biomass_capacity`, floored per policy — see `advance_expeditions`), accumulates food up
+/// to a carry cap, and delivers it. The take **policy** is chosen per-expedition at launch (on the
+/// mission), not here.
+#[derive(Debug, Clone, Deserialize)]
+pub struct HuntExpeditionConfig {
+    /// Carry cap = `party_workers × this` (provisions). Tuned so a party fills a cap in ~4–6 active
+    /// turns at the productive take rate (`party × per_worker_biomass_capacity × provisions_per_biomass`).
+    pub per_worker_carry: f32,
+    /// How close (hex distance) the party must be to the herd to take food this turn.
+    pub reach_tiles: u32,
+    /// When the herd's circuit brings it within this hex distance of the home band, the party may
+    /// flip to deliver early — but only with a worthwhile load (see `min_deliver_fraction`).
+    pub drop_off_within_tiles: u32,
+    /// **Sustain** floor: the party takes the herd down only to `this × carrying_capacity`, leaving
+    /// it robust (default ~0.7). Surplus/Market instead floor at the ecology collapse threshold;
+    /// Eradicate has no floor (extinction).
+    pub sustain_floor_fraction: f32,
+    /// Early-delivery gate: with the herd near the band (`drop_off_within_tiles`), only flip to
+    /// deliver once `carried ≥ this × cap` (default 0.5) — fixes the empty-larder flip-flop.
+    pub min_deliver_fraction: f32,
+}
+
+/// Scout opportunistic-replenish levers: the scout's own use of the shared `hunt_take` primitive.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReplenishConfig {
+    /// Top up when remaining provisions are below `party_workers × provision_upkeep_per_worker ×
+    /// this` (i.e. fewer than this many turns of upkeep remain).
+    pub low_turns: u32,
+    /// The scout must be within this hex distance of a huntable herd to top up.
+    pub reach_tiles: u32,
 }
 
 impl ExpeditionConfig {
@@ -185,6 +223,14 @@ mod tests {
         assert_eq!(config.observe_sight_range, 6);
         assert!(config.provision_draw_per_worker_per_tile > 0.0);
         assert!(config.provision_upkeep_per_worker > 0.0);
+        assert!(config.hunt.per_worker_carry > 0.0);
+        assert!(config.hunt.reach_tiles >= 1);
+        // Sustain floor must be a sensible fraction; min-deliver gate in (0, 1].
+        assert!(
+            config.hunt.sustain_floor_fraction > 0.0 && config.hunt.sustain_floor_fraction < 1.0
+        );
+        assert!(config.hunt.min_deliver_fraction > 0.0 && config.hunt.min_deliver_fraction <= 1.0);
+        assert!(config.replenish.low_turns >= 1);
     }
 
     #[test]

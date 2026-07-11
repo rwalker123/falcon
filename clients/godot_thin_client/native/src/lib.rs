@@ -3683,6 +3683,25 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         cohort.expeditionMission().unwrap_or(""),
     );
     let _ = dict.insert("expedition_phase", cohort.expeditionPhase().unwrap_or(""));
+    // Hunt expedition (PR 2, docs/plan_exploration_and_sites.md §2b): the herd a hunt party
+    // follows (fauna_id string like "game_deer_57", mirrors LaborAssignment.faunaId); "" for a
+    // scout expedition / normal band. `expedition_mission` also takes "hunt", `expedition_phase`
+    // also takes "hunting"/"delivering" — same string fields already decoded above, new values.
+    let _ = dict.insert(
+        "expedition_target_herd",
+        cohort.expeditionTargetHerd().unwrap_or(""),
+    );
+    // Hunt-party take policy (sustain|surplus|market|eradicate; "" for scouts/bands) + the carry
+    // ceiling (party × per_worker_carry; 0 for scouts/bands). The hunt panel shows "Carried X / cap"
+    // + a FULL state, and the launched party's policy.
+    let _ = dict.insert(
+        "expedition_hunt_policy",
+        cohort.expeditionHuntPolicy().unwrap_or(""),
+    );
+    let _ = dict.insert(
+        "expedition_carry_cap",
+        f64::from(cohort.expeditionCarryCap()),
+    );
     // Hard cap on party size the server enforces (from the expedition config, default 8). The
     // outfit stepper clamps its max to min(idle_workers, this) so the player can't dial an
     // over-cap party.

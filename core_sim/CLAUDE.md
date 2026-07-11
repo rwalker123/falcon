@@ -46,7 +46,7 @@ cargo run -p core_sim --bin server
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
 | `src/data/sites_config.json` | Wondrous Sites catalog (`catalog`: per-`site_id` `category`/`display_name`/`glyph`/`placement_rule`/`discovery_reward.morale_bonus`) + `placement` rules (per-rule `max_sites`, `min_spacing`, and the union of rule inputs: `min_relief`, `max_habitability_pressure`, `min_food_weight`). Loader `sites_config.rs`, env override `SITES_CONFIG_PATH`. Not wired into the `reload_config` hot-reload path (mirrors `fauna_config.json`) |
-| `src/data/expedition_config.json` | Scouting-expedition tuning: `max_party_size`, `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this). Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`) |
+| `src/data/expedition_config.json` | Expedition tuning. Scout: `max_party_size`, `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt (PR 2) `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band → Delivering), `take_policy` (default `surplus`, never Eradicate). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`) |
 
 Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archetypes|crisis_modifiers|visibility [path]`
 
@@ -351,13 +351,14 @@ category, display_name, glyph }] }]` on both `WorldSnapshot` and `WorldDelta` (`
 
 ---
 
-## Scouting Expeditions
+## Scouting & Hunting Expeditions
 
-A **detached traveling party** a faction outfits and drives out to explore, then folds back. v1 =
+A **detached traveling party** a faction outfits and drives out — to **explore** (scout) or to
+**follow a migratory herd and deliver food** (hunt). One traveling-party system, two verbs. v1 =
 sim + snapshot producer (client marker/outfit/recall UI is a separate slice). Authoritative design:
-`docs/plan_exploration_and_sites.md` §2 + "Implementation model (expeditions)". Config
-`src/data/expedition_config.json`, loader `expedition_config.rs` (`EXPEDITION_CONFIG_PATH` override,
-not on the hot-reload path).
+`docs/plan_exploration_and_sites.md` §2 (scout) + §2b (hunt) + the Implementation-model subsection.
+Config `src/data/expedition_config.json`, loader `expedition_config.rs` (`EXPEDITION_CONFIG_PATH`
+override, not on the hot-reload path).
 
 **An expedition is another `StartingUnit` band.** It reuses `PopulationCohort` + `BandTravel` /
 `advance_band_movement` + `LaborAllocation` + `StartingUnit`, tagged with the `Expedition` component
@@ -394,22 +395,49 @@ on the flushed tiles for free; **(c) provisions** drain by `party × provision_u
 band + despawn (`ExpeditionReturned`, after the flush so the final findings report); `AwaitingOrders`
 waits.
 
+**Hunt verb (PR 2)** — `ExpeditionMission::Hunt { fauna_id }` on the same party. `advance_expeditions`
+branches on mission:
+- **Hunting**: retarget `BandTravel` to the herd's live tile each turn (from `HerdRegistry`); when
+  within `hunt.reach_tiles`, take food via the shared **`hunt_take`** primitive into the party larder,
+  clamped so `carried ≤ party × hunt.per_worker_carry`. Flip to **Delivering** when full **or** the
+  herd's circuit brings it within `hunt.drop_off_within_tiles` of the band.
+- **Delivering**: run to the band's live tile, deposit all carried food into the band larder, then
+  **auto-relaunch** to `Hunting`. A lost/extinct herd (`HerdRegistry::find` → none) flips to the
+  shared `Returning` fold-back with a feed line.
+- **Lives off its kills** — no launch provisions, no per-turn upkeep (upkeep is scout-only).
+- **The shared `hunt_take(herd, workers, policy, per_worker_biomass_capacity, fauna, output_mult)`
+  primitive** (`systems.rs`) is the band Hunt take math extracted verbatim (per-policy ecology
+  ceiling + `per_worker_biomass_capacity` cap + biomass→provisions), called by **all three**: the
+  band Hunt labor (`advance_labor_allocation`, unchanged — it reads `herd.biomass` before/after for
+  the raw take driving trade goods + husbandry), the hunt verb, and the **scout's opportunistic
+  replenish** (when a scout's provisions fall below `party × provision_upkeep_per_worker ×
+  replenish.low_turns` and a herd is within `replenish.reach_tiles`, it tops up off it). Take policy
+  is `hunt.take_policy` (default Surplus — never Eradicate). Domestication accrual is **not** wired to
+  the expedition take in v1 (a documented later interaction).
+
 **Commands** (full proto/runtime/text/server plumbing, mirroring `move_band`):
 - `send_expedition <faction> <band> <party_workers> <x> <y>` — validates land target + `1 ≤
   party_workers ≤ min(available_workers, max_party_size)`, draws `party × distance ×
   provision_draw_per_worker_per_tile` provisions from the band larder (partial OK), removes the
   workers from `band.working`, and spawns the detached `Expedition` cohort. Feed `ExpeditionSent`.
+- `send_hunt_expedition <faction> <band> <party_workers> <fauna_id>` — same resident-band gate +
+  party validation, validates `fauna_id` resolves to a live herd, draws **no** provisions, removes
+  the workers, spawns a `Hunt`-mission party in `Hunting` phase heading for the herd. Feed
+  `ExpeditionSent` (hunt flavor).
 - `recall_expedition <faction> <expedition_entity_bits>` — resolves the entity via
-  `resolve_expedition_entity` (checks the `Expedition` component + faction), sets `phase = Returning`.
-  Feed `ExpeditionRecalled`.
-- **Retargeting a waypoint is just `move_band` on the expedition entity** — `handle_move_band` has a
-  hook that re-arms a moved expedition to `Outbound` + `announced = false`.
+  `resolve_expedition_entity` (checks the `Expedition` component + faction), sets `phase = Returning`
+  (works for both verbs). Feed `ExpeditionRecalled`.
+- **Retargeting a scout waypoint is just `move_band` on the expedition entity** — `handle_move_band`
+  has a hook that re-arms a moved expedition to `Outbound` + `announced = false`.
 - New `CommandEventKind` variants: `ExpeditionSent`, `ExpeditionArrived`, `ExpeditionRecalled`,
-  `ExpeditionReturned` (in `as_str` + the server label map).
+  `ExpeditionReturned` (in `as_str` + the server label map); the hunt drop-off / lost-herd feed lines
+  reuse `Hunt`.
 
 **Snapshot.** `PopulationCohortState` gains client discriminators `isExpedition` / `expeditionMission`
-/ `expeditionPhase` and persistence-only `homeBandEntity` / `expeditionAnnounced` / `pendingRevealX`
-/ `pendingRevealY` (`snapshot.fbs`, `sim_schema`). Capture fills them from `Option<&Expedition>`;
+(`"scout"`|`"hunt"`) / `expeditionPhase` (`outbound`|`awaiting`|`returning`|`hunting`|`delivering`) /
+`expeditionTargetHerd` (hunt fauna_id — a **string**, since herd ids are non-numeric) and
+persistence-only `homeBandEntity` / `expeditionAnnounced` / `pendingRevealX` / `pendingRevealY`
+(`snapshot.fbs`, `sim_schema`). Capture fills them from `Option<&Expedition>`;
 `restore_world_from_snapshot` re-attaches `Expedition` for a rolled-back in-flight party (resolving
 `home_band` from `homeBandEntity` via the cohort entity-remap; missing home band → log + skip) and
 re-attaches `ResidentBand` to every non-expedition cohort so the `With<ResidentBand>` systems keep
