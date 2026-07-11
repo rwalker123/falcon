@@ -1,8 +1,10 @@
 # Plan: Wildlife & Hunting Overlay
 
-Status: **Design approved, not yet implemented.** This is the authoritative spec
-for unifying wild game into the fauna system and giving hunting/gathering their
-own verbs. Supersedes the static `game_trail` food-site flag.
+Status: **Largely implemented.** The fauna herd layer (game-as-herds), the hunt/follow/ecology/husbandry
+verbs, market hunting, and herd movement (graze-wander / loiter-then-migrate) have all shipped; remaining
+deferred items (`Camp`-entity/corrals, wiring the sedentarization hard prompt to `found_settlement`) are
+called out inline. This is the authoritative spec for unifying wild game into the fauna system and giving
+hunting/gathering their own verbs. Superseded the static `game_trail` food-site flag.
 
 ## Motivation
 
@@ -71,13 +73,15 @@ arc: `take > regrowth` over time → collapse → local extinction.
 
 ## Herd Movement — graze-wander + loiter-then-migrate
 
-> **Status: designed, not yet built** (own slice; cross-refs `docs/plan_exploration_and_sites.md`
-> §2b hunt expedition). Fixes a latent bug and makes hunting *migratory* game actually possible.
+> **Status: implemented** (PR #100 — graze-wander + loiter-then-migrate in `advance_herds`; cross-refs
+> `docs/plan_exploration_and_sites.md` §2b hunt expedition). Fixed a latent bug and made hunting
+> *migratory* game actually possible.
 
-**The bug being fixed.** Today `advance_herds` calls `Herd::advance()` **every turn unconditionally**,
-stepping `step_index` one waypoint along the route. But migratory routes (`build_route`) are a **sparse
-spiral of waypoints 4–12 tiles apart**, so a migratory herd effectively **teleports 4–12 tiles per turn**
-— which is why an equal-speed hunt party can never catch one, and why the map trail looks jumpy.
+**The bug this fixed.** Previously `advance_herds` called `Herd::advance()` **every turn
+unconditionally**, stepping `step_index` one waypoint along the route. But migratory routes
+(`build_route`) are a **sparse spiral of waypoints 4–12 tiles apart**, so a migratory herd effectively
+**teleported 4–12 tiles per turn** — which is why an equal-speed hunt party could never catch one, and
+why the map trail looked jumpy.
 
 **One primitive: graze-wander** (dwell a turn, then step ≤1 tile). Two behaviours built from it, split by
 `Herd.size_class`:

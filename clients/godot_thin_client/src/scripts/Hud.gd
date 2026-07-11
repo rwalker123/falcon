@@ -912,10 +912,19 @@ func _band_tile(band: Dictionary) -> Vector2i:
 
 ## Shortest signed column delta from→to honoring horizontal wrap (mirrors MapView._wrapped_col_delta),
 ## so a herd across the seam measures by its short wrapped distance, not the long way across the map.
+## Mirrors the sim's `grid_utils::shortest_delta_x` exactly (magnitude only here, no live
+## direction effect): keep the direct delta when within half the width, else shift by one width.
+## The exact-half tie (`abs(d) == width/2`) resolves POSITIVE like the sim, NOT `round()`'s
+## half-away-from-zero — kept consistent with MapView._wrapped_col_delta.
 func _wrapped_col_delta(from_col: int, to_col: int) -> int:
     var d := to_col - from_col
     if _grid_wrap_horizontal and _grid_width > 0:
-        d -= int(round(float(d) / float(_grid_width))) * _grid_width
+        # Integer half-width mirrors the sim's `w / 2` truncation.
+        var half_width := _grid_width / 2
+        if d > half_width:
+            d -= _grid_width
+        elif d < -half_width:
+            d += _grid_width
     return d
 
 ## odd-r offset (col,row) → axial (mirrors MapView._offset_to_axial).
