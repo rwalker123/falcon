@@ -4548,4 +4548,11 @@ func focus_on_tile(col: int, row: int) -> void:
 	# refresh the indicator instead of running the full rebuild-check path.
 	_minimap_2d.queue_indicator_redraw()
 
+## Centre the view on a tile AND select it (as if the hex were clicked), so a jump
+## from the turn-orb attention popover lands on a *selected* tile — the Tile card +
+## Occupants roster populate, not just a recentre. Select first, then centre.
+func focus_and_select_tile(col: int, row: int) -> void:
+	handle_hex_click(col, row, MOUSE_BUTTON_LEFT)
+	focus_on_tile(col, row)
+
 # --- End 2D Minimap System ---

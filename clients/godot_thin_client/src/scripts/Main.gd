@@ -151,9 +151,9 @@ func _ready() -> void:
         if hud != null and map_view.has_signal("targeting_cancel_requested") and hud.has_method("cancel_active_targeting"):
             if not map_view.is_connected("targeting_cancel_requested", Callable(hud, "cancel_active_targeting")):
                 map_view.connect("targeting_cancel_requested", Callable(hud, "cancel_active_targeting"))
-        if hud != null and hud.has_signal("alert_focus_requested") and map_view.has_method("focus_on_tile"):
-            if not hud.is_connected("alert_focus_requested", Callable(map_view, "focus_on_tile")):
-                hud.connect("alert_focus_requested", Callable(map_view, "focus_on_tile"))
+        if hud != null and hud.has_signal("alert_focus_requested") and map_view.has_method("focus_and_select_tile"):
+            if not hud.is_connected("alert_focus_requested", Callable(map_view, "focus_and_select_tile")):
+                hud.connect("alert_focus_requested", Callable(map_view, "focus_and_select_tile"))
         # Map-zoom rail (bottom-left nav cluster): the ＋/－/⊡ buttons and the live
         # zoom readout all ride the single MapView._apply_zoom path.
         if hud != null and hud.has_signal("map_zoom_step") and map_view.has_method("zoom_step"):
