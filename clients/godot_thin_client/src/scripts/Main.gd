@@ -19,7 +19,6 @@ var _warned_stream_fallback: bool = false
 var _warned_missing_map_view_method: bool = false
 var _camera_initialized: bool = false
 var script_host_manager: ScriptHostManager = null
-var ui_zoom: float = 1.0
 var localization_store: LocalizationStore = null
 var _campaign_label_signature: String = ""
 var _victory_analytics_signature: String = ""
@@ -31,15 +30,9 @@ const STREAM_HOST = "127.0.0.1"
 const STREAM_PORT = 41002
 const STREAM_CONNECTION_TIMEOUT = 5.0
 const CAMERA_PAN_SPEED = 220.0
-const CAMERA_ZOOM_STEP = 0.1
-const CAMERA_ZOOM_MIN = 0.5
-const CAMERA_ZOOM_MAX = 1.5
 const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
 const COMMAND_PROTO_PORT = 41001
-const UI_ZOOM_STEP = 0.1
-const UI_ZOOM_MIN = 0.5
-const UI_ZOOM_MAX = 2.0
 const PLAYER_FACTION_ID = 0
 const SNAPSHOT_DELTA_FIELDS := [
     "influencer_updates",
@@ -112,14 +105,7 @@ func _ready() -> void:
     else:
         initial = snapshot_loader.current()
     _apply_snapshot(initial)
-    _ensure_ui_zoom_actions()
-    ui_zoom = _resolve_ui_zoom()
-    _apply_ui_zoom()
     if hud != null:
-        if not hud.is_connected("ui_zoom_delta", Callable(self, "_on_hud_zoom_delta")):
-            hud.connect("ui_zoom_delta", Callable(self, "_on_hud_zoom_delta"))
-        if not hud.is_connected("ui_zoom_reset", Callable(self, "_on_hud_zoom_reset")):
-            hud.connect("ui_zoom_reset", Callable(self, "_on_hud_zoom_reset"))
         if hud.has_signal("cancel_order_requested") and not hud.is_connected("cancel_order_requested", Callable(self, "_on_hud_cancel_order")):
             hud.connect("cancel_order_requested", Callable(self, "_on_hud_cancel_order"))
         if hud.has_signal("assign_labor_requested") and not hud.is_connected("assign_labor_requested", Callable(self, "_on_hud_assign_labor")):
@@ -165,9 +151,22 @@ func _ready() -> void:
         if hud != null and map_view.has_signal("targeting_cancel_requested") and hud.has_method("cancel_active_targeting"):
             if not map_view.is_connected("targeting_cancel_requested", Callable(hud, "cancel_active_targeting")):
                 map_view.connect("targeting_cancel_requested", Callable(hud, "cancel_active_targeting"))
-        if hud != null and hud.has_signal("alert_focus_requested") and map_view.has_method("focus_on_tile"):
-            if not hud.is_connected("alert_focus_requested", Callable(map_view, "focus_on_tile")):
-                hud.connect("alert_focus_requested", Callable(map_view, "focus_on_tile"))
+        if hud != null and hud.has_signal("alert_focus_requested") and map_view.has_method("focus_and_select_tile"):
+            if not hud.is_connected("alert_focus_requested", Callable(map_view, "focus_and_select_tile")):
+                hud.connect("alert_focus_requested", Callable(map_view, "focus_and_select_tile"))
+        # Map-zoom rail (bottom-left nav cluster): the ＋/－/⊡ buttons and the live
+        # zoom readout all ride the single MapView._apply_zoom path.
+        if hud != null and hud.has_signal("map_zoom_step") and map_view.has_method("zoom_step"):
+            if not hud.is_connected("map_zoom_step", Callable(map_view, "zoom_step")):
+                hud.connect("map_zoom_step", Callable(map_view, "zoom_step"))
+        if hud != null and hud.has_signal("map_zoom_fit") and map_view.has_method("fit_to_view"):
+            if not hud.is_connected("map_zoom_fit", Callable(map_view, "fit_to_view")):
+                hud.connect("map_zoom_fit", Callable(map_view, "fit_to_view"))
+        if hud != null and map_view.has_signal("zoom_changed") and hud.has_method("set_zoom_readout"):
+            if not map_view.is_connected("zoom_changed", Callable(hud, "set_zoom_readout")):
+                map_view.connect("zoom_changed", Callable(hud, "set_zoom_readout"))
+            # Seed the readout once from the current factor (no zoom event has fired yet).
+            _hud_invoke("set_zoom_readout", [map_view.zoom_factor])
         # Optimistic pending-labor: HUD publishes the per-band pending map, MapView draws the
         # dashed-amber pending hexes for the selected band.
         if hud != null and hud.has_signal("labor_pending_changed") and map_view.has_method("set_labor_pending"):
@@ -237,7 +236,6 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         if victory_variant is Dictionary:
             _hud_invoke("update_victory_state", [victory_variant])
             _emit_victory_analytics(victory_variant)
-    _hud_invoke("set_ui_zoom", [ui_zoom])
     if inspector != null:
         if is_delta:
             if inspector.has_method("update_delta"):
@@ -444,17 +442,10 @@ func skip_to_previous_turn() -> void:
     _apply_snapshot(snapshot_loader.rewind())
 
 func _unhandled_input(event: InputEvent) -> void:
-    _ensure_ui_zoom_actions()
     if event.is_action_pressed("ui_right"):
         skip_to_next_turn()
     elif event.is_action_pressed("ui_left"):
         skip_to_previous_turn()
-    elif event.is_action_pressed("ui_zoom_in"):
-        _adjust_ui_zoom(UI_ZOOM_STEP)
-    elif event.is_action_pressed("ui_zoom_out"):
-        _adjust_ui_zoom(-UI_ZOOM_STEP)
-    elif event.is_action_pressed("ui_zoom_reset"):
-        set_ui_zoom(1.0)
 
 func _toggle_inspector_visibility() -> void:
     if inspector == null:
@@ -591,59 +582,6 @@ func _snapshot_is_delta(snapshot: Dictionary) -> bool:
         if snapshot.has(field):
             return true
     return false
-
-func _adjust_camera_zoom(delta_zoom: float) -> void:
-    var new_zoom: float = clamp(camera.zoom.x + delta_zoom, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
-    camera.zoom = Vector2(new_zoom, new_zoom)
-
-func _adjust_ui_zoom(delta: float) -> void:
-    set_ui_zoom(ui_zoom + delta)
-
-func set_ui_zoom(scale: float) -> void:
-    ui_zoom = clamp(scale, UI_ZOOM_MIN, UI_ZOOM_MAX)
-    _apply_ui_zoom()
-
-func _apply_ui_zoom() -> void:
-    var root := get_tree().root
-    if root != null:
-        root.content_scale_factor = ui_zoom
-    if hud != null and hud.has_method("set_ui_zoom"):
-        _hud_invoke("set_ui_zoom", [ui_zoom])
-
-func _on_hud_zoom_delta(step: float) -> void:
-    _adjust_ui_zoom(step * UI_ZOOM_STEP)
-
-func _on_hud_zoom_reset() -> void:
-    set_ui_zoom(1.0)
-
-func _resolve_ui_zoom() -> float:
-    var env_value: String = OS.get_environment("UI_ZOOM")
-    if env_value != "":
-        var parsed := env_value.to_float()
-        if parsed > 0.0:
-            return clamp(parsed, UI_ZOOM_MIN, UI_ZOOM_MAX)
-    return 1.0
-
-func _ensure_ui_zoom_actions() -> void:
-    var zoom_actions := {
-        "ui_zoom_in": KEY_EQUAL,
-        "ui_zoom_out": KEY_MINUS,
-        "ui_zoom_reset": KEY_0,
-    }
-    for action in zoom_actions.keys():
-        if not InputMap.has_action(action):
-            InputMap.add_action(action)
-        var keycode: int = zoom_actions[action]
-        var has_event := false
-        for existing_event in InputMap.action_get_events(action):
-            if existing_event is InputEventKey and existing_event.keycode == keycode:
-                has_event = true
-                break
-        if not has_event:
-            var key_event := InputEventKey.new()
-            key_event.keycode = keycode
-            key_event.physical_keycode = keycode
-            InputMap.action_add_event(action, key_event)
 
 func _hud_invoke(method: String, args: Array = []) -> Variant:
     var result: Variant = null

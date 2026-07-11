@@ -55,6 +55,24 @@ static func card_stylebox() -> StyleBoxFlat:
 static func empty_stylebox() -> StyleBoxEmpty:
 	return StyleBoxEmpty.new()
 
+# ---- nav cluster backing ---------------------------------------------------
+# The bottom-left minimap + zoom rail share one rounded semi-transparent black
+# panel (matches the nav prototype). Deliberately darker/plainer than a card so it
+# reads as map chrome, not a content surface — hence a bespoke box, not card_stylebox.
+const NAV_BACKING_OPACITY := 0.85
+const NAV_BACKING_CORNER_RADIUS := 10
+const NAV_BACKING_PADDING := 8
+
+static func nav_backing_stylebox() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.0, 0.0, 0.0, NAV_BACKING_OPACITY)
+	sb.set_corner_radius_all(NAV_BACKING_CORNER_RADIUS)
+	sb.content_margin_left = NAV_BACKING_PADDING
+	sb.content_margin_right = NAV_BACKING_PADDING
+	sb.content_margin_top = NAV_BACKING_PADDING
+	sb.content_margin_bottom = NAV_BACKING_PADDING
+	return sb
+
 ## Targeting banner chrome: a prominent cyan-bordered pill that floats at the top
 ## of the map while a command is choosing its target.
 static func banner_stylebox() -> StyleBoxFlat:

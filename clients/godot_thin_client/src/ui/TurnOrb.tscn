@@ -1,0 +1,10 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/ui/TurnOrb.gd" id="1"]
+
+[node name="TurnOrb" type="Control"]
+custom_minimum_size = Vector2(260, 128)
+size_flags_horizontal = 0
+size_flags_vertical = 1
+mouse_filter = 2
+script = ExtResource("1")

@@ -48,13 +48,15 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the hydrology rivers toggle. Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` via `set_map_view`. The nested Map-Overlays section keeps its own `OverlayPanel` script |
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
 | `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the **Export Map** button (the tile Scout button was retired with the single-task `scout` command). Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`, gated by `set_command_connected` |
-| `Hud.gd` | HUD layer, legend, the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + the `%ForageAssignControls` "assign foragers" stepper) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer; a player band shows the `%AllocationPanel` labor-allocation UI, a herd the `%HerdAssignControls` "assign hunters" stepper+policy picker), band **Alerts** panel, turn readout. Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) + the snapshot-captured `_player_band` (and `_player_bands`, the full player-faction list backing the assign controls' band-picker dropdown) live here; roster selection emits `roster_occupant_selected`; labor edits emit `assign_labor_requested` / `move_band_requested` / `cancel_order_requested` (clear-all) |
+| `Hud.gd` | HUD layer, legend, the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + the `%ForageAssignControls` "assign foragers" stepper) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer; a player band shows the `%AllocationPanel` labor-allocation UI, a herd the `%HerdAssignControls` "assign hunters" stepper+policy picker), turn readout (the standalone band Alerts panel was folded into the turn-orb attention model — see "Turn orb & attention model"). Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) + the snapshot-captured `_player_band` (and `_player_bands`, the full player-faction list backing the assign controls' band-picker dropdown) live here; roster selection emits `roster_occupant_selected`; labor edits emit `assign_labor_requested` / `move_band_requested` / `cancel_order_requested` (clear-all) |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale warn/critical thresholds + `color_for_morale`/`hex_for_morale`), shared by MapView's band dot and Hud's food/morale lines + alerts |
 | `ui/TileHabitability.gd` | Single source of truth for the Tile-card Habitability rating: buckets `TileState.habitability` (band-independent per-turn morale drain) into Hospitable/Fair/Harsh/Hostile via `tile_habitability_config.json` thresholds, with the HEALTHY/INK/WARN/DANGER color / `hex_for_rating` mapping. Consumed by `Hud._tile_terrain_lines` + `_format_detail_bbcode` |
 | `ui/TileClimate.gd` | Single source of truth for the Tile-card Climate band: maps `TileState.temperature` (°, a latitude+elevation climate, equator-in-the-middle) into Tropical/Warm/Temperate/Cool/Polar via `tile_climate_config.json` cutoffs. INFORMATIONAL only — deliberately no HEALTHY/WARN/DANGER tint (renders neutral ink), so it doesn't compete with the Habitability row's semantic palette. Consumed by `Hud._tile_terrain_lines` |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
 | `ui/MinimapPanel.gd` | Minimap component for the 2D map view (click-to-pan, aspect ratio sizing) |
+| `ui/TurnOrb.gd` / `ui/TurnOrb.tscn` | The bottom-right **turn orb** (replaces the old "Advance Turn" button): calm cyan pulse when the attention registry is empty, else a severity-tinted count badge + a reasons popover (see "Turn orb & attention model"). Re-emits `focus_requested` (jump) / `advance_requested` so Main's advance/jump wiring is unchanged; palette from `HudStyle`, all geometry/severity/kind as named constants |
+| `ui/MagnifierButton.gd` | Zoom-rail in/out button that `_draw`s a crisp magnifier icon (lens + handle + inner `+`/`−`, `zoom_sign` picks which) — font magnifier glyphs render as tofu/blobs. Monochrome `HudStyle` ink → `SIGNAL` on hover |
 | `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content |
 | `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, and `apply_button(btn, "primary"/"ghost"/"armed")`. Every HUD surface styles through here |
 | `ui/FoodIcons.gd` | Shared map-marker emoji glyphs — food modules (`for_site`) and fauna herds (`for_herd`, species keyword matched in the herd label, longest-first). Covers migratory species plus wild game (deer/boar/rabbit/fowl). Used by the Harvest/Hunt button (`Hud.gd`) and the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`) so a source always reads the same |
@@ -107,7 +109,24 @@ Server (FlatBuffers) -> SnapshotStream.gd -> parsed snapshot
 
 ## Minimap System
 
-The map view displays a minimap in the bottom-right corner showing the full map with a viewport indicator rectangle.
+The 2D minimap lives in the HUD **bottom-left** `NavCluster` (an HBox in `BottomBar`,
+`HudLayer.tscn`) — a `MinimapContainer` (the map thumbnail with its viewport indicator
+rectangle) with a docked **zoom rail** to its right. `MapView._setup_2d_minimap` finds the
+container via `Hud.get_minimap_container()`, so the container abstracts the move.
+
+### Zoom rail — the on-screen map-zoom control
+The rail (`ZoomRail` VBox) is `＋` (`MagnifierButton`, zoom in) / a live `1.0×` readout /
+`－` (`MagnifierButton`, zoom out) / `▣` fit ("Fit map to view (C)"). It rides the **one**
+map-zoom path: the buttons emit `Hud.map_zoom_step(±1)` / `map_zoom_fit` → `Main` →
+`MapView.zoom_step()` / `fit_to_view()` (thin wrappers over `_apply_zoom`, pivoting on the
+map center), and `MapView.zoom_changed(zoom_factor)` → `Hud.set_zoom_readout` renders the
+readout (so it also reflects the wheel and `Q`/`E`). The old top-right **interface-scale**
+widget (which drove `content_scale_factor` — it scaled the whole canvas uniformly, so map
+icons never crossed the icon-LOD threshold) was **removed**; map zoom is now solely
+`MapView._apply_zoom`. Interface scale returns later via an Options menu. See
+`docs/plan_hud_nav_turn_orb.md`.
+
+The map view displays this minimap showing the full map with a viewport indicator rectangle.
 
 ### Component (`ui/MinimapPanel.gd`)
 Reusable minimap UI component handling:
@@ -615,21 +634,35 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   = `26`/`20`/`12`/`3`) maps the temperature into Tropical/Warm/Temperate/Cool/Polar, making the
   latitude gradient legible ("far south → Polar"). The row is **informational** — neutral ink, no
   HEALTHY/WARN/DANGER tint, so it doesn't overload the Habitability row's warning semantics.
-- **Alerts panel** (`Hud.gd` `update_band_alerts`, dispatched from `Main.gd` on the snapshot
-  `populations`): a left-dock `PanelCard` (`AlertsPanel`/`%AlertsLabel`, priority 15) that rebuilds each
-  snapshot from the player faction's bands — **starving** (`days_of_food` < critical, red),
-  **losing population** (`size` dropped vs the previous snapshot, tracked in `_prev_band_sizes`, amber),
-  and **idle** (`activity == idle`, quiet dim). The losing-population alert names its cause via
-  `_decline_reason(days, morale, morale_cause, last_emigrated)`: `days < critical` → `— starving`
-  (first), then `last_emigrated > 0` → `— people leaving` (morale no longer kills — discontent
-  relocates people; see `docs/plan_civ_wellbeing.md`), else the dominant `morale_cause` maps to the
-  same plain-language labels as the drawer (`— harsh terrain` / `— harsh climate` / `— unrest`),
-  falling back to `— low morale` when the cause is `None` (e.g. a rehydrated save). Alerts are
-  (band, type) deduped by construction and clear
-  when resolved; each row is a `[url=x,y]` link whose `meta_clicked` emits `alert_focus_requested(x,y)` →
-  `MapView.focus_on_tile` (shared minimap centering machinery). Hidden via the dock until an alert exists.
-  NOTE: cohorts carry no top-level band label in the snapshot — names fall back to a positional
-  "Band N"; a server-side band-label field would make names authoritative.
+- **Band alerts → the turn orb** (`Hud.gd` `update_band_alerts`, dispatched from `Main.gd` on the
+  snapshot `populations`): the standalone left-dock **Alerts panel was removed** and its alerts folded
+  into the turn-orb attention model (see next bullet) — the single player-faction loop now builds the
+  orb's `attention` array instead of a separate alerts array. NOTE: cohorts carry no top-level band label
+  in the snapshot — names fall back to a positional "Band N"; a server-side band-label field would make
+  names authoritative.
+- **Turn orb & attention model** (`ui/TurnOrb.gd` + `ui/TurnOrb.tscn`, last `BottomBar` child;
+  `docs/plan_hud_nav_turn_orb.md`): the bottom-right orb replaces the "Advance Turn" button and
+  is a **generic attention hub**. Readiness = the attention registry is **empty** → a calm cyan
+  `SIGNAL` pulse ("nothing needs you"); any entries → the pulse stops and a **count badge** tinted
+  by the highest severity shows, and clicking the orb face toggles a **reasons popover** (built at
+  runtime, `HudStyle.card_stylebox()`) — one row per entry (severity stripe + kind icon + label +
+  detail + right-aligned `Jump →`), highest-severity first, plus an `Advance ▸` footer. The orb
+  knows nothing about producers; it renders a list of generic **Attention** dicts:
+  `{kind, severity ("info"|"warn"|"critical" → SIGNAL/WARN/DANGER), label, detail, x, y}` where
+  `x < 0` = non-locating (renders `Open ▸`, a no-op stub for now). Kind→icon (in `TurnOrb.gd`):
+  `starving`→🍖, `losing_population`→📉, `idle_workers`→🛠, unknown→●. Wiring stays stable via Hud
+  relays: a row's jump → `focus_requested` → `alert_focus_requested` → `MapView.focus_on_tile`
+  (the same centering the retired Alerts panel used); the footer → `advance_requested` →
+  `next_turn_requested(1)`; `update_overlay` pushes the turn number via `set_turn`. The **three live
+  producers** (all in `Hud.update_band_alerts`, one loop over the player faction, each pushed with the
+  band tile `current_x`/`current_y` so Jump locates it) — the folded-in Alerts panel:
+  - **`starving`** (critical) — `BandFoodStatus.is_critical(days)`; label `"<band> starving"`, detail = `_food_days_text(days)`.
+  - **`losing_population`** (warn) — shrank vs the previous snapshot (`_prev_band_sizes`); label `"<band> losing population"`, detail = `_decline_reason(days, morale, morale_cause, last_emigrated)` (`— starving` / `— people leaving` / `— harsh terrain|climate|unrest` / `— low morale`).
+  - **`idle_workers`** (warn) — `idle_workers > 0`; label `"N idle workers"`, detail = band name. Supersedes the old `activity == idle` alert (a worker count is more actionable).
+
+  The orb severity-sorts (critical floats up), so a starving band tops the popover. Future producers
+  (`war` / `decision` / `expedition_awaiting`) are stubs the model already fits — one producer each,
+  **no orb changes**.
 - **Targeting: move-band + send-expedition + send-hunt-expedition** (`Hud.gd`): the single-task
   forage/scout/hunt/follow `_pending_*` flows were retired with labor allocation. Three targeting
   flows remain, all built on the same `_pending_*` → `_current_targeting_info()` →
