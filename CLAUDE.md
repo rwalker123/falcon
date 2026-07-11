@@ -62,6 +62,30 @@ Stay consistent with this flow to keep design intent and engineering execution a
 
 ---
 
+## Working from a Git Worktree
+
+Multiple checkouts of this repo (git worktrees) can be developed in parallel, but
+they must stay independent. Worktrees created by the Claude Code harness live under
+`.claude/worktrees/<name>/` — *inside* the main checkout — which makes two mistakes
+easy:
+
+- **Run every tool from the worktree root you intend to change.** A session's Bash
+  calls and its `server-dev`/`client-dev` subagents all operate in that session's
+  *primary working directory*. If a session meant for a worktree is rooted at the
+  main checkout, `cargo fmt`/`clippy`/`build`/`test` and every edit silently hit
+  **main** instead — this is the "commands are global / only affect main" symptom.
+  Confirm with `git rev-parse --show-toplevel` before builds, edits, or commits.
+- **Ports are isolated per checkout.** Launch the stack with `scripts/run_stack.sh`,
+  which auto-assigns each checkout its own block of four TCP ports via
+  `SIM_PORT_BASE` (see `core_sim/CLAUDE.md` → Environment Overrides). Never run two
+  servers on the default 41000–41003 block at once.
+- **Builds are already isolated** — each worktree has its own `target/`, so cargo
+  artifacts don't collide (at the cost of disk).
+- `.claude/worktrees/` is gitignored so searches, `git status`, and `git add` from
+  the main checkout don't descend into nested worktrees.
+
+---
+
 ## Delegating Implementation to Coder Agents
 
 Long sessions fill the orchestrator's context fast because writing code churns
