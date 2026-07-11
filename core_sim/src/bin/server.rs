@@ -21,9 +21,9 @@ use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
-    available_workers, resolve_active_profile, ActiveStartProfile, BandTravel, CampaignLabel,
-    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, LaborAllocation,
-    LaborTarget, LocalStore, ResidentBand, StartProfileOverrides,
+    apply_port_base_override, available_workers, resolve_active_profile, ActiveStartProfile,
+    BandTravel, CampaignLabel, Expedition, ExpeditionConfigHandle, ExpeditionMission,
+    ExpeditionPhase, LaborAllocation, LaborTarget, LocalStore, ResidentBand, StartProfileOverrides,
 };
 use core_sim::{
     build_headless_app, recapture_snapshot_in_place, restore_world_from_snapshot, run_turn,
@@ -2196,7 +2196,7 @@ fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<St
                 .cloned()
         });
 
-    let (new_config, applied_path) = match requested_path {
+    let (mut new_config, applied_path) = match requested_path {
         Some(path) => match SimulationConfig::from_file(&path) {
             Ok(cfg) => (cfg, Some(path)),
             Err(err) => {
@@ -2210,6 +2210,11 @@ fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<St
         },
         None => (SimulationConfig::builtin(), None),
     };
+
+    // Reapply the SIM_PORT_BASE shift the same way startup does, so a reload of
+    // an unchanged file keeps the shifted binds and doesn't spuriously trip the
+    // socket_changed=restart_required warning below.
+    apply_port_base_override(&mut new_config);
 
     {
         let mut metadata = app.world.resource_mut::<SimulationConfigMetadata>();

@@ -109,8 +109,10 @@ elif [[ -n "${SIM_PORT_BASE:-}" ]]; then
   port_base_explicit=true
 else
   # Deterministic per-checkout derivation: identical for repeated runs from the
-  # same path (so --client-only reconnects to the same block the server used),
-  # but distinct across worktrees.
+  # same path (so a plain --client-only run reconnects to the block the server
+  # used), but distinct across worktrees. Caveat: if the server had to bump off a
+  # port collision below, this un-bumped base no longer matches — pass an explicit
+  # --port-base / SIM_PORT_BASE to a later --client-only run so both agree.
   path_hash="$(printf '%s' "$ROOT_DIR" | cksum | cut -d' ' -f1)"
   PORT_BASE="$((DEFAULT_PORT_BASE + (path_hash % PORT_SLOT_COUNT) * PORT_BLOCK_STRIDE))"
 fi
