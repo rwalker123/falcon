@@ -265,6 +265,47 @@ func _ready() -> void:
 	await _settle()
 	await _save("quick_hunt_note")
 
+	# State 6 — turn orb, ALL-CLEAR: a player band with zero idle workers → empty
+	# attention registry → the orb calm-pulses (dashed cyan arc), the caption reads
+	# "Turn 42 · ▸ all clear", and no badge shows.
+	_hud.clear_selection()
+	_hud.update_overlay(42, {})
+	_hud.update_band_alerts([
+		{"faction": 0, "entity": 501, "size": 40, "days_of_food": 999.0, "activity": "forage",
+			"current_x": 30, "current_y": 20, "idle_workers": 0},
+	])
+	await _settle()
+	await _save("turn_orb_clear")
+
+	# State 7 — turn orb, ALL THREE ATTENTION KINDS (the folded-in Alerts panel): a first
+	# snapshot seeds prior band sizes so "losing population" has a baseline, then the live
+	# snapshot fires one of each producer — Band 1 starving (days 3 < critical → critical/red),
+	# Band 2 shrank 90→78 with emigrants (losing population → warn/amber), Band 3 has idle
+	# workers (warn/amber). The badge reads "3", the pulse stops, and the popover (opened here)
+	# lists all three with the starving/critical row sorted to the TOP, each with a Jump row.
+	_hud.update_band_alerts([
+		{"faction": 0, "entity": 601, "size": 120, "days_of_food": 12.0, "activity": "forage",
+			"current_x": 21, "current_y": 15},
+		{"faction": 0, "entity": 602, "size": 90, "days_of_food": 999.0, "activity": "hunt",
+			"current_x": 31, "current_y": 21},
+		{"faction": 0, "entity": 603, "size": 60, "days_of_food": 999.0, "activity": "forage",
+			"current_x": 12, "current_y": 9},
+	])
+	_hud.update_band_alerts([
+		# Band 1 — starving (3 days of food, below critical).
+		{"faction": 0, "entity": 601, "size": 120, "days_of_food": 3.0, "activity": "forage",
+			"current_x": 21, "current_y": 15},
+		# Band 2 — losing population: 90 → 78, well-fed but 12 emigrated last turn → "people leaving".
+		{"faction": 0, "entity": 602, "size": 78, "days_of_food": 999.0, "morale": 0.30,
+			"morale_cause": 1, "last_emigrated": 12, "activity": "hunt", "current_x": 31, "current_y": 21},
+		# Band 3 — idle labor: 4 working-age workers unassigned.
+		{"faction": 0, "entity": 603, "size": 60, "days_of_food": 999.0, "activity": "forage",
+			"current_x": 12, "current_y": 9, "idle_workers": 4},
+	])
+	_hud.turn_orb.open_popover()
+	await _settle()
+	await _save("turn_orb_attention")
+
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
 	var probe_layer := CanvasLayer.new()

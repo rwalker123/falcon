@@ -16,6 +16,11 @@ signal tile_hovered(info: Dictionary)
 signal selection_cleared()
 signal next_turn_requested(steps: int)
 signal targeting_cancel_requested()
+## Emitted whenever the map zoom factor changes (rail button, wheel, Q/E, or fit).
+## The HUD renders the live zoom readout from it. `_apply_zoom` emits only on a
+## real change (it early-returns on a no-op); `_fit_map_to_view` also emits after
+## resetting zoom + pan, so a fit re-syncs the readout even when already at 1.0×.
+signal zoom_changed(zoom_factor: float)
 
 const LOGISTICS_COLOR := Color(0.15, 0.45, 1.0, 1.0)
 const SENTIMENT_COLOR := Color(1.0, 0.35, 0.25, 1.0)
@@ -160,6 +165,10 @@ const HEIGHTFIELD_CONFIG_PATH := "res://src/data/heightfield_config.json"
 const MIN_ZOOM_FACTOR := 1.0
 const MAX_ZOOM_FACTOR := 4.0
 const MOUSE_ZOOM_STEP := 0.2
+# One click of the on-screen zoom rail. Deliberately larger than MOUSE_ZOOM_STEP
+# (0.2) so a button press feels like a deliberate step, not a nudge; promote to a
+# config lever if it ever wants tuning.
+const ZOOM_BUTTON_STEP := 0.5
 const KEYBOARD_ZOOM_SPEED := 0.8
 const KEYBOARD_PAN_SPEED := 600.0
 const PLAYER_FACTION_ID := 0
@@ -3749,6 +3758,25 @@ func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
 	queue_redraw()
 	if _minimap_2d != null:
 		_minimap_2d.queue_indicator_redraw()
+	# Reaching here means the factor actually changed (the no-op / clamped-equal
+	# cases early-returned above), so the readout only updates on a real change.
+	emit_signal("zoom_changed", zoom_factor)
+
+## Public zoom API — the on-screen zoom rail routes through the same `_apply_zoom`
+## path the trackpad/wheel uses, so there is exactly one map-zoom code path.
+## `direction` is +1 (in) / -1 (out); the pivot is the map center so button-zoom
+## doesn't drift the view.
+func zoom_step(direction: int) -> void:
+	_apply_zoom(float(direction) * ZOOM_BUTTON_STEP, _viewport_center_pivot())
+
+func _viewport_center_pivot() -> Vector2:
+	# Local coords (matches _apply_zoom's pivot space); respects the inspector inset.
+	return _get_adjusted_viewport_size() * 0.5
+
+## Public alias for the fit-to-view action (the `C` hotkey), so the zoom rail's
+## `⊡` button and Main's wiring can call it without reaching a private method.
+func fit_to_view() -> void:
+	_fit_map_to_view()
 
 func _begin_mouse_pan(button_index: int) -> void:
 	mouse_pan_active = true
@@ -3793,9 +3821,14 @@ func _fit_map_to_view() -> void:
 	pan_offset = Vector2.ZERO
 	_update_layout_metrics()
 	_clamp_pan_offset()
+	# Mirror _apply_zoom: the fit changes last_hex_radius, so the cached terrain
+	# render must be dropped too or the map keeps drawing at the pre-fit zoom while
+	# markers redraw at the new radius (also fixes the `C` hotkey's stale-icon gap).
+	_invalidate_map_cache()
 	queue_redraw()
 	if _minimap_2d != null:
 		_minimap_2d.queue_indicator_redraw()
+	emit_signal("zoom_changed", zoom_factor)
 
 func handle_hex_click(col: int, row: int, button_index: int) -> void:
 	# Only handle left mouse button clicks. Right-clicks and other buttons are intentionally ignored.
@@ -4515,5 +4548,12 @@ func focus_on_tile(col: int, row: int) -> void:
 	# Panning only moves the viewport; the minimap image is unchanged, so just
 	# refresh the indicator instead of running the full rebuild-check path.
 	_minimap_2d.queue_indicator_redraw()
+
+## Centre the view on a tile AND select it (as if the hex were clicked), so a jump
+## from the turn-orb attention popover lands on a *selected* tile — the Tile card +
+## Occupants roster populate, not just a recentre. Select first, then centre.
+func focus_and_select_tile(col: int, row: int) -> void:
+	handle_hex_click(col, row, MOUSE_BUTTON_LEFT)
+	focus_on_tile(col, row)
 
 # --- End 2D Minimap System ---
