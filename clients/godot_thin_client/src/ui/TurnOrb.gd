@@ -97,7 +97,6 @@ var _pulse_time: float = 0.0
 var _layout: HBoxContainer
 var _caption: VBoxContainer
 var _turn_label: Label
-var _status_label: Label
 var _orb_area: Control
 var _face: Button
 
@@ -130,10 +129,7 @@ func _ready() -> void:
 	_turn_label = Label.new()
 	_turn_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_turn_label.add_theme_color_override("font_color", HudStyle.INK)
-	_status_label = Label.new()
-	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_caption.add_child(_turn_label)
-	_caption.add_child(_status_label)
 	_layout.add_child(_caption)
 
 	_orb_area = Control.new()
@@ -231,14 +227,6 @@ func _recompute() -> void:
 	var ready := _entries.is_empty()
 	_accent_color = HudStyle.SIGNAL if ready else _highest_severity_color()
 	_style_face(_accent_color)
-	if ready:
-		_status_label.text = "▸ all clear"
-		_status_label.add_theme_color_override("font_color", HudStyle.HEALTHY)
-	else:
-		var n := _entries.size()
-		var noun := "item needs you" if n == 1 else "items need you"
-		_status_label.text = "%d %s" % [n, noun]
-		_status_label.add_theme_color_override("font_color", _accent_color)
 	# The pulse only breathes while all-clear; otherwise the badge tells the story.
 	set_process(ready)
 	if _orb_area != null:
@@ -301,7 +289,14 @@ func _draw_badge() -> void:
 
 func _open_popover() -> void:
 	_close_popover()
-	# Full-screen catcher so a click anywhere outside the popover dismisses it.
+	# Standard modal pattern: a full-screen dismiss layer (STOP) with the popover nested INSIDE
+	# it (a CHILD, not a sibling). A child renders + picks ABOVE its parent, so the popover's own
+	# buttons (STOP) consume their clicks and the popover PanelContainer consumes background
+	# clicks; only clicks in the catcher area OUTSIDE the popover reach `_on_catcher_input` →
+	# dismiss. The catcher is a `top_level` child of the orb — full-screen in the orb's own
+	# CanvasLayer (so it sits at the HUD's z, not behind it) but escaping the orb's small rect.
+	# (Previously catcher + popover were SIBLING top_level children: ambiguous ordering let the
+	# catcher pick above the popover and swallow the Advance/Jump clicks — "Advance did nothing".)
 	_catcher = Control.new()
 	_catcher.top_level = true
 	_catcher.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -311,19 +306,17 @@ func _open_popover() -> void:
 	add_child(_catcher)
 
 	_popover = _build_popover()
-	_popover.top_level = true
 	_popover.resized.connect(_position_popover)
-	add_child(_popover)
+	_catcher.add_child(_popover)
 	_popover_open = true
 	_position_popover()
 
 func _close_popover() -> void:
-	if _popover != null:
-		_popover.queue_free()
-		_popover = null
-	if _catcher != null:
+	# Freeing the catcher frees the nested popover too.
+	if _catcher != null and is_instance_valid(_catcher):
 		_catcher.queue_free()
-		_catcher = null
+	_catcher = null
+	_popover = null
 	_popover_open = false
 
 func _on_catcher_input(event: InputEvent) -> void:
@@ -501,12 +494,11 @@ func _on_advance_pressed() -> void:
 	_close_popover()
 
 func _rebuild_popover() -> void:
-	if not _popover_open:
+	if not _popover_open or _catcher == null:
 		return
 	if _popover != null:
 		_popover.queue_free()
 	_popover = _build_popover()
-	_popover.top_level = true
 	_popover.resized.connect(_position_popover)
-	add_child(_popover)
+	_catcher.add_child(_popover)
 	_position_popover()

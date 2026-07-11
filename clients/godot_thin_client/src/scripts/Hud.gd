@@ -97,9 +97,6 @@ var _server_build: String = "?"
 @onready var right_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack
 @onready var turn_orb: TurnOrb = $LayoutRoot/RootColumn/BottomBar/TurnCluster
 @onready var minimap_container: MarginContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/MinimapContainer
-@onready var resource_summary: MarginContainer = $LayoutRoot/RootColumn/BottomBar/ResourceSummary
-@onready var resource_hbox: HBoxContainer = $LayoutRoot/RootColumn/BottomBar/ResourceSummary/ResourceHBox
-@onready var resource_placeholder: Label = $LayoutRoot/RootColumn/BottomBar/ResourceSummary/ResourceHBox/ResourcePlaceholder
 
 var tooltip_panel: PanelContainer
 var tooltip_label: Label
@@ -3390,19 +3387,3 @@ func show_tooltip(info: Dictionary) -> void:
 func get_minimap_container() -> Control:
     return minimap_container
 
-## Update the bottom-bar resource summary display.
-## Called with key stockpile totals or other important metrics.
-func update_resource_summary(summary: Dictionary) -> void:
-    if resource_placeholder == null:
-        return
-    var parts: PackedStringArray = []
-    for key in summary.keys():
-        var value = summary[key]
-        if value is int:
-            parts.append("%s: %d" % [_format_stockpile_label(key), value])
-        elif value is float:
-            parts.append("%s: %.1f" % [_format_stockpile_label(key), value])
-    if parts.is_empty():
-        resource_placeholder.text = "Resources: --"
-    else:
-        resource_placeholder.text = " | ".join(parts)
