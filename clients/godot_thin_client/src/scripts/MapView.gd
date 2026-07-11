@@ -53,8 +53,10 @@ const MARKER_CATEGORY_FOOD := "food"
 const MARKER_CATEGORY_HERD := "herd"
 
 # Primary band token: a settlement-stage glyph over a faction-colored nameplate banner
-# (ownership cue). No faction ring or disc — the banner carries ownership, the white
-# selection ring carries selection. No name label yet — the banner is the substrate for one.
+# (ownership cue). No faction ring or disc — the banner carries ownership; selection is
+# conveyed by the selected/hovered hex outline, and the active stacked band reads by
+# brightness (back cards darkened) — there is no per-token selection ring. No name label
+# yet — the banner is the substrate for one.
 const BAND_TOKEN_RADIUS_FACTOR := 0.34       # of hex radius — the spotlight token (was 0.30)
 const BAND_TOKEN_OUTLINE_COLOR := Color(0.04, 0.05, 0.06, 0.9)
 const BAND_TOKEN_OUTLINE_WIDTH := 2.0
@@ -441,6 +443,10 @@ var zoom_factor: float = 1.0
 # Cached hex point offsets (pre-computed trig values for hex corners)
 var _cached_hex_offsets: PackedVector2Array = PackedVector2Array()
 var _cached_hex_radius: float = -1.0
+# Reused StyleBoxFlat for the band nameplate banner — lazily created once, then only its
+# per-call properties (bg_color, corner radius) are updated in `_draw_band_banner`, so the
+# draw path allocates no StyleBox per primary tile per frame.
+var _band_banner_box: StyleBoxFlat = null
 # Visible column/row range from last render (for minimap indicator)
 var _last_visible_col_start: float = 0.0
 var _last_visible_col_end: float = 0.0
@@ -1551,12 +1557,14 @@ func _draw_band_banner(center: Vector2, token_radius: float, faction_color: Colo
 	var height := token_radius * BAND_BANNER_HEIGHT_FACTOR
 	var top := center.y + token_radius + token_radius * BAND_BANNER_GAP_FACTOR
 	var rect := Rect2(center.x - width * 0.5, top, width, height)
-	var box := StyleBoxFlat.new()
-	box.bg_color = faction_color
-	box.border_color = BAND_BANNER_OUTLINE_COLOR
-	box.set_border_width_all(int(BAND_BANNER_OUTLINE_WIDTH))
-	box.set_corner_radius_all(int(maxf(0.0, height * BAND_BANNER_CORNER_RADIUS_FACTOR)))
-	draw_style_box(box, rect)
+	if _band_banner_box == null:
+		# Constant chrome (border) set once; per-call fields updated below.
+		_band_banner_box = StyleBoxFlat.new()
+		_band_banner_box.border_color = BAND_BANNER_OUTLINE_COLOR
+		_band_banner_box.set_border_width_all(int(BAND_BANNER_OUTLINE_WIDTH))
+	_band_banner_box.bg_color = faction_color
+	_band_banner_box.set_corner_radius_all(int(maxf(0.0, height * BAND_BANNER_CORNER_RADIUS_FACTOR)))
+	draw_style_box(_band_banner_box, rect)
 	return rect
 
 ## Travel/task destination arrow for a band, extracted so the stack draws it for the
@@ -2370,9 +2378,11 @@ func _rebuild_herd_markers(snapshot: Dictionary) -> void:
 		if not active_ids.has(herd_id):
 			herd_trails.erase(herd_id)
 
-## Move the selection ring to a band/herd chosen from the HUD Occupants roster
-## (no hex click). `kind` is "unit" (id = entity_id int) or "herd" (id = herd_id
-## String); the existing ring draw reads `selected_unit_id`/`selected_herd_id`.
+## Select a band/herd chosen from the HUD Occupants roster (no hex click). `kind` is
+## "unit" (id = entity_id int) or "herd" (id = herd_id String). Sets
+## `selected_unit_id`/`selected_herd_id` (and syncs `cycle_index`) so the picked occupant
+## becomes the active/top stack card and the hex selection outline reflects it — there is
+## no per-token ring; selection is the hex outline.
 func select_occupant(kind: String, id) -> void:
 	if kind == "unit":
 		selected_unit_id = int(id)

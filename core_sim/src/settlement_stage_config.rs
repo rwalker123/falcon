@@ -1,11 +1,13 @@
 //! Data-driven tuning for a band's **settlement-progression stage**.
 //!
 //! Loaded from `data/settlement_stage_config.json`. The config is the *single source of truth* for
-//! the set of stages: an ORDERED list of stage definitions, each an opaque `{ id, label, min_size,
-//! icon }`. The sim resolves which stage a band is in with [`resolve_settlement_stage`] (the last /
-//! highest-threshold entry whose `min_size <= size`) and ships the winning stage's presentation
-//! tokens on the population snapshot. `label`/`icon` are pass-through strings the sim never
-//! interprets (`icon` is an emoji today, a sprite/asset key later).
+//! the set of stages: an ORDERED list of `SettlementStageDef { id, label, icon, criteria:
+//! StageCriteria { min_size } }` — the size threshold is nested under the (extensible) `criteria`
+//! record, not a flat field. The sim resolves which stage a band is in with
+//! [`resolve_settlement_stage`], which takes a `SettlementStageInputs` record and returns the
+//! highest-ordered stage whose `criteria` are all satisfied, then ships the winning stage's
+//! presentation tokens on the population snapshot. `label`/`icon` are pass-through strings the sim
+//! never interprets (`icon` is an emoji today, a sprite/asset key later).
 //!
 //! **Adding a settlement stage is a pure config edit** — append a list entry here; no Rust match
 //! arm, no schema field, and no client change. Mirrors the `sedentarization_config.rs` /

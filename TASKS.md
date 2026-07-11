@@ -202,7 +202,7 @@
 
 ### Marketing & Narrative Support
 - [ ] Lock primary marketing tagline for “Trail Sovereigns” and feed localization keys (Owner: Narrative Team — TBD, Estimate: 0.5d; Deps: campaign label schema). Description: Select from manual §Messaging Exploration, register `campaign.trail_sovereigns.tagline_primary` in string tables.
-- [ ] Produce key art brief covering bands, portable hearth, and treaty visuals (Owner: Art Team — TBD, Estimate: 1d; Deps: messaging exploration). Description: Hand off manual cues to concept art with references for seasonal circuits, assay kits, and totemic route markers. Include the **evolving band map-icon stages** (Nomadic → Camp → Village, extensible) to replace the prototype emoji stand-ins (⛺/🛖/🏘️) with real sprite art — the `icon` per stage is config-defined (`settlement_stages`), so new art drops in by config.
+- [ ] Produce key art brief covering bands, portable hearth, and treaty visuals (Owner: Art Team — TBD, Estimate: 1d; Deps: messaging exploration). Description: Hand off manual cues to concept art with references for seasonal circuits, assay kits, and totemic route markers. Include the **evolving band map-icon stages** (Nomadic → Camp → Village, extensible) to replace the prototype emoji stand-ins (⛺/🛖/🏘️) with real sprite art — the `icon` per stage is config-defined (`settlement_stage_config.json`), so new art drops in by config.
 
 ### Nomadic Start Prototype
 - [ ] Define default `late_forager_tribe` StartProfile (Owner: TBD, Estimate: 0.5d; Deps: StartProfile loader). Description: 2–3 bands, no permanent buildings, enable Nomadic commands; victory modes enabled: Hegemony, Cultural Diffusion, Stewardship, Survival.
@@ -255,15 +255,15 @@ lean-to and an arcology (and a 400k town vs a 5M city) are the same engine at di
 - [ ] Phase 4 — Settlements as derived clusters. Compute the camp/settlement/town/city label from
   populated-tile clusters; tiering; retire discrete founding; rework `SedentarizationScore` into an
   emergent tether readout. Client settlement view. **Tiering should feed the config-driven
-  settlement-stage system** (data-defined stages shipped per-band on `PopulationCohortState` as
-  `settlementStageId`/`Label`/`Icon` — an interim size-driven proxy driving the evolving band
+  settlement-stage system** (data-defined stages shipped per-band on `PopulationCohortState` as a
+  single nested `settlementStage:SettlementStageView { id, label, icon }` — an interim size-driven proxy driving the evolving band
   map-icon; see follow-up below), enriching the stage-resolution inputs rather than adding new
   schema.
 - [ ] Enrich settlement-stage resolution beyond the interim size proxy (Owner: TBD; Deps: Phase 3
-  improvements, Phase 4 derived clusters). Settlement stages are **config-defined** (a
-  `settlement_stages` config: an ordered list of `{ id, label, min_size, icon }`); the sim's
-  `resolve_settlement_stage(size, &stages)` helper picks the highest threshold met and ships
-  id/label/icon per band, driving the client band map-icon (⛺ Nomadic → 🛖 Camp → 🏘️ Village).
+  improvements, Phase 4 derived clusters). Settlement stages are **config-defined** (an ordered list
+  of `{ id, label, icon, criteria: { min_size } }` in `settlement_stage_config.json`); the sim's
+  `resolve_settlement_stage(&inputs, &stages)` helper picks the highest-ordered stage whose criteria
+  are met and ships id/label/icon per band, driving the client band map-icon (⛺ Nomadic → 🛖 Camp → 🏘️ Village).
   Adding a new stage (e.g. a `town` entry) is a **pure config edit — no code**. The design is
   open/closed for new signals: the resolver takes an extensible `SettlementStageInputs` record and
   each stage declares an extensible `StageCriteria` record (only `min_size` today). Enriching the
