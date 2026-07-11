@@ -36,7 +36,13 @@ const SEVERITY_CRITICAL := "critical"
 const SEVERITY_RANK := {SEVERITY_CRITICAL: 3, SEVERITY_WARN: 2, SEVERITY_INFO: 1}
 
 const KIND_IDLE_WORKERS := "idle_workers"
-const KIND_ICON := {KIND_IDLE_WORKERS: "🛠"}
+const KIND_STARVING := "starving"
+const KIND_LOSING_POPULATION := "losing_population"
+const KIND_ICON := {
+	KIND_IDLE_WORKERS: "🛠",
+	KIND_STARVING: "🍖",
+	KIND_LOSING_POPULATION: "📉",
+}
 const KIND_ICON_FALLBACK := "●"
 
 # ---- geometry (named constants; no magic literals) -------------------------

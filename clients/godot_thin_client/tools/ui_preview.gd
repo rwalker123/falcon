@@ -277,14 +277,30 @@ func _ready() -> void:
 	await _settle()
 	await _save("turn_orb_clear")
 
-	# State 7 — turn orb, WITH REASONS: two player bands each carrying idle workers →
-	# 2 attention entries → the pulse stops, an amber badge reads "2", the caption reads
-	# "2 items need you", and the popover (opened here) lists two `Jump →` rows.
+	# State 7 — turn orb, ALL THREE ATTENTION KINDS (the folded-in Alerts panel): a first
+	# snapshot seeds prior band sizes so "losing population" has a baseline, then the live
+	# snapshot fires one of each producer — Band 1 starving (days 3 < critical → critical/red),
+	# Band 2 shrank 90→78 with emigrants (losing population → warn/amber), Band 3 has idle
+	# workers (warn/amber). The badge reads "3", the pulse stops, and the popover (opened here)
+	# lists all three with the starving/critical row sorted to the TOP, each with a Jump row.
 	_hud.update_band_alerts([
-		{"faction": 0, "entity": 601, "size": 120, "days_of_food": 999.0, "activity": "forage",
-			"current_x": 21, "current_y": 15, "idle_workers": 3},
-		{"faction": 0, "entity": 602, "size": 80, "days_of_food": 999.0, "activity": "forage",
-			"current_x": 31, "current_y": 21, "idle_workers": 5},
+		{"faction": 0, "entity": 601, "size": 120, "days_of_food": 12.0, "activity": "forage",
+			"current_x": 21, "current_y": 15},
+		{"faction": 0, "entity": 602, "size": 90, "days_of_food": 999.0, "activity": "hunt",
+			"current_x": 31, "current_y": 21},
+		{"faction": 0, "entity": 603, "size": 60, "days_of_food": 999.0, "activity": "forage",
+			"current_x": 12, "current_y": 9},
+	])
+	_hud.update_band_alerts([
+		# Band 1 — starving (3 days of food, below critical).
+		{"faction": 0, "entity": 601, "size": 120, "days_of_food": 3.0, "activity": "forage",
+			"current_x": 21, "current_y": 15},
+		# Band 2 — losing population: 90 → 78, well-fed but 12 emigrated last turn → "people leaving".
+		{"faction": 0, "entity": 602, "size": 78, "days_of_food": 999.0, "morale": 0.30,
+			"morale_cause": 1, "last_emigrated": 12, "activity": "hunt", "current_x": 31, "current_y": 21},
+		# Band 3 — idle labor: 4 working-age workers unassigned.
+		{"faction": 0, "entity": 603, "size": 60, "days_of_food": 999.0, "activity": "forage",
+			"current_x": 12, "current_y": 9, "idle_workers": 4},
 	])
 	_hud.turn_orb.open_popover()
 	await _settle()

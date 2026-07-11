@@ -4,6 +4,10 @@ Status: implementation + ui_preview verification complete (A–D landed in the c
 zoom collapsed to `MapView._apply_zoom`, interface-scale subsystem removed, minimap +
 zoom rail moved bottom-left, turn orb + idle_workers attention producer). Pending commit.
 Zoom-rail in/out use a hand-drawn `MagnifierButton` icon (font magnifier glyphs tofu).
+Follow-up (committed after the first landing): the standalone left-dock **Alerts panel was
+removed** and its alerts folded into the orb as two more producers — `starving` (critical)
+and `losing_population` (warn) alongside `idle_workers` (warn), so the orb is now the single
+"needs you" surface. Icons: 🍖 / 📉 / 🛠.
 
 Reshapes the bottom-bar navigation chrome. Three coupled changes plus the
 plumbing for a generic "player attention" model, prototyped and signed off via
