@@ -49,13 +49,16 @@ size_flags_horizontal = 3
 custom_minimum_size = Vector2(0, 150)
 mouse_filter = 2
 
-[node name="NavCluster" type="HBoxContainer" parent="LayoutRoot/RootColumn/BottomBar"]
+[node name="NavBacking" type="PanelContainer" parent="LayoutRoot/RootColumn/BottomBar"]
 size_flags_horizontal = 0
 size_flags_vertical = 4
+mouse_filter = 2
+
+[node name="NavCluster" type="HBoxContainer" parent="LayoutRoot/RootColumn/BottomBar/NavBacking"]
 theme_override_constants/separation = 8
 mouse_filter = 2
 
-[node name="MinimapContainer" type="MarginContainer" parent="LayoutRoot/RootColumn/BottomBar/NavCluster"]
+[node name="MinimapContainer" type="MarginContainer" parent="LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster"]
 size_flags_horizontal = 0
 size_flags_vertical = 4
 theme_override_constants/margin_left = 12
@@ -64,28 +67,28 @@ theme_override_constants/margin_top = 4
 theme_override_constants/margin_bottom = 4
 mouse_filter = 2
 
-[node name="ZoomRail" type="VBoxContainer" parent="LayoutRoot/RootColumn/BottomBar/NavCluster"]
+[node name="ZoomRail" type="VBoxContainer" parent="LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster"]
 size_flags_vertical = 4
 theme_override_constants/separation = 4
 mouse_filter = 2
 
-[node name="ZoomInButton" type="Button" parent="LayoutRoot/RootColumn/BottomBar/NavCluster/ZoomRail"]
+[node name="ZoomInButton" type="Button" parent="LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail"]
 custom_minimum_size = Vector2(30, 30)
 tooltip_text = "Zoom in"
 script = ExtResource("6")
 zoom_sign = 1
 
-[node name="ZoomLevelLabel" type="Label" parent="LayoutRoot/RootColumn/BottomBar/NavCluster/ZoomRail"]
+[node name="ZoomLevelLabel" type="Label" parent="LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail"]
 horizontal_alignment = 1
 text = "1.0×"
 
-[node name="ZoomOutButton" type="Button" parent="LayoutRoot/RootColumn/BottomBar/NavCluster/ZoomRail"]
+[node name="ZoomOutButton" type="Button" parent="LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail"]
 custom_minimum_size = Vector2(30, 30)
 tooltip_text = "Zoom out"
 script = ExtResource("6")
 zoom_sign = -1
 
-[node name="ZoomFitButton" type="Button" parent="LayoutRoot/RootColumn/BottomBar/NavCluster/ZoomRail"]
+[node name="ZoomFitButton" type="Button" parent="LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail"]
 custom_minimum_size = Vector2(30, 30)
 tooltip_text = "Fit map to view (C)"
 text = "▣"

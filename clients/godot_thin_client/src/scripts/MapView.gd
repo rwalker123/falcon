@@ -3820,6 +3820,10 @@ func _fit_map_to_view() -> void:
 	pan_offset = Vector2.ZERO
 	_update_layout_metrics()
 	_clamp_pan_offset()
+	# Mirror _apply_zoom: the fit changes last_hex_radius, so the cached terrain
+	# render must be dropped too or the map keeps drawing at the pre-fit zoom while
+	# markers redraw at the new radius (also fixes the `C` hotkey's stale-icon gap).
+	_invalidate_map_cache()
 	queue_redraw()
 	if _minimap_2d != null:
 		_minimap_2d.queue_indicator_redraw()

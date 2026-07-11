@@ -63,11 +63,12 @@ var _server_build: String = "?"
 @onready var sedentarization_label: Label = %SedentarizationLabel
 @onready var demographics_label: Label = %DemographicsLabel
 @onready var discoveries_label: Label = %DiscoveriesLabel
-@onready var zoom_rail: VBoxContainer = $LayoutRoot/RootColumn/BottomBar/NavCluster/ZoomRail
-@onready var zoom_in_button2: Button = $LayoutRoot/RootColumn/BottomBar/NavCluster/ZoomRail/ZoomInButton
-@onready var zoom_out_button2: Button = $LayoutRoot/RootColumn/BottomBar/NavCluster/ZoomRail/ZoomOutButton
-@onready var zoom_fit_button: Button = $LayoutRoot/RootColumn/BottomBar/NavCluster/ZoomRail/ZoomFitButton
-@onready var zoom_level_label: Label = $LayoutRoot/RootColumn/BottomBar/NavCluster/ZoomRail/ZoomLevelLabel
+@onready var nav_backing: PanelContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking
+@onready var zoom_rail: VBoxContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail
+@onready var zoom_in_button2: Button = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail/ZoomInButton
+@onready var zoom_out_button2: Button = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail/ZoomOutButton
+@onready var zoom_fit_button: Button = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail/ZoomFitButton
+@onready var zoom_level_label: Label = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail/ZoomLevelLabel
 @onready var terrain_legend_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel as PanelCard
 @onready var terrain_legend_scroll: ScrollContainer = %LegendScroll
 @onready var terrain_legend_list: VBoxContainer = %LegendList
@@ -97,7 +98,7 @@ var _server_build: String = "?"
 @onready var left_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack
 @onready var right_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack
 @onready var turn_orb: TurnOrb = $LayoutRoot/RootColumn/BottomBar/TurnCluster
-@onready var minimap_container: MarginContainer = $LayoutRoot/RootColumn/BottomBar/NavCluster/MinimapContainer
+@onready var minimap_container: MarginContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/MinimapContainer
 @onready var resource_summary: MarginContainer = $LayoutRoot/RootColumn/BottomBar/ResourceSummary
 @onready var resource_hbox: HBoxContainer = $LayoutRoot/RootColumn/BottomBar/ResourceSummary/ResourceHBox
 @onready var resource_placeholder: Label = $LayoutRoot/RootColumn/BottomBar/ResourceSummary/ResourceHBox/ResourcePlaceholder
@@ -791,6 +792,8 @@ func set_zoom_readout(zoom_factor: float) -> void:
 ## button is styled through HudStyle (no raw default-theme buttons); the readout
 ## label reads as tabular cyan mono.
 func _connect_zoom_rail() -> void:
+    if nav_backing != null:
+        nav_backing.add_theme_stylebox_override("panel", HudStyle.nav_backing_stylebox())
     HudStyle.apply_button(zoom_in_button2, "ghost")
     HudStyle.apply_button(zoom_out_button2, "ghost")
     HudStyle.apply_button(zoom_fit_button, "ghost")
