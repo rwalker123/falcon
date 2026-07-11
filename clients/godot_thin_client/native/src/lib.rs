@@ -3577,6 +3577,22 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("generation", cohort.generation() as i64);
     let _ = dict.insert("faction", cohort.faction() as i64);
     let _ = dict.insert("days_of_food", cohort.daysOfFood() as f64);
+    // Data-driven settlement stage (id/label/icon are opaque pass-through strings resolved
+    // by the sim from `settlement_stage_config.json`). Missing/pre-stage snapshots yield
+    // `None` → empty strings, which the client renders as the fallback faction disc.
+    let settlement_stage = cohort.settlementStage();
+    let _ = dict.insert(
+        "settlement_stage_id",
+        settlement_stage.and_then(|s| s.id()).unwrap_or(""),
+    );
+    let _ = dict.insert(
+        "settlement_stage_label",
+        settlement_stage.and_then(|s| s.label()).unwrap_or(""),
+    );
+    let _ = dict.insert(
+        "settlement_stage_icon",
+        settlement_stage.and_then(|s| s.icon()).unwrap_or(""),
+    );
     if let Some(activity) = cohort.activity() {
         let _ = dict.insert("activity", activity);
     }

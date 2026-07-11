@@ -1101,6 +1101,26 @@ pub struct PopulationCohortState {
     pub scout_task: Option<ScoutTaskState>,
     #[serde(default)]
     pub accessible_stockpile: Option<AccessibleStockpileState>,
+    /// The band's resolved settlement-progression stage (data-driven; resolved in the sim from the
+    /// ordered `settlement_stage_config.json` list against the band's `size`). Pure presentation
+    /// pass-through — the client draws `icon` and shows `label`. Appended last (append-only schema
+    /// discipline); a pre-stage snapshot decodes to the empty default.
+    #[serde(default)]
+    pub settlement_stage: SettlementStageViewState,
+}
+
+/// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`
+/// FlatBuffers sub-table). All three fields are opaque strings the sim never interprets: `id` is a
+/// stable stage key, `label` a tooltip name, `icon` a presentation token (emoji now, asset key
+/// later). Adding a stage is a pure `settlement_stage_config.json` edit — no code change here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SettlementStageViewState {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub icon: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -2760,6 +2780,20 @@ fn create_populations<'a>(
                     .collect();
                 Some(builder.create_vector(&entries))
             };
+            let settlement_stage = {
+                let stage = &cohort.settlement_stage;
+                let id = builder.create_string(&stage.id);
+                let label = builder.create_string(&stage.label);
+                let icon = builder.create_string(&stage.icon);
+                fb::SettlementStageView::create(
+                    builder,
+                    &fb::SettlementStageViewArgs {
+                        id: Some(id),
+                        label: Some(label),
+                        icon: Some(icon),
+                    },
+                )
+            };
             let migration = cohort.migration.as_ref().map(|pending| {
                 let fragments = if pending.fragments.is_empty() {
                     None
@@ -2942,6 +2976,7 @@ fn create_populations<'a>(
                     moraleTerrain: cohort.morale_terrain,
                     moraleClimate: cohort.morale_climate,
                     moraleUnrest: cohort.morale_unrest,
+                    settlementStage: Some(settlement_stage),
                 },
             )
         })

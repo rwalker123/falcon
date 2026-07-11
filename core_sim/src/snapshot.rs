@@ -24,10 +24,10 @@ use sim_runtime::{
     PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
     PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState,
     SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
-    SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState, SnapshotHeader,
-    StartMarkerState, TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge,
-    TradeLinkState, VictoryModeSnapshotState, VictoryResultState, VictorySnapshotState, WorldDelta,
-    WorldSnapshot,
+    SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
+    SettlementStageViewState, SnapshotHeader, StartMarkerState, TerrainOverlayState, TerrainSample,
+    TileState, TradeLinkKnowledge, TradeLinkState, VictoryModeSnapshotState, VictoryResultState,
+    VictorySnapshotState, WorldDelta, WorldSnapshot,
 };
 
 use crate::{
@@ -137,6 +137,7 @@ pub struct SnapshotContext<'w> {
     pub wellbeing: Res<'w, crate::wellbeing_config::WellbeingConfigHandle>,
     pub labor: Res<'w, crate::labor_config::LaborConfigHandle>,
     pub expedition: Res<'w, crate::expedition_config::ExpeditionConfigHandle>,
+    pub settlement_stage: Res<'w, crate::settlement_stage_config::SettlementStageConfigHandle>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
 }
@@ -1273,6 +1274,7 @@ pub fn capture_snapshot(
         wellbeing,
         labor,
         expedition,
+        settlement_stage,
         supply_membership,
         pipeline_config,
     } = ctx;
@@ -1332,6 +1334,7 @@ pub fn capture_snapshot(
     let demographics_config = demographics.get();
     let wellbeing_config = wellbeing.get();
     let labor_config = labor.get();
+    let settlement_stage_config = settlement_stage.get();
     // Global labor config today (identical for every band); the work-range ring is surfaced
     // per-band so the client reads it off the selected band (future-proof if bands diverge).
     let band_work_range = labor_config.band_work_range;
@@ -1374,6 +1377,7 @@ pub fn capture_snapshot(
                 band_work_range,
                 scout_vantage_distance,
                 max_expedition_party_size,
+                &settlement_stage_config,
             )
         })
         .collect();
@@ -3684,6 +3688,7 @@ fn population_state(
     work_range: u32,
     scout_vantage_distance: u32,
     max_expedition_party_size: u32,
+    settlement_stage_config: &crate::settlement_stage_config::SettlementStageConfig,
 ) -> PopulationCohortState {
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let demand = food_demand(
@@ -3738,6 +3743,20 @@ fn population_state(
             Vec::new(),
         ),
     };
+    // Resolve the band's settlement stage from the data-driven config (interim input: head-count).
+    // Empty config would yield None; fall back to the empty view so the field is always present.
+    let settlement_stage_inputs =
+        crate::settlement_stage_config::SettlementStageInputs { size: cohort.size };
+    let settlement_stage = crate::settlement_stage_config::resolve_settlement_stage(
+        &settlement_stage_inputs,
+        &settlement_stage_config.stages,
+    )
+    .map(|stage| SettlementStageViewState {
+        id: stage.id.clone(),
+        label: stage.label.clone(),
+        icon: stage.icon.clone(),
+    })
+    .unwrap_or_default();
     PopulationCohortState {
         entity: entity.to_bits(),
         home: cohort.home.to_bits(),
@@ -3804,6 +3823,7 @@ fn population_state(
             start_position,
             stockpile_radius,
         ),
+        settlement_stage,
     }
 }
 

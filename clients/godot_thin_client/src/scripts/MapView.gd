@@ -38,10 +38,100 @@ const HEIGHT_DEFAULT_SEA_LEVEL := 0.6
 const HEIGHT_BAR_SEGMENTS := 10
 # Bright outline/fill used by the Terrain-tab "highlight all tiles of type" tool.
 const TERRAIN_HIGHLIGHT_COLOR := Color(1.0, 0.25, 0.9, 1.0)
-# Wondrous-site marker: backing-disc radius factor + the upward hex-radius offset applied
-# when the tile already carries a food/herd marker, so the two glyphs don't stack illegibly.
-const DISCOVERED_SITE_DISC_FACTOR := 0.42
-const DISCOVERED_SITE_STACK_OFFSET := 0.62
+# ---------------------------------------------------------------------------
+# Hex marker stack UX (see clients/godot_thin_client CLAUDE.md — Map markers).
+# Two marker classes share a hex: PRIMARY (player bands) own the CENTER spotlight
+# as an offset card-stack; SECONDARY (herds / food sites / wondrous sites) ring the
+# hex in FIXED corner slots. `_marker_is_primary` is the single predicate that
+# decides the split — flip a category there to restyle it everywhere.
+# ---------------------------------------------------------------------------
+# Marker category tags (the classifier key + the value stored per secondary entry).
+const MARKER_CATEGORY_BAND := "band"
+const MARKER_CATEGORY_WONDER := "wonder"
+const MARKER_CATEGORY_FOOD := "food"
+const MARKER_CATEGORY_HERD := "herd"
+
+# Primary band token: a settlement-stage glyph over a faction-colored nameplate banner
+# (ownership cue). No faction ring or disc — the banner carries ownership, the white
+# selection ring carries selection. No name label yet — the banner is the substrate for one.
+const BAND_TOKEN_RADIUS_FACTOR := 0.34       # of hex radius — the spotlight token (was 0.30)
+const BAND_TOKEN_OUTLINE_COLOR := Color(0.04, 0.05, 0.06, 0.9)
+const BAND_TOKEN_OUTLINE_WIDTH := 2.0
+const BAND_FACTION_FALLBACK_COLOR := Color(0.9, 0.9, 0.9, 1.0)  # unknown-faction band tint
+# Settlement-stage glyph token: the (opaque, sim-supplied) glyph is drawn with the shared
+# drop-shadow helper. Ownership is carried by the banner below, not a ring.
+const BAND_STAGE_GLYPH_SIZE_FACTOR := 2.0     # glyph point size as a factor of the token radius
+const BAND_STAGE_GLYPH_COLOR := Color(0.99, 0.99, 0.96, 1.0)
+# No-stage fallback (pre-stage / missing snapshot — rare; sim assigns nomadic at size 0):
+# a small neutral, NON-circular placeholder square in place of the glyph. Never a disc.
+const BAND_FALLBACK_MARKER_COLOR := Color(0.55, 0.57, 0.6, 1.0)  # neutral gray, faction-agnostic
+const BAND_FALLBACK_MARKER_SIZE_FACTOR := 1.1  # square side as a factor of the token radius
+# Faction nameplate banner: a short faction-colored bar under the PRIMARY token (active top
+# card only, far-zoom LOD-gated). Reuses the band's faction color as fill so ownership reads
+# without a ring/disc. Intentionally wide enough to later host a faction/band NAME LABEL drawn
+# on top of the bar — keep the width/height structured for that.
+const BAND_BANNER_WIDTH_FACTOR := 2.4         # bar width as a factor of the token radius
+const BAND_BANNER_HEIGHT_FACTOR := 0.5        # bar height as a factor of the token radius
+const BAND_BANNER_GAP_FACTOR := 0.18          # gap below the glyph as a factor of the token radius
+const BAND_BANNER_OUTLINE_COLOR := Color(0.04, 0.05, 0.06, 0.9)  # thin dark outline for legibility
+const BAND_BANNER_OUTLINE_WIDTH := 1.0        # ~1px outline
+const BAND_BANNER_CORNER_RADIUS_FACTOR := 0.35  # corner radius as a factor of the bar height
+const BAND_TASK_ARROW_WIDTH := 2.5           # travel/task destination arrow
+# Co-located bands fan into an up-right offset card stack: back cards darkened, the
+# active (selected/cycled) band drawn full-brightness on top. Beyond the cap, a `×N` badge.
+const BAND_STACK_MAX_CARDS := 3
+const BAND_STACK_CARD_STEP := Vector2(0.10, -0.10)   # per-card offset (× hex radius)
+# Behind (non-active) cards are multiplied by this tint AND drawn smaller so they read as
+# shadowed/recessed *behind* the bright top card (a pseudo-3D depth cue) — this darkening +
+# shrink (not the old white ring) is what marks the active band. Tint lever: RGB < 1 darkens,
+# alpha < 1 fades. Scale lever: back-card token radius × this factor (< 1 pushes them "back").
+const BAND_STACK_BEHIND_TINT := Color(0.28, 0.28, 0.28, 1.0)
+const BAND_STACK_BEHIND_SCALE := 0.75   # back-card size vs the front card (perspective shrink)
+const BAND_COUNT_BADGE_OFFSET := Vector2(0.34, 0.30)  # from token center (× hex radius), bottom-right
+
+# Secondary edge icons: fixed corner slots around the hex (pointy-top; the top &
+# bottom are sharp vertices, so slots hug the upper flanks + sides where a glyph
+# reads cleanly and clears the center token + its bottom-right count badge). Filled
+# deterministically by category priority (wonder → food → herd) so icons never jump
+# frame-to-frame. Offsets are × hex radius from the hex center.
+const SECONDARY_SLOT_OFFSETS: Array[Vector2] = [
+	Vector2(-0.61, -0.56),   # upper-left
+	Vector2(0.61, -0.56),    # upper-right
+	Vector2(-0.78, 0.07),    # left flank
+	Vector2(0.78, 0.07),     # right flank (also holds the +N overflow chip)
+	Vector2(-0.51, 0.66),    # lower-left
+	Vector2(0.51, 0.66),     # lower-right
+]
+const SECONDARY_VISIBLE_CAP := 3             # icons drawn before the +N overflow chip
+const SECONDARY_ICON_SIZE_FACTOR := 0.55     # of hex radius (was ~1.05 over a backing disc)
+const SECONDARY_ICON_MIN_SIZE := 10.0
+const SECONDARY_ICON_COLOR := Color(0.97, 0.98, 0.94, 1.0)
+# Legibility without the old dark backing disc: a 1px-offset drop shadow under the glyph.
+const MARKER_GLYPH_SHADOW_OFFSET := Vector2(1.0, 1.0)
+const MARKER_GLYPH_SHADOW_COLOR := Color(0.0, 0.0, 0.0, 0.6)
+# A selected hex containing a herd is indicated ONLY by the hex outline — herds get no
+# per-marker ring (it diverged from the outline when a selected herd migrated on turn-advance).
+const FOOD_HARVEST_RING_FACTOR := 0.42       # active-harvest ring around a food slot icon
+const FOOD_HARVEST_RING_WIDTH := 2.0
+# Migration arrow: thinner, and only on the hovered/selected herd tile to cut clutter.
+const HERD_MIGRATION_ARROW_COLOR := Color(0.98, 0.58, 0.18, 0.8)
+const HERD_MIGRATION_ARROW_WIDTH := 1.6
+
+# Count / overflow badge (shared dark pill: primary `×N`, secondary `+N`).
+const MARKER_BADGE_BG := Color(0.05, 0.06, 0.08, 0.9)
+const MARKER_BADGE_FG := Color(0.95, 0.97, 1.0, 1.0)
+const MARKER_BADGE_FONT_SIZE := 11
+const MARKER_BADGE_HEIGHT_FACTOR := 1.15     # pill height as a factor of glyph height
+
+# Selected / hovered hex outline (replaces the old brown-circle selection feel).
+const SELECTED_HEX_OUTLINE_COLOR := Color(1.0, 1.0, 1.0, 0.9)
+const SELECTED_HEX_OUTLINE_WIDTH := 3.0
+const HOVER_HEX_OUTLINE_COLOR := Color(1.0, 1.0, 1.0, 0.22)
+const HOVER_HEX_OUTLINE_WIDTH := 1.5
+
+# Zoom level-of-detail: below this hex radius (far zoom, tiny hexes) skip the
+# secondary edge icons + overflow/count chips; draw only the primary token.
+const ICON_MIN_DETAIL_RADIUS := 16.0
 const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
 const GRID_LINE_COLOR := Color(0.4, 0.4, 0.4, 0.7)
 const SQRT3 := 1.7320508075688772
@@ -375,6 +465,14 @@ var faction_colors: Dictionary = {
 
 var selected_unit_id: int = -1
 var selected_herd_id: String = ""
+# Select-then-cycle: which band in the selected tile's stack is active. Advanced by
+# re-clicking the selected tile; reset to 0 (top card) on a fresh tile; synced from a
+# roster selection via select_occupant so map cycling + roster stay coherent.
+var cycle_index: int = 0
+# Per-frame SECONDARY marker slot assignments (rebuilt in _compute_secondary_slots):
+# entry-key(String) -> edge slot index (int, -1 = overflowed/hidden); tile -> overflow count.
+var _secondary_slot_lookup: Dictionary = {}
+var _secondary_overflow: Dictionary = {}
 # Optimistic pending-labor map (per band entity), pushed from the HUD via set_labor_pending.
 # Drawn for the selected band in a distinct dashed-amber style until the snapshot confirms.
 var _labor_pending: Dictionary = {}
@@ -849,22 +947,25 @@ func _draw() -> void:
 	_draw_crisis_annotations(radius, origin)
 	_draw_start_marker(radius, origin)
 
+	# Selected + hovered hex outlines (drawn under the markers).
+	_draw_tile_selection_highlight(radius, origin)
+
 	# Selected player band: highlight what it's working (forage tiles / hunted herds) and
 	# its assignable reach (work-range ring). Drawn before the
 	# unit/herd markers so those sit on top of the tile tints.
 	_draw_band_work_highlights(radius, origin)
 
 	_draw_supply_links(radius, origin)
-	for unit in units:
-		_draw_unit(unit, radius, origin)
+	_draw_primary_bands(radius, origin)
 
+	_compute_secondary_slots()
 	for herd in herds:
 		_draw_herd(herd, radius, origin)
 	for site in food_sites:
 		_draw_food_site(site, radius, origin)
-		_draw_food_highlight(site, radius, origin)
 	for wsite in discovered_sites:
 		_draw_discovered_site(wsite, radius, origin)
+	_draw_secondary_overflow(radius, origin)
 
 	_draw_harvest_markers(radius, origin)
 	_draw_scout_markers(radius, origin)
@@ -1330,54 +1431,157 @@ func _unhandled_input(event: InputEvent) -> void:
 			_apply_zoom(amount, get_local_mouse_position())
 			_mark_input_handled()
 
-func _draw_unit(unit: Dictionary, radius: float, origin: Vector2) -> void:
-	var position: Array = Array(unit.get("pos", [0, 0]))
-	if position.size() != 2:
+## PRIMARY marker pass: draw player-band tokens as center card-stacks, one per
+## occupied tile. Co-located bands fan up-right (back cards dimmed); the active band
+## (selected, else first) is the opaque top card with the white selection ring. Beyond
+## BAND_STACK_MAX_CARDS a `×N` count badge notes the hidden bands.
+func _draw_primary_bands(radius: float, origin: Vector2) -> void:
+	# Group units by tile, preserving snapshot order (deterministic stack order).
+	var by_tile: Dictionary = {}   # Vector2i -> Array[Dictionary]
+	var order: Array = []          # tiles in first-seen order
+	for unit in units:
+		var pos: Array = Array(unit.get("pos", []))
+		if pos.size() != 2:
+			continue
+		var tile := Vector2i(int(pos[0]), int(pos[1]))
+		if not by_tile.has(tile):
+			by_tile[tile] = []
+			order.append(tile)
+		by_tile[tile].append(unit)
+	for tile in order:
+		_draw_band_stack(by_tile[tile], radius, origin)
+
+func _draw_band_stack(group: Array, radius: float, origin: Vector2) -> void:
+	var count := group.size()
+	if count == 0:
 		return
-	var center: Vector2 = _hex_center_wrapped(int(position[0]), int(position[1]), radius, origin)
-	var marker_radius: float = radius * 0.45
-	var color: Color = faction_colors.get(unit.get("faction", ""), Color(0.9, 0.9, 0.9, 1.0))
+	var first: Dictionary = group[0]
+	var pos: Array = Array(first.get("pos", []))
+	var group_tile := Vector2i(int(pos[0]), int(pos[1]))
+	var center: Vector2 = _hex_center_wrapped(group_tile.x, group_tile.y, radius, origin)
+	# Active band = the selected one on this tile (selected_unit_id is the cycle target),
+	# else the first. selected_unit_id already tracks the cycled/roster-picked band.
+	var active_idx := 0
+	for i in range(count):
+		if int((group[i] as Dictionary).get("entity", -1)) == selected_unit_id:
+			active_idx = i
+			break
+	var token_radius := radius * BAND_TOKEN_RADIUS_FACTOR
+	# Back cards = every non-active band (decorative depth), active drawn last on top.
+	var back_bands: Array = []
+	for i in range(count):
+		if i != active_idx:
+			back_bands.append(group[i])
+	var back_to_draw := mini(count, BAND_STACK_MAX_CARDS) - 1
+	var back_radius := token_radius * BAND_STACK_BEHIND_SCALE   # shrink back cards for depth
+	for j in range(back_to_draw):
+		var depth := back_to_draw - j   # furthest (largest offset) drawn first
+		var offset := BAND_STACK_CARD_STEP * radius * float(depth)
+		_draw_band_token(back_bands[j], center + offset, back_radius, true)
+	# Active top card at base position.
+	var active: Dictionary = group[active_idx]
+	_draw_band_token(active, center, token_radius, false)
+	# Faction nameplate banner under the active (primary) card only. Far-zoom LOD-gated with the
+	# same threshold that suppresses secondary icons/chips. Returns its rect so the count pill
+	# can cap its right end.
+	# Expeditions carry their faction on the flag-disc ring, not a settlement nameplate, so skip
+	# the banner for them (and thus the banner-anchored count pill falls back to the offset).
+	var active_is_expedition := bool(active.get("is_expedition", false))
+	var show_banner := radius >= ICON_MIN_DETAIL_RADIUS and not active_is_expedition
+	var banner_rect := Rect2()
+	if show_banner:
+		banner_rect = _draw_band_banner(center, token_radius, _band_faction_color(active))
+	# Active band reads by brightness alone now (full-color top card over darkened back cards);
+	# the hex selection outline still marks the selected tile. No per-token ring.
+	# Decorations on the active band only (expeditions show provisions in their drawer, not a dot).
+	if _is_player_unit(active) and not active_is_expedition:
+		_draw_band_status(active, center, token_radius)
+	_draw_band_task_arrow(active, center, radius, origin)
+	# Count badge for hidden bands beyond the visible cap (suppressed at far zoom). Folded onto
+	# the right end of the banner (nameplate-with-count look); falls back to the old bottom-right
+	# offset only if the banner is LOD-suppressed (which shares the same zoom gate, so in practice
+	# it always caps the banner).
+	if count > BAND_STACK_MAX_CARDS and radius >= ICON_MIN_DETAIL_RADIUS:
+		var pill_center := center + BAND_COUNT_BADGE_OFFSET * radius
+		if show_banner:
+			pill_center = Vector2(banner_rect.position.x + banner_rect.size.x, banner_rect.position.y + banner_rect.size.y * 0.5)
+		_draw_count_pill(pill_center, "×%d" % count)
 
+func _draw_band_token(unit: Dictionary, center: Vector2, token_radius: float, dim: bool) -> void:
 	if bool(unit.get("is_expedition", false)):
-		# A detached scouting party — distinct hollow flag disc + awaiting-orders pulse.
-		_draw_expedition_body(unit, center, marker_radius, color)
-	else:
-		draw_circle(center, marker_radius, color)
-		draw_arc(center, marker_radius, 0, TAU, 12, Color(0, 0, 0, 0.4), 2.5)
+		# A detached scouting party keeps its distinct hollow flag disc + awaiting-orders pulse
+		# (not a settlement glyph). Faction reads off the ring, so no nameplate banner is drawn
+		# (guarded in _draw_band_stack). Expeditions are lone on their tile, so `dim` is unused.
+		_draw_expedition_body(unit, center, token_radius, _band_faction_color(unit))
+		return
+	var stage_icon := String(unit.get("settlement_stage_icon", ""))
+	if stage_icon == "":
+		# Fallback: pre-stage / missing snapshot — a small neutral, NON-circular placeholder
+		# square (never a faction disc). Ownership is still carried by the banner below.
+		var marker_color := BAND_FALLBACK_MARKER_COLOR
+		var outline := BAND_TOKEN_OUTLINE_COLOR
+		if dim:
+			marker_color *= BAND_STACK_BEHIND_TINT
+			outline *= BAND_STACK_BEHIND_TINT
+		var side := token_radius * BAND_FALLBACK_MARKER_SIZE_FACTOR
+		var square := Rect2(center.x - side * 0.5, center.y - side * 0.5, side, side)
+		draw_rect(square, marker_color)
+		draw_rect(square, outline, false, BAND_TOKEN_OUTLINE_WIDTH)
+		return
+	# Stage glyph token: just the shadowed glyph — ownership is carried by the banner, not a ring.
+	var glyph_color := BAND_STAGE_GLYPH_COLOR
+	if dim:
+		glyph_color *= BAND_STACK_BEHIND_TINT
+	var glyph_size := int(maxf(SECONDARY_ICON_MIN_SIZE, token_radius * BAND_STAGE_GLYPH_SIZE_FACTOR))
+	_draw_marker_glyph(center, stage_icon, glyph_size, glyph_color)
 
-		# Band food + activity indicators (player bands only — other factions' larders
-		# and orders aren't ours to see).
-		if _is_player_unit(unit):
-			_draw_band_status(unit, center, marker_radius)
+## Faction color lookup for a band token, with a neutral fallback for unknown factions.
+func _band_faction_color(unit: Dictionary) -> Color:
+	return faction_colors.get(unit.get("faction", ""), BAND_FACTION_FALLBACK_COLOR)
 
-	var label: String = str(unit.get("id", ""))
-	if label != "":
-		_draw_label(center + Vector2(-marker_radius, marker_radius * 0.1), label, marker_radius * 2.0, 16, Color(0.05, 0.05, 0.05, 0.85))
+## Faction-colored nameplate banner drawn under the PRIMARY band token (caller draws it for the
+## active top card only — never the dimmed back cards). Ownership reads off the fill color, so no
+## ring/disc is needed. The bar is sized to later host an optional faction/band NAME LABEL drawn
+## on top of it (this bar is the substrate); keep it wide/structured enough for that. Returns the
+## bar Rect2 so the caller can anchor the `×N` count pill to its right end.
+func _draw_band_banner(center: Vector2, token_radius: float, faction_color: Color) -> Rect2:
+	var width := token_radius * BAND_BANNER_WIDTH_FACTOR
+	var height := token_radius * BAND_BANNER_HEIGHT_FACTOR
+	var top := center.y + token_radius + token_radius * BAND_BANNER_GAP_FACTOR
+	var rect := Rect2(center.x - width * 0.5, top, width, height)
+	var box := StyleBoxFlat.new()
+	box.bg_color = faction_color
+	box.border_color = BAND_BANNER_OUTLINE_COLOR
+	box.set_border_width_all(int(BAND_BANNER_OUTLINE_WIDTH))
+	box.set_corner_radius_all(int(maxf(0.0, height * BAND_BANNER_CORNER_RADIUS_FACTOR)))
+	draw_style_box(box, rect)
+	return rect
 
-	# Draw task arrow if unit has active assignment
+## Travel/task destination arrow for a band, extracted so the stack draws it for the
+## active card only. Skips the arrow when the band is already at its destination or the
+## line would span the wrap seam.
+func _draw_band_task_arrow(unit: Dictionary, center: Vector2, radius: float, origin: Vector2) -> void:
+	var pos: Array = Array(unit.get("pos", []))
+	if pos.size() != 2:
+		return
 	var dest_x: int = int(unit.get("dest_x", -1))
 	var dest_y: int = int(unit.get("dest_y", -1))
-	if dest_x >= 0 and dest_y >= 0:
-		var dest_center: Vector2 = _hex_center_wrapped(dest_x, dest_y, radius, origin)
-		var task_kind: String = String(unit.get("travel_task_kind", ""))
-		var arrow_color: Color = _travel_arrow_color(task_kind)
-		# Only draw arrow if unit is not already at destination and line isn't too long
-		var pos_x: int = int(position[0])
-		var pos_y: int = int(position[1])
-		var line_too_long: bool = abs(center.x - dest_center.x) > last_map_size.x * 0.4
-		if pos_x != dest_x or pos_y != dest_y:
-			if not line_too_long:
-				draw_line(center, dest_center, arrow_color, 2.5)
-				_draw_arrowhead(center, dest_center, arrow_color)
-
-	if int(unit.get("entity", -1)) == selected_unit_id:
-		var highlight_color := Color(1.0, 1.0, 1.0, 0.9)
-		draw_arc(center, marker_radius + 4.0, 0, TAU, 24, highlight_color, 3.0)
+	if dest_x < 0 or dest_y < 0:
+		return
+	if int(pos[0]) == dest_x and int(pos[1]) == dest_y:
+		return
+	var dest_center: Vector2 = _hex_center_wrapped(dest_x, dest_y, radius, origin)
+	if abs(center.x - dest_center.x) > last_map_size.x * 0.4:
+		return
+	var arrow_color: Color = _travel_arrow_color(String(unit.get("travel_task_kind", "")))
+	draw_line(center, dest_center, arrow_color, BAND_TASK_ARROW_WIDTH)
+	_draw_arrowhead(center, dest_center, arrow_color)
 
 ## Draw a scouting expedition's map body (docs/plan_exploration_and_sites.md §2): a hollow,
 ## faction-tinted flag disc — visually distinct from a resident band's solid dot — plus, when the
 ## party is idle-at-objective (`expedition_phase == "awaiting"`), a pulsing amber ring signalling
-## it needs an order. The shared label / travel arrow / selection ring stay in `_draw_unit`.
+## it needs an order. Called from `_draw_band_token` for an `is_expedition` unit (in place of the
+## settlement-stage glyph); the travel arrow still draws via `_draw_band_task_arrow`.
 func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: float, color: Color) -> void:
 	# Dark backing disc keeps the glyph legible over any terrain (mirrors the site/herd markers).
 	draw_circle(center, marker_radius, Color(0.04, 0.06, 0.07, EXPEDITION_DISC_ALPHA))
@@ -1657,6 +1861,15 @@ func _outline_hex(col: int, row: int, radius: float, origin: Vector2, color: Col
 	var outline := PackedVector2Array([pts[0], pts[1], pts[2], pts[3], pts[4], pts[5], pts[0]])
 	draw_polyline(outline, color, width, true)
 
+## White outline on the selected hex + a faint outline on the hovered hex (skipped when
+## hover == selection). Replaces the old brown-circle-as-selection feel; the per-token
+## rings still mark the active band/herd within a hex.
+func _draw_tile_selection_highlight(radius: float, origin: Vector2) -> void:
+	if selected_tile.x >= 0 and selected_tile.y >= 0:
+		_outline_hex(selected_tile.x, selected_tile.y, radius, origin, SELECTED_HEX_OUTLINE_COLOR, SELECTED_HEX_OUTLINE_WIDTH)
+	if _hovered_tile.x >= 0 and _hovered_tile.y >= 0 and _hovered_tile != selected_tile:
+		_outline_hex(_hovered_tile.x, _hovered_tile.y, radius, origin, HOVER_HEX_OUTLINE_COLOR, HOVER_HEX_OUTLINE_WIDTH)
+
 func _travel_arrow_color(task_kind: String) -> Color:
 	match task_kind:
 		"harvest":
@@ -1673,6 +1886,110 @@ func _draw_label(pos: Vector2, text: String, max_width: float, font_size: int, c
 	if font != null:
 		draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, max_width, font_size, color)
 
+# ---------------------------------------------------------------------------
+# SECONDARY markers (herds / food sites / wondrous sites) — fixed edge-slot icons.
+# ---------------------------------------------------------------------------
+
+## The ONE predicate that splits map markers into PRIMARY (center card-stack) vs
+## SECONDARY (edge-slot). Flip a category here to restyle it everywhere.
+func _marker_is_primary(category: String) -> bool:
+	return category == MARKER_CATEGORY_BAND
+
+## Assign each SECONDARY marker a fixed edge slot on its hex, once per frame. Priority
+## order wonder → food → herd, sequential fill, so a tile's icons never jump between
+## frames. Beyond SECONDARY_VISIBLE_CAP the extras collapse into a `+N` overflow chip
+## (drawn in the next slot). Visibility gating matches each category's own rule
+## (herds/food Active-only; wonders any explored tile). Skipped entirely at far zoom.
+func _compute_secondary_slots() -> void:
+	_secondary_slot_lookup.clear()
+	_secondary_overflow.clear()
+	if last_hex_radius < ICON_MIN_DETAIL_RADIUS:
+		return
+	var per_tile: Dictionary = {}   # Vector2i -> Array[String] of entry keys, priority order
+	for wsite in discovered_sites:
+		var wx := int((wsite as Dictionary).get("x", -1))
+		var wy := int((wsite as Dictionary).get("y", -1))
+		if wx < 0 or wy < 0:
+			continue
+		if _visibility_state_at(wx, wy) == "unexplored":
+			continue
+		if String((wsite as Dictionary).get("glyph", "")) == "":
+			continue
+		_append_secondary(per_tile, Vector2i(wx, wy), _wonder_key(wsite))
+	for site in food_sites:
+		var fx := int((site as Dictionary).get("x", -1))
+		var fy := int((site as Dictionary).get("y", -1))
+		if fx < 0 or fy < 0 or not _is_tile_visible(fx, fy):
+			continue
+		_append_secondary(per_tile, Vector2i(fx, fy), _food_key(fx, fy))
+	for herd in herds:
+		var hx := int((herd as Dictionary).get("x", -1))
+		var hy := int((herd as Dictionary).get("y", -1))
+		if hx < 0 or hy < 0 or not _is_tile_visible(hx, hy):
+			continue
+		_append_secondary(per_tile, Vector2i(hx, hy), _herd_key(String((herd as Dictionary).get("id", ""))))
+	for tile in per_tile:
+		var keys: Array = per_tile[tile]
+		for i in range(keys.size()):
+			_secondary_slot_lookup[keys[i]] = i if i < SECONDARY_VISIBLE_CAP else -1
+		if keys.size() > SECONDARY_VISIBLE_CAP:
+			_secondary_overflow[tile] = keys.size() - SECONDARY_VISIBLE_CAP
+
+func _append_secondary(per_tile: Dictionary, tile: Vector2i, key: String) -> void:
+	var list: Array = per_tile.get(tile, [])
+	list.append(key)
+	per_tile[tile] = list
+
+func _wonder_key(wsite: Dictionary) -> String:
+	var fallback := "%d,%d" % [int(wsite.get("x", -1)), int(wsite.get("y", -1))]
+	return "wonder:%s" % String(wsite.get("site_id", fallback))
+
+func _food_key(x: int, y: int) -> String:
+	return "food:%d,%d" % [x, y]
+
+func _herd_key(herd_id: String) -> String:
+	return "herd:%s" % herd_id
+
+func _secondary_icon_size(radius: float) -> int:
+	return int(maxf(SECONDARY_ICON_MIN_SIZE, radius * SECONDARY_ICON_SIZE_FACTOR))
+
+func _secondary_slot_center(tile_center: Vector2, slot: int, radius: float) -> Vector2:
+	return tile_center + SECONDARY_SLOT_OFFSETS[slot] * radius
+
+## Draw a marker glyph with a subtle drop shadow (replaces the old dark backing disc):
+## the glyph once offset in near-black, then again on top, centered on `center`.
+func _draw_marker_glyph(center: Vector2, glyph: String, size: int, color: Color) -> void:
+	var font: Font = ThemeDB.fallback_font
+	if font == null or glyph == "":
+		return
+	var text_size: Vector2 = font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
+	var baseline := Vector2(center.x - text_size.x * 0.5, center.y + size * 0.34)
+	draw_string(font, baseline + MARKER_GLYPH_SHADOW_OFFSET, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, MARKER_GLYPH_SHADOW_COLOR)
+	draw_string(font, baseline, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
+
+## A small dark rounded pill with centered text — shared by the primary `×N` count
+## badge and the secondary `+N` overflow chip (draw_rect body + two end-cap circles).
+func _draw_count_pill(center: Vector2, text: String) -> void:
+	var font: Font = ThemeDB.fallback_font
+	if font == null or text == "":
+		return
+	var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, MARKER_BADGE_FONT_SIZE)
+	var half_w: float = text_size.x * 0.5
+	var half_h: float = text_size.y * 0.5 * MARKER_BADGE_HEIGHT_FACTOR
+	draw_rect(Rect2(center.x - half_w, center.y - half_h, text_size.x, half_h * 2.0), MARKER_BADGE_BG)
+	draw_circle(Vector2(center.x - half_w, center.y), half_h, MARKER_BADGE_BG)
+	draw_circle(Vector2(center.x + half_w, center.y), half_h, MARKER_BADGE_BG)
+	draw_string(font, Vector2(center.x - text_size.x * 0.5, center.y + text_size.y * 0.32), text, HORIZONTAL_ALIGNMENT_LEFT, -1, MARKER_BADGE_FONT_SIZE, MARKER_BADGE_FG)
+
+## Per-tile `+N` overflow chip pass (secondaries beyond SECONDARY_VISIBLE_CAP).
+func _draw_secondary_overflow(radius: float, origin: Vector2) -> void:
+	if SECONDARY_VISIBLE_CAP >= SECONDARY_SLOT_OFFSETS.size():
+		return
+	for tile in _secondary_overflow:
+		var tile_center: Vector2 = _hex_center_wrapped(tile.x, tile.y, radius, origin)
+		var chip_center := _secondary_slot_center(tile_center, SECONDARY_VISIBLE_CAP, radius)
+		_draw_count_pill(chip_center, "+%d" % int(_secondary_overflow[tile]))
+
 func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	var herd_id := String(herd.get("id", ""))
 	var x: int = int(herd.get("x", -1))
@@ -1681,34 +1998,27 @@ func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 		return
 	if not _is_tile_visible(x, y):
 		return
-	var center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
+	# Herd trail stays centered on the hex path (a route, not a marker).
 	_draw_herd_trail(herd_id, radius, origin)
-	var marker_radius: float = radius * 0.35
+	var slot: int = _secondary_slot_lookup.get(_herd_key(herd_id), -1)
+	if slot < 0:
+		return   # far-zoom LOD or overflowed into the +N chip
+	var tile_center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
+	var icon_center := _secondary_slot_center(tile_center, slot, radius)
 	var herd_icon := FoodIcons.for_herd(String(herd.get("label", herd.get("id", "Herd"))))
-	# Dark backing disc keeps the (color) glyph legible over any terrain.
-	draw_circle(center, radius * 0.44, Color(0.04, 0.06, 0.07, 0.55))
-	var herd_font: Font = ThemeDB.fallback_font
-	if herd_font != null:
-		var herd_icon_size: int = int(maxf(12.0, radius * 1.05))
-		var herd_text_size: Vector2 = herd_font.get_string_size(herd_icon, HORIZONTAL_ALIGNMENT_LEFT, -1, herd_icon_size)
-		draw_string(herd_font, Vector2(center.x - herd_text_size.x * 0.5, center.y + herd_icon_size * 0.34), herd_icon, HORIZONTAL_ALIGNMENT_LEFT, -1, herd_icon_size, Color(0.96, 0.97, 0.92))
+	_draw_marker_glyph(icon_center, herd_icon, _secondary_icon_size(radius), SECONDARY_ICON_COLOR)
 
-	var label: String = String(herd.get("label", herd.get("id", "Herd")))
-	if label != "":
-		_draw_label(center + Vector2(-marker_radius, marker_radius + 4.0), label, marker_radius * 2.0, 14, Color(0.1, 0.1, 0.1, 0.85))
-
-	var next_x := int(herd.get("next_x", -1))
-	var next_y := int(herd.get("next_y", -1))
-	if next_x >= 0 and next_y >= 0:
-		var next_center := _hex_center_wrapped(next_x, next_y, radius, origin)
-		# Skip line if it would span more than 40% of map (wrap artifact)
-		var line_too_long: bool = abs(center.x - next_center.x) > last_map_size.x * 0.4
-		if not line_too_long:
-			draw_line(center, next_center, Color(0.98, 0.58, 0.18, 0.85), 3.0)
-			_draw_arrowhead(center, next_center, Color(0.98, 0.58, 0.18, 0.85))
-
-	if herd_id == selected_herd_id:
-		draw_arc(center, radius * 0.5, 0, TAU, 24, Color(1.0, 1.0, 1.0, 0.9), 2.5)
+	# Migration arrow — thinner, and only on the hovered/selected herd tile to cut clutter.
+	var tile := Vector2i(x, y)
+	if tile == _hovered_tile or tile == selected_tile:
+		var next_x := int(herd.get("next_x", -1))
+		var next_y := int(herd.get("next_y", -1))
+		if next_x >= 0 and next_y >= 0:
+			var next_center := _hex_center_wrapped(next_x, next_y, radius, origin)
+			var line_too_long: bool = abs(tile_center.x - next_center.x) > last_map_size.x * 0.4
+			if not line_too_long:
+				draw_line(tile_center, next_center, HERD_MIGRATION_ARROW_COLOR, HERD_MIGRATION_ARROW_WIDTH)
+				_draw_arrowhead(tile_center, next_center, HERD_MIGRATION_ARROW_COLOR)
 
 func _draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 	var x: int = int(site.get("x", -1))
@@ -1717,22 +2027,18 @@ func _draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 		return
 	if not _is_tile_visible(x, y):
 		return
-	var center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
-
+	var slot: int = _secondary_slot_lookup.get(_food_key(x, y), -1)
+	if slot < 0:
+		return
+	var tile_center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
+	var icon_center := _secondary_slot_center(tile_center, slot, radius)
 	var module_key := String(site.get("module", ""))
 	var kind := String(site.get("kind", ""))
 	var is_hunt := kind == "game_trail"
 	var icon := FoodIcons.for_site(module_key, is_hunt)
-	# Dark backing disc so the (monochrome) glyph stays legible over any terrain.
-	draw_circle(center, radius * 0.44, Color(0.04, 0.06, 0.07, 0.55))
 	if _food_harvest_active(x, y):
-		draw_arc(center, radius * 0.52, 0, TAU, 28, Color(HudStyle.SIGNAL, 0.9), 2.0)
-	var icon_font: Font = ThemeDB.fallback_font
-	if icon_font != null:
-		var icon_size: int = int(maxf(12.0, radius * 1.05))
-		var text_size: Vector2 = icon_font.get_string_size(icon, HORIZONTAL_ALIGNMENT_LEFT, -1, icon_size)
-		var pos: Vector2 = Vector2(center.x - text_size.x * 0.5, center.y + icon_size * 0.34)
-		draw_string(icon_font, pos, icon, HORIZONTAL_ALIGNMENT_LEFT, -1, icon_size, Color(0.96, 0.97, 0.92))
+		draw_arc(icon_center, radius * FOOD_HARVEST_RING_FACTOR, 0, TAU, 20, Color(HudStyle.SIGNAL, 0.9), FOOD_HARVEST_RING_WIDTH)
+	_draw_marker_glyph(icon_center, icon, _secondary_icon_size(radius), SECONDARY_ICON_COLOR)
 
 func _draw_discovered_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 	var x: int = int(site.get("x", -1))
@@ -1744,45 +2050,15 @@ func _draw_discovered_site(site: Dictionary, radius: float, origin: Vector2) -> 
 	# (Discovered or Active), not only Active, so it stays visible once found even under fog.
 	if _visibility_state_at(x, y) == "unexplored":
 		return
+	var slot: int = _secondary_slot_lookup.get(_wonder_key(site), -1)
+	if slot < 0:
+		return
 	var glyph := String(site.get("glyph", ""))
 	if glyph == "":
 		return
-	var center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
-	# Nudge up when a food/herd marker already sits on this hex so the glyphs stay legible.
-	if _tile_has_food_or_herd_marker(x, y):
-		center.y -= radius * DISCOVERED_SITE_STACK_OFFSET
-	# Dark backing disc so the (monochrome) glyph reads over any terrain.
-	draw_circle(center, radius * DISCOVERED_SITE_DISC_FACTOR, Color(0.04, 0.06, 0.07, 0.55))
-	var glyph_font: Font = ThemeDB.fallback_font
-	if glyph_font != null:
-		var glyph_size: int = int(maxf(12.0, radius * 1.05))
-		var text_size: Vector2 = glyph_font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size)
-		var pos: Vector2 = Vector2(center.x - text_size.x * 0.5, center.y + glyph_size * 0.34)
-		draw_string(glyph_font, pos, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size, Color(0.96, 0.97, 0.92))
-
-func _tile_has_food_or_herd_marker(x: int, y: int) -> bool:
-	var key := Vector2i(x, y)
-	if food_site_lookup.has(key):
-		return true
-	for herd in herds:
-		if int((herd as Dictionary).get("x", -1)) == x and int((herd as Dictionary).get("y", -1)) == y:
-			return true
-	return false
-
-func _draw_food_highlight(site: Dictionary, radius: float, origin: Vector2) -> void:
-	var x: int = int(site.get("x", -1))
-	var y: int = int(site.get("y", -1))
-	if x < 0 or y < 0:
-		return
-	if not _is_tile_visible(x, y):
-		return
-	var module_key := String(site.get("module", ""))
-	if module_key == "":
-		return
-	if _selected_tile_matches_food(x, y, module_key):
-		var center := _hex_center_wrapped(x, y, radius, origin)
-		var highlight_color := Color(1.0, 1.0, 1.0, 0.85)
-		draw_arc(center, radius * 0.5, 0, TAU, 32, highlight_color, 2.0)
+	var tile_center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
+	var icon_center := _secondary_slot_center(tile_center, slot, radius)
+	_draw_marker_glyph(icon_center, glyph, _secondary_icon_size(radius), SECONDARY_ICON_COLOR)
 
 func _draw_harvest_markers(radius: float, origin: Vector2) -> void:
 	if harvest_sites.is_empty():
@@ -2012,6 +2288,11 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"morale_terrain": float(entry.get("morale_terrain", 0.0)),
 			"morale_climate": float(entry.get("morale_climate", 0.0)),
 			"morale_unrest": float(entry.get("morale_unrest", 0.0)),
+			# Data-driven settlement stage (icon glyph + label). The icon becomes the band's
+			# map token; empty icon → fallback faction disc. Label surfaces in tooltip/roster.
+			"settlement_stage_id": String(entry.get("settlement_stage_id", "")),
+			"settlement_stage_label": String(entry.get("settlement_stage_label", "")),
+			"settlement_stage_icon": String(entry.get("settlement_stage_icon", "")),
 			"activity": String(entry.get("activity", "")),
 			# Fauna-pursuit sub-mode (single/sustain/surplus/market/eradicate); flows to the
 			# drawer + roster so "Cancel <Mode> Hunt" can label a live hunting band.
@@ -2029,8 +2310,9 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"idle_workers": int(entry.get("idle_workers", 0)),
 			# Scouting expedition (docs/plan_exploration_and_sites.md §2): a detached party is a
 			# cohort tagged Expedition flowing through this same populations[] array. These three
-			# discriminator fields drive the distinct expedition marker (_draw_unit), its
-			# awaiting-orders idle indicator, and the HUD expedition panel. Default false/"" so
+			# discriminator fields drive the distinct expedition marker (_draw_band_token →
+			# _draw_expedition_body), its awaiting-orders idle indicator, and the HUD expedition
+			# panel. Default false/"" so
 			# resident-band markers are unaffected.
 			"is_expedition": bool(entry.get("is_expedition", false)),
 			"expedition_mission": String(entry.get("expedition_mission", "")),
@@ -2096,10 +2378,28 @@ func select_occupant(kind: String, id) -> void:
 	if kind == "unit":
 		selected_unit_id = int(id)
 		selected_herd_id = ""
+		# Surface the roster-picked band as the top stack card, and seed cycling from it.
+		cycle_index = _cycle_index_for_unit(selected_unit_id)
 	elif kind == "herd":
 		selected_herd_id = String(id)
 		selected_unit_id = -1
 	queue_redraw()
+
+## The band's position within the stack on its own tile — so a roster selection shows it
+## on top and map re-click cycling continues from it. Returns 0 if not found.
+func _cycle_index_for_unit(entity_id: int) -> int:
+	for unit in units:
+		if int(unit.get("entity", -1)) != entity_id:
+			continue
+		var pos: Array = Array(unit.get("pos", []))
+		if pos.size() != 2:
+			return 0
+		var here := _units_on_tile(int(pos[0]), int(pos[1]))
+		for i in range(here.size()):
+			if int((here[i] as Dictionary).get("entity", -1)) == entity_id:
+				return i
+		return 0
+	return 0
 
 ## Re-resolve the current selection against the freshly-rebuilt markers/tiles so the
 ## HUD panel can refresh after a snapshot without the user reselecting the hex.
@@ -2138,7 +2438,8 @@ func _handle_entity_selection(col: int, row: int) -> void:
 	# Check for units on this tile
 	var units_here := _units_on_tile(col, row)
 	if not units_here.is_empty():
-		var unit: Dictionary = units_here[0]
+		# Select-then-cycle: cycle_index picks which band in the stack is active.
+		var unit: Dictionary = units_here[clampi(cycle_index, 0, units_here.size() - 1)]
 		selected_unit_id = int(unit.get("entity", -1))
 		selected_herd_id = ""
 		var unit_payload: Dictionary = (unit as Dictionary).duplicate(true)
@@ -3474,6 +3775,15 @@ func handle_hex_click(col: int, row: int, button_index: int) -> void:
 
 	if col < 0 or col >= grid_width or row < 0 or row >= grid_height:
 		return
+
+	# Select-then-cycle: re-clicking the current tile with >1 band advances the active
+	# band through the stack; any fresh tile resets to the top band. Computed before
+	# _emit_tile_selection overwrites selected_tile.
+	var bands_here := _units_on_tile(col, row)
+	if Vector2i(col, row) == selected_tile and bands_here.size() > 1:
+		cycle_index = (cycle_index + 1) % bands_here.size()
+	else:
+		cycle_index = 0
 
 	var terrain_id: int = _terrain_id_at(col, row)
 	emit_signal("hex_selected", col, row, terrain_id)
