@@ -1,0 +1,7 @@
+{
+  "stages": [
+    { "id": "nomadic", "label": "Nomadic band",  "icon": "⛺",  "criteria": { "min_size": 0 } },
+    { "id": "camp",    "label": "Seasonal camp", "icon": "🛖",  "criteria": { "min_size": 50 } },
+    { "id": "village", "label": "Village",        "icon": "🏘️", "criteria": { "min_size": 100 } }
+  ]
+}

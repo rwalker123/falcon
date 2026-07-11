@@ -47,6 +47,7 @@ mod resources;
 mod scalar;
 mod sedentarization;
 mod sedentarization_config;
+mod settlement_stage_config;
 mod sites;
 mod sites_config;
 mod snapshot;
@@ -154,6 +155,11 @@ pub use sedentarization::{
 pub use sedentarization_config::{
     load_sedentarization_config_from_env, SedentarizationConfig, SedentarizationConfigHandle,
     SedentarizationConfigMetadata,
+};
+pub use settlement_stage_config::{
+    load_settlement_stage_config_from_env, resolve_settlement_stage, SettlementStageConfig,
+    SettlementStageConfigHandle, SettlementStageConfigMetadata, SettlementStageDef,
+    SettlementStageInputs, StageCriteria, BUILTIN_SETTLEMENT_STAGE_CONFIG,
 };
 pub use sites::{
     discover_sites, place_wondrous_sites, DiscoveredSiteRecord, DiscoveredSites, SiteTag,
@@ -352,6 +358,10 @@ pub fn build_headless_app() -> App {
         sedentarization_config::load_sedentarization_config_from_env();
     let sedentarization_handle =
         sedentarization_config::SedentarizationConfigHandle::new(sedentarization_config);
+    let (settlement_stage_config, settlement_stage_metadata) =
+        settlement_stage_config::load_settlement_stage_config_from_env();
+    let settlement_stage_handle =
+        settlement_stage_config::SettlementStageConfigHandle::new(settlement_stage_config);
     let (sites_config, sites_metadata) = sites_config::load_sites_config_from_env();
     let sites_handle = sites_config::SitesConfigHandle::new(sites_config);
     let (expedition_config, expedition_metadata) =
@@ -421,6 +431,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(sedentarization_handle)
         .insert_resource(sedentarization_metadata)
         .insert_resource(sedentarization::SedentarizationScore::default())
+        .insert_resource(settlement_stage_handle)
+        .insert_resource(settlement_stage_metadata)
         .insert_resource(sites_handle)
         .insert_resource(sites_metadata)
         .insert_resource(sites::DiscoveredSites::default())

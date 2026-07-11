@@ -1864,6 +1864,11 @@ func _build_band_row(unit: Dictionary) -> Button:
     row.add_child(_roster_meta_label(str(int(unit.get("size", 0)))))
     if glyph != "":
         row.add_child(_roster_glyph_label(glyph, String(unit.get("activity", "")) == BAND_ACTIVITY_IDLE))
+    # Surface the data-driven settlement-stage label (e.g. "Nomadic band") on hover; omit when
+    # the band has no resolved stage (pre-stage / missing snapshot).
+    var stage_label := String(unit.get("settlement_stage_label", "")).strip_edges()
+    if stage_label != "":
+        button.tooltip_text = stage_label
     button.add_child(row)
     button.pressed.connect(_on_roster_row_selected.bind("unit", entity_id))
     return button

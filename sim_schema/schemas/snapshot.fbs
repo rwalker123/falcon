@@ -425,6 +425,17 @@ table LogisticsLinkState {
   flow:long;
 }
 
+// A band's resolved settlement-progression stage — how rooted-in-place its dwelling has become.
+// Fully data-driven: the sim resolves which stage a band is in from the ORDERED stage list in
+// `settlement_stage_config.json` and ships the winning stage's presentation tokens here. All three
+// fields are opaque pass-through strings the sim never interprets (`icon` is an emoji today, a
+// sprite/asset key later). Adding a stage is a pure config edit — no schema, sim, or client change.
+table SettlementStageView {
+  id:string;     // stable stage id (e.g. "nomadic" | "camp" | "village")
+  label:string;  // human-readable stage name for tooltips
+  icon:string;   // opaque presentation token (emoji now, asset key later)
+}
+
 table PopulationCohortState {
   entity:ulong;
   home:ulong;
@@ -506,6 +517,12 @@ table PopulationCohortState {
   // config lever echoed per-cohort (same idiom as workRange) so the client outfit stepper pre-clamps
   // to min(idle_workers, this). Populated for every cohort (the stepper is on the resident-band panel).
   maxExpeditionPartySize:uint = 0;
+  // The band's resolved settlement-progression stage (data-driven; see `SettlementStageView`).
+  // The sim resolves it from the band's `size` against the ordered `settlement_stage_config.json`
+  // list (interim: a size-only proxy; Phase 3/4 enrich the resolution inputs without touching this
+  // field or the client). Client draws `icon` directly and shows `label` in the tooltip. Appended
+  // last (append-only schema discipline).
+  settlementStage:SettlementStageView;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
