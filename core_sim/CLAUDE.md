@@ -40,7 +40,7 @@ cargo run -p core_sim --bin server
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
 | `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage.per_worker_yield`, `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles) |
-| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length, biomass, host biomes) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) / `market` (commercial-hunt take + trade multiplier) tuning |
+| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) / `market` (commercial-hunt take + trade multiplier) tuning |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
@@ -150,8 +150,9 @@ Pre-agricultural survival modules mapping to worldgen tags, snapshot payloads, a
 
 ## Fauna & Wild Game
 
-Mobile animal **groups** (not individuals) walk cyclic routes independent of the
-gather layer. One entity = one band/warren/herd; `biomass` = group size.
+Mobile animal **groups** (not individuals) graze-wander / migrate across the map
+independent of the gather layer (see "Movement" below). One entity = one
+band/warren/herd; `biomass` = group size.
 
 **Species table** (`src/data/fauna_config.json`, loader `fauna_config.rs`): the
 former hard-coded `HerdSpecies` enum is now a data-driven table. Each row has a
@@ -174,8 +175,29 @@ marsh_grazer (long routes); big game deer/boar (2–3 tiles); small game rabbit/
    order). Route via `build_short_route` (`route_len == 1` → single stationary
    tile → no client trail).
 
+**Movement — graze-wander + loiter-then-migrate** (`advance_herds`, `docs/plan_wildlife_hunting_overlay.md`
+"Herd Movement"). A `Herd` carries a **live `current_pos`** (walked ≤1 hex/turn, land-clamped,
+wrap-aware — `position()` returns it) over its sparse `route` (now **anchors**, not a per-turn path),
+plus a `RoamState` + `dwell_remaining`. One primitive — **graze-wander** (dwell `dwell_turns`, then
+step ≤1 hex) — split by `size_class`:
+- **Wild game** (`Big`/`Small`): permanent `GrazeWander` toward the current cluster anchor (cycling);
+  ≈ half speed (a `route_len==1` group stays put). Catchable by an equal-speed party during a graze
+  turn.
+- **Migratory**: a `Loiter { turns_left }` ↔ `Migrate` state machine over the anchors. **Loiter** —
+  graze-wander within `loiter_radius` of the current anchor for `loiter_turns` (sampled). **Migrate** —
+  1 hex/turn toward the next anchor, **no dwell**, then loiter at the new anchor. Fixes the old bug
+  where `Herd::advance()` teleported 4–12 tiles/turn along the sparse route.
+
+Movement is **deterministic under rollback** — a per-herd/​per-turn `SmallRng` seeded from `map_seed ^
+tick ^ HERD_MOVEMENT_SEED_SALT ^ fnv(herd.id)` (mirrors `repopulate_fauna`). Cadence levers are
+per-species on `SpeciesDef` (`fauna_config.json`): `dwell_turns` (~1), `loiter_turns [min,max]`
+(migratory, e.g. [12,24]), `loiter_radius` (~2), all `#[serde(default)]`. `advance_herds` resolves a
+herd's levers via `FaunaConfig::species_by_display`. Movement is **independent of** `regrow_biomass`
+(a loitering herd still grazes/regrows — ecology unchanged). Telemetry `next_position` is the next
+`Migrate` hex (client heading arrow), `None` while loitering/grazing.
+
 Abundance is a **tuning value, high to start** (design: game plentiful early,
-thins under overhunting in later phases). Roaming reuses `advance_herds`; herds
+thins under overhunting in later phases). Herds
 flow to telemetry, the `HerdDensityMap`, and the snapshot (`HerdTelemetryState`,
 which now also carries `size_class` + `huntable` so the client can offer the right
 verbs — a free-form `species` string means new species need no schema change).
@@ -381,15 +403,18 @@ gains `ResidentBand`.)
 
 **`advance_expeditions`** (`systems.rs`, `TurnStage::Population`, registered right after
 `advance_band_movement`, before the Visibility stage's `discover_sites`) runs per expedition each
-turn: **(a) observe** the tiles in `observe_sight_range` LOS of its current tile into the private
-`pending_reveal` buffer (reusing `visibility_systems::visible_tiles_in_range` — the pure geometry
-behind `reveal_tiles_in_range` — **without** touching the faction map); **(b) comm check + flush** —
-when within `effective_comm_range()` (= `comm_range_tiles × comm_range_tech_factor`, rounded) hex
-distance of the home band's **live** tile, promote every buffered tile to `Discovered` on the faction
-map (`FactionVisibilityMap::discover`, Unexplored→Discovered, never downgrading `Active`) and clear
-the buffer — so the map lights up **as a lump on return**, and `discover_sites` records any `SiteTag`
-on the flushed tiles for free; **(c) provisions** drain by `party × provision_upkeep_per_worker`
-(non-fatal at zero in v1); **(d) phase transitions** — `Outbound` + arrived (no `BandTravel`) →
+turn. **Map documentation — (a)+(b) — is SHARED by every mission (scout AND hunt):** a ranging party
+maps the terrain it crosses regardless of verb. **(a) observe** the tiles in `observe_sight_range` LOS
+of its current tile into the private `pending_reveal` buffer (reusing
+`visibility_systems::visible_tiles_in_range` — the pure geometry behind `reveal_tiles_in_range` —
+**without** touching the faction map); **(b) comm check + flush** — when within `effective_comm_range()`
+(= `comm_range_tiles × comm_range_tech_factor`, rounded) hex distance of the home band's **live** tile,
+promote every buffered tile to `Discovered` on the faction map (`FactionVisibilityMap::discover`,
+Unexplored→Discovered, never downgrading `Active`) and clear the buffer — so the map lights up **as a
+lump on return** (for a hunt party, at each `Delivering` drop-off / `Returning` fold-back), and
+`discover_sites` records any `SiteTag` on the flushed tiles for free. **Scout-only** below: **(c)
+provisions** drain by `party × provision_upkeep_per_worker` (hunt lives off its kills; non-fatal at
+zero in v1) + opportunistic replenish; **(d) phase transitions** — `Outbound` + arrived (no `BandTravel`) →
 `AwaitingOrders` + one-shot `ExpeditionArrived` feed; `Returning` → chase the home band's live tile
 (refresh `BandTravel`) and, once within comm range, fold workers + leftover provisions back into the
 band + despawn (`ExpeditionReturned`, after the flush so the final findings report); `AwaitingOrders`

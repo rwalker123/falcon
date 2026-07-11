@@ -434,6 +434,17 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `set_labor_pending`) — the pending forage tile, the pending hunted herd (dashed ring-hex + dashed
     band→herd link), and the pending move destination (dashed hex + dashed link) — clearly apart from the
     solid confirmed styles, cleared when the snapshot confirms.
+  - **Travel destination** (`MapView._draw_travel_destination`, drawn for the selected traveling unit —
+    band OR expedition — from `_draw_band_work_highlights`): when the unit reports `is_traveling`, a
+    thin cyan line runs from its tile to the destination hex plus a steady (non-pulsing) cyan target
+    reticle on it. The target coords (`travel_target_x` / `travel_target_y`, `uint`, `0,0` and ignored
+    unless `is_traveling`) are decoded in `native/src/lib.rs population_to_dict` and flowed onto the
+    marker in `_rebuild_unit_markers`. **Wrap-aware:** the target is brought into the band's effective
+    column frame via `_wrapped_col_delta`, so the line follows the SHORT (possibly seam-crossing)
+    wrapped path the sim actually takes rather than shooting the long way across the map. Only the
+    selected unit's destination draws (no clutter). Covered by `marker_field_guard`
+    (`travel_target_x`/`travel_target_y`/`is_traveling`) and `map_preview` states `map_travel_band` /
+    `map_travel_seam` (seam-crossing) / `map_travel_expedition`.
   - **Band-picker dropdown** (`_build_band_picker`, on BOTH assign controls, above the worker
     stepper so it reads "which band → how many workers"): a `Band:` `OptionButton` listing every
     `_player_bands` cohort by positional name ("Band N", via `_band_display_name`; the cohort has
@@ -447,13 +458,34 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     actor is explicit). Lists **all** player bands — in-range filtering (Forage `work_range` / Hunt
     `work_range` + leash) is deferred to the multi-band slice (needs hunt-leash reach in the snapshot).
   - **`%HerdAssignControls`** (herd drawer, huntable herds, `_build_herd_assign_controls`): the
-    band-picker, then an "Assign hunters" **compose** control — a Hunters `−/+` count (`_hunt_assign_count`), a
-    sustain/surplus/market/eradicate **policy picker** (`_build_policy_picker`, `_hunt_assign_policy`,
-    `LABOR_HUNT_POLICIES`, default `sustain`), and an **Assign** button → `assign_labor hunt <herd_id>
-    <policy> <workers>`. Compose state re-seeds from current staffing when the selected herd changes.
+    band-picker, then a **distance-aware** "Assign hunters" **compose** control — a `−/+` worker/party
+    count (`_hunt_assign_count`) + a sustain/surplus/market/eradicate **policy picker**
+    (`_build_policy_picker`, `_hunt_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`). The
+    button + command switch on the **wrap-aware hex distance** from the **SELECTED band's** own tile
+    to the herd vs that band's **`hunt_reach`** (= `work_range` + hunt leash, decoded as `hunt_reach`
+    and flowed onto the marker): **within reach** → a `Hunters` stepper + **"Assign Local Hunt"** →
+    `assign_labor hunt <herd_id> <policy> <workers>`; **beyond reach** → a `Party` stepper (cap
+    `min(idle_workers, max_expedition_party_size)`) + a distance hint + **"Send Hunting Expedition"** →
+    `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> <policy>` (emitted directly, no
+    herd-targeting step — the herd is already selected). Every part of the decision (distance, reach,
+    band-entity target) keys off the band the picker selects, explicitly threaded — never the faction's
+    default band. Distance uses Hud-local mirrors of MapView's odd-r `_hex_distance` /
+    `_wrapped_col_delta`, fed grid width + wrap via `Hud.set_grid_dimensions` (Main forwards the
+    snapshot `grid` key). Compose state re-seeds from current staffing when the selected herd changes.
+    Covered by ui_preview states `herd_verbs` (local) / `herd_hunt_expedition` (single far band) /
+    `herd_hunt_band_near` + `herd_hunt_band_far` (two bands, one herd — picker flips local↔expedition).
   - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): the
-    band-picker, then an "Assign foragers" Foragers `−/+` count (`_forage_assign_count`) + **Assign** → `assign_labor
-    forage <x> <y> <workers>`.
+    band-picker, then an "Assign foragers" Foragers `−/+` count (`_forage_assign_count`) + a
+    **range-aware** **Forage** button → `assign_labor forage <x> <y> <workers>`. Foraging is
+    **stationary** gathering — there is **no forage-expedition fallback** — so the button gates on the
+    **wrap-aware hex distance** from the **SELECTED band's** own tile to the forage tile vs that band's
+    **`work_range`** (the plain `workRange` field, NOT `hunt_reach`; already decoded/on the marker):
+    **within range** → enabled **Forage**; **beyond range** → the button is **disabled** + an
+    out-of-range hint (`"(x,y) is N tiles away — beyond this band's forage range (R)"`), no alternative.
+    Reuses the same `_hex_distance_wrapped` / `_band_tile` / grid-dim plumbing and explicit
+    selected-band threading as the herd hunt. Covered by ui_preview states `food_tile` (in range) /
+    `food_forage_out_of_range` (single far band) / `food_forage_band_near` + `food_forage_band_far`
+    (two bands, one tile — picker flips enabled↔disabled).
 
   All emit `assign_labor_requested(payload)` (payload: `faction/band/kind/workers/x/y/herd_id/policy`);
   `Main._on_hud_assign_labor` formats the `assign_labor …` text command. **Clear all** emits

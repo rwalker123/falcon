@@ -25,9 +25,10 @@ extends Node
 const MAP_VIEW := preload("res://src/scripts/MapView.gd")
 
 # Every key the band drawer (`Hud._unit_summary_lines`) and the labor-allocation panel
-# (`Hud._build_allocation_panel` / `_effective_*`) read off `_selected_unit` (the marker copy).
-# The marker's key set MUST stay a superset of this list; add a key here whenever the panel
-# starts reading a new marker field, and the guard will hold the marker to it.
+# (`Hud._build_allocation_panel` / `_effective_*`) read off `_selected_unit` (the marker copy),
+# plus the marker fields MapView draws from the same copy (e.g. the travel-destination reticle).
+# The marker's key set MUST stay a superset of this list; add a key here whenever the panel or a
+# selected-unit map draw starts reading a new marker field, and the guard will hold the marker to it.
 const PANEL_CONSUMED_KEYS := [
 	"entity",              # _emit_assign_labor bits, roster identity
 	"faction",             # _is_player_unit gating
@@ -48,7 +49,11 @@ const PANEL_CONSUMED_KEYS := [
 	"idle_workers",        # allocation header Idle / quick_assign_hunters
 	"labor_assignments",   # allocation "Current actions" steppers
 	"work_range",          # selected-band map highlights
+	"hunt_reach",          # herd-hunt affordance local-vs-expedition distance gate
 	"scout_reveal_radius", # allocation Scout role hint
+	"is_traveling",        # travel-destination map draw gating
+	"travel_target_x",     # travel-destination map draw (MapView._draw_travel_destination)
+	"travel_target_y",     # travel-destination map draw (MapView._draw_travel_destination)
 	"activity",            # roster activity glyph
 	"hunt_mode",           # roster / cancel-hunt label
 	"accessible_stockpile", # _accessible_stockpile_lines
@@ -78,7 +83,11 @@ const FIXTURE_ENTRY := {
 	"activity": "forage",
 	"hunt_mode": "sustain",
 	"work_range": 2,
+	"hunt_reach": 7,
 	"scout_reveal_radius": 3,
+	"is_traveling": true,
+	"travel_target_x": 11,
+	"travel_target_y": 9,
 	"working_age": 16,
 	"idle_workers": 7,
 	"output_multiplier": 0.72,
@@ -129,7 +138,12 @@ func _ready() -> void:
 	_expect_int(marker, "working_age", 16)
 	_expect_int(marker, "idle_workers", 7)
 	_expect_int(marker, "work_range", 2)
+	_expect_int(marker, "hunt_reach", 7)
 	_expect_int(marker, "scout_reveal_radius", 3)
+	_expect_int(marker, "travel_target_x", 11)
+	_expect_int(marker, "travel_target_y", 9)
+	if not bool(marker.get("is_traveling", false)):
+		_fail("is_traveling did not round-trip to true (defaulted?)")
 	_expect_int(marker, "size", 30)
 	_expect_int(marker, "entity", 9001)
 	_expect_int(marker, "faction", 0)

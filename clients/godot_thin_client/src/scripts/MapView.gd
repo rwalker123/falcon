@@ -242,6 +242,14 @@ const LABOR_PENDING_WIDTH := 2.6
 const LABOR_PENDING_DASH := 10.0
 const LABOR_PENDING_GAP := 7.0
 const LABOR_PENDING_LINK_ALPHA := 0.7
+# Travel destination (selected traveling band/expedition): a thin cyan line from the unit's
+# current tile to the wrapped-nearest destination hex + a target reticle on that hex, so the
+# player sees where it is headed. Distinct from the pending-amber style — this is a confirmed,
+# in-progress move reported by the snapshot (`is_traveling` + `travel_target_x/y`).
+const TRAVEL_DEST_COLOR := Color(0.310, 0.878, 0.812, 0.85)  # SIGNAL cyan
+const TRAVEL_DEST_LINE_WIDTH := 2.0
+const TRAVEL_DEST_LINE_ALPHA := 0.6           # line reads fainter than the reticle
+const TRAVEL_DEST_RETICLE_FACTOR := 0.62      # reticle radius as a factor of hex radius
 # Supply-link overlay: faint lines connecting bands sharing a supply network.
 const SUPPLY_LINK_COLOR := Color(0.310, 0.878, 0.812, 0.28)  # dim SIGNAL cyan
 const SUPPLY_LINK_WIDTH := 2.0
@@ -1764,6 +1772,11 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 	#    the snapshot hasn't confirmed yet. Drawn last so it reads on top of the confirmed styles.
 	_draw_band_pending(band, band_col, band_row, eff_col, band_center, radius, origin)
 
+	# 6. Travel destination: a confirmed in-progress move the snapshot reports (`is_traveling`).
+	#    Line + reticle toward the wrapped-nearest copy of the target, so it follows the short
+	#    (possibly seam-crossing) path the sim actually takes. Works for bands AND expeditions.
+	_draw_travel_destination(band, band_col, band_row, eff_col, band_center, radius, origin)
+
 ## Draw the dashed-amber pending overlay for a band: pending forage tiles, pending hunted herds
 ## (dashed ring + dashed link), and a pending move destination (dashed tile + dashed link).
 func _draw_band_pending(band: Dictionary, band_col: int, band_row: int, eff_col: int, band_center: Vector2, radius: float, origin: Vector2) -> void:
@@ -1806,6 +1819,30 @@ func _draw_band_pending(band: Dictionary, band_col: int, band_row: int, eff_col:
 			_draw_dashed_hex(mcol, mrow, radius, origin, LABOR_PENDING_COLOR, LABOR_PENDING_WIDTH)
 			if absf(band_center.x - mc.x) <= last_map_size.x * 0.4:
 				_draw_dashed_line(band_center, mc, link_color, LABOR_PENDING_WIDTH, LABOR_PENDING_DASH, LABOR_PENDING_GAP)
+
+## Draw the selected traveling unit's destination: a thin cyan line from its current tile to the
+## wrapped-nearest copy of the `travel_target` hex + a target reticle on that hex. Only the target
+## coords are read when `is_traveling` (they are `0,0` otherwise). Bringing the target into the
+## band's effective column frame via `_wrapped_col_delta` makes the line follow the SHORT wrapped
+## path (matching the sim's seam-crossing pathing) rather than shooting the long way across the map.
+func _draw_travel_destination(unit: Dictionary, band_col: int, band_row: int, eff_col: int, band_center: Vector2, radius: float, origin: Vector2) -> void:
+	if not bool(unit.get("is_traveling", false)):
+		return
+	var target_x := int(unit.get("travel_target_x", 0))
+	var target_y := int(unit.get("travel_target_y", 0))
+	if target_y < 0 or target_y >= grid_height:
+		return
+	# Already on the destination tile — nothing to draw (also guards a `0,0` slip-through).
+	if target_x == band_col and target_y == band_row:
+		return
+	var dest_col := eff_col + _wrapped_col_delta(band_col, target_x)
+	var dest_center := _hex_center(dest_col, target_y, radius, origin)
+	var line_color := TRAVEL_DEST_COLOR
+	line_color.a = TRAVEL_DEST_LINE_ALPHA
+	draw_line(band_center, dest_center, line_color, TRAVEL_DEST_LINE_WIDTH)
+	# Reticle marks the destination hex; no pulse (this is a steady, confirmed heading, unlike the
+	# animated targeting reticle).
+	_draw_reticle(dest_center, radius * TRAVEL_DEST_RETICLE_FACTOR, TRAVEL_DEST_COLOR, 1.0)
 
 ## Coordinator push (Hud.labor_pending_changed → Main → here): the per-band optimistic pending
 ## map. Stored + redrawn; the selected band's pending shows in a dashed-amber style.
@@ -1868,10 +1905,19 @@ func _band_effective_col(col: int, radius: float, origin: Vector2) -> int:
 
 ## Shortest signed column delta from `from_col` to `to_col`, honoring horizontal wrap, so a
 ## target tile renders adjacent to the band rather than across the whole map.
+## Mirrors the sim's `grid_utils::shortest_delta_x` exactly: keep the direct delta when it is
+## within half the width, else shift by one width. The exact-half tie (`abs(d) == width/2`)
+## resolves to the POSITIVE direct value, matching the sim — NOT `round()`'s half-away-from-zero
+## (which flipped the sign at the antipode and pointed the travel line the wrong seam direction).
 func _wrapped_col_delta(from_col: int, to_col: int) -> int:
 	var d := to_col - from_col
 	if _wrap_horizontal and grid_width > 0:
-		d -= int(round(float(d) / float(grid_width))) * grid_width
+		# Integer half-width mirrors the sim's `w / 2` truncation.
+		var half_width := grid_width / 2
+		if d > half_width:
+			d -= grid_width
+		elif d < -half_width:
+			d += grid_width
 	return d
 
 func _fill_hex(col: int, row: int, radius: float, origin: Vector2, fill: Color) -> void:
@@ -2295,6 +2341,11 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"size": int(entry.get("size", 0)),
 			"id": label,
 			"is_traveling": is_traveling,
+			# Travel destination tile (valid only while `is_traveling`; `0,0` otherwise). Drives the
+			# wrap-aware destination reticle + line the selected traveling unit draws (band OR
+			# expedition) in _draw_travel_destination.
+			"travel_target_x": int(entry.get("travel_target_x", 0)),
+			"travel_target_y": int(entry.get("travel_target_y", 0)),
 			"days_of_food": float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS)),
 			"morale": float(entry.get("morale", 1.0)),
 			"morale_delta": float(entry.get("morale_delta", 0.0)),
@@ -2328,6 +2379,9 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			# here or the panel reads 0). `scout_reveal_radius` (now the band's sight-range
 			# bonus, not a reveal-disc radius) is still carried but no longer drawn.
 			"work_range": int(entry.get("work_range", 0)),
+			# Hunt reach (work_range + hunt leash): the herd-hunt affordance offers a LOCAL hunt within
+			# this hex distance, a hunting EXPEDITION beyond it (Hud._build_herd_assign_controls).
+			"hunt_reach": int(entry.get("hunt_reach", 0)),
 			"scout_reveal_radius": int(entry.get("scout_reveal_radius", 0)),
 			"working_age": int(entry.get("working_age", 0)),
 			"idle_workers": int(entry.get("idle_workers", 0)),

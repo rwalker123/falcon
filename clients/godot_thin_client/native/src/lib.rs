@@ -3530,6 +3530,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("current_x", cohort.currentX() as i64);
     let _ = dict.insert("current_y", cohort.currentY() as i64);
     let _ = dict.insert("is_traveling", cohort.isTraveling());
+    // Destination tile while traveling (`isTraveling` gates it; `0,0` otherwise). The map
+    // draws a wrap-aware reticle + line to it for the selected traveling unit.
+    let _ = dict.insert("travel_target_x", i64::from(cohort.travelTargetX()));
+    let _ = dict.insert("travel_target_y", i64::from(cohort.travelTargetY()));
     let _ = dict.insert("size", cohort.size() as i64);
     let _ = dict.insert("morale", fixed64_to_f64(cohort.morale()));
     // Signed per-turn morale trend + the dominant negative driver when falling
@@ -3653,6 +3657,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // base, 0 when no scouts) — its effect shows directly in the fog, NOT as a drawn disc.
     let _ = dict.insert("work_range", cohort.workRange() as i64);
     let _ = dict.insert("scout_reveal_radius", cohort.scoutRevealRadius() as i64);
+    // Hunt reach = work_range + hunt_leash_tiles (default 5): the max hex distance at which the band
+    // can run a LOCAL hunt. Beyond it, the herd-hunt affordance offers a hunting EXPEDITION instead.
+    let _ = dict.insert("hunt_reach", cohort.huntReach() as i64);
 
     // Scouting expedition (docs/plan_exploration_and_sites.md §2): a detached party is a
     // PopulationCohort tagged Expedition that flows through this same populations[] array as a

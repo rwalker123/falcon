@@ -249,6 +249,15 @@ fold back on arrival).
   the faction map (as `Discovered`) only when in comm range (see §2). This is the one place the
   "expedition = another `StartingUnit` band" equivalence is deliberately broken.
 
+**Map documentation is a *shared* expedition behaviour (every mission, not scout-only).** The
+observe-into-`pending_reveal` + comm-range flush-to-`Discovered` step in `advance_expeditions` is
+mission-agnostic — a hunting party ranging after a herd obviously maps the terrain it crosses, just
+like a scout, and its findings report home (flush) whenever it is back within comm range: naturally at
+each **Delivering** drop-off and on **Returning** fold-back, so the map lights up when it delivers the
+food. Sites on the flushed tiles ride `discover_sites` for free. Only the **scout-specific** bits stay
+scout-only — provisions upkeep, opportunistic replenish, and the awaiting-orders flow (a hunt party
+lives off its kills and never idles).
+
 Expeditions are excluded **by construction** (absence of `ResidentBand`), so the safe default survives
 new systems added to the settlement arc. A breakaway-to-new-band is the same detached party that simply
 drops its `Expedition` marker and gains `ResidentBand` instead of returning. Expedition-specific

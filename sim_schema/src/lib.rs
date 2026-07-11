@@ -1039,6 +1039,18 @@ pub struct PopulationCohortState {
     /// `Hunt { fauna_id, policy }`; drives the client's per-policy label + policy-picker default.
     #[serde(default)]
     pub expedition_hunt_policy: String,
+    /// The `BandTravel` destination tile while traveling (`is_traveling` gates it; `0,0` otherwise).
+    /// Lets the client draw a destination hex + line from a selected band/expedition. Appended last
+    /// in the FlatBuffers table (append-only wire discipline).
+    #[serde(default)]
+    pub travel_target_x: u32,
+    #[serde(default)]
+    pub travel_target_y: u32,
+    /// Band's effective hunt reach = `band_work_range + hunt_leash_tiles` (the leash a Hunt
+    /// assignment lapses past). Echoed per-cohort so the client offers a local hunt vs a hunting
+    /// expedition by the clicked herd's distance. Appended last in the FlatBuffers table.
+    #[serde(default)]
+    pub hunt_reach: u32,
     /// Persistence-only: the real band (entity bits) that outfitted this party — a rollback
     /// re-attaches the expedition and resolves its home band from this.
     #[serde(default)]
@@ -2971,6 +2983,9 @@ fn create_populations<'a>(
                     // Appended after every earlier-shipped field (append-only wire discipline).
                     expeditionTargetHerd: expedition_target_herd,
                     expeditionHuntPolicy: expedition_hunt_policy,
+                    travelTargetX: cohort.travel_target_x,
+                    travelTargetY: cohort.travel_target_y,
+                    huntReach: cohort.hunt_reach,
                     supplyNetworkId: cohort.supply_network_id,
                     moraleDelta: cohort.morale_delta,
                     moraleCause: cohort.morale_cause,

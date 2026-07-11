@@ -116,8 +116,8 @@ pub use expedition_config::{
     ExpeditionConfigMetadata, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
-    advance_herds, advance_husbandry, repopulate_fauna, spawn_initial_herds, EcologyPhase,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry,
+    advance_herds, advance_husbandry, repopulate_fauna, spawn_initial_herds, EcologyPhase, Herd,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, RoamState,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata, SizeClass,

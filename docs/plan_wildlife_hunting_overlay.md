@@ -1,8 +1,10 @@
 # Plan: Wildlife & Hunting Overlay
 
-Status: **Design approved, not yet implemented.** This is the authoritative spec
-for unifying wild game into the fauna system and giving hunting/gathering their
-own verbs. Supersedes the static `game_trail` food-site flag.
+Status: **Largely implemented.** The fauna herd layer (game-as-herds), the hunt/follow/ecology/husbandry
+verbs, market hunting, and herd movement (graze-wander / loiter-then-migrate) have all shipped; remaining
+deferred items (`Camp`-entity/corrals, wiring the sedentarization hard prompt to `found_settlement`) are
+called out inline. This is the authoritative spec for unifying wild game into the fauna system and giving
+hunting/gathering their own verbs. Superseded the static `game_trail` food-site flag.
 
 ## Motivation
 
@@ -68,6 +70,52 @@ arc: `take > regrowth` over time → collapse → local extinction.
   early and thins as population pressure / overhunting grow, unless domestication /
   industrialized farming & hunting take hold (future arc). Respawn/immigration rate
   is tunable so early forager play is game-rich.
+
+## Herd Movement — graze-wander + loiter-then-migrate
+
+> **Status: implemented** (PR #100 — graze-wander + loiter-then-migrate in `advance_herds`; cross-refs
+> `docs/plan_exploration_and_sites.md` §2b hunt expedition). Fixed a latent bug and made hunting
+> *migratory* game actually possible.
+
+**The bug this fixed.** Previously `advance_herds` called `Herd::advance()` **every turn
+unconditionally**, stepping `step_index` one waypoint along the route. But migratory routes
+(`build_route`) are a **sparse spiral of waypoints 4–12 tiles apart**, so a migratory herd effectively
+**teleported 4–12 tiles per turn** — which is why an equal-speed hunt party could never catch one, and
+why the map trail looked jumpy.
+
+**One primitive: graze-wander** (dwell a turn, then step ≤1 tile). Two behaviours built from it, split by
+`Herd.size_class`:
+- **Wild game** (`Big`/`Small` — deer/boar/rabbit/fowl): *permanent* graze-wander in its local cluster —
+  graze the current tile for `dwell_turns` (~1), then step one tile. Effectively half-speed → an
+  equal-speed party catches it during a graze turn.
+- **Migratory** (`Migratory` — mammoth/steppe-runner/marsh-grazer): alternates two modes —
+  - **Loiter**: graze-wander confined to ±1–2 tiles of an **anchor** for `loiter_turns` (many). The
+    sparse route waypoints become the loiter anchors.
+  - **Migrate**: a directed leg to the *next* anchor at **1 hex every turn, no grazing pause** ("they
+    don't stop until their destination"). Requires **densifying** the sparse route into an adjacent
+    hex-line path at spawn so migration is 1-hex/turn, not a teleport.
+
+**Hunting works** (mechanically): a party catches the herd **during a loiter** (it's slow), and once
+adjacent it **keeps pace through a migrate leg** — both move 1/turn, so it trails one tile behind, still
+within reach, following in the herd's wake. A band's *leashed* Hunt still lapses when a herd migrates a
+long leg away (graceful — feed entry, workers return) — which is exactly what hunting **expeditions**
+are for.
+
+**Config: per-species** on `SpeciesDef` (cadence differs — deer vs mammoth): `dwell_turns` (game/loiter
+grazing pause), `loiter_turns [min,max]` (migratory dwell at an anchor), `loiter_radius` (±1–2 local
+wander), plus migrate-leg behaviour. `#[serde(default)]` so no config-migration churn.
+
+### Future concepts (documented now, built later)
+- **Hunt difficulty = danger, not movement.** Large/migratory animals are hard to hunt because a
+  mammoth can *kill your party*, not because it's fast — so mechanically-easy hunting now is intended;
+  the challenge lands with the **expedition risk/failure layer** (`docs/plan_exploration_and_sites.md`
+  §2b deferred). Do **not** tune pursuit speed to make hunting "hard."
+- **Game trails → travel roads.** Historically the first human paths followed game/herd trails. A future
+  slice: repeated herd movement accumulates a **trail** on the tiles it crosses that, over time, becomes
+  cheaper-to-traverse terrain — an emergent road network feeding movement/logistics. Build the movement
+  so the herd's repeated positions are a clean signal a trail-accumulation system can later consume
+  (they already are — `advance_herds` visits `position()` each turn). Retire the per-herd "next-position
+  heading arrow" in favour of the accumulated trail when that lands; keep the arrow/breadcrumb as-is for now.
 
 ## Implementation phases
 

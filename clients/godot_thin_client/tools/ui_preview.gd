@@ -181,17 +181,64 @@ func _ready() -> void:
 	await _settle()
 	await _save("discoveries")
 
-	# State 2 — a food tile selected: the Tile card's "Assign foragers" controls (a "Band:"
-	# dropdown naming the actor band + a Foragers −/+ count + the Assign button). With one
-	# player band the dropdown is a single item ("Band 1").
+	# band_alerts (above) left _player_band as an alert-fixture band (no work_range, far from the food
+	# tile); seed a NEAR band so the forage controls resolve an in-range actor.
+	_hud._player_band = _forage_range_bands()[0]
+	_hud._player_bands = []
+	_hud._forage_assign_key = ""
+	_hud._forage_assign_band = -1
+
+	# State 2 — a food tile selected, band WITHIN forage range: the Tile card's "Assign foragers"
+	# controls (a "Band:" dropdown naming the actor band + a Foragers −/+ count + an enabled **Forage**
+	# button). With one player band the dropdown is a single item ("Band 1").
 	_hud.show_tile_selection(_food_tile_fixture())
 	await _settle()
 	await _save("food_tile")
 
-	# State 3 — a huntable herd selected on a food tile: the "Assign hunters" controls
-	# (a "Band:" dropdown naming the actor band, a Hunters −/+ count, the
-	# sustain/surplus/market/eradicate policy picker, and the Assign button). A Thriving herd
-	# shows a neutral ecology readout in the drawer.
+	# State 2b — the same food tile, single FAR band (~21 tiles away, beyond work_range 2): foraging is
+	# stationary gathering with NO expedition fallback, so the Forage button is DISABLED and an
+	# out-of-range hint shows ("(66,10) is 21 tiles away — beyond this band's forage range (2)").
+	_hud._player_band = _forage_range_bands()[1]
+	_hud._player_bands = []
+	_hud._forage_assign_key = ""
+	_hud._forage_assign_band = -1
+	_hud.show_tile_selection(_food_tile_fixture())
+	await _settle()
+	await _save("food_forage_out_of_range")
+
+	# State 2c — TWO bands at DIFFERENT distances from ONE food tile, NEAR band selected (821, 1 tile
+	# away ≤ range 2): enabled **Forage**. The band-picker selection — not the tile — drives it.
+	_hud._player_bands = _forage_range_bands()
+	_hud._player_band = _hud._player_bands[0]
+	_hud._forage_assign_key = ""
+	_hud._forage_assign_band = -1
+	_hud.show_tile_selection(_food_tile_fixture())
+	await _settle()
+	await _save("food_forage_band_near")
+
+	# State 2d — same two bands, FAR band selected via the picker (822, ~21 tiles away): the SAME tile
+	# now DISABLES Forage + shows the out-of-range hint, proving WHICH band is selected drives the
+	# enabled-vs-disabled state (the case single-band playtest can't cover).
+	_hud._forage_assign_band = int(_forage_range_bands()[1]["entity"])
+	_hud._build_forage_assign_controls(_food_tile_fixture())
+	await _settle()
+	await _save("food_forage_band_far")
+	# Reset so later states resolve their usual band.
+	_hud._player_bands = []
+	_hud._forage_assign_key = ""
+	_hud._forage_assign_band = -1
+
+	# band_alerts (above) overwrote _player_band with alert-fixture bands (which carry no hunt_reach);
+	# re-seed the reference band so the herd assign controls resolve a proper band with a hunt reach.
+	_hud._player_band = _band_fixture()
+	_hud._player_bands = []
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+
+	# State 3 — a huntable herd selected on a food tile, WITHIN the band's hunt reach: the "Assign
+	# hunters" controls (a "Band:" dropdown naming the actor band, a Hunters −/+ count, the
+	# sustain/surplus/market/eradicate policy picker, and the local "Assign Local Hunt" button). A
+	# Thriving herd shows a neutral ecology readout in the drawer.
 	_hud.show_herd_selection(_herd_fixture())
 	await _settle()
 	await _save("herd_verbs")
@@ -231,6 +278,42 @@ func _ready() -> void:
 	# Reset so later states render their usual single-band dropdown.
 	_hud._player_bands = []
 	_hud._hunt_assign_key = ""
+
+	# State 3h — distance-aware herd-hunt, SINGLE far band: a lone band ~27 tiles from the herd (beyond
+	# its hunt_reach 7). The affordance fully replaces the local option — the button reads "Send Hunting
+	# Expedition", a distance hint shows, the stepper reads "Party", and Assign emits
+	# send_hunt_expedition (party = the stepper), NOT assign_labor.
+	_hud._player_bands = [_hunt_distance_bands()[1]]   # only the FAR band
+	_hud._player_band = _hud._player_bands[0]
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(_hunt_distance_herd())
+	await _settle()
+	await _save("herd_hunt_expedition")
+
+	# State 3i — TWO bands at DIFFERENT distances from ONE herd, NEAR band selected: band 811 sits ON
+	# the herd (distance 0 ≤ reach 7) → "Assign Local Hunt" + assign_labor. The band-picker selection —
+	# not the herd — drives it (the resolved/default band is the near one here).
+	_hud._player_bands = _hunt_distance_bands()
+	_hud._player_band = _hud._player_bands[0]
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(_hunt_distance_herd())
+	await _settle()
+	await _save("herd_hunt_band_near")
+
+	# State 3j — same two bands, FAR band selected via the picker (entity 812, ~27 tiles away): the SAME
+	# herd now offers "Send Hunting Expedition" (party cap = min(idle 6, max party 8) = 6), proving that
+	# WHICH band is selected flips the label + command + band-entity target, not the herd.
+	_hud._hunt_assign_band = int(_hunt_distance_bands()[1]["entity"])   # FAR band
+	_hud._build_herd_assign_controls(_hunt_distance_herd())
+	await _settle()
+	await _save("herd_hunt_band_far")
+	# Reset so later states render their usual single-band dropdown + default band.
+	_hud._player_bands = []
+	_hud._player_band = _band_fixture()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
 
 	# State 3d — a populated hex: the Tile card + the Occupants roster split. Three
 	# player bands (days_of_food 15 / 7 / 2 → green / amber / red vitality dots, with
@@ -363,6 +446,11 @@ func _band_fixture() -> Dictionary:
 		# min(idle, this).
 		"max_expedition_party_size": 8,
 		"work_range": 2,
+		# Hunt reach (work_range + hunt leash) — large enough here that BOTH the reference herd_fixture
+		# (9 tiles from this band's pos) and the occupied-hex herd (16 tiles) stay WITHIN reach, so those
+		# herd states render the LOCAL "Assign Local Hunt" controls (the far-herd expedition path has its
+		# own dedicated fixtures, _hunt_distance_bands).
+		"hunt_reach": 16,
 		"scout_reveal_radius": 2,
 		"activity": "forage",
 		"labor_assignments": [
@@ -498,12 +586,57 @@ func _band_alert_fixture() -> Array:
 ## handle N). Different idle_workers so switching the dropdown visibly re-caps the worker
 ## stepper; neither hunts the deer herd, so the cap for a fresh source == idle_workers.
 func _two_player_bands() -> Array:
+	# hunt_reach 6 keeps both bands WITHIN local reach of the (66,10) herd (distances 0 and 3), so the
+	# band-picker states test the LOCAL-hunt re-cap (the distance-aware expedition path is exercised by
+	# _hunt_distance_bands below).
 	return [
 		{"entity": 801, "faction": 0, "size": 120, "current_x": 66, "current_y": 10,
-			"working_age": 14, "idle_workers": 12, "activity": "forage", "labor_assignments": []},
+			"working_age": 14, "idle_workers": 12, "hunt_reach": 6, "activity": "forage", "labor_assignments": []},
 		{"entity": 802, "faction": 0, "size": 40, "current_x": 68, "current_y": 12,
-			"working_age": 6, "idle_workers": 2, "activity": "hunt", "labor_assignments": []},
+			"working_age": 6, "idle_workers": 2, "hunt_reach": 6, "activity": "hunt", "labor_assignments": []},
 	]
+
+## Distance-aware herd-hunt (docs/plan_exploration_and_sites.md §2b): two player bands at DIFFERENT
+## distances from ONE herd — a NEAR band ON the herd tile (within hunt_reach → LOCAL hunt) and a FAR
+## band ~27 tiles away (beyond reach → hunting EXPEDITION). Proves the SELECTED band (band-picker)
+## drives the local-vs-expedition label + command + band-entity target — the case single-band
+## playtest can't surface. Both carry idle workers + a party cap so either verb is dialable.
+func _hunt_distance_bands() -> Array:
+	return [
+		{"entity": 811, "faction": 0, "size": 120, "current_x": 66, "current_y": 10,
+			"working_age": 14, "idle_workers": 10, "hunt_reach": 7, "max_expedition_party_size": 8,
+			"activity": "forage", "labor_assignments": []},
+		{"entity": 812, "faction": 0, "size": 80, "current_x": 86, "current_y": 24,
+			"working_age": 10, "idle_workers": 6, "hunt_reach": 7, "max_expedition_party_size": 8,
+			"activity": "hunt", "labor_assignments": []},
+	]
+
+## Range-aware forage: two player bands at DIFFERENT distances from the (66,10) food tile — a NEAR band
+## 1 tile away (within work_range 2 → forage ENABLED) and a FAR band ~21 tiles away (beyond range →
+## forage DISABLED + out-of-range hint). Foraging is stationary gathering, so out-of-range has NO
+## expedition fallback — just a disabled button. Proves the SELECTED band (band-picker) drives the
+## enabled-vs-disabled state — the case single-band playtest can't surface.
+func _forage_range_bands() -> Array:
+	return [
+		{"entity": 821, "faction": 0, "size": 120, "current_x": 67, "current_y": 10,
+			"working_age": 14, "idle_workers": 10, "work_range": 2, "activity": "forage", "labor_assignments": []},
+		{"entity": 822, "faction": 0, "size": 80, "current_x": 80, "current_y": 24,
+			"working_age": 10, "idle_workers": 6, "work_range": 2, "activity": "forage", "labor_assignments": []},
+	]
+
+## The herd the distance-aware states select — the same (66,10) herd but a NON-food tile_info, so the
+## Tile card drops its "Assign foragers" block and the hunt button + distance hint sit in-frame.
+func _hunt_distance_herd() -> Dictionary:
+	var herd := _herd_fixture()
+	herd["tile_info"] = {
+		"x": 66, "y": 10,
+		"terrain_label": "Prairie Steppe",
+		"tags_text": "Fertile",
+		"visibility_state": "active",
+		"food_module": "",
+		"food_module_label": "None",
+	}
+	return herd
 
 func _food_tile_fixture() -> Dictionary:
 	return {

@@ -1377,6 +1377,9 @@ pub fn capture_snapshot(
     // Global labor config today (identical for every band); the work-range ring is surfaced
     // per-band so the client reads it off the selected band (future-proof if bands diverge).
     let band_work_range = labor_config.band_work_range;
+    // Effective hunt reach (= `band_work_range + hunt_leash_tiles`, the leash a Hunt lapses past),
+    // echoed per-band so the client offers a local hunt vs a hunting expedition by herd distance.
+    let hunt_reach = labor_config.hunt_reach();
     // Server-side hard cap on an expedition party (`expedition_config.json`). Echoed per-cohort —
     // same idiom as `band_work_range` — so the client's outfit stepper can pre-clamp to
     // `min(idle_workers, max_expedition_party_size)` (the stepper lives on the resident-band panel,
@@ -1395,6 +1398,8 @@ pub fn capture_snapshot(
             let is_traveling = travel
                 .map(|t| current_pos.map(|p| p != t.target).unwrap_or(true))
                 .unwrap_or(false);
+            // The `BandTravel` destination (for the client's target-hex display); `None` → 0,0.
+            let travel_target = travel.map(|t| t.target);
             // Local scout: scouts are now forward observers posting vantage points out from the
             // band. Carry the effective vantage distance (how far the vantage ring is posted, `0`
             // with no scouts), using the same helper the visibility pass applies, so the field
@@ -1422,6 +1427,8 @@ pub fn capture_snapshot(
                 max_expedition_party_size,
                 &settlement_stage_config,
                 hunt_per_worker_carry,
+                travel_target,
+                hunt_reach,
             )
         })
         .collect();
@@ -3767,8 +3774,11 @@ fn population_state(
     max_expedition_party_size: u32,
     settlement_stage_config: &crate::settlement_stage_config::SettlementStageConfig,
     hunt_per_worker_carry: f32,
+    travel_target: Option<UVec2>,
+    hunt_reach: u32,
 ) -> PopulationCohortState {
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
+    let (travel_target_x, travel_target_y) = travel_target.map(|t| (t.x, t.y)).unwrap_or((0, 0));
     let demand = food_demand(
         cohort.children,
         cohort.working,
@@ -3889,9 +3899,12 @@ fn population_state(
         max_expedition_party_size,
         expedition_carry_cap,
         // Appended after every earlier-shipped field (append-only wire discipline; matches the
-        // `.fbs` slot order for `expeditionTargetHerd`/`expeditionHuntPolicy`).
+        // `.fbs` slot order for `expeditionTargetHerd`/`expeditionHuntPolicy`/`travelTargetX/Y`).
         expedition_target_herd,
         expedition_hunt_policy,
+        travel_target_x,
+        travel_target_y,
+        hunt_reach,
         supply_network_id: supply_membership.network_of(entity),
         morale_delta: cohort.last_morale_delta.raw(),
         morale_cause: cohort.last_morale_cause.as_u8(),

@@ -6,10 +6,14 @@ use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 use sim_runtime::TerrainTags;
 use tracing::info;
 
+use std::hash::{Hash, Hasher};
+
 use crate::{
     components::{PopulationCohort, Tile, FOOD},
-    fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle, SizeClass},
+    fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle, SizeClass, SpeciesDef},
     food::{classify_food_module, FoodModule},
+    grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT},
+    hashing::FnvHasher,
     mapgen::WorldGenSeed,
     orders::FactionId,
     resources::{SimulationConfig, SimulationTick, StartLocation, TileRegistry},
@@ -21,6 +25,11 @@ use crate::{
 /// RNG salt for per-turn immigration, kept distinct from the initial-spawn salt so the
 /// two streams don't correlate.
 const IMMIGRATION_SEED_SALT: u64 = 0xFA1A_B0B0;
+
+/// RNG salt for per-turn herd graze-wander / loiter movement, distinct from the immigration
+/// stream. Combined with `map_seed ^ tick ^ hash(herd.id)` so each herd's wander is deterministic
+/// under rollback (mirrors `repopulate_fauna`'s seeding).
+const HERD_MOVEMENT_SEED_SALT: u64 = 0x4D0E_9A17_C0FF_EE21;
 
 /// Id prefix marking a short-range wild-game group (migratory herds use `herd_`). The
 /// `abundance.max_total_game` cap applies to these groups only — both at initial spawn
@@ -75,6 +84,20 @@ pub(crate) fn classify_ecology_phase(
     }
 }
 
+/// A herd's per-turn movement mode (graze-wander + loiter-then-migrate, `advance_herds`).
+/// Game groups graze-wander their local cluster forever; migratory groups alternate loitering near
+/// a route anchor and a directed 1-hex/turn migration to the next anchor. See
+/// `docs/plan_wildlife_hunting_overlay.md` "Herd Movement".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoamState {
+    /// Wild game (`Big`/`Small`): permanent graze-wander toward the current cluster waypoint.
+    GrazeWander,
+    /// Migratory: loitering near the current anchor for `turns_left` more turns.
+    Loiter { turns_left: u32 },
+    /// Migratory: a directed leg toward the next anchor at 1 hex/turn, no grazing pause.
+    Migrate,
+}
+
 #[derive(Debug, Clone)]
 pub struct Herd {
     pub id: String,
@@ -84,8 +107,19 @@ pub struct Herd {
     pub species: String,
     /// Coarse size band (snapshot `size_class`); lets the client offer the right verbs.
     pub size_class: SizeClass,
+    /// Sparse anchor list (was a dense per-turn path). Game: the small local cluster it wanders;
+    /// migratory: the loiter anchors a migration cycles through. `step_index` is the current one.
     pub route: Vec<UVec2>,
     pub step_index: usize,
+    /// Live position — walked one hex per move by `advance_herds` (no longer `route[step_index]`).
+    pub current_pos: UVec2,
+    /// Grazing pause countdown (graze-wander cadence); moves only when this hits 0.
+    pub dwell_remaining: u32,
+    /// Current movement mode (graze-wander for game, loiter/migrate for migratory).
+    pub roam: RoamState,
+    /// Next intended hex (client heading arrow): the tile a `Migrate` leg heads to next, else `None`
+    /// (loitering/grazing herds show no arrow).
+    pub next_pos: Option<UVec2>,
     pub biomass: f32,
     /// Per-species carrying capacity (= table biomass max) that biomass regrows toward.
     pub carrying_capacity: f32,
@@ -109,6 +143,14 @@ impl Herd {
         carrying_capacity: f32,
     ) -> Self {
         let label = format!("{} ({})", species_display, id);
+        let current_pos = route.first().copied().unwrap_or_else(|| UVec2::new(0, 0));
+        // Migratory groups start loitering at their spawn anchor (the caller samples the real
+        // `turns_left` from the species' `loiter_turns`); game groups graze-wander their cluster.
+        let roam = if size_class == SizeClass::Migratory {
+            RoamState::Loiter { turns_left: 0 }
+        } else {
+            RoamState::GrazeWander
+        };
         Self {
             id,
             label,
@@ -116,6 +158,10 @@ impl Herd {
             size_class,
             route,
             step_index: 0,
+            current_pos,
+            dwell_remaining: 0,
+            roam,
+            next_pos: None,
             biomass,
             carrying_capacity,
             // Refreshed against the ecology config at spawn/each turn; Thriving until then.
@@ -174,30 +220,20 @@ impl Herd {
         self.domestication_progress = 1.0;
     }
 
+    /// The herd's live tile — walked one hex per move by `advance_herds` (graze-wander /
+    /// loiter-migrate), no longer a teleport to `route[step_index]`.
     pub fn position(&self) -> UVec2 {
-        self.route
-            .get(self.step_index)
-            .copied()
-            .unwrap_or_else(|| UVec2::new(0, 0))
-    }
-
-    pub fn advance(&mut self) {
-        if self.route.is_empty() {
-            return;
-        }
-        self.step_index = (self.step_index + 1) % self.route.len();
+        self.current_pos
     }
 
     pub fn route_length(&self) -> usize {
         self.route.len()
     }
 
+    /// The herd's next intended hex — the client heading arrow. `Some` only during a `Migrate` leg
+    /// (one hex toward the target anchor); `None` while loitering/grazing (no misleading arrow).
     pub fn next_position(&self) -> Option<UVec2> {
-        if self.route.is_empty() {
-            return None;
-        }
-        let next_index = (self.step_index + 1) % self.route.len();
-        self.route.get(next_index).copied()
+        self.next_pos
     }
 }
 
@@ -451,6 +487,11 @@ fn spawn_migratory_herds(
             biomass,
             carrying_capacity,
         );
+        // Start loitering at the spawn anchor for a randomized window (rather than migrating off
+        // immediately from `Loiter { turns_left: 0 }`).
+        herd.roam = RoamState::Loiter {
+            turns_left: def.sample_loiter_turns(rng),
+        };
         herd.refresh_ecology_phase(&fauna.ecology);
         log_herd_spawn(&herd);
         herds.push(herd);
@@ -564,12 +605,17 @@ fn spawn_game_group_at(
     Some(herd)
 }
 
+#[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_herds(
     mut registry: ResMut<HerdRegistry>,
     mut telemetry: ResMut<HerdTelemetry>,
     mut density: ResMut<HerdDensityMap>,
     config: Res<SimulationConfig>,
     fauna_config: Res<FaunaConfigHandle>,
+    tick: Res<SimulationTick>,
+    world_seed: Option<Res<WorldGenSeed>>,
+    tile_registry: Res<TileRegistry>,
+    tiles: Query<&Tile>,
 ) {
     if registry.herds.is_empty() {
         telemetry.entries.clear();
@@ -580,8 +626,28 @@ pub fn advance_herds(
     }
     let fauna = fauna_config.get();
     let ecology = &fauna.ecology;
+    let width = config.grid_size.x.max(1);
+    let height = config.grid_size.y.max(1);
+    let wrap = config.map_topology.wrap_horizontal;
+    let base_seed = world_seed.map(|s| s.0).unwrap_or(config.map_seed) ^ tick.0;
     for herd in registry.herds.iter_mut() {
-        herd.advance();
+        // Deterministic per-herd, per-turn RNG (rollback-stable): map_seed ^ tick ^ salt ^ id-hash.
+        let mut hasher = FnvHasher::new();
+        herd.id.hash(&mut hasher);
+        let mut rng =
+            SmallRng::seed_from_u64(base_seed ^ HERD_MOVEMENT_SEED_SALT ^ hasher.finish());
+        // Movement cadence levers for this species (fall back to a slow game default if unresolved).
+        let def = fauna.species_by_display(&herd.species);
+        advance_herd_roam(
+            herd,
+            def,
+            &tile_registry,
+            &tiles,
+            &mut rng,
+            width,
+            height,
+            wrap,
+        );
         regrow_biomass(herd, ecology);
         let position = herd.position();
         info!(
@@ -604,6 +670,219 @@ pub fn advance_herds(
         .retain(|herd| herd.biomass > ecology.extinction_floor * herd.carrying_capacity);
     telemetry.entries = registry.snapshot_entries();
     density.rebuild(config.grid_size, &registry);
+}
+
+/// One turn of graze-wander / loiter-migrate movement (`docs/plan_wildlife_hunting_overlay.md`
+/// "Herd Movement"). Deterministic under the per-turn seeded `rng`. Mutates the herd's
+/// `current_pos` / `dwell_remaining` / `roam` / `step_index` / `next_pos`. `def` supplies the
+/// species' cadence levers (`None` → a slow game default). Movement is ≤ 1 hex/turn and land-clamped;
+/// it never touches `biomass` (ecology stays independent — a loitering herd still grazes/regrows).
+// Args are the herd + its cadence levers + the grid/tile context needed to land-clamp a hex step;
+// bundling them adds noise without clarity (matches the other fauna spawn/movement helpers).
+#[allow(clippy::too_many_arguments)]
+fn advance_herd_roam(
+    herd: &mut Herd,
+    def: Option<&SpeciesDef>,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    rng: &mut SmallRng,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) {
+    let dwell_turns = def.map(|d| d.dwell_turns).unwrap_or(1);
+    let loiter_radius = def.map(|d| d.loiter_radius).unwrap_or(2);
+    herd.next_pos = None;
+
+    match herd.roam {
+        RoamState::GrazeWander => {
+            // Wild game: graze `dwell_turns`, then step one hex toward the current cluster
+            // waypoint, advancing to the next when reached (a route_len==1 group stays put).
+            if herd.dwell_remaining > 0 {
+                herd.dwell_remaining -= 1;
+                return;
+            }
+            let target = herd
+                .route
+                .get(herd.step_index)
+                .copied()
+                .unwrap_or(herd.current_pos);
+            if herd.current_pos == target && !herd.route.is_empty() {
+                herd.step_index = (herd.step_index + 1) % herd.route.len();
+            }
+            let target = herd
+                .route
+                .get(herd.step_index)
+                .copied()
+                .unwrap_or(herd.current_pos);
+            step_herd_toward(herd, target, registry, tiles, width, height, wrap);
+            herd.dwell_remaining = dwell_turns;
+        }
+        RoamState::Loiter { turns_left } => {
+            if turns_left == 0 {
+                // Loiter expired — commit to migrating to the next anchor (starts next turn).
+                herd.roam = RoamState::Migrate;
+                return;
+            }
+            let anchor = herd
+                .route
+                .get(herd.step_index)
+                .copied()
+                .unwrap_or(herd.current_pos);
+            // Graze-wander confined to `loiter_radius` of the anchor: dwell, then a ≤1-hex nudge.
+            if herd.dwell_remaining > 0 {
+                herd.dwell_remaining -= 1;
+            } else {
+                wander_near_anchor(
+                    herd,
+                    anchor,
+                    loiter_radius,
+                    registry,
+                    tiles,
+                    rng,
+                    width,
+                    height,
+                    wrap,
+                );
+                herd.dwell_remaining = dwell_turns;
+            }
+            herd.roam = RoamState::Loiter {
+                turns_left: turns_left - 1,
+            };
+        }
+        RoamState::Migrate => {
+            // Directed leg to the next anchor at 1 hex/turn, no grazing pause.
+            let next_index = if herd.route.is_empty() {
+                0
+            } else {
+                (herd.step_index + 1) % herd.route.len()
+            };
+            let target = herd
+                .route
+                .get(next_index)
+                .copied()
+                .unwrap_or(herd.current_pos);
+            let moved = step_herd_toward(herd, target, registry, tiles, width, height, wrap);
+            if herd.current_pos == target || !moved {
+                // Arrived (or hemmed in) → loiter at the new anchor for a fresh window.
+                herd.step_index = next_index;
+                let turns = def.map(|d| d.sample_loiter_turns(rng)).unwrap_or(16);
+                herd.roam = RoamState::Loiter { turns_left: turns };
+                herd.dwell_remaining = 0;
+            } else {
+                // Heading arrow: where it will step next turn.
+                herd.next_pos = best_land_neighbor_toward(
+                    herd.current_pos,
+                    target,
+                    registry,
+                    tiles,
+                    width,
+                    height,
+                    wrap,
+                );
+            }
+        }
+    }
+}
+
+/// Step the herd one hex toward `target`, choosing the land neighbour that most reduces hex
+/// distance (deterministic tie-break by direction order). Returns whether it moved (`false` = no
+/// land neighbour gets closer, so it stays — avoids marching into water / off the map).
+fn step_herd_toward(
+    herd: &mut Herd,
+    target: UVec2,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> bool {
+    if herd.current_pos == target {
+        return false;
+    }
+    match best_land_neighbor_toward(
+        herd.current_pos,
+        target,
+        registry,
+        tiles,
+        width,
+        height,
+        wrap,
+    ) {
+        Some(next) => {
+            herd.current_pos = next;
+            true
+        }
+        None => false,
+    }
+}
+
+/// The land neighbour of `from` with the smallest hex distance to `target`, but only if it is
+/// strictly closer than `from` (so a herd never oscillates or backtracks into water).
+fn best_land_neighbor_toward(
+    from: UVec2,
+    target: UVec2,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> Option<UVec2> {
+    let cur_dist = hex_distance_wrapped(from, target, width, wrap);
+    let mut best: Option<(UVec2, u32)> = None;
+    for dir in 0..HEX_DIRECTION_COUNT {
+        let Some((nx, ny)) = hex_neighbor(from.x, from.y, dir, width, height, wrap) else {
+            continue;
+        };
+        let np = UVec2::new(nx, ny);
+        if !is_land_tile(np, registry, tiles) {
+            continue;
+        }
+        let d = hex_distance_wrapped(np, target, width, wrap);
+        if d < cur_dist && best.map(|(_, bd)| d < bd).unwrap_or(true) {
+            best = Some((np, d));
+        }
+    }
+    best.map(|(pos, _)| pos)
+}
+
+/// Nudge the herd ≤1 hex to a random land tile within `loiter_radius` of `anchor` (deterministic
+/// via the seeded `rng`); if it is hemmed in, it stays.
+#[allow(clippy::too_many_arguments)]
+fn wander_near_anchor(
+    herd: &mut Herd,
+    anchor: UVec2,
+    loiter_radius: u32,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    rng: &mut SmallRng,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) {
+    let mut options: Vec<UVec2> = Vec::new();
+    for dir in 0..HEX_DIRECTION_COUNT {
+        let Some((nx, ny)) = hex_neighbor(
+            herd.current_pos.x,
+            herd.current_pos.y,
+            dir,
+            width,
+            height,
+            wrap,
+        ) else {
+            continue;
+        };
+        let np = UVec2::new(nx, ny);
+        if is_land_tile(np, registry, tiles)
+            && hex_distance_wrapped(np, anchor, width, wrap) <= loiter_radius
+        {
+            options.push(np);
+        }
+    }
+    if options.is_empty() {
+        return;
+    }
+    herd.current_pos = options[rng.gen_range(0..options.len())];
 }
 
 /// Per-turn immigration: with probability `immigration.chance_per_turn`, respawn one

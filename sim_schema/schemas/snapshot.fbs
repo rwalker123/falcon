@@ -536,6 +536,15 @@ table PopulationCohortState {
   // for scout/normal bands. Persisted so a rollback reconstructs `Hunt { fauna_id, policy }`; drives
   // the client's per-policy behaviour label + policy picker default. Appended last.
   expeditionHuntPolicy:string;
+  // The `move_band`/`BandTravel` destination tile while traveling (`isTraveling` gates it; `0,0`
+  // when not traveling). Lets the client draw a destination hex + line from a selected band or
+  // expedition to where it's headed. Appended last (append-only schema discipline).
+  travelTargetX:uint = 0;
+  travelTargetY:uint = 0;
+  // Band's effective hunt reach = LaborConfig `band_work_range + hunt_leash_tiles` (the same leash a
+  // Hunt assignment lapses past). Echoed per-cohort like `workRange` so the client can offer a local
+  // hunt vs a hunting expedition based on the clicked herd's distance. Appended last (append-only).
+  huntReach:uint = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
