@@ -408,7 +408,9 @@ mission:
 - **Per-policy behaviour**: **Sustain** — take the herd down only to `hunt.sustain_floor_fraction ×
   carrying_capacity`, then one trip home + **done** (fold back, herd left robust); **Surplus** — one
   full-cap haul (floor = ecology collapse threshold) + **done**; **Market** — repeated full-cap trips
-  via `Delivering`→deposit→**auto-relaunch**, grinding the herd toward the collapse floor until it
+  via `Delivering`→deposit→**auto-relaunch** (the deposit fires once the party is back within
+  communication range of the home band — the shared `near_home` proximity — not necessarily on its
+  exact live tile), grinding the herd toward the collapse floor until it
   crashes or you recall; **Eradicate** — no floor, **delivers no food** (denial): keeps taking each
   turn until the herd is extinct, then folds back empty. A lost/extinct herd → shared `Returning`.
 - **Lives off its kills** — no launch provisions, no per-turn upkeep (upkeep is scout-only).

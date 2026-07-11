@@ -260,14 +260,15 @@ depletion) lives in a new `advance_expeditions` system in the Population stage, 
 
 **Hunt verb — implementation model (PR 2).** The second verb rides the same detached-party machinery.
 - **Mission + command.** `ExpeditionMission::Hunt { fauna_id }` (alongside `Scout`); a new
-  `send_hunt_expedition <faction> <band?> <party_workers> <fauna_id>` command (targets a *herd*, not a
+  `send_hunt_expedition <faction> <band> <party_workers> <fauna_id>` command (targets a *herd*, not a
   tile). `fauna_id` is persisted via a new snapshot field `expeditionTargetHerd` (also shown in the
   client panel).
 - **Phases.** Two hunt-specific `ExpeditionPhase` variants: **`Hunting`** — `advance_expeditions`
   retargets `BandTravel` to `herd.position()` (from `HerdRegistry`) each turn and, when within
   `hunt.reach_tiles`, takes a **productive hunt's worth** of food (see take model) into the party's
-  `LocalStore` up to **`party_workers × hunt.per_worker_carry`**; and **`Delivering`** — runs to the
-  band's live tile and deposits. A lost/extinct herd (`HerdRegistry::find` → none) flips the party to
+  `LocalStore` up to **`party_workers × hunt.per_worker_carry`**; and **`Delivering`** — heads for the
+  band's live tile and deposits once within communication range of home (`near_home`, the shared
+  comm-range proximity), not necessarily on the exact live tile. A lost/extinct herd (`HerdRegistry::find` → none) flips the party to
   `Returning` (fold back). Recall → the shared `Returning` phase.
 - **Take model — productive hunt, not a sustainable skim.** Per turn in reach the party takes ~a real
   hunt's worth (`workers × per_worker_biomass_capacity`, the same worker productivity as a band Hunt),

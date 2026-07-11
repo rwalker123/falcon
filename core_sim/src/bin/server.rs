@@ -1742,10 +1742,27 @@ fn handle_send_hunt_expedition(
     policy: Option<String>,
 ) {
     // Take policy — parsed via `FollowPolicy::from_str`, default Sustain (conservative) when omitted.
-    let policy: FollowPolicy = policy
-        .as_deref()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(FollowPolicy::Sustain);
+    // An explicit but unparseable token is rejected rather than silently defaulting: Sustain and
+    // Market are opposite ecological behaviors, so a typo must not silently flip the herd's fate.
+    let policy: FollowPolicy = match policy.as_deref() {
+        None => FollowPolicy::Sustain,
+        Some(token) => match token.parse() {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                emit_command_failure(
+                    app,
+                    CommandEventKind::ExpeditionSent,
+                    faction,
+                    format!(
+                        "send_hunt_expedition: unknown follow policy '{}' — valid options are \
+                         sustain, surplus, market, eradicate.",
+                        token
+                    ),
+                );
+                return;
+            }
+        },
+    };
     let Some(band) = select_starting_band(
         app,
         faction,
