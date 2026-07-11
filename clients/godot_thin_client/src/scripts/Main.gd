@@ -480,6 +480,11 @@ func _connect_band_city_panel() -> void:
         return
     if band_city_panel.has_signal("reservation_changed") and not band_city_panel.is_connected("reservation_changed", Callable(self, "_on_band_panel_reservation_changed")):
         band_city_panel.connect("reservation_changed", Callable(self, "_on_band_panel_reservation_changed"))
+    # Inject the panel into the HUD (band detail relocates into it) and relay the cycler.
+    if hud != null and hud.has_method("set_band_city_panel"):
+        hud.call("set_band_city_panel", band_city_panel)
+    if band_city_panel.has_signal("cycle_requested") and hud != null and hud.has_method("cycle_panel_band") and not band_city_panel.is_connected("cycle_requested", Callable(hud, "cycle_panel_band")):
+        band_city_panel.connect("cycle_requested", Callable(hud, "cycle_panel_band"))
     if band_city_panel.has_method("get_dock") and band_city_panel.has_method("current_reservation_size"):
         _apply_reservation(&"band_panel", int(band_city_panel.call("get_dock")), float(band_city_panel.call("current_reservation_size")))
 

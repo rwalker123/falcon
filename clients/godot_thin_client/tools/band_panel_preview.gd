@@ -16,13 +16,6 @@ const HUD_SCENE := preload("res://src/ui/HudLayer.tscn")
 const BAND_PANEL_SCENE := preload("res://src/ui/BandCityPanel.tscn")
 const OUT_DIR := "res://ui_preview_out"
 
-# Canned header subject (a Camp-stage band, like the prototype's middle subject).
-const SUBJECT_GLYPH := "🛖"
-const SUBJECT_NAME := "Band 2"
-const SUBJECT_STAGE := "Camp · Band"
-const SUBJECT_INDEX := 1
-const SUBJECT_COUNT := 3
-
 var _hud: HudLayer
 var _panel: BandCityPanel
 
@@ -54,8 +47,12 @@ func _ready() -> void:
 	# Seed the top bar so the HUD reflow reads against real content.
 	_hud.update_sedentarization([{"faction": 0, "score": 62.0, "stage": "soft"}])
 	_hud.update_demographics([{"faction": 0, "children": 34, "working": 51, "elders": 15}])
-	_panel.set_header(SUBJECT_GLYPH, SUBJECT_NAME, SUBJECT_STAGE)
-	_panel.set_cycler(SUBJECT_INDEX, SUBJECT_COUNT)
+
+	# Slice 3: inject the panel into the HUD and push a player band through the real snapshot
+	# path (update_band_alerts → _refresh_panel_band), so the FULL band detail relocates into the
+	# panel — summary lines + labor allocation + the settlement stage header/cycler.
+	_hud.set_band_city_panel(_panel)
+	_hud.update_band_alerts([_band_fixture()])
 
 	# Dock to each edge and render.
 	_panel.set_collapsed(false)
@@ -93,3 +90,34 @@ func _save(name: String) -> void:
 		push_error("band_panel_preview: failed to save %s (err %d)" % [name, err])
 	else:
 		print("band_panel_preview: saved ", name, ".png")
+
+## A player-faction Camp-stage band (population-snapshot shape update_band_alerts consumes):
+## working-age labor with idle workers + a couple of active assignments + the settlement stage
+## header fields, so the relocated panel shows a full detail + allocation report.
+func _band_fixture() -> Dictionary:
+	return {
+		"id": "Band 2",
+		"entity": 904,
+		"faction": 0,
+		"size": 148,
+		"pos": [71, 18],
+		"current_x": 71,
+		"current_y": 18,
+		"days_of_food": 7.0,
+		"morale": 0.82,
+		"stores": {"provisions": 84.0},
+		"working_age": 16,
+		"idle_workers": 3,
+		"max_expedition_party_size": 8,
+		"work_range": 2,
+		"hunt_reach": 16,
+		"settlement_stage_icon": "🛖",
+		"settlement_stage_label": "Camp",
+		"activity": "forage",
+		"labor_assignments": [
+			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18},
+			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17},
+			{"kind": "scout", "workers": 2},
+			{"kind": "warrior", "workers": 2},
+		],
+	}

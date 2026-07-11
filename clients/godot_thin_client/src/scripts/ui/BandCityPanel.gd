@@ -42,7 +42,10 @@ const DOCK_CELL_SEPARATION := 3
 const DOCK_ACCENT_WIDTH := 4
 const CORNER_RADIUS := 3
 const COUNT_MIN_WIDTH := 30.0
-const BODY_PLACEHOLDER_TEXT := "Select a band — detail relocates here in slice 3"
+const BODY_EMPTY_TEXT := "No band selected"
+const BODY_SEPARATION := 8
+## Row spacing inside the allocation host (mirrors the Occupants card's AllocationPanel).
+const BAND_ALLOC_SEPARATION := 6
 const CYCLE_PREV := -1
 const CYCLE_NEXT := 1
 
@@ -85,6 +88,9 @@ var _collapse_button: Button
 var _rail_expand_button: Button
 var _body_scroll: ScrollContainer
 var _body: VBoxContainer
+var _empty_state: Label
+var _band_detail: RichTextLabel
+var _band_alloc: VBoxContainer
 var _dock_cells: Dictionary = {}   # edge:int -> Button
 
 func _ready() -> void:
@@ -118,9 +124,26 @@ func set_cycler(index: int, count: int) -> void:
 	else:
 		_count_label.text = "%d / %d" % [index + 1, count]
 
-## The body host that slice 3 renders band detail into.
+## The body host (the ScrollContainer VBox that survives re-docking).
 func get_body_container() -> VBoxContainer:
 	return _body
+
+## The RichTextLabel Hud renders the band summary lines into (mirrors %OccupantDetail).
+func get_band_detail_label() -> RichTextLabel:
+	return _band_detail
+
+## The VBox Hud builds the labor-allocation panel into (mirrors %AllocationPanel).
+func get_band_alloc_container() -> VBoxContainer:
+	return _band_alloc
+
+## Toggle between the band-detail content and the empty-state placeholder.
+func set_band_present(present: bool) -> void:
+	if _empty_state != null:
+		_empty_state.visible = not present
+	if _band_detail != null:
+		_band_detail.visible = present
+	if _band_alloc != null:
+		_band_alloc.visible = present
 
 ## Dock the panel to an edge (a Godot SIDE_* const). Re-anchors, persists, and
 ## re-emits the reservation so the map + HUD reflow.
@@ -203,14 +226,37 @@ func _build() -> void:
 	_body = VBoxContainer.new()
 	_body.name = "BandBody"
 	_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body.add_theme_constant_override("separation", BODY_SEPARATION)
 	_body_scroll.add_child(_body)
 
-	var placeholder := Label.new()
-	placeholder.text = BODY_PLACEHOLDER_TEXT
-	placeholder.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	placeholder.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-	placeholder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_body.add_child(placeholder)
+	# Empty state (shown only when no band is resolved — the panel otherwise hides
+	# outright when there are zero player bands).
+	_empty_state = Label.new()
+	_empty_state.text = BODY_EMPTY_TEXT
+	_empty_state.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_empty_state.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	_empty_state.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body.add_child(_empty_state)
+
+	# Band-detail targets Hud renders into (mirroring the Occupants card's
+	# %OccupantDetail / %AllocationPanel). Kept inside the ScrollContainer VBox so
+	# they survive re-docking.
+	_band_detail = RichTextLabel.new()
+	_band_detail.name = "BandDetail"
+	_band_detail.bbcode_enabled = true
+	_band_detail.fit_content = true
+	_band_detail.scroll_active = false
+	_band_detail.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_band_detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_band_detail.visible = false
+	_body.add_child(_band_detail)
+
+	_band_alloc = VBoxContainer.new()
+	_band_alloc.name = "BandAllocation"
+	_band_alloc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_band_alloc.add_theme_constant_override("separation", BAND_ALLOC_SEPARATION)
+	_band_alloc.visible = false
+	_body.add_child(_band_alloc)
 
 	# The accent seam sits on the map-facing edge, above the card fill.
 	_seam = ColorRect.new()
