@@ -59,7 +59,7 @@ static func empty_stylebox() -> StyleBoxEmpty:
 # The bottom-left minimap + zoom rail share one rounded semi-transparent black
 # panel (matches the nav prototype). Deliberately darker/plainer than a card so it
 # reads as map chrome, not a content surface — hence a bespoke box, not card_stylebox.
-const NAV_BACKING_OPACITY := 0.3
+const NAV_BACKING_OPACITY := 0.85
 const NAV_BACKING_CORNER_RADIUS := 10
 const NAV_BACKING_PADDING := 8
 
