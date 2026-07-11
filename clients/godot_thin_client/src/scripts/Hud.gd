@@ -1102,11 +1102,14 @@ func _record_pending_move(entity: int, x: int, y: int) -> void:
     entry["move"] = {"x": x, "y": y}
     _pending_labor[entity] = entry
 
-## Re-render the current selection (so pending shows in the panel) and push the pending map
-## to MapView (so pending hexes show), after any optimistic change.
+## Re-render the current selection (so pending shows in the Occupants/Tile cards) and push the
+## pending map to MapView (so pending hexes show), after any optimistic change. Also re-render the
+## Band/City panel keyed off `_panel_band` — a worker-stepper edit in the panel must show its
+## optimistic pending even when the current selection is a foreign hex (never blank it).
 func _after_pending_change() -> void:
     if not _selected_tile_info.is_empty() or not _selected_unit.is_empty() or not _selected_herd.is_empty():
         _render_selection_panel(_selected_tile_info, _selected_unit, _selected_herd)
+    _rerender_panel_allocation()
     emit_signal("labor_pending_changed", _pending_labor)
 
 ## Drop pending entries the server has already processed: a snapshot with a turn NEWER than
@@ -2362,27 +2365,40 @@ func _render_occupant_drawer() -> void:
 func _render_band_into_panel(unit: Dictionary) -> void:
     if _band_city_panel == null or unit.is_empty():
         return
-    _panel_band = unit
+    # DEEP-COPY the subject: `_panel_band` must NOT alias `_selected_unit` (the selection
+    # path passes it in), because selecting a foreign tile calls `_selected_unit.clear()` —
+    # which would empty a shared dict and blank the panel on its next stepper rebuild. The
+    # allocation closures below also capture this stable copy, so they keep targeting the
+    # panel band regardless of the current selection.
+    _panel_band = unit.duplicate(true)
     # Summary text (resets + re-sets the food/morale/output tint context, then tints via bbcode).
     _selected_band_food_days = NAN
     _selected_band_morale = NAN
     _selected_band_output = NAN
     var detail_label: RichTextLabel = _band_city_panel.get_band_detail_label()
     if detail_label != null:
-        detail_label.text = _format_detail_bbcode(_unit_summary_lines(unit))
-    # Labor allocation into the panel's own host.
+        detail_label.text = _format_detail_bbcode(_unit_summary_lines(_panel_band))
+    # Labor allocation into the panel's own host (closures capture the stable `_panel_band`).
     var alloc: VBoxContainer = _band_city_panel.get_band_alloc_container()
     if alloc != null:
-        _build_allocation_panel(unit, alloc)
+        _build_allocation_panel(_panel_band, alloc)
     # Header: settlement stage glyph + name + stage label (glyph/label already flow onto the
     # marker/cohort dict; fall back to a neutral glyph when the stage is absent).
-    var glyph := String(unit.get("settlement_stage_icon", "")).strip_edges()
-    var stage_label := String(unit.get("settlement_stage_label", "")).strip_edges()
-    var index := _index_of_player_band(int(unit.get("entity", -1)))
-    _band_city_panel.set_header(glyph, _band_display_name(unit, index + 1), stage_label)
+    var glyph := String(_panel_band.get("settlement_stage_icon", "")).strip_edges()
+    var stage_label := String(_panel_band.get("settlement_stage_label", "")).strip_edges()
+    var index := _index_of_player_band(int(_panel_band.get("entity", -1)))
+    _band_city_panel.set_header(glyph, _band_display_name(_panel_band, index + 1), stage_label)
     _band_city_panel.set_cycler(index, _player_bands.size())
     _band_city_panel.set_band_present(true)
     _band_city_panel.set_shown(true)
+
+## Re-render the panel band into the panel container, keyed off `_panel_band` (never the current
+## selection). The panel's own allocation rebuilds (optimistic pending, etc.) route through this so
+## they stay pinned to the panel's subject even when a foreign hex is selected.
+func _rerender_panel_allocation() -> void:
+    if _band_city_panel == null or _panel_band.is_empty():
+        return
+    _render_band_into_panel(_panel_band)
 
 ## Keep the panel a live, persistent command center each snapshot: hide it when there are no
 ## player bands, else re-resolve the shown band against the fresh snapshot (so steppers/idle stay

@@ -15,6 +15,8 @@ extends Node
 const HUD_SCENE := preload("res://src/ui/HudLayer.tscn")
 const BAND_PANEL_SCENE := preload("res://src/ui/BandCityPanel.tscn")
 const OUT_DIR := "res://ui_preview_out"
+# A left inspector strip width to prove co-edge stacking (bug 1).
+const INSPECTOR_STRIP := 300.0
 
 var _hud: HudLayer
 var _panel: BandCityPanel
@@ -72,6 +74,28 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_collapsed")
 	_panel.set_collapsed(false)
+
+	# Bug 1 — co-edge stacking with the Inspector. Reserve a left inspector strip (as Main does)
+	# and push the band panel's matching leading offset, docked left: the panel must render to the
+	# RIGHT of the strip (no overlap at x=0). The strip region is left empty here (no inspector in
+	# this harness) — what matters is the panel starts at INSPECTOR_STRIP, not the screen edge.
+	_panel.set_dock(SIDE_LEFT)
+	_hud.set_reserved_inset(&"inspector", SIDE_LEFT, INSPECTOR_STRIP)
+	_panel.set_edge_offset(INSPECTOR_STRIP)
+	await _settle()
+	await _save("band_panel_stacked_left")
+	_hud.set_reserved_inset(&"inspector", SIDE_LEFT, 0.0)
+	_panel.set_edge_offset(0.0)
+
+	# Bug 2 — panel stays populated on a stepper edit while a FOREIGN hex is selected. Selecting a
+	# tile calls `_selected_unit.clear()`; `_panel_band` must NOT alias it. Then drive a worker
+	# assign on the panel band (the worker-stepper path → `_after_pending_change`): the panel must
+	# stay populated (never blank) and show the optimistic "· pending".
+	_hud.show_tile_selection({"x": 5, "y": 5, "terrain_label": "Prairie Steppe", "visibility_state": "active"})
+	print("band_panel_preview: bug2 — _panel_band empty after foreign select? ", _hud._panel_band.is_empty())
+	_hud._emit_assign_labor(_hud._panel_band, "forage", 6, 71, 18, "", "")
+	await _settle()
+	await _save("band_panel_stepper_foreign")
 
 	get_tree().quit()
 

@@ -72,6 +72,11 @@ signal cycle_requested(delta: int)
 var _dock_edge: int = SIDE_LEFT
 var _collapsed: bool = false
 var _shown: bool = true
+# Leading (inboard) offset from the docked edge, pushed by Main = Σ sizes of co-edge reservers
+# inboard of this panel (today: the Inspector's strip when both dock left). Keeps co-edge panels
+# stacked, not overlapping. Does NOT change what this panel reserves (the map/HUD inset is the
+# per-edge SUM), only where its own Control anchors.
+var _edge_offset: float = 0.0
 
 # nodes
 var _root: Control
@@ -160,6 +165,16 @@ func set_dock(edge: int) -> void:
 
 func get_dock() -> int:
 	return _dock_edge
+
+## Set the leading (inboard) offset from the docked edge so this panel stacks outboard of any
+## co-edge reserver (Main computes it = Σ sizes of inboard co-edge reservers). Re-anchors only;
+## does NOT re-emit the reservation (the size this panel reserves is unchanged).
+func set_edge_offset(px: float) -> void:
+	var offset: float = maxf(px, 0.0)
+	if is_equal_approx(offset, _edge_offset):
+		return
+	_edge_offset = offset
+	_apply_dock_layout()
 
 ## Rail the panel to a thin strip (or restore it). Persists + re-emits the
 ## reservation so the map + HUD reflow to the collapsed size.
@@ -367,20 +382,26 @@ func _apply_dock_layout() -> void:
 	if _root == null:
 		return
 	var cross := _cross_axis_size()
+	# `_edge_offset` shifts the panel INBOARD from the docked edge, so a co-edge reserver
+	# (e.g. the Inspector, which is always the inboard screen-edge reserver) sits between the
+	# screen edge and this panel — the two stack instead of overlapping. The near offset is
+	# `_edge_offset`, the far offset `_edge_offset + cross`.
+	var near := _edge_offset
+	var far := _edge_offset + cross
 	# Re-anchor _root to the active edge, fixed on the cross axis, filling the rest.
 	match _dock_edge:
 		SIDE_LEFT:
 			_set_root_anchors(0.0, 0.0, 0.0, 1.0)
-			_set_root_offsets(0.0, 0.0, cross, 0.0)
+			_set_root_offsets(near, 0.0, far, 0.0)
 		SIDE_RIGHT:
 			_set_root_anchors(1.0, 0.0, 1.0, 1.0)
-			_set_root_offsets(-cross, 0.0, 0.0, 0.0)
+			_set_root_offsets(-far, 0.0, -near, 0.0)
 		SIDE_TOP:
 			_set_root_anchors(0.0, 0.0, 1.0, 0.0)
-			_set_root_offsets(0.0, 0.0, 0.0, cross)
+			_set_root_offsets(0.0, near, 0.0, far)
 		SIDE_BOTTOM:
 			_set_root_anchors(0.0, 1.0, 1.0, 1.0)
-			_set_root_offsets(0.0, -cross, 0.0, 0.0)
+			_set_root_offsets(0.0, -far, 0.0, -near)
 	_position_seam()
 
 func _set_root_anchors(left: float, top: float, right: float, bottom: float) -> void:

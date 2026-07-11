@@ -23,6 +23,11 @@ var script_host_manager: ScriptHostManager = null
 var localization_store: LocalizationStore = null
 var _campaign_label_signature: String = ""
 var _victory_analytics_signature: String = ""
+# Reserved-edge registry (id → {edge, size}), mirrored from `_apply_reservation` so co-edge
+# panels can be STACKED (not just summed): the Band panel is offset inboard by the Σ sizes of
+# lower-priority reservers on its edge. The map/HUD inset still uses the per-edge SUM (owned by
+# MapView/Hud), which is unchanged — this registry only drives the Band panel's leading offset.
+var _reservations: Dictionary = {}
 
 const MOCK_DATA_PATH = "res://src/data/mock_snapshots.json"
 const TURN_INTERVAL_SECONDS = 1.5
@@ -459,15 +464,46 @@ func _toggle_inspector_visibility() -> void:
         inspector.call("set_panel_visible", not current_visible)
     # The inset update arrives via the inspector's reserved_width_changed signal.
 
+## Stable stacking order for co-edge reservers: lower priority sits INBOARD (against the screen
+## edge). The Inspector is always the screen-edge reserver; the Band panel stacks outboard of it.
+const RESERVER_PRIORITY := {&"inspector": 0, &"band_panel": 1}
+const BAND_PANEL_RESERVER := &"band_panel"
+
 ## Reserve space for a docked panel by insetting the game area (map + HUD) from
 ## the given edge, so the panel shrinks the play space instead of overlapping it.
 ## Fans a reserver's (edge, size) out to both surfaces. `edge` is a Godot Side
 ## const (SIDE_LEFT/SIDE_TOP/SIDE_RIGHT/SIDE_BOTTOM); `size <= 0` releases it.
 func _apply_reservation(id: StringName, edge: int, size: float) -> void:
+    if size <= 0.0:
+        _reservations.erase(id)
+    else:
+        _reservations[id] = {"edge": edge, "size": size}
     if map_view != null and map_view.has_method("set_reserved_inset"):
         map_view.call("set_reserved_inset", id, edge, size)
     if hud != null and hud.has_method("set_reserved_inset"):
         hud.call("set_reserved_inset", id, edge, size)
+    # Co-edge stacking: push the Band panel's leading offset so it sits just past any inboard
+    # reserver on its edge (e.g. the Inspector when both are left) instead of overlapping it.
+    _update_band_panel_edge_offset()
+
+## The Band panel's leading offset = Σ sizes of all lower-priority reservers currently on the SAME
+## edge as the Band panel (today just the Inspector when both dock left; 0 otherwise). Recomputed
+## on every reservation change, so the panel tracks the Inspector's show/hide + live drag-resize.
+func _update_band_panel_edge_offset() -> void:
+    if band_city_panel == null or not band_city_panel.has_method("set_edge_offset") or not band_city_panel.has_method("get_dock"):
+        return
+    var band_edge: int = int(band_city_panel.call("get_dock"))
+    var band_priority: int = int(RESERVER_PRIORITY.get(BAND_PANEL_RESERVER, 1))
+    var offset: float = 0.0
+    for other_id in _reservations:
+        if other_id == BAND_PANEL_RESERVER:
+            continue
+        var r: Dictionary = _reservations[other_id]
+        if int(r.get("edge", -1)) != band_edge:
+            continue
+        if int(RESERVER_PRIORITY.get(other_id, 0)) < band_priority:
+            offset += float(r.get("size", 0.0))
+    band_city_panel.call("set_edge_offset", offset)
 
 func _on_inspector_reserved_width_changed(width: float) -> void:
     _apply_reservation(&"inspector", SIDE_LEFT, width)
