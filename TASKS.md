@@ -384,6 +384,14 @@ role). Sequenced: local scout (small fix) → sites subsystem (foundation) → e
   same gap). Fix: persist `StartingUnit.kind`/`tags` on `PopulationCohortState`, re-attach on restore
   (build on the 2-pass restore the expedition PR added). Not expedition-specific; keep out of the
   expedition PR's diff. Check first whether `rollback` is player-reachable or dev-only (sets priority).
+- [ ] **Band commands lack a faction check** (pre-existing, all band-command handlers — surfaced
+  during the expedition work, own PR). `resolve_starting_unit_entity` validates entity-exists +
+  `StartingUnit`/`ResidentBand` but never `cohort.faction == faction`, so a raw command with explicit
+  `band_entity_bits` (`move_band`, `send_expedition`, etc.) could target **another faction's** band.
+  Not UI-reachable, bounded harm, but a footgun. Fix uniformly at the shared resolver
+  (`resolve_starting_unit_entity` / `select_starting_band`) — a faction-match gate applied across all
+  band-command handlers — not per-handler. `send_expedition` already gained a `ResidentBand` gate in
+  PR #96; the faction check is the remaining shared gap.
 
 ### Civilization Wellbeing (Morale → Discontent → Consequences)
 
