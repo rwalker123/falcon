@@ -16,6 +16,10 @@ signal tile_hovered(info: Dictionary)
 signal selection_cleared()
 signal next_turn_requested(steps: int)
 signal targeting_cancel_requested()
+## Emitted whenever the map zoom factor changes (rail button, wheel, Q/E, or fit).
+## The HUD renders the live zoom readout from it. Emitted only when the factor
+## actually changed (both producers below early-return / reset before emitting).
+signal zoom_changed(zoom_factor: float)
 
 const LOGISTICS_COLOR := Color(0.15, 0.45, 1.0, 1.0)
 const SENTIMENT_COLOR := Color(1.0, 0.35, 0.25, 1.0)
@@ -160,6 +164,10 @@ const HEIGHTFIELD_CONFIG_PATH := "res://src/data/heightfield_config.json"
 const MIN_ZOOM_FACTOR := 1.0
 const MAX_ZOOM_FACTOR := 4.0
 const MOUSE_ZOOM_STEP := 0.2
+# One click of the on-screen zoom rail. Deliberately larger than MOUSE_ZOOM_STEP
+# (0.2) so a button press feels like a deliberate step, not a nudge; promote to a
+# config lever if it ever wants tuning.
+const ZOOM_BUTTON_STEP := 0.5
 const KEYBOARD_ZOOM_SPEED := 0.8
 const KEYBOARD_PAN_SPEED := 600.0
 const PLAYER_FACTION_ID := 0
@@ -3749,6 +3757,25 @@ func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
 	queue_redraw()
 	if _minimap_2d != null:
 		_minimap_2d.queue_indicator_redraw()
+	# Reaching here means the factor actually changed (the no-op / clamped-equal
+	# cases early-returned above), so the readout only updates on a real change.
+	emit_signal("zoom_changed", zoom_factor)
+
+## Public zoom API — the on-screen zoom rail routes through the same `_apply_zoom`
+## path the trackpad/wheel uses, so there is exactly one map-zoom code path.
+## `direction` is +1 (in) / -1 (out); the pivot is the map center so button-zoom
+## doesn't drift the view.
+func zoom_step(direction: int) -> void:
+	_apply_zoom(float(direction) * ZOOM_BUTTON_STEP, _viewport_center_pivot())
+
+func _viewport_center_pivot() -> Vector2:
+	# Local coords (matches _apply_zoom's pivot space); respects the inspector inset.
+	return _get_adjusted_viewport_size() * 0.5
+
+## Public alias for the fit-to-view action (the `C` hotkey), so the zoom rail's
+## `⊡` button and Main's wiring can call it without reaching a private method.
+func fit_to_view() -> void:
+	_fit_map_to_view()
 
 func _begin_mouse_pan(button_index: int) -> void:
 	mouse_pan_active = true
@@ -3796,6 +3823,7 @@ func _fit_map_to_view() -> void:
 	queue_redraw()
 	if _minimap_2d != null:
 		_minimap_2d.queue_indicator_redraw()
+	emit_signal("zoom_changed", zoom_factor)
 
 func handle_hex_click(col: int, row: int, button_index: int) -> void:
 	# Only handle left mouse button clicks. Right-clicks and other buttons are intentionally ignored.

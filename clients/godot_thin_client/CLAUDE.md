@@ -55,6 +55,8 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
 | `ui/MinimapPanel.gd` | Minimap component for the 2D map view (click-to-pan, aspect ratio sizing) |
+| `ui/TurnOrb.gd` / `ui/TurnOrb.tscn` | The bottom-right **turn orb** (replaces the old "Advance Turn" button): calm cyan pulse when the attention registry is empty, else a severity-tinted count badge + a reasons popover (see "Turn orb & attention model"). Re-emits `focus_requested` (jump) / `advance_requested` so Main's advance/jump wiring is unchanged; palette from `HudStyle`, all geometry/severity/kind as named constants |
+| `ui/MagnifierButton.gd` | Zoom-rail in/out button that `_draw`s a crisp magnifier icon (lens + handle + inner `+`/`−`, `zoom_sign` picks which) — font magnifier glyphs render as tofu/blobs. Monochrome `HudStyle` ink → `SIGNAL` on hover |
 | `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content |
 | `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, and `apply_button(btn, "primary"/"ghost"/"armed")`. Every HUD surface styles through here |
 | `ui/FoodIcons.gd` | Shared map-marker emoji glyphs — food modules (`for_site`) and fauna herds (`for_herd`, species keyword matched in the herd label, longest-first). Covers migratory species plus wild game (deer/boar/rabbit/fowl). Used by the Harvest/Hunt button (`Hud.gd`) and the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`) so a source always reads the same |
@@ -107,7 +109,24 @@ Server (FlatBuffers) -> SnapshotStream.gd -> parsed snapshot
 
 ## Minimap System
 
-The map view displays a minimap in the bottom-right corner showing the full map with a viewport indicator rectangle.
+The 2D minimap lives in the HUD **bottom-left** `NavCluster` (an HBox in `BottomBar`,
+`HudLayer.tscn`) — a `MinimapContainer` (the map thumbnail with its viewport indicator
+rectangle) with a docked **zoom rail** to its right. `MapView._setup_2d_minimap` finds the
+container via `Hud.get_minimap_container()`, so the container abstracts the move.
+
+### Zoom rail — the on-screen map-zoom control
+The rail (`ZoomRail` VBox) is `＋` (`MagnifierButton`, zoom in) / a live `1.0×` readout /
+`－` (`MagnifierButton`, zoom out) / `▣` fit ("Fit map to view (C)"). It rides the **one**
+map-zoom path: the buttons emit `Hud.map_zoom_step(±1)` / `map_zoom_fit` → `Main` →
+`MapView.zoom_step()` / `fit_to_view()` (thin wrappers over `_apply_zoom`, pivoting on the
+map center), and `MapView.zoom_changed(zoom_factor)` → `Hud.set_zoom_readout` renders the
+readout (so it also reflects the wheel and `Q`/`E`). The old top-right **interface-scale**
+widget (which drove `content_scale_factor` — it scaled the whole canvas uniformly, so map
+icons never crossed the icon-LOD threshold) was **removed**; map zoom is now solely
+`MapView._apply_zoom`. Interface scale returns later via an Options menu. See
+`docs/plan_hud_nav_turn_orb.md`.
+
+The map view displays this minimap showing the full map with a viewport indicator rectangle.
 
 ### Component (`ui/MinimapPanel.gd`)
 Reusable minimap UI component handling:
@@ -598,6 +617,23 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `MapView.focus_on_tile` (shared minimap centering machinery). Hidden via the dock until an alert exists.
   NOTE: cohorts carry no top-level band label in the snapshot — names fall back to a positional
   "Band N"; a server-side band-label field would make names authoritative.
+- **Turn orb & attention model** (`ui/TurnOrb.gd` + `ui/TurnOrb.tscn`, last `BottomBar` child;
+  `docs/plan_hud_nav_turn_orb.md`): the bottom-right orb replaces the "Advance Turn" button and
+  is a **generic attention hub**. Readiness = the attention registry is **empty** → a calm cyan
+  `SIGNAL` pulse ("nothing needs you"); any entries → the pulse stops and a **count badge** tinted
+  by the highest severity shows, and clicking the orb face toggles a **reasons popover** (built at
+  runtime, `HudStyle.card_stylebox()`) — one row per entry (severity stripe + kind icon + label +
+  detail + right-aligned `Jump →`), highest-severity first, plus an `Advance ▸` footer. The orb
+  knows nothing about producers; it renders a list of generic **Attention** dicts:
+  `{kind, severity ("info"|"warn"|"critical" → SIGNAL/WARN/DANGER), label, detail, x, y}` where
+  `x < 0` = non-locating (renders `Open ▸`, a no-op stub for now). Wiring stays stable via Hud
+  relays: a row's jump → `focus_requested` → `alert_focus_requested` → `MapView.focus_on_tile`
+  (the same centering the Alerts panel uses); the footer → `advance_requested` →
+  `next_turn_requested(1)`; `update_overlay` pushes the turn number via `set_turn`. The **one live
+  producer** is `idle_workers`: `Hud.update_band_alerts` appends a `warn` entry for each player band
+  with `idle_workers > 0` (label `"N idle workers"`, detail = `_band_display_name`, band tile x/y),
+  then calls `turn_orb.set_attention`. Future producers (`war` / `decision` /
+  `expedition_awaiting`) are stubs the model already fits — one producer each, **no orb changes**.
 - **Targeting: move-band + send-expedition + send-hunt-expedition** (`Hud.gd`): the single-task
   forage/scout/hunt/follow `_pending_*` flows were retired with labor allocation. Three targeting
   flows remain, all built on the same `_pending_*` → `_current_targeting_info()` →

@@ -265,6 +265,31 @@ func _ready() -> void:
 	await _settle()
 	await _save("quick_hunt_note")
 
+	# State 6 — turn orb, ALL-CLEAR: a player band with zero idle workers → empty
+	# attention registry → the orb calm-pulses (dashed cyan arc), the caption reads
+	# "Turn 42 · ▸ all clear", and no badge shows.
+	_hud.clear_selection()
+	_hud.update_overlay(42, {})
+	_hud.update_band_alerts([
+		{"faction": 0, "entity": 501, "size": 40, "days_of_food": 999.0, "activity": "forage",
+			"current_x": 30, "current_y": 20, "idle_workers": 0},
+	])
+	await _settle()
+	await _save("turn_orb_clear")
+
+	# State 7 — turn orb, WITH REASONS: two player bands each carrying idle workers →
+	# 2 attention entries → the pulse stops, an amber badge reads "2", the caption reads
+	# "2 items need you", and the popover (opened here) lists two `Jump →` rows.
+	_hud.update_band_alerts([
+		{"faction": 0, "entity": 601, "size": 120, "days_of_food": 999.0, "activity": "forage",
+			"current_x": 21, "current_y": 15, "idle_workers": 3},
+		{"faction": 0, "entity": 602, "size": 80, "days_of_food": 999.0, "activity": "forage",
+			"current_x": 31, "current_y": 21, "idle_workers": 5},
+	])
+	_hud.turn_orb.open_popover()
+	await _settle()
+	await _save("turn_orb_attention")
+
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
 	var probe_layer := CanvasLayer.new()

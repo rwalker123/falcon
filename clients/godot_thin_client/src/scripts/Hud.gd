@@ -1,8 +1,10 @@
 extends CanvasLayer
 class_name HudLayer
 
-signal ui_zoom_delta(delta: float)
-signal ui_zoom_reset
+## Map-zoom rail (bottom-left nav cluster). `map_zoom_step` carries +1 (in) / -1 (out);
+## `map_zoom_fit` fits the map to the view. Main wires both to the single MapView zoom path.
+signal map_zoom_step(direction: int)
+signal map_zoom_fit
 ## Emitted when the player clears ALL of a band's labor assignments (the "Clear all"
 ## affordance); carries the band dict so Main can extract faction + entity bits for the
 ## repurposed `cancel_order` command (now a clear-all → fully idle).
@@ -61,10 +63,11 @@ var _server_build: String = "?"
 @onready var sedentarization_label: Label = %SedentarizationLabel
 @onready var demographics_label: Label = %DemographicsLabel
 @onready var discoveries_label: Label = %DiscoveriesLabel
-@onready var zoom_controls: HBoxContainer = $LayoutRoot/RootColumn/TopBar/ZoomControls
-@onready var zoom_out_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomOutButton
-@onready var zoom_reset_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomResetButton
-@onready var zoom_in_button: Button = $LayoutRoot/RootColumn/TopBar/ZoomControls/ZoomInButton
+@onready var zoom_rail: VBoxContainer = $LayoutRoot/RootColumn/BottomBar/NavCluster/ZoomRail
+@onready var zoom_in_button2: Button = $LayoutRoot/RootColumn/BottomBar/NavCluster/ZoomRail/ZoomInButton
+@onready var zoom_out_button2: Button = $LayoutRoot/RootColumn/BottomBar/NavCluster/ZoomRail/ZoomOutButton
+@onready var zoom_fit_button: Button = $LayoutRoot/RootColumn/BottomBar/NavCluster/ZoomRail/ZoomFitButton
+@onready var zoom_level_label: Label = $LayoutRoot/RootColumn/BottomBar/NavCluster/ZoomRail/ZoomLevelLabel
 @onready var terrain_legend_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TerrainLegendPanel as PanelCard
 @onready var terrain_legend_scroll: ScrollContainer = %LegendScroll
 @onready var terrain_legend_list: VBoxContainer = %LegendList
@@ -93,8 +96,8 @@ var _server_build: String = "?"
 @onready var stockpile_list: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin/StockpileVBox/StockpileList
 @onready var left_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack
 @onready var right_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack
-@onready var next_turn_button: Button = $LayoutRoot/RootColumn/BottomBar/NextTurnButton
-@onready var minimap_container: MarginContainer = $LayoutRoot/RootColumn/BottomBar/MinimapContainer
+@onready var turn_orb: TurnOrb = $LayoutRoot/RootColumn/BottomBar/TurnCluster
+@onready var minimap_container: MarginContainer = $LayoutRoot/RootColumn/BottomBar/NavCluster/MinimapContainer
 @onready var resource_summary: MarginContainer = $LayoutRoot/RootColumn/BottomBar/ResourceSummary
 @onready var resource_hbox: HBoxContainer = $LayoutRoot/RootColumn/BottomBar/ResourceSummary/ResourceHBox
 @onready var resource_placeholder: Label = $LayoutRoot/RootColumn/BottomBar/ResourceSummary/ResourceHBox/ResourcePlaceholder
@@ -116,6 +119,10 @@ const COMMAND_FEED_LIMIT := 6
 const COMMAND_FEED_MIN_HEIGHT := 72.0
 const COMMAND_FEED_BOTTOM_MARGIN := 12.0
 const PLAYER_FACTION_ID := 0
+# Turn-orb attention contract (see TurnOrb.gd): the one producer this PR feeds is
+# idle labor. `warn` severity matches the amber tint the idle-band alert uses.
+const ATTENTION_KIND_IDLE_WORKERS := "idle_workers"
+const ATTENTION_SEVERITY_WARN := "warn"
 # Top-bar glyph for the discovered-Wondrous-Sites readout (a faceted-gem marker).
 const DISCOVERIES_GLYPH := "◈"
 const FOOD_MODULE_LABELS := {
@@ -370,8 +377,8 @@ var _left_inset: float = 0.0
 
 func _ready() -> void:
     _load_ui_balance_config()
-    set_ui_zoom(1.0)
-    _connect_zoom_controls()
+    _connect_zoom_rail()
+    _connect_turn_orb()
     _setup_tooltip()
     _refresh_existing_legend_rows()
     _resize_legend_panel(_legend_list_size())
@@ -379,7 +386,6 @@ func _ready() -> void:
     _refresh_victory_status()
     _render_command_feed()
     _connect_selection_buttons()
-    _connect_control_buttons()
     left_dock = PanelDock.new(left_stack)
     right_dock = PanelDock.new(right_stack)
     left_dock.add(tile_panel, 10)
@@ -608,6 +614,8 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
     # _reconcile_pending, called from update_band_alerts later in the same snapshot cycle).
     _current_turn = turn
     turn_label.text = "Turn %d" % turn
+    if turn_orb != null:
+        turn_orb.set_turn(turn)
     var unit_count: int = int(metrics.get("unit_count", 0))
     var avg_logistics: float = float(metrics.get("avg_logistics", 0.0))
     var avg_sentiment: float = float(metrics.get("avg_sentiment", 0.0))
@@ -773,18 +781,38 @@ func update_stockpiles(faction_inventory_variant: Variant) -> void:
     for entry in panel_entries:
         stockpile_list.add_child(_build_stockpile_row(entry))
 
-func set_ui_zoom(scale: float) -> void:
-    if zoom_reset_button != null:
-        zoom_reset_button.text = "%.0f%%" % (scale * 100.0)
+## Render the live map-zoom readout (e.g. "1.6×"). Driven by MapView.zoom_changed
+## via Main, so it reflects the rail buttons, the wheel, and the Q/E keys alike.
+func set_zoom_readout(zoom_factor: float) -> void:
+    if zoom_level_label != null:
+        zoom_level_label.text = "%.1f×" % zoom_factor
 
+## Wire the bottom-left zoom rail: ＋/－ step the map zoom, ⊡ fits to view. Every
+## button is styled through HudStyle (no raw default-theme buttons); the readout
+## label reads as tabular cyan mono.
+func _connect_zoom_rail() -> void:
+    HudStyle.apply_button(zoom_in_button2, "ghost")
+    HudStyle.apply_button(zoom_out_button2, "ghost")
+    HudStyle.apply_button(zoom_fit_button, "ghost")
+    if zoom_level_label != null:
+        zoom_level_label.add_theme_color_override("font_color", HudStyle.SIGNAL)
+    if zoom_in_button2 != null and not zoom_in_button2.is_connected("pressed", Callable(self, "_on_zoom_in_pressed")):
+        zoom_in_button2.pressed.connect(_on_zoom_in_pressed)
+    if zoom_out_button2 != null and not zoom_out_button2.is_connected("pressed", Callable(self, "_on_zoom_out_pressed")):
+        zoom_out_button2.pressed.connect(_on_zoom_out_pressed)
+    if zoom_fit_button != null and not zoom_fit_button.is_connected("pressed", Callable(self, "_on_zoom_fit_pressed")):
+        zoom_fit_button.pressed.connect(_on_zoom_fit_pressed)
 
-func _connect_zoom_controls() -> void:
-    if zoom_out_button != null and not zoom_out_button.is_connected("pressed", Callable(self, "_on_zoom_out_pressed")):
-        zoom_out_button.pressed.connect(_on_zoom_out_pressed)
-    if zoom_reset_button != null and not zoom_reset_button.is_connected("pressed", Callable(self, "_on_zoom_reset_pressed")):
-        zoom_reset_button.pressed.connect(_on_zoom_reset_pressed)
-    if zoom_in_button != null and not zoom_in_button.is_connected("pressed", Callable(self, "_on_zoom_in_pressed")):
-        zoom_in_button.pressed.connect(_on_zoom_in_pressed)
+## Wire the turn orb: it re-emits the existing advance/jump signals, so the Main
+## wiring (next_turn_requested / alert_focus_requested → MapView.focus_on_tile) is
+## unchanged — the orb just replaces the old advance-turn button as their source.
+func _connect_turn_orb() -> void:
+    if turn_orb == null:
+        return
+    if not turn_orb.is_connected("focus_requested", Callable(self, "_on_turn_orb_focus")):
+        turn_orb.focus_requested.connect(_on_turn_orb_focus)
+    if not turn_orb.is_connected("advance_requested", Callable(self, "_on_turn_orb_advance")):
+        turn_orb.advance_requested.connect(_on_turn_orb_advance)
 
 ## The labor-allocation UI (allocation panel, herd/tile assign controls) is built at
 ## runtime with its own per-widget signal connections, so there are no static selection
@@ -792,20 +820,19 @@ func _connect_zoom_controls() -> void:
 func _connect_selection_buttons() -> void:
     pass
 
-func _connect_control_buttons() -> void:
-    if next_turn_button != null and not next_turn_button.is_connected("pressed", Callable(self, "_on_next_turn_pressed")):
-        next_turn_button.pressed.connect(_on_next_turn_pressed)
-
 func _on_zoom_out_pressed() -> void:
-    emit_signal("ui_zoom_delta", -1.0)
-
-func _on_zoom_reset_pressed() -> void:
-    emit_signal("ui_zoom_reset")
+    emit_signal("map_zoom_step", -1)
 
 func _on_zoom_in_pressed() -> void:
-    emit_signal("ui_zoom_delta", 1.0)
+    emit_signal("map_zoom_step", 1)
 
-func _on_next_turn_pressed() -> void:
+func _on_zoom_fit_pressed() -> void:
+    emit_signal("map_zoom_fit")
+
+func _on_turn_orb_focus(x: int, y: int) -> void:
+    emit_signal("alert_focus_requested", x, y)
+
+func _on_turn_orb_advance() -> void:
     emit_signal("next_turn_requested", 1)
 
 # ---- Early-Game Labor allocation (slice 3b) --------------------------------
@@ -2714,6 +2741,10 @@ func update_band_alerts(populations_variant: Variant) -> void:
     var populations: Array = populations_variant
     var new_sizes: Dictionary = {}
     var alerts: Array = []
+    # Turn-orb attention registry: one entry per player band with idle labor (the
+    # first, seeded producer). Built alongside the alerts and pushed to the orb below;
+    # the orb sorts and renders it. New producers (wars/decisions/…) append here later.
+    var attention: Array = []
     var band_index := 0
     # Capture the player bands each snapshot; the labor-allocation UI targets them (assign/move/
     # clear) and reads their labor_assignments for the herd/tile assign controls. `player_band`
@@ -2750,9 +2781,20 @@ func update_band_alerts(populations_variant: Variant) -> void:
             })
         if activity == BAND_ACTIVITY_IDLE:
             alerts.append({"type": ALERT_TYPE_IDLE, "band": band_name, "x": x, "y": y})
+        var idle_workers := int(entry.get("idle_workers", 0))
+        if idle_workers > 0:
+            attention.append({
+                "kind": ATTENTION_KIND_IDLE_WORKERS,
+                "severity": ATTENTION_SEVERITY_WARN,
+                "label": "%d idle worker%s" % [idle_workers, "" if idle_workers == 1 else "s"],
+                "detail": band_name,
+                "x": x, "y": y,
+            })
     _prev_band_sizes = new_sizes
     _player_band = player_band
     _player_bands = player_bands
+    if turn_orb != null:
+        turn_orb.set_attention(attention)
     # This snapshot is authoritative: drop optimistic pending actions the server has now
     # processed (issued on an older turn), then let the panels render the confirmed state.
     _reconcile_pending()
