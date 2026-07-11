@@ -28,7 +28,7 @@ const HERD_ON_TILE_ID := "game_boar_03"   # herd id used by the selected-hex her
 # current config so the map token glyphs render. EMPTY exercises the neutral non-circular fallback marker (square).
 const STAGE_NOMADIC := {"id": "nomadic", "label": "Nomadic band", "icon": "⛺"}
 const STAGE_CAMP := {"id": "camp", "label": "Seasonal camp", "icon": "🛖"}
-const STAGE_VILLAGE := {"id": "village", "label": "Settled village", "icon": "🏘️"}
+const STAGE_VILLAGE := {"id": "village", "label": "Village", "icon": "🏘️"}
 const STAGE_NONE := {"id": "", "label": "", "icon": ""}   # pre-stage / missing → neutral non-circular fallback marker
 # Stage cycle used to fan mixed glyphs across a co-located band stack.
 const STACK_STAGE_CYCLE := [STAGE_NOMADIC, STAGE_CAMP, STAGE_VILLAGE, STAGE_NONE]

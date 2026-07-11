@@ -2004,11 +2004,13 @@ func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 		return
 	if not _is_tile_visible(x, y):
 		return
-	# Herd trail stays centered on the hex path (a route, not a marker).
-	_draw_herd_trail(herd_id, radius, origin)
 	var slot: int = _secondary_slot_lookup.get(_herd_key(herd_id), -1)
 	if slot < 0:
 		return   # far-zoom LOD or overflowed into the +N chip
+	# Herd trail stays centered on the hex path (a route, not a marker), but only
+	# when the herd icon itself draws — no orphaned trail for an LOD-suppressed or
+	# overflowed herd (its slot is gone).
+	_draw_herd_trail(herd_id, radius, origin)
 	var tile_center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
 	var icon_center := _secondary_slot_center(tile_center, slot, radius)
 	var herd_icon := FoodIcons.for_herd(String(herd.get("label", herd.get("id", "Herd"))))
@@ -2413,8 +2415,9 @@ func _cycle_index_for_unit(entity_id: int) -> int:
 ## Re-resolve the current selection against the freshly-rebuilt markers/tiles so the
 ## HUD panel can refresh after a snapshot without the user reselecting the hex.
 ## Returns {"kind": "unit"|"herd"|"tile"|"none", "data": {...}}, mirroring the payload
-## shape each selection path emits. A selected band/herd that no longer exists in the
-## new snapshot clears its ring and falls through to its tile ("tile") or "none".
+## shape each selection path emits. Selection is conveyed by the hex outline (no
+## per-token ring): a selected band/herd that no longer exists in the new snapshot has
+## its selected id cleared and falls through to its tile ("tile") or "none".
 func refresh_selection_payload() -> Dictionary:
 	if selected_unit_id >= 0:
 		for unit in units:
@@ -2425,7 +2428,7 @@ func refresh_selection_payload() -> Dictionary:
 				var uy := int(pos[1]) if pos.size() == 2 else selected_tile.y
 				payload["tile_info"] = _tile_info_at(ux, uy)
 				return {"kind": "unit", "data": payload}
-		# The selected band left/expired — drop the ring and fall through.
+		# The selected band left/expired — clear the selection and fall through.
 		selected_unit_id = -1
 	if selected_herd_id != "":
 		for herd in herds:
