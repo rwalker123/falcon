@@ -22,6 +22,9 @@ const BAND_X := 8
 const BAND_Y := 6
 const TERRAIN_ID := 5  # arbitrary land biome for a legible backdrop
 const STACK_ENTITY_BASE := 9100   # co-located band entities are STACK_ENTITY_BASE + i
+const TRAVEL_SEAM_BAND_X := 1      # band column near the left edge for the seam-crossing case
+const TRAVEL_SEAM_TARGET_X := 14   # target near the right edge → short path wraps LEFT across seam
+const TRAVEL_EXPEDITION_ENTITY := 9301
 const HERD_ON_TILE_ID := "game_boar_03"   # herd id used by the selected-hex herd fixture
 # Canned settlement-stage tokens (the native bridge doesn't run here, so preview band dicts must
 # carry settlement_stage_* directly). Icons are opaque sim strings — the emoji here just mirror the
@@ -192,6 +195,42 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_hunt_expeditions")
+
+	# State N — selected TRAVELLING band destination (non-wrapping map): the band reports
+	# `is_traveling` + a `travel_target` a few hexes away → a thin cyan line from its tile to the
+	# destination hex + a target reticle on that hex. Only drawn because the band is selected.
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.display_snapshot(_snapshot_travel_band())
+	_map.selected_unit_id = BAND_ENTITY
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(BAND_X, BAND_Y)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_travel_band")
+
+	# State O — WRAP-AWARE seam-crossing destination: a horizontally-wrapping map with the band near
+	# the left edge and its target near the RIGHT edge. The short path crosses the seam, so the line
+	# must head LEFT (toward the wrapped-nearest copy of the target), not shoot right across the map.
+	_map.set_fow_enabled(false)
+	_map.display_snapshot(_snapshot_travel_seam())
+	_map.selected_unit_id = BAND_ENTITY
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(TRAVEL_SEAM_BAND_X, BAND_Y)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_travel_seam")
+
+	# State P — selected TRAVELLING expedition: a detached scout party in transit draws the same
+	# destination reticle + line (the draw is unit-agnostic — band OR expedition).
+	_map.set_fow_enabled(false)
+	_map.display_snapshot(_snapshot_travel_expedition())
+	_map.selected_unit_id = TRAVEL_EXPEDITION_ENTITY
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(5, 9)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_travel_expedition")
 
 	get_tree().quit()
 
@@ -413,6 +452,38 @@ func _snapshot_hunt_expeditions() -> Dictionary:
 	snap["populations"].append(_hunt_expedition(9202, 5, 9, "hunting"))
 	snap["populations"].append(_hunt_expedition(9203, 10, 8, "delivering"))
 	snap["populations"].append(_hunt_expedition(9204, 3, 4, "returning"))
+	return snap
+
+## A selected band in transit: carries `is_traveling` + a `travel_target` a few hexes SE of its
+## tile, so the destination reticle + line draw on a non-wrapping map.
+func _snapshot_travel_band() -> Dictionary:
+	var band := _band([{"kind": "warrior", "workers": 2}], 2, 0)
+	band["is_traveling"] = true
+	band["travel_target_x"] = 13
+	band["travel_target_y"] = 6
+	return _base_snapshot(band, [])
+
+## Seam-crossing destination on a horizontally-wrapping map: band near the LEFT edge, target near the
+## RIGHT edge. The short wrapped path runs left across the seam, so the line must head left.
+func _snapshot_travel_seam() -> Dictionary:
+	var band := _band_at(BAND_ENTITY, TRAVEL_SEAM_BAND_X, BAND_Y)
+	band["is_traveling"] = true
+	band["travel_target_x"] = TRAVEL_SEAM_TARGET_X
+	band["travel_target_y"] = BAND_Y
+	return {
+		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": true},
+		"overlays": {"terrain": _terrain_array()},
+		"populations": [band],
+		"herds": [],
+	}
+
+## A selected scouting expedition in transit → the same destination reticle + line (unit-agnostic).
+func _snapshot_travel_expedition() -> Dictionary:
+	var snap := _base_snapshot(_band([], 2, 0), [])
+	var party := _expedition(TRAVEL_EXPEDITION_ENTITY, 5, 9, "outbound")
+	party["travel_target_x"] = 11
+	party["travel_target_y"] = 3
+	snap["populations"].append(party)
 	return snap
 
 func _snapshot_sites_fogged() -> Dictionary:

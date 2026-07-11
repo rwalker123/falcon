@@ -60,6 +60,33 @@ pub struct SpeciesDef {
     /// Food-module keys (see `FoodModule::as_str`) this species hosts in.
     #[serde(default)]
     pub host_biomes: Vec<String>,
+    /// Turns the group grazes its current tile before stepping ≤1 hex (the graze-wander cadence,
+    /// `advance_herds`). `~1` → effectively half speed, so an equal-speed party can catch it during
+    /// a graze turn. Game rows use this; migratory rows use it for the pause between loiter wanders.
+    #[serde(default = "default_dwell_turns")]
+    pub dwell_turns: u32,
+    /// Migratory only: inclusive `[min, max]` turns to loiter (graze-wander near an anchor) before
+    /// committing to the next directed migration leg.
+    #[serde(default = "default_loiter_turns")]
+    pub loiter_turns: [u32; 2],
+    /// Migratory only: hex radius of the local graze-wander around a loiter anchor.
+    #[serde(default = "default_loiter_radius")]
+    pub loiter_radius: u32,
+}
+
+/// Default graze pause: one turn of grazing between hex steps (≈ half movement speed).
+fn default_dwell_turns() -> u32 {
+    1
+}
+
+/// Default migratory loiter window (turns) at an anchor before the next migration leg.
+fn default_loiter_turns() -> [u32; 2] {
+    [12, 24]
+}
+
+/// Default migratory loiter wander radius (hexes) around an anchor.
+fn default_loiter_radius() -> u32 {
+    2
 }
 
 impl SpeciesDef {
@@ -67,6 +94,13 @@ impl SpeciesDef {
     pub fn sample_route_len(&self, rng: &mut SmallRng) -> u32 {
         let lo = self.route_len[0].max(1);
         let hi = self.route_len[1].max(lo);
+        rng.gen_range(lo..=hi)
+    }
+
+    /// Sample a migratory loiter window (turns) within the configured inclusive range (>= 1).
+    pub fn sample_loiter_turns(&self, rng: &mut SmallRng) -> u32 {
+        let lo = self.loiter_turns[0].max(1);
+        let hi = self.loiter_turns[1].max(lo);
         rng.gen_range(lo..=hi)
     }
 
@@ -316,6 +350,14 @@ impl FaunaConfig {
             .collect();
         out.sort_by(|a, b| a.0.cmp(b.0));
         out
+    }
+
+    /// Resolve a species row by its `display_name` (the value a `Herd` stores in `species`), so
+    /// `advance_herds` can read the herd's movement cadence levers. Display names are unique.
+    pub fn species_by_display(&self, display: &str) -> Option<&SpeciesDef> {
+        self.species
+            .values()
+            .find(|def| def.display_name == display)
     }
 
     /// `(key, def)` pairs for every non-migratory (short-range) game species that

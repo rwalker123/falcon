@@ -220,6 +220,16 @@ model and the `Camp`-entity item above; consumes the Wildlife Overlay's `domesti
 `SedentarizationScore` seams. Guiding principle: one general mechanism, scaled by config — a
 lean-to and an arcology (and a 400k town vs a 5M city) are the same engine at different tuning.
 
+- [ ] **Band / settlement Roster View (client; future).** A HUD table listing every player band
+  (later: every settlement/city) with per-entry summary info — **population first** (the immediately
+  useful column), later worker allocation, food/days, morale, activity. Motivation: the faction
+  header shows the *total* population (e.g. "Pop 36") but a selected band shows only its own members
+  (e.g. 32) — the difference is detached expeditions, which is currently opaque; a roster makes the
+  whole faction legible at a glance and reconciles the totals (bands + expeditions = faction pop).
+  Forward-looking: the same table becomes the cities/settlements list in the Settlement arc. Reuse
+  `AutoSizingPanel.gd`. Data is already in the snapshot (`PopulationCohortState` per cohort incl.
+  `isExpedition`); this is a client-only aggregation/rendering slice. Cross-ref this doc (feeds the
+  emergent-settlement list).
 - [x] Phase 0 — Design doc. Authored `docs/plan_settlement_population.md` (population/labor/
   improvements/settlements model + phasing) and cross-linked it (manual §Organic Settlement,
   `plan_wildlife_hunting_overlay.md`, `core_sim/CLAUDE.md`).
@@ -410,16 +420,31 @@ role). Sequenced: local scout (small fix) → sites subsystem (foundation) → e
   delivered**, party self-feeds. (4) Client: `expeditionCarryCap` field (done) → **"carried / cap" +
   FULL** readout, a marker gather/haul indicator, the **Recall→"Returning"** hunt-panel fix, and a
   **policy picker** on the hunt launch.
-- [ ] **Fauna movement redesign — graze/loiter-then-migrate (next slice; own PR; fauna-layer).**
-  Herds today step 1 tile **every** turn (`advance_herds`), which (a) is unrealistic and (b) makes an
-  equal-speed hunt expedition unable to catch a long one-directional migratory route. New model:
-  **wild game** (deer/boar/small game) grazes a tile ~1 turn (dwell) before stepping 1 tile (≈ half
-  speed → catchable); **migratory herds** loiter in a 1–2 tile area for *many* turns, then commit to a
-  directed migration at 1 hex/turn until they reach the next area, then loiter again. Per-herd
-  dwell/migration state on `Herd`; config dwell/loiter lengths in `fauna_config.json`. Fixes migratory
-  catch for the hunt expedition **naturally** (party closes during dwell/loiter) and improves fauna
-  feel game-wide (affects band Hunt/Follow too). Document in `docs/plan_wildlife_hunting_overlay.md` +
-  `core_sim/CLAUDE.md` Fauna section. Cross-ref: expedition hunt (§2b) depends on this for migratory herds.
+- [ ] **Fauna movement redesign — graze-wander + loiter-then-migrate (IN PROGRESS; own PR; fauna-layer).**
+  Design: `docs/plan_wildlife_hunting_overlay.md` "Herd Movement". Fixes a latent bug: `advance_herds`
+  calls `Herd::advance()` **every turn unconditionally**, but migratory `route`s are a sparse spiral of
+  waypoints 4–12 tiles apart → a migratory herd **teleports 4–12 tiles/turn** (why an equal-speed party
+  can't catch it). One primitive — **graze-wander** (dwell a turn, step ≤1 tile) — split by
+  `Herd.size_class`: **wild game** (`Big`/`Small`) does permanent graze-wander in its local cluster
+  (`dwell_turns` ~1 → ≈half speed, catchable); **migratory** (`Migratory`) alternates **loiter**
+  (graze-wander ±1–2 of an anchor = the old waypoints, for `loiter_turns` many turns) with **migrate** (a
+  directed leg to the next anchor at **1 hex/turn, no pause**). Requires **densifying** the sparse route
+  into an adjacent hex-line path at spawn. New per-herd dwell/loiter/mode state on `Herd`; **per-species**
+  config on `SpeciesDef` (`dwell_turns`, `loiter_turns [min,max]`, `loiter_radius`). Hunting works: catch
+  during loiter, keep pace (trail 1 tile) through a migrate leg; a band's leashed Hunt still lapses on a
+  long migration (→ that's what expeditions are for). No hard breakage (all consumers read live
+  `position()`); pursuit becomes easier vs loitering herds — that's intended (difficulty is the risk
+  layer, below). Document in `core_sim/CLAUDE.md` Fauna section too. Cross-ref: expedition hunt (§2b).
+  - Future note: **hunt difficulty = danger, not movement** — mechanically-easy hunting now is intended;
+    challenge lands with the expedition **risk/failure** layer (a mammoth can kill your party). Do NOT
+    tune pursuit speed to make hunting hard.
+- [ ] **Game trails → travel roads (future slice; documented).** Historically the first human paths
+  followed game/herd trails. Repeated herd movement accumulates a **trail** on crossed tiles that, over
+  time, becomes cheaper-to-traverse terrain — an emergent road network feeding movement/logistics
+  (band/expedition travel cost). The movement redesign already leaves the signal (herds visit
+  `position()` each turn); a trail-accumulation system consumes it. Retire the per-herd next-position
+  heading arrow in favour of the accumulated trail when this lands. Design: `docs/plan_wildlife_hunting_overlay.md`
+  "Herd Movement → Future concepts".
 - [ ] Deferred / documented: expedition **risk/failure** (peril, non-return); **scouting-TOE**
   gating (with the TOE slice); **regional (multi-tile) sites**; richer per-category rewards;
   **tribes as real civilizations**.

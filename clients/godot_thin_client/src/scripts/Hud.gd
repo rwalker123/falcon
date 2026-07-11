@@ -295,6 +295,15 @@ const SEND_EXPEDITION_BUTTON := "Send scouting expedition…"
 const SEND_HUNT_EXPEDITION_TITLE := "Send hunting expedition"
 const SEND_HUNT_EXPEDITION_HINT := "Detach a party to follow a migratory herd, then click on the herd."
 const SEND_HUNT_EXPEDITION_BUTTON := "Send hunting expedition…"
+# Distance-aware herd-hunt affordance (docs/plan_exploration_and_sites.md §2b): clicking a herd
+# offers a LOCAL hunt when it's within the SELECTED band's hunt_reach, or a hunting EXPEDITION when
+# it's beyond. One compose control (worker/party stepper + policy), two labels/commands keyed off the
+# wrap-aware hex distance from the selected band's own tile.
+const ASSIGN_LOCAL_HUNT_BUTTON := "Assign Local Hunt"
+const SEND_HUNTING_EXPEDITION_BUTTON := "Send Hunting Expedition"
+# Range-aware forage assign: foraging is stationary gathering (NO expedition fallback), so a tile
+# beyond the selected band's `work_range` disables the button rather than offering an alternative.
+const FORAGE_ASSIGN_BUTTON := "Forage"
 # Generic section header for the outfit block (hosts both the scout + hunt send verbs).
 const SEND_EXPEDITION_SECTION := "Send expedition"
 # The hunt party's carry-ceiling FULL badge (shown in the hunt panel when carried ≥ cap).
@@ -318,6 +327,13 @@ var _player_band: Dictionary = {}
 # The assign controls' band-picker dropdown lists these so an assignment explicitly names WHICH
 # band supplies the workers. One entry today (multi-band split is deferred), but built for N.
 var _player_bands: Array = []
+# Map grid dimensions (width/height/horizontal-wrap), captured each snapshot from the `grid` key
+# (Main forwards it via set_grid_dimensions). Feed the wrap-aware hex distance the herd-hunt
+# affordance keys its LOCAL-hunt-vs-hunting-EXPEDITION decision off. Grid rides full snapshots only;
+# it persists across deltas. Defaults to no-wrap until the first snapshot.
+var _grid_width: int = 0
+var _grid_height: int = 0
+var _grid_wrap_horizontal: bool = false
 # The authoritative snapshot turn (header tick), set from update_overlay each snapshot. Used
 # to reconcile optimistic pending actions (a newer turn means the server has processed them).
 var _current_turn: int = -1
@@ -846,6 +862,62 @@ func _assignable_hunt_workers(band: Dictionary, herd_id: String) -> int:
 func _assignable_forage_workers(band: Dictionary, x: int, y: int) -> int:
     return int(band.get("idle_workers", 0)) + _workers_for_forage(band, x, y)
 
+## Map grid dimensions captured each snapshot (Main forwards the snapshot `grid` key). Width + wrap
+## feed the wrap-aware hex distance the herd-hunt affordance keys its local-vs-expedition decision
+## off. Grid rides full snapshots only; persists across deltas (fields default to the last value).
+func set_grid_dimensions(grid: Variant) -> void:
+    if not (grid is Dictionary):
+        return
+    var g: Dictionary = grid
+    _grid_width = int(g.get("width", _grid_width))
+    _grid_height = int(g.get("height", _grid_height))
+    _grid_wrap_horizontal = bool(g.get("wrap_horizontal", _grid_wrap_horizontal))
+
+## The band's current tile (col,row), reading the raw cohort `current_x/y` (snapshot entries) or the
+## MapView marker's `pos` fallback; (-1,-1) when unknown.
+func _band_tile(band: Dictionary) -> Vector2i:
+    var cx := int(band.get("current_x", -1))
+    var cy := int(band.get("current_y", -1))
+    if cx >= 0 and cy >= 0:
+        return Vector2i(cx, cy)
+    var pos_variant: Variant = band.get("pos", [])
+    if pos_variant is Array and (pos_variant as Array).size() == 2:
+        return Vector2i(int((pos_variant as Array)[0]), int((pos_variant as Array)[1]))
+    return Vector2i(-1, -1)
+
+## Shortest signed column delta from→to honoring horizontal wrap (mirrors MapView._wrapped_col_delta),
+## so a herd across the seam measures by its short wrapped distance, not the long way across the map.
+func _wrapped_col_delta(from_col: int, to_col: int) -> int:
+    var d := to_col - from_col
+    if _grid_wrap_horizontal and _grid_width > 0:
+        d -= int(round(float(d) / float(_grid_width))) * _grid_width
+    return d
+
+## odd-r offset (col,row) → axial (mirrors MapView._offset_to_axial).
+func _offset_to_axial(col: int, row: int) -> Vector2i:
+    var q := col - ((row - (row & 1)) >> 1)
+    return Vector2i(q, row)
+
+## Wrap-aware true odd-r hex distance between two offset tiles (mirrors the sim's `hex_distance_wrapped`
+## / MapView._hex_distance): bring the target into the source's column frame via _wrapped_col_delta,
+## then odd-r offset→axial→cube distance. Returns -1 when either tile is unknown.
+func _hex_distance_wrapped(a_col: int, a_row: int, b_col: int, b_row: int) -> int:
+    if a_col < 0 or a_row < 0 or b_col < 0 or b_row < 0:
+        return -1
+    var b_eff_col := a_col + _wrapped_col_delta(a_col, b_col)
+    var a := _offset_to_axial(a_col, a_row)
+    var b := _offset_to_axial(b_eff_col, b_row)
+    var dq: int = a.x - b.x
+    var dr: int = a.y - b.y
+    return int((abs(dq) + abs(dr) + abs(dq + dr)) / 2)
+
+## Max party the band can detach as a hunting expedition: min(idle_workers, max_expedition_party_size),
+## falling back to idle when the cap is absent/0 (mirrors _build_send_expedition_controls' party_max).
+func _expedition_party_cap(band: Dictionary) -> int:
+    var idle := int(band.get("idle_workers", 0))
+    var cap := int(band.get("max_expedition_party_size", 0))
+    return mini(idle, cap) if cap > 0 else idle
+
 ## A "Band: [▼]" dropdown row for the assign controls: lists every player band (positional
 ## "Band N" names, matching the roster) and selects `selected_band`; `on_pick` fires with the
 ## chosen band dict. The actor band is always explicit — shown even with one band (single-item
@@ -1340,27 +1412,57 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     title.text = "Assign hunters" + ("  (now %d%s)" % [current, " · pending" if pending else ""] if current > 0 or pending else "")
     title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK_DIM)
     herd_assign_controls.add_child(title)
-    # Which band supplies the hunters (above the worker stepper, so it reads "which band →
-    # how many workers"). Switching bands re-caps the count to the new band's assignable workers.
+    # Which band supplies the hunters (above the worker/party stepper, so it reads "which band →
+    # how many workers"). Switching bands re-runs the distance-aware branch below for that band.
     herd_assign_controls.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
         _hunt_assign_band = int(picked.get("entity", -1))
-        _hunt_assign_count = clampi(_hunt_assign_count, 0, _assignable_hunt_workers(picked, herd_id))
         _build_herd_assign_controls(herd)))
-    var cap := _assignable_hunt_workers(band, herd_id)
+    # Distance-aware: a LOCAL hunt when the herd is within the SELECTED band's hunt_reach, a hunting
+    # EXPEDITION when it's beyond. Distance is wrap-aware from the picked band's OWN tile — every part
+    # of the decision (distance, reach, and the command's band target) keys off `band` explicitly, so
+    # the right band drives it even with multiple bands (single-band playtest can't surface a mixup).
+    var herd_x := int(herd.get("x", -1))
+    var herd_y := int(herd.get("y", -1))
+    var band_tile := _band_tile(band)
+    var reach := int(band.get("hunt_reach", 0))
+    var distance := _hex_distance_wrapped(band_tile.x, band_tile.y, herd_x, herd_y)
+    # Beyond reach → expedition. Unknown distance (missing tiles) falls back to the local hunt.
+    var is_expedition := distance >= 0 and distance > reach
+    # Local hunt caps at the band's assignable hunt workers; an expedition caps at the party ceiling.
+    var cap := _expedition_party_cap(band) if is_expedition else _assignable_hunt_workers(band, herd_id)
+    _hunt_assign_count = clampi(_hunt_assign_count, 0, cap)
     herd_assign_controls.add_child(_build_worker_stepper(
-        "Hunters", _hunt_assign_count, _hunt_assign_count < cap,
+        "Party" if is_expedition else "Hunters", _hunt_assign_count, _hunt_assign_count < cap,
         func(n: int) -> void:
             _hunt_assign_count = clampi(n, 0, cap)
             _build_herd_assign_controls(herd)))
     herd_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _hunt_assign_policy = policy
         _build_herd_assign_controls(herd)))
+    if is_expedition:
+        herd_assign_controls.add_child(_alloc_hint_label(
+            "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
+            % [_herd_label_for_id(herd_id), distance, reach]))
     var assign_btn := Button.new()
-    assign_btn.text = "Assign"
+    assign_btn.text = SEND_HUNTING_EXPEDITION_BUTTON if is_expedition else ASSIGN_LOCAL_HUNT_BUTTON
     HudStyle.apply_button(assign_btn, "primary")
-    assign_btn.pressed.connect(func() -> void:
-        _emit_assign_labor(band, LABOR_KIND_HUNT, _hunt_assign_count,
-            int(herd.get("x", -1)), int(herd.get("y", -1)), herd_id, _hunt_assign_policy))
+    if is_expedition:
+        # A hunting expedition needs a positive party; a local hunt allows 0 (removes the assignment).
+        assign_btn.disabled = _hunt_assign_count <= 0
+        assign_btn.pressed.connect(func() -> void:
+            if _hunt_assign_count <= 0:
+                return
+            emit_signal("send_hunt_expedition_requested", {
+                "faction": int(band.get("faction", PLAYER_FACTION_ID)),
+                "band": int(band.get("entity", -1)),
+                "party_workers": _hunt_assign_count,
+                "fauna_id": herd_id,
+                "policy": _hunt_assign_policy if _hunt_assign_policy in LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY,
+            }))
+    else:
+        assign_btn.pressed.connect(func() -> void:
+            _emit_assign_labor(band, LABOR_KIND_HUNT, _hunt_assign_count,
+                herd_x, herd_y, herd_id, _hunt_assign_policy))
     herd_assign_controls.add_child(assign_btn)
 
 ## A sustain/surplus/market/eradicate policy radio; `on_pick` fires with the chosen policy. The
@@ -1418,21 +1520,34 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     title.text = "Assign foragers — %s" % label + ("  (now %d%s)" % [current, " · pending" if pending else ""] if current > 0 or pending else "")
     title.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK_DIM)
     forage_assign_controls.add_child(title)
-    # Which band supplies the foragers (above the stepper). Switching re-caps the count to the
-    # new band's assignable workers.
+    # Which band supplies the foragers (above the stepper). Switching re-runs the range check below
+    # for that band.
     forage_assign_controls.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
         _forage_assign_band = int(picked.get("entity", -1))
-        _forage_assign_count = clampi(_forage_assign_count, 0, _assignable_forage_workers(picked, x, y))
         _build_forage_assign_controls(tile_info)))
     var cap := _assignable_forage_workers(band, x, y)
+    _forage_assign_count = clampi(_forage_assign_count, 0, cap)
     forage_assign_controls.add_child(_build_worker_stepper(
         "Foragers", _forage_assign_count, _forage_assign_count < cap,
         func(n: int) -> void:
             _forage_assign_count = clampi(n, 0, cap)
             _build_forage_assign_controls(tile_info)))
+    # Range-aware: foraging is stationary gathering (there is NO forage-expedition alternative), so a
+    # tile beyond the SELECTED band's work_range DISABLES the button + shows an out-of-range hint,
+    # rather than a fallback. Distance is wrap-aware from the picked band's OWN tile — distance,
+    # work_range, and the target band all key off `band` explicitly (never the faction's default band).
+    var band_tile := _band_tile(band)
+    var work_range := int(band.get("work_range", 0))
+    var distance := _hex_distance_wrapped(band_tile.x, band_tile.y, x, y)
+    var out_of_range := distance >= 0 and distance > work_range
+    if out_of_range:
+        forage_assign_controls.add_child(_alloc_hint_label(
+            "(%d,%d) is %d tiles away — beyond this band's forage range (%d)." % [x, y, distance, work_range]))
     var assign_btn := Button.new()
-    assign_btn.text = "Assign"
+    assign_btn.text = FORAGE_ASSIGN_BUTTON
     HudStyle.apply_button(assign_btn, "primary")
+    # Out of range → disabled (no expedition fallback for stationary gathering).
+    assign_btn.disabled = out_of_range
     assign_btn.pressed.connect(func() -> void:
         _emit_assign_labor(band, LABOR_KIND_FORAGE, _forage_assign_count, x, y, "", ""))
     forage_assign_controls.add_child(assign_btn)

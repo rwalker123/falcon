@@ -3478,11 +3478,14 @@ pub fn simulate_population(
 pub fn advance_band_movement(
     mut commands: Commands,
     labor_config: Res<LaborConfigHandle>,
+    sim_config: Res<SimulationConfig>,
     tile_registry: Res<TileRegistry>,
     tiles: Query<&Tile>,
     mut cohorts: Query<(Entity, &mut PopulationCohort, &BandTravel)>,
 ) {
     let labor = labor_config.get();
+    let width = tile_registry.width;
+    let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
     for (entity, mut cohort, travel) in cohorts.iter_mut() {
         let current = tiles
             .get(cohort.current_tile)
@@ -3492,7 +3495,13 @@ pub fn advance_band_movement(
             commands.entity(entity).remove::<BandTravel>();
             continue;
         }
-        let next = step_toward(current, travel.target, labor.band_move_tiles_per_turn);
+        let next = step_toward(
+            current,
+            travel.target,
+            labor.band_move_tiles_per_turn,
+            width,
+            wrap_horizontal,
+        );
         if let Some(tile_entity) = tile_registry.index(next.x, next.y) {
             cohort.current_tile = tile_entity;
             cohort.home = tile_entity;
@@ -3506,14 +3515,16 @@ pub fn advance_band_movement(
 /// Per-turn logic for detached expeditions (traveling parties). Runs right after
 /// `advance_band_movement` (so it reads the party's fresh position) and before the Visibility
 /// stage's `discover_sites`. For each expedition:
-/// - **Observe** the tiles in `observe_sight_range` LOS of its current tile into a **private**
-///   pending-reveal buffer (it does NOT touch the faction map — it is `Without<Expedition>` in
-///   `calculate_visibility`).
-/// - **Comm check + flush**: when within the effective comm range of the home band's live tile,
-///   promote every buffered tile to `Discovered` on the faction map (never downgrading a live
-///   `Active` tile), then clear the buffer. Site discovery rides the flushed tiles for free via the
-///   Visibility stage's `discover_sites`.
-/// - **Provisions** drain by `party × provision_upkeep_per_worker` (non-fatal at zero in v1).
+/// - **Observe + comm-flush is SHARED by every mission (scout AND hunt)** — a ranging party maps the
+///   terrain it crosses regardless of verb. Each turn it observes the tiles in `observe_sight_range`
+///   LOS of its current tile into a **private** pending-reveal buffer (it does NOT touch the faction
+///   map — it is `Without<Expedition>` in `calculate_visibility`); and when within the effective comm
+///   range of the home band's live tile, promotes every buffered tile to `Discovered` on the faction
+///   map (never downgrading a live `Active` tile) and clears the buffer. For a hunt party this fires
+///   at each Delivering drop-off / Returning fold-back. Site discovery rides the flushed tiles for
+///   free via the Visibility stage's `discover_sites`.
+/// - **Provisions** drain by `party × provision_upkeep_per_worker` (scouts only — hunt lives off its
+///   kills); non-fatal at zero in v1.
 /// - **Phase transitions**: `Outbound` + arrived (no `BandTravel`) → `AwaitingOrders` + a one-shot
 ///   arrival feed line; `Returning` → chase the home band's live tile and, once within comm range,
 ///   fold workers + leftover provisions back into the band and despawn (fold-back happens after the
@@ -3614,34 +3625,40 @@ pub fn advance_expeditions(
             }
         }
 
-        // ---- Scout mission: observe + comm flush + upkeep + opportunistic replenish ----
+        // ---- Map documentation (SHARED — all missions, scout AND hunt) ----
+        // A ranging party maps the terrain it crosses regardless of verb, so observe + comm-flush is
+        // mission-agnostic. Scout-specific bits (upkeep, replenish, awaiting-orders) stay below.
+        // a. Observe into the private buffer — no faction-map mutation here. Dedup against an
+        // O(1) `HashSet` scratch (built once) instead of an O(n) `Vec::contains` per tile.
+        let mut seen: HashSet<UVec2> = expedition.pending_reveal.iter().copied().collect();
+        for pos in crate::visibility_systems::visible_tiles_in_range(
+            exp_pos,
+            cfg.observe_sight_range,
+            &elevation,
+            vis_cfg.line_of_sight.enabled,
+            &terrain_tags,
+            &vis_cfg.terrain_modifiers,
+            blocking_tags,
+            wrap_horizontal,
+        ) {
+            if seen.insert(pos) {
+                expedition.pending_reveal.push(pos);
+            }
+        }
+
+        // b. Comm check + flush: in range of home → report the buffer as Discovered, then clear.
+        // For a hunt party this naturally fires at each Delivering drop-off and on Returning
+        // fold-back (it's near the band then), so its findings report home with the food; sites on
+        // the flushed tiles ride `discover_sites` for free, same as the scout.
+        if near_home {
+            let map = ledger.ensure_faction(faction, elevation.width, elevation.height);
+            for pos in expedition.pending_reveal.drain(..) {
+                map.discover(pos.x, pos.y, current_turn);
+            }
+        }
+
+        // ---- Scout-only: provisions upkeep + opportunistic replenish (hunt lives off its kills) ----
         if matches!(mission, ExpeditionMission::Scout) {
-            // a. Observe into the private buffer — no faction-map mutation here. Dedup against an
-            // O(1) `HashSet` scratch (built once) instead of an O(n) `Vec::contains` per tile.
-            let mut seen: HashSet<UVec2> = expedition.pending_reveal.iter().copied().collect();
-            for pos in crate::visibility_systems::visible_tiles_in_range(
-                exp_pos,
-                cfg.observe_sight_range,
-                &elevation,
-                vis_cfg.line_of_sight.enabled,
-                &terrain_tags,
-                &vis_cfg.terrain_modifiers,
-                blocking_tags,
-                wrap_horizontal,
-            ) {
-                if seen.insert(pos) {
-                    expedition.pending_reveal.push(pos);
-                }
-            }
-
-            // b. Comm check + flush: in range of home → report the buffer as Discovered, then clear.
-            if near_home {
-                let map = ledger.ensure_faction(faction, elevation.width, elevation.height);
-                for pos in expedition.pending_reveal.drain(..) {
-                    map.discover(pos.x, pos.y, current_turn);
-                }
-            }
-
             // c. Provisions depletion (scouts only — hunt parties live off their kills). Non-fatal.
             let upkeep = scalar_from_f32(workers as f32 * cfg.provision_upkeep_per_worker);
             if upkeep > scalar_zero() {
@@ -4165,13 +4182,18 @@ pub fn advance_labor_allocation(
     }
 }
 
-/// One pursuit step: move each axis toward `to` by up to `max_step` tiles.
-fn step_toward(from: UVec2, to: UVec2, max_step: u32) -> UVec2 {
-    let axis = |f: u32, t: u32| -> u32 {
-        let delta = (t as i64 - f as i64).clamp(-(max_step as i64), max_step as i64);
-        (f as i64 + delta).max(0) as u32
-    };
-    UVec2::new(axis(from.x, to.x), axis(from.y, to.y))
+/// One travel step toward `to`, up to `max_step` tiles per axis. The **x** axis is horizontal-wrap
+/// aware: it takes the shortest signed delta (`shortest_delta_x`) so a target across the seam is
+/// reached the short way (e.g. left from x=3 to x=73 on an 80-wide wrapping map goes 3→2→1→0→79…),
+/// and wraps the result with `wrap_x`. The **y** axis has no wrap (clamped ≥ 0).
+fn step_toward(from: UVec2, to: UVec2, max_step: u32, width: u32, wrap_horizontal: bool) -> UVec2 {
+    let max = max_step as i32;
+    let dx =
+        crate::grid_utils::shortest_delta_x(from.x, to.x, width, wrap_horizontal).clamp(-max, max);
+    let nx = crate::grid_utils::wrap_x(from.x as i32 + dx, width, wrap_horizontal);
+    let dy = (to.y as i64 - from.y as i64).clamp(-(max_step as i64), max_step as i64);
+    let ny = (from.y as i64 + dy).max(0) as u32;
+    UVec2::new(nx, ny)
 }
 
 /// Layer 3b (wellbeing) — tech-gated migration: relocate-or-stay, population conserved within the

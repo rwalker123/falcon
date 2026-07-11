@@ -6,7 +6,10 @@
       "migratory": true,
       "route_len": [6, 12],
       "biomass": [8000, 12000],
-      "host_biomes": ["boreal_arctic", "montane_highland"]
+      "host_biomes": ["boreal_arctic", "montane_highland"],
+      "dwell_turns": 1,
+      "loiter_turns": [14, 26],
+      "loiter_radius": 2
     },
     "steppe_runner": {
       "display_name": "Steppe Runners",
@@ -14,7 +17,10 @@
       "migratory": true,
       "route_len": [6, 12],
       "biomass": [4000, 9000],
-      "host_biomes": ["savanna_grassland"]
+      "host_biomes": ["savanna_grassland"],
+      "dwell_turns": 1,
+      "loiter_turns": [12, 22],
+      "loiter_radius": 2
     },
     "marsh_grazer": {
       "display_name": "Marsh Grazers",
@@ -22,7 +28,10 @@
       "migratory": true,
       "route_len": [6, 12],
       "biomass": [4000, 9000],
-      "host_biomes": ["wetland_swamp", "riverine_delta"]
+      "host_biomes": ["wetland_swamp", "riverine_delta"],
+      "dwell_turns": 1,
+      "loiter_turns": [12, 22],
+      "loiter_radius": 2
     },
     "deer": {
       "display_name": "Red Deer",
@@ -30,7 +39,8 @@
       "migratory": false,
       "route_len": [2, 3],
       "biomass": [600, 1200],
-      "host_biomes": ["temperate_forest", "mixed_woodland", "savanna_grassland"]
+      "host_biomes": ["temperate_forest", "mixed_woodland", "savanna_grassland"],
+      "dwell_turns": 1
     },
     "boar": {
       "display_name": "Wild Boar",
@@ -38,7 +48,8 @@
       "migratory": false,
       "route_len": [2, 3],
       "biomass": [500, 1000],
-      "host_biomes": ["temperate_forest", "mixed_woodland", "wetland_swamp"]
+      "host_biomes": ["temperate_forest", "mixed_woodland", "wetland_swamp"],
+      "dwell_turns": 1
     },
     "rabbit": {
       "display_name": "Rabbit Warren",
@@ -46,7 +57,8 @@
       "migratory": false,
       "route_len": [1, 1],
       "biomass": [80, 200],
-      "host_biomes": ["savanna_grassland", "semi_arid_scrub", "temperate_forest"]
+      "host_biomes": ["savanna_grassland", "semi_arid_scrub", "temperate_forest"],
+      "dwell_turns": 1
     },
     "fowl": {
       "display_name": "Wild Fowl",
@@ -54,7 +66,8 @@
       "migratory": false,
       "route_len": [1, 1],
       "biomass": [60, 160],
-      "host_biomes": ["wetland_swamp", "riverine_delta", "coastal_littoral"]
+      "host_biomes": ["wetland_swamp", "riverine_delta", "coastal_littoral"],
+      "dwell_turns": 1
     }
   },
   "abundance": {
