@@ -42,8 +42,9 @@ const TERRAIN_HIGHLIGHT_COLOR := Color(1.0, 0.25, 0.9, 1.0)
 # Hex marker stack UX (see clients/godot_thin_client CLAUDE.md — Map markers).
 # Two marker classes share a hex: PRIMARY (player bands) own the CENTER spotlight
 # as an offset card-stack; SECONDARY (herds / food sites / wondrous sites) ring the
-# hex in FIXED corner slots. `_marker_is_primary` is the single predicate that
-# decides the split — flip a category there to restyle it everywhere.
+# hex in FIXED corner slots. The split is by source array, not a predicate:
+# `_draw_primary_bands` iterates the player-band `units` array, while
+# `_compute_secondary_slots` places herds / food sites / wondrous sites.
 # ---------------------------------------------------------------------------
 # Marker category tags (the classifier key + the value stored per secondary entry).
 const MARKER_CATEGORY_BAND := "band"
@@ -1432,8 +1433,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			_mark_input_handled()
 
 ## PRIMARY marker pass: draw player-band tokens as center card-stacks, one per
-## occupied tile. Co-located bands fan up-right (back cards dimmed); the active band
-## (selected, else first) is the opaque top card with the white selection ring. Beyond
+## occupied tile. Co-located bands fan up-right (back cards darkened/shrunk); the active band
+## (selected, else first) is the opaque, full-brightness top card. There is NO per-token ring —
+## the active band reads by brightness alone; selection is the hex-shape outline. Beyond
 ## BAND_STACK_MAX_CARDS a `×N` count badge notes the hidden bands.
 func _draw_primary_bands(radius: float, origin: Vector2) -> void:
 	# Group units by tile, preserving snapshot order (deterministic stack order).
@@ -1862,8 +1864,9 @@ func _outline_hex(col: int, row: int, radius: float, origin: Vector2, color: Col
 	draw_polyline(outline, color, width, true)
 
 ## White outline on the selected hex + a faint outline on the hovered hex (skipped when
-## hover == selection). Replaces the old brown-circle-as-selection feel; the per-token
-## rings still mark the active band/herd within a hex.
+## hover == selection). Replaces the old brown-circle-as-selection feel; the hex-shape
+## outline is the sole selection cue — there is NO per-token ring, and the active band in a
+## stack reads by full brightness over its darkened/shrunk back cards.
 func _draw_tile_selection_highlight(radius: float, origin: Vector2) -> void:
 	if selected_tile.x >= 0 and selected_tile.y >= 0:
 		_outline_hex(selected_tile.x, selected_tile.y, radius, origin, SELECTED_HEX_OUTLINE_COLOR, SELECTED_HEX_OUTLINE_WIDTH)
@@ -1889,11 +1892,6 @@ func _draw_label(pos: Vector2, text: String, max_width: float, font_size: int, c
 # ---------------------------------------------------------------------------
 # SECONDARY markers (herds / food sites / wondrous sites) — fixed edge-slot icons.
 # ---------------------------------------------------------------------------
-
-## The ONE predicate that splits map markers into PRIMARY (center card-stack) vs
-## SECONDARY (edge-slot). Flip a category here to restyle it everywhere.
-func _marker_is_primary(category: String) -> bool:
-	return category == MARKER_CATEGORY_BAND
 
 ## Assign each SECONDARY marker a fixed edge slot on its hex, once per frame. Priority
 ## order wonder → food → herd, sequential fill, so a tile's icons never jump between
@@ -2289,7 +2287,8 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"morale_climate": float(entry.get("morale_climate", 0.0)),
 			"morale_unrest": float(entry.get("morale_unrest", 0.0)),
 			# Data-driven settlement stage (icon glyph + label). The icon becomes the band's
-			# map token; empty icon → fallback faction disc. Label surfaces in tooltip/roster.
+			# map token; empty icon → neutral non-circular fallback marker (square; ownership is
+			# on the banner, no disc). Label surfaces in tooltip/roster.
 			"settlement_stage_id": String(entry.get("settlement_stage_id", "")),
 			"settlement_stage_label": String(entry.get("settlement_stage_label", "")),
 			"settlement_stage_icon": String(entry.get("settlement_stage_icon", "")),

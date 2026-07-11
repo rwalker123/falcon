@@ -3579,7 +3579,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("days_of_food", cohort.daysOfFood() as f64);
     // Data-driven settlement stage (id/label/icon are opaque pass-through strings resolved
     // by the sim from `settlement_stage_config.json`). Missing/pre-stage snapshots yield
-    // `None` → empty strings, which the client renders as the fallback faction disc.
+    // `None` → empty strings, which the client renders as a neutral non-circular fallback
+    // marker (ownership is on the banner, no disc).
     let settlement_stage = cohort.settlementStage();
     let _ = dict.insert(
         "settlement_stage_id",

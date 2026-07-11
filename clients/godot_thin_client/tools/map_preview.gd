@@ -25,11 +25,11 @@ const STACK_ENTITY_BASE := 9100   # co-located band entities are STACK_ENTITY_BA
 const HERD_ON_TILE_ID := "game_boar_03"   # herd id used by the selected-hex herd fixture
 # Canned settlement-stage tokens (the native bridge doesn't run here, so preview band dicts must
 # carry settlement_stage_* directly). Icons are opaque sim strings — the emoji here just mirror the
-# current config so the map token glyphs render. EMPTY exercises the fallback faction disc.
+# current config so the map token glyphs render. EMPTY exercises the neutral non-circular fallback marker (square).
 const STAGE_NOMADIC := {"id": "nomadic", "label": "Nomadic band", "icon": "⛺"}
 const STAGE_CAMP := {"id": "camp", "label": "Seasonal camp", "icon": "🛖"}
 const STAGE_VILLAGE := {"id": "village", "label": "Settled village", "icon": "🏘️"}
-const STAGE_NONE := {"id": "", "label": "", "icon": ""}   # pre-stage / missing → fallback disc
+const STAGE_NONE := {"id": "", "label": "", "icon": ""}   # pre-stage / missing → neutral non-circular fallback marker
 # Stage cycle used to fan mixed glyphs across a co-located band stack.
 const STACK_STAGE_CYCLE := [STAGE_NOMADIC, STAGE_CAMP, STAGE_VILLAGE, STAGE_NONE]
 # Far-zoom LOD grid: large enough that fitted hexes fall under ICON_MIN_DETAIL_RADIUS.
@@ -112,8 +112,9 @@ func _ready() -> void:
 	await _save("map_expeditions")
 
 	# State G — multi-band card stack (hex-icon-stack UX): 4 player bands on one hex render as an
-	# up-right offset stack (top card + 2 dimmed cards) plus a `×4` count badge, the tile carries the
-	# white selection outline, and the active (selected) band shows the white top-card ring.
+	# up-right offset stack (top card + 2 darkened/shrunk back cards) plus a `×4` count badge, the tile
+	# carries the white selection outline, and the active (selected) band is the full-brightness top
+	# card — no per-token ring.
 	_map.set_fow_enabled(false)
 	_map.display_snapshot(_snapshot_stack(4))
 	_map.selected_tile = Vector2i(BAND_X, BAND_Y)

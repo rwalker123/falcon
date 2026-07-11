@@ -288,9 +288,10 @@ not yet cards). `AutoSizingPanel.gd` remains only for the Inspector.
 ## Map markers (MapView hex-icon stack UX)
 
 Co-located hex markers no longer overlap at the hex center. Markers split into two
-classes via the single predicate `MapView._marker_is_primary(category)` (flip a
-category there to restyle it everywhere; tuning consts are grouped near the top of
-`MapView.gd`, after the FoW/height consts):
+classes by their source array (not a predicate): **PRIMARY** = player bands, drawn by
+`MapView._draw_primary_bands` over the `units`/`populations` array; **SECONDARY** = herds /
+food sites / wondrous sites, placed by `MapView._compute_secondary_slots`. (Tuning consts
+are grouped near the top of `MapView.gd`, after the FoW/height consts.)
 
 - **PRIMARY — player bands** own the **center spotlight** as an offset card-stack
   (`_draw_primary_bands`/`_draw_band_stack`/`_draw_band_token`). Each band's token is its
@@ -332,7 +333,7 @@ category there to restyle it everywhere; tuning consts are grouped near the top 
 
 Verify visual changes via `tools/map_preview.gd` (`godot --path . res://tools/map_preview.tscn`
 → `ui_preview_out/map_band_stack.png` / `map_mixed_hex.png` / `map_far_zoom.png` /
-`map_stage_glyphs.png` (the ⛺→🛖→🏘️ progression + empty-stage fallback disc) + the existing
+`map_stage_glyphs.png` (the ⛺→🛖→🏘️ progression + empty-stage neutral non-circular fallback marker) + the existing
 labor-highlight states).
 
 ## Command Targeting
