@@ -17,6 +17,8 @@ const HUD_SCENE := preload("res://src/ui/HudLayer.tscn")
 # --check-only cannot do).
 const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
 const OUT_DIR := "res://ui_preview_out"
+# Slice 1 reserved-dock probe: left-edge reservation width used to verify the HUD insets.
+const RESERVED_PROBE_WIDTH := 300.0
 
 var _hud: HudLayer
 
@@ -388,6 +390,18 @@ func _ready() -> void:
 	_hud.turn_orb.open_popover()
 	await _settle()
 	await _save("turn_orb_attention")
+
+	# State 8 — reserved-space docking (Slice 1 refactor): a left-edge reservation of
+	# RESERVED_PROBE_WIDTH px insets the whole HUD (LayoutRoot.offset_left), so the top/bottom
+	# bars start that much further right — mirroring how the docked Inspector shrinks the play
+	# space. Save the inset frame, then release it (size 0) and save the restored frame.
+	_hud.clear_selection()
+	_hud.set_reserved_inset(&"inspector", SIDE_LEFT, RESERVED_PROBE_WIDTH)
+	await _settle()
+	await _save("reserved_dock")
+	_hud.set_reserved_inset(&"inspector", SIDE_LEFT, 0.0)
+	await _settle()
+	await _save("reserved_dock_cleared")
 
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.

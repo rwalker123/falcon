@@ -386,8 +386,14 @@ var travel_tiles_per_turn: float = DEFAULT_TRAVEL_SPEED
 var travel_preview_turn_cap: int = DEFAULT_TRAVEL_PREVIEW_LIMIT
 var left_dock: PanelDock
 var right_dock: PanelDock
-# Left-edge space reserved for the docked Inspector; the whole HUD insets by it.
-var _left_inset: float = 0.0
+# Edges reserved by docked panels (Inspector, Band/City panel). Each reserver
+# registers a (edge, size) contribution keyed by a StringName id; the whole HUD
+# insets by the summed per-edge totals.
+var _reservations: Dictionary = {}
+var _inset_left: float = 0.0
+var _inset_right: float = 0.0
+var _inset_top: float = 0.0
+var _inset_bottom: float = 0.0
 
 func _ready() -> void:
     _load_ui_balance_config()
@@ -1803,13 +1809,39 @@ func get_upper_stack_height() -> float:
         max_bottom = 24.0
     return max_bottom + STACK_ADDITIONAL_MARGIN
 
-## Inset the entire HUD from the left edge to reserve room for the docked
-## Inspector. The panels keep their natural docks; the whole layout just lives in
-## the narrower rectangle, matching the shrunk map area.
-func set_left_inset(px: float) -> void:
-    _left_inset = max(px, 0.0)
+## Reserve a strip of one edge for a docked panel (keyed by reserver id). The
+## panels keep their natural docks; the whole layout just lives in the smaller
+## rectangle, matching the shrunk map area. `edge` is a Godot Side const
+## (SIDE_LEFT/SIDE_TOP/SIDE_RIGHT/SIDE_BOTTOM); `size <= 0` releases the reserver.
+func set_reserved_inset(id: StringName, edge: int, size: float) -> void:
+    if size <= 0.0:
+        _reservations.erase(id)
+    else:
+        _reservations[id] = {"edge": edge, "size": size}
+    _recompute_insets()
     if layout_root != null:
-        layout_root.offset_left = _left_inset
+        layout_root.offset_left = _inset_left
+        layout_root.offset_top = _inset_top
+        layout_root.offset_right = -_inset_right
+        layout_root.offset_bottom = -_inset_bottom
+
+## Sum the registered reservations into the four per-edge totals.
+func _recompute_insets() -> void:
+    _inset_left = 0.0
+    _inset_right = 0.0
+    _inset_top = 0.0
+    _inset_bottom = 0.0
+    for reservation in _reservations.values():
+        var size: float = float(reservation["size"])
+        match int(reservation["edge"]):
+            SIDE_LEFT:
+                _inset_left += size
+            SIDE_TOP:
+                _inset_top += size
+            SIDE_RIGHT:
+                _inset_right += size
+            SIDE_BOTTOM:
+                _inset_bottom += size
 
 func _legend_row_height() -> float:
     return LEGEND_MIN_ROW_HEIGHT + LEGEND_ROW_PADDING
