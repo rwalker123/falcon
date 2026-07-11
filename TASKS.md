@@ -309,7 +309,7 @@ equipment is consumable inventory; you allocate working-age labor across roles.
   `start_profiles.json` (default const `DEFAULT_STARTING_BAND_SIZE = 30` in `start_profile.rs`).
   Bracket split (initial_distribution) + `food_reserve_days` seeding flow through unchanged.
   _Carry-capacity headroom and starter TOEs land with their own slices below, not here._
-- [ ] **Labor allocation — sim (slice 3a).** Source-centric model: per-band assignment set
+- [x] **Labor allocation — sim (slice 3a).** Source-centric model: per-band assignment set
   (`{in-range source or band-role → workers}`, Σ ≤ working-age); **band work range `R`** (config,
   default 2) + a **move-band** command; **Forage** (in-range food-module tiles) + **Hunt** (in-range
   herds, with a **leashed follow** — bounded reuse of `FaunaPursuit` past `R`, lapses beyond the
@@ -318,7 +318,7 @@ equipment is consumable inventory; you allocate working-age labor across roles.
   predator slice) as band-wide roles. Retires `reassign_band`'s one-task model + target-tile Harvest
   / whole-band Follow chase. Snapshot widened from the single `activity` string to a structured
   assignment set (schema + snapshot). Flat per-worker tier only (TOE multipliers = the TOE slice).
-- [ ] **Labor allocation — client (slice 3b).** Allocation panel: assign/unassign workers per
+- [x] **Labor allocation — client (slice 3b).** Allocation panel: assign/unassign workers per
   in-range source (**per-source unassign is the new "cancel"** — supersedes the Issue-1 single-Cancel
   UI; command plumbing/optimistic-feedback pattern carries over); move-band command; role/worker
   readout. Consumes the widened snapshot assignment set.
@@ -420,7 +420,7 @@ role). Sequenced: local scout (small fix) → sites subsystem (foundation) → e
   delivered**, party self-feeds. (4) Client: `expeditionCarryCap` field (done) → **"carried / cap" +
   FULL** readout, a marker gather/haul indicator, the **Recall→"Returning"** hunt-panel fix, and a
   **policy picker** on the hunt launch.
-- [ ] **Fauna movement redesign — graze-wander + loiter-then-migrate (IN PROGRESS; own PR; fauna-layer).**
+- [x] **Fauna movement redesign — graze-wander + loiter-then-migrate (shipped; PR #100; fauna-layer).**
   Design: `docs/plan_wildlife_hunting_overlay.md` "Herd Movement". Fixes a latent bug: `advance_herds`
   calls `Herd::advance()` **every turn unconditionally**, but migratory `route`s are a sparse spiral of
   waypoints 4–12 tiles apart → a migratory herd **teleports 4–12 tiles/turn** (why an equal-speed party
