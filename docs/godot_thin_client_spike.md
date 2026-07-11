@@ -12,7 +12,7 @@ simulation snapshots. Focus on map overlays, unit visualisation, and rapid desig
 
 ## Usage
 
-1. Install Godot 4.2+
+1. Install Godot 4.7+
 2. Build the native extension via `cargo xtask godot-build`; the helper copies the library into
    `res://native/bin/<platform>/` as referenced by `native/shadow_scale_godot.gdextension`.
 3. (Optional) Run the headless sim so the client can attach to the FlatBuffers stream on

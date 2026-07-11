@@ -22,7 +22,7 @@ Start the headless simulation server (provides snapshot + command sockets):
 cargo run -p core_sim --bin server
 ```
 
-Launch the Godot thin client inspector (requires Godot 4.2 or newer) to view live telemetry and issue commands:
+Launch the Godot thin client inspector (requires Godot 4.7 or newer) to view live telemetry and issue commands:
 
 ```bash
 godot4 --path clients/godot_thin_client src/Main.tscn
