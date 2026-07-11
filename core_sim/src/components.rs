@@ -410,12 +410,21 @@ impl StartingUnit {
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct ResidentBand;
 
-/// What an expedition was sent to do. v1 has only `Scout`; the hunting expedition (PR 2) adds a
-/// `Hunt { fauna_id }` variant on the same traveling-party system.
+/// What an expedition was sent to do: `Scout` (explore + report the map, PR 1) or `Hunt` (follow a
+/// migratory herd, harvest food, deliver it, PR 2) — two verbs on one traveling-party system.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExpeditionMission {
     /// Explore toward a target and report the map + any Wondrous Sites it uncovers.
     Scout,
+    /// Follow the herd `fauna_id`, harvest a **productive** hunt's worth of food each turn into the
+    /// party's larder, and deliver it back to the band. `fauna_id` keys `HerdRegistry::find`. The
+    /// `policy` ([`FollowPolicy`], chosen at launch) governs the take floor + trip behaviour: Sustain
+    /// = one conservative harvest to the sustain floor + done; Surplus = one full-cap haul + done;
+    /// Market = repeated full-cap trips (grind down); Eradicate = hunt to extinction, delivers no food.
+    Hunt {
+        fauna_id: String,
+        policy: FollowPolicy,
+    },
 }
 
 impl ExpeditionMission {
@@ -423,24 +432,52 @@ impl ExpeditionMission {
     pub fn as_str(&self) -> &'static str {
         match self {
             ExpeditionMission::Scout => "scout",
+            ExpeditionMission::Hunt { .. } => "hunt",
         }
     }
 
-    /// Parse a mission from its wire key (snapshot restore). Only `Scout` exists in v1; unknown keys
-    /// (a future `Hunt`) default to `Scout` until PR 2 adds the variant.
-    pub fn from_wire(_s: &str) -> Self {
-        ExpeditionMission::Scout
+    /// Parse a mission from its wire keys (snapshot restore). `"hunt"` reconstructs `Hunt { fauna_id,
+    /// policy }` from `target_herd` + `policy` (via `FollowPolicy::from_str`, default Sustain);
+    /// anything else is `Scout`.
+    pub fn from_wire(kind: &str, target_herd: &str, policy: &str) -> Self {
+        match kind {
+            "hunt" => ExpeditionMission::Hunt {
+                fauna_id: target_herd.to_string(),
+                policy: policy.parse().unwrap_or(FollowPolicy::Sustain),
+            },
+            _ => ExpeditionMission::Scout,
+        }
+    }
+
+    /// The target herd id for a `Hunt` mission (empty for `Scout`) — the snapshot `expeditionTargetHerd`.
+    pub fn target_herd(&self) -> &str {
+        match self {
+            ExpeditionMission::Hunt { fauna_id, .. } => fauna_id,
+            ExpeditionMission::Scout => "",
+        }
+    }
+
+    /// The take policy string for a `Hunt` mission (empty for `Scout`) — the snapshot
+    /// `expeditionHuntPolicy`.
+    pub fn hunt_policy_str(&self) -> &'static str {
+        match self {
+            ExpeditionMission::Hunt { policy, .. } => policy.as_str(),
+            ExpeditionMission::Scout => "",
+        }
     }
 }
 
-/// The expedition's lifecycle phase. `Outbound` toward a target; `AwaitingOrders` parked at the
-/// target (the decision point — chain a `move_band` waypoint or `recall_expedition`); `Returning`
-/// chasing the home band's live tile to fold back.
+/// The expedition's lifecycle phase. Scout: `Outbound` toward a target; `AwaitingOrders` parked at
+/// the target (the decision point — chain a `move_band` waypoint or `recall_expedition`). Hunt:
+/// `Hunting` (chase the herd + harvest) and `Delivering` (run carried food to the band, then
+/// auto-relaunch). Shared: `Returning` chasing the home band's live tile to fold back on recall.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpeditionPhase {
     Outbound,
     AwaitingOrders,
     Returning,
+    Hunting,
+    Delivering,
 }
 
 impl ExpeditionPhase {
@@ -450,6 +487,8 @@ impl ExpeditionPhase {
             ExpeditionPhase::Outbound => "outbound",
             ExpeditionPhase::AwaitingOrders => "awaiting",
             ExpeditionPhase::Returning => "returning",
+            ExpeditionPhase::Hunting => "hunting",
+            ExpeditionPhase::Delivering => "delivering",
         }
     }
 
@@ -458,6 +497,8 @@ impl ExpeditionPhase {
         match s {
             "awaiting" => ExpeditionPhase::AwaitingOrders,
             "returning" => ExpeditionPhase::Returning,
+            "hunting" => ExpeditionPhase::Hunting,
+            "delivering" => ExpeditionPhase::Delivering,
             _ => ExpeditionPhase::Outbound,
         }
     }

@@ -506,8 +506,8 @@ table PopulationCohortState {
   // a PopulationCohort tagged `Expedition`; these fields are false/""/empty for a normal band.
   // Client-facing: distinct marker glyph/label + awaiting-orders marker state + a Recall affordance.
   isExpedition:bool = false;
-  expeditionMission:string;   // "scout" (PR 2 adds "hunt"); empty for normal bands.
-  expeditionPhase:string;     // "outbound" | "awaiting" | "returning"; empty for normal bands.
+  expeditionMission:string;   // "scout" | "hunt"; empty for normal bands.
+  expeditionPhase:string;     // "outbound"|"awaiting"|"returning"|"hunting"|"delivering"; empty for normal bands.
   // Persistence-only (rollback restores an in-flight expedition + its unreported findings):
   homeBandEntity:ulong = 0;   // the real band that outfitted this party (entity bits).
   expeditionAnnounced:bool = false; // whether the arrival feed line has fired for this AwaitingOrders latch.
@@ -523,6 +523,19 @@ table PopulationCohortState {
   // field or the client). Client draws `icon` directly and shows `label` in the tooltip. Appended
   // last (append-only schema discipline).
   settlementStage:SettlementStageView;
+  // Hunt expedition only: carry cap = party_workers × expedition_config.hunt.per_worker_carry (the
+  // provisions ceiling the party fills to before auto-Delivering). Capture-only, `0` for scouts +
+  // normal bands. The client shows carried/cap (carried = stores/daysOfFood) + a FULL state.
+  expeditionCarryCap:float = 0;
+  // Hunt mission only: the target herd id (`HerdRegistry` fauna_id). Empty for scout/normal bands.
+  // A string (not uint) because herd ids are non-numeric (e.g. "herd_3_00") — matches
+  // LaborAssignment.faunaId. Persisted so a rollback reconstructs `Hunt { fauna_id }`. Appended last
+  // (append-only schema discipline — must follow every field shipped in earlier PRs).
+  expeditionTargetHerd:string;
+  // Hunt mission only: the take policy (sustain|surplus|market|eradicate; mirrors huntMode). Empty
+  // for scout/normal bands. Persisted so a rollback reconstructs `Hunt { fauna_id, policy }`; drives
+  // the client's per-policy behaviour label + policy picker default. Appended last.
+  expeditionHuntPolicy:string;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -920,7 +933,6 @@ table WorldSnapshot {
   moistureRaster:FloatRaster;
   hydrologyOverlay:HydrologyOverlay; // rivers/streams polylines
   elevationOverlay:ElevationOverlay;
-  startMarker:StartMarker;
   terrainOverlay:TerrainOverlay;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
@@ -982,7 +994,6 @@ table WorldDelta {
   terrainOverlay:TerrainOverlay;
   hydrologyOverlay:HydrologyOverlay;
   elevationOverlay:ElevationOverlay;
-  startMarker:StartMarker;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
   corruptionRaster:ScalarRaster;
@@ -1008,11 +1019,6 @@ table RiverSegment {
 
 table HydrologyOverlay {
   rivers:[RiverSegment];
-}
-
-table StartMarker {
-  x:uint;
-  y:uint;
 }
 
 union SnapshotPayload {

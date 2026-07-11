@@ -391,6 +391,35 @@ role). Sequenced: local scout (small fix) → sites subsystem (foundation) → e
   (own lever — the band carry-cap slice is unbuilt); **auto-relaunch** on drop-off (loops the herd's
   circuit until recalled or herd extinct) + a recall/disband command; **risk/failure deferred** like
   the scout expedition. Client carried-food readout on the marker/panel.
+- [x] **Expedition broadcast fix** (landed in the expedition work). World-mutating non-`Turn` commands
+  (`send_expedition`/`send_hunt_expedition`/`recall_expedition`/`move_band`/`assign_labor`/…) mutate
+  `app.world` immediately, but the post-command broadcast reused *last turn's* captured snapshot and
+  only swapped the feed — so effects (worker draw, spawned expeditions, phase changes) were invisible
+  until the next `run_turn`. Fixed: `recapture_snapshot_in_place` re-captures + rebroadcasts the fresh
+  world after every command (ring-buffer-safe, no turn advance). Misleading `status=queued` → `applied`
+  on expedition commands (`move_band` still says `queued` — cosmetic one-liner follow-up).
+- [ ] **Hunting-expedition playtest fixes (finish the playable hunt — in progress).** From live
+  playtest of PR 2: (1) **deliver flip-flop bug** — the party flipped to `Delivering` every turn when
+  the herd sat within `drop_off_within_tiles` of the band regardless of carried amount, so it
+  oscillated and never gathered; gate delivery on a worthwhile load (policy completion **or**
+  `herd_near_band && carried ≥ hunt.min_deliver_fraction × cap`). (2) **productive take** — replace the
+  near-zero surplus-skim with `workers × per_worker_biomass_capacity`/turn drawn from biomass. (3)
+  **four-policy behaviours** (reuse `FollowPolicy`, chosen at launch — §2b): **Sustain** = harvest to
+  the sustainable floor then one trip + done; **Surplus** = one full-cap haul + done; **Market** =
+  repeated full-cap trips (grind down); **Eradicate** = hunt to extinction as *denial*, **no food
+  delivered**, party self-feeds. (4) Client: `expeditionCarryCap` field (done) → **"carried / cap" +
+  FULL** readout, a marker gather/haul indicator, the **Recall→"Returning"** hunt-panel fix, and a
+  **policy picker** on the hunt launch.
+- [ ] **Fauna movement redesign — graze/loiter-then-migrate (next slice; own PR; fauna-layer).**
+  Herds today step 1 tile **every** turn (`advance_herds`), which (a) is unrealistic and (b) makes an
+  equal-speed hunt expedition unable to catch a long one-directional migratory route. New model:
+  **wild game** (deer/boar/small game) grazes a tile ~1 turn (dwell) before stepping 1 tile (≈ half
+  speed → catchable); **migratory herds** loiter in a 1–2 tile area for *many* turns, then commit to a
+  directed migration at 1 hex/turn until they reach the next area, then loiter again. Per-herd
+  dwell/migration state on `Herd`; config dwell/loiter lengths in `fauna_config.json`. Fixes migratory
+  catch for the hunt expedition **naturally** (party closes during dwell/loiter) and improves fauna
+  feel game-wide (affects band Hunt/Follow too). Document in `docs/plan_wildlife_hunting_overlay.md` +
+  `core_sim/CLAUDE.md` Fauna section. Cross-ref: expedition hunt (§2b) depends on this for migratory herds.
 - [ ] Deferred / documented: expedition **risk/failure** (peril, non-return); **scouting-TOE**
   gating (with the TOE slice); **regional (multi-tile) sites**; richer per-category rewards;
   **tribes as real civilizations**.

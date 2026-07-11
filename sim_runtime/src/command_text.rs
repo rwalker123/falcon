@@ -188,6 +188,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "recall_expedition <faction_id> <expedition_entity_bits>",
     },
     CommandVerbHelp {
+        verb: "send_hunt_expedition",
+        aliases: &[],
+        summary: "Outfit a detached hunting party that follows a herd, harvests food, and delivers it.",
+        usage: "send_hunt_expedition <faction_id> <band> <party_workers> <fauna_id> [sustain|surplus|market|eradicate]",
+    },
+    CommandVerbHelp {
         verb: "export_map",
         aliases: &["export"],
         summary: "Write the current world map (terrain + seed) to a JSON file for inspection and tests.",
@@ -870,6 +876,32 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                     expedition_str,
                     "recall_expedition expedition_entity_bits",
                 )?,
+            })
+        }
+        "send_hunt_expedition" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_entity_bits"))?;
+            let workers_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("party_workers"))?;
+            let fauna_id = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("fauna_id"))?;
+            // Optional trailing take policy (sustain|surplus|market|eradicate); default sustain.
+            let policy = parts.next().map(|s| s.to_string());
+            Ok(CommandPayload::SendHuntExpedition {
+                faction_id: parse_u32(faction_str, "send_hunt_expedition faction")?,
+                band_entity_bits: Some(parse_u64(
+                    band_str,
+                    "send_hunt_expedition band_entity_bits",
+                )?),
+                party_workers: parse_u32(workers_str, "send_hunt_expedition party_workers")?,
+                fauna_id: fauna_id.to_string(),
+                policy,
             })
         }
         "export" | "export_map" => {

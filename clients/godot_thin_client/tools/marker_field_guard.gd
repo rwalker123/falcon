@@ -55,7 +55,10 @@ const PANEL_CONSUMED_KEYS := [
 	"is_expedition",       # expedition panel gating + distinct marker
 	"expedition_mission",  # expedition panel mission line
 	"expedition_phase",    # expedition marker awaiting state + panel phase line
-	"max_expedition_party_size" # outfit stepper max clamp
+	"max_expedition_party_size", # outfit stepper max clamp
+	"expedition_target_herd", # hunt expedition target herd (panel + marker)
+	"expedition_hunt_policy", # hunt expedition policy (panel readout)
+	"expedition_carry_cap"    # hunt expedition carry ceiling (panel Carried X / cap)
 ]
 
 # A full, realistic population entry — the shape the native decoder (`population_to_dict`)
@@ -96,6 +99,9 @@ const FIXTURE_ENTRY := {
 	"expedition_mission": "scout",
 	"expedition_phase": "awaiting",
 	"max_expedition_party_size": 8,
+	"expedition_target_herd": "game_deer_07",
+	"expedition_hunt_policy": "surplus",
+	"expedition_carry_cap": 16.0,
 }
 
 var _failures: Array[String] = []
@@ -133,6 +139,9 @@ func _ready() -> void:
 	_expect_str(marker, "expedition_mission", "scout")
 	_expect_str(marker, "expedition_phase", "awaiting")
 	_expect_int(marker, "max_expedition_party_size", 8)
+	_expect_str(marker, "expedition_target_herd", "game_deer_07")
+	_expect_str(marker, "expedition_hunt_policy", "surplus")
+	_expect_float(marker, "expedition_carry_cap", 16.0)
 	if not bool(marker.get("is_expedition", false)):
 		_fail("is_expedition did not round-trip to true (defaulted?)")
 	_expect_float(marker, "morale", 0.41)

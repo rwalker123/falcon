@@ -608,7 +608,6 @@ fn snapshot_dict(
     terrain: TerrainSlices<'_>,
     crisis_annotations: &[CrisisAnnotationRecord],
     hydrology_rivers: Option<&VarArray>,
-    start_marker: Option<(u32, u32)>,
     campaign_label: Option<VarDictionary>,
     campaign_profiles: Option<VarArray>,
     victory_state: Option<VarDictionary>,
@@ -1010,12 +1009,6 @@ fn snapshot_dict(
     if let Some(rivers) = hydrology_rivers {
         let _ = overlays.insert("hydrology_rivers", &rivers.clone());
     }
-    if let Some((sx, sy)) = start_marker {
-        let mut marker = VarDictionary::new();
-        let _ = marker.insert("x", sx as i64);
-        let _ = marker.insert("y", sy as i64);
-        let _ = overlays.insert("start_marker", &marker);
-    }
 
     let _ = dict.insert("overlays", &overlays);
 
@@ -1142,9 +1135,6 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
     }
     if let Some(raster) = delta.moistureRaster() {
         agg.apply_moisture_raster(raster);
-    }
-    if let Some(marker) = delta.startMarker() {
-        agg.start_marker = Some((marker.x(), marker.y()));
     }
     let mut dict = agg.into_dictionary();
 
@@ -1353,7 +1343,6 @@ struct DeltaAggregator {
     moisture_height: u32,
     moisture_samples: Vec<f32>,
     crisis_annotations: Vec<CrisisAnnotationRecord>,
-    start_marker: Option<(u32, u32)>,
 }
 
 impl DeltaAggregator {
@@ -1620,7 +1609,6 @@ impl DeltaAggregator {
             moisture_height,
             moisture_samples,
             crisis_annotations,
-            start_marker,
         } = self;
 
         let mut final_width = terrain_width
@@ -1870,7 +1858,6 @@ impl DeltaAggregator {
             },
             &crisis_annotations,
             None,
-            start_marker,
             None,
             None,
             None,
@@ -2605,10 +2592,6 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         }
     }
 
-    let start_marker_tuple = snapshot
-        .startMarker()
-        .map(|marker| (marker.x(), marker.y()));
-
     let campaign_label_dict = header.campaignLabel().map(campaign_label_to_dict);
     let mut campaign_profiles_array: Option<VarArray> = None;
     if let Some(profiles) = snapshot.campaignProfiles() {
@@ -2655,7 +2638,6 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         } else {
             Some(&hydrology_rivers)
         },
-        start_marker_tuple,
         campaign_label_dict,
         campaign_profiles_array,
         victory_dict,
@@ -3683,6 +3665,25 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         cohort.expeditionMission().unwrap_or(""),
     );
     let _ = dict.insert("expedition_phase", cohort.expeditionPhase().unwrap_or(""));
+    // Hunt expedition (PR 2, docs/plan_exploration_and_sites.md §2b): the herd a hunt party
+    // follows (fauna_id string like "game_deer_57", mirrors LaborAssignment.faunaId); "" for a
+    // scout expedition / normal band. `expedition_mission` also takes "hunt", `expedition_phase`
+    // also takes "hunting"/"delivering" — same string fields already decoded above, new values.
+    let _ = dict.insert(
+        "expedition_target_herd",
+        cohort.expeditionTargetHerd().unwrap_or(""),
+    );
+    // Hunt-party take policy (sustain|surplus|market|eradicate; "" for scouts/bands) + the carry
+    // ceiling (party × per_worker_carry; 0 for scouts/bands). The hunt panel shows "Carried X / cap"
+    // + a FULL state, and the launched party's policy.
+    let _ = dict.insert(
+        "expedition_hunt_policy",
+        cohort.expeditionHuntPolicy().unwrap_or(""),
+    );
+    let _ = dict.insert(
+        "expedition_carry_cap",
+        f64::from(cohort.expeditionCarryCap()),
+    );
     // Hard cap on party size the server enforces (from the expedition config, default 8). The
     // outfit stepper clamps its max to min(idle_workers, this) so the player can't dial an
     // over-cap party.

@@ -1025,9 +1025,20 @@ pub struct PopulationCohortState {
     /// `"scout"` (PR 2 adds `"hunt"`); empty for normal bands.
     #[serde(default)]
     pub expedition_mission: String,
-    /// `"outbound"` | `"awaiting"` | `"returning"`; empty for normal bands.
+    /// `"outbound"` | `"awaiting"` | `"returning"` | `"hunting"` | `"delivering"`; empty for normal
+    /// bands.
     #[serde(default)]
     pub expedition_phase: String,
+    /// Hunt mission only: target herd id (`HerdRegistry` fauna_id; a non-numeric string, so a
+    /// string not a uint). Empty for scout/normal bands. Persisted so a rollback reconstructs
+    /// `Hunt { fauna_id }`; also shown in the client hunt panel.
+    #[serde(default)]
+    pub expedition_target_herd: String,
+    /// Hunt mission only: take policy string (`sustain|surplus|market|eradicate`; mirrors
+    /// `hunt_mode`). Empty for scout/normal bands. Persisted so a rollback reconstructs
+    /// `Hunt { fauna_id, policy }`; drives the client's per-policy label + policy-picker default.
+    #[serde(default)]
+    pub expedition_hunt_policy: String,
     /// Persistence-only: the real band (entity bits) that outfitted this party — a rollback
     /// re-attaches the expedition and resolves its home band from this.
     #[serde(default)]
@@ -1047,6 +1058,11 @@ pub struct PopulationCohortState {
     /// stepper pre-clamps to `min(idle_workers, this)`. Populated for every cohort.
     #[serde(default)]
     pub max_expedition_party_size: u32,
+    /// Hunt expedition only: the carry cap = `party_workers × expedition_config.hunt.per_worker_carry`
+    /// (the provisions ceiling the party fills to before auto-Delivering). Capture-only, `0` for
+    /// scouts + normal bands. Lets the client render carried/cap + a FULL state.
+    #[serde(default)]
+    pub expedition_carry_cap: f32,
     /// Which supply network this band belongs to this turn: `0` = not in a multi-band network,
     /// `>= 1` = a per-snapshot id shared by all bands in the same connected component. Derived and
     /// recomputed every turn (not persisted for rollback).
@@ -1854,10 +1870,6 @@ fn build_snapshot_flatbuffer<'a>(
     let hydrology_overlay = create_hydrology_overlay(builder, &snapshot.hydrology_overlay);
     let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
     let elevation_overlay = create_elevation_overlay(builder, &snapshot.elevation_overlay);
-    let start_marker = snapshot
-        .start_marker
-        .as_ref()
-        .map(|marker| create_start_marker(builder, marker));
     let terrain_overlay = create_terrain_overlay(builder, &snapshot.terrain);
     let logistics_raster = create_scalar_raster(builder, &snapshot.logistics_raster);
     let sentiment_raster = create_scalar_raster(builder, &snapshot.sentiment_raster);
@@ -1915,7 +1927,6 @@ fn build_snapshot_flatbuffer<'a>(
             moistureRaster: Some(moisture_raster),
             hydrologyOverlay: Some(hydrology_overlay),
             elevationOverlay: Some(elevation_overlay),
-            startMarker: start_marker,
             terrainOverlay: Some(terrain_overlay),
             logisticsRaster: Some(logistics_raster),
             sentimentRaster: Some(sentiment_raster),
@@ -2060,10 +2071,6 @@ fn build_delta_flatbuffer<'a>(
         .elevation_overlay
         .as_ref()
         .map(|overlay| create_elevation_overlay(builder, overlay));
-    let start_marker = delta
-        .start_marker
-        .as_ref()
-        .map(|marker| create_start_marker(builder, marker));
     let terrain_overlay = delta
         .terrain
         .as_ref()
@@ -2169,7 +2176,6 @@ fn build_delta_flatbuffer<'a>(
             removedInfluencers: Some(removed_influencers_vec),
             terrainOverlay: terrain_overlay,
             hydrologyOverlay: hydrology_overlay,
-            startMarker: start_marker,
             logisticsRaster: logistics_raster,
             sentimentRaster: sentiment_raster,
             corruptionRaster: corruption_raster,
@@ -2243,19 +2249,6 @@ fn create_elevation_overlay<'a>(
             maxValue: overlay.max_value,
             samples: Some(samples_vec),
             seaLevel: overlay.sea_level,
-        },
-    )
-}
-
-fn create_start_marker<'a>(
-    builder: &mut FbBuilder<'a>,
-    marker: &StartMarkerState,
-) -> WIPOffset<fb::StartMarker<'a>> {
-    fb::StartMarker::create(
-        builder,
-        &fb::StartMarkerArgs {
-            x: marker.x,
-            y: marker.y,
         },
     )
 }
@@ -2899,6 +2892,16 @@ fn create_populations<'a>(
             } else {
                 Some(builder.create_string(&cohort.expedition_phase))
             };
+            let expedition_target_herd = if cohort.expedition_target_herd.is_empty() {
+                None
+            } else {
+                Some(builder.create_string(&cohort.expedition_target_herd))
+            };
+            let expedition_hunt_policy = if cohort.expedition_hunt_policy.is_empty() {
+                None
+            } else {
+                Some(builder.create_string(&cohort.expedition_hunt_policy))
+            };
             let pending_reveal_x = if cohort.pending_reveal_x.is_empty() {
                 None
             } else {
@@ -2964,6 +2967,10 @@ fn create_populations<'a>(
                     pendingRevealX: pending_reveal_x,
                     pendingRevealY: pending_reveal_y,
                     maxExpeditionPartySize: cohort.max_expedition_party_size,
+                    expeditionCarryCap: cohort.expedition_carry_cap,
+                    // Appended after every earlier-shipped field (append-only wire discipline).
+                    expeditionTargetHerd: expedition_target_herd,
+                    expeditionHuntPolicy: expedition_hunt_policy,
                     supplyNetworkId: cohort.supply_network_id,
                     moraleDelta: cohort.morale_delta,
                     moraleCause: cohort.morale_cause,

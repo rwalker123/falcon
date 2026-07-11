@@ -258,6 +258,50 @@ depletion) lives in a new `advance_expeditions` system in the Population stage, 
 `advance_band_movement`. The `Expedition` component (incl. its pending-reveal buffer) is
 **snapshot-persisted** so a rollback preserves an in-flight expedition and its unreported findings.
 
+**Hunt verb — implementation model (PR 2).** The second verb rides the same detached-party machinery.
+- **Mission + command.** `ExpeditionMission::Hunt { fauna_id }` (alongside `Scout`); a new
+  `send_hunt_expedition <faction> <band> <party_workers> <fauna_id>` command (targets a *herd*, not a
+  tile). `fauna_id` is persisted via a new snapshot field `expeditionTargetHerd` (also shown in the
+  client panel).
+- **Phases.** Two hunt-specific `ExpeditionPhase` variants: **`Hunting`** — `advance_expeditions`
+  retargets `BandTravel` to `herd.position()` (from `HerdRegistry`) each turn and, when within
+  `hunt.reach_tiles`, takes a **productive hunt's worth** of food (see take model) into the party's
+  `LocalStore` up to **`party_workers × hunt.per_worker_carry`**; and **`Delivering`** — heads for the
+  band's live tile and deposits once within communication range of home (`near_home`, the shared
+  comm-range proximity), not necessarily on the exact live tile. A lost/extinct herd (`HerdRegistry::find` → none) flips the party to
+  `Returning` (fold back). Recall → the shared `Returning` phase.
+- **Take model — productive hunt, not a sustainable skim.** Per turn in reach the party takes ~a real
+  hunt's worth (`workers × per_worker_biomass_capacity`, the same worker productivity as a band Hunt),
+  drawn from herd biomass and converted to provisions — **not** the near-zero net-regrowth skim (a herd
+  at carrying capacity has ~0 surplus, which made the party economically inert). The **policy** (the
+  band's existing `FollowPolicy`, chosen at launch) governs the floor + trip behaviour:
+  - **Sustain** — take down only to the herd's **sustainable floor**, then return with the load and
+    **done** (leaves the herd to recover). Load may be < a full cap for a small herd. Delivers food.
+  - **Surplus** — fill the **full carry cap** (drawing past the sustain floor but stopping above the
+    extinction floor), return once, **done**. Delivers food.
+  - **Market** — full-cap loads, **repeated trips** (auto-relaunch), grinding the herd down until it
+    collapses or you recall. Delivers food, ongoing.
+  - **Eradicate** — hunt to **extinction as denial**: **no food delivered** (the point is eliminating
+    the herd, historically the bison-slaughter pattern); the party only self-feeds en route, ends when
+    the herd is gone. Meaningful once there are rival peoples; scorched-earth option today.
+- **Deliver trigger (fixes the empty flip-flop bug).** Flip to `Delivering` only with a worthwhile
+  load: on the policy's completion condition (Sustain: herd hit its floor; Surplus/Market: cap reached)
+  **or** `herd_near_band && carried ≥ hunt.min_deliver_fraction × cap`. The prior bug flipped to
+  `Delivering` every turn whenever the herd sat within `drop_off_within_tiles` of the band regardless of
+  carried amount, so the party oscillated in place and never gathered.
+- **The shared `hunt_take` primitive.** The band's per-turn Hunt take math (extracted from
+  `advance_labor_allocation`) is called from **both** the band Hunt path (behaviour unchanged) and
+  `advance_expeditions`. The **scout's opportunistic replenish** uses it too: when a scout party's
+  provisions fall below `party_workers × provision_upkeep_per_worker × replenish.low_turns` **and** a
+  huntable herd is within `replenish.reach_tiles`, it tops up. One code path — one system, two verbs.
+- **Lives off its own kills** (no separate provisions); v1 stays deterministic (no starvation/risk).
+- **Catching migratory herds depends on the fauna-movement redesign** (next slice — see TASKS.md):
+  herds today step 1 tile every turn, so an equal-speed party can't close on a long one-directional
+  route. Once wild game grazes a tile (~1 turn dwell) before stepping and migratory herds loiter for
+  many turns before a directed migration, the party catches them naturally during the dwell/loiter.
+  Domestication accrual (a band-Hunt/husbandry interaction) is *not* wired to the expedition take in v1 —
+  a documented later interaction. New tunables live in `hunt`/`replenish` blocks of `expedition_config.json`.
+
 ## Cross-cutting touchpoints
 
 - **Visibility** (`visibility_systems.rs`): local scout posts forward-observer vantages (LOS from each); expeditions

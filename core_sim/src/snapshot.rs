@@ -3,7 +3,10 @@ use std::hash::Hash;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use bevy::{ecs::system::SystemParam, prelude::*};
+use bevy::{
+    ecs::system::{RunSystemOnce, SystemParam},
+    prelude::*,
+};
 use log::warn;
 use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
@@ -140,6 +143,10 @@ pub struct SnapshotContext<'w> {
     pub settlement_stage: Res<'w, crate::settlement_stage_config::SettlementStageConfigHandle>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
+    /// How to write the capture result: record a new ring entry (turn path) or refresh the latest
+    /// broadcast in place (post-command re-capture). Bundled here to keep `capture_snapshot` within
+    /// Bevy's 16-arg system limit.
+    pub capture_mode: Res<'w, SnapshotCaptureMode>,
 }
 
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
@@ -984,6 +991,37 @@ impl SnapshotHistory {
 
         Some((encoded_snapshot, encoded_snapshot_flat))
     }
+
+    /// Refresh the latest broadcast snapshot from a **freshly-captured** `WorldSnapshot` of the
+    /// current world, **in place** — mirroring [`Self::update_command_events`] but replacing the
+    /// whole world state, not just the feed. Used by the post-command re-capture path so a
+    /// world-mutating command (expedition launch, `move_band`, `assign_labor`, …) is reflected in
+    /// the client's snapshot immediately, without waiting for the next turn.
+    ///
+    /// Like `update_command_events` this updates `last_snapshot` + the current back ring entry (so a
+    /// rollback to this tick restores the post-command world) and re-encodes for broadcast, but it
+    /// **does not** push a new ring entry or touch the delta baselines (`self.tiles`/`populations`/…)
+    /// — so the rollback ring stays one-entry-per-tick and the next turn's delta still carries these
+    /// structural changes (a redundant but idempotent re-send on top of this full snapshot). Never
+    /// advances the turn or the `TurnQueue`.
+    pub fn refresh_latest(&mut self, snapshot: WorldSnapshot) -> Option<EncodedBuffers> {
+        let snapshot_arc = Arc::new(snapshot);
+        let encoded_snapshot = Arc::new(
+            encode_snapshot(snapshot_arc.as_ref()).expect("recapture snapshot encoding failed"),
+        );
+        let encoded_snapshot_flat = Arc::new(encode_snapshot_flatbuffer(snapshot_arc.as_ref()));
+
+        self.last_snapshot = Some(snapshot_arc.clone());
+        self.encoded_snapshot = Some(encoded_snapshot.clone());
+        self.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
+        if let Some(back) = self.history.back_mut() {
+            back.snapshot = snapshot_arc.clone();
+            back.encoded_snapshot = encoded_snapshot.clone();
+            back.encoded_snapshot_flat = encoded_snapshot_flat.clone();
+        }
+
+        Some((encoded_snapshot, encoded_snapshot_flat))
+    }
     pub fn update_influencers(
         &mut self,
         states: Vec<InfluentialIndividualState>,
@@ -1277,6 +1315,7 @@ pub fn capture_snapshot(
         settlement_stage,
         supply_membership,
         pipeline_config,
+        capture_mode,
     } = ctx;
     let overlays_config = overlays.get();
     history.set_capacity(config.snapshot_history_limit.max(1));
@@ -1342,7 +1381,11 @@ pub fn capture_snapshot(
     // same idiom as `band_work_range` — so the client's outfit stepper can pre-clamp to
     // `min(idle_workers, max_expedition_party_size)` (the stepper lives on the resident-band panel,
     // so it's populated for every cohort, not just expeditions).
-    let max_expedition_party_size = expedition.get().max_party_size;
+    let expedition_cfg = expedition.get();
+    let max_expedition_party_size = expedition_cfg.max_party_size;
+    // Hunt carry cap per party = party_workers × this; surfaced per hunt cohort so the client shows
+    // carried/cap + a FULL readout.
+    let hunt_per_worker_carry = expedition_cfg.hunt.per_worker_carry;
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
         .map(|(entity, cohort, allocation, travel, expedition)| {
@@ -1378,6 +1421,7 @@ pub fn capture_snapshot(
                 scout_vantage_distance,
                 max_expedition_party_size,
                 &settlement_stage_config,
+                hunt_per_worker_carry,
             )
         })
         .collect();
@@ -1701,7 +1745,36 @@ pub fn capture_snapshot(
     }
     .finalize();
 
-    history.update(snapshot);
+    // Turn path: record a fresh ring entry (`update`). Post-command re-capture path
+    // (`SnapshotCaptureMode::refresh_in_place`): refresh the latest broadcast + back ring entry in
+    // place so a mid-turn command's world mutation reaches the client now, without pushing a ring
+    // entry / advancing the turn.
+    if capture_mode.refresh_in_place {
+        history.refresh_latest(snapshot);
+    } else {
+        history.update(snapshot);
+    }
+}
+
+/// Selects how [`capture_snapshot`] writes its result: the normal turn path records a fresh ring
+/// entry (`false`); the post-command re-capture path refreshes the latest broadcast snapshot in
+/// place (`true`) so a world-mutating command is reflected immediately without corrupting the
+/// rollback ring. Toggled by the server around a `run_system_once(capture_snapshot)`.
+#[derive(bevy::prelude::Resource, Debug, Clone, Copy, Default)]
+pub struct SnapshotCaptureMode {
+    pub refresh_in_place: bool,
+}
+
+/// Re-capture the current world into the latest broadcast snapshot **in place** — no ring-entry
+/// push, no turn/`TurnQueue` advance. Runs [`capture_snapshot`] with
+/// `SnapshotCaptureMode::refresh_in_place` toggled on, so a mid-turn command's world mutation
+/// (expedition launch, `move_band`, `assign_labor`, …) is reflected in the client's snapshot
+/// immediately. The server broadcasts `SnapshotHistory::encoded_snapshot` / `encoded_snapshot_flat`
+/// afterward. Kept in this module so `capture_snapshot`'s private `SystemParam` types stay internal.
+pub fn recapture_snapshot_in_place(world: &mut World) {
+    world.resource_mut::<SnapshotCaptureMode>().refresh_in_place = true;
+    world.run_system_once(capture_snapshot);
+    world.resource_mut::<SnapshotCaptureMode>().refresh_in_place = false;
 }
 
 pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) {
@@ -1983,7 +2056,11 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             .collect();
         world.entity_mut(entity).insert(Expedition {
             home_band,
-            mission: ExpeditionMission::from_wire(&cohort_state.expedition_mission),
+            mission: ExpeditionMission::from_wire(
+                &cohort_state.expedition_mission,
+                &cohort_state.expedition_target_herd,
+                &cohort_state.expedition_hunt_policy,
+            ),
             phase: ExpeditionPhase::from_wire(&cohort_state.expedition_phase),
             announced: cohort_state.expedition_announced,
             pending_reveal,
@@ -3689,6 +3766,7 @@ fn population_state(
     scout_vantage_distance: u32,
     max_expedition_party_size: u32,
     settlement_stage_config: &crate::settlement_stage_config::SettlementStageConfig,
+    hunt_per_worker_carry: f32,
 ) -> PopulationCohortState {
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let demand = food_demand(
@@ -3719,6 +3797,8 @@ fn population_state(
         is_expedition,
         expedition_mission,
         expedition_phase,
+        expedition_target_herd,
+        expedition_hunt_policy,
         home_band_entity,
         expedition_announced,
         pending_reveal_x,
@@ -3728,6 +3808,8 @@ fn population_state(
             true,
             exp.mission.as_str().to_string(),
             exp.phase.as_str().to_string(),
+            exp.mission.target_herd().to_string(),
+            exp.mission.hunt_policy_str().to_string(),
             exp.home_band.to_bits(),
             exp.announced,
             exp.pending_reveal.iter().map(|p| p.x).collect(),
@@ -3735,6 +3817,8 @@ fn population_state(
         ),
         None => (
             false,
+            String::new(),
+            String::new(),
             String::new(),
             String::new(),
             0,
@@ -3757,6 +3841,14 @@ fn population_state(
         icon: stage.icon.clone(),
     })
     .unwrap_or_default();
+    // Hunt carry cap = party_workers × per_worker_carry (`0` for scouts + normal bands). The party's
+    // worker count is its working-age head-count.
+    let expedition_carry_cap = match expedition {
+        Some(exp) if matches!(exp.mission, ExpeditionMission::Hunt { .. }) => {
+            working_age as f32 * hunt_per_worker_carry
+        }
+        _ => 0.0,
+    };
     PopulationCohortState {
         entity: entity.to_bits(),
         home: cohort.home.to_bits(),
@@ -3795,6 +3887,11 @@ fn population_state(
         pending_reveal_x,
         pending_reveal_y,
         max_expedition_party_size,
+        expedition_carry_cap,
+        // Appended after every earlier-shipped field (append-only wire discipline; matches the
+        // `.fbs` slot order for `expeditionTargetHerd`/`expeditionHuntPolicy`).
+        expedition_target_herd,
+        expedition_hunt_policy,
         supply_network_id: supply_membership.network_of(entity),
         morale_delta: cohort.last_morale_delta.raw(),
         morale_cause: cohort.last_morale_cause.as_u8(),
