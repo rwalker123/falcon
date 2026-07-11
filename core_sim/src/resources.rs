@@ -472,6 +472,65 @@ impl SimulationConfigMetadata {
     }
 }
 
+/// Port offsets from the `SIM_PORT_BASE` base for each listen socket, preserving
+/// the historical 41000-based layout (base = 41000 reproduces today's ports).
+const SNAPSHOT_PORT_OFFSET: u16 = 0;
+const COMMAND_PORT_OFFSET: u16 = 1;
+const SNAPSHOT_FLAT_PORT_OFFSET: u16 = 2;
+const LOG_PORT_OFFSET: u16 = 3;
+
+/// Lowest accepted `SIM_PORT_BASE`. A base of 0 would set `snapshot_bind` to
+/// port 0, asking the OS for an ephemeral port and breaking clients that expect
+/// the fixed block; `scripts/run_stack.sh` applies the same floor.
+const MIN_PORT_BASE: u16 = 1;
+
+/// Overrides each bind's port with `base + <offset>`, preserving the host.
+/// Returns false (and leaves `config` unchanged) if `base` is below
+/// `MIN_PORT_BASE` (0 → ephemeral port) or `base + LOG_PORT_OFFSET` would
+/// overflow u16.
+fn apply_port_base(config: &mut SimulationConfig, base: u16) -> bool {
+    if base < MIN_PORT_BASE || base.checked_add(LOG_PORT_OFFSET).is_none() {
+        return false;
+    }
+    config.snapshot_bind.set_port(base + SNAPSHOT_PORT_OFFSET);
+    config.command_bind.set_port(base + COMMAND_PORT_OFFSET);
+    config
+        .snapshot_flat_bind
+        .set_port(base + SNAPSHOT_FLAT_PORT_OFFSET);
+    config.log_bind.set_port(base + LOG_PORT_OFFSET);
+    true
+}
+
+/// Reads the optional `SIM_PORT_BASE` env override and applies it to `config`.
+/// Warns and leaves `config` unchanged on parse failure or out-of-range base
+/// (never panics), so a stray value can't take the server down.
+pub fn apply_port_base_override(config: &mut SimulationConfig) {
+    let raw = match env::var("SIM_PORT_BASE") {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let base: u16 = match raw.trim().parse() {
+        Ok(b) => b,
+        Err(_) => {
+            tracing::warn!(target: "shadow_scale::config", value = %raw, "sim_port_base.invalid=ignored");
+            return;
+        }
+    };
+    if apply_port_base(config, base) {
+        tracing::info!(
+            target: "shadow_scale::config",
+            base,
+            snapshot = config.snapshot_bind.port(),
+            command = config.command_bind.port(),
+            snapshot_flat = config.snapshot_flat_bind.port(),
+            log = config.log_bind.port(),
+            "sim_port_base.applied"
+        );
+    } else {
+        tracing::warn!(target: "shadow_scale::config", base, "sim_port_base.out_of_range=ignored");
+    }
+}
+
 pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigMetadata) {
     let override_path = env::var("SIM_CONFIG_PATH").ok().map(PathBuf::from);
 
@@ -485,12 +544,13 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
 
     for path in candidates {
         match SimulationConfig::from_file(&path) {
-            Ok(config) => {
+            Ok(mut config) => {
                 tracing::info!(
                     target: "shadow_scale::config",
                     path = %path.display(),
                     "simulation_config.loaded=file"
                 );
+                apply_port_base_override(&mut config);
                 let random_seed = config.map_seed == 0;
                 return (
                     config,
@@ -508,11 +568,12 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
         }
     }
 
-    let config = SimulationConfig::builtin();
+    let mut config = SimulationConfig::builtin();
     tracing::info!(
         target: "shadow_scale::config",
         "simulation_config.loaded=builtin"
     );
+    apply_port_base_override(&mut config);
     let random_seed = config.map_seed == 0;
     (config, SimulationConfigMetadata::new(None, random_seed))
 }
@@ -1097,5 +1158,83 @@ impl CommandEventLog {
 
     pub fn iter(&self) -> impl Iterator<Item = &CommandEventEntry> {
         self.entries.iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn apply_port_base_overrides_ports_and_preserves_hosts() {
+        let mut config = SimulationConfig::builtin();
+        let base: u16 = 42000;
+        assert!(apply_port_base(&mut config, base));
+
+        assert_eq!(config.snapshot_bind.port(), base + SNAPSHOT_PORT_OFFSET);
+        assert_eq!(config.command_bind.port(), base + COMMAND_PORT_OFFSET);
+        assert_eq!(
+            config.snapshot_flat_bind.port(),
+            base + SNAPSHOT_FLAT_PORT_OFFSET
+        );
+        assert_eq!(config.log_bind.port(), base + LOG_PORT_OFFSET);
+
+        for bind in [
+            config.snapshot_bind,
+            config.command_bind,
+            config.snapshot_flat_bind,
+            config.log_bind,
+        ] {
+            assert_eq!(bind.ip(), Ipv4Addr::LOCALHOST);
+        }
+    }
+
+    #[test]
+    fn apply_port_base_rejects_overflow_and_leaves_ports_unchanged() {
+        let mut config = SimulationConfig::builtin();
+        let before = (
+            config.snapshot_bind.port(),
+            config.command_bind.port(),
+            config.snapshot_flat_bind.port(),
+            config.log_bind.port(),
+        );
+
+        // 65533 + LOG_PORT_OFFSET (3) overflows u16.
+        assert!(!apply_port_base(&mut config, 65533));
+
+        assert_eq!(
+            (
+                config.snapshot_bind.port(),
+                config.command_bind.port(),
+                config.snapshot_flat_bind.port(),
+                config.log_bind.port(),
+            ),
+            before
+        );
+    }
+
+    #[test]
+    fn apply_port_base_rejects_zero_and_leaves_ports_unchanged() {
+        let mut config = SimulationConfig::builtin();
+        let before = (
+            config.snapshot_bind.port(),
+            config.command_bind.port(),
+            config.snapshot_flat_bind.port(),
+            config.log_bind.port(),
+        );
+
+        // base 0 would bind ephemeral port 0; rejected below MIN_PORT_BASE.
+        assert!(!apply_port_base(&mut config, 0));
+
+        assert_eq!(
+            (
+                config.snapshot_bind.port(),
+                config.command_bind.port(),
+                config.snapshot_flat_bind.port(),
+                config.log_bind.port(),
+            ),
+            before
+        );
     }
 }

@@ -9,3 +9,6 @@
 /cargo.lock
 **/.godot
 shadow_scale_flatbuffers/src/generated/snapshot_generated.rs
+# Nested git worktrees created by the Claude Code harness — keep searches,
+# status, and staging in one checkout from descending into the others.
+.claude/worktrees/
