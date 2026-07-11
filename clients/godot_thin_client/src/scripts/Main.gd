@@ -126,6 +126,10 @@ func _ready() -> void:
             hud.connect("assign_labor_requested", Callable(self, "_on_hud_assign_labor"))
         if hud.has_signal("move_band_requested") and not hud.is_connected("move_band_requested", Callable(self, "_on_hud_move_band")):
             hud.connect("move_band_requested", Callable(self, "_on_hud_move_band"))
+        if hud.has_signal("send_expedition_requested") and not hud.is_connected("send_expedition_requested", Callable(self, "_on_hud_send_expedition")):
+            hud.connect("send_expedition_requested", Callable(self, "_on_hud_send_expedition"))
+        if hud.has_signal("recall_expedition_requested") and not hud.is_connected("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition")):
+            hud.connect("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition"))
         if hud.has_signal("next_turn_requested") and not hud.is_connected("next_turn_requested", Callable(self, "_on_hud_next_turn")):
             hud.connect("next_turn_requested", Callable(self, "_on_hud_next_turn"))
         if hud.has_signal("roster_occupant_selected") and not hud.is_connected("roster_occupant_selected", Callable(self, "_on_hud_roster_occupant_selected")):
@@ -366,6 +370,31 @@ func _on_hud_move_band(payload: Dictionary) -> void:
         return
     var line := "move_band %d %d %d %d" % [faction, band_bits, x, y]
     _send_runtime_command(line, "Move band to (%d, %d)." % [x, y])
+
+## Scouting expedition (docs/plan_exploration_and_sites.md §2): outfit a party off a resident
+## band and send it to a target tile. The server draws the workers + provisions and spawns the
+## detached party (rejects an over-cap party with a feed message).
+func _on_hud_send_expedition(payload: Dictionary) -> void:
+    var band_bits := int(payload.get("band", -1))
+    if band_bits < 0:
+        return
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var party_workers := int(payload.get("party_workers", 0))
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if party_workers <= 0 or x < 0 or y < 0:
+        return
+    var line := "send_expedition %d %d %d %d %d" % [faction, band_bits, party_workers, x, y]
+    _send_runtime_command(line, "Send scouting expedition (%d) to (%d, %d)." % [party_workers, x, y])
+
+## Recall an in-flight expedition home (folds workers + provisions back on arrival).
+func _on_hud_recall_expedition(payload: Dictionary) -> void:
+    var expedition_bits := int(payload.get("expedition", -1))
+    if expedition_bits < 0:
+        return
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var line := "recall_expedition %d %d" % [faction, expedition_bits]
+    _send_runtime_command(line, "Recall expedition.")
 
 func _on_hud_next_turn(steps: int) -> void:
     var clamped_steps: int = max(1, steps)

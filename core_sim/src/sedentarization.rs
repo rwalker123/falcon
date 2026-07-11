@@ -14,7 +14,7 @@ use bevy::prelude::*;
 use tracing::info;
 
 use crate::{
-    components::{PopulationCohort, FOOD},
+    components::{PopulationCohort, ResidentBand, FOOD},
     fauna::{HerdDensityMap, HerdRegistry},
     orders::FactionId,
     resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
@@ -115,7 +115,9 @@ pub fn sedentarization_tick(
     config: Res<SedentarizationConfigHandle>,
     herds: Res<HerdRegistry>,
     density: Res<HerdDensityMap>,
-    cohorts: Query<&PopulationCohort>,
+    // `With<ResidentBand>`: the sedentarization score aggregates real bands' surplus/population; a
+    // detached expedition's carried larder is not settled "tether".
+    cohorts: Query<&PopulationCohort, With<ResidentBand>>,
 ) {
     let cfg = config.get();
 

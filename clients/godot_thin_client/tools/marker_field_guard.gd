@@ -51,7 +51,11 @@ const PANEL_CONSUMED_KEYS := [
 	"scout_reveal_radius", # allocation Scout role hint
 	"activity",            # roster activity glyph
 	"hunt_mode",           # roster / cancel-hunt label
-	"accessible_stockpile" # _accessible_stockpile_lines
+	"accessible_stockpile", # _accessible_stockpile_lines
+	"is_expedition",       # expedition panel gating + distinct marker
+	"expedition_mission",  # expedition panel mission line
+	"expedition_phase",    # expedition marker awaiting state + panel phase line
+	"max_expedition_party_size" # outfit stepper max clamp
 ]
 
 # A full, realistic population entry — the shape the native decoder (`population_to_dict`)
@@ -87,6 +91,11 @@ const FIXTURE_ENTRY := {
 	],
 	"stores": {"provisions": 120.0},
 	"accessible_stockpile": {"item": "provisions", "qty": 40.0},
+	# Expedition discriminators (distinct non-default values so a dropped copy shows up).
+	"is_expedition": true,
+	"expedition_mission": "scout",
+	"expedition_phase": "awaiting",
+	"max_expedition_party_size": 8,
 }
 
 var _failures: Array[String] = []
@@ -121,6 +130,11 @@ func _ready() -> void:
 	_expect_int(marker, "morale_cause", 1)
 	_expect_str(marker, "activity", "forage")
 	_expect_str(marker, "hunt_mode", "sustain")
+	_expect_str(marker, "expedition_mission", "scout")
+	_expect_str(marker, "expedition_phase", "awaiting")
+	_expect_int(marker, "max_expedition_party_size", 8)
+	if not bool(marker.get("is_expedition", false)):
+		_fail("is_expedition did not round-trip to true (defaulted?)")
 	_expect_float(marker, "morale", 0.41)
 	_expect_float(marker, "output_multiplier", 0.72)
 	_expect_float(marker, "days_of_food", 12.0)

@@ -1017,6 +1017,36 @@ pub struct PopulationCohortState {
     /// points that see *around* obstacles, not the retired flat fog-pulse ring.)
     #[serde(default)]
     pub scout_reveal_radius: u32,
+    /// Expedition discriminators (`docs/plan_exploration_and_sites.md` §2). `false`/`""`/empty for a
+    /// normal band; a detached scouting party sets `is_expedition` and carries its mission/phase.
+    /// Client-facing (distinct marker glyph/label, awaiting-orders state, Recall affordance).
+    #[serde(default)]
+    pub is_expedition: bool,
+    /// `"scout"` (PR 2 adds `"hunt"`); empty for normal bands.
+    #[serde(default)]
+    pub expedition_mission: String,
+    /// `"outbound"` | `"awaiting"` | `"returning"`; empty for normal bands.
+    #[serde(default)]
+    pub expedition_phase: String,
+    /// Persistence-only: the real band (entity bits) that outfitted this party — a rollback
+    /// re-attaches the expedition and resolves its home band from this.
+    #[serde(default)]
+    pub home_band_entity: u64,
+    /// Persistence-only: whether the arrival ("awaiting orders") feed line has fired for the current
+    /// `AwaitingOrders` latch.
+    #[serde(default)]
+    pub expedition_announced: bool,
+    /// Persistence-only: observed-but-unreported tile coordinates (zipped `x`/`y`) — the expedition's
+    /// comm-range-gated pending-reveal buffer, so a rollback preserves unreported findings.
+    #[serde(default)]
+    pub pending_reveal_x: Vec<u32>,
+    #[serde(default)]
+    pub pending_reveal_y: Vec<u32>,
+    /// Server-side hard cap on an expedition party (`expedition_config.json` `max_party_size`). A
+    /// global config lever echoed per-cohort (same idiom as `work_range`) so the client outfit
+    /// stepper pre-clamps to `min(idle_workers, this)`. Populated for every cohort.
+    #[serde(default)]
+    pub max_expedition_party_size: u32,
     /// Which supply network this band belongs to this turn: `0` = not in a multi-band network,
     /// `>= 1` = a per-snapshot id shared by all bands in the same connected component. Derived and
     /// recomputed every turn (not persisted for rollback).
@@ -2825,6 +2855,26 @@ fn create_populations<'a>(
                     .collect();
                 Some(builder.create_vector(&entries))
             };
+            let expedition_mission = if cohort.expedition_mission.is_empty() {
+                None
+            } else {
+                Some(builder.create_string(&cohort.expedition_mission))
+            };
+            let expedition_phase = if cohort.expedition_phase.is_empty() {
+                None
+            } else {
+                Some(builder.create_string(&cohort.expedition_phase))
+            };
+            let pending_reveal_x = if cohort.pending_reveal_x.is_empty() {
+                None
+            } else {
+                Some(builder.create_vector(&cohort.pending_reveal_x))
+            };
+            let pending_reveal_y = if cohort.pending_reveal_y.is_empty() {
+                None
+            } else {
+                Some(builder.create_vector(&cohort.pending_reveal_y))
+            };
             let accessible_stockpile_fb = cohort.accessible_stockpile.as_ref().map(|stockpile| {
                 let entries = if stockpile.entries.is_empty() {
                     None
@@ -2872,6 +2922,14 @@ fn create_populations<'a>(
                     workingAge: cohort.working_age,
                     workRange: cohort.work_range,
                     scoutRevealRadius: cohort.scout_reveal_radius,
+                    isExpedition: cohort.is_expedition,
+                    expeditionMission: expedition_mission,
+                    expeditionPhase: expedition_phase,
+                    homeBandEntity: cohort.home_band_entity,
+                    expeditionAnnounced: cohort.expedition_announced,
+                    pendingRevealX: pending_reveal_x,
+                    pendingRevealY: pending_reveal_y,
+                    maxExpeditionPartySize: cohort.max_expedition_party_size,
                     supplyNetworkId: cohort.supply_network_id,
                     moraleDelta: cohort.morale_delta,
                     moraleCause: cohort.morale_cause,

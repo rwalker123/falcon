@@ -77,19 +77,60 @@ The Lewis-and-Clark action: a deliberate, outfitted venture, distinct from the s
   distance). *Scouting-TOE (wayfinding gear) that improves range/speed/safety lands with the TOE
   slice — not v1.*
 - **A visible traveling party:** a lightweight detached entity with its **own map marker** that
-  treks toward a target/direction, **revealing fog along its actual path** (Active as it passes,
-  remembered after), reaches its objective, and **returns to the band**. Reuses move-band's travel
-  stepping and the `FogRevealLedger`/knowledge-fragment machinery from the retired follow-herd;
-  it is the **temporary cousin of the deferred breakaway-to-new-band** (same detached-party
-  machinery — one returns, one settles), so building it de-risks that later split feature.
+  treks toward a target. It is a **persistent detached unit you drive** — aimed via the *reused
+  move-band click flow* (Hud pending-move → destination click on the expedition entity). Reuses
+  move-band's travel stepping; it is the **temporary cousin of the deferred breakaway-to-new-band**
+  (same detached-party machinery — one returns, one settles), so building it de-risks that later
+  split feature.
+- **Discovery is gated by communication range — the expedition *reports*, it doesn't live-stream.**
+  The Columbus/Lewis-and-Clark beat: an expedition carries a **communication range** (a flat config
+  lever, default 2 tiles early game, with a stubbed tech-scaling hook — no comm/tech signal exists
+  yet, mirroring migration's movement-tech `TODO(phase2)`). While **in comm range** of the band its
+  findings are known; **out of comm range** it keeps exploring but the faction learns nothing until
+  it comes **back into range to report** — the map lights up as a lump on return. Mechanically the
+  expedition is **not** a live faction vision source (`Without<Expedition>` in `calculate_visibility`);
+  each turn it accumulates the tiles it observes (reusing `reveal_tiles_in_range`) into a **private
+  pending-reveal buffer** on the `Expedition` component, and `advance_expeditions` **flushes that
+  buffer into the faction map as `Discovered`** (remembered, not `Active` — you read a report, you
+  aren't standing there) whenever it is within comm range of the band. **Site discovery rides the
+  existing path for free**: once the flush marks tiles `Discovered`, the normal `discover_sites`
+  (Visibility stage) records any `SiteTag` on them + fires the usual feed/reward. In v1 you still
+  see and command your *own* expedition marker regardless of range — comm-range gates **world
+  discovery**, not the expedition's own status (fate-uncertainty is the deferred risk layer, below).
+- **Arrival is a decision point, not an auto-turnaround.** On reaching its objective the expedition
+  enters an *awaiting-orders* state (marker state + a feed line, "Expedition reached X — awaiting
+  orders" — you command your own unit, so this fires regardless of comm range). The player then
+  **sends it onward to a new target** (chain waypoints; deciding *without yet knowing what's out
+  there* if it's beyond comm range — the core tension) or **orders it home**. Left alone it waits.
+  "Return" targets the band's **live** tile (the band is nomadic), and on arrival home the workers +
+  leftover provisions fold back into the band, and the pending-reveal buffer makes its final flush.
 - **Returns with findings — deterministic from where it goes.** An expedition reveals whatever
   Wondrous Sites actually lie along its path/objective — exploration is **skill** (aim it well,
   uncover the real map), not a slot machine. A *small* random flavor find may ride on top, but the
-  core prize is the real sites it uncovers. Plus the permanent map reveal of everything it crossed.
-- **Deferred but documented:** **risk/failure** (peril — losing members to starvation/threats,
-  an expedition that never returns) is a great later layer; v1 is deterministic success.
+  core prize is the real sites it uncovers. Plus the permanent (`Discovered`) map reveal of
+  everything it crossed — delivered when it reports back in comm range, not live along the path.
+- **Provisions deplete.** The party carries larder-drawn provisions (scaled by party size ×
+  distance) that **drain per turn**. In v1 running dry is **non-fatal** (deterministic success), but
+  the number is live — and a party that runs low can **opportunistically replenish** off game it
+  passes (see §2b; the replenish primitive lands with the hunt verb and is retrofitted here). This
+  is the seam the deferred **risk/failure** layer plugs into (can't replenish, runs out → peril).
+- **Deferred but documented — risk/failure + knowledge as dowry.** v1 is deterministic success; the
+  peril layer lands later and plugs into the *same* comm-range/pending-reveal seams v1 builds:
+  - **Dies out of contact → its knowledge is lost.** Death is simply "despawn without flushing the
+    pending-reveal buffer" — everything it saw beyond comm range was never reported, so it never
+    reaches the faction map. (In-comm losses have already reported.)
+  - **Defects / founds a new tribe / joins another civ → that tribe inherits its parent's discovered
+    (not active) view.** Knowledge travels with the people: the same flush operation, aimed at a
+    *different* faction's map (the new/joined tribe gains the parent's `Discovered` knowledge as of
+    when the party left). This is the deferred **breakaway/split** (an expedition that drops
+    `Expedition`, gains `ResidentBand`, and keeps its map) — needs other civilizations (tribes
+    unbuilt) and the breakaway machinery, so it is target-concept only. v1 shapes the seams
+    (pending-reveal buffer, per-expedition observation, the flush-to-a-faction-map operation) to
+    accept it without a rewrite.
+  - **Fate-uncertainty** (you lose contact and don't know if they live or will return) is part of
+    this layer; v1 keeps the player's own expedition marker/status visible and gates only discovery.
 
-### 2b. Hunting expedition — a long-range hunt that follows migratory game (deferred, documented)
+### 2b. Hunting expedition — a long-range hunt that follows migratory game (resolved; PR 2)
 
 The hunting analogue of the scouting expedition, and the answer to migratory herds the **leashed
 follow can't reach**. Today a Hunt assignment lapses once the herd roams past `band_work_range +
@@ -98,18 +139,32 @@ following* a migratory herd far from the band, accumulates food, and **drops it 
 so you can exploit a herd's whole migratory circuit instead of only what wanders into work range.
 
 - **Same machinery as the scouting expedition** (§2): a visible detached party (own marker) that
-  travels, using move-band stepping + the detached-party model. Build it as part of the expedition
-  work — one traveling-party system, two verbs (scout / hunt).
-- **Follows the herd** beyond the leash, taking food each turn it's in reach (reusing the per-turn
-  Hunt take math), and **carries** what it takes up to a **carry capacity** ("full").
+  travels, using move-band stepping + the detached-party model. Built as PR 2 on PR 1's system —
+  **one traveling-party system, two verbs** (scout / hunt).
+- **The shared primitive is "take food from a nearby source."** The hunt verb does it *continuously
+  and deliberately*; the scout does it *opportunistically* when its provisions run low and it passes
+  game (the real-life hunt-while-traveling). PR 2 introduces the primitive and applies it to both
+  verbs — so the scout's replenish and the hunt's harvest are the same code.
+- **Follows the herd** beyond the leash — retargeting travel to the herd's current tile each turn —
+  taking food each turn it's in reach (reusing the per-turn Hunt take math into its own store), and
+  **carries** what it takes up to a **carry capacity**.
 - **Drops off food at the band when EITHER:** (a) the herd's migratory circuit brings it back
   **near the band** (party is close enough to run the food home), OR (b) the party is **full**
-  (carry capacity reached) — at which point it returns, deposits into the larder, and (design
-  choice at build time) either re-launches or ends.
-- **Open questions to settle at build time (not now):** does the party carry **provisions** for
-  itself (like the scout expedition) or live off its own kills; is "full" tied to the same
-  **carry-capacity** concept as the band; does it auto-relaunch on drop-off or require re-issue;
-  and **risk/failure** (a party that starves or is lost) — deferred like the scouting expedition's.
+  (carry capacity reached) — at which point it returns to the band's live tile, deposits into the
+  larder, and **auto-relaunches** back to the herd.
+
+**Resolved decisions (were open questions):**
+- **Provisions vs. kills:** the hunt verb **lives off its own kills** — no separate provision
+  concept; its carried food is also its sustenance (one `LocalStore` under the reuse model). Only the
+  scout verb carries larder-drawn provisions (it has no food source), which deplete and can be
+  topped up via the shared replenish primitive.
+- **"Full":** its own lever, **`party_workers × per_worker_carry`** (mirrors the existing Hunt
+  `per_worker_biomass_capacity` idiom) — *not* tied to the band carry-capacity cap, which is an
+  unbuilt slice.
+- **Drop-off behavior:** **auto-relaunch** — loops the herd's whole migratory circuit until the
+  player **recalls/disbands** it or the herd goes extinct.
+- **Risk/failure:** **deferred**, deterministic success in v1, same as the scouting expedition; the
+  depleting-provisions / can't-replenish seam is where it plugs in later.
 
 ## 3. Wondrous Sites — the data-driven catalog of what exploration finds
 
@@ -155,10 +210,53 @@ local scout) pay off, before expeditions exist.
 1. **Local scout** (§1) — the small fix; makes the Scout role real. *Next.*
 2. **Wondrous Sites (minimal)** (§3) — catalog + tile-hold (schema) + discovery-on-vision + a
    Discoveries readout, with 2–3 seeded site types to prove the loop. Immediately valuable.
-3. **Scouting expedition** (§2) — the mobile discovery vector: the visible traveling party +
-   provisioning, layered on the sites discovery.
-4. **Deferred / documented:** expedition **risk/failure**; scouting-**TOE** gating;
+3. **Scouting expedition** (§2) — **PR 1**: the traveling-party system + the scout verb (the mobile
+   discovery vector — visible detached unit + provisioning, layered on the sites discovery).
+4. **Hunting expedition** (§2b) — **PR 2**: the second verb on PR 1's system + the shared
+   take-food-from-a-nearby-source primitive (hunt harvest + scout opportunistic replenish).
+5. **Deferred / documented:** expedition **risk/failure**; scouting-**TOE** gating;
    **regional (multi-tile) sites**; richer per-category rewards; **tribes as real civilizations**.
+
+### Implementation model (expeditions)
+
+An expedition is **another `StartingUnit` band** — it reuses `PopulationCohort` + `BandTravel` /
+`advance_band_movement` + `LaborAllocation` + `StartingUnit`, tagged with a new **`Expedition`**
+marker and (deliberately) **lacking `ResidentBand`**. Carrying `StartingUnit` is required, not
+incidental: `calculate_visibility` gates its vision sources on `StartingUnit` (visibility_systems.rs),
+so the marker is what makes the party reveal fog (and thus discover sites) for free. Consequences of
+being a full `StartingUnit` band: it's a moving snapshot marker for free, it's a `Hunt`-labor food
+producer for free (the hunt verb), and **retargeting a waypoint is just `move_band` on the expedition
+entity** — the only genuinely-new commands are `send_expedition` (spawn + outfit: draw N workers off
+the band's `working` and provisions off its larder) and `recall_expedition` (set phase → Returning +
+fold back on arrival).
+
+**Isolation via a positive `ResidentBand` marker.** To keep expedition cohorts from bleeding into the
+*growing* settlement/population arc, real bands get a `ResidentBand` marker and the systems that must
+*not* see expeditions filter `With<ResidentBand>`:
+- **Demographics** (`simulate_population`), **migration** (`advance_population_migration`),
+  **sedentarization** (`sedentarization_tick`), **startup seeding** (`apply_starting_inventory_effects`),
+  **supply network** (`balance_supply_networks` — an expedition manages its own larder; drop-off is the
+  explicit fold-back, not a passive supply-network leak), and the **default-band command pickers**
+  (`select_starting_band` / `select_founder_band` `None`-bits branch — so a band-less command never
+  auto-grabs an expedition).
+- **Stays bare** (expeditions *included*): `advance_band_movement` (travel), `advance_labor_allocation`
+  (labor/food — the hunt verb; a scout's empty allocation is a harmless no-op), `capture_snapshot`
+  (marker), `collect_metrics`, `discover_sites` (rides the flushed `Discovered` tiles).
+- **Special case — `calculate_visibility` (`Without<Expedition>`).** The expedition keeps
+  `StartingUnit` (for `move_band` retargeting + selection) but is **excluded from live faction fog
+  reveal** — comm-range gating means it must *not* light up the faction map from wherever it stands.
+  Instead it observes into its own **pending-reveal buffer** and `advance_expeditions` flushes that to
+  the faction map (as `Discovered`) only when in comm range (see §2). This is the one place the
+  "expedition = another `StartingUnit` band" equivalence is deliberately broken.
+
+Expeditions are excluded **by construction** (absence of `ResidentBand`), so the safe default survives
+new systems added to the settlement arc. A breakaway-to-new-band is the same detached party that simply
+drops its `Expedition` marker and gains `ResidentBand` instead of returning. Expedition-specific
+per-turn logic (accumulate the pending-reveal buffer, comm-range check + flush-to-`Discovered`,
+return-retarget to the band's live tile, arrival→awaiting-orders feed, fold-back on arrival, provision
+depletion) lives in a new `advance_expeditions` system in the Population stage, right after
+`advance_band_movement`. The `Expedition` component (incl. its pending-reveal buffer) is
+**snapshot-persisted** so a rollback preserves an in-flight expedition and its unreported findings.
 
 ## Cross-cutting touchpoints
 

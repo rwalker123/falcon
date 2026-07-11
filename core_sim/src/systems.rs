@@ -14,9 +14,10 @@ use crate::snapshot_overlays_config::SnapshotOverlaysConfig;
 use crate::{
     components::{
         available_workers, fragments_from_contract, fragments_to_contract, BandTravel, ElementKind,
-        FollowPolicy, KnowledgeFragment, LaborAllocation, LaborTarget, LocalStore, LogisticsLink,
-        MoraleCause, MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort,
-        PowerNode, StartingUnit, Tile, TradeLink, FOOD,
+        Expedition, ExpeditionPhase, FollowPolicy, KnowledgeFragment, LaborAllocation, LaborTarget,
+        LocalStore, LogisticsLink, MoraleCause, MoraleContributions, MountainMetadata,
+        PendingMigration, PopulationCohort, PowerNode, ResidentBand, StartingUnit, Tile, TradeLink,
+        FOOD,
     },
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
@@ -928,7 +929,9 @@ pub fn spawn_initial_world(
 pub fn apply_starting_inventory_effects(
     mut inventory: ResMut<FactionInventory>,
     demographics: Res<DemographicsConfigHandle>,
-    mut cohorts: Query<&mut PopulationCohort>,
+    // `With<ResidentBand>`: only real bands are seeded with startup demographics + food reserves; an
+    // expedition is seeded explicitly at launch from the home band's larder.
+    mut cohorts: Query<&mut PopulationCohort, With<ResidentBand>>,
     mut trade_links: Query<&mut TradeLink>,
 ) {
     seed_cohort_demographics(&demographics.get(), &mut cohorts);
@@ -939,7 +942,7 @@ pub fn apply_starting_inventory_effects(
 /// `startup.food_reserve_days` turns of its own food demand, and apply the well-fed morale bonus.
 fn seed_cohort_demographics(
     config: &DemographicsConfig,
-    cohorts: &mut Query<&mut PopulationCohort>,
+    cohorts: &mut Query<&mut PopulationCohort, With<ResidentBand>>,
 ) {
     let dist = &config.initial_distribution;
     let reserve_days = scalar_from_f32(config.startup.food_reserve_days);
@@ -2660,6 +2663,11 @@ fn spawn_population_entity(
     // Every band carries a labor allocation (default empty = fully idle). The client drives
     // assignment; the startup food reserve covers the ramp before the first orders land.
     entity.insert(LaborAllocation::default());
+    // Positive `ResidentBand` marker: this is a real band and participates in the
+    // population/settlement arc (demographics, migration, sedentarization, startup seeding, supply
+    // networks, default-band command pickers). Detached expeditions are spawned separately and
+    // deliberately lack it, so they are excluded from those systems by construction.
+    entity.insert(ResidentBand);
     if let Some(marker) = marker {
         entity.insert(marker);
     }
@@ -3294,7 +3302,9 @@ pub fn simulate_population(
     demographics: Res<DemographicsConfigHandle>,
     wellbeing_config: Res<WellbeingConfigHandle>,
     tiles: Query<&Tile>,
-    mut cohorts: Query<&mut PopulationCohort>,
+    // `With<ResidentBand>`: demographics run on real bands only — a detached expedition manages its
+    // own larder/consumption in `advance_expeditions` and never grows/starves/migrates.
+    mut cohorts: Query<&mut PopulationCohort, With<ResidentBand>>,
     mut discovery: ResMut<DiscoveryProgressLedger>,
     mut telemetry: ResMut<TradeTelemetry>,
     mut trade_events: EventWriter<TradeDiffusionEvent>,
@@ -3489,6 +3499,180 @@ pub fn advance_band_movement(
         }
         if next == travel.target {
             commands.entity(entity).remove::<BandTravel>();
+        }
+    }
+}
+
+/// Per-turn logic for detached expeditions (traveling parties). Runs right after
+/// `advance_band_movement` (so it reads the party's fresh position) and before the Visibility
+/// stage's `discover_sites`. For each expedition:
+/// - **Observe** the tiles in `observe_sight_range` LOS of its current tile into a **private**
+///   pending-reveal buffer (it does NOT touch the faction map — it is `Without<Expedition>` in
+///   `calculate_visibility`).
+/// - **Comm check + flush**: when within the effective comm range of the home band's live tile,
+///   promote every buffered tile to `Discovered` on the faction map (never downgrading a live
+///   `Active` tile), then clear the buffer. Site discovery rides the flushed tiles for free via the
+///   Visibility stage's `discover_sites`.
+/// - **Provisions** drain by `party × provision_upkeep_per_worker` (non-fatal at zero in v1).
+/// - **Phase transitions**: `Outbound` + arrived (no `BandTravel`) → `AwaitingOrders` + a one-shot
+///   arrival feed line; `Returning` → chase the home band's live tile and, once within comm range,
+///   fold workers + leftover provisions back into the band and despawn (fold-back happens after the
+///   flush so the final findings report); `AwaitingOrders` waits (relaunched by `move_band`).
+#[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
+pub fn advance_expeditions(
+    mut commands: Commands,
+    expedition_config: Res<crate::expedition_config::ExpeditionConfigHandle>,
+    visibility_config: Res<crate::visibility_config::VisibilityConfigHandle>,
+    sim_config: Res<SimulationConfig>,
+    tile_registry: Res<TileRegistry>,
+    tick: Res<SimulationTick>,
+    elevation: Option<Res<ElevationField>>,
+    mut ledger: ResMut<crate::visibility::VisibilityLedger>,
+    mut event_log: ResMut<CommandEventLog>,
+    tiles: Query<&Tile>,
+    mut expeditions: Query<(
+        Entity,
+        &mut PopulationCohort,
+        Option<&BandTravel>,
+        &mut Expedition,
+    )>,
+    mut bands: Query<&mut PopulationCohort, Without<Expedition>>,
+) {
+    // The common turn has zero expeditions — bail before building the O(w×h) terrain grid so a
+    // normal game pays nothing for this system.
+    if expeditions.is_empty() {
+        return;
+    }
+    // No elevation field means worldgen hasn't run — nothing to observe from (mirrors
+    // `calculate_visibility`'s early bail).
+    let Some(elevation) = elevation else {
+        return;
+    };
+    let cfg = expedition_config.get();
+    let vis_cfg = visibility_config.0.as_ref();
+    let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
+    let grid_width = tile_registry.width;
+    let current_turn = tick.0;
+    let comm_range = cfg.effective_comm_range();
+
+    // Shared LOS inputs (built once per turn for the few expeditions).
+    let terrain_tags = crate::visibility_systems::build_terrain_tags_grid(
+        &tiles,
+        elevation.width,
+        elevation.height,
+    );
+    let blocking_tags = crate::visibility_systems::parse_blocking_tags(
+        &vis_cfg.line_of_sight.blocking_terrain_tags,
+    );
+
+    for (entity, mut cohort, travel, mut expedition) in expeditions.iter_mut() {
+        let Ok(exp_pos) = tiles.get(cohort.current_tile).map(|tile| tile.position) else {
+            continue;
+        };
+        let faction = cohort.faction;
+        // Home band's LIVE tile (bands are nomadic): drives both the comm check and the return
+        // target. An orphaned expedition (home band gone) simply can't report or fold back.
+        let home_pos = bands
+            .get(expedition.home_band)
+            .ok()
+            .and_then(|band| tiles.get(band.current_tile).ok())
+            .map(|tile| tile.position);
+
+        // a. Observe into the private buffer — no faction-map mutation here. The buffer grows
+        // ~100+ tiles/turn while out of comm range, so dedup against an O(1) `HashSet` scratch
+        // (built once from the current buffer) instead of an O(n) `Vec::contains` per tile. The
+        // `Vec` is kept as the authoritative ordered buffer (snapshot `pendingRevealX/Y` needs it);
+        // the set is per-turn scratch only.
+        let mut seen: HashSet<UVec2> = expedition.pending_reveal.iter().copied().collect();
+        for pos in crate::visibility_systems::visible_tiles_in_range(
+            exp_pos,
+            cfg.observe_sight_range,
+            &elevation,
+            vis_cfg.line_of_sight.enabled,
+            &terrain_tags,
+            &vis_cfg.terrain_modifiers,
+            blocking_tags,
+            wrap_horizontal,
+        ) {
+            if seen.insert(pos) {
+                expedition.pending_reveal.push(pos);
+            }
+        }
+
+        // b. Comm check + flush: in range of home → report the buffer as Discovered, then clear.
+        let in_comm_range = home_pos
+            .map(|home| {
+                crate::grid_utils::hex_distance_wrapped(exp_pos, home, grid_width, wrap_horizontal)
+                    <= comm_range
+            })
+            .unwrap_or(false);
+        if in_comm_range {
+            let map = ledger.ensure_faction(faction, elevation.width, elevation.height);
+            for pos in expedition.pending_reveal.drain(..) {
+                map.discover(pos.x, pos.y, current_turn);
+            }
+        }
+
+        // c. Provisions depletion (non-fatal at zero in v1).
+        let upkeep = scalar_from_f32(
+            available_workers(cohort.working) as f32 * cfg.provision_upkeep_per_worker,
+        );
+        if upkeep > scalar_zero() {
+            cohort.stores.take(FOOD, upkeep);
+        }
+
+        // d. Phase transitions.
+        match expedition.phase {
+            ExpeditionPhase::Outbound => {
+                // Arrived when `advance_band_movement` (earlier this turn) removed the travel order.
+                if travel.is_none() {
+                    expedition.phase = ExpeditionPhase::AwaitingOrders;
+                    if !expedition.announced {
+                        event_log.push(CommandEventEntry::new(
+                            current_turn,
+                            CommandEventKind::ExpeditionArrived,
+                            faction,
+                            format!(
+                                "Expedition reached ({}, {}) — awaiting orders",
+                                exp_pos.x, exp_pos.y
+                            ),
+                            Some(format!("status=awaiting expedition={}", entity.to_bits())),
+                        ));
+                        expedition.announced = true;
+                    }
+                }
+            }
+            ExpeditionPhase::Returning => {
+                if in_comm_range {
+                    // Close enough to run home: fold workers + leftover provisions back in (after
+                    // the flush above, so the final findings reported), then despawn.
+                    if let Ok(mut home) = bands.get_mut(expedition.home_band) {
+                        home.working += cohort.working;
+                        let leftover = cohort.stores.get(FOOD);
+                        if leftover > scalar_zero() {
+                            home.stores.add(FOOD, leftover);
+                        }
+                        home.sync_size();
+                    }
+                    event_log.push(CommandEventEntry::new(
+                        current_turn,
+                        CommandEventKind::ExpeditionReturned,
+                        faction,
+                        format!(
+                            "Expedition folded back into the band at ({}, {})",
+                            exp_pos.x, exp_pos.y
+                        ),
+                        Some(format!("status=returned expedition={}", entity.to_bits())),
+                    ));
+                    commands.entity(entity).despawn();
+                } else if let Some(home) = home_pos {
+                    // Chase the band's live tile each turn (retargets any stale travel order).
+                    commands.entity(entity).insert(BandTravel { target: home });
+                }
+            }
+            ExpeditionPhase::AwaitingOrders => {
+                // Wait — a `move_band` order flips the party back to Outbound (server-side hook).
+            }
         }
     }
 }
@@ -3721,7 +3905,9 @@ pub fn advance_population_migration(
     wellbeing_config: Res<WellbeingConfigHandle>,
     tile_registry: Res<TileRegistry>,
     tiles: Query<&Tile>,
-    mut cohorts: Query<(Entity, &mut PopulationCohort)>,
+    // `With<ResidentBand>`: migration relocates people between real bands only — an expedition is
+    // never a migration source or destination.
+    mut cohorts: Query<(Entity, &mut PopulationCohort), With<ResidentBand>>,
 ) {
     let wellbeing = wellbeing_config.get();
     let disc_cfg = &wellbeing.discontent;
@@ -5527,7 +5713,9 @@ mod wellbeing_tests {
         advance_population_migration, discontent_fraction, discontent_output_modifier,
         migration_move_fraction, output_multiplier,
     };
-    use crate::components::{MoraleCause, MoraleContributions, PopulationCohort, Tile};
+    use crate::components::{
+        MoraleCause, MoraleContributions, PopulationCohort, ResidentBand, Tile,
+    };
     use crate::orders::FactionId;
     use crate::resources::{SimulationConfig, TileRegistry};
     use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
@@ -5664,8 +5852,12 @@ mod wellbeing_tests {
     #[test]
     fn migration_relocates_and_conserves() {
         let (mut world, tiles) = world_with_tiles(&[(0, 0), (2, 0)], 8);
-        let src = world.spawn(band(tiles[0], 0, 0.1, 900.0)).id();
-        let dst = world.spawn(band(tiles[1], 0, 0.70, 900.0)).id();
+        let src = world
+            .spawn((band(tiles[0], 0, 0.1, 900.0), ResidentBand))
+            .id();
+        let dst = world
+            .spawn((band(tiles[1], 0, 0.70, 900.0), ResidentBand))
+            .id();
         let before: f32 = {
             let a = world.get::<PopulationCohort>(src).unwrap();
             let b = world.get::<PopulationCohort>(dst).unwrap();
@@ -5700,8 +5892,12 @@ mod wellbeing_tests {
     #[test]
     fn above_migration_threshold_stays() {
         let (mut world, tiles) = world_with_tiles(&[(0, 0), (2, 0)], 8);
-        let src = world.spawn(band(tiles[0], 0, 0.38, 900.0)).id();
-        let _dst = world.spawn(band(tiles[1], 0, 0.70, 900.0)).id();
+        let src = world
+            .spawn((band(tiles[0], 0, 0.38, 900.0), ResidentBand))
+            .id();
+        let _dst = world
+            .spawn((band(tiles[1], 0, 0.70, 900.0), ResidentBand))
+            .id();
         world.run_system_once(advance_population_migration);
         let a = world.get::<PopulationCohort>(src).unwrap();
         assert_eq!(a.last_emigrated, 0, "above the 0.25 onset → nobody leaves");
@@ -5717,8 +5913,12 @@ mod wellbeing_tests {
     fn no_destination_stays_and_grievance_rises() {
         // Source below the migration onset; the only other band is not attractive (< 0.5).
         let (mut world, tiles) = world_with_tiles(&[(0, 0), (2, 0)], 8);
-        let a = world.spawn(band(tiles[0], 0, 0.15, 900.0)).id();
-        let _b = world.spawn(band(tiles[1], 0, 0.30, 900.0)).id();
+        let a = world
+            .spawn((band(tiles[0], 0, 0.15, 900.0), ResidentBand))
+            .id();
+        let _b = world
+            .spawn((band(tiles[1], 0, 0.30, 900.0), ResidentBand))
+            .id();
         let working_before = world.get::<PopulationCohort>(a).unwrap().working.to_f32();
         world.run_system_once(advance_population_migration);
         let cohort = world.get::<PopulationCohort>(a).unwrap();
@@ -5758,7 +5958,7 @@ mod wellbeing_tests {
         let e = {
             let mut c = band(tiles[0], 0, 0.9, 900.0);
             c.grievance = scalar_from_f32(0.5);
-            world.spawn(c).id()
+            world.spawn((c, ResidentBand)).id()
         };
         world.run_system_once(advance_population_migration);
         let cohort = world.get::<PopulationCohort>(e).unwrap();

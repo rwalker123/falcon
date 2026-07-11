@@ -281,7 +281,7 @@ fn json_to_variant(value: &JsonValue) -> Variant {
         JsonValue::Object(map) => {
             let mut dict = VarDictionary::new();
             for (key, value) in map {
-                let _ = dict.insert(key.as_str(), json_to_variant(value));
+                let _ = dict.insert(key.as_str(), &json_to_variant(value));
             }
             Variant::from(dict)
         }
@@ -320,7 +320,7 @@ impl ScriptHostBridge {
                 manifest.manifest_path = Some(path_str.clone());
                 let manifest_variant = json_to_variant(&manifest_to_json(&manifest));
                 let _ = dict.insert("ok", true);
-                let _ = dict.insert("manifest", manifest_variant);
+                let _ = dict.insert("manifest", &manifest_variant);
                 let _ = dict.insert("manifest_path", path_str);
                 let _ = dict.insert("entry_path", entry_path);
             }
@@ -363,7 +363,7 @@ impl ScriptHostBridge {
                         let _ = dict.insert("ok", true);
                         let _ = dict.insert("script_id", id);
                         let _ =
-                            dict.insert("manifest", json_to_variant(&manifest_to_json(&manifest)));
+                            dict.insert("manifest", &json_to_variant(&manifest_to_json(&manifest)));
                     }
                     Err(err) => {
                         let _ = dict.insert("ok", false);
@@ -436,7 +436,7 @@ impl ScriptHostBridge {
         let mut dict = VarDictionary::new();
         let map = self.manager.poll_all();
         for (id, responses) in map {
-            let _ = dict.insert(id, json_to_variant_array(&responses_to_json(responses)));
+            let _ = dict.insert(id, &json_to_variant_array(&responses_to_json(responses)));
         }
         dict
     }
@@ -447,7 +447,7 @@ impl ScriptHostBridge {
         for (id, manifest) in self.manager.list_scripts() {
             let mut entry = VarDictionary::new();
             let _ = entry.insert("script_id", id);
-            let _ = entry.insert("manifest", json_to_variant(&manifest_to_json(&manifest)));
+            let _ = entry.insert("manifest", &json_to_variant(&manifest_to_json(&manifest)));
             let variant_entry = Variant::from(entry);
             array.push(&variant_entry);
         }
@@ -555,13 +555,13 @@ fn insert_overlay_channel(
     if let Some(description) = params.description {
         let _ = channel.insert("description", description);
     }
-    let _ = channel.insert("normalized", params.normalized.clone());
-    let _ = channel.insert("raw", params.raw.clone());
-    let _ = channel.insert("contrast", params.contrast.clone());
+    let _ = channel.insert("normalized", &params.normalized.clone());
+    let _ = channel.insert("raw", &params.raw.clone());
+    let _ = channel.insert("contrast", &params.contrast.clone());
     if params.placeholder {
         let _ = channel.insert("placeholder", true);
     }
-    let _ = channels.insert(params.key, channel);
+    let _ = channels.insert(params.key, &channel);
     let key_str = GString::from(params.key);
     order.push(&key_str);
 }
@@ -624,7 +624,7 @@ fn snapshot_dict(
     let _ = grid_dict.insert("width", grid_size.width as i64);
     let _ = grid_dict.insert("height", grid_size.height as i64);
     let _ = grid_dict.insert("wrap_horizontal", grid_size.wrap_horizontal);
-    let _ = dict.insert("grid", grid_dict);
+    let _ = dict.insert("grid", &grid_dict);
 
     let size = (grid_size.width as usize)
         .saturating_mul(grid_size.height as usize)
@@ -893,8 +893,8 @@ fn snapshot_dict(
         },
     );
 
-    let _ = overlays.insert("channels", channels);
-    let _ = overlays.insert("channel_order", channel_order.clone());
+    let _ = overlays.insert("channels", &channels);
+    let _ = overlays.insert("channel_order", &channel_order.clone());
     let _ = overlays.insert("default_channel", "logistics");
 
     if corruption_placeholder
@@ -927,44 +927,44 @@ fn snapshot_dict(
         if moisture_placeholder {
             placeholder_keys.push(&GString::from("moisture"));
         }
-        let _ = overlays.insert("placeholder_channels", placeholder_keys);
+        let _ = overlays.insert("placeholder_channels", &placeholder_keys);
     }
 
-    let _ = overlays.insert("logistics", logistics_array.clone());
-    let _ = overlays.insert("logistics_raw", logistics_raw_array.clone());
-    let _ = overlays.insert("logistics_contrast", logistics_contrast_array.clone());
-    let _ = overlays.insert("contrast", logistics_contrast_array.clone());
-    let _ = overlays.insert("sentiment", sentiment_array.clone());
-    let _ = overlays.insert("sentiment_raw", sentiment_raw_array.clone());
-    let _ = overlays.insert("sentiment_contrast", sentiment_contrast_array.clone());
-    let _ = overlays.insert("corruption", corruption_array.clone());
-    let _ = overlays.insert("corruption_raw", corruption_raw_array.clone());
-    let _ = overlays.insert("corruption_contrast", corruption_contrast_array.clone());
-    let _ = overlays.insert("fog", fog_array.clone());
-    let _ = overlays.insert("fog_raw", fog_raw_array.clone());
-    let _ = overlays.insert("fog_contrast", fog_contrast_array.clone());
-    let _ = overlays.insert("culture", culture_array.clone());
-    let _ = overlays.insert("culture_raw", culture_raw_array.clone());
-    let _ = overlays.insert("culture_contrast", culture_contrast_array.clone());
-    let _ = overlays.insert("military", military_array.clone());
-    let _ = overlays.insert("military_raw", military_raw_array.clone());
-    let _ = overlays.insert("military_contrast", military_contrast_array.clone());
-    let _ = overlays.insert("crisis", crisis_array.clone());
-    let _ = overlays.insert("crisis_raw", crisis_raw_array.clone());
-    let _ = overlays.insert("crisis_contrast", crisis_contrast_array.clone());
-    let _ = overlays.insert("elevation", elevation_array.clone());
-    let _ = overlays.insert("elevation_raw", elevation_raw_array.clone());
-    let _ = overlays.insert("elevation_contrast", elevation_contrast_array.clone());
+    let _ = overlays.insert("logistics", &logistics_array.clone());
+    let _ = overlays.insert("logistics_raw", &logistics_raw_array.clone());
+    let _ = overlays.insert("logistics_contrast", &logistics_contrast_array.clone());
+    let _ = overlays.insert("contrast", &logistics_contrast_array.clone());
+    let _ = overlays.insert("sentiment", &sentiment_array.clone());
+    let _ = overlays.insert("sentiment_raw", &sentiment_raw_array.clone());
+    let _ = overlays.insert("sentiment_contrast", &sentiment_contrast_array.clone());
+    let _ = overlays.insert("corruption", &corruption_array.clone());
+    let _ = overlays.insert("corruption_raw", &corruption_raw_array.clone());
+    let _ = overlays.insert("corruption_contrast", &corruption_contrast_array.clone());
+    let _ = overlays.insert("fog", &fog_array.clone());
+    let _ = overlays.insert("fog_raw", &fog_raw_array.clone());
+    let _ = overlays.insert("fog_contrast", &fog_contrast_array.clone());
+    let _ = overlays.insert("culture", &culture_array.clone());
+    let _ = overlays.insert("culture_raw", &culture_raw_array.clone());
+    let _ = overlays.insert("culture_contrast", &culture_contrast_array.clone());
+    let _ = overlays.insert("military", &military_array.clone());
+    let _ = overlays.insert("military_raw", &military_raw_array.clone());
+    let _ = overlays.insert("military_contrast", &military_contrast_array.clone());
+    let _ = overlays.insert("crisis", &crisis_array.clone());
+    let _ = overlays.insert("crisis_raw", &crisis_raw_array.clone());
+    let _ = overlays.insert("crisis_contrast", &crisis_contrast_array.clone());
+    let _ = overlays.insert("elevation", &elevation_array.clone());
+    let _ = overlays.insert("elevation_raw", &elevation_raw_array.clone());
+    let _ = overlays.insert("elevation_contrast", &elevation_contrast_array.clone());
     let _ = overlays.insert("elevation_sea_level", elevation_sea_level);
-    let _ = overlays.insert("moisture", moisture_array.clone());
-    let _ = overlays.insert("moisture_raw", moisture_raw_array.clone());
-    let _ = overlays.insert("moisture_contrast", moisture_contrast_array.clone());
+    let _ = overlays.insert("moisture", &moisture_array.clone());
+    let _ = overlays.insert("moisture_raw", &moisture_raw_array.clone());
+    let _ = overlays.insert("moisture_contrast", &moisture_contrast_array.clone());
     let mut crisis_annotation_array = VarArray::new();
     for record in crisis_annotations {
         let dict = crisis_annotation_to_dict(record);
         crisis_annotation_array.push(&dict.to_variant());
     }
-    let _ = overlays.insert("crisis_annotations", crisis_annotation_array);
+    let _ = overlays.insert("crisis_annotations", &crisis_annotation_array);
 
     if let Some(terrain_data) = terrain.terrain {
         let mut terrain_array = PackedInt32Array::new();
@@ -976,7 +976,7 @@ fn snapshot_dict(
                 slice[i] = terrain_data[i] as i32;
             }
         }
-        let _ = overlays.insert("terrain", terrain_array);
+        let _ = overlays.insert("terrain", &terrain_array);
 
         if let Some(tag_data) = terrain.tags {
             let mut tag_array = PackedInt32Array::new();
@@ -988,7 +988,7 @@ fn snapshot_dict(
                     slice[i] = tag_data[i] as i32;
                 }
             }
-            let _ = overlays.insert("terrain_tags", tag_array);
+            let _ = overlays.insert("terrain_tags", &tag_array);
         }
 
         let mut palette = VarDictionary::new();
@@ -998,57 +998,57 @@ fn snapshot_dict(
                 let _ = palette.insert(value as i64, terrain_label_from_id(value));
             }
         }
-        let _ = overlays.insert("terrain_palette", palette);
+        let _ = overlays.insert("terrain_palette", &palette);
 
         let mut tag_labels = VarDictionary::new();
         for (mask, label) in TERRAIN_TAG_LABELS.iter() {
             let _ = tag_labels.insert(*mask as i64, *label);
         }
-        let _ = overlays.insert("terrain_tag_labels", tag_labels);
+        let _ = overlays.insert("terrain_tag_labels", &tag_labels);
     }
 
     if let Some(rivers) = hydrology_rivers {
-        let _ = overlays.insert("hydrology_rivers", rivers.clone());
+        let _ = overlays.insert("hydrology_rivers", &rivers.clone());
     }
     if let Some((sx, sy)) = start_marker {
         let mut marker = VarDictionary::new();
         let _ = marker.insert("x", sx as i64);
         let _ = marker.insert("y", sy as i64);
-        let _ = overlays.insert("start_marker", marker);
+        let _ = overlays.insert("start_marker", &marker);
     }
 
-    let _ = dict.insert("overlays", overlays);
+    let _ = dict.insert("overlays", &overlays);
 
-    let _ = dict.insert("units", VarArray::new());
-    let _ = dict.insert("orders", VarArray::new());
+    let _ = dict.insert("units", &VarArray::new());
+    let _ = dict.insert("orders", &VarArray::new());
 
     if let Some(label) = campaign_label {
-        let _ = dict.insert("campaign_label", label);
+        let _ = dict.insert("campaign_label", &label);
     }
     if let Some(profiles) = campaign_profiles {
-        let _ = dict.insert("campaign_profiles", profiles);
+        let _ = dict.insert("campaign_profiles", &profiles);
     }
     if let Some(victory) = victory_state {
-        let _ = dict.insert("victory", victory);
+        let _ = dict.insert("victory", &victory);
     }
     if let Some(inventory) = faction_inventory {
         if !inventory.is_empty() {
-            let _ = dict.insert("faction_inventory", inventory);
+            let _ = dict.insert("faction_inventory", &inventory);
         }
     }
     if let Some(events) = command_events {
         if !events.is_empty() {
-            let _ = dict.insert("command_events", events);
+            let _ = dict.insert("command_events", &events);
         }
     }
     if let Some(herd_array) = herds {
         if !herd_array.is_empty() {
-            let _ = dict.insert("herds", herd_array);
+            let _ = dict.insert("herds", &herd_array);
         }
     }
     if let Some(food_array) = food_modules {
         if !food_array.is_empty() {
-            let _ = dict.insert("food_modules", food_array);
+            let _ = dict.insert("food_modules", &food_array);
         }
     }
 
@@ -1149,155 +1149,158 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
     let mut dict = agg.into_dictionary();
 
     if let Some(victory) = delta.victory() {
-        let _ = dict.insert("victory", victory_state_to_dict(victory));
+        let _ = dict.insert("victory", &victory_state_to_dict(victory));
     }
 
     if let Some(events) = delta.commandEvents() {
-        let _ = dict.insert("command_events", command_events_to_array(events));
+        let _ = dict.insert("command_events", &command_events_to_array(events));
     }
 
     if let Some(herds) = delta.herds() {
-        let _ = dict.insert("herds", herds_to_array(herds));
+        let _ = dict.insert("herds", &herds_to_array(herds));
     }
 
     if let Some(sedentarization) = delta.sedentarization() {
-        let _ = dict.insert("sedentarization", sedentarization_to_array(sedentarization));
+        let _ = dict.insert(
+            "sedentarization",
+            &sedentarization_to_array(sedentarization),
+        );
     }
 
     if let Some(demographics) = delta.demographics() {
-        let _ = dict.insert("demographics", demographics_to_array(demographics));
+        let _ = dict.insert("demographics", &demographics_to_array(demographics));
     }
 
     if let Some(discovered_sites) = delta.discoveredSites() {
         let _ = dict.insert(
             "discovered_sites",
-            discovered_sites_to_array(discovered_sites),
+            &discovered_sites_to_array(discovered_sites),
         );
     }
 
     if let Some(definitions) = delta.greatDiscoveryDefinitions() {
         let _ = dict.insert(
             "great_discovery_definitions",
-            great_discovery_definitions_to_array(definitions),
+            &great_discovery_definitions_to_array(definitions),
         );
     }
 
     if let Some(axis_bias) = delta.axisBias() {
-        let _ = dict.insert("axis_bias", axis_bias_to_dict(axis_bias));
+        let _ = dict.insert("axis_bias", &axis_bias_to_dict(axis_bias));
     }
 
     if let Some(sentiment) = delta.sentiment() {
-        let _ = dict.insert("sentiment", sentiment_to_dict(sentiment));
+        let _ = dict.insert("sentiment", &sentiment_to_dict(sentiment));
     }
 
     if let Some(crisis) = delta.crisisTelemetry() {
-        let _ = dict.insert("crisis_telemetry", crisis_telemetry_to_dict(crisis));
+        let _ = dict.insert("crisis_telemetry", &crisis_telemetry_to_dict(crisis));
     }
 
     if let Some(crisis_overlay) = delta.crisisOverlay() {
-        let _ = dict.insert("crisis_overlay", crisis_overlay_to_dict(crisis_overlay));
+        let _ = dict.insert("crisis_overlay", &crisis_overlay_to_dict(crisis_overlay));
     }
 
     if let Some(great_discoveries) = delta.greatDiscoveries() {
         let updates = great_discovery_states_to_array(great_discoveries);
         if !updates.is_empty() {
-            let _ = dict.insert("great_discovery_updates", updates);
+            let _ = dict.insert("great_discovery_updates", &updates);
         }
     }
 
     if let Some(great_progress) = delta.greatDiscoveryProgress() {
         let updates = great_discovery_progress_states_to_array(great_progress);
         if !updates.is_empty() {
-            let _ = dict.insert("great_discovery_progress_updates", updates);
+            let _ = dict.insert("great_discovery_progress_updates", &updates);
         }
     }
 
     if let Some(gd_telemetry) = delta.greatDiscoveryTelemetry() {
         let _ = dict.insert(
             "great_discovery_telemetry",
-            great_discovery_telemetry_to_dict(gd_telemetry),
+            &great_discovery_telemetry_to_dict(gd_telemetry),
         );
     }
 
     if let Some(influencers) = delta.influencers() {
-        let _ = dict.insert("influencer_updates", influencers_to_array(influencers));
+        let _ = dict.insert("influencer_updates", &influencers_to_array(influencers));
     }
 
     let removed_influencers = u32_vector_to_packed_int32(delta.removedInfluencers());
     if !removed_influencers.is_empty() {
-        let _ = dict.insert("influencer_removed", removed_influencers);
+        let _ = dict.insert("influencer_removed", &removed_influencers);
     }
 
     if let Some(ledger) = delta.corruption() {
-        let _ = dict.insert("corruption", corruption_to_dict(ledger));
+        let _ = dict.insert("corruption", &corruption_to_dict(ledger));
     }
 
     if let Some(populations) = delta.populations() {
-        let _ = dict.insert("population_updates", populations_to_array(populations));
+        let _ = dict.insert("population_updates", &populations_to_array(populations));
     }
 
     let removed_populations = u64_vector_to_packed_int64(delta.removedPopulations());
     if !removed_populations.is_empty() {
-        let _ = dict.insert("population_removed", removed_populations);
+        let _ = dict.insert("population_removed", &removed_populations);
     }
 
     if let Some(trade_links) = delta.tradeLinks() {
-        let _ = dict.insert("trade_link_updates", trade_links_to_array(trade_links));
+        let _ = dict.insert("trade_link_updates", &trade_links_to_array(trade_links));
     }
 
     let removed_trade_links = u64_vector_to_packed_int64(delta.removedTradeLinks());
     if !removed_trade_links.is_empty() {
-        let _ = dict.insert("trade_link_removed", removed_trade_links);
+        let _ = dict.insert("trade_link_removed", &removed_trade_links);
     }
 
     if let Some(power_nodes) = delta.power() {
-        let _ = dict.insert("power_updates", power_nodes_to_array(power_nodes));
+        let _ = dict.insert("power_updates", &power_nodes_to_array(power_nodes));
     }
 
     let removed_power = u64_vector_to_packed_int64(delta.removedPower());
     if !removed_power.is_empty() {
-        let _ = dict.insert("power_removed", removed_power);
+        let _ = dict.insert("power_removed", &removed_power);
     }
 
     if let Some(power_metrics) = delta.powerMetrics() {
-        let _ = dict.insert("power_metrics", power_metrics_to_dict(power_metrics));
+        let _ = dict.insert("power_metrics", &power_metrics_to_dict(power_metrics));
     }
 
     if let Some(tiles) = delta.tiles() {
-        let _ = dict.insert("tile_updates", tiles_to_array(tiles));
+        let _ = dict.insert("tile_updates", &tiles_to_array(tiles));
     }
 
     let removed_tiles = u64_vector_to_packed_int64(delta.removedTiles());
     if !removed_tiles.is_empty() {
-        let _ = dict.insert("tile_removed", removed_tiles);
+        let _ = dict.insert("tile_removed", &removed_tiles);
     }
 
     if let Some(generations) = delta.generations() {
-        let _ = dict.insert("generation_updates", generations_to_array(generations));
+        let _ = dict.insert("generation_updates", &generations_to_array(generations));
     }
 
     let removed_generations = u16_vector_to_packed_int32(delta.removedGenerations());
     if !removed_generations.is_empty() {
-        let _ = dict.insert("generation_removed", removed_generations);
+        let _ = dict.insert("generation_removed", &removed_generations);
     }
 
     if let Some(layers) = delta.cultureLayers() {
-        let _ = dict.insert("culture_layer_updates", culture_layers_to_array(layers));
+        let _ = dict.insert("culture_layer_updates", &culture_layers_to_array(layers));
     }
 
     let removed_layers = u32_vector_to_packed_int32(delta.removedCultureLayers());
     if !removed_layers.is_empty() {
-        let _ = dict.insert("culture_layer_removed", removed_layers);
+        let _ = dict.insert("culture_layer_removed", &removed_layers);
     }
 
     if let Some(tensions) = delta.cultureTensions() {
-        let _ = dict.insert("culture_tensions", culture_tensions_to_array(tensions));
+        let _ = dict.insert("culture_tensions", &culture_tensions_to_array(tensions));
     }
 
     if let Some(progress) = delta.discoveryProgress() {
         let _ = dict.insert(
             "discovery_progress_updates",
-            discovery_progress_to_array(progress),
+            &discovery_progress_to_array(progress),
         );
     }
 
@@ -2595,7 +2598,7 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
                 let _ = rdict.insert("id", river.id() as i64);
                 let _ = rdict.insert("order", river.order() as i64);
                 let _ = rdict.insert("width", river.width() as i64);
-                let _ = rdict.insert("points", points_array);
+                let _ = rdict.insert("points", &points_array);
                 let river_variant = rdict.to_variant();
                 hydrology_rivers.push(&river_variant);
             }
@@ -2667,106 +2670,109 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
     }
 
     if let Some(sedentarization) = snapshot.sedentarization() {
-        let _ = dict.insert("sedentarization", sedentarization_to_array(sedentarization));
+        let _ = dict.insert(
+            "sedentarization",
+            &sedentarization_to_array(sedentarization),
+        );
     }
 
     if let Some(demographics) = snapshot.demographics() {
-        let _ = dict.insert("demographics", demographics_to_array(demographics));
+        let _ = dict.insert("demographics", &demographics_to_array(demographics));
     }
 
     if let Some(discovered_sites) = snapshot.discoveredSites() {
         let _ = dict.insert(
             "discovered_sites",
-            discovered_sites_to_array(discovered_sites),
+            &discovered_sites_to_array(discovered_sites),
         );
     }
 
     if let Some(axis_bias) = snapshot.axisBias() {
-        let _ = dict.insert("axis_bias", axis_bias_to_dict(axis_bias));
+        let _ = dict.insert("axis_bias", &axis_bias_to_dict(axis_bias));
     }
 
     if let Some(sentiment) = snapshot.sentiment() {
-        let _ = dict.insert("sentiment", sentiment_to_dict(sentiment));
+        let _ = dict.insert("sentiment", &sentiment_to_dict(sentiment));
     }
 
     if let Some(influencers) = snapshot.influencers() {
-        let _ = dict.insert("influencers", influencers_to_array(influencers));
+        let _ = dict.insert("influencers", &influencers_to_array(influencers));
     }
 
     if let Some(ledger) = snapshot.corruption() {
-        let _ = dict.insert("corruption", corruption_to_dict(ledger));
+        let _ = dict.insert("corruption", &corruption_to_dict(ledger));
     }
 
     if let Some(populations) = snapshot.populations() {
-        let _ = dict.insert("populations", populations_to_array(populations));
+        let _ = dict.insert("populations", &populations_to_array(populations));
     }
 
     if let Some(power_nodes) = snapshot.power() {
-        let _ = dict.insert("power_nodes", power_nodes_to_array(power_nodes));
+        let _ = dict.insert("power_nodes", &power_nodes_to_array(power_nodes));
     }
 
     if let Some(power_metrics) = snapshot.powerMetrics() {
-        let _ = dict.insert("power_metrics", power_metrics_to_dict(power_metrics));
+        let _ = dict.insert("power_metrics", &power_metrics_to_dict(power_metrics));
     }
 
     if let Some(crisis) = snapshot.crisisTelemetry() {
-        let _ = dict.insert("crisis_telemetry", crisis_telemetry_to_dict(crisis));
+        let _ = dict.insert("crisis_telemetry", &crisis_telemetry_to_dict(crisis));
     }
 
     if let Some(crisis_overlay) = snapshot.crisisOverlay() {
-        let _ = dict.insert("crisis_overlay", crisis_overlay_to_dict(crisis_overlay));
+        let _ = dict.insert("crisis_overlay", &crisis_overlay_to_dict(crisis_overlay));
     }
 
     if let Some(trade_links) = snapshot.tradeLinks() {
-        let _ = dict.insert("trade_links", trade_links_to_array(trade_links));
+        let _ = dict.insert("trade_links", &trade_links_to_array(trade_links));
     }
 
     if let Some(definitions) = snapshot.greatDiscoveryDefinitions() {
         let _ = dict.insert(
             "great_discovery_definitions",
-            great_discovery_definitions_to_array(definitions),
+            &great_discovery_definitions_to_array(definitions),
         );
     }
 
     if let Some(great_discoveries) = snapshot.greatDiscoveries() {
         let _ = dict.insert(
             "great_discoveries",
-            great_discovery_states_to_array(great_discoveries),
+            &great_discovery_states_to_array(great_discoveries),
         );
     }
 
     if let Some(great_progress) = snapshot.greatDiscoveryProgress() {
         let _ = dict.insert(
             "great_discovery_progress",
-            great_discovery_progress_states_to_array(great_progress),
+            &great_discovery_progress_states_to_array(great_progress),
         );
     }
 
     if let Some(gd_telemetry) = snapshot.greatDiscoveryTelemetry() {
         let _ = dict.insert(
             "great_discovery_telemetry",
-            great_discovery_telemetry_to_dict(gd_telemetry),
+            &great_discovery_telemetry_to_dict(gd_telemetry),
         );
     }
 
     if let Some(tiles_fb) = snapshot.tiles() {
-        let _ = dict.insert("tiles", tiles_to_array(tiles_fb));
+        let _ = dict.insert("tiles", &tiles_to_array(tiles_fb));
     }
 
     if let Some(generations) = snapshot.generations() {
-        let _ = dict.insert("generations", generations_to_array(generations));
+        let _ = dict.insert("generations", &generations_to_array(generations));
     }
 
     if let Some(layers) = snapshot.cultureLayers() {
-        let _ = dict.insert("culture_layers", culture_layers_to_array(layers));
+        let _ = dict.insert("culture_layers", &culture_layers_to_array(layers));
     }
 
     if let Some(tensions) = snapshot.cultureTensions() {
-        let _ = dict.insert("culture_tensions", culture_tensions_to_array(tensions));
+        let _ = dict.insert("culture_tensions", &culture_tensions_to_array(tensions));
     }
 
     if let Some(progress) = snapshot.discoveryProgress() {
-        let _ = dict.insert("discovery_progress", discovery_progress_to_array(progress));
+        let _ = dict.insert("discovery_progress", &discovery_progress_to_array(progress));
     }
 
     dict
@@ -2812,19 +2818,19 @@ fn campaign_profile_to_dict(profile: fb::CampaignProfile<'_>) -> VarDictionary {
     if let Some(units) = profile.startingUnits() {
         let units_array = campaign_starting_units_to_array(units);
         if !units_array.is_empty() {
-            let _ = dict.insert("starting_units", units_array);
+            let _ = dict.insert("starting_units", &units_array);
         }
     }
     if let Some(entries) = profile.inventory() {
         let inventory_array = campaign_inventory_to_array(entries);
         if !inventory_array.is_empty() {
-            let _ = dict.insert("inventory", inventory_array);
+            let _ = dict.insert("inventory", &inventory_array);
         }
     }
     if let Some(tags) = profile.knowledgeTags() {
         let tag_array = strings_to_variant_array(tags);
         if !tag_array.is_empty() {
-            let _ = dict.insert("knowledge_tags", tag_array);
+            let _ = dict.insert("knowledge_tags", &tag_array);
         }
     }
     let radius = profile.surveyRadius();
@@ -2862,7 +2868,7 @@ fn campaign_starting_units_to_array(
         if let Some(tags) = unit.tags() {
             let tag_array = strings_to_variant_array(tags);
             if !tag_array.is_empty() {
-                let _ = dict.insert("tags", tag_array);
+                let _ = dict.insert("tags", &tag_array);
             }
         }
         array.push(&dict.to_variant());
@@ -2910,7 +2916,7 @@ fn faction_inventory_to_array(
         if let Some(entries) = state.inventory() {
             let entry_array = faction_inventory_entries_to_array(entries);
             if !entry_array.is_empty() {
-                let _ = dict.insert("inventory", entry_array);
+                let _ = dict.insert("inventory", &entry_array);
             }
         }
         array.push(&dict.to_variant());
@@ -2962,7 +2968,7 @@ fn discovered_sites_to_array(
                 sites.push(&site_dict.to_variant());
             }
         }
-        let _ = dict.insert("sites", sites);
+        let _ = dict.insert("sites", &sites);
         array.push(&dict.to_variant());
     }
     array
@@ -3108,7 +3114,7 @@ fn victory_state_to_dict(state: fb::VictoryState<'_>) -> VarDictionary {
     }
 
     if !modes_array.is_empty() {
-        let _ = dict.insert("modes", modes_array);
+        let _ = dict.insert("modes", &modes_array);
     }
 
     if let Some(winner) = state.winner() {
@@ -3122,7 +3128,7 @@ fn victory_state_to_dict(state: fb::VictoryState<'_>) -> VarDictionary {
         let _ = winner_dict.insert("label", label_text);
         let _ = winner_dict.insert("faction", winner.faction() as i64);
         let _ = winner_dict.insert("tick", winner.tick() as i64);
-        let _ = dict.insert("winner", winner_dict);
+        let _ = dict.insert("winner", &winner_dict);
     }
 
     dict
@@ -3298,23 +3304,23 @@ fn sentiment_axis_to_dict(axis: fb::SentimentAxisTelemetry<'_>) -> VarDictionary
             drivers.push(&variant);
         }
     }
-    let _ = dict.insert("drivers", drivers);
+    let _ = dict.insert("drivers", &drivers);
     dict
 }
 
 fn sentiment_to_dict(sentiment: fb::SentimentTelemetryState<'_>) -> VarDictionary {
     let mut dict = VarDictionary::new();
     if let Some(axis) = sentiment.knowledge() {
-        let _ = dict.insert("knowledge", sentiment_axis_to_dict(axis));
+        let _ = dict.insert("knowledge", &sentiment_axis_to_dict(axis));
     }
     if let Some(axis) = sentiment.trust() {
-        let _ = dict.insert("trust", sentiment_axis_to_dict(axis));
+        let _ = dict.insert("trust", &sentiment_axis_to_dict(axis));
     }
     if let Some(axis) = sentiment.equity() {
-        let _ = dict.insert("equity", sentiment_axis_to_dict(axis));
+        let _ = dict.insert("equity", &sentiment_axis_to_dict(axis));
     }
     if let Some(axis) = sentiment.agency() {
-        let _ = dict.insert("agency", sentiment_axis_to_dict(axis));
+        let _ = dict.insert("agency", &sentiment_axis_to_dict(axis));
     }
     dict
 }
@@ -3417,7 +3423,7 @@ fn influencer_to_dict(state: fb::InfluentialIndividualState<'_>) -> VarDictionar
     );
     let domains_mask = state.domains();
     let _ = dict.insert("domains_mask", domains_mask as i64);
-    let _ = dict.insert("domains", influence_domain_labels(domains_mask));
+    let _ = dict.insert("domains", &influence_domain_labels(domains_mask));
     let _ = dict.insert("scope", influence_scope_label(state.scope()));
     let generation_scope = state.generationScope();
     if generation_scope != u16::MAX {
@@ -3429,7 +3435,7 @@ fn influencer_to_dict(state: fb::InfluentialIndividualState<'_>) -> VarDictionar
     let _ = dict.insert("coherence", fixed64_to_f64(state.coherence()));
     let _ = dict.insert("ticks_in_status", state.ticksInStatus() as i64);
     let audience = audience_generations_to_array(state.audienceGenerations());
-    let _ = dict.insert("audience_generations", audience);
+    let _ = dict.insert("audience_generations", &audience);
     let _ = dict.insert("support_popular", fixed64_to_f64(state.supportPopular()));
     let _ = dict.insert("support_peer", fixed64_to_f64(state.supportPeer()));
     let _ = dict.insert(
@@ -3452,7 +3458,7 @@ fn influencer_to_dict(state: fb::InfluentialIndividualState<'_>) -> VarDictionar
     );
     if let Some(resonance) = state.cultureResonance() {
         let array = culture_resonance_to_array(resonance);
-        let _ = dict.insert("culture_resonance", array);
+        let _ = dict.insert("culture_resonance", &array);
     }
     dict
 }
@@ -3526,7 +3532,7 @@ fn corruption_to_dict(ledger: fb::CorruptionLedger<'_>) -> VarDictionary {
             entries.push(&variant);
         }
     }
-    let _ = dict.insert("entries", entries);
+    let _ = dict.insert("entries", &entries);
     let _ = dict.insert(
         "reputation_modifier",
         fixed64_to_f64(ledger.reputationModifier()),
@@ -3587,7 +3593,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 let _ = stores_dict.insert(item, fixed64_to_f64(store.quantity()));
             }
         }
-        let _ = dict.insert("stores", stores_dict);
+        let _ = dict.insert("stores", &stores_dict);
     }
 
     if let Some(fragments) = cohort.knowledgeFragments() {
@@ -3596,7 +3602,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let dict = fragment_to_dict(fragment);
             array.push(&dict.to_variant());
         }
-        let _ = dict.insert("knowledge_fragments", array);
+        let _ = dict.insert("knowledge_fragments", &array);
     }
 
     if let Some(migration) = cohort.migration() {
@@ -3609,11 +3615,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 let dict = fragment_to_dict(fragment);
                 fragment_array.push(&dict.to_variant());
             }
-            let _ = migration_dict.insert("fragments", fragment_array);
+            let _ = migration_dict.insert("fragments", &fragment_array);
         } else {
-            let _ = migration_dict.insert("fragments", VarArray::new());
+            let _ = migration_dict.insert("fragments", &VarArray::new());
         }
-        let _ = dict.insert("migration", migration_dict);
+        let _ = dict.insert("migration", &migration_dict);
     }
 
     // Early-Game Labor (slice 3b): the band's source-centric labor allocation. Each entry is a
@@ -3640,7 +3646,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             array.push(&entry.to_variant());
         }
     }
-    let _ = dict.insert("labor_assignments", array);
+    let _ = dict.insert("labor_assignments", &array);
     let _ = dict.insert("idle_workers", cohort.idleWorkers() as i64);
     let _ = dict.insert("working_age", cohort.workingAge() as i64);
     // Forage work radius (Chebyshev tiles) drives the MapView band-selection work-range ring.
@@ -3648,6 +3654,25 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // base, 0 when no scouts) — its effect shows directly in the fog, NOT as a drawn disc.
     let _ = dict.insert("work_range", cohort.workRange() as i64);
     let _ = dict.insert("scout_reveal_radius", cohort.scoutRevealRadius() as i64);
+
+    // Scouting expedition (docs/plan_exploration_and_sites.md §2): a detached party is a
+    // PopulationCohort tagged Expedition that flows through this same populations[] array as a
+    // resident band, carrying three discriminator fields. Default to false/"" so resident-band
+    // markers are unaffected. (The persistence-only home_band/pending-reveal fields are
+    // deliberately NOT decoded — the client never reads them.)
+    let _ = dict.insert("is_expedition", cohort.isExpedition());
+    let _ = dict.insert(
+        "expedition_mission",
+        cohort.expeditionMission().unwrap_or(""),
+    );
+    let _ = dict.insert("expedition_phase", cohort.expeditionPhase().unwrap_or(""));
+    // Hard cap on party size the server enforces (from the expedition config, default 8). The
+    // outfit stepper clamps its max to min(idle_workers, this) so the player can't dial an
+    // over-cap party.
+    let _ = dict.insert(
+        "max_expedition_party_size",
+        cohort.maxExpeditionPartySize() as i64,
+    );
 
     if let Some(access) = cohort.accessibleStockpile() {
         let mut stock_dict = VarDictionary::new();
@@ -3662,9 +3687,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 let _ = entry_dict.insert("quantity", entry.quantity());
                 entry_array.push(&entry_dict.to_variant());
             }
-            let _ = stock_dict.insert("entries", entry_array);
+            let _ = stock_dict.insert("entries", &entry_array);
         }
-        let _ = dict.insert("accessible_stockpile", stock_dict);
+        let _ = dict.insert("accessible_stockpile", &stock_dict);
     }
 
     dict
@@ -3720,7 +3745,7 @@ fn great_discovery_state_to_dict(state: fb::GreatDiscoveryState<'_>) -> VarDicti
     let _ = dict.insert("publicly_deployed", state.publiclyDeployed());
     let effect_flags = state.effectFlags();
     let _ = dict.insert("effect_flags", effect_flags as i64);
-    let _ = dict.insert("effects", great_discovery_effect_labels(effect_flags));
+    let _ = dict.insert("effects", &great_discovery_effect_labels(effect_flags));
     dict
 }
 
@@ -3743,10 +3768,10 @@ fn great_discovery_requirement_definition_to_dict(
     let _ = dict.insert("weight", f64::from(req.weight()));
     let _ = dict.insert("minimum_progress", f64::from(req.minimumProgress()));
     if let Some(name) = req.name() {
-        let _ = dict.insert("name", GString::from(name));
+        let _ = dict.insert("name", &GString::from(name));
     }
     if let Some(summary) = req.summary() {
-        let _ = dict.insert("summary", GString::from(summary));
+        let _ = dict.insert("summary", &GString::from(summary));
     }
     dict
 }
@@ -3781,10 +3806,10 @@ fn great_discovery_definition_to_dict(
     let mut dict = VarDictionary::new();
     let _ = dict.insert("id", definition.id() as i64);
     if let Some(name) = definition.name() {
-        let _ = dict.insert("name", GString::from(name));
+        let _ = dict.insert("name", &GString::from(name));
     }
     let field = definition.field();
-    let _ = dict.insert("field", GString::from(knowledge_field_label(field)));
+    let _ = dict.insert("field", &GString::from(knowledge_field_label(field)));
     let _ = dict.insert(
         "observation_threshold",
         definition.observationThreshold() as i64,
@@ -3796,34 +3821,34 @@ fn great_discovery_definition_to_dict(
     let _ = dict.insert("effect_flags", definition.effectFlags() as i64);
     let _ = dict.insert("covert_until_public", definition.covertUntilPublic());
     if let Some(tier) = definition.tier() {
-        let _ = dict.insert("tier", GString::from(tier));
+        let _ = dict.insert("tier", &GString::from(tier));
     }
     if let Some(summary) = definition.summary() {
-        let _ = dict.insert("summary", GString::from(summary));
+        let _ = dict.insert("summary", &GString::from(summary));
     }
     if let Some(tags) = definition.tags() {
         let packed = string_vector_to_packed(tags);
-        let _ = dict.insert("tags", packed);
+        let _ = dict.insert("tags", &packed);
     } else {
-        let _ = dict.insert("tags", PackedStringArray::new());
+        let _ = dict.insert("tags", &PackedStringArray::new());
     }
     if let Some(effects) = definition.effectsSummary() {
         let packed = string_vector_to_packed(effects);
-        let _ = dict.insert("effects_summary", packed);
+        let _ = dict.insert("effects_summary", &packed);
     } else {
-        let _ = dict.insert("effects_summary", PackedStringArray::new());
+        let _ = dict.insert("effects_summary", &PackedStringArray::new());
     }
     if let Some(notes) = definition.observationNotes() {
-        let _ = dict.insert("observation_notes", GString::from(notes));
+        let _ = dict.insert("observation_notes", &GString::from(notes));
     }
     if let Some(profile) = definition.leakProfile() {
-        let _ = dict.insert("leak_profile", GString::from(profile));
+        let _ = dict.insert("leak_profile", &GString::from(profile));
     }
     if let Some(requirements) = definition.requirements() {
         let array = great_discovery_requirements_to_array(requirements);
-        let _ = dict.insert("requirements", array);
+        let _ = dict.insert("requirements", &array);
     } else {
-        let _ = dict.insert("requirements", VarArray::new());
+        let _ = dict.insert("requirements", &VarArray::new());
     }
     dict
 }
@@ -3925,7 +3950,7 @@ fn trade_link_to_dict(link: fb::TradeLinkState<'_>) -> VarDictionary {
         let _ = knowledge_dict.insert("last_discovery", knowledge.lastDiscovery() as i64);
         let _ = knowledge_dict.insert("decay", fixed64_to_f64(knowledge.decay()));
         let _ = knowledge_dict.insert("decay_raw", knowledge.decay());
-        let _ = dict.insert("knowledge", knowledge_dict);
+        let _ = dict.insert("knowledge", &knowledge_dict);
     }
 
     if let Some(pending) = link.pendingFragments() {
@@ -3934,9 +3959,9 @@ fn trade_link_to_dict(link: fb::TradeLinkState<'_>) -> VarDictionary {
             let fragment_dict = fragment_to_dict(fragment);
             pending_array.push(&fragment_dict.to_variant());
         }
-        let _ = dict.insert("pending_fragments", pending_array);
+        let _ = dict.insert("pending_fragments", &pending_array);
     } else {
-        let _ = dict.insert("pending_fragments", VarArray::new());
+        let _ = dict.insert("pending_fragments", &VarArray::new());
     }
 
     dict
@@ -4038,7 +4063,7 @@ fn power_metrics_to_dict(metrics: fb::PowerTelemetryState<'_>) -> VarDictionary 
             incidents_array.push(&dict.to_variant());
         }
     }
-    let _ = dict.insert("incidents", incidents_array);
+    let _ = dict.insert("incidents", &incidents_array);
 
     dict
 }
@@ -4100,9 +4125,9 @@ fn crisis_gauge_to_dict(gauge: fb::CrisisGaugeState<'_>) -> VarDictionary {
     let _ = dict.insert("stale_ticks", gauge.staleTicks() as i64);
     let _ = dict.insert("band", crisis_severity_band_to_str(gauge.band()));
     if let Some(history) = gauge.history() {
-        let _ = dict.insert("history", crisis_history_to_array(history));
+        let _ = dict.insert("history", &crisis_history_to_array(history));
     } else {
-        let _ = dict.insert("history", VarArray::new());
+        let _ = dict.insert("history", &VarArray::new());
     }
     dict
 }
@@ -4116,7 +4141,7 @@ fn crisis_telemetry_to_dict(telemetry: fb::CrisisTelemetryState<'_>) -> VarDicti
             gauges_array.push(&dict.to_variant());
         }
     }
-    let _ = dict.insert("gauges", gauges_array);
+    let _ = dict.insert("gauges", &gauges_array);
     let _ = dict.insert("modifiers_active", telemetry.modifiersActive() as i64);
     let _ = dict.insert("foreshock_incidents", telemetry.foreshockIncidents() as i64);
     let _ = dict.insert(
@@ -4149,13 +4174,13 @@ fn crisis_overlay_to_dict(overlay: fb::CrisisOverlayState<'_>) -> VarDictionary 
         }
         let _ = heatmap_dict.insert("width", width as i64);
         let _ = heatmap_dict.insert("height", height as i64);
-        let _ = heatmap_dict.insert("samples", packed_from_slice(&data));
+        let _ = heatmap_dict.insert("samples", &packed_from_slice(&data));
     } else {
         let _ = heatmap_dict.insert("width", 0);
         let _ = heatmap_dict.insert("height", 0);
-        let _ = heatmap_dict.insert("samples", PackedFloat32Array::new());
+        let _ = heatmap_dict.insert("samples", &PackedFloat32Array::new());
     }
-    let _ = dict.insert("heatmap", heatmap_dict);
+    let _ = dict.insert("heatmap", &heatmap_dict);
 
     let mut annotations = VarArray::new();
     if let Some(entries) = overlay.annotations() {
@@ -4172,14 +4197,14 @@ fn crisis_overlay_to_dict(overlay: fb::CrisisOverlayState<'_>) -> VarDictionary 
                 for (idx, value) in path.iter().enumerate() {
                     slice[idx] = value as i32;
                 }
-                let _ = annotation.insert("path", packed);
+                let _ = annotation.insert("path", &packed);
             } else {
-                let _ = annotation.insert("path", PackedInt32Array::new());
+                let _ = annotation.insert("path", &PackedInt32Array::new());
             }
             annotations.push(&annotation.to_variant());
         }
     }
-    let _ = dict.insert("annotations", annotations);
+    let _ = dict.insert("annotations", &annotations);
     dict
 }
 
@@ -4190,13 +4215,13 @@ fn crisis_annotation_to_dict(record: &CrisisAnnotationRecord) -> VarDictionary {
     }
     let _ = dict.insert("severity", crisis_severity_band_to_str(record.severity));
     if record.path.is_empty() {
-        let _ = dict.insert("path", PackedInt32Array::new());
+        let _ = dict.insert("path", &PackedInt32Array::new());
     } else {
         let mut packed = PackedInt32Array::new();
         packed.resize(record.path.len());
         let slice = packed.as_mut_slice();
         slice.copy_from_slice(&record.path);
-        let _ = dict.insert("path", packed);
+        let _ = dict.insert("path", &packed);
     }
     dict
 }
@@ -4244,7 +4269,7 @@ fn culture_layer_to_dict(layer: fb::CultureLayerState<'_>) -> VarDictionary {
             traits_array.push(&trait_dict.to_variant());
         }
     }
-    let _ = dict.insert("traits", traits_array);
+    let _ = dict.insert("traits", &traits_array);
 
     dict
 }

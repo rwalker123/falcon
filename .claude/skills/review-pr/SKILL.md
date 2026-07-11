@@ -15,134 +15,94 @@ This repo is a Rust (Bevy ECS) workspace plus a Godot thin client with
 FlatBuffers contracts. The review rules live in `.github/copilot-instructions.md`
 and the subsystem `CLAUDE.md` files — consult them when assessing a comment.
 
-## Arguments
+## Delegation model — keep review out of the orchestrator's context
 
-- `$ARGUMENTS` — optional PR number. If omitted, detect from the current branch.
+Processing a PR means reading many source files (analysis) and running builds
+and tests (fixes). Both would flood the main session's context, so this skill
+**delegates the heavy work to agents** and keeps only the report, the approval
+gate, and lightweight GitHub API calls in the orchestrator:
 
-## Step 1: Identify the PR
+- **Evaluation** (fetch comments, read code, assess each finding) → a single
+  read-only **`general-purpose`** agent that returns *only* a structured report
+  plus a JSON finding-manifest. It never mutates GitHub or the working tree.
+- **Fixes** (edit code, then fmt/clippy/test or godot-build) → **`server-dev`**
+  (Rust) and **`client-dev`** (Godot/GDScript) agents, which self-verify and
+  return terse summaries.
+- **The orchestrator** does everything in between: presents the report, gets the
+  user's approval, and performs the GitHub side-effects (inline comments,
+  replies, thread resolution, `eyes` reactions). These are small JSON calls,
+  cheap on context.
 
-If a PR number was provided, use it. Otherwise, detect from the current branch:
+The orchestrator must **not** read source files for analysis itself, and must
+**not** run the fmt/clippy/test/build loop itself — that is what the agents are
+for. Its own tool use should be limited to `gh` API calls and dispatching agents.
+
+## Step 1: Identify the PR (orchestrator)
+
+If a PR number was provided in `$ARGUMENTS`, use it. Otherwise detect from the
+current branch:
 
 ```bash
 gh pr view --json number,headRefName,url --jq '{number, headRefName, url}'
 ```
 
-Store the PR number and repo info for subsequent API calls.
-
-## Step 2: Get repo owner/name
+Also capture repo slug and HEAD SHA — the eval agent and the side-effect calls
+both need them:
 
 ```bash
 gh repo view --json owner,name --jq '.owner.login + "/" + .name'
+gh pr view {PR_NUMBER} --json headRefOid --jq '.headRefOid'
 ```
 
-Use this for all `gh api` calls (as `repos/:owner/:repo` shorthand works too).
+## Step 2: Delegate the evaluation to a `general-purpose` agent
 
-## Step 3: Fetch all review comments
+Spawn **one** `general-purpose` agent (it needs Bash for `gh` plus Read/Grep).
+Hand it the PR number, repo slug, and HEAD SHA, and the full instruction set
+below. It works in its own context and returns only the report + manifest — none
+of the file reads land in the orchestrator.
 
-### 3a: Copilot inline review comments
+Instruct the agent to do the following, verbatim in spirit:
 
-Fetch paginated inline review comments (these come from Copilot and human reviewers):
+### 2a: Fetch Copilot + human inline review comments
 
 ```bash
 gh api repos/:owner/:repo/pulls/{PR_NUMBER}/comments --paginate --jq '.[] | {id, node_id, user: .user.login, path, line, original_line, body, created_at, in_reply_to_id, pull_request_review_id}'
 ```
 
-Filter to comments from `copilot-pull-request-reviewer` or `Copilot` user.
-Also collect any human reviewer comments.
-
-**Check for already-processed comments**: For each comment, check if it has an `eyes` reaction.
-
-NOTE on reaction API paths — these differ by comment type:
-- **PR review comments** (Copilot inline): `repos/:owner/:repo/pulls/comments/{COMMENT_ID}/reactions`
-- **Issue comments** (Claude flat): `repos/:owner/:repo/issues/comments/{COMMENT_ID}/reactions`
-
-Do NOT include the PR number in the reactions path — it's `pulls/comments/{ID}` not `pulls/{PR}/comments/{ID}`.
+Keep comments from `copilot-pull-request-reviewer` / `Copilot` and any human
+reviewers. **Skip comments that already carry an `eyes` reaction** (processed in
+a prior run):
 
 ```bash
 gh api repos/:owner/:repo/pulls/comments/{COMMENT_ID}/reactions --jq '[.[] | select(.content == "eyes")] | length'
 ```
 
-Skip comments that already have an `eyes` reaction — they were processed in a previous run.
+NOTE on reaction API paths — they differ by comment type:
+- **PR review comments** (Copilot inline): `repos/:owner/:repo/pulls/comments/{COMMENT_ID}/reactions`
+- **Issue comments** (Claude flat): `repos/:owner/:repo/issues/comments/{COMMENT_ID}/reactions`
 
-### 3b: Claude issue comments
+Do NOT include the PR number in the reactions path — it's `pulls/comments/{ID}`,
+not `pulls/{PR}/comments/{ID}`.
 
-Fetch issue comments (Claude posts flat review comments here — see
-`.github/workflows/claude-code-review.yml`):
+### 2b: Fetch Claude issue comments and parse them into findings
 
 ```bash
 gh api repos/:owner/:repo/issues/{PR_NUMBER}/comments --jq '.[] | select(.user.login == "claude[bot]") | {id, node_id, body, created_at}'
 ```
 
-**Check for already-processed Claude comments**: Same `eyes` reaction check (note: issue comment path):
+Skip any with an `eyes` reaction (issue-comment path):
 
 ```bash
 gh api repos/:owner/:repo/issues/comments/{COMMENT_ID}/reactions --jq '[.[] | select(.content == "eyes")] | length'
 ```
 
-Skip Claude comments that already have an `eyes` reaction.
+Claude's comments are markdown with numbered findings grouped under severity
+headers (### Critical, ### Important, ### Code Quality / Nice-to-have). Parse each
+into: `severity` (Critical/Important/Code Quality), `title` (the bold title),
+`description` (full text), `file_path` (backtick-wrapped path, resolved to repo
+root), `line` (primary line number), `source` = "claude".
 
-### 3c: Parse Claude's flat markdown into individual findings
-
-Claude's comments are structured as markdown with numbered findings grouped under severity headers (### Critical, ### Important, ### Code Quality / Nice-to-have).
-
-For each Claude comment body, parse out individual findings. Each finding typically has:
-- A **numbered bold title** (e.g., `**1. Title here**`)
-- A description mentioning file paths (e.g., `In \`systems.rs\``) and line numbers (e.g., `(line 958)` or `(lines 118-134)`)
-- A severity level from the parent `###` header
-
-Extract from each finding:
-- `severity`: Critical / Important / Code Quality
-- `title`: The bold title text
-- `description`: The full finding text
-- `file_path`: Extract the file path mentioned (look for backtick-wrapped paths, resolve relative to repo root)
-- `line`: Extract the primary line number mentioned
-- `source`: "claude"
-
-## Step 4: Convert Claude findings to inline PR review comments
-
-For each parsed Claude finding that has a valid `file_path` and `line`:
-
-1. Verify the file exists in the PR diff:
-   ```bash
-   gh pr diff {PR_NUMBER} --name-only
-   ```
-
-2. Create an inline review comment on the PR so it becomes a resolvable conversation thread:
-   ```bash
-   gh api repos/:owner/:repo/pulls/{PR_NUMBER}/comments \
-     -f body="**[Claude Review — {SEVERITY}]** {FINDING_TITLE}
-
-   {FINDING_DESCRIPTION}
-
-   _Converted from Claude's flat review comment for tracking._" \
-     -f path="{FILE_PATH}" \
-     -F line={LINE_NUMBER} \
-     -f commit_id="{HEAD_SHA}"
-   ```
-
-   Get the HEAD SHA with:
-   ```bash
-   gh pr view {PR_NUMBER} --json headRefOid --jq '.headRefOid'
-   ```
-
-3. After converting ALL findings from a Claude comment, mark the original issue comment as processed with an `eyes` reaction:
-   ```bash
-   gh api repos/:owner/:repo/issues/comments/{COMMENT_ID}/reactions -f content=eyes
-   ```
-
-For Claude findings that DON'T have a clear file/line reference (e.g., architectural concerns, ECS ordering, schema-contract questions), keep them in the report but don't create inline comments.
-
-## Step 5: Build unified comment list
-
-Combine into a single list:
-- Copilot inline comments (already threads)
-- Newly created Claude inline comments (now threads too)
-- Claude findings without file/line (report-only)
-- Human reviewer comments
-
-Each entry should have: `source`, `severity` (infer for Copilot based on content), `file_path`, `line`, `body`, `thread_id` (GraphQL node ID for resolution).
-
-To get thread IDs for resolution later, fetch review threads via GraphQL:
+### 2c: Fetch review-thread node IDs for later resolution
 
 ```bash
 gh api graphql -f query='
@@ -154,14 +114,7 @@ gh api graphql -f query='
             id
             isResolved
             comments(first: 1) {
-              nodes {
-                id
-                databaseId
-                body
-                author { login }
-                path
-                line
-              }
+              nodes { id databaseId body author { login } path line }
             }
           }
         }
@@ -171,23 +124,21 @@ gh api graphql -f query='
 ' -f owner="{OWNER}" -f repo="{REPO}" -F pr={PR_NUMBER}
 ```
 
-Match threads to comments by `databaseId` to get the thread `id` for resolution.
+Match threads to comments by `databaseId` to get each thread's `id`.
 
-## Step 6: Analyze each finding
+### 2d: Assess each unprocessed finding
 
-For each unprocessed comment/finding:
+For each finding: read the referenced file and surrounding context (Read tool,
+not `cat`) and classify it as one of:
+- **Valid — fix needed**: exists in current code, should be fixed
+- **Valid — already fixed**: code no longer matches what the reviewer described
+- **Valid — but out of scope**: real but not for this PR
+- **Style nit**: subjective preference, not a bug
+- **Disagree**: reviewer is wrong (explain why)
 
-1. Read the referenced file and surrounding code context (use the Read tool, not cat)
-2. Assess whether the comment is:
-   - **Valid — fix needed**: The issue exists in the current code and should be fixed
-   - **Valid — already fixed**: The issue was already addressed (code doesn't match what the reviewer described)
-   - **Valid — but out of scope**: Real issue but not appropriate for this PR
-   - **Style nit**: Subjective preference, not a bug or correctness issue
-   - **Disagree**: The reviewer's assessment is incorrect (explain why)
-
-Ground the assessment in this repo's rules — check `.github/copilot-instructions.md`
-and the relevant subsystem `CLAUDE.md` (`core_sim/CLAUDE.md`,
-`clients/godot_thin_client/CLAUDE.md`). Common high-signal categories:
+Ground assessments in `.github/copilot-instructions.md` and the relevant
+subsystem `CLAUDE.md` (`core_sim/CLAUDE.md`,
+`clients/godot_thin_client/CLAUDE.md`). High-signal categories:
 - FlatBuffers contract changes (`sim_schema/schemas/*.fbs`) without regenerated bindings
 - Hand-edits to generated code under `shadow_scale_flatbuffers/src/generated/`
 - New `unwrap()`/`expect()`/`panic!` in simulation/server hot paths
@@ -196,9 +147,9 @@ and the relevant subsystem `CLAUDE.md` (`core_sim/CLAUDE.md`,
 - ECS systems added outside the correct `TurnStage` ordering
 - Godot panels that reimplement sizing instead of reusing `AutoSizingPanel.gd`
 
-## Step 7: Present the report
+### 2e: The agent returns ONLY these two things
 
-Output a structured report grouped by assessment:
+1. The **report** (markdown), grouped by assessment:
 
 ```
 ## PR Review Comment Analysis — PR #{NUMBER}
@@ -208,91 +159,130 @@ Output a structured report grouped by assessment:
 |---|--------|----------|------|---------|------------|
 | 1 | Copilot | High | core_sim/src/systems.rs:444 | unwrap on missing tile | Valid — panics on edge hex |
 
-### Already Fixed (X items)
-...
-
-### Out of Scope (X items)
-...
-
-### Style Nits (X items)
-...
-
-### Disagree (X items)
-...
+### Already Fixed (X)
+### Out of Scope (X)
+### Style Nits (X)
+### Disagree (X)
 ```
 
-Then ask: **"Which items should I fix? (e.g., 'all fixes needed', '1,3,5', 'skip')"**
+2. A **JSON manifest** — one object per finding, so the orchestrator can drive
+   fixes and side-effects without re-fetching anything:
 
-## Step 8: Fix selected items
+```json
+[
+  {
+    "n": 1,
+    "source": "copilot|claude|human",
+    "severity": "...",
+    "assessment": "fix-needed|already-fixed|out-of-scope|style-nit|disagree",
+    "file_path": "core_sim/src/systems.rs",
+    "line": 444,
+    "title": "...",
+    "description": "...",
+    "comment_id": 123,               // database id of the source comment
+    "comment_type": "pulls|issues",  // which reactions/reply path applies
+    "thread_id": "PRRT_...",         // GraphQL node id, or null if no thread yet
+    "in_reply_to_id": 123,           // for threaded replies
+    "needs_inline_comment": true     // true for Claude findings with file+line and no thread yet
+  }
+]
+```
 
-For each item the user wants fixed:
-1. Read the full relevant code
-2. Implement the fix
-3. After fixing, reply to the PR review thread:
-   ```bash
-   gh api repos/:owner/:repo/pulls/{PR_NUMBER}/comments \
-     -f body="Fixed in latest push. {BRIEF_DESCRIPTION_OF_FIX}" \
-     -F in_reply_to={ORIGINAL_COMMENT_ID}
-   ```
+The agent must **not** create comments, add reactions, resolve threads, or touch
+the working tree. It is read-only.
 
-## Step 9: Resolve threads
+## Step 3: Present the report and get approval (orchestrator)
 
-For ALL processed comments (fixed or not):
+Relay the agent's report to the user. Then ask:
+**"Which items should I fix? (e.g., 'all fixes needed', '1,3,5', 'skip')"**
 
-**Fixed items**: Resolve the thread:
+Do not proceed to fixes or any thread resolution without an explicit answer.
+
+## Step 4: Delegate fixes to the coder agents (orchestrator dispatches)
+
+Partition the approved findings by area and dispatch in parallel:
+- **Rust** (`core_sim`, `sim_runtime`, `sim_schema`, `xtask`, generated
+  FlatBuffers) → **`server-dev`**
+- **Godot / GDScript / native extension** (`clients/godot_thin_client`) →
+  **`client-dev`**
+
+Give each agent the specific findings (file, line, description, the fix intent)
+for its area. Both agents self-verify before returning:
+- `server-dev`: `cargo fmt --all` + `cargo clippy --workspace --all-targets
+  --all-features -- -D warnings` + `cargo test --workspace --locked`. If a
+  `.fbs` schema changed, regenerate first (`cargo build -p
+  shadow_scale_flatbuffers`, then `rustfmt` the generated file).
+- `client-dev`: `cargo xtask godot-build` + the ui_preview PNG harness.
+
+Never silence clippy with `#[allow(...)]` just to pass — fix the underlying
+issue. Each agent returns a terse summary (files touched, fix per finding,
+verification result). The orchestrator does **not** re-run these checks itself.
+
+If a fix is architectural / cross-cutting and doesn't fit a scoped agent spec,
+handle it inline — but that should be the exception.
+
+## Step 5: GitHub side-effects (orchestrator)
+
+These are small `gh` calls; keep them in the orchestrator so mutations stay under
+the user's eye. Drive them from the JSON manifest.
+
+**5a — Convert Claude findings into inline threads** (for any manifest entry with
+`needs_inline_comment: true`). First confirm the file is in the diff
+(`gh pr diff {PR_NUMBER} --name-only`), then:
+
+```bash
+gh api repos/:owner/:repo/pulls/{PR_NUMBER}/comments \
+  -f body="**[Claude Review — {SEVERITY}]** {TITLE}
+
+{DESCRIPTION}
+
+_Converted from Claude's flat review comment for tracking._" \
+  -f path="{FILE_PATH}" \
+  -F line={LINE} \
+  -f commit_id="{HEAD_SHA}"
+```
+
+After converting all findings from a given Claude issue comment, mark that
+comment processed (Step 5d). Claude findings with no clear file/line
+(architectural, ECS ordering, schema-contract questions) stay report-only — no
+inline comment.
+
+**5b — Reply on each processed thread:**
+- Fixed: `-f body="Fixed in latest push. {BRIEF_DESCRIPTION}"`
+- Not fixing (out of scope / disagree / style nit): `-f body="Not fixing — {REASON}"`
+- Already fixed: `-f body="Already addressed — {NOTE}"`
+
+```bash
+gh api repos/:owner/:repo/pulls/{PR_NUMBER}/comments \
+  -f body="..." -F in_reply_to={ORIGINAL_COMMENT_ID}
+```
+
+**5c — Resolve every processed thread** (fixed or not) once its reply is posted:
+
 ```bash
 gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "{THREAD_ID}"}) { thread { id isResolved } } }'
 ```
 
-**Not fixing (out of scope, disagree, style nit)**: Reply with reason, then resolve:
+**5d — Mark source comments processed** with an `eyes` reaction so the next run
+skips them (path depends on `comment_type`):
+
 ```bash
-gh api repos/:owner/:repo/pulls/{PR_NUMBER}/comments \
-  -f body="Not fixing — {REASON}" \
-  -F in_reply_to={ORIGINAL_COMMENT_ID}
-```
-Then resolve the thread with the same GraphQL mutation.
-
-**Already fixed**: Reply noting it's already addressed, then resolve.
-
-## Step 10: Mark all source comments as processed
-
-Add `eyes` reaction to every Copilot inline comment that was processed:
-```bash
+# Copilot inline:
 gh api repos/:owner/:repo/pulls/comments/{COMMENT_ID}/reactions -f content=eyes
+# Claude flat issue comment:
+gh api repos/:owner/:repo/issues/comments/{COMMENT_ID}/reactions -f content=eyes
 ```
-
-This ensures the next run of `/review-pr` skips these comments.
-
-## Step 11: Run formatting, lint, and tests
-
-After all fixes are applied, run this repo's standard checks — the same ones CI
-enforces (`.github/workflows/rust.yml`). Scope to what you touched, but the
-workspace commands are fast enough to run whole:
-
-```bash
-# If FlatBuffers schema (sim_schema/schemas/*.fbs) changed, regenerate first:
-cargo build -p shadow_scale_flatbuffers
-rustfmt shadow_scale_flatbuffers/src/generated/snapshot_generated.rs
-
-# Rust checks (CI treats clippy warnings as errors):
-cargo fmt --all
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --locked
-
-# If the Godot native extension or GDScript changed:
-cargo xtask godot-build
-```
-
-Fix any issues introduced by the fixes before considering the task complete.
-Never silence clippy with `#[allow(...)]` just to make the check pass — fix the
-underlying issue.
 
 ## Important notes
 
-- NEVER resolve threads or reply to comments without explicit user approval
-- Present the full report FIRST, then wait for user direction
-- When creating inline comments from Claude findings, use the exact file paths from the PR diff (not guessed paths)
-- If a Claude finding references multiple files, create a comment on the primary file mentioned
-- Handle pagination — PRs can have many comments across multiple pages
-- The `eyes` reaction is the "processed" marker — do not use other reactions
-- If the user runs `/review-pr` again on the same PR, only NEW unprocessed comments should appear
+- NEVER resolve threads or reply to comments without explicit user approval —
+  present the full report FIRST and wait for direction.
+- The orchestrator does not read source for analysis or run the build/test loop —
+  those are delegated (Steps 2 and 4). If you catch yourself reading files to
+  assess a finding, stop and let the eval agent do it.
+- Use exact file paths from the PR diff (not guessed paths) when creating inline
+  comments. If a Claude finding names multiple files, comment on the primary one.
+- Handle pagination — PRs can have many comments across pages.
+- The `eyes` reaction is the "processed" marker — do not use other reactions.
+- Re-running `/review-pr` on the same PR should surface only NEW unprocessed
+  comments.

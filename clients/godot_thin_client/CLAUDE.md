@@ -548,19 +548,52 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `MapView.focus_on_tile` (shared minimap centering machinery). Hidden via the dock until an alert exists.
   NOTE: cohorts carry no top-level band label in the snapshot — names fall back to a positional
   "Band N"; a server-side band-label field would make names authoritative.
-- **Targeting is now move-band only** (`Hud.gd`): the single-task forage/scout/hunt/follow
-  `_pending_*` flows were retired with labor allocation. `_current_targeting_info()` returns a
-  descriptor (`{active, command: "move", need: "tile", origin_x/y, context_label}`) only while
-  `_pending_move_band` is set; `_refresh_targeting()` shows the floating **targeting banner**
-  (top-centre, `HudStyle.banner_stylebox()`: cyan reticle + command + "click a destination tile"
-  + Cancel) and emits `targeting_changed(info)`.
+- **Targeting: move-band + send-expedition** (`Hud.gd`): the single-task forage/scout/hunt/follow
+  `_pending_*` flows were retired with labor allocation. Two tile-targeting flows remain, both
+  built on the same `_pending_*` → `_current_targeting_info()` → `_refresh_targeting()` machinery:
+  `_pending_move_band` (`command: "move"`) and `_pending_send_expedition` (`command: "expedition"`,
+  carries the outfitted band + chosen party size). `_current_targeting_info()` returns a descriptor
+  (`{active, command, need: "tile", origin_x/y, context_label}`) for whichever is set;
+  `_refresh_targeting()` shows the floating **targeting banner** (top-centre,
+  `HudStyle.banner_stylebox()`: cyan reticle + command + instruction + Cancel) and emits
+  `targeting_changed(info)`. Both `show_tile_selection` + `notify_hex_selected` dispatch both
+  pending flows on the tile click.
 - **Main forwards** `hud.targeting_changed → map_view.set_targeting` and
   `map_view.targeting_cancel_requested → hud.cancel_active_targeting`.
 - **MapView draws** the overlay (`_draw_targeting`): `need == "tile"` draws a reticle on the
   hovered hex (the `need == "band"` path is now unused). Esc / right-click during targeting emit
   `targeting_cancel_requested` instead of panning; the pulse is animated from `_process`.
 - **Resolution**: the destination tile click (`_try_dispatch_pending_move_band`) emits
-  `move_band_requested` → `Main._on_hud_move_band` → `move_band …`.
+  `move_band_requested` → `Main._on_hud_move_band` → `move_band …`; the expedition-target click
+  (`_try_dispatch_pending_send_expedition`) emits `send_expedition_requested` →
+  `Main._on_hud_send_expedition` → `send_expedition …`.
+- **Scouting expedition** (`docs/plan_exploration_and_sites.md` §2; snapshot
+  `PopulationCohortState.isExpedition`/`expeditionMission`/`expeditionPhase`, decoded in
+  `native/src/lib.rs population_to_dict` as `is_expedition`/`expedition_mission`/`expedition_phase`,
+  flowed onto the MapView unit marker in `_rebuild_unit_markers`; the persistence-only
+  `homeBandEntity`/`expeditionAnnounced`/`pendingReveal*` fields are deliberately NOT decoded). A
+  detached party is a `PopulationCohort` tagged `Expedition` that flows through the same
+  `populations[]` array as a band. Surfaced four ways:
+  (1) **Distinct map marker** (`MapView._draw_unit` → `_draw_expedition_body`): a hollow,
+  faction-tinted **flag disc** (⚑) instead of a resident band's solid dot; when
+  `expedition_phase == "awaiting"` a **pulsing amber (WARN) ring** signals idle-at-objective needing
+  an order (animated from `_expedition_time` in `_process`, gated on `_has_awaiting_expedition` set
+  at marker-rebuild). Resident-band rendering is untouched.
+  (2) **Expedition drawer panel** (`Hud._render_occupant_drawer` → `_build_expedition_panel`):
+  replaces the labor-allocation panel for a selected expedition (no labor in v1). Drawer text
+  (`_expedition_summary_lines`) shows Mission / humanized Phase / Party / Provisions (`daysOfFood`);
+  the panel hosts **Recall** (→ `recall_expedition_requested` → `Main._on_hud_recall_expedition` →
+  `recall_expedition …`) + **Move** (reuses `_on_move_band_pressed`; `_resolve_assign_band` returns
+  the selected expedition since it's a player unit — Move retargets it via `move_band` unchanged, no
+  un-gating needed).
+  (3) **Outfit UI** (`Hud._build_allocation_panel` → `_build_send_expedition_controls`): on a
+  selected resident band, a "Send scouting expedition" party-size stepper (max =
+  `min(idle_workers, max_expedition_party_size)`; the server's hard cap comes from the
+  `maxExpeditionPartySize` snapshot field, decoded as `max_expedition_party_size`, defensively
+  falling back to idle when absent/0) + a button entering `_pending_send_expedition` targeting.
+  (4) The `marker_field_guard` covers the four new marker keys (`is_expedition`,
+  `expedition_mission`, `expedition_phase`, `max_expedition_party_size`). The server still rejects
+  a genuinely over-cap request with a feed message as a backstop.
 - **Retired verbs (Early-Game Labor slice 3a):** the server now parses-but-ignores
   `follow_herd` / `scout` / `forage` / `hunt_fauna` / `hunt_game`. Every client control that
   emitted them was removed or repointed so nothing is silently dead: the map double-click

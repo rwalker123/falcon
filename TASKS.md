@@ -336,23 +336,62 @@ role). Sequenced: local scout (small fix) → sites subsystem (foundation) → e
   (settle-site / riches / tribe / landmark). **Point sites v1** (single tile; landmark = named
   point on its prominent tile); per-category placement (landmarks emergent from terrain at worldgen,
   riches from deposits, settle-sites derived, tribes seeded). Seed 2–3 site types.
-- [ ] **Scouting expedition.** A visible detached party (own map marker) outfitted with workers +
-  provisions (larder-drawn, scaled by size × distance), sent to a target; treks revealing fog along
-  its path, reaches the objective, **returns**. **Deterministic finds** — reveals the real Wondrous
-  Sites along its path (+ optional small flavor roll) + permanent map reveal. Reuses move-band
-  travel + `FogRevealLedger`/knowledge-fragment machinery; shares the deferred breakaway/split
-  detached-party machinery.
-- [ ] **Hunting expedition** (build with the scouting-expedition work — same detached-party
-  machinery; design `docs/plan_exploration_and_sites.md` §2b). A detached hunting party that
-  **follows a migratory herd beyond the leash** (which today lapses a Hunt at `band_work_range +
-  hunt_leash_tiles`), takes food each turn in reach (reusing the Hunt take math), **carries** it up
-  to a carry capacity, and **drops it off at the band** when the herd's circuit brings it near OR
-  the party is **full** — so you can exploit a herd's whole migratory circuit. Open at build time:
-  self-provisioning vs living off kills; "full" = the band carry-capacity concept?; auto-relaunch
-  vs re-issue; risk/failure (deferred like the scout expedition).
+- [ ] **PR 1 — Traveling-party system + scouting expedition** (folds in the `ResidentBand` isolation
+  refactor). A visible detached party (own map marker) outfitted with workers + provisions
+  (larder-drawn, scaled by size × distance), sent to a target via the **reused move-band click
+  flow**; treks and uncovers the real Wondrous Sites along its path (deterministic finds).
+  **Communication-range discovery** (the Columbus beat): the party carries a comm range (flat config
+  lever, default 2 tiles, tech-scaling hook stubbed); it is **not** a live faction vision source
+  (`Without<Expedition>` in `calculate_visibility`) — it accumulates observed tiles into a private
+  **pending-reveal buffer**, and `advance_expeditions` flushes that into the faction map as
+  `Discovered` only while **in comm range** of the band, so the map lights up as a lump **on return**,
+  not live along the path. Site discovery then rides the existing `discover_sites` path for free.
+  **Arrival is a decision point**, not an auto-turnaround: it enters an *awaiting-orders* state
+  (marker state + feed line, player-visible regardless of comm range), and the player either **sends
+  it onward to a new target** (chain waypoints — deciding blind if beyond comm range) or **orders it
+  home**; return targets the band's **live** tile (band is nomadic). On return, workers + leftover
+  provisions fold back into the band. Provisions **deplete per turn** (non-fatal if zero in v1 —
+  deterministic success). Model: an expedition is **another `StartingUnit` band** reusing
+  `PopulationCohort` + `BandTravel` + `LaborAllocation`, tagged with a new `Expedition` marker and
+  **lacking `ResidentBand`**; isolate from the growing population/settlement arc via the positive
+  **`ResidentBand`** marker on real bands (demographics / sedentarization / migration / startup-seed /
+  supply-network / default-band command pickers filter `With<ResidentBand>`; expeditions excluded by
+  construction). New `expedition_config.rs`/`.json`/`Handle`; `send_expedition` + `recall_expedition`
+  commands (retarget reuses `move_band`); `advance_expeditions` system; `Expedition` snapshot-persisted
+  (incl. pending-reveal buffer); snapshot discriminator `isExpedition`/`expeditionMission`/
+  `expeditionPhase` on `PopulationCohortState`; client distinct glyph/label + outfit UI + recall +
+  `marker_field_guard` update. Shares the deferred breakaway/split detached-party machinery (breakaway
+  = an expedition that drops `Expedition`, gains `ResidentBand`, and keeps its `Discovered` map).
+- [ ] **PR 2 — Hunting expedition** (second verb on PR 1's system; design §2b). Introduces the shared
+  **take-food-from-a-nearby-source** primitive: the **hunt** verb does it continuously — a detached
+  party that **follows a migratory herd beyond the leash** (which today lapses a Hunt at
+  `band_work_range + hunt_leash_tiles`) by retargeting `BandTravel` to `herd.position()` each turn,
+  takes food in reach (reusing the Hunt take math into its own store), **carries** it up to a carry
+  capacity, and **drops it off at the band** when the herd's circuit nears the band OR the party is
+  full. The same primitive **retrofits the scout's opportunistic replenish** (top up when provisions
+  run low and it passes game — the real-life hunt-while-traveling). Resolved (§2b): **lives off its
+  own kills** (no separate provisions for the hunt verb); **"full" = `party_workers × per_worker_carry`**
+  (own lever — the band carry-cap slice is unbuilt); **auto-relaunch** on drop-off (loops the herd's
+  circuit until recalled or herd extinct) + a recall/disband command; **risk/failure deferred** like
+  the scout expedition. Client carried-food readout on the marker/panel.
 - [ ] Deferred / documented: expedition **risk/failure** (peril, non-return); **scouting-TOE**
   gating (with the TOE slice); **regional (multi-tile) sites**; richer per-category rewards;
   **tribes as real civilizations**.
+- [ ] **Rollback restores `StartingUnit`** (pre-existing, all bands — surfaced during the expedition
+  work, own small PR). `rollback <tick>` (dev/debug time-rewind) re-spawns each band's
+  `PopulationCohort` from the snapshot but never persisted `StartingUnit` (unit kind/tags), so
+  restored bands lose live fog-reveal **and** `move_band` controllability (expeditions inherit the
+  same gap). Fix: persist `StartingUnit.kind`/`tags` on `PopulationCohortState`, re-attach on restore
+  (build on the 2-pass restore the expedition PR added). Not expedition-specific; keep out of the
+  expedition PR's diff. Check first whether `rollback` is player-reachable or dev-only (sets priority).
+- [ ] **Band commands lack a faction check** (pre-existing, all band-command handlers — surfaced
+  during the expedition work, own PR). `resolve_starting_unit_entity` validates entity-exists +
+  `StartingUnit`/`ResidentBand` but never `cohort.faction == faction`, so a raw command with explicit
+  `band_entity_bits` (`move_band`, `send_expedition`, etc.) could target **another faction's** band.
+  Not UI-reachable, bounded harm, but a footgun. Fix uniformly at the shared resolver
+  (`resolve_starting_unit_entity` / `select_starting_band`) — a faction-match gate applied across all
+  band-command handlers — not per-handler. `send_expedition` already gained a `ResidentBand` gate in
+  PR #96; the faction check is the remaining shared gap.
 
 ### Civilization Wellbeing (Morale → Discontent → Consequences)
 

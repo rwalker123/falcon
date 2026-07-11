@@ -41,8 +41,8 @@ use sim_runtime::TerrainTags;
 
 use crate::{
     components::{
-        LaborAllocation, LaborTarget, LogisticsLink, PopulationCohort, Settlement, StartingUnit,
-        Tile, TownCenter, TradeLink,
+        Expedition, LaborAllocation, LaborTarget, LogisticsLink, PopulationCohort, Settlement,
+        StartingUnit, Tile, TownCenter, TradeLink,
     },
     fauna::HerdRegistry,
     grid_utils::{hex_neighbor, shortest_delta_x, wrap_x, wrapped_distance_x, HEX_DIRECTION_COUNT},
@@ -113,12 +113,19 @@ pub fn calculate_visibility(
     tiles: Query<&Tile>,
     // Population cohorts with StartingUnit marker for unit type. The optional LaborAllocation
     // supplies the band's Scout head-count, which posts forward-observer vantages (see below).
-    cohorts: Query<(
-        Entity,
-        &PopulationCohort,
-        &StartingUnit,
-        Option<&LaborAllocation>,
-    )>,
+    // `Without<Expedition>`: a detached expedition keeps `StartingUnit` (for move_band retargeting +
+    // selection) but is deliberately NOT a live faction vision source — comm-range gating means it
+    // must not light up the faction map from wherever it stands. It observes into its own
+    // pending-reveal buffer and `advance_expeditions` flushes that on a comm-range delay.
+    cohorts: Query<
+        (
+            Entity,
+            &PopulationCohort,
+            &StartingUnit,
+            Option<&LaborAllocation>,
+        ),
+        Without<Expedition>,
+    >,
     // Settlements with TownCenter
     settlements: Query<(&Settlement, &TownCenter)>,
 ) {
@@ -454,7 +461,11 @@ fn scout_vantage_tiles(
 }
 
 /// Build a grid of terrain tags from tile entities.
-fn build_terrain_tags_grid(tiles: &Query<&Tile>, width: u32, height: u32) -> Vec<TerrainTags> {
+pub(crate) fn build_terrain_tags_grid(
+    tiles: &Query<&Tile>,
+    width: u32,
+    height: u32,
+) -> Vec<TerrainTags> {
     let mut grid = vec![TerrainTags::empty(); (width * height) as usize];
     for tile in tiles.iter() {
         let idx = (tile.position.y * width + tile.position.x) as usize;
@@ -493,6 +504,72 @@ fn reveal_tiles_in_range(
     terrain_modifiers: &TerrainModifierConfig,
     blocking_tags: TerrainTags,
     wrap_horizontal: bool,
+) {
+    // Mark each visible tile Active **inline** — this runs for every vision source every turn, so
+    // it must not allocate a Vec on the reveal hot path (the shared geometry hands us tiles via the
+    // closure instead of collecting them).
+    for_each_visible_tile_in_range(
+        center,
+        base_range,
+        elevation,
+        los_enabled,
+        terrain_tags,
+        terrain_modifiers,
+        blocking_tags,
+        wrap_horizontal,
+        |pos| map.mark_active(pos.x, pos.y, current_turn),
+    );
+}
+
+/// The tiles a source at `center` with `base_range` can see (elevation/terrain/LOS applied) — the
+/// pure geometry behind [`reveal_tiles_in_range`], collected into a `Vec` so a caller can observe
+/// **without** mutating a faction map. `advance_expeditions` uses this to accumulate a
+/// comm-range-gated pending-reveal buffer (an expedition observes but does not live-reveal fog).
+/// The allocation here is fine — this path is the (rare) expedition observation, not the per-source
+/// reveal, which streams through [`for_each_visible_tile_in_range`] allocation-free.
+// Args are inherent: it threads the LOS/elevation/terrain config through the shared reveal geometry.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn visible_tiles_in_range(
+    center: UVec2,
+    base_range: u32,
+    elevation: &ElevationField,
+    los_enabled: bool,
+    terrain_tags: &[TerrainTags],
+    terrain_modifiers: &TerrainModifierConfig,
+    blocking_tags: TerrainTags,
+    wrap_horizontal: bool,
+) -> Vec<UVec2> {
+    let mut visible = Vec::new();
+    for_each_visible_tile_in_range(
+        center,
+        base_range,
+        elevation,
+        los_enabled,
+        terrain_tags,
+        terrain_modifiers,
+        blocking_tags,
+        wrap_horizontal,
+        |pos| visible.push(pos),
+    );
+    visible
+}
+
+/// Shared per-tile visibility geometry (elevation bounding box + circular range + terrain modifier +
+/// LOS ray-cast), invoking `f(pos)` for each visible tile. Holds the geometry once so both the
+/// allocation-free reveal path ([`reveal_tiles_in_range`], marks inline) and the collecting
+/// observation path ([`visible_tiles_in_range`], pushes to a `Vec`) stay DRY.
+// Args are inherent: it threads the LOS/elevation/terrain config through the shared reveal geometry.
+#[allow(clippy::too_many_arguments)]
+fn for_each_visible_tile_in_range(
+    center: UVec2,
+    base_range: u32,
+    elevation: &ElevationField,
+    los_enabled: bool,
+    terrain_tags: &[TerrainTags],
+    terrain_modifiers: &TerrainModifierConfig,
+    blocking_tags: TerrainTags,
+    wrap_horizontal: bool,
+    mut f: impl FnMut(UVec2),
 ) {
     let width = elevation.width;
     let height = elevation.height;
@@ -572,14 +649,14 @@ fn reveal_tiles_in_range(
                 continue;
             }
 
-            // Mark tile as visible
-            map.mark_active(x, y, current_turn);
+            // Tile is visible from this source.
+            f(UVec2::new(x, y));
         }
     }
 }
 
 /// Convert string terrain tag names to a combined TerrainTags bitfield.
-fn parse_blocking_tags(tag_names: &[String]) -> TerrainTags {
+pub(crate) fn parse_blocking_tags(tag_names: &[String]) -> TerrainTags {
     let mut result = TerrainTags::empty();
     for name in tag_names {
         let tag = match name.as_str() {

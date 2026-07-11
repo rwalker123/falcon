@@ -401,6 +401,90 @@ impl StartingUnit {
     }
 }
 
+/// Positive marker for a **real** band — one that participates in the population/settlement arc
+/// (demographics, migration, sedentarization, startup seeding, supply networks, default-band
+/// command pickers). Attached to every band spawned by worldgen. A detached [`Expedition`]
+/// deliberately **lacks** this marker, so it is excluded from those systems *by construction* — the
+/// safe default survives new systems added to the settlement arc. A future breakaway-to-new-band is
+/// an expedition that drops `Expedition` and gains `ResidentBand` (`docs/plan_exploration_and_sites.md`).
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct ResidentBand;
+
+/// What an expedition was sent to do. v1 has only `Scout`; the hunting expedition (PR 2) adds a
+/// `Hunt { fauna_id }` variant on the same traveling-party system.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExpeditionMission {
+    /// Explore toward a target and report the map + any Wondrous Sites it uncovers.
+    Scout,
+}
+
+impl ExpeditionMission {
+    /// Stable wire/snapshot key for the mission (client discriminator).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ExpeditionMission::Scout => "scout",
+        }
+    }
+
+    /// Parse a mission from its wire key (snapshot restore). Only `Scout` exists in v1; unknown keys
+    /// (a future `Hunt`) default to `Scout` until PR 2 adds the variant.
+    pub fn from_wire(_s: &str) -> Self {
+        ExpeditionMission::Scout
+    }
+}
+
+/// The expedition's lifecycle phase. `Outbound` toward a target; `AwaitingOrders` parked at the
+/// target (the decision point — chain a `move_band` waypoint or `recall_expedition`); `Returning`
+/// chasing the home band's live tile to fold back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpeditionPhase {
+    Outbound,
+    AwaitingOrders,
+    Returning,
+}
+
+impl ExpeditionPhase {
+    /// Stable wire/snapshot key for the phase (client marker state discriminator).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ExpeditionPhase::Outbound => "outbound",
+            ExpeditionPhase::AwaitingOrders => "awaiting",
+            ExpeditionPhase::Returning => "returning",
+        }
+    }
+
+    /// Parse a phase from its wire key (snapshot restore). Unknown keys default to `Outbound`.
+    pub fn from_wire(s: &str) -> Self {
+        match s {
+            "awaiting" => ExpeditionPhase::AwaitingOrders,
+            "returning" => ExpeditionPhase::Returning,
+            _ => ExpeditionPhase::Outbound,
+        }
+    }
+}
+
+/// Marks a detached traveling party (a scouting/hunting expedition). Reuses `PopulationCohort` +
+/// `BandTravel` + `LaborAllocation` + `StartingUnit` machinery, but is excluded from the
+/// population/settlement arc (it lacks [`ResidentBand`]) and from live faction fog reveal
+/// (`Without<Expedition>` in `calculate_visibility`). Discovery is **communication-range gated**: it
+/// buffers the tiles it observes in `pending_reveal` and `advance_expeditions` flushes them to the
+/// faction map as `Discovered` only while within comm range of the home band. Snapshot-persisted so
+/// a rollback preserves an in-flight expedition and its unreported findings.
+#[derive(Component, Debug, Clone)]
+pub struct Expedition {
+    /// The real band that outfitted this party. `Returning` chases this band's **live** tile (bands
+    /// are nomadic), and fold-back deposits the party's workers + leftover provisions here.
+    pub home_band: Entity,
+    pub mission: ExpeditionMission,
+    pub phase: ExpeditionPhase,
+    /// Whether the arrival ("reached X — awaiting orders") feed line has fired for the current
+    /// `AwaitingOrders` latch; reset to `false` when a new `move_band` order relaunches the party.
+    pub announced: bool,
+    /// Observed-but-unreported tile coordinates (deduped). Flushed to the faction map as
+    /// `Discovered` when the party is within comm range of its home band, then cleared.
+    pub pending_reveal: Vec<UVec2>,
+}
+
 /// Permanent settlement seeded by a founding action.
 #[derive(Component, Debug, Clone)]
 pub struct Settlement {

@@ -5,7 +5,11 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use bevy::{ecs::system::Resource, math::UVec2, prelude::Entity};
+use bevy::{
+    ecs::system::Resource,
+    math::UVec2,
+    prelude::{Entity, With},
+};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tracing::{info, warn};
@@ -13,11 +17,13 @@ use tracing_subscriber::prelude::*;
 
 use core_sim::log_stream::start_log_stream_server;
 
+use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
     available_workers, resolve_active_profile, ActiveStartProfile, BandTravel, CampaignLabel,
-    LaborAllocation, LaborTarget, StartProfileOverrides,
+    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, LaborAllocation,
+    LaborTarget, LocalStore, ResidentBand, StartProfileOverrides,
 };
 use core_sim::{
     build_headless_app, command_events_to_state, restore_world_from_snapshot, run_turn,
@@ -508,6 +514,28 @@ fn main() {
             } => {
                 handle_move_band(&mut app, faction, band_entity_bits, target_x, target_y);
             }
+            Command::SendExpedition {
+                faction,
+                band_entity_bits,
+                party_workers,
+                target_x,
+                target_y,
+            } => {
+                handle_send_expedition(
+                    &mut app,
+                    faction,
+                    band_entity_bits,
+                    party_workers,
+                    target_x,
+                    target_y,
+                );
+            }
+            Command::RecallExpedition {
+                faction,
+                expedition_entity_bits,
+            } => {
+                handle_recall_expedition(&mut app, faction, expedition_entity_bits);
+            }
             Command::FoundSettlement {
                 faction,
                 target_x,
@@ -622,6 +650,17 @@ enum Command {
         band_entity_bits: Option<u64>,
         target_x: u32,
         target_y: u32,
+    },
+    SendExpedition {
+        faction: FactionId,
+        band_entity_bits: Option<u64>,
+        party_workers: u32,
+        target_x: u32,
+        target_y: u32,
+    },
+    RecallExpedition {
+        faction: FactionId,
+        expedition_entity_bits: u64,
     },
     FoundSettlement {
         faction: FactionId,
@@ -1488,6 +1527,14 @@ fn handle_move_band(
         .entity_mut(band.entity)
         .insert(BandTravel { target });
 
+    // If the moved entity is an expedition, a fresh `move_band` un-latches AwaitingOrders (or
+    // redirects a Returning party back out to explore): re-arm it Outbound and re-open the
+    // arrival announcement so reaching the new waypoint fires the feed line again.
+    if let Some(mut expedition) = app.world.get_mut::<Expedition>(band.entity) {
+        expedition.phase = ExpeditionPhase::Outbound;
+        expedition.announced = false;
+    }
+
     let tick = app.world.resource::<SimulationTick>().0;
     push_command_event(
         app,
@@ -1500,6 +1547,275 @@ fn handle_move_band(
             band.label
         )),
     );
+}
+
+/// Outfit and launch a scouting expedition: draw `party_workers` off the resolved home band's
+/// working pool and larder-drawn provisions, then spawn a detached `StartingUnit` band tagged
+/// `Expedition` (deliberately no `ResidentBand`) traveling toward the target. v1 is deterministic
+/// success. Text form: `send_expedition <faction> <band> <party_workers> <x> <y>`.
+fn handle_send_expedition(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_entity_bits: Option<u64>,
+    party_workers: u32,
+    target_x: u32,
+    target_y: u32,
+) {
+    let target = UVec2::new(target_x, target_y);
+    if ensure_land_tile(
+        app,
+        faction,
+        target,
+        "send_expedition",
+        Some(CommandEventKind::ExpeditionSent),
+    )
+    .is_none()
+    {
+        return;
+    }
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        band_entity_bits,
+        "send_expedition",
+        CommandEventKind::ExpeditionSent,
+    ) else {
+        return;
+    };
+    // `select_starting_band` only filters `With<ResidentBand>` on the None-bits fallback; an
+    // explicit `band_entity_bits` resolves on `StartingUnit` alone, which an expedition also carries
+    // (kept so `move_band` can retarget it). A party can only be outfitted *from* a resident band —
+    // reject anything else so `send_expedition` can't spawn a party off another expedition.
+    if app.world.get::<ResidentBand>(band.entity).is_none() {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            "send_expedition: band is not a resident band.",
+        );
+        return;
+    }
+
+    let grid_width = app.world.resource::<TileRegistry>().width;
+    let wrap_horizontal = app
+        .world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let cfg = app.world.resource::<ExpeditionConfigHandle>().get();
+
+    // Snapshot the home band: its position, worker pool, and a clone we retask into the party.
+    let Some(band_cohort) = app.world.get::<PopulationCohort>(band.entity) else {
+        return;
+    };
+    let current_tile = band_cohort.current_tile;
+    let band_working = band_cohort.working;
+    let mut expedition_cohort = band_cohort.clone();
+    let Some(band_tile) = app.world.get::<Tile>(current_tile) else {
+        return;
+    };
+    let band_pos = band_tile.position;
+    let (unit_kind, unit_tags) = app
+        .world
+        .get::<StartingUnit>(band.entity)
+        .map(|unit| (unit.kind.clone(), unit.tags.clone()))
+        .unwrap_or_else(|| ("expedition".to_string(), Vec::new()));
+
+    let distance = hex_distance_wrapped(band_pos, target, grid_width, wrap_horizontal);
+    let available = available_workers(band_working);
+    let max_party = available.min(cfg.max_party_size);
+    if party_workers < 1 || party_workers > max_party {
+        emit_command_failure(
+            app,
+            CommandEventKind::ExpeditionSent,
+            faction,
+            format!(
+                "Party of {} workers invalid — {} can outfit 1..{} workers.",
+                party_workers, band.label, max_party
+            ),
+        );
+        return;
+    }
+
+    // Draw provisions (partial OK — non-fatal in v1) and remove the party from the band's pool.
+    let requested = scalar_from_f32(
+        party_workers as f32 * distance as f32 * cfg.provision_draw_per_worker_per_tile,
+    );
+    let party_scalar = Scalar::from_u32(party_workers);
+    let drawn = {
+        // The `get`-guard above already confirmed the component; a synchronous handler can't
+        // despawn it mid-call, so this re-fetch is unreachable-None. Match the sibling guards'
+        // let-else style (no `expect` on a server path) and early-return if it somehow fails.
+        let Some(mut band_cohort) = app.world.get_mut::<PopulationCohort>(band.entity) else {
+            return;
+        };
+        let drawn = band_cohort.stores.take(FOOD, requested);
+        band_cohort.working -= party_scalar;
+        band_cohort.sync_size();
+        drawn
+    };
+
+    // Retask the cloned cohort into a detached party co-located with the band.
+    expedition_cohort.children = Scalar::from_i64(0);
+    expedition_cohort.working = party_scalar;
+    expedition_cohort.elders = Scalar::from_i64(0);
+    expedition_cohort.stores = LocalStore::new();
+    if drawn > Scalar::from_i64(0) {
+        expedition_cohort.stores.add(FOOD, drawn);
+    }
+    expedition_cohort.age_turns = 0;
+    expedition_cohort.migration = None;
+    expedition_cohort.grievance = Scalar::from_i64(0);
+    expedition_cohort.sync_size();
+
+    let expedition_entity = app
+        .world
+        .spawn((
+            expedition_cohort,
+            LaborAllocation::default(),
+            StartingUnit::new(unit_kind, unit_tags),
+            Expedition {
+                home_band: band.entity,
+                mission: ExpeditionMission::Scout,
+                phase: ExpeditionPhase::Outbound,
+                announced: false,
+                pending_reveal: Vec::new(),
+            },
+            BandTravel { target },
+        ))
+        .id();
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::ExpeditionSent,
+        faction,
+        format!("{} expedition -> ({}, {})", band.label, target_x, target_y),
+        Some(format!(
+            "status=queued workers={} provisions_drawn={} distance={} expedition={}",
+            party_workers,
+            drawn.to_i64_whole(),
+            distance,
+            expedition_entity.to_bits()
+        )),
+    );
+}
+
+/// Order an expedition home: set its phase to `Returning` (it chases the home band's live tile and
+/// folds its workers + leftover provisions back on arrival). Text form:
+/// `recall_expedition <faction> <expedition_entity_bits>`.
+fn handle_recall_expedition(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    expedition_entity_bits: u64,
+) {
+    let Some(entity) = resolve_expedition_entity(
+        app,
+        faction,
+        expedition_entity_bits,
+        "recall_expedition",
+        CommandEventKind::ExpeditionRecalled,
+    ) else {
+        return;
+    };
+    let label = starting_unit_label(app, entity);
+    if let Some(mut expedition) = app.world.get_mut::<Expedition>(entity) {
+        expedition.phase = ExpeditionPhase::Returning;
+    }
+    let tick = app.world.resource::<SimulationTick>().0;
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::ExpeditionRecalled,
+        faction,
+        format!("{} recalled — returning home", label),
+        Some(format!("status=returning expedition={}", entity.to_bits())),
+    );
+}
+
+/// Resolve an entity-bits reference to a faction's own [`Expedition`] (mirrors
+/// [`resolve_starting_unit_entity`] but gates on the `Expedition` component + faction match rather
+/// than merely `StartingUnit`).
+fn resolve_expedition_entity(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    entity_bits: u64,
+    command_label: &str,
+    event_kind: CommandEventKind,
+) -> Option<Entity> {
+    let Some(entity) = entity_from_bits(entity_bits) else {
+        warn!(
+            target: "shadow_scale::command",
+            command = command_label,
+            faction = %faction.0,
+            "command.expedition.rejected=invalid_entity_bits"
+        );
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("Expedition id {} is invalid.", entity_bits),
+        );
+        return None;
+    };
+    if !app.world.entities().contains(entity) {
+        warn!(
+            target: "shadow_scale::command",
+            command = command_label,
+            faction = %faction.0,
+            entity_bits,
+            "command.expedition.rejected=entity_not_found"
+        );
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!(
+                "Expedition id {} does not exist in the simulation.",
+                entity_bits
+            ),
+        );
+        return None;
+    }
+    if app.world.get::<Expedition>(entity).is_none() {
+        warn!(
+            target: "shadow_scale::command",
+            command = command_label,
+            faction = %faction.0,
+            entity_bits,
+            "command.expedition.rejected=entity_not_expedition"
+        );
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("Unit id {} is not an expedition.", entity_bits),
+        );
+        return None;
+    }
+    let faction_ok = app
+        .world
+        .get::<PopulationCohort>(entity)
+        .map(|cohort| cohort.faction == faction)
+        .unwrap_or(false);
+    if !faction_ok {
+        warn!(
+            target: "shadow_scale::command",
+            command = command_label,
+            faction = %faction.0,
+            entity_bits,
+            "command.expedition.rejected=wrong_faction"
+        );
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("Expedition id {} belongs to another faction.", entity_bits),
+        );
+        return None;
+    }
+    Some(entity)
 }
 
 /// Clear every labor assignment on a band and stop any in-progress move — the band goes fully
@@ -2309,6 +2625,26 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             target_x,
             target_y,
         }),
+        ProtoCommandPayload::SendExpedition {
+            faction_id,
+            band_entity_bits,
+            party_workers,
+            target_x,
+            target_y,
+        } => Some(Command::SendExpedition {
+            faction: FactionId(faction_id),
+            band_entity_bits,
+            party_workers,
+            target_x,
+            target_y,
+        }),
+        ProtoCommandPayload::RecallExpedition {
+            faction_id,
+            expedition_entity_bits,
+        } => Some(Command::RecallExpedition {
+            faction: FactionId(faction_id),
+            expedition_entity_bits,
+        }),
         ProtoCommandPayload::FoundSettlement {
             faction_id,
             target_x,
@@ -2507,9 +2843,11 @@ fn select_starting_band(
         });
     }
 
+    // Default-band picker: only ever auto-grab a real band (`With<ResidentBand>`) so a band-less
+    // command never silently commandeers a detached expedition (which keeps `StartingUnit`).
     let mut query = app
         .world
-        .query::<(Entity, &PopulationCohort, &StartingUnit)>();
+        .query_filtered::<(Entity, &PopulationCohort, &StartingUnit), With<ResidentBand>>();
     for (entity, cohort, unit) in query.iter(&app.world) {
         if cohort.faction == faction {
             return Some(SelectedBand {
@@ -2539,9 +2877,10 @@ fn select_founder_band(
     faction: FactionId,
     event_kind: CommandEventKind,
 ) -> Option<SelectedBand> {
+    // Founders picker: real bands only (`With<ResidentBand>`) — an expedition can never found.
     let mut query = app
         .world
-        .query::<(Entity, &PopulationCohort, &StartingUnit)>();
+        .query_filtered::<(Entity, &PopulationCohort, &StartingUnit), With<ResidentBand>>();
     for (entity, cohort, unit) in query.iter(&app.world) {
         if cohort.faction == faction && unit.kind.eq_ignore_ascii_case("founders") {
             return Some(SelectedBand {
@@ -2667,6 +3006,10 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::CancelOrder => "Cancel order",
         CommandEventKind::SedentarizationPrompt => "Sedentarization",
         CommandEventKind::SiteDiscovered => "Site discovered",
+        CommandEventKind::ExpeditionSent => "Expedition sent",
+        CommandEventKind::ExpeditionArrived => "Expedition arrived",
+        CommandEventKind::ExpeditionRecalled => "Expedition recalled",
+        CommandEventKind::ExpeditionReturned => "Expedition returned",
     }
 }
 

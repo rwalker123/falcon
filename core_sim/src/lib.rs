@@ -22,6 +22,7 @@ mod culture;
 mod culture_corruption_config;
 mod demographics_config;
 mod espionage;
+mod expedition_config;
 mod fauna;
 mod fauna_config;
 mod food;
@@ -71,9 +72,10 @@ use crate::start_profile::{
 use bevy::prelude::*;
 
 pub use components::{
-    available_workers, BandTravel, ElementKind, FollowPolicy, KnowledgeFragment, LaborAllocation,
-    LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause, PendingMigration,
-    PopulationCohort, PowerNode, Settlement, StartingUnit, Tile, TownCenter, TradeLink, FOOD,
+    available_workers, BandTravel, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
+    FollowPolicy, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
+    LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
+    Settlement, StartingUnit, Tile, TownCenter, TradeLink, FOOD,
 };
 pub use crisis::{
     ActiveCrisisLedger, CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot,
@@ -107,6 +109,10 @@ pub use espionage::{
     EspionageMissionId, EspionageMissionInstanceId, EspionageMissionKind, EspionageMissionState,
     EspionageMissionTemplate, EspionageRoster, FactionSecurityPolicies, QueueMissionError,
     QueueMissionParams, SecurityPolicy,
+};
+pub use expedition_config::{
+    load_expedition_config_from_env, ExpeditionConfig, ExpeditionConfigHandle,
+    ExpeditionConfigMetadata, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
     advance_herds, advance_husbandry, repopulate_fauna, spawn_initial_herds, EcologyPhase,
@@ -218,8 +224,8 @@ pub use snapshot::{
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
-    advance_band_movement, advance_labor_allocation, simulate_power, MigrationKnowledgeEvent,
-    PowerSimParams, TradeDiffusionEvent,
+    advance_band_movement, advance_expeditions, advance_labor_allocation, simulate_power,
+    MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent,
 };
 pub use terrain::{
     classify_terrain, terrain_definition, terrain_for_position, MovementProfile, TerrainDefinition,
@@ -348,6 +354,9 @@ pub fn build_headless_app() -> App {
         sedentarization_config::SedentarizationConfigHandle::new(sedentarization_config);
     let (sites_config, sites_metadata) = sites_config::load_sites_config_from_env();
     let sites_handle = sites_config::SitesConfigHandle::new(sites_config);
+    let (expedition_config, expedition_metadata) =
+        expedition_config::load_expedition_config_from_env();
+    let expedition_handle = expedition_config::ExpeditionConfigHandle::new(expedition_config);
     let (demographics_config, demographics_metadata) =
         demographics_config::load_demographics_config_from_env();
     let demographics_handle =
@@ -415,6 +424,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(sites_handle)
         .insert_resource(sites_metadata)
         .insert_resource(sites::DiscoveredSites::default())
+        .insert_resource(expedition_handle)
+        .insert_resource(expedition_metadata)
         .insert_resource(demographics_handle)
         .insert_resource(demographics_metadata)
         .insert_resource(supply_network_handle)
@@ -574,6 +585,11 @@ pub fn build_headless_app() -> App {
                 // Move first so the band's `current_tile` is current before labor reads its
                 // in-range sources, then resolve per-worker Forage/Hunt/Scout yields.
                 systems::advance_band_movement,
+                // Expedition per-turn logic (observe into the pending-reveal buffer, comm-range
+                // flush-to-Discovered, return-retarget, arrival/fold-back). Runs right after
+                // movement so it reads the party's fresh position, and before the Visibility stage's
+                // `discover_sites` picks up any site on the newly-flushed Discovered tiles.
+                systems::advance_expeditions,
                 systems::advance_labor_allocation,
                 // Wellbeing migration runs after demographics + this turn's yield payouts so
                 // morale/discontent are current and productivity has already been applied at each

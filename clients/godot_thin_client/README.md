@@ -6,7 +6,7 @@ and sketches unit path previews.
 
 ## Requirements
 
-- Godot 4.2 or newer (see install instructions below)
+- Godot 4.7 or newer (see install instructions below)
 - The Shadow-Scale workspace (repo root) so relative paths resolve (`project.godot` lives under
   `clients/godot_thin_client`)
 - FlatBuffers compiler (`flatc`) on your PATH so the native extension can generate schema bindings

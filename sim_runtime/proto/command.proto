@@ -234,6 +234,22 @@ message MoveBandCommand {
   uint32 target_y = 4;
 }
 
+// Outfit and launch a scouting expedition: draw party_workers + provisions off the home band and
+// send a detached traveling party toward the target tile.
+message SendExpeditionCommand {
+  uint32 faction_id = 1;
+  optional uint64 band_entity_bits = 2;
+  uint32 party_workers = 3;
+  uint32 target_x = 4;
+  uint32 target_y = 5;
+}
+
+// Order an in-flight expedition home (phase -> Returning; folds back on arrival).
+message RecallExpeditionCommand {
+  uint32 faction_id = 1;
+  uint64 expedition_entity_bits = 2;
+}
+
 message ExportMapCommand {
   // Optional destination path. When absent the server writes a
   // timestamped file into the gitignored exports/ scratch directory.
@@ -278,5 +294,7 @@ message CommandEnvelope {
     CancelOrderCommand cancel_order = 31;
     AssignLaborCommand assign_labor = 32;
     MoveBandCommand move_band = 33;
+    SendExpeditionCommand send_expedition = 34;
+    RecallExpeditionCommand recall_expedition = 35;
   }
 }

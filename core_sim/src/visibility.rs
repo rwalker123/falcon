@@ -126,6 +126,27 @@ impl FactionVisibilityMap {
         }
     }
 
+    /// Report a tile as `Discovered` (remembered, not currently visible) — the promotion an
+    /// expedition's comm-range flush applies. Lifts an **Unexplored** tile to `Discovered` and, for
+    /// an already-`Discovered` tile, **refreshes `last_seen_turn`** to the current turn (the tile
+    /// was just re-reported, so it must not carry a stale timestamp that could decay it if decay is
+    /// enabled). An `Active` tile (a live vision source is standing there) is left untouched, so a
+    /// delayed report never downgrades live sight.
+    pub fn discover(&mut self, x: u32, y: u32, current_turn: u64) {
+        if let Some(tile) = self.get_mut(x, y) {
+            match tile.state {
+                VisibilityState::Unexplored => {
+                    tile.state = VisibilityState::Discovered;
+                    tile.last_seen_turn = current_turn;
+                }
+                VisibilityState::Discovered => {
+                    tile.last_seen_turn = current_turn;
+                }
+                VisibilityState::Active => {}
+            }
+        }
+    }
+
     /// Mark a tile as unexplored (for decay).
     pub fn mark_unexplored(&mut self, x: u32, y: u32) {
         if let Some(tile) = self.get_mut(x, y) {

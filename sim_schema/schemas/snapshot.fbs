@@ -491,6 +491,21 @@ table PopulationCohortState {
   // vantage_distance_max) from LaborConfig.scout), 0 with no scouts. Field name retained for wire
   // compat; scouts now reveal by posting vantage points that see around obstacles, not a flat ring.
   scoutRevealRadius:uint = 0;
+  // Expedition discriminators (docs/plan_exploration_and_sites.md §2). A detached scouting party is
+  // a PopulationCohort tagged `Expedition`; these fields are false/""/empty for a normal band.
+  // Client-facing: distinct marker glyph/label + awaiting-orders marker state + a Recall affordance.
+  isExpedition:bool = false;
+  expeditionMission:string;   // "scout" (PR 2 adds "hunt"); empty for normal bands.
+  expeditionPhase:string;     // "outbound" | "awaiting" | "returning"; empty for normal bands.
+  // Persistence-only (rollback restores an in-flight expedition + its unreported findings):
+  homeBandEntity:ulong = 0;   // the real band that outfitted this party (entity bits).
+  expeditionAnnounced:bool = false; // whether the arrival feed line has fired for this AwaitingOrders latch.
+  pendingRevealX:[uint];      // observed-but-unreported tile coords (zipped with pendingRevealY).
+  pendingRevealY:[uint];
+  // Server-side hard cap on an expedition party (expedition_config.json max_party_size). A global
+  // config lever echoed per-cohort (same idiom as workRange) so the client outfit stepper pre-clamps
+  // to min(idle_workers, this). Populated for every cohort (the stepper is on the resident-band panel).
+  maxExpeditionPartySize:uint = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
