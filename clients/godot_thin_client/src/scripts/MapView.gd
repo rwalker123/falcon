@@ -4249,12 +4249,15 @@ func _get_neighbor_offset_y_2d(dir: int) -> int:
 func set_hud_reference(hud: Node) -> void:
 	_hud_layer = hud
 
-## True when a local-space point lies in the map's usable area rather than the
-## strip reserved for the docked Inspector. The node is translated right by the
-## inset, so local x < 0 is exactly the reserved region — the map ignores input
-## there even though its cover-fit content mathematically extends under it.
+## True when a local-space point lies in the map's usable area rather than a strip
+## reserved by a docked panel. The node is translated by the leading (left/top)
+## insets, so local origin (0,0) is the usable top-left and the adjusted viewport
+## size is its extent — a point outside that rect is under a reserved edge (left,
+## top, right, OR bottom) even though the cover-fit map mathematically extends
+## there. The map ignores input outside it.
 func _is_local_point_in_view(local_pos: Vector2) -> bool:
-	return local_pos.x >= 0.0
+	var adjusted: Vector2 = _get_adjusted_viewport_size()
+	return local_pos.x >= 0.0 and local_pos.y >= 0.0 and local_pos.x <= adjusted.x and local_pos.y <= adjusted.y
 
 ## Clip this node's drawing to its usable rect (in local space, i.e. after the
 ## node's translation). Because the map is cover-fit, its content is wider than

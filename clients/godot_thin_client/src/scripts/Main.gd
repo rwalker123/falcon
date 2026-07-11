@@ -9,6 +9,7 @@ const LocalizationStore = preload("res://src/scripts/LocalizationStore.gd")
 @onready var hud: CanvasLayer = $HUD
 @onready var camera: Camera2D = $Camera2D
 @onready var inspector: CanvasLayer = $Inspector
+@onready var band_city_panel: CanvasLayer = $BandCityPanel
 
 var snapshot_loader: SnapshotLoader
 var playback_timer: Timer
@@ -185,6 +186,7 @@ func _ready() -> void:
         inspector.connect("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed"))
     if inspector != null and inspector.has_method("reserved_width"):
         _apply_reservation(&"inspector", SIDE_LEFT, float(inspector.call("reserved_width")))
+    _connect_band_city_panel()
 
 func _ensure_timer() -> void:
     if is_instance_valid(playback_timer):
@@ -469,6 +471,20 @@ func _apply_reservation(id: StringName, edge: int, size: float) -> void:
 
 func _on_inspector_reserved_width_changed(width: float) -> void:
     _apply_reservation(&"inspector", SIDE_LEFT, width)
+
+## Wire the dockable Band/City panel onto the slice-1 reservation fan-out and seed
+## its initial reservation (mirrors the inspector: children _ready before us, so the
+## panel's own startup emit is missed — we query its current dock + size here).
+func _connect_band_city_panel() -> void:
+    if band_city_panel == null:
+        return
+    if band_city_panel.has_signal("reservation_changed") and not band_city_panel.is_connected("reservation_changed", Callable(self, "_on_band_panel_reservation_changed")):
+        band_city_panel.connect("reservation_changed", Callable(self, "_on_band_panel_reservation_changed"))
+    if band_city_panel.has_method("get_dock") and band_city_panel.has_method("current_reservation_size"):
+        _apply_reservation(&"band_panel", int(band_city_panel.call("get_dock")), float(band_city_panel.call("current_reservation_size")))
+
+func _on_band_panel_reservation_changed(edge: int, size: float) -> void:
+    _apply_reservation(&"band_panel", edge, size)
 
 func _toggle_legend_visibility() -> void:
     if hud == null:
