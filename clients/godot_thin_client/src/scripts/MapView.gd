@@ -2400,6 +2400,9 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"is_expedition": bool(entry.get("is_expedition", false)),
 			"expedition_mission": String(entry.get("expedition_mission", "")),
 			"expedition_phase": String(entry.get("expedition_phase", "")),
+			# The band that outfitted this party (entity bits; 0 for a normal band) — the Band/City
+			# panel groups a band's active expeditions by home_band_entity == band.entity.
+			"home_band_entity": int(entry.get("home_band_entity", 0)),
 			# Hunt expedition (PR 2): the herd (fauna_id) a hunt party follows; "" for scouts.
 			"expedition_target_herd": String(entry.get("expedition_target_herd", "")),
 			# Hunt party take policy (sustain|surplus|market|eradicate; "" for scouts) + carry cap.

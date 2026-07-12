@@ -703,8 +703,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
 - **Scouting expedition** (`docs/plan_exploration_and_sites.md` §2; snapshot
   `PopulationCohortState.isExpedition`/`expeditionMission`/`expeditionPhase`, decoded in
   `native/src/lib.rs population_to_dict` as `is_expedition`/`expedition_mission`/`expedition_phase`,
-  flowed onto the MapView unit marker in `_rebuild_unit_markers`; the persistence-only
-  `homeBandEntity`/`expeditionAnnounced`/`pendingReveal*` fields are deliberately NOT decoded). A
+  flowed onto the MapView unit marker in `_rebuild_unit_markers`; `homeBandEntity` is decoded as
+  `home_band_entity` (the outfitting band — powers the Band panel's Active-expeditions section),
+  while the persistence-only `expeditionAnnounced`/`pendingReveal*` fields stay undecoded). A
   detached party is a `PopulationCohort` tagged `Expedition` that flows through the same
   `populations[]` array as a band. Surfaced four ways:
   (1) **Distinct map marker** (`MapView._draw_unit` → `_draw_expedition_body`): a hollow,
@@ -804,18 +805,37 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   changes. `cycle_panel_band(delta)` walks `_player_bands`, **recenters the map**
   on the band (`alert_focus_requested` → `MapView.focus_and_select_tile`), then
   pins the exact band so ring/Tile card/roster/panel all agree.
+- **Bands vs expeditions.** `update_band_alerts` splits the player faction into
+  `_player_bands` (resident bands — NOT `is_expedition`) and `_player_expeditions`
+  (detached scout/hunt parties). The cycler + band-picker read `_player_bands`
+  only, so a band + 2 expeditions reads **1/1**, not 1/3. Expeditions surface
+  instead as an **Active expeditions** section on their home band (see below).
+- **Active expeditions section.** `_render_band_into_panel` → `_build_panel_expeditions`
+  renders (into the panel's own `get_band_expeditions_container()` — a **separate**
+  host from the allocation, so a stepper rebuild can't clear it) one ghost-button
+  row per `_player_expeditions` entry whose `home_band_entity == _panel_band.entity`
+  (correct for N bands; omitted when none). Row summary: hunt `🏹 <herd> · <Phase> ·
+  <Policy>`, scout `⚑ → (x,y) · <Phase>`. A row click reuses the cycler's routing —
+  `alert_focus_requested`→`focus_and_select_tile` + `roster_occupant_selected`→
+  `MapView.select_occupant` — so the map ring moves to the expedition and the
+  **Occupants card** (not the band panel) renders its `_build_expedition_panel`
+  drawer; `_panel_band` stays put. `home_band_entity` is decoded in
+  `native/src/lib.rs population_to_dict` from the snapshot's `homeBandEntity`,
+  flowed onto the MapView unit marker, and covered by `marker_field_guard`.
 - **Responsive body (tall vs wide).** `_relayout_body()` (hooked off
   `_apply_dock_layout`, so it fires on every dock/collapse change; idempotent —
   reparents only when the tall↔wide orientation flips) swaps the body layout by
   dock aspect: **tall** (LEFT/RIGHT) = one vertical `ScrollContainer` stack
-  (summary + allocation), **wide** (TOP/BOTTOM) = an HBox of two independently
-  scrolling columns — a fixed `SUMMARY_COLUMN_WIDTH` summary column + an
-  EXPAND_FILL allocation column (full-width stepper rows) — so the short strip
-  uses the width instead of one long vertical scroll. The
-  `get_band_detail_label()` / `get_band_alloc_container()` nodes are the **same
-  objects** reparented between layouts, so Hud's render needs no coordination.
-  (The allocation stays a single vertical list within its column; true
-  multi-column section-flow is deferred.)
+  (summary + expeditions + allocation), **wide** (TOP/BOTTOM) = an HBox of two
+  independently scrolling columns — a fixed `SUMMARY_COLUMN_WIDTH` summary column
+  (with the expeditions section) + a fixed `ALLOC_COLUMN_WIDTH` allocation column
+  **packed from the left** (leftover strip width empty on the right, so the
+  stepper `−/+` controls stay next to their labels at any window width) — so the
+  short strip uses the width instead of one long vertical scroll. The
+  `get_band_detail_label()` / `get_band_alloc_container()` / expeditions nodes are
+  the **same objects** reparented between layouts, so Hud's render needs no
+  coordination. (The allocation stays a single vertical list within its bounded
+  column; true multi-column section-flow that *fills* an ultrawide strip is deferred.)
 - Verify chrome + reflow via `tools/band_panel_preview.gd`
   (`godot --path . res://tools/band_panel_preview.tscn` → `ui_preview_out/
   band_panel_{left,right,top,bottom,collapsed}.png`).

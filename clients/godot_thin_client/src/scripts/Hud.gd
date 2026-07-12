@@ -288,6 +288,11 @@ const EXPEDITION_PHASE_LABELS := {
 	"hunting": "Hunting",
 	"delivering": "Delivering",
 }
+# Band/City panel "Active expeditions" section — mission glyphs mirror the map markers
+# (MapView EXPEDITION_GLYPH / EXPEDITION_HUNT_GLYPH).
+const PANEL_EXPEDITIONS_HEADER := "Active expeditions"
+const PANEL_EXPEDITION_SCOUT_GLYPH := "⚑"
+const PANEL_EXPEDITION_HUNT_GLYPH := "🏹"
 const SEND_EXPEDITION_TITLE := "Send scouting expedition"
 const SEND_EXPEDITION_HINT := "Detach a party to scout distant territory, then click a target tile."
 const SEND_EXPEDITION_BUTTON := "Send scouting expedition…"
@@ -328,7 +333,13 @@ var _player_band: Dictionary = {}
 # Every player-faction band from the latest snapshot (in roster order; first == _player_band).
 # The assign controls' band-picker dropdown lists these so an assignment explicitly names WHICH
 # band supplies the workers. One entry today (multi-band split is deferred), but built for N.
+# EXCLUDES expeditions (detached scout/hunt parties are cohorts in the same populations[] array) —
+# they are never a labor actor band and must not be counted by the panel cycler.
 var _player_bands: Array = []
+# The player-faction expedition cohorts (is_expedition) captured each snapshot, split out of
+# `_player_bands`. The Band/City panel's "Active expeditions" section lists the ones whose
+# `home_band_entity` matches the shown band.
+var _player_expeditions: Array = []
 # The dockable Band/City command center (docs/plan_band_city_dock.md §3), injected by Main. When
 # present, a selected player band's detail (summary + labor allocation) renders into IT rather than
 # the Occupants card, and the panel persists across selection changes showing `_panel_band`.
@@ -2379,6 +2390,8 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     var alloc: VBoxContainer = _band_city_panel.get_band_alloc_container()
     if alloc != null:
         _build_allocation_panel(_panel_band, alloc)
+    # "Active expeditions" the panel band has detached (grouped by home_band_entity).
+    _build_panel_expeditions(_panel_band)
     # Header: settlement stage glyph + name + stage label (glyph/label already flow onto the
     # marker/cohort dict; fall back to a neutral glyph when the stage is absent).
     var glyph := String(_panel_band.get("settlement_stage_icon", "")).strip_edges()
@@ -2388,6 +2401,88 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     _band_city_panel.set_cycler(index, _player_bands.size())
     _band_city_panel.set_band_present(true)
     _band_city_panel.set_shown(true)
+
+## Build the panel band's "Active expeditions" section — the player expeditions whose
+## `home_band_entity` matches the shown band. Rendered into its own panel host (not the allocation
+## container, so a stepper rebuild can't clear it). Omits the section when the band has none.
+func _build_panel_expeditions(band: Dictionary) -> void:
+    if _band_city_panel == null:
+        return
+    var container: VBoxContainer = _band_city_panel.get_band_expeditions_container()
+    if container == null:
+        return
+    for child in container.get_children():
+        child.queue_free()
+    var band_entity := int(band.get("entity", -1))
+    var rows: Array = []
+    for exp_variant in _player_expeditions:
+        if not (exp_variant is Dictionary):
+            continue
+        var exp: Dictionary = exp_variant
+        if int(exp.get("home_band_entity", 0)) == band_entity:
+            rows.append(exp)
+    if rows.is_empty():
+        container.visible = false
+        return
+    container.visible = true
+    container.add_child(_alloc_section_label(PANEL_EXPEDITIONS_HEADER))
+    for exp in rows:
+        container.add_child(_build_panel_expedition_row(exp))
+
+## One clickable "Active expeditions" row: mission glyph + compact summary. Click routes the map
+## selection to the expedition (its detail then shows in the Occupants card's expedition drawer),
+## via the same signal path a roster click uses.
+func _build_panel_expedition_row(exp: Dictionary) -> Button:
+    var btn := Button.new()
+    btn.text = _panel_expedition_summary(exp)
+    btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+    btn.focus_mode = Control.FOCUS_NONE
+    btn.clip_text = true
+    btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    HudStyle.apply_button(btn, "ghost")
+    var entity := int(exp.get("entity", -1))
+    var x := int(exp.get("current_x", -1))
+    var y := int(exp.get("current_y", -1))
+    btn.pressed.connect(func() -> void: _on_panel_expedition_selected(entity, x, y))
+    return btn
+
+## Compact one-line expedition summary: hunt → `🏹 <herd> · <Phase> · <Policy>`;
+## scout → `⚑ → (x, y) · <Phase>`.
+func _panel_expedition_summary(exp: Dictionary) -> String:
+    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
+    var phase := _expedition_phase_label(String(exp.get("expedition_phase", "")))
+    if mission == EXPEDITION_MISSION_HUNT:
+        var parts: Array = []
+        var herd := _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
+        if herd != "":
+            parts.append(herd)
+        if phase != "":
+            parts.append(phase)
+        var policy := String(exp.get("expedition_hunt_policy", "")).strip_edges()
+        if policy != "":
+            parts.append(policy.capitalize())
+        return "%s %s" % [PANEL_EXPEDITION_HUNT_GLYPH, " · ".join(parts)]
+    var x := int(exp.get("current_x", -1))
+    var y := int(exp.get("current_y", -1))
+    var scout_parts: Array = ["→ (%d, %d)" % [x, y]]
+    if phase != "":
+        scout_parts.append(phase)
+    return "%s %s" % [PANEL_EXPEDITION_SCOUT_GLYPH, " · ".join(scout_parts)]
+
+## Select an expedition (from the panel's Active-expeditions list) on the map: recenter + select
+## its hex (rebuilds that hex's roster), then pin the exact expedition so the map ring moves and the
+## Occupants card renders its expedition drawer. Mirrors `cycle_panel_band`'s routing. The Band/City
+## panel itself stays on its band (expeditions detail in the Occupants card, per the existing split);
+## a co-located band auto-select can't hijack it — we restore the panel band if it changed.
+func _on_panel_expedition_selected(entity: int, x: int, y: int) -> void:
+    var panel_band_keep: Dictionary = _panel_band.duplicate(true) if not _panel_band.is_empty() else {}
+    if x >= 0 and y >= 0:
+        emit_signal("alert_focus_requested", x, y)
+    if not _find_roster_unit(entity).is_empty():
+        _select_roster_occupant("unit", entity)
+        emit_signal("roster_occupant_selected", "unit", entity)
+    if not panel_band_keep.is_empty() and int(_panel_band.get("entity", -1)) != int(panel_band_keep.get("entity", -1)):
+        _render_band_into_panel(panel_band_keep)
 
 ## Re-render the panel band into the panel container, keyed off `_panel_band` (never the current
 ## selection). The panel's own allocation rebuilds (optimistic pending, etc.) route through this so
@@ -3027,6 +3122,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # (first) stays the default actor; `player_bands` backs the assign controls' band-picker.
     var player_band: Dictionary = {}
     var player_bands: Array = []
+    var player_expeditions: Array = []
     for entry_variant in populations:
         if not (entry_variant is Dictionary):
             continue
@@ -3034,9 +3130,15 @@ func update_band_alerts(populations_variant: Variant) -> void:
         if int(entry.get("faction", -1)) != PLAYER_FACTION_ID:
             continue
         band_index += 1
-        if player_band.is_empty():
-            player_band = entry
-        player_bands.append(entry)
+        # Split expeditions out of the band roster: they are detached scout/hunt parties, never a
+        # labor actor band, and must not be counted by the cycler or listed in the band-picker.
+        # (Attention producers below still run for every player cohort — unchanged.)
+        if bool(entry.get("is_expedition", false)):
+            player_expeditions.append(entry)
+        else:
+            if player_band.is_empty():
+                player_band = entry
+            player_bands.append(entry)
         var entity := int(entry.get("entity", -1))
         var size := int(entry.get("size", 0))
         var days := float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
@@ -3079,6 +3181,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
     _prev_band_sizes = new_sizes
     _player_band = player_band
     _player_bands = player_bands
+    _player_expeditions = player_expeditions
     if turn_orb != null:
         turn_orb.set_attention(attention)
     # This snapshot is authoritative: drop optimistic pending actions the server has now

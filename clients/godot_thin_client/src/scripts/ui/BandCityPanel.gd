@@ -50,8 +50,10 @@ const BAND_ALLOC_SEPARATION := 6
 ## Fixed width of the summary column when the dock is wide, so the RichTextLabel summary wraps
 ## to a readable measure instead of stretching across the whole strip.
 const SUMMARY_COLUMN_WIDTH := 240.0
-## Minimum width of the allocation column when the dock is wide.
-const ALLOC_COLUMN_MIN_WIDTH := 300.0
+## Fixed width of the allocation column when the dock is wide (~ the tall dock's content width, so
+## the stepper rows read identically — the `−/+` controls sit next to their labels). Bounded, NOT
+## expand-fill, so a wide window leaves empty space on the right instead of stretching the rows.
+const ALLOC_COLUMN_WIDTH := 360.0
 ## Gap between the summary and allocation columns in wide mode.
 const WIDE_COLUMN_SEPARATION := 16
 const CYCLE_PREV := -1
@@ -114,6 +116,7 @@ var _wide_alloc_scroll: ScrollContainer
 var _body_is_wide: bool = false
 var _empty_state: Label
 var _band_detail: RichTextLabel
+var _band_expeditions: VBoxContainer
 var _band_alloc: VBoxContainer
 var _dock_cells: Dictionary = {}   # edge:int -> Button
 
@@ -160,6 +163,11 @@ func get_band_detail_label() -> RichTextLabel:
 func get_band_alloc_container() -> VBoxContainer:
 	return _band_alloc
 
+## The VBox Hud builds the band's "Active expeditions" rows into (a separate host so an allocation
+## rebuild doesn't clear it). Sits between the summary and the allocation; survives re-docking.
+func get_band_expeditions_container() -> VBoxContainer:
+	return _band_expeditions
+
 ## Toggle between the band-detail content and the empty-state placeholder.
 func set_band_present(present: bool) -> void:
 	if _empty_state != null:
@@ -168,6 +176,10 @@ func set_band_present(present: bool) -> void:
 		_band_detail.visible = present
 	if _band_alloc != null:
 		_band_alloc.visible = present
+	# The expeditions section's own visibility is driven by Hud (hidden when the band has none);
+	# here we only force it off when there is no band at all.
+	if not present and _band_expeditions != null:
+		_band_expeditions.visible = false
 
 ## Dock the panel to an edge (a Godot SIDE_* const). Re-anchors, persists, and
 ## re-emits the reservation so the map + HUD reflow.
@@ -285,6 +297,8 @@ func _build() -> void:
 	_wide_summary_scroll.name = "WideSummaryScroll"
 	_wide_summary_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_wide_summary_scroll.custom_minimum_size = Vector2(SUMMARY_COLUMN_WIDTH, 0.0)
+	# Bounded (FILL, not EXPAND): takes its fixed width, doesn't stretch across the strip.
+	_wide_summary_scroll.size_flags_horizontal = Control.SIZE_FILL
 	_wide_summary_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_wide_row.add_child(_wide_summary_scroll)
 	_wide_summary_col = VBoxContainer.new()
@@ -295,8 +309,11 @@ func _build() -> void:
 	_wide_alloc_scroll = ScrollContainer.new()
 	_wide_alloc_scroll.name = "WideAllocScroll"
 	_wide_alloc_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_wide_alloc_scroll.custom_minimum_size = Vector2(ALLOC_COLUMN_MIN_WIDTH, 0.0)
-	_wide_alloc_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_wide_alloc_scroll.custom_minimum_size = Vector2(ALLOC_COLUMN_WIDTH, 0.0)
+	# Bounded (FILL, not EXPAND): a fixed ~tall-dock-width column, so stepper rows don't stretch and
+	# the −/+ controls stay next to their labels. The HBox packs both columns from the left
+	# (default begin alignment); leftover width on a wide window stays empty on the right.
+	_wide_alloc_scroll.size_flags_horizontal = Control.SIZE_FILL
 	_wide_alloc_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_wide_row.add_child(_wide_alloc_scroll)
 
@@ -320,6 +337,14 @@ func _build() -> void:
 	_band_detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_band_detail.visible = false
 
+	# "Active expeditions" section host — a separate node so an allocation rebuild (stepper edits)
+	# doesn't clear it. Hud populates/hides it in `_render_band_into_panel`.
+	_band_expeditions = VBoxContainer.new()
+	_band_expeditions.name = "BandExpeditions"
+	_band_expeditions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_band_expeditions.add_theme_constant_override("separation", BAND_ALLOC_SEPARATION)
+	_band_expeditions.visible = false
+
 	_band_alloc = VBoxContainer.new()
 	_band_alloc.name = "BandAllocation"
 	_band_alloc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -330,6 +355,7 @@ func _build() -> void:
 	# `_apply_dock_layout` in `_ready`) moves them to the wide columns if the loaded dock is wide.
 	_tall_vbox.add_child(_empty_state)
 	_tall_vbox.add_child(_band_detail)
+	_tall_vbox.add_child(_band_expeditions)
 	_tall_vbox.add_child(_band_alloc)
 
 	# The accent seam sits on the map-facing edge, above the card fill.
@@ -476,14 +502,19 @@ func _relayout_body() -> void:
 	_body_is_wide = wide
 	_detach(_empty_state)
 	_detach(_band_detail)
+	_detach(_band_expeditions)
 	_detach(_band_alloc)
 	if wide:
+		# Summary column: summary + the (short) expeditions list; allocation gets its own column.
 		_wide_summary_col.add_child(_empty_state)
 		_wide_summary_col.add_child(_band_detail)
+		_wide_summary_col.add_child(_band_expeditions)
 		_wide_alloc_scroll.add_child(_band_alloc)
 	else:
+		# Tall stack, top→bottom: summary, active expeditions, then labor allocation.
 		_tall_vbox.add_child(_empty_state)
 		_tall_vbox.add_child(_band_detail)
+		_tall_vbox.add_child(_band_expeditions)
 		_tall_vbox.add_child(_band_alloc)
 	if _tall_scroll != null:
 		_tall_scroll.visible = not wide

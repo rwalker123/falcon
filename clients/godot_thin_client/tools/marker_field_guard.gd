@@ -63,7 +63,8 @@ const PANEL_CONSUMED_KEYS := [
 	"max_expedition_party_size", # outfit stepper max clamp
 	"expedition_target_herd", # hunt expedition target herd (panel + marker)
 	"expedition_hunt_policy", # hunt expedition policy (panel readout)
-	"expedition_carry_cap"    # hunt expedition carry ceiling (panel Carried X / cap)
+	"expedition_carry_cap",   # hunt expedition carry ceiling (panel Carried X / cap)
+	"home_band_entity"        # Band/City panel groups a band's active expeditions by this
 ]
 
 # A full, realistic population entry — the shape the native decoder (`population_to_dict`)
@@ -111,6 +112,7 @@ const FIXTURE_ENTRY := {
 	"expedition_target_herd": "game_deer_07",
 	"expedition_hunt_policy": "surplus",
 	"expedition_carry_cap": 16.0,
+	"home_band_entity": 7777,
 }
 
 var _failures: Array[String] = []
@@ -156,6 +158,7 @@ func _ready() -> void:
 	_expect_str(marker, "expedition_target_herd", "game_deer_07")
 	_expect_str(marker, "expedition_hunt_policy", "surplus")
 	_expect_float(marker, "expedition_carry_cap", 16.0)
+	_expect_int(marker, "home_band_entity", 7777)
 	if not bool(marker.get("is_expedition", false)):
 		_fail("is_expedition did not round-trip to true (defaulted?)")
 	_expect_float(marker, "morale", 0.41)

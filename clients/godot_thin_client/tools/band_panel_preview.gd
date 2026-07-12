@@ -53,8 +53,13 @@ func _ready() -> void:
 	# Slice 3: inject the panel into the HUD and push a player band through the real snapshot
 	# path (update_band_alerts → _refresh_panel_band), so the FULL band detail relocates into the
 	# panel — summary lines + labor allocation + the settlement stage header/cycler.
+	# Push the band PLUS two detached expeditions (home_band_entity = the band's entity): the cycler
+	# must read 1/1 (expeditions excluded), and the panel's "Active expeditions" section must list
+	# both. Order interleaves an expedition first to prove the split (not just "first cohort = band").
 	_hud.set_band_city_panel(_panel)
-	_hud.update_band_alerts([_band_fixture()])
+	_hud.update_band_alerts([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
+	print("band_panel_preview: cycler split — player_bands=%d (expect 1), player_expeditions=%d (expect 2)" % [
+		_hud._player_bands.size(), _hud._player_expeditions.size()])
 
 	# Dock to each edge and render.
 	_panel.set_collapsed(false)
@@ -144,4 +149,38 @@ func _band_fixture() -> Dictionary:
 			{"kind": "scout", "workers": 2},
 			{"kind": "warrior", "workers": 2},
 		],
+	}
+
+## A detached SCOUT expedition outfitted by band 904 (home_band_entity), outbound to (39,26).
+func _scout_expedition_fixture() -> Dictionary:
+	return {
+		"id": "Scouts 1",
+		"entity": 951,
+		"faction": 0,
+		"size": 4,
+		"current_x": 39,
+		"current_y": 26,
+		"days_of_food": 9.0,
+		"is_expedition": true,
+		"expedition_mission": "scout",
+		"expedition_phase": "outbound",
+		"home_band_entity": 904,
+	}
+
+## A detached HUNT expedition outfitted by band 904, following game_deer_79 under a Surplus policy.
+func _hunt_expedition_fixture() -> Dictionary:
+	return {
+		"id": "Hunters 1",
+		"entity": 952,
+		"faction": 0,
+		"size": 6,
+		"current_x": 66,
+		"current_y": 12,
+		"days_of_food": 5.0,
+		"is_expedition": true,
+		"expedition_mission": "hunt",
+		"expedition_phase": "hunting",
+		"expedition_target_herd": "game_deer_79",
+		"expedition_hunt_policy": "surplus",
+		"home_band_entity": 904,
 	}

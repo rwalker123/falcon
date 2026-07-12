@@ -3663,15 +3663,19 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
 
     // Scouting expedition (docs/plan_exploration_and_sites.md §2): a detached party is a
     // PopulationCohort tagged Expedition that flows through this same populations[] array as a
-    // resident band, carrying three discriminator fields. Default to false/"" so resident-band
-    // markers are unaffected. (The persistence-only home_band/pending-reveal fields are
-    // deliberately NOT decoded — the client never reads them.)
+    // resident band, carrying discriminator fields. Default to false/"" so resident-band
+    // markers are unaffected. (The persistence-only pending-reveal fields stay undecoded.)
     let _ = dict.insert("is_expedition", cohort.isExpedition());
     let _ = dict.insert(
         "expedition_mission",
         cohort.expeditionMission().unwrap_or(""),
     );
     let _ = dict.insert("expedition_phase", cohort.expeditionPhase().unwrap_or(""));
+    // The real band that outfitted this party (entity bits; 0 for a normal band). The Band/City
+    // panel groups a band's active expeditions by `home_band_entity == band.entity`, and the band
+    // cycler excludes expeditions. Bit-reinterpreted as i64 like `entity` above so the comparison
+    // matches. Empty/0 for resident bands.
+    let _ = dict.insert("home_band_entity", cohort.homeBandEntity() as i64);
     // Hunt expedition (PR 2, docs/plan_exploration_and_sites.md §2b): the herd a hunt party
     // follows (fauna_id string like "game_deer_57", mirrors LaborAssignment.faunaId); "" for a
     // scout expedition / normal band. `expedition_mission` also takes "hunt", `expedition_phase`
