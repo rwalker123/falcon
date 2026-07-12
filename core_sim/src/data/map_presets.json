@@ -26,7 +26,7 @@
       "river_uphill_gain_pct": 0.08,
       "lake_chance": 0.15,
       "macro_land": { "continents": 4, "min_area": 256, "target_land_pct": 0.38, "jitter": 0.18 },
-      "shelf": { "width_tiles": 2, "slope_width_tiles": 3, "width_frac": 0.040, "width_exp": 0.4 },
+      "shelf": { "width_tiles": 2, "slope_width_tiles": 3, "width_frac": 0.040, "width_exp": 0.4, "min_width_tiles": 1.0, "coast_height_threshold": 0.10 },
       "islands": { "continental_density": 0.0025, "oceanic_density": 0.0012, "fringing_shelf_width": 2, "min_distance_from_continent": 12 },
       "inland_sea": { "min_area": 24, "merge_strait_width": 2 },
       "ocean": { "ridge_density": 0.0, "ridge_amplitude": 0.0 },
@@ -120,7 +120,26 @@
         "river_wetland_jitter": 0.5,
         "floodplain_spread": 0.4
       },
-      "tolerance": 0.02
+      "tolerance": 0.02,
+      "biome_palette": {
+        "_comment_highland_volcanic": "Highland + Volcanic are physically relief/elevation/mask-gated: every member maps to a specific regime, so no palette swap has an acceptable substitute. Never thinned (K = full membership); Volcanic is simply absent on maps with no volcanic arc + no fumarole anomaly hit.",
+        "_comment_anchors": "Anchors = selectable map presets: Tiny (2016) -> k_small (most legible), Huge (10240) -> k_large (richest); Standard (4160) lands partway up the smoothstep curve.",
+        "small_map_tiles": 2016,
+        "large_map_tiles": 10240,
+        "niches": {
+          "Ocean":          { "k_small": 2, "k_large": 4 },
+          "CoastWetland":   { "k_small": 1, "k_large": 4 },
+          "FertileLowland": { "k_small": 2, "k_large": 5 },
+          "AridLowland":    { "k_small": 1, "k_large": 4 },
+          "PolarLowland":   { "k_small": 1, "k_large": 3 },
+          "Highland":       { "k_small": 5, "k_large": 5 },
+          "Volcanic":       { "k_small": 3, "k_large": 3 },
+          "Anomaly":        { "k_small": 2, "k_large": 4 }
+        }
+      },
+      "terrain_classifier": {
+        "anomaly_fraction": 0.04
+      }
     },
     {
       "id": "polar_contrast",

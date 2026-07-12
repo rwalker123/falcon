@@ -411,6 +411,36 @@ func _ready() -> void:
 	await _settle()
 	await _save("reserved_dock_cleared")
 
+	# Terrain-legend sort control (base terrain legend, key == "terrain"). Several
+	# biomes of varying tile counts so the default count-desc order + the Name/Count
+	# sort toggles + sort persistence across a regen push are all visible. Rendered
+	# before the full-screen icon probe below so the right-dock legend isn't covered.
+	_hud.update_overlay_legend(_terrain_legend_fixture())
+	await _settle()
+	await _save("terrain_legend_count_desc")  # default: Count, high→low
+
+	# Click "Name" → alphabetical A→Z.
+	_hud._on_legend_sort_pressed(HudLayer.LEGEND_SORT_FIELD_NAME)
+	await _settle()
+	await _save("terrain_legend_name_asc")
+
+	# Click "Name" again → Z→A.
+	_hud._on_legend_sort_pressed(HudLayer.LEGEND_SORT_FIELD_NAME)
+	await _settle()
+	await _save("terrain_legend_name_desc")
+
+	# Click "Count" → back to count, and again → low→high.
+	_hud._on_legend_sort_pressed(HudLayer.LEGEND_SORT_FIELD_COUNT)
+	_hud._on_legend_sort_pressed(HudLayer.LEGEND_SORT_FIELD_COUNT)
+	await _settle()
+	await _save("terrain_legend_count_asc")
+
+	# Simulate a map regen (fresh terrain-legend push): the chosen sort (count asc)
+	# must persist, not snap back to the default.
+	_hud.update_overlay_legend(_terrain_legend_fixture())
+	await _settle()
+	await _save("terrain_legend_persist")
+
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
 	var probe_layer := CanvasLayer.new()
@@ -752,3 +782,22 @@ func _domesticated_herd_fixture() -> Dictionary:
 	var fixture := _herd_fixture()
 	fixture["domestication"] = 1.0
 	return fixture
+
+## A base terrain legend (key == "terrain") shaped exactly like
+## MapView._build_terrain_legend's output: rows carry color/label/value_text plus
+## the numeric `count` the sort control keys off. Counts are deliberately varied
+## and out of both name/count order so the sorting is obvious.
+func _terrain_legend_fixture() -> Dictionary:
+	return {
+		"key": "terrain",
+		"title": "Terrain Types",
+		"description": "Biomes present on this map (5).",
+		"rows": [
+			{"color": Color("3a6f3a"), "label": "Prairie", "value_text": "412 tiles", "count": 412},
+			{"color": Color("2a4a7a"), "label": "Deep Ocean", "value_text": "980 tiles", "count": 980},
+			{"color": Color("c8b26a"), "label": "Desert", "value_text": "137 tiles", "count": 137},
+			{"color": Color("2f5f2f"), "label": "Mixed Woodland", "value_text": "268 tiles", "count": 268},
+			{"color": Color("8a8a8a"), "label": "Alpine", "value_text": "54 tiles", "count": 54},
+		],
+		"stats": {},
+	}

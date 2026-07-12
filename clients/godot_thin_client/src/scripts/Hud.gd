@@ -105,6 +105,16 @@ const LEGEND_SWATCH_FRACTION := 0.75
 const LEGEND_MIN_ROW_HEIGHT := 20.0
 const LEGEND_ROW_PADDING := 6.0
 const LEGEND_MAX_HEIGHT := 640.0
+# Terrain-legend sort control (terrain key only). The panel holds a sort mode —
+# field ∈ {name, count} × a per-field direction — and re-applies it whenever a
+# new terrain legend arrives, so the user's chosen order sticks across map regen.
+const LEGEND_KEY_TERRAIN := "terrain"
+const LEGEND_SORT_FIELD_NAME := "name"
+const LEGEND_SORT_FIELD_COUNT := "count"
+const LEGEND_SORT_ARROW_ASC := "▲"
+const LEGEND_SORT_ARROW_DESC := "▼"
+const LEGEND_SORT_LABEL := "Sort"
+const LEGEND_SORT_ROW_SEPARATION := 6
 const STACK_ADDITIONAL_MARGIN := 16.0
 const COMMAND_FEED_LIMIT := 6
 # The feed grows to fit its entries, but never past the space left in the dock
@@ -213,6 +223,18 @@ const DEFAULT_TRAVEL_SPEED := 3.0
 const DEFAULT_TRAVEL_PREVIEW_LIMIT := 12
 var overlay_legend: Dictionary = {}
 var legend_suppressed: bool = false
+# Terrain-legend sort mode (display-only, persisted across legend pushes).
+# Default: Count, descending — most common biome first, a sensible read of a
+# map's composition. Direction is remembered per field so toggling is intuitive.
+var _legend_sort_field: String = LEGEND_SORT_FIELD_COUNT
+var _legend_sort_ascending: Dictionary = {
+	LEGEND_SORT_FIELD_NAME: true,
+	LEGEND_SORT_FIELD_COUNT: false,
+}
+# Runtime-built sort header (Name/Count toggles), lazily created, terrain-only.
+var _legend_sort_row: HBoxContainer = null
+var _legend_sort_name_button: Button = null
+var _legend_sort_count_button: Button = null
 var localization_store = null
 var campaign_label: Dictionary = {}
 var victory_state: Dictionary = {}
@@ -1828,7 +1850,14 @@ func update_overlay_legend(legend: Dictionary) -> void:
         terrain_legend_panel.visible = false
         terrain_legend_description.visible = false
         terrain_legend_description.text = ""
+        _set_legend_sort_visible(false)
         return
+    # The sort control applies to the base terrain legend only; scalar-overlay
+    # and tag legends have a meaningful intrinsic order and render unchanged.
+    var is_terrain := String(overlay_legend.get("key", "")) == LEGEND_KEY_TERRAIN
+    _set_legend_sort_visible(is_terrain)
+    if is_terrain:
+        rows = _sorted_terrain_rows(rows)
     var row_height := _legend_row_height()
     var swatch_size := _legend_swatch_size(row_height)
     for entry in rows:
@@ -3429,6 +3458,95 @@ func _resize_legend_panel(_list_size: Vector2) -> void:
     var clamped_height: float = clamp(list_height, LEGEND_MIN_ROW_HEIGHT, LEGEND_MAX_HEIGHT)
     terrain_legend_scroll.custom_minimum_size.y = clamped_height
     terrain_legend_scroll.scroll_vertical = 0
+
+## Sort the terrain legend rows by the active field/direction. Display-only —
+## MapView always sends its natural order; the panel owns the preference.
+func _sorted_terrain_rows(rows: Array) -> Array:
+    var sorted_rows: Array = rows.duplicate()
+    var field := _legend_sort_field
+    var ascending := bool(_legend_sort_ascending.get(field, true))
+    sorted_rows.sort_custom(func(a, b): return _legend_row_less(a, b, field, ascending))
+    return sorted_rows
+
+func _legend_row_less(a, b, field: String, ascending: bool) -> bool:
+    var less: bool
+    if field == LEGEND_SORT_FIELD_COUNT:
+        var count_a := int(a.get("count", 0))
+        var count_b := int(b.get("count", 0))
+        if count_a == count_b:
+            # Ties read best alphabetically rather than in arbitrary order.
+            less = str(a.get("label", "")).naturalnocasecmp_to(str(b.get("label", ""))) < 0
+        else:
+            less = count_a < count_b
+    else:
+        less = str(a.get("label", "")).naturalnocasecmp_to(str(b.get("label", ""))) < 0
+    return less if ascending else not less
+
+## Build the Name/Count sort header once and insert it above the row list.
+func _ensure_legend_sort_row() -> void:
+    if _legend_sort_row != null:
+        return
+    if terrain_legend_scroll == null:
+        return
+    var content: Node = terrain_legend_scroll.get_parent()
+    if content == null:
+        return
+    _legend_sort_row = HBoxContainer.new()
+    _legend_sort_row.add_theme_constant_override("separation", LEGEND_SORT_ROW_SEPARATION)
+    _legend_sort_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+    var caption := Label.new()
+    caption.text = LEGEND_SORT_LABEL
+    caption.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    caption.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+    _legend_sort_row.add_child(caption)
+
+    _legend_sort_name_button = Button.new()
+    _legend_sort_name_button.pressed.connect(_on_legend_sort_pressed.bind(LEGEND_SORT_FIELD_NAME))
+    _legend_sort_row.add_child(_legend_sort_name_button)
+
+    _legend_sort_count_button = Button.new()
+    _legend_sort_count_button.pressed.connect(_on_legend_sort_pressed.bind(LEGEND_SORT_FIELD_COUNT))
+    _legend_sort_row.add_child(_legend_sort_count_button)
+
+    content.add_child(_legend_sort_row)
+    # Sit directly above the row list (below the card header + description).
+    content.move_child(_legend_sort_row, terrain_legend_scroll.get_index())
+
+func _set_legend_sort_visible(should_show: bool) -> void:
+    if should_show:
+        _ensure_legend_sort_row()
+        _update_legend_sort_buttons()
+    if _legend_sort_row != null:
+        _legend_sort_row.visible = should_show
+
+func _update_legend_sort_buttons() -> void:
+    if _legend_sort_name_button == null or _legend_sort_count_button == null:
+        return
+    _legend_sort_name_button.text = _legend_sort_button_text("Name", LEGEND_SORT_FIELD_NAME)
+    _legend_sort_count_button.text = _legend_sort_button_text("Count", LEGEND_SORT_FIELD_COUNT)
+    # The active field reads as the "primary" cyan treatment; the other is ghost.
+    HudStyle.apply_button(_legend_sort_name_button, _legend_sort_variant(LEGEND_SORT_FIELD_NAME))
+    HudStyle.apply_button(_legend_sort_count_button, _legend_sort_variant(LEGEND_SORT_FIELD_COUNT))
+
+func _legend_sort_button_text(label: String, field: String) -> String:
+    if field != _legend_sort_field:
+        return label
+    var arrow := LEGEND_SORT_ARROW_ASC if bool(_legend_sort_ascending.get(field, true)) else LEGEND_SORT_ARROW_DESC
+    return "%s %s" % [label, arrow]
+
+func _legend_sort_variant(field: String) -> String:
+    return "primary" if field == _legend_sort_field else "ghost"
+
+func _on_legend_sort_pressed(field: String) -> void:
+    if field == _legend_sort_field:
+        # Re-clicking the active field flips its direction (A→Z↔Z→A, high↔low).
+        _legend_sort_ascending[field] = not bool(_legend_sort_ascending.get(field, true))
+    else:
+        _legend_sort_field = field
+    _update_legend_sort_buttons()
+    # Re-render the current legend so the new order lands immediately.
+    update_overlay_legend(overlay_legend)
 
 func toggle_legend() -> void:
     legend_suppressed = not legend_suppressed
