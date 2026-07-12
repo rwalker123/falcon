@@ -41,6 +41,16 @@ impl SizeClass {
             SizeClass::Migratory => "migratory",
         }
     }
+
+    /// Parse the stable string key back into a size class (inverse of `as_str`; the rollback
+    /// restore path). Unknown/empty strings resolve to the `Default` (`Small`).
+    pub fn from_key(key: &str) -> Self {
+        match key {
+            "big" => SizeClass::Big,
+            "migratory" => SizeClass::Migratory,
+            _ => SizeClass::Small,
+        }
+    }
 }
 
 /// One species row in the table.

@@ -154,6 +154,71 @@ impl Default for HerdTelemetryState {
     }
 }
 
+/// Shared depletable-ecology record round-tripped through the rollback snapshot. Mirrors the
+/// mutable biomass state a resource carries — herds today (`HerdState.ecology`), forage patches
+/// in the next intensification slice (`ForageState`). `ecology_phase` crosses as a stable string
+/// (`EcologyPhase::as_str` / parse) so the live enum stays serde-free per the codebase convention;
+/// `progress` = a herd's `domestication_progress` (forage will reuse it for cultivation);
+/// `owner` = the tending faction id (`FactionId`'s inner `u32`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct EcologyState {
+    #[serde(default)]
+    pub biomass: f32,
+    #[serde(default)]
+    pub carrying_capacity: f32,
+    #[serde(default)]
+    pub ecology_phase: String,
+    #[serde(default)]
+    pub progress: f32,
+    #[serde(default)]
+    pub owner: Option<u32>,
+}
+
+/// Serde mirror of a herd's live `RoamState` movement mode. The variant crosses as a stable
+/// string (`"graze_wander" | "loiter" | "migrate"`) with the loiter countdown alongside it, so the
+/// live enum stays serde-free (same convention as `ecology_phase`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct HerdRoamState {
+    #[serde(default)]
+    pub mode: String,
+    /// Loiter only: remaining loiter turns (`0` for graze-wander / migrate).
+    #[serde(default)]
+    pub loiter_turns_left: u32,
+}
+
+/// Full authoritative mirror of a live `Herd`, round-tripped through the rollback snapshot so a
+/// rollback rewinds herd biomass / position / movement — not just the lossy display telemetry
+/// (`HerdTelemetryState`). Identity + movement fields are mirrored directly; the depletable-ecology
+/// subset (biomass / carrying_capacity / phase / domestication progress / owner) lives in the
+/// embedded `EcologyState`. Coordinates cross as `(x, y)` pairs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct HerdState {
+    pub id: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub species: String,
+    /// Coarse size band (`SizeClass::as_str` / parse: `"small" | "big" | "migratory"`).
+    #[serde(default)]
+    pub size_class: String,
+    /// Sparse anchor list (movement waypoints), each an `(x, y)` tile.
+    #[serde(default)]
+    pub route: Vec<(u32, u32)>,
+    #[serde(default)]
+    pub step_index: u32,
+    #[serde(default)]
+    pub current_pos: (u32, u32),
+    #[serde(default)]
+    pub dwell_remaining: u32,
+    #[serde(default)]
+    pub roam: HerdRoamState,
+    /// Next intended hex (client heading arrow); `None` while loitering/grazing.
+    #[serde(default)]
+    pub next_pos: Option<(u32, u32)>,
+    #[serde(default)]
+    pub ecology: EcologyState,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FoodModuleState {
     pub x: u32,
@@ -1628,6 +1693,11 @@ pub struct WorldSnapshot {
     pub command_events: Vec<CommandEventState>,
     #[serde(default)]
     pub herds: Vec<HerdTelemetryState>,
+    /// Authoritative herd sim state (`HerdRegistry`), round-tripped for rollback correctness —
+    /// distinct from the lossy display `herds` above (which the client consumes). Not wired to the
+    /// FlatBuffers client stream; rollback restore reads it via `HerdRegistry::update_from_states`.
+    #[serde(default)]
+    pub herd_registry: Vec<HerdState>,
     #[serde(default)]
     pub food_modules: Vec<FoodModuleState>,
     #[serde(default)]

@@ -319,6 +319,21 @@ of `fauna_config.json`.
 > simply lacks the component). Pursuits are short-lived; revisit if needed. Domestication
 > state lives on the `Herd` (in `HerdRegistry`), alongside `biomass`.
 
+> **The authoritative `HerdRegistry` *is* rollback-persisted** (as of the intensification
+> arc's first slice, `docs/plan_intensification.md` §0-i). Each live `Herd` — identity,
+> movement (`route`/`step_index`/`current_pos`/`dwell_remaining`/`roam`/`next_pos`), **and** its
+> depletable-ecology subset (`biomass`/`carrying_capacity`/`ecology_phase`/
+> `domestication_progress`/`owner`) — round-trips through a serde `HerdState` (the ecology subset
+> embedded as a shared `EcologyState`) captured into `WorldSnapshot.herd_registry` and rebuilt on
+> restore via `HerdRegistry::update_from_states`, following the `GenerationRegistry` round-trip
+> convention. This closes a **latent bug**: only the lossy display `HerdTelemetry`
+> (`WorldSnapshot.herds`) used to be captured, so herd biomass/position silently kept their
+> post-rollback values. Restore rebuilds the derived `HerdDensityMap` + `HerdTelemetry` (as
+> `advance_herds` does post-loop) so nothing is stale for a turn. `HerdState` is the sim side; the
+> FlatBuffers client stream is untouched (it keeps using the display telemetry). **`EcologyState`
+> is the shared depletable-ecology record** the forage-depletion slice (§0-ii) reuses for its
+> per-tile `ForageState`.
+
 Market hunting shipped as the `Market` follow policy; `SedentarizationScore` shipped (see
 "Sedentarization" under Campaign Loop). Still deferred (`docs/plan_wildlife_hunting_overlay.md`):
 the `Camp` entity + corrals, and wiring the sedentarization hard prompt to an actual
@@ -725,6 +740,8 @@ per-faction orders -> command server -> turn queue -> run_turn -> snapshot -> br
 ## Snapshot History & Rollback
 
 `SnapshotHistory` retains ring buffer of `WorldSnapshot` + `WorldDelta` pairs (default 256). `rollback <tick>` rewinds simulation, resets ECS world, truncates history.
+
+The rollback snapshot round-trips the **authoritative `HerdRegistry`** (via `HerdState` + the shared `EcologyState` record in `WorldSnapshot.herd_registry`), not just the lossy display telemetry — see the herd-persistence note under "Fauna & Wild Game" for details and the bug it fixed.
 
 **Map export**: the `export_map [path]` command (`write_map_export` in `bin/server.rs`) writes the latest `SnapshotHistory.last_snapshot` plus the resolved `SimulationConfig.map_seed`/`map_preset_id` to disk as a `sim_schema::MapExport` JSON (default `exports/map-tick<t>-seed<s>.json`, gitignored). No new protocol — it rides the existing one-way command channel; the seed makes the dumped map reproducible, and the JSON doubles as an offline-inspectable, test-loadable fixture.
 
