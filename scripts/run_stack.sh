@@ -153,11 +153,37 @@ echo "[run_stack] Port base $PORT_BASE (snapshot=$SNAPSHOT_PORT command=$COMMAND
 
 # --- Build --------------------------------------------------------------------
 
+# Regenerate Godot's global class-name cache when stale. `class_name`-typed
+# references (e.g. Hud.gd's `var _band_city_panel: BandCityPanel`) only resolve
+# if the class is registered in .godot/global_script_class_cache.cfg, which is
+# rewritten by the *editor's* project scan — never by launching the client. So
+# after pulling a branch that adds a new `class_name`, a plain client run fails
+# with "Could not find type ...". The cache is gitignored (a per-checkout
+# artifact), so nothing else keeps it current. Rebuild it if it's missing or if
+# any script is newer than it (analogous to build_terrain_textures.sh).
+ensure_godot_class_cache() {
+  local client_dir="$ROOT_DIR/clients/godot_thin_client"
+  local cache="$client_dir/.godot/global_script_class_cache.cfg"
+
+  if [[ -f "$cache" ]] \
+      && ! find "$client_dir" -name '*.gd' -newer "$cache" -print -quit \
+             2>/dev/null | grep -q .; then
+    return 0
+  fi
+
+  echo "[run_stack] Regenerating Godot class cache (stale or missing)..."
+  if ! godot --headless --editor --quit --path "$client_dir" >/dev/null 2>&1; then
+    echo "[run_stack] Warning: class-cache regeneration exited non-zero; continuing." >&2
+  fi
+}
+
 if [[ "$RUN_CLIENT" == true || "$RUN_GODOT" == true ]]; then
   echo "[run_stack] Building Godot package..."
   cargo xtask godot-build
   # Build terrain textures if out of date
   "$ROOT_DIR/scripts/build_terrain_textures.sh"
+  # Refresh the global class-name cache if scripts changed since it was built.
+  ensure_godot_class_cache
 fi
 
 cleanup() {
