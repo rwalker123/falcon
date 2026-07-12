@@ -953,6 +953,15 @@ pub struct LaborAssignmentState {
     pub fauna_id: String,
     #[serde(default)]
     pub policy: String,
+    /// Provisions this source actually produced this turn (per-source food-income breakdown). Derived
+    /// per-turn at capture (0.0 on a rehydrated save before the next tick). Appended (append-only).
+    #[serde(default)]
+    pub actual_yield: f32,
+    /// Provisions this source could yield without drawing down its stock this turn (forage: ≡
+    /// `actual`; hunt: the herd's net regrowth). `actual > sustainable` is the overhunting signal.
+    /// Derived per-turn at capture. Appended (append-only).
+    #[serde(default)]
+    pub sustainable_yield: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -1135,6 +1144,16 @@ pub struct PopulationCohortState {
     /// discipline); a pre-stage snapshot decodes to the empty default.
     #[serde(default)]
     pub settlement_stage: SettlementStageViewState,
+    /// Band-level food income this turn = Σ of every worked source's `actual_yield` (the per-source
+    /// breakdown summed). Derived per-turn at capture (0.0 on a rehydrated save before the next
+    /// tick). Appended last (append-only schema discipline). Lets the client draw a food ledger
+    /// footer without re-summing the assignment rows.
+    #[serde(default)]
+    pub food_income: f32,
+    /// Band-level per-turn food consumption = `food_demand(children, working, elders)` (the same
+    /// one-turn demand `days_of_food` divides by). Derived per-turn at capture. Appended last.
+    #[serde(default)]
+    pub food_consumption: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`
@@ -2888,6 +2907,8 @@ fn create_populations<'a>(
                                 targetY: assignment.target_y,
                                 faunaId: fauna_id,
                                 policy,
+                                actualYield: assignment.actual_yield,
+                                sustainableYield: assignment.sustainable_yield,
                             },
                         )
                     })
@@ -2999,6 +3020,8 @@ fn create_populations<'a>(
                     moraleClimate: cohort.morale_climate,
                     moraleUnrest: cohort.morale_unrest,
                     settlementStage: Some(settlement_stage),
+                    foodIncome: cohort.food_income,
+                    foodConsumption: cohort.food_consumption,
                 },
             )
         })

@@ -605,13 +605,42 @@ pub struct LaborAssignment {
     pub workers: u32,
 }
 
+/// Retained per-source food-yield telemetry for one labor assignment this turn (derived, not
+/// persisted). `actual` = the provisions the source actually produced this turn; `sustainable` =
+/// the provisions it could yield *without drawing down its stock*. Forage is inexhaustible in
+/// today's model so its `sustainable` is defined equal to `actual`; a Hunt's `sustainable` is the
+/// herd's net regrowth this turn (`net_biomass_delta(..).max(0) × provisions_per_biomass`, scaled
+/// by the same output multiplier). A per-turn `actual > sustainable` is the (client-derived)
+/// overhunting signal — a *leading* flow indicator, distinct from the stock-based `ecology_phase`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SourceYield {
+    pub actual: f32,
+    pub sustainable: f32,
+}
+
 /// A band's partition of its working-age pool across labor demands. Replaces the retired
 /// single-task model (`HarvestAssignment`/`ScoutAssignment`/`FaunaPursuit`): a band now draws from
 /// many sources at once, with the invariant `Σ assignments.workers ≤ available_workers(working)`.
 /// Unassigned workers are **idle** — they eat but produce nothing (no auto-forage).
-#[derive(Component, Debug, Clone, Default, PartialEq)]
+#[derive(Component, Debug, Clone, Default)]
 pub struct LaborAllocation {
     pub assignments: Vec<LaborAssignment>,
+    /// Per-turn, per-source yield telemetry — one entry per `assignments` in the **same iteration
+    /// order** (so the snapshot zips by index). Rebuilt from scratch each turn in
+    /// `advance_labor_allocation`; it is **derived, not persisted** (rollback restores only the
+    /// assignments via `labor_allocation_from_state`, leaving this empty until the next tick) and is
+    /// **excluded from equality** (see the manual `PartialEq` below) so it can never perturb the
+    /// persisted-intent comparison.
+    pub last_yields: Vec<SourceYield>,
+}
+
+/// Equality is **intent only** — two allocations with equal `assignments` are equal regardless of
+/// the derived `last_yields` telemetry. This keeps `last_yields` out of any rollback / persisted-
+/// state comparison (it is deliberately not part of the assignment's identity).
+impl PartialEq for LaborAllocation {
+    fn eq(&self, other: &Self) -> bool {
+        self.assignments == other.assignments
+    }
 }
 
 impl LaborAllocation {

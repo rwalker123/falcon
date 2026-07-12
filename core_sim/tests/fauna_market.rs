@@ -141,6 +141,7 @@ fn spawn_hunter(
                     },
                     workers: HUNT_WORKERS,
                 }],
+                ..Default::default()
             },
         ))
         .id()
