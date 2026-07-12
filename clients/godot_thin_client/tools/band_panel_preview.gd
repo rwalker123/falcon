@@ -102,6 +102,21 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_stepper_foreign")
 
+	# Fit-to-content height (no clipping) — push a TALLER band: starving + full morale breakdown +
+	# output row + the send-expedition section, so the summary column is much taller than the old fixed
+	# T/B PANEL_HEIGHT would allow. Dock top/bottom and confirm every column's bottom row is visible and
+	# the reserved strip grew to fit (map/HUD reflow is fanned onto the HUD as usual).
+	_hud.show_tile_selection({})   # clear the foreign selection so the panel band is the subject again
+	_hud.update_band_alerts([_starving_band_fixture(), _scout_expedition_fixture(), _hunt_expedition_fixture()])
+	for state in [
+		{"edge": SIDE_TOP, "name": "band_panel_top_tall"},
+		{"edge": SIDE_BOTTOM, "name": "band_panel_bottom_tall"},
+	]:
+		_panel.set_dock(state["edge"])
+		await _settle()
+		await _settle()   # extra frame: let the deferred fit_content re-pack + reservation settle
+		await _save(state["name"])
+
 	get_tree().quit()
 
 func _settle() -> void:
@@ -150,6 +165,23 @@ func _band_fixture() -> Dictionary:
 			{"kind": "warrior", "workers": 2},
 		],
 	}
+
+## A TALLER band variant (same entity 904, so the expeditions still attach): starving + declining
+## morale with the full itemized breakdown + an Output row + the send-expedition section, so the
+## summary column runs well past the old fixed T/B PANEL_HEIGHT — the case that used to clip.
+func _starving_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["days_of_food"] = 1.5
+	band["morale"] = 0.22
+	band["morale_delta"] = -0.055
+	band["morale_cause"] = 1   # Terrain
+	band["morale_settling"] = 0.010
+	band["morale_terrain"] = -0.030
+	band["morale_climate"] = -0.020
+	band["morale_unrest"] = -0.015
+	band["output_multiplier"] = 0.62
+	band["last_emigrated"] = 4
+	return band
 
 ## A detached SCOUT expedition outfitted by band 904 (home_band_entity), outbound to (39,26).
 func _scout_expedition_fixture() -> Dictionary:
