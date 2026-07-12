@@ -122,6 +122,38 @@ So plant domestication carries a sedentarization pull that mobile pastoralism do
 the bridge** that wires the new mechanics (forage depletion + cultivation) into the already-specced
 improvement/settlement system — it does not reinvent it.
 
+### 4b. The intensification ladder — earned knowledge, labor-tended tiers (refines §3–4)
+
+Intensification is not a single step; it is an **earned tech ladder where you unlock the next tier by
+*doing* the current one, and every tier's yield requires population tending the hex.** Knowledge is a
+faction-level thing accrued through the activity (the same shape as Sustain-hunt already accruing
+domestication) — never start-granted. Each rung raises output *and* deepens the anchor, so the settle
+pull grows with intensification.
+
+**Plant path:**
+1. **Sustain-forage** hexes → accrue faction **Cultivation** knowledge.
+2. Know Cultivation → a tended hex converts to a **tended patch**: higher output, but **worker-tended
+   and place-local** (paid to the band that staffs it, near it), and it **goes feral** if abandoned.
+3. **Sustain-tend patches** → accrue **Seed Germination** knowledge.
+4. Know Seed Germination → **plant crops on arbitrary tiles** (not just existing forage) — higher
+   output still, still worker-tended.
+
+**Animal path (parallel):**
+1. **Sustain-hunt** → **Domestication** (built) → **corral** (pen a domesticated herd → higher yield,
+   worker-tended, place-local) → accrue **Husbandry** → …
+
+**The load-bearing invariant:** a tier's yield is **place-local and requires a tending worker** — the
+band that staffs the hex collects it, and an unstaffed improvement decays/goes feral. That is the
+"pins the band" mechanic, and it is what makes intensification *cause* sedentarization rather than
+merely correlate with it. (§3's per-patch `cultivation_progress` is the *local* "how tended is this
+hex"; the ladder adds the *faction-level* earned knowledge that gates each rung.)
+
+Build the ladder **one rung at a time** (see Phasing): the tended-patch mechanic (worker-tended /
+place-local / feral) first, then the Cultivation-knowledge gate, then Seed Germination → crops, then
+the corral/Husbandry rungs. The generic settlement `build`/footprint/decay *catalog* stays deferred
+to the settlement arc — this arc delivers the earned, labor-tended food-tending ladder that plugs
+into it.
+
 ### 5. The command yield-vector + pre-commit forecast (cross-cutting)
 
 A command's output is not one number — it is a **vector** across dimensions (food + domestication/
@@ -181,11 +213,20 @@ the `surplus`/`resource_density` terms).
      Hunt carries its policy.
    *No cultivation yet — this just makes forage a real depletable resource with tradeoffs and turns
    on the pressure.*
-1. **Cultivation + Corral.** Transpose domestication to plants (`cultivation_progress`/`owner`/
-   Sustain-accrual/`cultivate` command); land the **tended-patch** (farming) and **corral**
-   (pastoral) place-bound improvements — realizing the settlement arc's food-tending improvement
-   class, knowledge-gated (`farming`/`herding`), built/tended/decaying. Pulls forward a slice of the
-   settlement arc's `build`/improvement system. Feeds `SedentarizationScore`.
+1. **Cultivation + the intensification ladder (Phase 1)** — the earned, labor-tended ladder of §4b,
+   built one rung at a time:
+   - **1 (shipped, sim).** Cultivation transpose: `cultivation_progress`/`owner` on the patch,
+     Sustain-Forage accrual, `cultivate` command, folded sedentarization signal.
+   - **1a.** **Tended patch = worker-tended + place-local + higher-output + feral-if-abandoned** —
+     replaces the even-split passive yield with the "pins the band" mechanic (paid to the tending
+     band; decays to wild if unstaffed).
+   - **1b.** **Cultivation-knowledge ladder + gate** — Sustain-forage accrues faction **Cultivation**
+     knowledge (a `KnowledgeFragment` / `DiscoveryProgressLedger`); knowing it gates converting a hex
+     to a tended patch.
+   - **1c.** **Corral** — pen a domesticated herd (place-local, worker-tended); `herding` gate.
+   - **Later rungs.** Seed Germination → plant crops on arbitrary tiles; Husbandry; etc.
+   Feeds `SedentarizationScore`. The generic settlement `build`/footprint/decay catalog stays with the
+   settlement arc.
 - **Cross-cutting: command yield-vector + pre-commit forecast.** Model the multi-dimensional output;
   surface husbandry/cultivation progress + trade goods live; add the compose-time forecast. Lands
   alongside Phase 0/1 (forecast is most valuable once policies create tradeoffs).
