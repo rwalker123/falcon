@@ -64,17 +64,24 @@ aliasing + foreign-selection bugs here); do not alter the labor logic.
 ### The panel's mode arranger (`_relayout_body` / a new `_arrange_sections`)
 - **Tall (LEFT/RIGHT):** a vertical `ScrollContainer` → `VBoxContainer` holding the
   blocks in order — identical to today's stack.
-- **Wide (TOP/BOTTOM):** a `VFlowContainer` (bounded to the strip height) holding
-  the blocks — it flows them top→bottom and **wraps to a new column** when a column
-  fills, so the sections spread across the width. Each block keeps a fixed/max
-  column width (named const) so columns are tidy and the stepper `−/+` controls
-  stay beside their labels. Wrap the flow in a horizontal `ScrollContainer` only if
-  the columns can still exceed the width (defensive).
-  - NOTE: `VFlowContainer` is correct **only** in the wide/bounded-height case. In
-    the tall unbounded-height scroll it collapses to min height and mis-columns
-    (confirmed in the #103 work) — so tall stays a plain VBox. The two modes use
-    **different container types**, which is why blocks are reparented rather than a
-    single container being reparented.
+- **Wide (TOP/BOTTOM) — AS SHIPPED:** **manual balanced-column packing**
+  (`_pack_wide_columns`) that **fits the panel height to the content** so nothing
+  clips. Column count = `clamp(avail_width / (SECTION_COLUMN_WIDTH +
+  WIDE_FLOW_SEPARATION), 1, #blocks)`; each block is placed into the currently
+  **shortest** column (greedy balance → minimizes the tallest column); columns sit
+  in an HBox. The panel then reports its **content height** (`header + tallest
+  column + margins`) as the reservation via `reservation_changed`, so the map/HUD
+  reflow to exactly fit. Re-packs on dock change, `set_band_sections` (content), and
+  window `size_changed`; a deferred re-measure (`await process_frame`) lets the
+  `fit_content` summary RichTextLabel settle before the height is finalized. Safety
+  net: height capped at `MAX_WIDE_HEIGHT_FRACTION` of the window, past which the
+  columns re-enable vertical scroll.
+  - NOTE: a `VFlowContainer` was the **initial** plan (below) but was **rejected**
+    during implementation — it wraps by a *bounded* height, which is incompatible
+    with fitting the height to content (unbounded height stops it wrapping → one
+    column). Manual packing gives both multi-column fill **and** fit-to-content.
+    Tall stays a plain VBox stack either way; the two modes use different container
+    types, which is why blocks are reparented on a tall↔wide flip.
 - On a **dock change** that flips tall↔wide, the panel re-arranges the **same block
   nodes** into the new container (reparent) — no Hud re-render needed (the panel
   holds the block refs). On a **Hud re-render** (stepper edit / snapshot),
@@ -101,6 +108,6 @@ aliasing + foreign-selection bugs here); do not alter the labor logic.
 
 ## Docs on completion
 - `clients/godot_thin_client/CLAUDE.md` → "Band/City dockable panel" → "Responsive
-  body": update to the section-block model (tall VBox stack vs wide VFlowContainer
-  column-flow; `set_band_sections` contract).
+  body": update to the section-block model (tall VBox stack vs wide manual
+  balanced-column packing with fit-to-content height; `set_band_sections` contract).
 - `TASKS.md`: check off the multi-column-fill item.
