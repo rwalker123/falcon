@@ -160,7 +160,7 @@ func _band_fixture() -> Dictionary:
 		"activity": "forage",
 		"labor_assignments": [
 			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18},
-			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17},
+			{"kind": "hunt", "workers": 4, "fauna_id": "game_woolly_mammoth_14", "policy": "eradicate", "target_x": 70, "target_y": 17},
 			{"kind": "scout", "workers": 2},
 			{"kind": "warrior", "workers": 2},
 		],
