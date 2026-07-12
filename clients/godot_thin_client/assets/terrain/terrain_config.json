@@ -1,5 +1,5 @@
 {
-  "texture_scale": 4.0,
+  "base_texture_scale": 0.25,
   "blend_width": 0.42,
   "blend_noise_cell": 6.0,
   "use_terrain_textures": true,

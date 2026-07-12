@@ -155,10 +155,18 @@ const SHORE_DEFAULT_FOAM_COLOR := Vector3(0.874, 0.949, 0.968)
 const SHORE_DEFAULT_BEACH_COLOR := Vector3(0.847, 0.733, 0.541)
 # Canopy overlay (forest = grass floor + overhanging tree crowns): overhang reach + treeline softness
 # are fractions of the hex radius (× radius → px); texture_scale is the world-UV multiplier (1.0 = one
-# crown tile per hex, matching the base). Fallbacks mirror terrain_config's "canopy" block.
+# crown tile per hex). It is an INDEPENDENT density knob from base_texture_scale (the base biome is
+# sampled in continuous world space at its own base_scale, ~0.25 ≈ one base tile per 4 hexes), NOT
+# matched to it. Fallbacks mirror terrain_config's "canopy" block.
 const CANOPY_DEFAULT_OVERHANG_WIDTH := 0.5
 const CANOPY_DEFAULT_SOFTNESS_WIDTH := 0.45
 const CANOPY_DEFAULT_TEXTURE_SCALE := 1.0
+# Base biome-texture world-UV scale (top-level terrain_config "base_texture_scale"): the base biome is
+# sampled in CONTINUOUS world space (like the canopy), so one texture tile spans ~1/base_scale hex-rows
+# and adjacent hexes show DIFFERENT regions of it — killing the per-hex identical-repeat grid that any
+# detailed (non-homogeneous) texture showed. ~0.25 → one texture spans ~4 hexes: the grid disappears but
+# features aren't tiny. Smaller = a texture covers MORE hexes (zoomed-in look), larger = fewer.
+const BASE_DEFAULT_TEXTURE_SCALE := 0.25
 # Canopy LOD gate, DECOUPLED from the flat↔flat blend gate (EDGE_BLEND_MIN_RADIUS). Set WELL BELOW it so
 # the canopy pass keeps running at far zoom — interior forest density (D=1) persists into a distinct
 # darker-green forest mass (the edge overhang naturally shrinks to nothing as hexes shrink). Trilinear
@@ -4167,6 +4175,10 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 	m.set_shader_parameter("wrap_h", _wrap_horizontal)
 	m.set_shader_parameter("blend_band", blend_width * radius)  # interlock half-band width in px
 	m.set_shader_parameter("noise_cell", noise_cell)
+	# Base biome texture is sampled in continuous world space (kills the per-hex repeat grid); one tile
+	# spans ~1/base_scale hex-rows. See BASE_DEFAULT_TEXTURE_SCALE / CLAUDE.md → Edge Blending.
+	var base_scale: float = maxf(float(config.get("base_texture_scale", BASE_DEFAULT_TEXTURE_SCALE)), 0.01)
+	m.set_shader_parameter("base_scale", base_scale)
 	m.set_shader_parameter("blend_enabled", radius >= EDGE_BLEND_MIN_RADIUS)  # LOD: base-only at far zoom
 	var shore: Dictionary = config.get("shore", {})
 	var foam_frac: float = clampf(float(shore.get("foam_width", SHORE_DEFAULT_FOAM_WIDTH)), 0.0, 2.0)

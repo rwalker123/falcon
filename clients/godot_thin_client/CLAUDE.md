@@ -254,12 +254,23 @@ forest↔ocean stay hard.
   a different flat biome; near a qualifying shared edge it dithers the neighbour's array sample in.
   The mix is **symmetric**: `p = clamp(0.5 + signed_dist_to_edge / (2·blend_band), 0, 1)` is 0.5 at
   the edge on both sides; `show neighbour if p > value_noise(world_pos / noise_cell)`.
+- **Base biome UV — CONTINUOUS world space** (like the canopy pass, NOT per-hex-normalized): the base
+  biome is sampled at `base_uv = v_map / (2·hex_radius) · base_scale` (`v_map = v_world - hex_origin`,
+  pan/zoom-anchored), so **one texture tile spans ~`1/base_scale` hex-rows** and adjacent hexes show
+  DIFFERENT regions of it. This kills the **per-hex identical-repeat grid** (with diagonal seams) that
+  any *detailed* (non-homogeneous) base texture used to show when each hex was mapped to one whole
+  centered copy — invisible on homogeneous grass/water, obvious on a rocky/alpine texture. The
+  **flat↔flat dither samples the neighbour biome at the SAME `base_uv`** (only the array layer differs),
+  so the cross-edge interlock stays continuous (two world-sampled biomes at one world point). `repeat_enable`
+  tiles the array. The canopy pass already sampled this way; the base now matches it.
 - **id-map splatmap** (`_rebuild_terrain_shader_maps`, per snapshot): a `grid_w × grid_h` **RGBA8**
   texture, R = terrain id, G = `blend_class` code (0 water / 1 flat / 2 rugged), B = canopy code
   (0 none, else canopy layer + 1), A = 255, NEAREST-sampled. A
   companion **R8 vis-map** carries FoW state (0 unexplored / 0.5 discovered / 1 active).
 - **Config levers:** `blend_width` (→ `blend_band = blend_width · radius`, the interlock half-band in
-  px) and `blend_noise_cell` (world-noise cell px). **LOD:** below `EDGE_BLEND_MIN_RADIUS`
+  px), `blend_noise_cell` (world-noise cell px), and top-level `base_texture_scale`
+  (→ `base_scale`, default `0.25` = one base texture spans ~4 hex-rows; smaller covers MORE hexes,
+  larger fewer — `BASE_DEFAULT_TEXTURE_SCALE` in `MapView.gd`). **LOD:** below `EDGE_BLEND_MIN_RADIUS`
   (`= ICON_MIN_DETAIL_RADIUS`) the shader renders base-only (no shimmer at far zoom). **FoW:** the
   shader applies the same discovered-mist multiply / unexplored-fog fill as the per-hex path
   (`_fow_texture_tint_for_state` semantics) via the vis-map — it dims, never drops, the blend.
@@ -322,8 +333,9 @@ silhouette. Today the only canopy biome is **12 (mixed_woodland)** — its `blen
   hex_origin` is the pan/zoom-anchored MAP coordinate (raw `v_world` is the quad-LOCAL/screen-fixed
   coord and would slide against the grid on pan/zoom — all map-space terms, canopy UV + the
   dither/shore/treeline noise, use `v_map`). Continuous across hexes (a crown straddling a boundary
-  reads as one tree) and, at `canopy_scale = 1.0`, the same texel density as the base (which the shader
-  maps one texture per hex). FoW-tinted like the rest.
+  reads as one tree). The base biome now samples in the same continuous world space (see **Base biome
+  UV** above), so `canopy_scale` and `base_scale` are the two independent world-UV density knobs (a
+  crown tile per hex at `canopy_scale = 1.0`; a base tile per ~`1/base_scale` hexes). FoW-tinted like the rest.
 - **Canopy LOD is DECOUPLED from the blend LOD** (own `canopy_lod_enabled` uniform, `radius ≥
   canopy_min_radius`, NOT the flat↔flat `blend_enabled`/`EDGE_BLEND_MIN_RADIUS` gate). `canopy_min_radius`
   sits WELL BELOW `EDGE_BLEND_MIN_RADIUS` (3.0 vs 16.0) so the canopy pass keeps running at far zoom:
@@ -356,12 +368,19 @@ some drivers, whitening the base). The `sampler2DArray` uniform is the same `ter
 Verify via `tools/map_preview.gd` State Q → `ui_preview_out/map_biome_hard.png` (blend off, the
 reference) vs `map_biome_blend.png` (Approach B on), plus `map_biome_blend_seam.png` (desert↔prairie
 close-up): the flat pair blends symmetrically, prairie↔forest / forest↔ocean stay crisp, and terrain
-stays aligned with the grid.
+stays aligned with the grid. **State S** (`map_repetition_after.png` + `..._zoom.png`) renders a large
+detailed-rugged field (alpine id 26) beside a flat prairie band: the continuous world-space base
+sampling means NO per-hex identical-repeat grid on the alpine (each hex shows a different region of the
+texture, features flow across boundaries), while the prairie↔alpine seam stays a hard edge.
 
 **Fallback considered:** a MultiMesh (one instance per hex) was the fallback if whole-map inverse-hex
 alignment couldn't be matched; the splatmap alignment held, so the single-quad path was chosen (fewer
 moving parts, no per-frame instance transforms). **Future:** blue-noise sample instead of hash value
-noise; optional per-hex noise rotation to further break up any residual regularity.
+noise. A **per-hex UV rotation+offset for rugged biomes** (hard-edged, so cross-edge rotation
+discontinuities hide) was speced to break the texture's *own* tiling-period repeat, but the continuous
+world-space base sampling alone removed the objectionable per-hex grid (verified on alpine id 26 at
+`base_scale = 0.25`), so it was NOT needed. Do NOT rotate flat biomes — it would break their cross-edge
+blend continuity.
 
 ---
 
