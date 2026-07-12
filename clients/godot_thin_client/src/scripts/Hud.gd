@@ -1342,7 +1342,7 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     var sustainable := float(m.get("sustainable_yield", 0.0))
     # Forage is renewable (actual == sustainable) and can never overdraw; only depletable herds do.
     var renewable := kind == LABOR_KIND_FORAGE
-    var overhunting := actual > sustainable + OVERHUNT_EPSILON
+    var overhunting := not renewable and actual > sustainable + OVERHUNT_EPSILON
     var tooltip := "Actual %s" % _format_yield(actual)
     if renewable:
         tooltip += YIELD_TOOLTIP_RENEWABLE
