@@ -10,13 +10,17 @@ var terrain_textures: Texture2DArray = null
 # Canopy overlay: whole tree crowns on transparency (RGBA), a SECOND Texture2DArray sampled by the
 # blend shader over the (grass) forest floor so crowns can overhang the hex boundary. Only the biomes
 # with a `textures/canopy/NN_name.png` asset get a layer; `canopy_layer_by_id` maps terrain id → that
-# array layer (absent = no canopy). Today only 12 (mixed_woodland) has a canopy.
+# array layer (absent = no canopy). Layers are auto-discovered from whatever files are present in
+# `textures/canopy/` — any biome with a `NN_name.png` there gets a canopy layer, so there's no fixed
+# count to keep in sync here.
 var canopy_textures: Texture2DArray = null
 var canopy_layer_by_id: Dictionary = {}
 # Peak overlay: faceted mountain relief on transparency (RGBA), a THIRD Texture2DArray sampled by the
 # blend shader over the (rocky) highland/volcanic base floor — the mountain-drama analog of the canopy
 # overlay. Only biomes with a `textures/peaks/NN_name.png` asset get a layer; `peak_layer_by_id` maps
-# terrain id → that array layer (absent = no peaks). Today only 26 (alpine_mountain) has a peak asset.
+# terrain id → that array layer (absent = no peaks). Layers are auto-discovered from whatever files are
+# present in `textures/peaks/` — any biome with a `NN_name.png` there gets a peak layer, so there's no
+# fixed count to keep in sync here.
 var peak_textures: Texture2DArray = null
 var peak_layer_by_id: Dictionary = {}
 var terrain_config: Dictionary = {}

@@ -375,8 +375,9 @@ func _ready() -> void:
 	await _save("map_repetition_after")
 	await _save_crop("map_repetition_after_zoom", 0.42, 0.12, 0.98, 0.88)
 
-	# State "swatch" — reusable single-biome AI-texture check (SWATCH_BIOME_ID, tundra=20 this run): a
-	# large field of the biome bordering a prairie (id 11) band, blend on. Rendered at TWO zooms like
+	# State "swatch" — reusable single-biome AI-texture check (the biome under SWATCH_BIOME_ID, whatever
+	# it's currently set to): a large field of that biome bordering a prairie (id 11) band, blend on.
+	# Rendered at TWO zooms like
 	# State Q: a normal-zoom frame (judge the biome's own tiling + the flat↔flat blend against prairie)
 	# and a far-zoom frame on the large grid (judge whole-region cohesion / read as a distinct biome).
 	_map.set_fow_enabled(false)

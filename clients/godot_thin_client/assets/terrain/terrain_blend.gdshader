@@ -338,6 +338,7 @@ void fragment() {
 			bool own_is_peak = own_peak > 0;
 			float pk_best_d = -1e9;                         // nearest boundary edge = max signed distance
 			int nb_peak_code = 0;
+			float nb_peak_elev = 0.0;                       // elevation of that nearest peak-neighbour hex
 			for (int dir = 0; dir < 6; dir++) {
 				ivec2 off = neighbor_offset(row, dir);
 				int ncol = col + off.x;
@@ -359,6 +360,7 @@ void fragment() {
 				if (d > pk_best_d) {
 					pk_best_d = d;
 					nb_peak_code = ncode;
+					nb_peak_elev = texture(elev_map, nuv).r;   // same uv we read its id/peak-code from
 				}
 			}
 			int peak_code = own_is_peak ? own_peak : nb_peak_code;
@@ -370,15 +372,18 @@ void fragment() {
 				s = (pk_best_d > -1e8) ? pk_best_d : -1e9;   // no peak neighbour → no overhang
 			}
 			if (peak_code > 0) {
-				float own_elev = texture(elev_map, id_uv).r;              // 0..1
+				// Use the PEAK's elevation for prominence + shadow: own hex when it's the peak, else the
+				// captured peak-neighbour's — so the overhang/shadow on the ground side of the seam reads the
+				// peak's height, not the low neighbour-ground hex's (which discontinued across the seam).
+				float peak_elev = own_is_peak ? texture(elev_map, id_uv).r : nb_peak_elev;  // 0..1
 				vec2 puv = v_map / (2.0 * hex_radius) * peak_scale;       // continuous world UV (like canopy cuv)
-				float prom = mix(peak_min_prominence, 1.0, own_elev);
+				float prom = mix(peak_min_prominence, 1.0, peak_elev);
 
 				// --- CAST SHADOW: look back toward the light; if a peak occludes, darken this ground ---
 				// peak_light_dir points TOWARD the light (top-left). A fragment is shadowed if a peak sits
 				// between it and the light, i.e. at puv + light_dir * t. Multi-tap for a soft ramp.
 				float shadow = 0.0;
-				float slen_uv = (peak_shadow_len * (0.4 + 0.6 * own_elev)) / (2.0 * hex_radius) * peak_scale;
+				float slen_uv = (peak_shadow_len * (0.4 + 0.6 * peak_elev)) / (2.0 * hex_radius) * peak_scale;
 				const int TAPS = 4;
 				for (int k = 1; k <= TAPS; k++) {
 					float t = float(k) / float(TAPS);

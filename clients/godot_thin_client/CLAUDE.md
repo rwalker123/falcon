@@ -168,7 +168,7 @@ assets/terrain/
       00_deep_ocean.png
       ...
       36_aquifer_ceiling.png
-    canopy/                      # RGBA tree-crown overlays (transparency); one per canopy biome (12 today)
+    canopy/                      # RGBA tree-crown overlays (transparency); one per canopy biome (3 today: 07/12/13)
     peaks/                       # RGBA mountain-relief overlays (transparency); one per relief biome (5 today: 24/25/26/27/29)
     edges/                       # 6 edge masks for blending (optional)
     wang/                        # Wang tile variants (future)
