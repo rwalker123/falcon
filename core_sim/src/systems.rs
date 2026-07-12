@@ -12,6 +12,7 @@ use crate::map_preset::{MapPreset, MapPresetsHandle, TerrainClassifierConfig};
 #[cfg(test)]
 use crate::snapshot_overlays_config::SnapshotOverlaysConfig;
 use crate::{
+    biome_palette::BiomePalette,
     components::{
         available_workers, fragments_from_contract, fragments_to_contract, BandTravel, ElementKind,
         Expedition, ExpeditionMission, ExpeditionPhase, FollowPolicy, KnowledgeFragment,
@@ -262,6 +263,17 @@ pub fn spawn_initial_world(
     config.map_seed = world_seed;
     commands.insert_resource(WorldGenSeed(world_seed));
 
+    // Per-map biome palette (`docs/plan_biome_palette.md`): built once here, seeded from
+    // the resolved world seed, then enforced at the `bias_terrain_for_preset` seam below
+    // and by the post-solver `apply_biome_palette_clamp` system. Preset-driven, so a
+    // preset-less fallback map keeps its legacy (unrestricted) behavior.
+    let tile_count = (width * height).max(1) as u32;
+    let biome_palette =
+        preset_ref.map(|preset| BiomePalette::build(preset, world_seed, tile_count));
+    if let Some(ref palette) = biome_palette {
+        commands.insert_resource(palette.clone());
+    }
+
     let base_elevation_field = build_elevation_field(&config, preset_ref, world_seed);
     // Build coherent bands and restamped elevation (if preset available)
     let bands = preset_ref.map(|preset| {
@@ -363,11 +375,26 @@ pub fn spawn_initial_world(
                     )
                 }
             };
-            let (terrain, terrain_tags) = if let Some(preset) = preset_ref {
+            let (mut terrain, mut terrain_tags) = if let Some(preset) = preset_ref {
                 bias_terrain_for_preset(terrain, terrain_tags, preset, position, config.grid_size.y)
             } else {
                 (terrain, terrain_tags)
             };
+            // Palette enforcement (`docs/plan_biome_palette.md` §3.5): the weight/climate
+            // chains above cannot exclude highland/volcanic/polar/anomaly biomes, so any
+            // off-palette result is remapped to the nearest allowed biome in its niche.
+            // `is_polar` keeps the remap climate-safe (a polar wetland collapses to a
+            // polar biome, not a temperate marsh).
+            if let Some(ref palette) = biome_palette {
+                let lat_denom = config.grid_size.y.saturating_sub(1).max(1) as f32;
+                let dist_from_equator = (position.y as f32 / lat_denom - 0.5).abs();
+                let is_polar = dist_from_equator >= classifier_cfg.polar_latitude_cutoff;
+                let remapped = palette.remap(terrain, is_polar);
+                if remapped != terrain {
+                    terrain = remapped;
+                    terrain_tags = terrain_definition(remapped).tags;
+                }
+            }
             let food_module = classify_food_module_from_traits(terrain, terrain_tags);
             let mountain = if matches!(
                 terrain,
@@ -2340,6 +2367,139 @@ pub fn apply_tag_budget_solver(
                 break;
             }
             hazard_iterations += 1;
+        }
+    }
+}
+
+/// Post-solver palette clamp (`docs/plan_biome_palette.md` §6 #2). Insurance behind the
+/// build-time force-include of locked-tag fallbacks: after `apply_tag_budget_solver` runs,
+/// remap any stray off-palette tile back onto the palette via `BiomePalette::remap`, so the
+/// palette is a true invariant of the finished map. Cheap (one pass) and future-proofs the
+/// invariant against any new locked tag or edge path. `RiverDelta` is `must_have` (hence
+/// always on-palette) so genuine river mouths pass through untouched.
+pub fn apply_biome_palette_clamp(
+    palette: Option<Res<BiomePalette>>,
+    config: Res<SimulationConfig>,
+    map_presets: Res<MapPresetsHandle>,
+    registry: Res<TileRegistry>,
+    mut tiles: Query<&mut Tile>,
+) {
+    let Some(palette) = palette else {
+        return;
+    };
+    let presets = map_presets.get();
+    let polar_cutoff = presets
+        .get(&config.map_preset_id)
+        .map(|preset| preset.terrain_classifier.polar_latitude_cutoff)
+        .unwrap_or(POLAR_LATITUDE_THRESHOLD);
+    let lat_denom = registry.height.saturating_sub(1).max(1) as f32;
+    for &entity in registry.tiles.iter() {
+        if let Ok(mut tile) = tiles.get_mut(entity) {
+            if palette.contains(tile.terrain) {
+                continue;
+            }
+            let dist_from_equator = (tile.position.y as f32 / lat_denom - 0.5).abs();
+            let is_polar = dist_from_equator >= polar_cutoff;
+            let remapped = palette.remap(tile.terrain, is_polar);
+            if remapped != tile.terrain {
+                tile.terrain = remapped;
+                tile.terrain_tags = terrain_definition(remapped).tags;
+            }
+        }
+    }
+}
+
+/// Final coastal-shelf reconciliation — the last word on ocean tiles.
+///
+/// Runs in the Startup chain **after** `generate_hydrology`, `apply_tag_budget_solver`, and
+/// `apply_biome_palette_clamp`, so it sees the FINAL land mask: the `RiverDelta`/`Floodplain`/
+/// `FreshwaterMarsh` tiles hydrology stamps at river mouths and the polar `Tundra` the tag
+/// solver paints over near-shore ocean. `classify_bands` decides the shelf early and hex-exactly,
+/// so at that stage there are zero gentle-coast-vs-`DeepOcean` gaps — but those later stages
+/// repaint terrain near the coast *after* the shelf exists, creating new land-vs-`DeepOcean`
+/// adjacencies with no shelf between them. This pass closes that residual on the live map: every
+/// `DeepOcean` tile odd-r hex-adjacent to a GENTLE land tile (rise `< coast_height_threshold`)
+/// is reclassified to `ContinentalShelf`, using the SAME hex adjacency
+/// (`grid_utils::hex_neighbors_wrapped`) and coast-height gate as `classify_bands` so the two
+/// agree. STEEP (cliff/mountain) coasts — where every land hex-neighbour rises `>=` the threshold
+/// — keep deep water right at the edge (the passive-vs-active-margin model). Tiles a later stage
+/// repainted *as* land sit at or below sea level (rise `<= 0 < threshold`), so they read gentle
+/// and their adjacent deep ocean correctly gains a shelf. `ContinentalShelf` is a `must_have`
+/// palette biome, so this never conflicts with the palette clamp. Deterministic, no RNG.
+pub fn reconcile_coastal_shelf(
+    config: Res<SimulationConfig>,
+    map_presets: Res<MapPresetsHandle>,
+    elevation: Option<Res<ElevationField>>,
+    registry: Res<TileRegistry>,
+    mut tiles: Query<&mut Tile>,
+) {
+    let Some(elevation) = elevation else {
+        return;
+    };
+    let width = registry.width as usize;
+    let height = registry.height as usize;
+    let total = width * height;
+    if total == 0 {
+        return;
+    }
+
+    // Coast-height gate: prefer the active preset's threshold, fall back to the `ShelfConfig`
+    // default so the pass still runs when the preset is missing (mirrors `classify_bands`).
+    let presets = map_presets.get();
+    let coast_height_threshold = presets
+        .get(&config.map_preset_id)
+        .map(|preset| preset.shelf.coast_height_threshold)
+        .unwrap_or_else(|| crate::map_preset::ShelfConfig::default().coast_height_threshold);
+    let sea_level = elevation.sea_level;
+    let wrap_horizontal = config.map_topology.wrap_horizontal;
+
+    // Row-major snapshot of tags + DeepOcean flags so neighbour lookups don't fight the
+    // `&mut Tile` borrow. `registry.tiles` is row-major (index i == position (i%w, i/w)) — the
+    // same assumption `apply_tag_budget_solver` relies on for its neighbour indexing.
+    let mut tags: Vec<sim_runtime::TerrainTags> = vec![sim_runtime::TerrainTags::WATER; total];
+    let mut is_deep = vec![false; total];
+    for (i, &entity) in registry.tiles.iter().enumerate().take(total) {
+        if let Ok(tile) = tiles.get(entity) {
+            tags[i] = tile.terrain_tags;
+            is_deep[i] = tile.terrain == sim_runtime::TerrainType::DeepOcean;
+        }
+    }
+
+    let idx = |x: usize, y: usize| y * width + x;
+    let mut to_shelf: Vec<usize> = Vec::new();
+    for (i, &deep) in is_deep.iter().enumerate() {
+        if !deep {
+            continue;
+        }
+        let x = i % width;
+        let y = i / width;
+        let gentle_land_neighbour = crate::grid_utils::hex_neighbors_wrapped(
+            x as u32,
+            y as u32,
+            width as u32,
+            height as u32,
+            wrap_horizontal,
+        )
+        .any(|(nx, ny)| {
+            let nidx = idx(nx as usize, ny as usize);
+            // Land = not tagged WATER (treats deltas/marshes/tundra as land, excludes
+            // DeepOcean/ContinentalShelf/InlandSea/CoralShelf/HydrothermalVentField). Gentle =
+            // rise above sea level below the coast-height threshold (matches `classify_bands`).
+            !tags[nidx].contains(sim_runtime::TerrainTags::WATER)
+                && (elevation.sample(nx, ny) - sea_level) < coast_height_threshold
+        });
+        if gentle_land_neighbour {
+            to_shelf.push(i);
+        }
+    }
+
+    let shelf_tags = terrain_definition(sim_runtime::TerrainType::ContinentalShelf).tags;
+    for i in to_shelf {
+        if let Some(&entity) = registry.tiles.get(i) {
+            if let Ok(mut tile) = tiles.get_mut(entity) {
+                tile.terrain = sim_runtime::TerrainType::ContinentalShelf;
+                tile.terrain_tags = shelf_tags;
+            }
         }
     }
 }

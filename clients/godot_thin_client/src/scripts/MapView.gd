@@ -3110,6 +3110,18 @@ func terrain_palette_entries() -> Array:
 		})
 	return entries
 
+func present_terrain_ids() -> PackedInt32Array:
+	## Distinct terrain ids actually present on the current map, sorted ascending,
+	## computed from the per-tile `_cached_terrain_ids` set in `display_snapshot`.
+	## Empty before the first snapshot (no per-tile terrain cached yet) — callers
+	## fall back to the full palette in that case.
+	var seen: Dictionary = {}
+	for raw_id in _cached_terrain_ids:
+		seen[int(raw_id)] = true
+	var ids: Array = seen.keys()
+	ids.sort()
+	return PackedInt32Array(ids)
+
 func _emit_overlay_legend() -> void:
 	emit_signal("overlay_legend_changed", _legend_for_current_view())
 
@@ -3150,19 +3162,55 @@ func _legend_for_current_view() -> Dictionary:
 	return _build_scalar_overlay_legend(active_overlay_key)
 
 func _build_terrain_legend() -> Dictionary:
+	var present_ids: PackedInt32Array = present_terrain_ids()
+	if present_ids.is_empty():
+		# Pre-first-snapshot fallback: no per-tile terrain cached yet, so list the
+		# full palette (as before) rather than render a blank legend.
+		var fallback_rows: Array = []
+		for entry in terrain_palette_entries():
+			if typeof(entry) != TYPE_DICTIONARY:
+				continue
+			fallback_rows.append({
+				"color": entry.get("color", Color.WHITE),
+				"label": str(entry.get("label", "")),
+				"value_text": "#%02d" % int(entry.get("id", 0)),
+				# No per-tile counts pre-snapshot; carry 0 so the panel's count
+				# sort has a numeric field (rows fall back to name order).
+				"count": 0,
+			})
+		return {
+			"key": "terrain",
+			"title": "Terrain Types",
+			"description": "Biome palette applied directly to tiles.",
+			"rows": fallback_rows,
+			"stats": {},
+		}
+	# Count tiles per present biome in a single pass over the cached terrain ids.
+	var counts: Dictionary = {}
+	for raw_id in _cached_terrain_ids:
+		var counted_id := int(raw_id)
+		counts[counted_id] = int(counts.get(counted_id, 0)) + 1
+	var labels := _get_terrain_labels()
 	var rows: Array = []
-	for entry in terrain_palette_entries():
-		if typeof(entry) != TYPE_DICTIONARY:
-			continue
+	for id in present_ids:
+		var label := ""
+		if terrain_palette.has(id):
+			label = str(terrain_palette[id])
+		if label == "":
+			label = labels.get(id, "Unknown")
+		var tile_count := int(counts.get(id, 0))
 		rows.append({
-			"color": entry.get("color", Color.WHITE),
-			"label": str(entry.get("label", "")),
-			"value_text": "#%02d" % int(entry.get("id", 0)),
+			"color": _terrain_color_for_id(id),
+			"label": label,
+			"value_text": "%d tiles" % tile_count,
+			# Numeric tile count so the legend panel can sort by count without
+			# parsing value_text.
+			"count": tile_count,
 		})
 	return {
 		"key": "terrain",
 		"title": "Terrain Types",
-		"description": "Biome palette applied directly to tiles.",
+		"description": "Biomes present on this map (%d)." % present_ids.size(),
 		"rows": rows,
 		"stats": {},
 	}

@@ -89,6 +89,73 @@ pub struct MapPreset {
     pub biomes: BiomeTransitionConfig,
     #[serde(default)]
     pub terrain_classifier: TerrainClassifierConfig,
+    #[serde(default)]
+    pub biome_palette: BiomePaletteConfig,
+}
+
+/// Per-preset tuning for the per-map biome palette (`docs/plan_biome_palette.md` §4.2).
+/// The palette is always applied — this block only tunes the per-niche distinct-biome
+/// counts `K`, interpolated by map area between `k_small` (at `small_map_tiles`) and
+/// `k_large` (at `large_map_tiles`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct BiomePaletteConfig {
+    /// Map area (in tiles) at/below which each niche uses its `k_small`.
+    pub small_map_tiles: u32,
+    /// Map area (in tiles) at/above which each niche uses its `k_large`.
+    pub large_map_tiles: u32,
+    /// Per-niche `K` endpoints, keyed by [`crate::terrain::BiomeNiche::as_str`].
+    pub niches: HashMap<String, NicheKConfig>,
+}
+
+/// The two `K` endpoints for one niche (small-map floor, large-map ceiling).
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default)]
+pub struct NicheKConfig {
+    pub k_small: u32,
+    pub k_large: u32,
+}
+
+impl Default for NicheKConfig {
+    fn default() -> Self {
+        Self {
+            k_small: 1,
+            k_large: 3,
+        }
+    }
+}
+
+impl Default for BiomePaletteConfig {
+    fn default() -> Self {
+        // The §4.2 illustrative defaults: a small map reads ~one biome per climate zone
+        // plus a couple of discovery-flavor anomalies; a large map fills back out.
+        let niches = [
+            ("Ocean", 2, 4),
+            ("CoastWetland", 1, 4),
+            ("FertileLowland", 2, 5),
+            ("AridLowland", 1, 4),
+            ("PolarLowland", 1, 3),
+            // Highland + Volcanic are physically relief/elevation/mask-gated: each member
+            // maps to a specific relief/moisture/mask regime, so any palette swap between
+            // them stamps the wrong biome on a physically-specific tile. Never thin them —
+            // keep every member always-available (K = full membership). Legibility comes
+            // from thinning the interchangeable flat-land niches, not these.
+            ("Highland", 5, 5),
+            ("Volcanic", 3, 3),
+            ("Anomaly", 2, 4),
+        ]
+        .into_iter()
+        .map(|(name, k_small, k_large)| (name.to_string(), NicheKConfig { k_small, k_large }))
+        .collect();
+        Self {
+            // Anchors correspond to the selectable map presets: Tiny (2016) → k_small so the
+            // smallest map reads legibly, Huge (10240) → k_large so the largest reads rich.
+            // Standard (4160) lands partway up the smoothstep curve between them.
+            small_map_tiles: 2016,
+            large_map_tiles: 10240,
+            niches,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -428,6 +495,20 @@ pub struct ShelfConfig {
     /// accumulate, keeping the shelf a size-invariant fraction of the ocean.
     /// Only consulted when `width_frac` is set; defaults to `1.0`.
     pub width_exp: Option<f32>,
+    /// Minimum shelf-band width in tiles, floored *after* the `width_frac`/`width_exp`
+    /// (or `width_tiles`) computation. A qualifying gentle coast always gets a
+    /// *continuous* ring at least this wide instead of the old sub-tile sparse fringe,
+    /// while `width_frac`/`width_exp` still scale it wider on big maps. The shelf %
+    /// stays self-limited because the `coast_height_threshold` gate keeps steep/cliff
+    /// coasts off the shelf entirely (passive- vs active-margin model). Defaults to `1.0`.
+    pub min_width_tiles: f32,
+    /// Coast-height gate (normalized rise above sea level, i.e. `elevation.sample − sea_level`).
+    /// A shelf-candidate ocean tile only becomes `ContinentalShelf` when the coast land it
+    /// abuts rises gently — the MIN rise of its adjacent land tiles is **below** this. Cliff /
+    /// mountain / highland coasts (rise ≥ this) instead show deep water right at the edge,
+    /// matching how real continental shelves form off passive margins and are absent off
+    /// active ones. Sits low in the compressed lowland band `[sea_level, elevation_base]`.
+    pub coast_height_threshold: f32,
 }
 
 impl Default for ShelfConfig {
@@ -437,8 +518,22 @@ impl Default for ShelfConfig {
             slope_width_tiles: 3,
             width_frac: None,
             width_exp: None,
+            min_width_tiles: default_shelf_min_width_tiles(),
+            coast_height_threshold: default_shelf_coast_height_threshold(),
         }
     }
+}
+
+const fn default_shelf_min_width_tiles() -> f32 {
+    1.0
+}
+
+const fn default_shelf_coast_height_threshold() -> f32 {
+    // Sits in the bimodal gap between the compressed lowland band's top
+    // (`elevation_base − sea_level ≈ 0.10`) and the mountain-coast rises that jump to
+    // ≈0.16+, so every lowland coast reads gentle (→ shelf) and every mountain/highland
+    // coast reads steep (→ deep water at the edge). Measured on generated earthlike maps.
+    0.10
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -543,6 +638,17 @@ pub struct TerrainClassifierConfig {
     /// Moisture below which a high-dry non-mountain tile becomes CanyonBadlands (the
     /// companion gate to `high_dry_elevation`).
     pub high_dry_moisture: f32,
+    /// Relief (from the volcanic mask) below which a non-polar Volcanic tile becomes a
+    /// cooled-flow `BasalticLavaField` instead of an `ActiveVolcanoSlope` — the revived
+    /// biome hook (`docs/plan_biome_palette.md` §3.6). Sits below `alpine_relief_threshold`
+    /// so only lower-relief volcanic edges cool to basalt.
+    pub basaltic_relief_threshold: f32,
+    /// Fraction of eligible (flat, non-coastal, non-polar) lowland tiles that become a rare
+    /// anomaly / "discovery" biome (crater/sinkhole/karst-cavern/fumarole/volcano/aquifer).
+    /// A per-tile rarity roll gates the anomaly branch in `classify_terrain`; the surviving
+    /// tiles split evenly across the 6 anomaly biomes. Kept low so anomalies read as rare
+    /// discovery sites, not a blanket over the land (`docs/plan_biome_palette.md` §3.6).
+    pub anomaly_fraction: f32,
 }
 
 impl TerrainClassifierConfig {
@@ -557,6 +663,8 @@ impl TerrainClassifierConfig {
             high_dry_elevation: 0.68,
             high_wet_elevation: 0.66,
             high_dry_moisture: 0.28,
+            basaltic_relief_threshold: 1.0,
+            anomaly_fraction: 0.04,
         }
     }
 }

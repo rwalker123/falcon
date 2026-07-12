@@ -15,6 +15,7 @@ pub(crate) const BUILD_ID: &str = match option_env!("CORE_SIM_BUILD_ID") {
     None => "dev-unknown",
 };
 
+mod biome_palette;
 mod components;
 mod crisis;
 mod crisis_config;
@@ -207,6 +208,7 @@ pub use wellbeing_config::{
     WellbeingConfig, WellbeingConfigHandle, WellbeingConfigMetadata, BUILTIN_WELLBEING_CONFIG,
 };
 
+pub use biome_palette::{BiomePalette, PALETTE_SEED_SALT};
 pub use metrics::SimulationMetrics;
 pub use orders::{
     FactionId, FactionOrders, FactionRegistry, Order, SubmitError, SubmitOutcome, TurnQueue,
@@ -235,8 +237,8 @@ pub use systems::{
     MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent,
 };
 pub use terrain::{
-    classify_terrain, terrain_definition, terrain_for_position, MovementProfile, TerrainDefinition,
-    TerrainResourceBias,
+    biome_must_have, biome_niche, classify_terrain, terrain_definition, terrain_for_position,
+    BiomeNiche, MovementProfile, TerrainDefinition, TerrainResourceBias,
 };
 
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
@@ -523,6 +525,8 @@ pub fn build_headless_app() -> App {
                 systems::apply_starting_inventory_effects,
                 hydrology::generate_hydrology,
                 systems::apply_tag_budget_solver,
+                systems::apply_biome_palette_clamp,
+                systems::reconcile_coastal_shelf,
                 sites::place_wondrous_sites,
                 spawn_initial_herds,
                 espionage::initialise_espionage_roster,

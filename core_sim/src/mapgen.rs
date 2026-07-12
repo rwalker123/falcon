@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 
 use crate::{
-    grid_utils::neighbors4_wrapped,
+    grid_utils::{hex_neighbors_wrapped, neighbors4_wrapped},
     heightfield::ElevationField,
     map_preset::{
         BiomeTransitionConfig, InlandSeaConfig, IslandConfig, MacroLandConfig, OceanConfig,
@@ -358,7 +358,18 @@ pub fn build_bands(
 
     // Distance transform and classification
     let ocean_distance = compute_ocean_distance_wrapped(&land, w, h, wrap_horizontal);
-    let terrain = classify_bands(&land, &is_ocean, &ocean_distance, shelf, w, h, seed);
+    let terrain = classify_bands(
+        &land,
+        &is_ocean,
+        &ocean_distance,
+        shelf,
+        &elevation,
+        sea_level,
+        w,
+        h,
+        wrap_horizontal,
+        seed,
+    );
 
     BandsResult {
         terrain,
@@ -1244,7 +1255,12 @@ fn effective_shelf_width(shelf: &ShelfConfig, w: usize, h: usize) -> f32 {
         None => shelf.width_tiles as f32,
     };
     if raw.is_finite() {
-        raw.clamp(0.0, min_dim)
+        // Floor to `min_width_tiles` so a qualifying (gentle) coast gets a continuous
+        // ≥1-tile ring instead of the old sub-tile sparse fringe; `width_frac`/`width_exp`
+        // still scale it wider on big maps. The `coast_height_threshold` gate in
+        // `classify_bands` keeps steep coasts off the shelf, so this floor doesn't blow up
+        // the shelf fraction the way a blanket ring on every coast would.
+        raw.max(shelf.min_width_tiles).clamp(0.0, min_dim)
     } else {
         0.0
     }
@@ -1255,26 +1271,72 @@ fn shelf_hash_unit(seed: u64, x: usize, y: usize) -> f32 {
     terrain_hash(seed, x as u32, y as u32) as f32 / (u32::MAX as f32 + 1.0)
 }
 
+/// Minimum normalized rise (`elevation.sample − sea_level`) over the land tiles **hex-adjacent**
+/// (odd-r 6-neighbour, wrap-aware on x) to ocean tile `(x, y)`. `None` when the tile touches no
+/// land hex-neighbour — i.e. it is not on the immediate coastal ring.
+///
+/// Uses the authoritative odd-r hex adjacency (`grid_utils::hex_neighbors_wrapped`, the same
+/// helper gameplay + the client renderer use) rather than 4-connected square neighbours, so
+/// "coast-adjacent in worldgen" == "coast-adjacent on screen". This drives BOTH the 1-tile shelf
+/// ring's candidacy (`Some` ⇒ the ocean tile touches at least one Land hex-neighbour) and the
+/// coast-height gate's min rise, closing the old hex-diagonal gaps where a gentle coast could sit
+/// directly against DeepOcean (the 4-cardinal set covers only two of the six hex directions).
+// Justified: a leaf worldgen helper whose args are genuinely distinct scalars (land mask, elevation
+// field, sea level, tile x/y, grid w/h, wrap flag); bundling them into a struct would only obscure.
+#[allow(clippy::too_many_arguments)]
+fn min_adjacent_coast_rise(
+    land: &[bool],
+    elevation: &ElevationField,
+    sea_level: f32,
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
+    wrap_horizontal: bool,
+) -> Option<f32> {
+    let idx = |x: usize, y: usize| -> usize { y * w + x };
+    let mut min_rise: Option<f32> = None;
+    for (nx, ny) in hex_neighbors_wrapped(x as u32, y as u32, w as u32, h as u32, wrap_horizontal) {
+        let (nx, ny) = (nx as usize, ny as usize);
+        if land[idx(nx, ny)] {
+            let rise = elevation.sample(nx as u32, ny as u32) - sea_level;
+            min_rise = Some(min_rise.map_or(rise, |m| m.min(rise)));
+        }
+    }
+    min_rise
+}
+
+// Justified: a leaf worldgen helper whose args are genuinely distinct inputs (land/ocean masks,
+// ocean-distance grid, shelf config, elevation field, sea level, grid w/h, wrap flag, seed);
+// bundling them into a context struct would only obscure the coast-band computation.
+#[allow(clippy::too_many_arguments)]
 fn classify_bands(
     land: &[bool],
     is_ocean: &[bool],
     ocean_distance: &[u32],
     shelf: &ShelfConfig,
+    elevation: &ElevationField,
+    sea_level: f32,
     w: usize,
     h: usize,
+    wrap_horizontal: bool,
     seed: u64,
 ) -> Vec<TerrainBand> {
     let mut terrain = vec![TerrainBand::DeepOcean; w * h];
     let idx = |x: usize, y: usize| -> usize { y * w + x };
-    // Fractional shelf width: `full` whole rings are always shelf; the next ring
-    // (`full + 1`) is shelf on only `frac` of its tiles (deterministic hash), so
-    // a width below 1.0 yields a thin, sparse coastal shelf instead of a full
-    // ring. Slope collapses to DeepOcean downstream, so its exact extent is
-    // cosmetic — only the shelf boundary matters for the ocean composition.
+    // Shelf width: `full` whole rings around the coast are shelf candidates; the next
+    // ring (`full + 1`) is a candidate on only `frac` of its tiles (deterministic hash).
+    // With the `min_width_tiles` floor (default 1.0) `full == 1`/`frac == 0`, so the
+    // default shelf is the immediate coastal ring — determined HEX-exactly below (hex-adjacent
+    // to land), not via the square `ocean_distance == 1`, so it has no hex-diagonal gaps. The
+    // outer (`full > 1`) rings still ride the square-connected `ocean_distance`. Slope collapses
+    // to DeepOcean downstream, so its exact extent is cosmetic — only the shelf boundary matters
+    // for the ocean composition.
     let shelf_width = effective_shelf_width(shelf, w, h);
     let full = shelf_width.floor();
     let frac = shelf_width - full;
     let full = full as u32;
+    let coast_height_threshold = shelf.coast_height_threshold;
 
     for y in 0..h {
         for x in 0..w {
@@ -1288,9 +1350,28 @@ fn classify_bands(
                 continue;
             }
             let d = ocean_distance[i];
-            let is_shelf = d >= 1
+            // Hex-exact min rise over the tile's LAND hex-neighbours (`None` ⇒ touches no land).
+            // Authoritative odd-r 6-neighbour adjacency, so the immediate coastal ring matches
+            // what the client renders — no hex-diagonal gaps.
+            let coast_rise =
+                min_adjacent_coast_rise(land, elevation, sea_level, x, y, w, h, wrap_horizontal);
+            // Immediate coastal ring — HEX-exact. An ocean tile is on the default 1-tile shelf
+            // ring iff it is hex-adjacent to at least one Land tile (`coast_rise.is_some()`),
+            // covering all six odd-r directions so a gentle coast never falls through to
+            // slope→DeepOcean on a hex-diagonal. Coast-height gate: the MIN rise over its LAND
+            // hex-neighbours must be gentle (< threshold); steep/cliff coasts stay off the shelf.
+            let immediate_ring_shelf = coast_rise.is_some_and(|rise| rise < coast_height_threshold);
+            // Outer rings (only when a preset widens the shelf past the `min_width_tiles` floor,
+            // i.e. `full > 1`) still follow the pre-existing SQUARE-connected ocean-distance
+            // transform. Only the immediate ring above is hex-exact; a full hex distance-transform
+            // for wide shelves is the follow-up. Outer-ring tiles touch no land, so the
+            // coast-height gate passes them unfiltered (`None → true`), matching prior behaviour.
+            let outer_ring_candidate = d >= 2
                 && (d <= full
                     || (d == full + 1 && frac > 0.0 && shelf_hash_unit(seed, x, y) < frac));
+            let outer_ring_shelf =
+                outer_ring_candidate && coast_rise.is_none_or(|rise| rise < coast_height_threshold);
+            let is_shelf = immediate_ring_shelf || outer_ring_shelf;
             if is_shelf {
                 terrain[i] = TerrainBand::ContinentalShelf;
             } else if d <= full + shelf.slope_width_tiles {
@@ -2865,6 +2946,247 @@ mod tests {
 
     fn dummy_land_mask(width: usize, height: usize, fill: bool) -> Vec<bool> {
         vec![fill; width * height]
+    }
+
+    /// A shelf-width below 1.0 tile is floored up to a continuous 1-tile ring by
+    /// `min_width_tiles` (default), replacing the old sub-tile sparse fringe.
+    #[test]
+    fn effective_shelf_width_floors_to_min_width_tiles() {
+        // earthlike-style sub-tile width: 0.040 * 80^0.4 ≈ 0.23 tiles pre-floor.
+        let shelf = ShelfConfig {
+            width_frac: Some(0.040),
+            width_exp: Some(0.4),
+            min_width_tiles: 1.0,
+            ..ShelfConfig::default()
+        };
+        let w = effective_shelf_width(&shelf, 128, 80);
+        assert!(
+            (w - 1.0).abs() < 1e-6,
+            "sub-tile shelf width should floor to min_width_tiles (1.0), got {w}"
+        );
+        // A preset that bumps the coefficient past the floor still scales wider.
+        let wide = ShelfConfig {
+            width_frac: Some(0.5),
+            width_exp: Some(1.0),
+            min_width_tiles: 1.0,
+            ..ShelfConfig::default()
+        };
+        assert!(
+            effective_shelf_width(&wide, 128, 80) > 1.0,
+            "a coefficient above the floor should still scale the shelf wider"
+        );
+    }
+
+    /// The coast-height gate: on a 1-tile shelf, an ocean tile abutting a gently-rising
+    /// (lowland) coast becomes ContinentalShelf, while one abutting a steep (mountain/
+    /// cliff) coast does not — it collapses to slope/deep water at the edge.
+    #[test]
+    fn classify_bands_gates_shelf_on_coast_height() {
+        // A 5-wide, 3-tall strip: column 0 is land (the coast), columns 1..5 ocean.
+        // Row 0's coast land rises gently, row 2's coast land is a cliff; row 1 is a
+        // no-land control row so the coast rows are isolated.
+        let w = 5usize;
+        let h = 3usize;
+        let mut land = vec![false; w * h];
+        land[0] = true; // (0,0) gentle coast
+        land[2 * w] = true; // (0,2) cliff coast
+        let is_ocean = land.iter().map(|&l| !l).collect::<Vec<_>>();
+        let sea_level = 0.6f32;
+        let mut elev = vec![0.0f32; w * h]; // ocean tiles at 0.0
+        elev[0] = sea_level + 0.02; // gentle: rise 0.02 < threshold
+        elev[2 * w] = sea_level + 0.30; // cliff: rise 0.30 >= threshold
+        let elevation = ElevationField::new(w as u32, h as u32, elev);
+        let ocean_distance = compute_ocean_distance_wrapped(&land, w, h, false);
+        let shelf = ShelfConfig {
+            width_frac: None,
+            width_tiles: 0, // rely purely on the min_width_tiles floor → 1-tile ring
+            slope_width_tiles: 3,
+            min_width_tiles: 1.0,
+            coast_height_threshold: 0.10,
+            ..ShelfConfig::default()
+        };
+        let terrain = classify_bands(
+            &land,
+            &is_ocean,
+            &ocean_distance,
+            &shelf,
+            &elevation,
+            sea_level,
+            w,
+            h,
+            false,
+            0,
+        );
+        let at = |x: usize, y: usize| terrain[y * w + x];
+        // Gentle coast (row 0): the immediately-adjacent ocean tile is shelf.
+        assert_eq!(
+            at(1, 0),
+            TerrainBand::ContinentalShelf,
+            "ocean abutting a gently-rising coast should be ContinentalShelf"
+        );
+        // Cliff coast (row 2): the immediately-adjacent ocean tile is NOT shelf.
+        assert_ne!(
+            at(1, 2),
+            TerrainBand::ContinentalShelf,
+            "ocean abutting a steep/cliff coast should not be ContinentalShelf"
+        );
+    }
+
+    /// The shelf's coast-adjacency is HEX-exact (odd-r 6-neighbour), so an ocean tile whose ONLY
+    /// coast contact is a hex-DIAGONAL land tile (never one of its 4 cardinal neighbours) still
+    /// forms a shelf off a gentle coast — and stays deep off a steep one. The old 4-cardinal
+    /// adjacency missed these diagonals, leaving DeepOcean directly against gentle land. Covers
+    /// both row parities, since odd-r diagonal offsets differ by parity.
+    #[test]
+    fn classify_bands_shelf_covers_hex_diagonal_coast() {
+        // A single land tile in an otherwise all-ocean grid, placed at a pure hex-DIAGONAL of the
+        // probe ocean tile (verified NOT a 4-cardinal neighbour below), so only hex adjacency
+        // links them. Returns the probe tile's band. `rise` is the land's normalized rise.
+        fn probe(
+            w: usize,
+            h: usize,
+            land_xy: (usize, usize),
+            target_xy: (usize, usize),
+            rise: f32,
+        ) -> TerrainBand {
+            let (lx, ly) = land_xy;
+            let (tx, ty) = target_xy;
+            // The land tile must be a hex-diagonal — reachable via hex adjacency but NOT among the
+            // probe tile's 4 cardinal (square) neighbours; that is exactly what this test exercises.
+            let cardinals = [
+                (tx.wrapping_add(1), ty),
+                (tx.wrapping_sub(1), ty),
+                (tx, ty.wrapping_add(1)),
+                (tx, ty.wrapping_sub(1)),
+            ];
+            assert!(
+                !cardinals.contains(&land_xy),
+                "land tile must be a hex-diagonal, not a 4-cardinal neighbour of the probe"
+            );
+            let mut land = vec![false; w * h];
+            land[ly * w + lx] = true;
+            let is_ocean = land.iter().map(|&l| !l).collect::<Vec<_>>();
+            let sea_level = 0.6f32;
+            let mut elev = vec![0.0f32; w * h];
+            elev[ly * w + lx] = sea_level + rise;
+            let elevation = ElevationField::new(w as u32, h as u32, elev);
+            let ocean_distance = compute_ocean_distance_wrapped(&land, w, h, false);
+            let shelf = ShelfConfig {
+                width_frac: None,
+                width_tiles: 0, // rely purely on the min_width_tiles floor → 1-tile ring
+                slope_width_tiles: 3,
+                min_width_tiles: 1.0,
+                coast_height_threshold: 0.10,
+                ..ShelfConfig::default()
+            };
+            let terrain = classify_bands(
+                &land,
+                &is_ocean,
+                &ocean_distance,
+                &shelf,
+                &elevation,
+                sea_level,
+                w,
+                h,
+                false,
+                0,
+            );
+            terrain[ty * w + tx]
+        }
+
+        let gentle = 0.02f32; // rise < coast_height_threshold
+        let steep = 0.30f32; // rise >= coast_height_threshold
+
+        // Even probe row (y = 2): NW hex-diagonal is (x-1, y-1) = (1, 1).
+        assert_eq!(
+            probe(6, 6, (1, 1), (2, 2), gentle),
+            TerrainBand::ContinentalShelf,
+            "even-row ocean touching a gentle coast only on a hex-diagonal should be shelf"
+        );
+        assert_ne!(
+            probe(6, 6, (1, 1), (2, 2), steep),
+            TerrainBand::ContinentalShelf,
+            "even-row ocean touching only a steep hex-diagonal coast should not be shelf"
+        );
+
+        // Odd probe row (y = 3): NE hex-diagonal is (x+1, y-1) = (3, 2).
+        assert_eq!(
+            probe(6, 6, (3, 2), (2, 3), gentle),
+            TerrainBand::ContinentalShelf,
+            "odd-row ocean touching a gentle coast only on a hex-diagonal should be shelf"
+        );
+        assert_ne!(
+            probe(6, 6, (3, 2), (2, 3), steep),
+            TerrainBand::ContinentalShelf,
+            "odd-row ocean touching only a steep hex-diagonal coast should not be shelf"
+        );
+    }
+
+    /// Authoritative full-earthlike guard for the fix: over a REAL generated coastline,
+    /// `classify_bands` leaves NO DeepOcean tile hex-adjacent (odd-r 6-neighbour, wrap-aware) to a
+    /// GENTLE (below-threshold-rise) Land tile — every gentle coast carries a shelf on all six
+    /// seaward hex-neighbours. Before the hex-aware fix the hex-diagonal coast directions fell
+    /// through the 4-cardinal shelf ring and left deep water directly against gentle land. This is
+    /// checked at the BAND level (on `classify_bands`' own `land_mask` + restamped elevation)
+    /// because the post-worldgen snapshot additionally stamps river deltas / marsh / polar land
+    /// against ocean in later, out-of-scope stages (hydrology + tag-budget solver), independently
+    /// of the shelf ring — so the band level is where this shelf fix is provable.
+    #[test]
+    fn earthlike_bands_have_no_gentle_coast_shelf_gap() {
+        let seeds = [0x0FA1_C0DEu64, 0x5EED_F00D, 0x0000_BEEF];
+        let dims = [(80u32, 52u32), (128u32, 96u32)];
+        let presets = MapPresets::builtin();
+        let preset = presets.get("earthlike").expect("earthlike preset");
+        let threshold = preset.shelf.coast_height_threshold;
+        for &(w, h) in &dims {
+            for &seed in &seeds {
+                let mut config = SimulationConfig::builtin();
+                config.grid_size = UVec2::new(w, h);
+                config.map_seed = seed;
+                config.map_preset_id = preset.id.clone();
+                let elevation = build_elevation_field(&config, Some(preset), seed);
+                // wrap_horizontal = true to mirror production earthlike (map_topology wraps on x),
+                // so the seam is handled exactly as the shipped map + client render it.
+                let bands = build_bands(
+                    &elevation,
+                    preset.sea_level,
+                    &preset.macro_land,
+                    &preset.shelf,
+                    &preset.islands,
+                    &preset.inland_sea,
+                    &preset.ocean,
+                    preset.moisture_scale,
+                    &preset.biomes,
+                    seed,
+                    preset.mountain_scale,
+                    &preset.mountains,
+                    true,
+                );
+                let (wu, hu) = (w as usize, h as usize);
+                let mut gaps = 0usize;
+                for y in 0..hu {
+                    for x in 0..wu {
+                        if !matches!(bands.terrain[y * wu + x], TerrainBand::DeepOcean) {
+                            continue;
+                        }
+                        for (nx, ny) in hex_neighbors_wrapped(x as u32, y as u32, w, h, true) {
+                            if bands.land_mask[ny as usize * wu + nx as usize] {
+                                let rise = bands.elevation.sample(nx, ny) - preset.sea_level;
+                                if (0.0..threshold).contains(&rise) {
+                                    gaps += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                assert_eq!(
+                    gaps, 0,
+                    "{w}x{h} seed={seed:016x}: {gaps} DeepOcean tiles are hex-adjacent to a gentle \
+                     (rise < {threshold}) coast — the shelf coast-adjacency ring left a \
+                     hex-diagonal gap"
+                );
+            }
+        }
     }
 
     #[test]

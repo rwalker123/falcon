@@ -520,6 +520,14 @@ the early-turn loop currently being tuned.**
 - [ ] Implement Tag Budget Solver (Owner: TBD, Estimate: 2d; Deps: biome stamping). Description: Post-process to match `terrain_tag_targets` within `tolerance`, adjusting marginal tiles while respecting adjacency.
 - [ ] Earthlike default preset (Owner: TBD, Estimate: 0.5d; Deps: presets loader). Description: Oceans/continents macro, climate weights, hydrology intensity, tag targets, and mild biome weight biases.
 
+### Per-Map Biome Palette (`docs/plan_biome_palette.md`)
+Restrict the *distinct biomes used on a given map* (legibility) while keeping the full 37-biome
+library (variety). A curated, seed-driven, map-size-scaled subset — **this replaces the current
+biome-placement behavior** (not an opt-in mode). Delivered as **one PR**. Design:
+`docs/plan_biome_palette.md`.
+- [x] Design doc (Owner: TBD, Estimate: 1d). Description: Palette model, `BiomeNiche` taxonomy, `must_have` flag, K-sizing curve, `bias_terrain_for_preset` remap seam, tag-budget-solver reconciliation, 3-biome revival, config schema. _Status_: `docs/plan_biome_palette.md`._
+- [ ] Implementation — one PR (Owner: TBD, Estimate: ~5d; Deps: design doc). Description: (1) `BiomeNiche` enum + `niche`/`must_have` on `TerrainDefinition` (per §3.1/§3.2) + `biome_palette` `MapPreset` block/JSON; (2) revive Glacier/BasalticLavaField/AquiferCeiling with placement hooks (§3.6) + reachability tests; (3) `BiomePalette` resource + seeded coverage-first selection (`world_seed ^ PALETTE_SEED_SALT`), niche-nearest remap at the bias seam, tag-solver reconciliation (force-include locked-tag fallbacks + post-solver clamp); (4) tune `k_small`/`k_large` defaults. Verify via map-export biome histogram: small→few, large→many, seed-varied, climate coverage preserved, no off-palette biome present, all 37 reachable.
+
 ### Implemented (scaffold)
 - [x] Load `map_preset_id` from SimulationConfig and presets file; log selection; insert preset handle as resource.
 - [x] Generate hydrology rasters and basic river polylines at Startup using preset sea level.
