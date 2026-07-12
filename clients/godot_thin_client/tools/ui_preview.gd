@@ -17,6 +17,8 @@ const HUD_SCENE := preload("res://src/ui/HudLayer.tscn")
 # --check-only cannot do).
 const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
 const OUT_DIR := "res://ui_preview_out"
+# Slice 1 reserved-dock probe: left-edge reservation width used to verify the HUD insets.
+const RESERVED_PROBE_WIDTH := 300.0
 
 var _hud: HudLayer
 
@@ -366,6 +368,9 @@ func _ready() -> void:
 	# Band 2 shrank 90→78 with emigrants (losing population → warn/amber), Band 3 has idle
 	# workers (warn/amber). The badge reads "3", the pulse stops, and the popover (opened here)
 	# lists all three with the starving/critical row sorted to the TOP, each with a Jump row.
+	# A starving EXPEDITION is interleaved between the bands to verify the bands-only numbering:
+	# it produces NO attention entry (never "Band N starving") and does not shift Band 2/Band 3's
+	# positional numbers — the idle-workers row still reads "Band 3", matching the picker/header.
 	_hud.update_band_alerts([
 		{"faction": 0, "entity": 601, "size": 120, "days_of_food": 12.0, "activity": "forage",
 			"current_x": 21, "current_y": 15},
@@ -378,6 +383,11 @@ func _ready() -> void:
 		# Band 1 — starving (3 days of food, below critical).
 		{"faction": 0, "entity": 601, "size": 120, "days_of_food": 3.0, "activity": "forage",
 			"current_x": 21, "current_y": 15},
+		# A detached hunt expedition, also starving — must NOT emit a "Band N starving" entry and
+		# must NOT consume a band number (Band 2/Band 3 below stay 2 and 3).
+		{"faction": 0, "entity": 650, "size": 6, "days_of_food": 2.0, "is_expedition": true,
+			"expedition_mission": "hunt", "expedition_phase": "hunting", "home_band_entity": 601,
+			"current_x": 25, "current_y": 18},
 		# Band 2 — losing population: 90 → 78, well-fed but 12 emigrated last turn → "people leaving".
 		{"faction": 0, "entity": 602, "size": 78, "days_of_food": 999.0, "morale": 0.30,
 			"morale_cause": 1, "last_emigrated": 12, "activity": "hunt", "current_x": 31, "current_y": 21},
@@ -388,6 +398,18 @@ func _ready() -> void:
 	_hud.turn_orb.open_popover()
 	await _settle()
 	await _save("turn_orb_attention")
+
+	# State 8 — reserved-space docking (Slice 1 refactor): a left-edge reservation of
+	# RESERVED_PROBE_WIDTH px insets the whole HUD (LayoutRoot.offset_left), so the top/bottom
+	# bars start that much further right — mirroring how the docked Inspector shrinks the play
+	# space. Save the inset frame, then release it (size 0) and save the restored frame.
+	_hud.clear_selection()
+	_hud.set_reserved_inset(&"inspector", SIDE_LEFT, RESERVED_PROBE_WIDTH)
+	await _settle()
+	await _save("reserved_dock")
+	_hud.set_reserved_inset(&"inspector", SIDE_LEFT, 0.0)
+	await _settle()
+	await _save("reserved_dock_cleared")
 
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.

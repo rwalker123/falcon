@@ -48,7 +48,8 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the hydrology rivers toggle. Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` via `set_map_view`. The nested Map-Overlays section keeps its own `OverlayPanel` script |
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
 | `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the **Export Map** button (the tile Scout button was retired with the single-task `scout` command). Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`, gated by `set_command_connected` |
-| `Hud.gd` | HUD layer, legend, the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + the `%ForageAssignControls` "assign foragers" stepper) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer; a player band shows the `%AllocationPanel` labor-allocation UI, a herd the `%HerdAssignControls` "assign hunters" stepper+policy picker), turn readout (the standalone band Alerts panel was folded into the turn-orb attention model — see "Turn orb & attention model"). Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) + the snapshot-captured `_player_band` (and `_player_bands`, the full player-faction list backing the assign controls' band-picker dropdown) live here; roster selection emits `roster_occupant_selected`; labor edits emit `assign_labor_requested` / `move_band_requested` / `cancel_order_requested` (clear-all) |
+| `Hud.gd` | HUD layer, legend, the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + the `%ForageAssignControls` "assign foragers" stepper) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer for **herds/expeditions**; a herd shows the `%HerdAssignControls` "assign hunters" stepper+policy picker, an expedition the `%AllocationPanel` Recall/Move panel). **Player-band detail relocated into the dockable `BandCityPanel`** (summary + `%AllocationPanel`-style labor UI render there via `_render_band_into_panel`; the Occupants card keeps only the roster row) — see "Band/City dockable panel". Turn readout (the standalone band Alerts panel was folded into the turn-orb attention model — see "Turn orb & attention model"). Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) + the snapshot-captured `_player_band` (and `_player_bands`, the full player-faction list backing the band-picker + the panel cycler) live here; roster selection emits `roster_occupant_selected`; labor edits emit `assign_labor_requested` / `move_band_requested` / `cancel_order_requested` (clear-all) |
+| `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail. Header (stage glyph/name/label + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse), body hosts the relocated band detail (`get_band_detail_label()` / `get_band_alloc_container()`). Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`. See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale warn/critical thresholds + `color_for_morale`/`hex_for_morale`), shared by MapView's band dot and Hud's food/morale lines + alerts |
 | `ui/TileHabitability.gd` | Single source of truth for the Tile-card Habitability rating: buckets `TileState.habitability` (band-independent per-turn morale drain) into Hospitable/Fair/Harsh/Hostile via `tile_habitability_config.json` thresholds, with the HEALTHY/INK/WARN/DANGER color / `hex_for_rating` mapping. Consumed by `Hud._tile_terrain_lines` + `_format_detail_bbcode` |
 | `ui/TileClimate.gd` | Single source of truth for the Tile-card Climate band: maps `TileState.temperature` (°, a latitude+elevation climate, equator-in-the-middle) into Tropical/Warm/Temperate/Cool/Polar via `tile_climate_config.json` cutoffs. INFORMATIONAL only — deliberately no HEALTHY/WARN/DANGER tint (renders neutral ink), so it doesn't compete with the Habitability row's semantic palette. Consumed by `Hud._tile_terrain_lines` |
@@ -62,6 +63,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/FoodIcons.gd` | Shared map-marker emoji glyphs — food modules (`for_site`) and fauna herds (`for_herd`, species keyword matched in the herd label, longest-first). Covers migratory species plus wild game (deer/boar/rabbit/fowl). Used by the Harvest/Hunt button (`Hud.gd`) and the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`) so a source always reads the same |
 | `tools/ui_preview.gd` / `.tscn` | Dev-only preview harness: instances the real `HudLayer` with canned selection/targeting data, renders each state, and saves PNGs to `ui_preview_out/` (gitignored). Iterate on HUD styling without a server: `godot --path . res://tools/ui_preview.tscn` |
 | `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link; scouting draws no disc — it extends sight in the fog) without a server: `godot --path . res://tools/map_preview.tscn` |
+| `tools/band_panel_preview.gd` / `.tscn` | Dev-only preview harness for the **Band/City dockable panel**: instances the real `BandCityPanel` + `HudLayer`, injects the panel into the HUD, pushes a seeded player band through `update_band_alerts`, and dumps the panel docked left/right/top/bottom + collapsed (`band_panel_*.png`) so the chrome + the relocated band detail + the HUD reflow can be eyeballed without a server: `godot --path . res://tools/band_panel_preview.tscn` |
 | `tools/marker_field_guard.gd` / `.tscn` | Headless **regression guard** for the "unit marker drops a panel-consumed field" bug class (twice hit: `hunt_mode`, then `working_age`/`idle_workers`). Feeds one realistic population entry through the real `MapView._rebuild_unit_markers` and asserts the produced marker is a superset of `PANEL_CONSUMED_KEYS` (the keys `Hud._unit_summary_lines` + `_build_allocation_panel` read off `_selected_unit`) and that the drop-prone fields round-trip (not defaulted). Exits non-zero on failure (CI-usable). No rendering, so headless: `godot --headless --path . res://tools/marker_field_guard.tscn`. When the panel starts reading a new marker field, add it to `PANEL_CONSUMED_KEYS`. |
 | `assets/terrain/TerrainTextureManager.gd` | Autoload singleton for terrain texture loading |
 | `assets/terrain/TerrainDefinitions.gd` | Single source of truth for terrain definitions |
@@ -71,7 +73,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 ## Architecture
 
 ### Scene Structure
-- `Main.tscn` - Root `Node2D` scene with a `Camera2D`, the `MapView` map layer, and `CanvasLayer`s for HUD/inspector
+- `Main.tscn` - Root `Node2D` scene with a `Camera2D`, the `MapView` map layer, and `CanvasLayer`s for HUD/inspector/Band-City panel
 - The client is **2D-only**; an experimental 3D relief view was permanently removed (see `docs/architecture.md` → "Removed: 3D Relief Rendering")
 - Toggle: `I` hides/shows inspector, `L` collapses legend
 
@@ -230,35 +232,45 @@ The HUD (`HudLayer.tscn`) owns the screen regions with one layout authority — 
 / `BottomBar`. No panel positions itself with absolute offsets into a region;
 everything is container-sized so regions never collide.
 
-### Inspector as a reserved side dock
-The `Inspector` is a debug/telemetry CanvasLayer docked (resizable) against the
-**left** edge. It does not overlap or rearrange gameplay panels — instead it
-*reserves* space, shrinking the game area to fit beside it, as if the window were
-narrower:
+### Reserved-edge docking (4-edge, multi-reserver registry)
+A docked panel does not overlap or rearrange gameplay panels — it *reserves* a
+strip of one screen edge, shrinking the game area to fit beside it, as if the
+window were that much smaller. The mechanism is a **reservation registry** keyed
+by reserver id, so multiple panels can reserve (possibly different) edges at once:
 
-- `Inspector.reserved_width()` reports the strip it occupies (`_panel_width +
-  2·PANEL_MARGIN`, or 0 when hidden) and emits `reserved_width_changed` on
-  show/hide and on live drag-resize.
-- `Main._on_inspector_reserved_width_changed` fans that width out to both
-  surfaces: `Hud.set_left_inset(px)` (insets `LayoutRoot.offset_left`, so every
-  bar and dock lives in the narrower rect) and `MapView.set_view_inset_left(px)`.
-- `MapView.set_view_inset_left` makes the map behave as if the window were that
-  much narrower, via three coordinated pieces:
-  1. `_get_adjusted_viewport_size()` subtracts the inset, so fit, pan-clamp, draw
-     extents, hit-testing and the minimap indicator all treat the remaining width
-     as the whole viewport.
-  2. The node is translated right by the same amount (`position.x = inset`) so
-     that reduced coordinate space renders beside the panel. Because
+- **`MapView.set_reserved_inset(id: StringName, edge: int, size: float)`** and
+  **`Hud.set_reserved_inset(id, edge, size)`** — `edge` is a Godot `Side` const
+  (`SIDE_LEFT/SIDE_TOP/SIDE_RIGHT/SIDE_BOTTOM`); `size <= 0` releases the reserver.
+  Each stores `{edge, size}` under `id` and recomputes four per-edge totals
+  (`left/right/top/bottom` = Σ of sizes whose edge matches).
+- **`Main._apply_reservation(id, edge, size)`** fans a reserver's contribution out
+  to both surfaces. Two reservers today: the **Inspector** (`&"inspector"`,
+  `SIDE_LEFT` — `reserved_width()` / `reserved_width_changed` on show/hide + live
+  drag-resize) and the **Band/City panel** (`&"band_panel"`, its currently-docked
+  edge — see below).
+- **`MapView`** applies the totals via three coordinated pieces:
+  1. `_get_adjusted_viewport_size()` subtracts `left+right` on x and `top+bottom`
+     on y, so fit, pan-clamp, draw extents, hit-testing and the minimap indicator
+     all treat the remaining rect as the whole viewport.
+  2. The node is translated by the **leading** insets only (`position =
+     Vector2(left, top)`; trailing right/bottom just shrink the viewport), so the
+     reduced coordinate space renders beside the panel(s). Because
      `get_local_mouse_position()` accounts for the node transform, clicks stay
      correct without touching any screen↔hex math.
   3. `_apply_view_clip()` (in `_draw`, via `RenderingServer.canvas_item_set_clip`)
-     clips every draw command to the usable rect. This is essential: the map is
-     **cover-fit**, so its content is wider than the reduced viewport and would
-     otherwise overflow left into the reserved strip. Clipping confines it.
+     clips every draw command to the usable rect whenever **any** inset > 0. The
+     map is **cover-fit**, so its content is larger than the reduced viewport and
+     would otherwise overflow into a reserved strip; clipping confines it.
+  - `_is_local_point_in_view()` bounds hit-testing to the full adjusted-viewport
+    rect on **both** axes (`0 ≤ local ≤ adjusted` in x and y), so a click under a
+    left/top/right/bottom strip is rejected, not just a left one.
+- **`Hud`** applies the four totals to `LayoutRoot` offsets: `offset_left = left`,
+  `offset_top = top`, `offset_right = -right`, `offset_bottom = -bottom`, so every
+  bar and dock lives in the smaller rect.
 
-Because the HUD, Inspector, and map all sit under the same `content_scale`
-transform, the reserved width is a single canvas-space value that applies to all
-three with no per-surface scaling. Panels keep their natural left/right docks.
+Because the HUD, reservers, and map all sit under the same `content_scale`
+transform, each reservation is a single canvas-space value that applies to all
+surfaces with no per-surface scaling. Panels keep their natural docks.
 
 ### PanelCard (`ui/PanelCard.gd`)
 The single building block for every dock panel. It is a `PanelContainer` (never a
@@ -372,8 +384,12 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   (`Bands (N)` / `Wildlife (N)`); each row is a `Button` hosting a mouse-transparent
   HBox — a selection accent, a **vitality dot**, name, size, and (bands) an
   activity glyph. Below the roster, `%OccupantDetail` is the selected occupant's
-  **detail drawer** (player band → `_unit_summary_lines` + `%AllocationPanel`; herd →
-  `_herd_summary_lines` + `%HerdAssignControls`). Selecting a row (`_on_roster_row_selected`) re-homes the
+  **detail drawer** for **herds/expeditions** (`_herd_summary_lines` +
+  `%HerdAssignControls`; expedition → `_build_expedition_panel` into
+  `%AllocationPanel`). **Player-band detail relocated out of the Occupants card into
+  the dockable `BandCityPanel`** (see **Band/City dockable panel** below): the roster
+  still lists the band, but its summary + labor allocation render in the panel, not
+  the card. Selecting a row (`_on_roster_row_selected`) re-homes the
   selection and emits `roster_occupant_selected(kind, id)`; **Main forwards it to
   `MapView.select_occupant`, which moves the map selection ring** (sets
   `selected_unit_id`/`selected_herd_id`) with no hex click. A fresh tile click
@@ -687,8 +703,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
 - **Scouting expedition** (`docs/plan_exploration_and_sites.md` §2; snapshot
   `PopulationCohortState.isExpedition`/`expeditionMission`/`expeditionPhase`, decoded in
   `native/src/lib.rs population_to_dict` as `is_expedition`/`expedition_mission`/`expedition_phase`,
-  flowed onto the MapView unit marker in `_rebuild_unit_markers`; the persistence-only
-  `homeBandEntity`/`expeditionAnnounced`/`pendingReveal*` fields are deliberately NOT decoded). A
+  flowed onto the MapView unit marker in `_rebuild_unit_markers`; `homeBandEntity` is decoded as
+  `home_band_entity` (the outfitting band — powers the Band panel's Active-expeditions section),
+  while the persistence-only `expeditionAnnounced`/`pendingReveal*` fields stay undecoded). A
   detached party is a `PopulationCohort` tagged `Expedition` that flows through the same
   `populations[]` array as a band. Surfaced four ways:
   (1) **Distinct map marker** (`MapView._draw_unit` → `_draw_expedition_body`): a hollow,
@@ -749,6 +766,79 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   follow button, the Terrain tab's Scout Tile button, and the Commands tab's scenario
   Scout/Follow rows were removed (script + `InspectorLayer.tscn` nodes). No code path in
   `Main.gd`/`Hud.gd`/`MapView.gd`/`Inspector.gd` builds any of those five lines.
+
+## Band/City dockable panel
+
+`ui/BandCityPanel.gd`/`.tscn` — a CanvasLayer that is the **persistent band/city
+command center**: shown whenever ≥1 player band exists, always displaying a
+"current band" (`_panel_band`). Design/roadmap: `docs/plan_band_city_dock.md`.
+
+- **Dockable + persisted.** The user docks it to any of the 4 edges (default
+  `SIDE_LEFT`) or collapses it to a thin rail; the choice (+ collapsed bool)
+  persists to `user://band_city_dock.cfg` via `ConfigFile` (loaded in `_ready`,
+  saved on change — the client's first user-pref file). It reserves its edge
+  through the registry above: `reservation_changed(edge, size)` →
+  `Main._apply_reservation(&"band_panel", edge, size)` (size = the cross-axis
+  width/height, `COLLAPSED_SIZE` when railed, or 0 when hidden), so the map + HUD
+  reflow off the reserved edge. All geometry/typography are named constants +
+  `HudStyle`; the map-facing edge gets a `SIGNAL_DEEP` accent seam.
+- **Header chrome.** Settlement **stage glyph + name + stage label**
+  (`set_header` — glyph/label from the band marker's `settlement_stage_icon` /
+  `settlement_stage_label`, neutral glyph fallback), a `◀ n/N ▶` **cycler**
+  (`set_cycler`) over `_player_bands`, a 2×2 **dock chooser** (active edge
+  highlighted), and a **collapse** toggle. `cycle_requested(delta)` → Main relays
+  to `Hud.cycle_panel_band`.
+- **Content relocation (from the Occupants card).** The **player-band** branch of
+  `Hud._render_occupant_drawer` now renders into the panel body via
+  `_render_band_into_panel`: summary (`_unit_summary_lines`) → the panel's
+  `get_band_detail_label()`, and labor allocation (`_build_allocation_panel`, now
+  taking an **optional target container** — default the legacy `%AllocationPanel`
+  for the no-panel fallback, else the panel's `get_band_alloc_container()`; the
+  same target is threaded through every re-render). Herd/expedition detail stays in
+  the Occupants card (`%OccupantDetail` / `%AllocationPanel` — still the expedition
+  host **and** the no-panel fallback used by the HUD-only `ui_preview` harness).
+- **Live + persistent.** `_refresh_panel_band()` (called each snapshot from
+  `update_band_alerts`) hides the panel when there are zero player bands, else
+  re-resolves `_panel_band` against the fresh snapshot (by entity, falling back to
+  the first band) and re-renders so steppers/idle stay current. Selecting a
+  herd/empty tile leaves `_panel_band` intact — the panel persists across selection
+  changes. `cycle_panel_band(delta)` walks `_player_bands`, **recenters the map**
+  on the band (`alert_focus_requested` → `MapView.focus_and_select_tile`), then
+  pins the exact band so ring/Tile card/roster/panel all agree.
+- **Bands vs expeditions.** `update_band_alerts` splits the player faction into
+  `_player_bands` (resident bands — NOT `is_expedition`) and `_player_expeditions`
+  (detached scout/hunt parties). The cycler + band-picker read `_player_bands`
+  only, so a band + 2 expeditions reads **1/1**, not 1/3. Expeditions surface
+  instead as an **Active expeditions** section on their home band (see below).
+- **Active expeditions section.** `_render_band_into_panel` → `_build_panel_expeditions`
+  renders (into the panel's own `get_band_expeditions_container()` — a **separate**
+  host from the allocation, so a stepper rebuild can't clear it) one ghost-button
+  row per `_player_expeditions` entry whose `home_band_entity == _panel_band.entity`
+  (correct for N bands; omitted when none). Row summary: hunt `🏹 <herd> · <Phase> ·
+  <Policy>`, scout `⚑ → (x,y) · <Phase>`. A row click reuses the cycler's routing —
+  `alert_focus_requested`→`focus_and_select_tile` + `roster_occupant_selected`→
+  `MapView.select_occupant` — so the map ring moves to the expedition and the
+  **Occupants card** (not the band panel) renders its `_build_expedition_panel`
+  drawer; `_panel_band` stays put. `home_band_entity` is decoded in
+  `native/src/lib.rs population_to_dict` from the snapshot's `homeBandEntity`,
+  flowed onto the MapView unit marker, and covered by `marker_field_guard`.
+- **Responsive body (tall vs wide).** `_relayout_body()` (hooked off
+  `_apply_dock_layout`, so it fires on every dock/collapse change; idempotent —
+  reparents only when the tall↔wide orientation flips) swaps the body layout by
+  dock aspect: **tall** (LEFT/RIGHT) = one vertical `ScrollContainer` stack
+  (summary + expeditions + allocation), **wide** (TOP/BOTTOM) = an HBox of two
+  independently scrolling columns — a fixed `SUMMARY_COLUMN_WIDTH` summary column
+  (with the expeditions section) + a fixed `ALLOC_COLUMN_WIDTH` allocation column
+  **packed from the left** (leftover strip width empty on the right, so the
+  stepper `−/+` controls stay next to their labels at any window width) — so the
+  short strip uses the width instead of one long vertical scroll. The
+  `get_band_detail_label()` / `get_band_alloc_container()` / expeditions nodes are
+  the **same objects** reparented between layouts, so Hud's render needs no
+  coordination. (The allocation stays a single vertical list within its bounded
+  column; true multi-column section-flow that *fills* an ultrawide strip is deferred.)
+- Verify chrome + reflow via `tools/band_panel_preview.gd`
+  (`godot --path . res://tools/band_panel_preview.tscn` → `ui_preview_out/
+  band_panel_{left,right,top,bottom,collapsed}.png`).
 
 ## Inspector Panels
 

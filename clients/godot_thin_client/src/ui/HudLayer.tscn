@@ -97,23 +97,6 @@ text = "▣"
 size_flags_horizontal = 3
 mouse_filter = 2
 
-[node name="ResourceSummary" type="MarginContainer" parent="LayoutRoot/RootColumn/BottomBar"]
-size_flags_horizontal = 0
-size_flags_vertical = 4
-theme_override_constants/margin_left = 8
-theme_override_constants/margin_right = 8
-mouse_filter = 2
-
-[node name="ResourceHBox" type="HBoxContainer" parent="LayoutRoot/RootColumn/BottomBar/ResourceSummary"]
-size_flags_horizontal = 3
-size_flags_vertical = 1
-theme_override_constants/separation = 12
-mouse_filter = 2
-
-[node name="ResourcePlaceholder" type="Label" parent="LayoutRoot/RootColumn/BottomBar/ResourceSummary/ResourceHBox"]
-theme_override_colors/font_color = Color(0.7, 0.75, 0.8, 1)
-text = "Resources: --"
-
 [node name="TurnCluster" parent="LayoutRoot/RootColumn/BottomBar" instance=ExtResource("5")]
 
 [node name="LeftDock" type="MarginContainer" parent="LayoutRoot/RootColumn/ContentRow"]

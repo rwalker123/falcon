@@ -9,6 +9,7 @@ const LocalizationStore = preload("res://src/scripts/LocalizationStore.gd")
 @onready var hud: CanvasLayer = $HUD
 @onready var camera: Camera2D = $Camera2D
 @onready var inspector: CanvasLayer = $Inspector
+@onready var band_city_panel: CanvasLayer = $BandCityPanel
 
 var snapshot_loader: SnapshotLoader
 var playback_timer: Timer
@@ -22,6 +23,11 @@ var script_host_manager: ScriptHostManager = null
 var localization_store: LocalizationStore = null
 var _campaign_label_signature: String = ""
 var _victory_analytics_signature: String = ""
+# Reserved-edge registry (id → {edge, size}), mirrored from `_apply_reservation` so co-edge
+# panels can be STACKED (not just summed): the Band panel is offset inboard by the Σ sizes of
+# lower-priority reservers on its edge. The map/HUD inset still uses the per-edge SUM (owned by
+# MapView/Hud), which is unchanged — this registry only drives the Band panel's leading offset.
+var _reservations: Dictionary = {}
 
 const MOCK_DATA_PATH = "res://src/data/mock_snapshots.json"
 const TURN_INTERVAL_SECONDS = 1.5
@@ -32,7 +38,6 @@ const STREAM_CONNECTION_TIMEOUT = 5.0
 const CAMERA_PAN_SPEED = 220.0
 const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
-const COMMAND_PROTO_PORT = 41001
 const PLAYER_FACTION_ID = 0
 const SNAPSHOT_DELTA_FIELDS := [
     "influencer_updates",
@@ -184,7 +189,8 @@ func _ready() -> void:
     if inspector != null and inspector.has_signal("reserved_width_changed") and not inspector.is_connected("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed")):
         inspector.connect("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed"))
     if inspector != null and inspector.has_method("reserved_width"):
-        _apply_inspector_inset(float(inspector.call("reserved_width")))
+        _apply_reservation(&"inspector", SIDE_LEFT, float(inspector.call("reserved_width")))
+    _connect_band_city_panel()
 
 func _ensure_timer() -> void:
     if is_instance_valid(playback_timer):
@@ -457,17 +463,70 @@ func _toggle_inspector_visibility() -> void:
         inspector.call("set_panel_visible", not current_visible)
     # The inset update arrives via the inspector's reserved_width_changed signal.
 
-## Reserve space for the docked Inspector by insetting the game area (map + HUD)
-## from the left edge, so the panel shrinks the play space instead of overlapping
-## it. Called on startup and on every reserved_width_changed signal (toggle/resize).
-func _apply_inspector_inset(width: float) -> void:
-    if hud != null and hud.has_method("set_left_inset"):
-        hud.call("set_left_inset", width)
-    if map_view != null and map_view.has_method("set_view_inset_left"):
-        map_view.call("set_view_inset_left", width)
+## Stable stacking order for co-edge reservers: lower priority sits INBOARD (against the screen
+## edge). The Inspector is always the screen-edge reserver; the Band panel stacks outboard of it.
+const RESERVER_PRIORITY := {&"inspector": 0, &"band_panel": 1}
+const BAND_PANEL_RESERVER := &"band_panel"
+
+## Reserve space for a docked panel by insetting the game area (map + HUD) from
+## the given edge, so the panel shrinks the play space instead of overlapping it.
+## Fans a reserver's (edge, size) out to both surfaces. `edge` is a Godot Side
+## const (SIDE_LEFT/SIDE_TOP/SIDE_RIGHT/SIDE_BOTTOM); `size <= 0` releases it.
+func _apply_reservation(id: StringName, edge: int, size: float) -> void:
+    if size <= 0.0:
+        _reservations.erase(id)
+    else:
+        _reservations[id] = {"edge": edge, "size": size}
+    if map_view != null and map_view.has_method("set_reserved_inset"):
+        map_view.call("set_reserved_inset", id, edge, size)
+    if hud != null and hud.has_method("set_reserved_inset"):
+        hud.call("set_reserved_inset", id, edge, size)
+    # Co-edge stacking: push the Band panel's leading offset so it sits just past any inboard
+    # reserver on its edge (e.g. the Inspector when both are left) instead of overlapping it.
+    _update_band_panel_edge_offset()
+
+## The Band panel's leading offset = Σ sizes of all lower-priority reservers currently on the SAME
+## edge as the Band panel (today just the Inspector when both dock left; 0 otherwise). Recomputed
+## on every reservation change, so the panel tracks the Inspector's show/hide + live drag-resize.
+func _update_band_panel_edge_offset() -> void:
+    if band_city_panel == null or not band_city_panel.has_method("set_edge_offset") or not band_city_panel.has_method("get_dock"):
+        return
+    var band_edge: int = int(band_city_panel.call("get_dock"))
+    var band_priority: int = int(RESERVER_PRIORITY.get(BAND_PANEL_RESERVER, 1))
+    var offset: float = 0.0
+    for other_id in _reservations:
+        if other_id == BAND_PANEL_RESERVER:
+            continue
+        var r: Dictionary = _reservations[other_id]
+        if int(r.get("edge", -1)) != band_edge:
+            continue
+        if int(RESERVER_PRIORITY.get(other_id, 0)) < band_priority:
+            offset += float(r.get("size", 0.0))
+    band_city_panel.call("set_edge_offset", offset)
 
 func _on_inspector_reserved_width_changed(width: float) -> void:
-    _apply_inspector_inset(width)
+    _apply_reservation(&"inspector", SIDE_LEFT, width)
+
+## Wire the dockable Band/City panel onto the slice-1 reservation fan-out and seed
+## its initial reservation (mirrors the inspector: children _ready before us, so the
+## panel's own startup emit is missed — we query its current dock + size here).
+func _connect_band_city_panel() -> void:
+    if band_city_panel == null:
+        return
+    if band_city_panel.has_signal("reservation_changed") and not band_city_panel.is_connected("reservation_changed", Callable(self, "_on_band_panel_reservation_changed")):
+        band_city_panel.connect("reservation_changed", Callable(self, "_on_band_panel_reservation_changed"))
+    # Inject the panel into the HUD (band detail relocates into it) and relay the cycler.
+    if hud != null and hud.has_method("set_band_city_panel"):
+        hud.call("set_band_city_panel", band_city_panel)
+    if band_city_panel.has_signal("cycle_requested") and hud != null and hud.has_method("cycle_panel_band") and not band_city_panel.is_connected("cycle_requested", Callable(hud, "cycle_panel_band")):
+        band_city_panel.connect("cycle_requested", Callable(hud, "cycle_panel_band"))
+    if band_city_panel.has_signal("subject_activated") and hud != null and hud.has_method("focus_panel_band") and not band_city_panel.is_connected("subject_activated", Callable(hud, "focus_panel_band")):
+        band_city_panel.connect("subject_activated", Callable(hud, "focus_panel_band"))
+    if band_city_panel.has_method("get_dock") and band_city_panel.has_method("current_reservation_size"):
+        _apply_reservation(&"band_panel", int(band_city_panel.call("get_dock")), float(band_city_panel.call("current_reservation_size")))
+
+func _on_band_panel_reservation_changed(edge: int, size: float) -> void:
+    _apply_reservation(&"band_panel", edge, size)
 
 func _toggle_legend_visibility() -> void:
     if hud == null:
@@ -630,4 +689,11 @@ func _determine_command_proto_port() -> int:
         var parsed: int = int(env_port)
         if parsed > 0:
             return parsed
-    return COMMAND_PROTO_PORT
+    # No explicit COMMAND_PROTO_PORT override: the command endpoint is a single
+    # socket, so the protobuf port must follow the resolved command port (COMMAND_PORT
+    # env / default) — NOT a stale hardcoded default. run_stack now exports both
+    # COMMAND_PORT and COMMAND_PROTO_PORT, but this fallback keeps any launcher that
+    # sets only COMMAND_PORT (or a bare --port-base run) correct: without it a
+    # non-default port base would send commands to 41001 while the server binds
+    # PORT_BASE+1, giving "connection refused" on every command.
+    return _determine_command_port()

@@ -474,9 +474,15 @@ var _last_visible_row_end: float = 0.0
 var pan_offset: Vector2 = Vector2.ZERO
 var base_bounds: Rect2 = Rect2(Vector2.ZERO, Vector2.ONE)
 var bounds_dirty: bool = true
-# Left-edge strip reserved for the docked Inspector (canvas-space px). The map
-# fits and recentres into the remaining width instead of drawing under it.
-var _view_inset_left: float = 0.0
+# Edges reserved by docked panels (Inspector, Band/City panel). Each reserver
+# registers a (edge, size) contribution keyed by a StringName id; the four edge
+# totals are the summed sizes per edge (canvas-space px). The map fits and
+# recentres into the remaining rect instead of drawing under any reserved strip.
+var _reservations: Dictionary = {}
+var _inset_left: float = 0.0
+var _inset_right: float = 0.0
+var _inset_top: float = 0.0
+var _inset_bottom: float = 0.0
 var mouse_pan_active: bool = false
 var mouse_pan_button: int = -1
 
@@ -2394,6 +2400,9 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"is_expedition": bool(entry.get("is_expedition", false)),
 			"expedition_mission": String(entry.get("expedition_mission", "")),
 			"expedition_phase": String(entry.get("expedition_phase", "")),
+			# The band that outfitted this party (entity bits; 0 for a normal band) — the Band/City
+			# panel groups a band's active expeditions by home_band_entity == band.entity.
+			"home_band_entity": int(entry.get("home_band_entity", 0)),
 			# Hunt expedition (PR 2): the herd (fauna_id) a hunt party follows; "" for scouts.
 			"expedition_target_herd": String(entry.get("expedition_target_herd", "")),
 			# Hunt party take policy (sustain|surplus|market|eradicate; "" for scouts) + carry cap.
@@ -3482,10 +3491,11 @@ func _get_adjusted_viewport_size() -> Vector2:
 	if canvas_scale.x != 0.0 and canvas_scale.y != 0.0:
 		# Account for global canvas (camera) scaling so hit-testing matches the drawn map
 		viewport_size /= canvas_scale
-	# Exclude the docked Inspector's reserved strip: the map treats the remaining
-	# width as its entire viewport, and the node is translated right by the same
-	# amount (see set_view_inset_left), so nothing renders behind the panel.
-	viewport_size.x = max(viewport_size.x - _view_inset_left, 1.0)
+	# Exclude every reserved edge strip: the map treats the remaining rect as its
+	# entire viewport, and the node is translated by the leading insets (see
+	# set_reserved_inset), so nothing renders behind a docked panel.
+	viewport_size.x = max(viewport_size.x - _inset_left - _inset_right, 1.0)
+	viewport_size.y = max(viewport_size.y - _inset_top - _inset_bottom, 1.0)
 	return viewport_size
 
 func _update_layout_metrics() -> void:
@@ -4242,12 +4252,15 @@ func _get_neighbor_offset_y_2d(dir: int) -> int:
 func set_hud_reference(hud: Node) -> void:
 	_hud_layer = hud
 
-## True when a local-space point lies in the map's usable area rather than the
-## strip reserved for the docked Inspector. The node is translated right by the
-## inset, so local x < 0 is exactly the reserved region — the map ignores input
-## there even though its cover-fit content mathematically extends under it.
+## True when a local-space point lies in the map's usable area rather than a strip
+## reserved by a docked panel. The node is translated by the leading (left/top)
+## insets, so local origin (0,0) is the usable top-left and the adjusted viewport
+## size is its extent — a point outside that rect is under a reserved edge (left,
+## top, right, OR bottom) even though the cover-fit map mathematically extends
+## there. The map ignores input outside it.
 func _is_local_point_in_view(local_pos: Vector2) -> bool:
-	return local_pos.x >= 0.0
+	var adjusted: Vector2 = _get_adjusted_viewport_size()
+	return local_pos.x >= 0.0 and local_pos.y >= 0.0 and local_pos.x <= adjusted.x and local_pos.y <= adjusted.y
 
 ## Clip this node's drawing to its usable rect (in local space, i.e. after the
 ## node's translation). Because the map is cover-fit, its content is wider than
@@ -4256,29 +4269,52 @@ func _is_local_point_in_view(local_pos: Vector2) -> bool:
 ## the usable width.
 func _apply_view_clip(usable_size: Vector2) -> void:
 	var ci := get_canvas_item()
-	if _view_inset_left > 0.0:
+	if _inset_left > 0.0 or _inset_right > 0.0 or _inset_top > 0.0 or _inset_bottom > 0.0:
 		RenderingServer.canvas_item_set_custom_rect(ci, true, Rect2(Vector2.ZERO, usable_size))
 		RenderingServer.canvas_item_set_clip(ci, true)
 	else:
 		RenderingServer.canvas_item_set_clip(ci, false)
 		RenderingServer.canvas_item_set_custom_rect(ci, false, Rect2())
 
-## Reserve a strip of the left edge for the docked Inspector. The map's viewport
-## shrinks by this width (canvas-space px) and the node is translated right by
-## the same amount, so the whole map system behaves as if the window were that
-## much narrower — nothing draws behind the panel. 0 reclaims the full width.
-func set_view_inset_left(px: float) -> void:
-	var inset: float = max(px, 0.0)
-	if is_equal_approx(inset, _view_inset_left):
-		return
-	_view_inset_left = inset
-	position.x = inset
+## Reserve a strip of one edge for a docked panel (keyed by reserver id). The
+## map's viewport shrinks by the summed per-edge sizes (canvas-space px) and the
+## node is translated by the leading (left/top) insets, so the whole map system
+## behaves as if the window were that much smaller — nothing draws behind a
+## panel. `edge` is a Godot Side const (SIDE_LEFT/SIDE_TOP/SIDE_RIGHT/SIDE_BOTTOM);
+## `size <= 0` releases the reserver's strip.
+func set_reserved_inset(id: StringName, edge: int, size: float) -> void:
+	if size <= 0.0:
+		if not _reservations.has(id):
+			return
+		_reservations.erase(id)
+	else:
+		_reservations[id] = {"edge": edge, "size": size}
+	_recompute_insets()
+	position = Vector2(_inset_left, _inset_top)
 	_update_layout_metrics()
 	_clamp_pan_offset()
 	_invalidate_map_cache()
 	queue_redraw()
 	if _minimap_2d != null and _minimap_2d.has_method("queue_indicator_redraw"):
 		_minimap_2d.queue_indicator_redraw()
+
+## Sum the registered reservations into the four per-edge totals.
+func _recompute_insets() -> void:
+	_inset_left = 0.0
+	_inset_right = 0.0
+	_inset_top = 0.0
+	_inset_bottom = 0.0
+	for reservation in _reservations.values():
+		var size: float = float(reservation["size"])
+		match int(reservation["edge"]):
+			SIDE_LEFT:
+				_inset_left += size
+			SIDE_TOP:
+				_inset_top += size
+			SIDE_RIGHT:
+				_inset_right += size
+			SIDE_BOTTOM:
+				_inset_bottom += size
 
 func _setup_2d_minimap() -> void:
 	_minimap_2d = MinimapPanelScript.new()
