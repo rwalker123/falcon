@@ -31,18 +31,19 @@ use core_sim::{
     CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
     CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
     CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
-    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, EspionageAgentHandle,
-    EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
-    EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
-    FactionSecurityPolicies, FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry,
-    GenerationId, GenerationRegistry, HerdRegistry, InfluencerImpacts, InfluentialRoster,
-    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
-    QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
-    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
-    SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
-    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, FOOD,
+    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
+    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
+    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
+    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FogRevealLedger, FollowPolicy,
+    ForageRegistry, GenerationId, GenerationRegistry, HerdRegistry, InfluencerImpacts,
+    InfluentialRoster, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort,
+    QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, Settlement,
+    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
+    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
+    SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
+    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, CULTIVATION_DISCOVERY_ID,
+    FOOD,
 };
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
@@ -2193,19 +2194,31 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
 fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
     enum Outcome {
         UnknownPatch,
+        NotKnown,
         AlreadyCultivated,
         NotOwner,
         NotTame(f32),
         Cultivated,
     }
 
-    let claim_threshold = app
+    let cultivation = app
         .world
         .resource::<LaborConfigHandle>()
         .get()
         .forage
         .cultivation
-        .claim_threshold;
+        .clone();
+    let claim_threshold = cultivation.claim_threshold;
+
+    // Rung 1b gate (belt-and-suspenders): the faction must have LEARNED Cultivation (accrued by
+    // Sustain-foraging) before it can claim a tended patch. In practice a patch can never reach
+    // `claim_threshold` unless the faction already knows Cultivation (patch cultivation is itself
+    // gated on the same knowledge in `advance_labor_allocation`), so this is a clear early error.
+    let knows_cultivation = app
+        .world
+        .resource::<DiscoveryProgressLedger>()
+        .get_progress(faction, CULTIVATION_DISCOVERY_ID)
+        >= scalar_from_f32(cultivation.knowledge_completion_threshold);
 
     // Decide (and, on success, mutate the patch) inside a scope so the registry borrow ends
     // before we emit command events through `app`.
@@ -2213,6 +2226,7 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         match registry.patch_mut(tile) {
             None => Outcome::UnknownPatch,
+            Some(_) if !knows_cultivation => Outcome::NotKnown,
             Some(patch) if patch.is_cultivated() => Outcome::AlreadyCultivated,
             // Only the tending faction may claim; report ownership and tameness distinctly.
             Some(patch) if patch.owner != Some(faction) => Outcome::NotOwner,
@@ -2241,6 +2255,22 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
                 CommandEventKind::Cultivate,
                 faction,
                 format!("No forage patch at ({}, {}).", tile.x, tile.y),
+            );
+        }
+        Outcome::NotKnown => {
+            warn!(
+                target: "shadow_scale::command",
+                command = "cultivate",
+                faction = %faction.0,
+                x = tile.x,
+                y = tile.y,
+                "command.cultivate.rejected=cultivation_unknown"
+            );
+            emit_command_failure(
+                app,
+                CommandEventKind::Cultivate,
+                faction,
+                "Your people have not learned Cultivation yet. Sustain-forage thriving patches to learn it before cultivating.".to_string(),
             );
         }
         Outcome::AlreadyCultivated => emit_command_failure(
@@ -4150,5 +4180,79 @@ fn handle_rollback(
     }
     if let Some(server) = snapshot_server_flat {
         server.broadcast(entry.encoded_snapshot_flat.as_ref());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::math::UVec2;
+    use core_sim::{build_headless_app, ForagePatch};
+
+    /// Insert a patch tame enough to claim (progress ≥ `claim_threshold`, owned by `faction`).
+    fn seed_claimable_patch(app: &mut bevy::prelude::App, faction: FactionId, coord: UVec2) {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let mut patch = ForagePatch::new(coord, 100.0);
+        patch.owner = Some(faction);
+        patch.cultivation_progress = 0.9;
+        registry.patches.insert(coord, patch);
+    }
+
+    fn cultivate_rejected_for_unknown(app: &bevy::prelude::App) -> bool {
+        app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            matches!(entry.kind, CommandEventKind::Cultivate)
+                && entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("learned Cultivation"))
+        })
+    }
+
+    /// Rung 1b gate: `cultivate` is rejected when the faction has not learned Cultivation, even on a
+    /// tame patch it owns, and the patch stays un-cultivated.
+    #[test]
+    fn cultivate_rejected_when_cultivation_unknown() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_claimable_patch(&mut app, faction, coord);
+
+        handle_cultivate(&mut app, faction, coord);
+
+        assert!(
+            cultivate_rejected_for_unknown(&app),
+            "cultivate must emit a NotKnown failure when Cultivation is unknown"
+        );
+        assert!(
+            !app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .unwrap()
+                .is_cultivated(),
+            "a rejected cultivate must not cultivate the patch"
+        );
+    }
+
+    /// Once the faction knows Cultivation (ledger at completion), the same claim succeeds.
+    #[test]
+    fn cultivate_succeeds_when_cultivation_known() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_claimable_patch(&mut app, faction, coord);
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(faction, CULTIVATION_DISCOVERY_ID, scalar_from_f32(1.0));
+
+        handle_cultivate(&mut app, faction, coord);
+
+        assert!(
+            app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .unwrap()
+                .is_cultivated(),
+            "a known-Cultivation faction claims a tame patch"
+        );
     }
 }

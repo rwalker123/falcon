@@ -30,7 +30,7 @@ use crate::{
     fauna::{sustainable_yield, EcologyPhase, Herd, HerdDensityMap, HerdRegistry},
     fauna_config::{FaunaConfig, FaunaConfigHandle},
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
-    forage::{forage_take, ForageRegistry},
+    forage::{forage_take, ForageRegistry, CULTIVATION_DISCOVERY_ID},
     generations::GenerationRegistry,
     heightfield::{build_elevation_field, ElevationField},
     hydrology::HydrologyState,
@@ -4176,6 +4176,7 @@ pub fn advance_labor_allocation(
     mut registry: ResMut<HerdRegistry>,
     mut forage_registry: ResMut<ForageRegistry>,
     mut inventory: ResMut<FactionInventory>,
+    mut discovery: ResMut<DiscoveryProgressLedger>,
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
     tile_registry: Res<TileRegistry>,
@@ -4195,6 +4196,13 @@ pub fn advance_labor_allocation(
     let market = &fauna.market;
     let work_range = labor.band_work_range;
     let hunt_reach = labor.hunt_reach();
+    // Rung 1b (earned Cultivation knowledge): the per-turn ledger accrual and the "known" threshold,
+    // hoisted out of the per-cohort loop. A Sustain-forage on a Thriving patch teaches the faction
+    // Cultivation; a patch cannot accrue `cultivation_progress` until the faction's ledger progress
+    // reaches `knowledge_threshold`.
+    let cultivation = &labor.forage.cultivation;
+    let knowledge_delta = scalar_from_f32(cultivation.knowledge_progress_per_turn);
+    let knowledge_threshold = scalar_from_f32(cultivation.knowledge_completion_threshold);
     // In-range checks use true hex distance (not Chebyshev on offset coords, whose square
     // corners are actually 3 hex-steps away), wrap-aware to match the rest of the sim.
     let grid_width = tile_registry.width;
@@ -4259,15 +4267,23 @@ pub fn advance_labor_allocation(
                     let Some(patch) = forage_registry.patch_mut(*tile) else {
                         continue;
                     };
-                    // Phase 1a cultivation: a Sustain forage on a Thriving patch tames it over time
-                    // (the plant mirror of the Hunt-arm husbandry hook). No-op once cultivated.
+                    // Rung 1b — the earned-knowledge ladder (§4b). A Sustain forage on a Thriving
+                    // patch first **teaches the faction Cultivation** (accrued in the shared
+                    // `DiscoveryProgressLedger`, never start-granted); only *once the faction knows
+                    // Cultivation* can a patch actually accrue `cultivation_progress` and become a
+                    // tended crop (Phase 1a). Before known: foraging builds knowledge but no patch
+                    // tames. After known: patches tame exactly as before (the plant mirror of the
+                    // Hunt-arm husbandry hook). `accrue_cultivation` is a no-op once cultivated.
                     if matches!(policy, FollowPolicy::Sustain)
                         && patch.ecology_phase == EcologyPhase::Thriving
                     {
-                        patch.accrue_cultivation(
-                            faction,
-                            labor.forage.cultivation.progress_per_turn,
-                        );
+                        discovery.add_progress(faction, CULTIVATION_DISCOVERY_ID, knowledge_delta);
+                        let knows_cultivation = discovery
+                            .get_progress(faction, CULTIVATION_DISCOVERY_ID)
+                            >= knowledge_threshold;
+                        if knows_cultivation {
+                            patch.accrue_cultivation(faction, cultivation.progress_per_turn);
+                        }
                     }
                     // A cultivated ("tended") patch is worked, not wild-gathered (Rung 1a): the band
                     // whose Forage assignment tends it (≥1 worker here → place-local by construction)
@@ -6570,11 +6586,13 @@ mod labor_yield_tests {
     use crate::fauna::{sustainable_yield, Herd, HerdRegistry};
     use crate::fauna_config::{FaunaConfigHandle, SizeClass};
     use crate::food::{FoodModule, FoodModuleTag, FoodSiteKind};
+    use crate::forage::CULTIVATION_DISCOVERY_ID;
     use crate::forage::{ForagePatch, ForageRegistry};
     use crate::labor_config::LaborConfigHandle;
     use crate::orders::FactionId;
     use crate::resources::{
-        CommandEventLog, FactionInventory, SimulationConfig, SimulationTick, TileRegistry,
+        CommandEventLog, DiscoveryProgressLedger, FactionInventory, SimulationConfig,
+        SimulationTick, TileRegistry,
     };
     use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
     use crate::wellbeing_config::WellbeingConfigHandle;
@@ -6599,6 +6617,7 @@ mod labor_yield_tests {
         world.insert_resource(LaborConfigHandle::default());
         world.insert_resource(WellbeingConfigHandle::default());
         world.insert_resource(FactionInventory::default());
+        world.insert_resource(DiscoveryProgressLedger::default());
         world.insert_resource(CommandEventLog::default());
         world.insert_resource(SimulationTick::default());
 
@@ -6979,6 +6998,60 @@ mod labor_yield_tests {
         assert!(
             other_food.abs() < 1e-9,
             "a non-tending same-faction band gets no tended yield (no even-split): {other_food}"
+        );
+    }
+
+    /// Rung 1b at the labor-arm level: a Sustain forage on a Thriving patch earns faction Cultivation
+    /// knowledge in the `DiscoveryProgressLedger`, but the patch cannot accrue `cultivation_progress`
+    /// until the faction knows Cultivation (once seeded to completion, accrual resumes).
+    #[test]
+    fn forage_knowledge_gate_blocks_then_unlocks_patch_cultivation() {
+        let (mut world, tile) = world_with_source(CAP * 0.5);
+        spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: UVec2::new(0, 0),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+
+        // Not known yet: one turn of Sustain-forage earns knowledge but gates the patch.
+        world.run_system_once(advance_labor_allocation);
+        let learned = world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(FactionId(0), CULTIVATION_DISCOVERY_ID)
+            .to_f32();
+        assert!(
+            learned > 0.0,
+            "Sustain-forage earns Cultivation knowledge: {learned}"
+        );
+        let gated = world
+            .resource::<ForageRegistry>()
+            .patch(UVec2::new(0, 0))
+            .unwrap()
+            .cultivation_progress;
+        assert_eq!(
+            gated, 0.0,
+            "patch cannot accrue until Cultivation is known: {gated}"
+        );
+
+        // Grant Cultivation knowledge, then a Sustain-forage turn accrues patch cultivation.
+        world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(FactionId(0), CULTIVATION_DISCOVERY_ID, scalar_one());
+        world.run_system_once(advance_labor_allocation);
+        let unlocked = world
+            .resource::<ForageRegistry>()
+            .patch(UVec2::new(0, 0))
+            .unwrap()
+            .cultivation_progress;
+        assert!(
+            unlocked > 0.0,
+            "once Cultivation is known, the patch accrues: {unlocked}"
         );
     }
 }

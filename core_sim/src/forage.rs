@@ -40,6 +40,16 @@ use crate::{
     scalar::{scalar_from_f32, Scalar},
 };
 
+/// Discovery id for the faction-level **Cultivation** knowledge (Intensification Rung 1b — the
+/// earned-knowledge gate on the plant path, `docs/plan_intensification.md` §4b). Knowledge is
+/// **earned by doing**: a band Sustain-foraging a Thriving patch accrues this discovery in the
+/// per-faction `DiscoveryProgressLedger` (`advance_labor_allocation`), and a patch cannot become a
+/// tended crop until the faction knows Cultivation. Declared as a start-profile knowledge tag
+/// (`cultivation` → this id in `data/start_profile_knowledge_tags.json`) purely so it is mappable;
+/// it is deliberately **not** listed in any start profile's `starting_knowledge_tags`, so no faction
+/// starts knowing it. Next free id after `nomadic_wayfinding` (2001) / `portable_forge` (2002).
+pub const CULTIVATION_DISCOVERY_ID: u32 = 2003;
+
 /// A live depletable forage patch on a `FoodModuleTag` tile. Mirrors the herd biomass model's
 /// ecology subset, including cultivation (`cultivation_progress`/`owner`) — the plant analog of a
 /// herd's domestication (Phase 1a).

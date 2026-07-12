@@ -19,8 +19,19 @@ use core_sim::{
     LaborConfigHandle, LaborTarget, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
     PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
+    StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
+    CULTIVATION_DISCOVERY_ID, FOOD,
 };
+
+/// Grant faction-level **Cultivation** knowledge (Rung 1b) directly via the ledger, so patch
+/// cultivation is unlocked. Rung-1a tests seed this since they exercise the *tended-patch* mechanic,
+/// not the earned-knowledge gate (which has its own tests below). Mirrors how other knowledge-gated
+/// tests set up prerequisites through the `DiscoveryProgressLedger`.
+fn grant_cultivation_knowledge(app: &mut App, faction: FactionId) {
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(faction, CULTIVATION_DISCOVERY_ID, scalar_one());
+}
 
 /// Whole-worker head-count assigned to the forage — large enough that the per-worker gather cap
 /// never binds (the accrual hook is independent of the take, but this keeps the patch productive).
@@ -186,6 +197,7 @@ fn provisions_f32(app: &mut App) -> f32 {
 fn sustain_forage_cultivates_thriving_patch() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
     spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
 
     run_turns_with_forage(&mut app, 45);
@@ -220,6 +232,7 @@ fn cultivation_nets_accrual_minus_decay_then_decays() {
         patch.cultivation_progress = START;
         patch.owner = Some(FactionId(0));
     }
+    grant_cultivation_knowledge(&mut app, FactionId(0));
     let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
 
     // A few tended turns: net +0.03/turn (accrual 0.04 in Population − decay 0.01 in Logistics).
@@ -258,7 +271,9 @@ fn tended_patch_pays_tending_band_without_depletion() {
         patch.claim_cultivation(FactionId(0));
         patch.biomass
     };
-    // The owner band tends it (a Forage assignment on the cultivated patch).
+    // The owner band tends it (a Forage assignment on the cultivated patch). It knows Cultivation so
+    // the tending Sustain forage can re-accrue the patch after the decay pass.
+    grant_cultivation_knowledge(&mut app, FactionId(0));
     spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
     assert_eq!(provisions_f32(&mut app), 0.0, "larder starts empty");
 
@@ -339,5 +354,66 @@ fn untended_cultivated_patch_goes_feral() {
         patch_registry.cultivated_count(FactionId(0)),
         0,
         "no cultivated patches remain"
+    );
+}
+
+/// Rung 1b (earned-knowledge gate): a faction that does NOT yet know Cultivation and Sustain-forages a
+/// Thriving patch **builds faction Cultivation knowledge** (in the `DiscoveryProgressLedger`) but its
+/// patch does **not** gain any `cultivation_progress` — knowledge is earned first, tended patches are
+/// gated behind it.
+#[test]
+fn sustain_forage_earns_cultivation_knowledge_but_gates_patch() {
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    // No knowledge granted: the faction must learn Cultivation by foraging.
+    spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+
+    // A handful of turns — fewer than needed to complete the knowledge (0.05/turn vs threshold 1.0).
+    run_turns_with_forage(&mut app, 5);
+
+    let learned = app
+        .world
+        .resource::<DiscoveryProgressLedger>()
+        .get_progress(FactionId(0), CULTIVATION_DISCOVERY_ID)
+        .to_f32();
+    assert!(
+        learned > 0.0,
+        "Sustain-forage teaches the faction Cultivation: ledger progress {learned}"
+    );
+    assert!(
+        learned < 1.0,
+        "5 turns should not yet complete Cultivation knowledge: {learned}"
+    );
+
+    let patch_progress = progress_of(&app, coord);
+    assert_eq!(
+        patch_progress, 0.0,
+        "before knowing Cultivation, no patch may accrue cultivation_progress: {patch_progress}"
+    );
+    assert!(
+        !app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .is_cultivated(),
+        "an un-earned patch is not cultivated"
+    );
+}
+
+/// Rung 1b: once the faction knows Cultivation (knowledge crosses the completion threshold), a Sustain
+/// forage on a Thriving patch begins accruing `cultivation_progress` again — the gate opens.
+#[test]
+fn known_cultivation_unlocks_patch_accrual() {
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+
+    run_turns_with_forage(&mut app, 5);
+
+    let patch_progress = progress_of(&app, coord);
+    assert!(
+        patch_progress > 0.0,
+        "with Cultivation known, the patch accrues cultivation_progress: {patch_progress}"
     );
 }

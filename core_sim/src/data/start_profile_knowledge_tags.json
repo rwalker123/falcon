@@ -8,5 +8,8 @@
     "discovery_id": 2002,
     "progress": 0.55,
     "fidelity": 0.85
+  },
+  "cultivation": {
+    "discovery_id": 2003
   }
 }

@@ -78,6 +78,16 @@ const DEFAULT_CULTIVATION_PROGRESS_PER_TURN: f32 = 0.04;
 const DEFAULT_CULTIVATION_DECAY_PER_TURN: f32 = 0.01;
 const DEFAULT_CULTIVATION_CLAIM_THRESHOLD: f32 = 0.6;
 const DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS: f32 = 0.01;
+/// Faction **Cultivation** knowledge earned per turn a band Sustain-forages a Thriving patch
+/// (Rung 1b). At `0.05`/turn the knowledge completes (`>= knowledge_completion_threshold`) in ~20
+/// Sustain-forage turns. Deliberately faster than a patch can reach `claim_threshold` from a *gated*
+/// start (patch cultivation cannot accrue until the faction knows Cultivation), so the belt-and-
+/// suspenders `cultivate` NotKnown rejection can practically never bind.
+const DEFAULT_CULTIVATION_KNOWLEDGE_PROGRESS_PER_TURN: f32 = 0.05;
+/// Ledger progress (`0..=1`) at which the faction **knows** Cultivation and patches may accrue
+/// cultivation / be claimed. `1.0` = the ledger's completion value (`DiscoveryProgressLedger` clamps
+/// accrual to `1.0`).
+const DEFAULT_CULTIVATION_KNOWLEDGE_COMPLETION_THRESHOLD: f32 = 1.0;
 
 /// Cultivation tuning (Intensification Phase 1a): a sustained **Sustain** forage on a **Thriving**
 /// patch accrues `progress_per_turn` toward cultivation (`1.0` = cultivated); a cultivated patch that
@@ -103,6 +113,14 @@ pub struct CultivationConfig {
     /// same patch's wild MSY skim (see the module-level tuning note). Distinct from the gather
     /// `provisions_per_biomass`.
     pub tended_provisions_per_biomass: f32,
+    /// **Rung 1b — earned knowledge.** Faction-level Cultivation knowledge accrued per turn while a
+    /// band Sustain-forages a Thriving patch (into the `DiscoveryProgressLedger`, discovery
+    /// `CULTIVATION_DISCOVERY_ID`). Cultivation is *learned by foraging*, never start-granted; a patch
+    /// cannot accrue `cultivation_progress` until the faction knows it.
+    pub knowledge_progress_per_turn: f32,
+    /// Ledger progress (`0..=1`) at which the faction **knows** Cultivation: patches may then accrue
+    /// cultivation and the `cultivate` command is permitted. `1.0` = the ledger's completion value.
+    pub knowledge_completion_threshold: f32,
 }
 
 impl Default for CultivationConfig {
@@ -112,6 +130,8 @@ impl Default for CultivationConfig {
             decay_per_turn: DEFAULT_CULTIVATION_DECAY_PER_TURN,
             claim_threshold: DEFAULT_CULTIVATION_CLAIM_THRESHOLD,
             tended_provisions_per_biomass: DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS,
+            knowledge_progress_per_turn: DEFAULT_CULTIVATION_KNOWLEDGE_PROGRESS_PER_TURN,
+            knowledge_completion_threshold: DEFAULT_CULTIVATION_KNOWLEDGE_COMPLETION_THRESHOLD,
         }
     }
 }
@@ -445,6 +465,10 @@ mod tests {
         assert!(config.forage.cultivation.claim_threshold > 0.0);
         assert!(config.forage.cultivation.claim_threshold < 1.0);
         assert!(config.forage.cultivation.tended_provisions_per_biomass > 0.0);
+        // Rung 1b (earned knowledge): positive accrual, completion threshold in (0, 1].
+        assert!(config.forage.cultivation.knowledge_progress_per_turn > 0.0);
+        assert!(config.forage.cultivation.knowledge_completion_threshold > 0.0);
+        assert!(config.forage.cultivation.knowledge_completion_threshold <= 1.0);
         // A tended patch (harvested on its full standing biomass, ~cap) out-yields the same patch's
         // wild MSY skim (regrowth at K/2 = regrowth_rate × K/4, × the gather provisions rate) — the
         // intensification incentive. Compare per-biomass factors: tended pays on ~K, wild MSY on

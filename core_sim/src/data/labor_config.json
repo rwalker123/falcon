@@ -28,7 +28,9 @@
       "progress_per_turn": 0.04,
       "decay_per_turn": 0.01,
       "claim_threshold": 0.6,
-      "tended_provisions_per_biomass": 0.01
+      "tended_provisions_per_biomass": 0.01,
+      "knowledge_progress_per_turn": 0.05,
+      "knowledge_completion_threshold": 1.0
     }
   },
   "hunt": {

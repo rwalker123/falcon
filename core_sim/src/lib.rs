@@ -130,7 +130,8 @@ pub use food::{
     FoodSiteKind, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
 pub use forage::{
-    advance_cultivation, advance_forage_regrowth, spawn_initial_forage, ForagePatch, ForageRegistry,
+    advance_cultivation, advance_forage_regrowth, spawn_initial_forage, ForagePatch,
+    ForageRegistry, CULTIVATION_DISCOVERY_ID,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use great_discovery::{
