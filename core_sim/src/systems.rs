@@ -4259,6 +4259,23 @@ pub fn advance_labor_allocation(
                     let Some(patch) = forage_registry.patch_mut(*tile) else {
                         continue;
                     };
+                    // Phase 1a cultivation: a Sustain forage on a Thriving patch tames it over time
+                    // (the plant mirror of the Hunt-arm husbandry hook). No-op once cultivated.
+                    if matches!(policy, FollowPolicy::Sustain)
+                        && patch.ecology_phase == EcologyPhase::Thriving
+                    {
+                        patch.accrue_cultivation(
+                            faction,
+                            labor.forage.cultivation.progress_per_turn,
+                        );
+                    }
+                    // A cultivated patch is a tended crop, not wild forage: it is NOT gather-drawn
+                    // (the steady owner-yield in `advance_cultivation` handles its food), so this
+                    // assignment yields 0 from gathering this turn — `yields[idx]` stays {0, 0}.
+                    // Mirrors a domesticated herd no longer being hunted.
+                    if patch.is_cultivated() {
+                        continue;
+                    }
                     let biomass_before = patch.biomass;
                     let provisions =
                         forage_take(patch, workers, *policy, &labor.forage, mult_f, seasonal);

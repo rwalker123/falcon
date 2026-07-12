@@ -23,6 +23,12 @@
     },
     "eradicate": {
       "take_fraction": 0.30
+    },
+    "cultivation": {
+      "progress_per_turn": 0.04,
+      "decay_per_turn": 0.01,
+      "claim_threshold": 0.6,
+      "provisions_per_biomass": 0.01
     }
   },
   "hunt": {

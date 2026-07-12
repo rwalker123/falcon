@@ -39,7 +39,7 @@ cargo run -p core_sim --bin server
 | `src/data/influencer_config.json` | Roster caps, decay factors, scope thresholds |
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
-| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: `carrying_capacity` per-patch cap, `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles) |
+| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: `carrying_capacity` per-patch cap, `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting — **plus the Phase 1a `cultivation` block** `progress_per_turn`/`decay_per_turn`/`claim_threshold`/`provisions_per_biomass`, cloning fauna's `husbandry` so a Sustain-forage tames a patch into a cultivated crop; see "Cultivation"), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles) |
 | `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) / `market` (commercial-hunt take + trade multiplier) tuning |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
@@ -449,12 +449,53 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
 - **Persistence** — `ForageRegistry` round-trips through the rollback snapshot exactly like the
   `HerdRegistry` (the §0-i pattern): a per-tile `ForageState` (= tile key + the shared
   `sim_schema::EcologyState`) captured coord-sorted into `WorldSnapshot.forage_registry` and rebuilt
-  on restore via `ForageRegistry::update_from_states`. `progress`/`owner` on `EcologyState` stay
-  `0.0`/`None` here — **cultivation is Phase 1**. Not wired to the FlatBuffers client stream.
+  on restore via `ForageRegistry::update_from_states`. `progress`/`owner` on `EcologyState` now carry
+  **cultivation** (Phase 1a, below) — a mutate-then-restore rewinds it like biomass. Not wired to the
+  FlatBuffers client stream.
 - **Companion client slice:** the sim side of the forage policy axis (§0-iii) is complete — the
   client `%ForageAssignControls` policy picker (mirroring `%HerdAssignControls`) that emits the
   policy in the `assign_labor forage` command is a **client-dev follow-up**. A client patch-ecology
   readout (thriving/stressed/collapsing on the map/tile, like herds) is a possible later slice.
+
+### Cultivation (Intensification Phase 1a)
+
+The **plant analog of animal husbandry** (`docs/plan_intensification.md` §3) — a near-mechanical
+transpose of the herd domestication mechanic onto forage patches. A patch carries
+`cultivation_progress` (0–1, `1.0` = cultivated) + `owner: Option<FactionId>` on `ForagePatch`,
+mirroring a `Herd`'s `domestication_progress`/`owner`, and rides the shared `EcologyState`
+(`progress`/`owner`) through the rollback snapshot. *Sim-only — the client readout is a follow-up.*
+- **Emergent accrual** — in `advance_labor_allocation`'s **Forage** arm (Population), a **Sustain**
+  forage on a **Thriving** patch adds `cultivation.progress_per_turn` for the acting faction (sets
+  `owner` on first accrual; only the owner accrues; clamps to `1.0` → auto-cultivation). Mirrors the
+  Hunt-arm husbandry hook exactly. `ForagePatch` methods `is_cultivated`/`accrue_cultivation`/
+  `decay_cultivation`/`claim_cultivation` clone `Herd`'s.
+- **Decay + steady yield** — `advance_cultivation` (`forage.rs`, `TurnStage::Logistics` alongside
+  `advance_forage_regrowth`, so it runs *before* the same turn's accrual → a Sustain-foraged patch
+  nets `progress_per_turn − decay_per_turn`, an untended one only decays by `decay_per_turn` and
+  clears `owner` at 0). A **cultivated** patch pays its `owner` `biomass ×
+  cultivation.provisions_per_biomass` provisions each turn — accumulated per owner, split evenly
+  across the owner's `PopulationCohort`s and scaled at payout by `output_multiplier` (× wellbeing),
+  credited to `cohort.stores` (FOOD) — **without** drawing biomass down. The plant mirror of
+  `advance_husbandry`; the even split is a v1 (place-local yield is the improvement-engine work).
+- **Cultivated = steady yield, not gathered** — the Forage arm **short-circuits** a cultivated
+  patch: it skips the `forage_take` draw-down (the assignment yields 0 from gathering), so a
+  cultivated patch is never both drawn down *and* paid its steady owner-yield. Matches a domesticated
+  herd no longer being hunted.
+- **`cultivate` command** — `cultivate <faction> <x> <y>` (`handle_cultivate`, full
+  proto/runtime/text/server plumbing cloning `domesticate`; `CommandEventKind::Cultivate`) claims a
+  patch **early** once `cultivation_progress ≥ cultivation.claim_threshold` (snaps to `1.0`); rejected
+  for an unknown patch / non-owner / under-threshold / already-cultivated.
+- **Sedentarization (folded)** — `sedentarization_tick` reads `herds.domesticated_count(faction) +
+  forage.cultivated_count(faction)` for its **domestication** input: plant + animal domestication
+  share the one driver (no new weight, no re-balance).
+- **Config** (`labor_config.json` `forage.cultivation`, `CultivationConfig`, cloning
+  `HusbandryConfig`): `progress_per_turn` (0.04), `decay_per_turn` (0.01), `claim_threshold` (0.6),
+  `provisions_per_biomass` (0.01 — the **STEADY** tended-yield rate, distinct from the gather
+  `forage.provisions_per_biomass`). Same validation invariants (`progress_per_turn > decay_per_turn`,
+  `0 < claim_threshold < 1`, `provisions_per_biomass > 0`).
+- **Follow-ups:** the **client cultivation readout** (progress/owner on the tile card, like the herd
+  domestication readout) and the formal **tended-patch/corral improvement engine** (place-local
+  yield replacing the even split) come next.
 
 ---
 
@@ -768,8 +809,9 @@ settlement chain, and the consumer of Phase E's domestication seam.
 `sedentarization_tick` (`sedentarization.rs`, `TurnStage::Population` after
 `advance_labor_allocation`) computes a per-faction 0–100 **`SedentarizationScore`** each turn as
 a config-weighted blend of normalized inputs, then **EMA-smooths** it (`smoothing`):
-- **domestication** = `HerdRegistry::domesticated_count(faction) / references.domesticated_herds`
-  (the Phase E seam),
+- **domestication** = `(HerdRegistry::domesticated_count(faction) +
+  ForageRegistry::cultivated_count(faction)) / references.domesticated_herds` (the Phase E seam +
+  the Phase 1a cultivation fold-in — plant + animal domestication share one driver; see "Cultivation"),
 - **surplus** = Σ band `stores` food larders / `references.surplus` (band-local food, Phase 1),
 - **resource density** = `HerdDensityMap::normalized_average()` (map-wide game richness — a v1
   baseline; per-faction-local density is a future refinement),

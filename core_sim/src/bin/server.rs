@@ -34,15 +34,15 @@ use core_sim::{
     CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, EspionageAgentHandle,
     EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
     EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
-    FactionSecurityPolicies, FaunaConfigHandle, FogRevealLedger, FollowPolicy, GenerationId,
-    GenerationRegistry, HerdRegistry, InfluencerImpacts, InfluentialRoster, MapPresetsHandle,
-    PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams, Scalar,
-    SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig, SimulationConfigMetadata,
-    SimulationTick, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
-    StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry,
-    TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata,
-    TurnQueue, FOOD,
+    FactionSecurityPolicies, FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry,
+    GenerationId, GenerationRegistry, HerdRegistry, InfluencerImpacts, InfluentialRoster,
+    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
+    QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
+    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
+    SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
+    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, FOOD,
 };
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
@@ -562,6 +562,13 @@ fn main() {
             Command::Domesticate { faction, herd_id } => {
                 handle_domesticate(&mut app, faction, herd_id);
             }
+            Command::Cultivate {
+                faction,
+                target_x,
+                target_y,
+            } => {
+                handle_cultivate(&mut app, faction, UVec2::new(target_x, target_y));
+            }
             Command::CancelOrder {
                 faction,
                 band_entity_bits,
@@ -696,6 +703,11 @@ enum Command {
     Domesticate {
         faction: FactionId,
         herd_id: String,
+    },
+    Cultivate {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
     },
     CancelOrder {
         faction: FactionId,
@@ -2173,6 +2185,115 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
     }
 }
 
+/// Claim a forage patch as a cultivated crop (Phase 1a — the plant mirror of `handle_domesticate`).
+/// Requires the faction to have built cultivation progress on the patch via a sustained Sustain
+/// forage; once progress reaches `claim_threshold` the patch is finalized to cultivated
+/// (`claim_cultivation`), after which it yields steady provisions each turn (`advance_cultivation`)
+/// and is no longer gather-drawn.
+fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
+    enum Outcome {
+        UnknownPatch,
+        AlreadyCultivated,
+        NotOwner,
+        NotTame(f32),
+        Cultivated,
+    }
+
+    let claim_threshold = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .forage
+        .cultivation
+        .claim_threshold;
+
+    // Decide (and, on success, mutate the patch) inside a scope so the registry borrow ends
+    // before we emit command events through `app`.
+    let outcome = {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        match registry.patch_mut(tile) {
+            None => Outcome::UnknownPatch,
+            Some(patch) if patch.is_cultivated() => Outcome::AlreadyCultivated,
+            // Only the tending faction may claim; report ownership and tameness distinctly.
+            Some(patch) if patch.owner != Some(faction) => Outcome::NotOwner,
+            Some(patch) if patch.cultivation_progress < claim_threshold => {
+                Outcome::NotTame(patch.cultivation_progress)
+            }
+            Some(patch) => {
+                patch.claim_cultivation(faction);
+                Outcome::Cultivated
+            }
+        }
+    };
+
+    match outcome {
+        Outcome::UnknownPatch => {
+            warn!(
+                target: "shadow_scale::command",
+                command = "cultivate",
+                faction = %faction.0,
+                x = tile.x,
+                y = tile.y,
+                "command.cultivate.rejected=unknown_patch"
+            );
+            emit_command_failure(
+                app,
+                CommandEventKind::Cultivate,
+                faction,
+                format!("No forage patch at ({}, {}).", tile.x, tile.y),
+            );
+        }
+        Outcome::AlreadyCultivated => emit_command_failure(
+            app,
+            CommandEventKind::Cultivate,
+            faction,
+            format!("The patch at ({}, {}) is already cultivated.", tile.x, tile.y),
+        ),
+        Outcome::NotOwner => emit_command_failure(
+            app,
+            CommandEventKind::Cultivate,
+            faction,
+            format!(
+                "You are not tending the patch at ({}, {}). Sustain-forage it to build cultivation before claiming it.",
+                tile.x, tile.y
+            ),
+        ),
+        Outcome::NotTame(progress) => emit_command_failure(
+            app,
+            CommandEventKind::Cultivate,
+            faction,
+            format!(
+                "The patch at ({}, {}) is not tame enough to cultivate ({}%). Keep Sustain-foraging it to build cultivation.",
+                tile.x,
+                tile.y,
+                (progress * 100.0).round() as i64
+            ),
+        ),
+        Outcome::Cultivated => {
+            let tick = app.world.resource::<SimulationTick>().0;
+            info!(
+                target: "shadow_scale::command",
+                command = "cultivate",
+                faction = %faction.0,
+                x = tile.x,
+                y = tile.y,
+                "command.cultivate.claimed"
+            );
+            push_command_event(
+                app,
+                tick,
+                CommandEventKind::Cultivate,
+                faction,
+                format!("Cultivated patch at ({}, {})", tile.x, tile.y),
+                Some(format!(
+                    "status=complete action=cultivate x={} y={}",
+                    tile.x, tile.y
+                )),
+            );
+        }
+    }
+}
+
 fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<String>) {
     let command_sender = {
         let res = app.world.resource::<CommandSenderResource>();
@@ -2878,6 +2999,15 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             faction: FactionId(faction_id),
             herd_id,
         }),
+        ProtoCommandPayload::Cultivate {
+            faction_id,
+            target_x,
+            target_y,
+        } => Some(Command::Cultivate {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+        }),
         ProtoCommandPayload::CancelOrder {
             faction_id,
             band_entity_bits,
@@ -3207,6 +3337,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Forage => "Harvest",
         CommandEventKind::Hunt => "Hunt",
         CommandEventKind::Domesticate => "Domesticate",
+        CommandEventKind::Cultivate => "Cultivate",
         CommandEventKind::CancelOrder => "Cancel order",
         CommandEventKind::SedentarizationPrompt => "Sedentarization",
         CommandEventKind::SiteDiscovered => "Site discovered",

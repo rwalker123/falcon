@@ -144,6 +144,11 @@ pub enum CommandPayload {
         faction_id: u32,
         herd_id: String,
     },
+    Cultivate {
+        faction_id: u32,
+        target_x: u32,
+        target_y: u32,
+    },
     CancelOrder {
         faction_id: u32,
         band_entity_bits: Option<u64>,
@@ -495,6 +500,15 @@ impl CommandEnvelope {
                 faction_id: *faction_id,
                 herd_id: herd_id.clone(),
             }),
+            CommandPayload::Cultivate {
+                faction_id,
+                target_x,
+                target_y,
+            } => pb::command_envelope::Command::Cultivate(pb::CultivateCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+            }),
             CommandPayload::CancelOrder {
                 faction_id,
                 band_entity_bits,
@@ -778,6 +792,11 @@ impl CommandEnvelope {
             pb::command_envelope::Command::Domesticate(cmd) => CommandPayload::Domesticate {
                 faction_id: cmd.faction_id,
                 herd_id: cmd.herd_id,
+            },
+            pb::command_envelope::Command::Cultivate(cmd) => CommandPayload::Cultivate {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
             },
             pb::command_envelope::Command::CancelOrder(cmd) => CommandPayload::CancelOrder {
                 faction_id: cmd.faction_id,

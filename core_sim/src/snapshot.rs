@@ -4135,9 +4135,9 @@ fn herd_state(herd: &Herd) -> HerdState {
 }
 
 /// Capture a live `ForagePatch` into its authoritative snapshot mirror for rollback (the inverse is
-/// `forage::ForageRegistry::update_from_states`). The depletable-ecology subset goes into the shared
-/// `EcologyState`; `progress`/`owner` stay `0.0`/`None` (cultivation is Phase 1). Coordinates cross
-/// as the `(x, y)` tile key.
+/// `forage::ForageRegistry::update_from_states`). The depletable-ecology subset — including
+/// cultivation (`progress`/`owner`, Phase 1a) — goes into the shared `EcologyState`, mirroring
+/// `herd_state`. Coordinates cross as the `(x, y)` tile key.
 pub(crate) fn forage_state(patch: &ForagePatch) -> ForageState {
     ForageState {
         x: patch.tile.x,
@@ -4146,8 +4146,8 @@ pub(crate) fn forage_state(patch: &ForagePatch) -> ForageState {
             biomass: patch.biomass,
             carrying_capacity: patch.carrying_capacity,
             ecology_phase: patch.ecology_phase.as_str().to_string(),
-            progress: 0.0,
-            owner: None,
+            progress: patch.cultivation_progress,
+            owner: patch.owner.map(|f| f.0),
         },
     }
 }

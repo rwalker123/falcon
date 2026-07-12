@@ -129,7 +129,9 @@ pub use food::{
     classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,
     FoodSiteKind, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
-pub use forage::{advance_forage_regrowth, spawn_initial_forage, ForagePatch, ForageRegistry};
+pub use forage::{
+    advance_cultivation, advance_forage_regrowth, spawn_initial_forage, ForagePatch, ForageRegistry,
+};
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use great_discovery::{
     ConstellationRequirement, GreatDiscoveryCandidateEvent, GreatDiscoveryDefinition,
@@ -555,6 +557,7 @@ pub fn build_headless_app() -> App {
                 systems::simulate_logistics,
                 advance_herds,
                 advance_forage_regrowth,
+                advance_cultivation,
                 repopulate_fauna,
                 advance_husbandry,
                 supply::balance_supply_networks,

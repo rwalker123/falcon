@@ -56,6 +56,48 @@ const DEFAULT_FORAGE_MARKET_TRADE_GOODS_MULTIPLIER: f32 = 4.0;
 const DEFAULT_FORAGE_MARKET_TRADE_GOODS_PER_BIOMASS: f32 = 0.005;
 const DEFAULT_FORAGE_ERADICATE_TAKE_FRACTION: f32 = 0.30;
 
+/// Named-const defaults for **cultivation** (Intensification Phase 1a — the plant analog of fauna
+/// husbandry, `fauna_config::HusbandryConfig`). `progress_per_turn` must exceed `decay_per_turn` so
+/// a Sustain-foraged Thriving patch nets forward; `claim_threshold` is the early-claim gate; and
+/// `provisions_per_biomass` is the **STEADY tended-yield** rate — deliberately distinct from the
+/// gather `ForageLaborConfig::provisions_per_biomass` (a cultivated patch yields without being drawn
+/// down).
+const DEFAULT_CULTIVATION_PROGRESS_PER_TURN: f32 = 0.04;
+const DEFAULT_CULTIVATION_DECAY_PER_TURN: f32 = 0.01;
+const DEFAULT_CULTIVATION_CLAIM_THRESHOLD: f32 = 0.6;
+const DEFAULT_CULTIVATION_PROVISIONS_PER_BIOMASS: f32 = 0.01;
+
+/// Cultivation tuning (Intensification Phase 1a): a sustained **Sustain** forage on a **Thriving**
+/// patch accrues `progress_per_turn` toward cultivation (`1.0` = cultivated); progress that isn't
+/// being actively sustained decays by `decay_per_turn`. The explicit `cultivate` command may claim
+/// a patch early once progress reaches `claim_threshold`. A cultivated patch yields
+/// `biomass × provisions_per_biomass` provisions to its owner each turn **without** drawing the
+/// patch down. The plant mirror of fauna's `HusbandryConfig`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CultivationConfig {
+    /// Cultivation gained per turn while a band Sustain-forages a Thriving patch.
+    pub progress_per_turn: f32,
+    /// Cultivation lost per turn on a patch that isn't being actively tended.
+    pub decay_per_turn: f32,
+    /// Progress at which the `cultivate` command may claim the patch early (snaps to 1.0).
+    pub claim_threshold: f32,
+    /// **STEADY** tended-yield rate: a cultivated patch pays `biomass × this` provisions/turn to its
+    /// owner without depleting biomass. Distinct from the gather `provisions_per_biomass`.
+    pub provisions_per_biomass: f32,
+}
+
+impl Default for CultivationConfig {
+    fn default() -> Self {
+        Self {
+            progress_per_turn: DEFAULT_CULTIVATION_PROGRESS_PER_TURN,
+            decay_per_turn: DEFAULT_CULTIVATION_DECAY_PER_TURN,
+            claim_threshold: DEFAULT_CULTIVATION_CLAIM_THRESHOLD,
+            provisions_per_biomass: DEFAULT_CULTIVATION_PROVISIONS_PER_BIOMASS,
+        }
+    }
+}
+
 /// Forage **Market** policy tuning (Intensification §0-iii): a commercial gather that takes
 /// `take_fraction` of the patch's biomass each turn and sells it — the raw take yields
 /// `take × trade_goods_per_biomass × trade_goods_multiplier` trade goods (the plant mirror of
@@ -139,6 +181,9 @@ pub struct ForageLaborConfig {
     pub market: ForageMarketConfig,
     /// **Eradicate** policy tuning (§0-iii): the aggressive strip-the-patch share.
     pub eradicate: ForageEradicateConfig,
+    /// **Cultivation** tuning (Phase 1a): the plant analog of fauna husbandry — Sustain-forage
+    /// accrual, decay, early-claim gate, and the steady tended-yield rate.
+    pub cultivation: CultivationConfig,
 }
 
 impl Default for ForageLaborConfig {
@@ -158,6 +203,7 @@ impl Default for ForageLaborConfig {
             surplus_multiplier: DEFAULT_FORAGE_SURPLUS_MULTIPLIER,
             market: ForageMarketConfig::default(),
             eradicate: ForageEradicateConfig::default(),
+            cultivation: CultivationConfig::default(),
         }
     }
 }
@@ -373,6 +419,14 @@ mod tests {
         assert!(config.forage.market.trade_goods_per_biomass > 0.0);
         assert!(config.forage.eradicate.take_fraction > 0.0);
         assert!(config.forage.eradicate.take_fraction <= 1.0);
+        // Cultivation (Phase 1a): progress outruns decay so a tended patch nets forward, the claim
+        // gate sits strictly in (0, 1), and the steady tended-yield is positive.
+        assert!(
+            config.forage.cultivation.progress_per_turn > config.forage.cultivation.decay_per_turn
+        );
+        assert!(config.forage.cultivation.claim_threshold > 0.0);
+        assert!(config.forage.cultivation.claim_threshold < 1.0);
+        assert!(config.forage.cultivation.provisions_per_biomass > 0.0);
         assert!(config.hunt.per_worker_biomass_capacity > 0.0);
         assert!(config.scout.vantage_distance_base >= 1);
         assert!(config.scout.vantage_distance_max >= config.scout.vantage_distance_base);
