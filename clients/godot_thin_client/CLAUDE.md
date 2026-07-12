@@ -318,9 +318,12 @@ silhouette. Today the only canopy biome is **12 (mixed_woodland)** — its `blen
   perturbed (`CANOPY_TREELINE_NOISE`, reusing `noise_cell`) so it's bumpy, not a clean arc. Interior
   forest hexes (all-canopy neighbours) → D=1. Composited **after** blend+shoreline, before FoW:
   `result = mix(result, crown.rgb, crown.a · D)`.
-- **World-space canopy UV:** `cuv = v_world / (2·hex_radius) · canopy_scale` — continuous across hexes
-  (a crown straddling a boundary reads as one tree) and, at `canopy_scale = 1.0`, the same texel density
-  as the base (which the shader maps one texture per hex). FoW-tinted like the rest.
+- **Map-space canopy UV:** `cuv = v_map / (2·hex_radius) · canopy_scale`, where `v_map = v_world -
+  hex_origin` is the pan/zoom-anchored MAP coordinate (raw `v_world` is the quad-LOCAL/screen-fixed
+  coord and would slide against the grid on pan/zoom — all map-space terms, canopy UV + the
+  dither/shore/treeline noise, use `v_map`). Continuous across hexes (a crown straddling a boundary
+  reads as one tree) and, at `canopy_scale = 1.0`, the same texel density as the base (which the shader
+  maps one texture per hex). FoW-tinted like the rest.
 - **Canopy LOD is DECOUPLED from the blend LOD** (own `canopy_lod_enabled` uniform, `radius ≥
   canopy_min_radius`, NOT the flat↔flat `blend_enabled`/`EDGE_BLEND_MIN_RADIUS` gate). `canopy_min_radius`
   sits WELL BELOW `EDGE_BLEND_MIN_RADIUS` (3.0 vs 16.0) so the canopy pass keeps running at far zoom:
