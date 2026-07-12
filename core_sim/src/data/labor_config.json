@@ -4,7 +4,16 @@
   "hunt_leash_tiles": 3,
   "band_move_tiles_per_turn": 1,
   "forage": {
-    "per_worker_yield": 0.25
+    "carrying_capacity": 120.0,
+    "per_worker_biomass_capacity": 8.0,
+    "provisions_per_biomass": 0.05,
+    "ecology": {
+      "regrowth_rate": 0.25,
+      "collapse_fraction": 0.15,
+      "collapse_rate": 0.20,
+      "stressed_fraction": 0.40,
+      "extinction_floor": 0.0
+    }
   },
   "hunt": {
     "per_worker_biomass_capacity": 40.0

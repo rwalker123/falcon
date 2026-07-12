@@ -10,14 +10,14 @@ use bevy::MinimalPlugins;
 
 use core_sim::{
     advance_herds, advance_labor_allocation, available_workers, scalar_from_f32, scalar_one,
-    scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger,
-    FollowPolicy, FoodModuleTag, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget,
-    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig,
-    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, Tile, TileRegistry,
-    WellbeingConfigHandle, FOOD,
+    scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventLog,
+    CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle,
+    FogRevealLedger, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId, GenerationRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig,
+    LaborConfigHandle, LaborTarget, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
+    PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
 };
 
 fn spawn_world() -> App {
@@ -53,12 +53,15 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdRegistry::default());
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
+    app.world.insert_resource(ForageRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.insert_resource(FogRevealLedger::default());
     app.world.run_system_once(spawn_initial_herds);
+    // Seed depletable forage patches on every food-module tile (§0-ii).
+    app.world.run_system_once(spawn_initial_forage);
     app
 }
 
@@ -133,23 +136,42 @@ fn larder(app: &App, band: bevy::prelude::Entity) -> f32 {
         .unwrap_or(0.0)
 }
 
-/// (a) Forage yield scales linearly with the assigned worker count.
+/// (a) Forage now draws a **depletable** patch down (§0-ii): a Sustain gather on a below-cap patch
+/// yields the regrowth skim (> 0) and reduces the patch's biomass.
 #[test]
-fn forage_yield_scales_with_workers() {
+fn forage_draws_down_depletable_patch() {
     let mut app = spawn_world();
     let (pos, tile) = food_tile(&mut app);
-    let one = spawn_band(&mut app, tile, 10, forage_alloc(pos, 1));
-    let two = spawn_band(&mut app, tile, 10, forage_alloc(pos, 2));
+    // Seed the patch below its cap so a Sustain gather skims positive regrowth (a full patch's
+    // net regrowth is 0 → no yield, by design).
+    let (cap, before) = {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(pos).expect("patch on the food tile");
+        patch.biomass = patch.carrying_capacity * 0.5;
+        (patch.carrying_capacity, patch.biomass)
+    };
+    let band = spawn_band(&mut app, tile, 10, forage_alloc(pos, 5));
 
     app.world.run_system_once(advance_labor_allocation);
 
-    let a = larder(&app, one);
-    let b = larder(&app, two);
-    assert!(a > 0.0, "a single forager should yield food, got {a}");
-    // Same tile, same output multiplier → exactly double for double the workers.
+    let food = larder(&app, band);
     assert!(
-        (b - 2.0 * a).abs() < 1e-4,
-        "two foragers should yield ~2× one: {a} vs {b}"
+        food > 0.0,
+        "a Sustain gather yields the regrowth skim, got {food}"
+    );
+    let after = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(pos)
+        .expect("patch present")
+        .biomass;
+    assert!(
+        after < before,
+        "forage must draw the patch down: {before} -> {after}"
+    );
+    assert!(
+        (0.0..=cap).contains(&after),
+        "biomass stays in [0, cap]: {after}"
     );
 }
 
@@ -163,7 +185,7 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
         "worked_source_sight_range": 2,
         "hunt_leash_tiles": 3,
         "band_move_tiles_per_turn": 1,
-        "forage": { "per_worker_yield": 0.25 },
+        "forage": {},
         "hunt": { "per_worker_biomass_capacity": 0.05 },
         "scout": { "vantage_distance_base": 2, "vantage_distance_per_scout": 1, "vantage_distance_max": 6, "vantage_range": 2 }
     }"#;

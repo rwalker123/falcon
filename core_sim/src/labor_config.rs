@@ -17,13 +17,64 @@ use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::fauna_config::EcologyConfig;
+
 pub const BUILTIN_LABOR_CONFIG: &str = include_str!("data/labor_config.json");
 
-/// Flat per-worker forage throughput tier (TOE multipliers are a later slice).
+/// Named-const defaults for the depletable-forage ecology (Intensification §0-ii). All are
+/// **tuning dials** (settle live): the per-patch cap, the gather throughput, the biomass→provisions
+/// conversion, and the ecology dynamics. `regrowth_rate` is tuned **higher than fauna's 0.05** —
+/// patches regrow faster than game. `extinction_floor` is `0.0` because forage patches never
+/// despawn (a crashed patch sits at low biomass and recovers via `logistic_regrowth`).
+const DEFAULT_FORAGE_CARRYING_CAPACITY: f32 = 120.0;
+const DEFAULT_FORAGE_PER_WORKER_BIOMASS_CAPACITY: f32 = 8.0;
+const DEFAULT_FORAGE_PROVISIONS_PER_BIOMASS: f32 = 0.05;
+const DEFAULT_FORAGE_REGROWTH_RATE: f32 = 0.25;
+const DEFAULT_FORAGE_COLLAPSE_FRACTION: f32 = 0.15;
+const DEFAULT_FORAGE_COLLAPSE_RATE: f32 = 0.20;
+const DEFAULT_FORAGE_STRESSED_FRACTION: f32 = 0.40;
+const DEFAULT_FORAGE_EXTINCTION_FLOOR: f32 = 0.0;
+
+/// Depletable-forage tuning (Intensification §0-ii). A worked `FoodModuleTag` tile carries a
+/// mutable per-patch `biomass`/`carrying_capacity` (`ForageRegistry`) that foraging draws down and
+/// that regrows logistically toward `carrying_capacity` — the herd biomass model transposed onto
+/// plants. Supersedes the retired flat `per_worker_yield` lever.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct ForageLaborConfig {
-    /// Provisions produced per assigned forager per turn at `seasonal_weight` 1.0.
-    pub per_worker_yield: f32,
+    /// Per-patch carrying cap that patch biomass regrows toward (a flat default; a per-`FoodModule`
+    /// table is a later refinement). Each seeded patch starts full at this value.
+    pub carrying_capacity: f32,
+    /// Biomass one forager can gather per turn (× `seasonal_weight`), capped by the policy ceiling
+    /// (Sustain = one turn's net regrowth) and the patch's remaining biomass — the forage
+    /// counterpart of `hunt.per_worker_biomass_capacity`.
+    pub per_worker_biomass_capacity: f32,
+    /// Biomass→provisions conversion for a gather take (the forage counterpart of
+    /// `fauna.hunt.provisions_per_biomass`).
+    pub provisions_per_biomass: f32,
+    /// Depletion/regrowth dynamics (reuses fauna's `EcologyConfig`; forage regrows *faster* than
+    /// game via a higher `regrowth_rate`). `collapse_fraction`/`stressed_fraction` classify the
+    /// patch's ecology phase with the same ordering invariant. The Allee/`collapse_rate` branch of
+    /// `net_biomass_delta` only sizes the Sustain ceiling here — patch *regrowth* is pure logistic
+    /// (plants have no critical-depensation crash), so a depleted patch recovers.
+    pub ecology: EcologyConfig,
+}
+
+impl Default for ForageLaborConfig {
+    fn default() -> Self {
+        Self {
+            carrying_capacity: DEFAULT_FORAGE_CARRYING_CAPACITY,
+            per_worker_biomass_capacity: DEFAULT_FORAGE_PER_WORKER_BIOMASS_CAPACITY,
+            provisions_per_biomass: DEFAULT_FORAGE_PROVISIONS_PER_BIOMASS,
+            ecology: EcologyConfig {
+                regrowth_rate: DEFAULT_FORAGE_REGROWTH_RATE,
+                collapse_fraction: DEFAULT_FORAGE_COLLAPSE_FRACTION,
+                collapse_rate: DEFAULT_FORAGE_COLLAPSE_RATE,
+                stressed_fraction: DEFAULT_FORAGE_STRESSED_FRACTION,
+                extinction_floor: DEFAULT_FORAGE_EXTINCTION_FLOOR,
+            },
+        }
+    }
 }
 
 /// Flat per-worker hunt throughput tier.
@@ -217,7 +268,13 @@ mod tests {
         assert!(config.worked_source_sight_range >= 1);
         assert!(config.hunt_leash_tiles >= 1);
         assert!(config.band_move_tiles_per_turn >= 1);
-        assert!(config.forage.per_worker_yield > 0.0);
+        // Depletable-forage levers (Intensification §0-ii).
+        assert!(config.forage.carrying_capacity > 0.0);
+        assert!(config.forage.per_worker_biomass_capacity > 0.0);
+        assert!(config.forage.provisions_per_biomass > 0.0);
+        assert!(config.forage.ecology.regrowth_rate > 0.0);
+        // Ecology-phase ordering invariant (collapse band below stressed band).
+        assert!(config.forage.ecology.collapse_fraction < config.forage.ecology.stressed_fraction);
         assert!(config.hunt.per_worker_biomass_capacity > 0.0);
         assert!(config.scout.vantage_distance_base >= 1);
         assert!(config.scout.vantage_distance_max >= config.scout.vantage_distance_base);

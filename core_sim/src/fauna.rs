@@ -1131,8 +1131,10 @@ pub fn advance_husbandry(
 }
 
 /// One turn's positive logistic regrowth increment (>= 0) for a group of `biomass`
-/// toward `cap`. The healthy branch of `net_biomass_delta`.
-fn logistic_regrowth(biomass: f32, cap: f32, regrowth_rate: f32) -> f32 {
+/// toward `cap`. The healthy branch of `net_biomass_delta`. Also the forage patch's
+/// regrowth curve (`forage::regrow_patch`) — plants have no Allee crash, so a depleted
+/// patch always recovers via this branch (see `forage.rs`).
+pub(crate) fn logistic_regrowth(biomass: f32, cap: f32, regrowth_rate: f32) -> f32 {
     if cap <= 0.0 || biomass <= 0.0 {
         return 0.0;
     }

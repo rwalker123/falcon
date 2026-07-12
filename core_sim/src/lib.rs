@@ -26,6 +26,7 @@ mod expedition_config;
 mod fauna;
 mod fauna_config;
 mod food;
+mod forage;
 mod generations;
 mod great_discovery;
 pub mod grid_utils;
@@ -127,6 +128,7 @@ pub use food::{
     classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,
     FoodSiteKind, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
+pub use forage::{advance_forage_regrowth, spawn_initial_forage, ForagePatch, ForageRegistry};
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use great_discovery::{
     ConstellationRequirement, GreatDiscoveryCandidateEvent, GreatDiscoveryDefinition,
@@ -462,6 +464,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(HerdRegistry::default())
         .insert_resource(HerdTelemetry::default())
         .insert_resource(HerdDensityMap::default())
+        .insert_resource(ForageRegistry::default())
         .insert_resource(FogRevealLedger::default())
         .insert_resource(CommandEventLog::default())
         .insert_resource(FoodSiteRegistry::default())
@@ -525,6 +528,7 @@ pub fn build_headless_app() -> App {
                 systems::apply_tag_budget_solver,
                 sites::place_wondrous_sites,
                 spawn_initial_herds,
+                spawn_initial_forage,
                 espionage::initialise_espionage_roster,
             )
                 .chain(),
@@ -546,6 +550,7 @@ pub fn build_headless_app() -> App {
                 systems::simulate_materials,
                 systems::simulate_logistics,
                 advance_herds,
+                advance_forage_regrowth,
                 repopulate_fauna,
                 advance_husbandry,
                 supply::balance_supply_networks,

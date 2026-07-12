@@ -219,6 +219,21 @@ pub struct HerdState {
     pub ecology: EcologyState,
 }
 
+/// Authoritative mirror of a live depletable forage patch (`ForageRegistry`), round-tripped through
+/// the rollback snapshot so a rollback rewinds patch biomass / phase — the forage counterpart of
+/// `HerdState`. Reuses the shared `EcologyState` (biomass / carrying_capacity / phase); `progress`
+/// and `owner` stay `0.0` / `None` in Phase 0 (cultivation is a later intensification slice). The
+/// `(x, y)` tile key is the patch's location.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ForageState {
+    #[serde(default)]
+    pub x: u32,
+    #[serde(default)]
+    pub y: u32,
+    #[serde(default)]
+    pub ecology: EcologyState,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FoodModuleState {
     pub x: u32,
@@ -1698,6 +1713,11 @@ pub struct WorldSnapshot {
     /// FlatBuffers client stream; rollback restore reads it via `HerdRegistry::update_from_states`.
     #[serde(default)]
     pub herd_registry: Vec<HerdState>,
+    /// Authoritative depletable-forage sim state (`ForageRegistry`), round-tripped for rollback
+    /// correctness (biomass / ecology phase per patch). Like `herd_registry`, this is not wired to
+    /// the FlatBuffers client stream; rollback restore reads it via `ForageRegistry::update_from_states`.
+    #[serde(default)]
+    pub forage_registry: Vec<ForageState>,
     #[serde(default)]
     pub food_modules: Vec<FoodModuleState>,
     #[serde(default)]

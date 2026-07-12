@@ -19,7 +19,7 @@ use sim_runtime::{
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry, EcologyState,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FoodModuleState,
-    GenerationState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
+    ForageState, GenerationState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
     GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdRoamState, HerdState,
     HerdTelemetryState, HydrologyOverlayState, InfluentialIndividualState,
     KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
@@ -49,6 +49,7 @@ use crate::{
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
     fauna::{Herd, HerdDensityMap, HerdRegistry, HerdTelemetry},
     food::FoodModuleTag,
+    forage::{ForagePatch, ForageRegistry},
     generations::{GenerationProfile, GenerationRegistry},
     great_discovery::{
         snapshot_definitions, snapshot_discoveries, snapshot_progress, snapshot_telemetry,
@@ -121,6 +122,10 @@ pub struct SnapshotContext<'w> {
     /// Authoritative herd sim state, captured into the rollback snapshot (`herd_registry`) so a
     /// rollback rewinds biomass / position / movement — the display `herds` telemetry alone is lossy.
     pub herd_registry: Res<'w, HerdRegistry>,
+    /// Authoritative depletable-forage sim state, captured into the rollback snapshot
+    /// (`forage_registry`) so a rollback rewinds patch biomass / ecology phase. Mirrors
+    /// `herd_registry` — see the forage-depletion note in `core_sim/CLAUDE.md`.
+    pub forage_registry: Res<'w, ForageRegistry>,
     pub fog_reveals: Res<'w, FogRevealLedger>,
     pub hydrology: Res<'w, HydrologyState>,
     pub elevation: Res<'w, ElevationField>,
@@ -1295,6 +1300,7 @@ pub fn capture_snapshot(
         start_location,
         herds,
         herd_registry,
+        forage_registry,
         hydrology,
         fog_reveals,
         elevation,
@@ -1703,6 +1709,11 @@ pub fn capture_snapshot(
     let mut herd_registry_states: Vec<HerdState> =
         herd_registry.entries().iter().map(herd_state).collect();
     herd_registry_states.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+    // Authoritative depletable-forage state for rollback, sorted deterministically by tile coord
+    // (HashMap iteration order is unstable). Mirrors the herd-registry capture above.
+    let mut forage_registry_states: Vec<ForageState> =
+        forage_registry.patches.values().map(forage_state).collect();
+    forage_registry_states.sort_unstable_by_key(|state| (state.y, state.x));
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
     let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
@@ -1734,6 +1745,7 @@ pub fn capture_snapshot(
         victory: victory_snapshot_state.clone(),
         herds: herd_states.clone(),
         herd_registry: herd_registry_states,
+        forage_registry: forage_registry_states,
         food_modules: food_module_states.clone(),
         campaign_profiles: campaign_profiles_state,
         faction_inventory: faction_inventory_state.clone(),
@@ -2132,6 +2144,14 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         if let Some(mut telemetry) = world.get_resource_mut::<HerdTelemetry>() {
             telemetry.entries = herd_registry_clone.snapshot_entries();
         }
+    }
+
+    // Rebuild the authoritative depletable-forage registry so a rollback rewinds per-patch biomass /
+    // ecology phase — the forage counterpart of the herd round-trip above.
+    if let Some(mut forage_registry) = world.get_resource_mut::<ForageRegistry>() {
+        forage_registry.update_from_states(&snapshot.forage_registry);
+    } else {
+        world.insert_resource(ForageRegistry::from_states(&snapshot.forage_registry));
     }
 
     let influencer_config = if let Some(handle) = world.get_resource::<InfluencerConfigHandle>() {
@@ -4112,6 +4132,24 @@ fn herd_state(herd: &Herd) -> HerdState {
     }
 }
 
+/// Capture a live `ForagePatch` into its authoritative snapshot mirror for rollback (the inverse is
+/// `forage::ForageRegistry::update_from_states`). The depletable-ecology subset goes into the shared
+/// `EcologyState`; `progress`/`owner` stay `0.0`/`None` (cultivation is Phase 1). Coordinates cross
+/// as the `(x, y)` tile key.
+pub(crate) fn forage_state(patch: &ForagePatch) -> ForageState {
+    ForageState {
+        x: patch.tile.x,
+        y: patch.tile.y,
+        ecology: EcologyState {
+            biomass: patch.biomass,
+            carrying_capacity: patch.carrying_capacity,
+            ecology_phase: patch.ecology_phase.as_str().to_string(),
+            progress: 0.0,
+            owner: None,
+        },
+    }
+}
+
 fn snapshot_faction_inventory(inventory: &FactionInventory) -> Vec<SchemaFactionInventoryState> {
     let mut states = Vec::new();
     for (faction, items) in inventory.iter() {
@@ -4368,6 +4406,7 @@ mod tests {
             command_events: Vec::new(),
             herds: Vec::new(),
             herd_registry: Vec::new(),
+            forage_registry: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -4427,6 +4466,7 @@ mod tests {
             command_events: Vec::new(),
             herds: Vec::new(),
             herd_registry: Vec::new(),
+            forage_registry: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -4481,6 +4521,7 @@ mod tests {
             command_events: Vec::new(),
             herds: Vec::new(),
             herd_registry: Vec::new(),
+            forage_registry: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),

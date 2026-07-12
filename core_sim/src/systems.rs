@@ -29,6 +29,7 @@ use crate::{
     fauna::{net_biomass_delta, EcologyPhase, Herd, HerdDensityMap, HerdRegistry},
     fauna_config::{FaunaConfig, FaunaConfigHandle},
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
+    forage::{forage_take, ForageRegistry},
     generations::GenerationRegistry,
     heightfield::{build_elevation_field, ElevationField},
     hydrology::HydrologyState,
@@ -4000,8 +4001,9 @@ pub(crate) fn hunt_take(
 /// consumption drains the larder, so labor income lands the same turn (matching the old timing).
 ///
 /// - **Forage** `{ tile }`: within `band_work_range` of the band and carrying a `FoodModuleTag` →
-///   `workers × per_worker_yield × seasonal_weight` provisions (× output multiplier). Out of range
-///   or module-less → 0 this turn, but the assignment is kept (the band may move back).
+///   draws down the tile's depletable forage patch (§0-ii) via the shared `forage_take` primitive
+///   (Sustain gather = the regrowth skim; `sustainable` = one turn's net patch regrowth), the plant
+///   mirror of the Hunt take. Out of range / module-less / unseeded → 0 this turn, assignment kept.
 /// - **Hunt** `{ fauna_id, policy }`: reuses the per-policy ecology ceiling; the take is
 ///   `min(workers × per_worker_biomass_capacity, policy_ceiling)`, so under-hunting a Sustain herd
 ///   (`worker_cap < regrowth`) lets it GROW. Tracks a roaming herd out to `band_work_range +
@@ -4014,6 +4016,7 @@ pub(crate) fn hunt_take(
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_labor_allocation(
     mut registry: ResMut<HerdRegistry>,
+    mut forage_registry: ResMut<ForageRegistry>,
     mut inventory: ResMut<FactionInventory>,
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
@@ -4074,7 +4077,7 @@ pub fn advance_labor_allocation(
             match &assignment.target {
                 LaborTarget::Forage { tile } => {
                     // Out of range this turn → no yield, but keep the assignment (the band may
-                    // move back into range). No tile depletion in this slice (a later refinement).
+                    // move back into range).
                     if crate::grid_utils::hex_distance_wrapped(
                         band_pos,
                         *tile,
@@ -4091,19 +4094,39 @@ pub fn advance_labor_allocation(
                         continue; // module lost → 0 this turn.
                     };
                     let seasonal = module.seasonal_weight.max(0.0);
-                    // FOOD income is fully fractional: a few foragers may yield < 1/turn.
-                    let provisions =
-                        scalar_from_f32(workers as f32 * labor.forage.per_worker_yield * seasonal)
-                            * mult;
+                    // Depletable patch (Intensification §0-ii): draw the biomass down via the shared
+                    // `forage_take` primitive (mirrors the Hunt arm). Every `FoodModuleTag` tile is
+                    // seeded a patch at Startup; a missing one (a dynamically-tagged tile) is skipped
+                    // this turn. Gather on Sustain for now — the forage policy axis lands in 0-iii.
+                    let Some(patch) = forage_registry.patch_mut(*tile) else {
+                        continue;
+                    };
+                    let biomass_before = patch.biomass;
+                    let provisions = forage_take(
+                        patch,
+                        workers,
+                        FollowPolicy::Sustain,
+                        &labor.forage,
+                        mult_f,
+                        seasonal,
+                    );
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
                     }
-                    // Forage is inexhaustible in today's model (no tile depletion) → it can never be
-                    // overdrawn, so `sustainable` is defined equal to `actual`.
-                    let actual = provisions.to_f32();
+                    // Sustainable = one turn's net regrowth of the patch at its **pre-take** biomass,
+                    // in provisions (same conversion + output multiplier as the actual take). This
+                    // lights the over-forage ⚠ for free the moment `actual > sustainable`.
+                    let sustainable = net_biomass_delta(
+                        biomass_before,
+                        patch.carrying_capacity,
+                        &labor.forage.ecology,
+                    )
+                    .max(0.0)
+                        * labor.forage.provisions_per_biomass
+                        * mult_f;
                     yields[idx] = SourceYield {
-                        actual,
-                        sustainable: actual,
+                        actual: provisions.to_f32(),
+                        sustainable,
                     };
                 }
                 LaborTarget::Hunt { fauna_id, policy } => {
@@ -6331,9 +6354,11 @@ mod wellbeing_tests {
 
 #[cfg(test)]
 mod labor_yield_tests {
-    //! Retained per-source food-yield telemetry (`LaborAllocation.last_yields`): forage
-    //! `sustainable ≡ actual`; a hunt's `sustainable = net_biomass_delta(pre-take biomass).max(0) ×
-    //! provisions_per_biomass × output_multiplier`; and an overdraw reads `actual > sustainable`.
+    //! Retained per-source food-yield telemetry (`LaborAllocation.last_yields`): a depletable
+    //! forage patch's `sustainable = net_biomass_delta(pre-take biomass).max(0) ×
+    //! provisions_per_biomass × output_multiplier` (a Sustain gather skims exactly that, so
+    //! `actual ≈ sustainable`); a hunt's `sustainable` uses the same formula; and an overdraw reads
+    //! `actual > sustainable`.
     use super::advance_labor_allocation;
     use crate::components::{
         FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause,
@@ -6342,6 +6367,7 @@ mod labor_yield_tests {
     use crate::fauna::{net_biomass_delta, Herd, HerdRegistry};
     use crate::fauna_config::{FaunaConfigHandle, SizeClass};
     use crate::food::{FoodModule, FoodModuleTag, FoodSiteKind};
+    use crate::forage::{ForagePatch, ForageRegistry};
     use crate::labor_config::LaborConfigHandle;
     use crate::orders::FactionId;
     use crate::resources::{
@@ -6408,6 +6434,18 @@ mod labor_yield_tests {
         let mut registry = HerdRegistry::default();
         registry.herds.push(herd);
         world.insert_resource(registry);
+
+        // Depletable forage patch on the source tile, seeded at half its carrying capacity so a
+        // Sustain gather draws a clear (positive) regrowth skim (`forage.actual > 0`).
+        let forage_cfg = world.resource::<LaborConfigHandle>().get();
+        let patch_cap = forage_cfg.forage.carrying_capacity;
+        let mut patch = ForagePatch::new(UVec2::new(0, 0), patch_cap);
+        patch.biomass = patch_cap * 0.5;
+        patch.refresh_ecology_phase(&forage_cfg.forage.ecology);
+        drop(forage_cfg);
+        let mut forage_registry = ForageRegistry::default();
+        forage_registry.patches.insert(UVec2::new(0, 0), patch);
+        world.insert_resource(forage_registry);
 
         (world, source_tile)
     }
@@ -6489,9 +6527,17 @@ mod labor_yield_tests {
         let hunt = alloc.last_yields[1];
         assert!(forage.actual > 0.0, "forage produced food: {forage:?}");
         assert!(hunt.actual > 0.0, "hunt produced food: {hunt:?}");
-        assert_eq!(
-            forage.actual, forage.sustainable,
-            "forage is inexhaustible → sustainable ≡ actual"
+        // Depletable forage (§0-ii): a Sustain gather under the binding regrowth ceiling skims
+        // exactly one turn's net regrowth, so `actual ≈ sustainable` (no over-forage flag).
+        assert!(
+            (forage.actual - forage.sustainable).abs() < 1e-4,
+            "sustain forage skims the regrowth → actual ≈ sustainable: {} vs {}",
+            forage.actual,
+            forage.sustainable
+        );
+        assert!(
+            forage.actual <= forage.sustainable + 1e-4,
+            "a Sustain forage draw must not over-forage: {forage:?}"
         );
         assert!(
             (hunt.sustainable - expected_sustainable).abs() < 1e-6,
