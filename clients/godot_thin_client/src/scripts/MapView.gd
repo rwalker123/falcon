@@ -155,7 +155,9 @@ const SHORE_DEFAULT_FOAM_COLOR := Vector3(0.874, 0.949, 0.968)
 const SHORE_DEFAULT_BEACH_COLOR := Vector3(0.847, 0.733, 0.541)
 # Canopy overlay (forest = grass floor + overhanging tree crowns): overhang reach + treeline softness
 # are fractions of the hex radius (× radius → px); texture_scale is the world-UV multiplier (1.0 = one
-# crown tile per hex, matching the base). Fallbacks mirror terrain_config's "canopy" block.
+# crown tile per hex). It is an INDEPENDENT density knob from base_texture_scale (the base biome is
+# sampled in continuous world space at its own base_scale, ~0.25 ≈ one base tile per 4 hexes), NOT
+# matched to it. Fallbacks mirror terrain_config's "canopy" block.
 const CANOPY_DEFAULT_OVERHANG_WIDTH := 0.5
 const CANOPY_DEFAULT_SOFTNESS_WIDTH := 0.45
 const CANOPY_DEFAULT_TEXTURE_SCALE := 1.0
