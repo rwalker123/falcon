@@ -24,6 +24,9 @@ uniform bool canopy_lod_enabled;  // canopy LOD gate — DECOUPLED from blend_en
 uniform float canopy_overhang;    // how far crowns overhang past the treeline, in px (overhang_width * radius)
 uniform float canopy_softness;    // inner treeline ramp half-width, in px (softness_width * radius)
 uniform float canopy_scale;       // world-UV scale multiplier (1.0 = one crown tile per hex, matching the base)
+uniform float base_scale;         // base biome-texture world-UV scale: like canopy_scale, one texture tile
+                                  // spans (1/base_scale) hex-rows in world space (continuous across hexes,
+                                  // so adjacent hexes show DIFFERENT regions of the texture → no per-hex repeat)
 // id-map splatmap: R = terrain id (0..255), G = blend_class code (0 water, 1 flat, 2 rugged),
 // B = canopy code (0 = no canopy, else canopy-array layer + 1).
 uniform sampler2D id_map : filter_nearest;
@@ -165,13 +168,16 @@ void fragment() {
 		int own_class = int(idpx.g * 255.0 + 0.5);
 
 		vec2 own_c = hex_center(col, row);
-		vec2 own_uv = (v_world - own_c) / (2.0 * hex_radius) + 0.5;
-		vec3 result = texture(biome_array, vec3(own_uv, float(own_layer))).rgb;
+		// Base biome UV — CONTINUOUS world space (like the canopy pass), NOT per-hex-normalized. A single
+		// texture spans ~1/base_scale hex-rows, so adjacent hexes show DIFFERENT regions of it and the
+		// per-hex identical repeat (the diagonal-seam grid on detailed textures) disappears. Uses v_map
+		// (pan/zoom-anchored) so terrain tracks the grid on pan/zoom. repeat_enable tiles it.
+		vec2 base_uv = v_map / (2.0 * hex_radius) * base_scale;
+		vec3 result = texture(biome_array, vec3(base_uv, float(own_layer))).rgb;
 
 		if (blend_enabled && own_class == 1) {
 			float best_p = 0.0;
 			int best_layer = -1;
-			vec2 best_c = vec2(0.0);
 			for (int dir = 0; dir < 6; dir++) {
 				ivec2 off = neighbor_offset(row, dir);
 				int ncol = col + off.x;
@@ -199,12 +205,13 @@ void fragment() {
 				if (p > best_p) {
 					best_p = p;
 					best_layer = nlayer;
-					best_c = nb_c;
 				}
 			}
 			if (best_layer >= 0 && best_p > vnoise(v_map / noise_cell)) {
-				vec2 nb_uv = (v_world - best_c) / (2.0 * hex_radius) + 0.5;
-				result = texture(biome_array, vec3(nb_uv, float(best_layer))).rgb;
+				// Sample the neighbour biome at the SAME continuous world position as the base (only the
+				// array layer differs), so the flat↔flat dither interlocks two world-sampled biomes at one
+				// world point — the cross-edge blend stays continuous with the new base sampling.
+				result = texture(biome_array, vec3(base_uv, float(best_layer))).rgb;
 			}
 		}
 

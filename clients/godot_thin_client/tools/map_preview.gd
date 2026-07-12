@@ -48,6 +48,13 @@ const BIOME_OCEAN_ID := 0                # deep_ocean, blend_class "water"
 # exercises beach+foam on BOTH a grassy and a wooded shore.
 const BIOME_BAY_ROWS := 6
 const BIOME_BAY_COL_MIN := 8
+# State S (terrain-repetition repro): a large field of a DETAILED rugged texture (alpine, id 26 — staged
+# to reproduce the per-hex repeating grid) bordering a flat prairie band (id 11). BEFORE the world-space
+# base fix every alpine hex was an identical texture copy → an obvious grid with diagonal seams; AFTER,
+# the base samples continuous world space so one texture spans several hexes and the grid is gone.
+const REPEAT_ALPINE_ID := 26   # rugged, detailed staged texture
+const REPEAT_PRAIRIE_ID := 11  # flat prairie boundary band
+const REPEAT_PRAIRIE_COLS := 4 # left columns prairie; the rest alpine
 # State R (pan/zoom swim regression): a target hex solidly inside the mixed_woodland band (cols 8–11)
 # on a LOWER row (below the bay) so tree crowns are in the crop. The pan and crop context are in units
 # of the frame's hex radius so the SAME hex stays framed across fit/pan/zoom.
@@ -332,6 +339,24 @@ func _ready() -> void:
 	await _save("map_swim_panzoom")
 	var center_pz: Vector2 = _map._hex_center(SWIM_TARGET_COL, SWIM_TARGET_ROW, _map.last_hex_radius, _map.last_origin)
 	await _save_crop_px("map_swim_hex_panzoom", center_pz, SWIM_CROP_RADII * _map.last_hex_radius)
+
+	# State S — terrain-repetition repro (fix+terrain-repetition): a large alpine (id 26, detailed rugged
+	# texture) field bordering a flat prairie band (id 11). With the continuous world-space base sampling
+	# the per-hex identical-copy grid (diagonal seams) is gone — a texture spans several hexes. Fitted
+	# frame + a zoomed-in crop of the alpine field to inspect the texture's own tiling period up close.
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(true)
+	TerrainTextureManager.use_edge_blending = true
+	_map._map_cache_enabled = false
+	_map.display_snapshot(_snapshot_repetition())
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_repetition_after")
+	await _save_crop("map_repetition_after_zoom", 0.42, 0.12, 0.98, 0.88)
 
 	get_tree().quit()
 
@@ -661,6 +686,21 @@ func _snapshot_biomes() -> Dictionary:
 	return {
 		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
 		"overlays": {"terrain": _biome_band_terrain()},
+		"populations": [],
+		"herds": [],
+	}
+
+## Terrain-only repetition repro: left REPEAT_PRAIRIE_COLS columns prairie (flat), the rest alpine (rugged,
+## detailed) — a large alpine field to expose (and, post-fix, confirm the absence of) the per-hex grid.
+func _snapshot_repetition() -> Dictionary:
+	var arr: Array = []
+	arr.resize(GRID_W * GRID_H)
+	for y in range(GRID_H):
+		for x in range(GRID_W):
+			arr[y * GRID_W + x] = REPEAT_PRAIRIE_ID if x < REPEAT_PRAIRIE_COLS else REPEAT_ALPINE_ID
+	return {
+		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": arr},
 		"populations": [],
 		"herds": [],
 	}
