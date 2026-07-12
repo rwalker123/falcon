@@ -155,10 +155,18 @@ const SHORE_DEFAULT_FOAM_COLOR := Vector3(0.874, 0.949, 0.968)
 const SHORE_DEFAULT_BEACH_COLOR := Vector3(0.847, 0.733, 0.541)
 # Canopy overlay (forest = grass floor + overhanging tree crowns): overhang reach + treeline softness
 # are fractions of the hex radius (× radius → px); texture_scale is the world-UV multiplier (1.0 = one
-# crown tile per hex, matching the base). Fallbacks mirror terrain_config's "canopy" block.
+# crown tile per hex). It is an INDEPENDENT density knob from base_texture_scale (the base biome is
+# sampled in continuous world space at its own base_scale, ~0.25 ≈ one base tile per 4 hexes), NOT
+# matched to it. Fallbacks mirror terrain_config's "canopy" block.
 const CANOPY_DEFAULT_OVERHANG_WIDTH := 0.5
 const CANOPY_DEFAULT_SOFTNESS_WIDTH := 0.45
 const CANOPY_DEFAULT_TEXTURE_SCALE := 1.0
+# Base biome-texture world-UV scale (top-level terrain_config "base_texture_scale"): the base biome is
+# sampled in CONTINUOUS world space (like the canopy), so one texture tile spans ~1/base_scale hex-rows
+# and adjacent hexes show DIFFERENT regions of it — killing the per-hex identical-repeat grid that any
+# detailed (non-homogeneous) texture showed. ~0.25 → one texture spans ~4 hexes: the grid disappears but
+# features aren't tiny. Smaller = a texture covers MORE hexes (zoomed-in look), larger = fewer.
+const BASE_DEFAULT_TEXTURE_SCALE := 0.25
 # Canopy LOD gate, DECOUPLED from the flat↔flat blend gate (EDGE_BLEND_MIN_RADIUS). Set WELL BELOW it so
 # the canopy pass keeps running at far zoom — interior forest density (D=1) persists into a distinct
 # darker-green forest mass (the edge overhang naturally shrinks to nothing as hexes shrink). Trilinear
@@ -168,6 +176,7 @@ const CANOPY_DEFAULT_MIN_RADIUS := 3.0
 const TERRAIN_BG_COLOR := Color(0.3, 0.35, 0.25, 1.0)
 const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
 const GRID_LINE_COLOR := Color(0.4, 0.4, 0.4, 0.7)
+const GRID_LINE_WIDTH := 2.0
 const SQRT3 := 1.7320508075688772
 const SIN_60 := 0.8660254037844386
 # Fog-of-War visibility discriminators on the 0.0/0.5/1.0 visibility encoding
@@ -1160,26 +1169,8 @@ func _draw_terrain_direct(radius: float, origin: Vector2, viewport_size: Vector2
 				var polygon_points := _hex_points(center, radius)
 				draw_polygon(polygon_points, PackedColorArray([final_color, final_color, final_color, final_color, final_color, final_color]))
 
-	# Draw grid lines if enabled and radius is large enough.
-	# Each hex draws only its right + lower-right + lower-left edges (the open
-	# polyline v5-v0-v1-v2); its upper and left edges are drawn by the neighbours
-	# that share them. This paints every interior edge exactly once — drawing the
-	# full closed hex per tile painted each shared edge twice, so the doubled
-	# coverage made a translucent GRID_LINE_COLOR read as opaque.
-	if _show_grid_lines and radius >= 12.0:
-		for y in range(row_start, row_end):
-			for logical_x in range(col_start, col_end):
-				if not _wrap_horizontal and (logical_x < 0 or logical_x >= grid_width):
-					continue
-				var center: Vector2 = _hex_center(logical_x, y, radius, origin)
-				var pts := _hex_points(center, radius)
-				draw_polyline(PackedVector2Array([pts[5], pts[0], pts[1], pts[2]]), GRID_LINE_COLOR, 2.0, true)
-				# Map's north boundary: the top row has no neighbour above to draw its upper edges.
-				if y == 0:
-					draw_polyline(PackedVector2Array([pts[3], pts[4], pts[5]]), GRID_LINE_COLOR, 2.0, true)
-				# Map's west boundary (non-wrapping): column 0 has no western neighbour.
-				if not _wrap_horizontal and logical_x == 0:
-					draw_polyline(PackedVector2Array([pts[2], pts[3]]), GRID_LINE_COLOR, 2.0, true)
+	# Draw grid lines on top of all terrain (batched, shared with the shader path).
+	_draw_hex_grid_overlay(radius, origin, col_start, col_end, row_start, row_end)
 
 
 func _draw_hex_textured_direct(center: Vector2, terrain_id: int, radius: float, tint: Color = Color.WHITE) -> void:
@@ -4232,6 +4223,10 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 	m.set_shader_parameter("wrap_h", _wrap_horizontal)
 	m.set_shader_parameter("blend_band", blend_width * radius)  # interlock half-band width in px
 	m.set_shader_parameter("noise_cell", noise_cell)
+	# Base biome texture is sampled in continuous world space (kills the per-hex repeat grid); one tile
+	# spans ~1/base_scale hex-rows. See BASE_DEFAULT_TEXTURE_SCALE / CLAUDE.md → Edge Blending.
+	var base_scale: float = maxf(float(config.get("base_texture_scale", BASE_DEFAULT_TEXTURE_SCALE)), 0.01)
+	m.set_shader_parameter("base_scale", base_scale)
 	m.set_shader_parameter("blend_enabled", radius >= EDGE_BLEND_MIN_RADIUS)  # LOD: base-only at far zoom
 	var shore: Dictionary = config.get("shore", {})
 	var foam_frac: float = clampf(float(shore.get("foam_width", SHORE_DEFAULT_FOAM_WIDTH)), 0.0, 2.0)
@@ -4304,23 +4299,49 @@ func _rebuild_terrain_shader_maps() -> void:
 		_terrain_blend_material.set_shader_parameter("id_map", _terrain_id_map_tex)
 		_terrain_blend_material.set_shader_parameter("vis_map", _terrain_vis_map_tex)
 
-## Draw hex grid lines onto MapView's own canvas — used in the shader-terrain branch, where the base
-## terrain is the behind-quad rather than the per-hex loop. Mirrors _draw_terrain_direct's grid loop
-## (each hex paints only its right + lower edges; boundary rows/cols add their unshared edges).
+## The single shared hex-grid-line drawer for MapView's own canvas — called by BOTH the shader-terrain
+## branch (base terrain is the behind-quad) and _draw_terrain_direct (blend-off per-hex path), so the
+## grid renders identically regardless of the terrain path. Each hex paints only its right + lower edges
+## (boundary rows/cols add their unshared edges), and every visible edge is batched into one draw_multiline.
 func _draw_hex_grid_overlay(radius: float, origin: Vector2, col_start: int, col_end: int, row_start: int, row_end: int) -> void:
 	if not _show_grid_lines or radius < 12.0:
 		return
+	_update_hex_offset_cache(radius)  # idempotent; ensures _cached_hex_offsets is valid for this radius
+	if _cached_hex_offsets.size() < 6:
+		return
+	var o := _cached_hex_offsets
+	# draw_multiline consumes points as INDEPENDENT PAIRS (a,b, c,d, …), so push each
+	# edge's two endpoints. Batches every visible grid edge into ONE draw call.
+	var segs := PackedVector2Array()
 	for y in range(row_start, row_end):
 		for logical_x in range(col_start, col_end):
 			if not _wrap_horizontal and (logical_x < 0 or logical_x >= grid_width):
 				continue
-			var center: Vector2 = _hex_center(logical_x, y, radius, origin)
-			var pts := _hex_points(center, radius)
-			draw_polyline(PackedVector2Array([pts[5], pts[0], pts[1], pts[2]]), GRID_LINE_COLOR, 2.0, true)
+			var c: Vector2 = _hex_center(logical_x, y, radius, origin)
+			var p0 := c + o[0]
+			var p1 := c + o[1]
+			var p2 := c + o[2]
+			var p3 := c + o[3]
+			var p4 := c + o[4]
+			var p5 := c + o[5]
+			segs.push_back(p5)
+			segs.push_back(p0)
+			segs.push_back(p0)
+			segs.push_back(p1)
+			segs.push_back(p1)
+			segs.push_back(p2)
+			# Map's north boundary: the top row has no neighbour above to draw its upper edges.
 			if y == 0:
-				draw_polyline(PackedVector2Array([pts[3], pts[4], pts[5]]), GRID_LINE_COLOR, 2.0, true)
+				segs.push_back(p3)
+				segs.push_back(p4)
+				segs.push_back(p4)
+				segs.push_back(p5)
+			# Map's west boundary (non-wrapping): column 0 has no western neighbour.
 			if not _wrap_horizontal and logical_x == 0:
-				draw_polyline(PackedVector2Array([pts[2], pts[3]]), GRID_LINE_COLOR, 2.0, true)
+				segs.push_back(p2)
+				segs.push_back(p3)
+	if not segs.is_empty():
+		draw_multiline(segs, GRID_LINE_COLOR, GRID_LINE_WIDTH)
 
 # --- End Terrain Texture System ---
 

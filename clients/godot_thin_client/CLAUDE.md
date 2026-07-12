@@ -49,7 +49,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
 | `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the **Export Map** button (the tile Scout button was retired with the single-task `scout` command). Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`, gated by `set_command_connected` |
 | `Hud.gd` | HUD layer, legend, the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + the `%ForageAssignControls` "assign foragers" stepper) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer for **herds/expeditions**; a herd shows the `%HerdAssignControls` "assign hunters" stepper+policy picker, an expedition the `%AllocationPanel` Recall/Move panel). **Player-band detail relocated into the dockable `BandCityPanel`** (summary + `%AllocationPanel`-style labor UI render there via `_render_band_into_panel`; the Occupants card keeps only the roster row) — see "Band/City dockable panel". Turn readout (the standalone band Alerts panel was folded into the turn-orb attention model — see "Turn orb & attention model"). Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) + the snapshot-captured `_player_band` (and `_player_bands`, the full player-faction list backing the band-picker + the panel cycler) live here; roster selection emits `roster_occupant_selected`; labor edits emit `assign_labor_requested` / `move_band_requested` / `cancel_order_requested` (clear-all) |
-| `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail. Header (stage glyph/name/label + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse), body hosts the relocated band detail (`get_band_detail_label()` / `get_band_alloc_container()`). Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`. See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
+| `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail. Header (stage glyph/name/label + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse), body hosts the relocated band detail as **section blocks** via `set_band_sections` (tall = vertical stack that fits its width to the content, wide = manual balanced-column packing that fits its height to the content). Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`. See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale warn/critical thresholds + `color_for_morale`/`hex_for_morale`), shared by MapView's band dot and Hud's food/morale lines + alerts |
 | `ui/TileHabitability.gd` | Single source of truth for the Tile-card Habitability rating: buckets `TileState.habitability` (band-independent per-turn morale drain) into Hospitable/Fair/Harsh/Hostile via `tile_habitability_config.json` thresholds, with the HEALTHY/INK/WARN/DANGER color / `hex_for_rating` mapping. Consumed by `Hud._tile_terrain_lines` + `_format_detail_bbcode` |
 | `ui/TileClimate.gd` | Single source of truth for the Tile-card Climate band: maps `TileState.temperature` (°, a latitude+elevation climate, equator-in-the-middle) into Tropical/Warm/Temperate/Cool/Polar via `tile_climate_config.json` cutoffs. INFORMATIONAL only — deliberately no HEALTHY/WARN/DANGER tint (renders neutral ink), so it doesn't compete with the Habitability row's semantic palette. Consumed by `Hud._tile_terrain_lines` |
@@ -254,12 +254,23 @@ forest↔ocean stay hard.
   a different flat biome; near a qualifying shared edge it dithers the neighbour's array sample in.
   The mix is **symmetric**: `p = clamp(0.5 + signed_dist_to_edge / (2·blend_band), 0, 1)` is 0.5 at
   the edge on both sides; `show neighbour if p > value_noise(world_pos / noise_cell)`.
+- **Base biome UV — CONTINUOUS world space** (like the canopy pass, NOT per-hex-normalized): the base
+  biome is sampled at `base_uv = v_map / (2·hex_radius) · base_scale` (`v_map = v_world - hex_origin`,
+  pan/zoom-anchored), so **one texture tile spans ~`1/base_scale` hex-rows** and adjacent hexes show
+  DIFFERENT regions of it. This kills the **per-hex identical-repeat grid** (with diagonal seams) that
+  any *detailed* (non-homogeneous) base texture used to show when each hex was mapped to one whole
+  centered copy — invisible on homogeneous grass/water, obvious on a rocky/alpine texture. The
+  **flat↔flat dither samples the neighbour biome at the SAME `base_uv`** (only the array layer differs),
+  so the cross-edge interlock stays continuous (two world-sampled biomes at one world point). `repeat_enable`
+  tiles the array. The canopy pass already sampled this way; the base now matches it.
 - **id-map splatmap** (`_rebuild_terrain_shader_maps`, per snapshot): a `grid_w × grid_h` **RGBA8**
   texture, R = terrain id, G = `blend_class` code (0 water / 1 flat / 2 rugged), B = canopy code
   (0 none, else canopy layer + 1), A = 255, NEAREST-sampled. A
   companion **R8 vis-map** carries FoW state (0 unexplored / 0.5 discovered / 1 active).
 - **Config levers:** `blend_width` (→ `blend_band = blend_width · radius`, the interlock half-band in
-  px) and `blend_noise_cell` (world-noise cell px). **LOD:** below `EDGE_BLEND_MIN_RADIUS`
+  px), `blend_noise_cell` (world-noise cell px), and top-level `base_texture_scale`
+  (→ `base_scale`, default `0.25` = one base texture spans ~4 hex-rows; smaller covers MORE hexes,
+  larger fewer — `BASE_DEFAULT_TEXTURE_SCALE` in `MapView.gd`). **LOD:** below `EDGE_BLEND_MIN_RADIUS`
   (`= ICON_MIN_DETAIL_RADIUS`) the shader renders base-only (no shimmer at far zoom). **FoW:** the
   shader applies the same discovered-mist multiply / unexplored-fog fill as the per-hex path
   (`_fow_texture_tint_for_state` semantics) via the vis-map — it dims, never drops, the blend.
@@ -318,9 +329,13 @@ silhouette. Today the only canopy biome is **12 (mixed_woodland)** — its `blen
   perturbed (`CANOPY_TREELINE_NOISE`, reusing `noise_cell`) so it's bumpy, not a clean arc. Interior
   forest hexes (all-canopy neighbours) → D=1. Composited **after** blend+shoreline, before FoW:
   `result = mix(result, crown.rgb, crown.a · D)`.
-- **World-space canopy UV:** `cuv = v_world / (2·hex_radius) · canopy_scale` — continuous across hexes
-  (a crown straddling a boundary reads as one tree) and, at `canopy_scale = 1.0`, the same texel density
-  as the base (which the shader maps one texture per hex). FoW-tinted like the rest.
+- **Map-space canopy UV:** `cuv = v_map / (2·hex_radius) · canopy_scale`, where `v_map = v_world -
+  hex_origin` is the pan/zoom-anchored MAP coordinate (raw `v_world` is the quad-LOCAL/screen-fixed
+  coord and would slide against the grid on pan/zoom — all map-space terms, canopy UV + the
+  dither/shore/treeline noise, use `v_map`). Continuous across hexes (a crown straddling a boundary
+  reads as one tree). The base biome now samples in the same continuous world space (see **Base biome
+  UV** above), so `canopy_scale` and `base_scale` are the two independent world-UV density knobs (a
+  crown tile per hex at `canopy_scale = 1.0`; a base tile per ~`1/base_scale` hexes). FoW-tinted like the rest.
 - **Canopy LOD is DECOUPLED from the blend LOD** (own `canopy_lod_enabled` uniform, `radius ≥
   canopy_min_radius`, NOT the flat↔flat `blend_enabled`/`EDGE_BLEND_MIN_RADIUS` gate). `canopy_min_radius`
   sits WELL BELOW `EDGE_BLEND_MIN_RADIUS` (3.0 vs 16.0) so the canopy pass keeps running at far zoom:
@@ -353,12 +368,19 @@ some drivers, whitening the base). The `sampler2DArray` uniform is the same `ter
 Verify via `tools/map_preview.gd` State Q → `ui_preview_out/map_biome_hard.png` (blend off, the
 reference) vs `map_biome_blend.png` (Approach B on), plus `map_biome_blend_seam.png` (desert↔prairie
 close-up): the flat pair blends symmetrically, prairie↔forest / forest↔ocean stay crisp, and terrain
-stays aligned with the grid.
+stays aligned with the grid. **State S** (`map_repetition_after.png` + `..._zoom.png`) renders a large
+detailed-rugged field (alpine id 26) beside a flat prairie band: the continuous world-space base
+sampling means NO per-hex identical-repeat grid on the alpine (each hex shows a different region of the
+texture, features flow across boundaries), while the prairie↔alpine seam stays a hard edge.
 
 **Fallback considered:** a MultiMesh (one instance per hex) was the fallback if whole-map inverse-hex
 alignment couldn't be matched; the splatmap alignment held, so the single-quad path was chosen (fewer
 moving parts, no per-frame instance transforms). **Future:** blue-noise sample instead of hash value
-noise; optional per-hex noise rotation to further break up any residual regularity.
+noise. A **per-hex UV rotation+offset for rugged biomes** (hard-edged, so cross-edge rotation
+discontinuities hide) was speced to break the texture's *own* tiling-period repeat, but the continuous
+world-space base sampling alone removed the objectionable per-hex grid (verified on alpine id 26 at
+`base_scale = 0.25`), so it was NOT needed. Do NOT rotate flat biomes — it would break their cross-edge
+blend continuity.
 
 ---
 
@@ -965,14 +987,16 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   highlighted), and a **collapse** toggle. `cycle_requested(delta)` → Main relays
   to `Hud.cycle_panel_band`.
 - **Content relocation (from the Occupants card).** The **player-band** branch of
-  `Hud._render_occupant_drawer` now renders into the panel body via
-  `_render_band_into_panel`: summary (`_unit_summary_lines`) → the panel's
-  `get_band_detail_label()`, and labor allocation (`_build_allocation_panel`, now
-  taking an **optional target container** — default the legacy `%AllocationPanel`
-  for the no-panel fallback, else the panel's `get_band_alloc_container()`; the
-  same target is threaded through every re-render). Herd/expedition detail stays in
-  the Occupants card (`%OccupantDetail` / `%AllocationPanel` — still the expedition
-  host **and** the no-panel fallback used by the HUD-only `ui_preview` harness).
+  `Hud._render_occupant_drawer` now renders into the panel via `_render_band_into_panel`,
+  which assembles an ordered array of **section blocks** — a summary block
+  (`_unit_summary_lines`), the Active-expeditions block, then the allocation sections
+  (`_build_allocation_sections`) — and hands them to `BandCityPanel.set_band_sections`
+  (see "Responsive body"). `_build_allocation_sections` returns the discrete Workers /
+  Current actions / Band roles / Orders / Send-expedition VBoxes; the legacy
+  `_build_allocation_panel(band, target)` wrapper still exists and fills the flat
+  `%AllocationPanel` (the no-panel `ui_preview` fallback) by appending those same blocks.
+  Herd/expedition detail stays in the Occupants card (`%OccupantDetail` / `%AllocationPanel`
+  — still the expedition host **and** the no-panel fallback).
 - **Live + persistent.** `_refresh_panel_band()` (called each snapshot from
   `update_band_alerts`) hides the panel when there are zero player bands, else
   re-resolves `_panel_band` against the fresh snapshot (by entity, falling back to
@@ -986,9 +1010,9 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   (detached scout/hunt parties). The cycler + band-picker read `_player_bands`
   only, so a band + 2 expeditions reads **1/1**, not 1/3. Expeditions surface
   instead as an **Active expeditions** section on their home band (see below).
-- **Active expeditions section.** `_render_band_into_panel` → `_build_panel_expeditions`
-  renders (into the panel's own `get_band_expeditions_container()` — a **separate**
-  host from the allocation, so a stepper rebuild can't clear it) one ghost-button
+- **Active expeditions section.** `_render_band_into_panel` → `_build_panel_expeditions_block`
+  builds a self-contained expeditions **section block** (handed to the panel in the section
+  array, so it's its own flow item / stack row) with one ghost-button
   row per `_player_expeditions` entry whose `home_band_entity == _panel_band.entity`
   (correct for N bands; omitted when none). Row summary: hunt `🏹 <herd> · <Phase> ·
   <Policy>`, scout `⚑ → (x,y) · <Phase>`. A row click reuses the cycler's routing —
@@ -998,20 +1022,40 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   drawer; `_panel_band` stays put. `home_band_entity` is decoded in
   `native/src/lib.rs population_to_dict` from the snapshot's `homeBandEntity`,
   flowed onto the MapView unit marker, and covered by `marker_field_guard`.
-- **Responsive body (tall vs wide).** `_relayout_body()` (hooked off
-  `_apply_dock_layout`, so it fires on every dock/collapse change; idempotent —
-  reparents only when the tall↔wide orientation flips) swaps the body layout by
-  dock aspect: **tall** (LEFT/RIGHT) = one vertical `ScrollContainer` stack
-  (summary + expeditions + allocation), **wide** (TOP/BOTTOM) = an HBox of two
-  independently scrolling columns — a fixed `SUMMARY_COLUMN_WIDTH` summary column
-  (with the expeditions section) + a fixed `ALLOC_COLUMN_WIDTH` allocation column
-  **packed from the left** (leftover strip width empty on the right, so the
-  stepper `−/+` controls stay next to their labels at any window width) — so the
-  short strip uses the width instead of one long vertical scroll. The
-  `get_band_detail_label()` / `get_band_alloc_container()` / expeditions nodes are
-  the **same objects** reparented between layouts, so Hud's render needs no
-  coordination. (The allocation stays a single vertical list within its bounded
-  column; true multi-column section-flow that *fills* an ultrawide strip is deferred.)
+- **Responsive body — section blocks (tall stack vs wide column-flow).** The band
+  content is a list of discrete **section blocks** Hud hands the panel via
+  **`set_band_sections(blocks: Array)`** (replacing the old
+  `get_band_alloc_container()`/`get_band_detail_label()`/`get_band_expeditions_container()`
+  fill-a-container contract): the summary RichTextLabel block, the Active-expeditions
+  block, then the allocation sections (Workers / Current actions / Band roles / Orders /
+  Send expedition). Hud builds them in `_render_band_into_panel` (allocation sections from
+  `_build_allocation_sections` — the per-row stepper/band-picker/pending/expedition wiring
+  is unchanged, only each row's *parent* is its section VBox now; the legacy flat
+  `%AllocationPanel` fallback still fills by appending the same blocks). The panel **owns**
+  the blocks (frees the prior set on each call) and arranges them by dock aspect
+  (`_relayout_body`/`_arrange_sections`, hooked off `_apply_dock_layout`, reparenting the
+  **same** block nodes on a tall↔wide flip — no Hud re-render): **tall** (LEFT/RIGHT) = a
+  vertical `ScrollContainer` stack whose reserved **WIDTH fits the content** (`_measure_tall_width`,
+  the mirror of the wide height fit): the cross-axis width is `maxf(PANEL_WIDTH, content-min)` (the
+  PanelContainer's combined min width — margins + widest section), floored at `PANEL_WIDTH`, so
+  `_root`, the seam (`_position_seam`), and the reservation all track the **true card edge** — a wide
+  section (a long Hunt row, the send-expedition button) no longer overflows a fixed-380 `_root` and
+  freezes the seam mid-card. Re-measured (deferred one frame, `is_equal_approx`-guarded — the content
+  min is width-independent so there's no resize feedback) on `set_band_sections`, dock/collapse change,
+  and viewport resize. **Wide** (TOP/BOTTOM) = **manual balanced-column packing** (`_pack_wide_columns`):
+  column count from the
+  available width (`num_cols = clamp(avail / (SECTION_COLUMN_WIDTH + WIDE_FLOW_SEPARATION), 1,
+  #blocks)`), blocks distributed **greedily into the shortest column** so the tallest column
+  is minimized, columns in an HBox. The panel then **sizes its T/B height to the content** —
+  the reservation it reports (`reservation_changed`) is `header + tallest-column + margins`,
+  so the map/HUD reflow to exactly fit and **nothing clips** (fit-to-content, not a fixed
+  `PANEL_HEIGHT`). Re-packs on dock change, `set_band_sections` (content change), and window
+  `size_changed`; a deferred re-measure (`await process_frame`) lets the `fit_content` summary
+  RichTextLabel settle before the height is finalized. Safety net: reserved height is capped
+  at `MAX_WIDE_HEIGHT_FRACTION` of the window, past which the columns' ScrollContainer
+  re-enables vertical scroll. (Earlier `VFlowContainer` / fixed-height wide layouts were
+  replaced — VFlowContainer can't do fit-to-content *and* multi-column: unbounded height
+  stops it wrapping.)
 - Verify chrome + reflow via `tools/band_panel_preview.gd`
   (`godot --path . res://tools/band_panel_preview.tscn` → `ui_preview_out/
   band_panel_{left,right,top,bottom,collapsed}.png`).
