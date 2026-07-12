@@ -142,6 +142,15 @@ var _section_blocks: Array = []   # the Hud-built section blocks the panel curre
 var _wide_content_height: float = PANEL_HEIGHT
 var _wide_capped: bool = false
 var _wide_remeasure_queued: bool = false
+# Tall-dock (L/R) fit-to-content WIDTH — the mirror of `_wide_content_height` for the vertical docks.
+# The reserved cross-axis WIDTH tracks the section content so `_root`, the seam (`_position_seam`), and
+# the reservation (`current_reservation_size`) all agree on the true card edge. The fixed PANEL_WIDTH
+# used to freeze the seam mid-card whenever a section (a long Hunt row, the send-expedition button, …)
+# grew the content-sized PanelContainer past 380. PANEL_WIDTH stays the floor (a sparse band still gets
+# the nominal strip). `_tall_remeasure_queued` mirrors `_wide_remeasure_queued` (one deferred settle
+# pass per burst).
+var _tall_content_width: float = PANEL_WIDTH
+var _tall_remeasure_queued: bool = false
 var _dock_cells: Dictionary = {}   # edge:int -> Button
 
 func _ready() -> void:
@@ -562,6 +571,9 @@ func _arrange_tall() -> void:
 			_detach(block)
 			_tall_vbox.add_child(block)
 		block.custom_minimum_size.x = 0.0
+	# Fit the reserved WIDTH to the just-homed content (deferred a frame so the summary RichTextLabel's
+	# fit_content settles first), so the seam sits on the true card edge rather than a fixed PANEL_WIDTH.
+	_schedule_tall_remeasure()
 
 ## Wide (T/B): cap each block to a tidy column measure, pack the balanced columns now (using current
 ## min sizes), then queue one deferred re-pack so the fit_content summary height settles before the
@@ -679,11 +691,61 @@ func _run_wide_remeasure() -> void:
 		return
 	_pack_wide_columns()
 
+## Fit the tall (L/R) reserved WIDTH to the section content, floored at PANEL_WIDTH — the mirror of
+## `_pack_wide_columns`'s height fit. The content minimum is read off the PanelContainer's combined
+## minimum size (it already folds in the card stylebox margins, the column separation, and the tall
+## stack's widest section), which is INDEPENDENT of the current allocated width — so measuring never
+## feeds back into a resize loop. `is_equal_approx` guards against reflow churn, exactly like the wide
+## height fit. On a real change, re-anchor `_root` (which re-pins the seam) + re-report the reservation
+## so the map/HUD reflow to the true card edge.
+func _measure_tall_width() -> void:
+	if _panel == null or _collapsed or not _shown or not _band_present:
+		return
+	if not _is_vertical_edge(_dock_edge):
+		return
+	# Floor at PANEL_WIDTH FIRST, then guard on the effective (floored) value — the mirror of
+	# `_pack_wide_columns` guarding on its capped `new_height`. `_tall_content_width` therefore always
+	# holds the width actually reserved by `_cross_axis_size`, so a sub-PANEL_WIDTH content wiggle (a
+	# "· pending" suffix, an expedition row appearing) that leaves the reserved edge unchanged does NOT
+	# re-anchor/re-emit and needlessly invalidate the map cache downstream.
+	var content_width := maxf(PANEL_WIDTH, _panel.get_combined_minimum_size().x)
+	if is_equal_approx(content_width, _tall_content_width):
+		return
+	_tall_content_width = content_width
+	_apply_root_anchors()
+	_emit_reservation()
+
+## Queue one deferred tall-width measure so the fit_content summary RichTextLabel reports its final size
+## before the reserved width is finalised. Guarded so a burst of arrange calls collapses to a single pass
+## (mirrors `_schedule_wide_remeasure`).
+func _schedule_tall_remeasure() -> void:
+	if _tall_remeasure_queued:
+		return
+	_tall_remeasure_queued = true
+	_run_tall_remeasure.call_deferred()
+
+func _run_tall_remeasure() -> void:
+	_tall_remeasure_queued = false
+	if _collapsed or not _shown or not _band_present or not _is_vertical_edge(_dock_edge):
+		return
+	# One frame lets the just-homed blocks lay out so the content minimum (fit_content summary) settles.
+	await get_tree().process_frame
+	if not is_instance_valid(self):
+		return
+	if _collapsed or not _shown or not _band_present or not _is_vertical_edge(_dock_edge):
+		return
+	_measure_tall_width()
+
 ## A window resize changes the available width (column count) and thus the fit-to-content height —
-## re-pack + re-report when wide and showing a band.
+## re-pack + re-report when wide and showing a band. When tall, the content minimum width is unchanged
+## by a resize, but re-measure defensively (the `is_equal_approx` guard makes a no-op cheap).
 func _on_viewport_resized() -> void:
-	if _body_is_wide and _band_present:
+	if not _band_present:
+		return
+	if _body_is_wide:
 		_arrange_wide()
+	elif _is_vertical_edge(_dock_edge):
+		_schedule_tall_remeasure()
 
 ## The current window (viewport) size, the basis for the wide-dock column count + height cap.
 func _viewport_size() -> Vector2:
@@ -766,6 +828,11 @@ func _cross_axis_size() -> float:
 	if _collapsed:
 		return COLLAPSED_SIZE
 	if _is_vertical_edge(_dock_edge):
+		# Tall (L/R): `_tall_content_width` is the already-floored effective width from the last measure
+		# (`_measure_tall_width` stores `maxf(PANEL_WIDTH, content-min)`, mirroring how `_pack_wide_columns`
+		# stores its capped height), so `_root`/seam/reservation track the real card edge. No band → nominal.
+		if _band_present:
+			return _tall_content_width
 		return PANEL_WIDTH
 	# Wide (T/B): the fit-to-content height from the last column pack. Before the first pack (or with no
 	# band) fall back to the nominal PANEL_HEIGHT so the reserved strip is sensible.
