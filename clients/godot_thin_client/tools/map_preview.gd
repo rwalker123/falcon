@@ -38,6 +38,16 @@ const STACK_STAGE_CYCLE := [STAGE_NOMADIC, STAGE_CAMP, STAGE_VILLAGE, STAGE_NONE
 # Far-zoom LOD grid: large enough that fitted hexes fall under ICON_MIN_DETAIL_RADIUS.
 const FAR_GRID_W := 72
 const FAR_GRID_H := 52
+# Multi-biome baseline: the four terrain ids that today have REAL base textures (the other 33 are
+# noise placeholders), laid out as four vertical bands 4 columns wide each across GRID_W (16).
+const BIOME_BAND_IDS := [15, 11, 12, 0]  # hot_desert_erg / prairie_steppe / mixed_woodland / deep_ocean
+const BIOME_BAND_COLS := 4               # GRID_W (16) / 4 bands
+const BIOME_OCEAN_ID := 0                # deep_ocean, blend_class "water"
+# An ocean bay carved into the upper cols 8+ (rows 0..BIOME_BAY_ROWS-1) so the ocean ALSO borders the
+# prairie band (a flat-land↔water coast at col 7↔8) alongside the woodland↔ocean coast at col 11↔12 —
+# exercises beach+foam on BOTH a grassy and a wooded shore.
+const BIOME_BAY_ROWS := 6
+const BIOME_BAY_COL_MIN := 8
 
 var _map: Node2D
 
@@ -232,6 +242,51 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_travel_expedition")
 
+	# State Q — MULTI-BIOME terrain + edge-blend (Approach B: per-pixel biome-blend shader). Four vertical
+	# bands of the four REAL base textures (the other 33 are noise placeholders): hot_desert_erg /
+	# prairie_steppe / mixed_woodland / deep_ocean, left→right. desert+prairie are blend_class "flat"
+	# (their seam should blend symmetrically); woodland is "rugged" and ocean is "water" (their seams stay
+	# hard). Empty of units/herds/fog so terrain renders unobstructed. Rendered twice: blend OFF (per-hex
+	# textures, the reference) then Approach B ON (the whole-map blend shader) — a pure use_edge_blending
+	# toggle. The shader path bypasses the CPU cache, so no cache flag juggling is needed.
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(true)
+	# Force the direct (non-cached) per-hex path for the blend-OFF reference frame (deterministic).
+	_map._map_cache_enabled = false
+	_map.display_snapshot(_snapshot_biomes())
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map._fit_map_to_view()
+	# Blend OFF (reference): crisp textured hex silhouettes, one texture per hex, every seam hard.
+	TerrainTextureManager.use_edge_blending = false
+	_map.queue_redraw()
+	await _settle()
+	await _save("map_biome_hard")
+	# Blend ON (Approach B): the shader blends the desert↔prairie (flat↔flat) seam symmetrically with
+	# world-noise dither; woodland/ocean seams stay hard. Terrain must still align with the grid lines.
+	TerrainTextureManager.use_edge_blending = true
+	_map.queue_redraw()
+	await _settle()
+	await _save("map_biome_blend")
+	# Coast close-up: crop the right-center region so BOTH the grass↔ocean bay coast (col 7↔8, upper)
+	# and the woodland↔ocean coast (col 11↔12, lower) land in one frame — beach + foam should read.
+	await _save_crop("map_biome_shore_seam", 0.44, 0.06, 0.99, 0.95)
+	# Woodland-edge close-up: the forest block (cols 8–11, lower rows) borders prairie (grassy floor,
+	# left) and ocean (top + right) — verifies the canopy overhang/thinning treeline (no razor cut) AND
+	# the forest coast (beach/foam + canopy overhanging the water).
+	await _save_crop("map_biome_woods_edge_seam", 0.30, 0.28, 0.86, 0.99)
+
+	# State Q-far — the SAME four biome bands on a LARGE grid so _fit_map_to_view makes hexes tiny
+	# (radius << EDGE_BLEND_MIN_RADIUS, so the flat↔flat blend LOD is OFF). Verifies the DECOUPLED canopy
+	# LOD (canopy_min_radius): the woodland band must still read as a distinct darker-green forest mass —
+	# clearly NOT the prairie grass to its left — with no shimmer/aliasing (mipmapped crown array).
+	_map.display_snapshot(_snapshot_biomes_far())
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_biome_farzoom")
+
 	get_tree().quit()
 
 func _settle() -> void:
@@ -245,6 +300,22 @@ func _save(name: String) -> void:
 		push_warning("map_preview: null image (dummy renderer?) — run without --headless")
 		return
 	var err := image.save_png("%s/%s.png" % [OUT_DIR, name])
+	if err != OK:
+		push_error("map_preview: failed to save %s (err %d)" % [name, err])
+	else:
+		print("map_preview: saved ", name, ".png")
+
+## Save a cropped region of the current frame (fractions of the viewport, 0..1) — used for coast close-ups.
+func _save_crop(name: String, fx0: float, fy0: float, fx1: float, fy1: float) -> void:
+	var image := get_viewport().get_texture().get_image()
+	if image == null:
+		push_warning("map_preview: null image (dummy renderer?) — run without --headless")
+		return
+	var w := image.get_width()
+	var h := image.get_height()
+	var rect := Rect2i(int(fx0 * w), int(fy0 * h), int((fx1 - fx0) * w), int((fy1 - fy0) * h))
+	var crop := image.get_region(rect)
+	var err := crop.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
 		push_error("map_preview: failed to save %s (err %d)" % [name, err])
 	else:
@@ -485,6 +556,47 @@ func _snapshot_travel_expedition() -> Dictionary:
 	party["travel_target_y"] = 3
 	snap["populations"].append(party)
 	return snap
+
+## Four vertical biome bands across the 16×12 grid (see BIOME_BAND_IDS): cols 0–3 desert, 4–7
+## prairie, 8–11 woodland, 12–15 ocean — plus an ocean bay carved into the upper cols 8+ so the ocean
+## also borders the prairie band (see BIOME_BAY_*). Straight band edges — the point is the coast/seam look.
+func _biome_band_terrain() -> Array:
+	var arr: Array = []
+	arr.resize(GRID_W * GRID_H)
+	for y in range(GRID_H):
+		for x in range(GRID_W):
+			var band: int = mini(x / BIOME_BAND_COLS, BIOME_BAND_IDS.size() - 1)
+			var tid: int = BIOME_BAND_IDS[band]
+			if y < BIOME_BAY_ROWS and x >= BIOME_BAY_COL_MIN:
+				tid = BIOME_OCEAN_ID  # bay → prairie↔ocean (grassy) coast in the upper rows
+			arr[y * GRID_W + x] = tid
+	return arr
+
+## The same four biome bands as _biome_band_terrain, but on the LARGE far-zoom grid (no bay — the point
+## is forest-vs-prairie readability at far zoom, not the coast). Bands split FAR_GRID_W evenly.
+func _snapshot_biomes_far() -> Dictionary:
+	var band_cols: int = FAR_GRID_W / BIOME_BAND_IDS.size()
+	var arr: Array = []
+	arr.resize(FAR_GRID_W * FAR_GRID_H)
+	for y in range(FAR_GRID_H):
+		for x in range(FAR_GRID_W):
+			var band: int = mini(x / band_cols, BIOME_BAND_IDS.size() - 1)
+			arr[y * FAR_GRID_W + x] = BIOME_BAND_IDS[band]
+	return {
+		"grid": {"width": FAR_GRID_W, "height": FAR_GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": arr},
+		"populations": [],
+		"herds": [],
+	}
+
+## Terrain-only snapshot for the multi-biome baseline: no bands/herds/sites, fog off.
+func _snapshot_biomes() -> Dictionary:
+	return {
+		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": _biome_band_terrain()},
+		"populations": [],
+		"herds": [],
+	}
 
 func _snapshot_sites_fogged() -> Dictionary:
 	var snap := _snapshot_sites()
