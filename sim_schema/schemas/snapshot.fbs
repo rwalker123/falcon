@@ -545,6 +545,12 @@ table PopulationCohortState {
   // Hunt assignment lapses past). Echoed per-cohort like `workRange` so the client can offer a local
   // hunt vs a hunting expedition based on the clicked herd's distance. Appended last (append-only).
   huntReach:uint = 0;
+  // Band-level per-turn food flow (derived at capture). foodIncome = Σ of every worked source's
+  // actualYield (the per-source breakdown summed); foodConsumption = food_demand(children, working,
+  // elders) (the one-turn demand daysOfFood divides by). Client draws a food-ledger footer from these
+  // without re-summing the assignment rows. Appended last (append-only schema discipline).
+  foodIncome:float = 0;
+  foodConsumption:float = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -555,6 +561,12 @@ table LaborAssignment {
   targetY:uint = 0;
   faunaId:string;    // Hunt target herd id
   policy:string;     // Hunt take policy (sustain|surplus|market|eradicate)
+  // Per-source food-income breakdown (derived per-turn at capture, 0 on a rehydrated save before the
+  // next tick). actualYield = provisions this source produced this turn; sustainableYield = what it
+  // could yield without drawing down its stock (forage: ≡ actual; hunt: herd net regrowth). A per-turn
+  // actualYield > sustainableYield is the client-derived overhunting signal. Appended (append-only).
+  actualYield:float = 0;
+  sustainableYield:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

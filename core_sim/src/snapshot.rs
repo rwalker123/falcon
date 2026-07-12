@@ -38,8 +38,8 @@ use crate::{
         available_workers, fragments_from_contract, fragments_to_contract, BandTravel, ElementKind,
         Expedition, ExpeditionMission, ExpeditionPhase, FollowPolicy, LaborAllocation,
         LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause, MoraleContributions,
-        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ResidentBand, Tile,
-        TradeLink, FOOD,
+        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ResidentBand, SourceYield,
+        Tile, TradeLink, FOOD,
     },
     culture::{
         CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
@@ -3679,14 +3679,27 @@ fn labor_allocation_from_state(states: &[LaborAssignmentState]) -> LaborAllocati
             })
         })
         .collect();
-    LaborAllocation { assignments }
+    // `last_yields` is derived telemetry, not persisted — it stays empty on rehydrate and is
+    // rebuilt by the next `advance_labor_allocation`.
+    LaborAllocation {
+        assignments,
+        ..Default::default()
+    }
 }
 
-/// Serialize one labor assignment for the snapshot (client readout + rollback persistence).
-fn labor_assignment_to_state(assignment: &LaborAssignment) -> LaborAssignmentState {
+/// Serialize one labor assignment for the snapshot (client readout + rollback persistence). The
+/// `yields` carry this turn's actual/sustainable food income for the source (per-source breakdown;
+/// derived, not part of the rollback-persisted intent — defaulted to `0` when telemetry is absent,
+/// e.g. a rehydrated save before the next tick).
+fn labor_assignment_to_state(
+    assignment: &LaborAssignment,
+    yields: SourceYield,
+) -> LaborAssignmentState {
     let mut state = LaborAssignmentState {
         kind: assignment.target.kind().to_string(),
         workers: assignment.workers,
+        actual_yield: yields.actual,
+        sustainable_yield: yields.sustainable,
         ..Default::default()
     };
     match &assignment.target {
@@ -3794,14 +3807,32 @@ fn population_state(
     let working_age = available_workers(cohort.working);
     let assigned = allocation.map(|a| a.assigned_total()).unwrap_or(0);
     let idle_workers = working_age.saturating_sub(assigned);
+    // Zip each assignment with its retained per-source yield telemetry (same index order). A
+    // rehydrated allocation has an empty `last_yields` until the next tick → default 0 yields.
+    const NO_YIELD: SourceYield = SourceYield {
+        actual: 0.0,
+        sustainable: 0.0,
+    };
     let labor_assignments = allocation
         .map(|a| {
             a.assignments
                 .iter()
-                .map(labor_assignment_to_state)
+                .enumerate()
+                .map(|(i, assignment)| {
+                    labor_assignment_to_state(
+                        assignment,
+                        a.last_yields.get(i).copied().unwrap_or(NO_YIELD),
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();
+    // Band-level food flow: income = Σ per-source actual yield; consumption reuses the one-turn
+    // `demand` already computed above for `days_of_food` (don't recompute `food_demand`).
+    let food_income = allocation
+        .map(|a| a.last_yields.iter().map(|y| y.actual).sum())
+        .unwrap_or(0.0);
+    let food_consumption = demand.to_f32();
     // Expedition discriminators + persistence fields (empty/false for a normal band).
     let (
         is_expedition,
@@ -3934,6 +3965,8 @@ fn population_state(
             stockpile_radius,
         ),
         settlement_stage,
+        food_income,
+        food_consumption,
     }
 }
 
@@ -4380,6 +4413,168 @@ mod tests {
             visibility_raster: ScalarRasterState::default(),
         }
         .finalize()
+    }
+
+    /// Build a minimal content band for the food-flow snapshot test, with the given age brackets
+    /// (fixed-point) and labor allocation.
+    fn food_test_cohort(
+        children: Scalar,
+        working: Scalar,
+        elders: Scalar,
+        allocation: LaborAllocation,
+    ) -> (PopulationCohort, LaborAllocation) {
+        let cohort = PopulationCohort {
+            home: Entity::from_raw(2),
+            current_tile: Entity::from_raw(2),
+            size: 30,
+            children,
+            working,
+            elders,
+            stores: LocalStore::new(),
+            morale: crate::scalar::scalar_one(),
+            last_morale_delta: crate::scalar::scalar_zero(),
+            last_morale_cause: MoraleCause::None,
+            last_morale_contributions: Default::default(),
+            discontent_fraction: crate::scalar::scalar_zero(),
+            grievance: crate::scalar::scalar_zero(),
+            last_emigrated: 0,
+            last_immigrated: 0,
+            age_turns: 0,
+            generation: 0,
+            faction: FactionId(0),
+            knowledge: Vec::new(),
+            migration: None,
+        };
+        (cohort, allocation)
+    }
+
+    /// Capture a cohort's `PopulationCohortState` with all-default configs (isolates the food-flow
+    /// wiring). Returns the built state.
+    fn capture_food_state(
+        cohort: &PopulationCohort,
+        allocation: &LaborAllocation,
+    ) -> PopulationCohortState {
+        let inventory = FactionInventory::default();
+        let demographics = crate::demographics_config::DemographicsConfig::default();
+        let wellbeing = crate::wellbeing_config::WellbeingConfig::default();
+        let membership = crate::supply::SupplyNetworkMembership::default();
+        let stages = crate::settlement_stage_config::SettlementStageConfig::default();
+        population_state(
+            Entity::from_raw(1),
+            cohort,
+            Some(allocation),
+            None,
+            Some(UVec2::new(0, 0)),
+            None,
+            false,
+            0,
+            None,
+            &inventory,
+            &demographics,
+            &wellbeing,
+            &membership,
+            0,
+            0,
+            0,
+            &stages,
+            0.0,
+            None,
+            0,
+        )
+    }
+
+    /// (d) `food_income` = Σ per-source `actual_yield`, `food_consumption` = `food_demand(...)`, and
+    /// each labor-assignment row carries its matching actual/sustainable yield (zipped by index).
+    #[test]
+    fn population_state_reports_food_income_and_consumption() {
+        let working = Scalar::from_f32(30.0);
+        let allocation = LaborAllocation {
+            assignments: vec![
+                LaborAssignment {
+                    target: LaborTarget::Forage {
+                        tile: UVec2::new(0, 0),
+                    },
+                    workers: 10,
+                },
+                LaborAssignment {
+                    target: LaborTarget::Hunt {
+                        fauna_id: "game_1".to_string(),
+                        policy: crate::components::FollowPolicy::Sustain,
+                    },
+                    workers: 5,
+                },
+            ],
+            last_yields: vec![
+                SourceYield {
+                    actual: 2.5,
+                    sustainable: 2.5,
+                },
+                SourceYield {
+                    actual: 0.5,
+                    sustainable: 0.25,
+                },
+            ],
+        };
+        let (cohort, allocation) = food_test_cohort(
+            Scalar::from_f32(0.0),
+            working,
+            Scalar::from_f32(0.0),
+            allocation,
+        );
+        let state = capture_food_state(&cohort, &allocation);
+
+        // food_income = Σ actual (2.5 + 0.5).
+        assert!(
+            (state.food_income - 3.0).abs() < 1e-5,
+            "food_income sums per-source actual: {}",
+            state.food_income
+        );
+        // food_consumption reuses the same one-turn food_demand daysOfFood divides by.
+        let expected_consumption = crate::systems::food_demand(
+            cohort.children,
+            cohort.working,
+            cohort.elders,
+            &crate::demographics_config::DemographicsConfig::default().consumption,
+        )
+        .to_f32();
+        assert!(
+            (state.food_consumption - expected_consumption).abs() < 1e-5,
+            "food_consumption == food_demand: {} vs {}",
+            state.food_consumption,
+            expected_consumption
+        );
+        // Each assignment row carries its zipped actual/sustainable.
+        assert_eq!(state.labor_assignments.len(), 2);
+        assert!((state.labor_assignments[0].actual_yield - 2.5).abs() < 1e-5);
+        assert!((state.labor_assignments[0].sustainable_yield - 2.5).abs() < 1e-5);
+        assert!((state.labor_assignments[1].actual_yield - 0.5).abs() < 1e-5);
+        assert!((state.labor_assignments[1].sustainable_yield - 0.25).abs() < 1e-5);
+    }
+
+    /// A rehydrated allocation (empty `last_yields`) reports zero food income and zero per-row yields
+    /// — the default-0.0 branch — while still exporting the assignment rows.
+    #[test]
+    fn population_state_food_income_defaults_to_zero_without_telemetry() {
+        let allocation = LaborAllocation {
+            assignments: vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: UVec2::new(0, 0),
+                },
+                workers: 10,
+            }],
+            last_yields: Vec::new(),
+        };
+        let (cohort, allocation) = food_test_cohort(
+            Scalar::from_f32(0.0),
+            Scalar::from_f32(30.0),
+            Scalar::from_f32(0.0),
+            allocation,
+        );
+        let state = capture_food_state(&cohort, &allocation);
+        assert_eq!(state.food_income, 0.0, "no telemetry → zero income");
+        assert_eq!(state.labor_assignments.len(), 1);
+        assert_eq!(state.labor_assignments[0].actual_yield, 0.0);
+        assert_eq!(state.labor_assignments[0].sustainable_yield, 0.0);
     }
 
     #[test]

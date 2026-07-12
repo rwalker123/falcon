@@ -234,6 +234,15 @@ var _selected_food_is_hunt: bool = false
 # Days-of-food of the currently-selected band's larder, so the detail formatter
 # can threshold-tint the Food row. NAN when no band is selected.
 var _selected_band_food_days: float = NAN
+# Set by `_band_food_line`: the current player band carries real food flow, so the Food row becomes a
+# clickable disclosure (net rate on the line + a Gathered/Hunted/Eaten breakdown).
+var _food_flow_present: bool = false
+# Disclosure context for the Food + Morale summary rows, rebuilt each render in `_unit_summary_lines`:
+# row-label → {kind, open}. `_format_detail_bbcode` reads it to render the caret + clickable meta.
+var _disclosure_state: Dictionary = {}
+# Per-row per-band expand override, keyed `"<kind>:<entity>"` → bool. Absent = follow the row's
+# concerning default (food: net-negative / low runway; morale: below-warn / falling); a click stores one.
+var _breakdown_expanded: Dictionary = {}
 # Morale (0–1) of the currently-selected player band, so the detail formatter can
 # threshold-tint the Morale row. NAN when no player band is selected.
 var _selected_band_morale: float = NAN
@@ -273,6 +282,39 @@ const ALLOC_HEADER_ROLES := "Band roles"
 const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd to assign foragers/hunters."
 const SCOUT_ROLE_HINT := "Posts scouts that see around obstacles — more scouts range farther. Staff with −/+."
 const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
+# Per-source food yield readout on the allocation rows. Yields are food/turn floats; render to
+# 2 decimals with an explicit sign ("+0.31 /turn").
+const YIELD_DECIMALS := 2
+const YIELD_PER_TURN_SUFFIX := " /turn"
+# Overhunting flag: a worked source whose actual take exceeds its renewable-sustainable ceiling by
+# more than this epsilon is overdrawing (depletable herds only — forage is renewable, actual ==
+# sustainable, so it never trips). Shown as a WARN-tinted ⚠ on the row + spelled out in the tooltip.
+const OVERHUNT_EPSILON := 0.001
+const OVERHUNT_FLAG := "⚠"
+const YIELD_TOOLTIP_RENEWABLE := " · renewable"
+const YIELD_TOOLTIP_OVERDRAW := " — overdrawing"
+# Band food flow lives on the Food summary line: `Food 15 (19 days) · −0.77 /turn` (net =
+# food_income − food_consumption, sign-tinted), with a click-to-expand category breakdown
+# (Gathered/Hunted/Eaten) underneath — mirroring the morale breakdown. `FOOD_FLOW_MIN` gates both
+# the net readout and each breakdown category (below it → absent, not shown as a zero).
+const FOOD_FLOW_MIN := 0.001
+# Click-to-expand disclosure shared by the Food + Morale summary rows: a ▸/▾ caret on the row label,
+# a clickable `[url]` meta = `<prefix><kind>` dispatched by `_on_detail_meta_clicked`, and a per-row
+# per-band expand override in `_breakdown_expanded` (absent → the row's concerning default).
+const BREAKDOWN_CARET_OPEN := "▾"
+const BREAKDOWN_CARET_CLOSED := "▸"
+const BREAKDOWN_TOGGLE_META_PREFIX := "breakdown:"
+const BREAKDOWN_KIND_FOOD := "food"
+const BREAKDOWN_KIND_MORALE := "morale"
+# The detail-row labels the disclosure attaches to (must equal the `Key` in `_split_detail_kv`).
+const DETAIL_ROW_FOOD := "Food"
+const DETAIL_ROW_MORALE := "Morale"
+# Category breakdown rows under Food reuse the morale breakdown's indent + ▲/▼ glyphs, so they flow
+# through the SAME `_format_detail_bbcode` indented-sub-line path (sign-tinted: ▲ income green, ▼
+# eaten amber) — no inline color tags, which mis-layout between the KV table segments.
+const FOOD_LABEL_GATHERED := "Gathered"
+const FOOD_LABEL_HUNTED := "Hunted"
+const FOOD_LABEL_EATEN := "Eaten"
 # Scouting expedition (docs/plan_exploration_and_sites.md §2). A detached party is a cohort
 # tagged Expedition flowing through the same populations[] array as a band; it carries no labor
 # in v1, so its drawer shows a dedicated mission/phase/party/provisions readout + Recall/Move
@@ -441,6 +483,9 @@ func _ready() -> void:
     _apply_hud_style()
     _ensure_targeting_banner()
     _setup_build_overlay()
+    # The Occupants-card drawer's Food/Morale labels are click-to-expand breakdown disclosures.
+    if occupant_detail != null:
+        occupant_detail.meta_clicked.connect(_on_detail_meta_clicked.bind(false))
 
 ## Apply the shared HudStyle console look to the selection panel: restyle its
 ## action buttons, tint the detail text, and bring the two plain PanelContainers
@@ -1160,6 +1205,11 @@ func _effective_worker_map(band: Dictionary) -> Dictionary:
             "kind": kind, "workers": int(a.get("workers", 0)),
             "x": int(a.get("target_x", -1)), "y": int(a.get("target_y", -1)),
             "herd_id": String(a.get("fauna_id", "")), "policy": String(a.get("policy", "")), "pending": false,
+            # Per-source yields (food/turn) for the row headline/tooltip/overhunt flag. `has_yield`
+            # gates the readout — a confirmed assignment carries them; a pending one (below) does not.
+            "actual_yield": float(a.get("actual_yield", 0.0)),
+            "sustainable_yield": float(a.get("sustainable_yield", 0.0)),
+            "has_yield": a.has("actual_yield"),
         }
     var pend := _pending_assigns_for(int(band.get("entity", -1)))
     for key in pend:
@@ -1168,6 +1218,8 @@ func _effective_worker_map(band: Dictionary) -> Dictionary:
             "kind": String(pd.get("kind", "")), "workers": int(pd.get("workers", 0)),
             "x": int(pd.get("x", -1)), "y": int(pd.get("y", -1)),
             "herd_id": String(pd.get("herd_id", "")), "policy": String(pd.get("policy", "")), "pending": true,
+            # A pending (optimistic) assign has no confirmed yield yet — render no yield number.
+            "actual_yield": 0.0, "sustainable_yield": 0.0, "has_yield": false,
         }
     return merged
 
@@ -1205,15 +1257,32 @@ func _effective_idle(band: Dictionary) -> int:
 ## when either stepper is pressed. `plus_enabled` gates the + (e.g. no idle workers).
 ## `pending` marks an optimistic (not-yet-confirmed) row: the label reads amber with a
 ## "· pending" suffix, tying it to the amber pending hex on the map.
-func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false) -> HBoxContainer:
+func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "") -> HBoxContainer:
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
+    if tooltip != "":
+        row.tooltip_text = tooltip
     var name_label := Label.new()
     name_label.text = label_text + (PENDING_ROW_SUFFIX if pending else "")
-    name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     name_label.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK)
+    if tooltip != "":
+        name_label.tooltip_text = tooltip
     row.add_child(name_label)
+    # Overhunting flag: a WARN-tinted ⚠ sits directly after the label (before the stepper), so an
+    # overdrawn herd row pops without recoloring the whole label. Forage never trips this.
+    if warn:
+        var warn_label := Label.new()
+        warn_label.text = OVERHUNT_FLAG
+        warn_label.add_theme_color_override("font_color", HudStyle.WARN)
+        if tooltip != "":
+            warn_label.tooltip_text = tooltip
+        row.add_child(warn_label)
+    # A spacer (not name_label's expand) pushes the −/+ stepper to the right edge, keeping the
+    # label + ⚠ adjacent at the left.
+    var spacer := Control.new()
+    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_child(spacer)
     var minus := Button.new()
     minus.text = "−"
     minus.custom_minimum_size = Vector2(WORKER_STEPPER_BUTTON_WIDTH, 0)
@@ -1256,6 +1325,122 @@ func _alloc_hint_label(text: String) -> Label:
     label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     return label
+
+## A signed, fixed-decimal food-rate string ("+0.31" / "-0.30"). Actual yields are ≥0, but the
+## formatter is sign-aware so it also renders Net (which can go negative) and Consumption (shown
+## as a negative cost).
+func _format_signed(value: float) -> String:
+    var sign_str := "+" if value >= 0.0 else "-"
+    return sign_str + String.num(absf(value), YIELD_DECIMALS).pad_decimals(YIELD_DECIMALS)
+
+## The same rate with the "/turn" suffix, for the per-source row headline ("+0.31 /turn").
+func _format_yield(value: float) -> String:
+    return _format_signed(value) + YIELD_PER_TURN_SUFFIX
+
+## Resolve a worked source's yield readout: the row-label suffix (headline actual yield), whether
+## it's overhunting (WARN ⚠), and the actual-vs-sustainable tooltip. Returns empty parts when the
+## source carries no confirmed yield (pending assign / older snapshot) so the row renders bare.
+func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
+    if not bool(m.get("has_yield", false)):
+        return {"label_suffix": "", "warn": false, "tooltip": ""}
+    var actual := float(m.get("actual_yield", 0.0))
+    var sustainable := float(m.get("sustainable_yield", 0.0))
+    # Forage is renewable (actual == sustainable) and can never overdraw; only depletable herds do.
+    var renewable := kind == LABOR_KIND_FORAGE
+    var overhunting := not renewable and actual > sustainable + OVERHUNT_EPSILON
+    var tooltip := "Actual %s" % _format_yield(actual)
+    if renewable:
+        tooltip += YIELD_TOOLTIP_RENEWABLE
+    else:
+        tooltip += " · Sustainable %s" % _format_yield(sustainable)
+        if overhunting:
+            tooltip += YIELD_TOOLTIP_OVERDRAW
+    return {"label_suffix": " %s" % _format_yield(actual), "warn": overhunting, "tooltip": tooltip}
+
+## Net per-turn food flow (food_income − food_consumption). Positive → the larder is growing.
+func _band_net_food(band: Dictionary) -> float:
+    return float(band.get("food_income", 0.0)) - float(band.get("food_consumption", 0.0))
+
+## True when the band carries a meaningful food flow (income or consumption above the floor) — so
+## an older snapshot / decode miss reads as "no flow" (net readout + breakdown omitted, not zeroed).
+func _band_has_food_flow(band: Dictionary) -> bool:
+    return float(band.get("food_income", 0.0)) >= FOOD_FLOW_MIN \
+        or float(band.get("food_consumption", 0.0)) >= FOOD_FLOW_MIN
+
+## Sum of per-source `actual_yield` (food/turn) across this band's labor assignments of one kind —
+## the category total behind the Food breakdown (Gathered = forage, Hunted = hunt).
+func _sum_actual_yield(band: Dictionary, kind: String) -> float:
+    var total := 0.0
+    for a in _labor_assignments_of(band):
+        if a is Dictionary and String((a as Dictionary).get("kind", "")).strip_edges().to_lower() == kind:
+            total += float((a as Dictionary).get("actual_yield", 0.0))
+    return total
+
+## Food is "concerning" (breakdown auto-shown) when the larder is net-draining OR the runway is
+## below the warn threshold — mirroring `_morale_is_concerning`'s below-warn / falling gate.
+func _food_is_concerning(band: Dictionary) -> bool:
+    var days := float(band.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
+    return _band_net_food(band) < 0.0 \
+        or (BandFoodStatus.is_limited(days) and days < BandFoodStatus.warn_days())
+
+## Per-row-per-band expand-override key.
+func _breakdown_key(kind: String, band: Dictionary) -> String:
+    return "%s:%d" % [kind, int(band.get("entity", -1))]
+
+## Effective expand state of a band's Food/Morale breakdown: the user's per-band override if set,
+## else that row's concerning default (auto-open when concerning, closed when healthy). Shared by
+## both disclosure rows — the only per-kind bit is which "concerning" gate to consult.
+func _breakdown_open_for(kind: String, band: Dictionary) -> bool:
+    var key := _breakdown_key(kind, band)
+    if _breakdown_expanded.has(key):
+        return bool(_breakdown_expanded[key])
+    return _food_is_concerning(band) if kind == BREAKDOWN_KIND_FOOD else _morale_is_concerning(band)
+
+## Register a summary row (`row_label`, e.g. "Food"/"Morale") as a click-to-expand disclosure so
+## `_format_detail_bbcode` renders its caret + clickable meta; returns whether it's currently open
+## (so the caller appends the breakdown sub-lines). Shared by both disclosure rows.
+func _register_disclosure(row_label: String, kind: String, band: Dictionary) -> bool:
+    var open := _breakdown_open_for(kind, band)
+    _disclosure_state[row_label] = {"kind": kind, "open": open}
+    return open
+
+## The category breakdown sub-lines under Food, one indented row per present category, mirroring the
+## morale breakdown: `    ▲ +0.48  Gathered` / `    ▲ +0.46  Hunted` / `    ▼ −0.68  Eaten` (income
+## ▲ green, eaten ▼ amber via the shared indented-sub-line tint). Only categories above the floor.
+func _food_breakdown_lines(band: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    var gathered := _sum_actual_yield(band, LABOR_KIND_FORAGE)
+    if gathered >= FOOD_FLOW_MIN:
+        lines.append(_food_breakdown_row(gathered, FOOD_LABEL_GATHERED))
+    var hunted := _sum_actual_yield(band, LABOR_KIND_HUNT)
+    if hunted >= FOOD_FLOW_MIN:
+        lines.append(_food_breakdown_row(hunted, FOOD_LABEL_HUNTED))
+    var eaten := float(band.get("food_consumption", 0.0))
+    if eaten >= FOOD_FLOW_MIN:
+        lines.append(_food_breakdown_row(-eaten, FOOD_LABEL_EATEN))
+    return lines
+
+## One `    ▲ +0.48  Gathered`-style breakdown row (morale-indent + sign glyph → shared tint path).
+func _food_breakdown_row(value: float, label: String) -> String:
+    var glyph := MORALE_CONTRIB_POSITIVE_GLYPH if value > 0.0 else MORALE_CONTRIB_NEGATIVE_GLYPH
+    return "%s%s %s  %s" % [MORALE_BREAKDOWN_INDENT, glyph, _format_signed(value), label]
+
+## Meta dispatcher for the summary-row disclosures (Food/Morale): parses the clicked row kind from
+## the `[url]` meta and toggles that row's per-band expand override, then re-renders. `is_panel`
+## routes the re-render to the dockable Band/City panel vs the Occupants-card drawer.
+func _on_detail_meta_clicked(meta: Variant, is_panel: bool) -> void:
+    var payload := String(meta)
+    if not payload.begins_with(BREAKDOWN_TOGGLE_META_PREFIX):
+        return
+    var kind := payload.substr(BREAKDOWN_TOGGLE_META_PREFIX.length())
+    var band: Dictionary = _panel_band if is_panel else _selected_unit
+    if band.is_empty():
+        return
+    _breakdown_expanded[_breakdown_key(kind, band)] = not _breakdown_open_for(kind, band)
+    if is_panel:
+        _render_band_into_panel(_panel_band)
+    else:
+        _render_occupant_drawer()
 
 ## A fresh section-block VBox: the discrete, self-contained unit the Band/City panel arranges (a
 ## vertical stack when tall, a column-flow when wide). Rows are added into it exactly as they used to
@@ -1322,15 +1507,18 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
         var kind := String(m.get("kind", "")).strip_edges().to_lower()
         var workers := int(m.get("workers", 0))
         var pending := bool(m.get("pending", false))
+        # Per-source yield readout: the actual take headlines the row, sustainable lives in the
+        # tooltip, and a WARN ⚠ flags overhunting. Pending rows have no confirmed yield → no number.
+        var yld := _source_yield_readout(m, kind)
         # Show a source row when it's staffed, or while its removal/change is still pending.
         if kind == LABOR_KIND_FORAGE and (workers > 0 or pending):
             has_source = true
             var fx := int(m.get("x", -1))
             var fy := int(m.get("y", -1))
             actions_block.add_child(_build_worker_stepper(
-                "Forage (%d, %d)" % [fx, fy], workers, can_add,
+                "Forage (%d, %d)%s" % [fx, fy, yld.label_suffix], workers, can_add,
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_FORAGE, n, fx, fy, "", ""),
-                pending))
+                pending, yld.warn, yld.tooltip))
         elif kind == LABOR_KIND_HUNT and (workers > 0 or pending):
             has_source = true
             var herd_id := String(m.get("herd_id", ""))
@@ -1340,9 +1528,9 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
             if not (policy in LABOR_HUNT_POLICIES):
                 policy = _policy_for_hunt(band, herd_id)
             actions_block.add_child(_build_worker_stepper(
-                "Hunt %s [%s]" % [_herd_label_for_id(herd_id), policy], workers, can_add,
+                "Hunt %s [%s]%s" % [_herd_label_for_id(herd_id), policy, yld.label_suffix], workers, can_add,
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_HUNT, n, hx, hy, herd_id, policy),
-                pending))
+                pending, yld.warn, yld.tooltip))
     if not has_source:
         actions_block.add_child(_alloc_hint_label(ALLOC_NO_SOURCES_HINT))
     blocks.append(actions_block)
@@ -2438,6 +2626,9 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     detail_label.scroll_active = false
     detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD
     detail_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    # The panel's Food/Morale labels are the same click-to-expand disclosures as the Occupants drawer.
+    # This RichTextLabel is rebuilt each render, so wire its `meta_clicked` here (bound is_panel = true).
+    detail_label.meta_clicked.connect(_on_detail_meta_clicked.bind(true))
     detail_label.text = _format_detail_bbcode(_unit_summary_lines(_panel_band))
     summary_block.add_child(detail_label)
     blocks.append(summary_block)
@@ -2576,6 +2767,8 @@ func _index_of_player_band(entity: int) -> int:
     return -1
 
 ## Injected by Main: the dockable Band/City panel the band drawer renders into.
+## (The Food/Morale disclosure `meta_clicked` is wired per-render on the fresh summary RichTextLabel
+## in `_render_band_into_panel`, since main's section-block model rebuilds that label each render.)
 func set_band_city_panel(panel: BandCityPanel) -> void:
     _band_city_panel = panel
 
@@ -2624,11 +2817,18 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
     if bool(unit_data.get("is_expedition", false)):
         return _expedition_summary_lines(unit_data)
     var lines: Array[String] = []
+    # Disclosure carets are rebuilt per render; drop last render's Food/Morale entries.
+    _disclosure_state = {}
     var label := String(unit_data.get("id", "Band"))
     lines.append("Unit: %s" % label)
     var size_value: int = int(unit_data.get("size", 0))
     lines.append("Size: %d" % size_value)
     lines.append(_band_food_line(unit_data))
+    # Category-aggregated food breakdown under Food: a click-to-expand disclosure (auto-shown when
+    # concerning). `_band_food_line` set `_food_flow_present`; `_register_disclosure` records the row
+    # so `_format_detail_bbcode` draws the caret + clickable meta.
+    if _food_flow_present and _register_disclosure(DETAIL_ROW_FOOD, BREAKDOWN_KIND_FOOD, unit_data):
+        lines.append_array(_food_breakdown_lines(unit_data))
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
@@ -2639,9 +2839,13 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
         var output_line := _band_output_line(unit_data)
         if output_line != "":
             lines.append(output_line)
-        # When morale is concerning/declining, itemize why (the Layer-1 contributions)
-        # and name the real recovery levers.
-        lines.append_array(_morale_breakdown_lines(unit_data))
+        # Itemized morale breakdown: the SAME click-to-expand disclosure as Food (auto-shown when
+        # concerning). Only offered when there's actually a breakdown to show (a contribution above
+        # the epsilon, or the concerning recovery line).
+        var morale_breakdown := _morale_breakdown_lines(unit_data)
+        if not morale_breakdown.is_empty() \
+                and _register_disclosure(DETAIL_ROW_MORALE, BREAKDOWN_KIND_MORALE, unit_data):
+            lines.append_array(morale_breakdown)
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
@@ -2733,7 +2937,17 @@ func _band_food_line(unit_data: Dictionary) -> String:
     var stores_variant: Variant = unit_data.get("stores", {})
     if stores_variant is Dictionary:
         provisions = int(round(float((stores_variant as Dictionary).get(STORE_ITEM_PROVISIONS, 0.0))))
-    return "Food: %d  (%s)" % [provisions, _food_days_text(days)]
+    var line := "Food: %d  (%s)" % [provisions, _food_days_text(days)]
+    # For player bands with real flow, append the net per-turn rate (sign-tinted, inline) and mark
+    # the Food label a clickable disclosure (`_food_flow_present`, read by `_format_detail_bbcode`).
+    # An enemy band / older snapshot shows the bare larder line, exactly as before.
+    _food_flow_present = false
+    if _is_player_unit(unit_data) and _band_has_food_flow(unit_data):
+        var net := _band_net_food(unit_data)
+        var net_hex := HudStyle.HEALTHY_HEX if net >= 0.0 else HudStyle.DANGER_HEX
+        line += " · [color=#%s]%s[/color]" % [net_hex, _format_yield(net)]
+        _food_flow_present = true
+    return line
 
 ## Selection-panel band morale row: "Morale: 41% ▼ — harsh terrain (Karst Cavern Mouth)".
 ## Morale, its per-turn trend, and the dominant cause come from the snapshot cohort dict
@@ -2782,14 +2996,14 @@ func _morale_is_concerning(unit_data: Dictionary) -> bool:
     var delta := float(unit_data.get("morale_delta", 0.0))
     return morale < BandFoodStatus.warn_morale() or delta <= -MORALE_TREND_EPSILON
 
-## Itemized morale breakdown: the four signed Layer-1 contributions (their sum IS
-## morale_delta) as indented sub-lines, plus a recovery-guidance line. Shown only when
-## morale is concerning/declining. Each contribution above the breakdown epsilon renders
-## as `    ▲ +1.0%  settling`; `_format_detail_bbcode` tints the row by its sign glyph.
+## Itemized morale breakdown: the four signed Layer-1 contributions (their sum IS morale_delta) as
+## indented sub-lines, each above the breakdown epsilon rendered as `    ▲ +1.0%  settling`
+## (`_format_detail_bbcode` tints by sign glyph). Now a click-to-expand disclosure (like Food): the
+## contributions always compute so the row can be manually opened in the good state; the
+## recovery-guidance line is appended ONLY when morale is concerning (don't tell a healthy band to
+## "recover"). Returns [] when there is nothing to disclose (no contribution + not concerning).
 func _morale_breakdown_lines(unit_data: Dictionary) -> Array[String]:
     var lines: Array[String] = []
-    if not _morale_is_concerning(unit_data):
-        return lines
     var terrain_label := String(_selected_tile_info.get("terrain_label", "")).strip_edges()
     var terrain_row_label := MORALE_CAUSE_LABEL_TERRAIN
     if terrain_label != "":
@@ -2812,7 +3026,9 @@ func _morale_breakdown_lines(unit_data: Dictionary) -> Array[String]:
         lines.append("%s%s %s%.1f%%  %s" % [
             MORALE_BREAKDOWN_INDENT, glyph, sign_str, absf(value) * 100.0, entry[1],
         ])
-    lines.append(RECOVERY_GUIDANCE_TEXT)
+    # Recovery guidance is a "you have a problem" prompt — only when concerning.
+    if _morale_is_concerning(unit_data):
+        lines.append(RECOVERY_GUIDANCE_TEXT)
     return lines
 
 ## Plain-language label for a morale cause (0=None,1=Terrain,2=Cold,3=Unrest); "" for None
@@ -3013,11 +3229,13 @@ func _format_detail_bbcode(lines: Array) -> String:
                 table_open = false
             out += "\n"
             continue
-        # Itemized morale breakdown sub-lines render full-width, tinted by their sign
-        # glyph (▲ positive = healthy, ▼ negative = amber) — kept two-tone, not a rainbow.
+        # Itemized morale / food breakdown sub-lines render full-width, tinted by their sign
+        # glyph (▲ positive = healthy, ▼ negative = amber) — kept two-tone, not a rainbow. The
+        # `\n` after `[/table]` forces a block break: a RichTextLabel `[table]` is inline, so text
+        # emitted right after it otherwise floats onto the table's top-right when there's room.
         if line.begins_with(MORALE_BREAKDOWN_INDENT):
             if table_open:
-                out += "[/table]"
+                out += "[/table]\n"
                 table_open = false
             var row_hex := HudStyle.HEALTHY_HEX if line.contains(MORALE_CONTRIB_POSITIVE_GLYPH) else HudStyle.WARN_HEX
             out += "[color=#%s]%s[/color]\n" % [row_hex, line]
@@ -3025,7 +3243,7 @@ func _format_detail_bbcode(lines: Array) -> String:
         var kv := _split_detail_kv(line)
         if kv.is_empty():
             if table_open:
-                out += "[/table]"
+                out += "[/table]\n"
                 table_open = false
             out += "[color=#%s]%s[/color]\n" % [HudStyle.INK_DIM_HEX, line]
         else:
@@ -3057,8 +3275,19 @@ func _format_detail_bbcode(lines: Array) -> String:
                 value_hex = _ecology_value_hex(String(kv[1]))
             elif String(kv[0]) == "Husbandry":
                 value_hex = _husbandry_value_hex(String(kv[1]))
-            out += "[cell][color=#%s]%s[/color][/cell][cell][color=#%s]%s[/color][/cell]" % [
-                HudStyle.INK_DIM_HEX, kv[0], value_hex, kv[1],
+            # A disclosure row (Food/Morale) renders its key as a clickable cyan `[url]` + ▸/▾ caret,
+            # toggling its breakdown sub-lines via `meta_clicked` → `_on_detail_meta_clicked`. Which
+            # rows are disclosures (and their open-state) is set in `_unit_summary_lines`.
+            var key_cell := "[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, kv[0]]
+            if _disclosure_state.has(kv[0]):
+                var st: Dictionary = _disclosure_state[kv[0]]
+                var caret := BREAKDOWN_CARET_OPEN if bool(st.get("open", false)) else BREAKDOWN_CARET_CLOSED
+                key_cell = "[url=%s%s][color=#%s]%s %s[/color][/url]" % [
+                    BREAKDOWN_TOGGLE_META_PREFIX, String(st.get("kind", "")),
+                    HudStyle.SIGNAL_HEX, kv[0], caret,
+                ]
+            out += "[cell]%s[/cell][cell][color=#%s]%s[/color][/cell]" % [
+                key_cell, value_hex, kv[1],
             ]
     if table_open:
         out += "[/table]"

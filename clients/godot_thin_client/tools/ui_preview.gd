@@ -60,12 +60,36 @@ func _ready() -> void:
 	# seed it so the herd/tile "assign" controls resolve a band to staff.
 	_hud._player_band = _band_fixture()
 
-	# State 1 — a single band selected: the Occupants roster + the labor allocation panel
-	# (Working/Idle header, Forage + Hunt assignment rows with −/+ steppers, the always-on
-	# Scout + Warrior role rows, and the Move / Clear-all affordances).
+	# State 1 — a single band selected (GOOD state): the Occupants roster + the labor allocation panel.
+	# Food + Morale are healthy, so BOTH summary rows read collapsed with a ▸ disclosure caret
+	# (`Food ▸ …` / `Morale 82% ▸`) — click-to-expand, nothing auto-shown.
 	_hud.show_unit_selection(_band_fixture())
 	await _settle()
 	await _save("band")
+
+	# State 1-food-a — GOOD food, breakdown force-EXPANDED. The good band's breakdown is hidden by
+	# default (net positive, long runway); the static harness can't click the Food disclosure, so we
+	# force the per-band expand override to confirm the click-expanded layout renders (indented
+	# `Gathered · Hunted · Eaten` sub-line under Food) without clipping.
+	_hud._breakdown_expanded = {"food:904": true}
+	_hud.show_unit_selection(_band_fixture())
+	await _settle()
+	await _save("band_food_expanded")
+	_hud._breakdown_expanded = {}
+
+	# State 1-morale-a — GOOD morale, breakdown force-EXPANDED (same disclosure as Food): forcing the
+	# per-band morale override opens the collapsed-by-default morale contribution sub-lines.
+	_hud._breakdown_expanded = {"morale:904": true}
+	_hud.show_unit_selection(_band_fixture())
+	await _settle()
+	await _save("band_morale_expanded")
+	_hud._breakdown_expanded = {}
+
+	# State 1-food-b — CONCERNING food (net negative + low runway): the Food line net reads red and
+	# the category breakdown is AUTO-shown (no click needed), mirroring the morale breakdown.
+	_hud.show_unit_selection(_concerning_food_band_fixture())
+	await _settle()
+	await _save("band_food_concerning")
 
 	# State 1b — an all-idle band: no assignments, every worker idle. The allocation panel
 	# shows just the Scout + Warrior rows (both at 0) under the Working/Idle header.
@@ -362,6 +386,39 @@ func _ready() -> void:
 	await _settle()
 	await _save("turn_orb_clear")
 
+	# State 6b — turn orb, EMPTY registry, orb-face CLICK: advancing must always be possible
+	# from the orb, so with nothing to triage the click ADVANCES the turn directly and opens NO
+	# popover (the old bug opened a tall blank box whose Advance affordance was pushed off-screen,
+	# trapping the player). Assert the emitted advance signal (the harness can't run a real turn)
+	# and that no popover opened; the saved frame must show the calm pulse with no blank box.
+	var advance_hits := [0]
+	var advance_cb := func() -> void: advance_hits[0] += 1
+	_hud.turn_orb.advance_requested.connect(advance_cb)
+	_hud.turn_orb._on_face_pressed()
+	await _settle()
+	_assert_turn_orb("empty click advances", advance_hits[0] == 1 and not _hud.turn_orb._popover_open)
+	await _save("turn_orb_clear_click_advances")
+
+	# State 6c — turn orb, NON-EMPTY registry: the click opens the reasons popover, and the
+	# popover's `Advance ▸` footer button emits advance_requested (unchanged behavior). Seed one
+	# attention entry, open via the face click, then fire the footer button and assert the emit.
+	advance_hits[0] = 0
+	_hud.update_band_alerts([
+		{"faction": 0, "entity": 511, "size": 40, "days_of_food": 999.0, "activity": "forage",
+			"current_x": 30, "current_y": 20, "idle_workers": 5},
+	])
+	_hud.turn_orb._on_face_pressed()
+	await _settle()
+	var opened := _hud.turn_orb._popover_open
+	var footer_btn := _turn_orb_advance_button()
+	var had_footer := footer_btn != null
+	if had_footer:
+		footer_btn.pressed.emit()   # frees the popover (advance closes it)
+	await _settle()
+	_assert_turn_orb("non-empty popover + footer advances",
+		opened and had_footer and advance_hits[0] == 1 and not _hud.turn_orb._popover_open)
+	_hud.turn_orb.advance_requested.disconnect(advance_cb)
+
 	# State 7 — turn orb, ALL THREE ATTENTION KINDS (the folded-in Alerts panel): a first
 	# snapshot seeds prior band sizes so "losing population" has a baseline, then the live
 	# snapshot fires one of each producer — Band 1 starving (days 3 < critical → critical/red),
@@ -450,6 +507,26 @@ func _save(name: String) -> void:
 	else:
 		print("ui_preview: saved ", name, ".png")
 
+## Walk the open reasons popover to its `Advance ▸` footer button (last body row's child).
+func _turn_orb_advance_button() -> Button:
+	var pop := _hud.turn_orb._popover
+	if pop == null or pop.get_child_count() == 0:
+		return null
+	var body := pop.get_child(0)
+	if body.get_child_count() == 0:
+		return null
+	var footer := body.get_child(body.get_child_count() - 1)
+	if footer.get_child_count() == 0:
+		return null
+	var btn := footer.get_child(0)
+	return btn as Button
+
+func _assert_turn_orb(label: String, ok: bool) -> void:
+	if ok:
+		print("ui_preview: PASS turn-orb — ", label)
+	else:
+		push_error("ui_preview: FAIL turn-orb — %s" % label)
+
 func _band_fixture() -> Dictionary:
 	return {
 		"id": "Band 2",
@@ -457,8 +534,15 @@ func _band_fixture() -> Dictionary:
 		"entity": 904,
 		"faction": 0,
 		"pos": [71, 18],
-		"days_of_food": 7.0,
+		# Good food state: a long larder runway (≥ warn) + positive net (0.94 − 0.68 = +0.26) → the
+		# Food line reads "… · +0.26 /turn" and the category breakdown is collapsed (clickable open).
+		"days_of_food": 22.0,
+		# Good morale (≥ warn, not falling) → the Morale row is collapsed with a ▸ caret. The signed
+		# Layer-1 contributions (above the breakdown epsilon) give the disclosure real content on expand.
 		"morale": 0.82,
+		"morale_settling": 0.012,
+		"morale_terrain": -0.010,
+		"morale_climate": -0.006,
 		"stores": {"provisions": 84.0},
 		# Early-Game Labor (slice 3b): 16 working-age workers, 3 idle, split across a
 		# Forage tile, a Hunt herd, and the Scout + Warrior band-wide roles.
@@ -475,9 +559,16 @@ func _band_fixture() -> Dictionary:
 		"hunt_reach": 16,
 		"scout_reveal_radius": 2,
 		"activity": "forage",
+		# Band food flow (Food summary line): total income across the worked sources vs the cohort's
+		# consumption. Net = 0.94 − 0.68 = +0.26 (positive → larder growing), shown green on the Food
+		# line. Per-source actual/sustainable yields live on the assignments below; the hunt overdraws
+		# (0.46 > 0.20) so its allocation row shows the ⚠ flag; forage (actual == sustainable) never does.
+		# The Gathered/Hunted breakdown sums the assignment actual_yields (0.48 / 0.46) by kind.
+		"food_income": 0.94,
+		"food_consumption": 0.68,
 		"labor_assignments": [
-			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18},
-			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17},
+			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
+			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20},
 			{"kind": "scout", "workers": 2},
 			{"kind": "warrior", "workers": 2},
 		],
@@ -490,6 +581,23 @@ func _band_fixture() -> Dictionary:
 			"food_module_label": "None",
 		},
 	}
+
+## A CONCERNING food state: net-negative flow (income 0.30 < consumption 0.95 → net −0.65) and a
+## low larder runway (4 days). Both trip `_food_is_concerning`, so the category breakdown auto-shows
+## under a red net figure without any click.
+func _concerning_food_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 905
+	band["id"] = "Band 3"
+	band["days_of_food"] = 4.0
+	band["food_income"] = 0.30
+	band["food_consumption"] = 0.95
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "target_x": 71, "target_y": 18, "actual_yield": 0.15, "sustainable_yield": 0.15},
+		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.15, "sustainable_yield": 0.20},
+		{"kind": "scout", "workers": 2},
+	]
+	return band
 
 ## A scouting expedition (docs/plan_exploration_and_sites.md §2) in its awaiting-orders phase:
 ## a detached party (is_expedition) carrying a mission/phase + party size + provisions. The drawer

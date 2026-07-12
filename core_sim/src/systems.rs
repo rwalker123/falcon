@@ -16,7 +16,7 @@ use crate::{
         available_workers, fragments_from_contract, fragments_to_contract, BandTravel, ElementKind,
         Expedition, ExpeditionMission, ExpeditionPhase, FollowPolicy, KnowledgeFragment,
         LaborAllocation, LaborTarget, LocalStore, LogisticsLink, MoraleCause, MoraleContributions,
-        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
+        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ResidentBand, SourceYield,
         StartingUnit, Tile, TradeLink, FOOD,
     },
     culture::{
@@ -4056,6 +4056,16 @@ pub fn advance_labor_allocation(
         let mult_f = mult.to_f32();
 
         let mut lapsed: Vec<usize> = Vec::new();
+        // Retained per-source yield telemetry (derived, not persisted): one entry per assignment in
+        // iteration order, pre-seeded to zero so any arm that `continue`s (out of range, module
+        // lost, herd gone) leaves a correct 0-yield row and index alignment is preserved.
+        let mut yields: Vec<SourceYield> = vec![
+            SourceYield {
+                actual: 0.0,
+                sustainable: 0.0
+            };
+            allocation.assignments.len()
+        ];
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
             let workers = assignment.workers;
             if workers == 0 {
@@ -4088,6 +4098,13 @@ pub fn advance_labor_allocation(
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
                     }
+                    // Forage is inexhaustible in today's model (no tile depletion) → it can never be
+                    // overdrawn, so `sustainable` is defined equal to `actual`.
+                    let actual = provisions.to_f32();
+                    yields[idx] = SourceYield {
+                        actual,
+                        sustainable: actual,
+                    };
                 }
                 LaborTarget::Hunt { fauna_id, policy } => {
                     let Some(herd_pos) = registry.find(fauna_id).map(|herd| herd.position()) else {
@@ -4164,6 +4181,19 @@ pub fn advance_labor_allocation(
                     if trade_goods > 0 {
                         inventory.add_stockpile(faction, "trade_goods", trade_goods);
                     }
+                    // Sustainable take = one turn's net regrowth of the herd at its **pre-take**
+                    // biomass, in provisions (same `provisions_per_biomass` + output multiplier as
+                    // the actual take). An overdraw (Surplus/Eradicate) reads `actual > sustainable`;
+                    // a Sustain draw reads `actual ≈ sustainable`.
+                    let sustainable =
+                        net_biomass_delta(biomass_before, herd.carrying_capacity, &fauna.ecology)
+                            .max(0.0)
+                            * hunt.provisions_per_biomass
+                            * mult_f;
+                    yields[idx] = SourceYield {
+                        actual: provisions.to_f32(),
+                        sustainable,
+                    };
                 }
                 LaborTarget::Scout => {
                     // Scouts act as forward observers in `calculate_visibility`: staffed scouts
@@ -4176,9 +4206,13 @@ pub fn advance_labor_allocation(
             }
         }
         // Drop lapsed hunts (reverse order to keep indices valid); workers return to the pool.
+        // Remove the matching telemetry rows too so `last_yields` stays index-aligned with the
+        // surviving assignments (lapsed rows carry a 0 yield anyway).
         for idx in lapsed.into_iter().rev() {
             allocation.assignments.remove(idx);
+            yields.remove(idx);
         }
+        allocation.last_yields = yields;
     }
 }
 
@@ -6292,5 +6326,221 @@ mod wellbeing_tests {
                 < 1e-4
         );
         assert!(output_multiplier(&miserable, &wb) < scalar_one());
+    }
+}
+
+#[cfg(test)]
+mod labor_yield_tests {
+    //! Retained per-source food-yield telemetry (`LaborAllocation.last_yields`): forage
+    //! `sustainable ≡ actual`; a hunt's `sustainable = net_biomass_delta(pre-take biomass).max(0) ×
+    //! provisions_per_biomass × output_multiplier`; and an overdraw reads `actual > sustainable`.
+    use super::advance_labor_allocation;
+    use crate::components::{
+        FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause,
+        PopulationCohort, Tile,
+    };
+    use crate::fauna::{net_biomass_delta, Herd, HerdRegistry};
+    use crate::fauna_config::{FaunaConfigHandle, SizeClass};
+    use crate::food::{FoodModule, FoodModuleTag, FoodSiteKind};
+    use crate::labor_config::LaborConfigHandle;
+    use crate::orders::FactionId;
+    use crate::resources::{
+        CommandEventLog, FactionInventory, SimulationConfig, SimulationTick, TileRegistry,
+    };
+    use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
+    use crate::wellbeing_config::WellbeingConfigHandle;
+    use bevy::math::UVec2;
+    use bevy::prelude::{Entity, World};
+    use bevy_ecs::system::RunSystemOnce;
+
+    const HERD_ID: &str = "game_test";
+    const CAP: f32 = 100.0;
+    /// Whole workers on each assignment: large enough that forage yields clearly and the hunt's
+    /// per-worker biomass cap never binds (so a Sustain take is set by the regrowth ceiling).
+    const WORKERS: u32 = 10;
+
+    /// A 3×1 world with a food-module tile + a stationary game herd (given `biomass`, cap `CAP`)
+    /// both anchored on tile (0,0). Returns the world and that source tile's entity.
+    fn world_with_source(biomass: f32) -> (World, Entity) {
+        let mut world = World::default();
+        let mut config = SimulationConfig::builtin();
+        config.map_topology.wrap_horizontal = false;
+        world.insert_resource(config);
+        world.insert_resource(FaunaConfigHandle::default());
+        world.insert_resource(LaborConfigHandle::default());
+        world.insert_resource(WellbeingConfigHandle::default());
+        world.insert_resource(FactionInventory::default());
+        world.insert_resource(CommandEventLog::default());
+        world.insert_resource(SimulationTick::default());
+
+        let tiles: Vec<Entity> = (0..3)
+            .map(|x| {
+                world
+                    .spawn(Tile {
+                        position: UVec2::new(x, 0),
+                        ..Default::default()
+                    })
+                    .id()
+            })
+            .collect();
+        let source_tile = tiles[0];
+        world.entity_mut(source_tile).insert(FoodModuleTag {
+            module: FoodModule::SavannaGrassland,
+            seasonal_weight: 1.0,
+            kind: FoodSiteKind::SavannaTrack,
+        });
+        world.insert_resource(TileRegistry {
+            tiles,
+            width: 3,
+            height: 1,
+        });
+
+        let ecology = world.resource::<FaunaConfigHandle>().get().ecology.clone();
+        let mut herd = Herd::new(
+            HERD_ID.to_string(),
+            "Test Game".to_string(),
+            SizeClass::Small,
+            vec![UVec2::new(0, 0)],
+            biomass,
+            CAP,
+        );
+        herd.refresh_ecology_phase(&ecology);
+        let mut registry = HerdRegistry::default();
+        registry.herds.push(herd);
+        world.insert_resource(registry);
+
+        (world, source_tile)
+    }
+
+    /// A content band (morale 1 → output multiplier 1.0) on `tile` with the given assignments.
+    fn spawn_band(world: &mut World, tile: Entity, assignments: Vec<LaborAssignment>) -> Entity {
+        world
+            .spawn((
+                PopulationCohort {
+                    home: tile,
+                    current_tile: tile,
+                    size: 30,
+                    children: scalar_zero(),
+                    working: scalar_from_f32(100.0),
+                    elders: scalar_zero(),
+                    stores: LocalStore::new(),
+                    morale: scalar_one(),
+                    last_morale_delta: scalar_zero(),
+                    last_morale_cause: MoraleCause::None,
+                    last_morale_contributions: Default::default(),
+                    discontent_fraction: scalar_zero(),
+                    grievance: scalar_zero(),
+                    last_emigrated: 0,
+                    last_immigrated: 0,
+                    age_turns: 0,
+                    generation: 0,
+                    faction: FactionId(0),
+                    knowledge: Vec::new(),
+                    migration: None,
+                },
+                LaborAllocation {
+                    assignments,
+                    ..Default::default()
+                },
+            ))
+            .id()
+    }
+
+    /// (a) both a Forage and a Hunt source capture `actual > 0`; (b) the hunt's `sustainable` equals
+    /// the net_biomass_delta-based regrowth value at the pre-take biomass, and a Sustain draw under a
+    /// binding regrowth ceiling skims exactly that (`actual ≈ sustainable`); (c) forage
+    /// `sustainable ≡ actual`.
+    #[test]
+    fn forage_and_sustain_hunt_capture_yields() {
+        let start = CAP * 0.5; // half cap → clear positive regrowth.
+        let (mut world, tile) = world_with_source(start);
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![
+                LaborAssignment {
+                    target: LaborTarget::Forage {
+                        tile: UVec2::new(0, 0),
+                    },
+                    workers: WORKERS,
+                },
+                LaborAssignment {
+                    target: LaborTarget::Hunt {
+                        fauna_id: HERD_ID.to_string(),
+                        policy: FollowPolicy::Sustain,
+                    },
+                    workers: WORKERS,
+                },
+            ],
+        );
+
+        // Expected hunt sustainable = one turn's net regrowth at the PRE-take biomass, in provisions
+        // (output multiplier is 1.0 at morale 1).
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let expected_sustainable = net_biomass_delta(start, CAP, &fauna.ecology).max(0.0)
+            * fauna.hunt.provisions_per_biomass;
+        drop(fauna);
+
+        world.run_system_once(advance_labor_allocation);
+
+        let alloc = world.get::<LaborAllocation>(band).unwrap();
+        assert_eq!(alloc.last_yields.len(), 2, "one yield row per assignment");
+        let forage = alloc.last_yields[0];
+        let hunt = alloc.last_yields[1];
+        assert!(forage.actual > 0.0, "forage produced food: {forage:?}");
+        assert!(hunt.actual > 0.0, "hunt produced food: {hunt:?}");
+        assert_eq!(
+            forage.actual, forage.sustainable,
+            "forage is inexhaustible → sustainable ≡ actual"
+        );
+        assert!(
+            (hunt.sustainable - expected_sustainable).abs() < 1e-6,
+            "hunt sustainable = net regrowth × provisions_per_biomass: {} vs {}",
+            hunt.sustainable,
+            expected_sustainable
+        );
+        assert!(
+            (hunt.actual - hunt.sustainable).abs() < 1e-6,
+            "a Sustain draw under the regrowth ceiling skims exactly the regrowth: {} vs {}",
+            hunt.actual,
+            hunt.sustainable
+        );
+    }
+
+    /// An Eradicate hunt near carrying capacity overdraws the herd's meagre regrowth, so the captured
+    /// telemetry reads `actual > sustainable` — the leading overhunting signal.
+    #[test]
+    fn overdraw_reads_actual_above_sustainable() {
+        let start = CAP * 0.9; // near cap → small regrowth, so any real take overdraws.
+        let (mut world, tile) = world_with_source(start);
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Eradicate,
+                },
+                workers: WORKERS,
+            }],
+        );
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let expected_sustainable = net_biomass_delta(start, CAP, &fauna.ecology).max(0.0)
+            * fauna.hunt.provisions_per_biomass;
+        drop(fauna);
+
+        world.run_system_once(advance_labor_allocation);
+
+        let hunt = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        assert!(
+            (hunt.sustainable - expected_sustainable).abs() < 1e-6,
+            "sustainable pinned to the pre-take net regrowth"
+        );
+        assert!(
+            hunt.actual > hunt.sustainable,
+            "an Eradicate overdraw reads actual > sustainable: {} vs {}",
+            hunt.actual,
+            hunt.sustainable
+        );
     }
 }

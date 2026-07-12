@@ -105,6 +105,7 @@ fn forage_alloc(tile: UVec2, workers: u32) -> LaborAllocation {
             target: LaborTarget::Forage { tile },
             workers,
         }],
+        ..Default::default()
     }
 }
 
@@ -210,6 +211,7 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
                 },
                 workers: 1,
             }],
+            ..Default::default()
         },
     );
 
@@ -268,6 +270,7 @@ fn hunt_lapses_beyond_leash() {
                 },
                 workers: 3,
             }],
+            ..Default::default()
         },
     );
 

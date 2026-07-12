@@ -36,6 +36,8 @@ const PANEL_CONSUMED_KEYS := [
 	"pos",                 # drawer "Position:" line
 	"size",                # drawer "Size:" + allocation header Population
 	"days_of_food",        # _band_food_line
+	"food_income",         # Food summary line net rate + Gathered/Hunted breakdown
+	"food_consumption",    # Food summary line net rate + Eaten breakdown
 	"stores",              # _band_food_line provisions
 	"morale",              # _band_morale_line / _morale_is_concerning
 	"morale_delta",        # _band_morale_line trend
@@ -78,6 +80,8 @@ const FIXTURE_ENTRY := {
 	"size": 30,
 	"label": "River Band",
 	"days_of_food": 12.0,
+	"food_income": 0.83,
+	"food_consumption": 0.60,
 	"morale": 0.41,
 	"morale_delta": -0.03,
 	"morale_cause": 1,
@@ -98,8 +102,8 @@ const FIXTURE_ENTRY := {
 	"morale_climate": -0.015,
 	"morale_unrest": -0.005,
 	"labor_assignments": [
-		{"kind": "forage", "workers": 5, "target_x": 7, "target_y": 6},
-		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain"},
+		{"kind": "forage", "workers": 5, "target_x": 7, "target_y": 6, "actual_yield": 0.42, "sustainable_yield": 0.42},
+		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "actual_yield": 0.31, "sustainable_yield": 0.18},
 		{"kind": "scout", "workers": 3},
 	],
 	"stores": {"provisions": 120.0},
@@ -164,9 +168,11 @@ func _ready() -> void:
 	_expect_float(marker, "morale", 0.41)
 	_expect_float(marker, "output_multiplier", 0.72)
 	_expect_float(marker, "days_of_food", 12.0)
+	_expect_float(marker, "food_income", 0.83)
+	_expect_float(marker, "food_consumption", 0.60)
 
 	# labor_assignments must round-trip as a non-empty, value-preserving copy (the
-	# allocation panel iterates it to build the per-source steppers).
+	# allocation panel iterates it to build the per-source steppers + per-source yields).
 	var la_variant: Variant = marker.get("labor_assignments", null)
 	if not (la_variant is Array):
 		_fail("labor_assignments is not an Array (got %s)" % typeof(la_variant))
@@ -176,6 +182,10 @@ func _ready() -> void:
 			_fail("labor_assignments size %d, expected 3" % la.size())
 		elif int((la[0] as Dictionary).get("workers", -1)) != 5:
 			_fail("labor_assignments[0].workers did not round-trip (expected 5)")
+		elif absf(float((la[1] as Dictionary).get("actual_yield", -1.0)) - 0.31) > 0.0001:
+			_fail("labor_assignments[1].actual_yield did not round-trip (expected 0.31)")
+		elif absf(float((la[1] as Dictionary).get("sustainable_yield", -1.0)) - 0.18) > 0.0001:
+			_fail("labor_assignments[1].sustainable_yield did not round-trip (expected 0.18)")
 
 	# pos must be the [current_x, current_y] the drawer reads.
 	var pos_variant: Variant = marker.get("pos", null)

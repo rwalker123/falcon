@@ -599,6 +599,25 @@ for the work-range ring) and `scoutRevealRadius` (**repurposed**: now carries th
 vantage_distance_per_scout, vantage_distance_max)`, `0` with no scouts — since scouts now reveal by
 posting forward-observer vantages that see around obstacles; field name kept for wire compat).
 
+**Per-source food-income breakdown (retained yield telemetry).** `advance_labor_allocation` rebuilds
+`LaborAllocation.last_yields` each turn — one `SourceYield { actual, sustainable }` (f32 provisions)
+per assignment, **in the same index order** as `assignments` (so the snapshot zips by index). It is
+**derived, not persisted**: it is out of rollback (`#[serde]` never sees it; `labor_allocation_from_state`
+restores only the assignments, leaving it empty until the next tick) and is **excluded from
+`LaborAllocation`'s equality** (manual `PartialEq` compares assignments only) so it can't perturb the
+persisted-intent comparison. Definitions: **`actual`** = the provisions the source produced this turn
+(the value added to the larder); **`sustainable`** = what it could yield without drawing down its
+stock — **forage `sustainable ≡ actual`** (inexhaustible in today's model, no tile depletion), a
+**hunt `sustainable = net_biomass_delta(biomass_before, carrying_capacity, ecology).max(0) ×
+hunt.provisions_per_biomass × output_multiplier`** (one turn's net regrowth at the *pre-take* biomass,
+in provisions). Scout/Warrior push `{0,0}`. The snapshot surfaces this: each `LaborAssignment` row
+carries `actualYield`/`sustainableYield`, and each `PopulationCohortState` carries band-level
+`foodIncome` (Σ per-source `actual`) + `foodConsumption` (the same one-turn `food_demand` `daysOfFood`
+divides by). All derived at capture (0 on a rehydrated save before the next tick). **The client
+consumes these next** (allocation-panel rows + tooltip + ledger footer, a follow-up PR): a per-turn
+`actual > sustainable` is the client-derived **overhunting signal** — a *leading* flow indicator,
+distinct from the stock-based `ecology_phase`.
+
 This is the general mechanism the arc scales: raise reach/throughput for settlements/cities, and a
 future **trade policy** adds a consent gate + a priced return flow on *cross-faction* edges (see the
 Trade note below). *v1:* population is the universal balancing weight, so a zero-population storage
