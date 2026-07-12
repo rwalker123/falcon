@@ -1818,10 +1818,13 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 				continue
 			_fill_hex(tcol, trow, radius, origin, FORAGE_WORKED_FILL)
 			_outline_hex(tcol, trow, radius, origin, FORAGE_WORKED_OUTLINE, FORAGE_WORKED_OUTLINE_WIDTH)
-			# Forage is renewable (never overhunts) → plain green income label above the tile.
+			# Forage patch: label the take. Sustain gathers at regrowth (actual == sustainable → plain
+			# green), but a Surplus/Market/Eradicate policy overdraws (actual > sustainable + ε) → ⚠.
 			if show_yields and entry.has("actual_yield"):
 				var fcenter := _hex_center(tcol, trow, radius, origin)
-				_draw_yield_label(fcenter, float(entry.get("actual_yield", 0.0)), false, radius)
+				var forage_overdraw := float(entry.get("actual_yield", 0.0)) \
+					> float(entry.get("sustainable_yield", 0.0)) + YIELD_OVERHUNT_EPSILON
+				_draw_yield_label(fcenter, float(entry.get("actual_yield", 0.0)), forage_overdraw, radius)
 		elif kind == LABOR_KIND_HUNT:
 			var herd := _herd_by_id(String(entry.get("fauna_id", "")))
 			var herd_col := int(entry.get("target_x", -1))

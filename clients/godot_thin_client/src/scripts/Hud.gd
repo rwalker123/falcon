@@ -259,6 +259,14 @@ const LABOR_KIND_WARRIOR := "warrior"
 # Hunt take policies a labor Hunt assignment can carry (no "single" one-shot anymore).
 const LABOR_HUNT_POLICIES := ["sustain", "surplus", "market", "eradicate"]
 const DEFAULT_HUNT_POLICY := "sustain"
+# Forage take policies reuse the same option set (LABOR_HUNT_POLICIES) + the same picker, but carry
+# forage-appropriate behaviour hints (gathering a plant patch's regrowth, not culling a herd).
+const FORAGE_POLICY_HINTS := {
+    "sustain": "Sustain — gather at the patch's regrowth; it stays healthy.",
+    "surplus": "Surplus — gather more now; the patch declines.",
+    "market": "Market — gather for trade goods; faster decline.",
+    "eradicate": "Eradicate — strip the patch bare.",
+}
 # One worker per −/+ stepper press.
 const WORKER_STEP := 1
 # Leading label on the assign controls' band-picker dropdown ("which band supplies the workers").
@@ -433,6 +441,7 @@ var _send_hunt_policy: String = DEFAULT_HUNT_POLICY
 # the selected source changes.
 var _forage_assign_key: String = ""
 var _forage_assign_count: int = 0
+var _forage_assign_policy: String = DEFAULT_HUNT_POLICY
 var _hunt_assign_key: String = ""
 var _hunt_assign_count: int = 0
 var _hunt_assign_policy: String = DEFAULT_HUNT_POLICY
@@ -1098,6 +1107,19 @@ func _policy_for_hunt(band: Dictionary, herd_id: String) -> String:
                 return policy
     return DEFAULT_HUNT_POLICY
 
+## The take policy of the band's existing forage on (x,y), else the default.
+func _policy_for_forage(band: Dictionary, x: int, y: int) -> String:
+    for entry in _labor_assignments_of(band):
+        if not (entry is Dictionary):
+            continue
+        var a: Dictionary = entry
+        if String(a.get("kind", "")).to_lower() == LABOR_KIND_FORAGE \
+                and int(a.get("target_x", -1)) == x and int(a.get("target_y", -1)) == y:
+            var policy := String(a.get("policy", "")).strip_edges().to_lower()
+            if policy in LABOR_HUNT_POLICIES:
+                return policy
+    return DEFAULT_HUNT_POLICY
+
 ## A friendlier label for a herd id — the roster/selected herd's label when known.
 func _herd_label_for_id(herd_id: String) -> String:
     var herd := _find_roster_herd(herd_id)
@@ -1345,9 +1367,12 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         return {"label_suffix": "", "warn": false, "tooltip": ""}
     var actual := float(m.get("actual_yield", 0.0))
     var sustainable := float(m.get("sustainable_yield", 0.0))
-    # Forage is renewable (actual == sustainable) and can never overdraw; only depletable herds do.
-    var renewable := kind == LABOR_KIND_FORAGE
-    var overhunting := not renewable and actual > sustainable + OVERHUNT_EPSILON
+    # A source overdraws when its actual take exceeds its renewable-sustainable ceiling. Forage on
+    # Sustain gathers at the patch's regrowth (actual == sustainable → never trips, reads
+    # "· renewable"); a Surplus/Market/Eradicate forage patch OR an over-hunted herd pushes actual
+    # above sustainable → the ⚠ flag.
+    var overhunting := actual > sustainable + OVERHUNT_EPSILON
+    var renewable := kind == LABOR_KIND_FORAGE and not overhunting
     var tooltip := "Actual %s" % _format_yield(actual)
     if renewable:
         tooltip += YIELD_TOOLTIP_RENEWABLE
@@ -1515,9 +1540,15 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
             has_source = true
             var fx := int(m.get("x", -1))
             var fy := int(m.get("y", -1))
+            # Policy is now populated for forage assignments (sim writes the string field). Tag the
+            # row like Hunt does; an older snapshot without a policy falls back to no tag. Re-staffing
+            # via the stepper preserves the policy (default Sustain when absent).
+            var fpolicy := String(m.get("policy", "")).strip_edges().to_lower()
+            var forage_tag := " [%s]" % fpolicy if fpolicy in LABOR_HUNT_POLICIES else ""
+            var forage_emit_policy := fpolicy if fpolicy in LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY
             actions_block.add_child(_build_worker_stepper(
-                "Forage (%d, %d)%s" % [fx, fy, yld.label_suffix], workers, can_add,
-                func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_FORAGE, n, fx, fy, "", ""),
+                "Forage (%d, %d)%s%s" % [fx, fy, forage_tag, yld.label_suffix], workers, can_add,
+                func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_FORAGE, n, fx, fy, "", forage_emit_policy),
                 pending, yld.warn, yld.tooltip))
         elif kind == LABOR_KIND_HUNT and (workers > 0 or pending):
             has_source = true
@@ -1805,6 +1836,7 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     if source_changed:
         var staffed := _workers_for_forage(band, x, y)
         _forage_assign_count = staffed if staffed > 0 else WORKER_STEP
+        _forage_assign_policy = _policy_for_forage(band, x, y)
     # Effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
     var current := _effective_forage_workers(band, x, y)
     var pending := _pending_assigns_for(int(band.get("entity", -1))).has(_pending_key(LABOR_KIND_FORAGE, x, y, ""))
@@ -1820,6 +1852,15 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     forage_assign_controls.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
         _forage_assign_band = int(picked.get("entity", -1))
         _build_forage_assign_controls(tile_info)))
+    # Forage take policy (Sustain/Surplus/Market/Eradicate, default Sustain) — reuses the hunt policy
+    # radio + option set (LABOR_HUNT_POLICIES) but shows forage-appropriate behaviour hints. Persisted
+    # across re-renders like the hunt policy; re-seeded from current staffing when the tile changes.
+    if not (_forage_assign_policy in LABOR_HUNT_POLICIES):
+        _forage_assign_policy = DEFAULT_HUNT_POLICY
+    forage_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
+        _forage_assign_policy = policy
+        _build_forage_assign_controls(tile_info), _forage_assign_policy))
+    forage_assign_controls.add_child(_alloc_hint_label(String(FORAGE_POLICY_HINTS.get(_forage_assign_policy, ""))))
     var cap := _assignable_forage_workers(band, x, y)
     _forage_assign_count = clampi(_forage_assign_count, 0, cap)
     forage_assign_controls.add_child(_build_worker_stepper(
@@ -1844,7 +1885,7 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     # Out of range → disabled (no expedition fallback for stationary gathering).
     assign_btn.disabled = out_of_range
     assign_btn.pressed.connect(func() -> void:
-        _emit_assign_labor(band, LABOR_KIND_FORAGE, _forage_assign_count, x, y, "", ""))
+        _emit_assign_labor(band, LABOR_KIND_FORAGE, _forage_assign_count, x, y, "", _forage_assign_policy))
     forage_assign_controls.add_child(assign_btn)
 
 ## Move-band: enter tile-targeting; the destination click emits move_band_requested.
