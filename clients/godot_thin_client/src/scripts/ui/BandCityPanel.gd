@@ -36,6 +36,11 @@ const COUNT_FONT_SIZE := 11
 const ICON_BUTTON_FONT_SIZE := 13
 const HEADER_SEPARATION := 8
 const COLUMN_SEPARATION := 0
+# Clickable subject cluster ("jump to my band"): a subtle rounded hover tint (transparent
+# otherwise); same content margins in both states so hover doesn't shift the header layout.
+const SUBJECT_HOVER_CORNER_RADIUS := 5
+const SUBJECT_HOVER_PADDING_H := 4
+const SUBJECT_HOVER_PADDING_V := 2
 const ICON_BUTTON_SIZE := 24.0
 const DOCK_CELL_SIZE := 16.0
 const DOCK_CELL_SEPARATION := 3
@@ -78,6 +83,8 @@ const DOCK_EDGES: Array[int] = [SIDE_LEFT, SIDE_TOP, SIDE_BOTTOM, SIDE_RIGHT]
 
 signal reservation_changed(edge: int, size: float)
 signal cycle_requested(delta: int)
+## The header subject cluster (stage glyph + name + stage label) was clicked — "jump to my band".
+signal subject_activated
 
 var _dock_edge: int = SIDE_LEFT
 var _collapsed: bool = false
@@ -94,6 +101,7 @@ var _panel: PanelContainer
 var _seam: ColorRect
 var _header_full: HBoxContainer
 var _header_rail: VBoxContainer
+var _subject_cluster: PanelContainer
 var _stage_glyph_label: Label
 var _rail_glyph_label: Label
 var _name_label: Label
@@ -370,27 +378,53 @@ func _build_header_full() -> HBoxContainer:
 	header.name = "HeaderFull"
 	header.add_theme_constant_override("separation", HEADER_SEPARATION)
 
+	# The subject cluster (stage glyph + name + stage label) is a clickable "jump to my band"
+	# affordance: a PanelContainer (STOP + hand cursor + subtle hover tint) wrapping a
+	# mouse-transparent HBox so a click anywhere on it reaches `_on_subject_gui_input`. It expands to
+	# fill (pushing the cycler/dock-chooser right, as the plain subject VBox used to).
+	_subject_cluster = PanelContainer.new()
+	_subject_cluster.name = "SubjectCluster"
+	_subject_cluster.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_subject_cluster.mouse_filter = Control.MOUSE_FILTER_STOP
+	_subject_cluster.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_subject_cluster.tooltip_text = "Jump to this band on the map"
+	_subject_cluster.add_theme_stylebox_override("panel", _subject_stylebox(false))
+	_subject_cluster.gui_input.connect(_on_subject_gui_input)
+	_subject_cluster.mouse_entered.connect(func(): _set_subject_hover(true))
+	_subject_cluster.mouse_exited.connect(func(): _set_subject_hover(false))
+
+	var cluster_row := HBoxContainer.new()
+	cluster_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cluster_row.add_theme_constant_override("separation", HEADER_SEPARATION)
+	_subject_cluster.add_child(cluster_row)
+
 	_stage_glyph_label = Label.new()
 	_stage_glyph_label.add_theme_font_size_override("font_size", STAGE_GLYPH_FONT_SIZE)
 	_stage_glyph_label.text = DEFAULT_STAGE_GLYPH
 	_stage_glyph_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	header.add_child(_stage_glyph_label)
+	_stage_glyph_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cluster_row.add_child(_stage_glyph_label)
 
 	var subject := VBoxContainer.new()
 	subject.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	subject.add_theme_constant_override("separation", 0)
+	subject.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_name_label = Label.new()
 	_name_label.add_theme_font_size_override("font_size", NAME_FONT_SIZE)
 	_name_label.add_theme_color_override("font_color", HudStyle.INK)
 	_name_label.text = ""
 	_name_label.clip_text = true
+	_name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_stage_label = Label.new()
 	_stage_label.add_theme_font_size_override("font_size", STAGE_LABEL_FONT_SIZE)
 	_stage_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 	_stage_label.text = ""
+	_stage_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	subject.add_child(_name_label)
 	subject.add_child(_stage_label)
-	header.add_child(subject)
+	cluster_row.add_child(subject)
+
+	header.add_child(_subject_cluster)
 
 	header.add_child(_build_cycler())
 
@@ -402,6 +436,27 @@ func _build_header_full() -> HBoxContainer:
 	header.add_child(_collapse_button)
 
 	return header
+
+## Subject-cluster background: transparent normally, a subtle SIGNAL_WASH tint on hover. Same
+## content margins in both states so hovering never shifts the header.
+func _subject_stylebox(hover: bool) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = HudStyle.SIGNAL_WASH if hover else Color(0.0, 0.0, 0.0, 0.0)
+	sb.set_corner_radius_all(SUBJECT_HOVER_CORNER_RADIUS)
+	sb.content_margin_left = SUBJECT_HOVER_PADDING_H
+	sb.content_margin_right = SUBJECT_HOVER_PADDING_H
+	sb.content_margin_top = SUBJECT_HOVER_PADDING_V
+	sb.content_margin_bottom = SUBJECT_HOVER_PADDING_V
+	return sb
+
+func _set_subject_hover(hover: bool) -> void:
+	if _subject_cluster != null:
+		_subject_cluster.add_theme_stylebox_override("panel", _subject_stylebox(hover))
+
+## Left-click anywhere on the subject cluster → "jump to my band".
+func _on_subject_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		subject_activated.emit()
 
 func _build_cycler() -> HBoxContainer:
 	var cycler := HBoxContainer.new()

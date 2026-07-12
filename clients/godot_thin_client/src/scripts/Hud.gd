@@ -2537,17 +2537,31 @@ func cycle_panel_band(delta: int) -> void:
         idx = 0
     var n := _player_bands.size()
     var next_band: Dictionary = _player_bands[((idx + delta) % n + n) % n]
-    var entity := int(next_band.get("entity", -1))
-    var x := int(next_band.get("current_x", -1))
-    var y := int(next_band.get("current_y", -1))
+    _select_band_on_map(next_band)
+
+## Jump to the panel band on the map (the header title is a "jump to my band" affordance): recenter
+## + select its hex and move the ring, WITHOUT changing which band the panel shows (it's already
+## `_panel_band`). No-op when there is no panel band.
+func focus_panel_band() -> void:
+    _select_band_on_map(_panel_band)
+
+## Select a band's hex on the map — recenter + select the hex (rebuilding its roster) via
+## `alert_focus_requested` (→ MapView.focus_and_select_tile) then pin the exact band so the map ring,
+## Tile card, roster, and panel all agree. Shared by the cycler and the header "jump to band". A band
+## with no live roster entry (no tile_info) is rendered directly into the panel instead.
+func _select_band_on_map(band: Dictionary) -> void:
+    if band.is_empty():
+        return
+    var entity := int(band.get("entity", -1))
+    var x := int(band.get("current_x", -1))
+    var y := int(band.get("current_y", -1))
     if x >= 0 and y >= 0:
         emit_signal("alert_focus_requested", x, y)
     if not _find_roster_unit(entity).is_empty():
         _select_roster_occupant("unit", entity)
         emit_signal("roster_occupant_selected", "unit", entity)
     else:
-        # Band not on the focused hex's roster (e.g. no live tile_info) — render it directly.
-        _render_band_into_panel(next_band)
+        _render_band_into_panel(band)
 
 ## Player-faction check for a roster/drawer band (mirrors MapView._is_player_unit).
 func _is_player_unit(unit: Dictionary) -> bool:

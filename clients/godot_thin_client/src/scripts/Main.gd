@@ -520,6 +520,8 @@ func _connect_band_city_panel() -> void:
         hud.call("set_band_city_panel", band_city_panel)
     if band_city_panel.has_signal("cycle_requested") and hud != null and hud.has_method("cycle_panel_band") and not band_city_panel.is_connected("cycle_requested", Callable(hud, "cycle_panel_band")):
         band_city_panel.connect("cycle_requested", Callable(hud, "cycle_panel_band"))
+    if band_city_panel.has_signal("subject_activated") and hud != null and hud.has_method("focus_panel_band") and not band_city_panel.is_connected("subject_activated", Callable(hud, "focus_panel_band")):
+        band_city_panel.connect("subject_activated", Callable(hud, "focus_panel_band"))
     if band_city_panel.has_method("get_dock") and band_city_panel.has_method("current_reservation_size"):
         _apply_reservation(&"band_panel", int(band_city_panel.call("get_dock")), float(band_city_panel.call("current_reservation_size")))
 
