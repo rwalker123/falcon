@@ -8,8 +8,10 @@ class_name BandCityPanel
 ## `MapView`/`Hud`, so the map + HUD reflow off the edge rather than being
 ## overlaid). This slice is the **chrome scaffold**: settlement header (stage
 ## glyph + name + stage label), a settlement cycler, a 4-cell dock chooser, and a
-## collapse toggle, plus dock persistence. The body is a placeholder host — the
-## real band detail relocates into it in slice 3 (`get_body_container()`).
+## collapse toggle, plus dock persistence. The body hosts the relocated band detail as an ordered
+## list of **section blocks** Hud hands over via `set_band_sections` (summary, active-expeditions,
+## then the allocation sections); the panel owns those blocks and arranges them by dock aspect —
+## a vertical stack when tall (L/R), a column-flow that fills the strip when wide (T/B).
 ##
 ## All geometry/typography flows from named constants + `HudStyle` (no magic
 ## numbers, one visual-language source).
@@ -49,18 +51,15 @@ const CORNER_RADIUS := 3
 const COUNT_MIN_WIDTH := 30.0
 const BODY_EMPTY_TEXT := "No band selected"
 const BODY_SEPARATION := 8
-## Row spacing inside the allocation host (mirrors the Occupants card's AllocationPanel).
-const BAND_ALLOC_SEPARATION := 6
-# ---- responsive body layout (tall L/R stack vs wide T/B columns) -----------
-## Fixed width of the summary column when the dock is wide, so the RichTextLabel summary wraps
-## to a readable measure instead of stretching across the whole strip.
-const SUMMARY_COLUMN_WIDTH := 240.0
-## Fixed width of the allocation column when the dock is wide (~ the tall dock's content width, so
-## the stepper rows read identically — the `−/+` controls sit next to their labels). Bounded, NOT
-## expand-fill, so a wide window leaves empty space on the right instead of stretching the rows.
-const ALLOC_COLUMN_WIDTH := 360.0
-## Gap between the summary and allocation columns in wide mode.
-const WIDE_COLUMN_SEPARATION := 16
+# ---- responsive body layout (tall L/R stack vs wide T/B column-flow) -------
+## In the wide (T/B) dock the section blocks flow into a VFlowContainer bounded to the strip height
+## and wrap into columns. Each block is capped to this width, so a column is a tidy, readable measure
+## and the stepper `−/+` controls stay beside their labels (≈ the tall dock's content width). Bounded,
+## NOT expand-fill, so a wide/ultrawide window leaves empty space on the right rather than stretching
+## the rows — the flow simply spreads the sections across more columns.
+const SECTION_COLUMN_WIDTH := 340.0
+## Gap between the wrapped columns AND between blocks within a column, in wide (column-flow) mode.
+const WIDE_FLOW_SEPARATION := 16
 const CYCLE_PREV := -1
 const CYCLE_NEXT := 1
 
@@ -109,23 +108,23 @@ var _stage_label: Label
 var _count_label: Label
 var _collapse_button: Button
 var _rail_expand_button: Button
-# Body layout: `_body_host` holds two alternative layouts, one visible at a time — a single
-# vertical stack (`_tall_*`, for the tall L/R docks) and side-by-side columns (`_wide_*`, for the
-# wide T/B docks). The movable content nodes (empty_state / band_detail / band_alloc) are
-# reparented between them on dock change (`_relayout_body`), staying the SAME node objects so the
-# `get_band_detail_label()` / `get_band_alloc_container()` targets Hud renders into stay valid.
+# Body layout: `_body_host` holds two alternative layout containers, one visible at a time — a
+# vertical `ScrollContainer`→VBox stack (`_tall_*`, for the tall L/R docks) and a bounded-height
+# `VFlowContainer` (`_wide_*`, for the wide T/B docks) that flows the blocks into columns. Hud hands
+# the panel an ordered list of self-contained **section blocks** via `set_band_sections`; the panel
+# OWNS them (frees the previous set, arranges the new one). On a tall↔wide dock flip the SAME block
+# nodes are reparented into the other container (`_relayout_body`) — no Hud re-render needed. The two
+# modes use DIFFERENT container types on purpose: VFlowContainer mis-columns in the tall unbounded
+# scroll (confirmed in #103), so tall stays a plain VBox.
 var _body_host: VBoxContainer
 var _tall_scroll: ScrollContainer
 var _tall_vbox: VBoxContainer
-var _wide_row: HBoxContainer
-var _wide_summary_scroll: ScrollContainer
-var _wide_summary_col: VBoxContainer
-var _wide_alloc_scroll: ScrollContainer
+var _wide_scroll: ScrollContainer
+var _wide_flow: VFlowContainer
 var _body_is_wide: bool = false
+var _band_present: bool = false
 var _empty_state: Label
-var _band_detail: RichTextLabel
-var _band_expeditions: VBoxContainer
-var _band_alloc: VBoxContainer
+var _section_blocks: Array = []   # the Hud-built section blocks the panel currently owns
 var _dock_cells: Dictionary = {}   # edge:int -> Button
 
 func _ready() -> void:
@@ -159,35 +158,41 @@ func set_cycler(index: int, count: int) -> void:
 	else:
 		_count_label.text = "%d / %d" % [index + 1, count]
 
-## The body host (the ScrollContainer VBox that survives re-docking).
-func get_body_container() -> VBoxContainer:
-	return _tall_vbox
+## Hand the panel the ordered list of Hud-built section blocks (summary, active-expeditions, then the
+## allocation section blocks). The panel takes OWNERSHIP: it frees the blocks from the previous render
+## and arranges the new ones in the active layout (tall stack / wide column-flow). An empty array →
+## the empty-state placeholder.
+func set_band_sections(blocks: Array) -> void:
+	_free_section_blocks()
+	for b in blocks:
+		if b is Control:
+			_section_blocks.append(b)
+	if _section_blocks.is_empty():
+		set_band_present(false)
+		return
+	_band_present = true
+	if _empty_state != null:
+		_empty_state.visible = false
+	_arrange_sections()
 
-## The RichTextLabel Hud renders the band summary lines into (mirrors %OccupantDetail).
-func get_band_detail_label() -> RichTextLabel:
-	return _band_detail
-
-## The VBox Hud builds the labor-allocation panel into (mirrors %AllocationPanel).
-func get_band_alloc_container() -> VBoxContainer:
-	return _band_alloc
-
-## The VBox Hud builds the band's "Active expeditions" rows into (a separate host so an allocation
-## rebuild doesn't clear it). Sits between the summary and the allocation; survives re-docking.
-func get_band_expeditions_container() -> VBoxContainer:
-	return _band_expeditions
-
-## Toggle between the band-detail content and the empty-state placeholder.
+## Toggle between the band-detail content and the empty-state placeholder. `false` also frees any
+## owned section blocks (no band → nothing to show).
 func set_band_present(present: bool) -> void:
+	_band_present = present
+	if not present:
+		_free_section_blocks()
 	if _empty_state != null:
 		_empty_state.visible = not present
-	if _band_detail != null:
-		_band_detail.visible = present
-	if _band_alloc != null:
-		_band_alloc.visible = present
-	# The expeditions section's own visibility is driven by Hud (hidden when the band has none);
-	# here we only force it off when there is no band at all.
-	if not present and _band_expeditions != null:
-		_band_expeditions.visible = false
+	_update_body_visibility()
+
+## Free (and detach) the section blocks from the previous render. Ownership is unambiguous: the panel
+## owns exactly what it was last handed, and drops it here before taking the next set.
+func _free_section_blocks() -> void:
+	for block_variant in _section_blocks:
+		if block_variant is Node:
+			_detach(block_variant)
+			(block_variant as Node).queue_free()
+	_section_blocks.clear()
 
 ## Dock the panel to an edge (a Godot SIDE_* const). Re-anchors, persists, and
 ## re-emits the reservation so the map + HUD reflow.
@@ -271,20 +276,30 @@ func _build() -> void:
 	_header_rail = _build_header_rail()
 	column.add_child(_header_rail)
 
-	# The body host holds both alternative layouts; only one is visible per dock. Collapse hides
-	# the whole host.
+	# The body host holds both alternative layout containers + the empty-state; only one layout is
+	# visible per dock. Collapse hides the whole host.
 	_body_host = VBoxContainer.new()
 	_body_host.name = "BandBodyHost"
 	_body_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_body_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(_body_host)
 
-	# Tall layout (L/R docks): a single vertical stack in a vertical scroll.
+	# Empty state (shown only when no band is resolved — the panel otherwise hides outright when
+	# there are zero player bands). First body child so it occupies the body when no band is present.
+	_empty_state = Label.new()
+	_empty_state.text = BODY_EMPTY_TEXT
+	_empty_state.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_empty_state.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	_empty_state.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body_host.add_child(_empty_state)
+
+	# Tall layout (L/R docks): a single vertical stack of section blocks in a vertical scroll.
 	_tall_scroll = ScrollContainer.new()
 	_tall_scroll.name = "TallScroll"
 	_tall_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_tall_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_tall_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_tall_scroll.visible = false
 	_body_host.add_child(_tall_scroll)
 	_tall_vbox = VBoxContainer.new()
 	_tall_vbox.name = "TallColumn"
@@ -292,79 +307,24 @@ func _build() -> void:
 	_tall_vbox.add_theme_constant_override("separation", BODY_SEPARATION)
 	_tall_scroll.add_child(_tall_vbox)
 
-	# Wide layout (T/B docks): summary column + allocation column, side by side, each in its own
-	# vertical scroll so a short strip scrolls per-column instead of one long combined scroll.
-	_wide_row = HBoxContainer.new()
-	_wide_row.name = "WideRow"
-	_wide_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_wide_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_wide_row.add_theme_constant_override("separation", WIDE_COLUMN_SEPARATION)
-	_wide_row.visible = false
-	_body_host.add_child(_wide_row)
-	_wide_summary_scroll = ScrollContainer.new()
-	_wide_summary_scroll.name = "WideSummaryScroll"
-	_wide_summary_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_wide_summary_scroll.custom_minimum_size = Vector2(SUMMARY_COLUMN_WIDTH, 0.0)
-	# Bounded (FILL, not EXPAND): takes its fixed width, doesn't stretch across the strip.
-	_wide_summary_scroll.size_flags_horizontal = Control.SIZE_FILL
-	_wide_summary_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_wide_row.add_child(_wide_summary_scroll)
-	_wide_summary_col = VBoxContainer.new()
-	_wide_summary_col.name = "WideSummaryColumn"
-	_wide_summary_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_wide_summary_col.add_theme_constant_override("separation", BODY_SEPARATION)
-	_wide_summary_scroll.add_child(_wide_summary_col)
-	_wide_alloc_scroll = ScrollContainer.new()
-	_wide_alloc_scroll.name = "WideAllocScroll"
-	_wide_alloc_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_wide_alloc_scroll.custom_minimum_size = Vector2(ALLOC_COLUMN_WIDTH, 0.0)
-	# Bounded (FILL, not EXPAND): a fixed ~tall-dock-width column, so stepper rows don't stretch and
-	# the −/+ controls stay next to their labels. The HBox packs both columns from the left
-	# (default begin alignment); leftover width on a wide window stays empty on the right.
-	_wide_alloc_scroll.size_flags_horizontal = Control.SIZE_FILL
-	_wide_alloc_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_wide_row.add_child(_wide_alloc_scroll)
-
-	# Empty state (shown only when no band is resolved — the panel otherwise hides
-	# outright when there are zero player bands).
-	_empty_state = Label.new()
-	_empty_state.text = BODY_EMPTY_TEXT
-	_empty_state.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_empty_state.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-	_empty_state.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	# Band-detail targets Hud renders into (mirroring the Occupants card's
-	# %OccupantDetail / %AllocationPanel). These stay the same node objects across dock changes
-	# (reparented by `_relayout_body`), so Hud's render always lands.
-	_band_detail = RichTextLabel.new()
-	_band_detail.name = "BandDetail"
-	_band_detail.bbcode_enabled = true
-	_band_detail.fit_content = true
-	_band_detail.scroll_active = false
-	_band_detail.autowrap_mode = TextServer.AUTOWRAP_WORD
-	_band_detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_band_detail.visible = false
-
-	# "Active expeditions" section host — a separate node so an allocation rebuild (stepper edits)
-	# doesn't clear it. Hud populates/hides it in `_render_band_into_panel`.
-	_band_expeditions = VBoxContainer.new()
-	_band_expeditions.name = "BandExpeditions"
-	_band_expeditions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_band_expeditions.add_theme_constant_override("separation", BAND_ALLOC_SEPARATION)
-	_band_expeditions.visible = false
-
-	_band_alloc = VBoxContainer.new()
-	_band_alloc.name = "BandAllocation"
-	_band_alloc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_band_alloc.add_theme_constant_override("separation", BAND_ALLOC_SEPARATION)
-	_band_alloc.visible = false
-
-	# Home the movable nodes into the tall stack by default; `_relayout_body` (via
-	# `_apply_dock_layout` in `_ready`) moves them to the wide columns if the loaded dock is wide.
-	_tall_vbox.add_child(_empty_state)
-	_tall_vbox.add_child(_band_detail)
-	_tall_vbox.add_child(_band_expeditions)
-	_tall_vbox.add_child(_band_alloc)
+	# Wide layout (T/B docks): a VFlowContainer that flows the section blocks top→bottom and wraps
+	# into a new column when a column fills, spreading the sections across the strip width. It MUST be
+	# bounded in height to column-flow correctly, so it lives in a ScrollContainer with vertical scroll
+	# DISABLED (the scroll fits the flow to the strip height) and horizontal scroll AUTO (defensive:
+	# a narrow window whose columns overrun the width scrolls sideways instead of clipping).
+	_wide_scroll = ScrollContainer.new()
+	_wide_scroll.name = "WideScroll"
+	_wide_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_wide_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_wide_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_wide_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_wide_scroll.visible = false
+	_body_host.add_child(_wide_scroll)
+	_wide_flow = VFlowContainer.new()
+	_wide_flow.name = "WideFlow"
+	_wide_flow.add_theme_constant_override("h_separation", WIDE_FLOW_SEPARATION)
+	_wide_flow.add_theme_constant_override("v_separation", WIDE_FLOW_SEPARATION)
+	_wide_scroll.add_child(_wide_flow)
 
 	# The accent seam sits on the map-facing edge, above the card fill.
 	_seam = ColorRect.new()
@@ -545,36 +505,52 @@ func _apply_dock_layout() -> void:
 	_position_seam()
 	_relayout_body()
 
-## Switch the body between the tall single-stack layout (L/R docks) and the wide two-column layout
-## (T/B docks) by reparenting the shared content nodes. Idempotent — only reparents when the
+## Switch the body between the tall single-stack layout (L/R docks) and the wide column-flow layout
+## (T/B docks) by reparenting the SAME owned section blocks. Idempotent — only re-arranges when the
 ## tall↔wide orientation actually changes.
 func _relayout_body() -> void:
-	if _tall_vbox == null or _wide_summary_col == null or _wide_alloc_scroll == null:
+	if _tall_vbox == null or _wide_flow == null:
 		return
 	var wide := not _is_vertical_edge(_dock_edge)
-	if wide == _body_is_wide and _empty_state.get_parent() != null:
+	if wide == _body_is_wide and _blocks_are_homed():
 		return
 	_body_is_wide = wide
-	_detach(_empty_state)
-	_detach(_band_detail)
-	_detach(_band_expeditions)
-	_detach(_band_alloc)
-	if wide:
-		# Summary column: summary + the (short) expeditions list; allocation gets its own column.
-		_wide_summary_col.add_child(_empty_state)
-		_wide_summary_col.add_child(_band_detail)
-		_wide_summary_col.add_child(_band_expeditions)
-		_wide_alloc_scroll.add_child(_band_alloc)
-	else:
-		# Tall stack, top→bottom: summary, active expeditions, then labor allocation.
-		_tall_vbox.add_child(_empty_state)
-		_tall_vbox.add_child(_band_detail)
-		_tall_vbox.add_child(_band_expeditions)
-		_tall_vbox.add_child(_band_alloc)
+	_arrange_sections()
+
+## True when every owned block already lives in the active layout container (so a re-arrange is a
+## no-op). Guards the first layout pass (before any blocks exist, `_body_is_wide` may match the dock
+## but the containers are empty — that's fine, an empty arrange just toggles visibility).
+func _blocks_are_homed() -> bool:
+	var host: Node = _wide_flow if _body_is_wide else _tall_vbox
+	for block in _section_blocks:
+		if block is Node and (block as Node).get_parent() != host:
+			return false
+	return true
+
+## Home every owned section block into the active layout container and size it for that mode, then
+## refresh which container is visible. Wide caps each block to a tidy column measure
+## (`SECTION_COLUMN_WIDTH`) so the flow spreads them across columns; tall lets blocks fill the strip
+## width (min 0 → the VBox's EXPAND_FILL stretches them). Reparents only blocks not already homed.
+func _arrange_sections() -> void:
+	var host: Node = _wide_flow if _body_is_wide else _tall_vbox
+	for block_variant in _section_blocks:
+		if not (block_variant is Control):
+			continue
+		var block: Control = block_variant
+		if block.get_parent() != host:
+			_detach(block)
+			host.add_child(block)
+		block.custom_minimum_size.x = SECTION_COLUMN_WIDTH if _body_is_wide else 0.0
+	_update_body_visibility()
+
+## Show the active layout container (tall or wide) when a band is present, else neither (the
+## empty-state placeholder shows instead). Collapse is handled separately by `_refresh_collapse_state`
+## hiding the whole `_body_host`.
+func _update_body_visibility() -> void:
 	if _tall_scroll != null:
-		_tall_scroll.visible = not wide
-	if _wide_row != null:
-		_wide_row.visible = wide
+		_tall_scroll.visible = _band_present and not _body_is_wide
+	if _wide_scroll != null:
+		_wide_scroll.visible = _band_present and _body_is_wide
 
 func _detach(node: Node) -> void:
 	if node != null and node.get_parent() != null:

@@ -49,7 +49,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
 | `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the **Export Map** button (the tile Scout button was retired with the single-task `scout` command). Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`, gated by `set_command_connected` |
 | `Hud.gd` | HUD layer, legend, the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + the `%ForageAssignControls` "assign foragers" stepper) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer for **herds/expeditions**; a herd shows the `%HerdAssignControls` "assign hunters" stepper+policy picker, an expedition the `%AllocationPanel` Recall/Move panel). **Player-band detail relocated into the dockable `BandCityPanel`** (summary + `%AllocationPanel`-style labor UI render there via `_render_band_into_panel`; the Occupants card keeps only the roster row) — see "Band/City dockable panel". Turn readout (the standalone band Alerts panel was folded into the turn-orb attention model — see "Turn orb & attention model"). Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) + the snapshot-captured `_player_band` (and `_player_bands`, the full player-faction list backing the band-picker + the panel cycler) live here; roster selection emits `roster_occupant_selected`; labor edits emit `assign_labor_requested` / `move_band_requested` / `cancel_order_requested` (clear-all) |
-| `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail. Header (stage glyph/name/label + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse), body hosts the relocated band detail (`get_band_detail_label()` / `get_band_alloc_container()`). Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`. See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
+| `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail. Header (stage glyph/name/label + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse), body hosts the relocated band detail as **section blocks** via `set_band_sections` (tall = vertical stack, wide = `VFlowContainer` column-flow). Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`. See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale warn/critical thresholds + `color_for_morale`/`hex_for_morale`), shared by MapView's band dot and Hud's food/morale lines + alerts |
 | `ui/TileHabitability.gd` | Single source of truth for the Tile-card Habitability rating: buckets `TileState.habitability` (band-independent per-turn morale drain) into Hospitable/Fair/Harsh/Hostile via `tile_habitability_config.json` thresholds, with the HEALTHY/INK/WARN/DANGER color / `hex_for_rating` mapping. Consumed by `Hud._tile_terrain_lines` + `_format_detail_bbcode` |
 | `ui/TileClimate.gd` | Single source of truth for the Tile-card Climate band: maps `TileState.temperature` (°, a latitude+elevation climate, equator-in-the-middle) into Tropical/Warm/Temperate/Cool/Polar via `tile_climate_config.json` cutoffs. INFORMATIONAL only — deliberately no HEALTHY/WARN/DANGER tint (renders neutral ink), so it doesn't compete with the Habitability row's semantic palette. Consumed by `Hud._tile_terrain_lines` |
@@ -926,14 +926,16 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   highlighted), and a **collapse** toggle. `cycle_requested(delta)` → Main relays
   to `Hud.cycle_panel_band`.
 - **Content relocation (from the Occupants card).** The **player-band** branch of
-  `Hud._render_occupant_drawer` now renders into the panel body via
-  `_render_band_into_panel`: summary (`_unit_summary_lines`) → the panel's
-  `get_band_detail_label()`, and labor allocation (`_build_allocation_panel`, now
-  taking an **optional target container** — default the legacy `%AllocationPanel`
-  for the no-panel fallback, else the panel's `get_band_alloc_container()`; the
-  same target is threaded through every re-render). Herd/expedition detail stays in
-  the Occupants card (`%OccupantDetail` / `%AllocationPanel` — still the expedition
-  host **and** the no-panel fallback used by the HUD-only `ui_preview` harness).
+  `Hud._render_occupant_drawer` now renders into the panel via `_render_band_into_panel`,
+  which assembles an ordered array of **section blocks** — a summary block
+  (`_unit_summary_lines`), the Active-expeditions block, then the allocation sections
+  (`_build_allocation_sections`) — and hands them to `BandCityPanel.set_band_sections`
+  (see "Responsive body"). `_build_allocation_sections` returns the discrete Workers /
+  Current actions / Band roles / Orders / Send-expedition VBoxes; the legacy
+  `_build_allocation_panel(band, target)` wrapper still exists and fills the flat
+  `%AllocationPanel` (the no-panel `ui_preview` fallback) by appending those same blocks.
+  Herd/expedition detail stays in the Occupants card (`%OccupantDetail` / `%AllocationPanel`
+  — still the expedition host **and** the no-panel fallback).
 - **Live + persistent.** `_refresh_panel_band()` (called each snapshot from
   `update_band_alerts`) hides the panel when there are zero player bands, else
   re-resolves `_panel_band` against the fresh snapshot (by entity, falling back to
@@ -947,9 +949,9 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   (detached scout/hunt parties). The cycler + band-picker read `_player_bands`
   only, so a band + 2 expeditions reads **1/1**, not 1/3. Expeditions surface
   instead as an **Active expeditions** section on their home band (see below).
-- **Active expeditions section.** `_render_band_into_panel` → `_build_panel_expeditions`
-  renders (into the panel's own `get_band_expeditions_container()` — a **separate**
-  host from the allocation, so a stepper rebuild can't clear it) one ghost-button
+- **Active expeditions section.** `_render_band_into_panel` → `_build_panel_expeditions_block`
+  builds a self-contained expeditions **section block** (handed to the panel in the section
+  array, so it's its own flow item / stack row) with one ghost-button
   row per `_player_expeditions` entry whose `home_band_entity == _panel_band.entity`
   (correct for N bands; omitted when none). Row summary: hunt `🏹 <herd> · <Phase> ·
   <Policy>`, scout `⚑ → (x,y) · <Phase>`. A row click reuses the cycler's routing —
@@ -959,20 +961,26 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   drawer; `_panel_band` stays put. `home_band_entity` is decoded in
   `native/src/lib.rs population_to_dict` from the snapshot's `homeBandEntity`,
   flowed onto the MapView unit marker, and covered by `marker_field_guard`.
-- **Responsive body (tall vs wide).** `_relayout_body()` (hooked off
-  `_apply_dock_layout`, so it fires on every dock/collapse change; idempotent —
-  reparents only when the tall↔wide orientation flips) swaps the body layout by
-  dock aspect: **tall** (LEFT/RIGHT) = one vertical `ScrollContainer` stack
-  (summary + expeditions + allocation), **wide** (TOP/BOTTOM) = an HBox of two
-  independently scrolling columns — a fixed `SUMMARY_COLUMN_WIDTH` summary column
-  (with the expeditions section) + a fixed `ALLOC_COLUMN_WIDTH` allocation column
-  **packed from the left** (leftover strip width empty on the right, so the
-  stepper `−/+` controls stay next to their labels at any window width) — so the
-  short strip uses the width instead of one long vertical scroll. The
-  `get_band_detail_label()` / `get_band_alloc_container()` / expeditions nodes are
-  the **same objects** reparented between layouts, so Hud's render needs no
-  coordination. (The allocation stays a single vertical list within its bounded
-  column; true multi-column section-flow that *fills* an ultrawide strip is deferred.)
+- **Responsive body — section blocks (tall stack vs wide column-flow).** The band
+  content is a list of discrete **section blocks** Hud hands the panel via
+  **`set_band_sections(blocks: Array)`** (replacing the old
+  `get_band_alloc_container()`/`get_band_detail_label()`/`get_band_expeditions_container()`
+  fill-a-container contract): the summary RichTextLabel block, the Active-expeditions
+  block, then the allocation sections (Workers / Current actions / Band roles / Orders /
+  Send expedition). Hud builds them in `_render_band_into_panel` (allocation sections from
+  `_build_allocation_sections` — the per-row stepper/band-picker/pending/expedition wiring
+  is unchanged, only each row's *parent* is its section VBox now; the legacy flat
+  `%AllocationPanel` fallback still fills by appending the same blocks). The panel **owns**
+  the blocks (frees the prior set on each call) and arranges them by dock aspect
+  (`_relayout_body`/`_arrange_sections`, hooked off `_apply_dock_layout`, reparenting the
+  **same** block nodes on a tall↔wide flip — no Hud re-render): **tall** (LEFT/RIGHT) = a
+  vertical `ScrollContainer` stack (blocks fill width, unchanged look); **wide** (TOP/BOTTOM)
+  = a `VFlowContainer` bounded to the strip height (vertical scroll disabled) that **wraps
+  the blocks into multiple columns filling the width** (each block capped to
+  `SECTION_COLUMN_WIDTH`). VFlowContainer is used **only** in the wide bounded-height case —
+  in the tall unbounded scroll it mis-columns, so tall stays a plain VBox. **Caveat:** wide
+  mode has no per-column vertical scroll, so a single block taller than the ~short T/B strip
+  would clip (mitigation if it bites: raise the T/B `PANEL_HEIGHT`).
 - Verify chrome + reflow via `tools/band_panel_preview.gd`
   (`godot --path . res://tools/band_panel_preview.tscn` → `ui_preview_out/
   band_panel_{left,right,top,bottom,collapsed}.png`).
