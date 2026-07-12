@@ -164,10 +164,11 @@ Optional terrain texture graphics for the 2D map view.
 ```
 assets/terrain/
   textures/
-    base/                        # 37 terrain textures (512x512 PNG)
+    base/                        # 37 terrain textures (512x512 PNG); forest bases are grass FLOOR (no trees)
       00_deep_ocean.png
       ...
       36_aquifer_ceiling.png
+    canopy/                      # RGBA tree-crown overlays (transparency); one per canopy biome (12 today)
     edges/                       # 6 edge masks for blending (optional)
     wang/                        # Wang tile variants (future)
   terrain_config.json            # Configuration
@@ -192,16 +193,23 @@ Textures are loaded at runtime from individual PNGs and combined into a `Texture
   "use_terrain_textures": true,
   "use_edge_blending": true,
   "texture_scale": 4.0,
-  "blend_width": 0.15,
+  "blend_width": 0.42,
+  "blend_noise_cell": 6.0,
   "lod_near_distance": 50.0,
   "lod_far_distance": 200.0
 }
 ```
+Every terrain entry also carries a `"blend_class"` (`flat` | `water` | `rugged`) — the single
+source of truth for edge-blend eligibility (see Edge Blending below). `blend_width` is the
+interlock band fraction; `blend_noise_cell` is the dither value-noise cell size (px).
 
 ### Texture Loading (TerrainTextureManager)
 - Autoload singleton loads textures once at startup for the 2D map renderer
 - Builds `Texture2DArray` from individual PNGs in `textures/base/`
 - Exposes: `terrain_textures` (Texture2DArray), `terrain_config`, `use_terrain_textures`, `use_edge_blending`
+- Also builds `canopy_textures` (a second Texture2DArray of RGBA crowns from `textures/canopy/`) +
+  `canopy_layer_by_id` / `canopy_layer_for(id)` (`terrain_id → canopy array layer`, -1 = none) for the
+  blend shader's canopy overlay (see Edge Blending → Canopy overlay)
 
 ### 2D Rendering Pipeline
 - `MapView` gets textures from `TerrainTextureManager` and pre-renders hex-masked textures on startup
@@ -213,15 +221,144 @@ Textures are loaded at runtime from individual PNGs and combined into a `Texture
   are tinted toward the mist color (cloudy) via `_fow_texture_tint_for_state()`,
   Unexplored tiles fill with the fog color.
 - Runtime toggle: `T` key (`enable_terrain_textures` / `_toggle_terrain_textures`)
-- Edge blending: gradient lines drawn at terrain boundaries
+- Edge blending: a flat↔flat **per-pixel biome blend shader** at biome seams (see Edge Blending below)
 
-### Edge Blending - Overlay/Fringe Technique
-When `use_edge_blending` is enabled, the 2D renderer uses a standard overlay/fringe technique:
-- 6 edge gradient masks (`assets/terrain/textures/edges/edge_mask_*.png`)
-- 222 pre-rendered edge overlays (37 terrains × 6 edges)
-- Neighbor terrain texture fades in at hex boundaries
+### Edge Blending — per-pixel biome-blend shader (Approach B)
+When `use_edge_blending` is enabled, biome **seams** blend per-pixel in a **fragment shader**
+(`assets/terrain/terrain_blend.gdshader`): a symmetric, world-noise **dither** where the two biomes
+interlock across the boundary, NOT a gradient blur (blur ghosts on detailed textures). It is
+deliberately narrow in scope: only truly *flat* biomes blend, and only against each other; every
+other seam stays a **crisp hard edge**. Approach B replaced the earlier baked-overlay dither
+(Approach A), fixing its three caveats: **symmetric** mutual intrusion (0.5 at the exact edge on
+both sides via signed distance), **no tiling** (world-space noise varies per hex), and **cleaner
+grain** (smooth in-shader value noise).
 
-Generate edge masks: `godot --headless --script assets/terrain/EdgeMaskGenerator.gd`
+**Eligibility — `blend_class` (config, `terrain_config.json`):** every terrain carries a
+`blend_class` of `flat` | `water` | `rugged`. Blend fires for an edge **only** when this hex is
+`flat` AND the neighbour across that edge is `flat` AND their terrain ids differ. Any `water`
+(crisp shoreline) or `rugged` (forests/hills/mountains/volcanic — never bleed discrete-object
+textures) on either side → hard edge. `MapView._terrain_is_flat` / `_blend_class_code` read a cached
+`_terrain_blend_class` map (`_build_terrain_blend_class_map`); `TerrainTextureManager.blend_class_for`
+mirrors it. On the 4-texture preview this means **desert↔prairie blends**; prairie↔forest and
+forest↔ocean stay hard.
+
+**Mechanism — whole-map shader quad + hex splatmap:**
+- `terrain_blend.gdshader` (canvas_item) is drawn as **one whole-map rect** by a dedicated child
+  node `TerrainBlendQuad` (`show_behind_parent = true`, so it renders BEHIND MapView's grid/markers —
+  a separate node is required because a canvas item's ShaderMaterial applies to *all* its draw
+  commands). `MapView._setup_terrain_blend_shader` builds it once; `_update_terrain_shader_quad`
+  pushes uniforms each frame. Per fragment the shader **inverts the pointy-top odd-r hex layout**
+  (MUST match `MapView._hex_center`/`_axial_center`/`_offset_to_axial` + the `hex_origin`/`hex_radius`
+  uniforms exactly — this is the alignment contract with grid lines/selection/markers), reads its
+  hex's biome from the **`sampler2DArray`**, and — if flat — checks the 6 neighbours (wrap-aware) for
+  a different flat biome; near a qualifying shared edge it dithers the neighbour's array sample in.
+  The mix is **symmetric**: `p = clamp(0.5 + signed_dist_to_edge / (2·blend_band), 0, 1)` is 0.5 at
+  the edge on both sides; `show neighbour if p > value_noise(world_pos / noise_cell)`.
+- **id-map splatmap** (`_rebuild_terrain_shader_maps`, per snapshot): a `grid_w × grid_h` **RGBA8**
+  texture, R = terrain id, G = `blend_class` code (0 water / 1 flat / 2 rugged), B = canopy code
+  (0 none, else canopy layer + 1), A = 255, NEAREST-sampled. A
+  companion **R8 vis-map** carries FoW state (0 unexplored / 0.5 discovered / 1 active).
+- **Config levers:** `blend_width` (→ `blend_band = blend_width · radius`, the interlock half-band in
+  px) and `blend_noise_cell` (world-noise cell px). **LOD:** below `EDGE_BLEND_MIN_RADIUS`
+  (`= ICON_MIN_DETAIL_RADIUS`) the shader renders base-only (no shimmer at far zoom). **FoW:** the
+  shader applies the same discovered-mist multiply / unexplored-fog fill as the per-hex path
+  (`_fow_texture_tint_for_state` semantics) via the vis-map — it dims, never drops, the blend.
+- **Integration:** the shader is the base-terrain renderer whenever `use_terrain_textures` and no
+  overlay and `use_edge_blending` (`_shader_terrain_active`); it **bypasses the CPU map cache** (a
+  single cheap GPU draw, so the cache's per-hex-loop purpose is moot). With `use_edge_blending` off,
+  the **per-hex texture path** (`_build_hex_texture_cache` / `_draw_hex_textured_direct` +
+  `CachedMapRenderer`) renders crisp hard hexes — that is the blend-OFF reference. Overlay/solid
+  modes are unchanged.
+
+**Shoreline — foam + sand beach at land↔water coasts (universal for now):** separate from the
+flat↔flat interlock, every **land↔water** edge gets a two-sided coastal treatment in the same shader,
+reusing the signed-distance-to-shared-edge machinery. It fires for any edge where **exactly one side is
+water** (`blend_class` code 0) — so it's independent of the land side's class (**both flat-land and
+rugged-land** coasts get it) and never touches inland edges (flat↔flat interlock and rugged↔* inland
+edges stay exactly as before — both sides non-water → skipped).
+- **Foam (water side):** in a water hex within `foam_band` px of a non-water neighbour edge, `result`
+  mixes toward `foam_color` (light desaturated cyan/near-white), strongest at the seam and fading
+  seaward. The inward reach is noise-perturbed (`reach = foam_band · mix(SHORE_REACH_NOISE_MIN, 1, noise)`,
+  reusing the same `noise_cell`) so the surf reads as irregular fingers, not a clean stripe, plus a
+  faint second **inner wisp** further out (`SHORE_WISP_*` consts).
+- **Beach (land side):** in a non-water hex (flat OR rugged) within `beach_band` px of a water-neighbour
+  edge, `result` mixes toward `beach_color` (warm tan), strongest at the seam and fading inland,
+  noise-modulated the same way. Net read at a coast: land → thin beach → foam → water.
+- **Config levers** (`terrain_config.json` → `shore` block): `foam_width` / `beach_width` (fractions of
+  the hex radius → `foam_band` / `beach_band` px uniforms, computed in `MapView._update_terrain_shader_quad`
+  like `blend_width`), and `foam_color` / `beach_color` (RGB 0–255, parsed by `MapView._shore_color` into
+  normalized `vec3` uniforms). Fallbacks are the `SHORE_DEFAULT_*` consts in `MapView.gd`. LOD-suppressed
+  and FoW-tinted like the rest of the shader (shares the `blend_enabled` gate + the vis-map).
+- **Per-biome shore gating is deliberately NOT built yet** — all coasts render identical beach+foam.
+  Verify via `tools/map_preview.gd` State Q (`_biome_band_terrain` now carves an ocean bay so the ocean
+  borders BOTH prairie (grassy shore) and woodland (wooded shore)) → `map_biome_blend.png` +
+  `map_biome_shore_seam.png` (coast close-up).
+
+**Canopy overlay — forest = grass floor + overhanging tree crowns:** a forest biome is split into a
+**ground layer** that blends like any flat land and a **canopy overlay** of whole crowns that overhang
+the hex boundary and thin out, so a forest edge is a natural treeline instead of a razor-cut hex
+silhouette. Today the only canopy biome is **12 (mixed_woodland)** — its `blend_class` is now **`flat`**
+(the grass floor flat↔flat-blends with prairie and gets a shoreline at coasts, like any flat land); 13
+(boreal_taiga) stays `rugged` (no canopy asset yet).
+- **Assets:** `textures/base/NN_name.png` is the **forest-floor grass** (trees removed);
+  `textures/canopy/NN_name.png` (**new dir**, RGBA crowns on transparency) is the canopy.
+- **Second Texture2DArray:** `TerrainTextureManager` builds `canopy_textures` (a companion
+  `Texture2DArray` from `textures/canopy/`, same once-only `Image.load_from_file` pattern as the base)
+  plus `canopy_layer_by_id` (`terrain_id → canopy array layer`, `canopy_layer_for()` returns -1 for
+  none). Only biomes with a canopy file get a layer. Two `sampler2DArray`s in **one** canvas shader work
+  fine (base `biome_array` + `canopy_tex`).
+- **Canopy code in the splatmap:** the id-map is now **RGBA8** (was RG8) — R=terrain id, G=blend_class
+  code, **B=canopy code** (`0` none, else canopy layer + 1), A unused (`MapView._canopy_code`). This
+  reuses the per-neighbour id-map fetch the shader already does rather than a separate id-indexed uniform
+  array, so both own and neighbour canopy state come from one texture read.
+- **Overhang density D (shader):** using the same signed-distance-to-shared-edge machinery vs the
+  **canopy↔non-canopy** boundary (`s` = signed distance, + inside the forest): D = 1 deep inside, **~0.5
+  at the exact edge**, ramping to 1 over `canopy_softness` px inside and down to 0 at `canopy_overhang` px
+  **outside** the forest (crowns overhang the neighbour, then fade). The treeline is world-noise
+  perturbed (`CANOPY_TREELINE_NOISE`, reusing `noise_cell`) so it's bumpy, not a clean arc. Interior
+  forest hexes (all-canopy neighbours) → D=1. Composited **after** blend+shoreline, before FoW:
+  `result = mix(result, crown.rgb, crown.a · D)`.
+- **World-space canopy UV:** `cuv = v_world / (2·hex_radius) · canopy_scale` — continuous across hexes
+  (a crown straddling a boundary reads as one tree) and, at `canopy_scale = 1.0`, the same texel density
+  as the base (which the shader maps one texture per hex). FoW-tinted like the rest.
+- **Canopy LOD is DECOUPLED from the blend LOD** (own `canopy_lod_enabled` uniform, `radius ≥
+  canopy_min_radius`, NOT the flat↔flat `blend_enabled`/`EDGE_BLEND_MIN_RADIUS` gate). `canopy_min_radius`
+  sits WELL BELOW `EDGE_BLEND_MIN_RADIUS` (3.0 vs 16.0) so the canopy pass keeps running at far zoom:
+  interior forest density (D=1) persists into a **distinct darker-green forest mass** (a forest region no
+  longer reads as bare grassland when zoomed out); the edge overhang naturally shrinks to nothing as hexes
+  shrink. The crown array (`canopy_textures`) is built **with mipmaps** and the `canopy_tex` sampler uses
+  **trilinear** (`filter_linear_mipmap`) filtering, so far-zoom crowns AVERAGE into a smooth tone instead of
+  shimmering/aliasing. (The base biome array has no mipmaps — `filter_linear` only; the canopy is the layer
+  that visibly aliases at far zoom because whole crowns tile many times per tiny hex. If the base ever
+  shimmers it can take mipmaps the same way.)
+- **Config levers** (`terrain_config.json` → `canopy` block): `overhang_width` / `softness_width`
+  (fractions of the hex radius → `canopy_overhang` / `canopy_softness` px uniforms, like `blend_width`),
+  `texture_scale` (→ `canopy_scale`), and `canopy_min_radius` (the decoupled canopy LOD floor in px, ≪
+  `EDGE_BLEND_MIN_RADIUS`). Fallbacks are the `CANOPY_DEFAULT_*` consts in `MapView.gd`.
+- **Caveat — canopy is shader-only:** the blend-OFF **per-hex CPU path** (`use_edge_blending = false`,
+  `map_biome_hard.png`) renders only the base, so forests there read as the **bare grass floor** (no
+  crowns). The live client runs blend-on, so this affects only the reference/fallback path.
+- Verify via `tools/map_preview.gd` State Q → `map_biome_blend.png` + `map_biome_woods_edge_seam.png`
+  (the forest block borders prairie floor left + ocean top/right): whole crowns overhang + thin into a
+  treeline, interior stays dense, the prairie↔forest floor blends softly, and the forest coast shows
+  beach/foam with canopy overhanging the water. Far-zoom decoupled-canopy LOD via State Q-far →
+  `map_biome_farzoom.png` (same four bands on a large grid so hexes go tiny): the woodland band reads as a
+  distinct darker-green forest mass vs the prairie grass, smooth (mipmapped), not shimmering.
+
+**Texture readback fix (kept from A):** `TerrainTextureManager` retains the CPU-side layer Images
+(`_layer_images`) captured once at build time; `get_terrain_image` serves duplicates from it and
+**never** calls `Texture2DArray.get_layer_data()` again (a second readback returned a blank image on
+some drivers, whitening the base). The `sampler2DArray` uniform is the same `terrain_textures`.
+
+Verify via `tools/map_preview.gd` State Q → `ui_preview_out/map_biome_hard.png` (blend off, the
+reference) vs `map_biome_blend.png` (Approach B on), plus `map_biome_blend_seam.png` (desert↔prairie
+close-up): the flat pair blends symmetrically, prairie↔forest / forest↔ocean stay crisp, and terrain
+stays aligned with the grid.
+
+**Fallback considered:** a MultiMesh (one instance per hex) was the fallback if whole-map inverse-hex
+alignment couldn't be matched; the splatmap alignment held, so the single-quad path was chosen (fewer
+moving parts, no per-frame instance transforms). **Future:** blue-noise sample instead of hash value
+noise; optional per-hex noise rotation to further break up any residual regularity.
 
 ---
 

@@ -140,6 +140,32 @@ const HOVER_HEX_OUTLINE_WIDTH := 1.5
 # Zoom level-of-detail: below this hex radius (far zoom, tiny hexes) skip the
 # secondary edge icons + overflow/count chips; draw only the primary token.
 const ICON_MIN_DETAIL_RADIUS := 16.0
+# Edge blending (Approach B — per-pixel biome-blend shader; see CLAUDE.md → Edge Blending):
+# below this hex radius the shader renders base-only (no blend) so far-zoom tiny hexes don't shimmer.
+# The band width + value-noise cell fallbacks mirror terrain_config.json (blend_width/blend_noise_cell).
+const EDGE_BLEND_MIN_RADIUS := ICON_MIN_DETAIL_RADIUS
+const EDGE_BLEND_DEFAULT_WIDTH := 0.42
+const EDGE_BLEND_DEFAULT_NOISE_CELL := 6.0
+# Shoreline (land↔water coasts): foam wash on the water side + sand beach on the land side. Widths are
+# fractions of the hex radius (× radius → px band, like blend_width). Fallbacks mirror terrain_config's
+# "shore" block; universal for now (every land↔water edge blends, no per-biome gating).
+const SHORE_DEFAULT_FOAM_WIDTH := 0.55
+const SHORE_DEFAULT_BEACH_WIDTH := 0.4
+const SHORE_DEFAULT_FOAM_COLOR := Vector3(0.874, 0.949, 0.968)
+const SHORE_DEFAULT_BEACH_COLOR := Vector3(0.847, 0.733, 0.541)
+# Canopy overlay (forest = grass floor + overhanging tree crowns): overhang reach + treeline softness
+# are fractions of the hex radius (× radius → px); texture_scale is the world-UV multiplier (1.0 = one
+# crown tile per hex, matching the base). Fallbacks mirror terrain_config's "canopy" block.
+const CANOPY_DEFAULT_OVERHANG_WIDTH := 0.5
+const CANOPY_DEFAULT_SOFTNESS_WIDTH := 0.45
+const CANOPY_DEFAULT_TEXTURE_SCALE := 1.0
+# Canopy LOD gate, DECOUPLED from the flat↔flat blend gate (EDGE_BLEND_MIN_RADIUS). Set WELL BELOW it so
+# the canopy pass keeps running at far zoom — interior forest density (D=1) persists into a distinct
+# darker-green forest mass (the edge overhang naturally shrinks to nothing as hexes shrink). Trilinear
+# mipmap filtering on the crown array (TerrainTextureManager) keeps that far-zoom mass smooth, not shimmery.
+const CANOPY_DEFAULT_MIN_RADIUS := 3.0
+# Out-of-map fill behind the hex grid (matches the direct-path background clear).
+const TERRAIN_BG_COLOR := Color(0.3, 0.35, 0.25, 1.0)
 const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
 const GRID_LINE_COLOR := Color(0.4, 0.4, 0.4, 0.7)
 const SQRT3 := 1.7320508075688772
@@ -433,10 +459,16 @@ var _show_grid_lines: bool = true
 var _terrain_grid_width: int = 0
 var _terrain_grid_height: int = 0
 var _cached_terrain_ids: PackedInt32Array = PackedInt32Array()
-var _edge_mask_textures: Array[ImageTexture] = []  # 6 edge masks for overlay blending
-var _edge_overlay_cache: Dictionary = {}  # (terrain_id, edge_idx) -> ImageTexture
 var _hex_alpha_mask: PackedByteArray = PackedByteArray()  # Pre-computed hex mask for texture rendering
-var _terrain_priority: Dictionary = {}  # terrain_id -> priority (higher wins)
+var _terrain_blend_class: Dictionary = {}  # terrain_id -> "flat"|"water"|"rugged" (edge-blend eligibility)
+# Approach B — per-pixel biome-blend shader (terrain_blend.gdshader). A whole-map quad child renders
+# the blended terrain behind MapView's own draws; MapView feeds it the biome array + a per-hex id-map
+# (splatmap) + the exact hex-layout uniforms. Supersedes A's baked-overlay dither when use_edge_blending.
+var _terrain_blend_quad: Node2D = null
+var _terrain_blend_material: ShaderMaterial = null
+var _terrain_blend_ready: bool = false
+var _terrain_id_map_tex: ImageTexture = null   # RGBA8: R=terrain id, G=blend_class code (0 water/1 flat/2 rugged), B=canopy code (0=none else layer+1), A=255
+var _terrain_vis_map_tex: ImageTexture = null  # R8: 0 unexplored / 0.5 discovered / 1 active
 var culture_layer_grid: PackedInt32Array = PackedInt32Array()
 var highlighted_culture_layer_ids: PackedInt32Array = PackedInt32Array()
 var highlighted_culture_layer_set: Dictionary = {}
@@ -689,6 +721,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_minimap_2d_data_version += 1
 	# Invalidate map cache when terrain data changes
 	_invalidate_map_cache()
+	# Rebuild the Approach-B blend-shader splatmaps (id-map + FoW vis-map) from the new terrain/fog.
+	_rebuild_terrain_shader_maps()
 	var palette_raw: Variant = overlays.get("terrain_palette", {})
 	terrain_palette = palette_raw if typeof(palette_raw) == TYPE_DICTIONARY else {}
 	terrain_tags_overlay = PackedInt32Array(overlays.get("terrain_tags", []))
@@ -942,28 +976,45 @@ func _draw() -> void:
 	_last_visible_row_start = (0.0 - origin.y) / hex_row_height
 	_last_visible_row_end = (viewport_size.y - origin.y) / hex_row_height
 
-	# === CACHED TERRAIN RENDERING ===
-	var use_cache := _map_cache_enabled and _cache_viewport != null and _cache_texture != null
-	var cache_needs_render := false
+	# Visible logical col/row span (for the shader-branch grid + drives the direct path's own ranges).
+	var col_start: int = int((-origin.x) / hex_col_width) - 2
+	var col_end: int = int((viewport_size.x - origin.x) / hex_col_width) + 2
+	var row_start: int = maxi(0, int((-origin.y) / hex_row_height) - 2)
+	var row_end: int = mini(grid_height, int((viewport_size.y - origin.y) / hex_row_height) + 2)
+	if not _wrap_horizontal:
+		col_start = maxi(0, col_start)
+		col_end = mini(grid_width, col_end)
 
-	if use_cache:
-		# Check if we need to re-render the cache
-		if not _cache_valid or not _is_pan_within_cache_buffer():
-			cache_needs_render = true
-			_render_map_cache()
-
-	# If cache is valid and doesn't need re-render, use it
-	# Otherwise fall back to direct rendering (SubViewport won't be ready until next frame)
-	var using_cached_render := use_cache and _cache_valid and not cache_needs_render
-	var pan_delta := pan_offset - _cache_pan_offset
-
-	if using_cached_render:
-		# Draw the cached texture with offset
-		var draw_pos := -_cache_display_offset + pan_delta
-		draw_texture_rect(_cache_texture, Rect2(draw_pos, Vector2(_cache_viewport.size)), false)
+	# === TERRAIN RENDERING ===
+	if _shader_terrain_active():
+		# Approach B: the whole-map blend shader draws the base terrain on the behind-quad; MapView only
+		# adds grid lines on top here. The CPU cache is bypassed (the shader is a single cheap GPU draw).
+		_update_terrain_shader_quad(radius, origin, viewport_size)
+		_draw_hex_grid_overlay(radius, origin, col_start, col_end, row_start, row_end)
 	else:
-		# Fallback: Direct rendering (used when cache is re-rendering or disabled)
-		_draw_terrain_direct(radius, origin, viewport_size)
+		_hide_terrain_shader_quad()
+		# === CACHED TERRAIN RENDERING (per-hex textures / solid / overlay — blend OFF or non-textured) ===
+		var use_cache := _map_cache_enabled and _cache_viewport != null and _cache_texture != null
+		var cache_needs_render := false
+
+		if use_cache:
+			# Check if we need to re-render the cache
+			if not _cache_valid or not _is_pan_within_cache_buffer():
+				cache_needs_render = true
+				_render_map_cache()
+
+		# If cache is valid and doesn't need re-render, use it
+		# Otherwise fall back to direct rendering (SubViewport won't be ready until next frame)
+		var using_cached_render := use_cache and _cache_valid and not cache_needs_render
+		var pan_delta := pan_offset - _cache_pan_offset
+
+		if using_cached_render:
+			# Draw the cached texture with offset
+			var draw_pos := -_cache_display_offset + pan_delta
+			draw_texture_rect(_cache_texture, Rect2(draw_pos, Vector2(_cache_viewport.size)), false)
+		else:
+			# Fallback: Direct rendering (used when cache is re-rendering or disabled)
+			_draw_terrain_direct(radius, origin, viewport_size)
 
 	# === OVERLAYS (always drawn fresh) ===
 	# These need to respond to hover, selection, and other dynamic state
@@ -1200,6 +1251,7 @@ func set_fow_enabled(enabled: bool) -> void:
 	# When enabling FoW, ensure we're in terrain view (no overlay)
 	if _fow_enabled and active_overlay_key != "":
 		active_overlay_key = ""
+	_rebuild_terrain_shader_maps()  # refresh the blend-shader vis-map for the new FoW state
 	_invalidate_map_cache()  # FoW changes require fresh cache render
 	queue_redraw()
 	_emit_overlay_legend()
@@ -3920,14 +3972,14 @@ func handle_hex_click(col: int, row: int, button_index: int) -> void:
 # --- Terrain Texture System for 2D View (textures loaded via TerrainTextureManager autoload) ---
 
 func _init_terrain_rendering() -> void:
-	## Initialize 2D terrain rendering from TerrainTextureManager
+	## Initialize 2D terrain rendering from TerrainTextureManager. The per-hex texture cache (blend-OFF
+	## renderer) and the Approach-B blend shader both set up ONCE here; the layer Images are captured in
+	## the manager (no GPU readback on rebuild). The id-map/vis-map splatmaps rebuild per snapshot.
 	var mgr := TerrainTextureManager
 	if mgr.terrain_textures != null and mgr.terrain_textures.get_layers() > 0:
-		_build_terrain_priority_map()
-		_build_hex_texture_cache()
-		if mgr.use_edge_blending:
-			_load_edge_masks()
-			_build_edge_overlay_cache()
+		_build_terrain_blend_class_map()
+		_build_hex_texture_cache()  # per-hex textures = the blend-OFF (use_edge_blending=false) renderer
+		_setup_terrain_blend_shader()
 
 func _build_hex_texture_cache() -> void:
 	## Pre-render hex-masked textures from the terrain atlas
@@ -4049,199 +4101,178 @@ func enable_terrain_textures(enabled: bool) -> void:
 func _toggle_terrain_textures() -> void:
 	enable_terrain_textures(not TerrainTextureManager.use_terrain_textures)
 
-func _load_edge_masks() -> void:
-	# Load the 6 edge gradient mask textures
-	_edge_mask_textures.clear()
-	const EDGE_PATH := "res://assets/terrain/textures/edges/"
+func _build_terrain_blend_class_map() -> void:
+	## Cache terrain_id -> blend_class ("flat"|"water"|"rugged") from config. Only flat↔flat seams
+	## blend; water/rugged always render a hard edge. Single source of truth: terrain_config.json.
+	_terrain_blend_class.clear()
+	var terrains: Array = TerrainTextureManager.terrain_config.get("terrains", [])
+	for entry: Variant in terrains:
+		if entry is Dictionary:
+			var tid: int = int(entry.get("id", -1))
+			if tid >= 0:
+				_terrain_blend_class[tid] = String(entry.get("blend_class", "rugged"))
 
-	for edge_idx: int in range(6):
-		var filename := "edge_mask_%d.png" % edge_idx
-		var filepath := EDGE_PATH + filename
-		var abs_path := ProjectSettings.globalize_path(filepath)
+func _terrain_is_flat(terrain_id: int) -> bool:
+	## Flat biomes are the only ones eligible to blend across a seam (unknown ids → not flat).
+	return String(_terrain_blend_class.get(terrain_id, "rugged")) == "flat"
 
-		if FileAccess.file_exists(abs_path):
-			var img := Image.load_from_file(abs_path)
-			if img != null:
-				var tex := ImageTexture.create_from_image(img)
-				_edge_mask_textures.append(tex)
-			else:
-				_edge_mask_textures.append(null)
-		else:
-			_edge_mask_textures.append(null)
+func _blend_class_code(terrain_id: int) -> int:
+	## Numeric blend class for the id-map G channel: 0 = water, 1 = flat, 2 = rugged.
+	var c := String(_terrain_blend_class.get(terrain_id, "rugged"))
+	if c == "flat":
+		return 1
+	if c == "water":
+		return 0
+	return 2
 
-	var loaded := _edge_mask_textures.filter(func(t: Variant) -> bool: return t != null).size()
-	print("[MapView] Loaded edge masks: %d/6" % loaded)
+func _canopy_code(terrain_id: int) -> int:
+	## Canopy code for the id-map B channel: 0 = no canopy, else canopy-array layer + 1.
+	var layer := TerrainTextureManager.canopy_layer_for(terrain_id)
+	return clampi(layer + 1, 0, 255)
 
-func _build_edge_overlay_cache() -> void:
-	## Pre-render edge overlays for each terrain type and edge direction
-	## These are the terrain textures masked by the edge gradient
-	var mgr := TerrainTextureManager
-	if mgr.terrain_textures == null or _edge_mask_textures.size() < 6:
+func _setup_terrain_blend_shader() -> void:
+	## Create the Approach-B whole-map blend quad + its ShaderMaterial ONCE. The quad renders BEHIND
+	## MapView's own draws (grid/markers) via show_behind_parent, so the material only shades terrain.
+	## Non-fatal if the shader is missing — MapView then falls back to the per-hex textured path.
+	var shader: Shader = load("res://assets/terrain/terrain_blend.gdshader")
+	if shader == null:
+		push_warning("[MapView] terrain_blend.gdshader missing — blend shader disabled")
 		return
+	_terrain_blend_material = ShaderMaterial.new()
+	_terrain_blend_material.shader = shader
+	_terrain_blend_material.set_shader_parameter("biome_array", TerrainTextureManager.terrain_textures)
+	# Canopy: a SECOND Texture2DArray in the same canvas shader. Disabled (and the sampler harmlessly
+	# bound to the base array) when no canopy asset exists.
+	var canopy_arr: Texture2DArray = TerrainTextureManager.canopy_textures
+	_terrain_blend_material.set_shader_parameter("canopy_enabled", canopy_arr != null)
+	_terrain_blend_material.set_shader_parameter("canopy_tex", canopy_arr if canopy_arr != null else TerrainTextureManager.terrain_textures)
+	var QuadScript: GDScript = preload("res://src/scripts/TerrainBlendQuad.gd")
+	_terrain_blend_quad = QuadScript.new()
+	_terrain_blend_quad.name = "TerrainBlendQuad"
+	_terrain_blend_quad.material = _terrain_blend_material
+	_terrain_blend_quad.show_behind_parent = true
+	_terrain_blend_quad.visible = false
+	add_child(_terrain_blend_quad)
+	move_child(_terrain_blend_quad, 0)  # keep it first so it draws behind
+	_terrain_blend_ready = true
+	print("[MapView] Terrain blend shader ready (Approach B)")
 
-	_edge_overlay_cache.clear()
-	var size := _hex_texture_size
-	var layer_count: int = mgr.terrain_textures.get_layers()
+func _has_terrain_textures() -> bool:
+	return TerrainTextureManager.use_terrain_textures and TerrainTextureManager.terrain_textures != null
 
-	for terrain_id: int in range(layer_count):
-		# Use the fixed get_terrain_image() which properly extracts from Texture2DArray
-		var source_img: Image = mgr.get_terrain_image(terrain_id)
-		if source_img == null:
-			continue
+func _shader_terrain_active() -> bool:
+	## The Approach-B shader renders the base terrain when textures are on, no overlay is selected, and
+	## edge blending is enabled. Otherwise the per-hex texture path (blend OFF) or overlay/solid path runs.
+	return _terrain_blend_ready and TerrainTextureManager.use_edge_blending \
+		and active_overlay_key == "" and _has_terrain_textures()
 
-		# Scale source to our texture size
-		var scaled_source: Image = source_img.duplicate()
-		scaled_source.resize(size, size)
-		if scaled_source.get_format() != Image.FORMAT_RGBA8:
-			scaled_source.convert(Image.FORMAT_RGBA8)
-
-		# Get source pixel data once for all edges
-		var src_data: PackedByteArray = scaled_source.get_data()
-
-		for edge_idx: int in range(6):
-			var mask_tex: ImageTexture = _edge_mask_textures[edge_idx]
-			if mask_tex == null:
-				continue
-
-			var mask_img: Image = mask_tex.get_image()
-			if mask_img == null:
-				continue
-
-			# Scale mask to match
-			var scaled_mask: Image = mask_img.duplicate()
-			scaled_mask.resize(size, size)
-			if scaled_mask.get_format() != Image.FORMAT_RGBA8:
-				scaled_mask.convert(Image.FORMAT_RGBA8)
-			var mask_data: PackedByteArray = scaled_mask.get_data()
-
-			# Create masked overlay using direct byte manipulation (much faster)
-			var overlay_data: PackedByteArray = src_data.duplicate()
-			for i in range(size * size):
-				# Copy alpha from mask (byte offset 3 in each RGBA8 pixel)
-				overlay_data[i * 4 + 3] = mask_data[i * 4 + 3]
-
-			var overlay := Image.create_from_data(size, size, false, Image.FORMAT_RGBA8, overlay_data)
-			var overlay_tex := ImageTexture.create_from_image(overlay)
-			var cache_key := "%d_%d" % [terrain_id, edge_idx]
-			_edge_overlay_cache[cache_key] = overlay_tex
-
-	print("[MapView] Built edge overlay cache: %d textures" % _edge_overlay_cache.size())
-
-func _build_terrain_priority_map() -> void:
-	## Build a map of terrain_id -> priority from config
-	## Higher priority terrains draw fringes onto lower priority terrains
-	_terrain_priority.clear()
-
+func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: Vector2) -> void:
+	## Push the exact hex-layout + blend uniforms (so terrain aligns with grid/markers), size the quad
+	## to the usable rect (bounds the shader to the area beside the Inspector strip), and show it.
+	if _terrain_blend_material == null or _terrain_blend_quad == null:
+		return
+	if _terrain_id_map_tex == null:
+		_rebuild_terrain_shader_maps()
 	var config: Dictionary = TerrainTextureManager.terrain_config
-	var categories: Dictionary = config.get("categories", {})
-	var terrains: Array = config.get("terrains", [])
+	var blend_width: float = clampf(float(config.get("blend_width", EDGE_BLEND_DEFAULT_WIDTH)), 0.02, 1.0)
+	var noise_cell: float = maxf(float(config.get("blend_noise_cell", EDGE_BLEND_DEFAULT_NOISE_CELL)), 1.0)
+	var m := _terrain_blend_material
+	m.set_shader_parameter("grid_w", grid_width)
+	m.set_shader_parameter("grid_h", grid_height)
+	m.set_shader_parameter("hex_radius", radius)
+	m.set_shader_parameter("hex_origin", origin)
+	m.set_shader_parameter("wrap_h", _wrap_horizontal)
+	m.set_shader_parameter("blend_band", blend_width * radius)  # interlock half-band width in px
+	m.set_shader_parameter("noise_cell", noise_cell)
+	m.set_shader_parameter("blend_enabled", radius >= EDGE_BLEND_MIN_RADIUS)  # LOD: base-only at far zoom
+	var shore: Dictionary = config.get("shore", {})
+	var foam_frac: float = clampf(float(shore.get("foam_width", SHORE_DEFAULT_FOAM_WIDTH)), 0.0, 2.0)
+	var beach_frac: float = clampf(float(shore.get("beach_width", SHORE_DEFAULT_BEACH_WIDTH)), 0.0, 2.0)
+	m.set_shader_parameter("foam_band", foam_frac * radius)   # foam reach on the water side (px)
+	m.set_shader_parameter("beach_band", beach_frac * radius) # beach reach on the land side (px)
+	m.set_shader_parameter("foam_color", _shore_color(shore.get("foam_color", null), SHORE_DEFAULT_FOAM_COLOR))
+	m.set_shader_parameter("beach_color", _shore_color(shore.get("beach_color", null), SHORE_DEFAULT_BEACH_COLOR))
+	var canopy: Dictionary = config.get("canopy", {})
+	var overhang_frac: float = clampf(float(canopy.get("overhang_width", CANOPY_DEFAULT_OVERHANG_WIDTH)), 0.0, 2.0)
+	var softness_frac: float = clampf(float(canopy.get("softness_width", CANOPY_DEFAULT_SOFTNESS_WIDTH)), 0.02, 2.0)
+	var canopy_scale: float = maxf(float(canopy.get("texture_scale", CANOPY_DEFAULT_TEXTURE_SCALE)), 0.05)
+	var canopy_min_radius: float = maxf(float(canopy.get("canopy_min_radius", CANOPY_DEFAULT_MIN_RADIUS)), 0.0)
+	m.set_shader_parameter("canopy_overhang", overhang_frac * radius) # crown overhang past the treeline (px)
+	m.set_shader_parameter("canopy_softness", softness_frac * radius) # inner treeline ramp half-width (px)
+	m.set_shader_parameter("canopy_scale", canopy_scale)
+	# Canopy LOD is DECOUPLED from the blend LOD (blend_enabled): the canopy pass keeps running far below
+	# EDGE_BLEND_MIN_RADIUS so forests stay a distinct darker-green mass at far zoom (see CANOPY_DEFAULT_MIN_RADIUS).
+	m.set_shader_parameter("canopy_lod_enabled", radius >= canopy_min_radius)
+	m.set_shader_parameter("fow_enabled", _fow_enabled)
+	m.set_shader_parameter("bg_color", TERRAIN_BG_COLOR)
+	m.set_shader_parameter("fog_color", _fow_fog_fill_color)
+	m.set_shader_parameter("mist_color", Vector3(_fow_mist_color.r, _fow_mist_color.g, _fow_mist_color.b))
+	m.set_shader_parameter("mist_blend", _fow_mist_blend)
+	_terrain_blend_quad.visible = true
+	_terrain_blend_quad.set_rect_size(viewport_size)
+	_terrain_blend_quad.queue_redraw()
 
-	# Build category -> priority map
-	var category_priority: Dictionary = {}
-	for cat_name: String in categories.keys():
-		var cat_data: Dictionary = categories[cat_name]
-		category_priority[cat_name] = int(cat_data.get("wang_priority", 3))
+func _hide_terrain_shader_quad() -> void:
+	if _terrain_blend_quad != null and _terrain_blend_quad.visible:
+		_terrain_blend_quad.visible = false
 
-	# Assign priority to each terrain based on its category
-	for terrain_data: Variant in terrains:
-		if terrain_data is Dictionary:
-			var tid: int = int(terrain_data.get("id", 0))
-			var cat: String = str(terrain_data.get("category", "land"))
-			_terrain_priority[tid] = category_priority.get(cat, 3)
+func _shore_color(raw, fallback: Vector3) -> Vector3:
+	## Parse a config [r,g,b] (0–255) shoreline color into a normalized Vector3 shader uniform, falling
+	## back to the named default when the key is absent/malformed.
+	if raw is Array and raw.size() >= 3:
+		return Vector3(float(raw[0]), float(raw[1]), float(raw[2])) / 255.0
+	return fallback
 
-	print("[MapView] Built terrain priority map: %d terrains" % _terrain_priority.size())
-
-func _get_terrain_priority(terrain_id: int) -> int:
-	return int(_terrain_priority.get(terrain_id, 3))
-
-
-func _draw_terrain_edge_blending(radius: float, origin: Vector2, col_start: int = 0, col_end: int = -1) -> void:
-	# Draw edge overlays using the overlay/fringe technique
-	# Only HIGHER priority terrains draw fringes onto LOWER priority terrains
-	if _cached_terrain_ids.is_empty() or _terrain_grid_width == 0:
+func _rebuild_terrain_shader_maps() -> void:
+	## (Re)build the id-map (RGBA8: R=terrain id, G=blend_class code, B=canopy code, A unused) + vis-map
+	## (R8: FoW state) splatmaps, one texel per hex, from the current terrain + FoW. Called each snapshot.
+	## NEAREST-sampled in-shader.
+	if grid_width <= 0 or grid_height <= 0 or _cached_terrain_ids.is_empty():
 		return
-	if _edge_overlay_cache.is_empty():
+	var w := grid_width
+	var h := grid_height
+	var id_bytes := PackedByteArray()
+	id_bytes.resize(w * h * 4)
+	var vis_bytes := PackedByteArray()
+	vis_bytes.resize(w * h)
+	for y in range(h):
+		for x in range(w):
+			var idx := y * w + x
+			var tid := _terrain_id_at(x, y)
+			id_bytes[idx * 4] = clampi(tid, 0, 255) if tid >= 0 else 0
+			id_bytes[idx * 4 + 1] = _blend_class_code(tid)
+			id_bytes[idx * 4 + 2] = _canopy_code(tid)
+			id_bytes[idx * 4 + 3] = 255
+			var v := 255
+			if _fow_enabled:
+				var state := _visibility_state_at(x, y)
+				v = 255 if state == "active" else (128 if state == "discovered" else 0)
+			vis_bytes[idx] = v
+	var id_img := Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, id_bytes)
+	_terrain_id_map_tex = ImageTexture.create_from_image(id_img)
+	var vis_img := Image.create_from_data(w, h, false, Image.FORMAT_R8, vis_bytes)
+	_terrain_vis_map_tex = ImageTexture.create_from_image(vis_img)
+	if _terrain_blend_material != null:
+		_terrain_blend_material.set_shader_parameter("id_map", _terrain_id_map_tex)
+		_terrain_blend_material.set_shader_parameter("vis_map", _terrain_vis_map_tex)
+
+## Draw hex grid lines onto MapView's own canvas — used in the shader-terrain branch, where the base
+## terrain is the behind-quad rather than the per-hex loop. Mirrors _draw_terrain_direct's grid loop
+## (each hex paints only its right + lower edges; boundary rows/cols add their unshared edges).
+func _draw_hex_grid_overlay(radius: float, origin: Vector2, col_start: int, col_end: int, row_start: int, row_end: int) -> void:
+	if not _show_grid_lines or radius < 12.0:
 		return
-
-	var tex_size := radius * 2.0
-
-	# Use default column range if not specified
-	if col_end < 0:
-		col_end = _terrain_grid_width
-
-	for y: int in range(_terrain_grid_height):
-		for logical_x: int in range(col_start, col_end):
-			var data_x: int = posmod(logical_x, _terrain_grid_width) if _wrap_horizontal else logical_x
-			if not _wrap_horizontal and (logical_x < 0 or logical_x >= _terrain_grid_width):
+	for y in range(row_start, row_end):
+		for logical_x in range(col_start, col_end):
+			if not _wrap_horizontal and (logical_x < 0 or logical_x >= grid_width):
 				continue
-			var center := _hex_center(logical_x, y, radius, origin)
-			var terrain_id := _terrain_id_at(data_x, y)
-			var my_priority := _get_terrain_priority(terrain_id)
-
-			# Check each of the 6 neighbors
-			for edge_idx: int in range(6):
-				var n_col: int = data_x + _get_neighbor_offset_x_2d(y, edge_idx)
-				var n_row: int = y + _get_neighbor_offset_y_2d(edge_idx)
-
-				# Wrap neighbor column if horizontal wrapping is enabled
-				if _wrap_horizontal:
-					n_col = posmod(n_col, _terrain_grid_width)
-				elif n_col < 0 or n_col >= _terrain_grid_width:
-					continue
-
-				if n_row < 0 or n_row >= _terrain_grid_height:
-					continue
-
-				var neighbor_id := _terrain_id_at(n_col, n_row)
-
-				if neighbor_id == terrain_id:
-					continue
-
-				var neighbor_priority := _get_terrain_priority(neighbor_id)
-
-				# Only draw fringe if neighbor has HIGHER priority than me
-				# (neighbor's terrain extends into my hex)
-				if neighbor_priority <= my_priority:
-					continue
-
-				# Get the edge overlay for the neighbor's terrain at THIS edge
-				# (the fringe extends from neighbor toward my center)
-				var cache_key := "%d_%d" % [neighbor_id, edge_idx]
-				var overlay_tex: ImageTexture = _edge_overlay_cache.get(cache_key)
-				if overlay_tex == null:
-					continue
-
-				# Draw the overlay at this hex's position
-				var rect := Rect2(
-					center.x - tex_size * 0.5,
-					center.y - tex_size * 0.5,
-					tex_size,
-					tex_size
-				)
-				draw_texture_rect(overlay_tex, rect, false)
-
-func _get_neighbor_offset_x_2d(row: int, dir: int) -> int:
-	# Hex neighbor X offsets for odd-r offset coordinates
-	var is_odd := (row % 2) == 1
-	match dir:
-		0: return 1   # E
-		1: return 1 if is_odd else 0   # NE
-		2: return 0 if is_odd else -1  # NW
-		3: return -1  # W
-		4: return 0 if is_odd else -1  # SW
-		5: return 1 if is_odd else 0   # SE
-	return 0
-
-func _get_neighbor_offset_y_2d(dir: int) -> int:
-	# Hex neighbor Y offsets
-	match dir:
-		0: return 0   # E
-		1: return -1  # NE
-		2: return -1  # NW
-		3: return 0   # W
-		4: return 1   # SW
-		5: return 1   # SE
-	return 0
+			var center: Vector2 = _hex_center(logical_x, y, radius, origin)
+			var pts := _hex_points(center, radius)
+			draw_polyline(PackedVector2Array([pts[5], pts[0], pts[1], pts[2]]), GRID_LINE_COLOR, 2.0, true)
+			if y == 0:
+				draw_polyline(PackedVector2Array([pts[3], pts[4], pts[5]]), GRID_LINE_COLOR, 2.0, true)
+			if not _wrap_horizontal and logical_x == 0:
+				draw_polyline(PackedVector2Array([pts[2], pts[3]]), GRID_LINE_COLOR, 2.0, true)
 
 # --- End Terrain Texture System ---
 
