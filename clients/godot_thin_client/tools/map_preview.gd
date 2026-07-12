@@ -68,6 +68,16 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_band_work")
 
+	# State A-far — the SAME worked band on a large grid so fitted hexes go tiny (radius <
+	# ICON_MIN_DETAIL_RADIUS): the per-source yield labels + ⚠ must LOD-SUPPRESS so far zoom stays a
+	# clean token/highlight view, not floating-text soup. Regression guard for the yield-label LOD gate.
+	_map.display_snapshot(_snapshot_far_work())
+	_map.selected_unit_id = BAND_ENTITY
+	_map.selected_tile = Vector2i(-1, -1)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_band_yield_farzoom")
+
 	# State B — the same band with scouts staffed: scouting no longer draws a map highlight
 	# (its effect is the extended sight visible in the fog; `scout_reveal_radius` is a
 	# sight-range bonus, not a reveal disc). This state is a regression guard that NO blue
@@ -360,10 +370,12 @@ func _deer_herd() -> Dictionary:
 	return {"id": "game_deer_07", "label": "Red Deer (game_deer_07)", "x": 13, "y": 6, "biomass": 800.0, "huntable": true}
 
 func _snapshot_work() -> Dictionary:
+	# Per-source yields annotate the worked tiles/herd on the map. Forage is renewable (actual ==
+	# sustainable, no ⚠); the hunt OVERDRAWS (0.46 > 0.20) so its herd label shows the amber ⚠ flag.
 	var assignments := [
-		{"kind": "forage", "workers": 5, "target_x": 7, "target_y": 6},
-		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8},
-		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 13, "target_y": 6},
+		{"kind": "forage", "workers": 5, "target_x": 7, "target_y": 6, "actual_yield": 0.48, "sustainable_yield": 0.48},
+		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "actual_yield": 0.27, "sustainable_yield": 0.27},
+		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 13, "target_y": 6, "actual_yield": 0.46, "sustainable_yield": 0.20},
 		{"kind": "warrior", "workers": 2},
 	]
 	return _base_snapshot(_band(assignments, 2, 2), [_deer_herd()])
@@ -490,6 +502,29 @@ func _snapshot_herd_on_tile() -> Dictionary:
 
 ## Large grid so fitted hexes are tiny (< ICON_MIN_DETAIL_RADIUS): bands + secondaries present, but
 ## only the primary tokens should draw (secondary icons + chips suppressed by LOD).
+## The worked band (forage tile + overdrawing hunt, both carrying yields) on the FAR grid, so a fit
+## makes hexes tiny — exercises the yield-label LOD suppression at far zoom.
+func _snapshot_far_work() -> Dictionary:
+	var terrain: Array = []
+	terrain.resize(FAR_GRID_W * FAR_GRID_H)
+	terrain.fill(TERRAIN_ID)
+	var cx := FAR_GRID_W / 2
+	var cy := FAR_GRID_H / 2
+	var assignments := [
+		{"kind": "forage", "workers": 5, "target_x": cx + 1, "target_y": cy, "actual_yield": 0.48, "sustainable_yield": 0.48},
+		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": cx + 2, "target_y": cy, "actual_yield": 0.46, "sustainable_yield": 0.20},
+	]
+	var band := _with_stage({
+		"entity": BAND_ENTITY, "faction": 0, "current_x": cx, "current_y": cy, "size": 30,
+		"id": "Band 1", "work_range": 2, "scout_reveal_radius": 2, "labor_assignments": assignments,
+	}, STAGE_NOMADIC)
+	return {
+		"grid": {"width": FAR_GRID_W, "height": FAR_GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": [band],
+		"herds": [{"id": "game_deer_07", "label": "Red Deer (game_deer_07)", "x": cx + 2, "y": cy, "biomass": 800.0, "huntable": true}],
+	}
+
 func _snapshot_far_zoom() -> Dictionary:
 	var terrain: Array = []
 	terrain.resize(FAR_GRID_W * FAR_GRID_H)

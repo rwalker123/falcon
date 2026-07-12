@@ -102,6 +102,37 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_stepper_foreign")
 
+	# Food + Morale summary-line disclosures — force-expanded in BOTH dock layouts (tall LEFT / wide
+	# TOP). The static harness can't click, so the per-band override opens each collapsed-by-default
+	# breakdown to confirm the click-expanded layout renders without clipping.
+	# (a) Food breakdown open (indented Gathered/Hunted/Eaten under the Food line).
+	_hud.update_band_alerts([_band_fixture()])
+	_hud._breakdown_expanded = {"food:904": true}
+	_hud._refresh_panel_band()
+	for state in [{"edge": SIDE_LEFT, "name": "band_panel_food_expanded_left"},
+			{"edge": SIDE_TOP, "name": "band_panel_food_expanded_top"}]:
+		_panel.set_dock(state["edge"])
+		await _settle()
+		await _save(state["name"])
+
+	# (b) Morale breakdown open (same disclosure mechanism, indented contributions under Morale).
+	_hud._breakdown_expanded = {"morale:904": true}
+	_hud._refresh_panel_band()
+	for state in [{"edge": SIDE_LEFT, "name": "band_panel_morale_expanded_left"},
+			{"edge": SIDE_TOP, "name": "band_panel_morale_expanded_top"}]:
+		_panel.set_dock(state["edge"])
+		await _settle()
+		await _save(state["name"])
+	_hud._breakdown_expanded = {}
+
+	# (c) CONCERNING food (net negative + low runway): the breakdown AUTO-shows (no click) under a red net.
+	_hud.update_band_alerts([_concerning_food_band_fixture()])
+	for state in [{"edge": SIDE_LEFT, "name": "band_panel_food_concerning_left"},
+			{"edge": SIDE_TOP, "name": "band_panel_food_concerning_top"}]:
+		_panel.set_dock(state["edge"])
+		await _settle()
+		await _save(state["name"])
+
 	get_tree().quit()
 
 func _settle() -> void:
@@ -132,8 +163,15 @@ func _band_fixture() -> Dictionary:
 		"pos": [71, 18],
 		"current_x": 71,
 		"current_y": 18,
-		"days_of_food": 7.0,
+		# Good food state: long larder runway (≥ warn) + positive net (0.94 − 0.68 = +0.26) → the Food
+		# line reads "… · +0.26 /turn" (green) with the category breakdown collapsed (clickable open).
+		"days_of_food": 22.0,
+		# Good morale (collapsed ▸ disclosure); the signed Layer-1 contributions give the morale
+		# breakdown real content when expanded.
 		"morale": 0.82,
+		"morale_settling": 0.012,
+		"morale_terrain": -0.010,
+		"morale_climate": -0.006,
 		"stores": {"provisions": 84.0},
 		"working_age": 16,
 		"idle_workers": 3,
@@ -143,13 +181,36 @@ func _band_fixture() -> Dictionary:
 		"settlement_stage_icon": "🛖",
 		"settlement_stage_label": "Camp",
 		"activity": "forage",
+		# Band food flow on the Food summary line: net income vs consumption + the Gathered/Hunted
+		# breakdown (summed from the assignment actual_yields by kind).
+		"food_income": 0.94,
+		"food_consumption": 0.68,
+		# The hunt overdraws (actual 0.46 > sustainable 0.20) so the ⚠ overhunting flag renders on its
+		# allocation row; the forage is renewable (actual == sustainable) so it never flags.
 		"labor_assignments": [
-			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18},
-			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17},
+			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
+			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20},
 			{"kind": "scout", "workers": 2},
 			{"kind": "warrior", "workers": 2},
 		],
 	}
+
+## A CONCERNING food state: net-negative flow (income 0.30 < consumption 0.95 → net −0.65) + a low
+## larder runway (4 days). Both trip the concerning gate, so the category breakdown auto-shows under
+## a red net figure. Reuses band 904's chrome fields but a distinct entity so the cycler stays 1/1.
+func _concerning_food_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 906
+	band["id"] = "Band 4"
+	band["days_of_food"] = 4.0
+	band["food_income"] = 0.30
+	band["food_consumption"] = 0.95
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "target_x": 71, "target_y": 18, "actual_yield": 0.15, "sustainable_yield": 0.15},
+		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.15, "sustainable_yield": 0.20},
+		{"kind": "scout", "workers": 2},
+	]
+	return band
 
 ## A detached SCOUT expedition outfitted by band 904 (home_band_entity), outbound to (39,26).
 func _scout_expedition_fixture() -> Dictionary:

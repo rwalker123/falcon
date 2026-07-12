@@ -260,6 +260,20 @@ const HUNT_WORKED_RING_FACTOR := 0.62   # of hex radius
 const HUNT_WORKED_RING_WIDTH := 3.0
 const HUNT_WORKED_LINK_COLOR := Color(0.92, 0.34, 0.30, 0.60)
 const HUNT_WORKED_LINK_WIDTH := 2.5
+# On-tile per-source yield annotations on the selected band's worked forage tiles / hunted herds:
+# the assignment's `actual_yield` (food/turn) as a small drop-shadow label above the tile center
+# (reusing `_draw_marker_glyph`), sign-formatted to 2 decimals, food-income green — with a WARN-amber
+# `⚠` overhunting flag when `actual > sustainable + ε` (mirrors the allocation panel; forage is
+# renewable so never trips). ε/decimals mirror Hud's `OVERHUNT_EPSILON`/`YIELD_DECIMALS` (separate
+# script, so named here rather than shared). LOD-suppressed below ICON_MIN_DETAIL_RADIUS.
+# Font scales with the hex radius (clamped) so the label reads at any zoom, not just tiny at big hexes.
+const YIELD_LABEL_SIZE_FACTOR := 0.16     # of hex radius
+const YIELD_LABEL_MIN_FONT := 11
+const YIELD_LABEL_MAX_FONT := 24
+const YIELD_LABEL_OFFSET_FACTOR := 0.78   # above the tile center, as a fraction of the hex radius
+const YIELD_LABEL_DECIMALS := 2
+const YIELD_OVERHUNT_EPSILON := 0.001
+const YIELD_OVERHUNT_FLAG := "⚠"
 # Optimistic PENDING actions (Early-Game Labor slice 3b UX): a distinct amber DASHED style
 # (clearly apart from the solid confirmed green/cyan/blue/red) marks a just-issued assign/move
 # that the snapshot hasn't confirmed yet. Ties to the amber "· pending" rows in the HUD panel.
@@ -1796,7 +1810,9 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 					continue
 				_outline_hex(col, row, radius, origin, WORK_RANGE_OUTLINE, WORK_RANGE_OUTLINE_WIDTH)
 
-	# 2. Worked forage tiles + 3. hunted herds, from the band's assignments.
+	# 2. Worked forage tiles + 3. hunted herds, from the band's assignments. Each staffed source is
+	# annotated with its per-turn `actual_yield` (LOD-suppressed at far zoom so tiny hexes stay clean).
+	var show_yields := radius >= ICON_MIN_DETAIL_RADIUS
 	for entry_variant in _labor_assignments_of_marker(band):
 		if not (entry_variant is Dictionary):
 			continue
@@ -1811,6 +1827,10 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 				continue
 			_fill_hex(tcol, trow, radius, origin, FORAGE_WORKED_FILL)
 			_outline_hex(tcol, trow, radius, origin, FORAGE_WORKED_OUTLINE, FORAGE_WORKED_OUTLINE_WIDTH)
+			# Forage is renewable (never overhunts) → plain green income label above the tile.
+			if show_yields and entry.has("actual_yield"):
+				var fcenter := _hex_center(tcol, trow, radius, origin)
+				_draw_yield_label(fcenter, float(entry.get("actual_yield", 0.0)), false, radius)
 		elif kind == LABOR_KIND_HUNT:
 			var herd := _herd_by_id(String(entry.get("fauna_id", "")))
 			var herd_col := int(entry.get("target_x", -1))
@@ -1825,6 +1845,11 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			if absf(band_center.x - hc.x) <= last_map_size.x * 0.4:
 				draw_line(band_center, hc, HUNT_WORKED_LINK_COLOR, HUNT_WORKED_LINK_WIDTH)
 			draw_arc(hc, radius * HUNT_WORKED_RING_FACTOR, 0, TAU, 28, HUNT_WORKED_COLOR, HUNT_WORKED_RING_WIDTH)
+			# Depletable herd: label the take, flagging overhunting when actual > sustainable + ε.
+			if show_yields and entry.has("actual_yield"):
+				var overhunt := float(entry.get("actual_yield", 0.0)) \
+					> float(entry.get("sustainable_yield", 0.0)) + YIELD_OVERHUNT_EPSILON
+				_draw_yield_label(hc, float(entry.get("actual_yield", 0.0)), overhunt, radius)
 
 	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
 	#    the snapshot hasn't confirmed yet. Drawn last so it reads on top of the confirmed styles.
@@ -2090,6 +2115,24 @@ func _draw_marker_glyph(center: Vector2, glyph: String, size: int, color: Color)
 	var baseline := Vector2(center.x - text_size.x * 0.5, center.y + size * 0.34)
 	draw_string(font, baseline + MARKER_GLYPH_SHADOW_OFFSET, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, MARKER_GLYPH_SHADOW_COLOR)
 	draw_string(font, baseline, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
+
+## A small drop-shadow per-source yield label above a worked tile's center (reuses `_draw_marker_glyph`
+## for legibility over terrain). Food-income green normally; WARN amber + a `⚠` suffix when `overhunt`.
+func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float) -> void:
+	var text := _format_yield_signed(value)
+	var color := HudStyle.HEALTHY
+	if overhunt:
+		text += " " + YIELD_OVERHUNT_FLAG
+		color = HudStyle.WARN
+	var font_size := clampi(int(radius * YIELD_LABEL_SIZE_FACTOR), YIELD_LABEL_MIN_FONT, YIELD_LABEL_MAX_FONT)
+	var label_center := tile_center + Vector2(0.0, -radius * YIELD_LABEL_OFFSET_FACTOR)
+	_draw_marker_glyph(label_center, text, font_size, color)
+
+## Signed, fixed-decimal food-rate string for the on-tile yield labels ("+0.48" / "-0.30"). Mirrors
+## Hud's `_format_signed` (separate script); actual yields are ≥0 but the sign keeps it explicit.
+func _format_yield_signed(value: float) -> String:
+	var magnitude := String.num(absf(value), YIELD_LABEL_DECIMALS).pad_decimals(YIELD_LABEL_DECIMALS)
+	return ("+" if value >= 0.0 else "-") + magnitude
 
 ## A small dark rounded pill with centered text — shared by the primary `×N` count
 ## badge and the secondary `+N` overflow chip (draw_rect body + two end-cap circles).
@@ -2405,6 +2448,11 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"travel_target_x": int(entry.get("travel_target_x", 0)),
 			"travel_target_y": int(entry.get("travel_target_y", 0)),
 			"days_of_food": float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS)),
+			# Band food ledger (food/turn) — total income across worked sources vs total consumption.
+			# Carried onto the marker so the allocation panel's ledger footer reads them off the
+			# selected-unit copy (the per-source actual/sustainable yields ride inside labor_assignments).
+			"food_income": float(entry.get("food_income", 0.0)),
+			"food_consumption": float(entry.get("food_consumption", 0.0)),
 			"morale": float(entry.get("morale", 1.0)),
 			"morale_delta": float(entry.get("morale_delta", 0.0)),
 			"morale_cause": int(entry.get("morale_cause", 0)),

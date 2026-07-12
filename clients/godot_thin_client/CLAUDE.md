@@ -550,7 +550,14 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     "current actions" report — a `Population <size> · Workers <working_age> (Idle <n>)` header (spells
     out that only the ~16 working-age labor, not the 30 people — children/elders are dependents), a
     **Current actions** section with one `−/+` **worker-stepper** row per staffed Forage tile / Hunt
-    herd (from the cohort's `labor_assignments`; an empty-state hint when none), then a **Band roles**
+    herd (from the cohort's `labor_assignments`; an empty-state hint when none). **Each source row
+    headlines its per-turn food yield** (`… +0.31 /turn`, the assignment's `actual_yield`), with a
+    WARN-tinted `⚠` **overhunting flag** when `actual > sustainable + ε` (`OVERHUNT_EPSILON`;
+    depletable herds only — forage is renewable, so `actual == sustainable` and it never trips) and a
+    `tooltip_text` spelling out actual-vs-sustainable (forage reads `… · renewable`).
+    `actual_yield`/`sustainable_yield` are decoded per assignment in `native/src/lib.rs` (inside
+    `labor_assignments`); the band-level food flow (net rate + Gathered/Hunted/Eaten breakdown) lives
+    on the **Food summary line**, not here — see "Band food status". Then a **Band roles**
     section with the always-shown **Scout** + **Warrior** rows (even at 0), each with a one-line hint so
     the `−/+` steppers read as "this is how you staff this standing role" (Scout's hint reads "Extends
     the band's sight — more scouts see further"; more staffed scouts extend the band's actual sight
@@ -575,7 +582,14 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     actually-assignable; the old Chebyshev square wrongly lit its diagonal corners, which are 3
     hex-steps away), and the **hunted
     herds** (red ring on the herd tile + a band→herd link, drawn wherever the herd is since hunt reach
-    = `work_range` + leash). **Scouting draws no map highlight** — staffed scouts extend the band's
+    = `work_range` + leash). **Per-source yield annotations** (`_draw_yield_label`): each staffed forage
+    tile / hunted herd is labeled with its `actual_yield` (food/turn, from the assignment inside
+    `labor_assignments`) as a small drop-shadow number above the tile center (reusing `_draw_marker_glyph`),
+    food-income **green**; a hunt that overdraws (`actual_yield > sustainable_yield + ε`, reusing the
+    panel's overhunting test) reads **WARN amber + a `⚠`** (forage is renewable so never trips). The
+    label font scales with the hex radius (clamped) and the whole annotation is **LOD-suppressed below
+    `ICON_MIN_DETAIL_RADIUS`** (like the secondary markers) so far zoom stays clean. Scout/Warrior
+    produce no food → no label. **Scouting draws no map highlight** — staffed scouts extend the band's
     real sight range (visible directly in the fog as a wider Active radius); the old faint-blue scouted
     disc was removed because `scout_reveal_radius` no longer means a reveal-disc radius — it now carries
     the band's effective sight-range bonus (extra tiles beyond base, `0` when no scouts), which the
@@ -713,6 +727,22 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   (`_is_player_unit`); (2) `Hud._band_food_line` adds a `Food  <N>  (<D> days)`
   row to the band selection panel, tinted by the thresholds via `_format_detail_bbcode`;
   (3) `MapView._draw_supply_links` faint-chains player bands sharing a `supply_network_id` (`0` = solo).
+  **Band food flow on the Food line** (snapshot `PopulationCohortState.foodIncome`/`foodConsumption`,
+  decoded as `food_income`/`food_consumption`, flowed onto the MapView unit marker + guarded by
+  `marker_field_guard`): for a **player** band with real flow, `_band_food_line` appends the **net
+  per-turn rate** — `Food 15 (19 days) · −0.77 /turn` — where net = `food_income − food_consumption`,
+  tinted green (≥0) / red (<0). The days-to-empty stays only in the `(N days)` figure; it is not
+  repeated. The `Food` label is a **click-to-expand disclosure** (a `▸/▾` caret) toggling a
+  **category breakdown** beneath it — indented `▲ +X  Gathered` / `▲ +Y  Hunted` / `▼ −Z  Eaten`
+  sub-lines (Gathered/Hunted = Σ per-source `actual_yield` by kind, Eaten = `food_consumption`),
+  rendered through the **shared morale-breakdown path** in `_format_detail_bbcode` (income ▲ green,
+  eaten ▼ amber). The breakdown **auto-shows when food is concerning** (`_food_is_concerning`:
+  net-negative OR runway below the warn threshold, mirroring `_morale_is_concerning`), else it's
+  collapsed but reachable via the click. Older snapshot / no flow → the bare `Food N (D days)` line,
+  no net/disclosure. **The Food + Morale rows share ONE disclosure mechanism** (see "Band morale
+  readout" for the shared helpers) — see `_register_disclosure` / `_on_detail_meta_clicked` /
+  `_breakdown_open_for` / `_breakdown_expanded`. (The label + click are wired on BOTH the Occupants-card
+  drawer's `%OccupantDetail` and the dockable Band/City panel's `get_band_detail_label()`.)
 - **Band morale readout** (snapshot `PopulationCohortState.morale`, decoded in `native/src/lib.rs`
   `population_to_dict` as `morale`, a 0–1 float on each cohort dict; flowed into the MapView unit marker
   in `_rebuild_unit_markers`): a band can shrink while well-fed when a harsh tile erodes morale until
@@ -747,17 +777,23 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     (config `band_status_config.json` `output.{warn,critical}` = `0.85`/`0.60`; near-full reads
     neutral ink, *not* green — it's a productivity note, not a "good"). Ties productivity to morale.
   - **Itemized morale breakdown** (`_morale_breakdown_lines`): the four signed contributions
-    (their sum IS `morale_delta`) as indented sub-lines (e.g. `    ▲ +1.0%  settling`), shown when
-    morale is concerning (`_morale_is_concerning`: below warn **or** falling past
-    `MORALE_TREND_EPSILON`). Only contributions above `BandFoodStatus.morale_breakdown_epsilon()`
-    (config `morale.breakdown_epsilon` = `0.002`) list. Labels: `settling`,
-    `harsh terrain (<terrain_label>)` (matches the headline cause treatment), `harsh climate`, and
-    `unrest`/`culture` by sign. `_format_detail_bbcode` tints each row two-tone by its sign glyph
-    (▲ = HEALTHY green, ▼ = WARN amber — deliberately not a rainbow); the indented breakdown lines
-    are intercepted before the KV split.
+    (their sum IS `morale_delta`) as indented sub-lines (e.g. `    ▲ +1.0%  settling`). Only
+    contributions above `BandFoodStatus.morale_breakdown_epsilon()` (config `morale.breakdown_epsilon`
+    = `0.002`) list. Labels: `settling`, `harsh terrain (<terrain_label>)` (matches the headline cause
+    treatment), `harsh climate`, and `unrest`/`culture` by sign. `_format_detail_bbcode` tints each
+    row two-tone by its sign glyph (▲ = HEALTHY green, ▼ = WARN amber — deliberately not a rainbow);
+    the indented breakdown lines are intercepted before the KV split. The **Morale row is a
+    click-to-expand disclosure identical to Food** (the `▸/▾` caret + `meta_clicked` toggle share
+    `_register_disclosure` / `_on_detail_meta_clicked` / `_breakdown_open_for` / `_breakdown_expanded`,
+    keyed `"morale:<entity>"`): **auto-shown when concerning** (`_morale_is_concerning`: below warn
+    **or** falling past `MORALE_TREND_EPSILON`), else collapsed but expandable via the click. The
+    contributions always compute so the good state can be manually expanded; the disclosure is offered
+    only when there's actually something to show (a contribution above epsilon, or the concerning
+    recovery line).
   - **Recovery guidance** (`RECOVERY_GUIDANCE_TEXT`): a dim `↑ Recover: move to Hospitable ground ·
-    Scout · Hunt` line (the real levers, NOT harvest), appended under the breakdown.
-    `_split_detail_kv` skips lines beginning with `↑` so it renders as a dim sentence, not a KV row.
+    Scout · Hunt` line (the real levers, NOT harvest), appended under the breakdown **only when
+    morale is concerning** (a healthy band that manually expands its breakdown is not told to
+    "recover"). `_split_detail_kv` skips lines beginning with `↑` so it renders as a dim sentence.
   - **Action morale hints**: the Scout button tooltip (`MORALE_HINT_SCOUT`, "(+morale)") and the four
     persistent Hunt/Follow policy tooltips (Sustain/Surplus/Market/Eradicate get `MORALE_HINT_PERSISTENT`
     appended, "(+morale/turn)") advertise the positive levers; the one-shot Single policy does not.
@@ -797,7 +833,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `docs/plan_hud_nav_turn_orb.md`): the bottom-right orb replaces the "Advance Turn" button and
   is a **generic attention hub**. Readiness = the attention registry is **empty** → a calm cyan
   `SIGNAL` pulse ("nothing needs you"); any entries → the pulse stops and a **count badge** tinted
-  by the highest severity shows, and clicking the orb face toggles a **reasons popover** (built at
+  by the highest severity shows. **The orb face always advances the turn** (`_on_face_pressed`): with
+  an **empty** registry the click emits `advance_requested` directly (no popover — an empty popover has
+  nothing to review, and once mis-stretched to full height it pushed its own `Advance ▸` footer
+  off-screen, trapping the player); with **entries** it toggles a **reasons popover** (built at
   runtime, `HudStyle.card_stylebox()`) — one row per entry (severity stripe + kind icon + label +
   detail + right-aligned `Jump →`), highest-severity first, plus an `Advance ▸` footer. The orb
   knows nothing about producers; it renders a list of generic **Attention** dicts:

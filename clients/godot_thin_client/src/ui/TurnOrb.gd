@@ -146,7 +146,7 @@ func _ready() -> void:
 	_face.custom_minimum_size = Vector2(FACE_DIAMETER, FACE_DIAMETER)
 	_face.size = Vector2(FACE_DIAMETER, FACE_DIAMETER)
 	_face.add_theme_font_size_override("font_size", GLYPH_FONT_SIZE)
-	_face.pressed.connect(toggle_popover)
+	_face.pressed.connect(_on_face_pressed)
 	_orb_area.add_child(_face)
 	_position_face()
 
@@ -173,7 +173,13 @@ func set_attention(entries: Array) -> void:
 	_entries.sort_custom(_sort_by_severity_desc)
 	_recompute()
 	if _popover_open:
-		_rebuild_popover()
+		# If the registry emptied while the popover was open, there is nothing left
+		# to triage — close it rather than rebuild an empty reasons list (an empty
+		# popover has no purpose, and the orb face now advances directly instead).
+		if _entries.is_empty():
+			_close_popover()
+		else:
+			_rebuild_popover()
 
 func set_turn(turn: int) -> void:
 	_turn = turn
@@ -184,6 +190,19 @@ func set_turn(turn: int) -> void:
 func open_popover() -> void:
 	if not _popover_open:
 		toggle_popover()
+
+## Orb-face click. Advancing the turn must ALWAYS be possible from the orb, so the
+## click behaviour depends on the attention registry:
+##   • empty ("nothing needs you") → advance the turn directly, exactly as the
+##     popover's `Advance ▸` footer would, and open NO popover (an empty reasons
+##     list has nothing to review — and, unpositioned, rendered as a blank box that
+##     pushed its own Advance affordance off-screen, trapping the player).
+##   • non-empty → toggle the reasons popover so the player can triage first.
+func _on_face_pressed() -> void:
+	if _entries.is_empty():
+		emit_signal("advance_requested")
+		return
+	toggle_popover()
 
 func toggle_popover() -> void:
 	if _popover_open:

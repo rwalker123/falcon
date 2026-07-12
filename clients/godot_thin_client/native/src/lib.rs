@@ -3563,6 +3563,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("generation", cohort.generation() as i64);
     let _ = dict.insert("faction", cohort.faction() as i64);
     let _ = dict.insert("days_of_food", cohort.daysOfFood() as f64);
+    // Band food ledger (food/turn): total realized income across all worked sources and total
+    // consumption across the cohort's population, summarized in the allocation panel's ledger footer.
+    let _ = dict.insert("food_income", cohort.foodIncome() as f64);
+    let _ = dict.insert("food_consumption", cohort.foodConsumption() as f64);
     // Data-driven settlement stage (id/label/icon are opaque pass-through strings resolved
     // by the sim from `settlement_stage_config.json`). Missing/pre-stage snapshots yield
     // `None` → empty strings, which the client renders as a neutral non-circular fallback
@@ -3640,6 +3644,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = entry.insert("workers", assignment.workers() as i64);
             let _ = entry.insert("target_x", assignment.targetX() as i64);
             let _ = entry.insert("target_y", assignment.targetY() as i64);
+            // Per-source food yield (food/turn): `actual_yield` is this turn's realized take, headlined
+            // on the allocation row; `sustainable_yield` is the renewable-without-depletion ceiling,
+            // surfaced in the row tooltip and used to flag overhunting (actual > sustainable). Forage
+            // is renewable, so its two values match; only depletable herds diverge.
+            let _ = entry.insert("actual_yield", assignment.actualYield() as f64);
+            let _ = entry.insert("sustainable_yield", assignment.sustainableYield() as f64);
             if let Some(fauna_id) = assignment.faunaId() {
                 let _ = entry.insert("fauna_id", fauna_id);
             }
