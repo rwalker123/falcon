@@ -804,6 +804,18 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   changes. `cycle_panel_band(delta)` walks `_player_bands`, **recenters the map**
   on the band (`alert_focus_requested` → `MapView.focus_and_select_tile`), then
   pins the exact band so ring/Tile card/roster/panel all agree.
+- **Responsive body (tall vs wide).** `_relayout_body()` (hooked off
+  `_apply_dock_layout`, so it fires on every dock/collapse change; idempotent —
+  reparents only when the tall↔wide orientation flips) swaps the body layout by
+  dock aspect: **tall** (LEFT/RIGHT) = one vertical `ScrollContainer` stack
+  (summary + allocation), **wide** (TOP/BOTTOM) = an HBox of two independently
+  scrolling columns — a fixed `SUMMARY_COLUMN_WIDTH` summary column + an
+  EXPAND_FILL allocation column (full-width stepper rows) — so the short strip
+  uses the width instead of one long vertical scroll. The
+  `get_band_detail_label()` / `get_band_alloc_container()` nodes are the **same
+  objects** reparented between layouts, so Hud's render needs no coordination.
+  (The allocation stays a single vertical list within its column; true
+  multi-column section-flow is deferred.)
 - Verify chrome + reflow via `tools/band_panel_preview.gd`
   (`godot --path . res://tools/band_panel_preview.tscn` → `ui_preview_out/
   band_panel_{left,right,top,bottom,collapsed}.png`).

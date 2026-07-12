@@ -1,7 +1,10 @@
 # Band / City Dockable Panel — design & implementation plan
 
-Status: in progress (branch `worktree-feat+band-city-dock`). Design signed off via
-an interactive prototype. Built in slices on one branch.
+Status: complete (branch `worktree-feat+band-city-dock`, pending push/PR). Design
+signed off via an interactive prototype. Slices 1–4 landed + verified live
+(commands fixed via the worktree proto-port fix). Slice 4 shipped the two-column
+wide-dock layout; true multi-column section-flow deferred. Built in slices on one
+branch.
 
 ## Motivation
 

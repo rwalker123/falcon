@@ -46,6 +46,14 @@ const BODY_EMPTY_TEXT := "No band selected"
 const BODY_SEPARATION := 8
 ## Row spacing inside the allocation host (mirrors the Occupants card's AllocationPanel).
 const BAND_ALLOC_SEPARATION := 6
+# ---- responsive body layout (tall L/R stack vs wide T/B columns) -----------
+## Fixed width of the summary column when the dock is wide, so the RichTextLabel summary wraps
+## to a readable measure instead of stretching across the whole strip.
+const SUMMARY_COLUMN_WIDTH := 240.0
+## Minimum width of the allocation column when the dock is wide.
+const ALLOC_COLUMN_MIN_WIDTH := 300.0
+## Gap between the summary and allocation columns in wide mode.
+const WIDE_COLUMN_SEPARATION := 16
 const CYCLE_PREV := -1
 const CYCLE_NEXT := 1
 
@@ -91,8 +99,19 @@ var _stage_label: Label
 var _count_label: Label
 var _collapse_button: Button
 var _rail_expand_button: Button
-var _body_scroll: ScrollContainer
-var _body: VBoxContainer
+# Body layout: `_body_host` holds two alternative layouts, one visible at a time — a single
+# vertical stack (`_tall_*`, for the tall L/R docks) and side-by-side columns (`_wide_*`, for the
+# wide T/B docks). The movable content nodes (empty_state / band_detail / band_alloc) are
+# reparented between them on dock change (`_relayout_body`), staying the SAME node objects so the
+# `get_band_detail_label()` / `get_band_alloc_container()` targets Hud renders into stay valid.
+var _body_host: VBoxContainer
+var _tall_scroll: ScrollContainer
+var _tall_vbox: VBoxContainer
+var _wide_row: HBoxContainer
+var _wide_summary_scroll: ScrollContainer
+var _wide_summary_col: VBoxContainer
+var _wide_alloc_scroll: ScrollContainer
+var _body_is_wide: bool = false
 var _empty_state: Label
 var _band_detail: RichTextLabel
 var _band_alloc: VBoxContainer
@@ -131,7 +150,7 @@ func set_cycler(index: int, count: int) -> void:
 
 ## The body host (the ScrollContainer VBox that survives re-docking).
 func get_body_container() -> VBoxContainer:
-	return _body
+	return _tall_vbox
 
 ## The RichTextLabel Hud renders the band summary lines into (mirrors %OccupantDetail).
 func get_band_detail_label() -> RichTextLabel:
@@ -232,17 +251,54 @@ func _build() -> void:
 	_header_rail = _build_header_rail()
 	column.add_child(_header_rail)
 
-	_body_scroll = ScrollContainer.new()
-	_body_scroll.name = "BandBodyScroll"
-	_body_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_body_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	column.add_child(_body_scroll)
+	# The body host holds both alternative layouts; only one is visible per dock. Collapse hides
+	# the whole host.
+	_body_host = VBoxContainer.new()
+	_body_host.name = "BandBodyHost"
+	_body_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	column.add_child(_body_host)
 
-	_body = VBoxContainer.new()
-	_body.name = "BandBody"
-	_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_body.add_theme_constant_override("separation", BODY_SEPARATION)
-	_body_scroll.add_child(_body)
+	# Tall layout (L/R docks): a single vertical stack in a vertical scroll.
+	_tall_scroll = ScrollContainer.new()
+	_tall_scroll.name = "TallScroll"
+	_tall_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_tall_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tall_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_body_host.add_child(_tall_scroll)
+	_tall_vbox = VBoxContainer.new()
+	_tall_vbox.name = "TallColumn"
+	_tall_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tall_vbox.add_theme_constant_override("separation", BODY_SEPARATION)
+	_tall_scroll.add_child(_tall_vbox)
+
+	# Wide layout (T/B docks): summary column + allocation column, side by side, each in its own
+	# vertical scroll so a short strip scrolls per-column instead of one long combined scroll.
+	_wide_row = HBoxContainer.new()
+	_wide_row.name = "WideRow"
+	_wide_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_wide_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_wide_row.add_theme_constant_override("separation", WIDE_COLUMN_SEPARATION)
+	_wide_row.visible = false
+	_body_host.add_child(_wide_row)
+	_wide_summary_scroll = ScrollContainer.new()
+	_wide_summary_scroll.name = "WideSummaryScroll"
+	_wide_summary_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_wide_summary_scroll.custom_minimum_size = Vector2(SUMMARY_COLUMN_WIDTH, 0.0)
+	_wide_summary_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_wide_row.add_child(_wide_summary_scroll)
+	_wide_summary_col = VBoxContainer.new()
+	_wide_summary_col.name = "WideSummaryColumn"
+	_wide_summary_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_wide_summary_col.add_theme_constant_override("separation", BODY_SEPARATION)
+	_wide_summary_scroll.add_child(_wide_summary_col)
+	_wide_alloc_scroll = ScrollContainer.new()
+	_wide_alloc_scroll.name = "WideAllocScroll"
+	_wide_alloc_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_wide_alloc_scroll.custom_minimum_size = Vector2(ALLOC_COLUMN_MIN_WIDTH, 0.0)
+	_wide_alloc_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_wide_alloc_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_wide_row.add_child(_wide_alloc_scroll)
 
 	# Empty state (shown only when no band is resolved — the panel otherwise hides
 	# outright when there are zero player bands).
@@ -251,11 +307,10 @@ func _build() -> void:
 	_empty_state.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_empty_state.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 	_empty_state.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_body.add_child(_empty_state)
 
 	# Band-detail targets Hud renders into (mirroring the Occupants card's
-	# %OccupantDetail / %AllocationPanel). Kept inside the ScrollContainer VBox so
-	# they survive re-docking.
+	# %OccupantDetail / %AllocationPanel). These stay the same node objects across dock changes
+	# (reparented by `_relayout_body`), so Hud's render always lands.
 	_band_detail = RichTextLabel.new()
 	_band_detail.name = "BandDetail"
 	_band_detail.bbcode_enabled = true
@@ -264,14 +319,18 @@ func _build() -> void:
 	_band_detail.autowrap_mode = TextServer.AUTOWRAP_WORD
 	_band_detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_band_detail.visible = false
-	_body.add_child(_band_detail)
 
 	_band_alloc = VBoxContainer.new()
 	_band_alloc.name = "BandAllocation"
 	_band_alloc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_band_alloc.add_theme_constant_override("separation", BAND_ALLOC_SEPARATION)
 	_band_alloc.visible = false
-	_body.add_child(_band_alloc)
+
+	# Home the movable nodes into the tall stack by default; `_relayout_body` (via
+	# `_apply_dock_layout` in `_ready`) moves them to the wide columns if the loaded dock is wide.
+	_tall_vbox.add_child(_empty_state)
+	_tall_vbox.add_child(_band_detail)
+	_tall_vbox.add_child(_band_alloc)
 
 	# The accent seam sits on the map-facing edge, above the card fill.
 	_seam = ColorRect.new()
@@ -403,6 +462,37 @@ func _apply_dock_layout() -> void:
 			_set_root_anchors(0.0, 1.0, 1.0, 1.0)
 			_set_root_offsets(0.0, -far, 0.0, -near)
 	_position_seam()
+	_relayout_body()
+
+## Switch the body between the tall single-stack layout (L/R docks) and the wide two-column layout
+## (T/B docks) by reparenting the shared content nodes. Idempotent — only reparents when the
+## tall↔wide orientation actually changes.
+func _relayout_body() -> void:
+	if _tall_vbox == null or _wide_summary_col == null or _wide_alloc_scroll == null:
+		return
+	var wide := not _is_vertical_edge(_dock_edge)
+	if wide == _body_is_wide and _empty_state.get_parent() != null:
+		return
+	_body_is_wide = wide
+	_detach(_empty_state)
+	_detach(_band_detail)
+	_detach(_band_alloc)
+	if wide:
+		_wide_summary_col.add_child(_empty_state)
+		_wide_summary_col.add_child(_band_detail)
+		_wide_alloc_scroll.add_child(_band_alloc)
+	else:
+		_tall_vbox.add_child(_empty_state)
+		_tall_vbox.add_child(_band_detail)
+		_tall_vbox.add_child(_band_alloc)
+	if _tall_scroll != null:
+		_tall_scroll.visible = not wide
+	if _wide_row != null:
+		_wide_row.visible = wide
+
+func _detach(node: Node) -> void:
+	if node != null and node.get_parent() != null:
+		node.get_parent().remove_child(node)
 
 func _set_root_anchors(left: float, top: float, right: float, bottom: float) -> void:
 	_root.anchor_left = left
@@ -445,8 +535,8 @@ func _position_seam() -> void:
 func _refresh_collapse_state() -> void:
 	if _header_full != null:
 		_header_full.visible = not _collapsed
-	if _body_scroll != null:
-		_body_scroll.visible = not _collapsed
+	if _body_host != null:
+		_body_host.visible = not _collapsed
 	if _header_rail != null:
 		_header_rail.visible = _collapsed
 
