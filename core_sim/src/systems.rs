@@ -4269,11 +4269,32 @@ pub fn advance_labor_allocation(
                             labor.forage.cultivation.progress_per_turn,
                         );
                     }
-                    // A cultivated patch is a tended crop, not wild forage: it is NOT gather-drawn
-                    // (the steady owner-yield in `advance_cultivation` handles its food), so this
-                    // assignment yields 0 from gathering this turn — `yields[idx]` stays {0, 0}.
-                    // Mirrors a domesticated herd no longer being hunted.
+                    // A cultivated ("tended") patch is worked, not wild-gathered (Rung 1a): the band
+                    // whose Forage assignment tends it (≥1 worker here → place-local by construction)
+                    // is paid `biomass × tended_provisions_per_biomass` — a **managed harvest** of the
+                    // full standing crop, WITHOUT drawing biomass down (a tended patch regrows freely,
+                    // so biomass sits near cap and the yield out-runs the same patch's wild MSY skim,
+                    // the intensification incentive). This is maintenance labor: the amount is
+                    // biomass-based (presence, not head-count, gates it beyond the `workers == 0`
+                    // check above). Marking the patch tended-this-turn stops `advance_cultivation`
+                    // taking it feral. Sustainable == actual (a managed harvest never overdraws → no
+                    // ⚠). Mirrors a domesticated herd's husbandry income, but paid place-local here
+                    // instead of split across the owner's bands.
                     if patch.is_cultivated() {
+                        patch.tended_this_turn = true;
+                        let provisions = scalar_from_f32(
+                            patch.biomass
+                                * labor.forage.cultivation.tended_provisions_per_biomass
+                                * mult_f,
+                        );
+                        if provisions > scalar_zero() {
+                            cohort.stores.add(FOOD, provisions);
+                        }
+                        let tended = provisions.to_f32();
+                        yields[idx] = SourceYield {
+                            actual: tended,
+                            sustainable: tended,
+                        };
                         continue;
                     }
                     let biomass_before = patch.biomass;
@@ -6815,6 +6836,149 @@ mod labor_yield_tests {
             "a Sustain draw off a full herd skims exactly MSY: {} vs {}",
             hunt.actual,
             hunt.sustainable
+        );
+    }
+
+    use crate::components::FOOD;
+
+    /// Set the source-tile forage patch cultivated (owned by faction 0) at the given biomass.
+    fn cultivate_source_patch(world: &mut World, biomass: f32) {
+        let ecology = world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .ecology
+            .clone();
+        let mut registry = world.resource_mut::<ForageRegistry>();
+        let patch = registry.patches.get_mut(&UVec2::new(0, 0)).unwrap();
+        patch.claim_cultivation(FactionId(0));
+        patch.biomass = biomass;
+        patch.refresh_ecology_phase(&ecology);
+    }
+
+    /// Rung 1a: a tended (cultivated) patch pays the band that tends it (a Forage assignment on the
+    /// tile) `biomass × tended_provisions_per_biomass` — higher than the same patch's wild MSY skim —
+    /// **without** drawing biomass down, and marks the patch tended-this-turn.
+    #[test]
+    fn tended_patch_pays_tending_band_above_msy_no_drawdown() {
+        let (mut world, tile) = world_with_source(CAP);
+        let cfg = world.resource::<LaborConfigHandle>().get();
+        let patch_cap = cfg.forage.carrying_capacity;
+        // A tended patch regrows freely toward the cap; harvest is on its full standing crop.
+        let biomass = patch_cap;
+        let tended_rate = cfg.forage.cultivation.tended_provisions_per_biomass;
+        let wild_msy = sustainable_yield(biomass, patch_cap, &cfg.forage.ecology)
+            * cfg.forage.provisions_per_biomass;
+        drop(cfg);
+        cultivate_source_patch(&mut world, biomass);
+
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: UVec2::new(0, 0),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+
+        world.run_system_once(advance_labor_allocation);
+
+        let expected = biomass * tended_rate; // output multiplier 1.0 at morale 1.
+        let paid = world
+            .get::<PopulationCohort>(band)
+            .unwrap()
+            .stores
+            .get(FOOD)
+            .to_f32();
+        assert!(
+            (paid - expected).abs() < 1e-3,
+            "tended band paid biomass × tended rate: {paid} vs {expected}"
+        );
+        assert!(
+            paid > wild_msy,
+            "tended yield out-yields the wild MSY skim: {paid} vs {wild_msy}"
+        );
+        // No draw-down: a tended patch is a managed harvest, biomass unchanged.
+        let patch = world
+            .resource::<ForageRegistry>()
+            .patch(UVec2::new(0, 0))
+            .unwrap();
+        assert!(
+            (patch.biomass - biomass).abs() < 1e-6,
+            "tended patch is not gather-drawn: {} vs {biomass}",
+            patch.biomass
+        );
+        assert!(patch.tended_this_turn, "tending marks the patch worked");
+        // Telemetry: a managed harvest never overdraws → actual == sustainable (no ⚠).
+        let row = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        assert!((row.actual - expected).abs() < 1e-3);
+        assert!((row.actual - row.sustainable).abs() < 1e-6);
+    }
+
+    /// Place-locality: only the band that tends the cultivated patch is paid. A second same-faction
+    /// band that does not tend it (forages an empty neighbor tile) receives nothing — the retired
+    /// even-split would have paid it a share.
+    #[test]
+    fn tended_yield_is_place_local_not_split() {
+        let (mut world, tile) = world_with_source(CAP);
+        let patch_cap = world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .carrying_capacity;
+        cultivate_source_patch(&mut world, patch_cap);
+
+        // Band A tends the cultivated patch on (0,0).
+        let tending = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: UVec2::new(0, 0),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+        // Band B (same faction) forages the neighbor tile (1,0), which has no food module/patch →
+        // it earns nothing from the cultivated patch.
+        let idle_tile = world.resource::<TileRegistry>().tiles[1];
+        let non_tending = spawn_band(
+            &mut world,
+            idle_tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: UVec2::new(1, 0),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+
+        world.run_system_once(advance_labor_allocation);
+
+        let tending_food = world
+            .get::<PopulationCohort>(tending)
+            .unwrap()
+            .stores
+            .get(FOOD)
+            .to_f32();
+        let other_food = world
+            .get::<PopulationCohort>(non_tending)
+            .unwrap()
+            .stores
+            .get(FOOD)
+            .to_f32();
+        assert!(
+            tending_food > 0.0,
+            "the tending band is paid: {tending_food}"
+        );
+        assert!(
+            other_food.abs() < 1e-9,
+            "a non-tending same-faction band gets no tended yield (no even-split): {other_food}"
         );
     }
 }

@@ -59,32 +59,50 @@ const DEFAULT_FORAGE_ERADICATE_TAKE_FRACTION: f32 = 0.30;
 /// Named-const defaults for **cultivation** (Intensification Phase 1a — the plant analog of fauna
 /// husbandry, `fauna_config::HusbandryConfig`). `progress_per_turn` must exceed `decay_per_turn` so
 /// a Sustain-foraged Thriving patch nets forward; `claim_threshold` is the early-claim gate; and
-/// `provisions_per_biomass` is the **STEADY tended-yield** rate — deliberately distinct from the
-/// gather `ForageLaborConfig::provisions_per_biomass` (a cultivated patch yields without being drawn
-/// down).
+/// `tended_provisions_per_biomass` is the **tended-harvest** rate — deliberately distinct from the
+/// gather `ForageLaborConfig::provisions_per_biomass` (a tended patch is harvested on its full
+/// standing biomass without being drawn down).
+///
+/// **Tuning — a tended patch out-yields the same patch's wild MSY (the intensification incentive).**
+/// A tended patch is never drawn down, so its biomass regrows toward the cap `K` and the per-turn
+/// tended yield settles at `K × tended_provisions_per_biomass`. The best a *wild* patch can
+/// sustainably yield is MSY = regrowth at `K/2` = `regrowth_rate × K/4`, in provisions
+/// `regrowth_rate × K/4 × provisions_per_biomass` (the gather rate). With the shipped forage defaults
+/// (`K` = 120, `regrowth_rate` = 0.25, gather `provisions_per_biomass` = 0.05): wild MSY ≈
+/// `0.25 × 30 × 0.05` = **0.375 prov/turn**, while a tended patch yields `120 × 0.01` = **1.2
+/// prov/turn** — ~3.2× the wild sustainable skim. (The tended *per-biomass* rate is lower than the
+/// gather rate, but tended harvests the whole standing crop every turn, not just the regrowth skim.)
+/// Keep `tended_provisions_per_biomass > regrowth_rate/4 × forage.provisions_per_biomass` so
+/// intensifying always pays.
 const DEFAULT_CULTIVATION_PROGRESS_PER_TURN: f32 = 0.04;
 const DEFAULT_CULTIVATION_DECAY_PER_TURN: f32 = 0.01;
 const DEFAULT_CULTIVATION_CLAIM_THRESHOLD: f32 = 0.6;
-const DEFAULT_CULTIVATION_PROVISIONS_PER_BIOMASS: f32 = 0.01;
+const DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS: f32 = 0.01;
 
 /// Cultivation tuning (Intensification Phase 1a): a sustained **Sustain** forage on a **Thriving**
-/// patch accrues `progress_per_turn` toward cultivation (`1.0` = cultivated); progress that isn't
-/// being actively sustained decays by `decay_per_turn`. The explicit `cultivate` command may claim
-/// a patch early once progress reaches `claim_threshold`. A cultivated patch yields
-/// `biomass × provisions_per_biomass` provisions to its owner each turn **without** drawing the
-/// patch down. The plant mirror of fauna's `HusbandryConfig`.
+/// patch accrues `progress_per_turn` toward cultivation (`1.0` = cultivated); a cultivated patch that
+/// isn't tended (worked by a Forage assignment) any given turn goes **feral**, its progress decaying
+/// by `decay_per_turn` back below `1.0` (reverting to a wild gather patch). The explicit `cultivate`
+/// command may claim a patch early once progress reaches `claim_threshold`. A tended patch pays the
+/// band that tends it `biomass × tended_provisions_per_biomass` provisions each turn **without**
+/// drawing the patch down (place-local — see `advance_labor_allocation`). The plant mirror of fauna's
+/// `HusbandryConfig`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct CultivationConfig {
     /// Cultivation gained per turn while a band Sustain-forages a Thriving patch.
     pub progress_per_turn: f32,
-    /// Cultivation lost per turn on a patch that isn't being actively tended.
+    /// Cultivation lost per turn on a patch that isn't being actively tended — the feral-reversion
+    /// rate. An untended tended patch drops below `1.0` (→ wild) the first turn and fully decays to 0
+    /// over ~`1/decay_per_turn` turns.
     pub decay_per_turn: f32,
     /// Progress at which the `cultivate` command may claim the patch early (snaps to 1.0).
     pub claim_threshold: f32,
-    /// **STEADY** tended-yield rate: a cultivated patch pays `biomass × this` provisions/turn to its
-    /// owner without depleting biomass. Distinct from the gather `provisions_per_biomass`.
-    pub provisions_per_biomass: f32,
+    /// **Tended-harvest** rate: a tended patch pays the tending band `biomass × this` provisions/turn
+    /// on its full standing crop, without depleting biomass. Tuned so a tended patch out-yields the
+    /// same patch's wild MSY skim (see the module-level tuning note). Distinct from the gather
+    /// `provisions_per_biomass`.
+    pub tended_provisions_per_biomass: f32,
 }
 
 impl Default for CultivationConfig {
@@ -93,7 +111,7 @@ impl Default for CultivationConfig {
             progress_per_turn: DEFAULT_CULTIVATION_PROGRESS_PER_TURN,
             decay_per_turn: DEFAULT_CULTIVATION_DECAY_PER_TURN,
             claim_threshold: DEFAULT_CULTIVATION_CLAIM_THRESHOLD,
-            provisions_per_biomass: DEFAULT_CULTIVATION_PROVISIONS_PER_BIOMASS,
+            tended_provisions_per_biomass: DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS,
         }
     }
 }
@@ -426,7 +444,19 @@ mod tests {
         );
         assert!(config.forage.cultivation.claim_threshold > 0.0);
         assert!(config.forage.cultivation.claim_threshold < 1.0);
-        assert!(config.forage.cultivation.provisions_per_biomass > 0.0);
+        assert!(config.forage.cultivation.tended_provisions_per_biomass > 0.0);
+        // A tended patch (harvested on its full standing biomass, ~cap) out-yields the same patch's
+        // wild MSY skim (regrowth at K/2 = regrowth_rate × K/4, × the gather provisions rate) — the
+        // intensification incentive. Compare per-biomass factors: tended pays on ~K, wild MSY on
+        // regrowth_rate·K/4, so tended wins iff tended_rate > regrowth_rate/4 × gather_rate.
+        let forage = &config.forage;
+        let wild_msy_rate = forage.ecology.regrowth_rate / 4.0 * forage.provisions_per_biomass;
+        assert!(
+            forage.cultivation.tended_provisions_per_biomass > wild_msy_rate,
+            "tended patch must out-yield its wild MSY: {} vs {}",
+            forage.cultivation.tended_provisions_per_biomass,
+            wild_msy_rate
+        );
         assert!(config.hunt.per_worker_biomass_capacity > 0.0);
         assert!(config.scout.vantage_distance_base >= 1);
         assert!(config.scout.vantage_distance_max >= config.scout.vantage_distance_base);

@@ -1,7 +1,9 @@
-//! Phase 1a cultivation: a sustained Sustain forage on a Thriving patch tames it into a cultivated
-//! crop (emergent accrual + decay), which then yields steady provisions each turn WITHOUT being
-//! drawn down and is no longer gather-drawn. The plant mirror of `fauna_husbandry.rs`; world setup
-//! mirrors it too.
+//! Phase 1a cultivation (Rung 1a — worker-tended, place-local tended patch): a sustained Sustain
+//! forage on a Thriving patch tames it into a cultivated crop (emergent accrual + decay). A completed
+//! "tended" patch is **worked, not passive**: it pays only the band that TENDS it (its Forage
+//! assignment, place-local) a higher-than-wild yield WITHOUT being drawn down, and if no band tends it
+//! for a turn it goes **feral** (decays back below the cultivated threshold, reverting to a wild
+//! gather patch). The plant mirror of `fauna_husbandry.rs`; world setup mirrors it too.
 
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
@@ -240,10 +242,12 @@ fn cultivation_nets_accrual_minus_decay_then_decays() {
     );
 }
 
-/// A cultivated patch pays its owner steady provisions each turn WITHOUT drawing biomass down, and
-/// a forage assignment on it is NOT gather-drawn (mirrors a domesticated herd no longer hunted).
+/// Rung 1a: a tended (cultivated) patch pays the band that TENDS it (its Forage assignment), via the
+/// labor arm — **place-local** — WITHOUT drawing biomass down, and is not wild gather-drawn. The
+/// `advance_cultivation` pass itself pays nothing now (it only decays untended patches — the even
+/// split across all the owner's bands is retired).
 #[test]
-fn cultivated_patch_yields_without_depletion_and_is_not_gathered() {
+fn tended_patch_pays_tending_band_without_depletion() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
 
@@ -254,41 +258,86 @@ fn cultivated_patch_yields_without_depletion_and_is_not_gathered() {
         patch.claim_cultivation(FactionId(0));
         patch.biomass
     };
-    // The owner band (also carrying a Forage assignment on the cultivated patch).
+    // The owner band tends it (a Forage assignment on the cultivated patch).
     spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
     assert_eq!(provisions_f32(&mut app), 0.0, "larder starts empty");
 
-    // Steady yield: pays the owner, does not deplete biomass.
+    // The decay pass alone pays nothing — tended food is paid by the tending band's labor, not here.
     app.world.run_system_once(advance_cultivation);
-    let after_yield = provisions_f32(&mut app);
-    assert!(
-        after_yield > 0.0,
-        "a cultivated patch should pay its owner provisions"
-    );
-    assert_eq!(
-        app.world
-            .resource::<ForageRegistry>()
-            .patch(coord)
-            .unwrap()
-            .biomass,
-        biomass_before,
-        "cultivation yield must not deplete biomass"
-    );
-
-    // Not gather-drawn: the Forage assignment yields 0 and leaves biomass untouched.
-    app.world.run_system_once(advance_labor_allocation);
-    assert_eq!(
-        app.world
-            .resource::<ForageRegistry>()
-            .patch(coord)
-            .unwrap()
-            .biomass,
-        biomass_before,
-        "a cultivated patch must not be gather-drawn by an assignment"
-    );
     assert_eq!(
         provisions_f32(&mut app),
-        after_yield,
-        "gathering a cultivated patch adds no extra FOOD (steady yield only)"
+        0.0,
+        "advance_cultivation no longer pays a cultivated patch's owner (even-split retired)"
+    );
+
+    // The tending band's labor resolves the tended yield place-local, without depleting biomass. (The
+    // decay pass above briefly dropped progress below 1.0, but the tending Sustain forage re-accrues
+    // it to cultivated and pays the tended yield — the tender keeps its farm alive.)
+    app.world.run_system_once(advance_labor_allocation);
+    let paid = provisions_f32(&mut app);
+    assert!(
+        paid > 0.0,
+        "the tending band is paid the tended yield via its Forage assignment: {paid}"
+    );
+    assert_eq!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .biomass,
+        biomass_before,
+        "a tended patch is a managed harvest — biomass is not drawn down"
+    );
+    assert!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .is_cultivated(),
+        "the tending band keeps the patch cultivated (re-accrues after the decay pass)"
+    );
+}
+
+/// Rung 1a feral loop: a cultivated patch with no band tending it goes feral through the real
+/// Logistics pipeline — `advance_cultivation` decays it below the cultivated threshold (reverting to
+/// a wild gather patch) and it fully reverts over ~1/decay_per_turn turns (owner cleared).
+#[test]
+fn untended_cultivated_patch_goes_feral() {
+    let mut app = spawn_world();
+    let (_tile, coord) = prime_thriving_patch(&mut app);
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).unwrap();
+        patch.claim_cultivation(FactionId(0));
+    }
+
+    // No forager band → the patch is never tended. One untended Logistics turn reverts it to wild.
+    run_turns_untended(&mut app, 1);
+    assert!(
+        !app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .is_cultivated(),
+        "an untended tended patch reverts to a wild gather patch after one turn"
+    );
+
+    // Keep neglecting it → progress fully decays and ownership lapses (~1/decay_per_turn turns).
+    let decay = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .forage
+        .cultivation
+        .decay_per_turn;
+    run_turns_untended(&mut app, (1.0 / decay).ceil() as u32 + 2);
+    let patch_registry = app.world.resource::<ForageRegistry>();
+    let patch = patch_registry.patch(coord).unwrap();
+    assert_eq!(patch.cultivation_progress, 0.0, "feral patch fully reverts");
+    assert_eq!(patch.owner, None, "ownership lapses once fully feral");
+    assert_eq!(
+        patch_registry.cultivated_count(FactionId(0)),
+        0,
+        "no cultivated patches remain"
     );
 }
