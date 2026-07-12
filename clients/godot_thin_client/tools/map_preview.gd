@@ -48,6 +48,16 @@ const BIOME_OCEAN_ID := 0                # deep_ocean, blend_class "water"
 # exercises beach+foam on BOTH a grassy and a wooded shore.
 const BIOME_BAY_ROWS := 6
 const BIOME_BAY_COL_MIN := 8
+# State R (pan/zoom swim regression): a target hex solidly inside the mixed_woodland band (cols 8–11)
+# on a LOWER row (below the bay) so tree crowns are in the crop. The pan and crop context are in units
+# of the frame's hex radius so the SAME hex stays framed across fit/pan/zoom.
+const SWIM_TARGET_COL := 9
+const SWIM_TARGET_ROW := 8
+const SWIM_PAN_COLS := 3.0    # pan right by this many hex-radii (viewport is wide → stays on-screen)
+const SWIM_PAN_ROWS := -2.0   # pan UP by this many hex-radii → nudges the low target hex toward the
+                              # viewport center so the crop stays unclamped (equal-sized fit vs pan crops)
+const SWIM_CROP_RADII := 2.4  # crop half-size = this × hex_radius → a couple hexes of context, small
+                              # enough to stay within bounds after the pan/zoom on the short viewport
 
 var _map: Node2D
 
@@ -287,6 +297,42 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_biome_farzoom")
 
+	# State R — pan/zoom SWIM regression (terrain_blend.gdshader must anchor map-space terms to the MAP,
+	# not the screen). Locks onto ONE hex inside the woodland band and re-crops it after a pan-only and a
+	# pan+zoom, recomputing that hex's screen center each frame. With the bug, the canopy/dither content
+	# under the hex slides between frames; fixed, the fit vs pan crops are terrain-identical (same zoom)
+	# and the panzoom crop shows the same hex's terrain scaled — proof the terrain tracks the grid.
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(true)
+	TerrainTextureManager.use_edge_blending = true
+	_map._map_cache_enabled = false  # shader path bypasses the cache anyway
+	_map.display_snapshot(_snapshot_biomes())
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	# 1) Fitted: full frame + the target-hex crop (the baseline the pan/zoom crops must match).
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_swim_fit")
+	var center_fit: Vector2 = _map._hex_center(SWIM_TARGET_COL, SWIM_TARGET_ROW, _map.last_hex_radius, _map.last_origin)
+	await _save_crop_px("map_swim_hex_fit", center_fit, SWIM_CROP_RADII * _map.last_hex_radius)
+	# 2) Pan only (same zoom): recompute the SAME hex's screen center (last_origin changed) → crop. This
+	# MUST be terrain/canopy-identical to map_swim_hex_fit — the crispest swim detector.
+	_map.pan_offset += Vector2(SWIM_PAN_COLS * _map.last_hex_radius, SWIM_PAN_ROWS * _map.last_hex_radius)
+	_map.queue_redraw()
+	await _settle()
+	var center_pan: Vector2 = _map._hex_center(SWIM_TARGET_COL, SWIM_TARGET_ROW, _map.last_hex_radius, _map.last_origin)
+	await _save_crop_px("map_swim_hex_pan", center_pan, SWIM_CROP_RADII * _map.last_hex_radius)
+	# 3) Pan AND zoom: one zoom-in step on top of the pan (origin AND radius change) → recompute the same
+	# hex's center → crop + full frame. Same hex → same terrain/canopy content, scaled by the zoom.
+	_map.zoom_step(1)
+	_map.queue_redraw()
+	await _settle()
+	await _save("map_swim_panzoom")
+	var center_pz: Vector2 = _map._hex_center(SWIM_TARGET_COL, SWIM_TARGET_ROW, _map.last_hex_radius, _map.last_origin)
+	await _save_crop_px("map_swim_hex_panzoom", center_pz, SWIM_CROP_RADII * _map.last_hex_radius)
+
 	get_tree().quit()
 
 func _settle() -> void:
@@ -314,6 +360,27 @@ func _save_crop(name: String, fx0: float, fy0: float, fx1: float, fy1: float) ->
 	var w := image.get_width()
 	var h := image.get_height()
 	var rect := Rect2i(int(fx0 * w), int(fy0 * h), int((fx1 - fx0) * w), int((fy1 - fy0) * h))
+	var crop := image.get_region(rect)
+	var err := crop.save_png("%s/%s.png" % [OUT_DIR, name])
+	if err != OK:
+		push_error("map_preview: failed to save %s (err %d)" % [name, err])
+	else:
+		print("map_preview: saved ", name, ".png")
+
+## Save a square crop of `2*half` px centered on `center` (viewport pixels), clamped to the image
+## bounds — used by State R to lock onto the SAME hex across fit/pan/zoom so a swim shows as a shift.
+func _save_crop_px(name: String, center: Vector2, half: float) -> void:
+	var image := get_viewport().get_texture().get_image()
+	if image == null:
+		push_warning("map_preview: null image (dummy renderer?) — run without --headless")
+		return
+	var w := image.get_width()
+	var h := image.get_height()
+	var x0 := clampi(int(center.x - half), 0, w - 1)
+	var y0 := clampi(int(center.y - half), 0, h - 1)
+	var x1 := clampi(int(center.x + half), 0, w)
+	var y1 := clampi(int(center.y + half), 0, h)
+	var rect := Rect2i(x0, y0, maxi(x1 - x0, 1), maxi(y1 - y0, 1))
 	var crop := image.get_region(rect)
 	var err := crop.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:

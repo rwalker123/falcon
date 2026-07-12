@@ -12,8 +12,9 @@ render_mode blend_mix;
 // the id-map (splatmap) below.
 
 uniform sampler2DArray biome_array : filter_linear, repeat_enable;
-// Canopy overlay array: whole tree crowns on transparency (RGBA), sampled in WORLD space so crowns are
-// continuous across hexes and overhang the boundary. Indexed by canopy-array layer (id-map B - 1).
+// Canopy overlay array: whole tree crowns on transparency (RGBA), sampled in MAP space (v_map, the
+// pan/zoom-anchored coordinate) so crowns are continuous across hexes, overhang the boundary, and
+// track the grid on pan/zoom. Indexed by canopy-array layer (id-map B - 1).
 // Trilinear (mipmap) filtering so far-zoom crowns AVERAGE into a smooth darker-green forest mass instead
 // of shimmering/aliasing — the crown array is built with mipmaps (see TerrainTextureManager).
 uniform sampler2DArray canopy_tex : filter_linear_mipmap, repeat_enable;
@@ -58,10 +59,15 @@ const float SHORE_WISP_HALF = 0.35;       // inner foam wisp half-thickness (× 
 const float SHORE_WISP_STRENGTH = 0.45;   // inner foam wisp max opacity
 const float CANOPY_TREELINE_NOISE = 0.6;  // how hard world-noise waves the treeline in/out (× overhang)
 
+// v_world is the quad-LOCAL (viewport/screen-fixed) coordinate — it does NOT track the map on
+// pan/zoom. hex_origin (= MapView last_origin) moves with the pan/zoom, so hex-anchored terms
+// (pp, the base/neighbour biome UVs, hex_center/signed-distance math) that subtract hex_origin or a
+// hex center are pan/zoom-invariant for a fixed map point. Any map-space term built from RAW v_world
+// would slide against the grid — use the derived v_map (= v_world - hex_origin) in fragment() instead.
 varying vec2 v_world;
 
 void vertex() {
-	v_world = VERTEX; // local == MapView local space, where hex centers are computed
+	v_world = VERTEX; // quad-LOCAL (screen-fixed) coord; hex centers are computed in this same local space
 }
 
 float hash21(vec2 p) {
@@ -115,6 +121,11 @@ int wrap_col(int col) {
 void fragment() {
 	// --- invert the hex layout: world → fractional axial → cube-round → offset (col,row) ---
 	vec2 pp = (v_world - hex_origin) / hex_radius;
+	// Pan/zoom-anchored MAP-space coordinate: v_world is the quad-LOCAL (screen-fixed) coord, so any
+	// map-space term built from RAW v_world slides against the grid on pan/zoom. Subtracting hex_origin
+	// anchors it to the map (invariant for a fixed map point). Use v_map — NOT v_world — for every
+	// map-space term below (canopy UV, dither/shore/treeline noise) so they track the grid.
+	vec2 v_map = pp * hex_radius; // == v_world - hex_origin
 	float rf = pp.y / 1.5;
 	float qf = pp.x / SQRT3 - 0.5 * rf;
 	float xf = qf;
@@ -191,7 +202,7 @@ void fragment() {
 					best_c = nb_c;
 				}
 			}
-			if (best_layer >= 0 && best_p > vnoise(v_world / noise_cell)) {
+			if (best_layer >= 0 && best_p > vnoise(v_map / noise_cell)) {
 				vec2 nb_uv = (v_world - best_c) / (2.0 * hex_radius) + 0.5;
 				result = texture(biome_array, vec3(nb_uv, float(best_layer))).rgb;
 			}
@@ -226,7 +237,7 @@ void fragment() {
 			if (best_d > -1e8) {
 				float dist_in = max(-best_d, 0.0);            // 0 at the coast edge, grows away from it
 				float band = own_water ? foam_band : beach_band;
-				float n = vnoise(v_world / noise_cell);
+				float n = vnoise(v_map / noise_cell);
 				float reach = max(band * mix(SHORE_REACH_NOISE_MIN, 1.0, n), 1.0); // wavy inward extent
 				float amount = clamp(1.0 - dist_in / reach, 0.0, 1.0); // strongest at the edge, fades away
 				result = mix(result, own_water ? foam_color : beach_color, amount);
@@ -234,7 +245,7 @@ void fragment() {
 					// optional faint second wisp: a thinner surf line further out over open water
 					float wisp = clamp(1.0 - abs(dist_in - foam_band * SHORE_WISP_CENTER)
 						/ max(foam_band * SHORE_WISP_HALF, 1.0), 0.0, 1.0);
-					float wn = vnoise(v_world / noise_cell + vec2(17.0, 5.0));
+					float wn = vnoise(v_map / noise_cell + vec2(17.0, 5.0));
 					result = mix(result, foam_color, wisp * SHORE_WISP_STRENGTH * wn);
 				}
 			}
@@ -282,11 +293,11 @@ void fragment() {
 			}
 			// widen the guard by the noise amplitude so the bumpy fringe isn't clipped
 			if (forest_code > 0 && s > -canopy_overhang * (1.0 + CANOPY_TREELINE_NOISE)) {
-				float tn = vnoise(v_world / noise_cell + vec2(3.0, 11.0));
+				float tn = vnoise(v_map / noise_cell + vec2(3.0, 11.0));
 				s += (tn - 0.5) * 2.0 * canopy_overhang * CANOPY_TREELINE_NOISE; // bumpy treeline
 				float dens = canopy_density(s, canopy_overhang, canopy_softness);
 				if (dens > 0.0) {
-					vec2 cuv = v_world / (2.0 * hex_radius) * canopy_scale; // world-space, continuous
+					vec2 cuv = v_map / (2.0 * hex_radius) * canopy_scale; // map-space, continuous + pan/zoom-anchored
 					vec4 crown = texture(canopy_tex, vec3(cuv, float(forest_code - 1)));
 					result = mix(result, crown.rgb, crown.a * dens);
 				}
