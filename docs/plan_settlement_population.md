@@ -203,5 +203,8 @@ government) is a **later arc**, out of scope for the phases above.
   Agrarian Towns …, line 88), §Ecosystem Food Modules (the storage-hook catalog).
 - `docs/plan_wildlife_hunting_overlay.md` — the domestication (`domesticated_count`) and
   `SedentarizationScore` seams this arc consumes; corrals tie to Phase E domesticated herds.
+- `docs/plan_intensification.md` — the arc that *realizes* this catalog's food-tending class
+  (tended patches / corrals) by adding forage depletion + cultivation (the plant-domestication
+  transpose) as the pressure/response that feeds sedentarization.
 - `core_sim/CLAUDE.md` — Campaign Loop → Sedentarization; the config-file + loader patterns.
 - `docs/architecture.md` — cross-system data flow.

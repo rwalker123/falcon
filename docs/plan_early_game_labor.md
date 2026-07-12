@@ -261,6 +261,9 @@ numbers convention.
   improvements/storage; emergent settlements). Carry capacity + storage are the bridge.
 - `docs/plan_wildlife_hunting_overlay.md` — the herds/Sustain yields this subsistence model draws
   from; the density overlay that reads carrying capacity.
+- `docs/plan_intensification.md` — the arc that makes Forage a depletable resource with a policy
+  axis (parity with Hunt) and adds cultivation/farming; the honest carrying-capacity mechanic that
+  supersedes the reverted flat carry-cap.
 - `shadow_scale_strategy_game_concept_technical_plan_v_0.md` — §"Start of Game — Nomadic Default"
   (starting tribe → one band + TOE roles) and §Wildlife & Hunting (Sustain = sustain the
   *resource*, not the band).
