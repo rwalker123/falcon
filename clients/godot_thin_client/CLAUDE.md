@@ -252,8 +252,9 @@ forest↔ocean stay hard.
   a different flat biome; near a qualifying shared edge it dithers the neighbour's array sample in.
   The mix is **symmetric**: `p = clamp(0.5 + signed_dist_to_edge / (2·blend_band), 0, 1)` is 0.5 at
   the edge on both sides; `show neighbour if p > value_noise(world_pos / noise_cell)`.
-- **id-map splatmap** (`_rebuild_terrain_shader_maps`, per snapshot): a `grid_w × grid_h` **RG8**
-  texture, R = terrain id, G = `blend_class` code (0 water / 1 flat / 2 rugged), NEAREST-sampled. A
+- **id-map splatmap** (`_rebuild_terrain_shader_maps`, per snapshot): a `grid_w × grid_h` **RGBA8**
+  texture, R = terrain id, G = `blend_class` code (0 water / 1 flat / 2 rugged), B = canopy code
+  (0 none, else canopy layer + 1), A = 255, NEAREST-sampled. A
   companion **R8 vis-map** carries FoW state (0 unexplored / 0.5 discovered / 1 active).
 - **Config levers:** `blend_width` (→ `blend_band = blend_width · radius`, the interlock half-band in
   px) and `blend_noise_cell` (world-noise cell px). **LOD:** below `EDGE_BLEND_MIN_RADIUS`

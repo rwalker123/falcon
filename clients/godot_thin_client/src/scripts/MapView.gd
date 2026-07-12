@@ -467,7 +467,7 @@ var _terrain_blend_class: Dictionary = {}  # terrain_id -> "flat"|"water"|"rugge
 var _terrain_blend_quad: Node2D = null
 var _terrain_blend_material: ShaderMaterial = null
 var _terrain_blend_ready: bool = false
-var _terrain_id_map_tex: ImageTexture = null   # RG8: R=terrain id, G=blend_class code (0 water/1 flat/2 rugged)
+var _terrain_id_map_tex: ImageTexture = null   # RGBA8: R=terrain id, G=blend_class code (0 water/1 flat/2 rugged), B=canopy code (0=none else layer+1), A=255
 var _terrain_vis_map_tex: ImageTexture = null  # R8: 0 unexplored / 0.5 discovered / 1 active
 var culture_layer_grid: PackedInt32Array = PackedInt32Array()
 var highlighted_culture_layer_ids: PackedInt32Array = PackedInt32Array()

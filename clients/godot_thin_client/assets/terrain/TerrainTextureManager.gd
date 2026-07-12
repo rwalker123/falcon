@@ -17,9 +17,9 @@ var terrain_config: Dictionary = {}
 var use_terrain_textures: bool = false
 var use_edge_blending: bool = false
 
-# CPU-side copy of every terrain layer, captured ONCE at build time. Reused for both the hex-texture
-# cache and the edge-overlay bake so we never call Texture2DArray.get_layer_data() again — a second
-# readback returns a blank image on some drivers, which blanked the base terrain on any cache rebuild.
+# CPU-side copy of every terrain layer, captured ONCE at build time. Reused by the hex-texture
+# cache and the get_terrain_image readback so we never call Texture2DArray.get_layer_data() again — a
+# second readback returns a blank image on some drivers, which blanked the base terrain on any cache rebuild.
 var _layer_images: Array[Image] = []
 # terrain_id -> blend_class ("flat" | "water" | "rugged"), parsed once from terrain_config.
 var _blend_class_by_id: Dictionary = {}
