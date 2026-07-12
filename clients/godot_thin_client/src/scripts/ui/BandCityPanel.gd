@@ -51,15 +51,25 @@ const CORNER_RADIUS := 3
 const COUNT_MIN_WIDTH := 30.0
 const BODY_EMPTY_TEXT := "No band selected"
 const BODY_SEPARATION := 8
-# ---- responsive body layout (tall L/R stack vs wide T/B column-flow) -------
-## In the wide (T/B) dock the section blocks flow into a VFlowContainer bounded to the strip height
-## and wrap into columns. Each block is capped to this width, so a column is a tidy, readable measure
-## and the stepper `−/+` controls stay beside their labels (≈ the tall dock's content width). Bounded,
-## NOT expand-fill, so a wide/ultrawide window leaves empty space on the right rather than stretching
-## the rows — the flow simply spreads the sections across more columns.
+## Card inner padding (the PanelContainer content margins). Named so the wide-dock fit-to-content
+## height math reuses the exact same paddings the card draws with (no magic 12/10 duplicated).
+const PANEL_CONTENT_MARGIN_H := 12
+const PANEL_CONTENT_MARGIN_V := 10
+# ---- responsive body layout (tall L/R stack vs wide T/B manual columns) -----
+## In the wide (T/B) dock the section blocks are packed by hand into fixed-width columns that FILL the
+## strip width, and the panel reserves exactly the height its tallest column needs (fit-to-content, so
+## nothing clips). Each block is capped to this width so a column is a tidy, readable measure and the
+## stepper `−/+` controls stay beside their labels (≈ the tall dock's content width).
 const SECTION_COLUMN_WIDTH := 340.0
-## Gap between the wrapped columns AND between blocks within a column, in wide (column-flow) mode.
+## Gap between the packed columns AND between blocks within a column, in wide mode.
 const WIDE_FLOW_SEPARATION := 16
+## Safety net for a pathological single column taller than most of the screen: the reserved wide-dock
+## height never exceeds this fraction of the window height; past it the columns gain a vertical scroll
+## rather than the panel eating the whole screen. Fit-to-content is the primary behaviour; this caps it.
+const MAX_WIDE_HEIGHT_FRACTION := 0.6
+## A few px of slack on the computed wide-dock height so sub-pixel min-size vs rendered-height rounding
+## never clips the last row of the tallest column.
+const WIDE_CONTENT_SAFETY_PAD := 4.0
 const CYCLE_PREV := -1
 const CYCLE_NEXT := 1
 
@@ -109,22 +119,29 @@ var _count_label: Label
 var _collapse_button: Button
 var _rail_expand_button: Button
 # Body layout: `_body_host` holds two alternative layout containers, one visible at a time — a
-# vertical `ScrollContainer`→VBox stack (`_tall_*`, for the tall L/R docks) and a bounded-height
-# `VFlowContainer` (`_wide_*`, for the wide T/B docks) that flows the blocks into columns. Hud hands
-# the panel an ordered list of self-contained **section blocks** via `set_band_sections`; the panel
-# OWNS them (frees the previous set, arranges the new one). On a tall↔wide dock flip the SAME block
-# nodes are reparented into the other container (`_relayout_body`) — no Hud re-render needed. The two
-# modes use DIFFERENT container types on purpose: VFlowContainer mis-columns in the tall unbounded
-# scroll (confirmed in #103), so tall stays a plain VBox.
+# vertical `ScrollContainer`→VBox stack (`_tall_*`, for the tall L/R docks) and a MANUAL column pack
+# (`_wide_*`, for the wide T/B docks): an HBox of column VBoxes the panel fills by hand. Hud hands the
+# panel an ordered list of self-contained **section blocks** via `set_band_sections`; the panel OWNS
+# them (frees the previous set, arranges the new one). On a tall↔wide dock flip the SAME block nodes
+# are reparented into the other container (`_relayout_body`) — no Hud re-render needed. Wide mode packs
+# blocks height-balanced into as many `SECTION_COLUMN_WIDTH` columns as the width allows and reserves
+# exactly the tallest column's height (fit-to-content — see `_pack_wide_columns`), so a short fixed
+# strip can never clip a tall column. The column VBoxes are transient scaffolding, rebuilt each pack.
 var _body_host: VBoxContainer
 var _tall_scroll: ScrollContainer
 var _tall_vbox: VBoxContainer
 var _wide_scroll: ScrollContainer
-var _wide_flow: VFlowContainer
+var _wide_columns_row: HBoxContainer
 var _body_is_wide: bool = false
 var _band_present: bool = false
 var _empty_state: Label
 var _section_blocks: Array = []   # the Hud-built section blocks the panel currently owns
+# Wide-dock fit-to-content state: the reserved cross-axis HEIGHT `_cross_axis_size` reports for T/B
+# (derived from the tallest packed column, capped by MAX_WIDE_HEIGHT_FRACTION), and a re-measure guard
+# so the deferred settle pass (fit_content RichTextLabel heights) is queued at most once.
+var _wide_content_height: float = PANEL_HEIGHT
+var _wide_capped: bool = false
+var _wide_remeasure_queued: bool = false
 var _dock_cells: Dictionary = {}   # edge:int -> Button
 
 func _ready() -> void:
@@ -134,6 +151,11 @@ func _ready() -> void:
 	_apply_dock_layout()
 	_refresh_collapse_state()
 	_refresh_dock_cells()
+	# A window resize changes the available width → the wide-dock column count (and thus the
+	# fit-to-content height), so re-pack + re-report the reservation when the viewport resizes.
+	var vp := get_viewport()
+	if vp != null:
+		vp.size_changed.connect(_on_viewport_resized)
 
 # ---- public API ------------------------------------------------------------
 
@@ -307,11 +329,10 @@ func _build() -> void:
 	_tall_vbox.add_theme_constant_override("separation", BODY_SEPARATION)
 	_tall_scroll.add_child(_tall_vbox)
 
-	# Wide layout (T/B docks): a VFlowContainer that flows the section blocks top→bottom and wraps
-	# into a new column when a column fills, spreading the sections across the strip width. It MUST be
-	# bounded in height to column-flow correctly, so it lives in a ScrollContainer with vertical scroll
-	# DISABLED (the scroll fits the flow to the strip height) and horizontal scroll AUTO (defensive:
-	# a narrow window whose columns overrun the width scrolls sideways instead of clipping).
+	# Wide layout (T/B docks): a MANUAL column pack. The panel reserves exactly the tallest column's
+	# height (fit-to-content), so the columns normally fit with no scroll; the ScrollContainer is the
+	# cap safety net — vertical scroll flips to AUTO only when a pathological column exceeds
+	# MAX_WIDE_HEIGHT_FRACTION of the window, and horizontal AUTO is defensive against column overrun.
 	_wide_scroll = ScrollContainer.new()
 	_wide_scroll.name = "WideScroll"
 	_wide_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -320,11 +341,12 @@ func _build() -> void:
 	_wide_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_wide_scroll.visible = false
 	_body_host.add_child(_wide_scroll)
-	_wide_flow = VFlowContainer.new()
-	_wide_flow.name = "WideFlow"
-	_wide_flow.add_theme_constant_override("h_separation", WIDE_FLOW_SEPARATION)
-	_wide_flow.add_theme_constant_override("v_separation", WIDE_FLOW_SEPARATION)
-	_wide_scroll.add_child(_wide_flow)
+	# The row of hand-packed column VBoxes (begin-aligned, so columns fill from the left and any
+	# leftover width stays empty on the right). `_pack_wide_columns` rebuilds its children each pack.
+	_wide_columns_row = HBoxContainer.new()
+	_wide_columns_row.name = "WideColumns"
+	_wide_columns_row.add_theme_constant_override("separation", WIDE_FLOW_SEPARATION)
+	_wide_scroll.add_child(_wide_columns_row)
 
 	# The accent seam sits on the map-facing edge, above the card fill.
 	_seam = ColorRect.new()
@@ -479,6 +501,13 @@ func _build_header_rail() -> VBoxContainer:
 # ---- layout ----------------------------------------------------------------
 
 func _apply_dock_layout() -> void:
+	_apply_root_anchors()
+	_relayout_body()
+
+## Re-anchor `_root` to the active edge at the current cross-axis size, and pin the seam. Split out of
+## `_apply_dock_layout` so a wide-dock fit-to-content height recompute can resize the card WITHOUT
+## re-arranging the body (which would recurse back into the packer).
+func _apply_root_anchors() -> void:
 	if _root == null:
 		return
 	var cross := _cross_axis_size()
@@ -503,45 +532,48 @@ func _apply_dock_layout() -> void:
 			_set_root_anchors(0.0, 1.0, 1.0, 1.0)
 			_set_root_offsets(0.0, -far, 0.0, -near)
 	_position_seam()
-	_relayout_body()
 
-## Switch the body between the tall single-stack layout (L/R docks) and the wide column-flow layout
-## (T/B docks) by reparenting the SAME owned section blocks. Idempotent — only re-arranges when the
-## tall↔wide orientation actually changes.
+## Switch the body between the tall single-stack layout (L/R docks) and the wide manual-column layout
+## (T/B docks). Called on every dock-layout pass; the actual work is cheap and idempotent, so it just
+## re-arranges into the active mode (the wide packer re-runs on width/content change anyway).
 func _relayout_body() -> void:
-	if _tall_vbox == null or _wide_flow == null:
+	if _tall_vbox == null or _wide_columns_row == null:
 		return
-	var wide := not _is_vertical_edge(_dock_edge)
-	if wide == _body_is_wide and _blocks_are_homed():
-		return
-	_body_is_wide = wide
+	_body_is_wide = not _is_vertical_edge(_dock_edge)
 	_arrange_sections()
 
-## True when every owned block already lives in the active layout container (so a re-arrange is a
-## no-op). Guards the first layout pass (before any blocks exist, `_body_is_wide` may match the dock
-## but the containers are empty — that's fine, an empty arrange just toggles visibility).
-func _blocks_are_homed() -> bool:
-	var host: Node = _wide_flow if _body_is_wide else _tall_vbox
-	for block in _section_blocks:
-		if block is Node and (block as Node).get_parent() != host:
-			return false
-	return true
-
-## Home every owned section block into the active layout container and size it for that mode, then
-## refresh which container is visible. Wide caps each block to a tidy column measure
-## (`SECTION_COLUMN_WIDTH`) so the flow spreads them across columns; tall lets blocks fill the strip
-## width (min 0 → the VBox's EXPAND_FILL stretches them). Reparents only blocks not already homed.
+## Home the owned section blocks into the active layout — a single vertical stack when tall, the
+## hand-packed balanced columns when wide — then refresh which container is visible.
 func _arrange_sections() -> void:
-	var host: Node = _wide_flow if _body_is_wide else _tall_vbox
+	if _body_is_wide:
+		_arrange_wide()
+	else:
+		_arrange_tall()
+	_update_body_visibility()
+
+## Tall (L/R): every block stacks in the vertical scroll's VBox, filling the strip width (min-x 0 →
+## the VBox's EXPAND_FILL stretches them). Reparents only blocks not already homed there.
+func _arrange_tall() -> void:
 	for block_variant in _section_blocks:
 		if not (block_variant is Control):
 			continue
 		var block: Control = block_variant
-		if block.get_parent() != host:
+		if block.get_parent() != _tall_vbox:
 			_detach(block)
-			host.add_child(block)
-		block.custom_minimum_size.x = SECTION_COLUMN_WIDTH if _body_is_wide else 0.0
-	_update_body_visibility()
+			_tall_vbox.add_child(block)
+		block.custom_minimum_size.x = 0.0
+
+## Wide (T/B): cap each block to a tidy column measure, pack the balanced columns now (using current
+## min sizes), then queue one deferred re-pack so the fit_content summary height settles before the
+## reserved height is finalised.
+func _arrange_wide() -> void:
+	if _section_blocks.is_empty():
+		return   # nothing to pack yet; `_cross_axis_size` falls back to PANEL_HEIGHT until a band arrives
+	for block_variant in _section_blocks:
+		if block_variant is Control:
+			(block_variant as Control).custom_minimum_size.x = SECTION_COLUMN_WIDTH
+	_pack_wide_columns()
+	_schedule_wide_remeasure()
 
 ## Show the active layout container (tall or wide) when a band is present, else neither (the
 ## empty-state placeholder shows instead). Collapse is handled separately by `_refresh_collapse_state`
@@ -551,6 +583,114 @@ func _update_body_visibility() -> void:
 		_tall_scroll.visible = _band_present and not _body_is_wide
 	if _wide_scroll != null:
 		_wide_scroll.visible = _band_present and _body_is_wide
+
+## Pack the owned section blocks into height-balanced fixed-width columns and reserve exactly the
+## height the tallest column needs (fit-to-content, so nothing clips). Steps:
+##   1. Column count from the available width (full window width for a T/B dock, minus card padding),
+##      clamped to 1..blocks so a wide screen fills with many columns but never more than blocks.
+##   2. Greedy balance: each block (in order) joins the currently-SHORTEST column, minimising the
+##      tallest column → minimising the height we must reserve. Column VBoxes are rebuilt each pack.
+##   3. Reserved height = card V-padding + header + tallest column (+ a px of slack), capped at
+##      MAX_WIDE_HEIGHT_FRACTION of the window (past which the columns gain a vertical scroll). Report
+##      it via `reservation_changed` (through `_cross_axis_size`) so the map/HUD reflow to fit.
+func _pack_wide_columns() -> void:
+	if _wide_columns_row == null:
+		return
+	# (1) Column count from available width. For a T/B dock `_root` spans the full window width, so the
+	# usable content width is the window width minus the card's horizontal padding.
+	var window_w := _viewport_size().x
+	var avail := window_w - 2.0 * PANEL_CONTENT_MARGIN_H
+	var block_count := _section_blocks.size()
+	var per_col := SECTION_COLUMN_WIDTH + float(WIDE_FLOW_SEPARATION)
+	var num_cols := clampi(int(avail / per_col), 1, maxi(block_count, 1))
+	# (2) Rebuild the column scaffolding: detach the owned blocks first (so freeing the old columns
+	# never frees a block), then create fresh column VBoxes.
+	for block_variant in _section_blocks:
+		if block_variant is Node:
+			_detach(block_variant)
+	for child in _wide_columns_row.get_children():
+		child.queue_free()
+	var columns: Array[VBoxContainer] = []
+	var col_heights: Array[float] = []
+	for i in range(num_cols):
+		var col := VBoxContainer.new()
+		col.size_flags_horizontal = Control.SIZE_FILL
+		col.size_flags_vertical = Control.SIZE_FILL
+		col.custom_minimum_size = Vector2(SECTION_COLUMN_WIDTH, 0.0)
+		col.add_theme_constant_override("separation", WIDE_FLOW_SEPARATION)
+		_wide_columns_row.add_child(col)
+		columns.append(col)
+		col_heights.append(0.0)
+	# Greedy: add each block to the shortest column.
+	for block_variant in _section_blocks:
+		if not (block_variant is Control):
+			continue
+		var block: Control = block_variant
+		var target := _shortest_column_index(col_heights)
+		if col_heights[target] > 0.0:
+			col_heights[target] += float(WIDE_FLOW_SEPARATION)
+		col_heights[target] += block.get_combined_minimum_size().y
+		columns[target].add_child(block)
+	# (3) Reserved height from the tallest column + chrome, capped by the window fraction.
+	var tallest := 0.0
+	for h in col_heights:
+		tallest = maxf(tallest, h)
+	var header_h := _header_full.get_combined_minimum_size().y if _header_full != null else 0.0
+	var content_h := 2.0 * PANEL_CONTENT_MARGIN_V + header_h + tallest + WIDE_CONTENT_SAFETY_PAD
+	var cap := _viewport_size().y * MAX_WIDE_HEIGHT_FRACTION
+	_wide_capped = content_h > cap
+	var new_height := minf(content_h, cap) if _wide_capped else content_h
+	# Capped → let the columns scroll vertically within the (shorter) reserved height; else they fit
+	# exactly, no scroll.
+	if _wide_scroll != null:
+		_wide_scroll.vertical_scroll_mode = (
+			ScrollContainer.SCROLL_MODE_AUTO if _wide_capped else ScrollContainer.SCROLL_MODE_DISABLED)
+	# Re-anchor + re-report the reservation only when the height actually moved (avoids reflow churn).
+	if not is_equal_approx(new_height, _wide_content_height):
+		_wide_content_height = new_height
+		if not _collapsed and _shown:
+			_apply_root_anchors()
+			_emit_reservation()
+
+## Index of the shortest column (ties → the leftmost), for the greedy height balance.
+func _shortest_column_index(heights: Array[float]) -> int:
+	var best := 0
+	for i in range(1, heights.size()):
+		if heights[i] < heights[best]:
+			best = i
+	return best
+
+## Queue one deferred re-pack so the fit_content summary RichTextLabel (bounded to SECTION_COLUMN_WIDTH)
+## reports its final wrapped height before the reserved height is finalised. Guarded so a burst of
+## arrange calls collapses to a single settle pass.
+func _schedule_wide_remeasure() -> void:
+	if _wide_remeasure_queued:
+		return
+	_wide_remeasure_queued = true
+	_run_wide_remeasure.call_deferred()
+
+func _run_wide_remeasure() -> void:
+	_wide_remeasure_queued = false
+	if not _body_is_wide or not _band_present:
+		return
+	# One frame lets the just-packed blocks lay out at their column width so fit_content settles.
+	await get_tree().process_frame
+	if not is_instance_valid(self) or not _body_is_wide or not _band_present:
+		return
+	_pack_wide_columns()
+
+## A window resize changes the available width (column count) and thus the fit-to-content height —
+## re-pack + re-report when wide and showing a band.
+func _on_viewport_resized() -> void:
+	if _body_is_wide and _band_present:
+		_arrange_wide()
+
+## The current window (viewport) size, the basis for the wide-dock column count + height cap.
+func _viewport_size() -> Vector2:
+	var vp := get_viewport()
+	if vp != null:
+		return vp.get_visible_rect().size
+	return Vector2(PANEL_WIDTH, PANEL_HEIGHT)
 
 func _detach(node: Node) -> void:
 	if node != null and node.get_parent() != null:
@@ -625,7 +765,13 @@ func _emit_reservation() -> void:
 func _cross_axis_size() -> float:
 	if _collapsed:
 		return COLLAPSED_SIZE
-	return PANEL_WIDTH if _is_vertical_edge(_dock_edge) else PANEL_HEIGHT
+	if _is_vertical_edge(_dock_edge):
+		return PANEL_WIDTH
+	# Wide (T/B): the fit-to-content height from the last column pack. Before the first pack (or with no
+	# band) fall back to the nominal PANEL_HEIGHT so the reserved strip is sensible.
+	if _band_present and _wide_content_height > 0.0:
+		return _wide_content_height
+	return PANEL_HEIGHT
 
 ## True when the dock reserves a vertical strip (left/right → width on the x-axis).
 func _is_vertical_edge(edge: int) -> bool:
@@ -669,10 +815,10 @@ func _panel_stylebox() -> StyleBoxFlat:
 	sb.bg_color = HudStyle.PANEL_SOLID
 	sb.set_border_width_all(1)
 	sb.border_color = HudStyle.LINE
-	sb.content_margin_left = 12
-	sb.content_margin_right = 12
-	sb.content_margin_top = 10
-	sb.content_margin_bottom = 10
+	sb.content_margin_left = PANEL_CONTENT_MARGIN_H
+	sb.content_margin_right = PANEL_CONTENT_MARGIN_H
+	sb.content_margin_top = PANEL_CONTENT_MARGIN_V
+	sb.content_margin_bottom = PANEL_CONTENT_MARGIN_V
 	return sb
 
 func _dock_cell_stylebox(edge: int, active: bool, hovered: bool = false) -> StyleBoxFlat:

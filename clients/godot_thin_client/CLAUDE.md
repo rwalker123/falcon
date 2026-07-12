@@ -975,12 +975,19 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   (`_relayout_body`/`_arrange_sections`, hooked off `_apply_dock_layout`, reparenting the
   **same** block nodes on a tall↔wide flip — no Hud re-render): **tall** (LEFT/RIGHT) = a
   vertical `ScrollContainer` stack (blocks fill width, unchanged look); **wide** (TOP/BOTTOM)
-  = a `VFlowContainer` bounded to the strip height (vertical scroll disabled) that **wraps
-  the blocks into multiple columns filling the width** (each block capped to
-  `SECTION_COLUMN_WIDTH`). VFlowContainer is used **only** in the wide bounded-height case —
-  in the tall unbounded scroll it mis-columns, so tall stays a plain VBox. **Caveat:** wide
-  mode has no per-column vertical scroll, so a single block taller than the ~short T/B strip
-  would clip (mitigation if it bites: raise the T/B `PANEL_HEIGHT`).
+  = **manual balanced-column packing** (`_pack_wide_columns`): column count from the
+  available width (`num_cols = clamp(avail / (SECTION_COLUMN_WIDTH + WIDE_FLOW_SEPARATION), 1,
+  #blocks)`), blocks distributed **greedily into the shortest column** so the tallest column
+  is minimized, columns in an HBox. The panel then **sizes its T/B height to the content** —
+  the reservation it reports (`reservation_changed`) is `header + tallest-column + margins`,
+  so the map/HUD reflow to exactly fit and **nothing clips** (fit-to-content, not a fixed
+  `PANEL_HEIGHT`). Re-packs on dock change, `set_band_sections` (content change), and window
+  `size_changed`; a deferred re-measure (`await process_frame`) lets the `fit_content` summary
+  RichTextLabel settle before the height is finalized. Safety net: reserved height is capped
+  at `MAX_WIDE_HEIGHT_FRACTION` of the window, past which the columns' ScrollContainer
+  re-enables vertical scroll. (Earlier `VFlowContainer` / fixed-height wide layouts were
+  replaced — VFlowContainer can't do fit-to-content *and* multi-column: unbounded height
+  stops it wrapping.)
 - Verify chrome + reflow via `tools/band_panel_preview.gd`
   (`godot --path . res://tools/band_panel_preview.tscn` → `ui_preview_out/
   band_panel_{left,right,top,bottom,collapsed}.png`).
