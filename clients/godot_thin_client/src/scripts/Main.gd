@@ -38,7 +38,6 @@ const STREAM_CONNECTION_TIMEOUT = 5.0
 const CAMERA_PAN_SPEED = 220.0
 const COMMAND_HOST = "127.0.0.1"
 const COMMAND_PORT = 41001
-const COMMAND_PROTO_PORT = 41001
 const PLAYER_FACTION_ID = 0
 const SNAPSHOT_DELTA_FIELDS := [
     "influencer_updates",
@@ -688,4 +687,10 @@ func _determine_command_proto_port() -> int:
         var parsed: int = int(env_port)
         if parsed > 0:
             return parsed
-    return COMMAND_PROTO_PORT
+    # No explicit COMMAND_PROTO_PORT override: the command endpoint is a single
+    # socket, so the protobuf port must follow the resolved command port (COMMAND_PORT
+    # env / default) — NOT a stale hardcoded default. run_stack exports COMMAND_PORT
+    # but not COMMAND_PROTO_PORT, so any non-default port base (every worktree, or a
+    # --port-base run) would otherwise send commands to 41001 while the server binds
+    # PORT_BASE+1, giving "connection refused" on every command.
+    return _determine_command_port()

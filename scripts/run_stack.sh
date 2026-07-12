@@ -195,6 +195,7 @@ if [[ "$RUN_CLIENT" == true || "$RUN_GODOT" == true ]]; then
       STREAM_PORT="$STREAM_PORT" \
       COMMAND_HOST=127.0.0.1 \
       COMMAND_PORT="$COMMAND_PORT" \
+      COMMAND_PROTO_PORT="$COMMAND_PORT" \
       LOG_HOST=127.0.0.1 \
       LOG_PORT="$LOG_PORT" \
       INSPECTOR_FONT_SIZE=32 \
@@ -206,6 +207,7 @@ if [[ "$RUN_CLIENT" == true || "$RUN_GODOT" == true ]]; then
       STREAM_PORT="$STREAM_PORT" \
       COMMAND_HOST=127.0.0.1 \
       COMMAND_PORT="$COMMAND_PORT" \
+      COMMAND_PROTO_PORT="$COMMAND_PORT" \
       LOG_HOST=127.0.0.1 \
       LOG_PORT="$LOG_PORT" \
       INSPECTOR_FONT_SIZE=32 \
