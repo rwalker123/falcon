@@ -703,10 +703,15 @@ func _measure_tall_width() -> void:
 		return
 	if not _is_vertical_edge(_dock_edge):
 		return
-	var content_min := _panel.get_combined_minimum_size().x
-	if is_equal_approx(content_min, _tall_content_width):
+	# Floor at PANEL_WIDTH FIRST, then guard on the effective (floored) value — the mirror of
+	# `_pack_wide_columns` guarding on its capped `new_height`. `_tall_content_width` therefore always
+	# holds the width actually reserved by `_cross_axis_size`, so a sub-PANEL_WIDTH content wiggle (a
+	# "· pending" suffix, an expedition row appearing) that leaves the reserved edge unchanged does NOT
+	# re-anchor/re-emit and needlessly invalidate the map cache downstream.
+	var content_width := maxf(PANEL_WIDTH, _panel.get_combined_minimum_size().x)
+	if is_equal_approx(content_width, _tall_content_width):
 		return
-	_tall_content_width = content_min
+	_tall_content_width = content_width
 	_apply_root_anchors()
 	_emit_reservation()
 
@@ -823,10 +828,11 @@ func _cross_axis_size() -> float:
 	if _collapsed:
 		return COLLAPSED_SIZE
 	if _is_vertical_edge(_dock_edge):
-		# Tall (L/R): the fit-to-content width from the last measure, floored at the nominal PANEL_WIDTH
-		# so `_root`/seam/reservation track the real card edge instead of a fixed 380. No band → nominal.
+		# Tall (L/R): `_tall_content_width` is the already-floored effective width from the last measure
+		# (`_measure_tall_width` stores `maxf(PANEL_WIDTH, content-min)`, mirroring how `_pack_wide_columns`
+		# stores its capped height), so `_root`/seam/reservation track the real card edge. No band → nominal.
 		if _band_present:
-			return maxf(PANEL_WIDTH, _tall_content_width)
+			return _tall_content_width
 		return PANEL_WIDTH
 	# Wide (T/B): the fit-to-content height from the last column pack. Before the first pack (or with no
 	# band) fall back to the nominal PANEL_HEIGHT so the reserved strip is sensible.
