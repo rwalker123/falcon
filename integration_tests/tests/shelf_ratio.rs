@@ -106,8 +106,13 @@ fn is_land(t: TerrainType) -> bool {
 /// wrap-aware on x) to shelf tiles vs. deep-water-at-the-edge tiles. Uses each coastal
 /// ocean tile's MIN adjacent-land sample (mirroring the gate's min-rise logic). The
 /// elevation-overlay samples are monotonic in real elevation, so comparing raw samples
-/// is sufficient to prove shelves sit off lower/gentler coasts.
-fn coast_land_elev_by_shelf(snap: &WorldSnapshot) -> (Option<f64>, Option<f64>) {
+/// is sufficient to prove shelves sit off lower/gentler coasts. `wrap_horizontal` is the
+/// flag `generate()` returned, so x-neighbours wrap exactly when the sim's map does (and
+/// are otherwise skipped at the edges), matching the sibling assertion helpers.
+fn coast_land_elev_by_shelf(
+    snap: &WorldSnapshot,
+    wrap_horizontal: bool,
+) -> (Option<f64>, Option<f64>) {
     let w = snap.terrain.width as usize;
     let h = snap.terrain.height as usize;
     let terr = &snap.terrain.samples;
@@ -133,15 +138,30 @@ fn coast_land_elev_by_shelf(snap: &WorldSnapshot) -> (Option<f64>, Option<f64>) 
             if !(is_shelf || is_deep) {
                 continue;
             }
-            // MIN adjacent-land elevation sample (wrap on x, clamp on y).
+            // MIN adjacent-land elevation sample: x wraps only when the sim's map does
+            // (else out-of-range x-neighbours are skipped), y always clamps at the poles.
             let mut min_land: Option<u16> = None;
+            let west = if x > 0 {
+                Some(x - 1)
+            } else if wrap_horizontal {
+                Some(w - 1)
+            } else {
+                None
+            };
+            let east = if x + 1 < w {
+                Some(x + 1)
+            } else if wrap_horizontal {
+                Some(0)
+            } else {
+                None
+            };
             let neighbours = [
-                ((x + w - 1) % w, y),
-                ((x + 1) % w, y),
-                (x, y.wrapping_sub(1)),
-                (x, y + 1),
+                west.map(|nx| (nx, y)),
+                east.map(|nx| (nx, y)),
+                Some((x, y.wrapping_sub(1))),
+                Some((x, y + 1)),
             ];
-            for (nx, ny) in neighbours {
+            for (nx, ny) in neighbours.into_iter().flatten() {
                 if ny >= h {
                     continue;
                 }
@@ -379,8 +399,8 @@ fn shelf_forms_off_gentler_coasts_than_deep_water() {
 
     println!("\n=== coast-land elevation: shelf vs deep-water-at-edge ===");
     for (w, h, seed) in samples {
-        let (snap, _wrap) = generate(w, h, seed);
-        let (shelf_mean, deep_mean) = coast_land_elev_by_shelf(&snap);
+        let (snap, wrap) = generate(w, h, seed);
+        let (shelf_mean, deep_mean) = coast_land_elev_by_shelf(&snap, wrap);
         let shelf_mean = shelf_mean.expect("map has shelf tiles with adjacent coast land");
         let deep_mean =
             deep_mean.expect("map has deep-water-at-edge tiles with adjacent coast land");

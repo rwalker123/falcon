@@ -3469,18 +3469,23 @@ func _sorted_terrain_rows(rows: Array) -> Array:
     return sorted_rows
 
 func _legend_row_less(a, b, field: String, ascending: bool) -> bool:
-    var less: bool
+    # Descending reuses the strict comparator with swapped arguments rather than
+    # negating it: `not less` would return true for equal rows in both directions,
+    # violating the strict-weak-ordering `sort_custom` requires. Swapping args keeps
+    # equality false either way (and preserves the alphabetical tie-break inside).
+    if ascending:
+        return _legend_strict_less(a, b, field)
+    return _legend_strict_less(b, a, field)
+
+func _legend_strict_less(a, b, field: String) -> bool:
     if field == LEGEND_SORT_FIELD_COUNT:
         var count_a := int(a.get("count", 0))
         var count_b := int(b.get("count", 0))
         if count_a == count_b:
             # Ties read best alphabetically rather than in arbitrary order.
-            less = str(a.get("label", "")).naturalnocasecmp_to(str(b.get("label", ""))) < 0
-        else:
-            less = count_a < count_b
-    else:
-        less = str(a.get("label", "")).naturalnocasecmp_to(str(b.get("label", ""))) < 0
-    return less if ascending else not less
+            return str(a.get("label", "")).naturalnocasecmp_to(str(b.get("label", ""))) < 0
+        return count_a < count_b
+    return str(a.get("label", "")).naturalnocasecmp_to(str(b.get("label", ""))) < 0
 
 ## Build the Name/Count sort header once and insert it above the row list.
 func _ensure_legend_sort_row() -> void:

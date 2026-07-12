@@ -1281,6 +1281,8 @@ fn shelf_hash_unit(seed: u64, x: usize, y: usize) -> f32 {
 /// ring's candidacy (`Some` ⇒ the ocean tile touches at least one Land hex-neighbour) and the
 /// coast-height gate's min rise, closing the old hex-diagonal gaps where a gentle coast could sit
 /// directly against DeepOcean (the 4-cardinal set covers only two of the six hex directions).
+// Justified: a leaf worldgen helper whose args are genuinely distinct scalars (land mask, elevation
+// field, sea level, tile x/y, grid w/h, wrap flag); bundling them into a struct would only obscure.
 #[allow(clippy::too_many_arguments)]
 fn min_adjacent_coast_rise(
     land: &[bool],
@@ -1304,6 +1306,9 @@ fn min_adjacent_coast_rise(
     min_rise
 }
 
+// Justified: a leaf worldgen helper whose args are genuinely distinct inputs (land/ocean masks,
+// ocean-distance grid, shelf config, elevation field, sea level, grid w/h, wrap flag, seed);
+// bundling them into a context struct would only obscure the coast-band computation.
 #[allow(clippy::too_many_arguments)]
 fn classify_bands(
     land: &[bool],
