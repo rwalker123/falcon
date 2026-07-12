@@ -4075,7 +4075,7 @@ pub fn advance_labor_allocation(
                 continue;
             }
             match &assignment.target {
-                LaborTarget::Forage { tile } => {
+                LaborTarget::Forage { tile, policy } => {
                     // Out of range this turn → no yield, but keep the assignment (the band may
                     // move back into range).
                     if crate::grid_utils::hex_distance_wrapped(
@@ -4097,21 +4097,30 @@ pub fn advance_labor_allocation(
                     // Depletable patch (Intensification §0-ii): draw the biomass down via the shared
                     // `forage_take` primitive (mirrors the Hunt arm). Every `FoodModuleTag` tile is
                     // seeded a patch at Startup; a missing one (a dynamically-tagged tile) is skipped
-                    // this turn. Gather on Sustain for now — the forage policy axis lands in 0-iii.
+                    // this turn. Gather per the assignment's policy (§0-iii, parity with hunting).
                     let Some(patch) = forage_registry.patch_mut(*tile) else {
                         continue;
                     };
                     let biomass_before = patch.biomass;
-                    let provisions = forage_take(
-                        patch,
-                        workers,
-                        FollowPolicy::Sustain,
-                        &labor.forage,
-                        mult_f,
-                        seasonal,
-                    );
+                    let provisions =
+                        forage_take(patch, workers, *policy, &labor.forage, mult_f, seasonal);
+                    let take = biomass_before - patch.biomass;
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
+                    }
+                    // Market forage = gathered goods sold: convert the raw take to trade goods
+                    // (mirror of the Hunt-Market arm). Only Market sells — Sustain/Surplus/Eradicate
+                    // produce no trade goods (Eradicate is denial, not commerce).
+                    if matches!(policy, FollowPolicy::Market) {
+                        let forage_market = &labor.forage.market;
+                        let trade_goods = (take
+                            * forage_market.trade_goods_per_biomass
+                            * forage_market.trade_goods_multiplier
+                            * mult_f)
+                            .round() as i64;
+                        if trade_goods > 0 {
+                            inventory.add_stockpile(faction, "trade_goods", trade_goods);
+                        }
                     }
                     // Sustainable = one turn's net regrowth of the patch at its **pre-take** biomass,
                     // in provisions (same conversion + output multiplier as the actual take). This
@@ -6499,6 +6508,7 @@ mod labor_yield_tests {
                 LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
+                        policy: FollowPolicy::Sustain,
                     },
                     workers: WORKERS,
                 },

@@ -3714,6 +3714,7 @@ fn labor_allocation_from_state(states: &[LaborAssignmentState]) -> LaborAllocati
             let target = match state.kind.as_str() {
                 "forage" => LaborTarget::Forage {
                     tile: UVec2::new(state.target_x, state.target_y),
+                    policy: FollowPolicy::from_str(&state.policy).unwrap_or_default(),
                 },
                 "hunt" => LaborTarget::Hunt {
                     fauna_id: state.fauna_id.clone(),
@@ -3753,9 +3754,10 @@ fn labor_assignment_to_state(
         ..Default::default()
     };
     match &assignment.target {
-        LaborTarget::Forage { tile } => {
+        LaborTarget::Forage { tile, policy } => {
             state.target_x = tile.x;
             state.target_y = tile.y;
+            state.policy = policy.as_str().to_string();
         }
         LaborTarget::Hunt { fauna_id, policy } => {
             state.fauna_id = fauna_id.clone();
@@ -4629,6 +4631,7 @@ mod tests {
                 LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
+                        policy: crate::components::FollowPolicy::Sustain,
                     },
                     workers: 10,
                 },
@@ -4695,6 +4698,7 @@ mod tests {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
+                    policy: crate::components::FollowPolicy::Sustain,
                 },
                 workers: 10,
             }],
@@ -4711,6 +4715,32 @@ mod tests {
         assert_eq!(state.labor_assignments.len(), 1);
         assert_eq!(state.labor_assignments[0].actual_yield, 0.0);
         assert_eq!(state.labor_assignments[0].sustainable_yield, 0.0);
+    }
+
+    /// A `LaborTarget::Forage` policy round-trips through the snapshot (§0-iii): `to_state` writes
+    /// the policy string and `from_state` parses it back, so a rollback preserves the gather policy
+    /// (parity with the Hunt arm). A non-Sustain policy is the interesting case (empty string would
+    /// silently default to Sustain).
+    #[test]
+    fn forage_policy_roundtrips_through_snapshot() {
+        use crate::components::FollowPolicy;
+        let target = LaborTarget::Forage {
+            tile: UVec2::new(7, 9),
+            policy: FollowPolicy::Market,
+        };
+        let assignment = LaborAssignment { target, workers: 6 };
+        let state = labor_assignment_to_state(
+            &assignment,
+            SourceYield {
+                actual: 0.0,
+                sustainable: 0.0,
+            },
+        );
+        assert_eq!(state.policy, "market", "policy serialized");
+
+        let restored = labor_allocation_from_state(std::slice::from_ref(&state));
+        assert_eq!(restored.assignments.len(), 1);
+        assert_eq!(restored.assignments[0], assignment, "policy round-trips");
     }
 
     #[test]

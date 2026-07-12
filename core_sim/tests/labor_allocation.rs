@@ -103,9 +103,13 @@ fn spawn_band(
 }
 
 fn forage_alloc(tile: UVec2, workers: u32) -> LaborAllocation {
+    forage_alloc_policy(tile, workers, FollowPolicy::Sustain)
+}
+
+fn forage_alloc_policy(tile: UVec2, workers: u32, policy: FollowPolicy) -> LaborAllocation {
     LaborAllocation {
         assignments: vec![LaborAssignment {
-            target: LaborTarget::Forage { tile },
+            target: LaborTarget::Forage { tile, policy },
             workers,
         }],
         ..Default::default()
@@ -319,6 +323,7 @@ fn assignment_sum_clamps_to_working_age() {
     let applied = alloc.set_assignment(
         LaborTarget::Forage {
             tile: UVec2::new(1, 1),
+            policy: FollowPolicy::Sustain,
         },
         3,
         available,
@@ -334,6 +339,7 @@ fn assignment_sum_clamps_to_working_age() {
     let applied = alloc.set_assignment(
         LaborTarget::Forage {
             tile: UVec2::new(1, 1),
+            policy: FollowPolicy::Sustain,
         },
         0,
         available,
@@ -352,4 +358,110 @@ fn assignment_sum_clamps_to_working_age() {
 
     // Sanity: available_workers floors the fractional working scalar.
     assert_eq!(available_workers(scalar_from_f32(5.9)), 5);
+}
+
+/// Run one turn of forage under `policy` on a Thriving (0.8×cap) patch with ample workers, returning
+/// the assignment's `(actual, sustainable)` food yield and the biomass drawn down this turn.
+fn run_forage_yield(policy: FollowPolicy) -> (f32, f32, f32) {
+    let mut app = spawn_world();
+    let (pos, tile) = food_tile(&mut app);
+    let before = {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(pos).expect("patch on the food tile");
+        patch.biomass = patch.carrying_capacity * 0.8; // Thriving, positive net regrowth.
+        patch.biomass
+    };
+    let band = spawn_band(&mut app, tile, 10, forage_alloc_policy(pos, 10, policy));
+    app.world.run_system_once(advance_labor_allocation);
+    let yields = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("band allocation")
+        .last_yields
+        .clone();
+    let y = yields[0];
+    let after = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(pos)
+        .expect("patch present")
+        .biomass;
+    (y.actual, y.sustainable, before - after)
+}
+
+/// (§0-iii over-forage): a non-Sustain gather makes `actual > sustainable` (the client overdraw ⚠
+/// trips) while a Sustain gather keeps `actual ≈ sustainable` (the regrowth skim, no overdraw).
+#[test]
+fn non_sustain_forage_trips_overdraw_while_sustain_does_not() {
+    let (sustain_actual, sustain_sustainable, _) = run_forage_yield(FollowPolicy::Sustain);
+    assert!(
+        (sustain_actual - sustain_sustainable).abs() < 1e-4,
+        "Sustain reads actual ≈ sustainable: {sustain_actual} vs {sustain_sustainable}"
+    );
+
+    let (erad_actual, erad_sustainable, _) = run_forage_yield(FollowPolicy::Eradicate);
+    assert!(
+        erad_actual > erad_sustainable + 1e-4,
+        "Eradicate overdraws (actual > sustainable): {erad_actual} vs {erad_sustainable}"
+    );
+}
+
+/// (§0-iii Market): a Market gather sells the take as trade goods (→ `FactionInventory`) and strips
+/// the patch harder than the Sustain skim; Sustain/Eradicate generate no trade goods.
+#[test]
+fn market_forage_sells_trade_goods_others_do_not() {
+    // Bump the trade-goods rate so a single Market gather on a small patch clears integer rounding.
+    let json = r#"{
+        "band_work_range": 2,
+        "worked_source_sight_range": 2,
+        "hunt_leash_tiles": 3,
+        "band_move_tiles_per_turn": 1,
+        "forage": { "market": { "trade_goods_per_biomass": 1.0 } },
+        "hunt": { "per_worker_biomass_capacity": 40.0 },
+        "scout": { "vantage_distance_base": 2, "vantage_distance_per_scout": 1, "vantage_distance_max": 6, "vantage_range": 2 }
+    }"#;
+
+    let run = |policy: FollowPolicy| -> (i64, f32) {
+        let mut app = spawn_world();
+        app.world.insert_resource(LaborConfigHandle::new(Arc::new(
+            LaborConfig::from_json_str(json).expect("custom labor config parses"),
+        )));
+        let (pos, tile) = food_tile(&mut app);
+        let before = {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(pos).expect("patch on the food tile");
+            patch.biomass = patch.carrying_capacity * 0.8;
+            patch.biomass
+        };
+        spawn_band(&mut app, tile, 10, forage_alloc_policy(pos, 10, policy));
+        app.world.run_system_once(advance_labor_allocation);
+        let trade = app
+            .world
+            .resource::<FactionInventory>()
+            .stockpile(FactionId(0))
+            .and_then(|s| s.get("trade_goods").copied())
+            .unwrap_or(0);
+        let after = app
+            .world
+            .resource::<ForageRegistry>()
+            .patch(pos)
+            .expect("patch present")
+            .biomass;
+        (trade, before - after)
+    };
+
+    let (market_trade, market_take) = run(FollowPolicy::Market);
+    let (sustain_trade, sustain_take) = run(FollowPolicy::Sustain);
+    let (erad_trade, _) = run(FollowPolicy::Eradicate);
+
+    assert!(
+        market_trade > 0,
+        "Market forage sells gathered goods as trade goods: {market_trade}"
+    );
+    assert_eq!(sustain_trade, 0, "Sustain generates no trade goods");
+    assert_eq!(erad_trade, 0, "Eradicate is denial, not commerce");
+    assert!(
+        market_take > sustain_take,
+        "Market depletes the patch faster than the Sustain skim: {market_take} vs {sustain_take}"
+    );
 }

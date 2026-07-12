@@ -240,7 +240,7 @@ pub fn calculate_visibility(
             if let Some(alloc) = allocation {
                 for assignment in &alloc.assignments {
                     let worked_tile = match &assignment.target {
-                        LaborTarget::Forage { tile } => Some(*tile),
+                        LaborTarget::Forage { tile, .. } => Some(*tile),
                         // Resolve the herd's live tile; a despawned/extinct herd yields no source.
                         LaborTarget::Hunt { fauna_id, .. } => {
                             herds.find(fauna_id).map(|herd| herd.position())
@@ -1145,7 +1145,7 @@ mod tests {
 
     #[test]
     fn forage_worked_tile_provides_visibility() {
-        use crate::components::{LaborAllocation, LaborTarget};
+        use crate::components::{FollowPolicy, LaborAllocation, LaborTarget};
 
         // A forage tile 7 tiles north of the band — far beyond the band center's base_range (2),
         // so only the forager standing on it can reveal it.
@@ -1161,7 +1161,14 @@ mod tests {
 
         // Staff a forager on it: the worked tile and its immediate neighbors go Active.
         let mut allocation = LaborAllocation::default();
-        allocation.set_assignment(LaborTarget::Forage { tile: FORAGE }, 2, 4);
+        allocation.set_assignment(
+            LaborTarget::Forage {
+                tile: FORAGE,
+                policy: FollowPolicy::Sustain,
+            },
+            2,
+            4,
+        );
         let worked = run_worked_visibility(allocation, Vec::new());
         assert_eq!(
             worked.visibility_state(FactionId(0), FORAGE.x, FORAGE.y),

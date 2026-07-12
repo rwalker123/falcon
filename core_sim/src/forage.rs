@@ -11,9 +11,11 @@
 //! Unlike a wild herd, a patch uses **pure logistic regrowth** (no Allee / critical-depensation
 //! crash) and **never despawns** — plants reseed, so a depleted (feral) patch always recovers. The
 //! Allee branch of `net_biomass_delta` is still used to size the **Sustain** gather ceiling (so a
-//! collapsed patch yields no sustainable surplus). The policy *choice* (Sustain/Surplus/Market/
-//! Eradicate for forage) is wired in slice 0-iii; §0-ii always gathers on `Sustain`. Cultivation
-//! (`progress`/`owner` on a patch) is Phase 1 — those `EcologyState` fields stay `0.0`/`None` here.
+//! collapsed patch yields no sustainable surplus). Foraging honors the full policy axis
+//! (Sustain/Surplus/Market/Eradicate — §0-iii, parity with hunting): the `LaborTarget::Forage`
+//! policy flows through `advance_labor_allocation` into `forage_take`, and a Market gather sells its
+//! take as trade goods. Cultivation (`progress`/`owner` on a patch) is Phase 1 — those
+//! `EcologyState` fields stay `0.0`/`None` here.
 
 use std::collections::HashMap;
 
@@ -168,11 +170,12 @@ fn regrow_patch(patch: &mut ForagePatch, ecology: &EcologyConfig) {
 /// the patch's remaining biomass, **subtract it from the patch**, and convert the take to provisions
 /// (× the caller's productivity `output_multiplier`). Returns the provisions gathered.
 ///
-/// Policy ceilings mirror `hunt_take`'s **Sustain** rung: one turn's net regrowth
-/// (`net_biomass_delta(..).max(0.0)`) — a collapsed patch yields nothing, and under Sustain the
-/// patch stays healthy. The other policies' forage semantics are settled in slice 0-iii; until then
-/// a non-Sustain draw is **throughput-capped only** (a heavier, depleting take — the seam the
-/// depletion path/tests exercise). §0-ii always passes `FollowPolicy::Sustain`.
+/// Policy ceilings mirror `hunt_take` (§0-iii — forage parity with hunting): **Sustain** = one
+/// turn's net regrowth (`net_biomass_delta(..).max(0.0)`, a collapsed patch yields nothing and a
+/// healthy patch stays healthy); **Surplus** = that × `surplus_multiplier` (overdraws a healthy
+/// patch → slow decline); **Market** = `market.take_fraction × biomass` (a commercial share → fast
+/// depletion; the caller sells the take as trade goods); **Eradicate** = `eradicate.take_fraction ×
+/// biomass` (strip the patch, no floor). All are then throughput-capped and clamped to biomass.
 pub(crate) fn forage_take(
     patch: &mut ForagePatch,
     workers: u32,
@@ -182,13 +185,19 @@ pub(crate) fn forage_take(
     seasonal: f32,
 ) -> Scalar {
     let ecology = &forage.ecology;
+    // Per-policy ecology ceiling: Sustain = net regrowth (skim), Surplus = that × multiplier,
+    // Market = a commercial share, Eradicate = an aggressive strip. Market/Eradicate deplete a
+    // healthy patch; Sustain keeps it healthy by default.
     let policy_ceiling = match policy {
         FollowPolicy::Sustain => {
             net_biomass_delta(patch.biomass, patch.carrying_capacity, ecology).max(0.0)
         }
-        // 0-iii settles Surplus/Market/Eradicate forage ceilings; a non-Sustain draw is
-        // throughput-and-biomass-capped only for now (a heavier, depleting gather).
-        _ => f32::INFINITY,
+        FollowPolicy::Surplus => {
+            net_biomass_delta(patch.biomass, patch.carrying_capacity, ecology).max(0.0)
+                * forage.surplus_multiplier
+        }
+        FollowPolicy::Market => forage.market.take_fraction * patch.biomass,
+        FollowPolicy::Eradicate => forage.eradicate.take_fraction * patch.biomass,
     };
     // Gather throughput caps the take (seasonal folded in); clamp to the patch's remaining biomass.
     let worker_cap = workers as f32 * forage.per_worker_biomass_capacity * seasonal.max(0.0);
@@ -278,6 +287,50 @@ mod tests {
         );
         assert_eq!(patch.ecology_phase, EcologyPhase::Collapsing);
         assert!(patch.biomass < forage.ecology.collapse_fraction * cap);
+    }
+
+    /// The forage policy axis (§0-iii, parity with hunting): on an identical Thriving patch with
+    /// ample workers (so the take is ceiling-bound, not throughput-bound), a heavier policy takes
+    /// more — `Sustain ≤ Surplus < Market < Eradicate` — and the heavier policies deplete the patch
+    /// faster (biomass drops more in a single turn).
+    #[test]
+    fn policy_ceilings_order_take_and_depletion() {
+        let forage = test_forage_config();
+        let cap = forage.carrying_capacity;
+        let start = 0.8 * cap; // Thriving, clear positive net regrowth.
+        let workers = 20; // worker_cap (20 × per_worker) far exceeds every policy ceiling.
+
+        // One-turn take under each policy from the same starting biomass.
+        let take_under = |policy: FollowPolicy| -> (f32, f32) {
+            let mut patch = ForagePatch::new(UVec2::new(1, 1), cap);
+            patch.biomass = start;
+            let provisions = forage_take(&mut patch, workers, policy, &forage, 1.0, 1.0);
+            let take = start - patch.biomass;
+            (take, provisions.to_f32())
+        };
+
+        let (sustain_take, _) = take_under(FollowPolicy::Sustain);
+        let (surplus_take, _) = take_under(FollowPolicy::Surplus);
+        let (market_take, _) = take_under(FollowPolicy::Market);
+        let (eradicate_take, _) = take_under(FollowPolicy::Eradicate);
+
+        // Sustain is the regrowth skim; Surplus overdraws it; Market/Eradicate strip a share.
+        assert!(sustain_take <= surplus_take + 1e-4, "Sustain ≤ Surplus");
+        assert!(surplus_take < market_take, "Surplus < Market");
+        assert!(market_take < eradicate_take, "Market < Eradicate");
+        // Heavier policies deplete the patch faster (more biomass removed this turn).
+        assert!(
+            market_take > sustain_take,
+            "Market depletes faster than Sustain"
+        );
+        assert!(
+            eradicate_take > sustain_take,
+            "Eradicate depletes faster than Sustain"
+        );
+        // Sustain leaves the patch at/above where it started net of regrowth (no overdraw): the
+        // take equals the net regrowth ceiling exactly.
+        let expected_sustain = net_biomass_delta(start, cap, &forage.ecology).max(0.0);
+        assert!((sustain_take - expected_sustain).abs() < 1e-3);
     }
 
     #[test]

@@ -1434,6 +1434,7 @@ fn handle_assign_labor(
         "forage" => match (target_x, target_y) {
             (Some(x), Some(y)) => LaborTarget::Forage {
                 tile: UVec2::new(x, y),
+                policy: parse_follow_policy(policy.as_deref()),
             },
             _ => {
                 emit_command_failure(

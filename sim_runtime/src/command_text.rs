@@ -167,7 +167,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "assign_labor",
         aliases: &[],
         summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle).",
-        usage: "assign_labor <faction_id> <band> forage <x> <y> <workers> | hunt <herd_id> <policy> <workers> | scout <workers> | warrior <workers>",
+        usage: "assign_labor <faction_id> <band> forage <x> <y> [policy] <workers> | hunt <herd_id> <policy> <workers> | scout <workers> | warrior <workers>",
     },
     CommandVerbHelp {
         verb: "move_band",
@@ -765,15 +765,22 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                     let y = parts
                         .next()
                         .ok_or(CommandParseError::MissingArgument("target_y"))?;
-                    let w = parts
+                    // Optional policy token: `forage <x> <y> [policy] <workers>` (parity with the
+                    // hunt arm's policy). If a token follows the first, the first is the policy and
+                    // the second is the worker count; otherwise the lone token is the worker count.
+                    let first = parts
                         .next()
                         .ok_or(CommandParseError::MissingArgument("workers"))?;
+                    let (policy_tok, workers_tok) = match parts.next() {
+                        Some(w) => (Some(first.to_string()), w),
+                        None => (None, first),
+                    };
                     (
-                        parse_u32(w, "assign_labor workers")?,
+                        parse_u32(workers_tok, "assign_labor workers")?,
                         Some(parse_u32(x, "assign_labor target_x")?),
                         Some(parse_u32(y, "assign_labor target_y")?),
                         None,
-                        None,
+                        policy_tok,
                     )
                 }
                 "hunt" => {
@@ -1101,6 +1108,27 @@ mod tests {
                 policy: None,
             }
         );
+    }
+
+    #[test]
+    fn parse_assign_labor_forage_with_policy() {
+        // The optional policy token (§0-iii, parity with hunt): `forage <x> <y> <policy> <workers>`.
+        for policy in ["sustain", "surplus", "market", "eradicate"] {
+            assert_eq!(
+                parse_command_line(&format!("assign_labor 0 904 forage 3 5 {policy} 6")).unwrap(),
+                CommandPayload::AssignLabor {
+                    faction_id: 0,
+                    band_entity_bits: Some(904),
+                    role: "forage".to_string(),
+                    workers: 6,
+                    target_x: Some(3),
+                    target_y: Some(5),
+                    fauna_id: None,
+                    policy: Some(policy.to_string()),
+                },
+                "forage policy {policy} should round-trip"
+            );
+        }
     }
 
     #[test]

@@ -35,6 +35,63 @@ const DEFAULT_FORAGE_COLLAPSE_RATE: f32 = 0.20;
 const DEFAULT_FORAGE_STRESSED_FRACTION: f32 = 0.40;
 const DEFAULT_FORAGE_EXTINCTION_FLOOR: f32 = 0.0;
 
+/// Named-const defaults for the forage **policy axis** (Intensification §0-iii — "forage parity
+/// with hunting"). These mirror the fauna `follow`/`market`/`hunt` levers so a gather policy
+/// behaves like the matching hunt policy: **Surplus** overdraws the Sustain regrowth skim by
+/// `surplus_multiplier` (fauna `follow.surplus_multiplier`), **Market** takes a commercial share
+/// `market.take_fraction` of the patch and sells it at `trade_goods_multiplier`× the base
+/// `trade_goods_per_biomass` rate (fauna `market.*` + `hunt.trade_goods_per_biomass`), and
+/// **Eradicate** strips the patch by `eradicate.take_fraction` (fauna `hunt.take_fraction`).
+const DEFAULT_FORAGE_SURPLUS_MULTIPLIER: f32 = 1.6;
+const DEFAULT_FORAGE_MARKET_TAKE_FRACTION: f32 = 0.20;
+const DEFAULT_FORAGE_MARKET_TRADE_GOODS_MULTIPLIER: f32 = 4.0;
+const DEFAULT_FORAGE_MARKET_TRADE_GOODS_PER_BIOMASS: f32 = 0.005;
+const DEFAULT_FORAGE_ERADICATE_TAKE_FRACTION: f32 = 0.30;
+
+/// Forage **Market** policy tuning (Intensification §0-iii): a commercial gather that takes
+/// `take_fraction` of the patch's biomass each turn and sells it — the raw take yields
+/// `take × trade_goods_per_biomass × trade_goods_multiplier` trade goods (the plant mirror of
+/// fauna's `market` block + `hunt.trade_goods_per_biomass`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ForageMarketConfig {
+    /// Fraction of the patch's remaining biomass a Market gather targets each turn (the ceiling
+    /// before the throughput/biomass clamps).
+    pub take_fraction: f32,
+    /// Multiplier applied to the base trade-goods rate for gathered-for-sale goods.
+    pub trade_goods_multiplier: f32,
+    /// Base trade goods yielded per unit of biomass taken.
+    pub trade_goods_per_biomass: f32,
+}
+
+impl Default for ForageMarketConfig {
+    fn default() -> Self {
+        Self {
+            take_fraction: DEFAULT_FORAGE_MARKET_TAKE_FRACTION,
+            trade_goods_multiplier: DEFAULT_FORAGE_MARKET_TRADE_GOODS_MULTIPLIER,
+            trade_goods_per_biomass: DEFAULT_FORAGE_MARKET_TRADE_GOODS_PER_BIOMASS,
+        }
+    }
+}
+
+/// Forage **Eradicate** policy tuning (Intensification §0-iii): an aggressive strip that takes
+/// `take_fraction` of the patch's biomass with no floor (the plant mirror of fauna's
+/// `hunt.take_fraction`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ForageEradicateConfig {
+    /// Fraction of the patch's remaining biomass an Eradicate gather targets each turn.
+    pub take_fraction: f32,
+}
+
+impl Default for ForageEradicateConfig {
+    fn default() -> Self {
+        Self {
+            take_fraction: DEFAULT_FORAGE_ERADICATE_TAKE_FRACTION,
+        }
+    }
+}
+
 /// Depletable-forage tuning (Intensification §0-ii). A worked `FoodModuleTag` tile carries a
 /// mutable per-patch `biomass`/`carrying_capacity` (`ForageRegistry`) that foraging draws down and
 /// that regrows logistically toward `carrying_capacity` — the herd biomass model transposed onto
@@ -58,6 +115,14 @@ pub struct ForageLaborConfig {
     /// `net_biomass_delta` only sizes the Sustain ceiling here — patch *regrowth* is pure logistic
     /// (plants have no critical-depensation crash), so a depleted patch recovers.
     pub ecology: EcologyConfig,
+    /// **Surplus** policy multiplier on the Sustain (net-regrowth) ceiling (§0-iii). `> 1.0` so a
+    /// Surplus gather overdraws a healthy patch — the plant mirror of `follow.surplus_multiplier`.
+    pub surplus_multiplier: f32,
+    /// **Market** policy tuning (§0-iii): a commercial gather share + the gathered-goods trade-goods
+    /// conversion.
+    pub market: ForageMarketConfig,
+    /// **Eradicate** policy tuning (§0-iii): the aggressive strip-the-patch share.
+    pub eradicate: ForageEradicateConfig,
 }
 
 impl Default for ForageLaborConfig {
@@ -73,6 +138,9 @@ impl Default for ForageLaborConfig {
                 stressed_fraction: DEFAULT_FORAGE_STRESSED_FRACTION,
                 extinction_floor: DEFAULT_FORAGE_EXTINCTION_FLOOR,
             },
+            surplus_multiplier: DEFAULT_FORAGE_SURPLUS_MULTIPLIER,
+            market: ForageMarketConfig::default(),
+            eradicate: ForageEradicateConfig::default(),
         }
     }
 }
@@ -275,6 +343,15 @@ mod tests {
         assert!(config.forage.ecology.regrowth_rate > 0.0);
         // Ecology-phase ordering invariant (collapse band below stressed band).
         assert!(config.forage.ecology.collapse_fraction < config.forage.ecology.stressed_fraction);
+        // Forage policy axis (§0-iii): Surplus overdraws the Sustain skim, Market/Eradicate take a
+        // fractional commercial/strip share, Market sells at a boosted trade-goods rate.
+        assert!(config.forage.surplus_multiplier > 1.0);
+        assert!(config.forage.market.take_fraction > 0.0);
+        assert!(config.forage.market.take_fraction < 1.0);
+        assert!(config.forage.market.trade_goods_multiplier > 1.0);
+        assert!(config.forage.market.trade_goods_per_biomass > 0.0);
+        assert!(config.forage.eradicate.take_fraction > 0.0);
+        assert!(config.forage.eradicate.take_fraction <= 1.0);
         assert!(config.hunt.per_worker_biomass_capacity > 0.0);
         assert!(config.scout.vantage_distance_base >= 1);
         assert!(config.scout.vantage_distance_max >= config.scout.vantage_distance_base);
