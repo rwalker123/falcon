@@ -368,6 +368,9 @@ func _ready() -> void:
 	# Band 2 shrank 90→78 with emigrants (losing population → warn/amber), Band 3 has idle
 	# workers (warn/amber). The badge reads "3", the pulse stops, and the popover (opened here)
 	# lists all three with the starving/critical row sorted to the TOP, each with a Jump row.
+	# A starving EXPEDITION is interleaved between the bands to verify the bands-only numbering:
+	# it produces NO attention entry (never "Band N starving") and does not shift Band 2/Band 3's
+	# positional numbers — the idle-workers row still reads "Band 3", matching the picker/header.
 	_hud.update_band_alerts([
 		{"faction": 0, "entity": 601, "size": 120, "days_of_food": 12.0, "activity": "forage",
 			"current_x": 21, "current_y": 15},
@@ -380,6 +383,11 @@ func _ready() -> void:
 		# Band 1 — starving (3 days of food, below critical).
 		{"faction": 0, "entity": 601, "size": 120, "days_of_food": 3.0, "activity": "forage",
 			"current_x": 21, "current_y": 15},
+		# A detached hunt expedition, also starving — must NOT emit a "Band N starving" entry and
+		# must NOT consume a band number (Band 2/Band 3 below stay 2 and 3).
+		{"faction": 0, "entity": 650, "size": 6, "days_of_food": 2.0, "is_expedition": true,
+			"expedition_mission": "hunt", "expedition_phase": "hunting", "home_band_entity": 601,
+			"current_x": 25, "current_y": 18},
 		# Band 2 — losing population: 90 → 78, well-fed but 12 emigrated last turn → "people leaving".
 		{"faction": 0, "entity": 602, "size": 78, "days_of_food": 999.0, "morale": 0.30,
 			"morale_cause": 1, "last_emigrated": 12, "activity": "hunt", "current_x": 31, "current_y": 21},

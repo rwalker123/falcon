@@ -75,6 +75,9 @@ decisions / awaiting-expeditions slot in later with no orb changes.
 ### HudLayer.tscn — BottomBar reorder + new nav cluster
 Target left→right order in `BottomBar`:
 `[NavCluster (minimap + zoom rail)] [BottomSpacer→expands] [ResourceSummary] [TurnCluster]`.
+(The `ResourceSummary` "Resources: --" placeholder was later removed — see
+`docs/plan_band_city_dock.md` / the turn-orb Advance fix; the bar is now
+`[NavCluster] [BottomSpacer] [TurnCluster]`.)
 
 - Wrap the minimap and rail in a new `NavCluster` (`HBoxContainer`, `size_flags_horizontal = 0`,
   bottom-aligned) placed as the **first** BottomBar child (before `BottomSpacer`).

@@ -691,8 +691,9 @@ func _determine_command_proto_port() -> int:
             return parsed
     # No explicit COMMAND_PROTO_PORT override: the command endpoint is a single
     # socket, so the protobuf port must follow the resolved command port (COMMAND_PORT
-    # env / default) — NOT a stale hardcoded default. run_stack exports COMMAND_PORT
-    # but not COMMAND_PROTO_PORT, so any non-default port base (every worktree, or a
-    # --port-base run) would otherwise send commands to 41001 while the server binds
+    # env / default) — NOT a stale hardcoded default. run_stack now exports both
+    # COMMAND_PORT and COMMAND_PROTO_PORT, but this fallback keeps any launcher that
+    # sets only COMMAND_PORT (or a bare --port-base run) correct: without it a
+    # non-default port base would send commands to 41001 while the server binds
     # PORT_BASE+1, giving "connection refused" on every command.
     return _determine_command_port()

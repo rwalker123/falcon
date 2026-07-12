@@ -3130,7 +3130,10 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # per band (starving / losing_population / idle_workers). Pushed to the orb below, which
     # severity-sorts (critical floats up). New producers (wars/decisions/…) append here later.
     var attention: Array = []
-    var band_index := 0
+    # Bands-only counter: increments for resident bands, NOT expeditions, so the "Band N"
+    # attention labels match the band-picker (`_build_band_picker`, `i + 1`) and the panel
+    # header (`_index_of_player_band` + 1) — all number positionally within `_player_bands`.
+    var band_number := 0
     # Capture the player bands each snapshot; the labor-allocation UI targets them (assign/move/
     # clear) and reads their labor_assignments for the herd/tile assign controls. `player_band`
     # (first) stays the default actor; `player_bands` backs the assign controls' band-picker.
@@ -3143,16 +3146,17 @@ func update_band_alerts(populations_variant: Variant) -> void:
         var entry: Dictionary = entry_variant
         if int(entry.get("faction", -1)) != PLAYER_FACTION_ID:
             continue
-        band_index += 1
         # Split expeditions out of the band roster: they are detached scout/hunt parties, never a
-        # labor actor band, and must not be counted by the cycler or listed in the band-picker.
-        # (Attention producers below still run for every player cohort — unchanged.)
+        # labor actor band, and must not be counted by the cycler, listed in the band-picker, or
+        # given band-style attention labels. The attention producers key off the bands-only path
+        # below, so an expedition never surfaces as "Band N starving/losing/idle".
         if bool(entry.get("is_expedition", false)):
             player_expeditions.append(entry)
-        else:
-            if player_band.is_empty():
-                player_band = entry
-            player_bands.append(entry)
+            continue
+        if player_band.is_empty():
+            player_band = entry
+        player_bands.append(entry)
+        band_number += 1
         var entity := int(entry.get("entity", -1))
         var size := int(entry.get("size", 0))
         var days := float(entry.get("days_of_food", BandFoodStatus.UNLIMITED_DAYS))
@@ -3161,7 +3165,7 @@ func update_band_alerts(populations_variant: Variant) -> void:
         var last_emigrated := int(entry.get("last_emigrated", 0))
         var x := int(entry.get("current_x", -1))
         var y := int(entry.get("current_y", -1))
-        var band_name := _band_display_name(entry, band_index)
+        var band_name := _band_display_name(entry, band_number)
         new_sizes[entity] = size
         # Producer 1 — starving: larder below the critical threshold (red/critical).
         if BandFoodStatus.is_critical(days):
