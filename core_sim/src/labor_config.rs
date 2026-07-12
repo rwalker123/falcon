@@ -34,6 +34,14 @@ const DEFAULT_FORAGE_COLLAPSE_FRACTION: f32 = 0.15;
 const DEFAULT_FORAGE_COLLAPSE_RATE: f32 = 0.20;
 const DEFAULT_FORAGE_STRESSED_FRACTION: f32 = 0.40;
 const DEFAULT_FORAGE_EXTINCTION_FLOOR: f32 = 0.0;
+/// Reseed standing crop as a fraction of a patch's carrying capacity (Intensification §0-ii). A
+/// depleted patch is reseeded up to this floor before regrowth, so a patch driven to exactly `0`
+/// (repeated Eradicate + f32 underflow, `take_fraction = 1.0`, or a snapshot carrying `biomass = 0`)
+/// still has a seed stock to regrow from — plants reseed from surrounding vegetation, so a crashed
+/// patch **always recovers** (the invariant `regrow_patch` promises). Kept small (2% of cap, below
+/// `collapse_fraction`) so Eradicate still crashes a patch hard into the Collapsing band — it just
+/// can't drive it *permanently* to 0.
+const DEFAULT_FORAGE_RESEED_FLOOR_FRACTION: f32 = 0.02;
 
 /// Named-const defaults for the forage **policy axis** (Intensification §0-iii — "forage parity
 /// with hunting"). These mirror the fauna `follow`/`market`/`hunt` levers so a gather policy
@@ -116,6 +124,13 @@ pub struct ForageLaborConfig {
     /// *regrowth* itself is pure logistic (plants have no critical-depensation crash), so a depleted
     /// patch recovers.
     pub ecology: EcologyConfig,
+    /// Reseed standing crop, as a **fraction of `carrying_capacity`**, that a depleted patch is
+    /// lifted to *before* logistic regrowth each turn (`regrow_patch`). This models plants
+    /// reseeding from surrounding vegetation, so a patch driven to exactly `0` still has a seed
+    /// stock and recovers via normal regrowth — the "a feral patch always recovers" invariant.
+    /// Only affects patches below the floor (a healthy patch is untouched); kept small (below
+    /// `collapse_fraction`) so Eradicate still crashes a patch hard, just never permanently to 0.
+    pub reseed_floor_fraction: f32,
     /// **Surplus** policy multiplier on the Sustain (net-regrowth) ceiling (§0-iii). `> 1.0` so a
     /// Surplus gather overdraws a healthy patch — the plant mirror of `follow.surplus_multiplier`.
     pub surplus_multiplier: f32,
@@ -139,6 +154,7 @@ impl Default for ForageLaborConfig {
                 stressed_fraction: DEFAULT_FORAGE_STRESSED_FRACTION,
                 extinction_floor: DEFAULT_FORAGE_EXTINCTION_FLOOR,
             },
+            reseed_floor_fraction: DEFAULT_FORAGE_RESEED_FLOOR_FRACTION,
             surplus_multiplier: DEFAULT_FORAGE_SURPLUS_MULTIPLIER,
             market: ForageMarketConfig::default(),
             eradicate: ForageEradicateConfig::default(),
@@ -344,6 +360,10 @@ mod tests {
         assert!(config.forage.ecology.regrowth_rate > 0.0);
         // Ecology-phase ordering invariant (collapse band below stressed band).
         assert!(config.forage.ecology.collapse_fraction < config.forage.ecology.stressed_fraction);
+        // Reseed floor is a small positive standing crop below the collapse band, so a crashed
+        // patch recovers from it while Eradicate still bottoms the patch out in Collapsing.
+        assert!(config.forage.reseed_floor_fraction > 0.0);
+        assert!(config.forage.reseed_floor_fraction < config.forage.ecology.collapse_fraction);
         // Forage policy axis (§0-iii): Surplus overdraws the Sustain skim, Market/Eradicate take a
         // fractional commercial/strip share, Market sells at a boosted trade-goods rate.
         assert!(config.forage.surplus_multiplier > 1.0);

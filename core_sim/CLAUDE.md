@@ -359,7 +359,14 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
 - **Regrowth** (`advance_forage_regrowth`, `TurnStage::Logistics` alongside `advance_herds`): each
   patch regrows toward its cap and refreshes its `EcologyPhase`. Unlike a wild herd, a patch uses
   **pure `logistic_regrowth`** (no Allee / critical-depensation crash) and **never despawns** —
-  plants reseed, so a depleted (feral) patch always recovers.
+  plants reseed, so a depleted (feral) patch always recovers. Because `logistic_regrowth` is `0` at
+  `biomass = 0`, `regrow_patch` first applies a **reseed floor** — it lifts a depleted patch up to
+  `reseed_floor_fraction × carrying_capacity` (a small standing crop, `max()` so a healthy patch is
+  untouched) *before* regrowth — so a patch driven to exactly `0` (repeated Eradicate + f32
+  underflow, `take_fraction = 1.0`, or a restored snapshot carrying `biomass = 0`) still has a seed
+  stock and recovers via normal regrowth instead of sticking at `0` forever. The floor is below
+  `collapse_fraction`, so Eradicate still crashes a patch hard into the Collapsing band — it just
+  can't hold it permanently at `0`.
 - **Draw-down** (`forage_take`, the plant mirror of `hunt_take`): resolves the per-policy ecology
   ceiling, caps it by gather throughput (`workers × per_worker_biomass_capacity × seasonal_weight`),
   clamps to the patch's biomass, **subtracts the take**, and converts to provisions
@@ -381,8 +388,11 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   as an over-hunt does.
 - **Config** (`labor_config.json` `forage`): `carrying_capacity`, `per_worker_biomass_capacity`,
   `provisions_per_biomass`, an `ecology` block reusing fauna's `EcologyConfig` (`regrowth_rate` tuned
-  higher than fauna's 0.05; `collapse_fraction`/`stressed_fraction` phase bands), plus the **policy
-  axis** levers (§0-iii, mirroring fauna's `follow`/`market`/`hunt`): `surplus_multiplier` (1.6),
+  higher than fauna's 0.05; `collapse_fraction`/`stressed_fraction` phase bands), a
+  `reseed_floor_fraction` (0.02 — the reseed standing crop as a fraction of `carrying_capacity`, so a
+  crashed patch recovers from a seed stock rather than sticking at `0`; below `collapse_fraction`),
+  plus the **policy axis** levers (§0-iii, mirroring fauna's `follow`/`market`/`hunt`):
+  `surplus_multiplier` (1.6),
   `market: { take_fraction 0.20, trade_goods_multiplier 4.0, trade_goods_per_biomass 0.005 }`,
   `eradicate: { take_fraction 0.30 }`. The old flat `forage.per_worker_yield` lever is **retired**.
   A flat per-patch cap is a v1 — a per-`FoodModule` table is a documented later refinement.

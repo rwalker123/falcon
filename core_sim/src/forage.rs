@@ -9,7 +9,10 @@
 //! the `HerdRegistry` uses (`ForageRegistry::from_states`/`update_from_states`).
 //!
 //! Unlike a wild herd, a patch uses **pure logistic regrowth** (no Allee / critical-depensation
-//! crash) and **never despawns** — plants reseed, so a depleted (feral) patch always recovers. The
+//! crash) and **never despawns** — plants reseed, so a depleted (feral) patch always recovers. A
+//! small **reseed floor** (`forage.reseed_floor_fraction × carrying_capacity`) lifts a fully-depleted
+//! patch back to a seed stock before regrowth each turn, so even a patch driven to exactly `0`
+//! (Eradicate / f32 underflow / a restored `biomass = 0`) recovers rather than sticking at `0`. The
 //! Allee branch of `net_biomass_delta` (via `sustainable_yield`) still sizes the **Sustain** gather
 //! ceiling (so a collapsed patch yields no sustainable surplus). Foraging honors the full policy axis
 //! (Sustain/Surplus/Market/Eradicate — §0-iii, parity with hunting): the `LaborTarget::Forage`
@@ -148,9 +151,9 @@ pub fn advance_forage_regrowth(
     labor_config: Res<LaborConfigHandle>,
 ) {
     let labor = labor_config.get();
-    let ecology = &labor.forage.ecology;
+    let forage = &labor.forage;
     for patch in registry.patches.values_mut() {
-        regrow_patch(patch, ecology);
+        regrow_patch(patch, &forage.ecology, forage.reseed_floor_fraction);
     }
 }
 
@@ -158,8 +161,21 @@ pub fn advance_forage_regrowth(
 /// ecology phase. Unlike a wild herd (`fauna::regrow_biomass`, which crashes below the Allee
 /// threshold and despawns), a patch has no critical-depensation crash — a depleted (feral) patch
 /// always recovers, and patches never despawn.
-fn regrow_patch(patch: &mut ForagePatch, ecology: &EcologyConfig) {
+///
+/// **Reseed floor.** `logistic_regrowth` returns `0` at `biomass == 0`, so a patch driven to exactly
+/// `0` (repeated Eradicate + f32 underflow, `take_fraction = 1.0`, or a restored snapshot carrying
+/// `biomass = 0`) would otherwise be stuck at `0` forever — contradicting the "always recovers"
+/// invariant. To model plants reseeding from surrounding vegetation, a depleted patch is first lifted
+/// to a small standing crop (`reseed_floor_fraction × carrying_capacity`) before regrowth, so it
+/// recovers from that floor via the normal logistic curve. The lift only touches patches below the
+/// floor — a healthy patch is untouched — and the floor is small (below `collapse_fraction`), so
+/// Eradicate still crashes a patch hard into the Collapsing band; it just can't hold it at `0`.
+fn regrow_patch(patch: &mut ForagePatch, ecology: &EcologyConfig, reseed_floor_fraction: f32) {
     let cap = patch.carrying_capacity;
+    // Reseed a depleted patch up to the floor (no-op for a healthy patch) so it has a seed stock to
+    // regrow from — plants reseed, so a crashed patch is never permanently stuck at 0.
+    let reseed_floor = reseed_floor_fraction * cap;
+    patch.biomass = patch.biomass.max(reseed_floor);
     let delta = logistic_regrowth(patch.biomass, cap, ecology.regrowth_rate);
     patch.biomass = (patch.biomass + delta).clamp(0.0, cap);
     patch.refresh_ecology_phase(ecology);
@@ -266,7 +282,7 @@ mod tests {
             let before = patch.biomass;
             let _ = forage_take(&mut patch, 20, FollowPolicy::Sustain, &forage, 1.0, 1.0);
             last_take = before - patch.biomass;
-            regrow_patch(&mut patch, &forage.ecology);
+            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
             if turn >= 190 {
                 assert!(
                     (patch.biomass - prev).abs() < 1.0,
@@ -308,7 +324,7 @@ mod tests {
         let mut saw_stressed = false;
         for _ in 0..40 {
             let _ = forage_take(&mut patch, 3, FollowPolicy::Eradicate, &forage, 1.0, 1.0);
-            regrow_patch(&mut patch, &forage.ecology);
+            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
             assert!(patch.biomass < last + 1e-3, "biomass must trend downward");
             last = patch.biomass;
             if patch.ecology_phase == EcologyPhase::Stressed {
@@ -377,7 +393,7 @@ mod tests {
 
         let mut prev = patch.biomass;
         for _ in 0..30 {
-            regrow_patch(&mut patch, &forage.ecology);
+            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
             assert!(patch.biomass >= prev, "regrowth must be monotonic upward");
             prev = patch.biomass;
         }
@@ -399,10 +415,111 @@ mod tests {
         assert_eq!(patch.ecology_phase, EcologyPhase::Collapsing);
 
         for _ in 0..80 {
-            regrow_patch(&mut patch, &forage.ecology);
+            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
         }
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
         assert!(patch.biomass > forage.ecology.stressed_fraction * cap);
+    }
+
+    #[test]
+    fn zero_biomass_patch_reseeds_and_recovers() {
+        // Regression: a patch driven to *exactly* 0 (repeated Eradicate + f32 underflow,
+        // `take_fraction = 1.0`, or a snapshot restore carrying biomass = 0) used to be stuck at 0
+        // forever, because `logistic_regrowth(0, ..) == 0`. The reseed floor lifts a depleted patch
+        // to a small standing crop each turn, so it recovers via normal regrowth — the "a feral
+        // patch always recovers" invariant is now backed by code, not just the docstring.
+        let forage = test_forage_config();
+        let cap = forage.carrying_capacity;
+        let floor = forage.reseed_floor_fraction * cap;
+        assert!(floor > 0.0, "reseed floor must be a positive standing crop");
+
+        let mut patch = ForagePatch::new(UVec2::new(5, 5), cap);
+        patch.biomass = 0.0;
+        patch.refresh_ecology_phase(&forage.ecology);
+
+        // One turn off dead-zero: reseeded to the floor and already regrowing above it (> 0).
+        regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+        assert!(
+            patch.biomass > 0.0,
+            "a 0-biomass patch must escape 0 via the reseed floor: {}",
+            patch.biomass
+        );
+        assert!(patch.biomass >= floor);
+
+        // Over subsequent turns it recovers toward a healthy level (Thriving), just like a patch
+        // seeded a hair above 0 — no permanent stall at 0.
+        for _ in 0..80 {
+            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+        }
+        assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
+        assert!(patch.biomass > forage.ecology.stressed_fraction * cap);
+    }
+
+    #[test]
+    fn continuous_eradicate_bottoms_at_floor_then_recovers() {
+        // The floor is small enough that Eradicate still crashes the patch hard (into Collapsing),
+        // but it can't drive it *permanently* to 0: the patch bottoms out at ~the reseed floor and
+        // recovers once Eradicate stops.
+        let forage = test_forage_config();
+        let cap = forage.carrying_capacity;
+        let floor = forage.reseed_floor_fraction * cap;
+        let mut patch = ForagePatch::new(UVec2::new(6, 6), cap);
+        patch.refresh_ecology_phase(&forage.ecology);
+
+        // Hammer with Eradicate + regrowth: biomass crashes but never sits at 0 — it floats at/above
+        // the reseed floor while still reading Collapsing (a hard crash, not extinction).
+        for _ in 0..60 {
+            let _ = forage_take(&mut patch, 50, FollowPolicy::Eradicate, &forage, 1.0, 1.0);
+            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+            assert!(
+                patch.biomass > 0.0,
+                "Eradicate must not permanently zero a patch"
+            );
+        }
+        assert!(
+            patch.biomass < cap * forage.ecology.collapse_fraction,
+            "Eradicate still crashes the patch hard: {} vs {}",
+            patch.biomass,
+            cap * forage.ecology.collapse_fraction
+        );
+        assert_eq!(patch.ecology_phase, EcologyPhase::Collapsing);
+
+        // Stop hunting: from the crashed floor the patch recovers all the way back to Thriving.
+        for _ in 0..120 {
+            regrow_patch(&mut patch, &forage.ecology, forage.reseed_floor_fraction);
+        }
+        assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
+        assert!(patch.biomass >= floor);
+    }
+
+    #[test]
+    fn reseed_floor_leaves_healthy_patch_regrowth_unchanged() {
+        // A patch above the floor must regrow identically with or without the reseed lift (the floor
+        // only reseeds depleted patches — a healthy patch is untouched).
+        let forage = test_forage_config();
+        let cap = forage.carrying_capacity;
+        let start = 0.5 * cap; // comfortably above reseed_floor_fraction × cap.
+
+        let mut with_floor = ForagePatch::new(UVec2::new(7, 7), cap);
+        with_floor.biomass = start;
+        let mut without_floor = ForagePatch::new(UVec2::new(8, 8), cap);
+        without_floor.biomass = start;
+
+        for _ in 0..30 {
+            regrow_patch(
+                &mut with_floor,
+                &forage.ecology,
+                forage.reseed_floor_fraction,
+            );
+            // A zero floor is the "no reseed" baseline.
+            regrow_patch(&mut without_floor, &forage.ecology, 0.0);
+        }
+        assert!(
+            (with_floor.biomass - without_floor.biomass).abs() < 1e-6,
+            "reseed floor must not perturb a healthy patch's regrowth: {} vs {}",
+            with_floor.biomass,
+            without_floor.biomass
+        );
     }
 
     #[test]
