@@ -172,6 +172,23 @@ const BASE_DEFAULT_TEXTURE_SCALE := 0.25
 # darker-green forest mass (the edge overhang naturally shrinks to nothing as hexes shrink). Trilinear
 # mipmap filtering on the crown array (TerrainTextureManager) keeps that far-zoom mass smooth, not shimmery.
 const CANOPY_DEFAULT_MIN_RADIUS := 3.0
+# Peak overlay (highland/volcanic relief = flat rocky floor + overhanging faceted peaks + cast shadow):
+# the mountain-drama analog of the canopy overlay. Overhang reach + softness are fractions of the hex
+# radius (× radius → px, like canopy); texture_scale is the world-UV multiplier (1.0 = one peak tile per
+# hex); shadow_length is the cast-shadow reach fraction (× radius → px). prominence/strength are unit
+# scalars; light_dir points TOWARD the light in canvas space (+y is DOWN, so top-left = negative,negative).
+# Fallbacks mirror terrain_config's "peaks" block.
+const PEAK_DEFAULT_OVERHANG_WIDTH := 0.6
+const PEAK_DEFAULT_SOFTNESS_WIDTH := 0.4
+const PEAK_DEFAULT_TEXTURE_SCALE := 1.0
+const PEAK_DEFAULT_MIN_RADIUS := 3.0
+const PEAK_DEFAULT_SHADOW_LENGTH := 0.5
+const PEAK_DEFAULT_SHADOW_STRENGTH := 0.45
+const PEAK_DEFAULT_MIN_PROMINENCE := 0.35
+const PEAK_DEFAULT_LIGHT_DIR := Vector2(-0.7, -0.7)  # top-left; canvas +y is DOWN, so negative,negative
+# Elev-map fallback (0..255 = relative height 0..100): used when a snapshot lacks an elevation raster
+# (relative_height_at returns -1) so peak relief still renders in preview/rehydrated frames.
+const PEAK_ELEV_FALLBACK := 200
 # Out-of-map fill behind the hex grid (matches the direct-path background clear).
 const TERRAIN_BG_COLOR := Color(0.3, 0.35, 0.25, 1.0)
 const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
@@ -476,8 +493,9 @@ var _terrain_blend_class: Dictionary = {}  # terrain_id -> "flat"|"water"|"rugge
 var _terrain_blend_quad: Node2D = null
 var _terrain_blend_material: ShaderMaterial = null
 var _terrain_blend_ready: bool = false
-var _terrain_id_map_tex: ImageTexture = null   # RGBA8: R=terrain id, G=blend_class code (0 water/1 flat/2 rugged), B=canopy code (0=none else layer+1), A=255
+var _terrain_id_map_tex: ImageTexture = null   # RGBA8: R=terrain id, G=blend_class code (0 water/1 flat/2 rugged), B=canopy code (0=none else layer+1), A=peak code (0=none else layer+1)
 var _terrain_vis_map_tex: ImageTexture = null  # R8: 0 unexplored / 0.5 discovered / 1 active
+var _terrain_elev_map_tex: ImageTexture = null # R8: per-hex relative height (0..255 = 0..100), for peak prominence + shadow scaling
 var culture_layer_grid: PackedInt32Array = PackedInt32Array()
 var highlighted_culture_layer_ids: PackedInt32Array = PackedInt32Array()
 var highlighted_culture_layer_set: Dictionary = {}
@@ -4121,6 +4139,11 @@ func _canopy_code(terrain_id: int) -> int:
 	var layer := TerrainTextureManager.canopy_layer_for(terrain_id)
 	return clampi(layer + 1, 0, 255)
 
+func _peak_code(terrain_id: int) -> int:
+	## Peak code for the id-map A channel: 0 = no peaks, else peak-array layer + 1.
+	var layer := TerrainTextureManager.peak_layer_for(terrain_id)
+	return clampi(layer + 1, 0, 255)
+
 func _setup_terrain_blend_shader() -> void:
 	## Create the Approach-B whole-map blend quad + its ShaderMaterial ONCE. The quad renders BEHIND
 	## MapView's own draws (grid/markers) via show_behind_parent, so the material only shades terrain.
@@ -4137,6 +4160,11 @@ func _setup_terrain_blend_shader() -> void:
 	var canopy_arr: Texture2DArray = TerrainTextureManager.canopy_textures
 	_terrain_blend_material.set_shader_parameter("canopy_enabled", canopy_arr != null)
 	_terrain_blend_material.set_shader_parameter("canopy_tex", canopy_arr if canopy_arr != null else TerrainTextureManager.terrain_textures)
+	# Peaks: a THIRD Texture2DArray in the same canvas shader (mountain relief). Disabled (and the sampler
+	# harmlessly bound to the base array) when no peak asset exists.
+	var peak_arr: Texture2DArray = TerrainTextureManager.peak_textures
+	_terrain_blend_material.set_shader_parameter("peaks_enabled", peak_arr != null and peak_arr.get_layers() > 0)
+	_terrain_blend_material.set_shader_parameter("peak_tex", peak_arr if peak_arr != null else TerrainTextureManager.terrain_textures)
 	var QuadScript: GDScript = preload("res://src/scripts/TerrainBlendQuad.gd")
 	_terrain_blend_quad = QuadScript.new()
 	_terrain_blend_quad.name = "TerrainBlendQuad"
@@ -4198,6 +4226,31 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 	# Canopy LOD is DECOUPLED from the blend LOD (blend_enabled): the canopy pass keeps running far below
 	# EDGE_BLEND_MIN_RADIUS so forests stay a distinct darker-green mass at far zoom (see CANOPY_DEFAULT_MIN_RADIUS).
 	m.set_shader_parameter("canopy_lod_enabled", radius >= canopy_min_radius)
+	# Peak overlay (highland/volcanic relief): overhang/softness/shadow are px = fraction × radius (like
+	# canopy); prominence/strength are unit scalars; light_dir points TOWARD the light. LOD is decoupled
+	# from the flat↔flat blend gate (own peak_min_radius), so the mountain mass persists at far zoom.
+	var peaks: Dictionary = config.get("peaks", {})
+	var peak_overhang_frac: float = clampf(float(peaks.get("overhang_width", PEAK_DEFAULT_OVERHANG_WIDTH)), 0.0, 2.0)
+	var peak_softness_frac: float = clampf(float(peaks.get("softness_width", PEAK_DEFAULT_SOFTNESS_WIDTH)), 0.02, 2.0)
+	var peak_scale: float = maxf(float(peaks.get("texture_scale", PEAK_DEFAULT_TEXTURE_SCALE)), 0.05)
+	var peak_min_radius: float = maxf(float(peaks.get("peak_min_radius", PEAK_DEFAULT_MIN_RADIUS)), 0.0)
+	var peak_shadow_frac: float = clampf(float(peaks.get("shadow_length", PEAK_DEFAULT_SHADOW_LENGTH)), 0.0, 4.0)
+	var peak_shadow_strength: float = clampf(float(peaks.get("shadow_strength", PEAK_DEFAULT_SHADOW_STRENGTH)), 0.0, 1.0)
+	var peak_min_prominence: float = clampf(float(peaks.get("min_prominence", PEAK_DEFAULT_MIN_PROMINENCE)), 0.0, 1.0)
+	var peak_light_dir: Vector2 = Vector2(
+		float(peaks.get("light_dir_x", PEAK_DEFAULT_LIGHT_DIR.x)),
+		float(peaks.get("light_dir_y", PEAK_DEFAULT_LIGHT_DIR.y)))
+	if peak_light_dir.length() < 0.0001:
+		peak_light_dir = PEAK_DEFAULT_LIGHT_DIR
+	peak_light_dir = peak_light_dir.normalized()
+	m.set_shader_parameter("peaks_lod_enabled", radius >= peak_min_radius)
+	m.set_shader_parameter("peak_overhang", peak_overhang_frac * radius)  # relief overhang past the footline (px)
+	m.set_shader_parameter("peak_softness", peak_softness_frac * radius)  # inner footline ramp half-width (px)
+	m.set_shader_parameter("peak_scale", peak_scale)
+	m.set_shader_parameter("peak_shadow_len", peak_shadow_frac * radius)  # cast-shadow reach toward the light (px)
+	m.set_shader_parameter("peak_shadow_strength", peak_shadow_strength)
+	m.set_shader_parameter("peak_min_prominence", peak_min_prominence)
+	m.set_shader_parameter("peak_light_dir", peak_light_dir)
 	m.set_shader_parameter("fow_enabled", _fow_enabled)
 	m.set_shader_parameter("bg_color", TERRAIN_BG_COLOR)
 	m.set_shader_parameter("fog_color", _fow_fog_fill_color)
@@ -4219,8 +4272,9 @@ func _shore_color(raw, fallback: Vector3) -> Vector3:
 	return fallback
 
 func _rebuild_terrain_shader_maps() -> void:
-	## (Re)build the id-map (RGBA8: R=terrain id, G=blend_class code, B=canopy code, A unused) + vis-map
-	## (R8: FoW state) splatmaps, one texel per hex, from the current terrain + FoW. Called each snapshot.
+	## (Re)build the id-map (RGBA8: R=terrain id, G=blend_class code, B=canopy code, A=peak code) +
+	## vis-map (R8: FoW state) + elev-map (R8: per-hex relative height for peak prominence/shadow)
+	## splatmaps, one texel per hex, from the current terrain + FoW + elevation. Called each snapshot.
 	## NEAREST-sampled in-shader.
 	if grid_width <= 0 or grid_height <= 0 or _cached_terrain_ids.is_empty():
 		return
@@ -4230,6 +4284,8 @@ func _rebuild_terrain_shader_maps() -> void:
 	id_bytes.resize(w * h * 4)
 	var vis_bytes := PackedByteArray()
 	vis_bytes.resize(w * h)
+	var elev_bytes := PackedByteArray()
+	elev_bytes.resize(w * h)
 	for y in range(h):
 		for x in range(w):
 			var idx := y * w + x
@@ -4237,19 +4293,26 @@ func _rebuild_terrain_shader_maps() -> void:
 			id_bytes[idx * 4] = clampi(tid, 0, 255) if tid >= 0 else 0
 			id_bytes[idx * 4 + 1] = _blend_class_code(tid)
 			id_bytes[idx * 4 + 2] = _canopy_code(tid)
-			id_bytes[idx * 4 + 3] = 255
+			id_bytes[idx * 4 + 3] = _peak_code(tid)
 			var v := 255
 			if _fow_enabled:
 				var state := _visibility_state_at(x, y)
 				v = 255 if state == "active" else (128 if state == "discovered" else 0)
 			vis_bytes[idx] = v
+			# Per-hex relative height (0..100 → 0..255) for peak prominence + shadow scaling; the
+			# PEAK_ELEV_FALLBACK keeps relief rendering when a snapshot carries no elevation raster.
+			var rh := relative_height_at(x, y)
+			elev_bytes[idx] = clampi(int(round(float(rh) * 2.55)), 0, 255) if rh >= 0 else PEAK_ELEV_FALLBACK
 	var id_img := Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, id_bytes)
 	_terrain_id_map_tex = ImageTexture.create_from_image(id_img)
 	var vis_img := Image.create_from_data(w, h, false, Image.FORMAT_R8, vis_bytes)
 	_terrain_vis_map_tex = ImageTexture.create_from_image(vis_img)
+	var elev_img := Image.create_from_data(w, h, false, Image.FORMAT_R8, elev_bytes)
+	_terrain_elev_map_tex = ImageTexture.create_from_image(elev_img)
 	if _terrain_blend_material != null:
 		_terrain_blend_material.set_shader_parameter("id_map", _terrain_id_map_tex)
 		_terrain_blend_material.set_shader_parameter("vis_map", _terrain_vis_map_tex)
+		_terrain_blend_material.set_shader_parameter("elev_map", _terrain_elev_map_tex)
 
 ## The single shared hex-grid-line drawer for MapView's own canvas — called by BOTH the shader-terrain
 ## branch (base terrain is the behind-quad) and _draw_terrain_direct (blend-off per-hex path), so the

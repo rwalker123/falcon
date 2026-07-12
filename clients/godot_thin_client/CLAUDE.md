@@ -169,6 +169,7 @@ assets/terrain/
       ...
       36_aquifer_ceiling.png
     canopy/                      # RGBA tree-crown overlays (transparency); one per canopy biome (12 today)
+    peaks/                       # RGBA mountain-relief overlays (transparency); one per relief biome (5 today: 24/25/26/27/29)
     edges/                       # 6 edge masks for blending (optional)
     wang/                        # Wang tile variants (future)
   terrain_config.json            # Configuration
@@ -209,7 +210,9 @@ interlock band fraction; `blend_noise_cell` is the dither value-noise cell size 
 - Exposes: `terrain_textures` (Texture2DArray), `terrain_config`, `use_terrain_textures`, `use_edge_blending`
 - Also builds `canopy_textures` (a second Texture2DArray of RGBA crowns from `textures/canopy/`) +
   `canopy_layer_by_id` / `canopy_layer_for(id)` (`terrain_id → canopy array layer`, -1 = none) for the
-  blend shader's canopy overlay (see Edge Blending → Canopy overlay)
+  blend shader's canopy overlay (see Edge Blending → Canopy overlay), and `peak_textures` (a third
+  Texture2DArray of RGBA mountain relief from `textures/peaks/`) + `peak_layer_by_id` / `peak_layer_for(id)`
+  for the blend shader's peak overlay (see Edge Blending → Peak overlay)
 
 ### 2D Rendering Pipeline
 - `MapView` gets textures from `TerrainTextureManager` and pre-renders hex-masked textures on startup
@@ -359,6 +362,48 @@ silhouette. Today the only canopy biome is **12 (mixed_woodland)** — its `blen
   beach/foam with canopy overhanging the water. Far-zoom decoupled-canopy LOD via State Q-far →
   `map_biome_farzoom.png` (same four bands on a large grid so hexes go tiny): the woodland band reads as a
   distinct darker-green forest mass vs the prairie grass, smooth (mipmapped), not shimmering.
+
+**Peak overlay — highland/volcanic relief = flat rocky floor + overhanging faceted peaks + cast shadow:**
+the mountain-drama analog of the canopy overlay, built on the exact same machinery (DRY). A relief biome
+keeps its flat rocky base floor and gets an RGBA **peaks overlay** of faceted mountains composited on top:
+they overhang the hex boundary and thin to a footline (like the treeline), have an **elevation-driven
+prominence**, and **cast a shadow** onto neighbouring hexes, so mountains read as raised relief on the 2D
+map. Five relief biomes carry real AI-gen peak art today — **24 (rolling_hills)**, **25 (high_plateau)**,
+**26 (alpine_mountain)**, **27 (karst_highland)**, **29 (active_volcano_slope)** — each a magenta-keyed,
+offset-blend-seamless RGBA overlay in `textures/peaks/`. (28 canyon_badlands is intentionally NOT a peak
+biome — its drama is incision, handled at the base-floor level, not raised relief.)
+- **Assets + third Texture2DArray:** `textures/peaks/NN_name.png` (**new dir**, RGBA relief on
+  transparency). `TerrainTextureManager` builds `peak_textures` (a THIRD `Texture2DArray`, same once-only
+  `Image.load_from_file` + **mipmaps** pattern as the canopy) plus `peak_layer_by_id` /
+  `peak_layer_for()` (`terrain_id → peak array layer`, -1 = none). Only biomes with a peak file get a
+  layer. Three `sampler2DArray`s in one canvas shader (base + canopy + peaks) work fine.
+- **Peak code in the splatmap A channel:** the id-map A channel (previously the unused `255`) now carries
+  the **peak code** (`0` none, else peak layer + 1, `MapView._peak_code`) — the peak analog of B=canopy
+  code, so both own and neighbour peak state come from the one id-map read the shader already does.
+- **New elev-map (R8):** a companion `grid_w × grid_h` R8 texture (parallel to the vis-map), each texel =
+  the hex's relative height (`MapView.relative_height_at` 0..100 → 0..255; `PEAK_ELEV_FALLBACK = 200` when
+  a snapshot lacks an elevation raster, so relief still renders in preview/rehydrated frames). Drives the
+  shader's per-hex `prominence` (`mix(peak_min_prominence, 1, elev)`) and shadow length.
+- **Peak pass (shader), after canopy, before FoW:** mirrors the canopy signed-distance-to-boundary scan
+  vs the **peak↔non-peak** boundary to get `s` (+inside relief) + `peak_code` (own, else nearest
+  peak-neighbour's for the overhang/shadow region). Where `peak_code > 0`: (1) a multi-tap **cast shadow**
+  looks back toward `peak_light_dir` (TOWARD the light; top-left = `(-0.7,-0.7)`, canvas +y DOWN) and
+  darkens the ground by up to `peak_shadow_strength` where a peak occludes; (2) a **peak composite** over
+  the shadowed ground using the shared `canopy_density(s, overhang, softness)` × prominence and the
+  world-noise `CANOPY_TREELINE_NOISE` bumpy footline (reused, not duplicated). Peak UV = the same
+  continuous map-space `v_map / (2·hex_radius) · peak_scale` as the canopy.
+- **Peak LOD is DECOUPLED from the blend LOD** (own `peaks_lod_enabled`, `radius ≥ peak_min_radius`,
+  default 3.0 ≪ `EDGE_BLEND_MIN_RADIUS`), so the mountain mass persists at far zoom; trilinear-mipmapped
+  peak array keeps it smooth (no shimmer).
+- **Config levers** (`terrain_config.json` → `peaks` block): `overhang_width` / `softness_width`
+  (→ `peak_overhang` / `peak_softness` px, like canopy), `texture_scale` (→ `peak_scale`),
+  `peak_min_radius` (LOD floor px), `shadow_length` (→ `peak_shadow_len` px) / `shadow_strength`,
+  `min_prominence`, and `light_dir_x` / `light_dir_y` (normalized → `peak_light_dir`). Fallbacks are the
+  `PEAK_DEFAULT_*` consts in `MapView.gd`. Peaks are shader-only (same caveat as canopy).
+- Verify via `tools/map_preview.gd` **State swatch** with `SWATCH_BIOME_ID = 26` (alpine) →
+  `map_swatch.png` (+ `map_swatch_farzoom.png`): faceted peaks composite with light-left/dark-right
+  self-shading, overhang the alpine↔prairie seam + cast a darkening shadow onto the prairie, and the
+  far-zoom alpine band reads as a raised mountain mass. Restore `SWATCH_BIOME_ID = 2` after.
 
 **Texture readback fix (kept from A):** `TerrainTextureManager` retains the CPU-side layer Images
 (`_layer_images`) captured once at build time; `get_terrain_image` serves duplicates from it and
