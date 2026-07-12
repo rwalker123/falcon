@@ -1159,6 +1159,19 @@ pub(crate) fn net_biomass_delta(biomass: f32, cap: f32, ecology: &EcologyConfig)
     }
 }
 
+/// The most-productive biomass for logistic regrowth is K/2 (the Maximum Sustainable
+/// Yield point), where `r·B·(1−B/K)` peaks.
+const MSY_BIOMASS_FRACTION: f32 = 0.5;
+
+/// Max Sustainable Yield ceiling: regrowth evaluated at the most-productive biomass (K/2),
+/// so a resource AT carrying capacity still has a positive sustainable harvest (Sustain draws it
+/// down to K/2 and holds it there). Below the Allee threshold this is 0 (don't harvest a
+/// collapsing resource — inherited from net_biomass_delta's negative branch, clamped). Distinct
+/// from net_biomass_delta, which stays the ACTUAL per-turn biomass change used by regrow_biomass.
+pub(crate) fn sustainable_yield(biomass: f32, cap: f32, ecology: &EcologyConfig) -> f32 {
+    net_biomass_delta(biomass.min(cap * MSY_BIOMASS_FRACTION), cap, ecology).max(0.0)
+}
+
 /// Apply one turn of critical-depensation dynamics toward the herd's carrying capacity
 /// and refresh its `ecology_phase`. A sub-threshold group declines instead of regrowing;
 /// the caller despawns it once it falls below the viability floor.

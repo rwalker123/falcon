@@ -26,7 +26,7 @@ use crate::{
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
     demographics_config::{DemographicsConfig, DemographicsConfigHandle, DemographicsConsumption},
-    fauna::{net_biomass_delta, EcologyPhase, Herd, HerdDensityMap, HerdRegistry},
+    fauna::{sustainable_yield, EcologyPhase, Herd, HerdDensityMap, HerdRegistry},
     fauna_config::{FaunaConfig, FaunaConfigHandle},
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     forage::{forage_take, ForageRegistry},
@@ -3969,11 +3969,9 @@ pub(crate) fn hunt_take(
     // Per-policy ecology ceiling: Sustain = one turn's net regrowth (a collapsing group gives
     // nothing), Surplus = that × multiplier, Market = a commercial share, Eradicate = max take.
     let policy_ceiling = match policy {
-        FollowPolicy::Sustain => {
-            net_biomass_delta(herd.biomass, herd.carrying_capacity, ecology).max(0.0)
-        }
+        FollowPolicy::Sustain => sustainable_yield(herd.biomass, herd.carrying_capacity, ecology),
         FollowPolicy::Surplus => {
-            net_biomass_delta(herd.biomass, herd.carrying_capacity, ecology).max(0.0)
+            sustainable_yield(herd.biomass, herd.carrying_capacity, ecology)
                 * follow.surplus_multiplier
         }
         FollowPolicy::Market => market.take_fraction * herd.biomass,
@@ -4125,13 +4123,11 @@ pub fn advance_labor_allocation(
                     // Sustainable = one turn's net regrowth of the patch at its **pre-take** biomass,
                     // in provisions (same conversion + output multiplier as the actual take). This
                     // lights the over-forage ⚠ for free the moment `actual > sustainable`.
-                    let sustainable = net_biomass_delta(
+                    let sustainable = sustainable_yield(
                         biomass_before,
                         patch.carrying_capacity,
                         &labor.forage.ecology,
-                    )
-                    .max(0.0)
-                        * labor.forage.provisions_per_biomass
+                    ) * labor.forage.provisions_per_biomass
                         * mult_f;
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
@@ -4218,8 +4214,7 @@ pub fn advance_labor_allocation(
                     // the actual take). An overdraw (Surplus/Eradicate) reads `actual > sustainable`;
                     // a Sustain draw reads `actual ≈ sustainable`.
                     let sustainable =
-                        net_biomass_delta(biomass_before, herd.carrying_capacity, &fauna.ecology)
-                            .max(0.0)
+                        sustainable_yield(biomass_before, herd.carrying_capacity, &fauna.ecology)
                             * hunt.provisions_per_biomass
                             * mult_f;
                     yields[idx] = SourceYield {
@@ -6364,16 +6359,17 @@ mod wellbeing_tests {
 #[cfg(test)]
 mod labor_yield_tests {
     //! Retained per-source food-yield telemetry (`LaborAllocation.last_yields`): a depletable
-    //! forage patch's `sustainable = net_biomass_delta(pre-take biomass).max(0) ×
-    //! provisions_per_biomass × output_multiplier` (a Sustain gather skims exactly that, so
-    //! `actual ≈ sustainable`); a hunt's `sustainable` uses the same formula; and an overdraw reads
-    //! `actual > sustainable`.
+    //! forage patch's `sustainable = sustainable_yield(pre-take biomass) ×
+    //! provisions_per_biomass × output_multiplier` (MSY-based — regrowth at the most-productive
+    //! biomass K/2, so a resource at carrying capacity still reads a positive sustainable harvest;
+    //! a Sustain gather skims exactly that, so `actual ≈ sustainable`); a hunt's `sustainable` uses
+    //! the same formula; and an overdraw reads `actual > sustainable`.
     use super::advance_labor_allocation;
     use crate::components::{
         FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause,
         PopulationCohort, Tile,
     };
-    use crate::fauna::{net_biomass_delta, Herd, HerdRegistry};
+    use crate::fauna::{sustainable_yield, Herd, HerdRegistry};
     use crate::fauna_config::{FaunaConfigHandle, SizeClass};
     use crate::food::{FoodModule, FoodModuleTag, FoodSiteKind};
     use crate::forage::{ForagePatch, ForageRegistry};
@@ -6494,7 +6490,7 @@ mod labor_yield_tests {
     }
 
     /// (a) both a Forage and a Hunt source capture `actual > 0`; (b) the hunt's `sustainable` equals
-    /// the net_biomass_delta-based regrowth value at the pre-take biomass, and a Sustain draw under a
+    /// the MSY-based `sustainable_yield` value at the pre-take biomass, and a Sustain draw under a
     /// binding regrowth ceiling skims exactly that (`actual ≈ sustainable`); (c) forage
     /// `sustainable ≡ actual`.
     #[test]
@@ -6525,8 +6521,8 @@ mod labor_yield_tests {
         // Expected hunt sustainable = one turn's net regrowth at the PRE-take biomass, in provisions
         // (output multiplier is 1.0 at morale 1).
         let fauna = world.resource::<FaunaConfigHandle>().get();
-        let expected_sustainable = net_biomass_delta(start, CAP, &fauna.ecology).max(0.0)
-            * fauna.hunt.provisions_per_biomass;
+        let expected_sustainable =
+            sustainable_yield(start, CAP, &fauna.ecology) * fauna.hunt.provisions_per_biomass;
         drop(fauna);
 
         world.run_system_once(advance_labor_allocation);
@@ -6581,8 +6577,8 @@ mod labor_yield_tests {
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
-        let expected_sustainable = net_biomass_delta(start, CAP, &fauna.ecology).max(0.0)
-            * fauna.hunt.provisions_per_biomass;
+        let expected_sustainable =
+            sustainable_yield(start, CAP, &fauna.ecology) * fauna.hunt.provisions_per_biomass;
         drop(fauna);
 
         world.run_system_once(advance_labor_allocation);
@@ -6595,6 +6591,51 @@ mod labor_yield_tests {
         assert!(
             hunt.actual > hunt.sustainable,
             "an Eradicate overdraw reads actual > sustainable: {} vs {}",
+            hunt.actual,
+            hunt.sustainable
+        );
+    }
+
+    /// Regression (Phase 0 bug): a herd AT carrying capacity used to yield 0 under a Sustain hunt
+    /// (logistic regrowth is 0 at K), leaving a full herd stuck. The MSY-based `sustainable_yield`
+    /// ceiling skims regrowth at the most-productive biomass (K/2), so a full herd stays
+    /// sustainably huntable — the parity fix mirroring the forage full-patch case.
+    #[test]
+    fn sustain_hunt_at_capacity_yields_msy() {
+        let start = CAP; // full herd — the old net_biomass_delta(K) == 0 bug.
+        let (mut world, tile) = world_with_source(start);
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let expected_sustainable =
+            sustainable_yield(start, CAP, &fauna.ecology) * fauna.hunt.provisions_per_biomass;
+        drop(fauna);
+
+        world.run_system_once(advance_labor_allocation);
+
+        let hunt = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        assert!(
+            hunt.sustainable > 0.0,
+            "a herd at carrying capacity must stay sustainably huntable: {hunt:?}"
+        );
+        assert!(
+            (hunt.sustainable - expected_sustainable).abs() < 1e-6,
+            "sustainable = MSY × provisions_per_biomass: {} vs {}",
+            hunt.sustainable,
+            expected_sustainable
+        );
+        assert!(
+            (hunt.actual - hunt.sustainable).abs() < 1e-6,
+            "a Sustain draw off a full herd skims exactly MSY: {} vs {}",
             hunt.actual,
             hunt.sustainable
         );

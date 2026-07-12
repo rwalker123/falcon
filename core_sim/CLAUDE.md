@@ -228,8 +228,10 @@ provisions/trade (`hunt.*_per_biomass`), drawn from the group and added to
 (`FollowPolicy` ∈ Sustain | Surplus | Market | Eradicate). The same `advance_fauna_pursuits`
 system keeps the band within `pursuit_radius` of the moving group and, once adjacent,
 **auto-hunts each turn per policy** instead of removing the component — a commercial
-spectrum: Sustain takes one turn's net regrowth (`net_biomass_delta(..).max(0.0)`, group
-~stable; a collapsing group yields nothing), Surplus takes that × `follow.surplus_multiplier`
+spectrum: Sustain takes the **Maximum Sustainable Yield** (`sustainable_yield(..)` — regrowth at
+the most-productive biomass K/2, so a group *at carrying capacity* still yields a positive skim and
+a collapsing group yields nothing; Sustain draws the group toward K/2 and holds it there), Surplus
+takes that × `follow.surplus_multiplier`
 (slow decline), **Market** takes `market.take_fraction × biomass` (a large commercial share →
 fast decline into the Phase D collapse) and sells it at `market.trade_goods_multiplier`× the
 normal trade-goods rate, Eradicate takes `hunt.take_from` (drives extinction). The policy is a
@@ -363,15 +365,18 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   clamps to the patch's biomass, **subtracts the take**, and converts to provisions
   (`take × provisions_per_biomass × output_multiplier`). Foraging honors the **full policy axis**
   (Sustain/Surplus/Market/Eradicate — §0-iii, **parity with hunting**), mirroring `hunt_take`'s
-  rungs: **Sustain** = one turn's net regrowth (`net_biomass_delta(..).max(0.0)` — a collapsed patch
-  yields nothing, patches stay healthy by default); **Surplus** = that × `surplus_multiplier` (slow
+  rungs: **Sustain** = the **Maximum Sustainable Yield** (`sustainable_yield(..)` — regrowth at the
+  most-productive biomass K/2, so a patch *at carrying capacity* still yields a positive skim and a
+  collapsed patch yields nothing; Sustain draws the patch toward K/2); **Surplus** = that ×
+  `surplus_multiplier` (slow
   decline); **Market** = `market.take_fraction × biomass` (a commercial share → fast depletion) and
   the `Forage` arm sells the take as trade goods (`take × market.trade_goods_per_biomass ×
   market.trade_goods_multiplier × output_mult` → `FactionInventory` — gathered goods sold, **Market
   only**); **Eradicate** = `eradicate.take_fraction × biomass` (strip the patch, no floor, no trade
   goods — denial). The `Forage` arm of `advance_labor_allocation` (Population) passes the
-  assignment's policy into `forage_take` and writes the real `sustainable = net_biomass_delta(
-  biomass_before, cap, forage.ecology).max(0) × provisions_per_biomass × output_multiplier` into the
+  assignment's policy into `forage_take` and writes the real `sustainable =
+  sustainable_yield(biomass_before, cap, forage.ecology) × provisions_per_biomass ×
+  output_multiplier` (MSY-based) into the
   yield telemetry, so a non-Sustain gather reads `actual > sustainable` (the over-forage ⚠) exactly
   as an over-hunt does.
 - **Config** (`labor_config.json` `forage`): `carrying_capacity`, `per_worker_biomass_capacity`,
@@ -678,11 +683,14 @@ restores only the assignments, leaving it empty until the next tick) and is **ex
 `LaborAllocation`'s equality** (manual `PartialEq` compares assignments only) so it can't perturb the
 persisted-intent comparison. Definitions: **`actual`** = the provisions the source produced this turn
 (the value added to the larder); **`sustainable`** = what it could yield without drawing down its
-stock. As of §0-ii **forage is depletable too**, so a forage `sustainable = net_biomass_delta(
-biomass_before, carrying_capacity, forage.ecology).max(0) × forage.provisions_per_biomass ×
-output_multiplier`** (one turn's net *patch* regrowth) — the plant mirror of the
-**hunt `sustainable = net_biomass_delta(biomass_before, carrying_capacity, ecology).max(0) ×
-hunt.provisions_per_biomass × output_multiplier`** (net *herd* regrowth at the *pre-take* biomass).
+stock. As of §0-ii **forage is depletable too**, so a forage `sustainable =
+sustainable_yield(biomass_before, carrying_capacity, forage.ecology) × forage.provisions_per_biomass ×
+output_multiplier`** (**MSY** — regrowth at the most-productive biomass K/2, so a *full* patch still
+reads a positive sustainable harvest, no longer 0) — the plant mirror of the
+**hunt `sustainable = sustainable_yield(biomass_before, carrying_capacity, ecology) ×
+hunt.provisions_per_biomass × output_multiplier`** (MSY at the *pre-take* biomass). `sustainable_yield`
+is shared by hunt + forage (`fauna.rs`); `net_biomass_delta` remains the **actual** per-turn biomass
+evolution used by `regrow_biomass`/`advance_herds` (0 at K — correct there, unchanged).
 A Sustain gather/hunt reads `actual ≈ sustainable`; an over-draw reads `actual > sustainable` (the
 overdraw ⚠). Scout/Warrior push `{0,0}`. The snapshot surfaces this: each `LaborAssignment` row
 carries `actualYield`/`sustainableYield`, and each `PopulationCohortState` carries band-level

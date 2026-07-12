@@ -10,8 +10,8 @@
 //!
 //! Unlike a wild herd, a patch uses **pure logistic regrowth** (no Allee / critical-depensation
 //! crash) and **never despawns** — plants reseed, so a depleted (feral) patch always recovers. The
-//! Allee branch of `net_biomass_delta` is still used to size the **Sustain** gather ceiling (so a
-//! collapsed patch yields no sustainable surplus). Foraging honors the full policy axis
+//! Allee branch of `net_biomass_delta` (via `sustainable_yield`) still sizes the **Sustain** gather
+//! ceiling (so a collapsed patch yields no sustainable surplus). Foraging honors the full policy axis
 //! (Sustain/Surplus/Market/Eradicate — §0-iii, parity with hunting): the `LaborTarget::Forage`
 //! policy flows through `advance_labor_allocation` into `forage_take`, and a Market gather sells its
 //! take as trade goods. Cultivation (`progress`/`owner` on a patch) is Phase 1 — those
@@ -24,7 +24,7 @@ use sim_schema::ForageState;
 
 use crate::{
     components::{FollowPolicy, Tile},
-    fauna::{classify_ecology_phase, logistic_regrowth, net_biomass_delta, EcologyPhase},
+    fauna::{classify_ecology_phase, logistic_regrowth, sustainable_yield, EcologyPhase},
     fauna_config::EcologyConfig,
     food::FoodModuleTag,
     labor_config::{ForageLaborConfig, LaborConfigHandle},
@@ -170,9 +170,10 @@ fn regrow_patch(patch: &mut ForagePatch, ecology: &EcologyConfig) {
 /// the patch's remaining biomass, **subtract it from the patch**, and convert the take to provisions
 /// (× the caller's productivity `output_multiplier`). Returns the provisions gathered.
 ///
-/// Policy ceilings mirror `hunt_take` (§0-iii — forage parity with hunting): **Sustain** = one
-/// turn's net regrowth (`net_biomass_delta(..).max(0.0)`, a collapsed patch yields nothing and a
-/// healthy patch stays healthy); **Surplus** = that × `surplus_multiplier` (overdraws a healthy
+/// Policy ceilings mirror `hunt_take` (§0-iii — forage parity with hunting): **Sustain** = the
+/// Maximum Sustainable Yield (`sustainable_yield`: regrowth at the most-productive biomass K/2, so a
+/// patch at carrying capacity still yields a positive skim and a collapsed patch yields nothing);
+/// **Surplus** = that × `surplus_multiplier` (overdraws a healthy
 /// patch → slow decline); **Market** = `market.take_fraction × biomass` (a commercial share → fast
 /// depletion; the caller sells the take as trade goods); **Eradicate** = `eradicate.take_fraction ×
 /// biomass` (strip the patch, no floor). All are then throughput-capped and clamped to biomass.
@@ -185,15 +186,13 @@ pub(crate) fn forage_take(
     seasonal: f32,
 ) -> Scalar {
     let ecology = &forage.ecology;
-    // Per-policy ecology ceiling: Sustain = net regrowth (skim), Surplus = that × multiplier,
-    // Market = a commercial share, Eradicate = an aggressive strip. Market/Eradicate deplete a
-    // healthy patch; Sustain keeps it healthy by default.
+    // Per-policy ecology ceiling: Sustain = Maximum Sustainable Yield (regrowth at K/2, so a full
+    // patch still yields), Surplus = that × multiplier, Market = a commercial share, Eradicate = an
+    // aggressive strip. Market/Eradicate deplete a healthy patch; Sustain draws it toward K/2.
     let policy_ceiling = match policy {
-        FollowPolicy::Sustain => {
-            net_biomass_delta(patch.biomass, patch.carrying_capacity, ecology).max(0.0)
-        }
+        FollowPolicy::Sustain => sustainable_yield(patch.biomass, patch.carrying_capacity, ecology),
         FollowPolicy::Surplus => {
-            net_biomass_delta(patch.biomass, patch.carrying_capacity, ecology).max(0.0)
+            sustainable_yield(patch.biomass, patch.carrying_capacity, ecology)
                 * forage.surplus_multiplier
         }
         FollowPolicy::Market => forage.market.take_fraction * patch.biomass,
@@ -221,43 +220,78 @@ mod tests {
     }
 
     #[test]
-    fn sustain_on_thriving_patch_holds_and_matches_sustainable() {
+    fn sustain_on_full_patch_yields_msy_and_draws_to_half_cap() {
+        // Regression (Phase 0 bug): a patch AT carrying capacity used to yield 0 under Sustain
+        // (logistic regrowth is 0 at K), so a full patch stayed stuck at 0 forever. The MSY-based
+        // `sustainable_yield` ceiling skims regrowth at the most-productive biomass (K/2), so a
+        // full patch yields a positive harvest and Sustain draws it DOWN toward K/2 and holds.
         let forage = test_forage_config();
         let cap = forage.carrying_capacity;
-        // Seed above cap/2 (Thriving) where net regrowth is positive. Above the logistic peak a
-        // Sustain skim leaves the patch nearer the peak, so it holds/recovers turn over turn.
+        let half_cap = cap * 0.5;
+        let msy = sustainable_yield(cap, cap, &forage.ecology);
+        assert!(
+            msy > 0.0,
+            "a full patch must be sustainably harvestable: {msy}"
+        );
+
+        // Seed FULL, exactly as real forage patches spawn.
         let mut patch = ForagePatch::new(UVec2::new(1, 1), cap);
-        patch.biomass = 0.8 * cap;
+        patch.biomass = cap;
         patch.refresh_ecology_phase(&forage.ecology);
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
 
-        // Sustain with plenty of workers: take is ceiling-capped to net regrowth, not throughput.
+        // First Sustain gather off the full patch: take equals MSY (positive), no longer 0.
         let biomass_before = patch.biomass;
-        let expected_sustainable = net_biomass_delta(biomass_before, cap, &forage.ecology).max(0.0);
+        let expected_sustainable = sustainable_yield(biomass_before, cap, &forage.ecology);
         let provisions = forage_take(&mut patch, 20, FollowPolicy::Sustain, &forage, 1.0, 1.0);
         let take = biomass_before - patch.biomass;
-
-        // The Sustain take equals one turn's net regrowth (the sustainable rate) — no overdraw.
+        assert!(
+            take > 0.0,
+            "a full patch under Sustain must yield > 0: {take}"
+        );
         assert!((take - expected_sustainable).abs() < 1e-3);
         let actual = provisions.to_f32();
         let sustainable = expected_sustainable * forage.provisions_per_biomass;
-        assert!((actual - sustainable).abs() < 1e-3);
-        assert!(actual <= sustainable + 1e-4, "sustain must not over-forage");
+        assert!(
+            (actual - sustainable).abs() < 1e-3,
+            "actual ≈ sustainable (no overdraw): {actual} vs {sustainable}"
+        );
 
-        // Over many take+regrowth turns the patch holds/recovers — Sustain never draws a Thriving
-        // patch down (above cap/2 each cycle regrows at least what it gathered), so biomass stays
-        // at/above where it sits going into the loop and stays Thriving.
-        let loop_floor = patch.biomass - 1e-2;
-        for _ in 0..40 {
+        // Over many take+regrowth turns Sustain draws the patch DOWN from full and then HOLDS: the
+        // post-take biomass settles at the MSY point (K/2), so the stored biomass stabilizes just
+        // above K/2 and the per-turn yield stays ≈ MSY (never falling back to 0).
+        let mut prev = patch.biomass;
+        let mut last_take = take;
+        for turn in 0..200 {
+            let before = patch.biomass;
             let _ = forage_take(&mut patch, 20, FollowPolicy::Sustain, &forage, 1.0, 1.0);
+            last_take = before - patch.biomass;
             regrow_patch(&mut patch, &forage.ecology);
-            assert!(
-                patch.biomass >= loop_floor,
-                "sustain must not draw a Thriving patch down: {}",
-                patch.biomass
-            );
+            if turn >= 190 {
+                assert!(
+                    (patch.biomass - prev).abs() < 1.0,
+                    "late turns: biomass has stabilized: {} vs {}",
+                    patch.biomass,
+                    prev
+                );
+            }
+            prev = patch.biomass;
         }
-        assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
+        assert!(
+            patch.biomass < cap,
+            "Sustain drew the full patch down: {}",
+            patch.biomass
+        );
+        assert!(
+            patch.biomass > half_cap,
+            "Sustain holds at/above the MSY point K/2: {} vs {}",
+            patch.biomass,
+            half_cap
+        );
+        assert!(
+            (last_take - msy).abs() < 1e-3 && last_take > 0.0,
+            "steady-state yield stays ≈ MSY: {last_take} vs {msy}"
+        );
     }
 
     #[test]
@@ -329,7 +363,7 @@ mod tests {
         );
         // Sustain leaves the patch at/above where it started net of regrowth (no overdraw): the
         // take equals the net regrowth ceiling exactly.
-        let expected_sustain = net_biomass_delta(start, cap, &forage.ecology).max(0.0);
+        let expected_sustain = sustainable_yield(start, cap, &forage.ecology);
         assert!((sustain_take - expected_sustain).abs() < 1e-3);
     }
 
@@ -369,6 +403,34 @@ mod tests {
         }
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
         assert!(patch.biomass > forage.ecology.stressed_fraction * cap);
+    }
+
+    #[test]
+    fn sustainable_yield_is_zero_below_allee() {
+        // A collapsing (sub-Allee) patch is not sustainably harvestable.
+        let forage = test_forage_config();
+        let cap = forage.carrying_capacity;
+        let below_allee = forage.ecology.collapse_fraction * cap * 0.5;
+        assert_eq!(
+            sustainable_yield(below_allee, cap, &forage.ecology),
+            0.0,
+            "a collapsing patch has no sustainable yield"
+        );
+    }
+
+    #[test]
+    fn sustainable_yield_plateaus_at_msy_above_half_cap() {
+        // For any healthy biomass (>= K/2) the MSY ceiling is flat at the K/2 peak.
+        let forage = test_forage_config();
+        let cap = forage.carrying_capacity;
+        let msy = sustainable_yield(cap * 0.5, cap, &forage.ecology);
+        assert!(msy > 0.0);
+        for frac in [0.5_f32, 0.6, 0.75, 0.9, 1.0] {
+            assert!(
+                (sustainable_yield(cap * frac, cap, &forage.ecology) - msy).abs() < 1e-6,
+                "flat MSY plateau at biomass = {frac}·K"
+            );
+        }
     }
 
     #[test]

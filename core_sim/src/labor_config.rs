@@ -111,9 +111,10 @@ pub struct ForageLaborConfig {
     pub provisions_per_biomass: f32,
     /// Depletion/regrowth dynamics (reuses fauna's `EcologyConfig`; forage regrows *faster* than
     /// game via a higher `regrowth_rate`). `collapse_fraction`/`stressed_fraction` classify the
-    /// patch's ecology phase with the same ordering invariant. The Allee/`collapse_rate` branch of
-    /// `net_biomass_delta` only sizes the Sustain ceiling here — patch *regrowth* is pure logistic
-    /// (plants have no critical-depensation crash), so a depleted patch recovers.
+    /// patch's ecology phase with the same ordering invariant. This config feeds `sustainable_yield`
+    /// (the MSY-based Sustain ceiling, regrowth evaluated at the most-productive biomass K/2) — patch
+    /// *regrowth* itself is pure logistic (plants have no critical-depensation crash), so a depleted
+    /// patch recovers.
     pub ecology: EcologyConfig,
     /// **Surplus** policy multiplier on the Sustain (net-regrowth) ceiling (§0-iii). `> 1.0` so a
     /// Surplus gather overdraws a healthy patch — the plant mirror of `follow.surplus_multiplier`.
