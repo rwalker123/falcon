@@ -4239,9 +4239,10 @@ func _rebuild_terrain_shader_maps() -> void:
 		_terrain_blend_material.set_shader_parameter("id_map", _terrain_id_map_tex)
 		_terrain_blend_material.set_shader_parameter("vis_map", _terrain_vis_map_tex)
 
-## Draw hex grid lines onto MapView's own canvas — used in the shader-terrain branch, where the base
-## terrain is the behind-quad rather than the per-hex loop. Mirrors _draw_terrain_direct's grid loop
-## (each hex paints only its right + lower edges; boundary rows/cols add their unshared edges).
+## The single shared hex-grid-line drawer for MapView's own canvas — called by BOTH the shader-terrain
+## branch (base terrain is the behind-quad) and _draw_terrain_direct (blend-off per-hex path), so the
+## grid renders identically regardless of the terrain path. Each hex paints only its right + lower edges
+## (boundary rows/cols add their unshared edges), and every visible edge is batched into one draw_multiline.
 func _draw_hex_grid_overlay(radius: float, origin: Vector2, col_start: int, col_end: int, row_start: int, row_end: int) -> void:
 	if not _show_grid_lines or radius < 12.0:
 		return
