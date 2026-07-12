@@ -342,6 +342,35 @@ equipment is consumable inventory; you allocate working-age labor across roles.
   **larder spoilage + storage tiers** (spoilage matters once storage lets food sit); richer threats;
   the Settlement arc's Phase 3 improvement catalog (storage improvements consume the carry-cap seam).
 
+### Intensification — Depletion → Domestication → Agriculture
+
+Design: `docs/plan_intensification.md`. Completes the Neolithic transition: adds the missing
+**pressure** (local resource depletion under population pressure — the honest carrying-capacity
+mechanic that supersedes the reverted flat carry-cap) and the **plant** path (forage → cultivation →
+farming), as a near-mechanical transpose of the shipped herd depletion + husbandry/domestication
+systems. Realizes the Settlement arc's food-tending improvement class (tended patches / corrals).
+
+- [ ] **Phase 0 — Forage parity with hunting.** Make forage tiles **depletable**: transpose the herd
+  `biomass`/`carrying_capacity`/logistic-regrowth (+ ecology phases) onto forage, moved into
+  **persisted** state (`FoodModuleTag` is an unpersisted worldgen tag today — step zero). Forage take
+  draws the stock down; `forage sustainable` becomes the real `net_biomass_delta` rate, so PR #110's
+  overdraw ⚠ lights up for over-foraging automatically. Then give forage the **policy axis**
+  (Sustain/Surplus/Market/Eradicate mirrored from Hunt): `LaborTarget::Forage` policy + `assign_labor`
+  parse + snapshot + client picker. (May split: 0a depletion/persistence, 0b policy.)
+- [ ] **Phase 1 — Cultivation + Corral.** Transpose husbandry to plants
+  (`cultivation_progress`/`owner`/Sustain-accrual/`cultivate` command, mirroring
+  `domestication_progress`/`domesticate`); complete cultivation into a **tended-patch** (farming) and
+  land the **corral** (pastoral) — the place-bound food-tending improvements from
+  `plan_settlement_population.md`, knowledge-gated (`farming`/`herding`), built/tended/decaying. Pulls
+  forward a slice of the Settlement arc's `build`/improvement system. Feeds `SedentarizationScore`.
+- [ ] **Cross-cutting — command yield-vector + pre-commit forecast.** Model a command's
+  multi-dimensional output (food + husbandry/cultivation progress + trade goods + discovery) and
+  surface it live + as a compose-time **forecast** (projection fn mirroring the sim yield math, no
+  mutation); policy becomes a visible tradeoff. Lands alongside Phase 0/1.
+- [ ] Deferred (documented): full improvement catalog (dwellings/storage/defense), larder spoilage +
+  storage tiers, richer crop/livestock variety, settlement-cluster derivation — owned by
+  `plan_settlement_population.md`; this arc delivers the food-tending seam that feeds them.
+
 ### Exploration & Wondrous Sites
 
 Design: `docs/plan_exploration_and_sites.md`. The early-game exploration layer — makes scouting

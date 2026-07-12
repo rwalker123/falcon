@@ -191,5 +191,7 @@ Each phase is independently shippable.
 ## See Also
 
 - `core_sim/CLAUDE.md` — Ecosystem Food Modules (gather layer), fauna system.
+- `docs/plan_intensification.md` — transposes this doc's herd depletion + husbandry/domestication
+  model onto forage tiles (making them depletable) and onto plants (cultivation → tended patches).
 - Manual §"Start of Game — Nomadic Default" — Follow Herd (current interim
   behavior) and the forager loop this feeds.

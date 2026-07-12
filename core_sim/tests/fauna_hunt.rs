@@ -6,10 +6,10 @@ use core_sim::{
     advance_herds, advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero,
     spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger,
-    FollowPolicy, GenerationId, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
-    LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    FollowPolicy, ForageRegistry, GenerationId, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
 };
 
@@ -49,6 +49,7 @@ fn spawn_world() -> App {
     app.update();
 
     app.world.insert_resource(HerdRegistry::default());
+    app.world.insert_resource(ForageRegistry::default());
     app.world.insert_resource(HerdTelemetry::default());
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());

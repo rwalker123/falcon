@@ -348,8 +348,11 @@ func _on_hud_assign_labor(payload: Dictionary) -> void:
             var fy := int(payload.get("y", -1))
             if fx < 0 or fy < 0:
                 return
-            line = "assign_labor %d %d forage %d %d %d" % [faction, band_bits, fx, fy, workers]
-            message = "Assign %d forager%s to (%d, %d)." % [workers, "" if workers == 1 else "s", fx, fy]
+            var fpolicy := String(payload.get("policy", "sustain")).strip_edges().to_lower()
+            if fpolicy == "":
+                fpolicy = "sustain"
+            line = "assign_labor %d %d forage %d %d %s %d" % [faction, band_bits, fx, fy, fpolicy, workers]
+            message = "Assign %d forager%s to (%d, %d) (%s)." % [workers, "" if workers == 1 else "s", fx, fy, fpolicy]
         "hunt":
             var herd_id := String(payload.get("herd_id", "")).strip_edges()
             if herd_id == "":

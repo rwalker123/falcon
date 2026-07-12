@@ -4,6 +4,7 @@ use std::f32::consts::TAU;
 use bevy::prelude::*;
 use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 use sim_runtime::TerrainTags;
+use sim_schema::HerdState;
 use tracing::info;
 
 use std::hash::{Hash, Hasher};
@@ -63,6 +64,16 @@ impl EcologyPhase {
             EcologyPhase::Collapsing => "collapsing",
         }
     }
+
+    /// Parse the stable string key back into a phase (inverse of `as_str`; the rollback restore
+    /// path). Unknown/empty strings resolve to the `Default` (`Thriving`).
+    pub fn from_key(key: &str) -> Self {
+        match key {
+            "stressed" => EcologyPhase::Stressed,
+            "collapsing" => EcologyPhase::Collapsing,
+            _ => EcologyPhase::Thriving,
+        }
+    }
 }
 
 /// Classify a group's ecological phase from its biomass fraction of carrying capacity.
@@ -96,6 +107,43 @@ pub enum RoamState {
     Loiter { turns_left: u32 },
     /// Migratory: a directed leg toward the next anchor at 1 hex/turn, no grazing pause.
     Migrate,
+}
+
+/// Stable string keys for `RoamState`, shared by the snapshot capture (`HerdRoamState.mode`) and
+/// the rollback restore (`RoamState::from_mode`) so the mapping lives in one place.
+const ROAM_MODE_GRAZE_WANDER: &str = "graze_wander";
+const ROAM_MODE_LOITER: &str = "loiter";
+const ROAM_MODE_MIGRATE: &str = "migrate";
+
+impl RoamState {
+    /// Stable string key for the movement mode (snapshot `HerdRoamState.mode`).
+    pub fn mode_key(self) -> &'static str {
+        match self {
+            RoamState::GrazeWander => ROAM_MODE_GRAZE_WANDER,
+            RoamState::Loiter { .. } => ROAM_MODE_LOITER,
+            RoamState::Migrate => ROAM_MODE_MIGRATE,
+        }
+    }
+
+    /// The loiter countdown (`0` for graze-wander / migrate).
+    pub fn loiter_turns_left(self) -> u32 {
+        match self {
+            RoamState::Loiter { turns_left } => turns_left,
+            _ => 0,
+        }
+    }
+
+    /// Reconstruct from the stable string key + loiter countdown (rollback restore; inverse of
+    /// `mode_key` + `loiter_turns_left`). Unknown/empty keys resolve to `GrazeWander`.
+    pub fn from_mode(mode: &str, loiter_turns_left: u32) -> Self {
+        match mode {
+            ROAM_MODE_LOITER => RoamState::Loiter {
+                turns_left: loiter_turns_left,
+            },
+            ROAM_MODE_MIGRATE => RoamState::Migrate,
+            _ => RoamState::GrazeWander,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -283,6 +331,44 @@ impl HerdRegistry {
             .iter()
             .filter(|herd| herd.is_domesticated() && herd.owner == Some(faction))
             .count()
+    }
+
+    /// Rebuild the authoritative herd list from a rollback snapshot's `HerdState`s (clear + rebuild,
+    /// mirroring `GenerationRegistry::update_from_states`). Restores biomass / position / movement /
+    /// ecology so a rollback rewinds herd sim state, not just display telemetry.
+    pub fn update_from_states(&mut self, states: &[HerdState]) {
+        self.herds = states.iter().map(herd_from_state).collect();
+    }
+
+    /// Construct a registry directly from snapshot `HerdState`s (mirrors
+    /// `GenerationRegistry::from_states`).
+    pub fn from_states(states: &[HerdState]) -> Self {
+        let mut registry = Self::default();
+        registry.update_from_states(states);
+        registry
+    }
+}
+
+/// Reconstruct a live `Herd` from its snapshot mirror (the rollback restore side of `herd_state`
+/// in `snapshot.rs`). Parses the `ecology_phase` / `size_class` / `roam` string keys back to their
+/// live enums.
+fn herd_from_state(state: &HerdState) -> Herd {
+    Herd {
+        id: state.id.clone(),
+        label: state.label.clone(),
+        species: state.species.clone(),
+        size_class: SizeClass::from_key(&state.size_class),
+        route: state.route.iter().map(|&(x, y)| UVec2::new(x, y)).collect(),
+        step_index: state.step_index as usize,
+        current_pos: UVec2::new(state.current_pos.0, state.current_pos.1),
+        dwell_remaining: state.dwell_remaining,
+        roam: RoamState::from_mode(&state.roam.mode, state.roam.loiter_turns_left),
+        next_pos: state.next_pos.map(|(x, y)| UVec2::new(x, y)),
+        biomass: state.ecology.biomass,
+        carrying_capacity: state.ecology.carrying_capacity,
+        ecology_phase: EcologyPhase::from_key(&state.ecology.ecology_phase),
+        domestication_progress: state.ecology.progress,
+        owner: state.ecology.owner.map(FactionId),
     }
 }
 
@@ -1045,8 +1131,10 @@ pub fn advance_husbandry(
 }
 
 /// One turn's positive logistic regrowth increment (>= 0) for a group of `biomass`
-/// toward `cap`. The healthy branch of `net_biomass_delta`.
-fn logistic_regrowth(biomass: f32, cap: f32, regrowth_rate: f32) -> f32 {
+/// toward `cap`. The healthy branch of `net_biomass_delta`. Also the forage patch's
+/// regrowth curve (`forage::regrow_patch`) — plants have no Allee crash, so a depleted
+/// patch always recovers via this branch (see `forage.rs`).
+pub(crate) fn logistic_regrowth(biomass: f32, cap: f32, regrowth_rate: f32) -> f32 {
     if cap <= 0.0 || biomass <= 0.0 {
         return 0.0;
     }
@@ -1069,6 +1157,19 @@ pub(crate) fn net_biomass_delta(biomass: f32, cap: f32, ecology: &EcologyConfig)
     } else {
         logistic_regrowth(biomass, cap, ecology.regrowth_rate)
     }
+}
+
+/// The most-productive biomass for logistic regrowth is K/2 (the Maximum Sustainable
+/// Yield point), where `r·B·(1−B/K)` peaks.
+const MSY_BIOMASS_FRACTION: f32 = 0.5;
+
+/// Max Sustainable Yield ceiling: regrowth evaluated at the most-productive biomass (K/2),
+/// so a resource AT carrying capacity still has a positive sustainable harvest (Sustain draws it
+/// down to K/2 and holds it there). Below the Allee threshold this is 0 (don't harvest a
+/// collapsing resource — inherited from net_biomass_delta's negative branch, clamped). Distinct
+/// from net_biomass_delta, which stays the ACTUAL per-turn biomass change used by regrow_biomass.
+pub(crate) fn sustainable_yield(biomass: f32, cap: f32, ecology: &EcologyConfig) -> f32 {
+    net_biomass_delta(biomass.min(cap * MSY_BIOMASS_FRACTION), cap, ecology).max(0.0)
 }
 
 /// Apply one turn of critical-depensation dynamics toward the herd's carrying capacity
@@ -1217,4 +1318,45 @@ fn is_land_tile(position: UVec2, registry: &TileRegistry, tiles: &Query<&Tile>) 
         .and_then(|entity| tiles.get(entity).ok())
         .map(|tile| !tile.terrain_tags.contains(TerrainTags::WATER))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ecology_phase_string_roundtrips() {
+        for phase in [
+            EcologyPhase::Thriving,
+            EcologyPhase::Stressed,
+            EcologyPhase::Collapsing,
+        ] {
+            assert_eq!(EcologyPhase::from_key(phase.as_str()), phase);
+        }
+    }
+
+    #[test]
+    fn ecology_phase_from_unknown_key_defaults_thriving() {
+        assert_eq!(EcologyPhase::from_key(""), EcologyPhase::Thriving);
+        assert_eq!(EcologyPhase::from_key("bogus"), EcologyPhase::Thriving);
+    }
+
+    #[test]
+    fn roam_state_string_roundtrips() {
+        for roam in [
+            RoamState::GrazeWander,
+            RoamState::Loiter { turns_left: 7 },
+            RoamState::Migrate,
+        ] {
+            let restored = RoamState::from_mode(roam.mode_key(), roam.loiter_turns_left());
+            assert_eq!(restored, roam);
+        }
+    }
+
+    #[test]
+    fn size_class_string_roundtrips() {
+        for size in [SizeClass::Small, SizeClass::Big, SizeClass::Migratory] {
+            assert_eq!(SizeClass::from_key(size.as_str()), size);
+        }
+    }
 }

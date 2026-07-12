@@ -39,7 +39,7 @@ cargo run -p core_sim --bin server
 | `src/data/influencer_config.json` | Roster caps, decay factors, scope thresholds |
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
-| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage.per_worker_yield`, `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles) |
+| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: `carrying_capacity` per-patch cap, `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles) |
 | `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) / `market` (commercial-hunt take + trade multiplier) tuning |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
@@ -273,8 +273,10 @@ provisions/trade (`hunt.*_per_biomass`), drawn from the group and added to
 (`FollowPolicy` ∈ Sustain | Surplus | Market | Eradicate). The same `advance_fauna_pursuits`
 system keeps the band within `pursuit_radius` of the moving group and, once adjacent,
 **auto-hunts each turn per policy** instead of removing the component — a commercial
-spectrum: Sustain takes one turn's net regrowth (`net_biomass_delta(..).max(0.0)`, group
-~stable; a collapsing group yields nothing), Surplus takes that × `follow.surplus_multiplier`
+spectrum: Sustain takes the **Maximum Sustainable Yield** (`sustainable_yield(..)` — regrowth at
+the most-productive biomass K/2, so a group *at carrying capacity* still yields a positive skim and
+a collapsing group yields nothing; Sustain draws the group toward K/2 and holds it there), Surplus
+takes that × `follow.surplus_multiplier`
 (slow decline), **Market** takes `market.take_fraction × biomass` (a large commercial share →
 fast decline into the Phase D collapse) and sells it at `market.trade_goods_multiplier`× the
 normal trade-goods rate, Eradicate takes `hunt.take_from` (drives extinction). The policy is a
@@ -289,7 +291,7 @@ one-task-per-band model (`reassign_band` + `HarvestAssignment`/`ScoutAssignment`
 and their systems `advance_harvest_assignments`/`advance_scout_assignments`/`advance_fauna_pursuits`,
 plus the `scout`/`forage`/`hunt_fauna`/`follow_herd` command handlers) is **removed**. A band is now a
 **labor pool**: a `LaborAllocation` component (`components.rs`) partitions its whole working-age workers
-(`available_workers(working)` = `floor`) across `LaborTarget`s — `Forage { tile }`, `Hunt { fauna_id,
+(`available_workers(working)` = `floor`) across `LaborTarget`s — `Forage { tile, policy }`, `Hunt { fauna_id,
 policy }`, `Scout`, `Warrior` — with the invariant `Σ workers ≤ available`. `advance_labor_allocation`
 (`systems.rs`, Population stage, replacing the three retired systems) resolves per-worker yields each
 turn: Forage = `workers × per_worker_yield × seasonal_weight` from an in-range `FoodModuleTag` tile;
@@ -364,11 +366,95 @@ of `fauna_config.json`.
 > simply lacks the component). Pursuits are short-lived; revisit if needed. Domestication
 > state lives on the `Herd` (in `HerdRegistry`), alongside `biomass`.
 
+> **The authoritative `HerdRegistry` *is* rollback-persisted** (as of the intensification
+> arc's first slice, `docs/plan_intensification.md` §0-i). Each live `Herd` — identity,
+> movement (`route`/`step_index`/`current_pos`/`dwell_remaining`/`roam`/`next_pos`), **and** its
+> depletable-ecology subset (`biomass`/`carrying_capacity`/`ecology_phase`/
+> `domestication_progress`/`owner`) — round-trips through a serde `HerdState` (the ecology subset
+> embedded as a shared `EcologyState`) captured into `WorldSnapshot.herd_registry` and rebuilt on
+> restore via `HerdRegistry::update_from_states`, following the `GenerationRegistry` round-trip
+> convention. This closes a **latent bug**: only the lossy display `HerdTelemetry`
+> (`WorldSnapshot.herds`) used to be captured, so herd biomass/position silently kept their
+> post-rollback values. Restore rebuilds the derived `HerdDensityMap` + `HerdTelemetry` (as
+> `advance_herds` does post-loop) so nothing is stale for a turn. `HerdState` is the sim side; the
+> FlatBuffers client stream is untouched (it keeps using the display telemetry). **`EcologyState`
+> is the shared depletable-ecology record** the forage-depletion slice (§0-ii) reuses for its
+> per-tile `ForageState`.
+
 Market hunting shipped as the `Market` follow policy; `SedentarizationScore` shipped (see
 "Sedentarization" under Campaign Loop). Still deferred (`docs/plan_wildlife_hunting_overlay.md`):
 the `Camp` entity + corrals, and wiring the sedentarization hard prompt to an actual
 `found_settlement`. The tile-based `HuntGame` handler stays neutralized (its client button no
 longer surfaces).
+
+---
+
+## Depletable Forage (Intensification §0-ii)
+
+Forage tiles are **depletable**, the herd biomass/regrowth model transposed onto plants (design:
+`docs/plan_intensification.md` §0). Every `FoodModuleTag` tile carries a live per-patch
+`{ biomass, carrying_capacity, ecology_phase }` (`ForagePatch`, `forage.rs`) held in the
+authoritative **`ForageRegistry`** resource, keyed by tile coord. Foraging now **draws the stock
+down** and the patch **regrows**, so the yield instrument's overdraw ⚠ (PR #110) lights up for
+forage exactly as it does for overhunting. *Sim-only — the client already renders forage
+`sustainable_yield` from the snapshot.*
+
+- **Seeding** (`spawn_initial_forage`, Startup after `spawn_initial_herds`): one full patch
+  (`biomass = carrying_capacity`) per `FoodModuleTag` tile. Idempotent (a restored world is skipped).
+- **Regrowth** (`advance_forage_regrowth`, `TurnStage::Logistics` alongside `advance_herds`): each
+  patch regrows toward its cap and refreshes its `EcologyPhase`. Unlike a wild herd, a patch uses
+  **pure `logistic_regrowth`** (no Allee / critical-depensation crash) and **never despawns** —
+  plants reseed, so a depleted (feral) patch always recovers. Because `logistic_regrowth` is `0` at
+  `biomass = 0`, `regrow_patch` first applies a **reseed floor** — it lifts a depleted patch up to
+  `reseed_floor_fraction × carrying_capacity` (a small standing crop, `max()` so a healthy patch is
+  untouched) *before* regrowth — so a patch driven to exactly `0` (repeated Eradicate + f32
+  underflow, `take_fraction = 1.0`, or a restored snapshot carrying `biomass = 0`) still has a seed
+  stock and recovers via normal regrowth instead of sticking at `0` forever. The floor is below
+  `collapse_fraction`, so Eradicate still crashes a patch hard into the Collapsing band — it just
+  can't hold it permanently at `0`.
+- **Draw-down** (`forage_take`, the plant mirror of `hunt_take`): resolves the per-policy ecology
+  ceiling, caps it by gather throughput (`workers × per_worker_biomass_capacity × seasonal_weight`),
+  clamps to the patch's biomass, **subtracts the take**, and converts to provisions
+  (`take × provisions_per_biomass × output_multiplier`). Foraging honors the **full policy axis**
+  (Sustain/Surplus/Market/Eradicate — §0-iii, **parity with hunting**), mirroring `hunt_take`'s
+  rungs: **Sustain** = the **Maximum Sustainable Yield** (`sustainable_yield(..)` — regrowth at the
+  most-productive biomass K/2, so a patch *at carrying capacity* still yields a positive skim and a
+  collapsed patch yields nothing; Sustain draws the patch toward K/2); **Surplus** = that ×
+  `surplus_multiplier` (slow
+  decline); **Market** = `market.take_fraction × biomass` (a commercial share → fast depletion) and
+  the `Forage` arm sells the take as trade goods (`take × market.trade_goods_per_biomass ×
+  market.trade_goods_multiplier × output_mult` → `FactionInventory` — gathered goods sold, **Market
+  only**); **Eradicate** = `eradicate.take_fraction × biomass` (strip the patch, no floor, no trade
+  goods — denial). The `Forage` arm of `advance_labor_allocation` (Population) passes the
+  assignment's policy into `forage_take` and writes the real `sustainable =
+  sustainable_yield(biomass_before, cap, forage.ecology) × provisions_per_biomass ×
+  output_multiplier` (MSY-based) into the
+  yield telemetry, so a non-Sustain gather reads `actual > sustainable` (the over-forage ⚠) exactly
+  as an over-hunt does.
+- **Config** (`labor_config.json` `forage`): `carrying_capacity`, `per_worker_biomass_capacity`,
+  `provisions_per_biomass`, an `ecology` block reusing fauna's `EcologyConfig` (`regrowth_rate` tuned
+  higher than fauna's 0.05; `collapse_fraction`/`stressed_fraction` phase bands), a
+  `reseed_floor_fraction` (0.02 — the reseed standing crop as a fraction of `carrying_capacity`, so a
+  crashed patch recovers from a seed stock rather than sticking at `0`; below `collapse_fraction`),
+  plus the **policy axis** levers (§0-iii, mirroring fauna's `follow`/`market`/`hunt`):
+  `surplus_multiplier` (1.6),
+  `market: { take_fraction 0.20, trade_goods_multiplier 4.0, trade_goods_per_biomass 0.005 }`,
+  `eradicate: { take_fraction 0.30 }`. The old flat `forage.per_worker_yield` lever is **retired**.
+  A flat per-patch cap is a v1 — a per-`FoodModule` table is a documented later refinement.
+- **Policy plumbing** (§0-iii, the 5-site mirror of Hunt's policy): `LaborTarget::Forage` carries a
+  `policy: FollowPolicy` (a policy change on the same tile is the **same source** in `same_source`,
+  a mutable property); the `assign_labor forage <x> <y> [policy] <workers>` command-text parse takes
+  an optional policy token; `handle_assign_labor` builds it via `parse_follow_policy`; and the
+  policy round-trips through the rollback snapshot (`LaborAssignmentState.policy`, no schema change).
+- **Persistence** — `ForageRegistry` round-trips through the rollback snapshot exactly like the
+  `HerdRegistry` (the §0-i pattern): a per-tile `ForageState` (= tile key + the shared
+  `sim_schema::EcologyState`) captured coord-sorted into `WorldSnapshot.forage_registry` and rebuilt
+  on restore via `ForageRegistry::update_from_states`. `progress`/`owner` on `EcologyState` stay
+  `0.0`/`None` here — **cultivation is Phase 1**. Not wired to the FlatBuffers client stream.
+- **Companion client slice:** the sim side of the forage policy axis (§0-iii) is complete — the
+  client `%ForageAssignControls` policy picker (mirroring `%HerdAssignControls`) that emits the
+  policy in the `assign_labor forage` command is a **client-dev follow-up**. A client patch-ecology
+  readout (thriving/stressed/collapsing on the map/tile, like herds) is a possible later slice.
 
 ---
 
@@ -652,10 +738,16 @@ restores only the assignments, leaving it empty until the next tick) and is **ex
 `LaborAllocation`'s equality** (manual `PartialEq` compares assignments only) so it can't perturb the
 persisted-intent comparison. Definitions: **`actual`** = the provisions the source produced this turn
 (the value added to the larder); **`sustainable`** = what it could yield without drawing down its
-stock — **forage `sustainable ≡ actual`** (inexhaustible in today's model, no tile depletion), a
-**hunt `sustainable = net_biomass_delta(biomass_before, carrying_capacity, ecology).max(0) ×
-hunt.provisions_per_biomass × output_multiplier`** (one turn's net regrowth at the *pre-take* biomass,
-in provisions). Scout/Warrior push `{0,0}`. The snapshot surfaces this: each `LaborAssignment` row
+stock. As of §0-ii **forage is depletable too**, so a forage `sustainable =
+sustainable_yield(biomass_before, carrying_capacity, forage.ecology) × forage.provisions_per_biomass ×
+output_multiplier`** (**MSY** — regrowth at the most-productive biomass K/2, so a *full* patch still
+reads a positive sustainable harvest, no longer 0) — the plant mirror of the
+**hunt `sustainable = sustainable_yield(biomass_before, carrying_capacity, ecology) ×
+hunt.provisions_per_biomass × output_multiplier`** (MSY at the *pre-take* biomass). `sustainable_yield`
+is shared by hunt + forage (`fauna.rs`); `net_biomass_delta` remains the **actual** per-turn biomass
+evolution used by `regrow_biomass`/`advance_herds` (0 at K — correct there, unchanged).
+A Sustain gather/hunt reads `actual ≈ sustainable`; an over-draw reads `actual > sustainable` (the
+overdraw ⚠). Scout/Warrior push `{0,0}`. The snapshot surfaces this: each `LaborAssignment` row
 carries `actualYield`/`sustainableYield`, and each `PopulationCohortState` carries band-level
 `foodIncome` (Σ per-source `actual`) + `foodConsumption` (the same one-turn `food_demand` `daysOfFood`
 divides by). All derived at capture (0 on a rehydrated save before the next tick). **The client
@@ -770,6 +862,8 @@ per-faction orders -> command server -> turn queue -> run_turn -> snapshot -> br
 ## Snapshot History & Rollback
 
 `SnapshotHistory` retains ring buffer of `WorldSnapshot` + `WorldDelta` pairs (default 256). `rollback <tick>` rewinds simulation, resets ECS world, truncates history.
+
+The rollback snapshot round-trips the **authoritative `HerdRegistry`** (via `HerdState` + the shared `EcologyState` record in `WorldSnapshot.herd_registry`), not just the lossy display telemetry — see the herd-persistence note under "Fauna & Wild Game" for details and the bug it fixed. The **`ForageRegistry`** rides the same pattern (per-tile `ForageState` = tile key + the shared `EcologyState`, in `WorldSnapshot.forage_registry`) so a rollback rewinds forage depletion — see "Depletable Forage".
 
 **Map export**: the `export_map [path]` command (`write_map_export` in `bin/server.rs`) writes the latest `SnapshotHistory.last_snapshot` plus the resolved `SimulationConfig.map_seed`/`map_preset_id` to disk as a `sim_schema::MapExport` JSON (default `exports/map-tick<t>-seed<s>.json`, gitignored). No new protocol — it rides the existing one-way command channel; the seed makes the dumped map reproducible, and the JSON doubles as an offline-inspectable, test-loadable fixture.
 

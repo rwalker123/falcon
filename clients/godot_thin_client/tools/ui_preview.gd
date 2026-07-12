@@ -67,6 +67,19 @@ func _ready() -> void:
 	await _settle()
 	await _save("band")
 
+	# State 1-forage-policy — the forage allocation row carries a policy tag like Hunt does. This band
+	# forages on Market policy, which the sim gathers past the patch's regrowth, so actual_yield (0.62)
+	# exceeds sustainable_yield (0.40): the row reads `Forage (71, 18) [market] +0.62 /turn ⚠` (amber
+	# over-forage flag). The default `band` state above shows the [sustain] tag with no warning.
+	var forage_policy_band := _band_fixture()
+	forage_policy_band["labor_assignments"] = [
+		{"kind": "forage", "workers": 6, "target_x": 71, "target_y": 18, "policy": "market", "actual_yield": 0.62, "sustainable_yield": 0.40},
+		{"kind": "scout", "workers": 2},
+	]
+	_hud.show_unit_selection(forage_policy_band)
+	await _settle()
+	await _save("forage_policy")
+
 	# State 1-food-a — GOOD food, breakdown force-EXPANDED. The good band's breakdown is hidden by
 	# default (net positive, long runway); the static harness can't click the Food disclosure, so we
 	# force the per-band expand override to confirm the click-expanded layout renders (indented
@@ -597,7 +610,7 @@ func _band_fixture() -> Dictionary:
 		"food_income": 0.94,
 		"food_consumption": 0.68,
 		"labor_assignments": [
-			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
+			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48},
 			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20},
 			{"kind": "scout", "workers": 2},
 			{"kind": "warrior", "workers": 2},

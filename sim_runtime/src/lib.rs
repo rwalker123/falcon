@@ -402,6 +402,8 @@ pub mod knowledge {
                 campaign_profiles: Vec::new(),
                 command_events: Vec::new(),
                 herds: Vec::new(),
+                herd_registry: Vec::new(),
+                forage_registry: Vec::new(),
                 food_modules: Vec::new(),
                 faction_inventory: Vec::new(),
                 sedentarization: Vec::new(),

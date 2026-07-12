@@ -16,17 +16,17 @@ use sim_runtime::{
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
     CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,
-    DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry,
+    DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry, EcologyState,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FoodModuleState,
-    GenerationState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
-    GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdTelemetryState, HydrologyOverlayState,
-    InfluentialIndividualState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
-    KnowledgeTimelineEventState, LaborAssignmentState, LogisticsLinkState, MountainKind,
-    PendingMigrationState, PopulationCohortState,
-    PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
-    PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState,
-    SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
+    ForageState, GenerationState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
+    GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdRoamState, HerdState,
+    HerdTelemetryState, HydrologyOverlayState, InfluentialIndividualState,
+    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
+    LaborAssignmentState, LogisticsLinkState, MountainKind, PendingMigrationState,
+    PopulationCohortState, PopulationDemographicsState as SchemaPopulationDemographicsState,
+    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState,
+    ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, StartMarkerState, TerrainOverlayState, TerrainSample,
     TileState, TradeLinkKnowledge, TradeLinkState, VictoryModeSnapshotState, VictoryResultState,
@@ -47,8 +47,9 @@ use crate::{
         CultureTensionRecord, CultureTraitAxis as SimCultureTraitAxis,
     },
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
-    fauna::HerdTelemetry,
+    fauna::{Herd, HerdDensityMap, HerdRegistry, HerdTelemetry},
     food::FoodModuleTag,
+    forage::{ForagePatch, ForageRegistry},
     generations::{GenerationProfile, GenerationRegistry},
     great_discovery::{
         snapshot_definitions, snapshot_discoveries, snapshot_progress, snapshot_telemetry,
@@ -118,6 +119,13 @@ pub struct SnapshotContext<'w> {
     pub crisis_overlay: Res<'w, CrisisOverlayCache>,
     pub start_location: Res<'w, StartLocation>,
     pub herds: Res<'w, HerdTelemetry>,
+    /// Authoritative herd sim state, captured into the rollback snapshot (`herd_registry`) so a
+    /// rollback rewinds biomass / position / movement — the display `herds` telemetry alone is lossy.
+    pub herd_registry: Res<'w, HerdRegistry>,
+    /// Authoritative depletable-forage sim state, captured into the rollback snapshot
+    /// (`forage_registry`) so a rollback rewinds patch biomass / ecology phase. Mirrors
+    /// `herd_registry` — see the forage-depletion note in `core_sim/CLAUDE.md`.
+    pub forage_registry: Res<'w, ForageRegistry>,
     pub fog_reveals: Res<'w, FogRevealLedger>,
     pub hydrology: Res<'w, HydrologyState>,
     pub elevation: Res<'w, ElevationField>,
@@ -1291,6 +1299,8 @@ pub fn capture_snapshot(
         crisis_overlay,
         start_location,
         herds,
+        herd_registry,
+        forage_registry,
         hydrology,
         fog_reveals,
         elevation,
@@ -1694,6 +1704,16 @@ pub fn capture_snapshot(
         .map(|entry| entry.to_schema())
         .collect();
     let herd_states = herd_snapshot_entries(&herds);
+    // Authoritative herd state for rollback (distinct from the lossy display `herd_states` above),
+    // sorted deterministically by herd id like the generation states.
+    let mut herd_registry_states: Vec<HerdState> =
+        herd_registry.entries().iter().map(herd_state).collect();
+    herd_registry_states.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+    // Authoritative depletable-forage state for rollback, sorted deterministically by tile coord
+    // (HashMap iteration order is unstable). Mirrors the herd-registry capture above.
+    let mut forage_registry_states: Vec<ForageState> =
+        forage_registry.patches.values().map(forage_state).collect();
+    forage_registry_states.sort_unstable_by_key(|state| (state.y, state.x));
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
     let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
@@ -1724,6 +1744,8 @@ pub fn capture_snapshot(
         start_marker: start_marker_state.clone(),
         victory: victory_snapshot_state.clone(),
         herds: herd_states.clone(),
+        herd_registry: herd_registry_states,
+        forage_registry: forage_registry_states,
         food_modules: food_module_states.clone(),
         campaign_profiles: campaign_profiles_state,
         faction_inventory: faction_inventory_state.clone(),
@@ -2102,6 +2124,34 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         generation_registry.update_from_states(&snapshot.generations);
     } else {
         world.insert_resource(GenerationRegistry::from_states(&snapshot.generations));
+    }
+
+    // Rebuild the authoritative herd registry from the snapshot so a rollback rewinds herd biomass /
+    // position / movement / ecology — not just the lossy display telemetry. Mirrors the
+    // generation-registry round-trip above.
+    if let Some(mut herd_registry) = world.get_resource_mut::<HerdRegistry>() {
+        herd_registry.update_from_states(&snapshot.herd_registry);
+    } else {
+        world.insert_resource(HerdRegistry::from_states(&snapshot.herd_registry));
+    }
+    // Rebuild the derived herd structures the same way `advance_herds` does post-loop, so the
+    // density map and display telemetry aren't stale for a turn after the restore.
+    {
+        let herd_registry_clone = world.resource::<HerdRegistry>().clone();
+        if let Some(mut density) = world.get_resource_mut::<HerdDensityMap>() {
+            density.rebuild(grid_size, &herd_registry_clone);
+        }
+        if let Some(mut telemetry) = world.get_resource_mut::<HerdTelemetry>() {
+            telemetry.entries = herd_registry_clone.snapshot_entries();
+        }
+    }
+
+    // Rebuild the authoritative depletable-forage registry so a rollback rewinds per-patch biomass /
+    // ecology phase — the forage counterpart of the herd round-trip above.
+    if let Some(mut forage_registry) = world.get_resource_mut::<ForageRegistry>() {
+        forage_registry.update_from_states(&snapshot.forage_registry);
+    } else {
+        world.insert_resource(ForageRegistry::from_states(&snapshot.forage_registry));
     }
 
     let influencer_config = if let Some(handle) = world.get_resource::<InfluencerConfigHandle>() {
@@ -3664,6 +3714,7 @@ fn labor_allocation_from_state(states: &[LaborAssignmentState]) -> LaborAllocati
             let target = match state.kind.as_str() {
                 "forage" => LaborTarget::Forage {
                     tile: UVec2::new(state.target_x, state.target_y),
+                    policy: FollowPolicy::from_str(&state.policy).unwrap_or_default(),
                 },
                 "hunt" => LaborTarget::Hunt {
                     fauna_id: state.fauna_id.clone(),
@@ -3703,9 +3754,10 @@ fn labor_assignment_to_state(
         ..Default::default()
     };
     match &assignment.target {
-        LaborTarget::Forage { tile } => {
+        LaborTarget::Forage { tile, policy } => {
             state.target_x = tile.x;
             state.target_y = tile.y;
+            state.policy = policy.as_str().to_string();
         }
         LaborTarget::Hunt { fauna_id, policy } => {
             state.fauna_id = fauna_id.clone();
@@ -4054,6 +4106,52 @@ fn generation_state(profile: &GenerationProfile) -> GenerationState {
     }
 }
 
+/// Capture a live `Herd` into its authoritative snapshot mirror for rollback (the inverse is
+/// `fauna::HerdRegistry::update_from_states`). Movement/identity fields are mirrored directly; the
+/// depletable-ecology subset goes into the embedded `EcologyState`. Coordinates cross as `(x, y)`.
+fn herd_state(herd: &Herd) -> HerdState {
+    HerdState {
+        id: herd.id.clone(),
+        label: herd.label.clone(),
+        species: herd.species.clone(),
+        size_class: herd.size_class.as_str().to_string(),
+        route: herd.route.iter().map(|p| (p.x, p.y)).collect(),
+        step_index: herd.step_index as u32,
+        current_pos: (herd.current_pos.x, herd.current_pos.y),
+        dwell_remaining: herd.dwell_remaining,
+        roam: HerdRoamState {
+            mode: herd.roam.mode_key().to_string(),
+            loiter_turns_left: herd.roam.loiter_turns_left(),
+        },
+        next_pos: herd.next_pos.map(|p| (p.x, p.y)),
+        ecology: EcologyState {
+            biomass: herd.biomass,
+            carrying_capacity: herd.carrying_capacity,
+            ecology_phase: herd.ecology_phase.as_str().to_string(),
+            progress: herd.domestication_progress,
+            owner: herd.owner.map(|f| f.0),
+        },
+    }
+}
+
+/// Capture a live `ForagePatch` into its authoritative snapshot mirror for rollback (the inverse is
+/// `forage::ForageRegistry::update_from_states`). The depletable-ecology subset goes into the shared
+/// `EcologyState`; `progress`/`owner` stay `0.0`/`None` (cultivation is Phase 1). Coordinates cross
+/// as the `(x, y)` tile key.
+pub(crate) fn forage_state(patch: &ForagePatch) -> ForageState {
+    ForageState {
+        x: patch.tile.x,
+        y: patch.tile.y,
+        ecology: EcologyState {
+            biomass: patch.biomass,
+            carrying_capacity: patch.carrying_capacity,
+            ecology_phase: patch.ecology_phase.as_str().to_string(),
+            progress: 0.0,
+            owner: None,
+        },
+    }
+}
+
 fn snapshot_faction_inventory(inventory: &FactionInventory) -> Vec<SchemaFactionInventoryState> {
     let mut states = Vec::new();
     for (faction, items) in inventory.iter() {
@@ -4229,6 +4327,40 @@ mod tests {
         TradeLinkKnowledge,
     };
 
+    #[test]
+    fn herd_state_roundtrip_is_identity() {
+        // A herd with every field non-default so movement + ecology + domestication all round-trip.
+        let original = HerdState {
+            id: "herd_test".to_string(),
+            label: "Test Herd (herd_test)".to_string(),
+            species: "Red Deer".to_string(),
+            size_class: "migratory".to_string(),
+            route: vec![(3, 4), (5, 6), (7, 2)],
+            step_index: 2,
+            current_pos: (5, 6),
+            dwell_remaining: 3,
+            roam: HerdRoamState {
+                mode: "loiter".to_string(),
+                loiter_turns_left: 9,
+            },
+            next_pos: Some((7, 2)),
+            ecology: EcologyState {
+                biomass: 4321.0,
+                carrying_capacity: 8000.0,
+                ecology_phase: "stressed".to_string(),
+                progress: 0.42,
+                owner: Some(1),
+            },
+        };
+
+        // HerdState -> Herd (restore side) -> HerdState (capture side) must be an identity.
+        let registry = HerdRegistry::from_states(std::slice::from_ref(&original));
+        let herd = registry.entries().first().expect("one herd restored");
+        let restored = herd_state(herd);
+
+        assert_eq!(restored, original);
+    }
+
     fn tile(entity: u64, x: u32, y: u32) -> TileState {
         TileState {
             entity,
@@ -4275,6 +4407,8 @@ mod tests {
             campaign_profiles: Vec::new(),
             command_events: Vec::new(),
             herds: Vec::new(),
+            herd_registry: Vec::new(),
+            forage_registry: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -4333,6 +4467,8 @@ mod tests {
             campaign_profiles: Vec::new(),
             command_events: Vec::new(),
             herds: Vec::new(),
+            herd_registry: Vec::new(),
+            forage_registry: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -4386,6 +4522,8 @@ mod tests {
             campaign_profiles: Vec::new(),
             command_events: Vec::new(),
             herds: Vec::new(),
+            herd_registry: Vec::new(),
+            forage_registry: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -4493,6 +4631,7 @@ mod tests {
                 LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
+                        policy: crate::components::FollowPolicy::Sustain,
                     },
                     workers: 10,
                 },
@@ -4559,6 +4698,7 @@ mod tests {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
+                    policy: crate::components::FollowPolicy::Sustain,
                 },
                 workers: 10,
             }],
@@ -4575,6 +4715,32 @@ mod tests {
         assert_eq!(state.labor_assignments.len(), 1);
         assert_eq!(state.labor_assignments[0].actual_yield, 0.0);
         assert_eq!(state.labor_assignments[0].sustainable_yield, 0.0);
+    }
+
+    /// A `LaborTarget::Forage` policy round-trips through the snapshot (§0-iii): `to_state` writes
+    /// the policy string and `from_state` parses it back, so a rollback preserves the gather policy
+    /// (parity with the Hunt arm). A non-Sustain policy is the interesting case (empty string would
+    /// silently default to Sustain).
+    #[test]
+    fn forage_policy_roundtrips_through_snapshot() {
+        use crate::components::FollowPolicy;
+        let target = LaborTarget::Forage {
+            tile: UVec2::new(7, 9),
+            policy: FollowPolicy::Market,
+        };
+        let assignment = LaborAssignment { target, workers: 6 };
+        let state = labor_assignment_to_state(
+            &assignment,
+            SourceYield {
+                actual: 0.0,
+                sustainable: 0.0,
+            },
+        );
+        assert_eq!(state.policy, "market", "policy serialized");
+
+        let restored = labor_allocation_from_state(std::slice::from_ref(&state));
+        assert_eq!(restored.assignments.len(), 1);
+        assert_eq!(restored.assignments[0], assignment, "policy round-trips");
     }
 
     #[test]

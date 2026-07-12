@@ -572,11 +572,16 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     "current actions" report — a `Population <size> · Workers <working_age> (Idle <n>)` header (spells
     out that only the ~16 working-age labor, not the 30 people — children/elders are dependents), a
     **Current actions** section with one `−/+` **worker-stepper** row per staffed Forage tile / Hunt
-    herd (from the cohort's `labor_assignments`; an empty-state hint when none). **Each source row
-    headlines its per-turn food yield** (`… +0.31 /turn`, the assignment's `actual_yield`), with a
-    WARN-tinted `⚠` **overhunting flag** when `actual > sustainable + ε` (`OVERHUNT_EPSILON`;
-    depletable herds only — forage is renewable, so `actual == sustainable` and it never trips) and a
-    `tooltip_text` spelling out actual-vs-sustainable (forage reads `… · renewable`).
+    herd (from the cohort's `labor_assignments`; an empty-state hint when none). **Both source kinds
+    tag their take policy** like `[sustain]` (Forage `(x, y) [sustain]`, Hunt `<herd> [sustain]`),
+    read off the assignment's `policy` field (now populated for forage too); an older snapshot with no
+    forage policy falls back to no tag. **Each source row headlines its per-turn food yield**
+    (`… +0.31 /turn`, the assignment's `actual_yield`), with a WARN-tinted `⚠` **overdraw flag** when
+    `actual > sustainable + ε` (`OVERHUNT_EPSILON`). A Sustain source gathers at its renewable ceiling
+    (`actual == sustainable` → no flag, reads `… · renewable`); a Surplus/Market/Eradicate **forage
+    patch** or an over-hunted herd pushes `actual` above `sustainable` → the flag trips (forage is no
+    longer hardcoded renewable now that the policy axis can decline a patch). A
+    `tooltip_text` spells out actual-vs-sustainable.
     `actual_yield`/`sustainable_yield` are decoded per assignment in `native/src/lib.rs` (inside
     `labor_assignments`); the band-level food flow (net rate + Gathered/Hunted/Eaten breakdown) lives
     on the **Food summary line**, not here — see "Band food status". Then a **Band roles**
@@ -607,8 +612,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     = `work_range` + leash). **Per-source yield annotations** (`_draw_yield_label`): each staffed forage
     tile / hunted herd is labeled with its `actual_yield` (food/turn, from the assignment inside
     `labor_assignments`) as a small drop-shadow number above the tile center (reusing `_draw_marker_glyph`),
-    food-income **green**; a hunt that overdraws (`actual_yield > sustainable_yield + ε`, reusing the
-    panel's overhunting test) reads **WARN amber + a `⚠`** (forage is renewable so never trips). The
+    food-income **green**; a source that overdraws (`actual_yield > sustainable_yield + ε`, reusing the
+    panel's overdraw test) reads **WARN amber + a `⚠`** — an over-hunted herd, or a non-Sustain forage
+    patch now that the forage policy axis can decline one (a Sustain forage gathers at regrowth, so it
+    stays green). The
     label font scales with the hex radius (clamped) and the whole annotation is **LOD-suppressed below
     `ICON_MIN_DETAIL_RADIUS`** (like the secondary markers) so far zoom stays clean. Scout/Warrior
     produce no food → no label. **Scouting draws no map highlight** — staffed scouts extend the band's
@@ -664,8 +671,14 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     Covered by ui_preview states `herd_verbs` (local) / `herd_hunt_expedition` (single far band) /
     `herd_hunt_band_near` + `herd_hunt_band_far` (two bands, one herd — picker flips local↔expedition).
   - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): the
-    band-picker, then an "Assign foragers" Foragers `−/+` count (`_forage_assign_count`) + a
-    **range-aware** **Forage** button → `assign_labor forage <x> <y> <workers>`. Foraging is
+    band-picker, then a sustain/surplus/market/eradicate **policy picker** (`_build_policy_picker`,
+    `_forage_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`) with a **forage-appropriate**
+    behaviour hint (`FORAGE_POLICY_HINTS` — "gather at the patch's regrowth" etc., NOT the herd-cull
+    hints), an "Assign foragers" Foragers `−/+` count (`_forage_assign_count`), and a
+    **range-aware** **Forage** button → `assign_labor forage <x> <y> <policy> <workers>` (the policy is
+    the optional token the sim accepts before the worker count; the policy persists across re-renders
+    and re-seeds from the tile's current forage policy via `_policy_for_forage` when the tile changes).
+    Mirrors `%HerdAssignControls`' policy affordance. Foraging is
     **stationary** gathering — there is **no forage-expedition fallback** — so the button gates on the
     **wrap-aware hex distance** from the **SELECTED band's** own tile to the forage tile vs that band's
     **`work_range`** (the plain `workRange` field, NOT `hunt_reach`; already decoded/on the marker):

@@ -554,10 +554,12 @@ pub fn available_workers(working: Scalar) -> u32 {
 /// (`docs/plan_early_game_labor.md`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum LaborTarget {
-    /// Gather food from a food-module tile within `band_work_range`. Stored as coordinates (not an
-    /// entity) so a moving band re-resolves the tile each turn — an out-of-range tile simply
-    /// yields 0 that turn without dropping the assignment.
-    Forage { tile: UVec2 },
+    /// Gather food from a food-module tile within `band_work_range` under a take policy. Stored as
+    /// coordinates (not an entity) so a moving band re-resolves the tile each turn — an out-of-range
+    /// tile simply yields 0 that turn without dropping the assignment. The `policy`
+    /// (Sustain/Surplus/Market/Eradicate) sizes the per-turn draw on the tile's depletable forage
+    /// patch, the plant mirror of the Hunt policy (§0-iii, parity with hunting).
+    Forage { tile: UVec2, policy: FollowPolicy },
     /// Hunt a fauna group by id under a take policy. The band tracks a roaming herd up to
     /// `band_work_range + hunt_leash_tiles` (leashed follow); past that the assignment lapses.
     Hunt {
@@ -583,11 +585,12 @@ impl LaborTarget {
     }
 
     /// Whether two targets name the **same source** (so re-assigning replaces rather than
-    /// duplicates). Forage is keyed by tile, Hunt by herd id (the take policy is a mutable
-    /// property of the same source), and the band-wide roles are singletons.
+    /// duplicates). Forage is keyed by tile and Hunt by herd id — for both, the take policy is a
+    /// mutable property of the same source (a policy change on the same tile/herd replaces it) — and
+    /// the band-wide roles are singletons.
     pub fn same_source(&self, other: &LaborTarget) -> bool {
         match (self, other) {
-            (LaborTarget::Forage { tile: a }, LaborTarget::Forage { tile: b }) => a == b,
+            (LaborTarget::Forage { tile: a, .. }, LaborTarget::Forage { tile: b, .. }) => a == b,
             (LaborTarget::Hunt { fauna_id: a, .. }, LaborTarget::Hunt { fauna_id: b, .. }) => {
                 a == b
             }
@@ -892,5 +895,38 @@ mod tests {
         // Only the Scout assignment is counted (Warrior is a different singleton source).
         assert_eq!(allocation.workers_on(&LaborTarget::Scout), 3);
         assert_eq!(allocation.workers_on(&LaborTarget::Warrior), 2);
+    }
+
+    /// A Forage policy change on the **same tile** is the same source (§0-iii, parity with the Hunt
+    /// arm's policy): re-assigning replaces rather than duplicating. A different tile is a different
+    /// source regardless of policy.
+    #[test]
+    fn forage_same_source_ignores_policy_matches_tile() {
+        let tile = UVec2::new(3, 4);
+        let sustain = LaborTarget::Forage {
+            tile,
+            policy: FollowPolicy::Sustain,
+        };
+        let market = LaborTarget::Forage {
+            tile,
+            policy: FollowPolicy::Market,
+        };
+        let other_tile = LaborTarget::Forage {
+            tile: UVec2::new(5, 6),
+            policy: FollowPolicy::Sustain,
+        };
+        // Same tile, different policy → same source (policy is a mutable property).
+        assert!(sustain.same_source(&market));
+        // Different tile → different source even at the same policy.
+        assert!(!sustain.same_source(&other_tile));
+
+        // set_assignment on the same tile with a new policy replaces (no duplicate row) and updates
+        // the stored policy.
+        let mut allocation = LaborAllocation::default();
+        allocation.set_assignment(sustain, 4, 10);
+        allocation.set_assignment(market.clone(), 3, 10);
+        assert_eq!(allocation.assignments.len(), 1, "policy change replaces");
+        assert_eq!(allocation.assignments[0].workers, 3);
+        assert_eq!(allocation.assignments[0].target, market);
     }
 }
