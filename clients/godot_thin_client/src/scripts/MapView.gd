@@ -190,6 +190,8 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"food_module", "food_module_label", "food_module_weight", "food_kind",
 	"cultivation_progress", "is_cultivated", "patch_has_owner", "patch_owner",
 	"patch_ecology_phase", "patch_biomass", "patch_carrying_capacity",
+	"patch_per_worker_yield", "patch_ceiling_sustain", "patch_ceiling_surplus",
+	"patch_ceiling_market", "patch_ceiling_eradicate",
 	"units", "herds", "unit_count", "herd_count",
 	"harvest_tasks", "harvest_active", "scout_tasks", "scout_active",
 ]
@@ -2807,6 +2809,14 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# counterpart to a herd's Biomass row (Hud._tile_terrain_lines renders both).
 		info["patch_biomass"] = float(patch.get("biomass", 0.0))
 		info["patch_carrying_capacity"] = float(patch.get("carrying_capacity", 0.0))
+		# Pre-commit yield forecast (food/turn at the patch's current biomass, at
+		# output_multiplier 1.0). Read by Hud._build_forage_assign_controls to show the live
+		# "Expected yield" row and to cap the forager stepper at the patch's max-useful workers.
+		info["patch_per_worker_yield"] = float(patch.get("per_worker_yield", 0.0))
+		info["patch_ceiling_sustain"] = float(patch.get("ceiling_sustain", 0.0))
+		info["patch_ceiling_surplus"] = float(patch.get("ceiling_surplus", 0.0))
+		info["patch_ceiling_market"] = float(patch.get("ceiling_market", 0.0))
+		info["patch_ceiling_eradicate"] = float(patch.get("ceiling_eradicate", 0.0))
 	var units_here := _units_on_tile(col, row)
 	var herds_here := _herds_on_tile(col, row)
 	info["units"] = units_here

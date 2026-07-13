@@ -336,6 +336,40 @@ const OVERSTAFF_NOTE_FORMAT := " · only %d of %d working"
 const OVERSTAFF_TOOLTIP := "Overstaffed — this source's yield is capped at its sustainable/policy ceiling; the extra workers produce nothing here. Reassign them to another source."
 # Joins the yield readout and the overstaffing explanation into one row tooltip.
 const TOOLTIP_LINE_SEPARATOR := "\n"
+# PRE-COMMIT YIELD FORECAST on the assign controls (%ForageAssignControls / %HerdAssignControls).
+# The overstaffing note above is POST-HOC — it tells you a turn later that workers were wasted. The
+# forecast is the same truth shown WHILE COMPOSING: the sim exports, with identical field names on
+# both the forage patch and the herd, a `per_worker_yield` plus one take ceiling per policy — all
+# food/turn at the source's CURRENT biomass and at output_multiplier 1.0:
+#     expected(workers, policy) = min(workers × per_worker_yield, ceiling[policy]) × band output
+#     max_useful_workers(policy) = ceil(ceiling[policy] / per_worker_yield)
+# The ceilings are already biomass-clamped, so that `min` IS the take. The worker stepper caps at
+# max-useful (the `+` goes dead there, explained by MAX_USEFUL_NOTE_FORMAT) so over-assignment is
+# impossible up front; the post-hoc note still covers a source whose biomass FELL after staffing.
+# max_useful is independent of the band's output multiplier — it scales both terms linearly.
+const FORECAST_PER_WORKER_KEY := "per_worker_yield"
+const FORECAST_CEILING_KEYS := {
+    "sustain": "ceiling_sustain",
+    "surplus": "ceiling_surplus",
+    "market": "ceiling_market",
+    "eradicate": "ceiling_eradicate",
+}
+# A herd dict carries the forecast fields bare; `tile_info` carries the forage patch's under a
+# `patch_` prefix (MapView._tile_info_at cross-refs them off `forage_patch_lookup`).
+const HERD_FORECAST_PREFIX := ""
+const FORAGE_FORECAST_PREFIX := "patch_"
+# Below this a worker produces nothing here (a dead-season forage tile, or an older snapshot with no
+# forecast fields). Dividing by it would blow max-useful up to infinity, so instead: no forecast row,
+# and the stepper keeps its plain idle-worker cap.
+const FORECAST_MIN_PER_WORKER := 0.0001
+# Sentinel for "no forecast data" → the stepper is not forecast-capped.
+const MAX_USEFUL_UNBOUNDED := -1
+const FORECAST_LABEL_FORMAT := "Expected yield: %s"
+# A tended patch / corralled herd collapses max-useful to exactly 1, so this note has to read
+# "max 1 worker" — pluralize the noun rather than shipping "max 1 workers".
+const MAX_USEFUL_NOTE_FORMAT := "max %d %s useful here — more would be idle"
+const MAX_USEFUL_NOUN_ONE := "worker"
+const MAX_USEFUL_NOUN_MANY := "workers"
 # Band food flow lives on the Food summary line: `Food 15 (19 days) · −0.77 /turn` (net =
 # food_income − food_consumption, sign-tinted), with a click-to-expand category breakdown
 # (Gathered/Hunted/Eaten) underneath — mirroring the morale breakdown. `FOOD_FLOW_MIN` gates both
@@ -1489,6 +1523,54 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
             else tooltip + TOOLTIP_LINE_SEPARATOR + OVERSTAFF_TOOLTIP
     return {"label_suffix": label_suffix, "warn": warn, "note": note, "tooltip": tooltip}
 
+## PRE-COMMIT FORECAST (the compose-time counterpart to `_source_yield_readout`'s post-hoc note).
+## Pull the source's per-worker yield + the take ceiling for `policy` — both food/turn at its
+## CURRENT biomass, at output_multiplier 1.0. `src` is a herd dict (bare keys) or a tile_info (the
+## patch's fields, `patch_`-prefixed); `known` is false for a dead-season source or an older
+## snapshot that carries no forecast fields, in which case callers show no row and apply no cap.
+func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictionary:
+    var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
+    var policy_key: String = policy if policy in FORECAST_CEILING_KEYS else DEFAULT_HUNT_POLICY
+    var ceiling := float(src.get(prefix + String(FORECAST_CEILING_KEYS[policy_key]), 0.0))
+    return {
+        "per_worker": per_worker,
+        "ceiling": ceiling,
+        "known": per_worker >= FORECAST_MIN_PER_WORKER,
+    }
+
+## Workers beyond this produce nothing at this source under the selected policy —
+## ceil(ceiling / per_worker). MAX_USEFUL_UNBOUNDED when there's no forecast data. A tended patch /
+## corralled herd reports every ceiling == per_worker, so this collapses to 1 (policy irrelevant).
+func _max_useful_workers(forecast: Dictionary) -> int:
+    if not bool(forecast.get("known", false)):
+        return MAX_USEFUL_UNBOUNDED
+    return int(ceilf(float(forecast["ceiling"]) / float(forecast["per_worker"])))
+
+## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling), scaled by the
+## acting band's output multiplier (the sim exports the forecast at 1.0).
+func _expected_yield(forecast: Dictionary, workers: int, band: Dictionary) -> float:
+    var raw := minf(float(workers) * float(forecast.get("per_worker", 0.0)),
+        float(forecast.get("ceiling", 0.0)))
+    return raw * float(band.get("output_multiplier", OUTPUT_FULL))
+
+## Cap the worker stepper at what the source can absorb: min(the band's assignable workers,
+## max-useful). Returns `{cap, note}` — `note` is set ONLY when max-useful is the binding cap, so a
+## dead `+` button is always explained rather than mysterious (the idle-worker cap explains itself).
+func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
+    var useful := _max_useful_workers(forecast)
+    if useful == MAX_USEFUL_UNBOUNDED or useful >= assignable:
+        return {"cap": assignable, "note": ""}
+    var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
+    return {"cap": useful, "note": MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
+
+## The live "Expected yield: +0.48 /turn" row on the assign controls. Food income → HEALTHY green,
+## matching the map's per-source yield annotations and the Food line's income tint.
+func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary) -> Label:
+    var row := Label.new()
+    row.text = FORECAST_LABEL_FORMAT % _format_yield(_expected_yield(forecast, workers, band))
+    row.add_theme_color_override("font_color", HudStyle.HEALTHY)
+    return row
+
 ## Net per-turn food flow (food_income − food_consumption). Positive → the larder is growing.
 func _band_net_food(band: Dictionary) -> float:
     return float(band.get("food_income", 0.0)) - float(band.get("food_consumption", 0.0))
@@ -1862,16 +1944,32 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     # Beyond reach → expedition. Unknown distance (missing tiles) falls back to the local hunt.
     var is_expedition := distance >= 0 and distance > reach
     # Local hunt caps at the band's assignable hunt workers; an expedition caps at the party ceiling.
-    var cap := _expedition_party_cap(band) if is_expedition else _assignable_hunt_workers(band, herd_id)
+    var assignable := _expedition_party_cap(band) if is_expedition else _assignable_hunt_workers(band, herd_id)
+    # Pre-commit forecast — LOCAL hunt only. An expedition travels for several turns and accumulates
+    # toward a carry cap, so the herd's per-turn take ceiling is NOT the bound on its party size;
+    # forecasting a per-turn yield for it would be a lie. On a local hunt the ceiling caps the
+    # stepper (no over-assigning) and drives the live expected-yield row; both recompute here on
+    # every stepper/policy change, since both re-render these controls.
+    var forecast := _forecast_inputs(herd, HERD_FORECAST_PREFIX, _hunt_assign_policy)
+    var forecast_active := not is_expedition and bool(forecast["known"])
+    var capped := {"cap": assignable, "note": ""} if is_expedition \
+        else _forecast_worker_cap(forecast, assignable)
+    var cap := int(capped["cap"])
     _hunt_assign_count = clampi(_hunt_assign_count, 0, cap)
     herd_assign_controls.add_child(_build_worker_stepper(
         "Party" if is_expedition else "Hunters", _hunt_assign_count, _hunt_assign_count < cap,
         func(n: int) -> void:
             _hunt_assign_count = clampi(n, 0, cap)
             _build_herd_assign_controls(herd)))
+    var cap_note := String(capped["note"])
+    if cap_note != "":
+        herd_assign_controls.add_child(_alloc_hint_label(cap_note))
     herd_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _hunt_assign_policy = policy
         _build_herd_assign_controls(herd)))
+    if forecast_active:
+        herd_assign_controls.add_child(
+            _forecast_yield_row(forecast, _hunt_assign_count, band))
     if is_expedition:
         herd_assign_controls.add_child(_alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
@@ -1968,13 +2066,26 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
         _forage_assign_policy = policy
         _build_forage_assign_controls(tile_info), _forage_assign_policy))
     forage_assign_controls.add_child(_alloc_hint_label(String(FORAGE_POLICY_HINTS.get(_forage_assign_policy, ""))))
-    var cap := _assignable_forage_workers(band, x, y)
+    # Pre-commit forecast: the patch's per-worker yield + the SELECTED policy's ceiling cap the
+    # stepper at max-useful workers, so the player CAN'T over-assign while composing. Both the
+    # stepper and the policy picker re-render these controls, so the cap and the expected-yield row
+    # below recompute on every change (a Market/Eradicate ceiling is higher than Sustain's, so
+    # switching policy moves the cap).
+    var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, _forage_assign_policy)
+    var capped := _forecast_worker_cap(forecast, _assignable_forage_workers(band, x, y))
+    var cap := int(capped["cap"])
     _forage_assign_count = clampi(_forage_assign_count, 0, cap)
     forage_assign_controls.add_child(_build_worker_stepper(
         "Foragers", _forage_assign_count, _forage_assign_count < cap,
         func(n: int) -> void:
             _forage_assign_count = clampi(n, 0, cap)
             _build_forage_assign_controls(tile_info)))
+    var cap_note := String(capped["note"])
+    if cap_note != "":
+        forage_assign_controls.add_child(_alloc_hint_label(cap_note))
+    if bool(forecast["known"]):
+        forage_assign_controls.add_child(
+            _forecast_yield_row(forecast, _forage_assign_count, band))
     # Range-aware: foraging is stationary gathering (there is NO forage-expedition alternative), so a
     # tile beyond the SELECTED band's work_range DISABLES the button + shows an out-of-range hint,
     # rather than a fallback. Distance is wrap-aware from the picked band's OWN tile — distance,

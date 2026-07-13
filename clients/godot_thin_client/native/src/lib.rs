@@ -3021,6 +3021,17 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         }
         let _ = dict.insert("domestication", herd.domestication());
         let _ = dict.insert("corralled", herd.corralled());
+        // Pre-commit yield forecast (food/turn at the herd's CURRENT biomass, exported at
+        // output_multiplier 1.0 — the client scales by the acting band's multiplier):
+        //   expected(workers, policy) = min(workers * per_worker_yield, ceiling_<policy>)
+        //   max_useful_workers(policy) = ceil(ceiling_<policy> / per_worker_yield)
+        // Read by Hud's %HerdAssignControls to show the expected yield live and to cap the
+        // hunter stepper at what the herd can actually absorb.
+        let _ = dict.insert("per_worker_yield", herd.perWorkerYield());
+        let _ = dict.insert("ceiling_sustain", herd.ceilingSustain());
+        let _ = dict.insert("ceiling_surplus", herd.ceilingSurplus());
+        let _ = dict.insert("ceiling_market", herd.ceilingMarket());
+        let _ = dict.insert("ceiling_eradicate", herd.ceilingEradicate());
         array.push(&dict.to_variant());
     }
     array
@@ -3043,6 +3054,14 @@ fn forage_patches_to_array(
         if let Some(ecology_phase) = patch.ecologyPhase() {
             let _ = dict.insert("ecology_phase", ecology_phase);
         }
+        // Pre-commit yield forecast — identical contract to the herd fields above (food/turn at
+        // the patch's CURRENT biomass, at output_multiplier 1.0). MapView cross-refs these onto
+        // `tile_info` (as `patch_*`) so %ForageAssignControls can forecast + cap the stepper.
+        let _ = dict.insert("per_worker_yield", patch.perWorkerYield());
+        let _ = dict.insert("ceiling_sustain", patch.ceilingSustain());
+        let _ = dict.insert("ceiling_surplus", patch.ceilingSurplus());
+        let _ = dict.insert("ceiling_market", patch.ceilingMarket());
+        let _ = dict.insert("ceiling_eradicate", patch.ceilingEradicate());
         array.push(&dict.to_variant());
     }
     array

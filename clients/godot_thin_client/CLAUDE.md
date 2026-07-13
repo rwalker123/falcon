@@ -699,6 +699,34 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `food_forage_out_of_range` (single far band) / `food_forage_band_near` + `food_forage_band_far`
     (two bands, one tile — picker flips enabled↔disabled).
 
+  - **Pre-commit yield forecast** (on BOTH assign controls): setting up a forage/hunt assignment used
+    to give no feedback — you staffed 6 workers, committed, advanced a turn, and only then learned 5
+    were wasted. The sim now streams, with **identical field names** on `ForagePatchState` and
+    `HerdTelemetryState` (`perWorkerYield` / `ceilingSustain` / `ceilingSurplus` / `ceilingMarket` /
+    `ceilingEradicate` — all food/turn at the source's **current biomass**, exported at
+    `output_multiplier = 1.0`), enough to compute the take *while composing*:
+    `expected(workers, policy) = min(workers × per_worker_yield, ceiling[policy])` (the ceilings are
+    already biomass-clamped, so that `min` IS the take) and `max_useful_workers(policy) =
+    ceil(ceiling[policy] / per_worker_yield)`. Decoded in `native/src/lib.rs`
+    (`herds_to_array` bare / `forage_patches_to_array`, both the snapshot + delta paths), carried to
+    the controls via the herd dict and — for the patch — via `forage_patch_lookup` → `_tile_info_at`
+    as `patch_`-prefixed keys (in `FOW_DISCOVERED_HIDDEN_KEYS`, so a remembered tile redacts them).
+    Two affordances, both recomputed on **every** stepper *and* policy change (both already re-render
+    the controls): a live HEALTHY-green **"Expected yield: +X.XX /turn"** row (scaled by the
+    **selected band's `output_multiplier`** — the sim exports at 1.0), and a **worker-stepper cap** of
+    `min(idle-worker cap, max_useful_workers(policy))` — the `+` goes dead at the cap and, when
+    max-useful is the binding one, a `"max N worker(s) useful here — more would be idle"` note
+    explains why (a Market/Eradicate ceiling exceeds Sustain's, so switching policy moves the cap).
+    Shared helpers `_forecast_inputs` / `_max_useful_workers` / `_expected_yield` /
+    `_forecast_worker_cap` / `_forecast_yield_row` serve both controls. **Guards:**
+    `per_worker_yield == 0` (dead-season tile, or an older snapshot with no forecast fields) → no row,
+    no cap, never a divide-by-zero; a **tended patch / corralled herd** reports every ceiling ==
+    `per_worker_yield` ⇒ max-useful 1, policy irrelevant. Applied to the **local hunt only** — an
+    expedition accumulates toward a carry cap over several turns of travel, so the herd's per-turn
+    ceiling is not the bound on its party size. The **post-hoc** `"· only N of M working"` overstaffing
+    note on the allocation rows stays: it still covers a source whose biomass FELL after you staffed
+    it. ui_preview: `food_tile` / `forage_forecast_cap` / `tended_tile` / `herd_hunt_band_near`.
+
   All emit `assign_labor_requested(payload)` (payload: `faction/band/kind/workers/x/y/herd_id/policy`);
   `Main._on_hud_assign_labor` formats the `assign_labor …` text command. **Clear all** emits
   `cancel_order_requested` (the repurposed `cancel_order` = clear-all → fully idle). The roster

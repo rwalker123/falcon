@@ -238,8 +238,18 @@ func _ready() -> void:
 	await _settle()
 	await _save("food_tile")
 
+	# State 2-forecast — the same food tile with the Foragers stepper parked AT the forecast cap
+	# (3 = the Sustain ceiling's max-useful workers, below the band's 10 idle): the `+` button is
+	# DISABLED, the "max 3 workers useful here — more would be idle" note explains why, and the
+	# "Expected yield" row reads the ceiling itself (+0.96 /turn = min(3 × 0.32, 0.96)).
+	_hud._forage_assign_count = 3
+	_hud._build_forage_assign_controls(_food_tile_fixture())
+	await _settle()
+	await _save("forage_forecast_cap")
+
 	# State 2-tended — a fully-cultivated forage patch: the Tile card's cultivation row reads
-	# "🌾 Tended Patch" (SIGNAL tint) with a "Patch health: Thriving" ecology row beneath it.
+	# "🌾 Tended Patch" (SIGNAL tint) with a "Patch health: Thriving" ecology row beneath it. A tended
+	# patch's ceilings all equal its per-worker yield, so the forecast caps the stepper at 1 worker.
 	_hud.show_tile_selection(_tended_tile_fixture())
 	await _settle()
 	await _save("tended_tile")
@@ -853,6 +863,15 @@ func _food_tile_fixture() -> Dictionary:
 		# "Forage biomass 84 / 120" row, the patch counterpart to a herd's Biomass row.
 		"patch_biomass": 84.0,
 		"patch_carrying_capacity": 120.0,
+		# Pre-commit yield forecast (food/turn at THIS biomass, exported at output_multiplier 1.0).
+		# Sustain's ceiling admits ceil(0.96 / 0.32) = 3 useful foragers — below band 821's 10 idle
+		# workers, so the Foragers stepper caps at 3 and shows the "max 3 workers useful here" note.
+		# The higher-policy ceilings admit 6 / 9 / 15, so switching policy visibly moves the cap.
+		"patch_per_worker_yield": 0.32,
+		"patch_ceiling_sustain": 0.96,
+		"patch_ceiling_surplus": 1.92,
+		"patch_ceiling_market": 2.88,
+		"patch_ceiling_eradicate": 4.80,
 	}
 
 ## A fully-tended forage patch: the Tile card shows the "🌾 Tended Patch" badge (SIGNAL tint)
@@ -864,6 +883,12 @@ func _tended_tile_fixture() -> Dictionary:
 	tile["cultivation_progress"] = 1.0
 	tile["is_cultivated"] = true
 	tile["patch_ecology_phase"] = "thriving"
+	# A TENDED patch reports every policy ceiling == per_worker_yield, so max-useful collapses to 1
+	# worker regardless of policy — the stepper caps at 1 ("max 1 workers useful here").
+	tile["patch_ceiling_sustain"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_surplus"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_market"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
 	return tile
 
 func _herd_fixture() -> Dictionary:
@@ -878,6 +903,15 @@ func _herd_fixture() -> Dictionary:
 		"x": 66, "y": 10,
 		"biomass": 820.0,
 		"route_length": 3,
+		# Pre-commit yield forecast — the SAME field names the forage patch carries (food/turn at this
+		# herd's biomass, at output_multiplier 1.0). Sustain admits ceil(0.90 / 0.30) = 3 useful
+		# hunters, below the reference band's 7 assignable (3 idle + the 4 it already has on this
+		# herd), so the Hunters stepper caps at 3 with the "max 3 workers useful here" note.
+		"per_worker_yield": 0.30,
+		"ceiling_sustain": 0.90,
+		"ceiling_surplus": 1.80,
+		"ceiling_market": 2.70,
+		"ceiling_eradicate": 4.50,
 		"tile_info": _food_tile_fixture(),
 	}
 
