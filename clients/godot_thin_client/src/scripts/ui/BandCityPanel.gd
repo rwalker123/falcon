@@ -605,6 +605,15 @@ func _update_body_visibility() -> void:
 ##   3. Reserved height = card V-padding + header + tallest column (+ a px of slack), capped at
 ##      MAX_WIDE_HEIGHT_FRACTION of the window (past which the columns gain a vertical scroll). Report
 ##      it via `reservation_changed` (through `_cross_axis_size`) so the map/HUD reflow to fit.
+## The width one packed column must actually afford: the nominal SECTION_COLUMN_WIDTH, raised to the
+## widest section's own minimum width when a section's content exceeds it.
+func _widest_block_width() -> float:
+	var widest := SECTION_COLUMN_WIDTH
+	for block_variant in _section_blocks:
+		if block_variant is Control:
+			widest = maxf(widest, (block_variant as Control).get_combined_minimum_size().x)
+	return widest
+
 func _pack_wide_columns() -> void:
 	if _wide_columns_row == null:
 		return
@@ -613,7 +622,11 @@ func _pack_wide_columns() -> void:
 	var window_w := _viewport_size().x
 	var avail := window_w - 2.0 * PANEL_CONTENT_MARGIN_H
 	var block_count := _section_blocks.size()
-	var per_col := SECTION_COLUMN_WIDTH + float(WIDE_FLOW_SEPARATION)
+	# A column is at least SECTION_COLUMN_WIDTH, but a block whose content is WIDER than that (e.g. a
+	# Current-actions row: resource glyph + label + policy tag + yield + ⚠ + the −/+ stepper) makes its
+	# column grow to fit. Size the column budget off the WIDEST block, else the packed columns sum past
+	# the window and the last one clips / spawns a horizontal scrollbar.
+	var per_col := _widest_block_width() + float(WIDE_FLOW_SEPARATION)
 	var num_cols := clampi(int(avail / per_col), 1, maxi(block_count, 1))
 	# (2) Rebuild the column scaffolding: detach the owned blocks first (so freeing the old columns
 	# never frees a block), then create fresh column VBoxes.

@@ -254,6 +254,12 @@ var _selected_herd: Dictionary = {}
 # doesn't list it — e.g. an inspector-driven herd selection). Rebuilt each render.
 var _roster_units: Array = []
 var _roster_herds: Array = []
+# Every herd in the snapshot (`snapshot["herds"]`, pushed by Main each turn). The roster above only
+# holds the SELECTED hex's herds, so it can't answer "where is the herd this band hunts?" — herds
+# MIGRATE, so a hunt assignment's `target_x/target_y` is a stale launch position. This is the live
+# position + label source for the Current-actions Hunt row (label + jump), mirroring
+# `MapView.herds` / `MapView._herd_by_id`, which the hunted-herd ring already resolves through.
+var _world_herds: Array = []
 var _selected_food_module: String = ""
 var _selected_food_is_hunt: bool = false
 # Days-of-food of the currently-selected band's larder, so the detail formatter
@@ -315,6 +321,13 @@ const ALLOC_HEADER_ROLES := "Band roles"
 const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd to assign foragers/hunters."
 const SCOUT_ROLE_HINT := "Posts scouts that see around obstacles — more scouts range farther. Staff with −/+."
 const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
+# A food module whose kind is a game trail is HUNTED, not gathered — `FoodIcons.for_site` swaps in the
+# hunt glyph for it. Mirrors `MapView._draw_food_site`'s `kind == "game_trail"` test.
+const FOOD_SITE_KIND_GAME_TRAIL := "game_trail"
+# Appended to a clickable Current-actions row's tooltip: the row's LABEL is an inline link that jumps
+# the map to the source being worked (a forage tile, or a hunted herd's CURRENT tile). Scout/Warrior
+# are band-wide roles with no tile, so their rows stay plain labels and never carry this.
+const SOURCE_ROW_FOCUS_HINT := "Click to show this source on the map."
 # Per-source food yield readout on the allocation rows. Yields are food/turn floats; render to
 # 2 decimals with an explicit sign ("+0.31 /turn").
 const YIELD_DECIMALS := 2
@@ -1086,6 +1099,59 @@ func set_grid_dimensions(grid: Variant) -> void:
     _grid_height = int(g.get("height", _grid_height))
     _grid_wrap_horizontal = bool(g.get("wrap_horizontal", _grid_wrap_horizontal))
 
+## The world's herds captured each snapshot (Main forwards the snapshot `herds` key, the same array
+## `MapView._rebuild_herd_markers` consumes). Herds MIGRATE every turn, so this — not a hunt
+## assignment's launch-time `target_x/target_y` — is the authority on where a hunted herd IS.
+func update_herds(herds_variant: Variant) -> void:
+    if not (herds_variant is Array):
+        return
+    _world_herds = herds_variant
+
+## The snapshot herd with this id, wherever it is on the map; {} when unknown.
+## Mirrors `MapView._herd_by_id` (the hunted-herd ring's resolver).
+func _find_world_herd(herd_id: String) -> Dictionary:
+    if herd_id == "":
+        return {}
+    for herd in _world_herds:
+        if herd is Dictionary and String((herd as Dictionary).get("id", "")) == herd_id:
+            return herd
+    return {}
+
+## The world's food modules captured each snapshot (Main forwards the snapshot `food_modules` key,
+## the same array `MapView` ingests into `food_site_lookup`). Keyed by tile so a forage assignment's
+## `target_x/target_y` resolves to the module the map draws there — that's how a Current-actions
+## Forage row shows the SAME resource glyph as the map marker (`FoodIcons.for_site`).
+var _food_module_by_tile: Dictionary = {}
+
+func update_food_modules(modules_variant: Variant) -> void:
+    if not (modules_variant is Array):
+        return
+    _food_module_by_tile.clear()
+    for entry in modules_variant:
+        if not (entry is Dictionary):
+            continue
+        var site: Dictionary = entry
+        var sx := int(site.get("x", -1))
+        var sy := int(site.get("y", -1))
+        if sx >= 0 and sy >= 0:
+            _food_module_by_tile[Vector2i(sx, sy)] = site
+
+## "<glyph> " for a resolved glyph, "" for none — so a Current-actions row degrades to bare text
+## (no stray leading space) when the resource can't be resolved.
+func _source_icon_prefix(icon: String) -> String:
+    return "%s " % icon if icon != "" else ""
+
+## The resource glyph for the food module on (x, y) — the same icon `MapView._draw_food_site` draws
+## there. "" when the tile has no known module (older snapshot / undiscovered), so the row renders
+## bare rather than with a misleading fallback sprig.
+func _food_module_icon(x: int, y: int) -> String:
+    var site: Variant = _food_module_by_tile.get(Vector2i(x, y), null)
+    if not (site is Dictionary):
+        return ""
+    var module_key := String((site as Dictionary).get("module", ""))
+    var is_hunt := String((site as Dictionary).get("kind", "")) == FOOD_SITE_KIND_GAME_TRAIL
+    return FoodIcons.for_site(module_key, is_hunt)
+
 ## The band's current tile (col,row), reading the raw cohort `current_x/y` (snapshot entries) or the
 ## MapView marker's `pos` fallback; (-1,-1) when unknown.
 func _band_tile(band: Dictionary) -> Vector2i:
@@ -1228,13 +1294,18 @@ func _policy_for_forage(band: Dictionary, x: int, y: int) -> String:
                 return policy
     return DEFAULT_HUNT_POLICY
 
-## A friendlier label for a herd id — the roster/selected herd's label when known.
+## A friendlier label for a herd id — the roster/selected herd's label when known, else the
+## snapshot-wide herd list (a hunted herd usually sits on a DIFFERENT hex than the one selected,
+## so the roster alone left those rows reading the raw `game_deer_07` id).
 func _herd_label_for_id(herd_id: String) -> String:
     var herd := _find_roster_herd(herd_id)
     if not herd.is_empty():
         return String(herd.get("species", herd.get("label", herd_id)))
     if String(_selected_herd.get("id", "")) == herd_id:
         return String(_selected_herd.get("species", _selected_herd.get("label", herd_id)))
+    var world_herd := _find_world_herd(herd_id)
+    if not world_herd.is_empty():
+        return String(world_herd.get("species", world_herd.get("label", herd_id)))
     return herd_id
 
 ## Emit an assign_labor request for the given band, and record it as an OPTIMISTIC pending
@@ -1392,17 +1463,34 @@ func _effective_idle(band: Dictionary) -> int:
 ## when either stepper is pressed. `plus_enabled` gates the + (e.g. no idle workers).
 ## `pending` marks an optimistic (not-yet-confirmed) row: the label reads amber with a
 ## "· pending" suffix, tying it to the amber pending hex on the map.
-func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "") -> HBoxContainer:
+## `on_focus_source` (optional) makes the LABEL a clickable inline link that jumps the map to the
+## row's source — a Forage tile / a hunted herd's live tile. It is a separate child from the
+## steppers, so the −/+ buttons keep working untouched and the count stays right-aligned. Band-wide
+## roles (Scout/Warrior) have no tile, so they pass nothing and keep a plain Label.
+func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable()) -> HBoxContainer:
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
     if tooltip != "":
         row.tooltip_text = tooltip
-    var name_label := Label.new()
-    name_label.text = label_text + (PENDING_ROW_SUFFIX if pending else "")
-    name_label.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK)
-    if tooltip != "":
-        name_label.tooltip_text = tooltip
+    var row_text := label_text + (PENDING_ROW_SUFFIX if pending else "")
+    var row_ink: Color = HudStyle.WARN if pending else HudStyle.INK
+    var name_label: Control
+    if on_focus_source.is_valid():
+        var link := Button.new()
+        link.text = row_text
+        link.alignment = HORIZONTAL_ALIGNMENT_LEFT
+        HudStyle.apply_link_button(link, row_ink)
+        link.tooltip_text = (tooltip + "\n" if tooltip != "" else "") + SOURCE_ROW_FOCUS_HINT
+        link.pressed.connect(func() -> void: on_focus_source.call())
+        name_label = link
+    else:
+        var plain := Label.new()
+        plain.text = row_text
+        plain.add_theme_color_override("font_color", row_ink)
+        if tooltip != "":
+            plain.tooltip_text = tooltip
+        name_label = plain
     row.add_child(name_label)
     # Overhunting flag: a WARN-tinted ⚠ sits directly after the label (before the stepper), so an
     # overdrawn herd row pops without recoloring the whole label. Forage never trips this.
@@ -1735,10 +1823,15 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
             var fpolicy := String(m.get("policy", "")).strip_edges().to_lower()
             var forage_tag := " [%s]" % fpolicy if fpolicy in LABOR_HUNT_POLICIES else ""
             var forage_emit_policy := fpolicy if fpolicy in LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY
+            # Lead with the resource glyph the map draws on that tile (FoodIcons — one source of
+            # truth), so a source reads identically in the panel and on the map. Unknown module → "".
+            var forage_icon := _source_icon_prefix(_food_module_icon(fx, fy))
             actions_block.add_child(_build_worker_stepper(
-                "Forage (%d, %d)%s%s" % [fx, fy, forage_tag, yld.label_suffix], workers, can_add,
+                "%sForage (%d, %d)%s%s" % [forage_icon, fx, fy, forage_tag, yld.label_suffix], workers, can_add,
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_FORAGE, n, fx, fy, "", forage_emit_policy),
-                pending, yld.warn, yld.tooltip, yld.note))
+                pending, yld.warn, yld.tooltip, yld.note,
+                # A forage patch is a fixed tile: the assignment's own target IS its live location.
+                func() -> void: _focus_labor_source(fx, fy)))
         elif kind == LABOR_KIND_HUNT and (workers > 0 or pending):
             has_source = true
             var herd_id := String(m.get("herd_id", ""))
@@ -1747,10 +1840,17 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
             var policy := String(m.get("policy", ""))
             if not (policy in LABOR_HUNT_POLICIES):
                 policy = _policy_for_hunt(band, herd_id)
+            # Same species glyph the map's herd marker uses (FoodIcons.for_herd, keyed off the herd
+            # label/species) — the panel row and the map marker read as the same animal.
+            var herd_label := _herd_label_for_id(herd_id)
+            var hunt_icon := _source_icon_prefix(FoodIcons.for_herd(herd_label))
             actions_block.add_child(_build_worker_stepper(
-                "Hunt %s [%s]%s" % [_herd_label_for_id(herd_id), policy, yld.label_suffix], workers, can_add,
+                "%sHunt %s [%s]%s" % [hunt_icon, herd_label, policy, yld.label_suffix], workers, can_add,
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_HUNT, n, hx, hy, herd_id, policy),
-                pending, yld.warn, yld.tooltip, yld.note))
+                pending, yld.warn, yld.tooltip, yld.note,
+                # Herds MIGRATE, so resolve the herd's live tile at CLICK time (hx/hy is only the
+                # assignment's launch-time target, kept as the fallback for an unknown herd).
+                func() -> void: _focus_hunt_source(herd_id, hx, hy)))
     if not has_source:
         actions_block.add_child(_alloc_hint_label(ALLOC_NO_SOURCES_HINT))
     blocks.append(actions_block)
@@ -2005,7 +2105,9 @@ func _build_policy_picker(on_pick: Callable, selected: String = "") -> HBoxConta
     row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
     for policy in LABOR_HUNT_POLICIES:
         var btn := Button.new()
-        btn.text = String(policy).capitalize()
+        # Glyph + name, from the shared FoodIcons policy map — the same icon the map's yield labels
+        # append, so a policy reads identically on the picker and on the worked tile/herd.
+        btn.text = "%s%s" % [_source_icon_prefix(FoodIcons.for_policy(String(policy))), String(policy).capitalize()]
         HudStyle.apply_button(btn, "primary" if policy == current else "ghost")
         btn.pressed.connect(func() -> void: on_pick.call(policy))
         row.add_child(btn)
@@ -3017,6 +3119,34 @@ func _on_panel_expedition_selected(entity: int, x: int, y: int) -> void:
         emit_signal("roster_occupant_selected", "unit", entity)
     if not panel_band_keep.is_empty() and int(_panel_band.get("entity", -1)) != int(panel_band_keep.get("entity", -1)):
         _render_band_into_panel(panel_band_keep)
+
+## A Current-actions row's label was clicked: show the source the band is working. Recenter + select
+## its hex (`alert_focus_requested` → `MapView.focus_and_select_tile`) and, for a hunted herd, pin
+## the herd itself (`roster_occupant_selected` → `MapView.select_occupant`) so its drawer opens on
+## the herd rather than whatever occupant the hex auto-selects. This is exactly the routing the
+## Active-expeditions rows and the turn-orb "Jump →" use — no new path. The Band/City panel stays on
+## its band: focusing a hex that hosts another band would otherwise hijack the panel.
+func _focus_labor_source(x: int, y: int, herd_id: String = "") -> void:
+    if x < 0 or y < 0:
+        return
+    var panel_band_keep: Dictionary = _panel_band.duplicate(true) if not _panel_band.is_empty() else {}
+    emit_signal("alert_focus_requested", x, y)
+    # The focus above rebuilt the hex's roster, so the herd is resolvable now.
+    if herd_id != "" and not _find_roster_herd(herd_id).is_empty():
+        _select_roster_occupant("herd", herd_id)
+        emit_signal("roster_occupant_selected", "herd", herd_id)
+    if not panel_band_keep.is_empty() and int(_panel_band.get("entity", -1)) != int(panel_band_keep.get("entity", -1)):
+        _render_band_into_panel(panel_band_keep)
+
+## Show a hunted herd. Herds MIGRATE each turn, so the hunt assignment's `target_x/target_y` is a
+## stale launch position: resolve the herd's LIVE tile from the snapshot herd list first, exactly as
+## `MapView._draw_band_work_highlights` resolves the hunted-herd ring (`_herd_by_id`, falling back to
+## the assignment target when the herd is unknown — e.g. it left the visible fauna set).
+func _focus_hunt_source(herd_id: String, fallback_x: int, fallback_y: int) -> void:
+    var herd := _find_world_herd(herd_id)
+    var x := int(herd.get("x", fallback_x))
+    var y := int(herd.get("y", fallback_y))
+    _focus_labor_source(x, y, herd_id)
 
 ## Re-render the panel band into the panel container, keyed off `_panel_band` (never the current
 ## selection). The panel's own allocation rebuilds (optimistic pending, etc.) route through this so

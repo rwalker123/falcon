@@ -63,6 +63,17 @@ func _ready() -> void:
 	# The labor-allocation UI (Early-Game Labor slice 3b) targets the single player band;
 	# seed it so the herd/tile "assign" controls resolve a band to staff.
 	_hud._player_band = _band_fixture()
+	# The world's herds (Main pushes snapshot["herds"]): the Current-actions Hunt row reads the herd's
+	# species from here and, when clicked, jumps to its LIVE tile (it has migrated away from the hunt
+	# assignment's launch target).
+	_hud.update_herds([
+		{"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120, "ecology_phase": "stressed"},
+	])
+	# The world's food modules (Main pushes snapshot["food_modules"]): each Forage row leads with the
+	# module's map glyph, so the panel row and the map marker read as the same resource.
+	_hud.update_food_modules([
+		{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"},
+	])
 
 	# State 1 — a single band selected (GOOD state): the Occupants roster + the labor allocation panel.
 	# Food + Morale are healthy, so BOTH summary rows read collapsed with a ▸ disclosure caret

@@ -59,8 +59,8 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/TurnOrb.gd` / `ui/TurnOrb.tscn` | The bottom-right **turn orb** (replaces the old "Advance Turn" button): calm cyan pulse when the attention registry is empty, else a severity-tinted count badge + a reasons popover (see "Turn orb & attention model"). Re-emits `focus_requested` (jump) / `advance_requested` so Main's advance/jump wiring is unchanged; palette from `HudStyle`, all geometry/severity/kind as named constants |
 | `ui/MagnifierButton.gd` | Zoom-rail in/out button that `_draw`s a crisp magnifier icon (lens + handle + inner `+`/`−`, `zoom_sign` picks which) — font magnifier glyphs render as tofu/blobs. Monochrome `HudStyle` ink → `SIGNAL` on hover |
 | `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content |
-| `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, and `apply_button(btn, "primary"/"ghost"/"armed")`. Every HUD surface styles through here |
-| `ui/FoodIcons.gd` | Shared map-marker emoji glyphs — food modules (`for_site`) and fauna herds (`for_herd`, species keyword matched in the herd label, longest-first). Covers migratory species plus wild game (deer/boar/rabbit/fowl). Used by the Harvest/Hunt button (`Hud.gd`) and the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`) so a source always reads the same |
+| `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, `apply_button(btn, "primary"/"ghost"/"armed")`, and `apply_link_button(btn, base_color)` — the **inline link** treatment for a clickable label inside a row (no box at rest; hover tint + cyan text + pointing hand), used by the band panel's clickable Current-actions rows. Every HUD surface styles through here |
+| `ui/FoodIcons.gd` | Shared glyph vocabulary — food modules (`for_site`), fauna herds (`for_herd`, species keyword matched in the herd label, longest-first), and **take policies** (`for_policy`, `POLICY_ICONS`: sustain ♻ / surplus ⬆ / market ⇄ / eradicate 💀; `""` for unknown). Used by the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`), the Harvest/Hunt button + the **band panel's Current-actions rows** (each row leads with its resource glyph), and — for policies — BOTH the Hud policy-picker buttons (`_build_policy_picker`) and the map's yield labels (`MapView._draw_yield_label` appends the icon: `+0.38 ♻`), so a resource/policy always reads the same on the panel and on the map. **Policy glyphs are deliberately line-art** (♻ ⬆ ⇄) plus the high-contrast 💀: pictographic emoji (🪙 coin, 💰 money bag) render as a featureless grey blob at the ~12–13px these are drawn at, and ⚖ renders tiny/faint — same glyph-legibility hazard that forced `MagnifierButton` to hand-draw. Verified in `band_panel_left.png` / `map_band_work.png` |
 | `tools/ui_preview.gd` / `.tscn` | Dev-only preview harness: instances the real `HudLayer` with canned selection/targeting data, renders each state, and saves PNGs to `ui_preview_out/` (gitignored). Iterate on HUD styling without a server: `godot --path . res://tools/ui_preview.tscn` |
 | `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link; scouting draws no disc — it extends sight in the fog) without a server: `godot --path . res://tools/map_preview.tscn` |
 | `tools/band_panel_preview.gd` / `.tscn` | Dev-only preview harness for the **Band/City dockable panel**: instances the real `BandCityPanel` + `HudLayer`, injects the panel into the HUD, pushes a seeded player band through `update_band_alerts`, and dumps the panel docked left/right/top/bottom + collapsed (`band_panel_*.png`) so the chrome + the relocated band detail + the HUD reflow can be eyeballed without a server: `godot --path . res://tools/band_panel_preview.tscn` |
@@ -591,6 +591,30 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     == 0` (rehydrated/older snapshot, or a pending optimistic assign) means "unknown" → no note, never a
     wrong one. Both the ⚠ and the note are rendered by `_build_worker_stepper` (`warn` / `note` params)
     off one `_source_yield_readout`, so Forage and Hunt rows share the logic.
+    **Each source row leads with its resource glyph** — `FoodIcons.for_site(module)` for a Forage
+    row (resolved from `_food_module_by_tile`, the snapshot `food_modules` array pushed by `Main` →
+    **`Hud.update_food_modules`**, keyed by tile) and `FoodIcons.for_herd(species)` for a Hunt row —
+    the SAME icon the map marker draws, so a source reads identically in the panel and on the map. An
+    unresolvable module renders the row bare (no fallback sprig).
+    **Each source row's LABEL is clickable — it jumps the map to the source being worked.**
+    `_build_worker_stepper`'s optional `on_focus_source` Callable turns the label into an inline link
+    Button (`HudStyle.apply_link_button` — plain at rest, hover tint + `SIGNAL` text + pointing-hand
+    cursor, a far tighter padding than the boxed ghost chrome); it is a *separate child* from the
+    `−`/`+` stepper, which is untouched, and the count stays right-aligned. Both handlers route
+    through `_focus_labor_source` — the SAME path the Active-expeditions rows and the turn-orb
+    "Jump →" use: `alert_focus_requested` → `MapView.focus_and_select_tile`, plus (herd only)
+    `roster_occupant_selected` → `MapView.select_occupant` so the herd's own drawer opens rather than
+    whatever occupant the hex auto-selects; `_panel_band` is restored afterwards, so focusing a hex
+    that hosts another band can't hijack the panel. **Forage** jumps to the assignment's
+    `target_x/target_y` (a patch is a fixed tile). **Hunt** deliberately does NOT — herds MIGRATE, so
+    `_focus_hunt_source` resolves the herd's **live** tile from `_world_herds` via `_find_world_herd`
+    (the Hud mirror of `MapView._herd_by_id`, which the hunted-herd ring already resolves through),
+    falling back to the assignment target only when the herd is unknown. `_world_herds` is the
+    snapshot `herds` array, pushed each snapshot by `Main` → **`Hud.update_herds`**; it also backs
+    `_herd_label_for_id`'s new fallback, so an off-hex hunted herd reads "Red Deer" instead of the raw
+    `game_deer_07` id. **Scout/Warrior are band-wide roles with no tile → plain, non-clickable
+    labels.** Verified by `band_panel_preview` state `band_panel_source_row_hover` (the harness
+    force-hovers the Hunt link, so the affordance shows in a static frame).
     `actual_yield`/`sustainable_yield`/`workers_needed` are decoded per assignment in
     `native/src/lib.rs` (inside
     `labor_assignments`); the band-level food flow (net rate + Gathered/Hunted/Eaten breakdown) lives
@@ -1134,8 +1158,12 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   min is width-independent so there's no resize feedback) on `set_band_sections`, dock/collapse change,
   and viewport resize. **Wide** (TOP/BOTTOM) = **manual balanced-column packing** (`_pack_wide_columns`):
   column count from the
-  available width (`num_cols = clamp(avail / (SECTION_COLUMN_WIDTH + WIDE_FLOW_SEPARATION), 1,
-  #blocks)`), blocks distributed **greedily into the shortest column** so the tallest column
+  available width (`num_cols = clamp(avail / (_widest_block_width() + WIDE_FLOW_SEPARATION), 1,
+  #blocks)` — the budget is `max(SECTION_COLUMN_WIDTH, widest section's own min width)`, NOT the
+  nominal column width: a section wider than nominal (a Current-actions row now carries a resource
+  glyph + label + policy tag + yield + ⚠ + the stepper) grows its column, and budgeting off the
+  nominal width summed the columns past the window — the last one clipped behind a horizontal
+  scrollbar), blocks distributed **greedily into the shortest column** so the tallest column
   is minimized, columns in an HBox. The panel then **sizes its T/B height to the content** —
   the reservation it reports (`reservation_changed`) is `header + tallest-column + margins`,
   so the map/HUD reflow to exactly fit and **nothing clips** (fit-to-content, not a fixed

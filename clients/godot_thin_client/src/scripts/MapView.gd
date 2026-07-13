@@ -1842,7 +1842,8 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 				var fcenter := _hex_center(tcol, trow, radius, origin)
 				var forage_overdraw := float(entry.get("actual_yield", 0.0)) \
 					> float(entry.get("sustainable_yield", 0.0)) + YIELD_OVERHUNT_EPSILON
-				_draw_yield_label(fcenter, float(entry.get("actual_yield", 0.0)), forage_overdraw, radius)
+				_draw_yield_label(fcenter, float(entry.get("actual_yield", 0.0)), forage_overdraw, radius,
+					String(entry.get("policy", "")))
 		elif kind == LABOR_KIND_HUNT:
 			var herd := _herd_by_id(String(entry.get("fauna_id", "")))
 			var herd_col := int(entry.get("target_x", -1))
@@ -1861,7 +1862,8 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			if show_yields and entry.has("actual_yield"):
 				var overhunt := float(entry.get("actual_yield", 0.0)) \
 					> float(entry.get("sustainable_yield", 0.0)) + YIELD_OVERHUNT_EPSILON
-				_draw_yield_label(hc, float(entry.get("actual_yield", 0.0)), overhunt, radius)
+				_draw_yield_label(hc, float(entry.get("actual_yield", 0.0)), overhunt, radius,
+					String(entry.get("policy", "")))
 
 	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
 	#    the snapshot hasn't confirmed yet. Drawn last so it reads on top of the confirmed styles.
@@ -2130,12 +2132,17 @@ func _draw_marker_glyph(center: Vector2, glyph: String, size: int, color: Color)
 
 ## A small drop-shadow per-source yield label above a worked tile's center (reuses `_draw_marker_glyph`
 ## for legibility over terrain). Food-income green normally; WARN amber + a `⚠` suffix when `overhunt`.
-func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float) -> void:
+## `policy` (the assignment's take policy) appends the shared `FoodIcons` policy glyph — the SAME icon
+## the Hud policy-picker buttons show — so the worked source reads "+0.38 ♻" on the map; "" = no glyph.
+func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, policy: String = "") -> void:
 	var text := _format_yield_signed(value)
 	var color := HudStyle.HEALTHY
 	if overhunt:
 		text += " " + YIELD_OVERHUNT_FLAG
 		color = HudStyle.WARN
+	var policy_icon := FoodIcons.for_policy(policy)
+	if policy_icon != "":
+		text += " " + policy_icon
 	var font_size := clampi(int(radius * YIELD_LABEL_SIZE_FACTOR), YIELD_LABEL_MIN_FONT, YIELD_LABEL_MAX_FONT)
 	var label_center := tile_center + Vector2(0.0, -radius * YIELD_LABEL_OFFSET_FACTOR)
 	_draw_marker_glyph(label_center, text, font_size, color)

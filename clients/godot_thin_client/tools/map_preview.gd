@@ -465,8 +465,10 @@ func _snapshot_work() -> Dictionary:
 	# Per-source yields annotate the worked tiles/herd on the map. Forage is renewable (actual ==
 	# sustainable, no ⚠); the hunt OVERDRAWS (0.46 > 0.20) so its herd label shows the amber ⚠ flag.
 	var assignments := [
-		{"kind": "forage", "workers": 5, "target_x": 7, "target_y": 6, "actual_yield": 0.48, "sustainable_yield": 0.48},
-		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "actual_yield": 0.27, "sustainable_yield": 0.27},
+		# Policies drive the yield label's trailing policy glyph (♻ sustain / ⬆ surplus / 🪙 market /
+		# 💀 eradicate) — two different ones here so the map read is verifiable in one frame.
+		{"kind": "forage", "workers": 5, "target_x": 7, "target_y": 6, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48},
+		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "policy": "market", "actual_yield": 0.27, "sustainable_yield": 0.20},
 		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 13, "target_y": 6, "actual_yield": 0.46, "sustainable_yield": 0.20},
 		{"kind": "warrior", "workers": 2},
 	]

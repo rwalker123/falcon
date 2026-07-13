@@ -36,6 +36,27 @@ const HERD_SPECIES := {
 	"fowl": "🐓",
 }
 
+# Take-policy glyphs (the `LABOR_HUNT_POLICIES` set, shared by forage + hunt). ONE source of
+# truth, read by BOTH consumers: the Hud policy-picker buttons (`_build_policy_picker`) and the
+# map's worked-source yield labels (`MapView._draw_yield_label`), so a policy always reads the
+# same on the panel and on the map. Sustain = take only the regrowth; Surplus = take more now,
+# accept a slow decline; Market = harvest for trade goods; Eradicate = strip it bare.
+# Market is ⇄ (exchange), NOT 🪙 (coin) / 💰 (money bag) / ⚖ (scales): the two pictographic emoji
+# both render as a featureless grey ball at the sizes these glyphs are drawn (a ~13px HUD button, a
+# ~12px map yield label), and the scales render tiny and faint — the known glyph-legibility hazard.
+# What survives the downscale is bold line art (♻ ⬆ ⇄) plus the high-contrast 💀. All verified in
+# the preview frames (band_panel_left / map_band_work).
+const POLICY_ICONS := {
+	"sustain": "♻",
+	"surplus": "⬆",
+	"market": "⇄",
+	"eradicate": "💀",
+}
+
+## Icon for a take policy ("" for an unknown/absent policy, so callers render bare text).
+static func for_policy(policy: String) -> String:
+	return String(POLICY_ICONS.get(policy.strip_edges().to_lower(), ""))
+
 const ICONS := {
 	"coastal_littoral": "🐚",
 	"riverine_delta": "🐟",

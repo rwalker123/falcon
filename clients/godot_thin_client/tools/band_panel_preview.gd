@@ -57,6 +57,15 @@ func _ready() -> void:
 	# must read 1/1 (expeditions excluded), and the panel's "Active expeditions" section must list
 	# both. Order interleaves an expedition first to prove the split (not just "first cohort = band").
 	_hud.set_band_city_panel(_panel)
+	# The world's herds (Main pushes snapshot["herds"]): the Current-actions Hunt row names the herd
+	# from here and, on click, jumps to its LIVE tile — the herd has MIGRATED away from the
+	# assignment's launch target (70, 17) to (68, 15), which is exactly what the row must resolve.
+	_hud.update_herds(_herd_fixtures())
+	# The world's food modules (Main pushes snapshot["food_modules"]): the Forage row leads with the
+	# module's map glyph (savanna grassland → 🌾 on (71, 18)).
+	_hud.update_food_modules([
+		{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"},
+	])
 	_hud.update_band_alerts([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 	print("band_panel_preview: cycler split — player_bands=%d (expect 1), player_expeditions=%d (expect 2)" % [
 		_hud._player_bands.size(), _hud._player_expeditions.size()])
@@ -79,6 +88,22 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_collapsed")
 	_panel.set_collapsed(false)
+
+	# Clickable Current-actions rows: each Forage/Hunt row's LABEL is an inline link that jumps the
+	# map to that source (Scout/Warrior are band-wide roles — plain labels, not links). A static frame
+	# can't hover, so synthesize a mouse-motion over the Hunt row's label and render the HOVER skin
+	# (tinted fill + cyan border/text) — the affordance proof.
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	var hunt_link := _find_button_containing(_panel, "Hunt ")
+	if hunt_link != null:
+		# The harness window has no real pointer, so drive the button's hover state directly (the
+		# same notification the engine sends on mouse-enter) — BaseButton then draws its hover skin.
+		hunt_link.notification(Control.NOTIFICATION_MOUSE_ENTER)
+	else:
+		push_warning("band_panel_preview: no Hunt link button found — Current-actions row not clickable?")
+	await _settle()
+	await _save("band_panel_source_row_hover")
 
 	# Bug 1 — co-edge stacking with the Inspector. Reserve a left inspector strip (as Main does)
 	# and push the band panel's matching leading offset, docked left: the panel must render to the
@@ -165,6 +190,27 @@ func _save(name: String) -> void:
 		push_error("band_panel_preview: failed to save %s (err %d)" % [name, err])
 	else:
 		print("band_panel_preview: saved ", name, ".png")
+
+## Depth-first search for the first Button whose text CONTAINS `needle` (used to locate a
+## Current-actions link row in the live panel tree — the row text leads with a resource glyph,
+## so this deliberately does not anchor at the start).
+func _find_button_containing(node: Node, needle: String) -> Button:
+	if node is Button and (node as Button).text.contains(needle):
+		return node as Button
+	for child in node.get_children():
+		var found := _find_button_containing(child, needle)
+		if found != null:
+			return found
+	return null
+
+## The snapshot's herd list (shape `Hud.update_herds` / `MapView._rebuild_herd_markers` consume).
+## The hunted herd sits at (68, 15) — NOT the (70, 17) its hunt assignment was launched at — so the
+## Hunt row's jump proves it resolves the herd's current position, not the stale target.
+func _herd_fixtures() -> Array:
+	return [
+		{"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120, "ecology_phase": "stressed"},
+		{"id": "game_deer_79", "species": "Roe Deer", "x": 64, "y": 11, "population": 90, "ecology_phase": "thriving"},
+	]
 
 ## A player-faction Camp-stage band (population-snapshot shape update_band_alerts consumes):
 ## working-age labor with idle workers + a couple of active assignments + the settlement stage
