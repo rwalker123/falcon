@@ -4,14 +4,15 @@ render_mode blend_mix;
 // Approach B — per-pixel biome blend for the 2D hex map (see clients/.../CLAUDE.md → Edge Blending).
 // One whole-map quad runs this fragment shader. Each fragment inverts the pointy-top odd-r hex layout
 // (MUST match MapView._hex_center / _axial_center exactly) to find its hex, samples that hex's biome
-// from the Texture2DArray, and — only when the hex AND a neighbour across a shared edge share a BLENDABLE
-// blend_class (SAME class, different biome: flat↔flat or water↔water) — MIXES the neighbour's texture in
+// from the Texture2DArray, and — when the hex AND a neighbour across a shared edge are BLEND-ELIGIBLE
+// (different biome, and either the same blendable blend_class — flat↔flat / water↔water — or, with the
+// SHIPPED-TRUE blend_rugged_land gate, any land↔land pair) — MIXES the neighbour's texture in
 // near the seam: a symmetric signed-distance splat weight (a tie at the exact edge), wobbled by WORLD-space
 // value noise (varies per hex, no baked tiling), optionally nudged by the two textures' luminance detail,
 // and feathered through a smoothstep into a continuous mix factor — never a 1-bit pick (see the const
-// block). rugged edges never blend, and neither does any CLASS CHANGE — land↔water stays hard because that
-// seam is the SHORELINE, which gets its own wash instead (sand shallows then surf, BOTH on the water side;
-// the land keeps its texture) — see the shoreline block. See the id-map (splatmap) below.
+// block). The one CLASS CHANGE that never blends is land↔water: that seam is the SHORELINE, which gets its
+// own coastal profile instead (a LAND-ONLY beach, then a surf that peaks at the waterline and washes both
+// ways, over a base that cross-fades across it) — see the shoreline block. See the id-map (splatmap) below.
 
 uniform sampler2DArray biome_array : filter_linear, repeat_enable;
 // Canopy overlay array: whole tree crowns on transparency (RGBA), sampled in MAP space (v_map, the
@@ -109,12 +110,17 @@ uniform float noise_cell;     // FEATURE value-noise cell size in px (config fea
                               // DECOUPLED from blend_noise_cell so retuning the interlock grain can't move any
                               // coastline, treeline or footline.
 uniform bool blend_enabled;   // false below the LOD radius → base only (no shimmer at far zoom)
-// RUGGED-LAND eligibility (config blend_rugged_land, default FALSE = the shipped same-class rule). When TRUE
-// the LAND seam gate widens from same-class to "both sides are land": a rugged biome's BASE FLOOR then blends
-// with any land neighbour (flat↔rugged and rugged↔rugged), instead of ending in a razor-straight hexagon.
-// land↔water is untouched (still hard — that seam is the shoreline) and water↔water still takes the depth
-// field. OFF by default because rugged base textures are high-contrast/structured and the height term can
-// shred them — see EDGE_BLEND_DEFAULT_RUGGED_LAND in MapView.gd.
+// RUGGED-LAND eligibility (config blend_rugged_land — it SHIPS TRUE: terrain_config.json "blend_rugged_land"
+// and EDGE_BLEND_DEFAULT_RUGGED_LAND in MapView.gd). When TRUE the LAND seam gate widens from same-class to
+// "both sides are land": a rugged biome's BASE FLOOR then blends with any land neighbour (flat↔rugged and
+// rugged↔rugged), instead of ending in a razor-straight hexagon — which is the whole reason it shipped (a
+// peak biome's floor IS the ground under its relief overlay, so a hard-edged floor made rolling hills read as
+// CUT OFF at the hex line). land↔water is untouched (still hard — that seam is the shoreline) and water↔water
+// still takes the depth field, so a frame with no rugged hex is bit-identical either way.
+// The risk the flag is a LEVER for — high-contrast/structured rugged art SHREDDING under the height term —
+// is why the sweep exists, not why it is off: blend_probe state R renders EVERY rugged biome as an ISOLATED
+// hex in a contrasting field, gate OFF vs ON, and none shredded (interiors stay solid; only the rim
+// feathers). Keep the flag so a future rugged texture that DOES shred can be swept and, if need be, gated.
 uniform bool blend_rugged_land;
 uniform bool fow_enabled;
 uniform vec4 bg_color;        // out-of-map fill (matches the direct path background)
@@ -187,7 +193,8 @@ const float SQRT3 = 1.7320508075688772;
 // eligibility rule below is expressed in these, never in bare literals.
 const int CLASS_WATER = 0;
 const int CLASS_FLAT = 1;
-const int CLASS_RUGGED = 2;  // never blends (discrete-object textures must not bleed) — see the gate
+const int CLASS_RUGGED = 2;  // blends with any LAND neighbour while blend_rugged_land (shipped TRUE) is on;
+                             // with the gate off it never blends at all — see the uniform + the gate
 // Shore look tuning (fixed feel; the widths/colors are the config levers).
 const float SHORE_REACH_NOISE_MIN = 0.35; // min fraction of the shore band the noise leaves → wavy fingers
 const float SHORE_REACH_MIN_PX = 1.0;     // floor on any noise-shrunk reach, so no fade ever divides by ~0
@@ -494,11 +501,12 @@ void fragment() {
 		vec2 base_uv = v_map / (2.0 * hex_radius) * base_scale;
 		vec3 result = texture(biome_array, vec3(base_uv, float(own_layer))).rgb;
 
-		// SAME-CLASS eligibility: a hex blends only with a neighbour of its OWN blend_class and a different
-		// terrain id. flat↔flat (grass↔soil ecotones) and water↔water (deep ocean grading into shelf) both
-		// qualify; land↔water is a CLASS CHANGE, so it stays hard — that seam is the SHORELINE, owned by the
-		// foam/beach pass below, and softening it would wash the coastline out. rugged (class 2) never blends.
-		// blend_rugged_land widens the LAND half of that rule to "both sides are land" (see the uniform).
+		// ELIGIBILITY: the base rule is SAME-CLASS — a hex blends only with a neighbour of its OWN blend_class
+		// and a different terrain id. flat↔flat (grass↔soil ecotones) and water↔water (deep ocean grading into
+		// shelf) both qualify; land↔water is a CLASS CHANGE, so it stays hard — that seam is the SHORELINE,
+		// owned by the foam/beach pass below, and softening it would wash the coastline out.
+		// blend_rugged_land (SHIPPED TRUE — see the uniform) widens the LAND half of that rule to "both sides
+		// are land", so rugged (class 2) blends with any land neighbour; with it off, rugged never blends.
 		bool own_land = own_class != CLASS_WATER;
 		bool own_blendable = own_class == CLASS_FLAT || own_class == CLASS_WATER
 			|| (blend_rugged_land && own_class == CLASS_RUGGED);
@@ -569,9 +577,10 @@ void fragment() {
 				vec4 npx = texture(id_map, nuv);
 				int nlayer = int(npx.r * 255.0 + 0.5);
 				int nclass = int(npx.g * 255.0 + 0.5);
-				// Eligibility: same class by default; with blend_rugged_land, ANY land neighbour (own is land
-				// here, so this is flat↔rugged / rugged↔rugged). Water is excluded either way — that seam is
-				// the shoreline. Symmetric on both sides of the edge, so the seam stays continuous.
+				// Eligibility: with blend_rugged_land (SHIPPED TRUE), ANY land neighbour (own is land here, so
+				// this is flat↔flat / flat↔rugged / rugged↔rugged); with the gate off, same class only. Water
+				// is excluded either way — that seam is the shoreline. Symmetric on both sides of the edge,
+				// so the seam stays continuous.
 				bool nb_eligible = blend_rugged_land && own_land
 					? nclass != CLASS_WATER
 					: nclass == own_class;
@@ -791,7 +800,13 @@ void fragment() {
 				// wider than the floor, i.e. for every real coast.
 				float sand_fade = min(sand_reach_raw / SHORE_REACH_MIN_PX, 1.0);
 				float sand_plateau = min(wash_reach, sand_reach * SHORE_SAND_PLATEAU_MAX);
-				float sand = ((u <= 0.0) ? smoothstep(sand_reach, sand_plateau, -u) : 0.0)
+				// ASCENDING-EDGE FORM, and that is not cosmetic: `sand_plateau` is capped at
+				// SHORE_SAND_PLATEAU_MAX (0.6) of `sand_reach`, which is itself floored at
+				// SHORE_REACH_MIN_PX, so edge0 > edge1 on EVERY path — and smoothstep is UNDEFINED
+				// (GLSL + SPIR-V) when edge0 >= edge1. `1 - smoothstep(plateau, reach, -u)` is
+				// algebraically identical (smoothstep's descending form) and still a pure function of
+				// `u` alone, so the cross-edge continuity invariant is preserved.
+				float sand = ((u <= 0.0) ? 1.0 - smoothstep(sand_plateau, sand_reach, -u) : 0.0)
 					* (SHORE_SAND_OPACITY * sand_fade);
 				result = mix(result, beach_color, sand);
 
@@ -821,8 +836,11 @@ void fragment() {
 				// lake) without touching that water's sand or surf. Same neutral-1.0 grouping as the reaches.
 				float wisp_center = max(wisp_center_band * wisp_wobble, SHORE_REACH_MIN_PX);
 				float wisp_half = max(wisp_half_band * wisp_wobble, SHORE_REACH_MIN_PX);
+				// Ascending-edge form for the same reason as the sand above: `wisp_half` is floored at
+				// SHORE_REACH_MIN_PX, so a descending `smoothstep(wisp_half, 0.0, …)` would have
+				// edge0 >= edge1 on every path — undefined behaviour. Algebraically identical.
 				float wisp = wisp_half_band * wisp_scale > 0.0
-					? smoothstep(wisp_half, 0.0, abs(u - wisp_center))
+					? 1.0 - smoothstep(0.0, wisp_half, abs(u - wisp_center))
 					: 0.0;
 				// foam_opacity scales the wisp too, so the whole surf mutes as ONE gesture — muting the peak
 				// while the offshore froth stayed bright would just move the eye-catching bright ring out to sea.

@@ -316,6 +316,13 @@ const DEFAULT_FOW_FOG_FILL_COLOR := Color(0.08, 0.08, 0.12, 1.0)
 # it is enveloped in-shader so it only bites at boundaries and never tints a pure Active/Discovered interior.
 const FOW_DEFAULT_SOFTNESS := 0.6
 const FOW_DEFAULT_NOISE_AMOUNT := 0.15
+# Config bounds. The LOWER bound of both is 0 ON PURPOSE — softness 0 fully disables the smoothing (the raw
+# per-hex tint), which blend_probe state 8/W renders as the BEFORE frame of the FoW hex-step fix, and noise 0
+# is a clean, unwisped fog line. The UPPER bounds only stop a bad config from swamping the visibility states:
+# a softness beyond ~2 radii averages hexes that are nowhere near the fragment, and a noise amount beyond 1
+# could push the smoothed scalar clean across a state gap.
+const FOW_MAX_SOFTNESS := 2.0
+const FOW_MAX_NOISE_AMOUNT := 1.0
 const HEIGHTFIELD_CONFIG_PATH := "res://src/data/heightfield_config.json"
 const MIN_ZOOM_FACTOR := 1.0
 const MAX_ZOOM_FACTOR := 4.0
@@ -759,9 +766,13 @@ func _load_fow_config() -> void:
 	_fow_mist_blend = float(cfg.get("mist_blend", DEFAULT_FOW_MIST_BLEND))
 	_fow_fog_fill_color = _color_from_config(cfg.get("fog_fill_color"), DEFAULT_FOW_FOG_FILL_COLOR)
 	# Boundary-softening levers (blend-shader path only): a fraction of the hex radius, and the wispiness
-	# amplitude. Clamped so a bad config can neither disable smoothing entirely nor swamp the states.
-	_fow_softness = clampf(float(cfg.get("fow_softness", FOW_DEFAULT_SOFTNESS)), 0.0, 2.0)
-	_fow_noise_amount = clampf(float(cfg.get("fow_noise_amount", FOW_DEFAULT_NOISE_AMOUNT)), 0.0, 1.0)
+	# amplitude. Clamped to the documented bounds — 0 is a legitimate setting on BOTH (softness 0 = smoothing
+	# OFF, i.e. the raw per-hex tint the probe's before-frame renders; noise 0 = an unwisped fog line); the
+	# upper bounds are what keep a bad config from swamping the visibility states. See the const block.
+	_fow_softness = clampf(float(cfg.get("fow_softness", FOW_DEFAULT_SOFTNESS)), 0.0, FOW_MAX_SOFTNESS)
+	_fow_noise_amount = clampf(
+		float(cfg.get("fow_noise_amount", FOW_DEFAULT_NOISE_AMOUNT)), 0.0, FOW_MAX_NOISE_AMOUNT
+	)
 
 ## Parse an [r, g, b] (or [r, g, b, a]) config array into a Color, or return the fallback.
 func _color_from_config(value, fallback: Color) -> Color:
