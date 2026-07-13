@@ -153,33 +153,76 @@ const V8_VIS_DISCOVERED := 0.5
 const V8_ACTIVE_CENTER := Vector2i(6, 4)   # the "band's sight" blob, inside the deep-ocean region
 const V8_ACTIVE_RADIUS := 2                # hexes within this hex-distance of the centre are Active
 
-# --- state 6 (V8): SHORELINE sweep — the sand/foam moved onto the WATER side ---
-# Rendered on the ragged coast (state 4's terrain). The old two-sided pass painted the land solid tan and
-# the water solid white AT the shared edge, so they met in a hard tan↔white line that traced the hexagon,
-# and the land-side beach covered ~0.4·radius of the land texture. Now: land (untouched) → sand shallows
-# → surf → open water, all fades smoothstepped. The sweep varies the three width levers.
-const V8_SHORE_VARIANTS := [
-	{
-		"name": "V8_shore_S1",
-		"label": "S1  all on the water side — sand .35 · foam .55 · land rim 0 (SHIPPED)",
-		"overrides": {"shore": {"sand_width": 0.35, "foam_width": 0.55, "land_beach_width": 0.0}},
-	},
-	{
-		"name": "V8_shore_S2",
-		"label": "S2  + thin damp rim on the land — sand .35 · foam .55 · land rim .12",
-		"overrides": {"shore": {"sand_width": 0.35, "foam_width": 0.55, "land_beach_width": 0.12}},
-	},
-	{
-		"name": "V8_shore_S3",
-		"label": "S3  more sand, less foam — sand .50 · foam .45 · land rim 0",
-		"overrides": {"shore": {"sand_width": 0.50, "foam_width": 0.45, "land_beach_width": 0.0}},
-	},
+# --- state 8 (W): the FoW hex-step, BEFORE vs AFTER the boundary softening ---
+# The "hard straight full-hexagon edges are back in open water" report. The water↔water blend is NOT the
+# culprit (W_fow_off proves it: same terrain, no FoW, no steps). The culprit is the FoW tint: the vis-map is
+# per-hex and NEAREST-sampled, so an active↔discovered adjacency draws a hex-shaped BRIGHTNESS step that is
+# not a terrain seam at all — it cuts across uniform water, including water of the SAME terrain id.
+# The three frames share one camera + the V8 terrain/visibility, and differ ONLY in `fow_softness`:
+#   W_fow_off   — FoW off (every hex Active). The terrain-only reference.
+#   W_fow_on    — FoW on with softness FOW_SOFTNESS_UNSMOOTHED, which reproduces the UNSMOOTHED per-hex tint
+#                 that ships on main (the smoothing reach collapses to the shader's BLEND_SOFT_MIN floor, so
+#                 `vis` is the raw per-hex value — and the continuous tint map is bit-identical at the pure
+#                 states). This is the frame that must show the user's hexagonal steps.
+#   W_fow_fixed — FoW on with the shipped softness. Same mist, same pure states, no hex steps.
+# Judge on the CLOSE-UPs: the full frame is downscaled when viewed, which hides the very step in question.
+const W_FOW_OFF_NAME := "W_fow_off"
+const W_FOW_ON_NAME := "W_fow_on"
+const W_FOW_FIXED_NAME := "W_fow_fixed"
+const W_FOW_SOFTNESS_UNSMOOTHED := 0.0   # main's behaviour: no cross-edge smoothing → the raw per-hex step
+const W_FOW_NOISE_UNSMOOTHED := 0.0      # …and no wisps, so the step is the ONLY thing under test
+# Straddles the Active/Discovered boundary where it crosses SAME-terrain (deep-ocean) water — the step that
+# cannot be blamed on any terrain seam.
+const W_CROP_COL := 4
+const W_CROP_ROW := 4
+const W_CROP_RADII := 2.2
+# The SAME-TERRAIN crop — the one that proves the step is not a terrain seam at all. Hex (4,3) is Active and
+# its neighbour (3,3) is Discovered, and BOTH are continental shelf (neither is in WATER_DEEP_HEXES), so the
+# only thing that can draw an edge between them is the FoW tint. This is the user's "…and it looks like also
+# between water hexes of the SAME terrain".
+const W_SAME_CROP_COL := 4
+const W_SAME_CROP_ROW := 3
+const W_SAME_CROP_RADII := 1.8
+
+# --- state 6 (V10): SHORELINE — sand on the LAND ONLY, the surf washing up over it ---
+# Rendered on state 4's terrain at r≈75. This is the frame every "is there a hard line anywhere on the
+# coast?" call is made on, and it has caught three rejected passes: (1) a two-sided pass whose land beach and
+# water foam both saturated AT the shared edge (hard tan↔white line tracing the hexagon); (2) an
+# all-on-the-water-side pass whose sand stopped DEAD at the edge against the raw land texture (hard sand↔land
+# line); (3) sand on BOTH sides, which had no hard line left but read TWICE AS WIDE — sand in the water hex is
+# not wanted. The shipped profile keeps the sand strictly on the LAND side (fading inland) and blends the waves
+# into it by letting the surf wash INLAND over the beach (`shore.foam_inland_width`) as well as out to sea.
+# Rendered with the SHIPPED config (no overrides — the levers are `shore.sand_width` / `foam_inland_width` /
+# `foam_width`; `_render_variant` can still sweep them). Judge on the CLOSE-UP: the full frame is downscaled
+# when viewed, which hides a 1px line.
+const V10_SHORE_NAME := "V10_shore"
+const V10_SHORE_CROP_COL := 6
+const V10_SHORE_CROP_ROW := 4
+const V10_SHORE_CROP_RADII := 2.2
+# The same coast against a DARK land biome: prairie is tan, so it HIDES sand-vs-land contrast — a dark land
+# is the frame that shows how far the beach actually reaches inland.
+const V10_SHORE_DARK_NAME := "V10_shore_dark_land"
+const V10_DARK_LAND_ID := 16      # rocky_reg — dark brown, maximal contrast against the tan beach
+# A/B contact sheet: the REJECTED sand-on-both-sides frame (rendered from the previous shader and left in
+# OUT_DIR under this name) beside the shipped land-only one. Missing file → the sheet just skips the cell.
+const V10_AB_NAME := "V10_shore_ab"
+const V10_REJECTED_NAME := "V10_shore_rejected"
+
+# --- state 7 (V11): SURF-REACH / WISP sweep — "the white foam dominates the map" ---
+# Same DARK-land coast (rocky_regolith — prairie's tan camouflages the foam) at the game's r ≈ 75, WIDE shot
+# (the full frame, several hexes of coastline) so the question actually being asked — how much of the sea is
+# white? — is judgeable. Every frame uses the same camera/crop, so they are directly comparable.
+# Only the surf's SEAWARD reach and the second wisp's geometry vary; `sand_width` / `foam_inland_width` are
+# taken from the SHIPPED config in every frame (see _shore_sweep_overrides) — the beach is signed off and
+# must be bit-identical across the sweep.
+# A reproduces the OLD look through the new levers: the wisp used to be a multiple of foam_band
+# (centre 1.35 × 0.55 = 0.74·r, half 0.35 × 0.55 = 0.19·r), so those numbers ARE the old ring.
+const V11_SHORE_VARIANTS := [
+	{"name": "A_current", "foam_width": 0.55, "wisp_center_width": 0.74, "wisp_half_width": 0.19},
+	{"name": "B_proposed", "foam_width": 0.41, "wisp_center_width": 0.55, "wisp_half_width": 0.13},
+	{"name": "C_tighter", "foam_width": 0.41, "wisp_center_width": 0.47, "wisp_half_width": 0.09},
+	{"name": "D_no_wisp", "foam_width": 0.41, "wisp_center_width": 0.55, "wisp_half_width": 0.0},
 ]
-const V8_SHORE_SHEET_NAME := "V8_shore_sheet"
-# Close-up on the coastline itself (the frame the "is the hex-tracing line gone?" call is made on).
-const V8_SHORE_CROP_COL := 6
-const V8_SHORE_CROP_ROW := 4
-const V8_SHORE_CROP_RADII := 2.2
 
 # Contact-sheet layout (a 2×2 grid of the sweep frames, each captioned).
 const SHEET_COLS := 2
@@ -189,6 +232,37 @@ const SHEET_CAPTION_FONT_SIZE := 20
 const SHEET_PADDING := 8.0
 const SHEET_NAME := "V6_sheet"
 const SHEET_LAYER := 200   # above MapView's minimap CanvasLayer (102), which is not hidden with the map
+
+# --- state 9 (X): the DARK-WATER report, on REAL GAME TERRAIN (not a synthetic blob) ---
+# "Patches of open water render noticeably DARKER, with hard full-hexagon edges" (FoW OFF). The synthetic
+# water state above never reproduced it because its deep-ocean region is one CLEAN ragged blob: a large
+# same-id interior with a single boundary. The real map's ocean is nothing like that — it is SALT-AND-PEPPER
+# (dumped from a live snapshot's id-map: 2332 deep↔shelf hex adjacencies on one 80×52 map, 16 deep hexes
+# with SIX different-id water neighbours). A lone deep_ocean hex ringed by continental_shelf can only ever
+# read as a dark HEXAGON: the seam blend feathers its rim, but its interior keeps the (much darker) deep
+# texture and its silhouette is the hex. That is the reported artifact, and it is TERRAIN, not a FoW tint.
+# X_WATER_IDS is a verbatim 14×10 window of that live id-map (ids: 0 deep_ocean · 1 continental_shelf ·
+# 2 inland_sea · 9/10/11/14/20 land), rendered at the game's r ≈ 75 with FoW OFF.
+const X_WATER_NAME := "X_dark_water"
+const X_WATER_GRID_W := 14
+const X_WATER_GRID_H := 10
+const X_WATER_IDS := [
+	[1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1],
+	[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+	[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1],
+	[1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 1, 1, 14],
+	[1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 2],
+	[1, 1, 1, 0, 1, 1, 1, 14, 1, 0, 1, 1, 1, 20],
+	[1, 0, 0, 0, 1, 9, 9, 2, 1, 0, 1, 10, 11, 10],
+	[1, 1, 1, 1, 1, 1, 1, 10, 1, 0, 1, 10, 1, 1],
+	[1, 1, 1, 1, 1, 1, 10, 10, 1, 1, 1, 14, 14, 1],
+	[1, 0, 0, 0, 1, 1, 1, 10, 10, 2, 14, 11, 11, 14],
+]
+# Close-up on the shelf field around (1..3, 6) — three deep hexes sitting in shelf, the exact "dark hexagon"
+# the report is about.
+const X_WATER_CROP_COL := 2
+const X_WATER_CROP_ROW := 5
+const X_WATER_CROP_RADII := 2.6
 
 var _map: Node2D
 
@@ -266,21 +340,138 @@ func _ready() -> void:
 	await _save("V8_water_fow_on")
 	_map.set_fow_enabled(false)
 
-	# --- state 6 (V8): the shoreline sweep, on the ragged coast ---
+	# --- state 6 (V10): the shipped shoreline profile, on the ragged coast (full frame + close-up) ---
 	_map.display_snapshot(_snapshot_coast())
 	await _refit(WATER_HEX_RADIUS)
-	var shore_names: Array[String] = []
-	var shore_labels: Array[String] = []
-	for variant: Dictionary in V8_SHORE_VARIANTS:
+	await _settle()
+	await _save(V10_SHORE_NAME)
+	# Re-settle: a second get_image() in the same frame as the full-frame save reads back a stale viewport.
+	await _settle()
+	await _save_crop(
+		"%s_closeup" % V10_SHORE_NAME, V10_SHORE_CROP_COL, V10_SHORE_CROP_ROW, V10_SHORE_CROP_RADII
+	)
+
+	# The same coast against a DARK land biome — prairie's tan hides how far the sand reaches inland.
+	_map.display_snapshot(_snapshot_coast(V10_DARK_LAND_ID))
+	await _refit(WATER_HEX_RADIUS)
+	await _settle()
+	await _save(V10_SHORE_DARK_NAME)
+	await _settle()
+	await _save_crop(
+		"%s_closeup" % V10_SHORE_DARK_NAME,
+		V10_SHORE_CROP_COL,
+		V10_SHORE_CROP_ROW,
+		V10_SHORE_CROP_RADII
+	)
+
+	# A/B: the rejected sand-on-both-sides close-up (left in OUT_DIR by the previous shader) vs the shipped one.
+	await _save_contact_sheet(
+		[V10_REJECTED_NAME, "%s_closeup" % V10_SHORE_NAME],
+		["REJECTED: sand on BOTH sides (double width)", "SHIPPED: sand LAND-only, surf washes over it"],
+		V10_AB_NAME
+	)
+
+	# --- state 7 (V11): the surf-reach / wisp sweep, on the DARK-land coast already displayed ---
+	for variant: Dictionary in V11_SHORE_VARIANTS:
 		await _render_variant(
-			variant["overrides"], variant["name"],
-			V8_SHORE_CROP_COL, V8_SHORE_CROP_ROW, V8_SHORE_CROP_RADII
+			_shore_sweep_overrides(variant),
+			variant["name"],
+			V10_SHORE_CROP_COL,
+			V10_SHORE_CROP_ROW,
+			V10_SHORE_CROP_RADII
 		)
-		shore_names.append(variant["name"])
-		shore_labels.append(variant["label"])
-	await _save_contact_sheet(shore_names, shore_labels, V8_SHORE_SHEET_NAME)
+
+	# --- state 8 (W): the FoW hex-step, BEFORE vs AFTER the boundary softening (see the const block) ---
+	await _render_fow_softness_frames()
+
+	# --- state 9 (X): the dark-water report, on a verbatim window of REAL game terrain, FoW OFF ---
+	_map.set_fow_enabled(false)
+	_map.display_snapshot(_snapshot_real_water())
+	await _refit(WATER_HEX_RADIUS)
+	await _settle()
+	await _save(X_WATER_NAME)
+	await _settle()
+	await _save_crop(
+		"%s_closeup" % X_WATER_NAME, X_WATER_CROP_COL, X_WATER_CROP_ROW, X_WATER_CROP_RADII
+	)
 
 	get_tree().quit()
+
+
+func _snapshot_real_water() -> Dictionary:
+	## A verbatim 14×10 window of a LIVE snapshot's id-map (see X_WATER_IDS): salt-and-pepper
+	## continental_shelf / deep_ocean, which the synthetic blob state never reproduced.
+	var arr: Array = []
+	arr.resize(X_WATER_GRID_W * X_WATER_GRID_H)
+	for y in range(X_WATER_GRID_H):
+		var row: Array = X_WATER_IDS[y]
+		for x in range(X_WATER_GRID_W):
+			arr[y * X_WATER_GRID_W + x] = int(row[x])
+	return _snapshot(arr, X_WATER_GRID_W, X_WATER_GRID_H)
+
+
+func _render_fow_softness_frames() -> void:
+	## One camera, one terrain, one visibility map — only `fow_softness` changes. Isolates the FoW tint as
+	## the source of the hexagonal brightness steps in open water (the blend is exonerated by W_fow_off).
+	var shipped_softness: float = _map._fow_softness
+	var shipped_noise: float = _map._fow_noise_amount
+
+	# (a) FoW OFF — the terrain-only reference: same water, no mist, so any hard edge here IS the blend's.
+	_map.set_fow_enabled(false)
+	_map.display_snapshot(_snapshot_water_patch())
+	await _refit(WATER_HEX_RADIUS)
+	await _settle()
+	await _save(W_FOW_OFF_NAME)
+	await _settle()
+	await _save_crop("%s_closeup" % W_FOW_OFF_NAME, W_CROP_COL, W_CROP_ROW, W_CROP_RADII)
+	await _settle()
+	await _save_crop(
+		"%s_same_terrain" % W_FOW_OFF_NAME, W_SAME_CROP_COL, W_SAME_CROP_ROW, W_SAME_CROP_RADII
+	)
+
+	# (b) + (c) FoW ON over the same terrain: unsmoothed (main's per-hex step) vs the shipped softening.
+	_map.display_snapshot(_snapshot_water_patch(_v8_visibility()))
+	_map.set_fow_enabled(true)
+	await _refit(WATER_HEX_RADIUS)
+	for frame: Dictionary in [
+		{
+			"name": W_FOW_ON_NAME,
+			"softness": W_FOW_SOFTNESS_UNSMOOTHED,
+			"noise": W_FOW_NOISE_UNSMOOTHED,
+		},
+		{"name": W_FOW_FIXED_NAME, "softness": shipped_softness, "noise": shipped_noise},
+	]:
+		_map._fow_softness = float(frame["softness"])
+		_map._fow_noise_amount = float(frame["noise"])
+		_map.queue_redraw()
+		await _settle()
+		await _save(String(frame["name"]))
+		await _settle()
+		await _save_crop(
+			"%s_closeup" % String(frame["name"]), W_CROP_COL, W_CROP_ROW, W_CROP_RADII
+		)
+		await _settle()
+		await _save_crop(
+			"%s_same_terrain" % String(frame["name"]),
+			W_SAME_CROP_COL,
+			W_SAME_CROP_ROW,
+			W_SAME_CROP_RADII
+		)
+
+	_map._fow_softness = shipped_softness
+	_map._fow_noise_amount = shipped_noise
+	_map.set_fow_enabled(false)
+
+
+func _shore_sweep_overrides(variant: Dictionary) -> Dictionary:
+	## The shipped `shore` block with ONLY the sweep's surf/wisp keys replaced — so `sand_width`,
+	## `foam_inland_width` and the colors stay exactly as configured in every frame of the sweep.
+	var shore: Dictionary = (
+		(TerrainTextureManager.terrain_config.get("shore", {}) as Dictionary).duplicate(true)
+	)
+	for key: String in ["foam_width", "wisp_center_width", "wisp_half_width"]:
+		shore[key] = variant[key]
+	return {"shore": shore}
 
 
 func _refit(target_radius: float) -> void:
@@ -377,10 +568,12 @@ func _v8_visibility() -> PackedFloat32Array:
 	return vis
 
 
-func _snapshot_coast() -> Dictionary:
+func _snapshot_coast(shore_id: int = COAST_SHORE_ID) -> Dictionary:
 	## A ragged land↔water coastline with a single water id (so no water↔water edge exists anywhere) and an
 	## inland flat↔flat seam. The shoreline (foam/beach) and flat-interlock passes own every pixel here, so
 	## this frame must be BIT-IDENTICAL before and after any eligibility-gate change.
+	## `shore_id` swaps the coastal land band (default tan prairie; pass a DARK biome to judge the sand's
+	## inland reach, which tan land hides).
 	var arr: Array = []
 	arr.resize(WATER_GRID_W * WATER_GRID_H)
 	for y in range(WATER_GRID_H):
@@ -390,7 +583,7 @@ func _snapshot_coast() -> Dictionary:
 			if x >= shore_col + COAST_SHORE_BAND_COLS:
 				id = COAST_INLAND_ID
 			elif x >= shore_col:
-				id = COAST_SHORE_ID
+				id = shore_id
 			arr[y * WATER_GRID_W + x] = id
 	return _snapshot(arr, WATER_GRID_W, WATER_GRID_H)
 
@@ -446,8 +639,12 @@ func _save_crop(name: String, col: int, row: int, radii: float) -> void:
 	print("blend_probe: %s at hex radius %.1f px" % [name, radius])   # the radius the frame was judged at
 	var w := image.get_width()
 	var h := image.get_height()
-	# The captured image can be a HiDPI multiple of the 1:1 canvas — rescale map-space px into image px.
-	var px_scale: float = float(w) / float(CANVAS_SIZE.x)
+	# The captured image can be a HiDPI multiple of the canvas — rescale MAP-space px into IMAGE px. The
+	# map is laid out in the VIEWPORT's coordinate space (that is what _fit_map_to_view measures), which on
+	# a HiDPI window is ALREADY the backing-store size, not CANVAS_SIZE. Dividing by CANVAS_SIZE.x instead
+	# double-counted the 2× scale and threw every close-up a screenful off-target (the coast crops silently
+	# landed out in the inland desert), so scale by image ÷ viewport — 1.0 in both the 1:1 and HiDPI cases.
+	var px_scale: float = float(w) / get_viewport().get_visible_rect().size.x
 	center *= px_scale
 	var half: float = radii * radius * px_scale
 	var x0 := clampi(int(center.x - half), 0, w - 1)

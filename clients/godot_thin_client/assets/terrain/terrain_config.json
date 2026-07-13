@@ -16,9 +16,11 @@
   "lod_near_distance": 50.0,
   "lod_far_distance": 200.0,
   "shore": {
-    "sand_width": 0.35,
-    "foam_width": 0.55,
-    "land_beach_width": 0.0,
+    "sand_width": 0.25,
+    "foam_inland_width": 0.15,
+    "foam_width": 0.41,
+    "wisp_center_width": 0.55,
+    "wisp_half_width": 0.13,
     "foam_color": [223, 242, 247],
     "beach_color": [216, 187, 138]
   },

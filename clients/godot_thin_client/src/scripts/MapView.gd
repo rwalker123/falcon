@@ -202,15 +202,25 @@ const EDGE_BLEND_DEFAULT_FEATURE_NOISE_CELL := 6.0
 const WATER_BLEND_DEFAULT_WIDTH := 0.45          # reach (× radius → px), vs 0.25 on land
 const WATER_BLEND_DEFAULT_SOFT := 0.45           # feather half-width, vs 0.35 on land (capped as land is)
 const WATER_BLEND_DEFAULT_NOISE_AMOUNT := 0.45   # wobble amplitude, vs 0.30 on land
-# Shoreline (land↔water coasts): sand shallows + surf, BOTH on the WATER side (the land hex keeps its own
-# texture). Widths are fractions of the hex radius (× radius → px band, like blend_width). Fallbacks mirror
-# terrain_config's "shore" block; universal for now (every land↔water edge blends, no per-biome gating).
-# land_beach_width is the OPT-IN damp rim on the land side and defaults to 0 (off) — a land-side beach at
-# full strength met the water-side foam along the shared edge and drew a hard tan↔white hexagon outline,
-# and it also overpainted the land texture ~0.4·radius deep. See the shader's shoreline block.
-const SHORE_DEFAULT_SAND_WIDTH := 0.35
-const SHORE_DEFAULT_FOAM_WIDTH := 0.55
-const SHORE_DEFAULT_LAND_BEACH_WIDTH := 0.0
+# Shoreline (land↔water coasts): a continuous profile — land → sand → surf → water — built from a SIGNED
+# coast coordinate that straddles the shared edge, so no boundary in that chain is a hard step (see the
+# shader's shoreline block for the three rejected passes this replaced). The three reaches are fractions of
+# the hex radius (× radius → px band, like blend_width); fallbacks mirror terrain_config's "shore" block.
+# Universal for now (every land↔water edge gets it, no per-biome gating).
+# SAND_WIDTH is the sand's reach INLAND and is deliberately SHORT (0.25 < the 0.4 the first land-side beach
+# used): the sand must fade into the land art, not bury it. There is NO sand on the water side at all — the
+# sand↔foam blend is bought instead with FOAM_INLAND_WIDTH, the distance the surf washes UP the beach and
+# crossfades with the sand.
+const SHORE_DEFAULT_SAND_WIDTH := 0.25
+const SHORE_DEFAULT_FOAM_INLAND_WIDTH := 0.15
+const SHORE_DEFAULT_FOAM_WIDTH := 0.41
+# The faint SECOND surf line out over open water. Both levers are fractions of the hex radius, exactly like
+# FOAM_WIDTH — the wisp used to be a fixed multiple of the surf's reach, which chained the two together so
+# the surf could not be shortened without dragging the wisp in with it. Config must keep the band clear of
+# the surf (centre − half > foam_width) or the two merge into one wide white smear; the shipped values put
+# the wisp at 0.42–0.68·r against a surf that dies at 0.41·r. wisp_half_width 0 turns the wisp off.
+const SHORE_DEFAULT_WISP_CENTER_WIDTH := 0.55
+const SHORE_DEFAULT_WISP_HALF_WIDTH := 0.13
 const SHORE_DEFAULT_FOAM_COLOR := Vector3(0.874, 0.949, 0.968)
 const SHORE_DEFAULT_BEACH_COLOR := Vector3(0.847, 0.733, 0.541)
 # Canopy overlay (forest = grass floor + overhanging tree crowns): overhang reach + treeline softness
@@ -273,6 +283,15 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 const DEFAULT_FOW_MIST_COLOR := Color(0.45, 0.48, 0.55, 1.0)
 const DEFAULT_FOW_MIST_BLEND := 0.35
 const DEFAULT_FOW_FOG_FILL_COLOR := Color(0.08, 0.08, 0.12, 1.0)
+# Shader-path FoW SOFTENING (heightfield_config's "fog_of_war" block; only the blend-shader path reads them —
+# the per-hex CPU path is hard-edged by construction). The vis-map is per-hex/NEAREST, so an active↔discovered
+# adjacency drew a hard HEXAGONAL brightness step even across uniform water. FOW_DEFAULT_SOFTNESS is the
+# cross-edge smoothing reach as a FRACTION OF THE HEX RADIUS (× radius → the fow_soft px uniform, like
+# blend_width — so the softness is zoom-invariant); at 0.6 the mist boundary reads as a gradient over most of
+# the shared edge's approach. FOW_DEFAULT_NOISE_AMOUNT wisps that boundary with world noise (0 = a clean arc);
+# it is enveloped in-shader so it only bites at boundaries and never tints a pure Active/Discovered interior.
+const FOW_DEFAULT_SOFTNESS := 0.6
+const FOW_DEFAULT_NOISE_AMOUNT := 0.15
 const HEIGHTFIELD_CONFIG_PATH := "res://src/data/heightfield_config.json"
 const MIN_ZOOM_FACTOR := 1.0
 const MAX_ZOOM_FACTOR := 4.0
@@ -649,6 +668,9 @@ var _fow_enabled: bool = false
 var _fow_mist_color: Color = DEFAULT_FOW_MIST_COLOR
 var _fow_mist_blend: float = DEFAULT_FOW_MIST_BLEND
 var _fow_fog_fill_color: Color = DEFAULT_FOW_FOG_FILL_COLOR
+# Shader-path-only FoW boundary softening (see FOW_DEFAULT_* — kills the hard hexagonal mist steps).
+var _fow_softness: float = FOW_DEFAULT_SOFTNESS
+var _fow_noise_amount: float = FOW_DEFAULT_NOISE_AMOUNT
 
 # 2D Minimap (uses shared MinimapPanel component)
 const MinimapPanelScript := preload("res://src/scripts/ui/MinimapPanel.gd")
@@ -712,6 +734,10 @@ func _load_fow_config() -> void:
 	_fow_mist_color = _color_from_config(cfg.get("mist_color"), DEFAULT_FOW_MIST_COLOR)
 	_fow_mist_blend = float(cfg.get("mist_blend", DEFAULT_FOW_MIST_BLEND))
 	_fow_fog_fill_color = _color_from_config(cfg.get("fog_fill_color"), DEFAULT_FOW_FOG_FILL_COLOR)
+	# Boundary-softening levers (blend-shader path only): a fraction of the hex radius, and the wispiness
+	# amplitude. Clamped so a bad config can neither disable smoothing entirely nor swamp the states.
+	_fow_softness = clampf(float(cfg.get("fow_softness", FOW_DEFAULT_SOFTNESS)), 0.0, 2.0)
+	_fow_noise_amount = clampf(float(cfg.get("fow_noise_amount", FOW_DEFAULT_NOISE_AMOUNT)), 0.0, 1.0)
 
 ## Parse an [r, g, b] (or [r, g, b, a]) config array into a Color, or return the fallback.
 func _color_from_config(value, fallback: Color) -> Color:
@@ -4411,14 +4437,23 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 	var base_scale: float = maxf(float(config.get("base_texture_scale", BASE_DEFAULT_TEXTURE_SCALE)), 0.01)
 	m.set_shader_parameter("base_scale", base_scale)
 	m.set_shader_parameter("blend_enabled", radius >= EDGE_BLEND_MIN_RADIUS)  # LOD: base-only at far zoom
+	# Shoreline: the three reaches of the ONE continuous land→sand→surf→water profile, measured from the
+	# coastline (the signed coast coordinate u in the shader), inland and seaward.
 	var shore: Dictionary = config.get("shore", {})
-	var sand_frac: float = clampf(float(shore.get("sand_width", SHORE_DEFAULT_SAND_WIDTH)), 0.0, 2.0)
+	var sand_frac: float = clampf(
+		float(shore.get("sand_width", SHORE_DEFAULT_SAND_WIDTH)), 0.0, 2.0)
+	var foam_inland_frac: float = clampf(
+		float(shore.get("foam_inland_width", SHORE_DEFAULT_FOAM_INLAND_WIDTH)), 0.0, 2.0)
 	var foam_frac: float = clampf(float(shore.get("foam_width", SHORE_DEFAULT_FOAM_WIDTH)), 0.0, 2.0)
-	var land_beach_frac: float = clampf(
-		float(shore.get("land_beach_width", SHORE_DEFAULT_LAND_BEACH_WIDTH)), 0.0, 2.0)
-	m.set_shader_parameter("sand_band", sand_frac * radius)   # sand shallows, water side (px)
-	m.set_shader_parameter("foam_band", foam_frac * radius)   # surf beyond the sand, water side (px)
-	m.set_shader_parameter("land_beach_band", land_beach_frac * radius)  # opt-in damp rim, land side (px)
+	var wisp_center_frac: float = clampf(
+		float(shore.get("wisp_center_width", SHORE_DEFAULT_WISP_CENTER_WIDTH)), 0.0, 2.0)
+	var wisp_half_frac: float = clampf(
+		float(shore.get("wisp_half_width", SHORE_DEFAULT_WISP_HALF_WIDTH)), 0.0, 2.0)
+	m.set_shader_parameter("sand_band", sand_frac * radius)            # sand INLAND of the waterline (px)
+	m.set_shader_parameter("foam_inland_band", foam_inland_frac * radius)  # surf washing UP the beach (px)
+	m.set_shader_parameter("foam_band", foam_frac * radius)            # surf SEAWARD of the waterline (px)
+	m.set_shader_parameter("wisp_center_band", wisp_center_frac * radius)  # 2nd surf line's centre (px)
+	m.set_shader_parameter("wisp_half_band", wisp_half_frac * radius)      # 2nd surf line's half-width (px)
 	m.set_shader_parameter("foam_color", _shore_color(shore.get("foam_color", null), SHORE_DEFAULT_FOAM_COLOR))
 	m.set_shader_parameter("beach_color", _shore_color(shore.get("beach_color", null), SHORE_DEFAULT_BEACH_COLOR))
 	var canopy: Dictionary = config.get("canopy", {})
@@ -4462,6 +4497,9 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 	m.set_shader_parameter("fog_color", _fow_fog_fill_color)
 	m.set_shader_parameter("mist_color", Vector3(_fow_mist_color.r, _fow_mist_color.g, _fow_mist_color.b))
 	m.set_shader_parameter("mist_blend", _fow_mist_blend)
+	# FoW boundary softening: radius-relative (like blend_band) so the mist gradient is zoom-invariant.
+	m.set_shader_parameter("fow_soft", _fow_softness * radius)
+	m.set_shader_parameter("fow_noise_amount", _fow_noise_amount)
 	_terrain_blend_quad.visible = true
 	_terrain_blend_quad.set_rect_size(viewport_size)
 	_terrain_blend_quad.queue_redraw()
