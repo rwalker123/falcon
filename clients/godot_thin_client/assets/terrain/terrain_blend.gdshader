@@ -57,8 +57,8 @@ uniform sampler2D layer_luma_map : filter_nearest;
 //   R = sand_scale — multiplies the inland beach reach (sand_band). 0 = NO BEACH AT ALL (the cliff).
 //   G = foam_scale — multiplies the MAIN WAVE's reaches, both ways: the wash up the beach
 //                    (foam_inland_band) and the surf's seaward reach (foam_band). It scales REACH only —
-//                    the surf's PEAK stays ~1, because that peak is what conceals the base's own step at
-//                    the waterline (see the SURF block below). foam_scale = 0 is not a legal profile.
+//                    the surf's PEAK is the GLOBAL foam_opacity lever (see the SURF block below), not a
+//                    per-water one. foam_scale = 0 is not a legal profile.
 //   B = wisp_scale — multiplies the secondary offshore disturbance: its centre distance, its half-width AND
 //                    its strength. 0 = no second disturbance.
 // Terrains with no `shore_profile` block read the neutral (1, 1, 1), which is a bit-exact no-op.
@@ -135,12 +135,11 @@ uniform float fow_noise_amount; // wispiness: world-noise perturbation of the sm
 // (negative inland, 0 exactly at the coastline, positive seaward — see the shore block in fragment()),
 // so every weight it defines is one function evaluated on both sides of the shared edge and therefore
 // CONTINUOUS ACROSS IT by construction.
-// THE SHAPE: the SAND lives ONLY in the LAND hex (full at the waterline, smoothstep-fading inland into
+// THE SHAPE: the BASE ITSELF cross-fades across the waterline (waterline_band — see below), then the
+// SAND lives ONLY in the LAND hex (full at the waterline, smoothstep-fading inland into
 // the biome art — it must never bury it, hence the short reach). The SURF peaks AT the waterline and
 // washes BOTH ways: a short distance INLAND over the sand (foam_inland_band — the crossfade that blends
-// the waves into the beach) and a longer way SEAWARD into open water (foam_band). The foam peak is also
-// what conceals the base's own step at u = 0 (sand-tinted land on one side, open water on the other), so
-// its weight must reach ~1 there — never scale the peak down.
+// the waves into the beach) and a longer way SEAWARD into open water (foam_band).
 // History (three rejected passes, all the same class of bug — a term saturating AT the hex edge, or sand
 // where the user does not want it):
 //   · Two-sided linear fades: land went solid tan, water solid white, and they met along the boundary —
@@ -161,8 +160,27 @@ uniform float foam_band;         // surf reach SEAWARD of the coastline, in px (
 // also shortening the surf (and vice versa). Set wisp_half_band = 0 to turn the wisp off entirely.
 uniform float wisp_center_band;  // distance from the coastline to the wisp's CENTRE, in px
 uniform float wisp_half_band;    // the wisp's half-thickness, in px
+// THE WATERLINE BASE CROSS-FADE — the reason the surf no longer has to be opaque.
+// Until this existed the BASE TEXTURE ITSELF stepped at u = 0: on a beach coast the (sand-tinted) land
+// texture met open water with nothing in between, and on a CLIFF coast (deep_ocean, sand_scale 0) it was
+// raw land meeting raw water. The full-strength foam peak was the ONLY thing concealing that flip — which
+// is why every attempt to soften the surf re-exposed a hard land↔water line and had to be reverted. So the
+// base now cross-fades across a SHORT reach either side of the waterline (a WET EDGE, not an ecotone: keep
+// it well under the sand's reach or land texture reads out to sea / water texture reads up the beach).
+// It is the same weighted-mean-over-{own + 6 neighbours} construction as the shore PROFILE field (see
+// SHORE_PROFILE_REACH_APOTHEMS), so both the land estimate and the water estimate are pure functions of the
+// id-map and the world UV — identical read from the land hex's frame and from the water hex's frame — and
+// the mix weight is one smoothstep of u. Continuous across the hex boundary by construction, like every
+// other shore term. waterline_band = 0 disables it (bit-exact: the whole block is skipped).
+uniform float waterline_band;  // half-reach of the base cross-fade either side of the waterline, in px
+                               // (waterline_width * radius)
 uniform vec3 foam_color;      // surf line color (light desaturated cyan / near-white)
 uniform vec3 beach_color;     // sand color — the beach, on the LAND side of the waterline only
+// The surf's PEAK opacity at the waterline. This is a lever ONLY because the waterline base cross-fade above
+// removed the step the foam used to be covering up; with waterline_band = 0 the surf is load-bearing and
+// this must stay ~1. It scales the offshore wisp too (SHORE_WISP_STRENGTH), so the whole surf mutes as one
+// gesture rather than the peak fading while the froth stays bright. 1.0 is a bit-exact no-op.
+uniform float foam_opacity;
 
 const float SQRT3 = 1.7320508075688772;
 // blend_class codes, as packed into the id-map's G channel by MapView._blend_class_code. The SAME-CLASS
@@ -190,6 +208,15 @@ const float SHORE_SAND_PLATEAU_MAX = 0.6; // plateau ≤ this fraction of the sa
                                           // exactly this cap: wash 0.15·r vs sand 0.25·r)
 const float SHORE_WISP_STRENGTH = 0.45;   // second foam wisp max opacity (its GEOMETRY is a config lever —
                                           // see wisp_center_band / wisp_half_band)
+// The waterline cross-fade's OUTER FADE, as a fraction of its half-reach: how far past the wet edge the true
+// base (the flat↔flat interlock inland, the water depth field seaward) fades back in. It exists so the
+// cross-fade can hold FULL weight across its whole reach. The first cut enveloped the cross-fade by
+// `1 − smoothstep(0, reach, |u|)`, i.e. multiplied two ramps that both peak at u = 0 — the water content on
+// the land side was already down to 8% at HALF the reach, so the visible transition was a quarter of the
+// nominal one (~4px) and the base step SURVIVED, which is the whole thing this pass exists to remove
+// (measured on the foam-off cliff step check). Holding the mix at full across the reach and fading back to
+// the true base OUTSIDE it makes the gradient the reach you actually configured.
+const float SHORE_WATERLINE_FADE = 0.5;
 // --- THE SHORE-PROFILE FIELD: the profile is a CONTINUOUS WEIGHTED MEAN over the nearby water, never a
 // nearest-pick. One land hex can border a deep_ocean hex AND a continental_shelf hex along the SAME
 // coastline, and those two carry different profiles (sand_scale 0 vs 1). Picking the nearest water
@@ -687,6 +714,68 @@ void fragment() {
 				float wash_reach = max(foam_inland_band * foam_wobble, SHORE_REACH_MIN_PX);  // surf up the beach, u < 0
 				float foam_reach = max(foam_band * foam_wobble, SHORE_REACH_MIN_PX);         // surf out to sea, u > 0
 
+				// 0. THE WATERLINE BASE CROSS-FADE — kill the base's OWN step at u = 0, so the surf above it
+				// no longer has to be an opaque cover-up (see the waterline_band uniform). A short WET EDGE:
+				// the land base and the water base are cross-faded across ±wl_reach of the coastline.
+				// Both estimates are the weighted mean over {own + 6 neighbours} of that wetness, weighted by
+				// proximity to THAT shared edge — the shore-PROFILE field's construction, and continuous across
+				// every hex edge for exactly the reason documented at SHORE_PROFILE_REACH_APOTHEMS. Because
+				// they are functions of the id-map and the world UV alone (never of `result`, which carries the
+				// own hex's flat-interlock/depth-field history), the land hex and the water hex compute the SAME
+				// pair at a given world point — so `mixed` is frame-independent and the cross-fade cannot step
+				// at the boundary. `result` (the true base, with its interlock/depth field intact) is then
+				// blended toward `mixed` by an envelope that holds FULL across the wet edge and fades back to
+				// the true base over SHORE_WATERLINE_FADE beyond it: at u = 0 both sides land on `mixed`
+				// exactly, and past the wet edge the flat↔flat blend and the water depth field are returned
+				// untouched. (Enveloping with a ramp that also peaks at u = 0 collapses the gradient to a
+				// quarter of its reach and the step survives — see SHORE_WATERLINE_FADE.)
+				float wl_reach = max(waterline_band * wobble, SHORE_REACH_MIN_PX);
+				float wl_outer = wl_reach * (1.0 + SHORE_WATERLINE_FADE);
+				if (waterline_band > 0.0 && abs(u) < wl_outer) {
+					vec3 own_base = texture(biome_array, vec3(base_uv, float(own_layer))).rgb;
+					vec3 land_sum = own_water ? vec3(0.0) : own_base;   // own carries weight 1 by construction
+					float land_w = own_water ? 0.0 : 1.0;
+					vec3 water_sum = own_water ? own_base : vec3(0.0);
+					float water_w = own_water ? 1.0 : 0.0;
+					for (int dir = 0; dir < 6; dir++) {
+						ivec2 off = neighbor_offset(row, dir);
+						int ncol = col + off.x;
+						int nrow = row + off.y;
+						if (nrow < 0 || nrow >= grid_h) { continue; }
+						int ncol_id = ncol;
+						if (wrap_h) {
+							ncol_id = wrap_col(ncol);
+						} else if (ncol < 0 || ncol >= grid_w) {
+							continue;
+						}
+						vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
+						vec4 nidpx = texture(id_map, nuv);
+						int nlayer = int(nidpx.r * 255.0 + 0.5);
+						bool nb_water = int(nidpx.g * 255.0 + 0.5) == CLASS_WATER;
+						vec2 nb_c = hex_center(ncol, nrow);
+						vec2 dir_v = normalize(nb_c - own_c);
+						float half_dist = 0.5 * distance(own_c, nb_c);
+						float d = dot(v_world - own_c, dir_v) - half_dist;
+						// The SAME unwobbled weight as the profile field — a noise displacement here would
+						// break the exact cross-edge agreement the whole cross-fade rests on.
+						float w = smoothstep(-half_dist * SHORE_PROFILE_REACH_APOTHEMS, 0.0, d);
+						vec3 nb_base = texture(biome_array, vec3(base_uv, float(nlayer))).rgb;
+						if (nb_water) {
+							water_sum += nb_base * w;
+							water_w += w;
+						} else {
+							land_sum += nb_base * w;
+							land_w += w;
+						}
+					}
+					vec3 land_base = land_sum / max(land_w, SHORE_PROFILE_WEIGHT_MIN);
+					vec3 water_base = water_sum / max(water_w, SHORE_PROFILE_WEIGHT_MIN);
+					// THE wet edge: one smoothstep of u, 0.5 exactly AT the waterline, spread over ±wl_reach.
+					vec3 mixed = mix(land_base, water_base, smoothstep(-wl_reach, wl_reach, u));
+					// …held at FULL across that reach, then handing back to the true base over the outer fade.
+					result = mix(result, mixed, 1.0 - smoothstep(wl_reach, wl_outer, abs(u)));
+				}
+
 				// 1. SAND — the LAND side only (the water hex gets no sand at all). FULL from the waterline
 				// across the surf's inland wash (the plateau — see SHORE_SAND_PLATEAU_MAX: the surf is painted
 				// over the sand, so a sand that decayed from the waterline would be whitewashed exactly where
@@ -708,13 +797,13 @@ void fragment() {
 
 				// 2. SURF — peaks AT the waterline and washes BOTH ways: INLAND over the sand (the
 				// crossfade that blends the waves into the beach, killing the sand↔foam line) and SEAWARD
-				// into open water. The peak must stay at ~1 — foam_scale shortens the wave's REACH, never its
-				// peak: with no sand in the water the base itself steps at u = 0 (sand-tinted land → open
-				// water), and the full-strength foam is the ONLY thing hiding it. That is doubly true on a
-				// CLIFF coast, where sand_scale is 0 and the step is raw land → open water.
+				// into open water. foam_scale still shortens the wave's REACH only; its PEAK is the global
+				// foam_opacity lever, which exists ONLY because the waterline cross-fade above removed the base
+				// step the peak used to conceal. With waterline_band = 0 the peak is load-bearing again and
+				// foam_opacity must stay ~1 — see the uniform block.
 				float foam_in = smoothstep(-wash_reach, 0.0, u);   // rises across the beach → crossfade
 				float foam_out = 1.0 - smoothstep(0.0, foam_reach, u); // dies out to sea
-				float surf = foam_in * foam_out;
+				float surf = foam_in * foam_out * foam_opacity;
 				result = mix(result, foam_color, surf);
 
 				// 3. faint second wisp: a thinner surf line further out over open water. Its centre and
@@ -735,8 +824,10 @@ void fragment() {
 				float wisp = wisp_half_band * wisp_scale > 0.0
 					? smoothstep(wisp_half, 0.0, abs(u - wisp_center))
 					: 0.0;
+				// foam_opacity scales the wisp too, so the whole surf mutes as ONE gesture — muting the peak
+				// while the offshore froth stayed bright would just move the eye-catching bright ring out to sea.
 				float wn = vnoise(v_map / noise_cell + vec2(17.0, 5.0));
-				result = mix(result, foam_color, wisp * (SHORE_WISP_STRENGTH * wisp_scale) * wn);
+				result = mix(result, foam_color, wisp * (SHORE_WISP_STRENGTH * wisp_scale * foam_opacity) * wn);
 			}
 		}
 

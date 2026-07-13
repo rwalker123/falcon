@@ -232,7 +232,20 @@ const SHORE_DEFAULT_FOAM_WIDTH := 0.41
 # the wisp at 0.42–0.68·r against a surf that dies at 0.41·r. wisp_half_width 0 turns the wisp off.
 const SHORE_DEFAULT_WISP_CENTER_WIDTH := 0.55
 const SHORE_DEFAULT_WISP_HALF_WIDTH := 0.13
-const SHORE_DEFAULT_FOAM_COLOR := Vector3(0.874, 0.949, 0.968)
+# THE WATERLINE BASE CROSS-FADE — the half-reach (fraction of the hex radius) over which the LAND base
+# texture and the WATER base texture cross-fade through the coastline. Without it the base STEPS at the
+# waterline (raw land meeting raw water on a cliff coast), and the opaque surf peak was the only thing
+# hiding that step — which is why the surf could never be muted. This is a WET EDGE, not an ecotone: it is
+# deliberately well under the sand's 0.25 reach, so no land texture reads out to sea and no water texture
+# reads up the beach. Chosen on `blend_probe` state SURF's foam-off step check over the CLIFF coast (the
+# worst case: deep_ocean has no beach either), where 0.08 already dissolves the step, 0.14 reads as a natural
+# wet-rock rim, and 0.20 starts ghosting land pebbles out into the water — so 0.14 ships.
+# 0 disables it (and then FOAM_OPACITY must go back to 1). See the shader's waterline_band.
+const SHORE_DEFAULT_WATERLINE_WIDTH := 0.14
+# The surf's PEAK opacity (and, scaled with it, the offshore wisp's) — a translucent highlight instead of the
+# opaque white ring the foam had to be while it was covering the base step above.
+const SHORE_DEFAULT_FOAM_OPACITY := 0.55
+const SHORE_DEFAULT_FOAM_COLOR := Vector3(0.690, 0.761, 0.804)
 const SHORE_DEFAULT_BEACH_COLOR := Vector3(0.847, 0.733, 0.541)
 # Canopy overlay (forest = grass floor + overhanging tree crowns): overhang reach + treeline softness
 # are fractions of the hex radius (× radius → px); texture_scale is the world-UV multiplier (1.0 = one
@@ -4473,6 +4486,14 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 		float(shore.get("wisp_center_width", SHORE_DEFAULT_WISP_CENTER_WIDTH)), 0.0, 2.0)
 	var wisp_half_frac: float = clampf(
 		float(shore.get("wisp_half_width", SHORE_DEFAULT_WISP_HALF_WIDTH)), 0.0, 2.0)
+	# The waterline base cross-fade (the wet edge that removed the base's own step at u = 0) and the surf's
+	# peak opacity, which only became a lever once that step was gone. See the SHORE_DEFAULT_* consts.
+	var waterline_frac: float = clampf(
+		float(shore.get("waterline_width", SHORE_DEFAULT_WATERLINE_WIDTH)), 0.0, 1.0)
+	var foam_opacity: float = clampf(
+		float(shore.get("foam_opacity", SHORE_DEFAULT_FOAM_OPACITY)), 0.0, 1.0)
+	m.set_shader_parameter("waterline_band", waterline_frac * radius)  # base cross-fade half-reach (px)
+	m.set_shader_parameter("foam_opacity", foam_opacity)               # surf + wisp peak opacity
 	m.set_shader_parameter("sand_band", sand_frac * radius)            # sand INLAND of the waterline (px)
 	m.set_shader_parameter("foam_inland_band", foam_inland_frac * radius)  # surf washing UP the beach (px)
 	m.set_shader_parameter("foam_band", foam_frac * radius)            # surf SEAWARD of the waterline (px)

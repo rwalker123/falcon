@@ -558,6 +558,79 @@ const D_CROP_ROW := 4
 const D_CROP_RADII := 2.4
 const D_MIXED_CROP_RADII := 3.4
 
+# --- state 16 (SURF): THE BRIGHT WHITE SHORELINE OUTLINE ---
+# The user's report: at map-scale zoom the surf reads as "an obvious bright white outline on most land" and
+# catches the eye far too much. The structural reason it is opaque is documented at the shader's SURF block:
+# the BASE TEXTURE ITSELF used to step at u = 0 (raw land meeting raw water on a CLIFF coast, sand-tinted
+# land meeting open water on a beach one) and the full-strength foam peak was the ONLY thing concealing that
+# step — which is why the four previous "just soften the foam" attempts all re-exposed a hard land↔water
+# line. So this state renders TWO candidate answers, on BOTH coast types, at the game's r ≈ 75, grid OFF:
+#   OPTION A (recolour only) — cool `shore.foam_color` from the shipped near-white toward grey-blue. The
+#     outline is still an OPAQUE ring, just a greyer one. `W_optA_1/2/3` is the tone ladder.
+#   OPTION B (the real fix) — a NARROW base cross-fade at the waterline (`shore.waterline_width`) removes the
+#     base step, after which `shore.foam_opacity` can make the surf a translucent highlight rather than a
+#     cover-up. `W_optB_1/2/3` is the opacity ladder, on the muted colour.
+# THE MAKE-OR-BREAK FRAME is `W_optB_step_check`: option B's cross-fade with the FOAM DISABLED ENTIRELY, on
+# the CLIFF coast (deep_ocean, sand_scale 0 — no sand out there either, so nothing else can hide the step).
+# If a hard land↔water line is still visible there, option B has FAILED. `W_step_control` is the same frame
+# with the cross-fade ALSO off — the raw step, i.e. proof the frame can show one.
+# `W_base_wide` / `W_optB_wide` (+ `_farzoom`) are the archipelago frames: several islands, both coast types,
+# one camera — the map-scale "white outline" effect the complaint is actually about.
+# The mixed coast carries BOTH coast types, so every rung is cropped on BOTH: row 2 is a deep_ocean (CLIFF)
+# row, row 7 a continental_shelf (BEACH) one; the cols are those rows' shore cols (COAST_SHORE_BASE_COL +
+# COAST_SHORE_WOBBLE[row]). The pure-cliff step check crops the same hex D1_cliff does.
+const SURF_MIXED_CROPS := [
+	{"suffix": "cliff", "hex": Vector2i(7, 2)},
+	{"suffix": "beach", "hex": Vector2i(6, 7)},
+]
+const SURF_CLIFF_CROPS := [{"suffix": "closeup", "hex": Vector2i(D_CROP_COL, D_CROP_ROW)}]
+const SURF_NO_CROPS := []   # the archipelago frames are about the WHOLE map, not one seam
+const SURF_CROP_RADII := 2.4
+# The SHIPPED-BEFORE shore: the near-white foam at full opacity, and NO waterline cross-fade. This is the
+# frame the complaint is about, and the baseline every ladder is compared against.
+const SURF_BASE_FOAM_COLOR := [223, 242, 247]
+const SURF_BASE_FOAM_OPACITY := 1.0
+const SURF_WATERLINE_OFF := 0.0
+const SURF_BASE_OVERRIDES := {
+	"foam_color": SURF_BASE_FOAM_COLOR,
+	"foam_opacity": SURF_BASE_FOAM_OPACITY,
+	"waterline_width": SURF_WATERLINE_OFF,
+}
+# OPTION A — the colour ladder, barely-cooled → clearly grey. Full opacity + no cross-fade throughout: A is a
+# recolour of the SHIPPED ring, nothing else.
+const SURF_OPTA_VARIANTS := [
+	{"name": "W_optA_1", "foam_color": [200, 216, 224]},
+	{"name": "W_optA_2", "foam_color": [176, 194, 205]},
+	{"name": "W_optA_3", "foam_color": [150, 166, 176]},
+]
+# OPTION B — the opacity ladder, on the shipped (muted) colour and the shipped cross-fade width.
+const SURF_OPTB_VARIANTS := [
+	{"name": "W_optB_1", "foam_opacity": 0.35},
+	{"name": "W_optB_2", "foam_opacity": 0.55},
+	{"name": "W_optB_3", "foam_opacity": 0.75},
+]
+const SURF_FOAM_DISABLED := 0.0   # foam_opacity 0 kills the surf AND the wisp — the step check needs both gone
+# The waterline sweep, rendered ON the step check (foam off, cliff coast) — the only frame that can say
+# whether a given wet edge actually removes the base step. Too narrow and the step survives (the shipped 0.08
+# first cut read as a ~4px band and did NOT hide it); too wide and land texture reads out to sea.
+const SURF_WATERLINE_VARIANTS := [
+	{"name": "W_step_wl_1", "waterline_width": 0.08},
+	{"name": "W_step_wl_2", "waterline_width": 0.14},
+	{"name": "W_step_wl_3", "waterline_width": 0.20},
+]
+# The archipelago: several islands with BOTH coast types, so the map-scale outline can be judged. Islands sit
+# on a lattice (so the pattern scales to any grid), alternating size, land biome and coast type: a shelf-ringed
+# island is a BEACH coast, an island the deep ocean touches directly is a CLIFF coast.
+const SURF_ISLAND_ORIGIN := Vector2i(2, 1)
+const SURF_ISLAND_STRIDE := Vector2i(5, 4)
+const SURF_ISLAND_RADII := [2, 1]          # cycled over the lattice → islands of two sizes
+const SURF_ISLAND_LANDS := [16, 11]        # cycled → dark rocky_regolith and tan prairie coasts
+const SURF_SHELF_RING := 1                 # hexes of continental_shelf around a BEACH island; else deep_ocean
+const SURF_RAGGED_MODULUS := 3             # rim hexes with (7x + 13y) % this == 0 are carved back to water
+const SURF_FAR_GRID_W := 36                # a bigger grid → _fit_map_to_view lands a SMALLER radius: map scale
+const SURF_FAR_GRID_H := 23
+const SURF_FAR_HEX_RADIUS := 30.0          # still well above EDGE_BLEND_MIN_RADIUS, so the shore pass runs
+
 # The state filter's cmdline flag (after the scene's `--`), e.g. `-- --only=G` / `-- --only=1,4,G`.
 const ONLY_ARG_PREFIX := "--only="
 
@@ -747,6 +820,10 @@ func _ready() -> void:
 	if _want("15/D"):
 		# --- state 15 (D): cliff vs beach vs lake, and the mixed coast (see the const block) ---
 		await _render_shore_profile_state()
+
+	if _want("16/SURF"):
+		# --- state 16 (SURF): the bright white shoreline outline (see the SURF_* const block) ---
+		await _render_surf_state()
 
 	get_tree().quit()
 
@@ -1173,6 +1250,137 @@ func _render_shore_profile_state() -> void:
 	await _save("D4_lake_unchanged")
 	await _settle()
 	await _save_crop("D4_lake_unchanged_closeup", LAKE_CROP_COL, LAKE_CROP_ROW, LAKE_CROP_RADII)
+
+
+func _render_surf_state() -> void:
+	## State 16 (SURF). The bright-white shoreline outline: the shipped baseline, option A's colour ladder,
+	## option B's (base cross-fade + translucent surf) opacity ladder, the decisive foam-off STEP CHECK on the
+	## cliff coast, and the archipelago frames that show the map-scale effect. See the SURF_* const block.
+	_map._show_grid_lines = false   # a drawn hexagon would answer the very question under test
+
+	# The MIXED coast: deep_ocean (CLIFF) in the north rows, continental_shelf (BEACH) in the south, both
+	# running into the same dark rocky land — so one camera carries both coast types and every ladder rung is
+	# judged on both at once (they fail differently: the cliff has no sand to hide anything).
+	_map.display_snapshot(_snapshot_mixed_coast())
+	await _refit(WATER_HEX_RADIUS)
+	await _render_surf_variant(SURF_BASE_OVERRIDES, "W_base", SURF_MIXED_CROPS)
+	for variant: Dictionary in SURF_OPTA_VARIANTS:
+		var a_shore: Dictionary = SURF_BASE_OVERRIDES.duplicate(true)
+		a_shore["foam_color"] = variant["foam_color"]
+		await _render_surf_variant(a_shore, String(variant["name"]), SURF_MIXED_CROPS)
+	for variant: Dictionary in SURF_OPTB_VARIANTS:
+		await _render_surf_variant(
+			{"foam_opacity": variant["foam_opacity"]}, String(variant["name"]), SURF_MIXED_CROPS
+		)
+
+	# THE STEP CHECK. The CLIFF coast (deep_ocean: sand_scale 0, so there is no beach either) with the foam
+	# turned OFF ENTIRELY. W_step_control has the cross-fade off too — that is the raw base step, and proves
+	# this frame CAN show one. W_optB_step_check has the cross-fade on: if a hard land↔water line survives
+	# there, option B has failed and no amount of foam dressing fixes it.
+	_map.display_snapshot(_snapshot_coast(D_LAND_ID, D_DEEP_ID))
+	await _refit(WATER_HEX_RADIUS)
+	await _render_surf_variant(
+		{"foam_opacity": SURF_FOAM_DISABLED, "waterline_width": SURF_WATERLINE_OFF},
+		"W_step_control",
+		SURF_CLIFF_CROPS
+	)
+	for variant: Dictionary in SURF_WATERLINE_VARIANTS:
+		await _render_surf_variant(
+			{
+				"foam_opacity": SURF_FOAM_DISABLED,
+				"waterline_width": variant["waterline_width"],
+			},
+			String(variant["name"]),
+			SURF_CLIFF_CROPS
+		)
+	await _render_surf_variant(
+		{"foam_opacity": SURF_FOAM_DISABLED}, "W_optB_step_check", SURF_CLIFF_CROPS
+	)
+
+	# The archipelago — the frame that actually answers the complaint: several islands, both coast types, one
+	# camera, shipped baseline vs shipped option B.
+	_map.display_snapshot(_snapshot_archipelago(WATER_GRID_W, WATER_GRID_H))
+	await _refit(WATER_HEX_RADIUS)
+	await _render_surf_variant(SURF_BASE_OVERRIDES, "W_base_wide", SURF_NO_CROPS)
+	await _render_surf_variant({}, "W_optB_wide", SURF_NO_CROPS)
+
+	# …and the same archipelago at MAP SCALE (a bigger grid fits to a smaller radius), which is the zoom the
+	# "obvious bright white outline on most land" report was made at.
+	_map.display_snapshot(_snapshot_archipelago(SURF_FAR_GRID_W, SURF_FAR_GRID_H))
+	await _refit(SURF_FAR_HEX_RADIUS)
+	await _render_surf_variant(SURF_BASE_OVERRIDES, "W_base_farzoom", SURF_NO_CROPS)
+	await _render_surf_variant({}, "W_optB_farzoom", SURF_NO_CROPS)
+
+
+func _render_surf_variant(shore_changes: Dictionary, name: String, crops: Array) -> void:
+	## Render one SURF rung: the SHIPPED `shore` block with `shore_changes` applied (so every key the rung does
+	## not name — the sand, its plateau, the surf's inland wash, the wisp geometry — stays exactly as shipped),
+	## one full frame, plus a native-res close-up per entry in `crops` ({suffix, hex}).
+	var token: Array = _override_config(_surf_overrides(shore_changes))
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save(name)
+	for crop: Dictionary in crops:
+		# Re-settle: a second get_image() in the same frame as the previous save reads back a stale viewport.
+		await _settle()
+		var hex: Vector2i = crop["hex"]
+		await _save_crop("%s_%s" % [name, crop["suffix"]], hex.x, hex.y, SURF_CROP_RADII)
+	_restore_config(token)
+
+
+func _surf_overrides(shore_changes: Dictionary) -> Dictionary:
+	## The SHIPPED `shore` block with only the rung's keys replaced — the sand, its plateau, the surf's inland
+	## wash and the wisp geometry are never retuned by this state.
+	var shore: Dictionary = (
+		(TerrainTextureManager.terrain_config.get("shore", {}) as Dictionary).duplicate(true)
+	)
+	for key: String in shore_changes:
+		shore[key] = shore_changes[key]
+	return {"shore": shore}
+
+
+func _snapshot_archipelago(gw: int, gh: int) -> Dictionary:
+	## Several ragged islands on a lattice in open ocean, carrying BOTH coast types: a shelf-ringed island is a
+	## BEACH coast (sand + muted surf), an island the deep ocean touches directly is a CLIFF coast (no sand,
+	## full surf). The lattice + hash raggedness are deterministic and grid-size independent, so the SAME
+	## archipelago renders at the game radius and at map scale (a bigger grid → a smaller fitted radius).
+	var arr: Array = []
+	arr.resize(gw * gh)
+	arr.fill(WATER_DEEP_ID)
+	var shelf_seeds: Array[Vector2i] = []
+	var island_index: int = 0
+	var cy: int = SURF_ISLAND_ORIGIN.y
+	while cy < gh:
+		var cx: int = SURF_ISLAND_ORIGIN.x
+		while cx < gw:
+			var radius: int = int(SURF_ISLAND_RADII[island_index % SURF_ISLAND_RADII.size()])
+			var land_id: int = int(SURF_ISLAND_LANDS[island_index % SURF_ISLAND_LANDS.size()])
+			var is_beach: bool = island_index % 2 == 0   # alternate beach (shelf-ringed) and cliff islands
+			for y in range(maxi(cy - radius, 0), mini(cy + radius + 1, gh)):
+				for x in range(maxi(cx - radius, 0), mini(cx + radius + 1, gw)):
+					var d: int = _map._hex_distance(x, y, cx, cy)
+					if d > radius:
+						continue
+					# Carve the rim back to water on a deterministic hash → a ragged coastline, not a rosette.
+					if d == radius and (7 * x + 13 * y) % SURF_RAGGED_MODULUS == 0:
+						continue
+					arr[y * gw + x] = land_id
+					if is_beach:
+						shelf_seeds.append(Vector2i(x, y))
+			island_index += 1
+			cx += SURF_ISLAND_STRIDE.x
+		cy += SURF_ISLAND_STRIDE.y
+	# Ring the BEACH islands with continental_shelf; every other water hex stays deep_ocean, so the cliff
+	# islands meet the deep directly. (The real worldgen's sequence is deep → shelf → land, with the cliff
+	# coast exactly where deep does touch land.)
+	for seed_hex: Vector2i in shelf_seeds:
+		for y in range(maxi(seed_hex.y - SURF_SHELF_RING, 0), mini(seed_hex.y + SURF_SHELF_RING + 1, gh)):
+			for x in range(maxi(seed_hex.x - SURF_SHELF_RING, 0), mini(seed_hex.x + SURF_SHELF_RING + 1, gw)):
+				if _map._hex_distance(x, y, seed_hex.x, seed_hex.y) > SURF_SHELF_RING:
+					continue
+				if int(arr[y * gw + x]) == WATER_DEEP_ID:
+					arr[y * gw + x] = WATER_SHELF_ID
+	return _snapshot(arr, gw, gh)
 
 
 func _snapshot_mixed_coast() -> Dictionary:
