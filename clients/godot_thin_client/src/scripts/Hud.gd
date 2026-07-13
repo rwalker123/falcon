@@ -3253,6 +3253,12 @@ func _build_herd_row(herd: Dictionary) -> Button:
     var glyph := FoodIcons.for_herd(label)
     var name_text := String(herd.get("species", label))
     row.add_child(_roster_name_label("%s %s" % [glyph, name_text], selected))
+    # The fauna id as a DIM meta suffix (the roster's existing muted-ink convention, same label the
+    # size class uses). It appears nowhere else in the UI and it is the handle the command feed
+    # names, so it must survive the `Herd: Red Deer (game_deer_07)` row's removal — as secondary
+    # text beside the name, not as a detail row restating it.
+    if herd_id != "":
+        row.add_child(_roster_meta_label(herd_id))
     var size_class := String(herd.get("size_class", "")).strip_edges()
     if size_class != "":
         row.add_child(_roster_meta_label("%s game" % size_class.capitalize()))
@@ -3745,33 +3751,43 @@ func _select_band_on_map(band: Dictionary) -> void:
 func _is_player_unit(unit: Dictionary) -> bool:
     return int(unit.get("faction", PLAYER_FACTION_ID)) == PLAYER_FACTION_ID
 
-## The band summary rows. `in_panel` = rendered into the Band/City dock, whose HEADER already carries
-## the band's name + stage: there the `Unit` row (a third copy of the name) is dropped and `Size` —
-## population under another name — becomes the **Population** row carrying the labor line
-## (`29 · Workers 14 (Idle 12)`), which is the same reading the allocation block used to strand
-## between Active expeditions and Current actions. The Occupants-card drawer (foreign bands / the
-## no-panel fallback) has no such header and no worker breakdown to show, so it keeps Unit + Size.
+## The band summary rows. **No row here restates what its host's own header already shows.** Both
+## hosts name the band above the detail — the Band/City dock in its panel header, the Occupants card
+## in the band's roster row — and the roster row also carries the band's SIZE, so neither the
+## `Unit: <name>` row nor the `Size: <n>` row survives.
+## `in_panel` = rendered into the dock, which is the only host with a labor readout to give: there the
+## population becomes the **Population** row carrying the labor line (`29 · Workers 14 (Idle 12)`) —
+## the same reading the allocation block used to strand between Active expeditions and Current
+## actions. The Occupants-card drawer (foreign bands / the no-panel fallback) has no worker breakdown
+## to show for a band that isn't ours, so it states no population at all; the roster row has it.
 func _unit_summary_lines(unit_data: Dictionary, in_panel: bool = false) -> Array[String]:
     if bool(unit_data.get("is_expedition", false)):
         return _expedition_summary_lines(unit_data)
     var lines: Array[String] = []
-    # Disclosure carets are rebuilt per render; drop last render's Food/Morale entries.
+    # Disclosure carets + the tint context are rebuilt per render. Reset BOTH here, not inside
+    # `_band_food_line` — a foreign band skips that call entirely (below), and a skipped Food row
+    # must not inherit the previous render's caret or its food-days tint.
     _disclosure_state = {}
-    var size_value: int = int(unit_data.get("size", 0))
+    _food_flow_present = false
+    _selected_band_food_days = NAN
     if in_panel:
         # Idle counts OPTIMISTICALLY via the SAME `_effective_idle` the `+` stepper gates on — the
         # calculation is moved here, never forked.
         lines.append("%s: %s" % [DETAIL_ROW_POPULATION, WORKERS_VALUE_FORMAT % [
-            size_value, int(unit_data.get("working_age", 0)), _effective_idle(unit_data)]])
-    else:
-        lines.append("Unit: %s" % String(unit_data.get("id", "Band")))
-        lines.append("Size: %d" % size_value)
-    lines.append(_band_food_line(unit_data))
-    # Category-aggregated food breakdown under Food: a click-to-expand disclosure (auto-shown when
-    # concerning). `_band_food_line` set `_food_flow_present`; `_register_disclosure` records the row
-    # so `_format_detail_bbcode` draws the caret + clickable meta.
-    if _food_flow_present and _register_disclosure(DETAIL_ROW_FOOD, BREAKDOWN_KIND_FOOD, unit_data):
-        lines.append_array(_food_breakdown_lines(unit_data))
+            int(unit_data.get("size", 0)), int(unit_data.get("working_age", 0)),
+            _effective_idle(unit_data)]])
+    # Food, like Morale below, is our OWN bands' business only. A rival's cohort carries no
+    # `days_of_food`/`stores` on the wire, so rendering the row for one printed a FABRICATED
+    # `Food 0 (∞)` in healthy green — the UI claiming we'd counted a larder we cannot see. A foreign
+    # band shows only what we can honestly observe from outside: where it is (Position) and roughly
+    # how many (its roster row's size).
+    if _is_player_unit(unit_data):
+        lines.append(_band_food_line(unit_data))
+        # Category-aggregated food breakdown under Food: a click-to-expand disclosure (auto-shown
+        # when concerning). `_band_food_line` set `_food_flow_present`; `_register_disclosure`
+        # records the row so `_format_detail_bbcode` draws the caret + clickable meta.
+        if _food_flow_present and _register_disclosure(DETAIL_ROW_FOOD, BREAKDOWN_KIND_FOOD, unit_data):
+            lines.append_array(_food_breakdown_lines(unit_data))
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
@@ -3806,11 +3822,15 @@ func _unit_summary_lines(unit_data: Dictionary, in_panel: bool = false) -> Array
 ## mission, humanized phase, party size, and carried food (from stores/daysOfFood). A hunt
 ## expedition (§2b) also lists the target herd it follows. Expeditions have no labor in v1, so
 ## this replaces the band's labor/morale rows entirely.
+## Like the band + herd drawers, it carries NO identity row: an expedition rides the same
+## `_roster_units` path as a band, so its roster row (`_build_band_row`) already shows the very
+## `id` the old `Unit:` line printed — nothing is lost with it (unlike the herd's fauna id, which
+## had to move INTO the row). `Policy` / `Phase` deliberately keep their WORDS here: the compact
+## Active-expeditions row is where the glyph vocabulary belongs; this block IS the disclosure.
 func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
     var lines: Array[String] = []
     var mission := String(unit_data.get("expedition_mission", ""))
     var is_hunt := mission == EXPEDITION_MISSION_HUNT
-    lines.append("Unit: %s" % String(unit_data.get("id", "Expedition")))
     lines.append("Mission: %s" % _expedition_mission_label(mission))
     if is_hunt:
         # The migratory herd it follows (species label from the fauna_id, falling back to the id).
@@ -3824,7 +3844,8 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
     var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
     if phase != "":
         lines.append("Phase: %s" % _expedition_phase_label(phase))
-    lines.append("Party: %d" % int(unit_data.get("size", 0)))
+    # NO `Party` row: it printed `unit_data["size"]` — the exact field the roster row already shows as
+    # its size meta (`Hunters 1 … 5`), so it was the band `Size` restatement under another name.
     # Food it carries — larder-drawn provisions for a scout, the hunted haul for a hunt party —
     # days from daysOfFood. Reuse the food-days tint context (`_selected_band_food_days`, read
     # back in `_format_detail_bbcode`).
@@ -4084,15 +4105,11 @@ func _format_food_kind_label(kind_value: String) -> String:
     return " ".join(parts)
 
 func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
+    # NO identity rows. The herd's own roster row above this drawer already shows the species glyph +
+    # name, the `<size> game` class, AND (as a dim meta) the fauna id — so `Herd` / `Species` / `Size`
+    # were the same three facts a second time (the name three times, counting the `Herd` row's
+    # "Red Deer (game_deer_07)"). What follows is only what the header CAN'T show: the herd's state.
     var lines: Array[String] = []
-    var label: String = String(herd_data.get("label", herd_data.get("id", "Herd")))
-    lines.append("Herd: %s" % label)
-    var species := String(herd_data.get("species", ""))
-    if species != "":
-        lines.append("Species: %s" % species)
-    var size_class := String(herd_data.get("size_class", "")).strip_edges()
-    if size_class != "":
-        lines.append("Size: %s game" % size_class.capitalize())
     var biomass: float = float(herd_data.get("biomass", 0.0))
     if biomass > 0.0:
         lines.append("Biomass: %.0f" % biomass)

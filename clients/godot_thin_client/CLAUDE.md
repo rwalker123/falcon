@@ -542,7 +542,22 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   wildlife on the hex, built at runtime into `%RosterList` as two sub-groups
   (`Bands (N)` / `Wildlife (N)`); each row is a `Button` hosting a mouse-transparent
   HBox — a selection accent, a **vitality dot**, name, size, and (bands) an
-  activity glyph. Below the roster, `%OccupantDetail` is the selected occupant's
+  activity glyph; a **wildlife** row also carries the **fauna id** as a dim meta suffix
+  (`🦌 Red Deer   game_deer_07   Big game`). **A detail row never restates what its
+  roster row already shows** (the same rule the Band/City panel header follows). The roster
+  row IS the identity line — name + size (+ the herd's fauna id) — so every drawer dropped
+  the rows that echoed it: band → `Unit` + `Size`; herd → `Herd` / `Species` / `Size`
+  (the name appeared three times, the size twice); expedition → `Unit` + `Party` (`Party`
+  printed the same `size` field the row's meta shows). The herd's **fauna id moved INTO the
+  row** as a dim meta — it appears nowhere else in the UI and the command feed names herds
+  by it, so it had to survive the `Herd:` row; nothing else was load-bearing (an expedition
+  rides `_roster_units`, so `_build_band_row` already prints the very `id` its `Unit` line
+  did). What's left in a drawer is only what the row can't show — herd: Biomass / Ecology /
+  Husbandry / Corral / Position; expedition: Mission / Target / Policy / Phase / Carried /
+  Position. **Expedition `Policy` / `Phase` keep their WORDS** — the compact
+  Active-expeditions row is where the glyph vocabulary belongs; the drawer IS the
+  disclosure. Below the roster,
+  `%OccupantDetail` is the selected occupant's
   **detail drawer** for **herds/expeditions** (`_herd_summary_lines` +
   `%HerdAssignControls`; expedition → `_build_expedition_panel` into
   `%AllocationPanel`). **Player-band detail relocated out of the Occupants card into
@@ -946,7 +961,16 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   key `food_days.{warn,critical}`; `999` = not food-limited → ∞). Surfaced three ways:
   (1) `MapView._draw_band_status` draws a food-days dot on each **player** band
   (`_is_player_unit`); (2) `Hud._band_food_line` adds a `Food  <N>  (<D> days)`
-  row to the band selection panel, tinted by the thresholds via `_format_detail_bbcode`;
+  row to the band selection panel, tinted by the thresholds via `_format_detail_bbcode`
+  — **player bands only** (`_is_player_unit`, the same gate Morale uses, and for the same
+  reason: **a rival's larder is not ours to see**). A foreign cohort carries no
+  `days_of_food`/`stores` on the wire, so rendering the row for one **fabricated knowledge**
+  — a healthy-green `Food 0 (∞)`, the UI claiming we'd counted a larder we cannot observe.
+  A foreign band's drawer now shows only what is honestly observable from outside: its
+  **Position**, plus the name/size on its roster row. The reset of the disclosure context
+  (`_food_flow_present` / `_selected_band_food_days` / `_disclosure_state`) lives at the top
+  of `_unit_summary_lines`, NOT inside `_band_food_line` — the skipped call must not leave the
+  previous render's caret or food-days tint behind;
   (3) `MapView._draw_supply_links` faint-chains player bands sharing a `supply_network_id` (`0` = solo).
   **Band food flow on the Food line** (snapshot `PopulationCohortState.foodIncome`/`foodConsumption`,
   decoded as `food_income`/`food_consumption`, flowed onto the MapView unit marker + guarded by
@@ -1219,12 +1243,13 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   ACTIONS did — **stranded between Active expeditions and Current actions**; the panel now passes
   `with_population_header = false` to `_build_allocation_sections`, so it exists once, in the identity
   grid. The header reads: name / stage / Population / Food / Morale / Position.
-  **`Size` is NOT dead** — `_unit_summary_lines` is shared with the Occupants-card drawer, which serves
-  **foreign bands** (no panel header naming them, and no worker breakdown of theirs to show) and the
-  no-panel `ui_preview` fallback; that path (`in_panel = false`, the default) keeps `Unit` + `Size`,
-  and the legacy in-card allocation host keeps the population header block. The dock itself only ever
-  shows player bands (expeditions are split into `_player_expeditions` and drawn in the Occupants
-  card), so in the dock `Size` was always redundant.
+  `Unit` and `Size` are gone from **both** hosts — the Occupants drawer's roster row names the band
+  and shows its size, so they restated it there too. `in_panel` survives as the gate on the
+  **Population** row alone: the dock is the only host with a labor readout, and a foreign band has no
+  `working_age`/`idle_workers`, so rendering it in the drawer would print a fabricated
+  `Workers 0 (Idle 0)`. `_unit_summary_lines` is still shared with the Occupants-card drawer (foreign
+  bands + the no-panel `ui_preview` fallback), and the legacy in-card allocation host keeps the
+  population header block.
 - **Content relocation (from the Occupants card).** The **player-band** branch of
   `Hud._render_occupant_drawer` now renders into the panel via `_render_band_into_panel`,
   which assembles an ordered array of **section blocks** — a summary block

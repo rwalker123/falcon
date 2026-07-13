@@ -82,6 +82,15 @@ func _ready() -> void:
 	await _settle()
 	await _save("band")
 
+	# State 1-foreign — a NON-player band selected. The drawer is the same `_unit_summary_lines` host,
+	# but almost none of it applies: morale/output/breakdowns are player-only (someone else's band is
+	# not ours to read), there is no allocation panel, and the identity rows (name, size) now live in
+	# the roster row above. So the check this state exists for: does the drawer collapse to an empty
+	# card once `Unit`/`Size` are gone? (It keeps the bare larder Food line + Position.)
+	_hud.show_unit_selection(_foreign_band_fixture())
+	await _settle()
+	await _save("band_foreign")
+
 	# State 1-forage-policy — the forage allocation row carries a policy tag like Hunt does. This band
 	# forages on Market policy, which the sim gathers past the patch's regrowth, so actual_yield (0.62)
 	# exceeds sustainable_yield (0.40): the row reads `Forage (71, 18) [market] +0.62 /turn ⚠` (amber
@@ -714,6 +723,29 @@ func _assert_turn_orb(label: String, ok: bool) -> void:
 		print("ui_preview: PASS turn-orb — ", label)
 	else:
 		push_error("ui_preview: FAIL turn-orb — %s" % label)
+
+## A NON-player band (faction 1): what a rival's cohort actually looks like on the wire — an identity,
+## a size, a position, and nothing of ours to read (no morale/output/labor/flow fields). Backs the
+## `band_foreign` state, which exists to prove the drawer doesn't collapse to an empty card now that
+## the identity rows moved into the roster row.
+func _foreign_band_fixture() -> Dictionary:
+	return {
+		"id": "Ashen Kin",
+		"size": 96,
+		"entity": 977,
+		"faction": 1,
+		"pos": [71, 18],
+		"current_x": 71,
+		"current_y": 18,
+		"activity": "forage",
+		"settlement_stage_icon": "⛺",
+		"settlement_stage_label": "Nomadic band",
+		"tile_info": {
+			"x": 71, "y": 18,
+			"terrain_label": "Prairie Steppe",
+			"visibility_state": "active",
+		},
+	}
 
 func _band_fixture() -> Dictionary:
 	return {
