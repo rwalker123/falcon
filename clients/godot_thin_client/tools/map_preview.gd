@@ -58,7 +58,7 @@ const REPEAT_PRAIRIE_COLS := 4 # left columns prairie; the rest alpine
 # State "swatch" (reusable AI-texture check): a LARGE field of a single configurable biome bordering a
 # known-good prairie band, so we can judge (a) the biome's own tiling and (b) cohesion + the flat↔flat
 # blend against prairie. SWATCH_BIOME_ID is the ONE lever — change it to preview a different biome.
-const SWATCH_BIOME_ID := 2            # deep_ocean — one-line change to preview any biome
+const SWATCH_BIOME_ID := 2            # the biome id rendered in the swatch harness — one-line change to preview any biome
 const SWATCH_PRAIRIE_ID := 11         # prairie_steppe, the accepted flat neighbour to blend against
 const SWATCH_PRAIRIE_COLS := 4        # left columns prairie (of GRID_W); the rest the swatch biome
 const SWATCH_FAR_PRAIRIE_COLS := 18   # left prairie columns on the far-zoom grid (of FAR_GRID_W)

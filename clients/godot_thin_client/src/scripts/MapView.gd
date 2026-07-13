@@ -4286,6 +4286,18 @@ func _rebuild_terrain_shader_maps() -> void:
 	vis_bytes.resize(w * h)
 	var elev_bytes := PackedByteArray()
 	elev_bytes.resize(w * h)
+	# Hoist the per-hex-invariant raster fetches + sea-level math out of the double loop:
+	# both the FoW visibility channel and the elevation channel (plus its sea-level rescale
+	# constants) are the same for every hex, so fetch/compute them once here instead of
+	# re-running _visibility_state_at / relative_height_at per hex (each of which re-did an
+	# _overlay_raw_array dict lookup). The per-hex byte encoding below reproduces those two
+	# helpers exactly, including the empty-raster fallbacks.
+	var vis_raster := _visibility_array()  # raw visibility channel (see _visibility_state_at)
+	var elev_raster := _overlay_raw_array("elevation")  # raw elevation channel (see relative_height_at)
+	var elev_has_data := not elev_raster.is_empty()  # matches relative_height_at's -1 (missing) guard
+	# Sea-level rescale constants (see relative_height_at): above-sea span normalized into 0..1.
+	var elev_sea_level := clampf(_elevation_sea_level, 0.0, 0.999)
+	var elev_span := 1.0 - elev_sea_level
 	for y in range(h):
 		for x in range(w):
 			var idx := y * w + x
@@ -4294,15 +4306,27 @@ func _rebuild_terrain_shader_maps() -> void:
 			id_bytes[idx * 4 + 1] = _blend_class_code(tid)
 			id_bytes[idx * 4 + 2] = _canopy_code(tid)
 			id_bytes[idx * 4 + 3] = _peak_code(tid)
+			# Mirror _visibility_state_at's active/discovered/unexplored classification (guarded by
+			# _fow_enabled) directly into the 255/128/0 byte, reading the hoisted raster.
 			var v := 255
 			if _fow_enabled:
-				var state := _visibility_state_at(x, y)
-				v = 255 if state == "active" else (128 if state == "discovered" else 0)
+				var vis := _value_at(vis_raster, x, y)
+				if vis > FOW_VISIBLE_THRESHOLD:
+					v = 255
+				elif vis > FOW_EXPLORED_THRESHOLD:
+					v = 128
+				else:
+					v = 0
 			vis_bytes[idx] = v
 			# Per-hex relative height (0..100 → 0..255) for peak prominence + shadow scaling; the
 			# PEAK_ELEV_FALLBACK keeps relief rendering when a snapshot carries no elevation raster.
-			var rh := relative_height_at(x, y)
-			elev_bytes[idx] = clampi(int(round(float(rh) * 2.55)), 0, 255) if rh >= 0 else PEAK_ELEV_FALLBACK
+			# Mirrors relative_height_at() against the hoisted raster/constants.
+			if elev_has_data:
+				var above_sea := clampf((_value_at(elev_raster, x, y) - elev_sea_level) / elev_span, 0.0, 1.0)
+				var rh := int(round(above_sea * 100.0))
+				elev_bytes[idx] = clampi(int(round(float(rh) * 2.55)), 0, 255)
+			else:
+				elev_bytes[idx] = PEAK_ELEV_FALLBACK
 	var id_img := Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, id_bytes)
 	_terrain_id_map_tex = ImageTexture.create_from_image(id_img)
 	var vis_img := Image.create_from_data(w, h, false, Image.FORMAT_R8, vis_bytes)
