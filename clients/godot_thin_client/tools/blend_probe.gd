@@ -248,19 +248,29 @@ const LAKE_HEXES := [
 const LAKE_CROP_COL := 6
 const LAKE_CROP_ROW := 4
 const LAKE_CROP_RADII := 3.4       # the whole lake plus its land collar, at native resolution
-# The four candidate profiles. reach_scale multiplies ALL FOUR shore reaches (sand / foam_inland / foam /
-# wisp centre+half); wisp_scale multiplies the wisp's half-width AND its strength (0 = no second disturbance).
+# The four candidate profiles, in the THREE-SCALE scheme (sand_scale × foam_scale × wisp_scale — see
+# terrain_config's `shore_profile`). The old two-lever sweep's `reach_scale` scaled sand and foam together, so
+# it maps onto the new scheme as `sand_scale == foam_scale`; L3 IS the shipped lake (0.5 / 0.5 / 0.0).
 # L4 ("shrink the whole thing"): the profile's OUTERMOST reach is the wisp's far edge, wisp_center +
 # wisp_half = 0.55 + 0.13 = 0.68·r. To land the lake's total shore disturbance at ~10% of a hex radius:
-# reach_scale = 0.10 / 0.68 = 0.147 → total seaward reach 0.68 × 0.147 = 0.0999·r ≈ 0.10·r (with the wisp KEPT).
+# scale = 0.10 / 0.68 = 0.147 → total seaward reach 0.68 × 0.147 = 0.0999·r ≈ 0.10·r (with the wisp KEPT).
 const LAKE_TOTAL_REACH_TARGET := 0.10                  # fraction of a hex radius the whole profile may reach
 const LAKE_SHIPPED_OUTER_REACH := 0.68                 # = shore.wisp_center_width + shore.wisp_half_width
 const LAKE_TENTH_REACH_SCALE := LAKE_TOTAL_REACH_TARGET / LAKE_SHIPPED_OUTER_REACH  # ≈ 0.147
 const LAKE_VARIANTS := [
-	{"name": "L1_current", "reach_scale": 1.0, "wisp_scale": 1.0},   # today's GLOBAL profile = the BEFORE
-	{"name": "L2_no_wisp", "reach_scale": 1.0, "wisp_scale": 0.0},   # kill the wisp, keep sand + surf
-	{"name": "L3_half", "reach_scale": 0.5, "wisp_scale": 0.0},      # lighter coast AND no wisp
-	{"name": "L4_tenth", "reach_scale": LAKE_TENTH_REACH_SCALE, "wisp_scale": 1.0},  # whole profile → ~10%·r
+	# today's GLOBAL profile = the BEFORE
+	{"name": "L1_current", "sand_scale": 1.0, "foam_scale": 1.0, "wisp_scale": 1.0},
+	# kill the wisp, keep sand + surf
+	{"name": "L2_no_wisp", "sand_scale": 1.0, "foam_scale": 1.0, "wisp_scale": 0.0},
+	# lighter coast AND no wisp — THE SHIPPED LAKE
+	{"name": "L3_half", "sand_scale": 0.5, "foam_scale": 0.5, "wisp_scale": 0.0},
+	# whole profile → ~10%·r, wisp kept
+	{
+		"name": "L4_tenth",
+		"sand_scale": LAKE_TENTH_REACH_SCALE,
+		"foam_scale": LAKE_TENTH_REACH_SCALE,
+		"wisp_scale": LAKE_TENTH_REACH_SCALE,
+	},
 ]
 
 # --- state 11 (H): ROLLING HILLS — "the hills are CUT OFF at the hex edge" ---
@@ -507,12 +517,54 @@ const G_BEFORE_NAME := "G_before"
 const G_NO_PEAKS_NAME := "G_no_peaks"
 const G_PEAKS_ONLY_NAME := "G_peaks_only"
 const G_NO_SHADOW_NAME := "G_no_shadow"
+
+# --- state 15 (D): the THREE-SCALE shore profile — CLIFF vs BEACH vs LAKE, and the MIXED coast ---
+# Worldgen intent: deep ocean never meets ordinary land (the natural sequence is deep → shelf → land), so
+# where deep_ocean DOES touch land it is a CLIFF — no beach at all, and the full dramatic surf. The
+# continental shelf is the ordinary beach (sand, a more muted wave). The inland_sea is the approved lake.
+# Every frame is the ragged coast at the GAME's r ≈ 75 against DARK rocky_regolith land (prairie's tan
+# camouflages both sand and foam — the trap the invisible-beach bug fell into), grid overlay OFF, ONE camera
+# and crop across the whole set so the frames are directly comparable.
+#   D1_cliff       — deep_ocean meeting land: NO sand anywhere, big surf, and the full-strength surf peak must
+#                    still conceal the base's own step at the waterline (there is no sand there to hide it).
+#   D2_shelf_C1/2/3— the muting ladder for the shelf's ordinary beach. The user wants the main wave "somewhat
+#                    smaller, but not as small as the lake" and the disturbance "about 1/2" — this is the
+#                    choice, and C2 is the shipped placeholder.
+#   D3_mixed_coast — THE DECISIVE FRAME. A deep_ocean hex and a continental_shelf hex ADJACENT along ONE
+#                    coastline, both touching the same land. With a nearest-water PICK the profile would jump
+#                    at the bisector between them and the sand would appear along a HARD LINE (sand_scale 0 on
+#                    one side, 1.0 on the other). The profile is a weighted mean over the water neighbours
+#                    instead, so the beach must FADE IN along the shore.
+#   D4_lake_unchanged — the lake coast, to prove the two-lever → three-scale migration is a no-op
+#                    (pixel-diffed against the pre-change render).
+const D_LAND_ID := V10_DARK_LAND_ID   # rocky_regolith — dark, so sand and foam are actually visible
+const D_DEEP_ID := WATER_DEEP_ID      # deep_ocean (0) — the CLIFF coast
+const D_SHELF_ID := WATER_SHELF_ID    # continental_shelf (1) — the ordinary BEACH coast
+# The shelf ladder. sand_scale stays 1.0 (a shelf beach is the full beach); only the main wave's reach and the
+# offshore disturbance are muted. Ships as C2.
+const D_SHELF_VARIANTS := [
+	{"name": "D2_shelf_C1", "sand_scale": 1.0, "foam_scale": 0.85, "wisp_scale": 0.5},
+	{"name": "D2_shelf_C2", "sand_scale": 1.0, "foam_scale": 0.75, "wisp_scale": 0.5},
+	{"name": "D2_shelf_C3", "sand_scale": 1.0, "foam_scale": 0.65, "wisp_scale": 0.5},
+]
+# The mixed coast: the northern rows' water is deep_ocean, the southern rows' is continental_shelf, so the
+# two water bodies are adjacent to each other AND both run into the same land band.
+const D_MIXED_DEEP_ROWS := 5          # rows [0, this) are deep; the rest are shelf
+# One camera for D1/D2/D3 (the coast band sits at col ≈ 5, so this crop straddles the waterline). D3's crop is
+# WIDER and centred on the deep↔shelf transition row, because the question there is how the sand behaves ALONG
+# the shore, over several hexes of it.
+const D_CROP_COL := 5
+const D_CROP_ROW := 4
+const D_CROP_RADII := 2.4
+const D_MIXED_CROP_RADII := 3.4
+
 # The state filter's cmdline flag (after the scene's `--`), e.g. `-- --only=G` / `-- --only=1,4,G`.
 const ONLY_ARG_PREFIX := "--only="
 
 var _map: Node2D
-# The inland_sea `shore_profile` as SHIPPED in terrain_config, captured before the lake sweep overrides it.
-var _shipped_lake_profile: Dictionary = {}
+# Each swept water terrain's `shore_profile` as SHIPPED in terrain_config (terrain id → profile), captured
+# before any sweep overrides it so `_restore_shore_profiles` can put the shipped coast back.
+var _shipped_shore_profiles: Dictionary = {}
 # Optional state filter, from the cmdline (`godot … res://tools/blend_probe.tscn -- --only=G`): the harness is
 # 60+ frames, and a diagnosis loop re-renders ONE state many times. Empty = render everything (the default, so
 # CI/regression runs are unaffected).
@@ -546,8 +598,6 @@ func _ready() -> void:
 	# a few thousand pixels that silently defeats the pixel-diff this harness exists to support (it is exactly
 	# the magnitude of a shore-profile regression). No frame here is driven by input, so drop input entirely.
 	_map.set_process_unhandled_input(false)
-	var lake_entry: Dictionary = _lake_terrain_entry()
-	_shipped_lake_profile = (lake_entry.get("shore_profile", {}) as Dictionary).duplicate(true)
 
 	if _want("1"):
 		# --- state 1: the straight flat↔flat band seam, at the game's r ≈ 45 ---
@@ -676,7 +726,7 @@ func _ready() -> void:
 		await _refit(WATER_HEX_RADIUS)
 		for variant: Dictionary in LAKE_VARIANTS:
 			await _render_lake_variant(variant)
-		_restore_lake_shore_profile()
+		_restore_shore_profiles()
 
 	if _want("11/H"):
 		# --- state 11 (H): rolling_hills cut off at the hex edge (see the const block) ---
@@ -693,6 +743,10 @@ func _ready() -> void:
 	if _want("14/G"):
 		# --- state 14 (G): the screenshot's real neighbourhood, rugged gate ON (see the const block) ---
 		await _render_neighbourhood_state()
+
+	if _want("15/D"):
+		# --- state 15 (D): cliff vs beach vs lake, and the mixed coast (see the const block) ---
+		await _render_shore_profile_state()
 
 	get_tree().quit()
 
@@ -1075,14 +1129,71 @@ func _save_diff(a_name: String, b_name: String, out_name: String) -> void:
 		print("blend_probe: saved %s.png (%d px differ)" % [out_name, changed])
 
 
+func _render_shore_profile_state() -> void:
+	## State 15 (D). The three-scale shore profile: the deep-ocean CLIFF, the shelf BEACH ladder, the MIXED
+	## coast (where the two meet along one shoreline), and the lake — all on the dark-land coast at the game's
+	## r ≈ 75, grid overlay OFF, one camera per comparison set. See the D_* const block.
+	_map._show_grid_lines = false   # a drawn hexagon would answer the very question under test
+
+	# D1 — the CLIFF: deep_ocean straight against land. NO sand anywhere; the surf's full-strength peak is the
+	# only thing concealing the base's own step at the waterline, so look for a hard line there.
+	_map.display_snapshot(_snapshot_coast(D_LAND_ID, D_DEEP_ID))
+	await _refit(WATER_HEX_RADIUS)
+	await _settle()
+	await _save("D1_cliff")
+	await _settle()
+	await _save_crop("D1_cliff_closeup", D_CROP_COL, D_CROP_ROW, D_CROP_RADII)
+
+	# D2 — the shelf BEACH, muting ladder. Same camera, same terrain, only the shelf's profile varies.
+	_map.display_snapshot(_snapshot_coast(D_LAND_ID, D_SHELF_ID))
+	await _refit(WATER_HEX_RADIUS)
+	for variant: Dictionary in D_SHELF_VARIANTS:
+		_set_shore_profile(D_SHELF_ID, _shore_profile_of(variant))
+		var name: String = String(variant["name"])
+		_map._fit_map_to_view()
+		await _settle()
+		await _save(name)
+		await _settle()
+		await _save_crop("%s_closeup" % name, D_CROP_COL, D_CROP_ROW, D_CROP_RADII)
+	_restore_shore_profiles()
+
+	# D3 — THE DECISIVE FRAME: deep and shelf ADJACENT along one coastline, both touching the same land. The
+	# sand must FADE IN along the shore; a hard line at their bisector is the nearest-pick bug.
+	_map.display_snapshot(_snapshot_mixed_coast())
+	await _refit(WATER_HEX_RADIUS)
+	await _settle()
+	await _save("D3_mixed_coast")
+	await _settle()
+	await _save_crop("D3_mixed_coast_closeup", D_CROP_COL, D_CROP_ROW, D_MIXED_CROP_RADII)
+
+	# D4 — the lake, on the SHIPPED config: the migration from the two-lever profile must be a no-op.
+	_map.display_snapshot(_snapshot_lake())
+	await _refit(WATER_HEX_RADIUS)
+	await _settle()
+	await _save("D4_lake_unchanged")
+	await _settle()
+	await _save_crop("D4_lake_unchanged_closeup", LAKE_CROP_COL, LAKE_CROP_ROW, LAKE_CROP_RADII)
+
+
+func _snapshot_mixed_coast() -> Dictionary:
+	## The ragged coast, but the water is deep_ocean in the northern rows and continental_shelf in the southern
+	## ones — so the two water bodies are adjacent to EACH OTHER and both run into the SAME land band. This is
+	## the configuration a nearest-water profile pick cannot render without a hard line.
+	var snap: Dictionary = _snapshot_coast(D_LAND_ID, D_DEEP_ID)
+	var arr: Array = snap["overlays"]["terrain"]
+	for y in range(D_MIXED_DEEP_ROWS, WATER_GRID_H):
+		for x in range(WATER_GRID_W):
+			var idx: int = y * WATER_GRID_W + x
+			if int(arr[idx]) == D_DEEP_ID:
+				arr[idx] = D_SHELF_ID
+	return snap
+
+
 func _render_lake_variant(variant: Dictionary) -> void:
 	## Override the inland_sea terrain's `shore_profile` in the live config, rebuild the shader's
 	## layer_shore_map (the manager updates the ImageTexture in place, so MapView's binding survives), and
 	## dump one full frame + one native-res close-up of the lake. Same camera/crop in every variant.
-	_set_lake_shore_profile({
-		"reach_scale": float(variant["reach_scale"]),
-		"wisp_scale": float(variant["wisp_scale"]),
-	})
+	_set_shore_profile(LAKE_WATER_ID, _shore_profile_of(variant))
 	var name: String = String(variant["name"])
 	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
 	await _settle()
@@ -1092,23 +1203,38 @@ func _render_lake_variant(variant: Dictionary) -> void:
 	await _save_crop(name, LAKE_CROP_COL, LAKE_CROP_ROW, LAKE_CROP_RADII)
 
 
-func _set_lake_shore_profile(profile: Dictionary) -> void:
-	var entry: Dictionary = _lake_terrain_entry()
+func _shore_profile_of(variant: Dictionary) -> Dictionary:
+	## The three-scale `shore_profile` block a sweep variant carries. Keys match terrain_config's exactly.
+	return {
+		"sand_scale": float(variant["sand_scale"]),
+		"foam_scale": float(variant["foam_scale"]),
+		"wisp_scale": float(variant["wisp_scale"]),
+	}
+
+
+func _set_shore_profile(terrain_id: int, profile: Dictionary) -> void:
+	## Override ONE water terrain's `shore_profile` in the live config and rebuild the shader's
+	## layer_shore_map. The shipped block is stashed on first touch, so `_restore_shore_profiles` can undo it.
+	var entry: Dictionary = _terrain_entry(terrain_id)
 	if entry.is_empty():
-		push_warning("blend_probe: inland_sea (id %d) missing from terrain_config" % LAKE_WATER_ID)
+		push_warning("blend_probe: terrain id %d missing from terrain_config" % terrain_id)
 		return
+	if not _shipped_shore_profiles.has(terrain_id):
+		_shipped_shore_profiles[terrain_id] = (entry.get("shore_profile", {}) as Dictionary).duplicate(true)
 	entry["shore_profile"] = profile
 	TerrainTextureManager.rebuild_layer_shore_map()
 
 
-func _restore_lake_shore_profile() -> void:
-	## Put the SHIPPED inland_sea profile back, so any frame rendered after this state is judged on config.
-	_set_lake_shore_profile(_shipped_lake_profile)
+func _restore_shore_profiles() -> void:
+	## Put every SHIPPED profile back, so any frame rendered after a sweep is judged on config.
+	for terrain_id: int in _shipped_shore_profiles.keys():
+		_terrain_entry(terrain_id)["shore_profile"] = _shipped_shore_profiles[terrain_id]
+	TerrainTextureManager.rebuild_layer_shore_map()
 
 
-func _lake_terrain_entry() -> Dictionary:
+func _terrain_entry(terrain_id: int) -> Dictionary:
 	for entry: Variant in TerrainTextureManager.terrain_config.get("terrains", []):
-		if entry is Dictionary and int(entry.get("id", -1)) == LAKE_WATER_ID:
+		if entry is Dictionary and int(entry.get("id", -1)) == terrain_id:
 			return entry
 	return {}
 
@@ -1293,18 +1419,19 @@ func _v8_visibility() -> PackedFloat32Array:
 	return vis
 
 
-func _snapshot_coast(shore_id: int = COAST_SHORE_ID) -> Dictionary:
+func _snapshot_coast(shore_id: int = COAST_SHORE_ID, water_id: int = COAST_WATER_ID) -> Dictionary:
 	## A ragged land↔water coastline with a single water id (so no water↔water edge exists anywhere) and an
 	## inland flat↔flat seam. The shoreline (foam/beach) and flat-interlock passes own every pixel here, so
 	## this frame must be BIT-IDENTICAL before and after any eligibility-gate change.
 	## `shore_id` swaps the coastal land band (default tan prairie; pass a DARK biome to judge the sand's
-	## inland reach, which tan land hides).
+	## inland reach, which tan land hides). `water_id` swaps the SEA (default continental_shelf; pass
+	## deep_ocean for the cliff coast), which is what selects the `shore_profile` under test.
 	var arr: Array = []
 	arr.resize(WATER_GRID_W * WATER_GRID_H)
 	for y in range(WATER_GRID_H):
 		var shore_col: int = COAST_SHORE_BASE_COL + int(COAST_SHORE_WOBBLE[y % COAST_SHORE_WOBBLE.size()])
 		for x in range(WATER_GRID_W):
-			var id: int = COAST_WATER_ID
+			var id: int = water_id
 			if x >= shore_col + COAST_SHORE_BAND_COLS:
 				id = COAST_INLAND_ID
 			elif x >= shore_col:
