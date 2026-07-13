@@ -41,6 +41,40 @@ uniform float peak_shadow_len;    // cast-shadow reach toward the light, in px (
 uniform float peak_shadow_strength; // max darkening a fully-occluding peak casts on the ground (0..1)
 uniform float peak_min_prominence;  // relief opacity floor at the lowest elevation (0..1); scales to 1 at peak elev
 uniform vec2 peak_light_dir;      // normalized direction TOWARD the light in canvas space (+y DOWN → top-left is -,-)
+// River water array: flowing-water bands (RGBA, opaque) for the Minor/Major hex-EDGE rivers. Indexed by
+// river CLASS - 1 (layer 0 = Minor, 1 = Major) — NOT by terrain id: a river is not a biome, it rides an
+// edge. Sampled in MAP space (v_map) like the canopy/peaks so the water is continuous across hexes, plus
+// a TIME scroll along the edge tangent so it flows. Trilinear (mipmap) because a thin band aliases badly
+// at far zoom (the river array is built with mipmaps — see TerrainTextureManager).
+uniform sampler2DArray river_tex : filter_linear_mipmap, repeat_enable;
+uniform bool rivers_enabled;       // false when no river asset exists → skip the river pass entirely
+uniform bool rivers_lod_enabled;   // river LOD gate — DECOUPLED from blend_enabled (like canopy/peaks),
+                                   // so rivers persist at far zoom where the flat↔flat blend is off
+uniform bool river_navigable_enabled; // false when the river array has no navigable layer → skip that pass
+uniform int river_navigable_terrain_id; // terrain id of NavigableRiver (from terrain_config, by NAME)
+uniform int river_delta_terrain_id;     // terrain id of RiverDelta — the sim makes the chain's MOUTH a delta,
+                                   // a LAND tile, so the channel must arm toward it or it dead-ends short of the sea
+uniform float river_navigable_half_width; // navigable CHANNEL half-width, in px (navigable_width * radius)
+uniform float river_minor_half_width; // Minor half-band half-width, in px (minor_width * radius)
+uniform float river_major_half_width; // Major half-band half-width, in px (major_width * radius)
+uniform float river_softness;      // bank ramp half-width, in px (softness_width * radius)
+uniform float river_meander;       // world-noise perturbation of the band's distance, in px (meander_width * radius)
+uniform float river_width_variation; // 0..1: how far the LOW-frequency world noise swells/pinches the
+                                   // half-width along the river's length (0.3 = ±30%). The main cure for
+                                   // the honeycomb read — a constant-width stroke looks INKED, not flowed.
+uniform float river_bank_noise;    // higher-frequency ragged-bank wobble of the half-width, in px
+                                   // (bank_noise_width * radius) — the shore pass's noisy-reach idiom
+uniform float river_class_blend;   // px over which Minor crossfades into Major at a class change, so one
+                                   // river GROWS instead of splicing two waterways together
+uniform float river_tint_strength; // 0..1: how hard both class layers are pulled onto the shared river hue
+uniform float river_depth_compress; // 0..1: how hard both class layers' luma is pulled toward the shared
+                                   // depth pivot — Major stays deeper, but stops reading as near-black
+uniform float river_scale;         // world-UV scale multiplier for the water texture (like canopy_scale)
+uniform float river_flow_speed;    // downstream UV scroll per second along the edge tangent
+uniform bool river_highlight;      // debug toggle (Map tab): tint the rivers hard so they pop
+// river-map splatmap: the per-tile 12-bit riverEdges mask, 2 bits per odd-r direction
+// (class = (mask >> (2*dir)) & 3; 0 none / 1 Minor / 2 Major). R = low 8 bits, G = high 4 bits.
+uniform sampler2D river_map : filter_nearest;
 // id-map splatmap: R = terrain id (0..255), G = blend_class code (0 water, 1 flat, 2 rugged),
 // B = canopy code (0 = no canopy, else canopy-array layer + 1),
 // A = peak code (0 = no peaks, else peak-array layer + 1).
@@ -72,12 +106,55 @@ uniform vec3 foam_color;      // surf line color (light desaturated cyan / near-
 uniform vec3 beach_color;     // sand beach color (warm tan)
 
 const float SQRT3 = 1.7320508075688772;
+const int BLEND_CLASS_WATER = 0;          // id-map G channel codes (see the id_map uniform): 0 water / 1 flat / 2 rugged
 // Shore look tuning (fixed feel; the widths/colors are the config levers).
 const float SHORE_REACH_NOISE_MIN = 0.35; // min fraction of the shore band the noise leaves → wavy fingers
 const float SHORE_WISP_CENTER = 1.35;     // inner foam wisp center, as a multiple of foam_band (out past the main band)
 const float SHORE_WISP_HALF = 0.35;       // inner foam wisp half-thickness (× foam_band)
 const float SHORE_WISP_STRENGTH = 0.45;   // inner foam wisp max opacity
 const float CANOPY_TREELINE_NOISE = 0.6;  // how hard world-noise waves the treeline in/out (× overhang)
+// River look tuning (fixed feel; the widths/softness/meander/scale are the config levers).
+const int RIVER_CLASS_MINOR = 1;          // 2-bit mask class values (0 = no river; 3 is RESERVED, never drawn)
+const int RIVER_CLASS_MAX = 2;            // Major — the highest class with a texture layer (layer = class - 1)
+const float RIVER_HALF_SIDE = 0.5;        // a regular hexagon's side length == its circumradius, so the shared
+                                          // edge is mid ± perp * (hex_radius * 0.5) — the segment, NOT the
+                                          // infinite bisector (which would smear the band across the hex)
+const vec2 RIVER_NOISE_OFFSET = vec2(23.0, 41.0); // decorrelate the meander noise from the shore/treeline ones
+const vec2 RIVER_NOISE_OFFSET_Y = vec2(61.0, 7.0); // second axis of the meander domain warp
+// Meander wavelength, in HEX RADII — deliberately NOT the shared `noise_cell`, which is a fixed px size:
+// at a few px the river would get a fuzzy bank rather than a wander, and being screen-space its character
+// would change with zoom. Keying the cell to hex_radius puts the wander on a ~1.5-hex wavelength that
+// looks the same at every zoom. The amplitude (river_meander) must stay WELL under this, or the warp's
+// gradient exceeds the band's half-width and the river TEARS into disconnected pools.
+const float RIVER_MEANDER_CELL = 0.9;
+// Width-variation wavelength, in HEX RADII. Deliberately LONG (a few radii, so one swell spans several
+// edges): the swell must read as a property of the REACH, not of the hex it happens to sit on — a cell
+// near 1 would re-key the variation to the lattice and reinforce exactly the honeycomb it is fighting.
+const float RIVER_WIDTH_NOISE_CELL = 2.6;
+const vec2 RIVER_WIDTH_NOISE_OFFSET = vec2(13.0, 71.0);  // decorrelated from the meander / bank / shore noises
+// Ragged-bank wavelength, in HEX RADII — a few of these wobbles per edge, so the bank frays.
+const float RIVER_BANK_NOISE_CELL = 0.35;
+const vec2 RIVER_BANK_NOISE_OFFSET = vec2(89.0, 31.0);
+// px floor on the half-width. Two jobs: the width/bank noise may PINCH the band but never sever it, and
+// at far zoom (where the fraction-of-radius width goes sub-pixel) it keeps the river a legible hairline
+// rather than letting it alias away — a river is a landmark you navigate BY (cf. the decoupled river LOD).
+const float RIVER_MIN_HALF_WIDTH = 1.25;
+const vec3 RIVER_LUMA = vec3(0.2126, 0.7152, 0.0722);    // Rec.709 luma, for the class harmonization
+// Minor (light water over gravel) and Major (deep water) are deliberately DIFFERENT art, but untreated
+// they meet as turquoise-next-to-near-black and read as two waterways spliced, not one river growing.
+// Both layers are pulled toward a shared hue and a shared depth pivot; what survives is the LUMA ORDER
+// (Minor lighter, Major deeper), which is the thing that should say "bigger".
+const vec3 RIVER_SHARED_HUE = vec3(0.24, 0.52, 0.58);
+const float RIVER_DEPTH_PIVOT = 0.38;     // the luma both classes are drawn toward (≈ a mid river green-blue)
+const float RIVER_LUMA_EPSILON = 0.001;   // guard: never divide by a black pixel's luma
+const vec3 RIVER_HIGHLIGHT_COLOR = vec3(0.95, 0.25, 0.25); // debug tint (matches the retired polyline highlight)
+const float RIVER_HIGHLIGHT_MIX = 0.75;   // how hard river_highlight pushes toward that tint
+// NAVIGABLE channel (a water TERRAIN, not an edge — see the navigable pass): its water is river-array
+// layer 2, painted OVER the hex's own bank floor. Unlike Minor/Major it runs hex CENTER → edge MIDPOINTS.
+const float RIVER_NAVIGABLE_LAYER = 2.0;
+// Degenerate fallback: a navigable hex with no qualifying arm (the sim should never emit one — MapView
+// push_warnings if it does) still gets water, as a blob at the hex centre, rather than a hex of bare bank.
+const float RIVER_NAVIGABLE_ORPHAN_BLOB = 0.9;  // blob radius, as a multiple of the channel half-width
 
 // v_world is the quad-LOCAL (viewport/screen-fixed) coordinate — it does NOT track the map on
 // pan/zoom. hex_origin (= MapView last_origin) moves with the pan/zoom, so hex-anchored terms
@@ -116,15 +193,61 @@ float canopy_density(float s, float overhang, float softness) {
 	return 0.5 * smoothstep(-overhang, 0.0, s);
 }
 
-// odd-r neighbour offsets (MUST match MapView._get_neighbor_offset_{x,y}_2d).
+// Pull a river water sample onto the SHARED river look: compress its luma toward RIVER_DEPTH_PIVOT
+// (river_depth_compress) and its chroma toward RIVER_SHARED_HUE (river_tint_strength), preserving the
+// relative order (Minor stays lighter than Major). This is what makes following a river from headwater to
+// mouth read as one waterway GROWING rather than a bright stream spliced onto a near-black one.
+vec3 river_harmonize(vec3 c) {
+	float l = dot(c, RIVER_LUMA);
+	float lc = mix(l, RIVER_DEPTH_PIVOT, river_depth_compress);   // depth-compressed target luma
+	vec3 graded = c * (lc / max(l, RIVER_LUMA_EPSILON));          // same pixel, re-exposed to that luma
+	vec3 hue = RIVER_SHARED_HUE * (lc / dot(RIVER_SHARED_HUE, RIVER_LUMA)); // shared hue AT that luma
+	return clamp(mix(graded, hue, river_tint_strength), vec3(0.0), vec3(1.0));
+}
+
+// --- the river "organic" machinery, SHARED by the edge (Minor/Major) and navigable-channel passes ---
+// All three sample WORLD space (v_map), never hex-local space: two hexes flanking a shared boundary must
+// get identical values there, or the water would step at the boundary. That is what makes the edge river's
+// two half-bands meet with no seam AND the navigable channel continuous across adjacent navigable hexes.
+//
+// MEANDER — a DOMAIN WARP of the point we measure FROM, not a scalar bias on the distance. Nudging the
+// (unsigned) distance would only bulge/pinch a still perfectly straight centerline; warping the point bends
+// the centerline itself. CAPPED by design (see RIVER_MEANDER_CELL).
+vec2 river_meander_warp(vec2 p_world, vec2 p_map) {
+	vec2 mp = p_map / (hex_radius * RIVER_MEANDER_CELL);
+	vec2 warp = vec2(vnoise(mp + RIVER_NOISE_OFFSET) - 0.5,
+		vnoise(mp + RIVER_NOISE_OFFSET_Y) - 0.5) * 2.0 * river_meander;
+	return p_world + warp;
+}
+
+// WIDTH VARIATION — the river swells and pinches ALONG its length. A constant-width stroke is what makes an
+// edge river read as INKED HEX BORDERS (and a navigable channel as a canal); a varying one reads as flowed
+// water. Low-frequency (cells of a few hex radii) so one swell spans several hexes and the variation is a
+// property of the REACH, not of the hex it sits on.
+float river_width_mod(vec2 p_map) {
+	float wn = vnoise(p_map / (hex_radius * RIVER_WIDTH_NOISE_CELL) + RIVER_WIDTH_NOISE_OFFSET);
+	return mix(1.0 - river_width_variation, 1.0 + river_width_variation, wn);
+}
+
+// RAGGED BANKS — a higher-frequency wobble of the half-width (px), the same idiom the shore pass's noisy
+// `reach` rides. Frays the bank without moving the centerline.
+float river_bank_wobble(vec2 p_map) {
+	return river_bank_noise * (vnoise(p_map / (hex_radius * RIVER_BANK_NOISE_CELL) + RIVER_BANK_NOISE_OFFSET) - 0.5);
+}
+
+// odd-r neighbour offsets, in the SIM's direction order (core_sim grid_utils HEX_NEIGHBOR_OFFSETS:
+// clockwise from E — 0=E, 1=SE, 2=SW, 3=W, 4=NW, 5=NE; +y is DOWN in canvas space, so SE steps row+1).
+// The blend/shore/canopy/peak passes only ever loop over all 6 and are order-agnostic, but the RIVER
+// pass indexes the per-tile riverEdges bitmask BY DIRECTION (class = (mask >> (2*dir)) & 3), so this
+// table's order IS the wire contract with the sim. Do not reorder.
 ivec2 neighbor_offset(int row, int dir) {
 	int odd = row & 1;
-	if (dir == 0) { return ivec2(1, 0); }                 // E
-	if (dir == 1) { return ivec2(odd == 1 ? 1 : 0, -1); } // NE
-	if (dir == 2) { return ivec2(odd == 1 ? 0 : -1, -1); }// NW
-	if (dir == 3) { return ivec2(-1, 0); }                // W
-	if (dir == 4) { return ivec2(odd == 1 ? 0 : -1, 1); } // SW
-	return ivec2(odd == 1 ? 1 : 0, 1);                    // SE
+	if (dir == 0) { return ivec2(1, 0); }                  // E
+	if (dir == 1) { return ivec2(odd == 1 ? 1 : 0, 1); }   // SE
+	if (dir == 2) { return ivec2(odd == 1 ? 0 : -1, 1); }  // SW
+	if (dir == 3) { return ivec2(-1, 0); }                 // W
+	if (dir == 4) { return ivec2(odd == 1 ? 0 : -1, -1); } // NW
+	return ivec2(odd == 1 ? 1 : 0, -1);                    // NE
 }
 
 // offset (col,row) → hex center in local space (MUST match MapView._axial_center + _offset_to_axial).
@@ -235,8 +358,13 @@ void fragment() {
 		// --- shoreline: foam wash on the water side, sand beach on the land side, at land↔water edges ---
 		// Universal: fires for ANY edge where exactly one side is water (own_class 0). Inland flat↔flat
 		// and rugged↔* edges are untouched (both sides non-water → skipped). LOD-gated like the blend.
-		if (blend_enabled) {
-			bool own_water = own_class == 0;
+		// EXCEPT a NAVIGABLE river: it is a bank hex (blend_class "flat") with a channel painted through it,
+		// so a coast treatment there is a lie in both directions — a beach on the bank at the river's mouth,
+		// and a surf line drawn ACROSS that mouth (the river visibly walled off from the sea it drains into).
+		// A river meeting the sea is not a coast, so any edge with a navigable hex on EITHER side is skipped.
+		bool own_navigable = own_layer == river_navigable_terrain_id;
+		if (blend_enabled && !own_navigable) {
+			bool own_water = own_class == BLEND_CLASS_WATER;
 			float best_d = -1e9; // nearest qualifying edge = max signed distance (closest to the seam)
 			for (int dir = 0; dir < 6; dir++) {
 				ivec2 off = neighbor_offset(row, dir);
@@ -250,8 +378,10 @@ void fragment() {
 					continue;
 				}
 				vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
-				int nclass = int(texture(id_map, nuv).g * 255.0 + 0.5);
-				bool nb_water = nclass == 0;
+				vec4 nsh = texture(id_map, nuv);
+				if (int(nsh.r * 255.0 + 0.5) == river_navigable_terrain_id) { continue; } // river mouth ≠ coast
+				int nclass = int(nsh.g * 255.0 + 0.5);
+				bool nb_water = nclass == BLEND_CLASS_WATER;
 				if (own_water == nb_water) { continue; } // exactly one side must be water
 				vec2 nb_c = hex_center(ncol, nrow);
 				vec2 dir_v = normalize(nb_c - own_c);
@@ -272,6 +402,178 @@ void fragment() {
 					float wn = vnoise(v_map / noise_cell + vec2(17.0, 5.0));
 					result = mix(result, foam_color, wisp * SHORE_WISP_STRENGTH * wn);
 				}
+			}
+		}
+
+		// --- river pass: Minor/Major rivers run along hex EDGES (not through centers) ---
+		// The own hex's 12-bit riverEdges mask (2 bits per odd-r direction) says which of its 6 sides carry
+		// water and of what class. For each such side we measure the distance to the SHARED EDGE SEGMENT
+		// (mid ± perp * hex_radius * RIVER_HALF_SIDE — clamped to the segment, or the band would smear
+		// across the whole hex along the infinite bisector), perturb it with the same world value-noise the
+		// treeline/shore ride (so the river WANDERS instead of reading as a honeycomb), and keep the edge
+		// with the MAX coverage. That max-coverage (== min-distance) pick is what rounds a 120° corner join
+		// for free — no spline math. Each hex paints only the half-band on ITS OWN side; both hexes flanking
+		// an edge carry it in their masks, so the two halves meet symmetrically with no seam and NO
+		// cross-hex sampling. Sits AFTER the shore pass (so a navigable river's banks are already drawn) and
+		// BEFORE the canopy/peak passes (trees overhang a river; mountains sit above it) and before FoW (so
+		// a river in a Discovered tile dims with the mist rather than punching through it).
+		if (rivers_enabled && rivers_lod_enabled) {
+			vec4 rvpx = texture(river_map, id_uv);
+			int mask = int(rvpx.r * 255.0 + 0.5) | (int(rvpx.g * 255.0 + 0.5) << 8);
+			if (mask != 0) {
+				// The shared organic machinery (meander warp / width variation / ragged banks) — sampled in
+				// WORLD space, so the two hexes flanking an edge see identical values there and their two
+				// half-bands still meet with no seam. Same three calls the navigable pass below makes.
+				vec2 rp = river_meander_warp(v_world, v_map);
+				float width_mod = river_width_mod(v_map);
+				float width_px = river_bank_wobble(v_map);
+				// Track the best coverage per CLASS (not one winner), so a class change crossfades over
+				// river_class_blend px instead of switching layers hard — one river growing, not a splice.
+				float cov_minor = -1e9; // coverage = half_width - distance; > 0 inside the water
+				float cov_major = -1e9;
+				vec2 best_tangent = vec2(1.0, 0.0);
+				float best_cov = -1e9;
+				for (int dir = 0; dir < 6; dir++) {
+					int cls = (mask >> (2 * dir)) & 3;
+					if (cls < RIVER_CLASS_MINOR || cls > RIVER_CLASS_MAX) { continue; } // 0 = none, 3 = reserved
+					// Geometry only — no id_map fetch — so an edge river still draws at the map border and
+					// across the wrap seam (an off-map neighbour's CENTER is still well defined).
+					ivec2 off = neighbor_offset(row, dir);
+					vec2 nb_c = hex_center(col + off.x, row + off.y);
+					vec2 axis = nb_c - own_c;
+					vec2 mid = (own_c + nb_c) * 0.5;
+					vec2 perp = normalize(vec2(-axis.y, axis.x));
+					vec2 seg = perp * (hex_radius * RIVER_HALF_SIDE);
+					vec2 a = mid - seg;
+					vec2 ab = 2.0 * seg;
+					float t = clamp(dot(rp - a, ab) / dot(ab, ab), 0.0, 1.0); // clamp → SEGMENT, not bisector
+					float d = distance(rp, a + ab * t);
+					float base_w = (cls == RIVER_CLASS_MINOR) ? river_minor_half_width : river_major_half_width;
+					float half_w = max(base_w * width_mod + width_px, RIVER_MIN_HALF_WIDTH);
+					float cov = half_w - d;
+					if (cls == RIVER_CLASS_MINOR) {
+						cov_minor = max(cov_minor, cov);
+					} else {
+						cov_major = max(cov_major, cov);
+					}
+					if (cov > best_cov) {
+						best_cov = cov;
+						best_tangent = normalize(ab);
+					}
+				}
+				if (best_cov > -river_softness) {
+					float alpha = smoothstep(-river_softness, river_softness, best_cov);
+					// Continuous map-space UV (exactly like the canopy), plus a downstream scroll along the
+					// winning edge's tangent so the water flows.
+					vec2 ruv = v_map / (2.0 * hex_radius) * river_scale
+						+ best_tangent * (TIME * river_flow_speed);
+					// CLASS CROSSFADE: which layer wins is a SMOOTH function of how much closer the nearest
+					// Major edge is than the nearest Minor one, ramped over river_class_blend px. Where a
+					// hex carries both classes (the class change) the two layers dissolve into each other
+					// over that distance; a pure-Minor / pure-Major hex is unaffected (the loser stays at
+					// -1e9). Hexes flanking the same edge see the same coverages → still no seam.
+					float class_mix = smoothstep(-river_class_blend, river_class_blend, cov_major - cov_minor);
+					vec3 water = mix(texture(river_tex, vec3(ruv, 0.0)).rgb,
+						texture(river_tex, vec3(ruv, 1.0)).rgb, class_mix);
+					water = river_harmonize(water);
+					if (river_highlight) {
+						water = mix(water, RIVER_HIGHLIGHT_COLOR, RIVER_HIGHLIGHT_MIX);
+					}
+					result = mix(result, water, alpha);
+				}
+			}
+		}
+
+		// --- navigable-river pass: a BANK hex with a wide water CHANNEL running through it ---
+		// A NavigableRiver (terrain 37) is a water TERRAIN in the sim (blocking, boats), but rendering it as
+		// one made it a hex-shaped puddle with a beach and surf — indistinguishable from a lake, and nothing
+		// like a river. So its BASE texture is the silty bank ground (and its blend_class is "flat", so the
+		// bank blends softly into neighbouring flat land and takes no shore pass — see the guard above), and
+		// the water is painted ON TOP here, as a channel far narrower than the hex.
+		//
+		// The channel runs from the hex CENTRE out to the MIDPOINT of each edge it connects through. An arm
+		// is drawn toward `dir` when the river actually continues that way: the neighbour is navigable too
+		// (the chain), or is water (the sea/lake it drains into), or is a RiverDelta (the sim makes the
+		// chain's MOUTH a delta — a LAND tile — so without this the river dead-ends one hex short of the
+		// sea), or this hex's own river_edges mask carries a Minor/Major river on that side (an edge river
+		// feeding the trunk — this is what makes the edge-river → navigable join seamless, not a splice).
+		// Taking the MIN DISTANCE over all arms (max coverage) unions them: they fuse into a natural,
+		// rounded junction at the hex centre for free — exactly how the Minor/Major pass rounds its corners.
+		// Runs AFTER that pass so a Major feeding a navigable trunk composites into it, and before
+		// canopy/peaks/FoW like the rest of the water.
+		if (river_navigable_enabled && rivers_lod_enabled && own_navigable) {
+			vec4 rvpx = texture(river_map, id_uv);
+			int mask = int(rvpx.r * 255.0 + 0.5) | (int(rvpx.g * 255.0 + 0.5) << 8);
+			// The SAME organic machinery as the edge pass — meander warp, low-frequency swell along the
+			// reach, ragged banks — all sampled in WORLD space, which is what keeps the channel CONTINUOUS
+			// across adjacent navigable hexes: both hexes warp the same point and read the same width at
+			// their shared boundary, so the two half-channels line up exactly. No seam, no pinch, no gap.
+			vec2 rp = river_meander_warp(v_world, v_map);
+			float half_w = max(river_navigable_half_width * river_width_mod(v_map) + river_bank_wobble(v_map),
+				RIVER_MIN_HALF_WIDTH);
+			float best_cov = -1e9;          // coverage = half_width - distance; > 0 inside the water
+			vec2 best_tangent = vec2(1.0, 0.0);
+			int arms = 0;
+			for (int dir = 0; dir < 6; dir++) {
+				ivec2 off = neighbor_offset(row, dir);
+				int ncol = col + off.x;
+				int nrow = row + off.y;
+				// An edge river on this side feeds the trunk — a mask bit needs no neighbour fetch, so it
+				// arms the channel even at the map border / across the wrap seam.
+				int cls = (mask >> (2 * dir)) & 3;
+				bool arm = cls >= RIVER_CLASS_MINOR && cls <= RIVER_CLASS_MAX;
+				if (!arm && nrow >= 0 && nrow < grid_h) {
+					int ncol_id = ncol;
+					bool nb_in = true;
+					if (wrap_h) {
+						ncol_id = wrap_col(ncol);
+					} else if (ncol < 0 || ncol >= grid_w) {
+						nb_in = false;
+					}
+					if (nb_in) {
+						// The one id-map fetch this pass makes — terrain id (R) and blend_class (G) at once,
+						// exactly as the other passes read their neighbour texel.
+						vec4 npx = texture(id_map, (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim);
+						int nlayer = int(npx.r * 255.0 + 0.5);
+						int nclass = int(npx.g * 255.0 + 0.5);
+						arm = nlayer == river_navigable_terrain_id   // the chain continues
+							|| nclass == BLEND_CLASS_WATER            // drains into the sea / a lake
+							|| nlayer == river_delta_terrain_id;      // ... or into its delta at the mouth
+					}
+				}
+				if (!arm) { continue; }
+				arms++;
+				vec2 nb_c = hex_center(ncol, nrow);
+				// The arm SEGMENT: own centre → the shared edge's midpoint. Clamped to the segment (like the
+				// edge pass clamps to the edge), so the channel stops at the hex boundary instead of
+				// smearing along an infinite ray — the neighbour paints its own half.
+				vec2 ab = (own_c + nb_c) * 0.5 - own_c;
+				float t = clamp(dot(rp - own_c, ab) / dot(ab, ab), 0.0, 1.0);
+				float cov = half_w - distance(rp, own_c + ab * t);
+				if (cov > best_cov) {
+					best_cov = cov;
+					best_tangent = normalize(ab);
+				}
+			}
+			if (arms == 0) {
+				// Degenerate — a navigable hex the river neither enters nor leaves. The sim should never
+				// emit one (MapView push_warnings if it does); draw a blob at the centre rather than a hex
+				// of bare bank with no water in it.
+				best_cov = half_w * RIVER_NAVIGABLE_ORPHAN_BLOB - distance(rp, own_c);
+			}
+			if (best_cov > -river_softness) {
+				float alpha = smoothstep(-river_softness, river_softness, best_cov);
+				// Same continuous map-space UV + downstream TIME scroll as the edge classes, so a Major and
+				// the trunk it feeds flow as one body of water.
+				vec2 ruv = v_map / (2.0 * hex_radius) * river_scale
+					+ best_tangent * (TIME * river_flow_speed);
+				// Harmonized like the edge classes (shared hue / depth pivot, luma order preserved), so the
+				// trunk reads as the SAME river grown bigger rather than a third, unrelated waterway.
+				vec3 water = river_harmonize(texture(river_tex, vec3(ruv, RIVER_NAVIGABLE_LAYER)).rgb);
+				if (river_highlight) {
+					water = mix(water, RIVER_HIGHLIGHT_COLOR, RIVER_HIGHLIGHT_MIX);
+				}
+				result = mix(result, water, alpha);
 			}
 		}
 

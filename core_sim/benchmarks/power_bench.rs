@@ -77,6 +77,8 @@ fn spawn_power_nodes(
                         terrain: TerrainType::AlluvialPlain,
                         terrain_tags: TerrainTags::empty(),
                         mountain: None,
+                        river_edges: 0,
+                        river_inflow: 0,
                     },
                     PowerNode {
                         id: PowerNodeId(idx as u32),

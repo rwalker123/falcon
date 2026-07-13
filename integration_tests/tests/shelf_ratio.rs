@@ -101,7 +101,12 @@ fn shelf_fraction_of_ocean(snap: &WorldSnapshot) -> (f64, usize, usize) {
 fn is_land(t: TerrainType) -> bool {
     !matches!(
         t,
-        TerrainType::ContinentalShelf | TerrainType::DeepOcean | TerrainType::InlandSea
+        TerrainType::ContinentalShelf
+            | TerrainType::DeepOcean
+            | TerrainType::InlandSea
+            // A navigable river is WATER-tagged (it mirrors InlandSea), so it is not land and must
+            // never attract a continental shelf.
+            | TerrainType::NavigableRiver
     )
 }
 
@@ -246,6 +251,7 @@ fn is_water_terrain(t: TerrainType) -> bool {
             | TerrainType::InlandSea
             | TerrainType::CoralShelf
             | TerrainType::HydrothermalVentField
+            | TerrainType::NavigableRiver
     )
 }
 

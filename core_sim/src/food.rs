@@ -169,7 +169,8 @@ pub fn classify_food_module_from_traits(
 
     let module = match terrain {
         TidalFlat | RiverDelta | MangroveSwamp | CoralShelf => FoodModule::CoastalLittoral,
-        Floodplain | AlluvialPlain => FoodModule::RiverineDelta,
+        // A navigable river is freshwater fishing water, same module as its floodplain.
+        Floodplain | AlluvialPlain | NavigableRiver => FoodModule::RiverineDelta,
         PrairieSteppe | SemiAridScrub | OasisBasin => FoodModule::SavannaGrassland,
         MixedWoodland | PeatHeath | ImpactCraterField => FoodModule::TemperateForest,
         BorealTaiga | Tundra | PeriglacialSteppe | SeasonalSnowfield => FoodModule::BorealArctic,

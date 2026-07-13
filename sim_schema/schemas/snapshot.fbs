@@ -94,7 +94,8 @@ enum TerrainType : ushort {
   ImpactCraterField,
   KarstCavernMouth,
   SinkholeField,
-  AquiferCeiling
+  AquiferCeiling,
+  NavigableRiver
 }
 
 enum KnowledgeField : ubyte {
@@ -415,6 +416,18 @@ table TileState {
   // Tile-intrinsic per-turn morale drain (fixed-point, FIXED_POINT_SCALE = 1e6; >= 0, bigger =
   // harsher). Band-independent property of the place — the sim's `tile_morale_pressure` total.
   habitability:long = 0;
+  // Packed per-side river classes: 2 bits per odd-r direction (0=E,1=SE,2=SW,3=W,4=NW,5=NE),
+  // decoded via RiverClass (0=None, 1=Minor, 2=Major; 3 reserved). Both hexes flanking a river
+  // edge carry it on their own side. With TerrainType.NavigableRiver this fully determines the
+  // river render — there is no separate polyline overlay.
+  riverEdges:ushort = 0;
+  // Packed per-CORNER river inflow: 2 bits per hex corner (0=lower-right, 1=bottom, 2=lower-left,
+  // 3=upper-left, 4=top, 5=upper-right — screen space, +y down; corner i at angle 60*i + 30),
+  // decoded via RiverClass exactly like riverEdges. Set only on the FIRST hex of a NavigableRiver
+  // chain, at the corner where the edge-river chain terminates and hands its water to the trunk,
+  // carrying the class of the last edge it emitted. An edge river ends at a vertex, never mid-side,
+  // so this is the point the renderer joins the tributary to the trunk hex. 0 everywhere else.
+  riverInflow:ushort = 0;
 }
 
 table LogisticsLinkState {
@@ -1046,7 +1059,6 @@ table WorldSnapshot {
   foragePatches:[ForagePatchState];
   intensificationKnowledge:[IntensificationKnowledgeState];
   moistureRaster:FloatRaster;
-  hydrologyOverlay:HydrologyOverlay; // rivers/streams polylines
   elevationOverlay:ElevationOverlay;
   terrainOverlay:TerrainOverlay;
   logisticsRaster:ScalarRaster;
@@ -1109,7 +1121,6 @@ table WorldDelta {
   influencers:[InfluentialIndividualState];
   removedInfluencers:[uint];
   terrainOverlay:TerrainOverlay;
-  hydrologyOverlay:HydrologyOverlay;
   elevationOverlay:ElevationOverlay;
   logisticsRaster:ScalarRaster;
   sentimentRaster:ScalarRaster;
@@ -1122,20 +1133,6 @@ table WorldDelta {
   cultureTensions:[CultureTensionState];
   discoveryProgress:[DiscoveryProgressEntry];
   visibilityRaster:ScalarRaster;
-}
-
-// Hydrology overlay types
-table HydrologyPoint { x:uint; y:uint; }
-
-table RiverSegment {
-  id:uint;
-  order:ubyte;
-  width:ubyte;
-  points:[HydrologyPoint];
-}
-
-table HydrologyOverlay {
-  rivers:[RiverSegment];
 }
 
 union SnapshotPayload {

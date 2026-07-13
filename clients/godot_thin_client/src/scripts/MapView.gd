@@ -190,6 +190,66 @@ const PEAK_DEFAULT_LIGHT_DIR := Vector2(-0.7, -0.7)  # top-left; canvas +y is DO
 # Elev-map fallback (0..255 = relative height 0..100): used when a snapshot lacks an elevation raster
 # (relative_height_at returns -1) so peak relief still renders in preview/rehydrated frames.
 const PEAK_ELEV_FALLBACK := 200
+# Rivers (Minor/Major) ride hex EDGES, not centers: each tile carries a 12-bit `river_edges` mask (2 bits
+# per odd-r direction). The shader's river pass paints a water band along each carrying edge. Widths /
+# softness / meander are fractions of the hex radius (× radius → px, like blend_width / canopy_overhang);
+# texture_scale is the world-UV multiplier; flow_speed scrolls the water downstream. Fallbacks mirror
+# terrain_config's "rivers" block. (Navigable rivers are NOT here — they are an ordinary water terrain.)
+const RIVER_DEFAULT_MINOR_WIDTH := 0.05
+const RIVER_DEFAULT_MAJOR_WIDTH := 0.09
+# NAVIGABLE is the exception to the "rivers ride edges" rule: it is a water TERRAIN, so its channel runs
+# hex CENTRE → edge midpoints, not along an edge. Its half-width is far wider than Major's (it is a great
+# river) but well short of filling the hex — the hex is a BANK with a channel through it, not a puddle.
+const RIVER_DEFAULT_NAVIGABLE_WIDTH := 0.24
+# River-array layer of the navigable channel water (the array is keyed by class - 1: 0 Minor, 1 Major).
+const RIVER_NAVIGABLE_LAYER := 2
+# The two terrains the navigable pass keys on, resolved from terrain_config BY NAME (never by a literal id):
+# the channel's own terrain, and the RiverDelta the sim makes the chain's mouth — a LAND tile the channel
+# must still arm toward, or the river visibly dead-ends one hex short of the sea.
+const TERRAIN_NAME_NAVIGABLE_RIVER := "navigable_river"
+const TERRAIN_NAME_RIVER_DELTA := "river_delta"
+const RIVER_DEFAULT_SOFTNESS_WIDTH := 0.05
+# The meander is CAPPED by design, not under-tuned: the river is edge-LOCKED (the water must be drawn on
+# the edge a crossing cost will apply to), so a warp big enough to erase the lattice read would detach the
+# band from its own edge — and past ~0.24 it tears the river into disconnected pools anyway. What actually
+# kills the honeycomb is THIN bands (above) + width variation ALONG the river (below).
+const RIVER_DEFAULT_MEANDER_WIDTH := 0.22
+# Low-frequency swell/pinch of the half-width along the river's length, as a fraction (0.4 = ±40%).
+const RIVER_DEFAULT_WIDTH_VARIATION := 0.4
+# Higher-frequency ragged-bank wobble of the half-width, as a fraction of the hex radius.
+const RIVER_DEFAULT_BANK_NOISE_WIDTH := 0.045
+# Distance (fraction of the hex radius) over which Minor crossfades into Major at a class change.
+const RIVER_DEFAULT_CLASS_BLEND_WIDTH := 1.0
+# How hard the two class textures (light gravel-shallow vs near-black deep) are pulled onto a shared hue /
+# depth so a river reads as ONE waterway growing rather than two spliced together.
+const RIVER_DEFAULT_TINT_STRENGTH := 0.5
+const RIVER_DEFAULT_DEPTH_COMPRESS := 0.5
+const RIVER_DEFAULT_TEXTURE_SCALE := 1.8
+# River LOD gate, DECOUPLED from the flat↔flat blend gate (EDGE_BLEND_MIN_RADIUS) exactly like the canopy
+# and peak floors: a river is a landmark you navigate BY, so it must survive zooming out. The mipmapped
+# river array keeps the thin band stable (no shimmer) down here.
+const RIVER_DEFAULT_MIN_RADIUS := 3.0
+const RIVER_DEFAULT_FLOW_SPEED := 0.03
+# The 12-bit river mask is split across an RG8 texel: R = low 8 bits, G = the high 4.
+const RIVER_MASK_LOW_BYTE := 0xFF
+const RIVER_MASK_HIGH_SHIFT := 8
+# The mask packs one river CLASS per odd-r direction: class = (mask >> (2 * dir)) & 0b11.
+const RIVER_MASK_CLASS_BITS := 2
+const RIVER_MASK_CLASS_MAX := 0b11
+# id-map G-channel blend-class code for water (see _blend_class_code) — the navigable channel arms toward
+# any water neighbour (the sea or lake it drains into).
+const BLEND_CLASS_CODE_WATER := 0
+# odd-r neighbour offsets in the SIM's direction order (core_sim grid_utils::HEX_NEIGHBOR_OFFSETS, clockwise
+# from E: 0=E, 1=SE, 2=SW, 3=W, 4=NW, 5=NE) — the order the 12-bit river_edges mask is indexed by, so this
+# table is a WIRE CONTRACT (it must stay in step with the shader's neighbor_offset()). (dx_even, dx_odd, dy).
+const HEX_NEIGHBOR_OFFSETS := [
+	[1, 1, 0],    # 0 E
+	[0, 1, 1],    # 1 SE
+	[-1, 0, 1],   # 2 SW
+	[-1, -1, 0],  # 3 W
+	[-1, 0, -1],  # 4 NW
+	[0, 1, -1],   # 5 NE
+]
 # Out-of-map fill behind the hex grid (matches the direct-path background clear).
 const TERRAIN_BG_COLOR := Color(0.3, 0.35, 0.25, 1.0)
 const GRID_COLOR := Color(0.06, 0.08, 0.12, 1.0)
@@ -505,7 +565,10 @@ var trade_links_overlay: Array = []
 var trade_overlay_enabled: bool = false
 var selected_trade_entity: int = -1
 var crisis_annotations: Array = []
-var hydrology_rivers: Array = []
+# Per-tile river-edge mask (12 bits, 2 per odd-r direction — see RIVER_DEFAULT_* / the shader's river
+# pass), keyed by Vector2i(x, y). Feeds the RG8 river-map splatmap; the shader does the drawing.
+var tile_river_edges: Dictionary = {}
+# Debug toggle (Map tab): tint rivers hard so they pop. Pushed to the shader as `river_highlight`.
 var highlight_rivers: bool = false
 
 # Terrain texture system for 2D view (textures loaded via TerrainTextureManager autoload)
@@ -517,6 +580,7 @@ var _terrain_grid_height: int = 0
 var _cached_terrain_ids: PackedInt32Array = PackedInt32Array()
 var _hex_alpha_mask: PackedByteArray = PackedByteArray()  # Pre-computed hex mask for texture rendering
 var _terrain_blend_class: Dictionary = {}  # terrain_id -> "flat"|"water"|"rugged" (edge-blend eligibility)
+var _terrain_id_by_name: Dictionary = {}   # terrain config `name` -> id (feeds the shader's navigable/delta ids)
 # Approach B — per-pixel biome-blend shader (terrain_blend.gdshader). A whole-map quad child renders
 # the blended terrain behind MapView's own draws; MapView feeds it the biome array + a per-hex id-map
 # (splatmap) + the exact hex-layout uniforms. Supersedes A's baked-overlay dither when use_edge_blending.
@@ -526,6 +590,7 @@ var _terrain_blend_ready: bool = false
 var _terrain_id_map_tex: ImageTexture = null   # RGBA8: R=terrain id, G=blend_class code (0 water/1 flat/2 rugged), B=canopy code (0=none else layer+1), A=peak code (0=none else layer+1)
 var _terrain_vis_map_tex: ImageTexture = null  # R8: 0 unexplored / 0.5 discovered / 1 active
 var _terrain_elev_map_tex: ImageTexture = null # R8: per-hex relative height (0..255 = 0..100), for peak prominence + shadow scaling
+var _terrain_river_map_tex: ImageTexture = null # RG8: the 12-bit river-edge mask (R = low 8 bits, G = high 4)
 var culture_layer_grid: PackedInt32Array = PackedInt32Array()
 var highlighted_culture_layer_ids: PackedInt32Array = PackedInt32Array()
 var highlighted_culture_layer_set: Dictionary = {}
@@ -782,8 +847,6 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_minimap_2d_data_version += 1
 	# Invalidate map cache when terrain data changes
 	_invalidate_map_cache()
-	# Rebuild the Approach-B blend-shader splatmaps (id-map + FoW vis-map) from the new terrain/fog.
-	_rebuild_terrain_shader_maps()
 	var palette_raw: Variant = overlays.get("terrain_palette", {})
 	terrain_palette = palette_raw if typeof(palette_raw) == TYPE_DICTIONARY else {}
 	terrain_tags_overlay = PackedInt32Array(overlays.get("terrain_tags", []))
@@ -809,12 +872,6 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 		for entry in crisis_annotations_variant:
 			if entry is Dictionary:
 				crisis_annotations.append((entry as Dictionary).duplicate(true))
-	hydrology_rivers = []
-	var rivers_variant: Variant = overlays.get("hydrology_rivers", [])
-	if rivers_variant is Array:
-		for entry in rivers_variant:
-			if entry is Dictionary:
-				hydrology_rivers.append((entry as Dictionary).duplicate(true))
 	routes = Array(snapshot.get("orders", []))
 	food_sites = []
 	food_site_lookup.clear()
@@ -895,6 +952,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	tile_lookup.clear()
 	tile_habitability.clear()
 	tile_temperature.clear()
+	tile_river_edges.clear()
 	if grid_width > 0 and grid_height > 0:
 		var total: int = grid_width * grid_height
 		culture_layer_grid = PackedInt32Array()
@@ -917,11 +975,18 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 					tile_habitability[Vector2i(x, y)] = float(tile_dict["habitability"])
 				if tile_dict.has("temperature"):
 					tile_temperature[Vector2i(x, y)] = float(tile_dict["temperature"])
+				var river_mask: int = int(tile_dict.get("river_edges", 0))
+				if river_mask != 0:
+					tile_river_edges[Vector2i(x, y)] = river_mask
 				if culture_layer_grid.size() > 0:
 					if x >= 0 and x < grid_width and y >= 0 and y < grid_height:
 						var index: int = y * grid_width + x
 						if index >= 0 and index < culture_layer_grid.size():
 							culture_layer_grid[index] = int(tile_dict.get("culture_layer", -1))
+	# Rebuild the Approach-B blend-shader splatmaps (id-map + FoW vis-map + elev-map + river-map) from the
+	# new terrain/fog/elevation/river-edges. Runs AFTER the tile loop, not beside the terrain ingest above:
+	# the river-map is built from `tile_river_edges`, which only exists once the tiles have been read.
+	_rebuild_terrain_shader_maps()
 	_install_province_overlay()
 	_rebuild_unit_markers(snapshot)
 	_rebuild_herd_markers(snapshot)
@@ -1092,7 +1157,8 @@ func _draw() -> void:
 	# These need to respond to hover, selection, and other dynamic state
 	_draw_terrain_highlight(radius, origin, viewport_size)
 	_draw_trade_overlay(radius, origin)
-	_draw_hydrology(radius, origin)
+	# (No river draw here: Minor/Major rivers are painted by terrain_blend.gdshader's river pass, off the
+	# per-tile river-edge mask — the water is drawn exactly on the edge the future crossing cost applies to.)
 	_draw_crisis_annotations(radius, origin)
 
 	# Selected + hovered hex outlines (drawn under the markers).
@@ -2861,6 +2927,11 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["habitability"] = float(tile_habitability[tile_key])
 	if tile_temperature.has(tile_key):
 		info["temperature"] = float(tile_temperature[tile_key])
+	# Hex-edge rivers (the 12-bit Minor/Major mask, 2 bits per odd-r direction). Deliberately NOT in
+	# FOW_DISCOVERED_HIDDEN_KEYS: a river is permanent geography, like the terrain label and a
+	# discovered Wondrous Site, so a remembered tile still reports it. Never-seen tiles are already
+	# handled by the `unexplored` redaction. Formatted for text by ui/RiverEdges.gd.
+	info["river_edges"] = int(tile_river_edges.get(tile_key, 0))
 	var mask := _tag_mask_at(col, row)
 	info["tags_mask"] = mask
 	var tag_labels := _tag_names_for_mask(mask)
@@ -3629,48 +3700,8 @@ func _format_legend_value(value: float) -> String:
 func set_terrain_mode(_enabled: bool) -> void:
 	set_overlay_channel("")
 
-func _draw_hydrology(radius: float, origin: Vector2) -> void:
-	if hydrology_rivers.is_empty():
-		return
-	var river_color := (Color(0.95, 0.25, 0.25, 0.95) if highlight_rivers else Color(0.12, 0.5, 0.85, 0.85))
-	var line_width := (4.0 if highlight_rivers else 3.0)
-	for river in hydrology_rivers:
-		if not (river is Dictionary):
-			continue
-		var points := Array(river.get("points", []))
-		if points.size() < 2:
-			continue
-		# When FoW is enabled, only draw visible segments
-		if _fow_enabled:
-			var current_segment: PackedVector2Array = PackedVector2Array()
-			for pt in points:
-				if not (pt is Dictionary):
-					continue
-				var x := int(pt.get("x", 0))
-				var y := int(pt.get("y", 0))
-				var is_visible := _is_tile_visible(x, y)
-				if is_visible:
-					current_segment.append(_hex_center(x, y, radius, origin))
-				else:
-					# End current segment and start new one
-					if current_segment.size() >= 2:
-						draw_polyline(current_segment, river_color, line_width, false)
-					current_segment = PackedVector2Array()
-			# Draw final segment if any
-			if current_segment.size() >= 2:
-				draw_polyline(current_segment, river_color, line_width, false)
-		else:
-			# FoW disabled - draw entire river
-			var poly: PackedVector2Array = PackedVector2Array()
-			for pt in points:
-				if not (pt is Dictionary):
-					continue
-				var x := int(pt.get("x", 0))
-				var y := int(pt.get("y", 0))
-				poly.append(_hex_center(x, y, radius, origin))
-			if poly.size() >= 2:
-				draw_polyline(poly, river_color, line_width, false)
-
+## Debug toggle (Map tab): tint the shader's river bands hard so they pop against the terrain.
+## Pushed to the blend shader as `river_highlight` on the next _update_terrain_shader_quad.
 func set_highlight_rivers(enabled: bool) -> void:
 	highlight_rivers = enabled
 	queue_redraw()
@@ -4323,13 +4354,21 @@ func _toggle_terrain_textures() -> void:
 func _build_terrain_blend_class_map() -> void:
 	## Cache terrain_id -> blend_class ("flat"|"water"|"rugged") from config. Only flat↔flat seams
 	## blend; water/rugged always render a hard edge. Single source of truth: terrain_config.json.
+	## Also caches name -> terrain_id, so the shader's navigable/delta ids come from the config by NAME
+	## rather than being hardcoded twice (here and in GLSL).
 	_terrain_blend_class.clear()
+	_terrain_id_by_name.clear()
 	var terrains: Array = TerrainTextureManager.terrain_config.get("terrains", [])
 	for entry: Variant in terrains:
 		if entry is Dictionary:
 			var tid: int = int(entry.get("id", -1))
 			if tid >= 0:
 				_terrain_blend_class[tid] = String(entry.get("blend_class", "rugged"))
+				_terrain_id_by_name[String(entry.get("name", ""))] = tid
+
+func _terrain_id_for_name(name: String) -> int:
+	## Terrain id for a config `name` (-1 when absent — the shader then never matches it).
+	return int(_terrain_id_by_name.get(name, -1))
 
 func _terrain_is_flat(terrain_id: int) -> bool:
 	## Flat biomes are the only ones eligible to blend across a seam (unknown ids → not flat).
@@ -4375,6 +4414,17 @@ func _setup_terrain_blend_shader() -> void:
 	var peak_arr: Texture2DArray = TerrainTextureManager.peak_textures
 	_terrain_blend_material.set_shader_parameter("peaks_enabled", peak_arr != null and peak_arr.get_layers() > 0)
 	_terrain_blend_material.set_shader_parameter("peak_tex", peak_arr if peak_arr != null else TerrainTextureManager.terrain_textures)
+	# Rivers: a FOURTH Texture2DArray in the same canvas shader (flowing water for the hex-EDGE Minor/Major
+	# rivers, layer = class - 1). Disabled (sampler harmlessly bound to the base array) with no river asset.
+	var river_arr: Texture2DArray = TerrainTextureManager.river_textures
+	_terrain_blend_material.set_shader_parameter("rivers_enabled", river_arr != null and river_arr.get_layers() > 0)
+	_terrain_blend_material.set_shader_parameter("river_tex", river_arr if river_arr != null else TerrainTextureManager.terrain_textures)
+	# The navigable channel is river-array layer 2 (the third file in textures/rivers/). Without that layer
+	# there is no channel water to paint, so the pass is disabled and a navigable hex renders as bare bank.
+	var has_navigable_layer: bool = river_arr != null and river_arr.get_layers() > RIVER_NAVIGABLE_LAYER
+	_terrain_blend_material.set_shader_parameter("river_navigable_enabled", has_navigable_layer)
+	_terrain_blend_material.set_shader_parameter("river_navigable_terrain_id", _terrain_id_for_name(TERRAIN_NAME_NAVIGABLE_RIVER))
+	_terrain_blend_material.set_shader_parameter("river_delta_terrain_id", _terrain_id_for_name(TERRAIN_NAME_RIVER_DELTA))
 	var QuadScript: GDScript = preload("res://src/scripts/TerrainBlendQuad.gd")
 	_terrain_blend_quad = QuadScript.new()
 	_terrain_blend_quad.name = "TerrainBlendQuad"
@@ -4461,6 +4511,37 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 	m.set_shader_parameter("peak_shadow_strength", peak_shadow_strength)
 	m.set_shader_parameter("peak_min_prominence", peak_min_prominence)
 	m.set_shader_parameter("peak_light_dir", peak_light_dir)
+	# Rivers (Minor/Major, on hex EDGES): widths/softness/meander are hex-radius fractions → px, exactly
+	# like blend_width / canopy_overhang. LOD is decoupled from the flat↔flat blend gate (own
+	# river_min_radius, well below EDGE_BLEND_MIN_RADIUS) so rivers survive zooming out.
+	var rivers: Dictionary = config.get("rivers", {})
+	var minor_frac: float = clampf(float(rivers.get("minor_width", RIVER_DEFAULT_MINOR_WIDTH)), 0.01, 1.0)
+	var major_frac: float = clampf(float(rivers.get("major_width", RIVER_DEFAULT_MAJOR_WIDTH)), 0.01, 1.0)
+	var navigable_frac: float = clampf(float(rivers.get("navigable_width", RIVER_DEFAULT_NAVIGABLE_WIDTH)), 0.01, 1.0)
+	var river_soft_frac: float = clampf(float(rivers.get("softness_width", RIVER_DEFAULT_SOFTNESS_WIDTH)), 0.005, 1.0)
+	var meander_frac: float = clampf(float(rivers.get("meander_width", RIVER_DEFAULT_MEANDER_WIDTH)), 0.0, 1.0)
+	var width_variation: float = clampf(float(rivers.get("width_variation", RIVER_DEFAULT_WIDTH_VARIATION)), 0.0, 1.0)
+	var bank_noise_frac: float = clampf(float(rivers.get("bank_noise_width", RIVER_DEFAULT_BANK_NOISE_WIDTH)), 0.0, 1.0)
+	var class_blend_frac: float = clampf(float(rivers.get("class_blend_width", RIVER_DEFAULT_CLASS_BLEND_WIDTH)), 0.01, 2.0)
+	var tint_strength: float = clampf(float(rivers.get("tint_strength", RIVER_DEFAULT_TINT_STRENGTH)), 0.0, 1.0)
+	var depth_compress: float = clampf(float(rivers.get("depth_compress", RIVER_DEFAULT_DEPTH_COMPRESS)), 0.0, 1.0)
+	var river_scale: float = maxf(float(rivers.get("texture_scale", RIVER_DEFAULT_TEXTURE_SCALE)), 0.05)
+	var river_min_radius: float = maxf(float(rivers.get("river_min_radius", RIVER_DEFAULT_MIN_RADIUS)), 0.0)
+	var river_flow_speed: float = float(rivers.get("flow_speed", RIVER_DEFAULT_FLOW_SPEED))
+	m.set_shader_parameter("rivers_lod_enabled", radius >= river_min_radius)
+	m.set_shader_parameter("river_minor_half_width", minor_frac * radius)  # Minor band half-width (px)
+	m.set_shader_parameter("river_major_half_width", major_frac * radius)  # Major band half-width (px)
+	m.set_shader_parameter("river_navigable_half_width", navigable_frac * radius)  # channel half-width (px)
+	m.set_shader_parameter("river_softness", river_soft_frac * radius)     # bank ramp half-width (px)
+	m.set_shader_parameter("river_meander", meander_frac * radius)         # noise wander of the band (px)
+	m.set_shader_parameter("river_width_variation", width_variation)       # swell/pinch along the river (frac)
+	m.set_shader_parameter("river_bank_noise", bank_noise_frac * radius)   # ragged-bank wobble (px)
+	m.set_shader_parameter("river_class_blend", class_blend_frac * radius) # Minor→Major crossfade span (px)
+	m.set_shader_parameter("river_tint_strength", tint_strength)
+	m.set_shader_parameter("river_depth_compress", depth_compress)
+	m.set_shader_parameter("river_scale", river_scale)
+	m.set_shader_parameter("river_flow_speed", river_flow_speed)
+	m.set_shader_parameter("river_highlight", highlight_rivers)
 	m.set_shader_parameter("fow_enabled", _fow_enabled)
 	m.set_shader_parameter("bg_color", TERRAIN_BG_COLOR)
 	m.set_shader_parameter("fog_color", _fow_fog_fill_color)
@@ -4483,9 +4564,10 @@ func _shore_color(raw, fallback: Vector3) -> Vector3:
 
 func _rebuild_terrain_shader_maps() -> void:
 	## (Re)build the id-map (RGBA8: R=terrain id, G=blend_class code, B=canopy code, A=peak code) +
-	## vis-map (R8: FoW state) + elev-map (R8: per-hex relative height for peak prominence/shadow)
-	## splatmaps, one texel per hex, from the current terrain + FoW + elevation. Called each snapshot.
-	## NEAREST-sampled in-shader.
+	## vis-map (R8: FoW state) + elev-map (R8: per-hex relative height for peak prominence/shadow) +
+	## river-map (RG8: the 12-bit river-edge mask, R = low 8 bits / G = high 4) splatmaps, one texel per
+	## hex, from the current terrain + FoW + elevation + river edges. Called each snapshot.
+	## NEAREST-sampled in-shader. All four id-map channels are taken, hence the rivers' own texture.
 	if grid_width <= 0 or grid_height <= 0 or _cached_terrain_ids.is_empty():
 		return
 	var w := grid_width
@@ -4496,6 +4578,8 @@ func _rebuild_terrain_shader_maps() -> void:
 	vis_bytes.resize(w * h)
 	var elev_bytes := PackedByteArray()
 	elev_bytes.resize(w * h)
+	var river_bytes := PackedByteArray()
+	river_bytes.resize(w * h * 2)
 	# Hoist the per-hex-invariant raster fetches + sea-level math out of the double loop:
 	# both the FoW visibility channel and the elevation channel (plus its sea-level rescale
 	# constants) are the same for every hex, so fetch/compute them once here instead of
@@ -4508,10 +4592,16 @@ func _rebuild_terrain_shader_maps() -> void:
 	# Sea-level rescale constants (see relative_height_at): above-sea span normalized into 0..1.
 	var elev_sea_level := clampf(_elevation_sea_level, 0.0, 0.999)
 	var elev_span := 1.0 - elev_sea_level
+	# Collected in the loop below (free — we already visit every hex) so the orphan-channel diagnostic
+	# costs one pass over the handful of navigable hexes instead of a second pass over the whole grid.
+	var navigable_hexes: Array[Vector2i] = []
+	var navigable_id := _terrain_id_for_name(TERRAIN_NAME_NAVIGABLE_RIVER)
 	for y in range(h):
 		for x in range(w):
 			var idx := y * w + x
 			var tid := _terrain_id_at(x, y)
+			if tid == navigable_id:
+				navigable_hexes.append(Vector2i(x, y))
 			id_bytes[idx * 4] = clampi(tid, 0, 255) if tid >= 0 else 0
 			id_bytes[idx * 4 + 1] = _blend_class_code(tid)
 			id_bytes[idx * 4 + 2] = _canopy_code(tid)
@@ -4537,16 +4627,69 @@ func _rebuild_terrain_shader_maps() -> void:
 				elev_bytes[idx] = clampi(int(round(float(rh) * 2.55)), 0, 255)
 			else:
 				elev_bytes[idx] = PEAK_ELEV_FALLBACK
+			# The 12-bit river-edge mask straddles two channels — every id-map channel is already taken.
+			var river_mask: int = int(tile_river_edges.get(Vector2i(x, y), 0))
+			river_bytes[idx * 2] = river_mask & RIVER_MASK_LOW_BYTE
+			river_bytes[idx * 2 + 1] = (river_mask >> RIVER_MASK_HIGH_SHIFT) & RIVER_MASK_LOW_BYTE
 	var id_img := Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, id_bytes)
 	_terrain_id_map_tex = ImageTexture.create_from_image(id_img)
 	var vis_img := Image.create_from_data(w, h, false, Image.FORMAT_R8, vis_bytes)
 	_terrain_vis_map_tex = ImageTexture.create_from_image(vis_img)
 	var elev_img := Image.create_from_data(w, h, false, Image.FORMAT_R8, elev_bytes)
 	_terrain_elev_map_tex = ImageTexture.create_from_image(elev_img)
+	var river_img := Image.create_from_data(w, h, false, Image.FORMAT_RG8, river_bytes)
+	_terrain_river_map_tex = ImageTexture.create_from_image(river_img)
 	if _terrain_blend_material != null:
 		_terrain_blend_material.set_shader_parameter("id_map", _terrain_id_map_tex)
 		_terrain_blend_material.set_shader_parameter("vis_map", _terrain_vis_map_tex)
 		_terrain_blend_material.set_shader_parameter("elev_map", _terrain_elev_map_tex)
+		_terrain_blend_material.set_shader_parameter("river_map", _terrain_river_map_tex)
+	_warn_orphan_navigable_rivers(navigable_hexes, navigable_id)
+
+func _warn_orphan_navigable_rivers(navigable_hexes: Array[Vector2i], navigable_id: int) -> void:
+	## Diagnostic mirror of the shader's navigable ARM rule (terrain_blend.gdshader, navigable pass): a
+	## navigable hex must connect through at least one side — to the next navigable hex, to the water it
+	## drains into, to the RiverDelta at its mouth, or to a Minor/Major edge river feeding it. A hex with
+	## none is a river the water neither enters nor leaves; the sim should never emit one. The shader stays
+	## graceful (it draws a centre blob rather than a hex of bare bank), so without this the anomaly would
+	## be silent — hence the warning. Keep the two rules in step if either changes.
+	if navigable_hexes.is_empty():
+		return
+	var delta_id := _terrain_id_for_name(TERRAIN_NAME_RIVER_DELTA)
+	var orphans: Array[String] = []
+	for hex: Vector2i in navigable_hexes:
+		var mask: int = int(tile_river_edges.get(hex, 0))
+		var connected := false
+		for dir in range(HEX_NEIGHBOR_OFFSETS.size()):
+			if ((mask >> (RIVER_MASK_CLASS_BITS * dir)) & RIVER_MASK_CLASS_MAX) != 0:
+				connected = true  # an edge river on this side feeds the trunk
+				break
+			var nb := _hex_neighbor(hex, dir)
+			if nb.x < 0:
+				continue
+			var ntid := _terrain_id_at(nb.x, nb.y)
+			if ntid == navigable_id or ntid == delta_id or _blend_class_code(ntid) == BLEND_CLASS_CODE_WATER:
+				connected = true
+				break
+		if not connected:
+			orphans.append("(%d, %d)" % [hex.x, hex.y])
+	if not orphans.is_empty():
+		push_warning("[MapView] %d navigable-river hex(es) connect to nothing — no chain, water, delta or edge river on any side; rendering a centre blob: %s"
+			% [orphans.size(), ", ".join(orphans)])
+
+func _hex_neighbor(hex: Vector2i, dir: int) -> Vector2i:
+	## Odd-r neighbour of `hex` in sim direction `dir`; Vector2i(-1, -1) when the step leaves the map
+	## (horizontal wrap included, so a river crossing the seam still reads as connected).
+	var off: Array = HEX_NEIGHBOR_OFFSETS[dir]
+	var nx: int = hex.x + int(off[1] if (hex.y % 2) == 1 else off[0])
+	var ny: int = hex.y + int(off[2])
+	if ny < 0 or ny >= grid_height:
+		return Vector2i(-1, -1)
+	if _wrap_horizontal and grid_width > 0:
+		nx = ((nx % grid_width) + grid_width) % grid_width
+	elif nx < 0 or nx >= grid_width:
+		return Vector2i(-1, -1)
+	return Vector2i(nx, ny)
 
 ## The single shared hex-grid-line drawer for MapView's own canvas — called by BOTH the shader-terrain
 ## branch (base terrain is the behind-quad) and _draw_terrain_direct (blend-off per-hex path), so the

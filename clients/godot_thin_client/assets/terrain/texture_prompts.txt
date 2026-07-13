@@ -96,3 +96,62 @@
 35_sinkhole_field: Seamless tileable sinkhole field texture, top-down view, collapsed terrain, circular depressions, exposed rock, painterly style, 512x512 game asset
 
 36_aquifer_ceiling: Seamless tileable underground aquifer ceiling texture, top-down view, wet limestone, stalactites, water drips, painterly style, 512x512 game asset
+
+# Navigable River (37)
+# A navigable river is a WATER TERRAIN HEX (not an edge feature) — the giant, boat-carrying
+# reach a river becomes near its mouth. It must read as FRESHWATER, clearly distinct from
+# 00_deep_ocean and 02_inland_sea, and it tiles across a chain of hexes, so it needs a sense
+# of current WITHOUT a directional bias (a strong one-way streak would visibly rotate at the
+# hex-to-hex seams). The shader's existing shore pass draws its banks/foam automatically.
+37_navigable_river: Seamless tileable wide navigable river water texture, top-down view, deep green-brown freshwater, gentle current streaks, faint silt swirls, subtle surface ripples, no shoreline, no banks, painterly style, muted colors, 512x512 game asset
+
+# ============================================================================
+# RIVER EDGE TEXTURES (minor / major)
+#
+# These are NOT base terrain. Minor and major rivers run ALONG HEX EDGES, drawn by the terrain
+# blend shader as a noise-perturbed band hugging the shared edge between two hexes. The shader
+# samples these in continuous world space and masks them with the edge distance field, exactly
+# how the canopy/peak overlays work.
+#
+# Requirements:
+#   - RGBA PNG, 512x512, saved to assets/terrain/textures/rivers/
+#   - Naming: XX_name.png -> 00_minor.png, 01_major.png
+#   - FULLY OPAQUE water (alpha 255) — the shader's mask decides the river's shape, not the
+#     texture's alpha. Do NOT paint banks, shorelines, or transparent edges into these; a
+#     built-in bank would fight the shader's own noise-perturbed edge and read as a double rim.
+#   - Seamless in BOTH axes, and non-directional for the same reason as 37 above.
+#   - The two must read as different SIZES of water at the same zoom: minor = you can see the
+#     bottom, major = you cannot. Keep the ripple/detail scale similar between them so they
+#     look like the same world seen at the same distance.
+# ============================================================================
+
+# NOTE: the first pass at this prompt led with the pebble bed ("clear water over visible pebble
+# and gravel bed") and every generation came back as GRAVEL with water as a faint overlay — a warm
+# gold tile whose blue channel was its LOWEST (mean R-B of +53). At real river-band width the fine
+# caustics mush out and colour dominates, so it read as a dirt road, and no colour grade could
+# rescue it (grading a gold tile toward blue just makes grey mud). Lead with the WATER; demote the
+# bed to "faintly visible through it".
+00_minor: Seamless tileable clear shallow stream water texture, top-down view, bright turquoise and blue-green water, rippling sunlit surface, sparkling caustic highlights, small pale pebbles faintly visible through the water, water dominant, fully opaque, no banks, no shoreline, painterly style, 512x512 game asset
+
+01_major: Seamless tileable deep river water texture, top-down view, dark blue-green opaque water, no visible bottom, strong swirling current lines, subtle foam flecks, fully opaque, no banks, no shoreline, painterly style, 512x512 game asset
+
+# ============================================================================
+# POST-PROCESSING (all three shipped textures were graded — see scripts/texture/README.md)
+#
+# Leonardo returns these MUCH brighter and more saturated than the muted painterly terrain set,
+# and the raw water tiles land right on top of 00_deep_ocean in tone. Both were fixed by grading,
+# not by re-rolling. Check the mean RGB of a new water texture against the existing ones before
+# accepting it:
+#     00_deep_ocean        ( 10,  36,  44)  bright  30
+#     01_continental_shelf ( 30,  72,  83)  bright  62
+#     02_inland_sea        ( 71,  96,  92)  bright  86
+#     37_navigable_river   ( 51,  91,  90)  bright  77   <- freshwater green, NOT ocean blue-black
+#     rivers/00_minor      ( 95, 146, 140)  bright 127   <- shallow: light, you see the bed
+#     rivers/01_major      ( 52,  73,  85)  bright  70   <- deep: dark, opaque
+#
+# The navigable river MUST NOT land near deep ocean. The first accepted candidate measured
+# (2,41,47)/bright 30 -- indistinguishable from 00_deep_ocean's (10,36,44)/bright 30 -- so a great
+# river would have rendered as open sea. It was exposure-lifted and pushed green into the gap
+# between the shelf and the inland sea. Watch for the neon failure on the way: crushing R toward 0
+# gives pure cyan; lift the RED channel rather than dropping saturation.
+# ============================================================================

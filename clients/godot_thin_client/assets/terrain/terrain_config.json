@@ -29,6 +29,21 @@
     "light_dir_x": -0.7,
     "light_dir_y": -0.7
   },
+  "rivers": {
+    "minor_width": 0.05,
+    "major_width": 0.09,
+    "navigable_width": 0.24,
+    "softness_width": 0.05,
+    "meander_width": 0.22,
+    "width_variation": 0.4,
+    "bank_noise_width": 0.045,
+    "class_blend_width": 1.0,
+    "tint_strength": 0.5,
+    "depth_compress": 0.5,
+    "texture_scale": 1.8,
+    "river_min_radius": 3.0,
+    "flow_speed": 0.03
+  },
   "terrains": [
     { "id": 0, "name": "deep_ocean", "label": "Deep Ocean", "category": "water", "blend_class": "water", "color": [11, 30, 61] },
     { "id": 1, "name": "continental_shelf", "label": "Continental Shelf", "category": "water", "blend_class": "water", "color": [20, 64, 94] },
@@ -66,7 +81,8 @@
     { "id": 33, "name": "impact_crater_field", "label": "Impact Crater Field", "category": "special", "blend_class": "rugged", "color": [91, 70, 57] },
     { "id": 34, "name": "karst_cavern_mouth", "label": "Karst Cavern Mouth", "category": "special", "blend_class": "rugged", "color": [46, 79, 92] },
     { "id": 35, "name": "sinkhole_field", "label": "Sinkhole Field", "category": "special", "blend_class": "rugged", "color": [79, 75, 51] },
-    { "id": 36, "name": "aquifer_ceiling", "label": "Aquifer Ceiling", "category": "special", "blend_class": "rugged", "color": [47, 143, 178] }
+    { "id": 36, "name": "aquifer_ceiling", "label": "Aquifer Ceiling", "category": "special", "blend_class": "rugged", "color": [47, 143, 178] },
+    { "id": 37, "name": "navigable_river", "label": "Navigable River", "category": "water", "blend_class": "flat", "color": [138, 152, 103] }
   ],
   "categories": {
     "water": { "wang_priority": 1 },

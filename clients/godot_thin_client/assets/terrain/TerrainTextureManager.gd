@@ -23,6 +23,13 @@ var canopy_layer_by_id: Dictionary = {}
 # fixed count to keep in sync here.
 var peak_textures: Texture2DArray = null
 var peak_layer_by_id: Dictionary = {}
+# River water: flowing-water bands (RGBA, fully opaque), a FOURTH Texture2DArray sampled by the blend
+# shader's river passes. Unlike the canopy/peak arrays this one is NOT keyed by terrain id — a river is not
+# a biome — so the layer index is the file's numeric prefix: `00_minor.png` → 0 and `01_major.png` → 1 are
+# the hex-EDGE classes (layer = river CLASS - 1), and `02_navigable.png` → 2 is the CHANNEL water the
+# navigable pass paints over a NavigableRiver hex's bank floor (that terrain's own base texture is the
+# BANK ground, not water — see terrain_blend.gdshader's navigable pass).
+var river_textures: Texture2DArray = null
 var terrain_config: Dictionary = {}
 var use_terrain_textures: bool = false
 var use_edge_blending: bool = false
@@ -89,6 +96,8 @@ func _load_textures() -> void:
 		canopy_textures = _build_canopy_texture_array()
 		# Build the companion peak array (transparent mountain relief) — only for biomes with a peak asset.
 		peak_textures = _build_peak_texture_array()
+		# Build the companion river array (flowing water bands) for the shader's hex-edge river pass.
+		river_textures = _build_river_texture_array()
 
 
 func _build_terrain_texture_array() -> Texture2DArray:
@@ -256,6 +265,72 @@ func _build_peak_texture_array() -> Texture2DArray:
 func peak_layer_for(terrain_id: int) -> int:
 	## Peak array layer for a terrain, or -1 when the biome has no peak overlay.
 	return int(peak_layer_by_id.get(terrain_id, -1))
+
+
+func _build_river_texture_array() -> Texture2DArray:
+	## Build the river Texture2DArray from `textures/rivers/NN_class.png` (flowing water, RGBA/opaque) for
+	## the blend shader's river passes. Mirrors the canopy/peak builds (once-only Image.load_from_file +
+	## mipmaps, so the trilinear river sampler averages a thin band into a stable line at far zoom instead
+	## of shimmering) with ONE difference: a river is not a biome, so the layer is keyed by the file's
+	## numeric prefix, not by terrain id — 0 = Minor / 1 = Major (the hex-EDGE classes, layer = class - 1)
+	## and 2 = the navigable CHANNEL water. Returns null when no river asset exists (shader runs
+	## river-disabled).
+	const RIVER_PATH := "res://assets/terrain/textures/rivers/"
+	# Layers 0/1 are the 2-bit edge mask's Minor/Major (class 3 is reserved and never drawn); layer 2 is the
+	# navigable channel. A river file's prefix must land in [0, RIVER_MAX_LAYERS).
+	const RIVER_MAX_LAYERS := 3
+	var by_layer: Dictionary = {}   # layer index (class - 1) -> Image
+	var dir := DirAccess.open(RIVER_PATH)
+	if dir == null:
+		print("[TerrainTextureManager] No river textures found (river overlay disabled)")
+		return null
+	var first_size: Vector2i = Vector2i.ZERO
+	for filename: String in dir.get_files():
+		if not filename.ends_with(".png"):
+			continue
+		var prefix: String = filename.split("_")[0]
+		if not prefix.is_valid_int():
+			push_warning("[TerrainTextureManager] River texture '%s' has no NN_ layer prefix — skipped" % filename)
+			continue
+		var layer := int(prefix)
+		if layer < 0 or layer >= RIVER_MAX_LAYERS:
+			push_warning("[TerrainTextureManager] River texture '%s' layer %d out of range — skipped" % [filename, layer])
+			continue
+		var img: Image = Image.load_from_file(ProjectSettings.globalize_path(RIVER_PATH + filename))
+		if img == null:
+			continue
+		if first_size == Vector2i.ZERO:
+			first_size = Vector2i(img.get_width(), img.get_height())
+		elif Vector2i(img.get_width(), img.get_height()) != first_size:
+			img.resize(first_size.x, first_size.y)
+		if img.get_format() != Image.FORMAT_RGBA8:
+			img.convert(Image.FORMAT_RGBA8)
+		img.generate_mipmaps()
+		by_layer[layer] = img
+
+	if by_layer.is_empty():
+		print("[TerrainTextureManager] No river textures found (river overlay disabled)")
+		return null
+
+	# The shader indexes the array by (class - 1), so the layers must be dense from 0 — a gap would make
+	# every higher class sample the wrong water. Fill any hole with the lowest present layer.
+	var layers: Array = by_layer.keys()
+	layers.sort()
+	var images: Array[Image] = []
+	for layer: int in range(int(layers[layers.size() - 1]) + 1):
+		if by_layer.has(layer):
+			images.append(by_layer[layer])
+		else:
+			push_warning("[TerrainTextureManager] River layer %d missing — reusing layer %d" % [layer, int(layers[0])])
+			images.append(by_layer[layers[0]])
+
+	var array_tex := Texture2DArray.new()
+	var err := array_tex.create_from_images(images)
+	if err != OK:
+		push_error("[TerrainTextureManager] Failed to create river Texture2DArray: %d" % err)
+		return null
+	print("[TerrainTextureManager] Loaded river textures: %d layers" % images.size())
+	return array_tex
 
 
 func get_config_value(key: String, default: Variant = null) -> Variant:

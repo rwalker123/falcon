@@ -19,7 +19,7 @@ pub use runtime::{
 use serde_json::{json, Map as JsonMap, Number as JsonNumber, Value as JsonValue};
 pub use sim_runtime::scripting::ScriptManifest;
 use sim_runtime::scripting::SimScriptState;
-use sim_runtime::{parse_command_line, CommandEnvelope};
+use sim_runtime::{parse_command_line, CommandEnvelope, TerrainType};
 
 #[derive(GodotClass)]
 #[class(base = RefCounted, init)]
@@ -607,7 +607,6 @@ fn snapshot_dict(
     overlays: OverlaySlices<'_>,
     terrain: TerrainSlices<'_>,
     crisis_annotations: &[CrisisAnnotationRecord],
-    hydrology_rivers: Option<&VarArray>,
     campaign_label: Option<VarDictionary>,
     campaign_profiles: Option<VarArray>,
     victory_state: Option<VarDictionary>,
@@ -1004,10 +1003,6 @@ fn snapshot_dict(
             let _ = tag_labels.insert(*mask as i64, *label);
         }
         let _ = overlays.insert("terrain_tag_labels", &tag_labels);
-    }
-
-    if let Some(rivers) = hydrology_rivers {
-        let _ = overlays.insert("hydrology_rivers", &rivers.clone());
     }
 
     let _ = dict.insert("overlays", &overlays);
@@ -1875,7 +1870,6 @@ impl DeltaAggregator {
             None,
             None,
             None,
-            None,
         );
         if !server_build.is_empty() {
             let _ = dict.insert("server_build", server_build.as_str());
@@ -2577,31 +2571,10 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         Some(tag_vec.as_slice())
     };
 
-    // Construct hydrology rivers array for overlays.
-    let mut hydrology_rivers = VarArray::new();
-    if let Some(hydro) = snapshot.hydrologyOverlay() {
-        if let Some(rivers) = hydro.rivers() {
-            for river in rivers {
-                let mut points_array = VarArray::new();
-                if let Some(points) = river.points() {
-                    for p in points {
-                        let mut pt = VarDictionary::new();
-                        let _ = pt.insert("x", p.x() as i64);
-                        let _ = pt.insert("y", p.y() as i64);
-                        let variant = pt.to_variant();
-                        points_array.push(&variant);
-                    }
-                }
-                let mut rdict = VarDictionary::new();
-                let _ = rdict.insert("id", river.id() as i64);
-                let _ = rdict.insert("order", river.order() as i64);
-                let _ = rdict.insert("width", river.width() as i64);
-                let _ = rdict.insert("points", &points_array);
-                let river_variant = rdict.to_variant();
-                hydrology_rivers.push(&river_variant);
-            }
-        }
-    }
+    // NOTE: the old HydrologyOverlay polyline (RiverSegment/HydrologyPoint) was DELETED from the
+    // schema. Rivers now ride the tiles: Minor/Major as the per-tile `riverEdges` bitmask (see
+    // tile_to_dict) and Navigable as the `NavigableRiver` terrain — the tiles fully determine the
+    // render, so a parallel overlay copy of that state no longer exists.
 
     let campaign_label_dict = header.campaignLabel().map(campaign_label_to_dict);
     let mut campaign_profiles_array: Option<VarArray> = None;
@@ -2644,11 +2617,6 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
             tags: terrain_tag_slice,
         },
         &crisis_annotations,
-        if hydrology_rivers.is_empty() {
-            None
-        } else {
-            Some(&hydrology_rivers)
-        },
         campaign_label_dict,
         campaign_profiles_array,
         victory_dict,
@@ -3229,45 +3197,66 @@ fn format_victory_label(raw: &str) -> String {
 }
 
 fn terrain_label_from_id(id: u16) -> &'static str {
-    match id {
-        0 => "Deep Ocean",
-        1 => "Continental Shelf",
-        2 => "Inland Sea",
-        3 => "Coral Shelf",
-        4 => "Hydrothermal Vent Field",
-        5 => "Tidal Flat",
-        6 => "River Delta",
-        7 => "Mangrove Swamp",
-        8 => "Freshwater Marsh",
-        9 => "Floodplain",
-        10 => "Alluvial Plain",
-        11 => "Prairie Steppe",
-        12 => "Mixed Woodland",
-        13 => "Boreal Taiga",
-        14 => "Peatland/Heath",
-        15 => "Hot Desert Erg",
-        16 => "Rocky Reg Desert",
-        17 => "Semi-Arid Scrub",
-        18 => "Salt Flat",
-        19 => "Oasis Basin",
-        20 => "Tundra",
-        21 => "Periglacial Steppe",
-        22 => "Glacier",
-        23 => "Seasonal Snowfield",
-        24 => "Rolling Hills",
-        25 => "High Plateau",
-        26 => "Alpine Mountain",
-        27 => "Karst Highland",
-        28 => "Canyon Badlands",
-        29 => "Active Volcano Slope",
-        30 => "Basaltic Lava Field",
-        31 => "Ash Plain",
-        32 => "Fumarole Basin",
-        33 => "Impact Crater Field",
-        34 => "Karst Cavern Mouth",
-        35 => "Sinkhole Field",
-        36 => "Aquifer Ceiling",
-        _ => "Unknown",
+    // Resolve the id through the enum rather than matching the raw number, so the label table
+    // below can be exhaustive. "Unknown" now means only one thing: an id this build has no
+    // `TerrainType` for (a server newer than the client).
+    match TerrainType::VALUES
+        .iter()
+        .copied()
+        .find(|t| *t as u16 == id)
+    {
+        Some(terrain) => terrain_label(terrain),
+        None => "Unknown",
+    }
+}
+
+/// Display label for every terrain, used to build the snapshot's `terrain_palette` (which the
+/// Terrain Types legend and the Inspector's Terrain tab both prefer over their local config).
+///
+/// **Exhaustive on purpose — do NOT add a `_` wildcard.** This table previously matched the raw
+/// `u16` with a `_ => "Unknown"` catch-all, so adding `NavigableRiver` (id 37) silently rendered
+/// it as "Unknown" in the legend instead of failing the build. Matching the enum with no wildcard
+/// makes a new terrain a *compile error* here rather than a runtime typo in the UI.
+fn terrain_label(terrain: TerrainType) -> &'static str {
+    match terrain {
+        TerrainType::DeepOcean => "Deep Ocean",
+        TerrainType::ContinentalShelf => "Continental Shelf",
+        TerrainType::InlandSea => "Inland Sea",
+        TerrainType::CoralShelf => "Coral Shelf",
+        TerrainType::HydrothermalVentField => "Hydrothermal Vent Field",
+        TerrainType::TidalFlat => "Tidal Flat",
+        TerrainType::RiverDelta => "River Delta",
+        TerrainType::MangroveSwamp => "Mangrove Swamp",
+        TerrainType::FreshwaterMarsh => "Freshwater Marsh",
+        TerrainType::Floodplain => "Floodplain",
+        TerrainType::AlluvialPlain => "Alluvial Plain",
+        TerrainType::PrairieSteppe => "Prairie Steppe",
+        TerrainType::MixedWoodland => "Mixed Woodland",
+        TerrainType::BorealTaiga => "Boreal Taiga",
+        TerrainType::PeatHeath => "Peatland/Heath",
+        TerrainType::HotDesertErg => "Hot Desert Erg",
+        TerrainType::RockyReg => "Rocky Reg Desert",
+        TerrainType::SemiAridScrub => "Semi-Arid Scrub",
+        TerrainType::SaltFlat => "Salt Flat",
+        TerrainType::OasisBasin => "Oasis Basin",
+        TerrainType::Tundra => "Tundra",
+        TerrainType::PeriglacialSteppe => "Periglacial Steppe",
+        TerrainType::Glacier => "Glacier",
+        TerrainType::SeasonalSnowfield => "Seasonal Snowfield",
+        TerrainType::RollingHills => "Rolling Hills",
+        TerrainType::HighPlateau => "High Plateau",
+        TerrainType::AlpineMountain => "Alpine Mountain",
+        TerrainType::KarstHighland => "Karst Highland",
+        TerrainType::CanyonBadlands => "Canyon Badlands",
+        TerrainType::ActiveVolcanoSlope => "Active Volcano Slope",
+        TerrainType::BasalticLavaField => "Basaltic Lava Field",
+        TerrainType::AshPlain => "Ash Plain",
+        TerrainType::FumaroleBasin => "Fumarole Basin",
+        TerrainType::ImpactCraterField => "Impact Crater Field",
+        TerrainType::KarstCavernMouth => "Karst Cavern Mouth",
+        TerrainType::SinkholeField => "Sinkhole Field",
+        TerrainType::AquiferCeiling => "Aquifer Ceiling",
+        TerrainType::NavigableRiver => "Navigable River",
     }
 }
 
@@ -4052,6 +4041,12 @@ fn tile_to_dict(tile: fb::TileState<'_>) -> VarDictionary {
     let _ = dict.insert("habitability", fixed64_to_f64(tile.habitability()));
     let _ = dict.insert("terrain", tile.terrain().0 as i64);
     let _ = dict.insert("terrain_tags", tile.terrainTags() as i64);
+    // Minor/Major rivers ride the tile's EDGES, not its center: a 12-bit mask, 2 bits per odd-r
+    // direction (class = (river_edges >> (2*dir)) & 0b11; 0 none / 1 Minor / 2 Major, 3 reserved).
+    // Both hexes flanking an edge carry it, so a hex can answer "river on my side d?" locally.
+    // MapView packs this into the shader's RG8 river-map splatmap (see _rebuild_terrain_shader_maps).
+    // Navigable rivers are NOT here — they are an ordinary water terrain (TerrainType::NavigableRiver).
+    let _ = dict.insert("river_edges", tile.riverEdges() as i64);
     let _ = dict.insert("culture_layer", tile.cultureLayer() as i64);
     let _ = dict.insert("mountain_kind", i64::from(tile.mountainKind().0));
     let _ = dict.insert("mountain_relief", tile.mountainRelief());

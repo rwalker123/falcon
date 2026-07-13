@@ -100,6 +100,69 @@ const SWIM_PAN_ROWS := -2.0   # pan UP by this many hex-radii → nudges the low
                               # viewport center so the crop stays unclamped (equal-sized fit vs pan crops)
 const SWIM_CROP_RADII := 2.4  # crop half-size = this × hex_radius → a couple hexes of context, small
                               # enough to stay within bounds after the pan/zoom on the short viewport
+# State "rivers" — Minor/Major rivers on hex EDGES + a NavigableRiver hex chain to the coast.
+# The edge chain is generated as the BOUNDARY of a region (all hexes north of a staircase row f(x)):
+# a region boundary is contiguous by construction, so the chain never breaks and every step of the
+# staircase produces a real CORNER TURN — exactly what the corner joins need to be read against.
+const RIVER_LAND_ID := 11        # prairie_steppe (flat) — a legible bank
+const RIVER_OCEAN_ID := 0        # deep_ocean (water) — the sea the navigable river drains into
+const RIVER_NAVIGABLE_ID := 37   # NavigableRiver — a water TERRAIN, rendered as a BANK with a channel through it
+const RIVER_DELTA_ID := 6        # RiverDelta — the sim makes the chain's MOUTH a delta (a LAND tile), so the
+                                 # channel must arm toward it or it dead-ends one hex short of the sea
+const RIVER_LAKE_ID := 2         # inland_sea — the CONTROL: an actual lake in the same frame. The navigable
+                                 # hexes used to render EXACTLY like this (a hex-shaped puddle ringed with
+                                 # beach + surf); the two must now read as obviously different things.
+const RIVER_OCEAN_COLS := 2      # rightmost columns of open sea
+const RIVER_NAV_HEXES := 4       # nominal length of the NavigableRiver chain (where the edge chain hands off)
+# The navigable chain WALKS these directions (sim odd-r order) from the last edge-river hex out to the sea,
+# so the trunk turns corners instead of running dead straight — the arm/junction geometry is the thing the
+# navigable pass has to get right, and a straight run would never exercise it. Cycled if more steps are
+# needed than the pattern has.
+const RIVER_NAV_STEPS := [0, 1, 0, 5, 0]   # E, SE, E, NE, E
+const RIVER_NAV_MAX_STEPS := 16  # guard: SE/NE don't always advance the column on an odd-r grid
+const RIVER_DIR_SE := 1          # the side the mouth's delta lobe sits on
+# The lake, as fractions of the grid (so it lands sensibly on the far-zoom grid too) + the hexes it spans.
+# West of the trunk and a couple of rows SOUTH of the edge river's bank (so no lake hex ever carries river
+# edges, which would draw an edge band across the lake and muddy the comparison).
+const RIVER_LAKE_COL_FRAC := 0.13
+const RIVER_LAKE_ROW_FRAC := 0.58
+const RIVER_LAKE_HEXES := [[0, 0], [1, 0], [0, 1]]
+# Crop framing for the river close-ups, as fractions of the frame (x, y, w, h) — the harness's own idiom.
+# (Hex-anchored pixel crops were tried and abandoned: the viewport rect this harness reports does not match
+# the captured framebuffer's geometry, so a hex-derived pixel rect lands somewhere else entirely.)
+const RIVER_SEAM_CROP := Rect2(0.22, 0.10, 0.28, 0.50)    # mid edge-chain: the Minor→Major class change + turns
+const RIVER_NAV_CROP := Rect2(0.52, 0.36, 0.36, 0.64)     # the trunk: several hexes, so hex-to-hex CONTINUITY shows
+const RIVER_MOUTH_CROP := Rect2(0.76, 0.42, 0.20, 0.45)   # the mouth: channel → open sea + the delta lobe
+# The map is COVER-fit and the fit is the zoom FLOOR (MapView.MIN_ZOOM_FACTOR = 1.0 — you cannot zoom out
+# past it), so on a window wider than the grid's aspect the lowest rows are simply off-screen. The river,
+# its trunk and the lake all live in those lower rows, so the state PANS up (the swim state's idiom) to
+# bring them into frame instead. Measured in hex radii; the row pitch is 1.5 radii.
+const RIVER_PAN_ROWS := -4.5
+const RIVER_CLASS_MINOR := 1     # 2-bit edge classes (must match core_sim RiverClass)
+const RIVER_CLASS_MAJOR := 2
+const RIVER_MAJOR_FROM_FRAC := 0.45  # fraction along the edge chain where Minor becomes Major
+# The river's mean row, as a fraction of grid height. Kept in the UPPER half deliberately: the map is
+# COVER-fit and the fit is the zoom floor, so on a window wider than the grid's aspect the lower rows are
+# unreachable (MapView's pan clamp will not scroll that far) — a river down there simply cannot be looked at.
+const RIVER_BASE_ROW_FRAC := 0.25
+# The bank row, as offsets (in rows) from the base row, sampled along the river's length.
+# It is a mostly-MONOTONE downhill drift with one back-up, NOT an up-down-up staircase: a boundary that
+# reverses every step wraps 4+ sides of the same hexagon and manufactures a honeycomb the render is then
+# blamed for — real hydrology (a downhill walk on the corner lattice) never circles a hex. It still turns
+# a corner at every step and double-steps twice, so the rounded joins are exercised just as hard.
+const RIVER_PATTERN := [0, 0, 1, 1, 2, 2, 3, 2, 3, 3]
+const RIVER_WANDER_BASE_H := 12      # the grid height RIVER_PATTERN's row offsets are authored for;
+                                     # a taller grid scales them up so the far-zoom river still wanders
+# odd-r neighbour offsets in the SIM's direction order (core_sim grid_utils HEX_NEIGHBOR_OFFSETS,
+# clockwise from E) — the order the river-edge bitmask is indexed by. (dx_even, dx_odd, dy).
+const RIVER_DIR_OFFSETS := [
+	[1, 1, 0],    # 0 E
+	[0, 1, 1],    # 1 SE
+	[-1, 0, 1],   # 2 SW
+	[-1, -1, 0],  # 3 W
+	[-1, 0, -1],  # 4 NW
+	[0, 1, -1],   # 5 NE
+]
 
 var _map: Node2D
 
@@ -472,6 +535,50 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_cohesion_farzoom")
 
+	# State "rivers" — Minor/Major rivers on hex EDGES (terrain_blend.gdshader's river pass, fed by the
+	# per-tile 12-bit river_edges mask) plus a NavigableRiver hex chain (terrain 37) that turns corners,
+	# is fed by the Major edge river, and drains to the sea through a delta lobe — with a real InlandSea
+	# LAKE in the same frame as the control.
+	# Read: the edge water must hug the hex EDGE (never the center) and visibly MEANDER (no honeycomb);
+	# corner joins rounded with no gap/kink; the two half-bands meet symmetrically across an edge (no seam
+	# down the middle); Minor visibly thinner than Major. And the NAVIGABLE hexes must read as a wide water
+	# CHANNEL running through a silty BANK — never a hex-shaped puddle: no beach, no foam anywhere on them,
+	# the channel CONTINUOUS across adjacent navigable hexes (no seam/pinch/gap at their shared edge), the
+	# Major edge river visibly flowing INTO the trunk, and the trunk reaching the sea. The lake, which still
+	# gets its beach + foam, must be obviously a different kind of thing.
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(true)
+	TerrainTextureManager.use_edge_blending = true
+	_map._map_cache_enabled = false
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map.display_snapshot(_snapshot_rivers(GRID_W, GRID_H))
+	_map._fit_map_to_view()
+	await _settle()  # last_hex_radius is only refreshed on draw — settle before panning by it
+	# Pan up so the trunk + the lake (lower rows, clipped by the cover-fit on a wide window) are in frame.
+	_map.pan_offset += Vector2(0.0, RIVER_PAN_ROWS * _map.last_hex_radius)
+	await _settle()
+	await _save("map_rivers")
+	# Seam + corner close-up: the mid-chain region, where the staircase steps (corner turns) and the
+	# Minor→Major transition both land — the frame to judge joins and the cross-edge seam on.
+	await _save_crop_rect("map_rivers_seam", RIVER_SEAM_CROP)
+	# The navigable trunk close-up: the edge-river → trunk join, the corner turns, and the hex-to-hex
+	# CONTINUITY of the channel. This is the frame the "a channel through a bank, not a puddle" and "no seam
+	# between adjacent navigable hexes" claims are judged on.
+	await _save_crop_rect("map_rivers_navigable", RIVER_NAV_CROP)
+	# The MOUTH: the channel must reach the sea and the delta lobe — no dead-end, and crucially NO surf line
+	# drawn ACROSS the mouth (a river meeting the sea is not a coast; the shore pass skips navigable edges).
+	await _save_crop_rect("map_rivers_mouth", RIVER_MOUTH_CROP)
+	# Far-zoom LOD: the same field on a large grid so hexes go tiny (radius ≪ EDGE_BLEND_MIN_RADIUS, so
+	# the flat↔flat blend is off). The DECOUPLED river LOD (river_min_radius) must keep the river drawn,
+	# smooth (mipmapped river array) and not shimmering.
+	_map.display_snapshot(_snapshot_rivers(FAR_GRID_W, FAR_GRID_H))
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_rivers_farzoom")
+
 	get_tree().quit()
 
 func _settle() -> void:
@@ -505,6 +612,10 @@ func _save_crop(name: String, fx0: float, fy0: float, fx1: float, fy1: float) ->
 		push_error("map_preview: failed to save %s (err %d)" % [name, err])
 	else:
 		print("map_preview: saved ", name, ".png")
+
+## Save a crop given as a fraction RECT of the frame (x, y, w, h) — the Rect2 form of _save_crop.
+func _save_crop_rect(name: String, frac: Rect2) -> void:
+	await _save_crop(name, frac.position.x, frac.position.y, frac.end.x, frac.end.y)
 
 ## Save a square crop of `2*half` px centered on `center` (viewport pixels), clamped to the image
 ## bounds — used by State R to lock onto the SAME hex across fit/pan/zoom so a swim shows as a shift.
@@ -890,6 +1001,104 @@ func _snapshot_cohesion(grid_w: int, grid_h: int) -> Dictionary:
 	return {
 		"grid": {"width": grid_w, "height": grid_h, "wrap_horizontal": false},
 		"overlays": {"terrain": arr},
+		"populations": [],
+		"herds": [],
+	}
+
+## The staircase row for column `x`: hexes with y < f(x) are the river's NORTH bank (the region whose
+## boundary IS the river). Each step of the staircase is a corner turn in the edge chain.
+func _river_bank_row(x: int, gw: int, gh: int, nav_start: int) -> int:
+	var idx: int = int(float(x) * RIVER_PATTERN.size() / float(maxi(nav_start, 1)))
+	idx = clampi(idx, 0, RIVER_PATTERN.size() - 1)
+	var wander: int = maxi(1, gh / RIVER_WANDER_BASE_H)  # scale the staircase to taller (far-zoom) grids
+	return clampi(int(gh * RIVER_BASE_ROW_FRAC) + int(RIVER_PATTERN[idx]) * wander, 1, gh - 2)
+
+## Odd-r neighbour of (x, y) in sim direction `dir`; Vector2i(-1, -1) when the step leaves the map.
+func _river_neighbor(x: int, y: int, dir: int, gw: int, gh: int) -> Vector2i:
+	var off: Array = RIVER_DIR_OFFSETS[dir]
+	var nx: int = x + int(off[1] if (y % 2) == 1 else off[0])
+	var ny: int = y + int(off[2])
+	if nx < 0 or nx >= gw or ny < 0 or ny >= gh:
+		return Vector2i(-1, -1)
+	return Vector2i(nx, ny)
+
+## Stamp river class `cls` on edge (x, y, dir) — on BOTH flanking hexes (the neighbour carries the
+## opposite direction, (dir + 3) % 6), exactly as the sim does, so each hex can answer locally.
+func _river_set_edge(masks: Dictionary, x: int, y: int, dir: int, nb: Vector2i, cls: int) -> void:
+	var here := Vector2i(x, y)
+	masks[here] = (int(masks.get(here, 0)) & ~(3 << (2 * dir))) | (cls << (2 * dir))
+	var back: int = (dir + 3) % 6
+	masks[nb] = (int(masks.get(nb, 0)) & ~(3 << (2 * back))) | (cls << (2 * back))
+
+## Terrain + per-tile river-edge masks for State "rivers": a Minor→Major edge river wandering west→east
+## with corner turns, joining a NavigableRiver hex chain that runs out to the eastern sea.
+func _snapshot_rivers(gw: int, gh: int) -> Dictionary:
+	var nav_start: int = gw - RIVER_OCEAN_COLS - RIVER_NAV_HEXES  # edge chain stops here; hexes take over
+	var major_from: int = int(nav_start * RIVER_MAJOR_FROM_FRAC)
+	var terrain: Array = []
+	terrain.resize(gw * gh)
+	for y in range(gh):
+		for x in range(gw):
+			terrain[y * gw + x] = RIVER_OCEAN_ID if x >= gw - RIVER_OCEAN_COLS else RIVER_LAND_ID
+
+	# Every edge between the north-bank region (y < f(x)) and its complement, within the edge-chain
+	# columns. A region boundary is a contiguous chain by construction — no gaps, corners for free.
+	var masks: Dictionary = {}
+	for x in range(nav_start):
+		for y in range(_river_bank_row(x, gw, gh, nav_start)):  # y < f(x) → in the region
+			for dir in range(6):
+				var nb := _river_neighbor(x, y, dir, gw, gh)
+				if nb.x < 0 or nb.x >= nav_start:
+					continue  # off-map, or past where the river stops being an edge
+				if nb.y < _river_bank_row(nb.x, gw, gh, nav_start):
+					continue  # neighbour is in the region too → interior, not a boundary edge
+				_river_set_edge(masks, x, y, dir, nb,
+					RIVER_CLASS_MAJOR if x >= major_from else RIVER_CLASS_MINOR)
+
+	# The navigable chain starts at the SOUTH-bank hex the last edge flanks, so the edge river and the hex
+	# river join with no gap (exactly how the sim hands off at the navigable discharge threshold) — that hex
+	# carries Major bits in its own mask, which is what arms its channel back toward the incoming edge river.
+	# From there it WALKS to the sea, turning corners on the way.
+	var mouth_col: int = gw - RIVER_OCEAN_COLS - 1   # last land column; everything beyond is open sea
+	var p := Vector2i(nav_start - 1, _river_bank_row(nav_start - 1, gw, gh, nav_start))
+	terrain[p.y * gw + p.x] = RIVER_NAVIGABLE_ID
+	var step := 0
+	while p.x < mouth_col and step < RIVER_NAV_MAX_STEPS:
+		var nb := _river_neighbor(p.x, p.y, int(RIVER_NAV_STEPS[step % RIVER_NAV_STEPS.size()]), gw, gh)
+		step += 1
+		if nb.x < 0:
+			break
+		p = nb
+		terrain[p.y * gw + p.x] = RIVER_NAVIGABLE_ID
+
+	# The MOUTH exercises both non-chain arm rules at once: the final navigable hex touches OPEN SEA on its
+	# seaward side (the water rule) and a RiverDelta distributary lobe on its SE (the delta rule — the shape
+	# the sim actually produces, where the chain hands off to a delta LAND tile before the coast).
+	var delta := _river_neighbor(p.x, p.y, RIVER_DIR_SE, gw, gh)
+	if delta.x >= 0 and delta.x <= mouth_col:
+		terrain[delta.y * gw + delta.x] = RIVER_DELTA_ID
+
+	# The lake — a real InlandSea, inland, far from the river. It still gets the beach + foam shore pass; a
+	# navigable hex no longer does. Side by side in one frame, they must not read as the same thing.
+	var lake_col: int = clampi(int(gw * RIVER_LAKE_COL_FRAC), 1, gw - 2)
+	var lake_row: int = clampi(int(gh * RIVER_LAKE_ROW_FRAC), 1, gh - 2)
+	for cell: Array in RIVER_LAKE_HEXES:
+		var lx: int = clampi(lake_col + int(cell[0]), 0, gw - 1)
+		var ly: int = clampi(lake_row + int(cell[1]), 0, gh - 1)
+		terrain[ly * gw + lx] = RIVER_LAKE_ID
+
+	var tiles: Array = []
+	for key: Vector2i in masks:
+		tiles.append({
+			"entity": key.y * gw + key.x,
+			"x": key.x,
+			"y": key.y,
+			"river_edges": int(masks[key]),
+		})
+	return {
+		"grid": {"width": gw, "height": gh, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"tiles": tiles,
 		"populations": [],
 		"herds": [],
 	}

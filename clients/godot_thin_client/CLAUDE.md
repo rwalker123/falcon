@@ -45,7 +45,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/inspector/CorruptionPanel.gd` | Corruption tab panel — display-only ledger (reputation modifier, audit capacity, incidents); not capability-gated |
 | `ui/inspector/CommandsPanel.gd` | Commands tab panel — the designer/debug console (axis-bias, influencer/channel/spawn, corruption inject, heat, config reload, autoplay row, command status/log; the scenario scout/follow rows were removed with the retired single-task commands). Outbound: issues verbs via `set_command_hooks` and logs via the sink; the command transport + autoplay timer + turn-sending stay in the coordinator. Couplings are coordinator-mediated: emits `axis_bias_apply_requested` (coordinator owns `_axis_bias`, pushes back via `set_axis_bias`), `autoplay_toggled`/`autoplay_interval_changed` (coordinator drives the timer, mirrors via `set_autoplay_active`); fed the roster via `set_influencer_roster` and gated via `set_command_connected`. NOT in `_tab_panels` (no snapshot inputs) |
 | `ui/inspector/OverlayPanel.gd` | "Map Overlays" section (nested inside the Map tab, attached to `OverlaySection`) — owns the overlay-channel selector (built at runtime), channel metadata, and the culture/military readouts; drives `MapView.set_overlay_channel`. Fed via `set_map_view` + `ingest(overlay_dict, terrain_tag_labels)` (the coordinator re-homes the palette → Terrain and crisis_annotations → Crisis side-routes that share the `overlays` key, and passes Terrain's tag labels since the terrain-tags channel depends on them). NOT in `_tab_panels` |
-| `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the hydrology rivers toggle. Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` via `set_map_view`. The nested Map-Overlays section keeps its own `OverlayPanel` script |
+| `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the highlight-rivers toggle (now a shader uniform — see Edge Blending → Rivers). Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` via `set_map_view`. The nested Map-Overlays section keeps its own `OverlayPanel` script |
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
 | `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the **Export Map** button (the tile Scout button was retired with the single-task `scout` command). Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`, gated by `set_command_connected` |
 | `Hud.gd` | HUD layer, legend (the right-dock **TerrainLegendPanel**; `update_overlay_legend` renders rows `{color,label,value_text}` and, for the base terrain legend (`key == "terrain"`) only, shows a runtime-built **sort header** — `Name`/`Count` toggle buttons with a ▲/▼ arrow on the active field. Sort mode is display-only HUD state — field ∈ {name,count} × per-field direction, default **Count desc** — held in `_legend_sort_*` and re-applied via `_sorted_terrain_rows` on every legend push, so the chosen order persists across map regen; MapView's `_build_terrain_legend` supplies a numeric `count` per row for the count sort. Non-terrain (overlay/tag) legends hide the control and render in the given order), the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + the `%ForageAssignControls` "assign foragers" stepper) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer for **herds/expeditions**; a herd shows the `%HerdAssignControls` "assign hunters" stepper+policy picker, an expedition the `%AllocationPanel` Recall/Move panel). **Player-band detail relocated into the dockable `BandCityPanel`** (summary + `%AllocationPanel`-style labor UI render there via `_render_band_into_panel`; the Occupants card keeps only the roster row) — see "Band/City dockable panel". Turn readout (the standalone band Alerts panel was folded into the turn-orb attention model — see "Turn orb & attention model"). Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) + the snapshot-captured `_player_band` (and `_player_bands`, the full player-faction list backing the band-picker + the panel cycler) live here; roster selection emits `roster_occupant_selected`; labor edits emit `assign_labor_requested` / `move_band_requested` / `cancel_order_requested` (clear-all) |
@@ -53,6 +53,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale warn/critical thresholds + `color_for_morale`/`hex_for_morale`), shared by MapView's band dot and Hud's food/morale lines + alerts |
 | `ui/TileHabitability.gd` | Single source of truth for the Tile-card Habitability rating: buckets `TileState.habitability` (band-independent per-turn morale drain) into Hospitable/Fair/Harsh/Hostile via `tile_habitability_config.json` thresholds, with the HEALTHY/INK/WARN/DANGER color / `hex_for_rating` mapping. Consumed by `Hud._tile_terrain_lines` + `_format_detail_bbcode` |
 | `ui/TileClimate.gd` | Single source of truth for the Tile-card Climate band: maps `TileState.temperature` (°, a latitude+elevation climate, equator-in-the-middle) into Tropical/Warm/Temperate/Cool/Polar via `tile_climate_config.json` cutoffs. INFORMATIONAL only — deliberately no HEALTHY/WARN/DANGER tint (renders neutral ink), so it doesn't compete with the Habitability row's semantic palette. Consumed by `Hud._tile_terrain_lines` |
+| `ui/RiverEdges.gd` | Single source of truth for the TEXT reading of hex-EDGE rivers: owns the class vocabulary (Minor/Major), the 6 direction names, and the mask bit-widths as named constants, and formats `TileState.riverEdges` into `Major River: NE, NW` / `Minor River: SW` rows (`summary_lines`, Major first, directions in compass order from NE). Consumed by BOTH `Hud._tile_terrain_lines` (Tile card) and `Hud.show_tooltip` (map hover) — one formatter, two surfaces. See Edge Blending → Rivers |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
 | `CommandBridge.gd` | Issues Protobuf commands to server |
 | `ui/MinimapPanel.gd` | Minimap component for the 2D map view (click-to-pan, aspect ratio sizing) |
@@ -62,7 +63,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, `apply_button(btn, "primary"/"ghost"/"armed")`, and `apply_link_button(btn, base_color)` — the **inline link** treatment for a clickable label inside a row (no box at rest; hover tint + cyan text + pointing hand), used by the band panel's clickable Current-actions rows. Every HUD surface styles through here |
 | `ui/FoodIcons.gd` | Shared glyph vocabulary — food modules (`for_site`), fauna herds (`for_herd`, species keyword matched in the herd label, longest-first), and **take policies** (`for_policy`, `POLICY_ICONS`: the four extractive rungs sustain ♻ / surplus ⬆ / market ⇄ / eradicate 💀, plus the two **investment** rungs cultivate 🌱 / corral 🐄 — 🐄 is the same glyph the herd drawer's Domesticated/Corralled badge uses; both verified legible at picker size in `forage_cultivate.png` / `herd_corral.png`; `""` for unknown). Used by the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`), the Harvest/Hunt button + the **band panel's Current-actions rows** (each row leads with its resource glyph), and — for policies — BOTH the Hud policy-picker buttons (`_build_policy_picker`) and the map's yield labels (`MapView._draw_yield_label` appends the icon: `+0.38 ♻`), so a resource/policy always reads the same on the panel and on the map. **Policy glyphs are deliberately line-art** (♻ ⬆ ⇄) plus the high-contrast 💀: pictographic emoji (🪙 coin, 💰 money bag) render as a featureless grey blob at the ~12–13px these are drawn at, and ⚖ renders tiny/faint — same glyph-legibility hazard that forced `MagnifierButton` to hand-draw. Verified in `band_panel_left.png` / `map_band_work.png`. Also the **action-status** glyphs (`for_status`, `STATUS_ICONS`) the Band panel's Current-actions + Active-expeditions rows use instead of words — `pending ○` (the ORDER isn't acknowledged yet; a modifier that rides on any row, amber) / `working ●` (a confirmed local forage/hunt row, and expedition phase `hunting`) / `outbound ➤` / `awaiting ▮▮` / `delivering ◄` = `returning ◄` (both are "coming home"; the tooltip distinguishes them). Same line-art rule and the same hazard: `◌` (dotted circle) was tried for `pending` and rejected — it renders thin and faint at row size — and `⏸` for `awaiting` carries emoji presentation (tofu/blob), so `▮▮` is used. Verified at true size in `band_panel_status_glyphs.png` |
 | `tools/ui_preview.gd` / `.tscn` | Dev-only preview harness: instances the real `HudLayer` with canned selection/targeting data, renders each state, and saves PNGs to `ui_preview_out/` (gitignored). Iterate on HUD styling without a server: `godot --path . res://tools/ui_preview.tscn` |
-| `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link; scouting draws no disc — it extends sight in the fog) without a server: `godot --path . res://tools/map_preview.tscn` |
+| `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link; scouting draws no disc — it extends sight in the fog), the terrain/blend states, and the **rivers** state (`map_rivers*.png` — hex-edge Minor/Major rivers + the NavigableRiver terrain chain) without a server: `godot --path . res://tools/map_preview.tscn` |
 | `tools/band_panel_preview.gd` / `.tscn` | Dev-only preview harness for the **Band/City dockable panel**: instances the real `BandCityPanel` + `HudLayer`, injects the panel into the HUD, pushes a seeded player band through `update_band_alerts`, and dumps the panel docked left/right/top/bottom + collapsed (`band_panel_*.png`) so the chrome + the relocated band detail + the HUD reflow can be eyeballed without a server: `godot --path . res://tools/band_panel_preview.tscn` |
 | `tools/marker_field_guard.gd` / `.tscn` | Headless **regression guard** for the "unit marker drops a panel-consumed field" bug class (twice hit: `hunt_mode`, then `working_age`/`idle_workers`). Feeds one realistic population entry through the real `MapView._rebuild_unit_markers` and asserts the produced marker is a superset of `PANEL_CONSUMED_KEYS` (the keys `Hud._unit_summary_lines` + `_build_allocation_panel` read off `_selected_unit`) and that the drop-prone fields round-trip (not defaulted). Exits non-zero on failure (CI-usable). No rendering, so headless: `godot --headless --path . res://tools/marker_field_guard.tscn`. When the panel starts reading a new marker field, add it to `PANEL_CONSUMED_KEYS`. |
 | `assets/terrain/TerrainTextureManager.gd` | Autoload singleton for terrain texture loading |
@@ -164,12 +165,15 @@ Optional terrain texture graphics for the 2D map view.
 ```
 assets/terrain/
   textures/
-    base/                        # 37 terrain textures (512x512 PNG); forest bases are grass FLOOR (no trees)
+    base/                        # 38 terrain textures (512x512 PNG); forest bases are grass FLOOR (no trees)
       00_deep_ocean.png
       ...
-      36_aquifer_ceiling.png
+      37_navigable_river.png     # NavigableRiver's BANK ground (the channel water is rivers/02) — see Rivers
     canopy/                      # RGBA tree-crown overlays (transparency); one per canopy biome (3 today: 07/12/13)
     peaks/                       # RGBA mountain-relief overlays (transparency); one per relief biome (5 today: 24/25/26/27/29)
+    rivers/                      # flowing water, NOT keyed by terrain id (see Rivers): 00_minor / 01_major
+                                 # are the hex-EDGE classes (layer = class - 1); 02_navigable is the CHANNEL
+                                 # water painted over a NavigableRiver hex's bank
     edges/                       # 6 edge masks for blending (optional)
     wang/                        # Wang tile variants (future)
   terrain_config.json            # Configuration
@@ -212,7 +216,11 @@ interlock band fraction; `blend_noise_cell` is the dither value-noise cell size 
   `canopy_layer_by_id` / `canopy_layer_for(id)` (`terrain_id → canopy array layer`, -1 = none) for the
   blend shader's canopy overlay (see Edge Blending → Canopy overlay), and `peak_textures` (a third
   Texture2DArray of RGBA mountain relief from `textures/peaks/`) + `peak_layer_by_id` / `peak_layer_for(id)`
-  for the blend shader's peak overlay (see Edge Blending → Peak overlay)
+  for the blend shader's peak overlay (see Edge Blending → Peak overlay), and `river_textures` (a FOURTH
+  Texture2DArray of flowing water from `textures/rivers/`) for the blend shader's river pass (see Edge
+  Blending → Rivers). The river array is the one array **not** keyed by terrain id — a river is not a
+  biome, it rides an edge — so its layer is the file's numeric prefix = river **class - 1**, and there is
+  no `river_layer_for(id)`
 
 ### 2D Rendering Pipeline
 - `MapView` gets textures from `TerrainTextureManager` and pre-renders hex-masked textures on startup
@@ -404,6 +412,157 @@ biome — its drama is incision, handled at the base-floor level, not raised rel
   `map_swatch.png` (+ `map_swatch_farzoom.png`): faceted peaks composite with light-left/dark-right
   self-shading, overhang the alpine↔prairie seam + cast a darkening shadow onto the prairie, and the
   far-zoom alpine band reads as a raised mountain mass. Restore `SWATCH_BIOME_ID = 2` after.
+
+**Rivers — Minor/Major on hex EDGES, Navigable as a water TERRAIN:** rivers are two different kinds of
+thing, and the split is the whole design (see `docs/plan_rivers.md`). A **Minor/Major** river lives on a
+hex **edge** — that is where a future crossing cost can live ("the side the river is on is the side that
+costs") — and is drawn by a **river pass in `terrain_blend.gdshader`** so the water is painted exactly on
+the edge the penalty will apply to. A **Navigable** river is a body of water you are *in*, so **in the sim**
+it stays an ordinary water terrain (`TerrainType::NavigableRiver`, **id 37** — blocking + boats fall out of
+the existing water rules). **Its RENDER, though, is not a water hex** — see the navigable-channel pass
+below: a water hex ran through the land↔water shore pass and came out a hex-shaped puddle with a sandy
+beach and surf, i.e. **visually identical to an InlandSea lake** and nothing like a river. It is now drawn
+as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` polyline (and
+`MapView._draw_hydrology`) is **deleted** — the tiles now fully determine the render.
+- **The wire primitive:** `TileState.riverEdges` (`ushort`), decoded in `native/src/lib.rs tile_to_dict`
+  as `river_edges` (both the snapshot and delta tile paths share that one function). A **12-bit mask, 2
+  bits per odd-r direction** — `class = (river_edges >> (2*dir)) & 0b11`, `0 = none / 1 = Minor / 2 =
+  Major` (3 reserved). **Both hexes flanking an edge carry it** (hex `H` dir `d`; the neighbour dir
+  `(d+3)%6`), so a hex answers "is there a river on my side `d`?" locally, with no cross-hex sampling.
+  Ingested by `MapView.display_snapshot` into `tile_river_edges` (`Vector2i → int`, like
+  `tile_habitability`).
+- **The shader's `neighbor_offset` table IS a wire contract now.** It was reordered to the SIM's odd-r
+  direction order (`core_sim` `grid_utils::HEX_NEIGHBOR_OFFSETS`, clockwise from E: 0=E, 1=SE, 2=SW, 3=W,
+  4=NW, 5=NE) because the river pass indexes the mask **by direction**. The blend/shore/canopy/peak passes
+  only ever loop over all 6 and are order-agnostic, so the reorder was free — but **do not reorder it
+  again**.
+- **New RG8 river-map splatmap** (`_rebuild_terrain_shader_maps`): all four id-map channels are already
+  taken (id / blend_class / canopy / peak), so the mask gets its **own** texture — `R = low 8 bits`,
+  `G = high 4 bits`, NEAREST-sampled, rebuilt each snapshot. That rebuild now runs **after** the tile
+  loop in `display_snapshot` (it reads `tile_river_edges`, which the tiles populate).
+- **River pass (shader), after the shore pass, before canopy/peaks:** trees overhang a river and mountains
+  sit above it; sitting before the FoW tint, a river in a Discovered tile **dims with the mist rather than
+  disappearing**. Per fragment, for each of the own hex's carrying edges: distance to the **shared edge
+  SEGMENT** — `mid ± perp * (hex_radius * 0.5)` (a regular hexagon's side == its circumradius), clamped to
+  the segment, **not** the infinite bisector, which would smear the band across the whole hex — then keep
+  the edge with the **max coverage** (`half_width - distance`). That min-distance-over-edges pick is what
+  **rounds the corner joins for free**: a 120° turn softens with no spline math. The water samples in
+  continuous map space (`v_map`, like the canopy) plus a **`TIME` scroll along the winning edge's tangent**
+  so it flows.
+- **THE HONEYCOMB, and what actually fixes it — read this before touching the river look.** An edge river
+  drawn as a wide, constant-width, hard-edged stroke reads as *the hex borders, inked blue*. The instinct is
+  to meander harder. **That is a dead end, and not because the meander is under-tuned:**
+  - the amplitude ceiling is real — past ~`0.24` of the warp cell the warp's gradient exceeds the band
+    half-width and the river **tears into disconnected pools**; and
+  - more fundamentally the river is **edge-LOCKED by design**. The water must be painted on the edge the
+    future crossing cost applies to ("the side the river is on is the side that costs"), so a warp can only
+    displace the band about a band-width before it **detaches from its own edge and starts lying about the
+    geometry**. Pushing meander trades a honeycomb for a lie.
+  What actually kills the honeycomb, in order of impact: **(1) THINNESS** — halved to `minor_width 0.05` /
+  `major_width 0.09`; a thin stroke reads as a river, a wide one as an outline. **(2) WIDTH VARIATION ALONG
+  the river** (`width_variation`, low-frequency world noise on a `RIVER_WIDTH_NOISE_CELL = 2.6` hex-radii
+  cell — deliberately several radii, so a swell is a property of the *reach*, not of the hex; a cell near 1
+  would re-key the variation to the lattice and *reinforce* the honeycomb). **(3) RAGGED BANKS** — a
+  higher-frequency wobble of the half-width (`bank_noise_width`, `RIVER_BANK_NOISE_CELL = 0.35`), the same
+  idiom as the shore pass's noisy `reach`, plus a wider `softness_width`. Both noises are sampled in
+  **world space** (`v_map`), so the two hexes flanking an edge get identical values at the shared boundary —
+  the symmetric **no-seam** meeting of the two half-bands survives. A `RIVER_MIN_HALF_WIDTH` px floor keeps
+  the noise from severing the band (and keeps it a legible hairline at far zoom).
+- **MEANDER — a domain warp, not a distance bias.** Kept (it still bends the centerline rather than
+  bulging/pinching a straight one) but **capped**, per the above: `RIVER_MEANDER_CELL = 0.9` hex radii,
+  `meander_width = 0.22`. The warp cell is keyed to `hex_radius`, **not** the shared px-sized `noise_cell`
+  (which would make the wander's character change with zoom and only fuzz the bank). It is warped ONCE per
+  fragment in world space, so both flanking hexes warp the same point → no seam.
+- **ONE river growing, not two spliced.** The two class textures are deliberately different art (`00_minor`
+  light/shallow-over-gravel, `01_major` dark/deep), and untreated they meet as turquoise-next-to-near-black:
+  a class change read as *two waterways joining*. Two shader fixes, no art edits: (a) the class **crossfades**
+  — the pass tracks the best coverage per class and mixes the two layers by
+  `smoothstep(-river_class_blend, river_class_blend, cov_major - cov_minor)`, so a hex carrying both classes
+  dissolves one into the other over `class_blend_width` (a pure-class hex is unaffected: the loser stays at
+  `-1e9`); and (b) `river_harmonize()` pulls both layers' luma toward `RIVER_DEPTH_PIVOT`
+  (`depth_compress`) and their chroma toward `RIVER_SHARED_HUE` (`tint_strength`), preserving the luma
+  ORDER — Minor stays lighter, Major deeper — which is the thing that should say *bigger*.
+- **NAVIGABLE-CHANNEL pass (shader), right AFTER the Minor/Major pass** (so a Major feeding a navigable
+  trunk composites into it), before canopy/peaks. **This is a RENDER-ONLY change — the sim is untouched.**
+  Three parts:
+  - **`blend_class` is `"flat"`, not `"water"`** (a *render* eligibility class with no sim meaning — the
+    sim's `WATER | FRESHWATER` tags and water movement profile are unchanged). The hex is now a **bank**
+    with water painted on it, so treating it as land is correct: it takes it **out of the shore pass**
+    (no beach, no foam) and lets the bank **blend softly into neighbouring flat land**, merging the
+    corridor into the landscape. Its base texture (`textures/base/37_navigable_river.png`) is now the
+    **BANK ground** (placeholder: a copy of `09_floodplain`; real silty-bank art lands later — do not tune
+    to its colours), and its config `color` (the fallback solid + minimap pixel) is a bank tone.
+  - The shore pass additionally **skips any edge with a navigable hex on EITHER side**: `blend_class`
+    alone is not enough at the MOUTH, where the (now-land) bank would take a beach and the sea across from
+    it would draw a **surf line across the river's mouth** — the river visibly walled off from the sea it
+    drains into. A river meeting the sea is not a coast.
+  - The **channel** (`river_tex` **layer 2**, `textures/rivers/02_navigable.png` — the deep teal water that
+    used to be the terrain's base) runs from the hex **CENTRE out to the MIDPOINT of each edge it connects
+    through**. An **arm** is drawn toward `dir` when the river actually continues that way: the neighbour is
+    **navigable** (the chain), or is **water** (the sea/lake it drains into), or is a **`RiverDelta`** (the
+    sim makes the chain's MOUTH a delta — a LAND tile — so without this rule the river **dead-ends one hex
+    short of the sea**), or this hex's own `river_edges` mask carries a **Minor/Major** river on that side
+    (**the edge-river → trunk join**, which is what makes it seamless rather than a splice; a mask bit needs
+    no neighbour fetch, so it arms even at the map border / across the wrap seam). Taking the **min distance
+    over all arms** unions them into a rounded junction at the hex centre for free — the same trick that
+    rounds the Minor/Major corner joins. A navigable hex with **zero** arms (the sim should never emit one)
+    draws a centre **blob** rather than a hex of bare bank, and `MapView._warn_orphan_navigable_rivers`
+    `push_warning`s it (a deliberate GDScript mirror of the shader's arm rule — keep the two in step).
+  - It reuses the **same organic machinery** as the edge pass — the `river_meander_warp` domain warp, the
+    low-frequency `river_width_mod` swell, the `river_bank_wobble` ragged bank (all three factored into
+    shared shader functions rather than copied) — and `river_harmonize`, so the trunk reads as the same
+    river grown bigger. All noise is sampled in **WORLD space**, which is exactly what makes the channel
+    **continuous across adjacent navigable hexes**: both hexes warp the same point and read the same width
+    at their shared boundary, so the half-channels line up with no seam, pinch or gap.
+- **Config levers** (`terrain_config.json` → `rivers` block): `minor_width` / `major_width` /
+  **`navigable_width`** (the channel HALF-width as a fraction of the hex radius — `0.24`, i.e. clearly
+  wider than Major's `0.09` but well short of filling the hex; softness / meander / width-variation /
+  bank-noise / flow-speed are **shared with the edge classes**, not duplicated per class) /
+  `softness_width` / `meander_width` / `bank_noise_width` / `class_blend_width` (fractions of the hex radius
+  → px uniforms, computed in `_update_terrain_shader_quad` exactly like `blend_width` / `canopy_overhang`),
+  the unitless `width_variation` / `tint_strength` / `depth_compress`, plus `texture_scale`,
+  `river_min_radius` (the LOD floor), and `flow_speed`. Fallbacks are the `RIVER_DEFAULT_*` consts in
+  `MapView.gd`.
+- **River LOD is DECOUPLED from the blend LOD** (own `rivers_lod_enabled`, `radius ≥ river_min_radius`,
+  default 3.0 ≪ `EDGE_BLEND_MIN_RADIUS`) — a river is a landmark you navigate *by*, so it must survive
+  zooming out; the mipmapped/trilinear river array keeps the thin band stable (no shimmer).
+- **`set_highlight_rivers`** (the Map tab toggle) survives, repointed from the deleted polyline draw to the
+  shader's `river_highlight` uniform.
+- **TEXT surfacing — `ui/RiverEdges.gd`, ONE formatter, two surfaces.** Seeing the water isn't knowing
+  which SIDES carry it — which is exactly what a crossing penalty will key on. `MapView._tile_info_at`
+  copies the mask onto the tile dict as `river_edges` (from `tile_river_edges`; **deliberately NOT in
+  `FOW_DISCOVERED_HIDDEN_KEYS`** — a river is permanent geography like the terrain label or a discovered
+  Wondrous Site, so a remembered tile still reports it; never-seen tiles are already covered by the
+  `unexplored` redaction), and both the **Tile card** (`Hud._tile_terrain_lines`, with the other
+  terrain-intrinsic rows, before the FoW discovered early-return) and the **map hover tooltip**
+  (`Hud.show_tooltip`, after `Terrain:`) render it from the same `RiverEdges.summary_lines(mask)` call.
+  `RiverEdges` owns the vocabulary (classes + direction names + bit widths as named constants) and emits
+  **one line PER CLASS, Major first** — `Major River: NE, NW` / `Minor River: SW` — plain `Key: Value`
+  rows needing no `_format_detail_bbcode` tint case, and an **empty array on a riverless tile** so no
+  empty label renders. It keeps **two direction orders**: the sim's `HEX_NEIGHBOR_OFFSETS` order
+  (clockwise from E — the wire contract) DECODES the mask, and a **compass display order** (clockwise
+  from NE) lists the directions within a line, because a compass reading is what a player parses.
+  ui_preview: `river_tile_both` (two-class) / `river_tile_minor` (single-class) / `river_tile_none` (no row).
+- **Caveat — rivers are shader-only** (same as canopy/peaks): the blend-OFF **per-hex CPU path** renders no
+  rivers. That is the reference/fallback path only; the live client runs blend-on.
+- Verify via `tools/map_preview.gd` State **rivers** → `map_rivers.png` (a Minor→Major edge river wandering
+  west→east with corner turns, joining a NavigableRiver chain that turns corners of its own and drains to
+  the eastern sea — **with a real InlandSea lake in the same frame as the control**: the lake keeps its
+  beach + surf, the navigable hexes have neither, and the two must read as obviously different things) +
+  `map_rivers_seam.png` (edge/corner close-up framing the class change: the band hugs the EDGE, joins are
+  rounded, the two half-bands meet with no seam down the middle, Minor grows into Major) +
+  `map_rivers_navigable.png` (the trunk: the Major edge river flowing INTO it, the corner turns, and the
+  channel CONTINUOUS across adjacent navigable hexes) + `map_rivers_mouth.png` (the channel reaching open
+  sea + its delta lobe — no dead-end, and no surf line across the mouth) +
+  `map_rivers_farzoom.png` (decoupled LOD). The fixture generates the edge chain as the **boundary of a
+  region** (hexes north of a bank row `f(x)`), which is contiguous by construction — no gaps — and turns a
+  corner at every step; the navigable chain then WALKS `RIVER_NAV_STEPS` (E/SE/E/NE/E) out to the sea, so the
+  trunk's arm/junction geometry is actually exercised. The river is kept in the map's **upper rows**
+  deliberately: the map is cover-fit and that fit is the zoom FLOOR, so on a window wider than the grid's
+  aspect the lower rows cannot be scrolled into view at all. **`RIVER_PATTERN` must stay a mostly-MONOTONE drift**: an up-down-up staircase makes
+  the boundary wrap 4+ sides of the same hexagon, manufacturing a honeycomb that real hydrology (a downhill
+  walk on the corner lattice) never produces — the original fixture did exactly that and made the render
+  look far worse than it is.
 
 **Texture readback fix (kept from A):** `TerrainTextureManager` retains the CPU-side layer Images
 (`_layer_images`) captured once at build time; `get_terrain_image` serves duplicates from it and

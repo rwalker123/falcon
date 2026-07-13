@@ -104,7 +104,6 @@ fn deterministic_snapshots_match() {
     assert_eq!(snapshot_a.food_modules, snapshot_b.food_modules);
     assert_eq!(snapshot_a.faction_inventory, snapshot_b.faction_inventory);
     assert_eq!(snapshot_a.moisture_raster, snapshot_b.moisture_raster);
-    assert_eq!(snapshot_a.hydrology_overlay, snapshot_b.hydrology_overlay);
     assert_eq!(snapshot_a.elevation_overlay, snapshot_b.elevation_overlay);
     assert_eq!(snapshot_a.start_marker, snapshot_b.start_marker);
     assert_eq!(snapshot_a.terrain, snapshot_b.terrain);
