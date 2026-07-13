@@ -4,12 +4,15 @@ render_mode blend_mix;
 // Approach B — per-pixel biome blend for the 2D hex map (see clients/.../CLAUDE.md → Edge Blending).
 // One whole-map quad runs this fragment shader. Each fragment inverts the pointy-top odd-r hex layout
 // (MUST match MapView._hex_center / _axial_center exactly) to find its hex, samples that hex's biome
-// from the Texture2DArray, and — only when the hex AND a neighbour across a shared edge are both
-// blend_class "flat" and different biomes — dithers the neighbour's texture in near the seam. The mix
-// is symmetric (0.5 at the exact edge on both sides) and driven by WORLD-space value noise (varies per
-// hex, no baked tiling). water/rugged INLAND edges never blend (hard). Separately, land↔water edges get
-// a SHORELINE wash (foam on the water side, sand beach on the land side) — see the shoreline block. See
-// the id-map (splatmap) below.
+// from the Texture2DArray, and — when the hex AND a neighbour across a shared edge are BLEND-ELIGIBLE
+// (different biome, and either the same blendable blend_class — flat↔flat / water↔water — or, with the
+// SHIPPED-TRUE blend_rugged_land gate, any land↔land pair) — MIXES the neighbour's texture in
+// near the seam: a symmetric signed-distance splat weight (a tie at the exact edge), wobbled by WORLD-space
+// value noise (varies per hex, no baked tiling), optionally nudged by the two textures' luminance detail,
+// and feathered through a smoothstep into a continuous mix factor — never a 1-bit pick (see the const
+// block). The one CLASS CHANGE that never blends is land↔water: that seam is the SHORELINE, which gets its
+// own coastal profile instead (a LAND-ONLY beach, then a surf that peaks at the waterline and washes both
+// ways, over a base that cross-fades across it) — see the shoreline block. See the id-map (splatmap) below.
 
 uniform sampler2DArray biome_array : filter_linear, repeat_enable;
 // Canopy overlay array: whole tree crowns on transparency (RGBA), sampled in MAP space (v_map, the
@@ -41,6 +44,27 @@ uniform float peak_shadow_len;    // cast-shadow reach toward the light, in px (
 uniform float peak_shadow_strength; // max darkening a fully-occluding peak casts on the ground (0..1)
 uniform float peak_min_prominence;  // relief opacity floor at the lowest elevation (0..1); scales to 1 at peak elev
 uniform vec2 peak_light_dir;      // normalized direction TOWARD the light in canvas space (+y DOWN → top-left is -,-)
+// Per-base-layer MEAN LUMINANCE, a 1×N single-channel texture fetched by layer index (N = terrain count,
+// so the layer count is never baked into this shader as a fixed array size). Height blending uses each
+// texture's per-pixel luminance as a pseudo-height (we have no height maps); subtracting the layer's mean
+// ZERO-CENTRES it, without which a bright biome would always out-height a dark one and the seam would
+// collapse onto one side instead of interlocking. Built by TerrainTextureManager.
+uniform sampler2D layer_luma_map : filter_nearest;
+// PER-WATER-TERRAIN SHORE PROFILE, a 1×N RGBA float texture fetched by layer index (same table shape as
+// layer_luma_map). THREE INDEPENDENT SCALES on the global (ocean-tuned) coastal profile, because a coast is
+// not one thing: deep ocean only ever touches HIGH land (a CLIFF — no beach, big surf), the continental
+// shelf is the ordinary beach (sand, muted surf), an inland sea is a small lake (short everything, no
+// offshore wisp).
+//   R = sand_scale — multiplies the inland beach reach (sand_band). 0 = NO BEACH AT ALL (the cliff).
+//   G = foam_scale — multiplies the MAIN WAVE's reaches, both ways: the wash up the beach
+//                    (foam_inland_band) and the surf's seaward reach (foam_band). It scales REACH only —
+//                    the surf's PEAK is the GLOBAL foam_opacity lever (see the SURF block below), not a
+//                    per-water one. foam_scale = 0 is not a legal profile.
+//   B = wisp_scale — multiplies the secondary offshore disturbance: its centre distance, its half-width AND
+//                    its strength. 0 = no second disturbance.
+// Terrains with no `shore_profile` block read the neutral (1, 1, 1), which is a bit-exact no-op.
+// Built by TerrainTextureManager.
+uniform sampler2D layer_shore_map : filter_nearest;
 // id-map splatmap: R = terrain id (0..255), G = blend_class code (0 water, 1 flat, 2 rugged),
 // B = canopy code (0 = no canopy, else canopy-array layer + 1),
 // A = peak code (0 = no peaks, else peak-array layer + 1).
@@ -55,29 +79,274 @@ uniform int grid_h;
 uniform float hex_radius;
 uniform vec2 hex_origin;      // MapView last_origin, in this quad's local space (== MapView local space)
 uniform bool wrap_h;
-uniform float blend_band;     // interlock half-band width in px (blend_width * radius)
-uniform float noise_cell;     // world-space value-noise cell size in px (blend_noise_cell)
+uniform float blend_band;     // transition half-band width in px (blend_width * radius) — the seam's REACH
+uniform float blend_soft;     // FEATHER SOFTNESS: half-width (in seam-weight units) of the smoothstep that
+                              // turns the seam weight into the mix factor. Small ⇒ a crisp, stippled edge
+                              // that follows the noise/detail closely; large ⇒ a smooth gradient.
+uniform float blend_height_influence; // how strongly texture detail NUDGES the boundary (vs. the distance
+                              // weight, which always LEADS). Keep SMALL (0..~0.5): the weights decide, the
+                              // heights only bend the 50/50 line toward the darker/lighter side.
+uniform float blend_noise_cell; // flat↔flat INTERLOCK-only value-noise cell size in px = the wobble's cell.
+                              // Fed as blend_noise_scale * hex_radius (config blend_noise_scale, a
+                              // FRACTION of the hex radius) so the grain-per-hex is zoom-invariant — a fixed
+                              // px cell made the grain grow/shrink relative to a hex as you zoomed.
+uniform float blend_noise_amount; // amplitude of that boundary wobble (added to the seam weight, NOT
+                              // thresholded against it — this is not a dither).
+// WATER↔WATER levers (config "water_blend"). Water does NOT take the flat↔flat nearest-edge seam path at
+// all — it is a DEPTH FIELD over all six neighbours (see WATER_FIELD_PLATEAU_MAX and the water block in
+// fragment()), because a hex's water id is a quantized sample of a continuous seafloor, not one side of an
+// ecotone. The three levers keep their names but mean:
+//   band  — the field's REACH: how far into the own hex a neighbour's depth still bleeds (px).
+//   soft  — the PLATEAU as a fraction of that reach: how far back from the shared edge a neighbour already
+//           carries FULL weight (this is what dissolves the hexagon; capped by WATER_FIELD_PLATEAU_MAX).
+//   noise — amplitude of the world-noise displacement of the depth boundary (in reach units).
+// The wobble CELL and the height nudge are deliberately NOT overridden (shared with land; the height term is
+// a no-op on smooth low-variance water anyway).
+uniform float water_blend_band;
+uniform float water_blend_soft;
+uniform float water_blend_noise_amount;
+uniform float noise_cell;     // FEATURE value-noise cell size in px (config feature_noise_cell) — shared by the
+                              // shoreline reach/wisp, the canopy treeline and the peak footline. Deliberately
+                              // DECOUPLED from blend_noise_cell so retuning the interlock grain can't move any
+                              // coastline, treeline or footline.
 uniform bool blend_enabled;   // false below the LOD radius → base only (no shimmer at far zoom)
+// RUGGED-LAND eligibility (config blend_rugged_land — it SHIPS TRUE: terrain_config.json "blend_rugged_land"
+// and EDGE_BLEND_DEFAULT_RUGGED_LAND in MapView.gd). When TRUE the LAND seam gate widens from same-class to
+// "both sides are land": a rugged biome's BASE FLOOR then blends with any land neighbour (flat↔rugged and
+// rugged↔rugged), instead of ending in a razor-straight hexagon — which is the whole reason it shipped (a
+// peak biome's floor IS the ground under its relief overlay, so a hard-edged floor made rolling hills read as
+// CUT OFF at the hex line). land↔water is untouched (still hard — that seam is the shoreline) and water↔water
+// still takes the depth field, so a frame with no rugged hex is bit-identical either way.
+// The risk the flag is a LEVER for — high-contrast/structured rugged art SHREDDING under the height term —
+// is why the sweep exists, not why it is off: blend_probe state R renders EVERY rugged biome as an ISOLATED
+// hex in a contrasting field, gate OFF vs ON, and none shredded (interiors stay solid; only the rim
+// feathers). Keep the flag so a future rugged texture that DOES shred can be swept and, if need be, gated.
+uniform bool blend_rugged_land;
 uniform bool fow_enabled;
 uniform vec4 bg_color;        // out-of-map fill (matches the direct path background)
 uniform vec4 fog_color;       // unexplored fill
 uniform vec3 mist_color;      // discovered multiply tint (matches _fow_texture_tint_for_state)
 uniform float mist_blend;
-// Shoreline (land↔water coasts): a surf/foam wash on the WATER side + a sand beach on the LAND side.
-// Universal for now — every land↔water edge gets both (flat-land and rugged-land alike). Same
-// signed-distance-to-shared-edge machinery as the flat interlock; LOD-suppressed via blend_enabled.
-uniform float foam_band;      // foam reach on the water side, in px (foam_width * radius)
-uniform float beach_band;     // beach reach on the land side, in px (beach_width * radius)
+// FoW SOFTENING (see the fow block in fragment()). The vis-map is NEAREST-sampled per hex, so an
+// active↔discovered adjacency used to be a HARD HEXAGONAL brightness step — straight edges cutting across
+// even uniform water, where no terrain seam exists at all. fow_soft is the width (px) of the cross-edge
+// smoothing kernel: each neighbour's visibility is weighted by how close the fragment is to THAT shared
+// edge, so the visibility scalar is continuous across every hex boundary before it is mapped to a tint.
+uniform float fow_soft;         // smoothing reach in px (fow_softness * radius), like blend_band
+uniform float fow_noise_amount; // wispiness: world-noise perturbation of the smoothed visibility, applied
+                                // ONLY near a visibility boundary (see FOW_NOISE_EDGE_GAIN), so the fog line
+                                // reads cloudy instead of a clean arc. 0 disables.
+// Shoreline (land↔water coasts) — a coastal profile read seaward as: land → sand → surf → open water,
+// with NO hard step anywhere in that chain. It is a function of a single SIGNED coast coordinate u
+// (negative inland, 0 exactly at the coastline, positive seaward — see the shore block in fragment()),
+// so every weight it defines is one function evaluated on both sides of the shared edge and therefore
+// CONTINUOUS ACROSS IT by construction.
+// THE SHAPE: the BASE ITSELF cross-fades across the waterline (waterline_band — see below), then the
+// SAND lives ONLY in the LAND hex (full at the waterline, smoothstep-fading inland into
+// the biome art — it must never bury it, hence the short reach). The SURF peaks AT the waterline and
+// washes BOTH ways: a short distance INLAND over the sand (foam_inland_band — the crossfade that blends
+// the waves into the beach) and a longer way SEAWARD into open water (foam_band).
+// History (three rejected passes, all the same class of bug — a term saturating AT the hex edge, or sand
+// where the user does not want it):
+//   · Two-sided linear fades: land went solid tan, water solid white, and they met along the boundary —
+//     a hard tan↔white line TRACING THE HEXAGON.
+//   · Then everything was pushed onto the WATER side (land_beach_width = 0): that killed the sand↔foam
+//     line but the sand now stopped DEAD at the hex edge against the raw land texture — a NEW hard
+//     sand↔land line. Symmetric bug, other side of the seam.
+//   · Then sand on BOTH sides (sand_land_band + sand_sea_band): every line was gone, but the beach now
+//     read TWICE AS WIDE — sand in the water hex is not wanted at all. Hence: sand is land-only, and the
+//     sand↔foam blend is bought with the surf washing INLAND over it instead of with sand in the sea.
+// Same signed-distance-to-shared-edge machinery as the flat interlock; LOD-suppressed via blend_enabled.
+uniform float sand_band;         // sand reach INLAND of the coastline, in px (sand_width * radius). LAND ONLY.
+uniform float foam_inland_band;  // how far the surf washes UP the beach, in px (foam_inland_width * radius)
+uniform float foam_band;         // surf reach SEAWARD of the coastline, in px (foam_width * radius)
+// The faint SECOND surf line further out to sea. Its geometry is radius-relative like every other shore
+// reach (wisp_center_width / wisp_half_width * radius) and therefore INDEPENDENT of foam_band: it used to be
+// a fixed multiple of the surf's reach, which chained the two so the wisp could not be pulled in without
+// also shortening the surf (and vice versa). Set wisp_half_band = 0 to turn the wisp off entirely.
+uniform float wisp_center_band;  // distance from the coastline to the wisp's CENTRE, in px
+uniform float wisp_half_band;    // the wisp's half-thickness, in px
+// THE WATERLINE BASE CROSS-FADE — the reason the surf no longer has to be opaque.
+// Until this existed the BASE TEXTURE ITSELF stepped at u = 0: on a beach coast the (sand-tinted) land
+// texture met open water with nothing in between, and on a CLIFF coast (deep_ocean, sand_scale 0) it was
+// raw land meeting raw water. The full-strength foam peak was the ONLY thing concealing that flip — which
+// is why every attempt to soften the surf re-exposed a hard land↔water line and had to be reverted. So the
+// base now cross-fades across a SHORT reach either side of the waterline (a WET EDGE, not an ecotone: keep
+// it well under the sand's reach or land texture reads out to sea / water texture reads up the beach).
+// It is the same weighted-mean-over-{own + 6 neighbours} construction as the shore PROFILE field (see
+// SHORE_PROFILE_REACH_APOTHEMS), so both the land estimate and the water estimate are pure functions of the
+// id-map and the world UV — identical read from the land hex's frame and from the water hex's frame — and
+// the mix weight is one smoothstep of u. Continuous across the hex boundary by construction, like every
+// other shore term. waterline_band = 0 disables it (bit-exact: the whole block is skipped).
+uniform float waterline_band;  // half-reach of the base cross-fade either side of the waterline, in px
+                               // (waterline_width * radius)
 uniform vec3 foam_color;      // surf line color (light desaturated cyan / near-white)
-uniform vec3 beach_color;     // sand beach color (warm tan)
+uniform vec3 beach_color;     // sand color — the beach, on the LAND side of the waterline only
+// The surf's PEAK opacity at the waterline. This is a lever ONLY because the waterline base cross-fade above
+// removed the step the foam used to be covering up; with waterline_band = 0 the surf is load-bearing and
+// this must stay ~1. It scales the offshore wisp too (SHORE_WISP_STRENGTH), so the whole surf mutes as one
+// gesture rather than the peak fading while the froth stays bright. 1.0 is a bit-exact no-op.
+uniform float foam_opacity;
 
 const float SQRT3 = 1.7320508075688772;
+// blend_class codes, as packed into the id-map's G channel by MapView._blend_class_code. The SAME-CLASS
+// eligibility rule below is expressed in these, never in bare literals.
+const int CLASS_WATER = 0;
+const int CLASS_FLAT = 1;
+const int CLASS_RUGGED = 2;  // blends with any LAND neighbour while blend_rugged_land (shipped TRUE) is on;
+                             // with the gate off it never blends at all — see the uniform + the gate
 // Shore look tuning (fixed feel; the widths/colors are the config levers).
 const float SHORE_REACH_NOISE_MIN = 0.35; // min fraction of the shore band the noise leaves → wavy fingers
-const float SHORE_WISP_CENTER = 1.35;     // inner foam wisp center, as a multiple of foam_band (out past the main band)
-const float SHORE_WISP_HALF = 0.35;       // inner foam wisp half-thickness (× foam_band)
-const float SHORE_WISP_STRENGTH = 0.45;   // inner foam wisp max opacity
+const float SHORE_REACH_MIN_PX = 1.0;     // floor on any noise-shrunk reach, so no fade ever divides by ~0
+const float SHORE_SAND_OPACITY = 0.85;    // max sand wash over the base texture — deliberately < 1 so the
+                                          // beach keeps the underlying biome detail and never reads as flat paint
+// The sand's PLATEAU: how far inland it stays at FULL strength before it starts fading into the biome art.
+// It is anchored to the SURF'S INLAND WASH (`foam_inland_band`), and that anchor is the whole point. The surf
+// is composited OVER the sand and peaks at ~1 AT the waterline, so wherever the wash is strong the sand is
+// whitewashed and contributes nothing. If the sand ALSO starts decaying from the waterline (as a plain
+// `1 - smoothstep(0, sand_reach, -u)` does), then by the time the foam has cleared, the sand is already down
+// to ~30% opacity and gone entirely a hair further inland — the beach is invisible and the coast reads
+// land → surf → water with NO SAND AT ALL (verified against a dark rocky-regolith coast: white foam met bare
+// rock). Holding the sand at FULL across the wash means the retreating surf uncovers a full-strength beach —
+// that IS the sand↔foam crossfade — and only THEN does the sand fade inland. The cap keeps a fade window even
+// if a config sets the wash wider than the sand reach: at least (1 - this) of the sand reach is always fade,
+// so the inner edge can never become a hard sand↔land step.
+const float SHORE_SAND_PLATEAU_MAX = 0.6; // plateau ≤ this fraction of the sand reach (shipped config sits at
+                                          // exactly this cap: wash 0.15·r vs sand 0.25·r)
+const float SHORE_WISP_STRENGTH = 0.45;   // second foam wisp max opacity (its GEOMETRY is a config lever —
+                                          // see wisp_center_band / wisp_half_band)
+// The waterline cross-fade's OUTER FADE, as a fraction of its half-reach: how far past the wet edge the true
+// base (the flat↔flat interlock inland, the water depth field seaward) fades back in. It exists so the
+// cross-fade can hold FULL weight across its whole reach. The first cut enveloped the cross-fade by
+// `1 − smoothstep(0, reach, |u|)`, i.e. multiplied two ramps that both peak at u = 0 — the water content on
+// the land side was already down to 8% at HALF the reach, so the visible transition was a quarter of the
+// nominal one (~4px) and the base step SURVIVED, which is the whole thing this pass exists to remove
+// (measured on the foam-off cliff step check). Holding the mix at full across the reach and fading back to
+// the true base OUTSIDE it makes the gradient the reach you actually configured.
+const float SHORE_WATERLINE_FADE = 0.5;
+// --- THE SHORE-PROFILE FIELD: the profile is a CONTINUOUS WEIGHTED MEAN over the nearby water, never a
+// nearest-pick. One land hex can border a deep_ocean hex AND a continental_shelf hex along the SAME
+// coastline, and those two carry different profiles (sand_scale 0 vs 1). Picking the nearest water
+// neighbour's profile makes the beach SWITCH ON at the bisector between them — a hard line of sand appearing
+// out of nowhere along the shore. So every WATER hex in the {own + 6 neighbours} set contributes at once,
+// weighted by proximity to THAT shared edge (the water depth field's discipline), and the profile is their
+// normalized weighted mean: a cliff coast TRANSITIONS into a beach coast instead of switching.
+//
+// REACH = this × the own↔neighbour half-distance (the hex APOTHEM, which the loop already computes as
+// half_dist). 1.0 is the LARGEST reach for which the mean is EXACTLY continuous across every hex edge, and
+// that continuity is the whole ballgame (the shore weights are smoothsteps of the signed coast coordinate u,
+// evaluated from BOTH sides of the waterline — if the two sides read different scales, the profile steps at
+// the hex line, which is the exact bug u exists to prevent). Why 1.0 works, on the shared edge of hexes A|B:
+//   · a water hex C that is a neighbour of BOTH reads the same signed distance from A's frame and from B's
+//     frame (the three bisectors meeting at the corner are symmetric under the 120° rotation about it), so
+//     the two frames give C the same weight;
+//   · a water hex enumerated from only ONE of the frames has signed distance ≤ −apothem there, so its weight
+//     is exactly 0 — the frame that cannot see it agrees.
+// Raising it above 1.0 breaks the second bullet and re-introduces a step at the hex boundary.
+const float SHORE_PROFILE_REACH_APOTHEMS = 1.0;
+// Divide-by-zero guard on the weighted mean. The weight sum only approaches 0 deep inside a LAND hex, more
+// than an apothem (0.87·r) from every water edge — far beyond the longest shore reach (0.68·r) — so the
+// profile there is multiplied into terms that are already 0. Clamping the denominator makes the mean decay to
+// (0,0,0) instead of exploding, which is the same zero output, continuously.
+const float SHORE_PROFILE_WEIGHT_MIN = 1e-4;
 const float CANOPY_TREELINE_NOISE = 0.6;  // how hard world-noise waves the treeline in/out (× overhang)
+// --- PEAK CAST SHADOW: it must die off with DISTANCE FROM THE RELIEF, never with the hex grid ---
+// The occlusion term (the multi-tap look back toward the light) is near-CONSTANT across a whole neighbour hex,
+// because the peak art is near-opaque almost everywhere it is sampled. On its own it therefore painted a flat
+// darkening over every hex merely ADJACENT to relief, terminating on THAT hex's own boundary: dark HEXAGONS in
+// the neighbouring biome. So the occlusion is enveloped by the signed distance to the peak↔non-peak boundary —
+// the same quantity the overhang already uses, and evaluated identically on both sides of a shared edge (the
+// discipline the shoreline's signed coast coordinate `u` follows), so nothing can pop at the hex line.
+// The envelope is FULL at the (noise-wobbled) footline and smoothsteps to 0 over a reach that is:
+//   * elevation-scaled — a high massif throws a longer shadow (PEAK_SHADOW_ELEV_FLOOR is the reach at elev 0);
+//   * DIRECTIONAL — full length where the relief lies TOWARD the light (we are down-light of it, i.e. in its
+//     cast shadow) and shrinking to PEAK_SHADOW_UPLIGHT_REACH of it on the LIT side, which leaves a short
+//     contact/ambient skirt at the foot instead of a hard angular cutoff. A hard cutoff on dot(light, normal)
+//     would step to zero at the footline on the lit side, where the relief art is only ~half opaque and the
+//     shadowed ground shows through — i.e. it would trade the hexagon for a dark crescent.
+// The envelope is a MAX over the qualifying boundary edges, never a sum: a hex touching relief on two sides
+// takes the nearer/darker of the two and cannot double-darken into a seam. (A single-nearest-edge envelope
+// would have been discontinuous along the bisector where the nearest edge switches, because the two edges'
+// light alignments differ; max-of-continuous is continuous everywhere.)
+const float PEAK_SHADOW_ELEV_FLOOR = 0.4;     // shadow reach at elevation 0, as a fraction of peak_shadow_len
+const float PEAK_SHADOW_UPLIGHT_REACH = 0.15; // …and on the LIT side of the relief, as a fraction of the reach
+const float PEAK_SHADOW_REACH_MIN = 1e-3;     // px floor, so the envelope's smoothstep can never divide by zero
+const int PEAK_SHADOW_TAPS = 4;               // occlusion samples along the light ray (nearer occluder = darker)
+// --- PEAK ↔ PEAK: two DIFFERENT reliefs meeting must cross-fade, and the TALLER one must do the overhanging ---
+// A peak↔non-peak edge is a footline: the relief overhangs it and thins away (canopy_density). But an edge
+// between two hexes that BOTH carry relief was not a boundary at all — each hex composited its OWN peak layer
+// at full density right up to the shared edge, so the art switched 1-bit ON the hex line: rolling_hills' green
+// mounds ended in a razor-straight diagonal and alpine_mountain's spires began (the "hills are still cut off"
+// report; the BASE floor under them blends fine — it is simply invisible under near-opaque relief art).
+// So a peak↔peak edge now cross-fades the two relief layers, as a CONTINUOUS WEIGHTED MIX (never a pick), with
+// the seam's CENTRE — not its shape — driven by elevation: the taller relief overhangs DOWN onto the lower one,
+// and the lower one must not climb uphill into it.
+//   depth = distance from the shared edge INTO the own hex (0 at the edge, growing inward)
+//   asym  = the elevation ordering, smooth and ODD in Δelev: +1 when the neighbour towers over us (its art
+//           spills onto us), −1 when we tower over it (ours spills onto them), 0 when we are the same height
+//   m     = peak_overhang · asym  — the depth (into US) at which the two layers sit 50/50. Positive = the
+//           neighbour's art has pushed the seam INTO our hex; negative = we have pushed it into theirs.
+//   w     = 1 − smoothstep(m − peak_softness, m + peak_softness, depth) — the neighbour layer's coverage here.
+// CONTINUITY (the discipline the shoreline's signed coast coordinate `u` follows): the neighbour computes the
+// same edge with asym negated, hence m negated, and smoothstep is symmetric about its centre — so at the shared
+// edge (depth = 0 from BOTH sides) the two hexes assign the SAME coverage to the SAME layer. Nothing can step
+// there for any elevation pair. At Δelev = 0 this degrades to m = 0: a symmetric 50/50 cross-fade of half-width
+// peak_softness, not a coin flip. The reach and the feather reuse the peak block's existing overhang/softness
+// levers, so a relief spilling onto a lower relief looks exactly like one spilling onto flat ground.
+const float PEAK_BLEND_FULL_DELTA = 0.25;  // Δ in elev-map units (0..1 relative height) at which the overhang is
+                                           // FULLY one-sided; below it the seam eases back toward symmetric.
+// The seam centre is displaced by the same world-noise the footline rides, so the cross-fade MEANDERS instead of
+// tracing the straight hex line (a soft straight gradient still reads as a straight line — which is the whole
+// complaint). It must be applied ANTISYMMETRICALLY — the two hexes must displace the seam the same way in world
+// space, i.e. with opposite signs in their own local `m` — or the continuity above breaks. The peak LAYER INDEX
+// gives a total order that both sides agree on and that never ties (the layers differ, or there is no seam).
+const float PEAK_BLEND_WOBBLE = 0.5;       // seam-centre wobble, as a fraction of the footline's wobble
+// Fog-of-war visibility states, as written into the vis-map's R channel by MapView._rebuild_terrain_shader_maps.
+// The tint is a CONTINUOUS function of the (cross-edge smoothed) visibility scalar between these anchors, so
+// the pure states still look exactly as they did under the old per-state branch: 1 = clear, 0.5 = mist, 0 = fog.
+const float FOW_UNEXPLORED = 0.0;
+const float FOW_DISCOVERED = 0.5;
+const float FOW_ACTIVE = 1.0;
+// Envelope for the FoW wispiness noise. |smoothed − own| is 0 in a uniform-visibility interior and peaks at
+// a state boundary, where the 6-neighbour average pulls the scalar halfway across ONE state gap
+// (FOW_DISCOVERED − FOW_UNEXPLORED = 0.5, halved = 0.25). Dividing by that peak normalizes the envelope to
+// 0..1, so the noise only bites AT boundaries and pure Active / Discovered / Unexplored areas are untouched.
+const float FOW_NOISE_EDGE_PEAK = 0.25;
+// Flat↔flat transition look tuning: the reach is blend_width (→ blend_band px), the feather softness is
+// blend_soft, the boundary wobble is blend_noise_scale (a FRACTION OF THE HEX RADIUS → blend_noise_cell px)
+// × blend_noise_amount, and blend_height_influence is an OPTIONAL detail-following nudge.
+// THE INVARIANT: the seam is ALWAYS a continuous weighted mix (`mix(own, nb, t)`), never a 1-bit pick.
+// Two rejected attempts were both 1-bit picks in disguise: (1) the original dither
+// (`if (best_p > vnoise(...)) result = neighbour;`) — user verdict "chunky blobs"; (2) height blending with
+// a large blend_height_influence and a small overlap depth, where the luminance term dwarfed the distance
+// weight and degenerated into winner-takes-all-by-luma — user verdict "shredded, this isn't a blend at all"
+// (dark soil punched holes deep into grass-hex interiors, because a dark patch of grass ANYWHERE in the band
+// lost outright). Hence: the DISTANCE WEIGHT LEADS, heights only NUDGE (influence stays ≤ ~0.5), and the
+// final step is always a smoothstep-weighted mix.
+// Perturbation envelope: the noise + height perturbation is scaled by 4·p·(1−p), a parabola peaking at the
+// seam (p = 0.5) and vanishing at both ends of the band, so a perturbation can never leak neighbour texture
+// into hex interiors nor leave a straight discontinuity along the band's outer edge.
+const float BLEND_PERTURB_ENVELOPE_PEAK = 4.0; // normalizes p·(1−p) (max 0.25) to a peak of 1.0 at p = 0.5
+const float BLEND_SOFT_MIN = 1e-3;             // floor on blend_soft so the smoothstep never degenerates
+                                               // into a divide-by-zero / hard step
+// WATER↔WATER is NOT a seam — it is a DEPTH FIELD (see the water block in fragment()).
+// The flat↔flat path above blends against the ONE nearest qualifying edge, which is right for an ecotone:
+// two biomes meet along a line and interlock across it. Water is not that. A hex's water id is a QUANTIZED
+// SAMPLE of a continuous seafloor depth, and the real map's ocean is salt-and-pepper (a live 80×52 snapshot's
+// id-map carried 2332 deep_ocean↔continental_shelf hex adjacencies and 16 deep hexes whose SIX water
+// neighbours were all a different id). Under a nearest-edge seam blend such a hex can only read as a dark
+// HEXAGON: the rim feathers, but the interior keeps the (much darker) deep texture and the silhouette IS the
+// hex — which is exactly the "dark patches with hard full-hexagon edges in open water" report, and it is
+// TERRAIN, not the FoW tint (FoW off leaves the vis-map unread — the tint cannot fire).
+// So for water every qualifying neighbour contributes AT ONCE, weighted by how close the fragment is to THAT
+// shared edge — the same 6-neighbour cross-edge weighting the FoW softening uses — and the result is a
+// normalized weighted mean of the water textures. The weight reaches 1 exactly AT a shared edge, so at that
+// edge the mean is (own + nb)/2 read from BOTH sides: continuous across every boundary by construction.
+// water_blend_soft is reinterpreted for this field as the PLATEAU: the fraction of the reach, measured back
+// from the shared edge, over which a neighbour already carries FULL weight. A wide plateau is what actually
+// dissolves the silhouette (a pure ramp only softens its rim). Capped so a ramp always survives — a plateau
+// spanning the whole reach would put a hard step at the reach's outer edge.
+const float WATER_FIELD_PLATEAU_MAX = 0.5;
 
 // v_world is the quad-LOCAL (viewport/screen-fixed) coordinate — it does NOT track the map on
 // pan/zoom. hex_origin (= MapView last_origin) moves with the pan/zoom, so hex-anchored terms
@@ -108,12 +377,41 @@ float vnoise(vec2 p) {
 	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
+// Rec.709 luminance — the pseudo-height of a texel for height blending. MUST match LUMA_WEIGHTS in
+// TerrainTextureManager, which measures each layer's mean of exactly this quantity.
+float luma(vec3 c) {
+	return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+// Mean luminance of a base layer (the zero-point of its pseudo-height), fetched by layer index.
+float mean_luma(int layer) {
+	return texelFetch(layer_luma_map, ivec2(layer, 0), 0).r;
+}
+
+// Shore profile of a terrain: (sand_scale, foam_scale, wisp_scale), fetched by layer index. Neutral
+// (1, 1, 1) for any terrain without a `shore_profile` block. See layer_shore_map.
+vec3 shore_profile(int layer) {
+	return texelFetch(layer_shore_map, ivec2(layer, 0), 0).rgb;
+}
+
 // Canopy density across the treeline. s = signed distance to the canopy↔non-canopy boundary,
 // POSITIVE inside the forest, 0 at the edge, negative in the neighbour. Deep inside → 1; ~0.5 at the
 // exact edge; ramps to 0 canopy_overhang px OUTSIDE the forest (crowns overhang, then fade).
 float canopy_density(float s, float overhang, float softness) {
 	if (s >= 0.0) { return 0.5 + 0.5 * smoothstep(0.0, softness, s); }
 	return 0.5 * smoothstep(-overhang, 0.0, s);
+}
+
+// Premultiplied-alpha conversions, for AVERAGING two overlay samples that have independent alpha (the
+// peak↔peak cross-fade). Averaging straight-alpha RGBA lets a fully TRANSPARENT texel's leftover RGB drag
+// the colour wherever the other layer is opaque — it painted bright fringes along the seam. Colour must be
+// weighted by coverage × alpha; alpha averages on its own.
+const float PREMUL_ALPHA_MIN = 1e-4;   // un-premultiply guard: below this the colour is undefined anyway
+vec4 premultiplied(vec4 c) {
+	return vec4(c.rgb * c.a, c.a);
+}
+vec4 unpremultiplied(vec4 c) {
+	return vec4(c.rgb / max(c.a, PREMUL_ALPHA_MIN), c.a);
 }
 
 // odd-r neighbour offsets (MUST match MapView._get_neighbor_offset_{x,y}_2d).
@@ -175,6 +473,17 @@ void fragment() {
 		in_map = in_map && col >= 0 && col < grid_w;
 	}
 
+	// Peak UV + its EXPLICIT screen-space gradients, computed HERE — in fully uniform control flow, before any
+	// branch. The peak pass's texture fetches all sit inside per-edge/per-fragment `if`s (divergent flow), where
+	// implicit-LOD `texture()` has UNDEFINED derivatives: on a 2×2 quad that straddles a relief↔relief seam the
+	// lanes take different branches, the driver picks a garbage mip, and the fetch comes back at the wrong
+	// resolution. That drew a 1-PIXEL DARK COLUMN exactly along the hex edge — a razor line, straight back where
+	// we started, hiding inside an otherwise correct cross-fade. Sampling with textureGrad and these gradients
+	// makes the LOD well-defined for every lane. (Same continuous map-space UV as the canopy's cuv.)
+	vec2 puv = v_map / (2.0 * hex_radius) * peak_scale;
+	vec2 puv_dx = dFdx(puv);
+	vec2 puv_dy = dFdy(puv);
+
 	if (!in_map) {
 		COLOR = bg_color;
 	} else {
@@ -192,7 +501,63 @@ void fragment() {
 		vec2 base_uv = v_map / (2.0 * hex_radius) * base_scale;
 		vec3 result = texture(biome_array, vec3(base_uv, float(own_layer))).rgb;
 
-		if (blend_enabled && own_class == 1) {
+		// ELIGIBILITY: the base rule is SAME-CLASS — a hex blends only with a neighbour of its OWN blend_class
+		// and a different terrain id. flat↔flat (grass↔soil ecotones) and water↔water (deep ocean grading into
+		// shelf) both qualify; land↔water is a CLASS CHANGE, so it stays hard — that seam is the SHORELINE,
+		// owned by the foam/beach pass below, and softening it would wash the coastline out.
+		// blend_rugged_land (SHIPPED TRUE — see the uniform) widens the LAND half of that rule to "both sides
+		// are land", so rugged (class 2) blends with any land neighbour; with it off, rugged never blends.
+		bool own_land = own_class != CLASS_WATER;
+		bool own_blendable = own_class == CLASS_FLAT || own_class == CLASS_WATER
+			|| (blend_rugged_land && own_class == CLASS_RUGGED);
+		if (blend_enabled && own_class == CLASS_WATER) {
+			// --- WATER: a continuous DEPTH FIELD, not a seam (see WATER_FIELD_PLATEAU_MAX) ---
+			// EVERY qualifying water neighbour contributes at once, weighted by proximity to THAT shared edge;
+			// the normalized weighted mean is the fragment's water. This dissolves the hex silhouette a lone
+			// deep_ocean hex would otherwise keep (the dark-hexagon report) instead of merely feathering its rim.
+			float reach = max(water_blend_band, BLEND_SOFT_MIN);
+			// Plateau: distance back from the shared edge over which a neighbour already has FULL weight.
+			float plateau = clamp(water_blend_soft, 0.0, WATER_FIELD_PLATEAU_MAX) * reach;
+			// ONE world-noise sample, shared by all six weights: it displaces the fragment's distance to every
+			// shared edge by the same amount, so the depth boundary MEANDERS organically. Sampled in map space,
+			// so a given world point reads the same value from both sides of an edge — continuity survives it.
+			float wobble = (vnoise(v_map / blend_noise_cell) - 0.5) * water_blend_noise_amount * reach;
+			vec3 wsum_rgb = result;   // own water carries weight 1 by construction
+			float wsum = 1.0;
+			for (int dir = 0; dir < 6; dir++) {
+				ivec2 off = neighbor_offset(row, dir);
+				int ncol = col + off.x;
+				int nrow = row + off.y;
+				if (nrow < 0 || nrow >= grid_h) { continue; }
+				int ncol_id = ncol;
+				bool nb_in = true;
+				if (wrap_h) {
+					ncol_id = wrap_col(ncol);
+				} else if (ncol < 0 || ncol >= grid_w) {
+					nb_in = false;
+				}
+				if (!nb_in) { continue; }
+				vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
+				vec4 npx = texture(id_map, nuv);
+				int nlayer = int(npx.r * 255.0 + 0.5);
+				int nclass = int(npx.g * 255.0 + 0.5);
+				if (nclass != CLASS_WATER || nlayer == own_layer) { continue; } // water & a different depth only
+				vec2 nb_c = hex_center(ncol, nrow);
+				vec2 dir_v = normalize(nb_c - own_c);
+				float half_dist = 0.5 * distance(own_c, nb_c);
+				// signed distance to the shared edge (the perpendicular bisector); <= 0 inside own hex.
+				float d = dot(v_world - own_c, dir_v) - half_dist + wobble;
+				// 0 at the reach limit → 1 from the plateau line inward to (and across) the shared edge.
+				float w = smoothstep(-reach, -plateau, d);
+				wsum_rgb += texture(biome_array, vec3(base_uv, float(nlayer))).rgb * w;
+				wsum += w;
+			}
+			result = wsum_rgb / wsum;
+		} else if (blend_enabled && own_blendable) {
+			// --- FLAT↔FLAT: the nearest-edge ECOTONE interlock (unchanged; water no longer takes this path) ---
+			float seam_band = blend_band;
+			float seam_soft = blend_soft;
+			float seam_noise_amount = blend_noise_amount;
 			float best_p = 0.0;
 			int best_layer = -1;
 			for (int dir = 0; dir < 6; dir++) {
@@ -212,32 +577,83 @@ void fragment() {
 				vec4 npx = texture(id_map, nuv);
 				int nlayer = int(npx.r * 255.0 + 0.5);
 				int nclass = int(npx.g * 255.0 + 0.5);
-				if (nclass != 1 || nlayer == own_layer) { continue; } // flat & different only
+				// Eligibility: with blend_rugged_land (SHIPPED TRUE), ANY land neighbour (own is land here, so
+				// this is flat↔flat / flat↔rugged / rugged↔rugged); with the gate off, same class only. Water
+				// is excluded either way — that seam is the shoreline. Symmetric on both sides of the edge,
+				// so the seam stays continuous.
+				bool nb_eligible = blend_rugged_land && own_land
+					? nclass != CLASS_WATER
+					: nclass == own_class;
+				if (!nb_eligible || nlayer == own_layer) { continue; }
 				vec2 nb_c = hex_center(ncol, nrow);
 				vec2 dir_v = normalize(nb_c - own_c);
 				float half_dist = 0.5 * distance(own_c, nb_c);
 				// signed distance to the shared edge (the perpendicular bisector); <=0 inside own hex.
 				float d = dot(v_world - own_c, dir_v) - half_dist;
-				float p = clamp(0.5 + d / (2.0 * blend_band), 0.0, 1.0); // 0.5 AT the edge → symmetric
+				float p = clamp(0.5 + d / (2.0 * seam_band), 0.0, 1.0); // 0.5 AT the edge → symmetric
 				if (p > best_p) {
 					best_p = p;
 					best_layer = nlayer;
 				}
 			}
-			if (best_layer >= 0 && best_p > vnoise(v_map / noise_cell)) {
-				// Sample the neighbour biome at the SAME continuous world position as the base (only the
-				// array layer differs), so the flat↔flat dither interlocks two world-sampled biomes at one
-				// world point — the cross-edge blend stays continuous with the new base sampling.
-				result = texture(biome_array, vec3(base_uv, float(best_layer))).rgb;
+			if (best_layer >= 0) {
+				// FEATHERED, WOBBLED, DETAIL-NUDGED MIX — always continuous, never a pick.
+				// best_p is the SPLAT WEIGHT (0 deep in own hex, 0.5 exactly at the shared edge, 1 deep in
+				// the neighbour). It LEADS. Two perturbations bend it, both enveloped by 4·p·(1−p) so they
+				// peak at the seam and vanish at the band's ends (no leakage into hex interiors):
+				//   · world value noise → an organic, meandering boundary instead of the straight hex line;
+				//   · the two textures' zero-centred luminances (their pseudo-height, we have no height maps)
+				//     → the boundary bends toward the darker/lighter side so it follows the textures' own
+				//     tufts and grains. This is a NUDGE: blend_height_influence stays small, so it can never
+				//     out-vote the distance weight (which is exactly what shredded the hexes at 4.0).
+				// The perturbed weight is then feathered through a smoothstep of half-width blend_soft and
+				// used as a plain mix factor: every pixel in the band is a genuine blend of the two biomes.
+				// The neighbour is sampled at the SAME continuous world position as the base (only the array
+				// layer differs), so both competitors are the same world point of two biomes.
+				vec3 own_rgb = result;
+				vec3 nb_rgb = texture(biome_array, vec3(base_uv, float(best_layer))).rgb;
+
+				float perturb_env = BLEND_PERTURB_ENVELOPE_PEAK * best_p * (1.0 - best_p);
+				float n = vnoise(v_map / blend_noise_cell);
+				float wobble = (n - 0.5) * seam_noise_amount;
+				// positive when OWN is the taller/brighter texture here → push the boundary toward the
+				// neighbour (own keeps the pixel), i.e. SUBTRACT from the neighbour's weight.
+				float h = (luma(own_rgb) - mean_luma(own_layer)) - (luma(nb_rgb) - mean_luma(best_layer));
+				float pw = clamp(best_p + (wobble - h * blend_height_influence) * perturb_env, 0.0, 1.0);
+
+				float soft = max(seam_soft, BLEND_SOFT_MIN);
+				float t = smoothstep(0.5 - soft, 0.5 + soft, pw);
+				result = mix(own_rgb, nb_rgb, t);
 			}
 		}
 
-		// --- shoreline: foam wash on the water side, sand beach on the land side, at land↔water edges ---
-		// Universal: fires for ANY edge where exactly one side is water (own_class 0). Inland flat↔flat
-		// and rugged↔* edges are untouched (both sides non-water → skipped). LOD-gated like the blend.
+		// --- shoreline: ONE continuous coastal profile straddling every land↔water edge ---
+		// Universal: fires for ANY edge where exactly one side is water. Inland flat↔flat, water↔water and
+		// rugged↔* edges are untouched (both sides same wetness → skipped). LOD-gated like the blend.
+		// Seaward read: land → sand → surf → open water, with NO hard step anywhere: every weight below is a
+		// smoothstep of the SIGNED coast coordinate u, one function evaluated on both sides of the shared
+		// edge, so nothing can pop at the hex boundary (see the uniform block for the two bugs this fixes).
 		if (blend_enabled) {
-			bool own_water = own_class == 0;
+			bool own_water = own_class == CLASS_WATER;
 			float best_d = -1e9; // nearest qualifying edge = max signed distance (closest to the seam)
+			// THE PROFILE IS KEYED ON THE WATER, AS A CONTINUOUS FIELD — both halves are correctness
+			// requirements, not preferences.
+			// (a) KEYED ON THE WATER: the profile must be the SAME function on both sides of the waterline, or
+			//     the smoothsteps of u would evaluate with different reaches on the land hex and the water hex
+			//     and re-introduce exactly the hard line at the hex edge that the signed coast coordinate
+			//     exists to prevent. The water is the only side both fragments can agree on (the land biome
+			//     differs from hex to hex along a coast, the body of water does not), and it is the meaningful
+			//     one: "cliff, beach or lake?" is a property of the water.
+			// (b) A FIELD, NOT A PICK: a land hex can border deep_ocean AND continental_shelf along ONE
+			//     coastline, and their profiles differ (no beach vs a full beach). Taking the NEAREST water
+			//     neighbour's profile switches at the bisector between them — the beach would appear along a
+			//     hard line. So every water hex in {own + 6 neighbours} contributes at once, weighted by
+			//     proximity to THAT shared edge, and we take the normalized weighted mean (the water depth
+			//     field's discipline). See SHORE_PROFILE_REACH_APOTHEMS for why that mean is EXACTLY
+			//     continuous across every hex edge — including the land↔water edge, where it must be.
+			// Own water carries weight 1 by construction; land contributes nothing (it has no profile).
+			vec3 prof_sum = own_water ? shore_profile(own_layer) : vec3(0.0);
+			float prof_w = own_water ? 1.0 : 0.0;
 			for (int dir = 0; dir < 6; dir++) {
 				ivec2 off = neighbor_offset(row, dir);
 				int ncol = col + off.x;
@@ -250,28 +666,186 @@ void fragment() {
 					continue;
 				}
 				vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
-				int nclass = int(texture(id_map, nuv).g * 255.0 + 0.5);
-				bool nb_water = nclass == 0;
-				if (own_water == nb_water) { continue; } // exactly one side must be water
+				vec4 nidpx = texture(id_map, nuv);
+				int nclass = int(nidpx.g * 255.0 + 0.5);
+				bool nb_water = nclass == CLASS_WATER;
 				vec2 nb_c = hex_center(ncol, nrow);
 				vec2 dir_v = normalize(nb_c - own_c);
-				float half_dist = 0.5 * distance(own_c, nb_c);
-				best_d = max(best_d, dot(v_world - own_c, dir_v) - half_dist); // <=0 inside own hex
+				float half_dist = 0.5 * distance(own_c, nb_c); // the hex APOTHEM
+				float d = dot(v_world - own_c, dir_v) - half_dist; // <=0 inside own hex, 0 AT the shared edge
+				if (nb_water) {
+					// Profile weight: 0 at (and beyond) our own centre, 1 AT the shared edge. Unwobbled on
+					// purpose — a noise displacement here would break the exact cross-edge agreement.
+					float prof_reach = half_dist * SHORE_PROFILE_REACH_APOTHEMS;
+					float w = smoothstep(-prof_reach, 0.0, d);
+					prof_sum += shore_profile(int(nidpx.r * 255.0 + 0.5)) * w;
+					prof_w += w;
+				}
+				if (own_water == nb_water) { continue; } // the COAST edge: exactly one side must be water
+				if (d > best_d) { best_d = d; }           // nearest qualifying edge → the coast coordinate
 			}
 			if (best_d > -1e8) {
+				// (1, 1, 1) for any water terrain without a `shore_profile` — a bit-exact no-op below (the
+				// mean of a set of identical neutral profiles is exactly 1.0 in float, so every ocean renders
+				// as it did before this table existed).
+				vec3 profile = prof_sum / max(prof_w, SHORE_PROFILE_WEIGHT_MIN);
+				float sand_scale = profile.r;  // scales the beach's inland reach (0 = a CLIFF: no beach)
+				float foam_scale = profile.g;  // scales the MAIN WAVE's reaches (both ways) — never its peak
+				float wisp_scale = profile.b;  // scales the offshore wisp's centre, half-width AND strength
 				float dist_in = max(-best_d, 0.0);            // 0 at the coast edge, grows away from it
-				float band = own_water ? foam_band : beach_band;
+				// THE SIGNED COAST COORDINATE. dist_in → 0 at the shared edge on BOTH sides, so negating it
+				// on the land side gives one coordinate that runs continuously through the coastline:
+				//   u < 0 = inland · u = 0 exactly AT the waterline · u > 0 = seaward.
+				// Every weight below is a smoothstep of u alone, so its value at u = 0 is the same whether
+				// the fragment belongs to the land hex or the water hex — nothing can step at the boundary.
+				float u = own_water ? dist_in : -dist_in;
+				// The SAME world-noise wobble scales every reach, so the sand's inland edge, its seaward lip,
+				// the surf line and the wisp all meander together (organic fingers) instead of drawing
+				// concentric clean stripes. Sampled in map space, so it is the same value on both sides of
+				// the edge at a given world point — the profile's continuity survives the wobble.
 				float n = vnoise(v_map / noise_cell);
-				float reach = max(band * mix(SHORE_REACH_NOISE_MIN, 1.0, n), 1.0); // wavy inward extent
-				float amount = clamp(1.0 - dist_in / reach, 0.0, 1.0); // strongest at the edge, fades away
-				result = mix(result, own_water ? foam_color : beach_color, amount);
-				if (own_water) {
-					// optional faint second wisp: a thinner surf line further out over open water
-					float wisp = clamp(1.0 - abs(dist_in - foam_band * SHORE_WISP_CENTER)
-						/ max(foam_band * SHORE_WISP_HALF, 1.0), 0.0, 1.0);
-					float wn = vnoise(v_map / noise_cell + vec2(17.0, 5.0));
-					result = mix(result, foam_color, wisp * SHORE_WISP_STRENGTH * wn);
+				float wobble = mix(SHORE_REACH_NOISE_MIN, 1.0, n);
+				// …and the water's THREE profile scales then scale their own parts of the profile (1.0 = the
+				// global, ocean-tuned reach), so a cliff coast, a beach coast and a lake coast can differ.
+				// EACH SCALE IS GROUPED WITH THE WOBBLE ON PURPOSE (`scale * wobble`, then × the band): a
+				// neutral 1.0 reduces each expression to the ORIGINAL `band * wobble` bit-for-bit, so every
+				// water terrain without a shore_profile renders EXACTLY as it did before this table existed.
+				// Scaling each band separately instead (`(band * scale) * wobble`) is the same value in exact
+				// arithmetic but rounds a different intermediate, which moved a handful of ocean pixels by
+				// 1/255 — a no-op, but not a bit-identical one.
+				float sand_wobble = sand_scale * wobble;
+				float foam_wobble = foam_scale * wobble;
+				float wisp_wobble = wisp_scale * wobble;
+				// The beach's reach, BEFORE the px floor — the floor is what the fade-out below is measured
+				// against, so it has to be visible here.
+				float sand_reach_raw = sand_band * sand_wobble;                              // inland, u < 0
+				float sand_reach = max(sand_reach_raw, SHORE_REACH_MIN_PX);
+				float wash_reach = max(foam_inland_band * foam_wobble, SHORE_REACH_MIN_PX);  // surf up the beach, u < 0
+				float foam_reach = max(foam_band * foam_wobble, SHORE_REACH_MIN_PX);         // surf out to sea, u > 0
+
+				// 0. THE WATERLINE BASE CROSS-FADE — kill the base's OWN step at u = 0, so the surf above it
+				// no longer has to be an opaque cover-up (see the waterline_band uniform). A short WET EDGE:
+				// the land base and the water base are cross-faded across ±wl_reach of the coastline.
+				// Both estimates are the weighted mean over {own + 6 neighbours} of that wetness, weighted by
+				// proximity to THAT shared edge — the shore-PROFILE field's construction, and continuous across
+				// every hex edge for exactly the reason documented at SHORE_PROFILE_REACH_APOTHEMS. Because
+				// they are functions of the id-map and the world UV alone (never of `result`, which carries the
+				// own hex's flat-interlock/depth-field history), the land hex and the water hex compute the SAME
+				// pair at a given world point — so `mixed` is frame-independent and the cross-fade cannot step
+				// at the boundary. `result` (the true base, with its interlock/depth field intact) is then
+				// blended toward `mixed` by an envelope that holds FULL across the wet edge and fades back to
+				// the true base over SHORE_WATERLINE_FADE beyond it: at u = 0 both sides land on `mixed`
+				// exactly, and past the wet edge the flat↔flat blend and the water depth field are returned
+				// untouched. (Enveloping with a ramp that also peaks at u = 0 collapses the gradient to a
+				// quarter of its reach and the step survives — see SHORE_WATERLINE_FADE.)
+				float wl_reach = max(waterline_band * wobble, SHORE_REACH_MIN_PX);
+				float wl_outer = wl_reach * (1.0 + SHORE_WATERLINE_FADE);
+				if (waterline_band > 0.0 && abs(u) < wl_outer) {
+					vec3 own_base = texture(biome_array, vec3(base_uv, float(own_layer))).rgb;
+					vec3 land_sum = own_water ? vec3(0.0) : own_base;   // own carries weight 1 by construction
+					float land_w = own_water ? 0.0 : 1.0;
+					vec3 water_sum = own_water ? own_base : vec3(0.0);
+					float water_w = own_water ? 1.0 : 0.0;
+					for (int dir = 0; dir < 6; dir++) {
+						ivec2 off = neighbor_offset(row, dir);
+						int ncol = col + off.x;
+						int nrow = row + off.y;
+						if (nrow < 0 || nrow >= grid_h) { continue; }
+						int ncol_id = ncol;
+						if (wrap_h) {
+							ncol_id = wrap_col(ncol);
+						} else if (ncol < 0 || ncol >= grid_w) {
+							continue;
+						}
+						vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
+						vec4 nidpx = texture(id_map, nuv);
+						int nlayer = int(nidpx.r * 255.0 + 0.5);
+						bool nb_water = int(nidpx.g * 255.0 + 0.5) == CLASS_WATER;
+						vec2 nb_c = hex_center(ncol, nrow);
+						vec2 dir_v = normalize(nb_c - own_c);
+						float half_dist = 0.5 * distance(own_c, nb_c);
+						float d = dot(v_world - own_c, dir_v) - half_dist;
+						// The SAME unwobbled weight as the profile field — a noise displacement here would
+						// break the exact cross-edge agreement the whole cross-fade rests on.
+						float w = smoothstep(-half_dist * SHORE_PROFILE_REACH_APOTHEMS, 0.0, d);
+						vec3 nb_base = texture(biome_array, vec3(base_uv, float(nlayer))).rgb;
+						if (nb_water) {
+							water_sum += nb_base * w;
+							water_w += w;
+						} else {
+							land_sum += nb_base * w;
+							land_w += w;
+						}
+					}
+					vec3 land_base = land_sum / max(land_w, SHORE_PROFILE_WEIGHT_MIN);
+					vec3 water_base = water_sum / max(water_w, SHORE_PROFILE_WEIGHT_MIN);
+					// THE wet edge: one smoothstep of u, 0.5 exactly AT the waterline, spread over ±wl_reach.
+					vec3 mixed = mix(land_base, water_base, smoothstep(-wl_reach, wl_reach, u));
+					// …held at FULL across that reach, then handing back to the true base over the outer fade.
+					result = mix(result, mixed, 1.0 - smoothstep(wl_reach, wl_outer, abs(u)));
 				}
+
+				// 1. SAND — the LAND side only (the water hex gets no sand at all). FULL from the waterline
+				// across the surf's inland wash (the plateau — see SHORE_SAND_PLATEAU_MAX: the surf is painted
+				// over the sand, so a sand that decayed from the waterline would be whitewashed exactly where
+				// it is strongest and the beach would never appear), THEN smoothstep-fading inland into the
+				// biome art over the rest of its reach — a soft inner edge, and short enough that the sand
+				// tints the land art rather than burying it.
+				// THE BEACH FADES OUT WITH ITS OWN REACH (sand_fade). SHORE_REACH_MIN_PX floors the reach so
+				// no fade divides by ~0 — but on a CLIFF coast (sand_scale → 0) that floor would keep a
+				// 1px-wide, FULL-STRENGTH tan hairline alive along the waterline, and worse, the beach would
+				// POP into existence at full opacity the instant sand_scale left 0 as a cliff profile blends
+				// into a beach one. Fading the opacity out with the reach over the last floor's-worth makes
+				// the beach GROW IN continuously from nothing. Exactly 1.0 (a bit-exact no-op) for any beach
+				// wider than the floor, i.e. for every real coast.
+				float sand_fade = min(sand_reach_raw / SHORE_REACH_MIN_PX, 1.0);
+				float sand_plateau = min(wash_reach, sand_reach * SHORE_SAND_PLATEAU_MAX);
+				// ASCENDING-EDGE FORM, and that is not cosmetic: `sand_plateau` is capped at
+				// SHORE_SAND_PLATEAU_MAX (0.6) of `sand_reach`, which is itself floored at
+				// SHORE_REACH_MIN_PX, so edge0 > edge1 on EVERY path — and smoothstep is UNDEFINED
+				// (GLSL + SPIR-V) when edge0 >= edge1. `1 - smoothstep(plateau, reach, -u)` is
+				// algebraically identical (smoothstep's descending form) and still a pure function of
+				// `u` alone, so the cross-edge continuity invariant is preserved.
+				float sand = ((u <= 0.0) ? 1.0 - smoothstep(sand_plateau, sand_reach, -u) : 0.0)
+					* (SHORE_SAND_OPACITY * sand_fade);
+				result = mix(result, beach_color, sand);
+
+				// 2. SURF — peaks AT the waterline and washes BOTH ways: INLAND over the sand (the
+				// crossfade that blends the waves into the beach, killing the sand↔foam line) and SEAWARD
+				// into open water. foam_scale still shortens the wave's REACH only; its PEAK is the global
+				// foam_opacity lever, which exists ONLY because the waterline cross-fade above removed the base
+				// step the peak used to conceal. With waterline_band = 0 the peak is load-bearing again and
+				// foam_opacity must stay ~1 — see the uniform block.
+				float foam_in = smoothstep(-wash_reach, 0.0, u);   // rises across the beach → crossfade
+				float foam_out = 1.0 - smoothstep(0.0, foam_reach, u); // dies out to sea
+				float surf = foam_in * foam_out * foam_opacity;
+				result = mix(result, foam_color, surf);
+
+				// 3. faint second wisp: a thinner surf line further out over open water. Its centre and
+				// half-thickness are their OWN radius-relative levers (wisp_center_band / wisp_half_band),
+				// not multiples of the surf's reach — so the surf can be shortened without dragging the wisp
+				// in with it, and the wisp can be pulled in or thinned on its own. Config is responsible for
+				// keeping the band seaward of the surf (centre − half > foam reach) so the two read as two
+				// lines; if they overlap they simply merge into one wider surf. Scaled by the SAME wobble as
+				// every other reach, so the wisp meanders with the surf instead of drawing a perfect ring.
+				// wisp_half_band = 0 turns the wisp off (the REACH_MIN_PX floor would otherwise keep a 1px
+				// ring alive).
+				// The wisp is the water's OWN lever: wisp_scale pulls its centre in, thins it (half-width) and
+				// fades it (strength) together, so it recedes toward the shore and dies out as one gesture —
+				// and wisp_scale = 0 removes the second disturbance entirely (it reads as noise on a small
+				// lake) without touching that water's sand or surf. Same neutral-1.0 grouping as the reaches.
+				float wisp_center = max(wisp_center_band * wisp_wobble, SHORE_REACH_MIN_PX);
+				float wisp_half = max(wisp_half_band * wisp_wobble, SHORE_REACH_MIN_PX);
+				// Ascending-edge form for the same reason as the sand above: `wisp_half` is floored at
+				// SHORE_REACH_MIN_PX, so a descending `smoothstep(wisp_half, 0.0, …)` would have
+				// edge0 >= edge1 on every path — undefined behaviour. Algebraically identical.
+				float wisp = wisp_half_band * wisp_scale > 0.0
+					? 1.0 - smoothstep(0.0, wisp_half, abs(u - wisp_center))
+					: 0.0;
+				// foam_opacity scales the wisp too, so the whole surf mutes as ONE gesture — muting the peak
+				// while the offshore froth stayed bright would just move the eye-catching bright ring out to sea.
+				float wn = vnoise(v_map / noise_cell + vec2(17.0, 5.0));
+				result = mix(result, foam_color, wisp * (SHORE_WISP_STRENGTH * wisp_scale * foam_opacity) * wn);
 			}
 		}
 
@@ -339,6 +913,22 @@ void fragment() {
 			float pk_best_d = -1e9;                         // nearest boundary edge = max signed distance
 			int nb_peak_code = 0;
 			float nb_peak_elev = 0.0;                       // elevation of that nearest peak-neighbour hex
+			float own_elev = texture(elev_map, id_uv).r;    // 0..1; the peak's own height when own_is_peak
+			// peak↔PEAK cross-blend accumulator (see the PEAK_BLEND_* consts): the neighbouring relief layers
+			// contribute AT ONCE, each weighted by its own edge's coverage, and the result is their weighted
+			// MEAN — never a pick, and never a nearest-edge switch that could seam along a bisector where two
+			// different reliefs meet the same hex (the discipline the water depth field uses).
+			vec4 pk_mix = vec4(0.0);                        // Σ wᵢ · relief_rgbaᵢ
+			float pk_w_sum = 0.0;                           // Σ wᵢ
+			float pk_elev_mix = 0.0;                        // Σ wᵢ · elevᵢ — so prominence follows the art shown
+			// The footline wobble, shared by the shadow ENVELOPE and the peak composite below so the shadow's
+			// onset meanders with the art's footline instead of tracing the hex edge. Map-space noise, so a
+			// world point reads the same value from both sides of an edge — continuity survives it.
+			float tn = vnoise(v_map / noise_cell + vec2(7.0, 5.0));
+			float pk_wobble = (tn - 0.5) * 2.0 * peak_overhang * CANOPY_TREELINE_NOISE;
+			// Cast-shadow envelope: 1 at the footline, 0 beyond the (elevation-scaled, DIRECTIONAL) reach.
+			// See the PEAK_SHADOW_* consts — this is what keeps the shadow off the hex grid.
+			float shadow_env = 0.0;
 			for (int dir = 0; dir < 6; dir++) {
 				ivec2 off = neighbor_offset(row, dir);
 				int ncol = col + off.x;
@@ -352,17 +942,68 @@ void fragment() {
 				}
 				vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
 				int ncode = int(texture(id_map, nuv).a * 255.0 + 0.5);
-				if (own_is_peak == (ncode > 0)) { continue; } // only peak↔non-peak edges are boundaries
+				bool nb_is_peak = ncode > 0;
 				vec2 nb_c = hex_center(ncol, nrow);
 				vec2 dir_v = normalize(nb_c - own_c);
 				float half_dist = 0.5 * distance(own_c, nb_c);
 				float d = dot(v_world - own_c, dir_v) - half_dist; // <=0 inside own hex, larger = nearer edge
+				float nb_elev = texture(elev_map, nuv).r;      // same uv we read its id/peak-code from
+				if (own_is_peak && nb_is_peak) {
+					// --- RELIEF ↔ RELIEF: cross-fade the two layers, taller one overhanging (PEAK_BLEND_*) ---
+					if (ncode == own_peak) { continue; }      // same relief layer: the art is already continuous
+					float delta = nb_elev - own_elev;         // > 0 ⇒ the neighbour towers over us
+					float asym = 2.0 * smoothstep(
+						-PEAK_BLEND_FULL_DELTA, PEAK_BLEND_FULL_DELTA, delta) - 1.0;   // odd, −1…+1
+					// The wobble must read the SAME way in world space from both hexes, i.e. with OPPOSITE signs
+					// in their own local frames. The peak layer index is a total order both sides agree on.
+					float wob_sign = own_peak < ncode ? 1.0 : -1.0;
+					// The 50/50 line, as a depth INTO our hex (negative = we have pushed it into theirs). The
+					// centre is offset by (overhang − softness) rather than the full overhang so that the far
+					// edge of the cross-fade — centre + softness — lands at exactly `peak_overhang`: a taller
+					// relief reaches into a lower one by the SAME distance it reaches onto flat ground, and no
+					// further. (Offsetting by the full overhang stacked the feather on top of it and pushed the
+					// alpine art a whole hex radius into the hills, swallowing them.)
+					float seam = max(peak_overhang - peak_softness, 0.0) * asym
+						+ wob_sign * pk_wobble * PEAK_BLEND_WOBBLE;
+					float depth = -d;                         // distance from this edge INTO our hex (0 at it)
+					float w = 1.0 - smoothstep(seam - peak_softness, seam + peak_softness, depth);
+					if (w > 0.0) {
+						pk_mix += w * premultiplied(
+							textureGrad(peak_tex, vec3(puv, float(ncode - 1)), puv_dx, puv_dy));
+						pk_w_sum += w;
+						pk_elev_mix += w * nb_elev;
+					}
+					continue;                                 // a relief↔relief edge is not a footline
+				}
+				if (own_is_peak == nb_is_peak) { continue; }  // ground↔ground: no boundary, nothing to do
 				if (d > pk_best_d) {
 					pk_best_d = d;
 					nb_peak_code = ncode;
-					nb_peak_elev = texture(elev_map, nuv).r;   // same uv we read its id/peak-code from
+					nb_peak_elev = nb_elev;
 				}
+				// --- this edge's contribution to the cast-shadow envelope (see the PEAK_SHADOW_* consts) ---
+				// Recast the edge in RELIEF terms, identically from either side of it: q = signed distance INTO
+				// the relief (so the shared edge reads q = 0 from both hexes), m = the unit normal pointing INTO
+				// the relief (dir_v points at the peak neighbour when we are the ground; when we ARE the peak,
+				// dir_v points at the ground neighbour, so the relief is the other way).
+				float q = own_is_peak ? -d : d;
+				vec2 m = own_is_peak ? -dir_v : dir_v;
+				float pk_elev = own_is_peak ? own_elev : nb_elev;
+				// +1 when the relief lies straight TOWARD the light (we are down-light of it → deepest shadow),
+				// -1 when it lies away from it (we are on its LIT side → only the short contact skirt).
+				float align = dot(peak_light_dir, m);
+				float lit_side = align * 0.5 + 0.5;           // remap the dot from [-1,1] to [0,1]
+				float reach = peak_shadow_len
+					* mix(PEAK_SHADOW_ELEV_FLOOR, 1.0, pk_elev)
+					* mix(PEAK_SHADOW_UPLIGHT_REACH, 1.0, lit_side);
+				// Distance BEYOND the wobbled footline (0 anywhere under the relief, growing outward from it).
+				float out_dist = max(0.0, -(q + pk_wobble));
+				float env = 1.0 - smoothstep(0.0, max(reach, PEAK_SHADOW_REACH_MIN), out_dist);
+				shadow_env = max(shadow_env, env);            // MAX, never a sum → no double-darkening seam
 			}
+			// A hex deep inside a massif has no peak↔non-peak edge at all, so the loop above never ran: its
+			// ground is under the relief and fully occluded.
+			if (own_is_peak && pk_best_d < -1e8) { shadow_env = 1.0; }
 			int peak_code = own_is_peak ? own_peak : nb_peak_code;
 			// signed distance into the relief (+inside, 0 at footline, -outside); interior massif → +big.
 			float s;
@@ -375,31 +1016,54 @@ void fragment() {
 				// Use the PEAK's elevation for prominence + shadow: own hex when it's the peak, else the
 				// captured peak-neighbour's — so the overhang/shadow on the ground side of the seam reads the
 				// peak's height, not the low neighbour-ground hex's (which discontinued across the seam).
-				float peak_elev = own_is_peak ? texture(elev_map, id_uv).r : nb_peak_elev;  // 0..1
-				vec2 puv = v_map / (2.0 * hex_radius) * peak_scale;       // continuous world UV (like canopy cuv)
-				float prom = mix(peak_min_prominence, 1.0, peak_elev);
+				float peak_elev = own_is_peak ? own_elev : nb_peak_elev;  // 0..1
 
 				// --- CAST SHADOW: look back toward the light; if a peak occludes, darken this ground ---
 				// peak_light_dir points TOWARD the light (top-left). A fragment is shadowed if a peak sits
 				// between it and the light, i.e. at puv + light_dir * t. Multi-tap for a soft ramp.
+				// The peak art is near-opaque wherever it is sampled, so this term alone is ~CONSTANT across a
+				// whole neighbour hex — it is shadow_env (the signed-distance envelope built above) that makes
+				// the result die off with distance from the RELIEF rather than with the hex grid.
 				float shadow = 0.0;
-				float slen_uv = (peak_shadow_len * (0.4 + 0.6 * peak_elev)) / (2.0 * hex_radius) * peak_scale;
-				const int TAPS = 4;
-				for (int k = 1; k <= TAPS; k++) {
-					float t = float(k) / float(TAPS);
-					vec2 sp = puv + peak_light_dir * (slen_uv * t);
-					float a = texture(peak_tex, vec3(sp, float(peak_code - 1))).a;
-					shadow = max(shadow, a * (1.0 - t));   // nearer occluder = darker
+				if (shadow_env > 0.0) {
+					float slen_uv = peak_shadow_len * mix(PEAK_SHADOW_ELEV_FLOOR, 1.0, peak_elev)
+						/ (2.0 * hex_radius) * peak_scale;
+					for (int k = 1; k <= PEAK_SHADOW_TAPS; k++) {
+						float t = float(k) / float(PEAK_SHADOW_TAPS);
+						vec2 sp = puv + peak_light_dir * (slen_uv * t);
+						float a = textureGrad(peak_tex, vec3(sp, float(peak_code - 1)), puv_dx, puv_dy).a;
+						shadow = max(shadow, a * (1.0 - t));   // nearer occluder = darker
+					}
 				}
-				result *= mix(1.0, 1.0 - peak_shadow_strength, clamp(shadow, 0.0, 1.0));
+				result *= mix(1.0, 1.0 - peak_shadow_strength, clamp(shadow * shadow_env, 0.0, 1.0));
 
 				// --- PEAK COMPOSITE (over the shadowed ground) ---
-				float tn = vnoise(v_map / noise_cell + vec2(7.0, 5.0));
-				float ss = s + (tn - 0.5) * 2.0 * peak_overhang * CANOPY_TREELINE_NOISE;  // bumpy footline
+				float ss = s + pk_wobble;   // bumpy footline — the same wobble the shadow envelope rides
 				if (ss > -peak_overhang) {
-					float dens = canopy_density(ss, peak_overhang, peak_softness) * prom;  // reuse canopy_density
+					// WHICH relief art this fragment shows. Normally our own layer (or, on the ground side of a
+					// footline, the overhanging neighbour's). Where a relief↔relief seam is in reach, it is the
+					// WEIGHTED MEAN of ours and the neighbouring reliefs' (see the PEAK_BLEND_* consts): our own
+					// weight is what the neighbours have not claimed, so at a seam the taller relief's art takes
+					// over CONTINUOUSLY instead of switching on the hex line. The denominator is max(1, Σw) — a
+					// continuous function of Σw, so a fragment in reach of two seams cannot pop either.
+					vec4 pk = textureGrad(peak_tex, vec3(puv, float(peak_code - 1)), puv_dx, puv_dy);
+					float art_elev = peak_elev;
+					if (pk_w_sum > 0.0) {
+						float own_w = max(0.0, 1.0 - pk_w_sum);
+						float denom = own_w + pk_w_sum;
+						// PREMULTIPLIED — relief art is RGBA with large transparent regions, and a straight-alpha
+						// mean lets a transparent texel's (keyed-out) RGB pollute the colour wherever the other
+						// layer is opaque: it drew thin bright dotted fringes ALONG the seam, i.e. re-introduced a
+						// hex-tracing line by another route. Weighting colour by coverage×alpha is the only mean
+						// that is right for two overlays with independent alpha.
+						pk = unpremultiplied((own_w * premultiplied(pk) + pk_mix) / denom);
+						art_elev = (own_w * peak_elev + pk_elev_mix) / denom;
+					}
+					// Prominence follows the art that is actually SHOWING, so a tall neighbour's spires overhang
+					// us at THEIR prominence rather than being faded down to ours.
+					float dens = canopy_density(ss, peak_overhang, peak_softness)
+						* mix(peak_min_prominence, 1.0, art_elev);   // reuse canopy_density
 					if (dens > 0.0) {
-						vec4 pk = texture(peak_tex, vec3(puv, float(peak_code - 1)));
 						result = mix(result, pk.rgb, pk.a * dens);
 					}
 				}
@@ -407,12 +1071,53 @@ void fragment() {
 		}
 
 		if (fow_enabled) {
-			float vis = texture(vis_map, id_uv).r;
-			if (vis < 0.25) {
-				result = fog_color.rgb;
-			} else if (vis < 0.75) {
-				result *= mix(vec3(1.0), mist_color, mist_blend); // discovered: remembered/cloudy
+			// --- FoW: SMOOTH the per-hex visibility across hex boundaries, then map it CONTINUOUSLY ---
+			// The vis-map is NEAREST-sampled per hex, so reading it raw made every active↔discovered
+			// adjacency a hard HEXAGONAL brightness step — straight edges cutting across even uniform water
+			// where no terrain seam exists. Fix, in two halves:
+			// (a) blur the scalar with the same 6-neighbour signed-distance machinery the blend/shore use:
+			//     weight each neighbour's visibility by how close the fragment is to THAT shared edge. At a
+			//     shared edge the neighbour's weight → 1, so vis → (own + nb)/2 from BOTH sides — equal, so
+			//     continuous across the boundary. Deep inside a hex all six weights → 0 and vis → own.
+			float own_vis = texture(vis_map, id_uv).r;
+			float vsum = own_vis;
+			float wsum = 1.0;
+			for (int dir = 0; dir < 6; dir++) {
+				ivec2 off = neighbor_offset(row, dir);
+				int ncol = col + off.x;
+				int nrow = row + off.y;
+				if (nrow < 0 || nrow >= grid_h) { continue; }
+				int ncol_id = ncol;
+				if (wrap_h) {
+					ncol_id = wrap_col(ncol);
+				} else if (ncol < 0 || ncol >= grid_w) {
+					continue;
+				}
+				vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
+				vec2 nb_c = hex_center(ncol, nrow);
+				vec2 dir_v = normalize(nb_c - own_c);
+				float half_dist = 0.5 * distance(own_c, nb_c);
+				float d = dot(v_world - own_c, dir_v) - half_dist;  // <= 0 inside own hex, 0 at the edge
+				float w = smoothstep(-max(fow_soft, BLEND_SOFT_MIN), 0.0, d);
+				vsum += texture(vis_map, nuv).r * w;
+				wsum += w;
 			}
+			float vis = vsum / wsum;
+			// Wispiness: perturb the smoothed scalar with world noise so the fog line is cloudy rather than a
+			// clean arc — enveloped by how much the smoothing moved the scalar (see FOW_NOISE_EDGE_PEAK), so
+			// it bites ONLY at boundaries and pure Active/Discovered/Unexplored areas stay untouched.
+			if (fow_noise_amount > 0.0) {
+				float edge = clamp(abs(vis - own_vis) / FOW_NOISE_EDGE_PEAK, 0.0, 1.0);
+				float fn = vnoise(v_map / noise_cell + vec2(23.0, 13.0));
+				vis = clamp(vis + (fn - 0.5) * fow_noise_amount * edge, 0.0, 1.0);
+			}
+			// (b) map vis to the tint CONTINUOUSLY (the old per-state branch was itself a step function).
+			// At the pure states this reproduces exactly today's look: vis 1 → clear, 0.5 → full mist
+			// multiply, 0 → fog fill; in between it crossfades.
+			float fog_amt = 1.0 - smoothstep(FOW_UNEXPLORED, FOW_DISCOVERED, vis);
+			float mist_amt = (1.0 - smoothstep(FOW_DISCOVERED, FOW_ACTIVE, vis)) * mist_blend;
+			result = mix(result, result * mist_color, mist_amt);  // discovered: remembered/cloudy (multiply)
+			result = mix(result, fog_color.rgb, fog_amt);         // unexplored: fog fill
 		}
 		COLOR = vec4(result, 1.0);
 	}
