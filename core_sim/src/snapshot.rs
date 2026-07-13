@@ -4124,6 +4124,7 @@ fn herd_state(herd: &Herd) -> HerdState {
             loiter_turns_left: herd.roam.loiter_turns_left(),
         },
         next_pos: herd.next_pos.map(|p| (p.x, p.y)),
+        corralled_at: herd.corralled_at.map(|p| (p.x, p.y)),
         ecology: EcologyState {
             biomass: herd.biomass,
             carrying_capacity: herd.carrying_capacity,
@@ -4344,11 +4345,13 @@ mod tests {
                 loiter_turns_left: 9,
             },
             next_pos: Some((7, 2)),
+            // Rung 1c: a corralled (penned) herd round-trips its pen tile through the snapshot.
+            corralled_at: Some((5, 6)),
             ecology: EcologyState {
                 biomass: 4321.0,
                 carrying_capacity: 8000.0,
                 ecology_phase: "stressed".to_string(),
-                progress: 0.42,
+                progress: 1.0,
                 owner: Some(1),
             },
         };
@@ -4356,6 +4359,7 @@ mod tests {
         // HerdState -> Herd (restore side) -> HerdState (capture side) must be an identity.
         let registry = HerdRegistry::from_states(std::slice::from_ref(&original));
         let herd = registry.entries().first().expect("one herd restored");
+        assert!(herd.is_corralled(), "corralled_at restores the pen");
         let restored = herd_state(herd);
 
         assert_eq!(restored, original);

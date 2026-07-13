@@ -7,6 +7,7 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
+use bevy::math::UVec2;
 use core_sim::{
     advance_herds, advance_husbandry, advance_labor_allocation, scalar_from_f32, scalar_one,
     scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
@@ -16,6 +17,7 @@ use core_sim::{
     MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
+    HERDING_DISCOVERY_ID,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -304,6 +306,157 @@ fn domesticated_herd_yields_provisions() {
     assert_eq!(
         after, biomass_before,
         "husbandry yield must not deplete biomass"
+    );
+}
+
+// --- Corral (Intensification Rung 1c) -------------------------------------------------------------
+
+/// Faction Herding knowledge for faction 0's ledger.
+fn herding_knowledge(app: &App) -> f32 {
+    app.world
+        .resource::<DiscoveryProgressLedger>()
+        .get_progress(FactionId(0), HERDING_DISCOVERY_ID)
+        .to_f32()
+}
+
+/// Pen a herd: prime it to full biomass (Thriving, and at cap so logistic regrowth is 0 → a clean
+/// no-draw-down check), domesticate it for faction 0, and corral it at its current tile.
+fn corral_herd(app: &mut App, id: &str) -> UVec2 {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+    herd.biomass = herd.carrying_capacity;
+    herd.claim_domestication(FactionId(0));
+    let tile = herd.position();
+    herd.corral_at(tile);
+    tile
+}
+
+/// Rung 1c earned knowledge: a Sustain hunt on a Thriving herd teaches the faction **Herding** (the
+/// `corral` gate), accrued in the shared `DiscoveryProgressLedger`.
+#[test]
+fn sustain_hunt_earns_herding_knowledge() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+    assert_eq!(
+        herding_knowledge(&app),
+        0.0,
+        "no faction starts knowing Herding"
+    );
+
+    run_turns_with_hunt(&mut app, 3);
+
+    assert!(
+        herding_knowledge(&app) > 0.0,
+        "Sustain-hunting a Thriving herd earns Herding knowledge"
+    );
+}
+
+/// A corralled herd does NOT roam: `advance_herds` leaves its position fixed at the pen tile (and
+/// clears any heading arrow), even given a multi-tile route it would otherwise wander.
+#[test]
+fn corralled_herd_stops_roaming() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    let pen = corral_herd(&mut app, &id);
+    // Give it a route to a distant tile + prime it to step, so an un-penned herd would move.
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.route = vec![pen, UVec2::new(pen.x.saturating_add(3), pen.y)];
+        herd.step_index = 1;
+        herd.dwell_remaining = 0;
+    }
+
+    for _ in 0..5 {
+        app.world.run_system_once(advance_herds);
+        let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+        assert_eq!(herd.position(), pen, "a corralled herd stays put");
+        assert_eq!(herd.next_position(), None, "a penned herd shows no heading");
+    }
+}
+
+/// A corralled herd tended by a Hunt assignment pays the keeper band place-local at the higher corral
+/// rate WITHOUT drawing the herd down, and stays penned (does not escape).
+#[test]
+fn tended_corral_pays_keeper_place_local_no_drawdown() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    let _pen = corral_herd(&mut app, &id);
+    // The mobile even-split rate vs the higher penned rate.
+    let (mobile_rate, corral_rate, cap) = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let cap = app
+            .world
+            .resource::<HerdRegistry>()
+            .find(&id)
+            .unwrap()
+            .carrying_capacity;
+        (
+            fauna.husbandry.provisions_per_biomass,
+            fauna.husbandry.corral_provisions_per_biomass,
+            cap,
+        )
+    };
+    // A Hunt assignment on the penned herd = herding/tending it.
+    spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+
+    run_turns_with_hunt(&mut app, 4);
+
+    let herd_biomass = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .unwrap()
+        .biomass;
+    assert!(
+        (herd_biomass - cap).abs() < 1e-3,
+        "a tended corral is a managed harvest — no draw-down: {herd_biomass} vs {cap}"
+    );
+    assert!(
+        app.world
+            .resource::<HerdRegistry>()
+            .find(&id)
+            .unwrap()
+            .is_corralled(),
+        "a tended corral stays penned"
+    );
+    let paid = provisions_f32(&mut app);
+    // Four turns of place-local corral yield; each ≈ cap × corral_rate (output mult 1.0).
+    let expected_one_turn = cap * corral_rate;
+    assert!(
+        paid > expected_one_turn * 0.5,
+        "the keeper collects the corral's place-local yield: {paid}"
+    );
+    // The corral rate out-pays the mobile even-split rate (the intensification incentive).
+    assert!(
+        corral_rate > mobile_rate,
+        "penning pays more per biomass than mobile pastoralism"
+    );
+}
+
+/// A corralled herd left untended **escapes**: `advance_husbandry` clears `corralled_at`, reverting it
+/// to a mobile domesticated herd (which resumes the even-split yield).
+#[test]
+fn untended_corral_escapes_to_mobile() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    corral_herd(&mut app, &id);
+    assert!(app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .unwrap()
+        .is_corralled());
+
+    // No keeper: the one-turn grace is consumed, then it breaks out.
+    run_turns_untended(&mut app, 3);
+
+    let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+    assert!(!herd.is_corralled(), "an untended corral escapes");
+    assert!(
+        herd.is_domesticated(),
+        "an escaped herd is still domesticated — just mobile again"
     );
 }
 

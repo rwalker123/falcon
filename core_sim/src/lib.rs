@@ -120,6 +120,7 @@ pub use expedition_config::{
 pub use fauna::{
     advance_herds, advance_husbandry, repopulate_fauna, spawn_initial_herds, EcologyPhase, Herd,
     HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, RoamState,
+    HERDING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata, SizeClass,

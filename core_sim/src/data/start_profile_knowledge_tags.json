@@ -11,5 +11,8 @@
   },
   "cultivation": {
     "discovery_id": 2003
+  },
+  "herding": {
+    "discovery_id": 2004
   }
 }

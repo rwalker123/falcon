@@ -278,6 +278,16 @@ impl Default for FollowConfig {
 /// being actively sustained decays by `decay_per_turn`. The explicit `domesticate`
 /// command may claim a herd early once progress reaches `claim_threshold`. A domesticated
 /// herd yields `biomass * provisions_per_biomass` provisions to its owner each turn.
+///
+/// **Corral (Rung 1c) levers.** `corral_provisions_per_biomass` is the **penned** yield rate — paid
+/// place-local to the keeper on the herd's full standing biomass without drawing it down, and set
+/// **higher** than the mobile `provisions_per_biomass` so pinning a herd pays more (mirroring how the
+/// forage `tended_provisions_per_biomass` beats the wild MSY skim). `knowledge_progress_per_turn` /
+/// `knowledge_completion_threshold` are the earned-**Herding**-knowledge levers (the animal mirror of
+/// `CultivationConfig`'s `knowledge_*`): a Sustain-hunt on a Thriving herd teaches the faction Herding
+/// (into the `DiscoveryProgressLedger`, discovery `HERDING_DISCOVERY_ID`), the gate the `corral`
+/// command checks. Note the asymmetry vs. cultivation — mobile *domestication* stays ungated; only
+/// corralling needs Herding.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct HusbandryConfig {
@@ -285,6 +295,17 @@ pub struct HusbandryConfig {
     pub decay_per_turn: f32,
     pub claim_threshold: f32,
     pub provisions_per_biomass: f32,
+    /// Corral (Rung 1c): provisions/turn per unit of a **penned** herd's biomass, paid place-local to
+    /// the keeper without draw-down. Higher than `provisions_per_biomass` (the mobile even-split rate)
+    /// — corralling pays more but pins the herd.
+    pub corral_provisions_per_biomass: f32,
+    /// Rung 1b/1c earned knowledge: faction **Herding** knowledge accrued per turn a band
+    /// Sustain-hunts a Thriving herd (into the `DiscoveryProgressLedger`). Herding is *learned by
+    /// hunting*, never start-granted; the `corral` command is refused until the faction knows it.
+    pub knowledge_progress_per_turn: f32,
+    /// Ledger progress (`0..=1`) at which the faction **knows** Herding and may `corral`. `1.0` = the
+    /// ledger's completion value (`DiscoveryProgressLedger` clamps accrual to `1.0`).
+    pub knowledge_completion_threshold: f32,
 }
 
 impl Default for HusbandryConfig {
@@ -294,6 +315,9 @@ impl Default for HusbandryConfig {
             decay_per_turn: 0.01,
             claim_threshold: 0.6,
             provisions_per_biomass: 0.01,
+            corral_provisions_per_biomass: 0.02,
+            knowledge_progress_per_turn: 0.05,
+            knowledge_completion_threshold: 1.0,
         }
     }
 }
@@ -544,6 +568,15 @@ mod tests {
         assert!(config.husbandry.claim_threshold > 0.0);
         assert!(config.husbandry.claim_threshold < 1.0);
         assert!(config.husbandry.provisions_per_biomass > 0.0);
+        // Corral (Rung 1c): penning pays a higher place-local rate than the mobile even-split, and
+        // Herding knowledge accrues positively toward a completion threshold in (0, 1].
+        assert!(
+            config.husbandry.corral_provisions_per_biomass
+                > config.husbandry.provisions_per_biomass
+        );
+        assert!(config.husbandry.knowledge_progress_per_turn > 0.0);
+        assert!(config.husbandry.knowledge_completion_threshold > 0.0);
+        assert!(config.husbandry.knowledge_completion_threshold <= 1.0);
         // Market hunting takes a meaningful share and sells at a premium trade rate.
         assert!(config.market.take_fraction > 0.0);
         assert!(config.market.take_fraction < 1.0);

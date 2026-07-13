@@ -27,7 +27,9 @@ use crate::{
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
     demographics_config::{DemographicsConfig, DemographicsConfigHandle, DemographicsConsumption},
-    fauna::{sustainable_yield, EcologyPhase, Herd, HerdDensityMap, HerdRegistry},
+    fauna::{
+        sustainable_yield, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HERDING_DISCOVERY_ID,
+    },
     fauna_config::{FaunaConfig, FaunaConfigHandle},
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     forage::{forage_take, ForageRegistry, CULTIVATION_DISCOVERY_ID},
@@ -4203,6 +4205,11 @@ pub fn advance_labor_allocation(
     let cultivation = &labor.forage.cultivation;
     let knowledge_delta = scalar_from_f32(cultivation.knowledge_progress_per_turn);
     let knowledge_threshold = scalar_from_f32(cultivation.knowledge_completion_threshold);
+    // Rung 1c (earned Herding knowledge, the animal mirror): a Sustain-hunt on a Thriving herd
+    // teaches the faction Herding, the gate the `corral` command checks. Unlike Cultivation this
+    // gates nothing *inside* this loop (mobile domestication stays ungated) — only corralling needs
+    // it — so there is no per-patch "known" check here, just the ledger accrual.
+    let herding_knowledge_delta = scalar_from_f32(husbandry.knowledge_progress_per_turn);
     // In-range checks use true hex distance (not Chebyshev on offset coords, whose square
     // corners are actually 3 hex-steps away), wrap-aware to match the rest of the sim.
     let grid_width = tile_registry.width;
@@ -4386,6 +4393,28 @@ pub fn advance_labor_allocation(
                     else {
                         continue;
                     };
+                    // Corral (Rung 1c): a Hunt assignment on a **corralled** (penned) herd is
+                    // herding/tending it, not hunting. The keeper band collects the corral's
+                    // place-local managed yield (`biomass × corral_provisions_per_biomass`, higher
+                    // than the passive even-split rate) WITHOUT drawing biomass down (managed harvest
+                    // of the full standing crop — biomass regrows freely), and marks it tended so it
+                    // doesn't escape in `advance_husbandry`. The animal mirror of the tended-patch arm
+                    // in Forage; reconciles the "corralled herd isn't both hunt-drawn AND paid".
+                    if herd.is_corralled() {
+                        herd.corralled_tended_this_turn = true;
+                        let provisions = scalar_from_f32(
+                            herd.biomass * husbandry.corral_provisions_per_biomass * mult_f,
+                        );
+                        if provisions > scalar_zero() {
+                            cohort.stores.add(FOOD, provisions);
+                        }
+                        let tended = provisions.to_f32();
+                        yields[idx] = SourceYield {
+                            actual: tended,
+                            sustainable: tended,
+                        };
+                        continue;
+                    }
                     // Take food via the shared primitive (per-policy ceiling + worker-cap +
                     // biomass→provisions, × the band's productivity multiplier). Read biomass
                     // before/after for the raw take that trade goods + husbandry are scaled from.
@@ -4402,10 +4431,18 @@ pub fn advance_labor_allocation(
                         f32::INFINITY,
                     );
                     let take = biomass_before - herd.biomass;
-                    // Phase E husbandry: a Sustain hunt on a Thriving group tames it over time.
+                    // Phase E husbandry + Rung 1c Herding knowledge: a Sustain hunt on a Thriving
+                    // group tames it over time AND teaches the faction Herding (the `corral` gate,
+                    // accrued in the shared `DiscoveryProgressLedger`, never start-granted). Taming
+                    // stays ungated — mobile pastoralism needs no knowledge; only corralling does.
                     if matches!(policy, FollowPolicy::Sustain)
                         && herd.ecology_phase == EcologyPhase::Thriving
                     {
+                        discovery.add_progress(
+                            faction,
+                            HERDING_DISCOVERY_ID,
+                            herding_knowledge_delta,
+                        );
                         herd.accrue_domestication(faction, husbandry.progress_per_turn);
                     }
                     let trade_multiplier = if matches!(policy, FollowPolicy::Market) {

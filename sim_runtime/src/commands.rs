@@ -149,6 +149,11 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
     },
+    Corral {
+        faction_id: u32,
+        target_x: u32,
+        target_y: u32,
+    },
     CancelOrder {
         faction_id: u32,
         band_entity_bits: Option<u64>,
@@ -509,6 +514,15 @@ impl CommandEnvelope {
                 target_x: *target_x,
                 target_y: *target_y,
             }),
+            CommandPayload::Corral {
+                faction_id,
+                target_x,
+                target_y,
+            } => pb::command_envelope::Command::Corral(pb::CorralCommand {
+                faction_id: *faction_id,
+                target_x: *target_x,
+                target_y: *target_y,
+            }),
             CommandPayload::CancelOrder {
                 faction_id,
                 band_entity_bits,
@@ -794,6 +808,11 @@ impl CommandEnvelope {
                 herd_id: cmd.herd_id,
             },
             pb::command_envelope::Command::Cultivate(cmd) => CommandPayload::Cultivate {
+                faction_id: cmd.faction_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+            },
+            pb::command_envelope::Command::Corral(cmd) => CommandPayload::Corral {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,

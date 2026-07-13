@@ -114,7 +114,10 @@
     "progress_per_turn": 0.04,
     "decay_per_turn": 0.01,
     "claim_threshold": 0.6,
-    "provisions_per_biomass": 0.01
+    "provisions_per_biomass": 0.01,
+    "corral_provisions_per_biomass": 0.02,
+    "knowledge_progress_per_turn": 0.05,
+    "knowledge_completion_threshold": 1.0
   },
   "market": {
     "take_fraction": 0.20,

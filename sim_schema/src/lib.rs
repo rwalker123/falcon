@@ -215,6 +215,11 @@ pub struct HerdState {
     /// Next intended hex (client heading arrow); `None` while loitering/grazing.
     #[serde(default)]
     pub next_pos: Option<(u32, u32)>,
+    /// Corral (Rung 1c): the tile a **penned** herd is fixed at, or `None` for a mobile herd. A
+    /// corralled herd doesn't roam and is paid its keeper place-local. Authoritative sim state —
+    /// persisted so a rollback preserves the pen.
+    #[serde(default)]
+    pub corralled_at: Option<(u32, u32)>,
     #[serde(default)]
     pub ecology: EcologyState,
 }

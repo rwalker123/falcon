@@ -39,6 +39,19 @@ const GAME_ID_PREFIX: &str = "game_";
 
 pub const HERD_DENSITY_REFERENCE_BIOMASS: f32 = 8_000.0;
 
+/// Discovery id for the faction-level **Herding** knowledge (Intensification Rung 1c — the
+/// earned-knowledge gate on the animal-pen path, `docs/plan_intensification.md` §4b; the animal
+/// mirror of `forage::CULTIVATION_DISCOVERY_ID`). Knowledge is **earned by doing**: a band
+/// Sustain-hunting a Thriving herd accrues this discovery in the per-faction
+/// `DiscoveryProgressLedger` (`advance_labor_allocation`), and the `corral` command is refused until
+/// the faction knows Herding. Declared as a start-profile knowledge tag (`herding` → this id in
+/// `data/start_profile_knowledge_tags.json`) purely so it is mappable; it is deliberately **not**
+/// listed in any start profile's `starting_knowledge_tags`, so no faction starts knowing it. Note
+/// the asymmetry vs. Cultivation: mobile *domestication* (pastoralism) stays ungated — only
+/// **corralling** (pinning a domesticated herd) needs Herding. Next free id after
+/// `cultivation` (2003).
+pub const HERDING_DISCOVERY_ID: u32 = 2004;
+
 /// Coarse ecological health band derived from a group's biomass vs its carrying
 /// capacity (thresholds in `EcologyConfig`). Surfaced to the client as an early
 /// overhunting warning, and the seam the later domestication / industrialized-hunting
@@ -179,6 +192,22 @@ pub struct Herd {
     pub domestication_progress: f32,
     /// Faction tending/owning this group (`Some` iff `domestication_progress > 0`).
     pub owner: Option<FactionId>,
+    /// Corral (Rung 1c): the tile a **penned** herd is fixed at, or `None` for a mobile herd.
+    /// `Some` = the herd does NOT roam (`advance_herds` skips its movement — it stays put) and is
+    /// paid its keeper **place-local** at the higher corral rate (via the tending Hunt assignment in
+    /// `advance_labor_allocation`), not the mobile even-split husbandry yield. Only a *domesticated*
+    /// herd whose owner knows Herding can be corralled (`corral` command). Authoritative sim state —
+    /// snapshot-persisted. The animal mirror of a cultivated patch being a fixed tended patch;
+    /// contrast the deliberate asymmetry — an *un*corralled domesticated herd stays mobile
+    /// (pastoralism travels with the band).
+    pub corralled_at: Option<UVec2>,
+    /// Transient per-turn flag: a Hunt assignment tended this corralled herd this turn (set in
+    /// `advance_labor_allocation`, Population). `advance_husbandry` (Logistics, the *next* turn —
+    /// Logistics runs before Population) reads it: a corralled herd tended this turn is spared, an
+    /// untended one **escapes** (reverts to mobile). Mirrors `ForagePatch::tended_this_turn`. **Not**
+    /// snapshot-persisted (derived) — a rehydrated corralled herd reads `false` until tended again,
+    /// so a rollback can only *delay* an escape by one turn, never resurrect a broken-out herd.
+    pub corralled_tended_this_turn: bool,
 }
 
 impl Herd {
@@ -216,6 +245,8 @@ impl Herd {
             ecology_phase: EcologyPhase::Thriving,
             domestication_progress: 0.0,
             owner: None,
+            corralled_at: None,
+            corralled_tended_this_turn: false,
         }
     }
 
@@ -266,6 +297,24 @@ impl Herd {
     pub fn claim_domestication(&mut self, faction: FactionId) {
         self.owner = Some(faction);
         self.domestication_progress = 1.0;
+    }
+
+    /// A **corralled** (penned) herd: fixed at `corralled_at`, doesn't roam, and is paid its keeper
+    /// place-local at the higher corral rate. The animal mirror of `ForagePatch::is_cultivated`
+    /// gating the tended-patch behaviour.
+    pub fn is_corralled(&self) -> bool {
+        self.corralled_at.is_some()
+    }
+
+    /// Pen the herd at `tile` (the `corral` command). Fixes its position and grants a one-turn
+    /// "tended" grace (`corralled_tended_this_turn = true`) so the first `advance_husbandry` pass
+    /// after corralling spares it — the keeper's Hunt assignment then re-marks it tended each
+    /// Population stage to keep it penned. Caller gates on domesticated + owner + Herding known.
+    pub fn corral_at(&mut self, tile: UVec2) {
+        self.corralled_at = Some(tile);
+        self.current_pos = tile;
+        self.next_pos = None;
+        self.corralled_tended_this_turn = true;
     }
 
     /// The herd's live tile — walked one hex per move by `advance_herds` (graze-wander /
@@ -369,6 +418,9 @@ fn herd_from_state(state: &HerdState) -> Herd {
         ecology_phase: EcologyPhase::from_key(&state.ecology.ecology_phase),
         domestication_progress: state.ecology.progress,
         owner: state.ecology.owner.map(FactionId),
+        corralled_at: state.corralled_at.map(|(x, y)| UVec2::new(x, y)),
+        // Transient (not persisted) — a rehydrated corralled herd is "untended" until worked again.
+        corralled_tended_this_turn: false,
     }
 }
 
@@ -724,16 +776,22 @@ pub fn advance_herds(
             SmallRng::seed_from_u64(base_seed ^ HERD_MOVEMENT_SEED_SALT ^ hasher.finish());
         // Movement cadence levers for this species (fall back to a slow game default if unresolved).
         let def = fauna.species_by_display(&herd.species);
-        advance_herd_roam(
-            herd,
-            def,
-            &tile_registry,
-            &tiles,
-            &mut rng,
-            width,
-            height,
-            wrap,
-        );
+        // A corralled (penned) herd is fixed at `corralled_at` — it does NOT roam (Rung 1c). It
+        // still grazes/regrows (ecology is independent of movement); only its wander is skipped.
+        if herd.is_corralled() {
+            herd.next_pos = None;
+        } else {
+            advance_herd_roam(
+                herd,
+                def,
+                &tile_registry,
+                &tiles,
+                &mut rng,
+                width,
+                height,
+                wrap,
+            );
+        }
         regrow_biomass(herd, ecology);
         let position = herd.position();
         info!(
@@ -1069,6 +1127,12 @@ pub fn repopulate_fauna(
 /// progress on any not-yet-tamed group. Runs before the same turn's accrual in
 /// `advance_fauna_pursuits` (`Population`), so a Sustain-followed group nets
 /// `progress_per_turn - decay_per_turn` while an untended one only decays.
+///
+/// **Corral (Rung 1c).** A **corralled** herd is exempt from the mobile even-split yield here — its
+/// keeper is paid place-local by the tending Hunt assignment (`advance_labor_allocation`) — and this
+/// pass instead runs its **escape** check: a corralled herd tended last turn is spared; an untended
+/// one clears `corralled_at` and reverts to a mobile domesticated herd. The animal mirror of
+/// `forage::advance_cultivation`'s feral pass.
 pub fn advance_husbandry(
     mut registry: ResMut<HerdRegistry>,
     fauna_config: Res<FaunaConfigHandle>,
@@ -1087,6 +1151,27 @@ pub fn advance_husbandry(
     let mut yields: HashMap<FactionId, Scalar> = HashMap::new();
     for herd in registry.herds.iter_mut() {
         if herd.is_domesticated() {
+            // Corral (Rung 1c): a penned herd is paid its keeper **place-local** by the tending Hunt
+            // assignment (`advance_labor_allocation`, at the higher `corral_provisions_per_biomass`),
+            // NOT the mobile even-split below — and it **escapes** if left untended. Logistics runs
+            // before Population, so the `corralled_tended_this_turn` flag read here was written last
+            // turn (a one-turn lag, mirroring `ForagePatch::tended_this_turn`): a herd tended every
+            // turn is always spared; a herd whose keeper leaves breaks out one turn later, reverting
+            // to a mobile domesticated herd (which resumes the even-split yield next turn).
+            if herd.is_corralled() {
+                if herd.corralled_tended_this_turn {
+                    herd.corralled_tended_this_turn = false;
+                } else {
+                    herd.corralled_at = None;
+                    info!(
+                        target: "shadow_scale::analytics",
+                        event = "corral_escape",
+                        herd = %herd.id,
+                        faction = herd.owner.map(|f| f.0).unwrap_or_default(),
+                    );
+                }
+                continue;
+            }
             let Some(owner) = herd.owner else {
                 continue;
             };

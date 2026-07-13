@@ -358,8 +358,68 @@ Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
 
 Ecology/husbandry tunables live in the `ecology` (`regrowth_rate`, `collapse_fraction`,
 `collapse_rate`, `stressed_fraction`, `extinction_floor`), `immigration`, and `husbandry`
-(`progress_per_turn`, `decay_per_turn`, `claim_threshold`, `provisions_per_biomass`) blocks
-of `fauna_config.json`.
+(`progress_per_turn`, `decay_per_turn`, `claim_threshold`, `provisions_per_biomass`, plus the
+Rung 1c corral levers `corral_provisions_per_biomass` / `knowledge_progress_per_turn` /
+`knowledge_completion_threshold` — see "Corral" below) blocks of `fauna_config.json`.
+
+### Corral (Intensification Rung 1c)
+
+The **animal mirror of the tended patch** (`docs/plan_intensification.md` §4b) — the place-bound form
+of the *existing* herd domestication, and the fauna-side twin of "Cultivation" under Depletable
+Forage. Domesticating a herd is *symmetric* with cultivating a patch (Sustain → tame), but the
+**product differs and that difference is the settle mechanic**: an *un*corralled domesticated herd
+stays **mobile** (pastoralism travels with the band); **corralling pins it**. A `Herd` carries
+`corralled_at: Option<UVec2>` (`Some` = penned at that tile) + a transient `corralled_tended_this_turn`
+flag. *Sim-only — the client readout is a follow-up (see below).*
+
+- **Rung 1c earned-knowledge gate — Herding.** The animal parallel of Cultivation knowledge, *learned
+  by doing* and **never start-granted**: a **Sustain** hunt on a **Thriving** herd accrues faction
+  **Herding** knowledge (discovery `HERDING_DISCOVERY_ID` = 2004, `fauna.rs`) in the per-faction
+  `DiscoveryProgressLedger` at `husbandry.knowledge_progress_per_turn` (in the Hunt arm of
+  `advance_labor_allocation`, alongside the existing domestication accrual). The `corral` command is
+  refused until `get_progress(faction, 2004) >= knowledge_completion_threshold`. The `herding` tag →
+  discovery 2004 mapping is declared in `start_profile_knowledge_tags.json` purely so it is mappable;
+  **no start profile lists it**. **Asymmetry vs. Cultivation:** Herding gates *only corralling* —
+  mobile domestication (pastoralism) stays ungated (a patch, by contrast, cannot even *tame* until the
+  faction knows Cultivation), because a mobile herd needs no place-binding knowledge.
+- **`corral` command** — `corral <faction> <x> <y>` (`handle_corral`, full proto/runtime/text/server
+  plumbing cloning `cultivate`; `CommandEventKind::Corral`, `CorralCommand` proto field 38) pens the
+  **domesticated** herd standing on that tile. Outcomes: `UnknownHerd` (no herd there) / `NotKnown`
+  (faction hasn't learned Herding) / `NotDomesticated` / `NotOwner` / `AlreadyCorralled` / `Corralled`.
+  Gated on the faction knowing Herding **and** the herd being a domesticated herd it owns.
+- **Corralled = fixed + place-local worker-tended + escapes-if-untended** (mirrors the tended patch):
+  - *Fixed* — `advance_herds` skips a corralled herd's `advance_herd_roam` (it stays at `corralled_at`,
+    no heading arrow); it still grazes/regrows (ecology is independent of movement).
+  - *Place-local worker-tended* — a **Hunt assignment on a corralled herd** is herding/tending it: in
+    `advance_labor_allocation`'s Hunt arm the keeper band is paid `biomass ×
+    husbandry.corral_provisions_per_biomass` directly into its `stores` (FOOD) **without** drawing the
+    herd down (managed harvest), and the herd is marked `corralled_tended_this_turn`. This
+    reconciles the "not both hunt-drawn AND paid": a corralled herd takes the tend branch and
+    `continue`s before `hunt_take`. `corral_provisions_per_biomass` is set **higher** than the mobile
+    `provisions_per_biomass` (0.02 vs 0.01) so penning out-pays mobile pastoralism — mirroring how
+    forage's `tended_provisions_per_biomass` beats the wild MSY skim.
+  - *Escapes-if-untended* — in `advance_husbandry` (Logistics, which runs *before* Population — a
+    deliberate one-turn-lag flag, exactly like `ForagePatch::tended_this_turn`) a corralled herd
+    tended last turn is spared; an **untended** one **escapes**: `corralled_at` is cleared and it
+    reverts to a mobile domesticated herd (resuming the passive even-split husbandry yield). A
+    corralled herd is exempt from the even-split here (it's paid place-local by its keeper).
+    `corral_at` grants a one-turn grace so a freshly-penned herd doesn't escape before its keeper can
+    tend it.
+- **Persistence** — `corralled_at` round-trips through the rollback snapshot on `HerdState`
+  (authoritative sim state), alongside the herd's other fields; `corralled_tended_this_turn` is
+  transient (not persisted), so a rollback can only *delay* an escape by one turn, never resurrect a
+  broken-out herd.
+- **Config** (`fauna_config.json` `husbandry`): `corral_provisions_per_biomass` (0.02),
+  `knowledge_progress_per_turn` (0.05 — ~20 Sustain-hunt turns to learn Herding),
+  `knowledge_completion_threshold` (1.0). Validation invariants (`fauna_config.rs`):
+  `corral_provisions_per_biomass > provisions_per_biomass`, `knowledge_progress_per_turn > 0`,
+  `0 < knowledge_completion_threshold <= 1`.
+- **Follow-up (final Phase-1 slice):** the **client readout for both ladders** — cultivation +
+  Cultivation-knowledge + tended-patch on the plant side, and domestication + Herding-knowledge +
+  corral on the animal side — is the last remaining client-dev slice.
+
+See Also: "Cultivation (Intensification Phase 1a)" under Depletable Forage — the plant twin of this
+mechanic (the two are near-mechanical transposes).
 
 > `FaunaPursuit` is **not** snapshot-persisted (unlike `HarvestAssignment`): a
 > `rollback` mid-pursuit cleanly cancels the in-flight hunt (the rehydrated cohort
@@ -368,8 +428,8 @@ of `fauna_config.json`.
 
 > **The authoritative `HerdRegistry` *is* rollback-persisted** (as of the intensification
 > arc's first slice, `docs/plan_intensification.md` §0-i). Each live `Herd` — identity,
-> movement (`route`/`step_index`/`current_pos`/`dwell_remaining`/`roam`/`next_pos`), **and** its
-> depletable-ecology subset (`biomass`/`carrying_capacity`/`ecology_phase`/
+> movement (`route`/`step_index`/`current_pos`/`dwell_remaining`/`roam`/`next_pos`/`corralled_at`),
+> **and** its depletable-ecology subset (`biomass`/`carrying_capacity`/`ecology_phase`/
 > `domestication_progress`/`owner`) — round-trips through a serde `HerdState` (the ecology subset
 > embedded as a shared `EcologyState`) captured into `WorldSnapshot.herd_registry` and rebuilt on
 > restore via `HerdRegistry::update_from_states`, following the `GenerationRegistry` round-trip
@@ -382,10 +442,10 @@ of `fauna_config.json`.
 > per-tile `ForageState`.
 
 Market hunting shipped as the `Market` follow policy; `SedentarizationScore` shipped (see
-"Sedentarization" under Campaign Loop). Still deferred (`docs/plan_wildlife_hunting_overlay.md`):
-the `Camp` entity + corrals, and wiring the sedentarization hard prompt to an actual
-`found_settlement`. The tile-based `HuntGame` handler stays neutralized (its client button no
-longer surfaces).
+"Sedentarization" under Campaign Loop); **corrals shipped** (Intensification Rung 1c — see "Corral"
+below). Still deferred (`docs/plan_wildlife_hunting_overlay.md`): the `Camp` entity, and wiring the
+sedentarization hard prompt to an actual `found_settlement`. The tile-based `HuntGame` handler stays
+neutralized (its client button no longer surfaces).
 
 ---
 
@@ -535,10 +595,11 @@ passive yield). *Sim-only — the client readout is a follow-up.*
   ledger's completion value). Validation invariants: `progress_per_turn > decay_per_turn`,
   `0 < claim_threshold < 1`, `tended_provisions_per_biomass > 0`,
   `knowledge_progress_per_turn > 0`, `0 < knowledge_completion_threshold <= 1`.
-- **Follow-ups:** **Rung 1c — corral** (the fauna-side pen: pen a domesticated herd into a place-local,
-  worker-tended improvement behind a `herding` gate) is the **next slice**. The **client cultivation /
-  knowledge readout** (patch progress/owner/tended + the faction Cultivation-knowledge meter on the
-  tile card / HUD, like the herd domestication readout) remains a client-dev follow-up.
+- **Follow-ups:** **Rung 1c — corral** (the fauna-side pen behind a `herding` gate) **shipped** — see
+  "Corral (Intensification Rung 1c)" under Fauna & Wild Game. The **client readout for both ladders**
+  (patch cultivation/owner/tended + Cultivation-knowledge on the plant side, herd domestication +
+  Herding-knowledge + corral on the animal side, on the tile card / HUD) is the **final Phase-1 slice**
+  and remains a client-dev follow-up.
 
 ---
 

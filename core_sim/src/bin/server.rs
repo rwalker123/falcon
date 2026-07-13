@@ -43,7 +43,7 @@ use core_sim::{
     StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
     SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
     TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, CULTIVATION_DISCOVERY_ID,
-    FOOD,
+    FOOD, HERDING_DISCOVERY_ID,
 };
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
@@ -570,6 +570,13 @@ fn main() {
             } => {
                 handle_cultivate(&mut app, faction, UVec2::new(target_x, target_y));
             }
+            Command::Corral {
+                faction,
+                target_x,
+                target_y,
+            } => {
+                handle_corral(&mut app, faction, UVec2::new(target_x, target_y));
+            }
             Command::CancelOrder {
                 faction,
                 band_entity_bits,
@@ -706,6 +713,11 @@ enum Command {
         herd_id: String,
     },
     Cultivate {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
+    },
+    Corral {
         faction: FactionId,
         target_x: u32,
         target_y: u32,
@@ -2324,6 +2336,141 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
     }
 }
 
+/// Pen the domesticated herd standing on `tile` into a fixed corral (Rung 1c — the animal mirror of
+/// `handle_cultivate`, and the place-bound form of `handle_domesticate`). Requires the faction to
+/// have learned **Herding** (accrued by Sustain-hunting a Thriving herd) AND for the herd on the tile
+/// to be a domesticated herd the faction owns. On success the herd is pinned (`corral_at`): it stops
+/// roaming and pays its keeper place-local at the higher corral rate (`advance_labor_allocation` /
+/// `advance_husbandry`). The deliberate asymmetry vs. mobile pastoralism: an *un*corralled
+/// domesticated herd stays mobile; corralling pins the band near the pen.
+fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
+    enum Outcome {
+        UnknownHerd,
+        NotKnown,
+        NotDomesticated,
+        NotOwner,
+        AlreadyCorralled,
+        Corralled(String),
+    }
+
+    // The `corral` gate: the faction must have LEARNED Herding (accrued by Sustain-hunting a Thriving
+    // herd), the animal mirror of the Cultivation gate on `cultivate`.
+    let knowledge_threshold = app
+        .world
+        .resource::<FaunaConfigHandle>()
+        .get()
+        .husbandry
+        .knowledge_completion_threshold;
+    let knows_herding = app
+        .world
+        .resource::<DiscoveryProgressLedger>()
+        .get_progress(faction, HERDING_DISCOVERY_ID)
+        >= scalar_from_f32(knowledge_threshold);
+
+    // Decide (and, on success, mutate the herd) inside a scope so the registry borrow ends before we
+    // emit command events through `app`. The herd is identified by the tile it stands on.
+    let outcome = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        match registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.position() == tile)
+        {
+            None => Outcome::UnknownHerd,
+            Some(_) if !knows_herding => Outcome::NotKnown,
+            Some(herd) if !herd.is_domesticated() => Outcome::NotDomesticated,
+            Some(herd) if herd.owner != Some(faction) => Outcome::NotOwner,
+            Some(herd) if herd.is_corralled() => Outcome::AlreadyCorralled,
+            Some(herd) => {
+                herd.corral_at(tile);
+                Outcome::Corralled(herd.id.clone())
+            }
+        }
+    };
+
+    match outcome {
+        Outcome::UnknownHerd => {
+            warn!(
+                target: "shadow_scale::command",
+                command = "corral",
+                faction = %faction.0,
+                x = tile.x,
+                y = tile.y,
+                "command.corral.rejected=unknown_herd"
+            );
+            emit_command_failure(
+                app,
+                CommandEventKind::Corral,
+                faction,
+                format!("No herd at ({}, {}) to corral.", tile.x, tile.y),
+            );
+        }
+        Outcome::NotKnown => {
+            warn!(
+                target: "shadow_scale::command",
+                command = "corral",
+                faction = %faction.0,
+                x = tile.x,
+                y = tile.y,
+                "command.corral.rejected=herding_unknown"
+            );
+            emit_command_failure(
+                app,
+                CommandEventKind::Corral,
+                faction,
+                "Your people have not learned Herding yet. Sustain-hunt thriving herds to learn it before corralling.".to_string(),
+            );
+        }
+        Outcome::NotDomesticated => emit_command_failure(
+            app,
+            CommandEventKind::Corral,
+            faction,
+            format!(
+                "The herd at ({}, {}) is not domesticated. Sustain-hunt it to tame it before corralling.",
+                tile.x, tile.y
+            ),
+        ),
+        Outcome::NotOwner => emit_command_failure(
+            app,
+            CommandEventKind::Corral,
+            faction,
+            format!(
+                "You do not own the herd at ({}, {}).",
+                tile.x, tile.y
+            ),
+        ),
+        Outcome::AlreadyCorralled => emit_command_failure(
+            app,
+            CommandEventKind::Corral,
+            faction,
+            format!("The herd at ({}, {}) is already corralled.", tile.x, tile.y),
+        ),
+        Outcome::Corralled(herd_id) => {
+            let tick = app.world.resource::<SimulationTick>().0;
+            info!(
+                target: "shadow_scale::command",
+                command = "corral",
+                faction = %faction.0,
+                herd = %herd_id,
+                x = tile.x,
+                y = tile.y,
+                "command.corral.penned"
+            );
+            push_command_event(
+                app,
+                tick,
+                CommandEventKind::Corral,
+                faction,
+                format!("Corralled {} at ({}, {})", herd_id, tile.x, tile.y),
+                Some(format!(
+                    "status=complete action=corral herd={} x={} y={}",
+                    herd_id, tile.x, tile.y
+                )),
+            );
+        }
+    }
+}
+
 fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<String>) {
     let command_sender = {
         let res = app.world.resource::<CommandSenderResource>();
@@ -3038,6 +3185,15 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             target_x,
             target_y,
         }),
+        ProtoCommandPayload::Corral {
+            faction_id,
+            target_x,
+            target_y,
+        } => Some(Command::Corral {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+        }),
         ProtoCommandPayload::CancelOrder {
             faction_id,
             band_entity_bits,
@@ -3368,6 +3524,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Hunt => "Hunt",
         CommandEventKind::Domesticate => "Domesticate",
         CommandEventKind::Cultivate => "Cultivate",
+        CommandEventKind::Corral => "Corral",
         CommandEventKind::CancelOrder => "Cancel order",
         CommandEventKind::SedentarizationPrompt => "Sedentarization",
         CommandEventKind::SiteDiscovered => "Site discovered",
@@ -4254,5 +4411,126 @@ mod tests {
                 .is_cultivated(),
             "a known-Cultivation faction claims a tame patch"
         );
+    }
+
+    /// Seed a herd standing on `coord`, optionally domesticated + owned by `owner`. Returns its id.
+    fn seed_herd(app: &mut bevy::prelude::App, coord: UVec2, owner: Option<FactionId>) -> String {
+        use core_sim::{Herd, SizeClass};
+        let mut herd = Herd::new(
+            "game_corral_test".to_string(),
+            "Test Deer".to_string(),
+            SizeClass::Small,
+            vec![coord],
+            60.0,
+            100.0,
+        );
+        if let Some(faction) = owner {
+            herd.claim_domestication(faction);
+        }
+        let id = herd.id.clone();
+        app.world.resource_mut::<HerdRegistry>().herds.push(herd);
+        id
+    }
+
+    fn grant_herding(app: &mut bevy::prelude::App, faction: FactionId) {
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(faction, HERDING_DISCOVERY_ID, scalar_from_f32(1.0));
+    }
+
+    fn herd_is_corralled(app: &bevy::prelude::App, id: &str) -> bool {
+        app.world
+            .resource::<HerdRegistry>()
+            .find(id)
+            .is_some_and(|herd| herd.is_corralled())
+    }
+
+    fn corral_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
+        app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            matches!(entry.kind, CommandEventKind::Corral)
+                && entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains(needle))
+        })
+    }
+
+    /// Rung 1c gate: `corral` is rejected when the faction has not learned Herding, even on a
+    /// domesticated herd it owns, and the herd stays mobile.
+    #[test]
+    fn corral_rejected_when_herding_unknown() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, Some(faction));
+
+        handle_corral(&mut app, faction, coord);
+
+        assert!(
+            corral_failure_detail_contains(&app, "learned Herding"),
+            "corral must emit a NotKnown failure when Herding is unknown"
+        );
+        assert!(
+            !herd_is_corralled(&app, &id),
+            "a rejected corral leaves the herd mobile"
+        );
+    }
+
+    /// `corral` is rejected on a herd that isn't domesticated (needs husbandry first), even when the
+    /// faction knows Herding.
+    #[test]
+    fn corral_rejected_when_not_domesticated() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, None);
+        grant_herding(&mut app, faction);
+
+        handle_corral(&mut app, faction, coord);
+
+        assert!(
+            corral_failure_detail_contains(&app, "not domesticated"),
+            "corral must reject a wild herd as NotDomesticated"
+        );
+        assert!(!herd_is_corralled(&app, &id));
+    }
+
+    /// `corral` is rejected for a faction that doesn't own the domesticated herd.
+    #[test]
+    fn corral_rejected_for_non_owner() {
+        let mut app = build_headless_app();
+        let owner = FactionId(0);
+        let intruder = FactionId(1);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, Some(owner));
+        grant_herding(&mut app, intruder);
+
+        handle_corral(&mut app, intruder, coord);
+
+        assert!(
+            corral_failure_detail_contains(&app, "do not own"),
+            "corral must reject a non-owner"
+        );
+        assert!(!herd_is_corralled(&app, &id));
+    }
+
+    /// A faction that knows Herding and owns the domesticated herd on the tile corrals it.
+    #[test]
+    fn corral_succeeds_when_herding_known_and_domesticated() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, Some(faction));
+        grant_herding(&mut app, faction);
+
+        handle_corral(&mut app, faction, coord);
+
+        assert!(
+            herd_is_corralled(&app, &id),
+            "a known-Herding owner pens its domesticated herd"
+        );
+        // Corralling a herd that's already penned is rejected as AlreadyCorralled.
+        handle_corral(&mut app, faction, coord);
+        assert!(corral_failure_detail_contains(&app, "already corralled"));
     }
 }

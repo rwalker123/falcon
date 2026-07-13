@@ -164,6 +164,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "cultivate <faction_id> <x> <y>",
     },
     CommandVerbHelp {
+        verb: "corral",
+        aliases: &[],
+        summary: "Pen the domesticated herd on a tile into a fixed corral (needs Herding knowledge from a Sustain hunt).",
+        usage: "corral <faction_id> <x> <y>",
+    },
+    CommandVerbHelp {
         verb: "cancel_order",
         aliases: &[],
         summary: "Clear all of a band's labor assignments and stop movement (fully idle).",
@@ -753,6 +759,22 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 target_y: parse_u32(y_str, "cultivate target_y")?,
             })
         }
+        "corral" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            Ok(CommandPayload::Corral {
+                faction_id: parse_u32(faction_str, "corral faction")?,
+                target_x: parse_u32(x_str, "corral target_x")?,
+                target_y: parse_u32(y_str, "corral target_y")?,
+            })
+        }
         "cancel_order" => {
             let faction_str = parts
                 .next()
@@ -1128,6 +1150,23 @@ mod tests {
         // Both coordinates are required.
         assert!(matches!(
             parse_command_line("cultivate 0 7"),
+            Err(CommandParseError::MissingArgument("target_y"))
+        ));
+    }
+
+    #[test]
+    fn parse_corral_command() {
+        assert_eq!(
+            parse_command_line("corral 0 7 3").unwrap(),
+            CommandPayload::Corral {
+                faction_id: 0,
+                target_x: 7,
+                target_y: 3,
+            }
+        );
+        // Both coordinates are required.
+        assert!(matches!(
+            parse_command_line("corral 0 7"),
             Err(CommandParseError::MissingArgument("target_y"))
         ));
     }
