@@ -14,6 +14,7 @@ extends Node2D
 
 const MAP_VIEW := preload("res://src/scripts/MapView.gd")
 const OUT_DIR := "res://ui_preview_out"
+const WARMUP_SETTLES := 3   # frames burned before the first capture (the window is still sizing)
 
 const GRID_W := 16
 const GRID_H := 12
@@ -26,6 +27,13 @@ const TRAVEL_SEAM_BAND_X := 1      # band column near the left edge for the seam
 const TRAVEL_SEAM_TARGET_X := 14   # target near the right edge → short path wraps LEFT across seam
 const TRAVEL_EXPEDITION_ENTITY := 9301
 const HERD_ON_TILE_ID := "game_boar_03"   # herd id used by the selected-hex herd fixture
+# First worked forage tile of the work fixture — named because the draw-order guard (State A-overlap)
+# parks a herd on exactly this tile so its glyph collides with that tile's yield label.
+const FORAGE_A_X := 7
+const FORAGE_A_Y := 6
+const OVERLAP_HERD_ID := "game_boar_11"   # the herd parked on the worked forage tile
+const OVERLAP_MOVE_X := 10                # pending-move target; band→target dash crosses forage tile B's label
+const OVERLAP_MOVE_Y := 10
 # Canned settlement-stage tokens (the native bridge doesn't run here, so preview band dicts must
 # carry settlement_stage_* directly). Icons are opaque sim strings — the emoji here just mirror the
 # current config so the map token glyphs render. EMPTY exercises the neutral non-circular fallback marker (square).
@@ -85,6 +93,11 @@ func _ready() -> void:
 	add_child(_map)
 	await get_tree().process_frame
 	await get_tree().process_frame
+	# Warm-up: the FIRST captured state came back all-black — the window is still sizing on the opening
+	# frames, so the first viewport read-back has nothing in it. Burn a few settles here so State A is a
+	# real frame like every state after it.
+	for _i in WARMUP_SETTLES:
+		await _settle()
 
 	# State A — a band working two forage tiles + hunting a distant herd. Shows the
 	# work-range ring (Chebyshev square), two strong-green worked forage tiles, and the
@@ -94,6 +107,26 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_band_work")
+
+	# State A-overlap — the draw-ORDER guard for the yield labels. Every layer that used to paint OVER
+	# them is forced to collide with one here: a herd parked ON a worked forage tile (its glyph lands in
+	# a secondary slot right under that tile's label), a pending hunt on the already-hunted deer (dashed
+	# hex + dashed band→herd link straight across the herd's label, on top of the confirmed red ring +
+	# link), and a pending move whose dashed link crosses the second forage tile's label. The labels are
+	# flushed LAST in _draw, so all of it must read UNDER the pills — no glyph or dash on the numbers.
+	_map.display_snapshot(_snapshot_work_overlap())
+	_map.selected_unit_id = BAND_ENTITY
+	_map.set_labor_pending({
+		BAND_ENTITY: {
+			"turn": 0,
+			"assign": {"hunt:game_deer_07": {"kind": "hunt", "x": 13, "y": 6, "herd_id": "game_deer_07"}},
+			"move": {"x": OVERLAP_MOVE_X, "y": OVERLAP_MOVE_Y},
+		}
+	})
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_band_label_overlap")
+	_map.set_labor_pending({})  # leave the pending overlay clear for the following states
 
 	# State A-far — the SAME worked band on a large grid so fitted hexes go tiny (radius <
 	# ICON_MIN_DETAIL_RADIUS): the per-source yield labels + ⚠ must LOD-SUPPRESS so far zoom stays a
@@ -479,12 +512,25 @@ func _snapshot_work() -> Dictionary:
 	var assignments := [
 		# Policies drive the yield label's trailing policy glyph (♻ sustain / ⬆ surplus / 🪙 market /
 		# 💀 eradicate) — two different ones here so the map read is verifiable in one frame.
-		{"kind": "forage", "workers": 5, "target_x": 7, "target_y": 6, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48},
+		{"kind": "forage", "workers": 5, "target_x": FORAGE_A_X, "target_y": FORAGE_A_Y, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48},
 		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "policy": "market", "actual_yield": 0.27, "sustainable_yield": 0.20},
 		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 13, "target_y": 6, "actual_yield": 0.46, "sustainable_yield": 0.20},
 		{"kind": "warrior", "workers": 2},
 	]
 	return _base_snapshot(_band(assignments, 2, 2), [_deer_herd()])
+
+## State A-overlap fixture: the worked band, plus a herd standing ON the first worked forage tile so
+## its secondary glyph is drawn over that tile's yield label (the reported failure).
+func _snapshot_work_overlap() -> Dictionary:
+	var snap := _snapshot_work()
+	var herds: Array = snap["herds"]
+	herds.append({
+		"id": OVERLAP_HERD_ID,
+		"label": "Wild Boar (%s)" % OVERLAP_HERD_ID,
+		"x": FORAGE_A_X, "y": FORAGE_A_Y,
+		"biomass": 400.0, "huntable": true,
+	})
+	return snap
 
 func _snapshot_scout() -> Dictionary:
 	var assignments := [

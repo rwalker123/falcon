@@ -658,7 +658,16 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     label font scales with the hex radius (clamped) and the whole annotation (plate included) is
     **LOD-suppressed below
     `ICON_MIN_DETAIL_RADIUS`** (like the secondary markers) so far zoom stays clean. Scout/Warrior
-    produce no food → no label. **Scouting draws no map highlight** — staffed scouts extend the band's
+    produce no food → no label. **The labels are DEFERRED to the very end of `_draw`** — they are an
+    annotation OVER the map, and drawn inline in the highlight pass they were painted over by every
+    later layer (the dashed-amber pending overlays, the band→herd links, the hunted-herd rings, and the
+    secondary herd/food glyphs — a deer glyph landing squarely on the number). The highlight pass now
+    `_queue_yield_label`s each request into `_deferred_yield_labels` (cleared at the top of
+    `_draw_band_work_highlights`, before its early-outs) and `_flush_yield_labels()` renders the batch
+    as the LAST draw call, after the markers/rings/links/pending/targeting. The LOD gate stays at the
+    QUEUE site (`show_yields`), so a far-zoom label is never queued and deferral can't bypass the
+    suppression. Guarded by `map_preview` state `map_band_label_overlap` (a herd parked ON a worked
+    forage tile + a pending hunt dashing across the hunted herd's label) and `map_band_yield_farzoom`. **Scouting draws no map highlight** — staffed scouts extend the band's
     real sight range (visible directly in the fog as a wider Active radius); the old faint-blue scouted
     disc was removed because `scout_reveal_radius` no longer means a reveal-disc radius — it now carries
     the band's effective sight-range bonus (extra tiles beyond base, `0` when no scouts), which the

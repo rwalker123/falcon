@@ -579,6 +579,10 @@ var _secondary_overflow: Dictionary = {}
 # Optimistic pending-labor map (per band entity), pushed from the HUD via set_labor_pending.
 # Drawn for the selected band in a distinct dashed-amber style until the snapshot confirms.
 var _labor_pending: Dictionary = {}
+# DEFERRED per-source yield labels (see _queue_yield_label / _flush_yield_labels). The labels are an
+# annotation ON TOP OF the map, so they must be the LAST thing drawn: collected during the
+# work-highlight pass, flushed at the very end of _draw.
+var _deferred_yield_labels: Array[Dictionary] = []
 var biome_color_buffer: PackedColorArray = PackedColorArray()
 var _hovered_tile: Vector2i = Vector2i(-1, -1)
 var _fow_enabled: bool = false
@@ -1078,7 +1082,8 @@ func _draw() -> void:
 
 	# Selected player band: highlight what it's working (forage tiles / hunted herds) and
 	# its assignable reach (work-range ring). Drawn before the
-	# unit/herd markers so those sit on top of the tile tints.
+	# unit/herd markers so those sit on top of the tile tints. Its per-source yield LABELS are the
+	# exception — they are queued here and flushed at the very end of _draw (see _flush_yield_labels).
 	_draw_band_work_highlights(radius, origin)
 
 	_draw_supply_links(radius, origin)
@@ -1100,6 +1105,12 @@ func _draw() -> void:
 		_draw_route(order, radius, origin)
 
 	_draw_targeting(radius, origin)
+
+	# TOPMOST: the selected band's per-source yield labels, collected during _draw_band_work_highlights
+	# and held back to here. They annotate the map, so they must survive every layer above the tile
+	# tints — herd/food glyphs, rings, band→herd links and the dashed pending overlays all used to
+	# scribble across the text.
+	_flush_yield_labels()
 
 	# Profiling output
 	if _profiling_enabled:
@@ -1784,6 +1795,9 @@ func _draw_band_status(unit: Dictionary, center: Vector2, marker_radius: float) 
 ##    the work-range ring — hunt reach = work_range + leash).
 ## All cleared automatically when the band is deselected (selected_unit_id < 0 → early out).
 func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
+	# Start every frame's annotation batch empty (cleared BEFORE the early-outs, so a deselected band
+	# leaves no stale labels for the flush to paint).
+	_deferred_yield_labels.clear()
 	if selected_unit_id < 0:
 		return
 	var band := _selected_player_band()
@@ -1851,7 +1865,7 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 				var fcenter := _hex_center(tcol, trow, radius, origin)
 				var forage_overdraw := float(entry.get("actual_yield", 0.0)) \
 					> float(entry.get("sustainable_yield", 0.0)) + YIELD_OVERHUNT_EPSILON
-				_draw_yield_label(fcenter, float(entry.get("actual_yield", 0.0)), forage_overdraw, radius,
+				_queue_yield_label(fcenter, float(entry.get("actual_yield", 0.0)), forage_overdraw, radius,
 					String(entry.get("policy", "")))
 		elif kind == LABOR_KIND_HUNT:
 			var herd := _herd_by_id(String(entry.get("fauna_id", "")))
@@ -1871,7 +1885,7 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			if show_yields and entry.has("actual_yield"):
 				var overhunt := float(entry.get("actual_yield", 0.0)) \
 					> float(entry.get("sustainable_yield", 0.0)) + YIELD_OVERHUNT_EPSILON
-				_draw_yield_label(hc, float(entry.get("actual_yield", 0.0)), overhunt, radius,
+				_queue_yield_label(hc, float(entry.get("actual_yield", 0.0)), overhunt, radius,
 					String(entry.get("policy", "")))
 
 	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
@@ -2138,6 +2152,29 @@ func _draw_marker_glyph(center: Vector2, glyph: String, size: int, color: Color)
 	var baseline := Vector2(center.x - text_size.x * 0.5, center.y + size * 0.34)
 	draw_string(font, baseline + MARKER_GLYPH_SHADOW_OFFSET, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, MARKER_GLYPH_SHADOW_COLOR)
 	draw_string(font, baseline, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
+
+## DEFER a per-source yield label instead of drawing it inline. The label is an annotation OVER the
+## map: drawn during the highlight pass it was painted over by every later layer (the dashed-amber
+## pending overlays, the band→herd links, the hunted-herd rings, and the secondary herd/food glyphs —
+## a deer glyph landing squarely on the number). Callers queue here; `_flush_yield_labels` renders the
+## batch at the very END of `_draw`, on top of everything. The far-zoom LOD gate stays at the CALL
+## SITE (`show_yields`), so a suppressed label is never queued and deferral can't bypass it.
+func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, policy: String = "") -> void:
+	_deferred_yield_labels.append({
+		"tile_center": tile_center,
+		"value": value,
+		"overhunt": overhunt,
+		"radius": radius,
+		"policy": policy,
+	})
+
+## Render (and drain) the deferred yield-label batch. Called LAST in `_draw` — after the markers,
+## rings, links, pending overlays and targeting — so nothing paints over the labels.
+func _flush_yield_labels() -> void:
+	for label in _deferred_yield_labels:
+		_draw_yield_label(label["tile_center"], label["value"], label["overhunt"], label["radius"],
+			label["policy"])
+	_deferred_yield_labels.clear()
 
 ## A small drop-shadow per-source yield label above a worked tile's center (reuses `_draw_marker_glyph`
 ## for legibility over terrain). Food-income green normally; WARN amber + a `⚠` suffix when `overhunt`.
