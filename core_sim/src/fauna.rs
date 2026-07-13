@@ -17,7 +17,10 @@ use crate::{
     hashing::FnvHasher,
     mapgen::WorldGenSeed,
     orders::FactionId,
-    resources::{SimulationConfig, SimulationTick, StartLocation, TileRegistry},
+    resources::{
+        CommandEventEntry, CommandEventKind, CommandEventLog, SimulationConfig, SimulationTick,
+        StartLocation, TileRegistry,
+    },
     scalar::{scalar_from_f32, scalar_zero, Scalar},
     systems::{output_multiplier, workers_needed_for_take, TENDED_SOURCE_WORKERS_NEEDED},
     wellbeing_config::WellbeingConfigHandle,
@@ -207,8 +210,11 @@ pub struct Herd {
     /// `husbandry.corral_build_progress_per_turn`. The animal mirror of
     /// `ForagePatch::cultivation_progress`, and the investment the `corralling_yield_fraction` dip
     /// buys. Authoritative sim state — snapshot-persisted (`HerdState.corral_progress`), so a rollback
-    /// rewinds a half-built pen rather than losing it. Unlike cultivation it does **not** decay: a
-    /// half-built pen is materials on the ground, not a field growing back over.
+    /// rewinds a half-built pen rather than losing it. Unlike cultivation it does **not** decay
+    /// gradually — but the two ends of its life differ: a **mid-build** gate lapse *keeps* progress
+    /// (materials on the ground, not a field growing back over), while a **completed pen that
+    /// escapes** (`advance_husbandry`) resets it to `0.0` — the pen is lost along with the herd that
+    /// roamed off it, so re-penning pays the full investment again.
     pub corral_progress: f32,
     /// Transient per-turn flag: a Hunt assignment tended this corralled herd this turn (set in
     /// `advance_labor_allocation`, Population). `advance_husbandry` (Logistics, the *next* turn —
@@ -1167,12 +1173,16 @@ pub fn repopulate_fauna(
 /// **Corral (Rung 1c).** A **corralled** herd is exempt from the mobile even-split yield here — its
 /// keeper is paid place-local by the tending Hunt assignment (`advance_labor_allocation`) — and this
 /// pass instead runs its **escape** check: a corralled herd tended last turn is spared; an untended
-/// one clears `corralled_at` and reverts to a mobile domesticated herd. The animal mirror of
+/// one clears `corralled_at` **and zeroes `corral_progress`** (the pen is lost with the herd — see
+/// the escape branch), pushes a `CommandEventKind::Corral` feed line so the destroyed investment is
+/// never silent, and reverts to a mobile domesticated herd. The animal mirror of
 /// `forage::advance_cultivation`'s feral pass.
 pub fn advance_husbandry(
     mut registry: ResMut<HerdRegistry>,
     fauna_config: Res<FaunaConfigHandle>,
     wellbeing_config: Res<WellbeingConfigHandle>,
+    mut event_log: ResMut<CommandEventLog>,
+    tick: Res<SimulationTick>,
     mut cohorts: Query<&mut PopulationCohort>,
 ) {
     let fauna = fauna_config.get();
@@ -1198,13 +1208,48 @@ pub fn advance_husbandry(
                 if herd.corralled_tended_this_turn {
                     herd.corralled_tended_this_turn = false;
                 } else {
+                    let pen = herd.corralled_at;
                     herd.corralled_at = None;
+                    // The pen is LOST, not merely opened: zero the build progress so re-penning pays
+                    // the full `corral_build_progress_per_turn` investment again. **A patch is a
+                    // place and a herd is not** — `cultivation_progress` may decay gradually because
+                    // the improvement sits on a tile that cannot move, so partial progress still
+                    // refers to the same patch; `corral_progress` lives on the *herd*, which roams,
+                    // so any retained progress would re-materialize the pen at whatever tile the
+                    // animal has since wandered to (a teleporting corral) and make abandoning a pen
+                    // cost one turn instead of the rebuild. Contrast the **mid-build** gate lapse,
+                    // which is NOT this branch (it only fires on a completed pen): a half-built pen
+                    // keeps its progress — materials on the ground at a tile the herd is still at.
+                    herd.corral_progress = 0.0;
                     info!(
                         target: "shadow_scale::analytics",
                         event = "corral_escape",
                         herd = %herd.id,
                         faction = herd.owner.map(|f| f.0).unwrap_or_default(),
                     );
+                    // Tell the player. The escape now DESTROYS a 25-turn investment (the reset
+                    // above), so it must never be silent: the corral meter would otherwise snap
+                    // 1.0 → 0.0 with no explanation. Same `CommandEventKind::Corral` the pen's
+                    // *completion* pushes from `advance_labor_allocation` — one feed line for the
+                    // pen's whole life. Human text names the **species** (`herd.species`), not the
+                    // internal id, and says what happened AND why; the detail carries the
+                    // machine-readable `status=… reason=… herd=…` fields.
+                    if let Some(owner) = herd.owner {
+                        let (pen_x, pen_y) = pen.map(|t| (t.x, t.y)).unwrap_or_default();
+                        event_log.push(CommandEventEntry::new(
+                            tick.0,
+                            CommandEventKind::Corral,
+                            owner,
+                            format!(
+                                "The {} herd broke out — untended, the pen is lost",
+                                herd.species
+                            ),
+                            Some(format!(
+                                "status=escaped reason=untended action=corral herd={} x={} y={}",
+                                herd.id, pen_x, pen_y
+                            )),
+                        ));
+                    }
                 }
                 continue;
             }

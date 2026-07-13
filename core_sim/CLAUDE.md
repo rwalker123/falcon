@@ -393,9 +393,11 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   reusing the **shared** MSY helper — the crew is building, not hunting; a fraction of MSY is a
   sustainable draw, so the herd stays healthy) and `corral_progress` accrues
   `husbandry.corral_build_progress_per_turn` (0.04 → 25 turns). **Gates:** the faction knows **Herding**
-  AND owns the **domesticated** herd; a gate that lapses mid-build just stops accrual that turn
+  AND owns the **domesticated** herd; a gate that lapses **mid-build** just stops accrual that turn
   (progress is kept — a half-built pen is materials on the ground; unlike cultivation it does **not**
-  decay). Accrued **after** the take, so the turn pays exactly what the forecast promised. At `1.0`
+  decay *gradually*). That "progress is kept" applies to a **mid-build** lapse only — a **completed
+  pen whose herd escapes loses its progress outright** (reset to `0.0`; see *Escapes-if-untended*
+  below). Accrued **after** the take, so the turn pays exactly what the forecast promised. At `1.0`
   `Herd::corral_at` pens it (sets `corralled_at`, stops roaming, grants the one-turn tended grace) and
   pushes a `CommandEventKind::Corral` feed line.
 - **`corral` command (repurposed)** — `corral <faction> <x> <y>` (`handle_corral`; unchanged
@@ -417,9 +419,22 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
     forage's `tended_provisions_per_biomass` beats the wild MSY skim.
   - *Escapes-if-untended* — in `advance_husbandry` (Logistics, which runs *before* Population — a
     deliberate one-turn-lag flag, exactly like `ForagePatch::tended_this_turn`) a corralled herd
-    tended last turn is spared; an **untended** one **escapes**: `corralled_at` is cleared and it
-    reverts to a mobile domesticated herd (resuming the passive even-split husbandry yield). A
-    corralled herd is exempt from the even-split here (it's paid place-local by its keeper).
+    tended last turn is spared; an **untended** one **escapes**: `corralled_at` is cleared, **and
+    `corral_progress` is reset to `0.0`**, reverting it to a mobile domesticated herd (resuming the
+    passive even-split husbandry yield). **The pen is lost, not merely opened** — re-penning pays the
+    full 25-turn `Corral` investment again, at the herd's new position. *Why zero, when a patch's
+    `cultivation_progress` only decays gradually:* **a patch is a place and a herd is not.**
+    `cultivation_progress` can survive partially because the improvement sits on a tile that cannot
+    move, so leftover progress still refers to the same patch; `corral_progress` lives on the **herd**,
+    which roams — so any retained progress would re-materialize the pen at whatever tile the animal has
+    since wandered to (a teleporting corral) and make abandoning a pen cost **one** turn instead of the
+    rebuild. Losing the pen is what makes the tending obligation real (the "pins the band" mechanic).
+    Because the escape now **destroys a 25-turn investment**, it is **never silent**: it pushes a
+    `CommandEventKind::Corral` feed line to the owner — the same kind the pen's *completion* pushes
+    (one kind for the pen's whole life) — reading `"The <species> herd broke out — untended, the pen
+    is lost"` (human text names the **species**, never the internal herd id) with
+    `status=escaped reason=untended action=corral herd=<id> x=<x> y=<y>` in the detail field.
+    A corralled herd is exempt from the even-split here (it's paid place-local by its keeper).
     `corral_at` grants a one-turn grace so a freshly-penned herd doesn't escape before its keeper can
     tend it.
 - **Persistence** — `corralled_at` **and `corral_progress`** round-trip through the rollback snapshot on

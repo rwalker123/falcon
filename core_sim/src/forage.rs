@@ -17,13 +17,21 @@
 //! ceiling (so a collapsed patch yields no sustainable surplus). Foraging honors the full policy axis
 //! (Sustain/Surplus/Market/Eradicate — §0-iii, parity with hunting): the `LaborTarget::Forage`
 //! policy flows through `advance_labor_allocation` into `forage_take`, and a Market gather sells its
-//! take as trade goods. **Cultivation** (Phase 1a) transposes husbandry onto patches: a patch carries
-//! `cultivation_progress`/`owner`, a Sustain forage on a Thriving patch accrues it, a completed
-//! ("tended") patch pays only the band that **tends it** (a Forage assignment worked it this turn —
-//! place-local, in `advance_labor_allocation`) a higher-than-wild yield without drawing biomass down,
-//! `advance_cultivation` takes an **untended** tended patch **feral** (its progress decays back below
-//! the cultivated threshold, reverting to a wild gather patch), and the `cultivate` command claims a
-//! patch early — the plant mirror of `fauna.rs`'s domestication.
+//! take as trade goods.
+//!
+//! **Cultivation** (Phase 1a) is the plant mirror of `fauna.rs`'s corral — an *investment*, not a
+//! by-product of gathering (authoritative spec: `core_sim/CLAUDE.md` → Cultivation):
+//! - A **Sustain** forage on a **Thriving** patch earns the faction **Cultivation knowledge**
+//!   (`CULTIVATION_DISCOVERY_ID`, in the `DiscoveryProgressLedger`) — the gate on the policy below.
+//!   Sustain **never** accrues a patch's `cultivation_progress`.
+//! - Taming a patch means **paying the `Cultivate` policy's investment**: a reduced take
+//!   (`cultivating_yield_fraction ×` the Sustain/MSY ceiling) while `cultivation_progress` accrues
+//!   toward `1.0`. The `cultivate` command only **sets that policy** on bands already foraging the
+//!   tile; it claims nothing.
+//! - A completed ("tended") patch pays only the band that **tends it** (a Forage assignment worked it
+//!   this turn — place-local, in `advance_labor_allocation`) a higher-than-wild yield without drawing
+//!   biomass down; `advance_cultivation` takes an **untended** patch **feral** (progress decays back
+//!   below the cultivated threshold, reverting it to a wild gather patch).
 
 use std::collections::HashMap;
 

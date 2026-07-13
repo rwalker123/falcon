@@ -10,12 +10,13 @@ use bevy::MinimalPlugins;
 use bevy::math::UVec2;
 use core_sim::{
     advance_herds, advance_husbandry, advance_labor_allocation, scalar_from_f32, scalar_one,
-    scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger,
-    FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore,
-    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventEntry, CommandEventKind,
+    CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory,
+    FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry, GenerationId,
+    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
     HERDING_DISCOVERY_ID,
 };
@@ -319,6 +320,34 @@ fn herding_knowledge(app: &App) -> f32 {
         .to_f32()
 }
 
+/// Complete faction 0's **Herding** knowledge — the `Corral` policy's gate — so a Corral assignment
+/// actually accrues pen progress.
+fn grant_herding(app: &mut App) {
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(FactionId(0), HERDING_DISCOVERY_ID, scalar_one());
+}
+
+/// The `Corral`-kind command-feed entries — the pen's whole life (completion AND escape) rides this
+/// one kind.
+fn corral_feed_lines(app: &App) -> Vec<CommandEventEntry> {
+    app.world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter(|entry| matches!(entry.kind, CommandEventKind::Corral))
+        .cloned()
+        .collect()
+}
+
+/// A herd's pen-construction progress (0 = no pen, 1.0 = built).
+fn corral_progress_of(app: &App, id: &str) -> f32 {
+    app.world
+        .resource::<HerdRegistry>()
+        .find(id)
+        .map(|h| h.corral_progress)
+        .unwrap_or(0.0)
+}
+
 /// Pen a herd: prime it to full biomass (Thriving, and at cap so logistic regrowth is 0 → a clean
 /// no-draw-down check), domesticate it for faction 0, and corral it at its current tile.
 fn corral_herd(app: &mut App, id: &str) -> UVec2 {
@@ -457,6 +486,150 @@ fn untended_corral_escapes_to_mobile() {
     assert!(
         herd.is_domesticated(),
         "an escaped herd is still domesticated — just mobile again"
+    );
+}
+
+/// The one-turn grace holds: a **freshly-penned** herd is spared its first `advance_husbandry` pass
+/// (`corral_at` marks it tended), so a keeper has a turn to take up the tending assignment.
+#[test]
+fn freshly_penned_herd_survives_its_grace_turn() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    corral_herd(&mut app, &id);
+
+    run_turns_untended(&mut app, 1);
+
+    let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+    assert!(
+        herd.is_corralled(),
+        "the grace turn spares a freshly-penned herd"
+    );
+    assert_eq!(
+        herd.corral_progress, 1.0,
+        "a spared pen keeps its completed progress"
+    );
+    assert!(
+        corral_feed_lines(&app).is_empty(),
+        "no escape line on the grace turn — nothing was lost"
+    );
+}
+
+/// The escape **destroys a 25-turn investment**, so it must never be silent: it pushes a
+/// `CommandEventKind::Corral` feed line naming the **species** (not the internal herd id) and saying
+/// both what happened and why, with the machine-readable bits in the detail field.
+#[test]
+fn corral_escape_announces_the_lost_pen_in_the_feed() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    corral_herd(&mut app, &id);
+    let species = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&id)
+        .unwrap()
+        .species
+        .clone();
+
+    run_turns_untended(&mut app, 3);
+
+    let lines = corral_feed_lines(&app);
+    assert_eq!(lines.len(), 1, "exactly one escape line: {lines:?}");
+    let entry = &lines[0];
+    assert_eq!(entry.faction, FactionId(0), "the owner is told");
+    assert!(
+        entry.label.contains(&species) && !entry.label.contains(&id),
+        "the human line names the species, not the internal id: {}",
+        entry.label
+    );
+    assert!(
+        entry.label.contains("broke out") && entry.label.contains("pen is lost"),
+        "the line says what happened AND why: {}",
+        entry.label
+    );
+    let detail = entry.detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("status=escaped")
+            && detail.contains("reason=untended")
+            && detail.contains(&format!("herd={id}")),
+        "the detail carries the machine-readable fields: {detail}"
+    );
+}
+
+/// **The pen is lost, not merely opened.** An escaping herd resets `corral_progress` to `0.0`, so the
+/// next `Corral` turn does NOT instantly re-pen it (at whatever tile it has roamed to) — the keeper
+/// must pay the full rebuild investment again.
+#[test]
+fn escaped_corral_loses_its_pen_progress_and_must_rebuild() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    corral_herd(&mut app, &id);
+    let build_per_turn = app
+        .world
+        .resource::<FaunaConfigHandle>()
+        .get()
+        .husbandry
+        .corral_build_progress_per_turn;
+
+    // No keeper: the grace turn is consumed, then the herd breaks out.
+    run_turns_untended(&mut app, 3);
+    let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+    assert!(!herd.is_corralled(), "an untended corral escapes");
+    assert_eq!(
+        herd.corral_progress, 0.0,
+        "the escaped herd's pen is lost — progress resets"
+    );
+
+    // A keeper returns under the Corral policy: it must REBUILD, not snap straight back to penned.
+    grant_herding(&mut app);
+    spawn_hunter(&mut app, &id, FollowPolicy::Corral);
+    run_turns_with_hunt(&mut app, 1);
+
+    let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+    assert!(
+        !herd.is_corralled(),
+        "one Corral turn must not instantly re-pen an escaped herd"
+    );
+    assert!(
+        (herd.corral_progress - build_per_turn).abs() < 1e-4,
+        "re-penning restarts the investment from zero: {} after one turn",
+        herd.corral_progress
+    );
+}
+
+/// Guard against over-reaching the escape fix: a **half-built** pen whose gate lapses (its keeper
+/// leaves mid-build) **keeps** its progress — materials on the ground at a tile the herd is still at.
+/// Only a *completed* pen that escapes loses it.
+#[test]
+fn half_built_pen_keeps_progress_when_its_keeper_leaves() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.claim_domestication(FactionId(0));
+    }
+    grant_herding(&mut app);
+    let band = spawn_hunter(&mut app, &id, FollowPolicy::Corral);
+
+    run_turns_with_hunt(&mut app, 5);
+    let half_built = corral_progress_of(&app, &id);
+    assert!(
+        half_built > 0.0 && half_built < 1.0,
+        "the pen should be part-built: {half_built}"
+    );
+
+    // The keeper walks off mid-build — the investment is NOT an escape and is NOT lost.
+    app.world.despawn(band);
+    run_turns_untended(&mut app, 5);
+
+    let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+    assert!(
+        !herd.is_corralled(),
+        "a half-built pen never penned the herd"
+    );
+    assert_eq!(
+        herd.corral_progress, half_built,
+        "a mid-build lapse keeps its progress"
     );
 }
 
