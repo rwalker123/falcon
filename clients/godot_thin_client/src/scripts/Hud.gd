@@ -511,6 +511,18 @@ const BREAKDOWN_KIND_MORALE := "morale"
 # The detail-row labels the disclosure attaches to (must equal the `Key` in `_split_detail_kv`).
 const DETAIL_ROW_FOOD := "Food"
 const DETAIL_ROW_MORALE := "Morale"
+# ---- Band/City panel identity grid ---------------------------------------------------------------
+# The panel's own header already states the band's name + settlement stage, so the summary rows there
+# drop the `Unit: <name>` row (a THIRD copy of the same name) and replace `Size: <n>` (population
+# under another name) with the labor line — same numbers, one row, in the identity grid where they
+# belong. The Occupants-card drawer (FOREIGN bands, and the no-panel ui_preview fallback) keeps
+# Unit/Size: it has no panel header naming the band, and a foreign band exposes no worker breakdown.
+# Hence `_unit_summary_lines(unit, in_panel)` rather than deleting the rows outright.
+const DETAIL_ROW_POPULATION := "Population"
+# The labor line's numbers. ONE format, two hosts: the panel's identity-grid row renders it without
+# the leading label (the grid supplies that), the legacy in-card allocation block with it.
+const WORKERS_VALUE_FORMAT := "%d · Workers %d (Idle %d)"
+const WORKERS_HEADER_FORMAT := "%s %s" % [DETAIL_ROW_POPULATION, WORKERS_VALUE_FORMAT]
 # Category breakdown rows under Food reuse the morale breakdown's indent + ▲/▼ glyphs, so they flow
 # through the SAME `_format_detail_bbcode` indented-sub-line path (sign-tinted: ▲ income green, ▼
 # eaten amber) — no inline color tags, which mis-layout between the KV table segments.
@@ -2067,10 +2079,15 @@ func _build_allocation_panel(band: Dictionary, target: VBoxContainer = null) -> 
 ## changed from one flat container to its section block. `rebuild` is called by the local-state
 ## controls (party stepper / send-policy picker) to re-render the host; labor edits re-render
 ## themselves through `_after_pending_change`.
-func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
+## `with_population_header` hosts the `Population N · Workers W (Idle I)` line as the allocation
+## stack's first block. The Band/City panel passes **false**: that line is the band's identity, not an
+## allocation section, and riding along with the blocks it rendered wherever CURRENT ACTIONS did —
+## stranded between Active expeditions and Current actions. There it lives in the summary's identity
+## grid instead (`_unit_summary_lines(unit, in_panel = true)`), off the SAME `_effective_idle`. The
+## legacy flat in-card host (no dock injected — the HUD-only ui_preview fallback) still shows it here,
+## since that path renders no identity grid of its own.
+func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_population_header: bool = true) -> Array:
     var blocks: Array = []
-    var population := int(band.get("size", 0))
-    var working := int(band.get("working_age", 0))
     # Idle counts OPTIMISTICALLY (confirmed idle overlaid with any pending changes) so the
     # math reflects a just-issued assignment immediately.
     var idle := _effective_idle(band)
@@ -2078,14 +2095,16 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
     # Workers block — clarified header: population (all people) vs the working-age labor split, so
     # nobody expects "Idle" to equal the 30 people — only the ~16 workers labor (children/elders eat
     # but don't work). E.g. "Population 30 · Workers 16 (Idle 16)".
-    var workers_block := _make_alloc_block()
-    var header := Label.new()
-    header.text = "Population %d · Workers %d (Idle %d)" % [population, working, idle]
-    header.add_theme_color_override("font_color", HudStyle.SIGNAL if can_add else HudStyle.INK_DIM)
-    header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    workers_block.add_child(header)
-    blocks.append(workers_block)
+    if with_population_header:
+        var workers_block := _make_alloc_block()
+        var header := Label.new()
+        header.text = WORKERS_HEADER_FORMAT % [
+            int(band.get("size", 0)), int(band.get("working_age", 0)), idle]
+        header.add_theme_color_override("font_color", HudStyle.SIGNAL if can_add else HudStyle.INK_DIM)
+        header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        workers_block.add_child(header)
+        blocks.append(workers_block)
     # "Current actions" block — the report of what each group is doing (confirmed + optimistic).
     var actions_block := _make_alloc_block()
     actions_block.add_child(_alloc_section_label(ALLOC_HEADER_ACTIONS))
@@ -2185,7 +2204,8 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
     clear_btn.text = "Clear all"
     HudStyle.apply_button(clear_btn, "ghost")
     clear_btn.tooltip_text = "Return every worker to idle (clears all assignments)."
-    clear_btn.disabled = not has_source and idle >= working
+    # Nothing to clear when no source is staffed AND every worker is already idle (roles included).
+    clear_btn.disabled = not has_source and idle >= int(band.get("working_age", 0))
     clear_btn.pressed.connect(_on_clear_all_pressed.bind(band))
     actions.add_child(clear_btn)
     orders_block.add_child(actions)
@@ -3420,7 +3440,9 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     # The panel's Food/Morale labels are the same click-to-expand disclosures as the Occupants drawer.
     # This RichTextLabel is rebuilt each render, so wire its `meta_clicked` here (bound is_panel = true).
     detail_label.meta_clicked.connect(_on_detail_meta_clicked.bind(true))
-    detail_label.text = _format_detail_bbcode(_unit_summary_lines(_panel_band))
+    # `in_panel`: the panel header already names the band + stage, so the summary drops the Unit row
+    # and folds the population/workers line into the identity grid (see `_unit_summary_lines`).
+    detail_label.text = _format_detail_bbcode(_unit_summary_lines(_panel_band, true))
     summary_block.add_child(detail_label)
     blocks.append(summary_block)
     # "Active expeditions" block the panel band has detached (grouped by home_band_entity); omitted
@@ -3431,7 +3453,9 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     # Allocation section blocks (closures capture the stable `_panel_band`; the party/policy controls
     # re-render the panel via `_rerender_panel_allocation`, which re-runs this whole assembly).
     var rebuild := func() -> void: _rerender_panel_allocation()
-    blocks.append_array(_build_allocation_sections(_panel_band, rebuild))
+    # No population header block here — the panel's identity grid carries that line (above), so it
+    # can't strand itself between Active expeditions and Current actions.
+    blocks.append_array(_build_allocation_sections(_panel_band, rebuild, false))
     _band_city_panel.set_band_sections(blocks)
     # Header: settlement stage glyph + name + stage label (glyph/label already flow onto the
     # marker/cohort dict; fall back to a neutral glyph when the stage is absent).
@@ -3721,16 +3745,27 @@ func _select_band_on_map(band: Dictionary) -> void:
 func _is_player_unit(unit: Dictionary) -> bool:
     return int(unit.get("faction", PLAYER_FACTION_ID)) == PLAYER_FACTION_ID
 
-func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
+## The band summary rows. `in_panel` = rendered into the Band/City dock, whose HEADER already carries
+## the band's name + stage: there the `Unit` row (a third copy of the name) is dropped and `Size` —
+## population under another name — becomes the **Population** row carrying the labor line
+## (`29 · Workers 14 (Idle 12)`), which is the same reading the allocation block used to strand
+## between Active expeditions and Current actions. The Occupants-card drawer (foreign bands / the
+## no-panel fallback) has no such header and no worker breakdown to show, so it keeps Unit + Size.
+func _unit_summary_lines(unit_data: Dictionary, in_panel: bool = false) -> Array[String]:
     if bool(unit_data.get("is_expedition", false)):
         return _expedition_summary_lines(unit_data)
     var lines: Array[String] = []
     # Disclosure carets are rebuilt per render; drop last render's Food/Morale entries.
     _disclosure_state = {}
-    var label := String(unit_data.get("id", "Band"))
-    lines.append("Unit: %s" % label)
     var size_value: int = int(unit_data.get("size", 0))
-    lines.append("Size: %d" % size_value)
+    if in_panel:
+        # Idle counts OPTIMISTICALLY via the SAME `_effective_idle` the `+` stepper gates on — the
+        # calculation is moved here, never forked.
+        lines.append("%s: %s" % [DETAIL_ROW_POPULATION, WORKERS_VALUE_FORMAT % [
+            size_value, int(unit_data.get("working_age", 0)), _effective_idle(unit_data)]])
+    else:
+        lines.append("Unit: %s" % String(unit_data.get("id", "Band")))
+        lines.append("Size: %d" % size_value)
     lines.append(_band_food_line(unit_data))
     # Category-aggregated food breakdown under Food: a click-to-expand disclosure (auto-shown when
     # concerning). `_band_food_line` set `_food_flow_present`; `_register_disclosure` records the row

@@ -32,9 +32,9 @@ const MAP_VIEW := preload("res://src/scripts/MapView.gd")
 const PANEL_CONSUMED_KEYS := [
 	"entity",              # _emit_assign_labor bits, roster identity
 	"faction",             # _is_player_unit gating
-	"id",                  # drawer "Unit:" label
+	"id",                  # Occupants-drawer "Unit:" label (the band panel names the band in its header)
 	"pos",                 # drawer "Position:" line
-	"size",                # drawer "Size:" + allocation header Population
+	"size",                # band panel "Population:" row / Occupants-drawer "Size:" row
 	"days_of_food",        # _band_food_line
 	"food_income",         # Food summary line net rate + Gathered/Hunted breakdown
 	"food_consumption",    # Food summary line net rate + Eaten breakdown

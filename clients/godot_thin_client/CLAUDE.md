@@ -569,8 +569,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   workers (built for N even though only one exists live). Three runtime-built control sets replace the retired single-task Scout/Cancel,
   Hunt/policy, and Forage buttons:
   - **`%AllocationPanel`** (band drawer, player band only, `_build_allocation_panel`): reads as a
-    "current actions" report — a `Population <size> · Workers <working_age> (Idle <n>)` header (spells
-    out that only the ~16 working-age labor, not the 30 people — children/elders are dependents), a
+    "current actions" report — a `Population <size> · Workers <working_age> (Idle <n>)` line (spells
+    out that only the ~16 working-age labor, not the 30 people — children/elders are dependents;
+    `WORKERS_HEADER_FORMAT`, idle from `_effective_idle` so it counts optimistically), a
     **Current actions** section with one `−/+` **worker-stepper** row per staffed Forage tile / Hunt
     herd (from the cohort's `labor_assignments`; an empty-state hint when none). **A row states its
     policy and its status as GLYPHS, not words** (`🌰 Forage (27, 26) +0.48 /turn  ♻  ●`) — the old
@@ -1209,6 +1210,21 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   (`set_cycler`) over `_player_bands`, a 2×2 **dock chooser** (active edge
   highlighted), and a **collapse** toggle. `cycle_requested(delta)` → Main relays
   to `Hud.cycle_panel_band`.
+- **Header rows — no restated identity.** The panel's own chrome already states the band's **name +
+  settlement stage**, so its summary grid does NOT repeat them: `_unit_summary_lines(unit, in_panel =
+  true)` **drops the `Unit: <name>` row** (it was a third copy of the name) and **replaces `Size: <n>`**
+  — population under another name — with a **`Population  29 · Workers 14 (Idle 12)`** row
+  (`WORKERS_VALUE_FORMAT`, idle from the SAME `_effective_idle` the `+` steppers gate on). That labor
+  line used to render as the allocation stack's first block, which meant it appeared wherever CURRENT
+  ACTIONS did — **stranded between Active expeditions and Current actions**; the panel now passes
+  `with_population_header = false` to `_build_allocation_sections`, so it exists once, in the identity
+  grid. The header reads: name / stage / Population / Food / Morale / Position.
+  **`Size` is NOT dead** — `_unit_summary_lines` is shared with the Occupants-card drawer, which serves
+  **foreign bands** (no panel header naming them, and no worker breakdown of theirs to show) and the
+  no-panel `ui_preview` fallback; that path (`in_panel = false`, the default) keeps `Unit` + `Size`,
+  and the legacy in-card allocation host keeps the population header block. The dock itself only ever
+  shows player bands (expeditions are split into `_player_expeditions` and drawn in the Occupants
+  card), so in the dock `Size` was always redundant.
 - **Content relocation (from the Occupants card).** The **player-band** branch of
   `Hud._render_occupant_drawer` now renders into the panel via `_render_band_into_panel`,
   which assembles an ordered array of **section blocks** — a summary block
