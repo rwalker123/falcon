@@ -432,9 +432,10 @@ const SEND_HUNT_POLICY_HINTS := {
 #   `hunt_trip_estimates`   {"<policy>:<workers>" → {turns_to_fill, delivers_food}} — the sim's
 #       PRE-LAUNCH TRIP ESTIMATE, forward-simulated server-side. An expedition's trip length is NOT a
 #       rate division: on Surplus/Market the ceiling is a *stock*, so the party strips the headroom in
-#       a turn or two and then crawls at the herd's regrowth trickle (the closed-form said 6 turns for
-#       a rabbit warren; the simulated truth was 48). So the client does ZERO arithmetic here — it
-#       looks the answer up. Never re-derive it.
+#       a turn or two and then crawls at the herd's regrowth trickle. A re-derived `carryCap / rate`
+#       closed form is wrong, and wrong by a lot — on a FULL Rabbit Warren under Surplus only a LONE
+#       hunter fills at all (23 turns); a party of 4 never fills within the sim's horizon. So the
+#       client does ZERO arithmetic here — it looks the answer up. Never re-derive it.
 const HERD_BAND_CEILINGS_KEY := "hunt_policy_ceilings"
 const HERD_TRIP_ESTIMATES_KEY := "hunt_trip_estimates"
 # `hunt_trip_estimates` is keyed "<policy><sep><party_workers>" — the sim's key format, mirrored by
@@ -444,23 +445,32 @@ const HUNT_ESTIMATE_KEY_SEPARATOR := ":"
 # is NOT inferred from the policy string: the estimate itself carries `delivers_food = false`, so the
 # sim, not the client, decides which policies are denial missions.)
 # Pre-launch hunt-trip forecast (shown in the targeting banner while a hunt expedition is armed and
-# the player hovers a herd). The sim exports every number this needs — the per-herd per-policy
-# EXPEDITION take ceiling (`hunt_policy_expedition_ceilings`) and the three global levers on the band's
-# cohort — so the client only does the arithmetic and NEVER re-derives the ecology model:
-#     rate  = min(workers × hunt_per_worker_provisions, expedition_ceiling_for(policy))
-#     turns = ceil(workers × expedition_per_worker_carry / rate)   # rate <= 0 -> never fills
-#     viable = turns <= expedition_viability_warn_turns
-# (pinned sim-side by core_sim/tests/expedition_hunt.rs).
+# the player hovers a herd, and live above the herd panel's Send button). It is a PURE TABLE LOOKUP
+# into the sim-exported per-(policy, party-size) `hunt_trip_estimates` carried on the herd — each cell
+# {policy, party_workers, turns_to_fill, delivers_food}, where `turns_to_fill == 0` means the party
+# does NOT fill within the sim's `forecast_horizon_turns`. The client reads the cell and stops (see
+# `_hunt_trip_forecast`); the only thing it computes is the display verdict:
+#     viable = turns <= expedition_viability_warn_turns   (the band's own exported lever)
+# THE CLIENT DOES ZERO ARITHMETIC FOR AN EXPEDITION, and must NEVER divide a carry cap by a take rate.
+# The sim FORWARD-SIMULATES the trip — the herd's state moves under the party, its stock exhausts, and
+# a horizon bounds the answer — so any client-side re-derivation drifts from the take the sim actually
+# performs. That forward simulation is the only honest number (pinned by core_sim/tests/expedition_hunt.rs).
+# This does NOT mean the client does no math anywhere: the LOCAL (resident band) per-turn yield preview
+# IS legitimate arithmetic — `min(workers × hunt_per_worker_provisions, band_ceiling) × output_multiplier`
+# over `hunt_policy_ceilings`, the BAND flow ceiling (`_hunt_take_rate` / `_local_hunt_preview_bbcode`,
+# pinned by exported_snapshot_fields_reproduce_band_hunt_take). Band = flow arithmetic; expedition = lookup.
 const HUNT_FORECAST_TURNS_FORMAT := "%s · ≈%d turns to fill"
 # Above the config's viability threshold the trip still launches (this is information, not a block) —
 # but the herd's sustainable yield, not the hunters, is the binding constraint by a wide margin.
 const HUNT_FORECAST_NOT_VIABLE_SUFFIX := " — too slow to be worth sending"
-# A ceiling of 0 means the herd yields nothing under this policy (sub-Allee / collapsing): the party
-# would follow it forever and come home with nothing.
+# The sim's forward simulation never filled this party's packs within its `forecast_horizon_turns`
+# (`turns_to_fill == 0`) — a "won't fill" verdict, NOT "the herd is dead". A perfectly HEALTHY herd
+# lands here whenever its yield is simply too slow for the packs this party carries: a thriving Rabbit
+# Warren under Sustain fills NO party size at all. The party would still be out there at the horizon.
 const HUNT_FORECAST_NEVER_FILLS_FORMAT := "%s can't fill a party this size — the packs would never fill"
 # An Eradicate expedition is a DENIAL mission, not a failed hunt: it delivers no food BY DESIGN. Kept
-# distinct from the collapsed-herd line above (red = the herd has nothing left to give; amber = you are
-# choosing to bring nothing home).
+# distinct from the won't-fill line above (red = the packs don't fill within the sim's horizon; amber =
+# you are choosing to bring nothing home).
 const HUNT_FORECAST_DENIAL_FORMAT := "%s — denial mission: hunts the herd toward extinction, delivers no food"
 const HUNT_FORECAST_WARN_GLYPH := "⚠ "
 # Sentinel for "the snapshot doesn't carry the levers/ceiling this forecast needs" (older server).
@@ -847,8 +857,10 @@ func _hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -> Stri
     if not bool(forecast.get("available", false)):
         return ""
     # Two different "no food comes home" stories, and they must not be confused: an Eradicate party
-    # brings nothing home BY DESIGN (denial, amber), while any other policy hitting a 0 ceiling means
-    # the HERD has nothing left to give (collapsed, red).
+    # brings nothing home BY DESIGN (denial, amber), while any other policy the sim says won't fill
+    # within its `forecast_horizon_turns` means the packs stay empty for the whole trip (red). The red
+    # case is a "can't fill" verdict, NOT a collapsed herd — a thriving herd whose yield is simply too
+    # slow for this party's packs (a full Rabbit Warren on Sustain) lands here too.
     if bool(forecast.get("denial", false)):
         return "[color=#%s]%s[/color]" % [
             HudStyle.WARN_HEX, HUNT_FORECAST_DENIAL_FORMAT % herd_name,
@@ -866,11 +878,12 @@ func _hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -> Stri
         HudStyle.WARN_HEX, HUNT_FORECAST_WARN_GLYPH, text, HUNT_FORECAST_NOT_VIABLE_SUFFIX,
     ]
 
-## Turns for `workers` from `band` to fill their carry cap hunting `herd` under `policy`. PURE
-## ARITHMETIC over sim-exported numbers — the ecology/MSY model is never reproduced here: the
-## per-policy take ceiling arrives on the herd (`hunt_policy_ceilings`) and the three levers on the
-## band's cohort, and this reproduces `core_sim`'s `hunt_trip_forecast` exactly (pinned by
-## core_sim/tests/expedition_hunt.rs).
+## Turns for `workers` from `band` to fill their carry cap hunting `herd` under `policy`. A PURE TABLE
+## LOOKUP into the sim's forward-simulated `hunt_trip_estimates` (`HERD_TRIP_ESTIMATES_KEY`) — ZERO
+## arithmetic, and NEVER a `carryCap / rate` division: the sim moves the herd's state under the party
+## and bounds the trip by its `forecast_horizon_turns`, so only the sim's own number is honest (pinned
+## by core_sim/tests/expedition_hunt.rs). The ecology/MSY model is never reproduced here. (The LOCAL
+## band hunt preview DOES compute — see `_hunt_take_rate` over the band ceiling `hunt_policy_ceilings`.)
 ## Returns {available, fills, turns, viable, denial}: `available` false when the snapshot carries no
 ## estimate for this (policy, party size) — older server → the caller shows no forecast at all.
 func _hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> Dictionary:

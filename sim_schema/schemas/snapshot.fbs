@@ -822,7 +822,10 @@ table PopulationDemographicsState {
 //
 // Consumer: the resident-band local-hunt yield preview,
 //   min(workers × huntPerWorkerProvisions, provisionsPerTurn) × outputMultiplier
-// A hunting EXPEDITION must not forecast from this (or any) rate — see HuntTripEstimate.
+// A hunting EXPEDITION must not forecast from this (or any) rate: a Sustain expedition takes the
+// shared MSY *flow* ceiling, while Surplus/Market/Eradicate take *stock* headroom down to the
+// collapse floor — and either way `cap / rate` is wrong, because the herd's state moves under the
+// party. An expedition's trip length comes from HuntTripEstimate, which the sim forward-simulates.
 table HuntPolicyCeiling {
   policy:string;
   // BAND / local-hunt ceiling (fauna::hunt_policy_ceiling — the MSY *flow* ceiling).
@@ -835,8 +838,10 @@ table HuntPolicyCeiling {
 // Produced by core_sim's `hunt_trip_forecast`, a bounded forward SIMULATION of the trip (herd
 // regrowth + the party's real take, turn by turn) rather than a closed-form `carryCap / rate`. The
 // division was wrong for Surplus/Market on a small herd, whose per-policy ceiling is a *stock*, not
-// a flow: the party strips the headroom in a turn or two, then crawls at the herd's regrowth trickle
-// (a rabbit warren forecast 6 turns; the truth was 48).
+// a flow: the party strips the headroom in a turn or two, then crawls at the herd's regrowth trickle.
+// It read a 4-worker party on a full Rabbit Warren (K = 200) under Surplus as a ~5-turn trip; the
+// simulation says that party NEVER fills within the 60-turn horizon (only a 1-worker party — a
+// quarter the pack — fills, in 23 turns).
 //
 // Counts only turns spent HUNTING, once the party is in reach — travel is NOT included.
 table HuntTripEstimate {

@@ -4415,8 +4415,11 @@ fn hunt_trip_provisions_bound(
 /// (Sustain's MSY) or when the party is throughput-bound for the whole trip (Surplus/Market on a big
 /// herd). Under **Surplus/Market on a small herd it is a total *stock***: the party strips the
 /// headroom down to the collapse floor in a turn or two and then crawls at the herd's regrowth
-/// trickle. Dividing the cap by that stock read a rabbit warren as a **6-turn** trip when the truth
-/// was **48**. Simulating collapses both regimes into one honest answer, and there is no second copy
+/// trickle. Dividing the cap by that stock read a **4-worker party on a full Rabbit Warren (K = 200)
+/// under Surplus as a ~5-turn trip**; the simulation says that party **never fills** within the
+/// 60-turn horizon (only a *1-worker* party fills, in **23 turns** — a quarter the pack, so the
+/// regrowth trickle can still reach it).
+/// Simulating collapses both regimes into one honest answer, and there is no second copy
 /// of the model to drift: each simulated turn is the *same* pair of calls the live sim makes —
 /// [`fauna::regrow_biomass`] (as `advance_herds` does in Logistics) then [`expedition_take_biomass`]
 /// (as the `ExpeditionPhase::Hunting` arm does in Population), in that order.

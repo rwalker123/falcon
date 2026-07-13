@@ -637,8 +637,9 @@ fn real_trip_turns(
 /// number. For Sustain that number is a genuine per-turn *flow* (MSY) and the division is exact — but
 /// for **Surplus/Market it is a total *stock*** (headroom down to the collapse floor). On a small herd
 /// the party strips that headroom in a turn or two and then crawls at the regrowth trickle, so the
-/// division read a **rabbit warren as a ~6-turn trip** when the truth is dozens of turns (or never).
-/// `SMALL_HERD_DEPLETING_MIN_TRUTH` pins that specific lie shut.
+/// division read a **4-hunter party on a full Rabbit Warren (K = 200) as a ~5-turn trip** when the
+/// truth is that it **never fills** inside the 60-turn horizon (only a lone hunter fills, in 23
+/// turns). `SMALL_HERD_DEPLETING_MIN_TRUTH` pins that specific lie shut.
 #[test]
 fn exported_hunt_trip_estimates_match_a_real_party_run() {
     let mut app = build_headless_app();
@@ -800,7 +801,8 @@ fn exported_hunt_trip_estimates_match_a_real_party_run() {
 
     // …and the other, the one this whole rewrite exists for: a **full small herd under a depleting
     // policy**. The old closed-form forecast divided the carry cap by the herd's *stock* headroom and
-    // reported ~6 turns. The truth is dozens of turns — or, past the horizon, "won't fill".
+    // reported ~5 turns for this 4-hunter party. The truth is dozens of turns — and on the shipped
+    // levers (a full Rabbit Warren), past the horizon: "won't fill".
     let small = snapshot
         .herds
         .iter()
@@ -823,9 +825,11 @@ fn exported_hunt_trip_estimates_match_a_real_party_run() {
 
 /// A 4-hunter party on a **full small herd** (rabbit/fowl) under Surplus/Market: the least the truth
 /// can be. Its total stock headroom is worth a fraction of one carry cap, so after the first turn or
-/// two the party is living on the herd's regrowth trickle — the trip cannot be short. Comfortably
-/// above the old closed-form lie (~6 turns) *and* above `viability_warn_turns` (20), so the guard
-/// fails loudly if anyone reintroduces a `carry_cap / stock` division.
+/// two the party is living on the herd's regrowth trickle — the trip cannot be short. (On the shipped
+/// levers it does not finish at all: a full Rabbit Warren never fills a 4-hunter pack inside the
+/// 60-turn horizon.) Comfortably above the old closed-form lie (~5 turns) *and* above
+/// `viability_warn_turns` (20), so the guard fails loudly if anyone reintroduces a `carry_cap / stock`
+/// division.
 const SMALL_HERD_DEPLETING_MIN_TRUTH: u32 = 30;
 
 /// Hard stop for the real-party fill loop in (9). A trip that has not filled by here has blown its
@@ -886,9 +890,10 @@ const SUSTAIN_LEG_CAP_FRACTION: f32 = 0.5;
 /// | small / Market  | small game, full | Market  | ditto, via the commercial share |
 ///
 /// The last two are the regression: the retired closed-form forecast divided the carry cap by the
-/// herd's *stock* headroom as if it were a per-turn flow and promised **~6 turns** on a rabbit warren.
-/// A real party takes dozens of turns — or never fills. If the estimate and the party ever disagree,
-/// **fix the forecast, never the sim.**
+/// herd's *stock* headroom as if it were a per-turn flow and promised **~5 turns** on a full rabbit
+/// warren. A real 4-hunter party takes dozens of turns — on the shipped levers it never fills inside
+/// the horizon at all. If the estimate and the party ever disagree, **fix the forecast, never the
+/// sim.**
 #[test]
 fn party_fills_on_the_forecast_turn() {
     // (size_class, policy, starting biomass as a fraction of K)
@@ -955,7 +960,7 @@ fn party_fills_on_the_forecast_turn() {
                 "{context}: a full small herd cannot fill a pack in {turns} turns — that is the OLD \
                  closed-form lie (it divided the carry cap by the herd's total STOCK headroom)"
             ),
-            ("small", _, None) => {} // Never fills at all — even more emphatically not ~6 turns.
+            ("small", _, None) => {} // Never fills at all — even more emphatically not ~5 turns.
             (class, _, None) => panic!("{class} game / {policy:?}: the party never filled its pack"),
             _ => unreachable!("legs cover only big and small game"),
         }

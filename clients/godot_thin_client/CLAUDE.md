@@ -1148,8 +1148,11 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `Hud.show_tooltip` (already fed by `MapView.tile_hovered`) records the hovered hex in
   `_hovered_tile_info`, and `_targeting_banner_bbcode` appends a second line from
   `_hunt_forecast_bbcode` — cyan `<Herd> · ≈N turns to fill`, WARN-amber `⚠ … — too slow to be worth
-  sending` past the viability threshold, DANGER-red `⚠ <Herd> yields no sustainable take — the party
-  would return empty` when the ceiling is 0. The click still commits (information, not a gate).
+  sending` past the viability threshold, DANGER-red `⚠ <Herd> can't fill a party this size — the packs
+  would never fill` when the sim's forward simulation does not fill the party within its
+  `forecast_horizon_turns` (`turns_to_fill == 0`) — a "can't fill" verdict, **not** a collapsed herd: a
+  thriving herd whose yield is too slow for this party's packs lands here too. The click still commits
+  (information, not a gate).
   **The client does ZERO arithmetic for an expedition's trip — it is a pure TABLE LOOKUP.** A band and
   an expedition are different actors and read **different herd fields**; never one for the other:
   - **Expedition → `HerdTelemetryState.huntTripEstimates`** (one entry per policy × party size),
@@ -1161,8 +1164,12 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     horizon; else the turns, flagged **not viable** when `> expeditionViabilityWarnTurns`. **Do not
     re-derive this with a `carryCap / rate` division** — that closed form is *wrong* for Surplus/Market,
     whose per-policy ceiling is a **stock**, not a flow: the party strips the headroom in a turn or two
-    and then crawls at the herd's regrowth trickle (it forecast **6** turns for a rabbit warren whose
-    simulated truth was **48**). The sim forward-simulates the trip and exports the answer.
+    and then crawls at the herd's regrowth trickle. On a **full Rabbit Warren** (K=200) the sim's real
+    exported rows read (`0` = does not fill within the 60-turn horizon):
+    `sustain` — every party size **0** (never fills at ANY size); `surplus`/`market` — **1** worker
+    fills in **23** turns, every larger party **0**. A party of 4 under Surplus does **not fill at
+    all**; a closed form would cheerfully quote it an ETA. The sim forward-simulates the trip — the
+    herd's state moves under the party and a horizon bounds the answer — and exports that.
   - **Resident band → `huntPolicyCeilings`** (`provisionsPerTurn`, the herd's renewable **flow**),
     decoded as `hunt_policy_ceilings`. This one IS pure client arithmetic, and the schema blesses it:
     `min(workers × huntPerWorkerProvisions, ceiling) × outputMultiplier` (`_hunt_take_rate` →

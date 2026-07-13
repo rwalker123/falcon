@@ -595,8 +595,10 @@ mission:
     party is throughput-bound for the whole trip (Surplus/Market on a *big* herd). Under
     **Surplus/Market on a small herd it is a total *stock*** — the party strips the headroom down to
     the collapse floor in a turn or two and then crawls at the herd's regrowth trickle. The division
-    read a full Rabbit Warren (K = 200, 4 hunters) as a **5-turn** trip; a real party takes **495**.
-    Simulating collapses both regimes into one honest answer.
+    read a full Rabbit Warren (K = 200, 4 hunters, Surplus) as a **~5-turn** trip; the simulation says
+    that party **never fills inside the 60-turn horizon** — only a *1-worker* party fills (in **23
+    turns**: a quarter the pack, so the regrowth trickle can still reach it). Simulating collapses
+    both regimes into one honest answer.
   - The estimate is **turns spent hunting once you arrive** — **travel is not counted**, and the herd
     is assumed stationary and in reach. **Eradicate** delivers no food (`delivers_food == false`) → no
     ETA, ever.
@@ -630,9 +632,13 @@ mission:
       sizes — 0.005 ms of an 0.8 ms table. Revisit only if `hunt.per_worker_biomass_capacity` drops
       far enough to make parties throughput-bound.
   - Shipped-lever reality check (4 hunters, full herd): Red Deer ~5 turns under Surplus/Market and ~54
-    under Sustain; Rabbit Warren/Wild Fowl **never fill inside the horizon** under *any* policy (the
-    true numbers are ~320 under Sustain, ~495 under Surplus/Market). Small game simply cannot provision
-    an expedition — the forecast now says so.
+    under Sustain; a full Rabbit Warren (K = 200) **never fills a 4-hunter pack inside the horizon**
+    under *any* policy (simulated past the horizon it would take ~320 turns under Sustain and ~495
+    under Surplus/Market — the forecast reports "won't fill" rather than those numbers). The *only*
+    small-game trip that fills at all is a **lone hunter** under Surplus/Market (**23 turns** — a
+    quarter the pack, so the herd's regrowth trickle can still reach it), and that is well past
+    `viability_warn_turns`. Small game simply cannot provision an expedition — the forecast now says
+    so.
   - `handle_send_hunt_expedition` folds the verdict into the `ExpeditionSent` feed line — viable
     (`≤ hunt.viability_warn_turns`) → "est. ~N turns to fill"; marginal (`>` it) → the same plus "NOT
     VIABLE at this herd's yield"; **won't fill inside the horizon** → "the party will NOT fill its pack

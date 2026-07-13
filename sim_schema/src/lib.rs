@@ -127,9 +127,13 @@ pub struct PopulationDemographicsState {
 /// `min(workers × hunt_per_worker_provisions, provisions_per_turn) × output_multiplier`, which is
 /// arithmetically `core_sim::hunt_take(..)` (pinned by `core_sim/tests/expedition_hunt.rs`).
 ///
-/// **A hunting expedition must NOT forecast from this number** — a party takes *stock* headroom, not
-/// the MSY flow, and its trip is not `cap / rate` at all (it can exhaust the stock mid-trip). The sim
-/// exports the simulated **answer** for a trip instead: `HerdTelemetryState.hunt_trip_estimates`.
+/// **A hunting expedition must NOT forecast from this number.** It is the **band / local-hunt**
+/// per-turn ceiling, and even for the expedition's *own* ceilings there is no single rate to divide
+/// by: a Sustain expedition takes the shared MSY **flow** (`fauna::hunt_policy_ceiling(Sustain, …)` —
+/// "Sustain" means one thing across the sim), while Surplus/Market/Eradicate take *stock* headroom
+/// down to the collapse floor. So `cap / rate` is wrong either way — the herd's state moves under the
+/// party (the stock exhausts mid-trip) and the forecast horizon bounds the answer. **An expedition's
+/// trip length comes from `HerdTelemetryState.hunt_trip_estimates`**, which the sim forward-simulates.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct HuntPolicyCeilingState {
     pub policy: String,
@@ -145,7 +149,9 @@ pub struct HuntPolicyCeilingState {
 /// regrowth + the party's real take, turn by turn, on the sim's fixed-point grid) rather than a
 /// closed-form `carry_cap / rate`. That division was wrong for Surplus/Market on a small herd, whose
 /// per-policy ceiling is a *stock*, not a flow: the party strips the headroom in a turn or two and
-/// then crawls at the regrowth trickle (a rabbit warren forecast 6 turns; the truth was 48).
+/// then crawls at the regrowth trickle. It read a **4-worker party on a full Rabbit Warren (K = 200)
+/// under Surplus as a ~5-turn trip**; the simulation says that party **never fills** within the
+/// 60-turn horizon (only a *1-worker* party — a quarter the pack — fills, in **23 turns**).
 ///
 /// The estimate covers only turns spent **hunting**, once the party is in reach — travel is not
 /// counted — and assumes the herd stays put.

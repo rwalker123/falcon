@@ -316,9 +316,12 @@ depletion) lives in a new `advance_expeditions` system in the Population stage, 
   - **Surplus/Market** draw *stock* headroom down to the collapse floor. On a **big** herd that
     headroom covers a whole pack, so the party is throughput-bound and fills in **~5 turns**. On a
     **small** herd it does not: the party strips the stock in a turn or two and then crawls at the
-    regrowth trickle. Dividing the cap by that stock — as if it were a flow — read a full **Rabbit
-    Warren as a 5-turn trip when the truth is ~495**. That was the design smell: one exported number
-    that meant a *flow* for Sustain and a *stock* for Surplus/Market, divided either way.
+    regrowth trickle. Dividing the cap by that stock — as if it were a flow — read a **4-worker party
+    on a full Rabbit Warren (K = 200) under Surplus as a ~5-turn trip**; the simulation says that party
+    **never fills within the 60-turn horizon** (only a *1-worker* party fills, in **23 turns** — its
+    pack is a quarter the size, so the regrowth trickle can still reach it). That was the design smell:
+    one exported number that meant a *flow* for Sustain and a *stock* for Surplus/Market, divided
+    either way.
   - **Eradicate** = denial, no food at all → no ETA, ever.
 
   The estimate covers **turns spent hunting once you arrive** — travel is not counted, and the herd is

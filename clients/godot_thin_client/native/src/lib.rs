@@ -3015,9 +3015,11 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         // The sim's PRE-LAUNCH TRIP ESTIMATES for a hunting EXPEDITION against this herd — one entry
         // per (policy × party size). An expedition's trip length is NOT a rate division: for
         // Surplus/Market the per-policy ceiling is a *stock*, so the party strips the headroom in a
-        // turn or two and then crawls at the herd's regrowth trickle (closed-form said 6 turns for a
-        // rabbit warren; the simulated truth was 48). The sim therefore forward-simulates the trip and
-        // exports the ANSWER, and the client does ZERO arithmetic — a pure table lookup keyed
+        // turn or two and then crawls at the herd's regrowth trickle (on a full Rabbit Warren under
+        // Surplus only a LONE hunter fills at all — 23 turns; a party of 4 never fills within the
+        // horizon, and under Sustain no party size fills at any size). The sim therefore
+        // forward-simulates the trip and exports the ANSWER; the client does ZERO arithmetic — a pure
+        // table lookup keyed
         // `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food}`:
         //   turns_to_fill == 0  → does not fill within the forecast horizon ("won't fill", not an ETA)
         //   delivers_food false → eradicate, a denial mission ("no food delivered", never an ETA)
