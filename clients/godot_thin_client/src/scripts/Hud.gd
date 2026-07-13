@@ -287,16 +287,71 @@ const LABOR_KIND_FORAGE := "forage"
 const LABOR_KIND_HUNT := "hunt"
 const LABOR_KIND_SCOUT := "scout"
 const LABOR_KIND_WARRIOR := "warrior"
-# Hunt take policies a labor Hunt assignment can carry (no "single" one-shot anymore).
+# EXTRACTIVE take policies — the four rungs that take from a wild source without changing it. Shared
+# by forage + hunt (and the only ones a hunting EXPEDITION can carry: a detached party builds no pen).
 const LABOR_HUNT_POLICIES := ["sustain", "surplus", "market", "eradicate"]
 const DEFAULT_HUNT_POLICY := "sustain"
-# Forage take policies reuse the same option set (LABOR_HUNT_POLICIES) + the same picker, but carry
-# forage-appropriate behaviour hints (gathering a plant patch's regrowth, not culling a herd).
+# INVESTMENT rungs (Intensification): an up-front cost — the source pays only its `ceiling_cultivate`
+# / `ceiling_corral` dip yield while the workers prepare it, then flips to the much higher tended /
+# corral yield. Kind-specific, and the sim REJECTS the cross pairing: Cultivate is forage-only,
+# Corral is hunt-only.
+const LABOR_POLICY_CULTIVATE := "cultivate"
+const LABOR_POLICY_CORRAL := "corral"
+# The full picker option sets per source kind (extractive rungs + that kind's one investment rung).
+const FORAGE_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "cultivate"]
+const HUNT_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "corral"]
+# Forage take policies reuse the hunt picker, but carry forage-appropriate behaviour hints
+# (gathering a plant patch's regrowth, not culling a herd).
 const FORAGE_POLICY_HINTS := {
     "sustain": "Sustain — gather at the patch's regrowth; it stays healthy.",
     "surplus": "Surplus — gather more now; the patch declines.",
     "market": "Market — gather for trade goods; faster decline.",
     "eradicate": "Eradicate — strip the patch bare.",
+    "cultivate": "Cultivate — prepare this patch: low yield while you work it, then a much higher tended yield. It must stay staffed or it goes feral.",
+}
+# Behaviour hint for the herd-side investment rung, shown under the hunt picker (the four extractive
+# hints there come from SEND_HUNT_POLICY_HINTS' local-hunt twin, HUNT_POLICY_HINTS below).
+const HUNT_POLICY_HINTS := {
+    "sustain": "Sustain — take only the herd's growth; it stays healthy.",
+    "surplus": "Surplus — take more now; the herd declines.",
+    "market": "Market — hunt for trade goods; faster decline.",
+    "eradicate": "Eradicate — hunt the herd to extinction.",
+    "corral": "Corral — pen this herd: low yield while you build, then a much higher penned yield. It must stay staffed or the herd goes wild again.",
+}
+# GATES on the investment rungs. The option stays VISIBLE but disabled with its reason, so the player
+# learns the prerequisite BEFORE acting rather than never discovering the rung exists. Both gates
+# mirror the sim's `assign_labor` validation (faction knowledge complete + the source ready).
+const GATE_REASON_CULTIVATION_KNOWLEDGE := "Requires Cultivation knowledge"
+const GATE_REASON_PATCH_THRIVING := "Patch must be Thriving"
+const GATE_REASON_HERDING_KNOWLEDGE := "Requires Herding knowledge"
+const GATE_REASON_HERD_DOMESTICATED := "Herd must be domesticated"
+# Joins two unmet reasons on one disabled option ("Requires Cultivation knowledge · Patch must be Thriving").
+const GATE_REASON_SEPARATOR := " · "
+# A gated option's reason line reads "🌱 Cultivate — <reasons>" under the picker row.
+const GATE_REASON_LINE_FORMAT := "%s — %s"
+# A knowledge track (0..1) is usable only once fully learned; a domestication track likewise.
+const KNOWLEDGE_COMPLETE := 1.0
+const DOMESTICATION_COMPLETE := 1.0
+# Herd drawer "Corral" row: the pen-build meter (0..1) reads "Building N%" until it completes, then
+# the penned badge — the herd twin of the tile card's "Cultivation N%" → "🌾 Tended Patch" row.
+const CORRAL_PROGRESS_COMPLETE := 1.0
+const CORRAL_BUILDING_LABEL := "Building"
+const CORRAL_GLYPH := "🐄"
+# The one ecology phase a patch can be cultivated from (matches `EcologyPhase::as_str`).
+const ECOLOGY_PHASE_THRIVING := "thriving"
+# The two intensification knowledge tracks (the `intensification_knowledge[]` row's field names),
+# each gating one investment rung.
+const KNOWLEDGE_TRACK_CULTIVATION := "cultivation"
+const KNOWLEDGE_TRACK_HERDING := "herding"
+# Command-feed nudge fired ONCE when a track completes: the rung it unlocks is a new verb the player
+# has never seen, so learning the discovery has to say what it bought.
+const KNOWLEDGE_UNLOCK_LABELS := {
+    "cultivation": "Cultivation learned",
+    "herding": "Herding learned",
+}
+const KNOWLEDGE_UNLOCK_NOTES := {
+    "cultivation": "The Cultivate policy is now available on Thriving patches.",
+    "herding": "The Corral policy is now available on domesticated herds.",
 }
 # One worker per −/+ stepper press.
 const WORKER_STEP := 1
@@ -366,7 +421,19 @@ const FORECAST_CEILING_KEYS := {
     "surplus": "ceiling_surplus",
     "market": "ceiling_market",
     "eradicate": "ceiling_eradicate",
+    # The INVESTMENT rungs' ceiling is the DIP yield paid while the patch/pen is being prepared —
+    # so the same expected(workers, policy) math shows the cost of the investment while composing.
+    "cultivate": "ceiling_cultivate",
+    "corral": "ceiling_corral",
 }
+# The PAYOFF the investment buys — the food/turn the source pays once prepared (one worker suffices).
+# Only the investment rungs have one; an extractive rung's forecast is a single number.
+const FORECAST_PAYOFF_KEYS := {
+    "cultivate": "tended_yield",
+    "corral": "corral_yield",
+}
+# The investment forecast states the DEAL, not a single yield: "Preparing: +0.09 /turn → then +1.20 /turn".
+const INVESTMENT_FORECAST_FORMAT := "Preparing: %s → then %s"
 # A herd dict carries the forecast fields bare; `tile_info` carries the forage patch's under a
 # `patch_` prefix (MapView._tile_info_at cross-refs them off `forage_patch_lookup`).
 const HERD_FORECAST_PREFIX := ""
@@ -527,6 +594,12 @@ var _forage_assign_policy: String = DEFAULT_HUNT_POLICY
 var _hunt_assign_key: String = ""
 var _hunt_assign_count: int = 0
 var _hunt_assign_policy: String = DEFAULT_HUNT_POLICY
+# Per-faction intensification knowledge from the latest snapshot: entity → {cultivation, herding},
+# each 0..1. Gates the Cultivate/Corral picker options (a rung needs its track fully learned) and
+# backs the top-bar meters; the previous value is what makes the one-shot unlock nudge possible.
+var _intensification_knowledge: Dictionary = {}
+# "<faction>:<track>" keys already announced to the command feed, so the nudge fires once.
+var _knowledge_announced: Dictionary = {}
 # The band-picker selection (actor band entity) for each assign control, persisted across the
 # per-snapshot re-renders of the same source. Re-defaults to _resolve_assign_band() when the
 # selected source changes; -1 means "fall back to the resolved band".
@@ -884,16 +957,11 @@ func update_discoveries(discovered_variant: Variant) -> void:
 ## hidden until the faction begins learning it (the snapshot row is sparse); a completed
 ## track reads "✔ known" (SIGNAL) instead of the bar.
 func update_intensification(intensification_variant: Variant) -> void:
+    _ingest_intensification(intensification_variant)
     if intensification_label == null:
         return
-    var cultivation := -1.0
-    var herding := -1.0
-    if intensification_variant is Array:
-        for entry in intensification_variant:
-            if entry is Dictionary and int(entry.get("faction", -1)) == PLAYER_FACTION_ID:
-                cultivation = float(entry.get("cultivation", 0.0))
-                herding = float(entry.get("herding", 0.0))
-                break
+    var cultivation := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_CULTIVATION)
+    var herding := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_HERDING)
     var segments: Array[String] = []
     var all_known := true
     if cultivation > 0.0:
@@ -910,6 +978,55 @@ func update_intensification(intensification_variant: Variant) -> void:
     # Cyan once every learned track is fully known; neutral while any is still in progress.
     intensification_label.add_theme_color_override(
         "font_color", HudStyle.SIGNAL if all_known else HudStyle.INK_DIM)
+
+## Capture the per-faction intensification tracks off the snapshot AND announce the moment one
+## COMPLETES — the transition (`< 1.0` last snapshot, `>= 1.0` now) is exactly when a new policy
+## becomes usable, and nothing else in the HUD would tell the player. One-shot per faction+track
+## (`_knowledge_announced`), so it never re-fires on subsequent snapshots; a track already complete
+## on the first snapshot we see (fresh connect / rehydrated save) has no prior value and is NOT
+## announced — a nudge about something learned long ago is noise.
+func _ingest_intensification(intensification_variant: Variant) -> void:
+    if not (intensification_variant is Array):
+        return
+    for entry in intensification_variant:
+        if not (entry is Dictionary):
+            continue
+        var row := entry as Dictionary
+        var faction := int(row.get("faction", -1))
+        if faction < 0:
+            continue
+        var previous: Dictionary = _intensification_knowledge.get(faction, {})
+        var current := {
+            KNOWLEDGE_TRACK_CULTIVATION: float(row.get(KNOWLEDGE_TRACK_CULTIVATION, 0.0)),
+            KNOWLEDGE_TRACK_HERDING: float(row.get(KNOWLEDGE_TRACK_HERDING, 0.0)),
+        }
+        for track in KNOWLEDGE_UNLOCK_NOTES:
+            if not previous.has(track):
+                continue
+            if float(previous[track]) >= KNOWLEDGE_COMPLETE:
+                continue
+            if float(current[track]) < KNOWLEDGE_COMPLETE:
+                continue
+            _announce_knowledge_unlock(faction, String(track))
+        _intensification_knowledge[faction] = current
+
+## Post the one-shot "policy unlocked" nudge to the command feed. Player faction only — another
+## faction's tech is not the player's to see, and every other intensification readout filters the
+## same way; the announced set is still keyed per faction so the dedupe is correct for all of them.
+func _announce_knowledge_unlock(faction: int, track: String) -> void:
+    var key := "%d:%s" % [faction, track]
+    if _knowledge_announced.has(key):
+        return
+    _knowledge_announced[key] = true
+    if faction != PLAYER_FACTION_ID:
+        return
+    _note_command_feed(String(KNOWLEDGE_UNLOCK_LABELS[track]), String(KNOWLEDGE_UNLOCK_NOTES[track]))
+
+## A faction's progress (0..1) on one intensification track; 0 when the faction has not begun it
+## (the snapshot row is sparse) or no snapshot has arrived yet.
+func _faction_knowledge(faction: int, track: String) -> float:
+    var tracks: Dictionary = _intensification_knowledge.get(faction, {})
+    return float(tracks.get(track, 0.0))
 
 ## One knowledge track's readout: the block-glyph bar + "learning" while in progress,
 ## a "✔ known" badge once complete. `progress` is 0..1.
@@ -1277,7 +1394,9 @@ func _policy_for_hunt(band: Dictionary, herd_id: String) -> String:
         var a: Dictionary = entry
         if String(a.get("kind", "")).to_lower() == LABOR_KIND_HUNT and String(a.get("fauna_id", "")) == herd_id:
             var policy := String(a.get("policy", "")).strip_edges().to_lower()
-            if policy in LABOR_HUNT_POLICIES:
+            # HUNT_POLICY_OPTIONS, not the extractive four: a herd already being Corralled must
+            # re-seed the compose picker as Corral, or re-staffing it would silently drop the pen.
+            if policy in HUNT_POLICY_OPTIONS:
                 return policy
     return DEFAULT_HUNT_POLICY
 
@@ -1290,7 +1409,10 @@ func _policy_for_forage(band: Dictionary, x: int, y: int) -> String:
         if String(a.get("kind", "")).to_lower() == LABOR_KIND_FORAGE \
                 and int(a.get("target_x", -1)) == x and int(a.get("target_y", -1)) == y:
             var policy := String(a.get("policy", "")).strip_edges().to_lower()
-            if policy in LABOR_HUNT_POLICIES:
+            # FORAGE_POLICY_OPTIONS, not the extractive four: a patch already being Cultivated must
+            # re-seed the compose picker as Cultivate, or re-staffing it would silently drop the
+            # investment back to Sustain (and the patch would go feral).
+            if policy in FORAGE_POLICY_OPTIONS:
                 return policy
     return DEFAULT_HUNT_POLICY
 
@@ -1616,13 +1738,21 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
 ## CURRENT biomass, at output_multiplier 1.0. `src` is a herd dict (bare keys) or a tile_info (the
 ## patch's fields, `patch_`-prefixed); `known` is false for a dead-season source or an older
 ## snapshot that carries no forecast fields, in which case callers show no row and apply no cap.
+## An INVESTMENT policy additionally carries `payoff` (the tended/corral yield the preparation buys)
+## and `investment: true`, so `_forecast_yield_row` can state the deal instead of one number.
 func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictionary:
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
     var policy_key: String = policy if policy in FORECAST_CEILING_KEYS else DEFAULT_HUNT_POLICY
     var ceiling := float(src.get(prefix + String(FORECAST_CEILING_KEYS[policy_key]), 0.0))
+    var investment: bool = policy_key in FORECAST_PAYOFF_KEYS
+    var payoff := 0.0
+    if investment:
+        payoff = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[policy_key]), 0.0))
     return {
         "per_worker": per_worker,
         "ceiling": ceiling,
+        "payoff": payoff,
+        "investment": investment,
         "known": per_worker >= FORECAST_MIN_PER_WORKER,
     }
 
@@ -1652,10 +1782,18 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
     return {"cap": useful, "note": MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
 ## The live "Expected yield: +0.48 /turn" row on the assign controls. Food income → HEALTHY green,
-## matching the map's per-source yield annotations and the Food line's income tint.
+## matching the map's per-source yield annotations and the Food line's income tint. Under an
+## INVESTMENT policy (Cultivate/Corral) it states the deal instead — "Preparing: +0.09 /turn → then
+## +1.20 /turn" — so the up-front cost AND the payoff are visible BEFORE the player commits. Both
+## halves are scaled by the acting band's output multiplier, exactly as the plain forecast is.
 func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary) -> Label:
     var row := Label.new()
-    row.text = FORECAST_LABEL_FORMAT % _format_yield(_expected_yield(forecast, workers, band))
+    var expected := _format_yield(_expected_yield(forecast, workers, band))
+    if bool(forecast.get("investment", false)):
+        var payoff := float(forecast.get("payoff", 0.0)) * float(band.get("output_multiplier", OUTPUT_FULL))
+        row.text = INVESTMENT_FORECAST_FORMAT % [expected, _format_yield(payoff)]
+    else:
+        row.text = FORECAST_LABEL_FORMAT % expected
     row.add_theme_color_override("font_color", HudStyle.HEALTHY)
     return row
 
@@ -1821,8 +1959,8 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
             # row like Hunt does; an older snapshot without a policy falls back to no tag. Re-staffing
             # via the stepper preserves the policy (default Sustain when absent).
             var fpolicy := String(m.get("policy", "")).strip_edges().to_lower()
-            var forage_tag := " [%s]" % fpolicy if fpolicy in LABOR_HUNT_POLICIES else ""
-            var forage_emit_policy := fpolicy if fpolicy in LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY
+            var forage_tag := " [%s]" % fpolicy if fpolicy in FORAGE_POLICY_OPTIONS else ""
+            var forage_emit_policy := fpolicy if fpolicy in FORAGE_POLICY_OPTIONS else DEFAULT_HUNT_POLICY
             # Lead with the resource glyph the map draws on that tile (FoodIcons — one source of
             # truth), so a source reads identically in the panel and on the map. Unknown module → "".
             var forage_icon := _source_icon_prefix(_food_module_icon(fx, fy))
@@ -1838,7 +1976,7 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
             var hx := int(m.get("x", -1))
             var hy := int(m.get("y", -1))
             var policy := String(m.get("policy", ""))
-            if not (policy in LABOR_HUNT_POLICIES):
+            if not (policy in HUNT_POLICY_OPTIONS):
                 policy = _policy_for_hunt(band, herd_id)
             # Same species glyph the map's herd marker uses (FoodIcons.for_herd, keyed off the herd
             # label/species) — the panel row and the map marker read as the same animal.
@@ -2045,6 +2183,15 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     var is_expedition := distance >= 0 and distance > reach
     # Local hunt caps at the band's assignable hunt workers; an expedition caps at the party ceiling.
     var assignable := _expedition_party_cap(band) if is_expedition else _assignable_hunt_workers(band, herd_id)
+    # Policy options: the Corral INVESTMENT rung is offered on a LOCAL hunt only — a detached party
+    # follows the herd and hauls food home; it builds no pen. An expedition keeps the extractive four.
+    var hunt_options: Array = LABOR_HUNT_POLICIES if is_expedition else HUNT_POLICY_OPTIONS
+    var hunt_gates := {} if is_expedition else _hunt_policy_gates(herd)
+    # A gated rung can never be the composed policy (the herd may still be taming under a standing
+    # Corral selection), so re-validate every render — not just when the selected herd changes.
+    if not (_hunt_assign_policy in hunt_options) \
+            or String(hunt_gates.get(_hunt_assign_policy, "")) != "":
+        _hunt_assign_policy = DEFAULT_HUNT_POLICY
     # Pre-commit forecast — LOCAL hunt only. An expedition travels for several turns and accumulates
     # toward a carry cap, so the herd's per-turn take ceiling is NOT the bound on its party size;
     # forecasting a per-turn yield for it would be a lie. On a local hunt the ceiling caps the
@@ -2066,7 +2213,8 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         herd_assign_controls.add_child(_alloc_hint_label(cap_note))
     herd_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _hunt_assign_policy = policy
-        _build_herd_assign_controls(herd)))
+        _build_herd_assign_controls(herd), _hunt_assign_policy, hunt_options, hunt_gates))
+    herd_assign_controls.add_child(_alloc_hint_label(String(HUNT_POLICY_HINTS.get(_hunt_assign_policy, ""))))
     if forecast_active:
         herd_assign_controls.add_child(
             _forecast_yield_row(forecast, _hunt_assign_count, band))
@@ -2096,22 +2244,80 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
                 herd_x, herd_y, herd_id, _hunt_assign_policy))
     herd_assign_controls.add_child(assign_btn)
 
-## A sustain/surplus/market/eradicate policy radio; `on_pick` fires with the chosen policy. The
-## highlighted option is `selected` (defaults to the herd-assign compose policy so existing callers
-## are unchanged; the send-hunt-expedition picker passes `_send_hunt_policy`).
-func _build_policy_picker(on_pick: Callable, selected: String = "") -> HBoxContainer:
+## Unmet prerequisites for the FORAGE investment rung (Cultivate), keyed policy → reason. Empty when
+## every rung is available. Mirrors the sim's `assign_labor` validation: the faction must have fully
+## learned Cultivation, and only a Thriving patch can be prepared.
+func _forage_policy_gates(tile_info: Dictionary) -> Dictionary:
+    var reasons: Array[String] = []
+    if _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_CULTIVATION) < KNOWLEDGE_COMPLETE:
+        reasons.append(GATE_REASON_CULTIVATION_KNOWLEDGE)
+    var phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
+    if phase != ECOLOGY_PHASE_THRIVING:
+        reasons.append(GATE_REASON_PATCH_THRIVING)
+    if reasons.is_empty():
+        return {}
+    return {LABOR_POLICY_CULTIVATE: GATE_REASON_SEPARATOR.join(reasons)}
+
+## Unmet prerequisites for the HUNT investment rung (Corral), keyed policy → reason. The herd twin of
+## `_forage_policy_gates`: the faction must have fully learned Herding, and the herd must be fully
+## domesticated before a pen can be built for it.
+func _hunt_policy_gates(herd: Dictionary) -> Dictionary:
+    var reasons: Array[String] = []
+    if _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_HERDING) < KNOWLEDGE_COMPLETE:
+        reasons.append(GATE_REASON_HERDING_KNOWLEDGE)
+    if float(herd.get("domestication", 0.0)) < DOMESTICATION_COMPLETE:
+        reasons.append(GATE_REASON_HERD_DOMESTICATED)
+    if reasons.is_empty():
+        return {}
+    return {LABOR_POLICY_CORRAL: GATE_REASON_SEPARATOR.join(reasons)}
+
+## The take-policy radio; `on_pick` fires with the chosen policy. The highlighted option is
+## `selected` (defaults to the herd-assign compose policy so existing callers are unchanged; the
+## send-hunt-expedition picker passes `_send_hunt_policy`). `options` is the option set for this
+## source kind — the four extractive rungs by default, plus that kind's INVESTMENT rung on the
+## forage/herd assign controls (FORAGE_POLICY_OPTIONS / HUNT_POLICY_OPTIONS).
+##
+## `gates` maps a policy → its unmet-prerequisite reason ("" / absent = available). A gated option is
+## **shown, greyed, and explained** rather than hidden: it is disabled, its tooltip carries the
+## reason, and the reason renders as a line under the row — so the player discovers the rung and
+## what it costs to unlock BEFORE trying to use it.
+func _build_policy_picker(
+    on_pick: Callable,
+    selected: String = "",
+    options: Array = LABOR_HUNT_POLICIES,
+    gates: Dictionary = {}) -> VBoxContainer:
     var current := selected if selected != "" else _hunt_assign_policy
+    var block := VBoxContainer.new()
+    block.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    for policy in LABOR_HUNT_POLICIES:
+    for policy in options:
+        var policy_key := String(policy)
+        var icon := FoodIcons.for_policy(policy_key)
+        var reason := String(gates.get(policy_key, ""))
         var btn := Button.new()
         # Glyph + name, from the shared FoodIcons policy map — the same icon the map's yield labels
         # append, so a policy reads identically on the picker and on the worked tile/herd.
-        btn.text = "%s%s" % [_source_icon_prefix(FoodIcons.for_policy(String(policy))), String(policy).capitalize()]
-        HudStyle.apply_button(btn, "primary" if policy == current else "ghost")
-        btn.pressed.connect(func() -> void: on_pick.call(policy))
+        btn.text = "%s%s" % [_source_icon_prefix(icon), policy_key.capitalize()]
+        HudStyle.apply_button(btn, "primary" if policy_key == current else "ghost")
+        btn.disabled = reason != ""
+        if reason != "":
+            btn.tooltip_text = reason
+        else:
+            btn.pressed.connect(func() -> void: on_pick.call(policy_key))
         row.add_child(btn)
-    return row
+    block.add_child(row)
+    # Spell the unmet prerequisites out in the panel — a greyed button alone doesn't teach.
+    for policy in options:
+        var policy_key := String(policy)
+        var reason := String(gates.get(policy_key, ""))
+        if reason == "":
+            continue
+        block.add_child(_alloc_hint_label(GATE_REASON_LINE_FORMAT % [
+            "%s%s" % [_source_icon_prefix(FoodIcons.for_policy(policy_key)), policy_key.capitalize()],
+            reason,
+        ]))
+    return block
 
 ## The tile "Assign foragers" controls (compose a count, then Assign). Shown only for a
 ## tile with a food module while a player band exists to staff it.
@@ -2162,11 +2368,15 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     # Forage take policy (Sustain/Surplus/Market/Eradicate, default Sustain) — reuses the hunt policy
     # radio + option set (LABOR_HUNT_POLICIES) but shows forage-appropriate behaviour hints. Persisted
     # across re-renders like the hunt policy; re-seeded from current staffing when the tile changes.
-    if not (_forage_assign_policy in LABOR_HUNT_POLICIES):
+    var forage_gates := _forage_policy_gates(tile_info)
+    # A gated rung can never be the composed policy — the patch may have left Thriving under a
+    # standing Cultivate selection, so re-validate every render, not just on a tile change.
+    if not (_forage_assign_policy in FORAGE_POLICY_OPTIONS) \
+            or String(forage_gates.get(_forage_assign_policy, "")) != "":
         _forage_assign_policy = DEFAULT_HUNT_POLICY
     forage_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _forage_assign_policy = policy
-        _build_forage_assign_controls(tile_info), _forage_assign_policy))
+        _build_forage_assign_controls(tile_info), _forage_assign_policy, FORAGE_POLICY_OPTIONS, forage_gates))
     forage_assign_controls.add_child(_alloc_hint_label(String(FORAGE_POLICY_HINTS.get(_forage_assign_policy, ""))))
     # Pre-commit forecast: the patch's per-worker yield + the SELECTED policy's ceiling cap the
     # stepper at max-useful workers, so the player CAN'T over-assign while composing. Both the
@@ -3579,10 +3789,15 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     var domestication := float(herd_data.get("domestication", 0.0))
     if domestication > 0.0:
         lines.append("Husbandry: %s" % _husbandry_label(domestication))
-    # A corralled herd is penned by the band (intensification ladder). SIGNAL-tinted,
-    # mirroring the Husbandry/Ecology row treatment.
+    # A corralled herd is penned by the band (intensification ladder). SIGNAL-tinted, mirroring the
+    # Husbandry/Ecology row treatment. While the keepers are still BUILDING the pen (0 < progress < 1
+    # under the Corral policy) the same row reports the meter — the animal twin of the tile card's
+    # "Cultivation N%" row, so the investment the player committed to is visibly under way.
+    var corral_progress := float(herd_data.get("corral_progress", 0.0))
     if bool(herd_data.get("corralled", false)):
-        lines.append("Corral: 🐄 Corralled")
+        lines.append("Corral: %s" % _corral_label(CORRAL_PROGRESS_COMPLETE, true))
+    elif corral_progress > 0.0:
+        lines.append("Corral: %s" % _corral_label(corral_progress, false))
     var x := int(herd_data.get("x", -1))
     var y := int(herd_data.get("y", -1))
     if x >= 0 and y >= 0:
@@ -3644,6 +3859,21 @@ func _cultivation_label(progress: float, cultivated: bool) -> String:
 ## while it's still being cultivated. Matched on the label from `_cultivation_label`.
 func _cultivation_value_hex(value: String) -> String:
     if value.to_lower().contains("tended"):
+        return HudStyle.SIGNAL_HEX
+    return HudStyle.INK_HEX
+
+## Player-facing corral label from pen-build progress (0.0–1.0) — the herd twin of
+## `_cultivation_label`. A finished pen shows the livestock glyph; an in-progress one reads
+## "Building N%", naming the work under way. `_format_detail_bbcode` tints via `_corral_value_hex`.
+func _corral_label(progress: float, corralled: bool) -> String:
+    if corralled or progress >= CORRAL_PROGRESS_COMPLETE:
+        return "%s Corralled" % CORRAL_GLYPH
+    return "%s %d%%" % [CORRAL_BUILDING_LABEL, int(round(progress * 100.0))]
+
+## BBCode hex for a "Corral" value: signal (positive) once penned, normal ink while it's being
+## built. Matched on the label from `_corral_label`, mirroring `_cultivation_value_hex`.
+func _corral_value_hex(value: String) -> String:
+    if value.to_lower().contains("corralled"):
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
 
@@ -3718,6 +3948,8 @@ func _format_detail_bbcode(lines: Array) -> String:
                 value_hex = _husbandry_value_hex(String(kv[1]))
             elif String(kv[0]) == "Cultivation":
                 value_hex = _cultivation_value_hex(String(kv[1]))
+            elif String(kv[0]) == "Corral":
+                value_hex = _corral_value_hex(String(kv[1]))
             elif String(kv[0]) == "Corral":
                 value_hex = HudStyle.SIGNAL_HEX
             # A disclosure row (Food/Morale) renders its key as a clickable cyan `[url]` + ▸/▾ caret,

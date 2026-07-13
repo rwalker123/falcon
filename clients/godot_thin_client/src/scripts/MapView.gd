@@ -193,6 +193,7 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"patch_ecology_phase", "patch_biomass", "patch_carrying_capacity",
 	"patch_per_worker_yield", "patch_ceiling_sustain", "patch_ceiling_surplus",
 	"patch_ceiling_market", "patch_ceiling_eradicate",
+	"patch_ceiling_cultivate", "patch_tended_yield",
 	"units", "herds", "unit_count", "herd_count",
 	"harvest_tasks", "harvest_active", "scout_tasks", "scout_active",
 ]
@@ -2846,6 +2847,11 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["patch_ceiling_surplus"] = float(patch.get("ceiling_surplus", 0.0))
 		info["patch_ceiling_market"] = float(patch.get("ceiling_market", 0.0))
 		info["patch_ceiling_eradicate"] = float(patch.get("ceiling_eradicate", 0.0))
+		# The Cultivate investment rung: the dip yield while the patch is being prepared, and the
+		# tended yield it pays afterwards. Hud._build_forage_assign_controls turns the pair into the
+		# pre-commit "Preparing: +X → then +Y" forecast.
+		info["patch_ceiling_cultivate"] = float(patch.get("ceiling_cultivate", 0.0))
+		info["patch_tended_yield"] = float(patch.get("tended_yield", 0.0))
 	var units_here := _units_on_tile(col, row)
 	var herds_here := _herds_on_tile(col, row)
 	info["units"] = units_here

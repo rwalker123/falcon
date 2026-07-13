@@ -36,11 +36,15 @@ const HERD_SPECIES := {
 	"fowl": "🐓",
 }
 
-# Take-policy glyphs (the `LABOR_HUNT_POLICIES` set, shared by forage + hunt). ONE source of
+# Take-policy glyphs (the extractive `LABOR_HUNT_POLICIES` set shared by forage + hunt, plus the two
+# INVESTMENT rungs — Cultivate is forage-only, Corral is hunt-only). ONE source of
 # truth, read by BOTH consumers: the Hud policy-picker buttons (`_build_policy_picker`) and the
 # map's worked-source yield labels (`MapView._draw_yield_label`), so a policy always reads the
 # same on the panel and on the map. Sustain = take only the regrowth; Surplus = take more now,
-# accept a slow decline; Market = harvest for trade goods; Eradicate = strip it bare.
+# accept a slow decline; Market = harvest for trade goods; Eradicate = strip it bare. Cultivate =
+# prepare the patch into a tended one (low yield while working, then a much higher tended yield);
+# Corral = build a pen for a domesticated herd (the same deal, animal side). The 🌱 seedling / 🐄 cow
+# read at picker size (🐄 is already the drawer's Domesticated/Corralled badge).
 # Market is ⇄ (exchange), NOT 🪙 (coin) / 💰 (money bag) / ⚖ (scales): the two pictographic emoji
 # both render as a featureless grey ball at the sizes these glyphs are drawn (a ~13px HUD button, a
 # ~12px map yield label), and the scales render tiny and faint — the known glyph-legibility hazard.
@@ -51,6 +55,8 @@ const POLICY_ICONS := {
 	"surplus": "⬆",
 	"market": "⇄",
 	"eradicate": "💀",
+	"cultivate": "🌱",
+	"corral": "🐄",
 }
 
 ## Icon for a take policy ("" for an unknown/absent policy, so callers render bare text).

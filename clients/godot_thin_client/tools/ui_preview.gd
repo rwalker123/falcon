@@ -273,6 +273,39 @@ func _ready() -> void:
 	await _settle()
 	await _save("food_tile_stressed")
 
+	# ---- Cultivate: the forage INVESTMENT rung (gated, then unlocked) ----------------------------
+	# State 2-cultivate-locked — the faction has NOT finished learning Cultivation (the top-bar meter
+	# reads "Cultivation ▰▰▰… learning"): the 🌱 Cultivate option is still SHOWN in the picker, greyed,
+	# with "🌱 Cultivate — Requires Cultivation knowledge" spelled out under the row. The player learns
+	# the rung exists and what it costs BEFORE they can use it.
+	_hud._forage_assign_count = 1
+	_hud.show_tile_selection(_food_tile_fixture())
+	await _settle()
+	await _save("forage_cultivate_locked")
+
+	# Learning Cultivation crosses 0.55 → 1.0 between snapshots: the one-shot command-feed nudge fires
+	# ("Cultivation learned — The Cultivate policy is now available on Thriving patches."), visible in
+	# the left-dock Command Feed card in every frame from here on.
+	_hud.update_intensification([{"faction": 0, "cultivation": 1.0, "herding": 1.0}])
+
+	# State 2-cultivate — knowledge known + a Thriving patch: 🌱 Cultivate is ENABLED and selected. The
+	# forecast states the DEAL instead of a single number — "Preparing: +0.24 /turn → then +1.20 /turn"
+	# (ceiling_cultivate → tended_yield) — and the stepper caps at 1 worker (a managed source needs one).
+	_hud.show_tile_selection(_food_tile_fixture())
+	_hud._forage_assign_policy = "cultivate"
+	_hud._build_forage_assign_controls(_food_tile_fixture())
+	await _settle()
+	await _save("forage_cultivate")
+
+	# State 2-cultivate-stressed — knowledge known, but the patch is ⚠ Stressed: Cultivate stays visible
+	# and greyed with the OTHER reason, "Patch must be Thriving" (the ecology gate, not the knowledge one).
+	_hud.show_tile_selection(_stressed_tile_fixture())
+	await _settle()
+	await _save("forage_cultivate_stressed")
+
+	# Back to a plain Sustain compose for the range states below.
+	_hud._forage_assign_policy = "sustain"
+
 	# State 2b — the same food tile, single FAR band (~21 tiles away, beyond work_range 2): foraging is
 	# stationary gathering with NO expedition fallback, so the Forage button is DISABLED and an
 	# out-of-range hint shows ("(66,10) is 21 tiles away — beyond this band's forage range (2)").
@@ -331,6 +364,30 @@ func _ready() -> void:
 	_hud.show_herd_selection(_domesticated_herd_fixture())
 	await _settle()
 	await _save("herd_domesticated")
+
+	# ---- Corral: the hunt INVESTMENT rung (gated, then enabled) ----------------------------------
+	# State 3c-corral-locked — a WILD herd (domestication 0.4) with Herding fully known: 🐄 Corral is
+	# SHOWN in the hunt picker, greyed, with "🐄 Corral — Herd must be domesticated" spelled out under
+	# the row (the knowledge half of the gate is already satisfied, so only the herd reason lists).
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_corral_locked_herd_fixture())
+	await _settle()
+	await _save("herd_corral_locked")
+
+	# State 3d-corral — a fully-domesticated, not-yet-penned herd with the pen 40% built: 🐄 Corral is
+	# ENABLED and selected, the forecast states the deal ("Preparing: +0.23 /turn → then +1.05 /turn",
+	# ceiling_corral → corral_yield, stepper capped at the 1 keeper a managed source needs), and the
+	# drawer carries the "Corral: Building 40%" row — the herd twin of the tile's "Cultivation N%".
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_corral_ready_herd_fixture())
+	_hud._hunt_assign_policy = "corral"
+	_hud._build_herd_assign_controls(_corral_ready_herd_fixture())
+	await _settle()
+	await _save("herd_corral")
+
+	# Back to a plain Sustain compose for the band-picker / distance states below.
+	_hud._hunt_assign_policy = "sustain"
+	_hud._hunt_assign_key = ""
 
 	# State 3f — TWO player bands: the "Assign hunters" controls' "Band:" dropdown lists both
 	# (positional "Band 1" / "Band 2"). Default selection is the resolved band (Band 1, 12 idle);
@@ -891,6 +948,11 @@ func _food_tile_fixture() -> Dictionary:
 		"patch_ceiling_surplus": 1.92,
 		"patch_ceiling_market": 2.88,
 		"patch_ceiling_eradicate": 4.80,
+		# The Cultivate INVESTMENT rung: while the patch is being prepared it pays only a fraction of
+		# its Sustain ceiling (the dip the player is buying with), then flips to the tended yield.
+		# Both are food/turn at output_multiplier 1.0, like the ceilings above.
+		"patch_ceiling_cultivate": 0.24,
+		"patch_tended_yield": 1.20,
 	}
 
 ## An over-drawn, UNCULTIVATED forage patch: the Tile card's "Ecology" row must still render
@@ -942,6 +1004,11 @@ func _herd_fixture() -> Dictionary:
 		"ceiling_surplus": 1.80,
 		"ceiling_market": 2.70,
 		"ceiling_eradicate": 4.50,
+		# The Corral INVESTMENT rung (the herd twin of the patch's Cultivate pair): the dip yield paid
+		# while the pen is being built, then the yield the penned herd pays.
+		"ceiling_corral": 0.23,
+		"corral_yield": 1.05,
+		"corral_progress": 0.0,
 		"tile_info": _food_tile_fixture(),
 	}
 
@@ -998,6 +1065,34 @@ func _collapsing_herd_fixture() -> Dictionary:
 	fixture["biomass"] = 96.0
 	fixture["ecology_phase"] = "collapsing"
 	fixture["domestication"] = 0.0
+	return fixture
+
+## A still-WILD herd (domestication 0.4) on the same compact tile as the corral-ready one: the Corral
+## rung is gated on the herd half of its prerequisite, so the picker greys it with "Herd must be
+## domesticated" (the faction already knows Herding).
+func _corral_locked_herd_fixture() -> Dictionary:
+	var fixture := _corral_ready_herd_fixture()
+	fixture["domestication"] = 0.4
+	fixture["corral_progress"] = 0.0
+	return fixture
+
+## A fully-domesticated herd whose pen is HALF-BUILT (not yet corralled): the Corral investment rung
+## is available (knowledge + domestication both satisfied) and under way, so the hunt picker offers
+## 🐄 Corral and the drawer reads "Corral: Building 40%". Compact non-food tile_info (like the
+## domesticated fixture) so the Tile card stays short and the drawer rows land in-frame.
+func _corral_ready_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["domestication"] = 1.0
+	fixture["corralled"] = false
+	fixture["corral_progress"] = 0.4
+	fixture["tile_info"] = {
+		"x": 66, "y": 10,
+		"terrain_label": "Prairie Steppe",
+		"tags_text": "Fertile",
+		"visibility_state": "active",
+		"food_module": "",
+		"food_module_label": "None",
+	}
 	return fixture
 
 func _domesticated_herd_fixture() -> Dictionary:

@@ -3021,6 +3021,10 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         }
         let _ = dict.insert("domestication", herd.domestication());
         let _ = dict.insert("corralled", herd.corralled());
+        // Pen-construction meter 0..1 accrued while a keeper band works this herd under the Corral
+        // policy — the animal twin of `ForagePatchState.cultivationProgress`. Read by Hud's herd
+        // drawer for the "Corral: Building N%" row.
+        let _ = dict.insert("corral_progress", herd.corralProgress());
         // Pre-commit yield forecast (food/turn at the herd's CURRENT biomass, exported at
         // output_multiplier 1.0 — the client scales by the acting band's multiplier):
         //   expected(workers, policy) = min(workers * per_worker_yield, ceiling_<policy>)
@@ -3032,6 +3036,11 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         let _ = dict.insert("ceiling_surplus", herd.ceilingSurplus());
         let _ = dict.insert("ceiling_market", herd.ceilingMarket());
         let _ = dict.insert("ceiling_eradicate", herd.ceilingEradicate());
+        // The Corral INVESTMENT rung (hunt-only): `ceiling_corral` is the food/turn the herd pays
+        // WHILE the pen is being built (the deliberate dip), `corral_yield` what it pays once penned.
+        // Together they drive the pre-commit "Preparing: +X → then +Y" forecast on %HerdAssignControls.
+        let _ = dict.insert("ceiling_corral", herd.ceilingCorral());
+        let _ = dict.insert("corral_yield", herd.corralYield());
         array.push(&dict.to_variant());
     }
     array
@@ -3062,6 +3071,12 @@ fn forage_patches_to_array(
         let _ = dict.insert("ceiling_surplus", patch.ceilingSurplus());
         let _ = dict.insert("ceiling_market", patch.ceilingMarket());
         let _ = dict.insert("ceiling_eradicate", patch.ceilingEradicate());
+        // The Cultivate INVESTMENT rung (forage-only): `ceiling_cultivate` is the food/turn the patch
+        // pays WHILE it is being prepared (the deliberate dip), `tended_yield` what it pays once
+        // cultivated. MapView cross-refs both onto `tile_info` (as `patch_*`) for the pre-commit
+        // "Preparing: +X → then +Y" forecast on %ForageAssignControls.
+        let _ = dict.insert("ceiling_cultivate", patch.ceilingCultivate());
+        let _ = dict.insert("tended_yield", patch.tendedYield());
         array.push(&dict.to_variant());
     }
     array

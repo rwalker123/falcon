@@ -60,7 +60,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/MagnifierButton.gd` | Zoom-rail in/out button that `_draw`s a crisp magnifier icon (lens + handle + inner `+`/`−`, `zoom_sign` picks which) — font magnifier glyphs render as tofu/blobs. Monochrome `HudStyle` ink → `SIGNAL` on hover |
 | `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content |
 | `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, `apply_button(btn, "primary"/"ghost"/"armed")`, and `apply_link_button(btn, base_color)` — the **inline link** treatment for a clickable label inside a row (no box at rest; hover tint + cyan text + pointing hand), used by the band panel's clickable Current-actions rows. Every HUD surface styles through here |
-| `ui/FoodIcons.gd` | Shared glyph vocabulary — food modules (`for_site`), fauna herds (`for_herd`, species keyword matched in the herd label, longest-first), and **take policies** (`for_policy`, `POLICY_ICONS`: sustain ♻ / surplus ⬆ / market ⇄ / eradicate 💀; `""` for unknown). Used by the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`), the Harvest/Hunt button + the **band panel's Current-actions rows** (each row leads with its resource glyph), and — for policies — BOTH the Hud policy-picker buttons (`_build_policy_picker`) and the map's yield labels (`MapView._draw_yield_label` appends the icon: `+0.38 ♻`), so a resource/policy always reads the same on the panel and on the map. **Policy glyphs are deliberately line-art** (♻ ⬆ ⇄) plus the high-contrast 💀: pictographic emoji (🪙 coin, 💰 money bag) render as a featureless grey blob at the ~12–13px these are drawn at, and ⚖ renders tiny/faint — same glyph-legibility hazard that forced `MagnifierButton` to hand-draw. Verified in `band_panel_left.png` / `map_band_work.png` |
+| `ui/FoodIcons.gd` | Shared glyph vocabulary — food modules (`for_site`), fauna herds (`for_herd`, species keyword matched in the herd label, longest-first), and **take policies** (`for_policy`, `POLICY_ICONS`: the four extractive rungs sustain ♻ / surplus ⬆ / market ⇄ / eradicate 💀, plus the two **investment** rungs cultivate 🌱 / corral 🐄 — 🐄 is the same glyph the herd drawer's Domesticated/Corralled badge uses; both verified legible at picker size in `forage_cultivate.png` / `herd_corral.png`; `""` for unknown). Used by the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`), the Harvest/Hunt button + the **band panel's Current-actions rows** (each row leads with its resource glyph), and — for policies — BOTH the Hud policy-picker buttons (`_build_policy_picker`) and the map's yield labels (`MapView._draw_yield_label` appends the icon: `+0.38 ♻`), so a resource/policy always reads the same on the panel and on the map. **Policy glyphs are deliberately line-art** (♻ ⬆ ⇄) plus the high-contrast 💀: pictographic emoji (🪙 coin, 💰 money bag) render as a featureless grey blob at the ~12–13px these are drawn at, and ⚖ renders tiny/faint — same glyph-legibility hazard that forced `MagnifierButton` to hand-draw. Verified in `band_panel_left.png` / `map_band_work.png` |
 | `tools/ui_preview.gd` / `.tscn` | Dev-only preview harness: instances the real `HudLayer` with canned selection/targeting data, renders each state, and saves PNGs to `ui_preview_out/` (gitignored). Iterate on HUD styling without a server: `godot --path . res://tools/ui_preview.tscn` |
 | `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link; scouting draws no disc — it extends sight in the fog) without a server: `godot --path . res://tools/map_preview.tscn` |
 | `tools/band_panel_preview.gd` / `.tscn` | Dev-only preview harness for the **Band/City dockable panel**: instances the real `BandCityPanel` + `HudLayer`, injects the panel into the HUD, pushes a seeded player band through `update_band_alerts`, and dumps the panel docked left/right/top/bottom + collapsed (`band_panel_*.png`) so the chrome + the relocated band detail + the HUD reflow can be eyeballed without a server: `godot --path . res://tools/band_panel_preview.tscn` |
@@ -729,6 +729,44 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `food_forage_out_of_range` (single far band) / `food_forage_band_near` + `food_forage_band_far`
     (two bands, one tile — picker flips enabled↔disabled).
 
+  - **Cultivate / Corral — the INVESTMENT rungs** (on BOTH assign controls; the sim's
+    `FollowPolicy::Cultivate` / `Corral`): the extractive four take from a wild source; these two pay
+    an **up-front cost** — while the patch is being prepared / the pen built, the source yields only
+    its `ceilingCultivate` / `ceilingCorral` dip yield, then flips to the much higher `tendedYield` /
+    `corralYield`. **Kind-specific and the sim rejects the cross pairing**: Cultivate is forage-only
+    (`FORAGE_POLICY_OPTIONS`), Corral hunt-only (`HUNT_POLICY_OPTIONS`) — and Corral is offered on a
+    **local hunt only** (a hunting expedition follows the herd and builds no pen, so it keeps the
+    extractive `LABOR_HUNT_POLICIES`, as does the send-expedition launch picker).
+    - **Disabled-with-reason, never hidden.** `_build_policy_picker(on_pick, selected, options,
+      gates)` renders a gated option **greyed, with its reason in the tooltip AND spelled out as a
+      line under the row** (`🌱 Cultivate — Requires Cultivation knowledge · Patch must be
+      Thriving`), so the player discovers the rung and its prerequisites *before* acting. Gates
+      (`_forage_policy_gates` / `_hunt_policy_gates`, mirroring the sim's `assign_labor` validation):
+      Cultivate needs faction `cultivation >= 1.0` **and** a Thriving patch; Corral needs
+      `herding >= 1.0` **and** `domestication >= 1.0`. A gated rung can never be the composed policy
+      (re-validated every render, since a patch can leave Thriving under a standing selection).
+    - **The forecast states the deal.** `_forecast_inputs` maps an investment policy's ceiling to the
+      DIP yield and additionally returns its `payoff`; `_forecast_yield_row` then reads
+      **`Preparing: +0.24 /turn → then +1.20 /turn`** instead of `Expected yield:` — both halves
+      scaled by the band's `output_multiplier` like every other forecast. The managed source reports
+      per-worker == ceiling, so the stepper caps at **1 worker**, as it should.
+    - **Progress meters.** The tile card's `Cultivation N%` row is joined by the herd drawer's
+      `Corral: Building N%` (`corralProgress`, `_corral_label` / `_corral_value_hex`), flipping to the
+      SIGNAL-tinted `🐄 Corralled` once penned — the animal twin of `🌾 Tended Patch`.
+    - **Knowledge-unlock nudge.** `_ingest_intensification` keeps the per-faction tracks and fires a
+      ONE-SHOT command-feed note the turn a track crosses to complete ("Cultivation learned — The
+      Cultivate policy is now available on Thriving patches."). Only a real `<1 → >=1` transition
+      fires it (a track already complete on the first snapshot / a rehydrated save is silent), and
+      only for the player faction; the announced set is keyed per faction+track.
+    - Wire fields decoded in `native/src/lib.rs` (snapshot + delta, both paths share the same
+      `herds_to_array` / `forage_patches_to_array`): `ForagePatchState.ceilingCultivate` /
+      `tendedYield` → `patch_ceiling_cultivate` / `patch_tended_yield` on `tile_info` (and in
+      `FOW_DISCOVERED_HIDDEN_KEYS`); `HerdTelemetryState.ceilingCorral` / `corralYield` /
+      `corralProgress` → bare keys on the herd dict.
+    - ui_preview: `forage_cultivate` (enabled + the Preparing→then forecast + the feed nudge) /
+      `forage_cultivate_locked` (Requires Cultivation knowledge) / `forage_cultivate_stressed` (Patch
+      must be Thriving) / `herd_corral` (enabled + `Corral: Building 40%`) / `herd_corral_locked`
+      (Herd must be domesticated).
   - **Pre-commit yield forecast** (on BOTH assign controls): setting up a forage/hunt assignment used
     to give no feedback — you staffed 6 workers, committed, advanced a turn, and only then learned 5
     were wasted. The sim now streams, with **identical field names** on `ForagePatchState` and
@@ -795,6 +833,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   (snapshot `HerdTelemetryState.corralled`, decoded beside `domestication` in
   `native/src/lib.rs herds_to_array`) is true, a **Corral** row shows "🐄 Corralled"
   (SIGNAL tint). The herd end of the intensification ladder — a penned, domesticated herd.
+  While the pen is still being built under the Corral policy (`corralProgress`, decoded as
+  `corral_progress`; `0 < p < 1`) the SAME row reports the meter — "Corral: Building 40%" —
+  the animal twin of the tile card's "Cultivation N%". See the Cultivate/Corral investment-rung
+  bullet under **Labor allocation UI**.
 - **Forage-patch cultivation readout** (`Hud.gd` `_tile_terrain_lines`): a forage tile's
   intensification state, mirroring the herd Husbandry row. `native/src/lib.rs
   forage_patches_to_array` decodes `foragePatches[]` (`ForagePatchState`) into both the
