@@ -94,7 +94,8 @@ fn forage_registry_cultivation_rewinds_on_rollback() {
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(tile).expect("mutable patch");
-        patch.claim_cultivation(FactionId(3));
+        patch.cultivation_progress = 1.0;
+        patch.owner = Some(FactionId(3));
         assert!(patch.is_cultivated());
     }
 

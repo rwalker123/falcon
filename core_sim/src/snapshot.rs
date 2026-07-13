@@ -4193,6 +4193,7 @@ fn herd_state(herd: &Herd) -> HerdState {
         },
         next_pos: herd.next_pos.map(|p| (p.x, p.y)),
         corralled_at: herd.corralled_at.map(|p| (p.x, p.y)),
+        corral_progress: herd.corral_progress,
         ecology: EcologyState {
             biomass: herd.biomass,
             carrying_capacity: herd.carrying_capacity,
@@ -4387,11 +4388,15 @@ fn herd_snapshot_entries(
                 ecology_phase: entry.ecology_phase.clone(),
                 domestication: entry.domestication,
                 corralled: entry.corralled,
+                corral_progress: entry.corral_progress,
                 per_worker_yield: forecast.per_worker_yield,
                 ceiling_sustain: forecast.ceiling_sustain,
                 ceiling_surplus: forecast.ceiling_surplus,
                 ceiling_market: forecast.ceiling_market,
                 ceiling_eradicate: forecast.ceiling_eradicate,
+                // The Corral investment rung: the preparing dip + the payoff once penned.
+                ceiling_corral: forecast.ceiling_prepare,
+                corral_yield: forecast.managed_yield,
             }
         })
         .collect()
@@ -4437,6 +4442,9 @@ fn snapshot_forage_patches(
                 ceiling_surplus: forecast.ceiling_surplus,
                 ceiling_market: forecast.ceiling_market,
                 ceiling_eradicate: forecast.ceiling_eradicate,
+                // The Cultivate investment rung: the preparing dip + the payoff once cultivated.
+                ceiling_cultivate: forecast.ceiling_prepare,
+                tended_yield: forecast.managed_yield,
             }
         })
         .collect();
@@ -4522,8 +4530,10 @@ mod tests {
                 loiter_turns_left: 9,
             },
             next_pos: Some((7, 2)),
-            // Rung 1c: a corralled (penned) herd round-trips its pen tile through the snapshot.
+            // Rung 1c: a corralled (penned) herd round-trips its pen tile AND its pen-construction
+            // progress through the snapshot (a rollback must not lose a half-built — or finished — pen).
             corralled_at: Some((5, 6)),
+            corral_progress: 1.0,
             ecology: EcologyState {
                 biomass: 4321.0,
                 carrying_capacity: 8000.0,
@@ -4540,6 +4550,42 @@ mod tests {
         let restored = herd_state(herd);
 
         assert_eq!(restored, original);
+    }
+
+    /// A **half-built** pen (the Corral investment mid-flight) must round-trip through the rollback
+    /// snapshot: a rollback rewinds the investment, it never silently loses it. The herd is still
+    /// mobile (`corralled_at` is `None`) until `corral_progress` reaches `1.0`.
+    #[test]
+    fn half_built_corral_progress_round_trips() {
+        const HALF_BUILT: f32 = 0.44;
+        let original = HerdState {
+            id: "herd_penning".to_string(),
+            size_class: "small".to_string(),
+            route: vec![(2, 2)],
+            current_pos: (2, 2),
+            roam: HerdRoamState {
+                mode: "graze_wander".to_string(),
+                loiter_turns_left: 0,
+            },
+            // Mid-build: the pen is not finished, so the herd is still mobile.
+            corralled_at: None,
+            corral_progress: HALF_BUILT,
+            ecology: EcologyState {
+                biomass: 60.0,
+                carrying_capacity: 100.0,
+                ecology_phase: "thriving".to_string(),
+                // Domesticated + owned — the gates the Corral policy requires to keep building.
+                progress: 1.0,
+                owner: Some(2),
+            },
+            ..Default::default()
+        };
+
+        let registry = HerdRegistry::from_states(std::slice::from_ref(&original));
+        let herd = registry.entries().first().expect("one herd restored");
+        assert!(!herd.is_corralled(), "a half-built pen is not yet a corral");
+        assert_eq!(herd.corral_progress, HALF_BUILT);
+        assert_eq!(herd_state(herd), original);
     }
 
     fn tile(entity: u64, x: u32, y: u32) -> TileState {
@@ -5550,7 +5596,8 @@ mod tests {
         let wild = ForagePatch::new(UVec2::new(1, 0), 100.0);
         // A tended (cultivated) patch owned by faction 3.
         let mut tended = ForagePatch::new(UVec2::new(0, 1), 100.0);
-        tended.claim_cultivation(FactionId(3));
+        tended.cultivation_progress = 1.0;
+        tended.owner = Some(FactionId(3));
         registry.patches.insert(wild.tile, wild);
         registry.patches.insert(tended.tile, tended);
 

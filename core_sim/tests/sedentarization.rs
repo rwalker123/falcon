@@ -114,7 +114,8 @@ fn cultivate_patches(app: &mut App, faction: FactionId, count: u32) {
     let mut registry = app.world.resource_mut::<ForageRegistry>();
     for i in 0..count {
         let mut patch = ForagePatch::new(bevy::math::UVec2::new(i, 900), 120.0);
-        patch.claim_cultivation(faction);
+        patch.cultivation_progress = 1.0;
+        patch.owner = Some(faction);
         registry.patches.insert(patch.tile, patch);
     }
 }

@@ -730,10 +730,24 @@ pub struct BandTravel {
     pub target: UVec2,
 }
 
-/// Auto-hunt policy for a Follow: how much biomass the band takes each turn once
-/// adjacent. Sustain ≈ regrowth (group stable), Surplus > regrowth (slow decline),
-/// Market = large commercial share (fast decline → collapse, boosted trade goods),
-/// Eradicate = max (drives the group toward local extinction).
+/// Take policy for a worked food source — shared by the Forage and Hunt labor arms.
+///
+/// **The four extractive rungs** size how much biomass the band draws each turn: Sustain ≈ regrowth
+/// (source stable), Surplus > regrowth (slow decline), Market = large commercial share (fast decline
+/// → collapse, boosted trade goods), Eradicate = max (drives the source toward local extinction).
+///
+/// **The two investment rungs** (Intensification — "Cultivate & Corral as explicit policies") are
+/// *not* extractive: they spend the crew's turns **preparing the ground / building the pen** instead
+/// of gathering. While preparing, the source's take ceiling is only
+/// `cultivating_yield_fraction` / `corralling_yield_fraction` × its **Sustain (MSY)** ceiling — a
+/// deliberate **yield dip**, drawn sustainably so the source stays healthy — and it accrues
+/// `ForagePatch::cultivation_progress` / `Herd::corral_progress` at `progress_per_turn`. At progress
+/// `1.0` the source becomes a **tended patch / corralled herd** and pays the full managed yield.
+/// This makes intensifying an *investment with a real up-front cost*, gated on the player's time
+/// horizon, instead of a free by-product of Sustain.
+///
+/// The two are **kind-specific** (validated at `assign_labor`): `Cultivate` is Forage-only,
+/// `Corral` is Hunt-only. See [`FollowPolicy::valid_for_forage`] / [`FollowPolicy::valid_for_hunt`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FollowPolicy {
     #[default]
@@ -741,6 +755,10 @@ pub enum FollowPolicy {
     Surplus,
     Market,
     Eradicate,
+    /// **Forage-only.** Prepare the patch into a tended crop (see the enum docs).
+    Cultivate,
+    /// **Hunt-only.** Build the pen for a domesticated herd (see the enum docs).
+    Corral,
 }
 
 impl FollowPolicy {
@@ -750,7 +768,22 @@ impl FollowPolicy {
             FollowPolicy::Surplus => "surplus",
             FollowPolicy::Market => "market",
             FollowPolicy::Eradicate => "eradicate",
+            FollowPolicy::Cultivate => "cultivate",
+            FollowPolicy::Corral => "corral",
         }
+    }
+
+    /// Policies a **Forage** assignment accepts: the four extractive rungs plus `Cultivate`.
+    /// `Corral` is an animal-only investment — a forage assignment carrying it is rejected at
+    /// `assign_labor` (and defensively yields nothing in `forage_policy_ceiling`).
+    pub fn valid_for_forage(self) -> bool {
+        !matches!(self, FollowPolicy::Corral)
+    }
+
+    /// Policies a **Hunt** assignment accepts: the four extractive rungs plus `Corral`.
+    /// `Cultivate` is a plant-only investment — see [`FollowPolicy::valid_for_forage`].
+    pub fn valid_for_hunt(self) -> bool {
+        !matches!(self, FollowPolicy::Cultivate)
     }
 }
 
@@ -762,6 +795,8 @@ impl FromStr for FollowPolicy {
             "surplus" => Ok(FollowPolicy::Surplus),
             "market" => Ok(FollowPolicy::Market),
             "eradicate" => Ok(FollowPolicy::Eradicate),
+            "cultivate" => Ok(FollowPolicy::Cultivate),
+            "corral" => Ok(FollowPolicy::Corral),
             "sustain" | "" => Ok(FollowPolicy::Sustain),
             _ => Err(()),
         }

@@ -135,6 +135,10 @@ pub struct HerdTelemetryState {
     /// Intensification Rung 1c corral state: `true` iff the herd is penned (`corralled_at.is_some()`).
     #[serde(default)]
     pub corralled: bool,
+    /// Pen-construction progress 0..1 (`1.0` = penned) while a keeper works the herd under the
+    /// **Corral** policy. The animal twin of `ForagePatchState::cultivation_progress`.
+    #[serde(default)]
+    pub corral_progress: f32,
     /// Pre-commit yield forecast at the herd's current biomass (food/turn, `output_multiplier = 1`).
     /// See `ForagePatchState`'s forecast fields — this is the herd-side twin.
     #[serde(default)]
@@ -147,6 +151,14 @@ pub struct HerdTelemetryState {
     pub ceiling_market: f32,
     #[serde(default)]
     pub ceiling_eradicate: f32,
+    /// Food/turn under the **Corral** policy — what the herd pays *while the pen is being built*
+    /// (`corralling_yield_fraction × the Sustain/MSY ceiling`, the investment dip).
+    #[serde(default)]
+    pub ceiling_corral: f32,
+    /// Food/turn the herd will pay **once penned** (the corral's managed harvest at its current
+    /// biomass). With `ceiling_corral`, lets the client show "preparing X → then Y" pre-commit.
+    #[serde(default)]
+    pub corral_yield: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -166,11 +178,14 @@ impl Default for HerdTelemetryState {
             ecology_phase: String::new(),
             domestication: 0.0,
             corralled: false,
+            corral_progress: 0.0,
             per_worker_yield: 0.0,
             ceiling_sustain: 0.0,
             ceiling_surplus: 0.0,
             ceiling_market: 0.0,
             ceiling_eradicate: 0.0,
+            ceiling_corral: 0.0,
+            corral_yield: 0.0,
         }
     }
 }
@@ -218,6 +233,14 @@ pub struct ForagePatchState {
     /// Food/turn ceiling under Eradicate, biomass-clamped.
     #[serde(default)]
     pub ceiling_eradicate: f32,
+    /// Food/turn under the **Cultivate** policy — what the patch pays *while it is being prepared*
+    /// (`cultivating_yield_fraction × the Sustain/MSY ceiling`, the investment dip).
+    #[serde(default)]
+    pub ceiling_cultivate: f32,
+    /// Food/turn the patch will pay **once cultivated** (the tended harvest on its current standing
+    /// crop). With `ceiling_cultivate`, lets the client show "preparing X → then Y" pre-commit.
+    #[serde(default)]
+    pub tended_yield: f32,
 }
 
 /// Per-faction intensification-ladder knowledge (Intensification Rung 1b/1c): the faction's progress
@@ -299,6 +322,11 @@ pub struct HerdState {
     /// persisted so a rollback preserves the pen.
     #[serde(default)]
     pub corralled_at: Option<(u32, u32)>,
+    /// Pen-construction progress 0..1 accrued under the **Corral** policy (`1.0` = penned). Persisted
+    /// alongside `corralled_at` so a rollback rewinds a half-built pen rather than losing the
+    /// investment.
+    #[serde(default)]
+    pub corral_progress: f32,
     #[serde(default)]
     pub ecology: EcologyState,
 }
@@ -2786,11 +2814,14 @@ fn create_herds<'a>(
                 ecologyPhase: Some(ecology_phase),
                 domestication: herd.domestication,
                 corralled: herd.corralled,
+                corralProgress: herd.corral_progress,
                 perWorkerYield: herd.per_worker_yield,
                 ceilingSustain: herd.ceiling_sustain,
                 ceilingSurplus: herd.ceiling_surplus,
                 ceilingMarket: herd.ceiling_market,
                 ceilingEradicate: herd.ceiling_eradicate,
+                ceilingCorral: herd.ceiling_corral,
+                corralYield: herd.corral_yield,
             },
         );
         entries.push(entry);
@@ -2822,6 +2853,8 @@ fn create_forage_patches<'a>(
                 ceilingSurplus: patch.ceiling_surplus,
                 ceilingMarket: patch.ceiling_market,
                 ceilingEradicate: patch.ceiling_eradicate,
+                ceilingCultivate: patch.ceiling_cultivate,
+                tendedYield: patch.tended_yield,
             },
         );
         entries.push(entry);

@@ -816,6 +816,14 @@ table ForagePatchState {
   ceilingSurplus:float = 0;
   ceilingMarket:float = 0;
   ceilingEradicate:float = 0;
+  // --- The Cultivate investment rung (appended) ---
+  // `ceilingCultivate` = food/turn WHILE the patch is being prepared under the Cultivate policy
+  // (= cultivating_yield_fraction × ceilingSustain — the deliberate yield dip that buys the tended
+  // patch). `tendedYield` = food/turn the patch will pay ONCE cultivated (maintenance labor: one
+  // worker suffices). Together they let the client show "preparing X → then Y" before the player
+  // commits to the investment. Cultivate is FORAGE-ONLY (the herd twin is Corral).
+  ceilingCultivate:float = 0;
+  tendedYield:float = 0;
 }
 
 // Per-faction intensification-ladder knowledge (Intensification Rung 1b/1c): the faction's progress
@@ -872,6 +880,9 @@ table HerdTelemetryState {
   // so the client can show a corral (place-bound) indicator distinct from a mobile domesticated
   // herd. Appended (append-only schema discipline).
   corralled:bool = false;
+  // Pen-construction progress 0..1 (1.0 = penned) accrued while a keeper band works this herd under
+  // the Corral policy — the animal twin of `ForagePatchState.cultivationProgress`. Appended.
+  corralProgress:float = 0;
   // --- Pre-commit yield forecast (appended, append-only schema discipline) ---
   // The herd-side twin of `ForagePatchState`'s forecast block — food/turn at this herd's CURRENT
   // biomass, for a live "Expected yield" readout + worker-stepper cap while the player composes a
@@ -888,6 +899,13 @@ table HerdTelemetryState {
   ceilingSurplus:float = 0;
   ceilingMarket:float = 0;
   ceilingEradicate:float = 0;
+  // --- The Corral investment rung (appended) --- the herd twin of `ForagePatchState`'s Cultivate
+  // block. `ceilingCorral` = food/turn WHILE the pen is being built under the Corral policy
+  // (= corralling_yield_fraction × ceilingSustain — the yield dip that buys the pen). `corralYield`
+  // = food/turn the herd will pay ONCE penned (maintenance labor: one keeper suffices). Corral is
+  // HUNT-ONLY (the patch twin is Cultivate).
+  ceilingCorral:float = 0;
+  corralYield:float = 0;
 }
 
 table CommandEventState {

@@ -1,9 +1,13 @@
-//! Phase 1a cultivation (Rung 1a — worker-tended, place-local tended patch): a sustained Sustain
-//! forage on a Thriving patch tames it into a cultivated crop (emergent accrual + decay). A completed
-//! "tended" patch is **worked, not passive**: it pays only the band that TENDS it (its Forage
-//! assignment, place-local) a higher-than-wild yield WITHOUT being drawn down, and if no band tends it
-//! for a turn it goes **feral** (decays back below the cultivated threshold, reverting to a wild
-//! gather patch). The plant mirror of `fauna_husbandry.rs`; world setup mirrors it too.
+//! Cultivation as an **explicit policy with an investment cost** (Intensification Rung 1a/1b).
+//!
+//! Sustain-foraging a Thriving patch **teaches the faction Cultivation** (Rung 1b knowledge, earned by
+//! doing) but no longer tames the patch — the old free auto-accrual is gone, because "same labor, same
+//! tile, no cost" made cultivating unconditionally correct and erased the decision. Cultivating is now
+//! the `FollowPolicy::Cultivate` policy: while preparing, the patch yields only
+//! `cultivating_yield_fraction × its Sustain (MSY) ceiling` (the crew is clearing and planting, not
+//! gathering) and accrues `cultivation_progress` at `progress_per_turn`. At `1.0` it becomes a
+//! **tended patch**: worked, place-local, paying the full managed yield without being drawn down, and
+//! going **feral** if abandoned. The plant mirror of `fauna_husbandry.rs`; world setup mirrors it too.
 
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
@@ -13,29 +17,32 @@ use bevy::MinimalPlugins;
 use core_sim::{
     advance_cultivation, advance_forage_regrowth, advance_labor_allocation, scalar_from_f32,
     scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_world, CommandEventLog,
-    CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle,
-    FogRevealLedger, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment,
-    LaborConfigHandle, LaborTarget, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
-    PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    CultureManager, DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory,
+    FaunaConfigHandle, FogRevealLedger, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId,
+    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
     CULTIVATION_DISCOVERY_ID, FOOD,
 };
 
-/// Grant faction-level **Cultivation** knowledge (Rung 1b) directly via the ledger, so patch
-/// cultivation is unlocked. Rung-1a tests seed this since they exercise the *tended-patch* mechanic,
-/// not the earned-knowledge gate (which has its own tests below). Mirrors how other knowledge-gated
-/// tests set up prerequisites through the `DiscoveryProgressLedger`.
+/// Grant faction-level **Cultivation** knowledge (Rung 1b) directly via the ledger — the gate the
+/// `Cultivate` policy checks. Tests of the *investment* mechanic seed it; the earned-knowledge ladder
+/// itself has its own test below.
 fn grant_cultivation_knowledge(app: &mut App, faction: FactionId) {
     app.world
         .resource_mut::<DiscoveryProgressLedger>()
         .add_progress(faction, CULTIVATION_DISCOVERY_ID, scalar_one());
 }
 
-/// Whole-worker head-count assigned to the forage — large enough that the per-worker gather cap
-/// never binds (the accrual hook is independent of the take, but this keeps the patch productive).
+/// Whole-worker head-count assigned to the forage — large enough that the per-worker gather cap never
+/// binds, so every take is **ceiling-bound** (which is what makes the Cultivate dip measurable as a
+/// clean fraction of the Sustain ceiling).
 const FORAGE_WORKERS: u32 = 5000;
+
+/// Float slack for provisions comparisons (fixed-point conversion + multiplication order).
+const EPSILON: f32 = 1e-4;
 
 fn spawn_world() -> App {
     let mut app = App::new();
@@ -81,8 +88,7 @@ fn spawn_world() -> App {
 }
 
 /// A `FoodModuleTag` tile that carries a seeded patch. Primes the patch to half its cap (Thriving,
-/// with regrowth headroom) so a Sustain forage keeps it Thriving and accruing. Returns the tile
-/// entity + its coord.
+/// with regrowth headroom) so the take is a clean MSY skim. Returns the tile entity + its coord.
 fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     let coord = {
         let mut query = app.world.query::<(&Tile, &FoodModuleTag)>();
@@ -97,6 +103,7 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).unwrap();
         patch.biomass = patch.carrying_capacity * 0.5;
+        assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
     }
     let entity = app
         .world
@@ -154,8 +161,8 @@ fn spawn_forager(
         .id()
 }
 
-/// One turn's forage pipeline in stage order: Logistics (regrowth, cultivation upkeep) then
-/// Population (labor allocation resolves the forage + accrues cultivation).
+/// One turn's forage pipeline in stage order: Logistics (regrowth, cultivation decay) then Population
+/// (labor allocation resolves the take and accrues the investment).
 fn run_turns_with_forage(app: &mut App, turns: u32) {
     for _ in 0..turns {
         app.world.run_system_once(advance_forage_regrowth);
@@ -191,103 +198,239 @@ fn provisions_f32(app: &mut App) -> f32 {
     total
 }
 
-/// A sustained Sustain forage on a Thriving patch cultivates it: progress climbs to 1.0 and the
-/// foraging faction owns it. Net accrual = progress_per_turn(0.04) − decay(0.01) = 0.03/turn.
-#[test]
-fn sustain_forage_cultivates_thriving_patch() {
+fn cultivation_config(app: &App) -> (f32, f32, f32) {
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let cultivation = &labor.forage.cultivation;
+    (
+        cultivation.cultivating_yield_fraction,
+        cultivation.progress_per_turn,
+        cultivation.decay_per_turn,
+    )
+}
+
+/// One turn of the pipeline under `policy` on a fresh identical world; returns the provisions the
+/// band was paid. Lets a test compare the Cultivate **dip** against the Sustain baseline without
+/// re-deriving the MSY formula anywhere.
+fn one_turn_yield(policy: FollowPolicy) -> f32 {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
-
-    run_turns_with_forage(&mut app, 45);
-
-    let registry = app.world.resource::<ForageRegistry>();
-    let patch = registry.patch(coord).expect("patch persists");
-    assert!(
-        patch.is_cultivated(),
-        "a sustained Sustain forage should cultivate: progress {}",
-        patch.cultivation_progress
-    );
-    assert_eq!(
-        patch.owner,
-        Some(FactionId(0)),
-        "the forager owns the patch"
-    );
-    assert_eq!(registry.cultivated_count(FactionId(0)), 1);
+    spawn_forager(&mut app, tile, coord, policy);
+    run_turns_with_forage(&mut app, 1);
+    provisions_f32(&mut app)
 }
 
-/// The per-turn net is exactly progress_per_turn − decay_per_turn while Sustain-foraged, and pure
-/// decay once untended.
+/// **The free path is gone.** Sustain-foraging a Thriving patch still teaches the faction Cultivation
+/// (knowledge is earned by doing), but it never accrues `cultivation_progress` — not even once the
+/// faction knows Cultivation. Cultivating costs something now, and the player must choose to pay it.
 #[test]
-fn cultivation_nets_accrual_minus_decay_then_decays() {
+fn sustain_forage_teaches_cultivation_but_never_tames_the_patch() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
-    // Head-start the progress (and ownership) so the Logistics decay bites every turn — a patch at
-    // exactly 0 would have its first-turn decay floored at 0, muddying the exact-net check.
-    const START: f32 = 0.2;
+    spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+
+    run_turns_with_forage(&mut app, 5);
+    let learned = app
+        .world
+        .resource::<DiscoveryProgressLedger>()
+        .get_progress(FactionId(0), CULTIVATION_DISCOVERY_ID)
+        .to_f32();
+    assert!(
+        learned > 0.0 && learned < 1.0,
+        "Sustain-forage still earns Cultivation knowledge: {learned}"
+    );
+    assert_eq!(
+        progress_of(&app, coord),
+        0.0,
+        "Sustain must not silently tame the patch"
+    );
+
+    // Even with the knowledge complete, Sustain accrues nothing — Cultivate is the only path.
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    run_turns_with_forage(&mut app, 10);
+    assert_eq!(
+        progress_of(&app, coord),
+        0.0,
+        "knowing Cultivation must not resurrect the free auto-accrual"
+    );
+    assert!(!app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .unwrap()
+        .is_cultivated());
+}
+
+/// **The investment cost.** A patch worked under `Cultivate` pays only
+/// `cultivating_yield_fraction × the Sustain (MSY) yield` — the crew is preparing ground, not
+/// gathering — and the reduced take is *sustainable*, so the patch stays Thriving throughout.
+#[test]
+fn cultivate_pays_a_fraction_of_the_sustain_yield_and_keeps_the_patch_healthy() {
+    let sustain_yield = one_turn_yield(FollowPolicy::Sustain);
+    let cultivating_yield = one_turn_yield(FollowPolicy::Cultivate);
+    assert!(
+        sustain_yield > 0.0,
+        "baseline Sustain yield must be positive"
+    );
+
+    let mut app = spawn_world();
+    let (fraction, _, _) = cultivation_config(&app);
+    assert!(
+        (cultivating_yield - fraction * sustain_yield).abs() < EPSILON,
+        "preparing pays fraction × the Sustain yield: {cultivating_yield} vs {}",
+        fraction * sustain_yield
+    );
+
+    // Over a full preparation the patch never leaves Thriving — the dip is drawn off the MSY ceiling,
+    // so it is a sustainable take, not a depletion.
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    let (_, progress_per_turn, _) = cultivation_config(&app);
+    run_turns_with_forage(&mut app, (1.0 / progress_per_turn).ceil() as u32);
+    assert_eq!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .ecology_phase,
+        EcologyPhase::Thriving,
+        "the preparing take is sustainable — the patch stays healthy"
+    );
+}
+
+/// The Cultivate policy accrues the **full** `progress_per_turn` while worked (the decay pass spares a
+/// patch under active preparation), completes in `1 / progress_per_turn` turns, and the completed
+/// patch then pays the full tended yield — strictly more than the wild Sustain skim it replaced.
+#[test]
+fn cultivate_completes_then_pays_the_tended_yield() {
+    let sustain_yield = one_turn_yield(FollowPolicy::Sustain);
+
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    let (_, progress_per_turn, _) = cultivation_config(&app);
+
+    // Progress accrues at the full rate — no net-of-decay drag while the crew is working it.
+    run_turns_with_forage(&mut app, 3);
+    let built = progress_of(&app, coord);
+    assert!(
+        (built - 3.0 * progress_per_turn).abs() < 1e-5,
+        "an actively-prepared patch accrues the full progress_per_turn: {built}"
+    );
+
+    let turns_to_prepare = (1.0 / progress_per_turn).ceil() as u32;
+    run_turns_with_forage(&mut app, turns_to_prepare);
+    {
+        let registry = app.world.resource::<ForageRegistry>();
+        let patch = registry.patch(coord).expect("patch persists");
+        assert!(
+            patch.is_cultivated(),
+            "sustained Cultivate work completes the patch: progress {}",
+            patch.cultivation_progress
+        );
+        assert_eq!(patch.owner, Some(FactionId(0)), "the preparer owns it");
+        assert_eq!(registry.cultivated_count(FactionId(0)), 1);
+    }
+
+    // The completed patch now pays the tended (managed) yield — the payoff on the investment.
+    let before = provisions_f32(&mut app);
+    run_turns_with_forage(&mut app, 1);
+    let tended_yield = provisions_f32(&mut app) - before;
+    assert!(
+        tended_yield > sustain_yield,
+        "a tended patch out-pays the wild Sustain skim: {tended_yield} vs {sustain_yield}"
+    );
+    assert_eq!(
+        app.world
+            .get::<LaborAllocation>(band)
+            .unwrap()
+            .last_yields
+            .len(),
+        1
+    );
+}
+
+/// Both Cultivate gates, at the sim level: without the **Cultivation knowledge**, and on a
+/// **non-Thriving** patch, the investment accrues nothing (the command layer rejects the assignment
+/// outright; this guards the system underneath it). Progress is held, not lost, when a gate lapses.
+#[test]
+fn cultivate_accrues_nothing_without_knowledge_or_on_a_stressed_patch() {
+    // (a) No knowledge.
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    run_turns_with_forage(&mut app, 5);
+    assert_eq!(
+        progress_of(&app, coord),
+        0.0,
+        "Cultivate without Cultivation knowledge accrues nothing"
+    );
+
+    // (b) Knowledge, but the patch is Stressed (another band overdrew it): accrual stops, and the
+    // progress already banked is *held* (the crew is still there, so the decay pass spares it).
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    run_turns_with_forage(&mut app, 3);
+    let banked = progress_of(&app, coord);
+    assert!(banked > 0.0);
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).unwrap();
-        patch.cultivation_progress = START;
-        patch.owner = Some(FactionId(0));
+        patch.biomass = patch.carrying_capacity * 0.15;
+        // The phase is derived in the Logistics regrowth pass; set it directly so the patch reads
+        // Stressed for the labor arm without a regrowth turn lifting it back to Thriving.
+        patch.ecology_phase = EcologyPhase::Stressed;
     }
-    grant_cultivation_knowledge(&mut app, FactionId(0));
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
-
-    // A few tended turns: net +0.03/turn (accrual 0.04 in Population − decay 0.01 in Logistics).
-    const TENDED_TURNS: u32 = 5;
-    run_turns_with_forage(&mut app, TENDED_TURNS);
-    let built = progress_of(&app, coord);
-    let expected = START + (0.04f32 - 0.01f32) * TENDED_TURNS as f32;
-    assert!(
-        (built - expected).abs() < 1e-4,
-        "net accrual should be (progress − decay)/turn: got {built}, expected {expected}"
-    );
-
-    // Stop foraging → pure decay.
-    app.world.despawn(band);
-    run_turns_untended(&mut app, 2);
-    let decayed = progress_of(&app, coord);
-    assert!(
-        decayed < built && (built - decayed - 0.02).abs() < 1e-4,
-        "untended patch should decay by decay_per_turn/turn: {built} -> {decayed}"
+    app.world.run_system_once(advance_cultivation);
+    app.world.run_system_once(advance_labor_allocation);
+    assert_eq!(
+        progress_of(&app, coord),
+        banked,
+        "a stressed patch stops accruing — progress is held, not lost"
     );
 }
 
-/// Rung 1a: a tended (cultivated) patch pays the band that TENDS it (its Forage assignment), via the
-/// labor arm — **place-local** — WITHOUT drawing biomass down, and is not wild gather-drawn. The
-/// `advance_cultivation` pass itself pays nothing now (it only decays untended patches — the even
-/// split across all the owner's bands is retired).
+/// Rung 1a: a **tended** (completed) patch pays the band that tends it — place-local, via the labor
+/// arm — WITHOUT drawing biomass down, and is not wild gather-drawn. `advance_cultivation` itself pays
+/// nothing (the retired even-split); it only decays *unworked* patches.
 #[test]
 fn tended_patch_pays_tending_band_without_depletion() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
 
-    // Claim the patch as a cultivated crop for the foraging faction.
+    // The state a completed preparation leaves behind: cultivated, owned, and flagged worked-this-turn
+    // (the labor arm sets the flag the turn it completes, so the next Logistics decay pass spares it).
     let biomass_before = {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).unwrap();
-        patch.claim_cultivation(FactionId(0));
+        patch.cultivation_progress = 1.0;
+        patch.owner = Some(FactionId(0));
+        patch.tended_this_turn = true;
         patch.biomass
     };
-    // The owner band tends it (a Forage assignment on the cultivated patch). It knows Cultivation so
-    // the tending Sustain forage can re-accrue the patch after the decay pass.
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
     assert_eq!(provisions_f32(&mut app), 0.0, "larder starts empty");
 
-    // The decay pass alone pays nothing — tended food is paid by the tending band's labor, not here.
+    // The decay pass pays nothing and spares the worked patch.
     app.world.run_system_once(advance_cultivation);
     assert_eq!(
         provisions_f32(&mut app),
         0.0,
         "advance_cultivation no longer pays a cultivated patch's owner (even-split retired)"
     );
+    assert!(app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .unwrap()
+        .is_cultivated());
 
-    // The tending band's labor resolves the tended yield place-local, without depleting biomass. (The
-    // decay pass above briefly dropped progress below 1.0, but the tending Sustain forage re-accrues
-    // it to cultivated and pays the tended yield — the tender keeps its farm alive.)
+    // The tending band's labor resolves the tended yield place-local, without depleting biomass.
     app.world.run_system_once(advance_labor_allocation);
     let paid = provisions_f32(&mut app);
     assert!(
@@ -303,19 +446,11 @@ fn tended_patch_pays_tending_band_without_depletion() {
         biomass_before,
         "a tended patch is a managed harvest — biomass is not drawn down"
     );
-    assert!(
-        app.world
-            .resource::<ForageRegistry>()
-            .patch(coord)
-            .unwrap()
-            .is_cultivated(),
-        "the tending band keeps the patch cultivated (re-accrues after the decay pass)"
-    );
 }
 
 /// Rung 1a feral loop: a cultivated patch with no band tending it goes feral through the real
-/// Logistics pipeline — `advance_cultivation` decays it below the cultivated threshold (reverting to
-/// a wild gather patch) and it fully reverts over ~1/decay_per_turn turns (owner cleared).
+/// Logistics pipeline — `advance_cultivation` decays it below the cultivated threshold (reverting to a
+/// wild gather patch) and it fully reverts over ~`1/decay_per_turn` turns (owner cleared).
 #[test]
 fn untended_cultivated_patch_goes_feral() {
     let mut app = spawn_world();
@@ -323,10 +458,11 @@ fn untended_cultivated_patch_goes_feral() {
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).unwrap();
-        patch.claim_cultivation(FactionId(0));
+        patch.cultivation_progress = 1.0;
+        patch.owner = Some(FactionId(0));
     }
 
-    // No forager band → the patch is never tended. One untended Logistics turn reverts it to wild.
+    // No forager band → the patch is never worked. One untended Logistics turn reverts it to wild.
     run_turns_untended(&mut app, 1);
     assert!(
         !app.world
@@ -338,82 +474,41 @@ fn untended_cultivated_patch_goes_feral() {
     );
 
     // Keep neglecting it → progress fully decays and ownership lapses (~1/decay_per_turn turns).
-    let decay = app
-        .world
-        .resource::<LaborConfigHandle>()
-        .get()
-        .forage
-        .cultivation
-        .decay_per_turn;
+    let (_, _, decay) = cultivation_config(&app);
     run_turns_untended(&mut app, (1.0 / decay).ceil() as u32 + 2);
     let patch_registry = app.world.resource::<ForageRegistry>();
     let patch = patch_registry.patch(coord).unwrap();
     assert_eq!(patch.cultivation_progress, 0.0, "feral patch fully reverts");
     assert_eq!(patch.owner, None, "ownership lapses once fully feral");
-    assert_eq!(
-        patch_registry.cultivated_count(FactionId(0)),
-        0,
-        "no cultivated patches remain"
-    );
+    assert_eq!(patch_registry.cultivated_count(FactionId(0)), 0);
 }
 
-/// Rung 1b (earned-knowledge gate): a faction that does NOT yet know Cultivation and Sustain-forages a
-/// Thriving patch **builds faction Cultivation knowledge** (in the `DiscoveryProgressLedger`) but its
-/// patch does **not** gain any `cultivation_progress` — knowledge is earned first, tended patches are
-/// gated behind it.
+/// Abandoning a **part-prepared** patch loses the investment: with nobody working it, the partial
+/// progress decays at `decay_per_turn` back toward zero (the cleared ground grows over).
 #[test]
-fn sustain_forage_earns_cultivation_knowledge_but_gates_patch() {
-    let mut app = spawn_world();
-    let (tile, coord) = prime_thriving_patch(&mut app);
-    // No knowledge granted: the faction must learn Cultivation by foraging.
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
-
-    // A handful of turns — fewer than needed to complete the knowledge (0.05/turn vs threshold 1.0).
-    run_turns_with_forage(&mut app, 5);
-
-    let learned = app
-        .world
-        .resource::<DiscoveryProgressLedger>()
-        .get_progress(FactionId(0), CULTIVATION_DISCOVERY_ID)
-        .to_f32();
-    assert!(
-        learned > 0.0,
-        "Sustain-forage teaches the faction Cultivation: ledger progress {learned}"
-    );
-    assert!(
-        learned < 1.0,
-        "5 turns should not yet complete Cultivation knowledge: {learned}"
-    );
-
-    let patch_progress = progress_of(&app, coord);
-    assert_eq!(
-        patch_progress, 0.0,
-        "before knowing Cultivation, no patch may accrue cultivation_progress: {patch_progress}"
-    );
-    assert!(
-        !app.world
-            .resource::<ForageRegistry>()
-            .patch(coord)
-            .unwrap()
-            .is_cultivated(),
-        "an un-earned patch is not cultivated"
-    );
-}
-
-/// Rung 1b: once the faction knows Cultivation (knowledge crosses the completion threshold), a Sustain
-/// forage on a Thriving patch begins accruing `cultivation_progress` again — the gate opens.
-#[test]
-fn known_cultivation_unlocks_patch_accrual() {
+fn abandoned_preparation_decays() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
 
     run_turns_with_forage(&mut app, 5);
+    let banked = progress_of(&app, coord);
+    assert!(banked > 0.0 && banked < 1.0, "part-prepared: {banked}");
 
-    let patch_progress = progress_of(&app, coord);
+    // The `tended_this_turn` flag is a deliberate one-turn-lag signal (Logistics runs before
+    // Population), so the first Logistics pass after the band leaves still sees the flag set from its
+    // last worked turn and spares the patch. Decay bites from the turn after that.
+    app.world.despawn(band);
+    const ABANDONED_TURNS: u32 = 3;
+    const SPARED_LAG_TURNS: u32 = 1;
+    run_turns_untended(&mut app, ABANDONED_TURNS);
+    let (_, _, decay) = cultivation_config(&app);
+    let decayed = progress_of(&app, coord);
+    let expected_decay = decay * (ABANDONED_TURNS - SPARED_LAG_TURNS) as f32;
     assert!(
-        patch_progress > 0.0,
-        "with Cultivation known, the patch accrues cultivation_progress: {patch_progress}"
+        (banked - decayed - expected_decay).abs() < 1e-5,
+        "an abandoned preparation decays by decay_per_turn/turn (after the one-turn flag lag): \
+         {banked} -> {decayed}"
     );
 }
