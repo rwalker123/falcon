@@ -160,13 +160,13 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "cultivate",
         aliases: &[],
-        summary: "Claim a tame-enough forage patch as a cultivated crop (needs cultivation progress from a Sustain forage).",
+        summary: "Set the Cultivate policy on the bands foraging a Thriving patch: an investment that pays a reduced yield while the crop is prepared, then a higher tended yield (needs Cultivation knowledge, earned by Sustain foraging).",
         usage: "cultivate <faction_id> <x> <y>",
     },
     CommandVerbHelp {
         verb: "corral",
         aliases: &[],
-        summary: "Pen the domesticated herd on a tile into a fixed corral (needs Herding knowledge from a Sustain hunt).",
+        summary: "Set the Corral policy on the bands hunting your domesticated herd at a tile: an investment that pays a reduced take while the pen is built, then pins the herd there (needs Herding knowledge, earned by Sustain hunting).",
         usage: "corral <faction_id> <x> <y>",
     },
     CommandVerbHelp {
