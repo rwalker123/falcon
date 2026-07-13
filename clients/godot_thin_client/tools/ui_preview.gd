@@ -620,9 +620,14 @@ func _band_fixture() -> Dictionary:
 		# The Gathered/Hunted breakdown sums the assignment actual_yields (0.48 / 0.46) by kind.
 		"food_income": 0.94,
 		"food_consumption": 0.68,
+		# `workers_needed` is the overstaffing axis, INDEPENDENT of the overdraw (⚠) axis — the two
+		# rows below deliberately cross them so one frame proves both:
+		#   • forage: 5 assigned but only 1 needed (the patch's ceiling caps the take) → the amber
+		#     "· only 1 of 5 working" note, and NO ⚠ (actual == sustainable, perfectly renewable).
+		#   • hunt: 4 assigned, 4 needed → no note, but it DOES overdraw (0.46 > 0.20) → the ⚠.
 		"labor_assignments": [
-			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48},
-			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20},
+			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1},
+			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20, "workers_needed": 4},
 			{"kind": "scout", "workers": 2},
 			{"kind": "warrior", "workers": 2},
 		],
@@ -844,6 +849,10 @@ func _food_tile_fixture() -> Dictionary:
 		"patch_has_owner": true,
 		"patch_owner": 0,
 		"patch_ecology_phase": "thriving",
+		# Standing forage stock vs the patch ceiling (sim default capacity 120) → the Tile card's
+		# "Forage biomass 84 / 120" row, the patch counterpart to a herd's Biomass row.
+		"patch_biomass": 84.0,
+		"patch_carrying_capacity": 120.0,
 	}
 
 ## A fully-tended forage patch: the Tile card shows the "🌾 Tended Patch" badge (SIGNAL tint)

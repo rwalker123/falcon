@@ -189,7 +189,7 @@ const FOW_EXPLORED_THRESHOLD := 0.3  # Above this a tile is at least Discovered
 const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"food_module", "food_module_label", "food_module_weight", "food_kind",
 	"cultivation_progress", "is_cultivated", "patch_has_owner", "patch_owner",
-	"patch_ecology_phase",
+	"patch_ecology_phase", "patch_biomass", "patch_carrying_capacity",
 	"units", "herds", "unit_count", "herd_count",
 	"harvest_tasks", "harvest_active", "scout_tasks", "scout_active",
 ]
@@ -2803,6 +2803,10 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["patch_has_owner"] = bool(patch.get("has_owner", false))
 		info["patch_owner"] = int(patch.get("owner", 0))
 		info["patch_ecology_phase"] = String(patch.get("ecology_phase", ""))
+		# Standing forage stock vs the patch's ceiling — "how much there is", the patch
+		# counterpart to a herd's Biomass row (Hud._tile_terrain_lines renders both).
+		info["patch_biomass"] = float(patch.get("biomass", 0.0))
+		info["patch_carrying_capacity"] = float(patch.get("carrying_capacity", 0.0))
 	var units_here := _units_on_tile(col, row)
 	var herds_here := _herds_on_tile(col, row)
 	info["units"] = units_here

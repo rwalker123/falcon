@@ -581,8 +581,18 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     (`actual == sustainable` → no flag, reads `… · renewable`); a Surplus/Market/Eradicate **forage
     patch** or an over-hunted herd pushes `actual` above `sustainable` → the flag trips (forage is no
     longer hardcoded renewable now that the policy axis can decline a patch). A
-    `tooltip_text` spells out actual-vs-sustainable.
-    `actual_yield`/`sustainable_yield` are decoded per assignment in `native/src/lib.rs` (inside
+    `tooltip_text` spells out actual-vs-sustainable. **Each source row also flags overstaffing** — a
+    WARN-tinted `· only N of M working` note (`OVERSTAFF_NOTE_FORMAT`) when `workers > workers_needed`
+    (and `workers_needed > 0`), i.e. the source's take was capped at its ceiling so the surplus workers
+    idled HERE and should be reassigned; the `tooltip_text` (`OVERSTAFF_TOOLTIP`) explains it. This is
+    **orthogonal to the ⚠ overdraw flag** and deliberately NOT the same glyph: overdraw is *ecological*
+    (taking past regrowth), overstaffing is *labor* (wasted workers) — a source can be overstaffed while
+    perfectly sustainable (every policy has a ceiling), or overdrawn while fully used. `workers_needed
+    == 0` (rehydrated/older snapshot, or a pending optimistic assign) means "unknown" → no note, never a
+    wrong one. Both the ⚠ and the note are rendered by `_build_worker_stepper` (`warn` / `note` params)
+    off one `_source_yield_readout`, so Forage and Hunt rows share the logic.
+    `actual_yield`/`sustainable_yield`/`workers_needed` are decoded per assignment in
+    `native/src/lib.rs` (inside
     `labor_assignments`); the band-level food flow (net rate + Gathered/Hunted/Eaten breakdown) lives
     on the **Food summary line**, not here — see "Band food status". Then a **Band roles**
     section with the always-shown **Scout** + **Warrior** rows (even at 0), each with a one-line hint so
@@ -733,11 +743,17 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   snapshot and delta dicts under `forage_patches`; `MapView.display_snapshot` ingests it into
   the tile-keyed `forage_patch_lookup`, and `_tile_info_at` cross-refs it onto `tile_info`
   (`cultivation_progress` / `is_cultivated` / `patch_ecology_phase` / `patch_has_owner` /
-  `patch_owner`, all in `FOW_DISCOVERED_HIDDEN_KEYS` so a remembered tile redacts them). The
+  `patch_owner` / `patch_biomass` / `patch_carrying_capacity`, all in `FOW_DISCOVERED_HIDDEN_KEYS`
+  so a remembered tile redacts them). The
   card shows a **Cultivation** row: "N%" while the patch is being tended, "🌾 Tended Patch"
   (SIGNAL tint via `_cultivation_value_hex`) once `is_cultivated`, plus an optional **Patch
   health** ecology row (reusing `_ecology_phase_label` / `_ecology_value_hex`). See `core_sim`
   intensification ladder — cultivation.
+  It also shows a **Forage biomass** row — `Forage biomass: 84 / 120` (`biomass` /
+  `carryingCapacity`, decoded in `forage_patches_to_array`) — the patch counterpart to a herd's
+  **Biomass** row, so a foraged patch reads like wild game does ("how much there is"). Foraging draws
+  the biomass down and it regrows logistically toward the capacity (sim default 120). Rendered only
+  when `patch_carrying_capacity > 0`, so a plain food-module tile with no patch stays bare.
 - **Sedentarization meter** (`Hud.gd` `update_sedentarization`, dispatched from `Main.gd`):
   the player faction's `SedentarizationState.score` (snapshot `sedentarization[]`) shows as a
   compact top-bar block-glyph meter (`▰▰▰▰▰▱▱ 62/100 · soft`, `SedentarizationLabel` in

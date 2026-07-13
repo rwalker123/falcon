@@ -326,6 +326,16 @@ const OVERHUNT_EPSILON := 0.001
 const OVERHUNT_FLAG := "⚠"
 const YIELD_TOOLTIP_RENEWABLE := " · renewable"
 const YIELD_TOOLTIP_OVERDRAW := " — overdrawing"
+# Overstaffing (wasted labor) — DISTINCT from the ⚠ overdraw flag above. Every policy caps a
+# source's take at its ceiling (policy ceiling / resource biomass), so past `workers_needed`
+# extra workers produce nothing HERE and should move elsewhere. A source can be overstaffed while
+# perfectly sustainable (and overdrawn while fully used), so this reads as its own WARN-tinted note
+# on the row rather than borrowing the ⚠. `workers_needed == 0` (rehydrated save / older snapshot)
+# means "unknown" ⇒ no note, never a wrong one.
+const OVERSTAFF_NOTE_FORMAT := " · only %d of %d working"
+const OVERSTAFF_TOOLTIP := "Overstaffed — this source's yield is capped at its sustainable/policy ceiling; the extra workers produce nothing here. Reassign them to another source."
+# Joins the yield readout and the overstaffing explanation into one row tooltip.
+const TOOLTIP_LINE_SEPARATOR := "\n"
 # Band food flow lives on the Food summary line: `Food 15 (19 days) · −0.77 /turn` (net =
 # food_income − food_consumption, sign-tinted), with a click-to-expand category breakdown
 # (Gathered/Hunted/Eaten) underneath — mirroring the morale breakdown. `FOOD_FLOW_MIN` gates both
@@ -1296,6 +1306,8 @@ func _effective_worker_map(band: Dictionary) -> Dictionary:
             "actual_yield": float(a.get("actual_yield", 0.0)),
             "sustainable_yield": float(a.get("sustainable_yield", 0.0)),
             "has_yield": a.has("actual_yield"),
+            # Min workers that produced this turn's take — drives the overstaffing note.
+            "workers_needed": int(a.get("workers_needed", 0)),
         }
     var pend := _pending_assigns_for(int(band.get("entity", -1)))
     for key in pend:
@@ -1305,7 +1317,10 @@ func _effective_worker_map(band: Dictionary) -> Dictionary:
             "x": int(pd.get("x", -1)), "y": int(pd.get("y", -1)),
             "herd_id": String(pd.get("herd_id", "")), "policy": String(pd.get("policy", "")), "pending": true,
             # A pending (optimistic) assign has no confirmed yield yet — render no yield number.
+            # Likewise no confirmed workers_needed, so 0 ⇒ "unknown" ⇒ no overstaffing note until
+            # the next snapshot resolves what the source actually used.
             "actual_yield": 0.0, "sustainable_yield": 0.0, "has_yield": false,
+            "workers_needed": 0,
         }
     return merged
 
@@ -1343,7 +1358,7 @@ func _effective_idle(band: Dictionary) -> int:
 ## when either stepper is pressed. `plus_enabled` gates the + (e.g. no idle workers).
 ## `pending` marks an optimistic (not-yet-confirmed) row: the label reads amber with a
 ## "· pending" suffix, tying it to the amber pending hex on the map.
-func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "") -> HBoxContainer:
+func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "") -> HBoxContainer:
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
@@ -1364,6 +1379,17 @@ func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, o
         if tooltip != "":
             warn_label.tooltip_text = tooltip
         row.add_child(warn_label)
+    # Overstaffing note ("· only 1 of 5 working"): WARN-tinted, sits after the label/⚠ so the wasted
+    # labor reads at a glance without recoloring the whole row. Deliberately NOT the ⚠ flag — that
+    # means "overdrawing" (ecological); this means "extra workers idle here" (see
+    # `_source_yield_readout`). The tooltip carries the full explanation.
+    if note != "":
+        var note_label := Label.new()
+        note_label.text = note
+        note_label.add_theme_color_override("font_color", HudStyle.WARN)
+        if tooltip != "":
+            note_label.tooltip_text = tooltip
+        row.add_child(note_label)
     # A spacer (not name_label's expand) pushes the −/+ stepper to the right edge, keeping the
     # label + ⚠ adjacent at the left.
     var spacer := Control.new()
@@ -1423,28 +1449,45 @@ func _format_signed(value: float) -> String:
 func _format_yield(value: float) -> String:
     return _format_signed(value) + YIELD_PER_TURN_SUFFIX
 
-## Resolve a worked source's yield readout: the row-label suffix (headline actual yield), whether
-## it's overhunting (WARN ⚠), and the actual-vs-sustainable tooltip. Returns empty parts when the
-## source carries no confirmed yield (pending assign / older snapshot) so the row renders bare.
+## Resolve a worked source's row readout. Two INDEPENDENT signals ride the same row:
+##   • overdraw (`warn` → the ⚠ flag) — ecological: the take exceeds the renewable ceiling.
+##   • overstaffed (`note` → "· only N of M working") — labor: the source's take was capped below
+##     what the assigned workers could produce, so the surplus workers idled HERE and should be
+##     reassigned. True for ALL policies (every source has a ceiling), and orthogonal to overdraw —
+##     a source can be overstaffed while perfectly sustainable, or overdrawn while fully used.
+## Parts are empty when the source carries no confirmed data (pending assign / older snapshot), so
+## the row degrades to bare rather than asserting a wrong state.
 func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
-    if not bool(m.get("has_yield", false)):
-        return {"label_suffix": "", "warn": false, "tooltip": ""}
-    var actual := float(m.get("actual_yield", 0.0))
-    var sustainable := float(m.get("sustainable_yield", 0.0))
-    # A source overdraws when its actual take exceeds its renewable-sustainable ceiling. Forage on
-    # Sustain gathers at the patch's regrowth (actual == sustainable → never trips, reads
-    # "· renewable"); a Surplus/Market/Eradicate forage patch OR an over-hunted herd pushes actual
-    # above sustainable → the ⚠ flag.
-    var overhunting := actual > sustainable + OVERHUNT_EPSILON
-    var renewable := kind == LABOR_KIND_FORAGE and not overhunting
-    var tooltip := "Actual %s" % _format_yield(actual)
-    if renewable:
-        tooltip += YIELD_TOOLTIP_RENEWABLE
-    else:
-        tooltip += " · Sustainable %s" % _format_yield(sustainable)
-        if overhunting:
-            tooltip += YIELD_TOOLTIP_OVERDRAW
-    return {"label_suffix": " %s" % _format_yield(actual), "warn": overhunting, "tooltip": tooltip}
+    var label_suffix := ""
+    var warn := false
+    var tooltip := ""
+    if bool(m.get("has_yield", false)):
+        var actual := float(m.get("actual_yield", 0.0))
+        var sustainable := float(m.get("sustainable_yield", 0.0))
+        # A source overdraws when its actual take exceeds its renewable-sustainable ceiling. Forage on
+        # Sustain gathers at the patch's regrowth (actual == sustainable → never trips, reads
+        # "· renewable"); a Surplus/Market/Eradicate forage patch OR an over-hunted herd pushes actual
+        # above sustainable → the ⚠ flag.
+        warn = actual > sustainable + OVERHUNT_EPSILON
+        var renewable := kind == LABOR_KIND_FORAGE and not warn
+        tooltip = "Actual %s" % _format_yield(actual)
+        if renewable:
+            tooltip += YIELD_TOOLTIP_RENEWABLE
+        else:
+            tooltip += " · Sustainable %s" % _format_yield(sustainable)
+            if warn:
+                tooltip += YIELD_TOOLTIP_OVERDRAW
+        label_suffix = " %s" % _format_yield(actual)
+    # Overstaffing: fewer workers were needed than are assigned, so the remainder produced nothing
+    # here. `workers_needed == 0` means "unknown" (rehydrated/older snapshot) → no note.
+    var note := ""
+    var workers := int(m.get("workers", 0))
+    var needed := int(m.get("workers_needed", 0))
+    if needed > 0 and workers > needed:
+        note = OVERSTAFF_NOTE_FORMAT % [needed, workers]
+        tooltip = OVERSTAFF_TOOLTIP if tooltip == "" \
+            else tooltip + TOOLTIP_LINE_SEPARATOR + OVERSTAFF_TOOLTIP
+    return {"label_suffix": label_suffix, "warn": warn, "note": note, "tooltip": tooltip}
 
 ## Net per-turn food flow (food_income − food_consumption). Positive → the larder is growing.
 func _band_net_food(band: Dictionary) -> float:
@@ -1613,7 +1656,7 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
             actions_block.add_child(_build_worker_stepper(
                 "Forage (%d, %d)%s%s" % [fx, fy, forage_tag, yld.label_suffix], workers, can_add,
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_FORAGE, n, fx, fy, "", forage_emit_policy),
-                pending, yld.warn, yld.tooltip))
+                pending, yld.warn, yld.tooltip, yld.note))
         elif kind == LABOR_KIND_HUNT and (workers > 0 or pending):
             has_source = true
             var herd_id := String(m.get("herd_id", ""))
@@ -1625,7 +1668,7 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
             actions_block.add_child(_build_worker_stepper(
                 "Hunt %s [%s]%s" % [_herd_label_for_id(herd_id), policy, yld.label_suffix], workers, can_add,
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_HUNT, n, hx, hy, herd_id, policy),
-                pending, yld.warn, yld.tooltip))
+                pending, yld.warn, yld.tooltip, yld.note))
     if not has_source:
         actions_block.add_child(_alloc_hint_label(ALLOC_NO_SOURCES_HINT))
     blocks.append(actions_block)
@@ -2486,6 +2529,13 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     if weight > 0.0:
         food_line += " (weight %.2f)" % weight
     lines.append(food_line)
+    # Standing forage stock vs the patch's ceiling — the patch counterpart to a herd's "Biomass"
+    # row, so a foraged patch reads like wild game does ("how much there is"). Foraging draws the
+    # biomass down and it regrows logistically toward the capacity. Only rendered when the snapshot
+    # carries a real patch (capacity > 0), so a plain food-module tile with no patch stays bare.
+    var patch_capacity := float(tile_info.get("patch_carrying_capacity", 0.0))
+    if patch_capacity > 0.0:
+        lines.append("Forage biomass: %.0f / %.0f" % [float(tile_info.get("patch_biomass", 0.0)), patch_capacity])
     # Forage-patch intensification ladder: while a patch is being tended it shows the
     # cultivation progress; once cultivated it reads as a "Tended Patch" (SIGNAL tint).
     # Mirrors the herd Husbandry row. Only when the snapshot carries the field so we

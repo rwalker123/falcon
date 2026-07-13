@@ -3709,6 +3709,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // is renewable, so its two values match; only depletable herds diverge.
             let _ = entry.insert("actual_yield", assignment.actualYield() as f64);
             let _ = entry.insert("sustainable_yield", assignment.sustainableYield() as f64);
+            // Minimum workers that would have produced this turn's take. `workers > workers_needed`
+            // (with needed > 0) means labor was NOT the binding constraint — the source's yield is
+            // capped by its policy ceiling / resource biomass, so the surplus workers idled here.
+            // The allocation row surfaces that as the "only N of M working" overstaffing note.
+            // 0 on a rehydrated save / older snapshot ⇒ the note degrades to hidden, never wrong.
+            let _ = entry.insert("workers_needed", assignment.workersNeeded() as i64);
             if let Some(fauna_id) = assignment.faunaId() {
                 let _ = entry.insert("fauna_id", fauna_id);
             }
