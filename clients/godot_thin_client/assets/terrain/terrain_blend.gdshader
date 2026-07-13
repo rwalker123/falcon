@@ -204,6 +204,35 @@ const float PEAK_SHADOW_ELEV_FLOOR = 0.4;     // shadow reach at elevation 0, as
 const float PEAK_SHADOW_UPLIGHT_REACH = 0.15; // …and on the LIT side of the relief, as a fraction of the reach
 const float PEAK_SHADOW_REACH_MIN = 1e-3;     // px floor, so the envelope's smoothstep can never divide by zero
 const int PEAK_SHADOW_TAPS = 4;               // occlusion samples along the light ray (nearer occluder = darker)
+// --- PEAK ↔ PEAK: two DIFFERENT reliefs meeting must cross-fade, and the TALLER one must do the overhanging ---
+// A peak↔non-peak edge is a footline: the relief overhangs it and thins away (canopy_density). But an edge
+// between two hexes that BOTH carry relief was not a boundary at all — each hex composited its OWN peak layer
+// at full density right up to the shared edge, so the art switched 1-bit ON the hex line: rolling_hills' green
+// mounds ended in a razor-straight diagonal and alpine_mountain's spires began (the "hills are still cut off"
+// report; the BASE floor under them blends fine — it is simply invisible under near-opaque relief art).
+// So a peak↔peak edge now cross-fades the two relief layers, as a CONTINUOUS WEIGHTED MIX (never a pick), with
+// the seam's CENTRE — not its shape — driven by elevation: the taller relief overhangs DOWN onto the lower one,
+// and the lower one must not climb uphill into it.
+//   depth = distance from the shared edge INTO the own hex (0 at the edge, growing inward)
+//   asym  = the elevation ordering, smooth and ODD in Δelev: +1 when the neighbour towers over us (its art
+//           spills onto us), −1 when we tower over it (ours spills onto them), 0 when we are the same height
+//   m     = peak_overhang · asym  — the depth (into US) at which the two layers sit 50/50. Positive = the
+//           neighbour's art has pushed the seam INTO our hex; negative = we have pushed it into theirs.
+//   w     = 1 − smoothstep(m − peak_softness, m + peak_softness, depth) — the neighbour layer's coverage here.
+// CONTINUITY (the discipline the shoreline's signed coast coordinate `u` follows): the neighbour computes the
+// same edge with asym negated, hence m negated, and smoothstep is symmetric about its centre — so at the shared
+// edge (depth = 0 from BOTH sides) the two hexes assign the SAME coverage to the SAME layer. Nothing can step
+// there for any elevation pair. At Δelev = 0 this degrades to m = 0: a symmetric 50/50 cross-fade of half-width
+// peak_softness, not a coin flip. The reach and the feather reuse the peak block's existing overhang/softness
+// levers, so a relief spilling onto a lower relief looks exactly like one spilling onto flat ground.
+const float PEAK_BLEND_FULL_DELTA = 0.25;  // Δ in elev-map units (0..1 relative height) at which the overhang is
+                                           // FULLY one-sided; below it the seam eases back toward symmetric.
+// The seam centre is displaced by the same world-noise the footline rides, so the cross-fade MEANDERS instead of
+// tracing the straight hex line (a soft straight gradient still reads as a straight line — which is the whole
+// complaint). It must be applied ANTISYMMETRICALLY — the two hexes must displace the seam the same way in world
+// space, i.e. with opposite signs in their own local `m` — or the continuity above breaks. The peak LAYER INDEX
+// gives a total order that both sides agree on and that never ties (the layers differ, or there is no seam).
+const float PEAK_BLEND_WOBBLE = 0.5;       // seam-centre wobble, as a fraction of the footline's wobble
 // Fog-of-war visibility states, as written into the vis-map's R channel by MapView._rebuild_terrain_shader_maps.
 // The tint is a CONTINUOUS function of the (cross-edge smoothed) visibility scalar between these anchors, so
 // the pure states still look exactly as they did under the old per-state branch: 1 = clear, 0.5 = mist, 0 = fog.
@@ -304,6 +333,18 @@ float canopy_density(float s, float overhang, float softness) {
 	return 0.5 * smoothstep(-overhang, 0.0, s);
 }
 
+// Premultiplied-alpha conversions, for AVERAGING two overlay samples that have independent alpha (the
+// peak↔peak cross-fade). Averaging straight-alpha RGBA lets a fully TRANSPARENT texel's leftover RGB drag
+// the colour wherever the other layer is opaque — it painted bright fringes along the seam. Colour must be
+// weighted by coverage × alpha; alpha averages on its own.
+const float PREMUL_ALPHA_MIN = 1e-4;   // un-premultiply guard: below this the colour is undefined anyway
+vec4 premultiplied(vec4 c) {
+	return vec4(c.rgb * c.a, c.a);
+}
+vec4 unpremultiplied(vec4 c) {
+	return vec4(c.rgb / max(c.a, PREMUL_ALPHA_MIN), c.a);
+}
+
 // odd-r neighbour offsets (MUST match MapView._get_neighbor_offset_{x,y}_2d).
 ivec2 neighbor_offset(int row, int dir) {
 	int odd = row & 1;
@@ -362,6 +403,17 @@ void fragment() {
 	} else {
 		in_map = in_map && col >= 0 && col < grid_w;
 	}
+
+	// Peak UV + its EXPLICIT screen-space gradients, computed HERE — in fully uniform control flow, before any
+	// branch. The peak pass's texture fetches all sit inside per-edge/per-fragment `if`s (divergent flow), where
+	// implicit-LOD `texture()` has UNDEFINED derivatives: on a 2×2 quad that straddles a relief↔relief seam the
+	// lanes take different branches, the driver picks a garbage mip, and the fetch comes back at the wrong
+	// resolution. That drew a 1-PIXEL DARK COLUMN exactly along the hex edge — a razor line, straight back where
+	// we started, hiding inside an otherwise correct cross-fade. Sampling with textureGrad and these gradients
+	// makes the LOD well-defined for every lane. (Same continuous map-space UV as the canopy's cuv.)
+	vec2 puv = v_map / (2.0 * hex_radius) * peak_scale;
+	vec2 puv_dx = dFdx(puv);
+	vec2 puv_dy = dFdy(puv);
 
 	if (!in_map) {
 		COLOR = bg_color;
@@ -686,6 +738,13 @@ void fragment() {
 			int nb_peak_code = 0;
 			float nb_peak_elev = 0.0;                       // elevation of that nearest peak-neighbour hex
 			float own_elev = texture(elev_map, id_uv).r;    // 0..1; the peak's own height when own_is_peak
+			// peak↔PEAK cross-blend accumulator (see the PEAK_BLEND_* consts): the neighbouring relief layers
+			// contribute AT ONCE, each weighted by its own edge's coverage, and the result is their weighted
+			// MEAN — never a pick, and never a nearest-edge switch that could seam along a bisector where two
+			// different reliefs meet the same hex (the discipline the water depth field uses).
+			vec4 pk_mix = vec4(0.0);                        // Σ wᵢ · relief_rgbaᵢ
+			float pk_w_sum = 0.0;                           // Σ wᵢ
+			float pk_elev_mix = 0.0;                        // Σ wᵢ · elevᵢ — so prominence follows the art shown
 			// The footline wobble, shared by the shadow ENVELOPE and the peak composite below so the shadow's
 			// onset meanders with the art's footline instead of tracing the hex edge. Map-space noise, so a
 			// world point reads the same value from both sides of an edge — continuity survives it.
@@ -707,12 +766,40 @@ void fragment() {
 				}
 				vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
 				int ncode = int(texture(id_map, nuv).a * 255.0 + 0.5);
-				if (own_is_peak == (ncode > 0)) { continue; } // only peak↔non-peak edges are boundaries
+				bool nb_is_peak = ncode > 0;
 				vec2 nb_c = hex_center(ncol, nrow);
 				vec2 dir_v = normalize(nb_c - own_c);
 				float half_dist = 0.5 * distance(own_c, nb_c);
 				float d = dot(v_world - own_c, dir_v) - half_dist; // <=0 inside own hex, larger = nearer edge
 				float nb_elev = texture(elev_map, nuv).r;      // same uv we read its id/peak-code from
+				if (own_is_peak && nb_is_peak) {
+					// --- RELIEF ↔ RELIEF: cross-fade the two layers, taller one overhanging (PEAK_BLEND_*) ---
+					if (ncode == own_peak) { continue; }      // same relief layer: the art is already continuous
+					float delta = nb_elev - own_elev;         // > 0 ⇒ the neighbour towers over us
+					float asym = 2.0 * smoothstep(
+						-PEAK_BLEND_FULL_DELTA, PEAK_BLEND_FULL_DELTA, delta) - 1.0;   // odd, −1…+1
+					// The wobble must read the SAME way in world space from both hexes, i.e. with OPPOSITE signs
+					// in their own local frames. The peak layer index is a total order both sides agree on.
+					float wob_sign = own_peak < ncode ? 1.0 : -1.0;
+					// The 50/50 line, as a depth INTO our hex (negative = we have pushed it into theirs). The
+					// centre is offset by (overhang − softness) rather than the full overhang so that the far
+					// edge of the cross-fade — centre + softness — lands at exactly `peak_overhang`: a taller
+					// relief reaches into a lower one by the SAME distance it reaches onto flat ground, and no
+					// further. (Offsetting by the full overhang stacked the feather on top of it and pushed the
+					// alpine art a whole hex radius into the hills, swallowing them.)
+					float seam = max(peak_overhang - peak_softness, 0.0) * asym
+						+ wob_sign * pk_wobble * PEAK_BLEND_WOBBLE;
+					float depth = -d;                         // distance from this edge INTO our hex (0 at it)
+					float w = 1.0 - smoothstep(seam - peak_softness, seam + peak_softness, depth);
+					if (w > 0.0) {
+						pk_mix += w * premultiplied(
+							textureGrad(peak_tex, vec3(puv, float(ncode - 1)), puv_dx, puv_dy));
+						pk_w_sum += w;
+						pk_elev_mix += w * nb_elev;
+					}
+					continue;                                 // a relief↔relief edge is not a footline
+				}
+				if (own_is_peak == nb_is_peak) { continue; }  // ground↔ground: no boundary, nothing to do
 				if (d > pk_best_d) {
 					pk_best_d = d;
 					nb_peak_code = ncode;
@@ -754,8 +841,6 @@ void fragment() {
 				// captured peak-neighbour's — so the overhang/shadow on the ground side of the seam reads the
 				// peak's height, not the low neighbour-ground hex's (which discontinued across the seam).
 				float peak_elev = own_is_peak ? own_elev : nb_peak_elev;  // 0..1
-				vec2 puv = v_map / (2.0 * hex_radius) * peak_scale;       // continuous world UV (like canopy cuv)
-				float prom = mix(peak_min_prominence, 1.0, peak_elev);
 
 				// --- CAST SHADOW: look back toward the light; if a peak occludes, darken this ground ---
 				// peak_light_dir points TOWARD the light (top-left). A fragment is shadowed if a peak sits
@@ -770,7 +855,7 @@ void fragment() {
 					for (int k = 1; k <= PEAK_SHADOW_TAPS; k++) {
 						float t = float(k) / float(PEAK_SHADOW_TAPS);
 						vec2 sp = puv + peak_light_dir * (slen_uv * t);
-						float a = texture(peak_tex, vec3(sp, float(peak_code - 1))).a;
+						float a = textureGrad(peak_tex, vec3(sp, float(peak_code - 1)), puv_dx, puv_dy).a;
 						shadow = max(shadow, a * (1.0 - t));   // nearer occluder = darker
 					}
 				}
@@ -779,9 +864,30 @@ void fragment() {
 				// --- PEAK COMPOSITE (over the shadowed ground) ---
 				float ss = s + pk_wobble;   // bumpy footline — the same wobble the shadow envelope rides
 				if (ss > -peak_overhang) {
-					float dens = canopy_density(ss, peak_overhang, peak_softness) * prom;  // reuse canopy_density
+					// WHICH relief art this fragment shows. Normally our own layer (or, on the ground side of a
+					// footline, the overhanging neighbour's). Where a relief↔relief seam is in reach, it is the
+					// WEIGHTED MEAN of ours and the neighbouring reliefs' (see the PEAK_BLEND_* consts): our own
+					// weight is what the neighbours have not claimed, so at a seam the taller relief's art takes
+					// over CONTINUOUSLY instead of switching on the hex line. The denominator is max(1, Σw) — a
+					// continuous function of Σw, so a fragment in reach of two seams cannot pop either.
+					vec4 pk = textureGrad(peak_tex, vec3(puv, float(peak_code - 1)), puv_dx, puv_dy);
+					float art_elev = peak_elev;
+					if (pk_w_sum > 0.0) {
+						float own_w = max(0.0, 1.0 - pk_w_sum);
+						float denom = own_w + pk_w_sum;
+						// PREMULTIPLIED — relief art is RGBA with large transparent regions, and a straight-alpha
+						// mean lets a transparent texel's (keyed-out) RGB pollute the colour wherever the other
+						// layer is opaque: it drew thin bright dotted fringes ALONG the seam, i.e. re-introduced a
+						// hex-tracing line by another route. Weighting colour by coverage×alpha is the only mean
+						// that is right for two overlays with independent alpha.
+						pk = unpremultiplied((own_w * premultiplied(pk) + pk_mix) / denom);
+						art_elev = (own_w * peak_elev + pk_elev_mix) / denom;
+					}
+					// Prominence follows the art that is actually SHOWING, so a tall neighbour's spires overhang
+					// us at THEIR prominence rather than being faded down to ours.
+					float dens = canopy_density(ss, peak_overhang, peak_softness)
+						* mix(peak_min_prominence, 1.0, art_elev);   // reuse canopy_density
 					if (dens > 0.0) {
-						vec4 pk = texture(peak_tex, vec3(puv, float(peak_code - 1)));
 						result = mix(result, pk.rgb, pk.a * dens);
 					}
 				}

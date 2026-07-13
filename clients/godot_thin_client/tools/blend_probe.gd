@@ -28,6 +28,10 @@ const OUT_DIR := "res://ui_preview_out"
 # so the grid dims below are chosen to land each state on its target radius.
 const CANVAS_SIZE := Vector2i(1920, 1080)
 const HEX_RADIUS_TOLERANCE := 2.5
+# How many frames _refit will keep re-asserting the pinned canvas while it waits for the WM to honour it
+# (project.godot opens MAXIMIZED; the mode change lands asynchronously). Bounded so a WM that refuses to
+# shrink the window fails with the radius warning rather than hanging.
+const CANVAS_PIN_MAX_FRAMES := 60
 
 # --- state 1: the flat-biome band strip (24×16 at 1920×1080 → r ≈ 45) ---
 const GRID_W := 24
@@ -435,12 +439,88 @@ const S_CROP_RADII := 2.8
 # hex-shaped darkening in them has nowhere to hide.
 const S_ISO_CROP_RADII := 2.0
 
+# --- state 14 (G): the REAL NEIGHBOURHOOD from the user's screenshot — hills STILL cut off, gate ON ---
+# State H proved the rugged BASE floor was cutting off and `blend_rugged_land` fixed it — yet the user still
+# reports hard straight edges on rolling_hills with that gate SHIPPED ON. H cannot see why: its hills blob sits
+# in FLAT fields only, so every peak edge in it is a peak↔non-peak boundary (which the overhang feathers). The
+# screenshot's hills sit next to ALPINE (26) — and alpine carries a peak overlay TOO. The peak pass treats only
+# peak↔non-peak edges as boundaries (`own_is_peak == (ncode > 0) → continue`), so a peak↔PEAK edge is NOT a
+# boundary at all: no overhang, no feather, both hexes composite their OWN peak layer at full density right up
+# to the shared hex line — a hard texture switch exactly ON the hex edge, under which the (blended) base floor
+# is invisible because the mound art is near-opaque. This state rebuilds the screenshot's neighbourhood so that
+# every reported adjacency is in ONE frame: hills(24) against canyon_badlands(28, rugged, NO peak asset),
+# alpine_mountain(26, rugged, HAS a peak asset → the peak↔peak case), alluvial_plain(10, flat),
+# rocky_reg(16, flat), basaltic_lava_field(30, rugged, no peak) and an inland_sea(2) lake hex (the shoreline,
+# which is hard BY DESIGN). Grid overlay OFF — a drawn hexagon would answer the question under test.
+const G_NAME := "G"
+const G_GRID_W := 14
+const G_GRID_H := 10
+const G_HEX_RADIUS := 75.0
+# ids: 2 inland_sea · 10 alluvial_plain (flat) · 16 rocky_reg (flat) · 24 rolling_hills (PEAK) ·
+#      25 high_plateau (PEAK) · 26 alpine_mountain (PEAK) · 28 canyon_badlands (rugged, no peak) ·
+#      30 basaltic_lava_field (rugged, no peak)
+const G_IDS := [
+	[16, 16, 16, 10, 10, 10, 10, 10, 10, 10, 10, 26, 26, 26],
+	[16, 16, 10, 10, 10, 28, 28, 26, 26, 26, 26, 26, 26, 26],
+	[16, 10, 10, 28, 28, 28, 24, 24, 26, 26, 26, 26, 26, 30],
+	[10, 10, 28, 28, 28, 24, 24, 24, 24, 26, 26, 26, 30, 30],
+	[10, 24, 28, 28, 24, 24, 24, 24, 24, 26, 26, 30, 30, 10],
+	[10, 10, 28, 28, 24, 24, 24, 24, 2, 2, 26, 30, 10, 10],
+	[10, 10, 10, 28, 28, 24, 24, 24, 2, 2, 16, 16, 10, 10],
+	[10, 10, 10, 10, 28, 28, 25, 25, 16, 16, 16, 10, 10, 10],
+	[16, 16, 26, 10, 10, 10, 10, 16, 16, 16, 10, 10, 10, 10],
+	[16, 16, 16, 10, 10, 10, 10, 10, 16, 16, 10, 10, 10, 10],
+]
+# ELEVATION. The peak pass reads a per-hex elev-map (prominence, shadow length, and — once the peak↔peak seam
+# is elevation-driven — which relief overhangs which). Every other probe snapshot omits the elevation channel,
+# so MapView falls back to PEAK_ELEV_FALLBACK for EVERY hex: all peaks read the SAME height and no elevation
+# asymmetry can be judged in them. This state therefore ships a real elevation raster, keyed by terrain id
+# (worldgen correlates the two: a peak biome sits high, a plain sits low). Values are on the raster's
+# normalized 0..1 scale; MapView rescales the above-sea span into the 0..100 relative height the shader sees.
+const G_SEA_LEVEL := 0.30
+const G_ELEVATION_BY_ID := {
+	2: 0.20,    # inland_sea — below sea level
+	10: 0.34,   # alluvial_plain — rel  6
+	16: 0.38,   # rocky_reg — rel 11
+	28: 0.46,   # canyon_badlands — rel 23
+	30: 0.50,   # basaltic_lava_field — rel 29
+	24: 0.58,   # rolling_hills — rel 40  ← the LOW relief
+	25: 0.585,  # high_plateau — rel 41   ← ~the SAME height as the hills: the near-zero-Δ peak↔peak case
+	26: 0.95,   # alpine_mountain — rel 93 ← the HIGH relief: Δ ≈ 53 against the hills
+}
+const G_ELEVATION_DEFAULT := 0.34
+# The crops, native-res (the downscaled full frame hides a 1px line — that is the whole point of state H's
+# close-ups). Each is centred on ONE of the competing hypotheses' seams:
+const G_CROP_RADII := 1.9
+const G_CROP_PEAKPEAK := Vector2i(8, 3)   # hills(8,3) ↔ alpine(9,3): peak↔PEAK, BIG Δelev — hypothesis (B)
+const G_CROP_SAMEELEV := Vector2i(6, 7)   # plateau(6,7) ↔ hills(6,6): peak↔PEAK, ~ZERO Δelev — must cross-fade
+const G_CROP_CANYON := Vector2i(4, 4)     # hills(4,4) ↔ canyon(3,4): rugged↔rugged, peak↔non-peak — (A)
+const G_CROP_LAKE := Vector2i(8, 5)       # hills(7,5) ↔ inland_sea(8,5): the SHORELINE — (C)
+# The two ISOLATED relief hexes (all six neighbours non-peak) — the mandatory shred/overhang check, one per
+# relief art. Both sit on the LEFT of the frame: MapView's minimap CanvasLayer (layer 102) is NOT hidden by the
+# harness, so anything cropped from the bottom-RIGHT corner captures the minimap instead of the terrain.
+const G_CROP_ISO := Vector2i(1, 4)        # an isolated rolling_hills hex
+const G_CROP_ISO_ALPINE := Vector2i(2, 8) # an isolated alpine hex — the tall/structured art
+const G_ISO_CROP_RADII := 1.7
+# Peaks OFF, exactly as state H does it: the peak pass's LOD floor pushed above any on-screen radius.
+const G_BEFORE_NAME := "G_before"
+const G_NO_PEAKS_NAME := "G_no_peaks"
+const G_PEAKS_ONLY_NAME := "G_peaks_only"
+const G_NO_SHADOW_NAME := "G_no_shadow"
+# The state filter's cmdline flag (after the scene's `--`), e.g. `-- --only=G` / `-- --only=1,4,G`.
+const ONLY_ARG_PREFIX := "--only="
+
 var _map: Node2D
 # The inland_sea `shore_profile` as SHIPPED in terrain_config, captured before the lake sweep overrides it.
 var _shipped_lake_profile: Dictionary = {}
+# Optional state filter, from the cmdline (`godot … res://tools/blend_probe.tscn -- --only=G`): the harness is
+# 60+ frames, and a diagnosis loop re-renders ONE state many times. Empty = render everything (the default, so
+# CI/regression runs are unaffected).
+var _only: PackedStringArray = PackedStringArray()
 
 
 func _ready() -> void:
+	_parse_only()
 	var win := get_window()
 	_pin_canvas(win)
 	DirAccess.make_dir_absolute(OUT_DIR)
@@ -469,135 +549,172 @@ func _ready() -> void:
 	var lake_entry: Dictionary = _lake_terrain_entry()
 	_shipped_lake_profile = (lake_entry.get("shore_profile", {}) as Dictionary).duplicate(true)
 
-	# --- state 1: the straight flat↔flat band seam, at the game's r ≈ 45 ---
-	_map.display_snapshot(_snapshot_flat_bands())
-	await _refit(GAME_HEX_RADIUS)
-	await _save("blend_bands_full")
-	await _save_seam_crop("blend_bands_seam")
+	if _want("1"):
+		# --- state 1: the straight flat↔flat band seam, at the game's r ≈ 45 ---
+		_map.display_snapshot(_snapshot_flat_bands())
+		await _refit(GAME_HEX_RADIUS)
+		await _save("blend_bands_full")
+		await _save_seam_crop("blend_bands_seam")
 
-	# --- state 2: isolated prairie hexes surrounded by dark soil, at the user's r ≈ 75 ---
-	# The state that exposes hex shredding. Every tuning variant is rendered here.
-	_map.display_snapshot(_snapshot_isolated_islands())
-	await _refit(ISO_HEX_RADIUS)
+	if _want("2"):
+		# --- state 2: isolated prairie hexes surrounded by dark soil, at the user's r ≈ 75 ---
+		# The state that exposes hex shredding. Every tuning variant is rendered here.
+		_map.display_snapshot(_snapshot_isolated_islands())
+		await _refit(ISO_HEX_RADIUS)
 
-	var sweep_names: Array[String] = []
-	var sweep_labels: Array[String] = []
-	for variant: Dictionary in V6_VARIANTS:
-		await _render_variant(variant["overrides"], variant["name"])
-		sweep_names.append(variant["name"])
-		sweep_labels.append(variant["label"])
-	await _save_contact_sheet(sweep_names, sweep_labels, SHEET_NAME)
+		var sweep_names: Array[String] = []
+		var sweep_labels: Array[String] = []
+		for variant: Dictionary in V6_VARIANTS:
+			await _render_variant(variant["overrides"], variant["name"])
+			sweep_names.append(variant["name"])
+			sweep_labels.append(variant["label"])
+		await _save_contact_sheet(sweep_names, sweep_labels, SHEET_NAME)
 
-	# The SHIPPED terrain_config values, rendered last: the very first capture after a window resize can
-	# read back at the pre-HiDPI-scale resolution, which would make this frame incomparable to the sweep.
-	await _settle()
-	await _save("blend_isolated_shipped")
-	await _save_crop("blend_isolated_shipped_closeup", ISO_CROP_COL, ISO_CROP_ROW, ISO_CROP_RADII)
+		# The SHIPPED terrain_config values, rendered last: the very first capture after a window resize can
+		# read back at the pre-HiDPI-scale resolution, which would make this frame incomparable to the sweep.
+		await _settle()
+		await _save("blend_isolated_shipped")
+		await _save_crop("blend_isolated_shipped_closeup", ISO_CROP_COL, ISO_CROP_ROW, ISO_CROP_RADII)
 
-	# --- state 3 (V7): WATER↔WATER — deep ocean embedded in continental shelf, at the user's r ≈ 75 ---
-	# W1 = the shipped (land-tuned) levers; W2 = the wider/softer water hypothesis.
-	_map.display_snapshot(_snapshot_water_patch())
-	await _refit(WATER_HEX_RADIUS)
-	await _render_variant(
-		WATER_W1_OVERRIDES, "V7_water_W1", WATER_CROP_COL, WATER_CROP_ROW, WATER_CROP_RADII
-	)
-	await _render_variant(
-		WATER_W2_OVERRIDES, "V7_water_W2", WATER_CROP_COL, WATER_CROP_ROW, WATER_CROP_RADII
-	)
-
-	# --- state 4 (V7): COAST (land↔water) — the shoreline reference frame, pixel-diffed across changes ---
-	_map.display_snapshot(_snapshot_coast())
-	await _refit(WATER_HEX_RADIUS)
-	await _settle()
-	await _save("V7_coast_unchanged")
-
-	# --- state 5 (V8): the same water patch, FoW OFF vs FoW ON (active + discovered mix) ---
-	# Same terrain, same levers — the only difference is the per-hex mist tint. See the const block.
-	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_water_patch())
-	await _refit(WATER_HEX_RADIUS)
-	await _settle()
-	await _save("V8_water_fow_off")
-
-	_map.display_snapshot(_snapshot_water_patch(_v8_visibility()))
-	_map.set_fow_enabled(true)
-	await _refit(WATER_HEX_RADIUS)
-	await _settle()
-	await _save("V8_water_fow_on")
-	_map.set_fow_enabled(false)
-
-	# --- state 6 (V10): the shipped shoreline profile, on the ragged coast (full frame + close-up) ---
-	_map.display_snapshot(_snapshot_coast())
-	await _refit(WATER_HEX_RADIUS)
-	await _settle()
-	await _save(V10_SHORE_NAME)
-	# Re-settle: a second get_image() in the same frame as the full-frame save reads back a stale viewport.
-	await _settle()
-	await _save_crop(
-		"%s_closeup" % V10_SHORE_NAME, V10_SHORE_CROP_COL, V10_SHORE_CROP_ROW, V10_SHORE_CROP_RADII
-	)
-
-	# The same coast against a DARK land biome — prairie's tan hides how far the sand reaches inland.
-	_map.display_snapshot(_snapshot_coast(V10_DARK_LAND_ID))
-	await _refit(WATER_HEX_RADIUS)
-	await _settle()
-	await _save(V10_SHORE_DARK_NAME)
-	await _settle()
-	await _save_crop(
-		"%s_closeup" % V10_SHORE_DARK_NAME,
-		V10_SHORE_CROP_COL,
-		V10_SHORE_CROP_ROW,
-		V10_SHORE_CROP_RADII
-	)
-
-	# A/B: the rejected sand-on-both-sides close-up (left in OUT_DIR by the previous shader) vs the shipped one.
-	await _save_contact_sheet(
-		[V10_REJECTED_NAME, "%s_closeup" % V10_SHORE_NAME],
-		["REJECTED: sand on BOTH sides (double width)", "SHIPPED: sand LAND-only, surf washes over it"],
-		V10_AB_NAME
-	)
-
-	# --- state 7 (V11): the surf-reach / wisp sweep, on the DARK-land coast already displayed ---
-	for variant: Dictionary in V11_SHORE_VARIANTS:
+	if _want("3/V7"):
+		# --- state 3 (V7): WATER↔WATER — deep ocean embedded in continental shelf, at the user's r ≈ 75 ---
+		# W1 = the shipped (land-tuned) levers; W2 = the wider/softer water hypothesis.
+		_map.display_snapshot(_snapshot_water_patch())
+		await _refit(WATER_HEX_RADIUS)
 		await _render_variant(
-			_shore_sweep_overrides(variant),
-			variant["name"],
+			WATER_W1_OVERRIDES, "V7_water_W1", WATER_CROP_COL, WATER_CROP_ROW, WATER_CROP_RADII
+		)
+		await _render_variant(
+			WATER_W2_OVERRIDES, "V7_water_W2", WATER_CROP_COL, WATER_CROP_ROW, WATER_CROP_RADII
+		)
+
+	if _want("4/coast"):
+		# --- state 4 (V7): COAST (land↔water) — the shoreline reference frame, pixel-diffed across changes ---
+		_map.display_snapshot(_snapshot_coast())
+		await _refit(WATER_HEX_RADIUS)
+		await _settle()
+		await _save("V7_coast_unchanged")
+
+	if _want("5/V8"):
+		# --- state 5 (V8): the same water patch, FoW OFF vs FoW ON (active + discovered mix) ---
+		# Same terrain, same levers — the only difference is the per-hex mist tint. See the const block.
+		_map.set_fow_enabled(false)
+		_map.display_snapshot(_snapshot_water_patch())
+		await _refit(WATER_HEX_RADIUS)
+		await _settle()
+		await _save("V8_water_fow_off")
+
+		_map.display_snapshot(_snapshot_water_patch(_v8_visibility()))
+		_map.set_fow_enabled(true)
+		await _refit(WATER_HEX_RADIUS)
+		await _settle()
+		await _save("V8_water_fow_on")
+		_map.set_fow_enabled(false)
+
+	if _want("6/V10"):
+		# --- state 6 (V10): the shipped shoreline profile, on the ragged coast (full frame + close-up) ---
+		_map.display_snapshot(_snapshot_coast())
+		await _refit(WATER_HEX_RADIUS)
+		await _settle()
+		await _save(V10_SHORE_NAME)
+		# Re-settle: a second get_image() in the same frame as the full-frame save reads back a stale viewport.
+		await _settle()
+		await _save_crop(
+			"%s_closeup" % V10_SHORE_NAME, V10_SHORE_CROP_COL, V10_SHORE_CROP_ROW, V10_SHORE_CROP_RADII
+		)
+
+		# The same coast against a DARK land biome — prairie's tan hides how far the sand reaches inland.
+		_map.display_snapshot(_snapshot_coast(V10_DARK_LAND_ID))
+		await _refit(WATER_HEX_RADIUS)
+		await _settle()
+		await _save(V10_SHORE_DARK_NAME)
+		await _settle()
+		await _save_crop(
+			"%s_closeup" % V10_SHORE_DARK_NAME,
 			V10_SHORE_CROP_COL,
 			V10_SHORE_CROP_ROW,
 			V10_SHORE_CROP_RADII
 		)
 
-	# --- state 8 (W): the FoW hex-step, BEFORE vs AFTER the boundary softening (see the const block) ---
-	await _render_fow_softness_frames()
+		# A/B: the rejected sand-on-both-sides close-up (left in OUT_DIR by the previous shader) vs the shipped one.
+		await _save_contact_sheet(
+			[V10_REJECTED_NAME, "%s_closeup" % V10_SHORE_NAME],
+			["REJECTED: sand on BOTH sides (double width)", "SHIPPED: sand LAND-only, surf washes over it"],
+			V10_AB_NAME
+		)
 
-	# --- state 9 (X): the dark-water report, on a verbatim window of REAL game terrain, FoW OFF ---
-	_map.set_fow_enabled(false)
-	_map.display_snapshot(_snapshot_real_water())
-	await _refit(WATER_HEX_RADIUS)
-	await _settle()
-	await _save(X_WATER_NAME)
-	await _settle()
-	await _save_crop(
-		"%s_closeup" % X_WATER_NAME, X_WATER_CROP_COL, X_WATER_CROP_ROW, X_WATER_CROP_RADII
-	)
+	if _want("7/V11"):
+		# --- state 7 (V11): the surf-reach / wisp sweep, on the DARK-land coast already displayed ---
+		for variant: Dictionary in V11_SHORE_VARIANTS:
+			await _render_variant(
+				_shore_sweep_overrides(variant),
+				variant["name"],
+				V10_SHORE_CROP_COL,
+				V10_SHORE_CROP_ROW,
+				V10_SHORE_CROP_RADII
+			)
 
-	# --- state 10 (L): the per-terrain shore profile on a SMALL inland sea (see the const block) ---
-	_map.display_snapshot(_snapshot_lake())
-	await _refit(WATER_HEX_RADIUS)
-	for variant: Dictionary in LAKE_VARIANTS:
-		await _render_lake_variant(variant)
-	_restore_lake_shore_profile()
+	if _want("8/W"):
+		# --- state 8 (W): the FoW hex-step, BEFORE vs AFTER the boundary softening (see the const block) ---
+		await _render_fow_softness_frames()
 
-	# --- state 11 (H): rolling_hills cut off at the hex edge (see the const block) ---
-	await _render_hills_state()
+	if _want("9/X"):
+		# --- state 9 (X): the dark-water report, on a verbatim window of REAL game terrain, FoW OFF ---
+		_map.set_fow_enabled(false)
+		_map.display_snapshot(_snapshot_real_water())
+		await _refit(WATER_HEX_RADIUS)
+		await _settle()
+		await _save(X_WATER_NAME)
+		await _settle()
+		await _save_crop(
+			"%s_closeup" % X_WATER_NAME, X_WATER_CROP_COL, X_WATER_CROP_ROW, X_WATER_CROP_RADII
+		)
 
-	# --- state 12 (R): the rugged-gate sweep — every rugged biome, isolated, gate ON (see the const block) ---
-	await _render_rugged_sweep()
+	if _want("10/L"):
+		# --- state 10 (L): the per-terrain shore profile on a SMALL inland sea (see the const block) ---
+		_map.display_snapshot(_snapshot_lake())
+		await _refit(WATER_HEX_RADIUS)
+		for variant: Dictionary in LAKE_VARIANTS:
+			await _render_lake_variant(variant)
+		_restore_lake_shore_profile()
 
-	# --- state 13 (S): the peak cast-shadow hexagons (see the const block) ---
-	await _render_peak_shadow_state()
+	if _want("11/H"):
+		# --- state 11 (H): rolling_hills cut off at the hex edge (see the const block) ---
+		await _render_hills_state()
+
+	if _want("12/R"):
+		# --- state 12 (R): the rugged-gate sweep — every rugged biome, isolated, gate ON (see the const block) ---
+		await _render_rugged_sweep()
+
+	if _want("13/S"):
+		# --- state 13 (S): the peak cast-shadow hexagons (see the const block) ---
+		await _render_peak_shadow_state()
+
+	if _want("14/G"):
+		# --- state 14 (G): the screenshot's real neighbourhood, rugged gate ON (see the const block) ---
+		await _render_neighbourhood_state()
 
 	get_tree().quit()
+
+
+func _want(state: String) -> bool:
+	## State filter (`-- --only=G`, or a comma list). A state's key is "<number>/<letter>" — either token
+	## selects it. No filter = every state, so an unfiltered run is exactly what it always was.
+	if _only.is_empty():
+		return true
+	for token: String in state.split("/"):
+		if _only.has(token):
+			return true
+	return false
+
+
+func _parse_only() -> void:
+	for arg: String in OS.get_cmdline_user_args():
+		if arg.begins_with(ONLY_ARG_PREFIX):
+			for token: String in arg.substr(ONLY_ARG_PREFIX.length()).split(",", false):
+				_only.append(token.strip_edges())
+	if not _only.is_empty():
+		print("blend_probe: rendering ONLY states ", _only)
 
 
 func _override_config(overrides: Dictionary) -> Array:
@@ -754,6 +871,78 @@ func _snapshot_peak_shadow() -> Dictionary:
 		arr[hex.y * S_GRID_W + hex.x] = S_MASSIF_ID
 	arr[S_ISO_HEX.y * S_GRID_W + S_ISO_HEX.x] = S_ISO_ID
 	return _snapshot(arr, S_GRID_W, S_GRID_H)
+
+
+func _render_neighbourhood_state() -> void:
+	## The screenshot's neighbourhood, with the SHIPPED config (rugged gate ON) — the frame the "hills STILL
+	## have hard straight edges" report has to be reproduced on. Three frames discriminate the hypotheses:
+	##   G_before    — shipped: does the hard edge show at all?
+	##   G_no_peaks  — the peak pass skipped: if the hard edge VANISHES, the base blend is innocent and the
+	##                 PEAK OVERLAY draws it (hypothesis B); if it SURVIVES, the base blend is too narrow (A).
+	##   G_peaks_only— the amplified before−no_peaks diff: the peak pass's exact footprint, so the abrupt
+	##                 texture switch (if any) can be located to the pixel.
+	_map.set_fow_enabled(false)
+	_map._show_grid_lines = false   # a drawn hexagon would answer the very question under test
+	_map.display_snapshot(_snapshot_neighbourhood())
+	await _refit(G_HEX_RADIUS)
+
+	await _render_neighbourhood_variant({}, G_BEFORE_NAME)
+	await _render_neighbourhood_variant(_hills_peaks_off_overrides(), G_NO_PEAKS_NAME)
+	# The cast shadow OFF, peaks still on: the shadow's occlusion taps read ONE peak layer (the nearest), so
+	# they step across a relief↔relief edge even when the art itself cross-fades. This frame is how a residual
+	# 1px line ON the hex edge is attributed to the shadow rather than to the art.
+	await _render_neighbourhood_variant(
+		_peak_overrides({"shadow_strength": S_NO_SHADOW_STRENGTH}), G_NO_SHADOW_NAME
+	)
+	for suffix: String in ["", "_peakpeak", "_sameelev", "_canyon", "_lake", "_iso", "_iso_alpine"]:
+		_save_diff(
+			"%s%s" % [G_BEFORE_NAME, suffix],
+			"%s%s" % [G_NO_PEAKS_NAME, suffix],
+			"%s%s" % [G_PEAKS_ONLY_NAME, suffix]
+		)
+
+
+func _render_neighbourhood_variant(overrides: Dictionary, name: String) -> void:
+	## One neighbourhood frame + the six seam crops it exists for (native res).
+	var token: Array = _override_config(overrides)
+	# _refit, not a bare _fit_map_to_view: the WM's deferred MAXIMIZE can land BETWEEN variants (it blew the
+	# second frame of this state up to the monitor's 5120×1410, which then failed the pixel-diff on a size
+	# mismatch). _refit re-pins the canvas, waits for it, and re-asserts the radius every frame is judged at.
+	await _refit(G_HEX_RADIUS)
+	await _save(name)
+	for crop: Array in [
+		["_peakpeak", G_CROP_PEAKPEAK, G_CROP_RADII],
+		["_sameelev", G_CROP_SAMEELEV, G_CROP_RADII],
+		["_canyon", G_CROP_CANYON, G_CROP_RADII],
+		["_lake", G_CROP_LAKE, G_CROP_RADII],
+		["_iso", G_CROP_ISO, G_ISO_CROP_RADII],
+		["_iso_alpine", G_CROP_ISO_ALPINE, G_ISO_CROP_RADII],
+	]:
+		# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+		await _settle()
+		var hex: Vector2i = crop[1]
+		await _save_crop("%s%s" % [name, crop[0]], hex.x, hex.y, float(crop[2]))
+	_restore_config(token)
+
+
+func _snapshot_neighbourhood() -> Dictionary:
+	## The screenshot's id map, plus the elevation channel the peak pass needs (see G_ELEVATION_BY_ID).
+	var arr: Array = []
+	arr.resize(G_GRID_W * G_GRID_H)
+	var elev := PackedFloat32Array()
+	elev.resize(G_GRID_W * G_GRID_H)
+	for y in range(G_GRID_H):
+		for x in range(G_GRID_W):
+			var tid: int = int(G_IDS[y][x])
+			arr[y * G_GRID_W + x] = tid
+			elev[y * G_GRID_W + x] = float(G_ELEVATION_BY_ID.get(tid, G_ELEVATION_DEFAULT))
+	var snap: Dictionary = _snapshot(arr, G_GRID_W, G_GRID_H)
+	var overlays: Dictionary = snap["overlays"]
+	var channels: Dictionary = overlays.get("channels", {})
+	channels["elevation"] = {"raw": elev, "normalized": elev, "label": "Elevation"}
+	overlays["channels"] = channels
+	overlays["elevation_sea_level"] = G_SEA_LEVEL
+	return snap
 
 
 func _render_hills_state() -> void:
@@ -1142,15 +1331,58 @@ func _snapshot(
 
 
 func _settle() -> void:
+	await _ensure_canvas()
 	await get_tree().process_frame
 	RenderingServer.force_draw()
 	await get_tree().process_frame
 
 
+func _ensure_canvas() -> void:
+	## Hold the window at the pinned 1:1 canvas, and WAIT for the WM to honour it, before anything is measured
+	## or captured. project.godot opens MAXIMIZED and macOS applies (and RE-applies) that asynchronously, many
+	## frames in — a fixed pair of process_frames in _ready is a RACE, and it does not stay won:
+	##  · fitted while still maximized → r ≈ 154, i.e. 2× the game's 75, and every judgement made on that frame
+	##    is worthless (the blend look is radius-relative). This is the harness's cardinal sin.
+	##  · re-maximized BETWEEN two frames of one state → they come out at different resolutions and the
+	##    pixel-diff dies on a size mismatch.
+	##  · re-maximized DURING a crop sequence → the captured image is the monitor's while the VIEWPORT still
+	##    reports the pinned 1920×1080 (content_scale_size pins the viewport, so the viewport rect CANNOT see
+	##    the maximize — only get_window().size can), so _save_crop's map-px → image-px scale is wrong and the
+	##    crop lands off-frame (it clamped to a 686×1 sliver).
+	## Hence: check the WINDOW, re-pin, and give the WM frames to comply.
+	for _i in range(CANVAS_PIN_MAX_FRAMES):
+		if get_window().size == CANVAS_SIZE and get_window().mode == Window.MODE_WINDOWED:
+			return
+		_pin_canvas(get_window())
+		await get_tree().process_frame
+
+
+func _capture() -> Image:
+	## The viewport image, GUARANTEED to be the pinned canvas (or an integer HiDPI multiple of it). The WM's
+	## deferred maximize can resize the RENDER TARGET while the viewport still reports the pinned size (see
+	## _ensure_canvas), so a raw get_image() can hand back a monitor-sized, differently-proportioned frame:
+	## every crop then lands off-target and every pixel-diff dies on a size mismatch. Re-pin and re-draw until
+	## the captured geometry is the canvas's, then give up loudly rather than silently saving a bad frame.
+	for _i in range(CANVAS_PIN_MAX_FRAMES):
+		var image := get_viewport().get_texture().get_image()
+		if image == null:
+			push_warning("blend_probe: null image (dummy renderer?) — run without --headless")
+			return null
+		var w := image.get_width()
+		var h := image.get_height()
+		if w % CANVAS_SIZE.x == 0 and h % CANVAS_SIZE.y == 0 and w / CANVAS_SIZE.x == h / CANVAS_SIZE.y:
+			return image
+		_pin_canvas(get_window())
+		await get_tree().process_frame
+		RenderingServer.force_draw()
+		await get_tree().process_frame
+	push_error("blend_probe: viewport never came back to the pinned %s canvas" % CANVAS_SIZE)
+	return null
+
+
 func _save(name: String) -> void:
-	var image := get_viewport().get_texture().get_image()
+	var image: Image = await _capture()
 	if image == null:
-		push_warning("blend_probe: null image (dummy renderer?) — run without --headless")
 		return
 	var err := image.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
@@ -1166,9 +1398,8 @@ func _save_seam_crop(name: String) -> void:
 
 func _save_crop(name: String, col: int, row: int, radii: float) -> void:
 	## Native-resolution crop centred on a hex (no rescale — the pixels are the game's).
-	var image := get_viewport().get_texture().get_image()
+	var image: Image = await _capture()
 	if image == null:
-		push_warning("blend_probe: null image (dummy renderer?) — run without --headless")
 		return
 	var radius: float = _map.last_hex_radius
 	var center: Vector2 = _map._hex_center(col, row, radius, _map.last_origin)
