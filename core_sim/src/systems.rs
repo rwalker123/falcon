@@ -27,7 +27,8 @@ use crate::{
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
     demographics_config::{DemographicsConfig, DemographicsConfigHandle, DemographicsConsumption},
-    fauna::{sustainable_yield, EcologyPhase, Herd, HerdDensityMap, HerdRegistry},
+    expedition_config::ExpeditionConfig,
+    fauna::{self, sustainable_yield, EcologyPhase, Herd, HerdDensityMap, HerdRegistry},
     fauna_config::{FaunaConfig, FaunaConfigHandle},
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     forage::{forage_take, ForageRegistry},
@@ -35,7 +36,7 @@ use crate::{
     heightfield::{build_elevation_field, ElevationField},
     hydrology::HydrologyState,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
-    labor_config::LaborConfigHandle,
+    labor_config::{LaborConfig, LaborConfigHandle},
     mapgen::MountainType,
     mapgen::{build_bands, validate_bands, TerrainBand, WorldGenSeed},
     orders::{FactionId, FactionRegistry},
@@ -3927,8 +3928,10 @@ pub fn advance_expeditions(
             }
             ExpeditionPhase::Hunting => {
                 // Chase the herd and, when in reach, take a **productive** hunt's worth of biomass
-                // (`workers × per_worker_biomass_capacity`, floored per policy) → provisions up to the
-                // carry cap. Then, per policy, decide whether the trip is complete.
+                // (`workers × per_worker_biomass_capacity`, capped per policy) → provisions up to the
+                // carry cap. Then, per policy, decide whether the trip is complete. The
+                // trip-completion decision lives INSIDE the in-reach guard: a party still walking to
+                // its herd must never conclude the trip.
                 if let ExpeditionMission::Hunt { fauna_id, policy } = &mission {
                     if let Some(idx) = herds.herds.iter().position(|herd| herd.id == *fauna_id) {
                         let policy = *policy;
@@ -3941,53 +3944,71 @@ pub fn advance_expeditions(
                             grid_width,
                             wrap_horizontal,
                         ) <= cfg.hunt.reach_tiles;
-                        if in_reach {
-                            // Productive take: workers × per-hunter capacity biomass, never below the
-                            // policy's biomass floor. Eradicate carries no food (denial) — it only
-                            // depletes the herd.
-                            let floor = hunt_expedition_floor(
-                                policy,
-                                carrying_capacity,
-                                cfg.hunt.sustain_floor_fraction,
-                                fauna.ecology.collapse_fraction,
-                            );
-                            let provisions_per_biomass = fauna.hunt.provisions_per_biomass;
-                            // Conservation: a non-Eradicate party can only take the biomass it can
-                            // actually carry home. Cap the take at the biomass equivalent of the
-                            // remaining carry room (invert `provisions_per_biomass`), so the herd
-                            // loses exactly what the party keeps — no over-depletion of unhunted
-                            // biomass. Eradicate is uncapped (it's driving the herd extinct).
-                            let carry_room_biomass = if matches!(policy, FollowPolicy::Eradicate)
-                                || provisions_per_biomass <= 0.0
-                            {
+                        if !in_reach {
+                            // Still walking — chase the herd's live tile.
+                            commands
+                                .entity(entity)
+                                .insert(BandTravel { target: herd_pos });
+                            continue;
+                        }
+
+                        // Productive take: the shared `expedition_take_biomass` — workers ×
+                        // per-hunter capacity, capped by the policy's ceiling
+                        // (`hunt_expedition_ceiling`: Sustain takes the shared MSY *flow*, the
+                        // depleting policies take *stock* headroom down to their floor) and clamped
+                        // to the herd. The launch forecast and the exported ceiling resolve through
+                        // the SAME helper, so a preview can't quote a different ceiling than this
+                        // take. Eradicate carries no food (denial) — it only depletes the herd.
+                        let herd_biomass_before = herds.herds[idx].biomass;
+                        // Kept for the empty-pack diagnosis below (`<= 0` → the herd yields nothing
+                        // under this policy); the take itself goes through the shared helper.
+                        let policy_ceiling = hunt_expedition_ceiling(
+                            policy,
+                            herd_biomass_before,
+                            carrying_capacity,
+                            &fauna,
+                        );
+                        let provisions_per_biomass = fauna.hunt.provisions_per_biomass;
+                        // Conservation: a delivering party can only take the biomass it can actually
+                        // carry home. Cap the take at the biomass equivalent of the remaining carry
+                        // room (invert `provisions_per_biomass`), so the herd loses exactly what the
+                        // party keeps — no over-depletion of unhunted biomass. Eradicate is uncapped
+                        // (it's driving the herd extinct).
+                        let carry_room_biomass =
+                            if !policy.delivers_food() || provisions_per_biomass <= 0.0 {
                                 f32::INFINITY
                             } else {
                                 (cap - cohort.stores.get(FOOD)).max(scalar_zero()).to_f32()
                                     / provisions_per_biomass
                             };
-                            let herd = &mut herds.herds[idx];
-                            let worker_cap = workers as f32 * per_worker_biomass;
-                            let take_biomass = worker_cap
-                                .min((herd.biomass - floor).max(0.0))
-                                .min(carry_room_biomass);
-                            herd.biomass -= take_biomass;
-                            if !matches!(policy, FollowPolicy::Eradicate) {
-                                let carried = cohort.stores.get(FOOD);
-                                let room = (cap - carried).max(scalar_zero());
-                                let provisions =
-                                    scalar_from_f32(take_biomass * provisions_per_biomass);
-                                let added = provisions.min(room);
-                                if added > scalar_zero() {
-                                    cohort.stores.add(FOOD, added);
-                                }
+                        let herd = &mut herds.herds[idx];
+                        let take_biomass = expedition_take_biomass(
+                            workers,
+                            per_worker_biomass,
+                            policy,
+                            herd_biomass_before,
+                            carrying_capacity,
+                            &fauna,
+                        )
+                        .min(carry_room_biomass.max(0.0));
+                        herd.biomass -= take_biomass;
+                        if policy.delivers_food() {
+                            let carried = cohort.stores.get(FOOD);
+                            let room = (cap - carried).max(scalar_zero());
+                            let provisions = fauna::hunt_provisions(
+                                take_biomass,
+                                &fauna,
+                                EXPEDITION_OUTPUT_MULTIPLIER,
+                            );
+                            let added = provisions.min(room);
+                            if added > scalar_zero() {
+                                cohort.stores.add(FOOD, added);
                             }
                         }
 
-                        // Trip-completion + early-delivery decision.
+                        // Trip-completion + early-delivery decision (arrived parties only).
                         let carried = cohort.stores.get(FOOD);
                         let full = carried >= cap;
-                        let herd_biomass = herds.herds[idx].biomass;
-                        let sustain_floor = cfg.hunt.sustain_floor_fraction * carrying_capacity;
                         let min_deliver = scalar_from_f32(
                             workers as f32
                                 * cfg.hunt.per_worker_carry
@@ -4007,13 +4028,13 @@ pub fn advance_expeditions(
                         let near_band_gate = herd_near_band && carried >= min_deliver;
 
                         // `done` = deliver then fold back + despawn (one trip); `relaunch` = deliver
-                        // then resume Hunting (Market's repeated trips).
+                        // then resume Hunting (Market's repeated trips). Sustain is a *flow* skim
+                        // now, so — like Surplus — it ends on a full pack or a worthwhile near-band
+                        // delivery (or a recall / a lost herd), never on a stock line.
                         let (done, relaunch) = match policy {
-                            FollowPolicy::Sustain => (
-                                herd_biomass <= sustain_floor || full || near_band_gate,
-                                false,
-                            ),
-                            FollowPolicy::Surplus => (full || near_band_gate, false),
+                            FollowPolicy::Sustain | FollowPolicy::Surplus => {
+                                (full || near_band_gate, false)
+                            }
                             FollowPolicy::Market => (false, full || near_band_gate),
                             // Eradicate never delivers — it grinds to extinction (→ lost-herd guard).
                             FollowPolicy::Eradicate => (false, false),
@@ -4022,16 +4043,40 @@ pub fn advance_expeditions(
                         if done {
                             // Deliver + fold back via the shared Returning arm (deposits carried food).
                             expedition.phase = ExpeditionPhase::Returning;
+                            // Never report a cheerful zero: an empty pack must name its cause.
+                            let (message, reason) = if carried > scalar_zero() {
+                                (
+                                    format!(
+                                        "Hunting expedition harvested {} provisions — returning home",
+                                        carried.to_i64_whole()
+                                    ),
+                                    "harvest_complete",
+                                )
+                            } else if policy_ceiling <= 0.0 {
+                                (
+                                    format!(
+                                        "Hunting expedition returning EMPTY — the {} yields no sustainable take (it is below its collapse threshold)",
+                                        fauna_id
+                                    ),
+                                    "empty_no_sustainable_take",
+                                )
+                            } else {
+                                (
+                                    format!(
+                                        "Hunting expedition returning EMPTY — no take was possible from the {}",
+                                        fauna_id
+                                    ),
+                                    "empty_no_take",
+                                )
+                            };
                             event_log.push(CommandEventEntry::new(
                                 current_turn,
                                 CommandEventKind::Hunt,
                                 faction,
-                                format!(
-                                    "Hunting expedition harvested {} provisions — returning home",
-                                    carried.to_i64_whole()
-                                ),
+                                message,
                                 Some(format!(
-                                    "status=harvest_complete policy={} expedition={}",
+                                    "status={} policy={} expedition={}",
+                                    reason,
                                     policy.as_str(),
                                     entity.to_bits()
                                 )),
@@ -4087,33 +4132,107 @@ pub fn advance_expeditions(
     }
 }
 
+/// A hunting expedition's take applies **no** productivity multiplier: a detached party is not a
+/// band, so it carries no morale/discontent output modifier (unlike the band Hunt arm, which passes
+/// `output_multiplier(cohort, ..)`). Named so the forecast and the take can't disagree.
+const EXPEDITION_OUTPUT_MULTIPLIER: f32 = 1.0;
+
+/// A hunting expedition's per-turn **biomass take ceiling**, by policy — the one place the two take
+/// models meet, so a policy can never pick up the wrong one.
+///
+/// **Sustain is a *flow***: it takes the shared MSY ceiling ([`fauna::hunt_policy_ceiling`]) — the
+/// same take a resident band's Hunt arm makes from the same herd state, so "Sustain" means one thing
+/// across the sim. It is **not** a stock target: the skim equals regrowth, so the herd holds steady
+/// and no floor is ever needed (or crossed).
+///
+/// The **depleting** policies are instead *stock* headroom down to a floor
+/// (`docs/plan_exploration_and_sites.md` §2b): **Surplus/Market** stop at the ecology collapse/Allee
+/// threshold (`collapse_fraction × carrying_capacity` — draw toward but not below it, so overhunting
+/// can't directly trigger the irreversible crash); **Eradicate** has no floor (drives extinction).
+fn hunt_expedition_ceiling(
+    policy: FollowPolicy,
+    biomass: f32,
+    carrying_capacity: f32,
+    fauna: &FaunaConfig,
+) -> f32 {
+    let floor = match policy {
+        // A flow, not a stock target — defer to the shared per-policy ceiling.
+        FollowPolicy::Sustain => {
+            return fauna::hunt_policy_ceiling(policy, biomass, carrying_capacity, fauna)
+        }
+        FollowPolicy::Surplus | FollowPolicy::Market => {
+            fauna.ecology.collapse_fraction * carrying_capacity
+        }
+        FollowPolicy::Eradicate => 0.0,
+    };
+    (biomass - floor).max(0.0)
+}
+
+/// **THE** expedition's per-turn take, in *biomass*, before carry room: the party's throughput capped
+/// by [`hunt_expedition_ceiling`] and clamped to what the herd actually has. The `ExpeditionPhase::
+/// Hunting` arm, the launch forecast, and the exported ceiling all resolve through this one function
+/// (or its provisions wrappers below), so a preview can never quote a different ceiling than the take
+/// — the bug that made a Surplus trip read ~34 turns when it really filled in ~5.
+fn expedition_take_biomass(
+    workers: u32,
+    per_worker_biomass_capacity: f32,
+    policy: FollowPolicy,
+    biomass: f32,
+    carrying_capacity: f32,
+    fauna: &FaunaConfig,
+) -> f32 {
+    let ceiling = hunt_expedition_ceiling(policy, biomass, carrying_capacity, fauna);
+    (workers as f32 * per_worker_biomass_capacity)
+        .min(ceiling)
+        .max(0.0)
+        .clamp(0.0, biomass.max(0.0))
+}
+
+/// The **provisions a hunting party actually lands in its larder per turn** at a herd's current state
+/// — the real take ([`expedition_take_biomass`] → [`fauna::hunt_provisions`], no output multiplier),
+/// ignoring only carry room (which bites solely on the final partial turn, and `ceil()` already
+/// accounts for that). `0` for a policy that [`FollowPolicy::delivers_food`] says carries nothing
+/// home (Eradicate — denial). This is what the client's pre-launch readout is pinned to
+/// (`core_sim/tests/expedition_hunt.rs`).
+pub fn expedition_take_provisions(
+    workers: u32,
+    policy: FollowPolicy,
+    biomass: f32,
+    carrying_capacity: f32,
+    fauna: &FaunaConfig,
+    labor: &LaborConfig,
+) -> f32 {
+    if !policy.delivers_food() {
+        return 0.0;
+    }
+    let take = expedition_take_biomass(
+        workers,
+        labor.hunt.per_worker_biomass_capacity,
+        policy,
+        biomass,
+        carrying_capacity,
+        fauna,
+    );
+    fauna::hunt_provisions(take, fauna, EXPEDITION_OUTPUT_MULTIPLIER).to_f32()
+}
+
 /// The shared **"take food from a nearby source"** primitive (`docs/plan_exploration_and_sites.md`
-/// §2b). Resolves the per-policy ecology ceiling, caps it by the hunting group's throughput
-/// (`workers × per_worker_biomass_capacity`), clamps to the herd's biomass, **subtracts it from the
-/// herd**, and converts the take to provisions (× the caller's productivity `output_multiplier`),
-/// returning the provisions taken. One code path for three callers: the band Hunt labor
+/// §2b). Resolves the per-policy take ceiling ([`fauna::hunt_policy_ceiling`] — the single source),
+/// caps it by the hunting group's throughput (`workers × per_worker_biomass_capacity`), clamps to
+/// the herd's biomass, **subtracts it from the herd**, and converts the take to provisions
+/// ([`fauna::hunt_provisions`], × the caller's productivity `output_multiplier`), returning the
+/// provisions taken. One code path for three callers: the band Hunt labor
 /// (`advance_labor_allocation`, which additionally credits trade goods + husbandry from the same
 /// take — it reads `herd.biomass` before/after for the raw biomass amount), the hunting expedition,
 /// and the scout's opportunistic replenish (`advance_expeditions`, `output_multiplier = 1.0`).
-/// The biomass floor a hunting expedition's productive take won't cross, per policy
-/// (`docs/plan_exploration_and_sites.md` §2b): **Sustain** stops at `sustain_floor_fraction ×
-/// carrying_capacity` (herd left robust); **Surplus/Market** stop at the ecology collapse/Allee
-/// threshold (`collapse_fraction × carrying_capacity` — draw toward but not below it, so overhunting
-/// can't directly trigger the irreversible crash); **Eradicate** has no floor (drives extinction).
-fn hunt_expedition_floor(
-    policy: FollowPolicy,
-    carrying_capacity: f32,
-    sustain_floor_fraction: f32,
-    collapse_fraction: f32,
-) -> f32 {
-    match policy {
-        FollowPolicy::Sustain => sustain_floor_fraction * carrying_capacity,
-        FollowPolicy::Surplus | FollowPolicy::Market => collapse_fraction * carrying_capacity,
-        FollowPolicy::Eradicate => 0.0,
-    }
-}
-
-pub(crate) fn hunt_take(
+///
+/// A resident band's take (`carry_room_biomass = f32::INFINITY`) is reproducible from the snapshot
+/// alone — `min(workers × huntPerWorkerProvisions, huntPolicyCeilings[policy]) × outputMultiplier` —
+/// because the biomass→provisions conversion and the multiplier are linear and factor out of the
+/// `min`, and the exported ceiling is biomass-clamped exactly as the take is
+/// ([`hunt_ceiling_provisions`]). That is the client's local-hunt yield preview; it is pinned to
+/// this function by `core_sim/tests/expedition_hunt.rs`.
+pub fn hunt_take(
     herd: &mut Herd,
     workers: u32,
     policy: FollowPolicy,
@@ -4122,21 +4241,8 @@ pub(crate) fn hunt_take(
     output_multiplier: f32,
     carry_room_biomass: f32,
 ) -> Scalar {
-    let ecology = &fauna.ecology;
-    let follow = &fauna.follow;
-    let market = &fauna.market;
-    let hunt = &fauna.hunt;
-    // Per-policy ecology ceiling: Sustain = one turn's net regrowth (a collapsing group gives
-    // nothing), Surplus = that × multiplier, Market = a commercial share, Eradicate = max take.
-    let policy_ceiling = match policy {
-        FollowPolicy::Sustain => sustainable_yield(herd.biomass, herd.carrying_capacity, ecology),
-        FollowPolicy::Surplus => {
-            sustainable_yield(herd.biomass, herd.carrying_capacity, ecology)
-                * follow.surplus_multiplier
-        }
-        FollowPolicy::Market => market.take_fraction * herd.biomass,
-        FollowPolicy::Eradicate => hunt.take_from(herd.biomass),
-    };
+    let policy_ceiling =
+        fauna::hunt_policy_ceiling(policy, herd.biomass, herd.carrying_capacity, fauna);
     // The hunting group's throughput caps the take; below the Sustain ceiling the herd nets growth.
     // `carry_room_biomass` additionally caps the take at the biomass the caller can carry home
     // (conservation — the herd loses only what's kept); the band Hunt passes `f32::INFINITY`
@@ -4148,8 +4254,181 @@ pub(crate) fn hunt_take(
         .clamp(0.0, herd.biomass)
         .min(carry_room_biomass.max(0.0));
     herd.biomass -= take;
-    // FOOD income is fully fractional (a few hunters may yield < 1/turn).
-    scalar_from_f32(take * hunt.provisions_per_biomass * output_multiplier)
+    fauna::hunt_provisions(take, fauna, output_multiplier)
+}
+
+/// What a hunting party can expect from a herd under a policy, computed **at launch** so the player
+/// sees the trip's economics before committing workers (`handle_send_hunt_expedition`), and exported
+/// per herd × policy × party size in the snapshot so the outfit UI can show it *before* the commit.
+/// Produced by [`hunt_trip_forecast`], a **bounded forward simulation** of the trip.
+pub struct HuntTripForecast {
+    /// Turns of hunting (once in reach — travel is **not** counted) before the party's carry cap is
+    /// full. `None` = it does not fill within `hunt.forecast_horizon_turns`, which covers three
+    /// honestly-different cases the caller distinguishes via the other two fields: the mission
+    /// **delivers no food at all** (`delivers_food == false` — Eradicate/denial), the herd yields
+    /// **nothing** under this policy (`first_turn_provisions == 0` — a collapsing sub-Allee herd),
+    /// or the trip is simply *too long to be worth a number* (a small herd's regrowth trickle).
+    pub turns_to_fill: Option<u32>,
+    /// Does this mission bring food home? `false` for Eradicate ([`FollowPolicy::delivers_food`]).
+    pub delivers_food: bool,
+    /// Provisions landed on the **first** hunting turn — the trip's opening rate, and the "can this
+    /// herd give me anything at all?" signal (`0` = no take is possible under this policy). It is
+    /// deliberately *not* a whole-trip rate: under Surplus/Market on a small herd the party strips
+    /// the stock headroom in a turn or two and then crawls at the regrowth trickle, so no single
+    /// per-turn number describes the trip — which is exactly why the forecast simulates.
+    pub first_turn_provisions: f32,
+}
+
+/// The worker-**independent** per-policy hunt take ceiling for a herd's *current* state, converted
+/// to **provisions/turn** ([`fauna::hunt_policy_ceiling`] + [`fauna::hunt_provisions`], the single
+/// sources — no formula gets a second copy). `0` for a collapsing (sub-Allee) herd under
+/// Sustain/Surplus: it yields no sustainable take, so a party can never fill.
+///
+/// **Clamped to the herd's remaining `biomass`**, mirroring [`hunt_take`]'s own
+/// `.clamp(0.0, herd.biomass)`: on a nearly-extinct herd a policy ceiling (e.g. Surplus = MSY ×
+/// `surplus_multiplier`, or Market's biomass share) can exceed what is actually left, and an
+/// unclamped ceiling would over-state the rate and under-state turns-to-fill. With the clamp this
+/// is **the true per-turn maximum take**, in provisions — nothing is lost (the take clamps anyway),
+/// and the exported number means exactly what it says.
+///
+/// This is the **BAND / local-hunt** ceiling ([`hunt_take`]'s). The expedition has a *different*
+/// ceiling for the depleting policies — see [`expedition_ceiling_provisions`]. Exported per-herd in
+/// the snapshot as `HerdTelemetryState.huntPolicyCeilings[].provisionsPerTurn` so the client can
+/// render a resident band's local-hunt yield preview as pure arithmetic over sim-computed numbers,
+/// **without** re-implementing the ecology model. Pinned by `core_sim/tests/expedition_hunt.rs`.
+pub fn hunt_ceiling_provisions(
+    policy: FollowPolicy,
+    biomass: f32,
+    carrying_capacity: f32,
+    fauna: &FaunaConfig,
+) -> f32 {
+    let ceiling = fauna::hunt_policy_ceiling(policy, biomass, carrying_capacity, fauna)
+        .min(biomass)
+        .max(0.0);
+    fauna::hunt_provisions(ceiling, fauna, EXPEDITION_OUTPUT_MULTIPLIER).to_f32()
+}
+
+/// One hunter's per-turn **provisions** throughput: their biomass take capacity converted through
+/// the same linear biomass→provisions rate the take uses. Worker-scaled (× party size) it is the
+/// party's uncapped rate — the other half of the forecast, exported per-cohort in the snapshot
+/// (`PopulationCohortState.huntPerWorkerProvisions`).
+///
+/// **Snapped to the `Scalar` grid** the larder actually accumulates on — `hunt_provisions` quantizes
+/// every take through `Scalar::from_f32`, so the honest per-worker constant is the *quantized* one.
+/// The raw `f32` product runs a hair low (40 × 0.02 = 3.1999999, not 3.2, once scaled by a
+/// 4-worker party), and that sliver is enough to turn an exactly-divisible trip into a phantom extra
+/// turn in any `ceil()` downstream — including the client's, which multiplies this constant by the
+/// party size. Snapping here keeps the exported constant on the same grid as the sim's reality.
+pub fn hunt_per_worker_provisions(labor: &LaborConfig, fauna: &FaunaConfig) -> f32 {
+    scalar_from_f32(
+        labor.hunt.per_worker_biomass_capacity
+            * fauna.hunt.provisions_per_biomass
+            * EXPEDITION_OUTPUT_MULTIPLIER,
+    )
+    .to_f32()
+}
+
+/// The first hunting turn: the forecast counts turns *in reach of the herd*, starting at 1 (the turn
+/// the party makes its first take). Travel is not counted — see [`hunt_trip_forecast`].
+const FIRST_HUNTING_TURN: u32 = 1;
+
+/// Forecast a hunting trip by **simulating it** — running the party's take forward turn by turn
+/// against the herd's own ecology, on the sim's arithmetic, until the pack is full or
+/// `hunt.forecast_horizon_turns` is hit. It does **not** divide a carry cap by a rate.
+///
+/// *Why not the closed form?* Because there is no single rate. The old forecast divided the carry cap
+/// by one per-policy number, which is exact only when that number is a genuine per-turn **flow**
+/// (Sustain's MSY) or when the party is throughput-bound for the whole trip (Surplus/Market on a big
+/// herd). Under **Surplus/Market on a small herd it is a total *stock***: the party strips the
+/// headroom down to the collapse floor in a turn or two and then crawls at the herd's regrowth
+/// trickle. Dividing the cap by that stock read a rabbit warren as a **6-turn** trip when the truth
+/// was **48**. Simulating collapses both regimes into one honest answer, and there is no second copy
+/// of the model to drift: each simulated turn is the *same* pair of calls the live sim makes —
+/// [`fauna::regrow_biomass`] (as `advance_herds` does in Logistics) then [`expedition_take_biomass`]
+/// (as the `ExpeditionPhase::Hunting` arm does in Population), in that order.
+///
+/// **The larder accumulates on the fixed-point `Scalar` grid**, exactly as the real one does
+/// (`hunt_provisions` quantizes every take): counting in `f32` instead is what once invented a
+/// phantom extra turn on an evenly-dividing trip (a 4-hunter Surplus pack is `16 / 3.2` = exactly 5
+/// turns, but the unquantized rate 3.1999999 made `ceil()` read 5.0000005 → **6**).
+///
+/// **Travel is not part of this estimate.** It assumes the party is already in reach of the herd and
+/// stationary, so the number means "turns spent *hunting* once you arrive" — the herd's position is
+/// never advanced. Eradicate delivers no food at all, so it gets no ETA (`delivers_food = false`).
+/// Pinned to a real party run forward through the real systems by `core_sim/tests/expedition_hunt.rs`.
+pub fn hunt_trip_forecast(
+    workers: u32,
+    herd: &Herd,
+    policy: FollowPolicy,
+    fauna: &FaunaConfig,
+    labor: &LaborConfig,
+    expedition: &ExpeditionConfig,
+) -> HuntTripForecast {
+    let delivers_food = policy.delivers_food();
+    let cap = scalar_from_f32(workers as f32 * expedition.hunt.per_worker_carry);
+    // Denial carries nothing home, and an empty party has no pack to fill — either way a
+    // "turns to fill" number would be a lie.
+    if !delivers_food || cap <= scalar_zero() {
+        return HuntTripForecast {
+            turns_to_fill: None,
+            delivers_food,
+            first_turn_provisions: 0.0,
+        };
+    }
+
+    let provisions_per_biomass = fauna.hunt.provisions_per_biomass;
+    // The forecast runs on a private copy of the herd — the caller's live herd is never touched.
+    let mut quarry = herd.clone();
+    let mut larder = scalar_zero();
+    let mut first_turn_provisions = 0.0_f32;
+
+    for turn in 1..=expedition.hunt.forecast_horizon_turns {
+        // Logistics: the herd's ecology moves first (regrowth, or the depensation decline), exactly
+        // as `advance_herds` runs before the Population stage's take.
+        fauna::regrow_biomass(&mut quarry, &fauna.ecology);
+        if quarry.biomass <= fauna.ecology.extinction_floor * quarry.carrying_capacity {
+            // `advance_herds` would despawn it here — a lost herd, so the party never fills.
+            break;
+        }
+
+        // Population: the `Hunting` arm's take, through the same helper, capped by the carry room
+        // left in the pack (the arm converts the room back into biomass the same way).
+        let carry_room_biomass = if provisions_per_biomass <= 0.0 {
+            f32::INFINITY
+        } else {
+            (cap - larder).max(scalar_zero()).to_f32() / provisions_per_biomass
+        };
+        let take_biomass = expedition_take_biomass(
+            workers,
+            labor.hunt.per_worker_biomass_capacity,
+            policy,
+            quarry.biomass,
+            quarry.carrying_capacity,
+            fauna,
+        )
+        .min(carry_room_biomass.max(0.0));
+        quarry.biomass -= take_biomass;
+
+        let provisions = fauna::hunt_provisions(take_biomass, fauna, EXPEDITION_OUTPUT_MULTIPLIER);
+        let room = (cap - larder).max(scalar_zero());
+        larder += provisions.min(room);
+        if turn == FIRST_HUNTING_TURN {
+            first_turn_provisions = provisions.to_f32();
+        }
+        if larder >= cap {
+            return HuntTripForecast {
+                turns_to_fill: Some(turn),
+                delivers_food,
+                first_turn_provisions,
+            };
+        }
+    }
+
+    HuntTripForecast {
+        turns_to_fill: None,
+        delivers_food,
+        first_turn_provisions,
+    }
 }
 
 /// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired

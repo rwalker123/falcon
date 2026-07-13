@@ -9,8 +9,9 @@
     "per_worker_carry": 4.0,
     "reach_tiles": 1,
     "drop_off_within_tiles": 3,
-    "sustain_floor_fraction": 0.7,
-    "min_deliver_fraction": 0.5
+    "min_deliver_fraction": 0.5,
+    "viability_warn_turns": 20,
+    "forecast_horizon_turns": 60
   },
   "replenish": {
     "low_turns": 3,

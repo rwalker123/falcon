@@ -55,9 +55,11 @@ pub struct ExpeditionConfig {
 
 /// Hunting-expedition levers (`docs/plan_exploration_and_sites.md` §2b). A hunt party follows a
 /// migratory herd, takes a **productive** hunt's worth of biomass each turn (`workers ×
-/// per_worker_biomass_capacity`, floored per policy — see `advance_expeditions`), accumulates food up
-/// to a carry cap, and delivers it. The take **policy** is chosen per-expedition at launch (on the
-/// mission), not here.
+/// per_worker_biomass_capacity`, capped per policy — **Sustain** by the shared MSY *flow* ceiling
+/// (`fauna::hunt_policy_ceiling`, the same take a resident band's Hunt arm makes), the depleting
+/// policies by their *stock* headroom down to their floor; see `hunt_expedition_ceiling`),
+/// accumulates food up to a carry cap, and delivers it. The take **policy** is chosen
+/// per-expedition at launch (on the mission), not here.
 #[derive(Debug, Clone, Deserialize)]
 pub struct HuntExpeditionConfig {
     /// Carry cap = `party_workers × this` (provisions). Tuned so a party fills a cap in ~4–6 active
@@ -68,13 +70,25 @@ pub struct HuntExpeditionConfig {
     /// When the herd's circuit brings it within this hex distance of the home band, the party may
     /// flip to deliver early — but only with a worthwhile load (see `min_deliver_fraction`).
     pub drop_off_within_tiles: u32,
-    /// **Sustain** floor: the party takes the herd down only to `this × carrying_capacity`, leaving
-    /// it robust (default ~0.7). Surplus/Market instead floor at the ecology collapse threshold;
-    /// Eradicate has no floor (extinction).
-    pub sustain_floor_fraction: f32,
     /// Early-delivery gate: with the herd near the band (`drop_off_within_tiles`), only flip to
     /// deliver once `carried ≥ this × cap` (default 0.5) — fixes the empty-larder flip-flop.
     pub min_deliver_fraction: f32,
+    /// Viability threshold for the **launch forecast** (`hunt_trip_forecast`): a trip whose
+    /// estimated turns-to-fill exceeds this is flagged NOT VIABLE in the `ExpeditionSent` feed line
+    /// (it still launches — the player's call). Default **20** = 4× the throughput-implied trip
+    /// length, where that length is `per_worker_carry / (per_worker_biomass_capacity ×
+    /// provisions_per_biomass)` = `4.0 / (40 × 0.02)` = 5 turns — the turns any policy needs to fill
+    /// a pack at *full* hunter throughput. Beyond 4× that, the herd's sustainable yield (not the
+    /// hunters) is the binding constraint by a wide margin, and the trip is a trap.
+    pub viability_warn_turns: u32,
+    /// How far forward the launch forecast (`hunt_trip_forecast`) simulates the trip before giving
+    /// up and reporting "won't fill". Default **60**. Two reasons for a bound:
+    /// - *Information*: `viability_warn_turns` is 20, so a trip past ~3× that is emphatically not
+    ///   viable and the exact turn count carries no information a player can act on — "won't fill"
+    ///   says everything.
+    /// - *Cost*: the forecast is exported per herd × policy × party size every snapshot, so the
+    ///   horizon bounds the per-snapshot work (`policies × max_party_size × this` turn-steps/herd).
+    pub forecast_horizon_turns: u32,
 }
 
 /// Scout opportunistic-replenish levers: the scout's own use of the shared `hunt_take` primitive.
@@ -225,11 +239,9 @@ mod tests {
         assert!(config.provision_upkeep_per_worker > 0.0);
         assert!(config.hunt.per_worker_carry > 0.0);
         assert!(config.hunt.reach_tiles >= 1);
-        // Sustain floor must be a sensible fraction; min-deliver gate in (0, 1].
-        assert!(
-            config.hunt.sustain_floor_fraction > 0.0 && config.hunt.sustain_floor_fraction < 1.0
-        );
+        // Min-deliver gate in (0, 1]; the viability warning needs at least one turn to warn about.
         assert!(config.hunt.min_deliver_fraction > 0.0 && config.hunt.min_deliver_fraction <= 1.0);
+        assert!(config.hunt.viability_warn_turns >= 1);
         assert!(config.replenish.low_turns >= 1);
     }
 

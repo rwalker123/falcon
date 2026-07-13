@@ -702,6 +702,13 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     band-picker, then a **distance-aware** "Assign hunters" **compose** control — a `−/+` worker/party
     count (`_hunt_assign_count`) + a sustain/surplus/market/eradicate **policy picker**
     (`_build_policy_picker`, `_hunt_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`). The
+    **local** branch renders `LOCAL_HUNT_POLICY_HINTS` under the picker (the band's real payoffs:
+    Sustain → the herd stays healthy AND, on a thriving herd, **builds husbandry toward livestock**;
+    Surplus → more food now, pushes settling; Market → sells the take as trade goods, "trade has little
+    effect yet" — deliberately not oversold; Eradicate → denial, no food/husbandry/trade). **These are
+    NOT the expedition hints** (`SEND_HUNT_POLICY_HINTS`): an expedition's Hunting arm credits **food
+    only** — no husbandry accrual, no trade goods (a known v1 gap, tracked server-side) — so the
+    expedition set promises neither, and the two sets must stay separate. The
     button + command switch on the **wrap-aware hex distance** from the **SELECTED band's** own tile
     to the herd vs that band's **`hunt_reach`** (= `work_range` + hunt leash, decoded as `hunt_reach`
     and flowed onto the marker): **within reach** → a `Hunters` stepper + **"Assign Local Hunt"** →
@@ -710,11 +717,39 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> <policy>` (emitted directly, no
     herd-targeting step — the herd is already selected). Every part of the decision (distance, reach,
     band-entity target) keys off the band the picker selects, explicitly threaded — never the faction's
-    default band. Distance uses Hud-local mirrors of MapView's odd-r `_hex_distance` /
+    default band. **Both branches show a LIVE forecast above the button** (everything — band, count,
+    policy, herd — is known at compose time, and the block re-renders on every stepper tick / policy
+    click, so it's live, not a confirmation; missing levers/ceilings → no line, panel otherwise
+    unchanged): the **expedition** branch renders the SAME turns-to-fill line as the targeting banner
+    (`_hunt_trip_forecast` → `_hunt_forecast_line_bbcode`, shared — the two entry points can't quote
+    different numbers) and gives the **button itself** the warning when the trip is a trap
+    (`_style_send_hunt_button`: WARN-amber `"armed"` + `Send Anyway (≈54 turns)` / `Send Anyway — party
+    returns empty` / the denial `Send (delivers no food)`; never disabled, never a confirm dialog — the
+    player can always send); the **local** branch has no carry cap, so turns-to-fill is meaningless and
+    it instead previews the **per-turn food yield** of the standing assignment
+    (`_local_hunt_preview_bbcode`: `min(workers × hunt_per_worker_provisions, band_ceiling(policy)) ×
+    output_multiplier` — the resident band applies its morale/discontent productivity modifier at
+    payout, an expedition does not), income-green `≈ +0.27 /turn · renewable`, or WARN-amber
+    `⚠ … — overdraws the herd` when the take exceeds the herd's Sustain ceiling (the shared
+    `_is_overdraw` test the allocation rows use). **The two branches read DIFFERENT herd fields**
+    (see "Hunting expedition" below): the expedition line is a pure LOOKUP into the sim's
+    forward-simulated `hunt_trip_estimates` (`HERD_TRIP_ESTIMATES_KEY`, zero client arithmetic — a
+    `carryCap / rate` division is WRONG for Surplus/Market), while the local line is arithmetic over
+    the band's flow ceiling `hunt_policy_ceilings` (`HERD_BAND_CEILINGS_KEY`, via `_hunt_take_rate` /
+    `_hunt_policy_ceiling`). The ecology/MSY model is NEVER re-derived client-side.
+    Distance uses Hud-local mirrors of MapView's odd-r `_hex_distance` /
     `_wrapped_col_delta`, fed grid width + wrap via `Hud.set_grid_dimensions` (Main forwards the
     snapshot `grid` key). Compose state re-seeds from current staffing when the selected herd changes.
     Covered by ui_preview states `herd_verbs` (local) / `herd_hunt_expedition` (single far band) /
-    `herd_hunt_band_near` + `herd_hunt_band_far` (two bands, one herd — picker flips local↔expedition).
+    `herd_hunt_band_near` + `herd_hunt_band_far` (two bands, one herd — picker flips local↔expedition),
+    plus the live-forecast states `herd_hunt_forecast_viable` / `herd_hunt_forecast_not_viable` /
+    `herd_hunt_forecast_surplus` (the SAME herd as not_viable, on Surplus: reads ≈6 turns off the
+    EXPEDITION ceiling — the regression test for the band-vs-expedition ceiling mixup) /
+    `herd_hunt_forecast_never_fills` / `herd_hunt_forecast_eradicate` (expedition branch: cyan line +
+    primary button; amber "Send Anyway (≈54 turns)"; red collapsed-herd "Send Anyway — party returns
+    empty"; amber denial "Send (delivers no food)") and `herd_hunt_local_sustain` /
+    `herd_hunt_local_overdraw` (local branch: green `≈ +0.27 /turn · renewable` vs amber `⚠ ≈ +0.54
+    /turn — overdraws the herd`).
   - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): the
     band-picker, then a sustain/surplus/market/eradicate **policy picker** (`_build_policy_picker`,
     `_forage_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`) with a **forage-appropriate**
@@ -743,6 +778,50 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   map (`MapView.herd_quick_hunt_requested` → `Main._on_map_herd_quick_hunt` → `Hud.quick_assign_hunters`)
   assigns the player band's idle workers to hunt that herd at Sustain — a no-op with a command-feed
   note when there are no idle workers (never silently nothing).
+- **Fog gate on live tile contents — "nothing here" ≠ "I can't see what's here"** (`MapView.gd` +
+  `Hud.gd`). Herd MARKERS were always Active-gated (`_draw_herd`), but the herd **lookup** wasn't:
+  `_herds_on_tile` matched by coordinate with no visibility test, so a fogged hex listed its herds in
+  the Occupants roster, let you target them for a hunt, and fed them into the trip forecast.
+  - **MapView (source of truth):** `_herds_on_tile` now early-returns on `not _is_tile_visible(col,row)`
+    — the SAME gate the renderer uses. It's the single chokepoint (roster / herd-selection click /
+    hunt-target click / forecast all read herds through `_tile_info_at` → `tile_info.herds`), so
+    "you can only hunt and forecast what you can see" is true by construction. Three sibling leaks
+    closed with it: `_herd_at_point` (double-click quick-hunt could hit an undrawn marker), the
+    `need == "herd"` targeting glow in `_draw_targeting` (it haloed every huntable herd, fogged ones
+    included — the halo WAS the leak), and the `selection_payload` re-resolve of `selected_herd_id`
+    (a selected herd that WALKS into fog kept streaming live biomass/ecology + a live forecast; it now
+    drops with its marker and the hex falls back to the tile card). **The server still exports every
+    herd unfiltered — a wire-level leak tracked separately — so this client gate is LOAD-BEARING, not
+    cosmetic. Never read `herds` by coordinate without it.**
+  - **Units — same rule, plus the ownership exception** (`_unit_hidden_by_fog`, the ONE definition):
+    `hidden == tile not currently visible AND the unit is not ours`. **Your own units are ALWAYS shown,
+    including on an Unexplored hex** — that exception is load-bearing, not a courtesy: the sim excludes
+    expeditions from fog reveal (`calculate_visibility` runs `Without<Expedition>` — discovery is
+    comm-range gated), so a scouting party ROUTINELY stands on an Unexplored tile, and a plain
+    visibility gate would erase your own expedition from the map exactly while you're using it. Applied
+    at all five leaks: **`_draw_primary_bands`** (had NO gate — foreign bands rendered straight through
+    the fog; the worst of them), `_units_on_tile` (roster/click/stack-cycling chokepoint),
+    `_unit_at_point` (marker hit-test), `_nearest_unit_sample` (leaked a hidden band's label *and* a
+    bearing on it into `tile_info`), and `refresh_selection_payload`'s selected-unit re-resolve (a
+    foreign band walking into fog kept streaming live state — now drops its selection, mirroring the
+    herd rule). Already-correct (left alone): everything player-scoped — `_draw_supply_links`,
+    `_selected_player_band`, the `need == "band"` targeting glow, band alerts, own work highlights.
+    Hud mirrors the exception in `_assemble_roster` (an unseen hex lists your own units, never foreign
+    ones, and no herds) and appends `OCCUPANTS_UNSEEN_OTHERS_HINT` ("Out of sight — you can't see
+    anything here but your own.") so a lone own-party row never implies the hex is otherwise empty.
+    ui_preview: `tile_sight_own_expedition` (the regression guard — own expedition on Unexplored still
+    listed + selectable + Move/Recall) / `tile_sight_foreign_hidden` / `tile_sight_foreign_visible`.
+  - **Hud (says the truth):** the Tile card leads with a **`Sight:` row** — `In sight` (SIGNAL cyan) /
+    `Remembered — not in sight now` / `Unexplored` (both INK_DIM; it states what you KNOW, so it never
+    borrows the WARN/DANGER palette) — via `_tile_sight_line` + `_sight_value_hex`. On an unseen hex,
+    `_tile_contents_unseen` (which re-reads MapView's `visibility_state` flag — NOT a second visibility
+    test) makes `_assemble_roster` list nothing, `_build_forage_assign_controls` offer nothing, and
+    `_render_occupants_unknown` replace the roster with the honest statement (`Occupants · out of sight`
+    + "You remember the ground here, but not what's on it now — bands and herds move. Scout it to see."
+    / "Nobody has been here…"). An EMPTY roster is a claim of emptiness the client can't back up, so it
+    is never rendered on a hex you can't see. Terrain rows stay (geography is remembered knowledge;
+    occupants are live state). ui_preview states `tile_sight_active` / `tile_sight_remembered` (fixture
+    deliberately carries a herd → proves it is NOT listed) / `tile_sight_unexplored`.
 - **Herd ecology readout** (`Hud.gd` `_herd_summary_lines`): the selection panel shows
   the group's `ecology_phase` (snapshot `HerdTelemetryState.ecologyPhase`) as an
   **Ecology** row — a neutral "Thriving", or a warned "⚠ Stressed" / "⚠ Collapsing"
@@ -1014,6 +1093,42 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `MapView._draw_targeting` glows huntable herds + reticles the hovered hex for `need == "herd"`.
   (4) `marker_field_guard` covers `expedition_target_herd` / `expedition_hunt_policy` /
   `expedition_carry_cap`. Recall is the unchanged `recall_expedition` (works for hunt parties too).
+  (5) **Pre-launch turns-to-fill forecast** (Sustain = maximum sustainable yield): Sustain is a small
+  per-turn *flow*, not a one-trip stock target, so a party filling its carry cap off a **small** herd
+  honestly takes a very long time (≈6 turns on a mammoth, ≈54 on red deer, effectively never on a
+  collapsing flock — for the same 4-worker party). The player must know **before** committing workers,
+  but the herd isn't chosen until the *targeting* step (the outfit block only picks party + policy), so
+  the forecast hangs off the **targeting banner**: while `_pending_send_hunt_expedition` is armed,
+  `Hud.show_tooltip` (already fed by `MapView.tile_hovered`) records the hovered hex in
+  `_hovered_tile_info`, and `_targeting_banner_bbcode` appends a second line from
+  `_hunt_forecast_bbcode` — cyan `<Herd> · ≈N turns to fill`, WARN-amber `⚠ … — too slow to be worth
+  sending` past the viability threshold, DANGER-red `⚠ <Herd> yields no sustainable take — the party
+  would return empty` when the ceiling is 0. The click still commits (information, not a gate).
+  **The client does ZERO arithmetic for an expedition's trip — it is a pure TABLE LOOKUP.** A band and
+  an expedition are different actors and read **different herd fields**; never one for the other:
+  - **Expedition → `HerdTelemetryState.huntTripEstimates`** (one entry per policy × party size),
+    decoded in `native/src/lib.rs` into `hunt_trip_estimates` on the herd dict, keyed
+    `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food}` (so it flows through
+    `tile_info.herds` untouched). `_hunt_trip_forecast` just looks it up: `delivers_food == false` →
+    **denial** (eradicate — "delivers no food", never an ETA; the SIM decides this, the client does not
+    infer it from the policy string); `turns_to_fill == 0` → **won't fill** within the sim's forecast
+    horizon; else the turns, flagged **not viable** when `> expeditionViabilityWarnTurns`. **Do not
+    re-derive this with a `carryCap / rate` division** — that closed form is *wrong* for Surplus/Market,
+    whose per-policy ceiling is a **stock**, not a flow: the party strips the headroom in a turn or two
+    and then crawls at the herd's regrowth trickle (it forecast **6** turns for a rabbit warren whose
+    simulated truth was **48**). The sim forward-simulates the trip and exports the answer.
+  - **Resident band → `huntPolicyCeilings`** (`provisionsPerTurn`, the herd's renewable **flow**),
+    decoded as `hunt_policy_ceilings`. This one IS pure client arithmetic, and the schema blesses it:
+    `min(workers × huntPerWorkerProvisions, ceiling) × outputMultiplier` (`_hunt_take_rate` →
+    `_local_hunt_preview_bbcode`) — but it must still never re-derive the ecology/MSY model.
+  Plus the global levers echoed on every cohort (`expeditionPerWorkerCarry` /
+  `huntPerWorkerProvisions` / `expeditionViabilityWarnTurns`, same idiom as `maxExpeditionPartySize`,
+  decoded + flowed onto the MapView unit marker + covered by `marker_field_guard`). Missing estimate /
+  levers (older snapshot) → no forecast line, banner unchanged.
+  `SEND_HUNT_POLICY_HINTS["sustain"]` was rewritten when Sustain became the MSY *flow* (it used to
+  promise "one conservative harvest"). ui_preview states `hunt_forecast_viable` /
+  `hunt_forecast_not_viable` / `hunt_forecast_never_fills` + `expedition_launch_policy_sustain` (dock
+  scrolled to the fold, so the hint is visible).
 - **Retired verbs (Early-Game Labor slice 3a):** the server now parses-but-ignores
   `follow_herd` / `scout` / `forage` / `hunt_fauna` / `hunt_game`. Every client control that
   emitted them was removed or repointed so nothing is silently dead: the map double-click

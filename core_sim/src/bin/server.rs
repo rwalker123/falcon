@@ -26,19 +26,20 @@ use core_sim::{
     ExpeditionPhase, LaborAllocation, LaborTarget, LocalStore, ResidentBand, StartProfileOverrides,
 };
 use core_sim::{
-    build_headless_app, recapture_snapshot_in_place, restore_world_from_snapshot, run_turn,
-    scalar_from_f32, AgentAssignment, CommandEventEntry, CommandEventKind, CommandEventLog,
-    CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
-    CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
-    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
-    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, EspionageAgentHandle,
-    EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
-    EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
-    FactionSecurityPolicies, FaunaConfigHandle, FogRevealLedger, FollowPolicy, GenerationId,
-    GenerationRegistry, HerdRegistry, InfluencerImpacts, InfluentialRoster, MapPresetsHandle,
-    PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams, Scalar,
-    SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig, SimulationConfigMetadata,
-    SimulationTick, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place,
+    restore_world_from_snapshot, run_turn, scalar_from_f32, AgentAssignment, CommandEventEntry,
+    CommandEventKind, CommandEventLog, CorruptionLedgers, CounterIntelBudgets,
+    CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
+    CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
+    CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
+    CrisisTelemetryConfigMetadata, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
+    EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate, EspionageRoster,
+    FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle,
+    FogRevealLedger, FollowPolicy, GenerationId, GenerationRegistry, HerdRegistry,
+    InfluencerImpacts, InfluentialRoster, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns,
+    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy,
+    SentimentAxisBias, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
+    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
     StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry,
     TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata,
@@ -1826,6 +1827,61 @@ fn handle_send_hunt_expedition(
         return;
     }
 
+    // Launch-time viability forecast — a bounded forward SIMULATION of the trip (`hunt_trip_forecast`),
+    // not a division. A Sustain party skims the herd's Maximum Sustainable Yield (a *flow*), and a
+    // Surplus/Market party eats *stock* headroom and then falls back to the regrowth trickle once it
+    // is gone, so filling a carry cap off a small herd can genuinely take dozens of turns. That is
+    // ecologically true, not a bug; the player must be told at launch rather than silently trapped,
+    // so the forecast rides the `ExpeditionSent` feed entry (it still launches either way).
+    let forecast = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let registry = app.world.resource::<HerdRegistry>();
+        registry
+            .find(&fauna_id)
+            .map(|herd| hunt_trip_forecast(party_workers, herd, policy, &fauna, &labor, &cfg))
+    };
+    let (viability_note, viability_detail) = match &forecast {
+        // A denial mission (Eradicate) brings nothing home, so a "turns to fill" number would be
+        // meaningless — say what it actually does instead of quoting a fillable-looking ETA.
+        Some(f) if !f.delivers_food => (
+            " — denial mission: the party delivers NO food; it hunts the herd toward extinction"
+                .to_string(),
+            " eta_turns=none viability=denial".to_string(),
+        ),
+        Some(f) => match f.turns_to_fill {
+            Some(turns) if turns <= cfg.hunt.viability_warn_turns => (
+                format!(" — est. ~{} turns to fill", turns),
+                format!(" eta_turns={}", turns),
+            ),
+            Some(turns) => (
+                format!(
+                    " — est. ~{} turns to fill; NOT VIABLE at this herd's yield",
+                    turns
+                ),
+                format!(" eta_turns={} viability=marginal", turns),
+            ),
+            // The herd yields nothing at all under this policy (sub-Allee / collapsing).
+            None if f.first_turn_provisions <= 0.0 => (
+                " — this herd is below its collapse threshold and yields no sustainable take; the \
+                 party will return empty"
+                    .to_string(),
+                " eta_turns=none viability=impossible".to_string(),
+            ),
+            // It yields *something*, but not enough to fill a pack inside the forecast horizon —
+            // the exact turn count past there carries no information a player can act on.
+            None => (
+                format!(
+                    " — the party will NOT fill its pack within {} turns at this herd's yield; NOT \
+                     VIABLE",
+                    cfg.hunt.forecast_horizon_turns
+                ),
+                " eta_turns=none viability=marginal".to_string(),
+            ),
+        },
+        None => (String::new(), String::new()),
+    };
+
     // Remove the party from the band's pool — but draw NO provisions (it lives off its kills).
     let party_scalar = Scalar::from_u32(party_workers);
     {
@@ -1873,17 +1929,19 @@ fn handle_send_hunt_expedition(
         CommandEventKind::ExpeditionSent,
         faction,
         format!(
-            "{} hunting expedition ({}) -> herd {}",
+            "{} hunting expedition ({}) -> herd {}{}",
             band.label,
             policy.as_str(),
-            fauna_id
+            fauna_id,
+            viability_note
         ),
         Some(format!(
-            "status=applied mission=hunt policy={} workers={} herd={} expedition={}",
+            "status=applied mission=hunt policy={} workers={} herd={} expedition={}{}",
             policy.as_str(),
             party_workers,
             fauna_id,
-            expedition_entity.to_bits()
+            expedition_entity.to_bits(),
+            viability_detail
         )),
     );
 }

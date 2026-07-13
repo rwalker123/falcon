@@ -2998,6 +2998,43 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
             let _ = dict.insert("ecology_phase", ecology_phase);
         }
         let _ = dict.insert("domestication", herd.domestication());
+        // Per-policy BAND / local-hunt take ceilings (provisions/turn) for this herd's CURRENT state.
+        // Surfaced as a `{policy -> provisions_per_turn}` Dictionary. With the cohort's
+        // `hunt_per_worker_provisions` + `output_multiplier` this is everything the RESIDENT-BAND hunt
+        // preview needs as pure arithmetic (`Hud._local_hunt_preview_bbcode`) — the client must never
+        // re-derive the ecology model itself.
+        if let Some(ceilings) = herd.huntPolicyCeilings() {
+            let mut ceiling_dict = VarDictionary::new();
+            for ceiling in ceilings {
+                if let Some(policy) = ceiling.policy() {
+                    let _ = ceiling_dict.insert(policy, f64::from(ceiling.provisionsPerTurn()));
+                }
+            }
+            let _ = dict.insert("hunt_policy_ceilings", &ceiling_dict);
+        }
+        // The sim's PRE-LAUNCH TRIP ESTIMATES for a hunting EXPEDITION against this herd — one entry
+        // per (policy × party size). An expedition's trip length is NOT a rate division: for
+        // Surplus/Market the per-policy ceiling is a *stock*, so the party strips the headroom in a
+        // turn or two and then crawls at the herd's regrowth trickle (closed-form said 6 turns for a
+        // rabbit warren; the simulated truth was 48). The sim therefore forward-simulates the trip and
+        // exports the ANSWER, and the client does ZERO arithmetic — a pure table lookup keyed
+        // `"<policy>:<party_workers>"` → `{turns_to_fill, delivers_food}`:
+        //   turns_to_fill == 0  → does not fill within the forecast horizon ("won't fill", not an ETA)
+        //   delivers_food false → eradicate, a denial mission ("no food delivered", never an ETA)
+        // Empty for a non-huntable herd; absent on an older snapshot (the HUD then shows no forecast).
+        if let Some(estimates) = herd.huntTripEstimates() {
+            let mut estimate_dict = VarDictionary::new();
+            for estimate in estimates {
+                if let Some(policy) = estimate.policy() {
+                    let mut entry = VarDictionary::new();
+                    let _ = entry.insert("turns_to_fill", i64::from(estimate.turnsToFill()));
+                    let _ = entry.insert("delivers_food", estimate.deliversFood());
+                    let key = format!("{}:{}", policy, estimate.partyWorkers());
+                    let _ = estimate_dict.insert(key, &entry);
+                }
+            }
+            let _ = dict.insert("hunt_trip_estimates", &estimate_dict);
+        }
         array.push(&dict.to_variant());
     }
     array
@@ -3711,6 +3748,25 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert(
         "max_expedition_party_size",
         cohort.maxExpeditionPartySize() as i64,
+    );
+    // Pre-launch hunt-expedition forecast levers — global expedition/labor config echoed onto EVERY
+    // cohort (same idiom as `max_expedition_party_size`). With a herd's `hunt_policy_ceilings` the
+    // HUD computes, for a chosen (workers, herd, policy):
+    //     rate  = min(workers × hunt_per_worker_provisions, ceiling_for(policy))
+    //     turns = ceil(workers × expedition_per_worker_carry / rate)   // rate <= 0 -> never fills
+    //     viable = turns <= expedition_viability_warn_turns
+    // which is exactly the sim's `hunt_trip_forecast` (pinned by core_sim/tests/expedition_hunt.rs).
+    let _ = dict.insert(
+        "expedition_per_worker_carry",
+        f64::from(cohort.expeditionPerWorkerCarry()),
+    );
+    let _ = dict.insert(
+        "hunt_per_worker_provisions",
+        f64::from(cohort.huntPerWorkerProvisions()),
+    );
+    let _ = dict.insert(
+        "expedition_viability_warn_turns",
+        cohort.expeditionViabilityWarnTurns() as i64,
     );
 
     if let Some(access) = cohort.accessibleStockpile() {

@@ -118,8 +118,9 @@ pub use expedition_config::{
     ExpeditionConfigMetadata, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
-    advance_herds, advance_husbandry, repopulate_fauna, spawn_initial_herds, EcologyPhase, Herd,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, RoamState,
+    advance_herds, advance_husbandry, hunt_policy_ceiling, hunt_provisions, repopulate_fauna,
+    spawn_initial_herds, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    HerdTelemetryEntry, RoamState,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata, SizeClass,
@@ -235,7 +236,9 @@ pub use snapshot::{
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
-    advance_band_movement, advance_expeditions, advance_labor_allocation, simulate_power,
+    advance_band_movement, advance_expeditions, advance_labor_allocation,
+    expedition_take_provisions, hunt_ceiling_provisions, hunt_per_worker_provisions, hunt_take,
+    hunt_trip_forecast, output_multiplier, simulate_power, HuntTripForecast,
     MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent,
 };
 pub use terrain::{

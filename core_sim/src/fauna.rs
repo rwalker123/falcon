@@ -10,7 +10,7 @@ use tracing::info;
 use std::hash::{Hash, Hasher};
 
 use crate::{
-    components::{PopulationCohort, Tile, FOOD},
+    components::{FollowPolicy, PopulationCohort, Tile, FOOD},
     fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle, SizeClass, SpeciesDef},
     food::{classify_food_module, FoodModule},
     grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT},
@@ -1172,10 +1172,48 @@ pub(crate) fn sustainable_yield(biomass: f32, cap: f32, ecology: &EcologyConfig)
     net_biomass_delta(biomass.min(cap * MSY_BIOMASS_FRACTION), cap, ecology).max(0.0)
 }
 
+/// **THE single source of the per-policy hunt take ceiling** (in *biomass*), shared by every hunter
+/// of a herd: the band's Hunt labor arm, the scout's opportunistic replenish, and the hunting
+/// expedition (all via `hunt_take` / `hunt_trip_forecast` in `systems.rs`). One word, one meaning:
+/// - **Sustain** — the **Maximum Sustainable Yield** flow (`sustainable_yield`): regrowth at the
+///   most-productive biomass (K/2), so a herd at capacity still yields a positive skim and a
+///   collapsing (sub-Allee) herd yields nothing. This is a *flow* ceiling, not a stock target.
+/// - **Surplus** — that × `follow.surplus_multiplier` (overdraw → slow decline).
+/// - **Market** — a commercial share `market.take_fraction × biomass` (fast decline).
+/// - **Eradicate** — the one-shot max take `hunt.take_from(biomass)` (drives extinction).
+///
+/// The caller still caps by hunter throughput / carry room and clamps to the herd's biomass.
+pub fn hunt_policy_ceiling(
+    policy: FollowPolicy,
+    biomass: f32,
+    cap: f32,
+    fauna: &FaunaConfig,
+) -> f32 {
+    match policy {
+        FollowPolicy::Sustain => sustainable_yield(biomass, cap, &fauna.ecology),
+        FollowPolicy::Surplus => {
+            sustainable_yield(biomass, cap, &fauna.ecology) * fauna.follow.surplus_multiplier
+        }
+        FollowPolicy::Market => fauna.market.take_fraction * biomass,
+        FollowPolicy::Eradicate => fauna.hunt.take_from(biomass),
+    }
+}
+
+/// The single biomass→provisions conversion for a hunt take: `take × hunt.provisions_per_biomass ×
+/// output_multiplier` (the caller's productivity). FOOD income is fully fractional — a few hunters
+/// may yield < 1 provision per turn.
+pub fn hunt_provisions(take_biomass: f32, fauna: &FaunaConfig, output_multiplier: f32) -> Scalar {
+    scalar_from_f32(take_biomass * fauna.hunt.provisions_per_biomass * output_multiplier)
+}
+
 /// Apply one turn of critical-depensation dynamics toward the herd's carrying capacity
 /// and refresh its `ecology_phase`. A sub-threshold group declines instead of regrowing;
 /// the caller despawns it once it falls below the viability floor.
-fn regrow_biomass(herd: &mut Herd, ecology: &EcologyConfig) {
+///
+/// `pub(crate)` because the hunt-trip forecast (`systems::hunt_trip_forecast`) runs a herd forward
+/// turn by turn on a **clone** and must apply the *same* regrowth the live `advance_herds` does —
+/// re-deriving the curve there would let the pre-launch estimate drift from the sim.
+pub(crate) fn regrow_biomass(herd: &mut Herd, ecology: &EcologyConfig) {
     let cap = herd.carrying_capacity;
     // A domesticated (managed) group is immune to the overhunting collapse: it always
     // regrows logistically toward capacity and never crosses into the depensation crash.

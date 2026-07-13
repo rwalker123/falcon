@@ -115,6 +115,55 @@ pub struct PopulationDemographicsState {
     pub elders: u32,
 }
 
+/// One take policy's per-turn **band / local-hunt** ceiling for a herd, in **provisions** (the sim
+/// already converted from biomass). Worker-*independent*: the ecology's MSY *flow* ceiling on the
+/// take at the herd's current state, before any party-throughput cap, and clamped to the herd's
+/// remaining biomass — so it is a **true maximum take**. `0` = no take is possible under this policy
+/// (a collapsing sub-Allee herd yields nothing under Sustain/Surplus).
+/// `policy` is a free-form string (`sustain|surplus|market|eradicate`, like `species`), so a new
+/// policy needs no schema change.
+///
+/// Consumer: the resident-band local-hunt yield preview —
+/// `min(workers × hunt_per_worker_provisions, provisions_per_turn) × output_multiplier`, which is
+/// arithmetically `core_sim::hunt_take(..)` (pinned by `core_sim/tests/expedition_hunt.rs`).
+///
+/// **A hunting expedition must NOT forecast from this number** — a party takes *stock* headroom, not
+/// the MSY flow, and its trip is not `cap / rate` at all (it can exhaust the stock mid-trip). The sim
+/// exports the simulated **answer** for a trip instead: `HerdTelemetryState.hunt_trip_estimates`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct HuntPolicyCeilingState {
+    pub policy: String,
+    /// BAND / local hunt (`core_sim::hunt_ceiling_provisions`).
+    #[serde(default)]
+    pub provisions_per_turn: f32,
+}
+
+/// The sim's **pre-launch hunt-trip estimate** for one (policy, party size) against one herd — the
+/// *answer*, so the client's outfit UI is a pure table lookup and does **zero** arithmetic.
+///
+/// Produced by `core_sim::hunt_trip_forecast`, a **bounded forward simulation** of the trip (herd
+/// regrowth + the party's real take, turn by turn, on the sim's fixed-point grid) rather than a
+/// closed-form `carry_cap / rate`. That division was wrong for Surplus/Market on a small herd, whose
+/// per-policy ceiling is a *stock*, not a flow: the party strips the headroom in a turn or two and
+/// then crawls at the regrowth trickle (a rabbit warren forecast 6 turns; the truth was 48).
+///
+/// The estimate covers only turns spent **hunting**, once the party is in reach — travel is not
+/// counted — and assumes the herd stays put.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct HuntTripEstimateState {
+    /// Free-form take policy (`sustain|surplus|market|eradicate`), like `species` — a new policy
+    /// needs no schema change.
+    pub policy: String,
+    /// Party size, `1 ..= expedition_config.max_party_size`.
+    pub party_workers: u32,
+    /// Turns of hunting to fill the party's carry cap. **`0` = it does not fill** within
+    /// `expedition_config.hunt.forecast_horizon_turns` — render "won't fill", not a number.
+    pub turns_to_fill: u32,
+    /// Does this mission bring food home? `false` for `eradicate` (denial) — render "no food
+    /// delivered", never an ETA.
+    pub delivers_food: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HerdTelemetryState {
     pub id: String,
@@ -132,6 +181,18 @@ pub struct HerdTelemetryState {
     pub ecology_phase: String,
     #[serde(default)]
     pub domestication: f32,
+    /// Per-policy **band / local-hunt** take ceilings for this herd's current state (one entry per
+    /// `FollowPolicy`). With the cohort's `hunt_per_worker_provisions` and `output_multiplier` this
+    /// is everything the client needs to preview a *resident band's* hunt yield as pure arithmetic —
+    /// it must never re-derive the ecology model. Derived at capture. Appended (append-only wire).
+    #[serde(default)]
+    pub hunt_policy_ceilings: Vec<HuntPolicyCeilingState>,
+    /// The sim's **pre-launch trip estimates** for a hunting expedition against this herd — one entry
+    /// per (policy × party size `1..=max_party_size`), so the outfit UI is a **table lookup** and the
+    /// client does no arithmetic at all. Empty for a non-huntable herd. See [`HuntTripEstimateState`]
+    /// for why the trip is simulated rather than divided. Derived at capture. Appended last.
+    #[serde(default)]
+    pub hunt_trip_estimates: Vec<HuntTripEstimateState>,
 }
 
 impl Default for HerdTelemetryState {
@@ -150,6 +211,8 @@ impl Default for HerdTelemetryState {
             huntable: false,
             ecology_phase: String::new(),
             domestication: 0.0,
+            hunt_policy_ceilings: Vec::new(),
+            hunt_trip_estimates: Vec::new(),
         }
     }
 }
@@ -1234,6 +1297,28 @@ pub struct PopulationCohortState {
     /// one-turn demand `days_of_food` divides by). Derived per-turn at capture. Appended last.
     #[serde(default)]
     pub food_consumption: f32,
+    /// Hunt levers — global config echoed per-cohort (same idiom as `max_expedition_party_size`, and
+    /// populated for **every** cohort, since the outfit/hunt UI lives on the resident-band panel).
+    ///
+    /// The pre-launch **expedition** trip length is **not** computed from these: the client reads the
+    /// sim's simulated answer out of the target herd's [`HuntTripEstimateState`] table
+    /// (policy × `party_workers` → `turns_to_fill`) and flags NOT VIABLE when `turns_to_fill >
+    /// expedition_viability_warn_turns` (or `turns_to_fill == 0` → "won't fill"). An `eradicate`
+    /// party has `delivers_food == false`: render "no food delivered (denial)", never an ETA.
+    ///
+    /// Carry cap per hunter, in provisions (`expedition_config.hunt.per_worker_carry`) — sizes the
+    /// pack for display (cap = `workers × this`).
+    #[serde(default)]
+    pub expedition_per_worker_carry: f32,
+    /// One hunter's per-turn provisions throughput (`labor_config.hunt.per_worker_biomass_capacity ×
+    /// fauna_config.hunt.provisions_per_biomass`). With a herd's **band** ceiling this drives the
+    /// resident-band local-hunt yield preview.
+    #[serde(default)]
+    pub hunt_per_worker_provisions: f32,
+    /// Turns-to-fill past which a trip is flagged NOT VIABLE
+    /// (`expedition_config.hunt.viability_warn_turns`).
+    #[serde(default)]
+    pub expedition_viability_warn_turns: u32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`
@@ -2656,6 +2741,46 @@ fn create_herds<'a>(
         let species = builder.create_string(herd.species.as_str());
         let size_class = builder.create_string(herd.size_class.as_str());
         let ecology_phase = builder.create_string(herd.ecology_phase.as_str());
+        let hunt_policy_ceilings = if herd.hunt_policy_ceilings.is_empty() {
+            None
+        } else {
+            let entries: Vec<_> = herd
+                .hunt_policy_ceilings
+                .iter()
+                .map(|ceiling| {
+                    let policy = builder.create_string(ceiling.policy.as_str());
+                    fb::HuntPolicyCeiling::create(
+                        builder,
+                        &fb::HuntPolicyCeilingArgs {
+                            policy: Some(policy),
+                            provisionsPerTurn: ceiling.provisions_per_turn,
+                        },
+                    )
+                })
+                .collect();
+            Some(builder.create_vector(&entries))
+        };
+        let hunt_trip_estimates = if herd.hunt_trip_estimates.is_empty() {
+            None
+        } else {
+            let entries: Vec<_> = herd
+                .hunt_trip_estimates
+                .iter()
+                .map(|estimate| {
+                    let policy = builder.create_string(estimate.policy.as_str());
+                    fb::HuntTripEstimate::create(
+                        builder,
+                        &fb::HuntTripEstimateArgs {
+                            policy: Some(policy),
+                            partyWorkers: estimate.party_workers,
+                            turnsToFill: estimate.turns_to_fill,
+                            deliversFood: estimate.delivers_food,
+                        },
+                    )
+                })
+                .collect();
+            Some(builder.create_vector(&entries))
+        };
         let entry = fb::HerdTelemetryState::create(
             builder,
             &fb::HerdTelemetryStateArgs {
@@ -2672,6 +2797,9 @@ fn create_herds<'a>(
                 huntable: herd.huntable,
                 ecologyPhase: Some(ecology_phase),
                 domestication: herd.domestication,
+                // Appended after every earlier-shipped field (append-only wire discipline).
+                huntPolicyCeilings: hunt_policy_ceilings,
+                huntTripEstimates: hunt_trip_estimates,
             },
         );
         entries.push(entry);
@@ -3112,6 +3240,9 @@ fn create_populations<'a>(
                     settlementStage: Some(settlement_stage),
                     foodIncome: cohort.food_income,
                     foodConsumption: cohort.food_consumption,
+                    expeditionPerWorkerCarry: cohort.expedition_per_worker_carry,
+                    huntPerWorkerProvisions: cohort.hunt_per_worker_provisions,
+                    expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
                 },
             )
         })

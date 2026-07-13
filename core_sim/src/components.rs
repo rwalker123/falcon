@@ -736,6 +736,16 @@ pub enum FollowPolicy {
 }
 
 impl FollowPolicy {
+    /// Every take policy, in player-facing order (gentlest → harshest). The single source for
+    /// "iterate the policies" — the snapshot's per-herd `hunt_policy_ceilings` export walks this, so
+    /// a new variant surfaces in the client's policy picker without touching the schema.
+    pub const ALL: [FollowPolicy; 4] = [
+        FollowPolicy::Sustain,
+        FollowPolicy::Surplus,
+        FollowPolicy::Market,
+        FollowPolicy::Eradicate,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             FollowPolicy::Sustain => "sustain",
@@ -743,6 +753,15 @@ impl FollowPolicy {
             FollowPolicy::Market => "market",
             FollowPolicy::Eradicate => "eradicate",
         }
+    }
+
+    /// Does a take under this policy put food in the taker's larder? **Eradicate is denial** — it
+    /// depletes the herd and carries nothing home — so every provisions-side path (the expedition's
+    /// payout, its launch forecast, and the exported per-policy ceiling) reads `0` for it. THE single
+    /// source of that rule, so a "turns to fill" number can never be quoted for a mission that
+    /// delivers nothing.
+    pub fn delivers_food(self) -> bool {
+        !matches!(self, FollowPolicy::Eradicate)
     }
 }
 

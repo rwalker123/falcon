@@ -42,7 +42,7 @@ const PANEL_CONSUMED_KEYS := [
 	"morale",              # _band_morale_line / _morale_is_concerning
 	"morale_delta",        # _band_morale_line trend
 	"morale_cause",        # _band_morale_line named cause
-	"output_multiplier",   # _band_output_line
+	"output_multiplier",   # _band_output_line + the local-hunt yield preview (payout modifier)
 	"morale_settling",     # _morale_breakdown_lines
 	"morale_terrain",      # _morale_breakdown_lines
 	"morale_climate",      # _morale_breakdown_lines
@@ -66,7 +66,10 @@ const PANEL_CONSUMED_KEYS := [
 	"expedition_target_herd", # hunt expedition target herd (panel + marker)
 	"expedition_hunt_policy", # hunt expedition policy (panel readout)
 	"expedition_carry_cap",   # hunt expedition carry ceiling (panel Carried X / cap)
-	"home_band_entity"        # Band/City panel groups a band's active expeditions by this
+	"home_band_entity",       # Band/City panel groups a band's active expeditions by this
+	"expedition_per_worker_carry",     # pre-launch hunt-trip forecast (Hud._hunt_trip_forecast)
+	"hunt_per_worker_provisions",      # hunt take rate (Hud._hunt_take_rate: forecast + local preview)
+	"expedition_viability_warn_turns"  # pre-launch hunt-trip forecast viability threshold
 ]
 
 # A full, realistic population entry — the shape the native decoder (`population_to_dict`)
@@ -117,6 +120,10 @@ const FIXTURE_ENTRY := {
 	"expedition_hunt_policy": "surplus",
 	"expedition_carry_cap": 16.0,
 	"home_band_entity": 7777,
+	# Pre-launch hunt-trip forecast levers (global config echoed on every cohort).
+	"expedition_per_worker_carry": 4.0,
+	"hunt_per_worker_provisions": 0.8,
+	"expedition_viability_warn_turns": 20,
 }
 
 var _failures: Array[String] = []
@@ -163,6 +170,9 @@ func _ready() -> void:
 	_expect_str(marker, "expedition_hunt_policy", "surplus")
 	_expect_float(marker, "expedition_carry_cap", 16.0)
 	_expect_int(marker, "home_band_entity", 7777)
+	_expect_float(marker, "expedition_per_worker_carry", 4.0)
+	_expect_float(marker, "hunt_per_worker_provisions", 0.8)
+	_expect_int(marker, "expedition_viability_warn_turns", 20)
 	if not bool(marker.get("is_expedition", false)):
 		_fail("is_expedition did not round-trip to true (defaulted?)")
 	_expect_float(marker, "morale", 0.41)

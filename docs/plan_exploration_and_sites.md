@@ -279,25 +279,62 @@ depletion) lives in a new `advance_expeditions` system in the Population stage, 
   band's live tile and deposits once within communication range of home (`near_home`, the shared
   comm-range proximity), not necessarily on the exact live tile. A lost/extinct herd (`HerdRegistry::find` → none) flips the party to
   `Returning` (fold back). Recall → the shared `Returning` phase.
-- **Take model — productive hunt, not a sustainable skim.** Per turn in reach the party takes ~a real
-  hunt's worth (`workers × per_worker_biomass_capacity`, the same worker productivity as a band Hunt),
-  drawn from herd biomass and converted to provisions — **not** the near-zero net-regrowth skim (a herd
-  at carrying capacity has ~0 surplus, which made the party economically inert). The **policy** (the
-  band's existing `FollowPolicy`, chosen at launch) governs the floor + trip behaviour:
-  - **Sustain** — take down only to the herd's **sustainable floor**, then return with the load and
-    **done** (leaves the herd to recover). Load may be < a full cap for a small herd. Delivers food.
-  - **Surplus** — fill the **full carry cap** (drawing past the sustain floor but stopping above the
-    extinction floor), return once, **done**. Delivers food.
-  - **Market** — full-cap loads, **repeated trips** (auto-relaunch), grinding the herd down until it
-    collapses or you recall. Delivers food, ongoing.
-  - **Eradicate** — hunt to **extinction as denial**: **no food delivered** (the point is eliminating
-    the herd, historically the bison-slaughter pattern); the party only self-feeds en route, ends when
-    the herd is gone. Meaningful once there are rival peoples; scorched-earth option today.
-- **Deliver trigger (fixes the empty flip-flop bug).** Flip to `Delivering` only with a worthwhile
-  load: on the policy's completion condition (Sustain: herd hit its floor; Surplus/Market: cap reached)
-  **or** `herd_near_band && carried ≥ hunt.min_deliver_fraction × cap`. The prior bug flipped to
+- **Take model — a productive hunt, capped by the policy's ceiling.** Per turn in reach the party takes
+  ~a real hunt's worth (`workers × per_worker_biomass_capacity`, the same worker productivity as a band
+  Hunt), drawn from herd biomass and converted to provisions. The **policy** (the band's existing
+  `FollowPolicy`, chosen at launch) caps that throughput — and the two depleting policies cap it with a
+  *stock* ceiling while Sustain caps it with a *flow* one:
+  - **Sustain** — takes the shared **Maximum Sustainable Yield flow ceiling**
+    (`fauna::hunt_policy_ceiling`): *exactly* the take a resident band's Hunt arm makes from the same
+    herd state. **One word, one meaning** — "Sustain" is the same skim wherever it appears in the sim.
+    It is **not** a stock target: there is no sustain floor (the `sustain_floor_fraction` lever is
+    deleted) and **no stock-line completion** — the skim equals regrowth, so the herd is held steady and
+    no floor is ever approached, let alone crossed. Delivers food.
+  - **Surplus** — draws *stock headroom* down to the ecology **collapse floor**
+    (`hunt_expedition_ceiling`: `collapse_fraction × carrying_capacity` — toward it, never below, so
+    overhunting cannot directly trigger the irreversible crash), so it is normally throughput-bound: one
+    full-cap haul, return once, **done**. Delivers food.
+  - **Market** — the same stock headroom, in **repeated** full-cap trips (auto-relaunch), grinding the
+    herd toward the collapse floor until it crashes or you recall. Delivers food, ongoing.
+  - **Eradicate** — hunt to **extinction as denial**: **no floor**, and **no food delivered** (the point
+    is eliminating the herd, historically the bison-slaughter pattern); the party only self-feeds en
+    route, ends when the herd is gone. Meaningful once there are rival peoples; scorched-earth option
+    today.
+- **Trip completion + deliver trigger (fixes the empty flip-flop bug).** For every *delivering* policy
+  the trip concludes on the same four conditions — a **full pack**, a worthwhile **near-band delivery**
+  (`herd_near_band && carried ≥ hunt.min_deliver_fraction × cap`), a **recall**, or a **lost/extinct
+  herd**. No policy completes on a stock line. The decision lives **inside the `hunt.reach_tiles`
+  guard**: a party still walking to its herd never concludes the trip. The prior bug flipped to
   `Delivering` every turn whenever the herd sat within `drop_off_within_tiles` of the band regardless of
   carried amount, so the party oscillated in place and never gathered.
+- **Launch viability forecast — SIMULATE, don't divide** (`hunt_trip_forecast`). The forecast runs the
+  trip **forward turn by turn** — the herd's regrowth, then the party's real take, on the sim's own
+  fixed-point larder — until the pack is full or `hunt.forecast_horizon_turns` (**60**) is hit. It does
+  **not** divide a carry cap by a rate, because *there is no single rate*:
+  - **Sustain** is a genuine per-turn **flow** (MSY), so a division was exact — and honestly slow: a
+    4-worker party on a full Red Deer takes **~54 turns**.
+  - **Surplus/Market** draw *stock* headroom down to the collapse floor. On a **big** herd that
+    headroom covers a whole pack, so the party is throughput-bound and fills in **~5 turns**. On a
+    **small** herd it does not: the party strips the stock in a turn or two and then crawls at the
+    regrowth trickle. Dividing the cap by that stock — as if it were a flow — read a full **Rabbit
+    Warren as a 5-turn trip when the truth is ~495**. That was the design smell: one exported number
+    that meant a *flow* for Sustain and a *stock* for Surplus/Market, divided either way.
+  - **Eradicate** = denial, no food at all → no ETA, ever.
+
+  The estimate covers **turns spent hunting once you arrive** — travel is not counted, and the herd is
+  assumed in reach and stationary. Past the horizon the answer is "**won't fill**" rather than a number:
+  `viability_warn_turns` is 20, so anything past ~3× that is emphatically not viable and the precise
+  value carries no actionable information (and the bound keeps the per-snapshot export cheap). The
+  verdict rides the `ExpeditionSent` feed line, so the player is never silently trapped in a trip that
+  will not pay — and the sim **exports the simulated answer** per herd × policy × party size
+  (`HerdTelemetryState.huntTripEstimates`), so the outfit UI is a **table lookup**: the client does no
+  arithmetic and holds no copy of the ecology model. Pinned by `core_sim/tests/expedition_hunt.rs`
+  against a **real party run forward through the real systems**, right down to the turn it fills.
+
+  *Consequence worth designing around:* with today's levers **small game cannot provision an
+  expedition at all** (a full Rabbit Warren/Wild Fowl never fills a 4-hunter pack inside the horizon
+  under any policy). Small herds are for a **resident band's local hunt**; expeditions are for big game
+  and migratory herds. The forecast now says so up front instead of trapping the player.
 - **The shared `hunt_take` primitive.** The band's per-turn Hunt take math (extracted from
   `advance_labor_allocation`) is called from **both** the band Hunt path (behaviour unchanged) and
   `advance_expeditions`. The **scout's opportunistic replenish** uses it too: when a scout party's
@@ -308,8 +345,12 @@ depletion) lives in a new `advance_expeditions` system in the Population stage, 
   herds today step 1 tile every turn, so an equal-speed party can't close on a long one-directional
   route. Once wild game grazes a tile (~1 turn dwell) before stepping and migratory herds loiter for
   many turns before a directed migration, the party catches them naturally during the dwell/loiter.
-  Domestication accrual (a band-Hunt/husbandry interaction) is *not* wired to the expedition take in v1 —
-  a documented later interaction. New tunables live in `hunt`/`replenish` blocks of `expedition_config.json`.
+- **The expedition take is food-only (known gap).** A resident band's Hunt arm credits food **plus**
+  trade goods (Market) **plus** husbandry/domestication accrual (Sustain on a Thriving herd) from the
+  same take; the expedition credits **food only** — so a Sustain *expedition* builds no domestication and
+  a Market *expedition* yields no trade goods. Tracked as the **"Hunt policy payoffs"** arc in `TASKS.md`
+  (see also `core_sim/CLAUDE.md` → Scouting & Hunting Expeditions); v1 ships the asymmetry deliberately.
+  New tunables live in `hunt`/`replenish` blocks of `expedition_config.json`.
 
 ## Cross-cutting touchpoints
 

@@ -551,6 +551,20 @@ table PopulationCohortState {
   // without re-summing the assignment rows. Appended last (append-only schema discipline).
   foodIncome:float = 0;
   foodConsumption:float = 0;
+  // Hunt levers. Global config echoed per-cohort (same idiom as `maxExpeditionPartySize`, and
+  // populated for EVERY cohort — the outfit/hunt UI lives on the resident-band panel).
+  //   - The pre-launch EXPEDITION trip length is NOT computed here: the client reads the sim's
+  //     simulated answer out of the target herd's `huntTripEstimates` (policy × partyWorkers →
+  //     turnsToFill), then flags NOT VIABLE when turnsToFill > expeditionViabilityWarnTurns (or
+  //     turnsToFill == 0 → "won't fill").
+  //   - `expeditionPerWorkerCarry` sizes the pack for display (carry cap = workers × this).
+  //   - `huntPerWorkerProvisions` × the BAND ceiling drives the resident-band local-hunt preview:
+  //     min(workers × huntPerWorkerProvisions, huntPolicyCeilings[policy].provisionsPerTurn)
+  //       × outputMultiplier
+  // Appended last (append-only schema discipline).
+  expeditionPerWorkerCarry:float = 0;   // expedition_config.hunt.per_worker_carry (provisions/worker)
+  huntPerWorkerProvisions:float = 0;    // one hunter's provisions/turn throughput
+  expeditionViabilityWarnTurns:uint = 0; // expedition_config.hunt.viability_warn_turns
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -800,6 +814,41 @@ table PopulationDemographicsState {
   elders:uint = 0;
 }
 
+// One take policy's per-turn BAND / local-hunt ceiling for a herd, in PROVISIONS (already converted
+// from biomass by the sim). Worker-INDEPENDENT: the ecology's MSY *flow* ceiling on the take at this
+// herd's CURRENT state, before any party-throughput cap. `0` = no take is possible under this policy
+// (a collapsing sub-Allee herd yields nothing under Sustain/Surplus). `policy` is free-form
+// (`sustain|surplus|market|eradicate`), like `species`, so a new policy needs no schema change.
+//
+// Consumer: the resident-band local-hunt yield preview,
+//   min(workers × huntPerWorkerProvisions, provisionsPerTurn) × outputMultiplier
+// A hunting EXPEDITION must not forecast from this (or any) rate — see HuntTripEstimate.
+table HuntPolicyCeiling {
+  policy:string;
+  // BAND / local-hunt ceiling (fauna::hunt_policy_ceiling — the MSY *flow* ceiling).
+  provisionsPerTurn:float = 0;
+}
+
+// The sim's PRE-LAUNCH HUNT-TRIP ESTIMATE for one (policy, party size) against one herd — the
+// *answer*, so the client's outfit UI is a pure TABLE LOOKUP and does ZERO arithmetic.
+//
+// Produced by core_sim's `hunt_trip_forecast`, a bounded forward SIMULATION of the trip (herd
+// regrowth + the party's real take, turn by turn) rather than a closed-form `carryCap / rate`. The
+// division was wrong for Surplus/Market on a small herd, whose per-policy ceiling is a *stock*, not
+// a flow: the party strips the headroom in a turn or two, then crawls at the herd's regrowth trickle
+// (a rabbit warren forecast 6 turns; the truth was 48).
+//
+// Counts only turns spent HUNTING, once the party is in reach — travel is NOT included.
+table HuntTripEstimate {
+  policy:string;           // sustain|surplus|market|eradicate (free-form, like `species`)
+  partyWorkers:uint = 0;   // 1 ..= expedition_config.max_party_size
+  // Turns of hunting to fill the party's carry cap. 0 = DOES NOT FILL within
+  // expedition_config.hunt.forecast_horizon_turns → render "won't fill", not a number.
+  turnsToFill:uint = 0;
+  // false for eradicate (denial) — render "no food delivered", never an ETA.
+  deliversFood:bool = false;
+}
+
 table HerdTelemetryState {
   id:string;
   label:string;
@@ -814,6 +863,15 @@ table HerdTelemetryState {
   huntable:bool = false;
   ecologyPhase:string;
   domestication:float = 0;
+  // Per-policy BAND / local-hunt take ceilings for this herd's current state (one entry per
+  // FollowPolicy). With the cohort's `huntPerWorkerProvisions` + `outputMultiplier` this is
+  // everything the client needs to preview a RESIDENT BAND's hunt yield as pure arithmetic — it must
+  // NOT re-derive the ecology model. Appended (append-only discipline).
+  huntPolicyCeilings:[HuntPolicyCeiling];
+  // The sim's pre-launch trip estimates for a hunting EXPEDITION against this herd — one entry per
+  // (policy × party size 1..=maxExpeditionPartySize), so the outfit UI is a table lookup and the
+  // client does no arithmetic at all. Empty for a non-huntable herd. Appended last (append-only).
+  huntTripEstimates:[HuntTripEstimate];
 }
 
 table CommandEventState {

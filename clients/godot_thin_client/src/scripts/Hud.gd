@@ -289,6 +289,21 @@ const FORAGE_POLICY_HINTS := {
     "market": "Market — gather for trade goods; faster decline.",
     "eradicate": "Eradicate — strip the patch bare.",
 }
+# The policy hint under a LOCAL (resident-band) hunt's picker. The live yield line above it already
+# carries the NUMBER; these carry the CONSEQUENCE, which is otherwise invisible — above all Sustain's,
+# because a resident Sustain hunt on a thriving herd accrues HUSBANDRY toward livestock (and feeds
+# Sedentarization's `domestication` input), the single most under-communicated payoff in the system.
+#
+# These are the BAND's payoffs and must not be reused for an expedition: the Hunting expedition arm
+# credits FOOD ONLY — no husbandry accrual, no trade goods — so `SEND_HUNT_POLICY_HINTS` below
+# deliberately promises neither. Do not merge the two sets; the asymmetry is real (a known v1 gap,
+# tracked server-side), and a hint that claims a payoff the sim never pays is a lie to the player.
+const LOCAL_HUNT_POLICY_HINTS := {
+    "sustain": "Sustain — takes only the herd's renewable yield, so it stays healthy forever; on a thriving herd the hunt also tames it, building husbandry toward livestock that pays food every turn without being hunted down.",
+    "surplus": "Surplus — more food now; the herd slowly declines. The fuller larder pushes the band toward settling.",
+    "market": "Market — sells the take as trade goods rather than eating it; the herd declines fast. Trade has little effect yet.",
+    "eradicate": "Eradicate — hunts the herd toward extinction. No food, no husbandry, no trade — denial only.",
+}
 # One worker per −/+ stepper press.
 const WORKER_STEP := 1
 # Leading label on the assign controls' band-picker dropdown ("which band supplies the workers").
@@ -392,14 +407,108 @@ const FORAGE_ASSIGN_BUTTON := "Forage"
 const SEND_EXPEDITION_SECTION := "Send expedition"
 # The hunt party's carry-ceiling FULL badge (shown in the hunt panel when carried ≥ cap).
 const HUNT_FULL_BADGE := "· FULL"
-# The launch policy (Sustain/Surplus/Market/Eradicate) chosen for a hunting expedition, with a
+# The launch policy (Sustain/Surplus/Market/Eradicate) chosen for a hunting EXPEDITION, with a
 # one-line behaviour hint so the choice is legible. Reuses `LABOR_HUNT_POLICIES` for the option set.
+#
+# An expedition's Hunting arm credits **FOOD ONLY** — no husbandry accrual, no trade goods (a known v1
+# gap, tracked server-side). So these hints promise NEITHER, even though the resident-band versions of
+# Sustain and Market do exactly those things (see `LOCAL_HUNT_POLICY_HINTS`). The asymmetry is real;
+# blurring it would have the UI promise the player a payoff the sim never pays.
 const SEND_HUNT_POLICY_HINTS := {
-	"sustain": "Sustain — one conservative harvest; the herd stays healthy.",
-	"surplus": "Surplus — one full haul.",
-	"market": "Market — repeated trips; grinds the herd down.",
-	"eradicate": "Eradicate — hunt to extinction; no food (denial).",
+	# Sustain is the MAXIMUM SUSTAINABLE YIELD flow — the same per-turn skim a resident band's Sustain
+	# hunt takes, so the herd stays healthy indefinitely. The trade-off is speed: MSY is a small flow,
+	# so a party fills slowly, and on a small herd the trip may not be worth sending. The per-herd
+	# turns-to-fill forecast (shown at the herd-targeting step) is the number that decides it. It does
+	# NOT tame the herd — only a resident band's Sustain hunt builds husbandry.
+	"sustain": "Sustain — takes only the herd's sustainable yield; it stays healthy forever, but the party fills slowly on a small herd.",
+	"surplus": "Surplus — takes the herd's spare stock, so the party fills fast; the herd declines.",
+	"market": "Market — grinds the herd down with repeated trips; the party still hauls home food, not trade goods.",
+	"eradicate": "Eradicate — denial mission: hunts the herd toward extinction and delivers no food.",
 }
+# A resident BAND and a detached EXPEDITION are told apart by the sim, and the client reads a DIFFERENT
+# herd field for each — never one for the other:
+#   `hunt_policy_ceilings`  {policy → provisions/turn} — the BAND's renewable FLOW ceiling. With the
+#       cohort's levers this makes the LOCAL hunt preview pure arithmetic (see `_hunt_take_rate`).
+#   `hunt_trip_estimates`   {"<policy>:<workers>" → {turns_to_fill, delivers_food}} — the sim's
+#       PRE-LAUNCH TRIP ESTIMATE, forward-simulated server-side. An expedition's trip length is NOT a
+#       rate division: on Surplus/Market the ceiling is a *stock*, so the party strips the headroom in
+#       a turn or two and then crawls at the herd's regrowth trickle (the closed-form said 6 turns for
+#       a rabbit warren; the simulated truth was 48). So the client does ZERO arithmetic here — it
+#       looks the answer up. Never re-derive it.
+const HERD_BAND_CEILINGS_KEY := "hunt_policy_ceilings"
+const HERD_TRIP_ESTIMATES_KEY := "hunt_trip_estimates"
+# (The denial case — an Eradicate party hunts the herd toward extinction and carries NOTHING home —
+# is NOT inferred from the policy string: the estimate itself carries `delivers_food = false`, so the
+# sim, not the client, decides which policies are denial missions.)
+# Pre-launch hunt-trip forecast (shown in the targeting banner while a hunt expedition is armed and
+# the player hovers a herd). The sim exports every number this needs — the per-herd per-policy
+# EXPEDITION take ceiling (`hunt_policy_expedition_ceilings`) and the three global levers on the band's
+# cohort — so the client only does the arithmetic and NEVER re-derives the ecology model:
+#     rate  = min(workers × hunt_per_worker_provisions, expedition_ceiling_for(policy))
+#     turns = ceil(workers × expedition_per_worker_carry / rate)   # rate <= 0 -> never fills
+#     viable = turns <= expedition_viability_warn_turns
+# (pinned sim-side by core_sim/tests/expedition_hunt.rs).
+const HUNT_FORECAST_TURNS_FORMAT := "%s · ≈%d turns to fill"
+# Above the config's viability threshold the trip still launches (this is information, not a block) —
+# but the herd's sustainable yield, not the hunters, is the binding constraint by a wide margin.
+const HUNT_FORECAST_NOT_VIABLE_SUFFIX := " — too slow to be worth sending"
+# A ceiling of 0 means the herd yields nothing under this policy (sub-Allee / collapsing): the party
+# would follow it forever and come home with nothing.
+const HUNT_FORECAST_NEVER_FILLS_FORMAT := "%s yields no sustainable take — the party would return empty"
+# An Eradicate expedition is a DENIAL mission, not a failed hunt: it delivers no food BY DESIGN. Kept
+# distinct from the collapsed-herd line above (red = the herd has nothing left to give; amber = you are
+# choosing to bring nothing home).
+const HUNT_FORECAST_DENIAL_FORMAT := "%s — denial mission: hunts the herd toward extinction, delivers no food"
+const HUNT_FORECAST_WARN_GLYPH := "⚠ "
+# Sentinel for "the snapshot doesn't carry the levers/ceiling this forecast needs" (older server).
+# A real take rate / ceiling is always ≥ 0, so a negative reads unambiguously as absent → the caller
+# renders NO forecast line rather than a misleading zero.
+const HUNT_RATE_UNAVAILABLE := -1.0
+# The herd panel's SECOND entry point into a hunting expedition: selecting a herd BEYOND the band's
+# hunt_reach composes party + policy right in the panel and sends immediately — no targeting step, so
+# the banner (and its forecast) never appears. Everything is known at compose time and the block
+# re-renders on every stepper tick / policy click, so the SAME forecast renders LIVE above the button.
+# When the trip is a trap, the button itself names the cost (amber "armed"); it is NEVER disabled and
+# never gated behind a confirm — the player can always send. This is information, not a gate.
+const SEND_HUNT_ANYWAY_TURNS_FORMAT := "Send Anyway (≈%d turns)"
+const SEND_HUNT_ANYWAY_EMPTY_BUTTON := "Send Anyway — party returns empty"
+# Eradicate's button states the deal rather than implying failure — the mission IS the point.
+const SEND_HUNT_DENIAL_BUTTON := "Send (delivers no food)"
+# Live per-turn yield preview for the LOCAL hunt branch. A resident hunt has no carry cap, so
+# turns-to-fill is meaningless there; the number that decides a standing assignment is the food/turn
+# it will produce — the sim's hunt take:
+#     rate = min(workers × hunt_per_worker_provisions, ceiling_for(policy)) × output_multiplier
+# The band applies its morale/discontent productivity modifier (`output_multiplier`) at payout; a
+# detached expedition does not, which is why the two branches show different numbers from the same
+# exported fields. (pinned sim-side by core_sim/tests/expedition_hunt.rs.)
+const LOCAL_HUNT_YIELD_FORMAT := "≈ %s"
+# The Sustain ceiling IS the herd's sustainable yield, so a take above it draws the herd down — flagged
+# with the same ⚠ / WARN amber (and the same `_is_overdraw` test) as the allocation rows.
+const LOCAL_HUNT_OVERDRAW_SUFFIX := " — overdraws the herd"
+# Tile-card SIGHT row — the player must ALWAYS be able to tell "there is nothing here" apart from
+# "I cannot see what is here". Herds/bands are LIVE state and are fog-gated out of `tile_info`
+# (MapView._herds_on_tile), so on a remembered hex an empty Occupants list would otherwise read as
+# "empty" when the truth is "unknown". These three rows name the hex's sight state in plain words,
+# and `OCCUPANTS_UNKNOWN_*` replaces the roster with the honest statement.
+# Sim-side the states are Active / Discovered / Unexplored.
+# The FoW states MapView tags onto `tile_info.visibility_state` (mirrors `_visibility_state_at`).
+# Empty string = FoW disabled → everything is in sight, and the Sight row is omitted entirely.
+const VISIBILITY_ACTIVE := "active"
+const VISIBILITY_DISCOVERED := "discovered"
+const VISIBILITY_UNEXPLORED := "unexplored"
+const TILE_SIGHT_KEY := "Sight"
+const TILE_SIGHT_ACTIVE := "In sight"
+const TILE_SIGHT_REMEMBERED := "Remembered — not in sight now"
+const TILE_SIGHT_UNEXPLORED := "Unexplored"
+# Shown INSTEAD of the Occupants roster on a hex the player cannot currently see. Never render an
+# empty roster there — an absent list is a claim of emptiness the client cannot back up.
+const OCCUPANTS_UNKNOWN_TITLE := "out of sight"
+const OCCUPANTS_UNKNOWN_REMEMBERED := "You remember the ground here, but not what's on it now — bands and herds move. Scout it to see."
+const OCCUPANTS_UNKNOWN_UNEXPLORED := "Nobody has been here. Send a band to reveal what's on this ground."
+# Your OWN party can stand on a hex it cannot see (a scouting expedition doesn't reveal fog — discovery
+# is comm-range gated), so the roster CAN be non-empty on an unseen hex while still hiding everything
+# that isn't ours. Listing only your own party without a word would quietly imply it's alone there.
+const OCCUPANTS_UNSEEN_OTHERS_HINT := "Out of sight — you can't see anything here but your own."
 # Suffix marking an optimistic (not-yet-confirmed) allocation row, tinted amber to tie it to
 # the amber pending hex on the map.
 const PENDING_ROW_SUFFIX := "  · pending"
@@ -452,6 +561,11 @@ var _pending_send_expedition: Dictionary = {}
 # Send-hunt-expedition targeting: the pending hunt-launch HERD pick (the click resolves to a
 # huntable herd on the clicked hex, not a tile). {} when inactive.
 var _pending_send_hunt_expedition: Dictionary = {}
+# The hex the pointer is currently over (MapView.tile_hovered -> show_tooltip), or {} when the
+# pointer is off the map / over a HUD control. While a hunt expedition is armed, the targeting
+# banner reads the hovered hex's herd out of this to show the pre-launch turns-to-fill forecast
+# BEFORE the click commits (the herd is only known at the targeting step, never at outfit time).
+var _hovered_tile_info: Dictionary = {}
 # Compose state for the send-expedition party stepper (workers to detach), preserved across the
 # resident band's per-snapshot allocation-panel re-renders.
 var _send_expedition_count: int = WORKER_STEP
@@ -672,9 +786,129 @@ func _targeting_banner_bbcode(info: Dictionary) -> String:
         instruction = "click on a herd to hunt"
     else:
         instruction = "click a tile to survey"
-    return "[color=#%s]%s[/color]  [color=#%s]%s[/color]%s   [color=#%s]— %s[/color]" % [
+    var line := "[color=#%s]%s[/color]  [color=#%s]%s[/color]%s   [color=#%s]— %s[/color]" % [
         HudStyle.SIGNAL_HEX, cmd, HudStyle.INK_HEX, ctx, loc, HudStyle.INK_DIM_HEX, instruction,
     ]
+    var forecast := _hunt_forecast_bbcode()
+    if forecast != "":
+        line += "\n" + forecast
+    return line
+
+## The pre-launch turns-to-fill line for the herd currently under the pointer, or "" when no hunt
+## expedition is armed / the pointer isn't over a huntable herd / the snapshot predates the forecast
+## fields. This is the real moment of decision: party size + policy are chosen at OUTFIT time, but the
+## HERD — which sets the take ceiling, and therefore the trip length — is only known HERE, so the
+## forecast cannot live in the outfit block. The click still commits: this is information, not a gate.
+func _hunt_forecast_bbcode() -> String:
+    if _pending_send_hunt_expedition.is_empty() or _hovered_tile_info.is_empty():
+        return ""
+    var herd := _huntable_herd_on_tile(_hovered_tile_info)
+    if herd.is_empty():
+        return ""
+    var band: Dictionary = _pending_send_hunt_expedition.get("band", {})
+    var workers := int(_pending_send_hunt_expedition.get("party_workers", 0))
+    var policy := String(_pending_send_hunt_expedition.get("policy", DEFAULT_HUNT_POLICY))
+    var herd_name := String(herd.get("species", herd.get("label", herd.get("id", "This herd"))))
+    return _hunt_forecast_line_bbcode(_hunt_trip_forecast(band, herd, policy, workers), herd_name)
+
+## Render a `_hunt_trip_forecast` result as its one-line BBCode readout — the three states in their
+## three colors (cyan viable / amber too-slow / red returns-empty), or "" when the forecast isn't
+## available (older snapshot → the caller shows no line at all). SHARED by both hunt-expedition entry
+## points: the targeting banner (band-first flow) and the herd panel's live compose block (herd-first
+## flow), so the two can never drift apart.
+func _hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -> String:
+    if not bool(forecast.get("available", false)):
+        return ""
+    # Two different "no food comes home" stories, and they must not be confused: an Eradicate party
+    # brings nothing home BY DESIGN (denial, amber), while any other policy hitting a 0 ceiling means
+    # the HERD has nothing left to give (collapsed, red).
+    if bool(forecast.get("denial", false)):
+        return "[color=#%s]%s[/color]" % [
+            HudStyle.WARN_HEX, HUNT_FORECAST_DENIAL_FORMAT % herd_name,
+        ]
+    if not bool(forecast.get("fills", false)):
+        return "[color=#%s]%s%s[/color]" % [
+            HudStyle.DANGER_HEX, HUNT_FORECAST_WARN_GLYPH,
+            HUNT_FORECAST_NEVER_FILLS_FORMAT % herd_name,
+        ]
+    var turns := int(forecast.get("turns", 0))
+    var text: String = HUNT_FORECAST_TURNS_FORMAT % [herd_name, turns]
+    if bool(forecast.get("viable", true)):
+        return "[color=#%s]%s[/color]" % [HudStyle.SIGNAL_HEX, text]
+    return "[color=#%s]%s%s%s[/color]" % [
+        HudStyle.WARN_HEX, HUNT_FORECAST_WARN_GLYPH, text, HUNT_FORECAST_NOT_VIABLE_SUFFIX,
+    ]
+
+## Turns for `workers` from `band` to fill their carry cap hunting `herd` under `policy`. PURE
+## ARITHMETIC over sim-exported numbers — the ecology/MSY model is never reproduced here: the
+## per-policy take ceiling arrives on the herd (`hunt_policy_ceilings`) and the three levers on the
+## band's cohort, and this reproduces `core_sim`'s `hunt_trip_forecast` exactly (pinned by
+## core_sim/tests/expedition_hunt.rs).
+## Returns {available, fills, turns, viable, denial}: `available` false when the snapshot carries no
+## estimate for this (policy, party size) — older server → the caller shows no forecast at all.
+func _hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> Dictionary:
+    var estimates_variant: Variant = herd.get(HERD_TRIP_ESTIMATES_KEY, {})
+    if workers <= 0 or not (estimates_variant is Dictionary):
+        return {"available": false}
+    var key := "%s:%d" % [policy, workers]
+    var estimates := estimates_variant as Dictionary
+    if not estimates.has(key):
+        return {"available": false}
+    var estimate: Dictionary = estimates[key]
+    # A denial mission (eradicate) delivers no food BY DESIGN — never an ETA, and never confused with
+    # a collapsed herd (which is the herd having nothing left to give).
+    if not bool(estimate.get("delivers_food", false)):
+        return {"available": true, "fills": false, "denial": true}
+    # 0 turns = the sim's forward simulation never fills the party within its forecast horizon.
+    var turns := int(estimate.get("turns_to_fill", 0))
+    if turns <= 0:
+        return {"available": true, "fills": false, "denial": false}
+    # A warn threshold of 0 means the server sent none — report the turns, judge nothing.
+    var warn_turns := int(band.get("expedition_viability_warn_turns", 0))
+    var viable: bool = warn_turns <= 0 or turns <= warn_turns
+    return {"available": true, "fills": true, "turns": turns, "viable": viable}
+
+## The per-turn provisions `workers` from `band` take off `herd` under `policy` — the sim's LOCAL/band
+## hunt take before the output multiplier: `min(workers × hunt_per_worker_provisions, band_ceiling)`.
+## Resident-band only: an EXPEDITION's trip is never a rate division (see `_hunt_trip_forecast`).
+## Returns `HUNT_RATE_UNAVAILABLE` when the levers/ceiling are absent.
+func _hunt_take_rate(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> float:
+    var per_worker_rate := float(band.get("hunt_per_worker_provisions", 0.0))
+    var ceiling := _hunt_policy_ceiling(herd, policy)
+    if workers <= 0 or per_worker_rate <= 0.0 or ceiling < 0.0:
+        return HUNT_RATE_UNAVAILABLE
+    return maxf(minf(float(workers) * per_worker_rate, ceiling), 0.0)
+
+## The sim-exported per-turn BAND take ceiling for `policy` on `herd` (`hunt_policy_ceilings` — the
+## herd's renewable FLOW), or `HUNT_RATE_UNAVAILABLE` when the snapshot carries none. NEVER derived
+## here — the ecology/MSY model that produces these numbers lives in the sim.
+func _hunt_policy_ceiling(herd: Dictionary, policy: String) -> float:
+    var ceilings_variant: Variant = herd.get(HERD_BAND_CEILINGS_KEY, {})
+    if not (ceilings_variant is Dictionary) or not (ceilings_variant as Dictionary).has(policy):
+        return HUNT_RATE_UNAVAILABLE
+    return float((ceilings_variant as Dictionary)[policy])
+
+## The LOCAL hunt's live per-turn yield preview, or "" when the snapshot lacks the levers/ceilings
+## (graceful degrade — no line, panel otherwise unchanged). A resident band applies its
+## `output_multiplier` (morale/discontent productivity) at payout, so the preview is the take rate
+## scaled by it. Reads income-green when the take is within the herd's sustainable yield (the Sustain
+## ceiling), WARN-amber with the shared ⚠ when it overdraws — the same flag the allocation rows carry.
+func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> String:
+    # The BAND ceiling (the herd's flow) — a resident hunt is capped by it, and the Sustain entry IS
+    # the herd's sustainable yield. The expedition's stock-headroom ceilings never enter here.
+    var rate := _hunt_take_rate(band, herd, policy, workers)
+    var sustain_ceiling := _hunt_policy_ceiling(herd, DEFAULT_HUNT_POLICY)
+    if rate < 0.0 or sustain_ceiling < 0.0:
+        return ""
+    var output := float(band.get("output_multiplier", OUTPUT_FULL))
+    var actual := rate * output
+    var sustainable := sustain_ceiling * output
+    var text: String = LOCAL_HUNT_YIELD_FORMAT % _format_yield(actual)
+    if _is_overdraw(actual, sustainable):
+        return "[color=#%s]%s %s%s[/color]" % [
+            HudStyle.WARN_HEX, OVERHUNT_FLAG, text, LOCAL_HUNT_OVERDRAW_SUFFIX,
+        ]
+    return "[color=#%s]%s%s[/color]" % [HudStyle.HEALTHY_HEX, text, YIELD_TOOLTIP_RENEWABLE]
 
 ## Cancel the active targeting (banner Cancel / Esc / right-click all route here).
 func cancel_active_targeting() -> void:
@@ -1393,7 +1627,7 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     # Sustain gathers at the patch's regrowth (actual == sustainable → never trips, reads
     # "· renewable"); a Surplus/Market/Eradicate forage patch OR an over-hunted herd pushes actual
     # above sustainable → the ⚠ flag.
-    var overhunting := actual > sustainable + OVERHUNT_EPSILON
+    var overhunting := _is_overdraw(actual, sustainable)
     var renewable := kind == LABOR_KIND_FORAGE and not overhunting
     var tooltip := "Actual %s" % _format_yield(actual)
     if renewable:
@@ -1403,6 +1637,12 @@ func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         if overhunting:
             tooltip += YIELD_TOOLTIP_OVERDRAW
     return {"label_suffix": " %s" % _format_yield(actual), "warn": overhunting, "tooltip": tooltip}
+
+## THE overdraw test: a take above the source's renewable-sustainable ceiling (by more than the
+## epsilon) draws the source down. One definition, shared by the confirmed allocation rows
+## (`_source_yield_readout`) and the local hunt's pre-assign yield preview.
+func _is_overdraw(actual: float, sustainable: float) -> bool:
+    return actual > sustainable + OVERHUNT_EPSILON
 
 ## Net per-turn food flow (food_income − food_consumption). Positive → the larder is growing.
 func _band_net_food(band: Dictionary) -> float:
@@ -1792,8 +2032,29 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
             % [_herd_label_for_id(herd_id), distance, reach]))
     var assign_btn := Button.new()
-    assign_btn.text = SEND_HUNTING_EXPEDITION_BUTTON if is_expedition else ASSIGN_LOCAL_HUNT_BUTTON
-    HudStyle.apply_button(assign_btn, "primary")
+    if is_expedition:
+        # LIVE turns-to-fill for the party + policy currently dialed. This block re-renders on every
+        # stepper tick and policy click, so the forecast tracks the compose state instead of arriving
+        # as a confirmation — and it comes from the SAME helpers the targeting banner uses, so the two
+        # entry points can never quote different numbers.
+        var forecast := _hunt_trip_forecast(band, herd, _hunt_assign_policy, _hunt_assign_count)
+        var forecast_line := _hunt_forecast_line_bbcode(forecast, _herd_label_for_id(herd_id))
+        if forecast_line != "":
+            herd_assign_controls.add_child(_forecast_label(forecast_line))
+        _style_send_hunt_button(assign_btn, forecast)
+    else:
+        # What this policy DOES for a resident band (the forecast line below carries the number; this
+        # carries the consequence — above all Sustain's husbandry-toward-livestock payoff, which is
+        # otherwise invisible). Deliberately NOT the expedition hints: a party earns neither.
+        herd_assign_controls.add_child(_alloc_hint_label(
+            String(LOCAL_HUNT_POLICY_HINTS.get(_hunt_assign_policy, ""))))
+        # LIVE per-turn yield for the standing assignment being composed (no carry cap on a local
+        # hunt, so turns-to-fill is meaningless — food/turn is the number that decides it).
+        var yield_line := _local_hunt_preview_bbcode(band, herd, _hunt_assign_policy, _hunt_assign_count)
+        if yield_line != "":
+            herd_assign_controls.add_child(_forecast_label(yield_line))
+        assign_btn.text = ASSIGN_LOCAL_HUNT_BUTTON
+        HudStyle.apply_button(assign_btn, "primary")
     if is_expedition:
         # A hunting expedition needs a positive party; a local hunt allows 0 (removes the assignment).
         assign_btn.disabled = _hunt_assign_count <= 0
@@ -1813,6 +2074,41 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
                 herd_x, herd_y, herd_id, _hunt_assign_policy))
     herd_assign_controls.add_child(assign_btn)
 
+## Style the hunt-expedition send button from the live forecast. A trip that is too slow to be worth
+## sending — or that never fills at all — hands the button the "armed" warning treatment and a label
+## that NAMES the cost, so the player can't miss it on the way to the click. It is deliberately never
+## disabled and never behind a confirm dialog: the trip is always sendable, this is just the price tag.
+func _style_send_hunt_button(button: Button, forecast: Dictionary) -> void:
+    var fills := bool(forecast.get("fills", false))
+    var warned := bool(forecast.get("available", false)) \
+        and (not fills or not bool(forecast.get("viable", true)))
+    if not warned:
+        button.text = SEND_HUNTING_EXPEDITION_BUTTON
+        HudStyle.apply_button(button, "primary")
+        return
+    if bool(forecast.get("denial", false)):
+        # Eradicate: no food comes home, but that IS the mission — state the deal, don't cry failure.
+        button.text = SEND_HUNT_DENIAL_BUTTON
+    elif fills:
+        button.text = SEND_HUNT_ANYWAY_TURNS_FORMAT % int(forecast.get("turns", 0))
+    else:
+        button.text = SEND_HUNT_ANYWAY_EMPTY_BUTTON
+    HudStyle.apply_button(button, "armed")
+
+## A one-line BBCode readout inside the assign controls (the live hunt-trip forecast / yield preview).
+## Sized like the hint lines it sits among, but BBCode-capable so the forecast keeps its state colors.
+func _forecast_label(bbcode: String) -> RichTextLabel:
+    var label := RichTextLabel.new()
+    label.bbcode_enabled = true
+    label.fit_content = true
+    label.scroll_active = false
+    label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    label.add_theme_font_size_override("normal_font_size", ALLOC_SECTION_FONT_SIZE)
+    label.add_theme_stylebox_override("normal", HudStyle.empty_stylebox())
+    label.text = bbcode
+    return label
+
 ## A sustain/surplus/market/eradicate policy radio; `on_pick` fires with the chosen policy. The
 ## highlighted option is `selected` (defaults to the herd-assign compose policy so existing callers
 ## are unchanged; the send-hunt-expedition picker passes `_send_hunt_policy`).
@@ -1829,7 +2125,10 @@ func _build_policy_picker(on_pick: Callable, selected: String = "") -> HBoxConta
     return row
 
 ## The tile "Assign foragers" controls (compose a count, then Assign). Shown only for a
-## tile with a food module while a player band exists to staff it.
+## tile with a food module while a player band exists to staff it — and only on a hex the player can
+## actually SEE (a workable patch is live state, redacted from a remembered tile like its occupants;
+## MapView already strips `food_module*` there, and this holds the line if anything ever feeds a
+## non-redacted dict).
 func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     if forage_assign_controls == null:
         return
@@ -1837,7 +2136,7 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
         child.queue_free()
     var module_key := String(tile_info.get("food_module", "")).strip_edges()
     var resolved := _resolve_assign_band()
-    var can_assign := module_key != "" and not resolved.is_empty()
+    var can_assign := module_key != "" and not resolved.is_empty() and not _tile_contents_unseen(tile_info)
     forage_assign_controls.visible = can_assign
     if not can_assign:
         return
@@ -2015,18 +2314,24 @@ func _try_dispatch_pending_send_hunt_expedition(tile_info: Dictionary) -> void:
     _pending_send_hunt_expedition = {}
     _refresh_targeting()
 
-## The id of the first huntable herd on a clicked hex's tile_info (the herds the tile carries), or
-## "" when the hex holds no huntable herd. Used to resolve a hunt-expedition target click.
+## The id of the first huntable herd on a hex's tile_info (the herds the tile carries), or "" when
+## the hex holds no huntable herd. Used to resolve a hunt-expedition target click.
 func _huntable_herd_id_on_tile(tile_info: Dictionary) -> String:
+    return String(_huntable_herd_on_tile(tile_info).get("id", "")).strip_edges()
+
+## The first huntable herd DICT on a hex's tile_info, or {} when there is none. The target click
+## resolves its id from this; the hovered-herd forecast additionally needs the herd's exported
+## `hunt_policy_ceilings`, so both read the same herd through one helper.
+func _huntable_herd_on_tile(tile_info: Dictionary) -> Dictionary:
     var herds_variant: Variant = tile_info.get("herds", [])
     if not (herds_variant is Array):
-        return ""
+        return {}
     for herd_variant in (herds_variant as Array):
         if herd_variant is Dictionary and bool((herd_variant as Dictionary).get("huntable", false)):
-            var id := String((herd_variant as Dictionary).get("id", "")).strip_edges()
-            if id != "":
-                return id
-    return ""
+            var herd: Dictionary = herd_variant as Dictionary
+            if String(herd.get("id", "")).strip_edges() != "":
+                return herd
+    return {}
 
 ## Clear-all: return every worker to idle (repurposed cancel_order).
 func _on_clear_all_pressed(band: Dictionary) -> void:
@@ -2329,16 +2634,26 @@ func _render_selection_panel(_tile_info: Dictionary, _unit_data: Dictionary, _he
 func _assemble_roster(tile_info: Dictionary) -> void:
     _roster_units = []
     _roster_herds = []
+    # Occupants are LIVE state, so on a hex the player cannot currently see they are redacted — MapView
+    # fog-gates them out of `tile_info` at source, and this re-reads the SAME state flag it tagged (not
+    # a second visibility test) so the roster stays honest no matter who feeds it.
+    # THE ONE EXCEPTION: your OWN bands are always listed, even on an Unexplored hex. A scouting party
+    # is deliberately excluded from fog reveal server-side, so it ROUTINELY stands on a tile it cannot
+    # see — hiding it would delete your own expedition from the roster exactly while you're using it.
+    # Mirrors `MapView._unit_hidden_by_fog`, which is the same rule for the map/click side.
+    var unseen := _tile_contents_unseen(tile_info)
     var units_variant: Variant = tile_info.get("units", [])
     if units_variant is Array:
         for entry in units_variant:
-            if entry is Dictionary:
+            if entry is Dictionary and (not unseen or _is_player_unit(entry as Dictionary)):
                 _roster_units.append(entry)
-    var herds_variant: Variant = tile_info.get("herds", [])
-    if herds_variant is Array:
-        for entry in herds_variant:
-            if entry is Dictionary:
-                _roster_herds.append(entry)
+    # Wildlife is never ours — an unseen hex lists no herds at all.
+    if not unseen:
+        var herds_variant: Variant = tile_info.get("herds", [])
+        if herds_variant is Array:
+            for entry in herds_variant:
+                if entry is Dictionary:
+                    _roster_herds.append(entry)
     if not _selected_unit.is_empty() and _find_roster_unit(int(_selected_unit.get("entity", -1))).is_empty():
         _roster_units.append(_selected_unit)
     if not _selected_herd.is_empty() and _find_roster_herd(String(_selected_herd.get("id", ""))).is_empty():
@@ -2358,12 +2673,46 @@ func _render_tile_card(tile_info: Dictionary) -> void:
     tile_detail.text = _format_detail_bbcode(_tile_terrain_lines(tile_info))
     _build_forage_assign_controls(tile_info)
 
+## The tile's `Sight: …` row — which of the three FoW states this hex is in, in plain words.
+## "" (FoW off) yields no row.
+func _tile_sight_line(visibility_state: String) -> String:
+    var value := ""
+    match visibility_state:
+        VISIBILITY_ACTIVE:
+            value = TILE_SIGHT_ACTIVE
+        VISIBILITY_DISCOVERED:
+            value = TILE_SIGHT_REMEMBERED
+        VISIBILITY_UNEXPLORED:
+            value = TILE_SIGHT_UNEXPLORED
+        _:
+            return ""
+    return "%s: %s" % [TILE_SIGHT_KEY, value]
+
+## Value tint for the Sight row: in-sight reads live (SIGNAL cyan — the HUD's "this is current"
+## color), while both unseen states read dim (INK_DIM). The row states what you KNOW, not what is
+## wrong, so it never borrows the WARN/DANGER palette.
+func _sight_value_hex(value: String) -> String:
+    return HudStyle.SIGNAL_HEX if value == TILE_SIGHT_ACTIVE else HudStyle.INK_DIM_HEX
+
+## True when the hex's LIVE contents (occupants, workable sources) are unknowable right now — a
+## remembered or a never-seen tile. MapView already redacts them from `tile_info` at source (it strips
+## `herds`/`units`/`food_module*` and fog-gates `_herds_on_tile`); this re-reads the SAME state flag it
+## tagged — not a second visibility test — so every consumer stays honest regardless of who feeds it.
+## Terrain rows are exempt by design: geography is remembered knowledge, live contents are not.
+func _tile_contents_unseen(tile_info: Dictionary) -> bool:
+    var state := String(tile_info.get("visibility_state", ""))
+    return state == VISIBILITY_DISCOVERED or state == VISIBILITY_UNEXPLORED
+
 ## The Occupants card: a selectable roster of bands + wildlife on the hex, plus a
-## detail drawer for the selected occupant. Hidden (dock reflows) on an empty hex.
+## detail drawer for the selected occupant. Hidden (dock reflows) on an empty hex that the player
+## can actually SEE; on an unseen hex it stays up and states that the contents are unknown.
 func _render_occupants_card() -> void:
     if occupants_panel == null:
         return
     if _roster_units.is_empty() and _roster_herds.is_empty():
+        if _tile_contents_unseen(_selected_tile_info):
+            _render_occupants_unknown()
+            return
         _set_occupants_relevant(false)
         if allocation_panel != null:
             allocation_panel.visible = false
@@ -2385,6 +2734,26 @@ func _render_occupants_card() -> void:
     _rebuild_roster()
     _render_occupant_drawer()
 
+## The Occupants card on a hex the player CANNOT see: the roster is emptied and the drawer states
+## that the hex's live contents are unknown. This is the whole point of the fog gate — an absent
+## roster would silently claim "nothing here", which is a different (and unearned) statement.
+func _render_occupants_unknown() -> void:
+    _set_occupants_relevant(true)
+    occupants_panel.set_card_kind("Occupants")
+    occupants_panel.set_card_title(OCCUPANTS_UNKNOWN_TITLE)
+    if roster_list != null:
+        for child in roster_list.get_children():
+            child.queue_free()
+    if allocation_panel != null:
+        allocation_panel.visible = false
+    if herd_assign_controls != null:
+        herd_assign_controls.visible = false
+    if occupant_detail != null:
+        var message := OCCUPANTS_UNKNOWN_UNEXPLORED \
+            if String(_selected_tile_info.get("visibility_state", "")) == VISIBILITY_UNEXPLORED \
+            else OCCUPANTS_UNKNOWN_REMEMBERED
+        occupant_detail.text = _format_detail_bbcode([message])
+
 func _set_occupants_relevant(relevant: bool) -> void:
     if left_dock != null:
         left_dock.set_relevant(occupants_panel, relevant)
@@ -2403,10 +2772,13 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # show only their last-known terrain, not current contents. See MapView
     # _apply_visibility_to_info, which redacts the hidden fields before this runs.
     var visibility_state := String(tile_info.get("visibility_state", ""))
-    if visibility_state == "unexplored":
-        lines.append("Undiscovered tile")
+    if visibility_state == VISIBILITY_UNEXPLORED:
+        lines.append(_tile_sight_line(visibility_state))
         lines.append("Not yet scouted — send a band to reveal this area.")
         return lines
+    # The Sight row leads the card: it frames everything under it as either live truth (In sight) or
+    # remembered knowledge (Remembered), so the terrain rows are never mistaken for current contents.
+    lines.append(_tile_sight_line(visibility_state))
     var terrain_label := String(tile_info.get("terrain_label", "Unknown"))
     lines.append("Biome: %s" % terrain_label)
     if tile_info.has("height_display"):
@@ -2430,7 +2802,7 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     var site_name := String(tile_info.get("site_name", "")).strip_edges()
     if site_name != "":
         lines.append("Site: %s" % site_name)
-    if visibility_state == "discovered":
+    if visibility_state == VISIBILITY_DISCOVERED:
         lines.append("Last seen — information incomplete. Scout to update.")
         return lines
     var food_label := String(tile_info.get("food_module_label", "None")).strip_edges()
@@ -2464,6 +2836,10 @@ func _rebuild_roster() -> void:
         roster_list.add_child(_roster_group_header("Wildlife", _roster_herds.size()))
         for herd in _roster_herds:
             roster_list.add_child(_build_herd_row(herd))
+    # Reached only when your OWN unit is on a hex you can't see (everything else was redacted): say so,
+    # or the lone row would read as "and nothing else is here" — which we cannot know.
+    if _tile_contents_unseen(_selected_tile_info):
+        roster_list.add_child(_alloc_hint_label(OCCUPANTS_UNSEEN_OTHERS_HINT))
 
 func _roster_group_header(title: String, count: int) -> Label:
     var label := Label.new()
@@ -3341,6 +3717,9 @@ func _format_detail_bbcode(lines: Array) -> String:
             elif String(kv[0]) == "Habitability":
                 # The tile's habitability rating tints by its bucket (green→red).
                 value_hex = TileHabitability.hex_for_rating(String(kv[1]))
+            elif String(kv[0]) == TILE_SIGHT_KEY:
+                # The tile's sight state: live cyan when in sight, dim when only remembered/unknown.
+                value_hex = _sight_value_hex(String(kv[1]))
             elif String(kv[0]) == "Ecology":
                 value_hex = _ecology_value_hex(String(kv[1]))
             elif String(kv[0]) == "Husbandry":
@@ -3873,15 +4252,34 @@ func _process(_delta: float) -> void:
 ## (panel, button, minimap, inspector). The map cannot detect this itself: those
 ## controls are MOUSE_FILTER_STOP and consume the motion events, so the map never
 ## receives a "moved away" event to clear its tooltip and it would otherwise stay
-## frozen on top of the panel.
+## frozen on top of the panel. The hovered-hex record (which drives the targeting
+## banner's hunt forecast) is dropped for the same reason — the pointer is no
+## longer over a herd, so a stale forecast must not linger in the banner.
 func _suppress_tooltip_over_ui() -> void:
+    var over_ui_viewport := get_viewport()
+    var over_ui := over_ui_viewport != null and over_ui_viewport.gui_get_hovered_control() != null
+    if over_ui and not _hovered_tile_info.is_empty():
+        _hovered_tile_info = {}
+        _refresh_targeting()
     if tooltip_panel == null or not tooltip_panel.visible:
         return
     var viewport := get_viewport()
     if viewport != null and viewport.gui_get_hovered_control() != null:
         tooltip_panel.visible = false
 
+## Record the hex under the pointer and, only while a hunt expedition is armed (the one flow that
+## reads it), re-render the targeting banner so its forecast tracks the hovered herd. Gated so an
+## ordinary hover doesn't re-emit targeting_changed on every hex the pointer crosses.
+func _set_hovered_tile_info(info: Dictionary) -> void:
+    _hovered_tile_info = info if info is Dictionary else {}
+    if not _pending_send_hunt_expedition.is_empty():
+        _refresh_targeting()
+
+## MapView.tile_hovered lands here. Besides the hex tooltip it records the hovered hex, which is how
+## the targeting banner knows WHICH herd the player is considering while a hunt expedition is armed
+## (the pre-launch turns-to-fill forecast) — see _hunt_forecast_bbcode.
 func show_tooltip(info: Dictionary) -> void:
+    _set_hovered_tile_info(info)
     if tooltip_panel == null:
         return
 
