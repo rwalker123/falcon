@@ -732,6 +732,44 @@ Capture: `snapshot_forage_patches` / `herd_snapshot_entries` (`snapshot.rs`); th
 **Client follow-up:** rendering the live "Expected yield" line + the worker-stepper cap in the
 forage/herd assign controls.
 
+### Assign-time yield seeding (the `+0.00` fix)
+
+The retained `SourceYield` telemetry used to be written **only** during turn resolution, so between
+"player assigns workers" and "player advances the turn" a brand-new source had no row and the display
+snapshot serialized `actual_yield = 0.0` — the map annotation and the Band panel read **`+0.00`** for
+every fresh assignment, and the client cannot distinguish "0 because not computed yet" from "0 because
+the source is barren". Fixed server-side: `handle_assign_labor` (and the `cultivate`/`corral` policy
+shorthands, via `set_policy_on_working_bands`) **seeds the touched source's `SourceYield` from its
+pre-commit forecast** right after mutating the `LaborAllocation` (`server.rs::seed_source_yield` →
+`LaborAllocation::set_source_yield`). Because forecast == actual (above), the seeded number is exactly
+what the turn then pays under unchanged conditions — **no jump** — and it is the same number the
+client's compose-time "Expected yield" row promises. Shape:
+- **The expected take** is the one shared helper `fauna::forecast_expected_take(&SourceYieldForecast,
+  workers, policy) = min(workers × per_worker_yield, forecast.ceiling_for(policy))`
+  (`SourceYieldForecast::ceiling_for` is the `ceiling[policy]` lookup; the two investment policies
+  share `ceiling_prepare`, the reduced `cultivating_yield_fraction`/`corralling_yield_fraction` bite —
+  once the improvement *completes* the source is `::tended`, whose every ceiling already **is**
+  `managed_yield`). The client preview, the seed, and the forecast==actual tests all call it.
+- The kind-specific seeds `forage::forage_source_yield_preview` / `fauna::hunt_source_yield_preview`
+  compose the full row through the shared `forecast_source_yield`: `actual` = the expected take,
+  `sustainable` = the same MSY value the resolution path records (a *managed* source reads
+  `sustainable == actual` — no ⚠), `workers_needed` = the same overstaffing inversion (a managed source
+  = `TENDED_SOURCE_WORKERS_NEEDED`). No new formula, no new config lever.
+- **Only the source the command touched** is seeded (other sources keep their real actuals), and only
+  where the turn would actually pay: out of `band_work_range` / past the hunt leash, an unseeded patch
+  or a vanished herd keeps its zero row, and a **genuinely barren source still seeds `0.0`** — `+0.00`
+  stays reachable, and correct, there. Consequence (intended): a fresh assignment now *previews* its
+  contribution to the Food-line net rate + the Gathered/Hunted breakdown, and can pre-trip the
+  overdraw ⚠ if the chosen policy would overdraw — ⚠ is a leading flow signal by design.
+- `LaborAllocation` now keeps `last_yields` **index-aligned with `assignments`** across every mutation
+  (`set_assignment`/`normalize`/`clear` — the snapshot zips the two by index, so a row left behind by a
+  removed assignment used to be attributed to the *next* source). New rows default to
+  `SourceYield::ZERO`.
+- Guarded by `server::tests::{assigning_forage,assigning_hunt}_workers_seeds_the_expected_yield_before_the_turn`,
+  `resolved_{forage,hunt}_yield_equals_the_seeded_yield` (the no-jump property),
+  `changing_the_policy_reseeds_the_expected_yield`, `a_barren_source_seeds_zero`,
+  `unassigning_a_source_drops_its_yield_row`.
+
 ---
 
 ## Wondrous Sites
@@ -1009,11 +1047,14 @@ posting forward-observer vantages that see around obstacles; field name kept for
 **Per-source food-income breakdown (retained yield telemetry).** `advance_labor_allocation` rebuilds
 `LaborAllocation.last_yields` each turn — one `SourceYield { actual, sustainable, workers_needed }`
 (f32 provisions + a worker count)
-per assignment, **in the same index order** as `assignments` (so the snapshot zips by index). It is
+per assignment, **in the same index order** as `assignments` (so the snapshot zips by index — every
+`LaborAllocation` mutator keeps the two aligned; see "Assign-time yield seeding"). It is
 **derived, not persisted**: it is out of rollback (`#[serde]` never sees it; `labor_allocation_from_state`
 restores only the assignments, leaving it empty until the next tick) and is **excluded from
 `LaborAllocation`'s equality** (manual `PartialEq` compares assignments only) so it can't perturb the
-persisted-intent comparison. Definitions: **`actual`** = the provisions the source produced this turn
+persisted-intent comparison. A row is also written **at assign time**, seeded from the source's
+pre-commit forecast, so a brand-new assignment shows its expected yield instead of `+0.00` before the
+turn resolves (see "Assign-time yield seeding (the `+0.00` fix)" under Pre-commit Yield Forecast). Definitions: **`actual`** = the provisions the source produced this turn
 (the value added to the larder); **`sustainable`** = what it could yield without drawing down its
 stock. As of §0-ii **forage is depletable too**, so a forage `sustainable =
 sustainable_yield(biomass_before, carrying_capacity, forage.ecology) × forage.provisions_per_biomass ×

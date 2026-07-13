@@ -78,7 +78,7 @@ pub use components::{
     available_workers, BandTravel, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
     FollowPolicy, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
     LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
-    Settlement, StartingUnit, Tile, TownCenter, TradeLink, FOOD,
+    Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, FOOD,
 };
 pub use crisis::{
     ActiveCrisisLedger, CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot,
@@ -118,9 +118,9 @@ pub use expedition_config::{
     ExpeditionConfigMetadata, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
-    advance_herds, advance_husbandry, repopulate_fauna, spawn_initial_herds, EcologyPhase, Herd,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, RoamState,
-    HERDING_DISCOVERY_ID,
+    advance_herds, advance_husbandry, forecast_expected_take, hunt_source_yield_preview,
+    repopulate_fauna, spawn_initial_herds, EcologyPhase, Herd, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, HerdTelemetryEntry, RoamState, SourceYieldForecast, HERDING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata, SizeClass,
@@ -131,8 +131,8 @@ pub use food::{
     FoodSiteKind, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
 pub use forage::{
-    advance_cultivation, advance_forage_regrowth, spawn_initial_forage, ForagePatch,
-    ForageRegistry, CULTIVATION_DISCOVERY_ID,
+    advance_cultivation, advance_forage_regrowth, forage_source_yield_preview,
+    spawn_initial_forage, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use great_discovery::{
@@ -239,8 +239,8 @@ pub use snapshot::{
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
-    advance_band_movement, advance_expeditions, advance_labor_allocation, simulate_power,
-    MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent,
+    advance_band_movement, advance_expeditions, advance_labor_allocation, output_multiplier,
+    simulate_power, MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent,
 };
 pub use terrain::{
     biome_must_have, biome_niche, classify_terrain, terrain_definition, terrain_for_position,

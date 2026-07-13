@@ -31,10 +31,10 @@ use bevy::prelude::*;
 use sim_schema::ForageState;
 
 use crate::{
-    components::{FollowPolicy, Tile},
+    components::{FollowPolicy, SourceYield, Tile},
     fauna::{
-        classify_ecology_phase, logistic_regrowth, sustainable_yield, EcologyPhase,
-        SourceYieldForecast,
+        classify_ecology_phase, forecast_source_yield, logistic_regrowth, sustainable_yield,
+        EcologyPhase, SourceYieldForecast,
     },
     fauna_config::EcologyConfig,
     food::FoodModuleTag,
@@ -461,6 +461,34 @@ pub(crate) fn forage_forecast(
         ceiling_prepare: ceiling(FollowPolicy::Cultivate),
         managed_yield: tended_provisions(patch.biomass, forage, output_multiplier),
     }
+}
+
+/// The assign-time yield telemetry seed for a **Forage** source: what staffing `patch` with `workers`
+/// gatherers under `policy` will pay next turn, in the same shape the Forage arm of
+/// `advance_labor_allocation` records after the take. Reuses `forage_forecast` (hence `forage_take`'s
+/// own ceiling/conversion helpers) and the shared MSY `sustainable_yield`, so the seed is exactly the
+/// number the turn then produces — no jump. The animal mirror is `fauna::hunt_source_yield_preview`.
+pub fn forage_source_yield_preview(
+    patch: &ForagePatch,
+    forage: &ForageLaborConfig,
+    seasonal: f32,
+    output_multiplier: f32,
+    workers: u32,
+    policy: FollowPolicy,
+) -> SourceYield {
+    let forecast = forage_forecast(patch, forage, seasonal, output_multiplier);
+    let sustainable = forage_provisions(
+        sustainable_yield(patch.biomass, patch.carrying_capacity, &forage.ecology),
+        forage,
+        output_multiplier,
+    );
+    forecast_source_yield(
+        &forecast,
+        sustainable,
+        patch.is_cultivated(),
+        workers,
+        policy,
+    )
 }
 
 #[cfg(test)]

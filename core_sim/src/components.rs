@@ -629,6 +629,18 @@ pub struct SourceYield {
     pub workers_needed: u32,
 }
 
+impl SourceYield {
+    /// A source that has produced nothing: the row every assignment starts each turn's resolution
+    /// with (so an arm that bails — out of range, module lost, herd gone — leaves a correct 0-yield
+    /// row), and the row a freshly-staffed assignment carries until it is seeded from its pre-commit
+    /// forecast (`set_source_yield`) or resolved by a turn.
+    pub const ZERO: Self = Self {
+        actual: 0.0,
+        sustainable: 0.0,
+        workers_needed: 0,
+    };
+}
+
 /// A band's partition of its working-age pool across labor demands. Replaces the retired
 /// single-task model (`HarvestAssignment`/`ScoutAssignment`/`FaunaPursuit`): a band now draws from
 /// many sources at once, with the invariant `Σ assignments.workers ≤ available_workers(working)`.
@@ -671,10 +683,24 @@ impl LaborAllocation {
             .sum()
     }
 
+    /// Keep the derived `last_yields` the same length as `assignments` — the snapshot **zips the two
+    /// by index**, so a mutation that adds/removes an assignment without touching the telemetry would
+    /// hand one source's yield row to another. Padding with [`SourceYield::ZERO`] is the correct
+    /// default: a source with no telemetry has produced nothing yet.
+    fn align_yields(&mut self) {
+        self.last_yields
+            .resize(self.assignments.len(), SourceYield::ZERO);
+    }
+
     /// Set/replace the worker count for `target`, keeping `Σ ≤ available`. `workers == 0` removes
     /// the assignment (per-source unassign — the new "cancel"). An over-budget request is
     /// **clamped** to the free headroom (not rejected). Returns the worker count actually applied
     /// so the caller can report a clamp.
+    ///
+    /// The touched source's yield telemetry is dropped alongside its assignment and a freshly-staffed
+    /// source gets a [`SourceYield::ZERO`] row, which the command handler immediately overwrites with
+    /// the source's pre-commit forecast (`set_source_yield`) so the client never displays `+0.00` for
+    /// an assignment that will in fact produce next turn.
     pub fn set_assignment(&mut self, target: LaborTarget, workers: u32, available: u32) -> u32 {
         // Free headroom excludes any existing assignment on the same source (it is being replaced).
         let others: u32 = self
@@ -685,16 +711,40 @@ impl LaborAllocation {
             .sum();
         let headroom = available.saturating_sub(others);
         let applied = workers.min(headroom);
-        // Drop any prior assignment on this source, then re-add if non-zero (captures a new policy).
-        self.assignments.retain(|a| !a.target.same_source(&target));
+        self.align_yields();
+        // Drop any prior assignment on this source (and its now-stale telemetry row), then re-add if
+        // non-zero (captures a new policy).
+        if let Some(idx) = self
+            .assignments
+            .iter()
+            .position(|a| a.target.same_source(&target))
+        {
+            self.assignments.remove(idx);
+            self.last_yields.remove(idx);
+        }
         if applied > 0 {
-            self.assignments.push(LaborAssignment { target, workers });
-            // Re-store the clamped count (the push above used the requested value).
-            if let Some(last) = self.assignments.last_mut() {
-                last.workers = applied;
-            }
+            self.assignments.push(LaborAssignment {
+                target,
+                workers: applied,
+            });
+            self.last_yields.push(SourceYield::ZERO);
         }
         applied
+    }
+
+    /// Overwrite one source's derived yield telemetry row (assign-time **forecast seeding**: the row
+    /// is set to what the source is expected to produce next turn, so the map annotation and the band
+    /// panel show the real number the moment workers are committed instead of `+0.00`). A no-op when
+    /// the source is not staffed.
+    pub fn set_source_yield(&mut self, target: &LaborTarget, yields: SourceYield) {
+        self.align_yields();
+        if let Some(idx) = self
+            .assignments
+            .iter()
+            .position(|a| a.target.same_source(target))
+        {
+            self.last_yields[idx] = yields;
+        }
     }
 
     /// Trim assignments so `Σ ≤ available` (called each turn in case `working` shrank). Reduces
@@ -713,11 +763,13 @@ impl LaborAllocation {
             }
             total = self.assigned_total();
         }
+        self.align_yields();
     }
 
     /// Clear every assignment (the repurposed `cancel_order` — band goes fully idle).
     pub fn clear(&mut self) {
         self.assignments.clear();
+        self.last_yields.clear();
     }
 }
 

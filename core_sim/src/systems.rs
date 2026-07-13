@@ -4100,7 +4100,7 @@ pub fn advance_expeditions(
 /// A *tended* improvement (cultivated patch / corralled herd) is **maintenance labor**, not scaling
 /// gather: it needs a tending presence, not a headcount proportional to the take. Its
 /// `SourceYield.workers_needed` is defined as exactly this many workers.
-const TENDED_SOURCE_WORKERS_NEEDED: u32 = 1;
+pub(crate) const TENDED_SOURCE_WORKERS_NEEDED: u32 = 1;
 
 /// `SourceYield.workers_needed` — the **minimum** assigned workers that would have produced `take`
 /// biomass this turn at `per_worker_capacity` biomass/worker (the overstaffing signal; see
@@ -4110,7 +4110,7 @@ const TENDED_SOURCE_WORKERS_NEEDED: u32 = 1;
 /// low-season, fully-labor-bound patch is not falsely flagged overstaffed; hunt has no seasonal
 /// factor. `per_worker_capacity ≤ 0` (a zero-throughput turn that somehow still took biomass) can't
 /// be inverted, so it conservatively reports `assigned` (no overstaffing flagged).
-fn workers_needed_for_take(take: f32, per_worker_capacity: f32, assigned: u32) -> u32 {
+pub(crate) fn workers_needed_for_take(take: f32, per_worker_capacity: f32, assigned: u32) -> u32 {
     if take <= 0.0 {
         return 0;
     }
@@ -4259,15 +4259,10 @@ pub fn advance_labor_allocation(
         let mut lapsed: Vec<usize> = Vec::new();
         // Retained per-source yield telemetry (derived, not persisted): one entry per assignment in
         // iteration order, pre-seeded to zero so any arm that `continue`s (out of range, module
-        // lost, herd gone) leaves a correct 0-yield row and index alignment is preserved.
-        let mut yields: Vec<SourceYield> = vec![
-            SourceYield {
-                actual: 0.0,
-                sustainable: 0.0,
-                workers_needed: 0,
-            };
-            allocation.assignments.len()
-        ];
+        // lost, herd gone) leaves a correct 0-yield row and index alignment is preserved. This also
+        // *overwrites* any assign-time forecast seed (`LaborAllocation::set_source_yield`) with the
+        // resolved take — the seed is only the pre-resolution stand-in.
+        let mut yields: Vec<SourceYield> = vec![SourceYield::ZERO; allocation.assignments.len()];
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
             let workers = assignment.workers;
             if workers == 0 {
@@ -6736,8 +6731,8 @@ mod labor_yield_tests {
         PopulationCohort, Tile,
     };
     use crate::fauna::{
-        hunt_forecast, sustainable_yield, EcologyPhase, Herd, HerdRegistry, SourceYieldForecast,
-        HERDING_DISCOVERY_ID,
+        forecast_expected_take, hunt_forecast, sustainable_yield, EcologyPhase, Herd, HerdRegistry,
+        SourceYieldForecast, HERDING_DISCOVERY_ID,
     };
     use crate::fauna_config::{FaunaConfigHandle, SizeClass};
     use crate::food::{FoodModule, FoodModuleTag, FoodSiteKind};
@@ -7267,27 +7262,16 @@ mod labor_yield_tests {
         FollowPolicy::Corral,
     ];
 
-    /// The client's `ceiling[policy]` lookup over the forecast's exposed ceilings. The two investment
-    /// policies are kind-exclusive and share the one `ceiling_prepare` field (wire:
-    /// `ceilingCultivate` / `ceilingCorral`).
-    fn ceiling_for(forecast: &SourceYieldForecast, policy: FollowPolicy) -> f32 {
-        match policy {
-            FollowPolicy::Sustain => forecast.ceiling_sustain,
-            FollowPolicy::Surplus => forecast.ceiling_surplus,
-            FollowPolicy::Market => forecast.ceiling_market,
-            FollowPolicy::Eradicate => forecast.ceiling_eradicate,
-            FollowPolicy::Cultivate | FollowPolicy::Corral => forecast.ceiling_prepare,
-        }
-    }
-
-    /// The client's composition: what it would display as the expected yield for this staffing.
+    /// The client's composition: what it would display as the expected yield for this staffing. The
+    /// shared helper — the *same* one the assign-time telemetry seed uses — so these tests pin the
+    /// number the client shows, not a re-derivation of it.
     fn expected_yield(forecast: &SourceYieldForecast, workers: u32, policy: FollowPolicy) -> f32 {
-        (workers as f32 * forecast.per_worker_yield).min(ceiling_for(forecast, policy))
+        forecast_expected_take(forecast, workers, policy)
     }
 
     /// The client's worker-stepper cap.
     fn max_useful_workers(forecast: &SourceYieldForecast, policy: FollowPolicy) -> u32 {
-        (ceiling_for(forecast, policy) / forecast.per_worker_yield).ceil() as u32
+        (forecast.ceiling_for(policy) / forecast.per_worker_yield).ceil() as u32
     }
 
     /// Re-seat the test herd at `biomass`/`cap` (the harness's default 100-cap herd saturates every
@@ -7339,7 +7323,7 @@ mod labor_yield_tests {
                 let actual = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
 
                 let labor_term = workers as f32 * forecast.per_worker_yield;
-                let ceiling = ceiling_for(&forecast, policy);
+                let ceiling = forecast.ceiling_for(policy);
                 if labor_term < ceiling {
                     saw_labor_bound = true;
                 } else {
@@ -7400,7 +7384,7 @@ mod labor_yield_tests {
                 let actual = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
 
                 let labor_term = workers as f32 * forecast.per_worker_yield;
-                let ceiling = ceiling_for(&forecast, policy);
+                let ceiling = forecast.ceiling_for(policy);
                 if labor_term < ceiling {
                     saw_labor_bound = true;
                 } else {

@@ -10,7 +10,7 @@ use tracing::info;
 use std::hash::{Hash, Hasher};
 
 use crate::{
-    components::{FollowPolicy, PopulationCohort, Tile, FOOD},
+    components::{FollowPolicy, PopulationCohort, SourceYield, Tile, FOOD},
     fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle, SizeClass, SpeciesDef},
     food::{classify_food_module, FoodModule},
     grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT},
@@ -19,7 +19,7 @@ use crate::{
     orders::FactionId,
     resources::{SimulationConfig, SimulationTick, StartLocation, TileRegistry},
     scalar::{scalar_from_f32, scalar_zero, Scalar},
-    systems::output_multiplier,
+    systems::{output_multiplier, workers_needed_for_take, TENDED_SOURCE_WORKERS_NEEDED},
     wellbeing_config::WellbeingConfigHandle,
 };
 
@@ -1313,6 +1313,95 @@ impl SourceYieldForecast {
             managed_yield: yield_per_turn,
         }
     }
+
+    /// The food/turn cap this source pays under `policy` — the `ceiling[policy]` lookup over the
+    /// exposed ceilings (wire: `ceilingSustain`/…). The two **investment** policies are kind-exclusive
+    /// and share the one `ceiling_prepare` field (wire: `ceilingCultivate` / `ceilingCorral`): while
+    /// the improvement is being prepared the source pays the reduced
+    /// `cultivating_yield_fraction`/`corralling_yield_fraction` bite. Once the improvement *completes*
+    /// the source is `tended()`, whose every ceiling already **is** `managed_yield` — so this one
+    /// lookup covers both sides of the investment without a second formula.
+    pub fn ceiling_for(&self, policy: FollowPolicy) -> f32 {
+        match policy {
+            FollowPolicy::Sustain => self.ceiling_sustain,
+            FollowPolicy::Surplus => self.ceiling_surplus,
+            FollowPolicy::Market => self.ceiling_market,
+            FollowPolicy::Eradicate => self.ceiling_eradicate,
+            FollowPolicy::Cultivate | FollowPolicy::Corral => self.ceiling_prepare,
+        }
+    }
+}
+
+/// **The expected take**: the food/turn `workers` will produce at this source under `policy` —
+/// `min(workers × per_worker_yield, ceiling(policy))`, the exact composition the take path
+/// (`forage_take` / `hunt_take`, both `min(worker_cap, policy_ceiling)` clamped to biomass — the
+/// clamp is already folded into every `ceiling_*`) pays and the client's "Expected yield" row
+/// promises. The one place that formula lives: the client's compose-time preview, the assign-time
+/// telemetry seed (`SourceYield` — so a brand-new assignment displays its yield before the turn
+/// resolves), and the forecast==actual tests all call it.
+pub fn forecast_expected_take(
+    forecast: &SourceYieldForecast,
+    workers: u32,
+    policy: FollowPolicy,
+) -> f32 {
+    (workers as f32 * forecast.per_worker_yield).min(forecast.ceiling_for(policy))
+}
+
+/// Compose the **seeded** `SourceYield` telemetry row for a source from its pre-commit forecast —
+/// what the source *will* pay next turn under this staffing/policy, written at assign time so the
+/// map annotation and the band panel never show `+0.00` for an assignment that has simply not been
+/// resolved yet. Mirrors the rows `advance_labor_allocation` writes:
+/// - `actual` = [`forecast_expected_take`],
+/// - `sustainable` = the caller's MSY-based sustainable rate (`sustainable_yield × provisions ×
+///   output_multiplier`, the same value the resolution path records) — except a **managed** source
+///   (tended patch / corralled herd), whose harvest never overdraws, so `sustainable == actual`
+///   (no ⚠), exactly as the tended/corral arms record it,
+/// - `workers_needed` = the overstaffing signal, inverted from the expected take by the per-worker
+///   throughput (a ratio, so provisions-space matches the resolution path's biomass-space result);
+///   a managed source is fixed at [`TENDED_SOURCE_WORKERS_NEEDED`] (maintenance labor, not scaling
+///   gather), again as the resolution path defines it.
+pub(crate) fn forecast_source_yield(
+    forecast: &SourceYieldForecast,
+    sustainable: f32,
+    managed: bool,
+    workers: u32,
+    policy: FollowPolicy,
+) -> SourceYield {
+    let actual = forecast_expected_take(forecast, workers, policy);
+    if managed {
+        return SourceYield {
+            actual,
+            sustainable: actual,
+            workers_needed: TENDED_SOURCE_WORKERS_NEEDED,
+        };
+    }
+    SourceYield {
+        actual,
+        sustainable,
+        workers_needed: workers_needed_for_take(actual, forecast.per_worker_yield, workers),
+    }
+}
+
+/// The assign-time yield telemetry seed for a **Hunt** source: what staffing `herd` with `workers`
+/// hunters under `policy` will pay next turn, in the same shape the Hunt arm of
+/// `advance_labor_allocation` records after the take. Reuses `hunt_forecast` (hence `hunt_take`'s own
+/// ceiling/conversion helpers) and the shared MSY `sustainable_yield`, so the seed is exactly the
+/// number the turn then produces — no jump. The plant mirror is `forage::forage_source_yield_preview`.
+pub fn hunt_source_yield_preview(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    per_worker_biomass_capacity: f32,
+    output_multiplier: f32,
+    workers: u32,
+    policy: FollowPolicy,
+) -> SourceYield {
+    let forecast = hunt_forecast(herd, fauna, per_worker_biomass_capacity, output_multiplier);
+    let sustainable = hunt_provisions(
+        sustainable_yield(herd.biomass, herd.carrying_capacity, &fauna.ecology),
+        fauna,
+        output_multiplier,
+    );
+    forecast_source_yield(&forecast, sustainable, herd.is_corralled(), workers, policy)
 }
 
 /// The per-policy **biomass** ceiling on a hunt take at the herd's current stock — the single source

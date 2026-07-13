@@ -21,9 +21,11 @@ use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
-    apply_port_base_override, available_workers, resolve_active_profile, ActiveStartProfile,
+    apply_port_base_override, available_workers, forage_source_yield_preview,
+    hunt_source_yield_preview, output_multiplier, resolve_active_profile, ActiveStartProfile,
     BandTravel, CampaignLabel, Expedition, ExpeditionConfigHandle, ExpeditionMission,
-    ExpeditionPhase, LaborAllocation, LaborTarget, LocalStore, ResidentBand, StartProfileOverrides,
+    ExpeditionPhase, FoodModuleTag, LaborAllocation, LaborTarget, LocalStore, ResidentBand,
+    StartProfileOverrides, WellbeingConfigHandle,
 };
 use core_sim::{
     build_headless_app, recapture_snapshot_in_place, restore_world_from_snapshot, run_turn,
@@ -1437,6 +1439,117 @@ fn band_allocation_mut(
         .expect("labor allocation inserted above")
 }
 
+/// Seed the touched source's **yield telemetry** (`LaborAllocation.last_yields`) from its
+/// **pre-commit forecast**, right after the allocation is mutated.
+///
+/// Without this, telemetry is only ever written during turn resolution (`advance_labor_allocation`),
+/// so between "player assigns workers" and "player advances the turn" a brand-new source has no row
+/// and the display snapshot serializes `actual_yield = 0.0` — the client cannot tell "0 because not
+/// computed yet" from "0 because the source is barren", and every fresh assignment reads `+0.00`.
+///
+/// The seeded row is exactly what the turn will pay under unchanged conditions: it reuses the same
+/// forecast helpers the take path reads (`forecast == actual` — see "Pre-commit Yield Forecast" in
+/// `core_sim/CLAUDE.md`), and it is the same number the client's compose-time "Expected yield" row
+/// promises — so there is no jump when the turn lands, and it is overwritten by the resolved take.
+///
+/// Only the **one source the command touched** is seeded (other sources keep their real actuals), and
+/// only where the resolution path would actually pay: a source the turn would skip (out of the band's
+/// work range / past the hunt leash, an unseeded patch, a vanished herd) keeps its zero row, and a
+/// genuinely barren source seeds `0.0` — `+0.00` stays reachable, and correct, there.
+fn seed_source_yield(
+    app: &mut bevy::prelude::App,
+    band: Entity,
+    target: &LaborTarget,
+    workers: u32,
+) {
+    // Unassigned (`workers == 0`): `set_assignment` already dropped the source's row with its
+    // assignment. Scout/Warrior are band-wide roles with no food yield — the resolution path leaves
+    // them at zero, so seeding must too.
+    if workers == 0
+        || !matches!(
+            target,
+            LaborTarget::Forage { .. } | LaborTarget::Hunt { .. }
+        )
+    {
+        return;
+    }
+    let Some(cohort) = app.world.get::<PopulationCohort>(band) else {
+        return;
+    };
+    let current_tile = cohort.current_tile;
+    // The band's productivity multiplier is applied at payout in the resolution path, so the forecast
+    // must fold it in too (the snapshot's per-source forecast is captured at 1.0 and scaled client-side
+    // by this same multiplier).
+    let wellbeing = app.world.resource::<WellbeingConfigHandle>().get();
+    let output_mult = output_multiplier(cohort, &wellbeing).to_f32();
+    let Some(band_pos) = app
+        .world
+        .get::<Tile>(current_tile)
+        .map(|tile| tile.position)
+    else {
+        return;
+    };
+    let grid_width = app.world.resource::<TileRegistry>().width;
+    let wrap_horizontal = app
+        .world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+
+    let seeded = match target {
+        LaborTarget::Forage { tile, policy } => {
+            // Out of the band's work range → the turn pays 0 (assignment kept). Keep the zero row.
+            if hex_distance_wrapped(band_pos, *tile, grid_width, wrap_horizontal)
+                > labor.band_work_range
+            {
+                return;
+            }
+            let Some(tile_entity) = app.world.resource::<TileRegistry>().index(tile.x, tile.y)
+            else {
+                return;
+            };
+            let Some(module) = app.world.get::<FoodModuleTag>(tile_entity) else {
+                return; // no food module on the tile → the turn pays 0.
+            };
+            let seasonal = module.seasonal_weight.max(0.0);
+            let Some(patch) = app.world.resource::<ForageRegistry>().patch(*tile) else {
+                return; // unseeded patch → the turn pays 0.
+            };
+            forage_source_yield_preview(
+                patch,
+                &labor.forage,
+                seasonal,
+                output_mult,
+                workers,
+                *policy,
+            )
+        }
+        LaborTarget::Hunt { fauna_id, policy } => {
+            let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
+                return; // herd gone → the assignment lapses next turn.
+            };
+            // Past the leash → the assignment lapses next turn; keep the zero row.
+            if hex_distance_wrapped(band_pos, herd.position(), grid_width, wrap_horizontal)
+                > labor.hunt_reach()
+            {
+                return;
+            }
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            hunt_source_yield_preview(
+                herd,
+                &fauna,
+                labor.hunt.per_worker_biomass_capacity,
+                output_mult,
+                workers,
+                *policy,
+            )
+        }
+        LaborTarget::Scout | LaborTarget::Warrior => return,
+    };
+    band_allocation_mut(app, band).set_source_yield(target, seeded);
+}
+
 /// Validate a labor target's **policy** against the source it names, returning a player-facing
 /// rejection reason (`Err`) or `Ok`. Two independent checks:
 ///
@@ -1645,9 +1758,13 @@ fn handle_assign_labor(
     let kind_label = target.kind();
     let (applied, assigned_total) = {
         let mut allocation = band_allocation_mut(app, band.entity);
-        let applied = allocation.set_assignment(target, workers, available);
+        let applied = allocation.set_assignment(target.clone(), workers, available);
         (applied, allocation.assigned_total())
     };
+    // Show the source's expected yield immediately (workers added/removed OR policy changed — every
+    // shape of this command that moves the number): without the seed the row reads `+0.00` until the
+    // player advances a turn.
+    seed_source_yield(app, band.entity, &target, applied);
 
     let tick = app.world.resource::<SimulationTick>().0;
     let clamp_note = if applied < workers {
@@ -2512,8 +2629,14 @@ fn set_policy_on_working_bands(
         })
         .collect();
     for (entity, workers, available) in &bands {
-        let mut allocation = band_allocation_mut(app, *entity);
-        allocation.set_assignment(target.clone(), *workers, *available);
+        let applied = {
+            let mut allocation = band_allocation_mut(app, *entity);
+            allocation.set_assignment(target.clone(), *workers, *available)
+        };
+        // A policy switch changes the expected yield (e.g. Sustain → Cultivate drops to the preparing
+        // bite), so re-seed the source's telemetry from the new policy's forecast — same reason as in
+        // `handle_assign_labor`, which this command is the shorthand for.
+        seed_source_yield(app, *entity, target, applied);
     }
     bands.len()
 }
@@ -4788,6 +4911,336 @@ mod tests {
                 .as_ref()
                 .is_err_and(|reason| reason.contains("not a hunting policy")),
             "Cultivate is not a hunt policy: {cultivate_on_hunt:?}"
+        );
+    }
+
+    // --- Assign-time yield seeding (the `+0.00` fix) ----------------------------------------------
+    //
+    // `LaborAllocation.last_yields` used to be written ONLY during turn resolution, so between
+    // "player assigns workers" and "player advances the turn" a brand-new source had no telemetry row
+    // and the display snapshot serialized `actual_yield = 0.0` — every fresh assignment read `+0.00`.
+    // `handle_assign_labor` now seeds the touched source's row from its pre-commit forecast, which
+    // (by the forecast == actual invariant) is exactly what the turn then pays: no jump.
+
+    /// f32 slack between the seeded forecast (provisions, direct f32 math) and the resolved take
+    /// (biomass → fixed-point provisions): different multiplication order + a 1e-6 fixed-point grid.
+    const SEED_EPSILON: f32 = 1e-4;
+    /// Side of the square tile grid the seeding tests build.
+    const GRID: u32 = 3;
+
+    /// A `GRID`×`GRID` tile world + its `TileRegistry` (labor commands resolve band/source positions
+    /// through it), with a full-weight `FoodModuleTag` on `source` so a Forage assignment there
+    /// resolves. Returns the tile entity at `source`.
+    fn seed_tile_grid(app: &mut bevy::prelude::App, source: UVec2) -> Entity {
+        use core_sim::{FoodModule, FoodSiteKind};
+        let tiles: Vec<Entity> = (0..GRID)
+            .flat_map(|y| (0..GRID).map(move |x| UVec2::new(x, y)))
+            .map(|position| {
+                app.world
+                    .spawn(Tile {
+                        position,
+                        ..Default::default()
+                    })
+                    .id()
+            })
+            .collect();
+        let source_tile = tiles[(source.y * GRID + source.x) as usize];
+        app.world.entity_mut(source_tile).insert(FoodModuleTag {
+            module: FoodModule::SavannaGrassland,
+            seasonal_weight: 1.0,
+            kind: FoodSiteKind::SavannaTrack,
+        });
+        app.world.insert_resource(TileRegistry {
+            tiles,
+            width: GRID,
+            height: GRID,
+        });
+        source_tile
+    }
+
+    /// A resident band standing on `tile` with **no** assignments — the state `assign_labor` acts on.
+    fn spawn_idle_band(app: &mut bevy::prelude::App, faction: FactionId, tile: Entity) -> Entity {
+        let band = spawn_working_band(app, faction, LaborTarget::Scout);
+        app.world
+            .entity_mut(band)
+            .insert((
+                StartingUnit::new("test_band".to_string(), Vec::new()),
+                ResidentBand,
+            ))
+            .insert(LaborAllocation::default());
+        let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
+        cohort.home = tile;
+        cohort.current_tile = tile;
+        band
+    }
+
+    /// Insert a **wild** patch at `coord` with the given biomass (`0.0` = barren) and ecology phase.
+    fn seed_patch_with_biomass(
+        app: &mut bevy::prelude::App,
+        coord: UVec2,
+        biomass: f32,
+        phase: EcologyPhase,
+    ) {
+        let cap = forage_carrying_capacity(app);
+        let mut patch = ForagePatch::new(coord, cap);
+        patch.biomass = biomass;
+        patch.ecology_phase = phase;
+        app.world
+            .resource_mut::<ForageRegistry>()
+            .patches
+            .insert(coord, patch);
+    }
+
+    /// The configured per-patch carrying capacity (the tests stock patches as a fraction of it rather
+    /// than hard-coding biomass).
+    fn forage_carrying_capacity(app: &bevy::prelude::App) -> f32 {
+        app.world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .carrying_capacity
+    }
+
+    /// Drive the real command handler (band resolved by the default resident-band picker).
+    fn assign_forage(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        coord: UVec2,
+        policy: &str,
+        workers: u32,
+    ) {
+        handle_assign_labor(
+            app,
+            faction,
+            None,
+            "forage".to_string(),
+            workers,
+            Some(coord.x),
+            Some(coord.y),
+            None,
+            Some(policy.to_string()),
+        );
+    }
+
+    fn assign_hunt(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        fauna_id: &str,
+        policy: &str,
+        workers: u32,
+    ) {
+        handle_assign_labor(
+            app,
+            faction,
+            None,
+            "hunt".to_string(),
+            workers,
+            None,
+            None,
+            Some(fauna_id.to_string()),
+            Some(policy.to_string()),
+        );
+    }
+
+    /// The single source's seeded/resolved `actual` yield.
+    fn source_actual(app: &bevy::prelude::App, band: Entity) -> f32 {
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .last_yields
+            .first()
+            .expect("the staffed source has a telemetry row")
+            .actual
+    }
+
+    /// Resolve one turn of labor (the only system that used to write yield telemetry).
+    fn resolve_labor(app: &mut bevy::prelude::App) {
+        use bevy_ecs::system::RunSystemOnce;
+        app.world
+            .run_system_once(core_sim::advance_labor_allocation);
+    }
+
+    /// **Forage.** A brand-new assignment reports its expected yield immediately — BEFORE any turn is
+    /// advanced — and that seed is exactly what the pre-commit forecast promises.
+    #[test]
+    fn assigning_forage_workers_seeds_the_expected_yield_before_the_turn() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        // Half cap → a clear positive MSY skim; Thriving is the phase that biomass implies.
+        let stocked = forage_carrying_capacity(&app) * 0.5;
+        seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
+
+        let seeded = source_actual(&app, band);
+        assert!(
+            seeded > 0.0,
+            "a staffed, stocked forage patch must not read +0.00 before the turn: {seeded}"
+        );
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let patch = app.world.resource::<ForageRegistry>().patch(coord).unwrap();
+        let expected = forage_source_yield_preview(
+            patch,
+            &labor.forage,
+            1.0,
+            1.0,
+            BAND_WORKERS,
+            FollowPolicy::Sustain,
+        );
+        assert!(
+            (seeded - expected.actual).abs() < SEED_EPSILON,
+            "seed {seeded} must equal the forecast {}",
+            expected.actual
+        );
+    }
+
+    /// **Forage, no jump.** Advancing the turn pays exactly the seeded number (the forecast == actual
+    /// invariant): the displayed yield does not move when the turn lands.
+    #[test]
+    fn resolved_forage_yield_equals_the_seeded_yield() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        let stocked = forage_carrying_capacity(&app) * 0.5;
+        seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
+        let seeded = source_actual(&app, band);
+        resolve_labor(&mut app);
+        let resolved = source_actual(&app, band);
+
+        assert!(
+            (resolved - seeded).abs() < SEED_EPSILON,
+            "the turn must pay the seeded yield (seed {seeded}, resolved {resolved})"
+        );
+    }
+
+    /// **Hunt.** Same seed-before-the-turn guarantee on the animal side.
+    #[test]
+    fn assigning_hunt_workers_seeds_the_expected_yield_before_the_turn() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        let id = seed_herd(&mut app, coord, None);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_hunt(&mut app, faction, &id, "sustain", BAND_WORKERS);
+
+        let seeded = source_actual(&app, band);
+        assert!(
+            seeded > 0.0,
+            "a staffed, thriving herd must not read +0.00 before the turn: {seeded}"
+        );
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+        let expected = hunt_source_yield_preview(
+            herd,
+            &fauna,
+            labor.hunt.per_worker_biomass_capacity,
+            1.0,
+            BAND_WORKERS,
+            FollowPolicy::Sustain,
+        );
+        assert!(
+            (seeded - expected.actual).abs() < SEED_EPSILON,
+            "seed {seeded} must equal the forecast {}",
+            expected.actual
+        );
+    }
+
+    /// **Hunt, no jump.** The resolved take equals the seed.
+    #[test]
+    fn resolved_hunt_yield_equals_the_seeded_yield() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        let id = seed_herd(&mut app, coord, None);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_hunt(&mut app, faction, &id, "sustain", BAND_WORKERS);
+        let seeded = source_actual(&app, band);
+        resolve_labor(&mut app);
+        let resolved = source_actual(&app, band);
+
+        assert!(
+            (resolved - seeded).abs() < SEED_EPSILON,
+            "the turn must pay the seeded yield (seed {seeded}, resolved {resolved})"
+        );
+    }
+
+    /// **Policy change re-seeds.** Switching an existing assignment from Sustain (the MSY skim) to
+    /// Eradicate (strip the patch) raises the displayed expectation immediately — the seed tracks
+    /// every shape of the command that moves the number, not just a fresh staffing.
+    #[test]
+    fn changing_the_policy_reseeds_the_expected_yield() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        let stocked = forage_carrying_capacity(&app) * 0.5;
+        seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
+        let sustain = source_actual(&app, band);
+        assign_forage(&mut app, faction, coord, "eradicate", BAND_WORKERS);
+        let eradicate = source_actual(&app, band);
+
+        assert!(
+            eradicate > sustain,
+            "Eradicate must re-seed a higher expectation than Sustain (sustain {sustain}, eradicate {eradicate})"
+        );
+    }
+
+    /// **A barren source still reads `+0.00`.** The seed is a forecast, not a fiction: a patch with no
+    /// biomass yields nothing, so `+0.00` stays reachable — and correct — there.
+    #[test]
+    fn a_barren_source_seeds_zero() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        seed_patch_with_biomass(&mut app, coord, 0.0, EcologyPhase::Collapsing);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
+
+        assert_eq!(
+            source_actual(&app, band),
+            0.0,
+            "a barren patch must still seed a zero yield"
+        );
+    }
+
+    /// **Unassigning drops the row.** Setting a source to zero workers removes its assignment *and* its
+    /// telemetry row, so the derived `last_yields` stays index-aligned with `assignments` (the snapshot
+    /// zips the two by index — a stale row would be attributed to another source).
+    #[test]
+    fn unassigning_a_source_drops_its_yield_row() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        let stocked = forage_carrying_capacity(&app) * 0.5;
+        seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
+        assign_forage(&mut app, faction, coord, "sustain", 0);
+
+        let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+        assert!(allocation.assignments.is_empty(), "the source is unstaffed");
+        assert!(
+            allocation.last_yields.is_empty(),
+            "its telemetry row must go with it"
         );
     }
 }
