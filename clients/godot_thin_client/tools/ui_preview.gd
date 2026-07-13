@@ -248,11 +248,19 @@ func _ready() -> void:
 	await _save("forage_forecast_cap")
 
 	# State 2-tended — a fully-cultivated forage patch: the Tile card's cultivation row reads
-	# "🌾 Tended Patch" (SIGNAL tint) with a "Patch health: Thriving" ecology row beneath it. A tended
+	# "🌾 Tended Patch" (SIGNAL tint) with an "Ecology: Thriving" row above it. A tended
 	# patch's ceilings all equal its per-worker yield, so the forecast caps the stepper at 1 worker.
 	_hud.show_tile_selection(_tended_tile_fixture())
 	await _settle()
 	await _save("tended_tile")
+
+	# State 2-stressed — an over-drawn (uncultivated) forage patch: the Ecology row reads a WARN-amber
+	# "⚠ Stressed" right under "Forage biomass", exactly like a stressed herd's Ecology row. Proves the
+	# row is NOT gated on cultivation.
+	_hud._forage_assign_count = 1
+	_hud.show_tile_selection(_stressed_tile_fixture())
+	await _settle()
+	await _save("food_tile_stressed")
 
 	# State 2b — the same food tile, single FAR band (~21 tiles away, beyond work_range 2): foraging is
 	# stationary gathering with NO expedition fallback, so the Forage button is DISABLED and an
@@ -874,8 +882,19 @@ func _food_tile_fixture() -> Dictionary:
 		"patch_ceiling_eradicate": 4.80,
 	}
 
+## An over-drawn, UNCULTIVATED forage patch: the Tile card's "Ecology" row must still render
+## (the phase gates cultivation, so it always shows on a patch) as a WARN-amber "⚠ Stressed".
+## Biomass is well below capacity, mirroring a patch foraged past its regrowth.
+func _stressed_tile_fixture() -> Dictionary:
+	var tile := _food_tile_fixture()
+	tile["cultivation_progress"] = 0.0
+	tile["is_cultivated"] = false
+	tile["patch_ecology_phase"] = "stressed"
+	tile["patch_biomass"] = 22.0
+	return tile
+
 ## A fully-tended forage patch: the Tile card shows the "🌾 Tended Patch" badge (SIGNAL tint)
-## plus a "Patch health" ecology row, instead of the in-progress "Cultivation N%".
+## plus an "Ecology" row, instead of the in-progress "Cultivation N%".
 func _tended_tile_fixture() -> Dictionary:
 	var tile := _food_tile_fixture()
 	tile["x"] = 67

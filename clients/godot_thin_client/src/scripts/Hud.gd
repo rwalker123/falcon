@@ -2632,13 +2632,12 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     var food_label := String(tile_info.get("food_module_label", "None")).strip_edges()
     if food_label == "":
         food_label = "None"
-    var weight: float = float(tile_info.get("food_module_weight", 0.0))
     var food_kind := String(tile_info.get("food_kind", "")).strip_edges()
     var food_line := "Forage: %s" % food_label
     if food_kind != "":
         food_line = "%s — %s" % [food_line, _format_food_kind_label(food_kind)]
-    if weight > 0.0:
-        food_line += " (weight %.2f)" % weight
+    # NOTE: the module's `seasonal_weight` is deliberately NOT printed — it is an internal
+    # yield coefficient, meaningless to the player (it still drives the sim's yield math).
     lines.append(food_line)
     # Standing forage stock vs the patch's ceiling — the patch counterpart to a herd's "Biomass"
     # row, so a foraged patch reads like wild game does ("how much there is"). Foraging draws the
@@ -2647,15 +2646,20 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     var patch_capacity := float(tile_info.get("patch_carrying_capacity", 0.0))
     if patch_capacity > 0.0:
         lines.append("Forage biomass: %.0f / %.0f" % [float(tile_info.get("patch_biomass", 0.0)), patch_capacity])
+    # Ecology phase of the patch — ALWAYS shown for any tile carrying a patch (not just a
+    # cultivated one): the phase gates whether cultivation can accrue at all, so it is the
+    # single most important condition on a forage tile. Same row name / label / tint as the
+    # herd's Ecology row (`_ecology_phase_label` + `_ecology_value_hex`), so a stressed patch
+    # and a stressed herd read identically.
+    var patch_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
+    if patch_phase != "":
+        lines.append("Ecology: %s" % _ecology_phase_label(patch_phase))
     # Forage-patch intensification ladder: while a patch is being tended it shows the
     # cultivation progress; once cultivated it reads as a "Tended Patch" (SIGNAL tint).
     # Mirrors the herd Husbandry row. Only when the snapshot carries the field so we
     # never invent a state on a patch that isn't being worked.
     if bool(tile_info.get("is_cultivated", false)):
         lines.append("Cultivation: %s" % _cultivation_label(1.0, true))
-        var tended_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
-        if tended_phase != "":
-            lines.append("Patch health: %s" % _ecology_phase_label(tended_phase))
     elif tile_info.has("cultivation_progress"):
         var cultivation_progress := float(tile_info["cultivation_progress"])
         if cultivation_progress > 0.0:
@@ -3576,7 +3580,9 @@ func _format_detail_bbcode(lines: Array) -> String:
             elif String(kv[0]) == "Habitability":
                 # The tile's habitability rating tints by its bucket (green→red).
                 value_hex = TileHabitability.hex_for_rating(String(kv[1]))
-            elif String(kv[0]) == "Ecology" or String(kv[0]) == "Patch health":
+            elif String(kv[0]) == "Ecology":
+                # Shared by the herd drawer and the forage-patch tile card — both name the row
+                # "Ecology" and take the same neutral/amber/red phase tint.
                 value_hex = _ecology_value_hex(String(kv[1]))
             elif String(kv[0]) == "Husbandry":
                 value_hex = _husbandry_value_hex(String(kv[1]))

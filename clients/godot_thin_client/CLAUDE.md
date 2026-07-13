@@ -774,9 +774,18 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `patch_owner` / `patch_biomass` / `patch_carrying_capacity`, all in `FOW_DISCOVERED_HIDDEN_KEYS`
   so a remembered tile redacts them). The
   card shows a **Cultivation** row: "N%" while the patch is being tended, "🌾 Tended Patch"
-  (SIGNAL tint via `_cultivation_value_hex`) once `is_cultivated`, plus an optional **Patch
-  health** ecology row (reusing `_ecology_phase_label` / `_ecology_value_hex`). See `core_sim`
+  (SIGNAL tint via `_cultivation_value_hex`) once `is_cultivated`. See `core_sim`
   intensification ladder — cultivation.
+  It also shows an **Ecology** row (`patch_ecology_phase`) for **every** tile carrying a patch —
+  cultivated or not, directly under **Forage biomass**. The phase gates whether cultivation can
+  accrue at all, so it is the tile's headline condition; it is deliberately **not** gated on
+  `is_cultivated` (it was, which hid it on exactly the ordinary forage tiles that needed it).
+  Named and rendered **identically to the herd's Ecology row** — same `_ecology_phase_label`
+  (neutral `Thriving`, warned `⚠ Stressed` / `⚠ Collapsing`) and the same `_ecology_value_hex`
+  amber/red tint applied by `_format_detail_bbcode`, which now keys one shared `"Ecology"` case
+  for both surfaces. The module's internal `seasonal_weight` is **not** printed on the `Forage:`
+  row (it is a yield coefficient, meaningless to the player); it still drives the sim's yield.
+  ui_preview: `food_tile` (Thriving) / `food_tile_stressed` (⚠ Stressed) / `tended_tile`.
   It also shows a **Forage biomass** row — `Forage biomass: 84 / 120` (`biomass` /
   `carryingCapacity`, decoded in `forage_patches_to_array`) — the patch counterpart to a herd's
   **Biomass** row, so a foraged patch reads like wild game does ("how much there is"). Foraging draws
