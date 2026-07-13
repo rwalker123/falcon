@@ -615,10 +615,18 @@ pub struct LaborAssignment {
 /// herd's net regrowth this turn (`net_biomass_delta(..).max(0) × provisions_per_biomass`, scaled
 /// by the same output multiplier). A per-turn `actual > sustainable` is the (client-derived)
 /// overhunting signal — a *leading* flow indicator, distinct from the stock-based `ecology_phase`.
+///
+/// `workers_needed` = the **minimum** assigned workers that would have produced the same take — the
+/// **overstaffing** signal. A source's take is `min(policy_ceiling, workers × per_worker_capacity,
+/// biomass, …)`; when the binding constraint is NOT labor, the extra workers were idle. It is
+/// `ceil(take_biomass / per_worker_capacity)` clamped into `[1, assigned]` when anything was taken,
+/// else `0`; a *tended* patch / *corralled* herd (maintenance labor, not scaling gather) is defined
+/// as `1`. `workers_needed < assigned` ⇒ the source is overstaffed (client flags the wasted labor).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SourceYield {
     pub actual: f32,
     pub sustainable: f32,
+    pub workers_needed: u32,
 }
 
 /// A band's partition of its working-age pool across labor demands. Replaces the retired

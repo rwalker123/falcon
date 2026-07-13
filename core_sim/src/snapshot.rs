@@ -3785,6 +3785,7 @@ fn labor_assignment_to_state(
         workers: assignment.workers,
         actual_yield: yields.actual,
         sustainable_yield: yields.sustainable,
+        workers_needed: yields.workers_needed,
         ..Default::default()
     };
     match &assignment.target {
@@ -3898,6 +3899,7 @@ fn population_state(
     const NO_YIELD: SourceYield = SourceYield {
         actual: 0.0,
         sustainable: 0.0,
+        workers_needed: 0,
     };
     let labor_assignments = allocation
         .map(|a| {
@@ -4745,10 +4747,12 @@ mod tests {
                 SourceYield {
                     actual: 2.5,
                     sustainable: 2.5,
+                    workers_needed: 1,
                 },
                 SourceYield {
                     actual: 0.5,
                     sustainable: 0.25,
+                    workers_needed: 5,
                 },
             ],
         };
@@ -4786,6 +4790,9 @@ mod tests {
         assert!((state.labor_assignments[0].sustainable_yield - 2.5).abs() < 1e-5);
         assert!((state.labor_assignments[1].actual_yield - 0.5).abs() < 1e-5);
         assert!((state.labor_assignments[1].sustainable_yield - 0.25).abs() < 1e-5);
+        // The overstaffing signal (workers_needed) carries onto the display state, zipped by index.
+        assert_eq!(state.labor_assignments[0].workers_needed, 1);
+        assert_eq!(state.labor_assignments[1].workers_needed, 5);
     }
 
     /// A rehydrated allocation (empty `last_yields`) reports zero food income and zero per-row yields
@@ -4813,6 +4820,7 @@ mod tests {
         assert_eq!(state.labor_assignments.len(), 1);
         assert_eq!(state.labor_assignments[0].actual_yield, 0.0);
         assert_eq!(state.labor_assignments[0].sustainable_yield, 0.0);
+        assert_eq!(state.labor_assignments[0].workers_needed, 0);
     }
 
     /// A `LaborTarget::Forage` policy round-trips through the snapshot (§0-iii): `to_state` writes
@@ -4832,6 +4840,7 @@ mod tests {
             SourceYield {
                 actual: 0.0,
                 sustainable: 0.0,
+                workers_needed: 0,
             },
         );
         assert_eq!(state.policy, "market", "policy serialized");

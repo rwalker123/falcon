@@ -567,6 +567,12 @@ table LaborAssignment {
   // actualYield > sustainableYield is the client-derived overhunting signal. Appended (append-only).
   actualYield:float = 0;
   sustainableYield:float = 0;
+  // Minimum workers that would have produced this turn's take = the overstaffing signal. workers >
+  // workersNeeded ⇒ the binding constraint was not labor, so the extra workers were idle (client
+  // flags the wasted labor). 0 when the source produced nothing; a tended patch / corralled herd
+  // (maintenance labor) reports 1. Derived per-turn at capture (0 on a rehydrated save before the
+  // next tick). Appended (append-only).
+  workersNeeded:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

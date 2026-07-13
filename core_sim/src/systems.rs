@@ -4089,6 +4089,29 @@ pub fn advance_expeditions(
     }
 }
 
+/// A *tended* improvement (cultivated patch / corralled herd) is **maintenance labor**, not scaling
+/// gather: it needs a tending presence, not a headcount proportional to the take. Its
+/// `SourceYield.workers_needed` is defined as exactly this many workers.
+const TENDED_SOURCE_WORKERS_NEEDED: u32 = 1;
+
+/// `SourceYield.workers_needed` — the **minimum** assigned workers that would have produced `take`
+/// biomass this turn at `per_worker_capacity` biomass/worker (the overstaffing signal; see
+/// `SourceYield`). `0` when nothing was taken; otherwise `ceil(take / per_worker_capacity)` clamped
+/// into `[1, assigned]`. For forage `per_worker_capacity` is the **effective** per-turn throughput
+/// `per_worker_biomass_capacity × seasonal_weight` (mirroring `forage_take`'s worker cap), so a
+/// low-season, fully-labor-bound patch is not falsely flagged overstaffed; hunt has no seasonal
+/// factor. `per_worker_capacity ≤ 0` (a zero-throughput turn that somehow still took biomass) can't
+/// be inverted, so it conservatively reports `assigned` (no overstaffing flagged).
+fn workers_needed_for_take(take: f32, per_worker_capacity: f32, assigned: u32) -> u32 {
+    if take <= 0.0 {
+        return 0;
+    }
+    if per_worker_capacity <= 0.0 {
+        return assigned;
+    }
+    ((take / per_worker_capacity).ceil() as u32).clamp(1, assigned)
+}
+
 /// The shared **"take food from a nearby source"** primitive (`docs/plan_exploration_and_sites.md`
 /// §2b). Resolves the per-policy ecology ceiling, caps it by the hunting group's throughput
 /// (`workers × per_worker_biomass_capacity`), clamps to the herd's biomass, **subtracts it from the
@@ -4238,7 +4261,8 @@ pub fn advance_labor_allocation(
         let mut yields: Vec<SourceYield> = vec![
             SourceYield {
                 actual: 0.0,
-                sustainable: 0.0
+                sustainable: 0.0,
+                workers_needed: 0,
             };
             allocation.assignments.len()
         ];
@@ -4314,9 +4338,12 @@ pub fn advance_labor_allocation(
                             cohort.stores.add(FOOD, provisions);
                         }
                         let tended = provisions.to_f32();
+                        // A tended patch is maintenance labor (biomass-based payout, presence-gated),
+                        // not scaling gather → a fixed one-worker "need" (never overstaffed by count).
                         yields[idx] = SourceYield {
                             actual: tended,
                             sustainable: tended,
+                            workers_needed: TENDED_SOURCE_WORKERS_NEEDED,
                         };
                         continue;
                     }
@@ -4350,9 +4377,18 @@ pub fn advance_labor_allocation(
                         &labor.forage.ecology,
                     ) * labor.forage.provisions_per_biomass
                         * mult_f;
+                    // Overstaffing: invert the take by the **effective** per-worker throughput this
+                    // turn (`per_worker_biomass_capacity × seasonal`, matching `forage_take`'s worker
+                    // cap) so a labor-bound low-season patch isn't falsely flagged.
+                    let workers_needed = workers_needed_for_take(
+                        take,
+                        labor.forage.per_worker_biomass_capacity * seasonal,
+                        workers,
+                    );
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
                         sustainable,
+                        workers_needed,
                     };
                 }
                 LaborTarget::Hunt { fauna_id, policy } => {
@@ -4409,9 +4445,12 @@ pub fn advance_labor_allocation(
                             cohort.stores.add(FOOD, provisions);
                         }
                         let tended = provisions.to_f32();
+                        // A corralled herd is worker-tended maintenance (the animal mirror of the
+                        // tended patch): a fixed one-worker "need", not scaling with the take.
                         yields[idx] = SourceYield {
                             actual: tended,
                             sustainable: tended,
+                            workers_needed: TENDED_SOURCE_WORKERS_NEEDED,
                         };
                         continue;
                     }
@@ -4468,9 +4507,17 @@ pub fn advance_labor_allocation(
                         sustainable_yield(biomass_before, herd.carrying_capacity, &fauna.ecology)
                             * hunt.provisions_per_biomass
                             * mult_f;
+                    // Overstaffing: invert the biomass take by the per-hunter throughput (hunt has no
+                    // seasonal factor, unlike forage).
+                    let workers_needed = workers_needed_for_take(
+                        take,
+                        labor.hunt.per_worker_biomass_capacity,
+                        workers,
+                    );
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
                         sustainable,
+                        workers_needed,
                     };
                 }
                 LaborTarget::Scout => {
@@ -6910,6 +6957,201 @@ mod labor_yield_tests {
         patch.claim_cultivation(FactionId(0));
         patch.biomass = biomass;
         patch.refresh_ecology_phase(&ecology);
+    }
+
+    /// Set the (wild, un-cultivated) source patch's biomass and refresh its ecology phase — for the
+    /// `workers_needed` overstaffing tests, which need a full patch so the per-policy biomass-fraction
+    /// ceiling binds rather than the seeded half-cap stock.
+    fn set_wild_patch_biomass(world: &mut World, biomass: f32) {
+        let ecology = world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .ecology
+            .clone();
+        let mut registry = world.resource_mut::<ForageRegistry>();
+        let patch = registry.patches.get_mut(&UVec2::new(0, 0)).unwrap();
+        patch.biomass = biomass;
+        patch.refresh_ecology_phase(&ecology);
+    }
+
+    /// Run a single Forage assignment (given policy) with `WORKERS` on a full patch and return the
+    /// captured `workers_needed` — the throughput to invert the per-policy take into a worker count.
+    fn forage_workers_needed(policy: FollowPolicy) -> u32 {
+        let (mut world, tile) = world_with_source(CAP);
+        let patch_cap = world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .carrying_capacity;
+        set_wild_patch_biomass(&mut world, patch_cap);
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: UVec2::new(0, 0),
+                    policy,
+                },
+                workers: WORKERS,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        world.get::<LaborAllocation>(band).unwrap().last_yields[0].workers_needed
+    }
+
+    /// Overstaffing: a Sustain hunt whose take is set by the regrowth (MSY) ceiling — not labor —
+    /// needs a **single** worker even with 5 assigned, so `workers_needed == 1 < assigned`.
+    #[test]
+    fn sustain_source_overstaffed_reports_one_worker_needed() {
+        let (mut world, tile) = world_with_source(CAP * 0.5); // half cap → clear positive MSY skim.
+        let assigned = 5;
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: assigned,
+            }],
+        );
+
+        world.run_system_once(advance_labor_allocation);
+
+        let hunt = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        assert!(
+            hunt.actual > 0.0,
+            "the sustain hunt produced food: {hunt:?}"
+        );
+        assert_eq!(
+            hunt.workers_needed, 1,
+            "the MSY throughput needs a single worker: {hunt:?}"
+        );
+        assert!(
+            hunt.workers_needed < assigned,
+            "the source is overstaffed (extra workers idle): {hunt:?}"
+        );
+    }
+
+    /// The other extreme: when worker throughput is the binding constraint (few workers, a high
+    /// biomass-fraction Eradicate ceiling), every assigned worker was productive → `workers_needed ==
+    /// assigned` (no overstaffing).
+    #[test]
+    fn labor_bound_take_reports_all_assigned_workers_needed() {
+        let (mut world, tile) = world_with_source(CAP);
+        let cfg = world.resource::<LaborConfigHandle>().get();
+        let patch_cap = cfg.forage.carrying_capacity;
+        let capacity = cfg.forage.per_worker_biomass_capacity;
+        let eradicate_fraction = cfg.forage.eradicate.take_fraction;
+        drop(cfg);
+        set_wild_patch_biomass(&mut world, patch_cap); // full patch.
+        let assigned = 2;
+        // The scenario is labor-bound iff worker throughput is below the Eradicate biomass ceiling.
+        assert!(
+            assigned as f32 * capacity < eradicate_fraction * patch_cap,
+            "test precondition: the take must be labor-bound, not ceiling-bound"
+        );
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: UVec2::new(0, 0),
+                    policy: FollowPolicy::Eradicate,
+                },
+                workers: assigned,
+            }],
+        );
+
+        world.run_system_once(advance_labor_allocation);
+
+        let forage = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        assert_eq!(
+            forage.workers_needed, assigned,
+            "a labor-bound take needs every assigned worker: {forage:?}"
+        );
+    }
+
+    /// A higher-take policy needs more workers on the **same** resource: Market/Eradicate draw a large
+    /// biomass fraction, so their inverted worker count exceeds Sustain's MSY skim on identical full
+    /// patches.
+    #[test]
+    fn market_and_eradicate_need_more_workers_than_sustain() {
+        let sustain = forage_workers_needed(FollowPolicy::Sustain);
+        let market = forage_workers_needed(FollowPolicy::Market);
+        let eradicate = forage_workers_needed(FollowPolicy::Eradicate);
+        assert!(
+            market > sustain,
+            "market's larger take needs more workers: {market} vs {sustain}"
+        );
+        assert!(
+            eradicate > sustain,
+            "eradicate's larger take needs more workers: {eradicate} vs {sustain}"
+        );
+        assert!(
+            eradicate >= market,
+            "eradicate's ceiling is ≥ market's: {eradicate} vs {market}"
+        );
+    }
+
+    /// A tended (cultivated) patch and a corralled herd are maintenance labor, not scaling gather, so
+    /// each reports `workers_needed == 1` regardless of how many workers tend it.
+    #[test]
+    fn tended_patch_and_corral_report_one_worker_needed() {
+        let (mut world, tile) = world_with_source(CAP);
+        let patch_cap = world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .carrying_capacity;
+        cultivate_source_patch(&mut world, patch_cap);
+        // Pen the herd in place (Rung 1c) so a Hunt assignment tends rather than hunts it.
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            registry.herds[0].corral_at(UVec2::new(0, 0));
+        }
+
+        let forager = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: UVec2::new(0, 0),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+        let keeper = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+
+        world.run_system_once(advance_labor_allocation);
+
+        let tended = world.get::<LaborAllocation>(forager).unwrap().last_yields[0];
+        let corral = world.get::<LaborAllocation>(keeper).unwrap().last_yields[0];
+        assert!(
+            tended.actual > 0.0 && corral.actual > 0.0,
+            "both tended sources pay out: tended={tended:?} corral={corral:?}"
+        );
+        assert_eq!(
+            tended.workers_needed, 1,
+            "a tended patch needs one tending presence: {tended:?}"
+        );
+        assert_eq!(
+            corral.workers_needed, 1,
+            "a corralled herd needs one keeper: {corral:?}"
+        );
     }
 
     /// Rung 1a: a tended (cultivated) patch pays the band that tends it (a Forage assignment on the

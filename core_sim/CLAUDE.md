@@ -899,7 +899,8 @@ vantage_distance_per_scout, vantage_distance_max)`, `0` with no scouts — since
 posting forward-observer vantages that see around obstacles; field name kept for wire compat).
 
 **Per-source food-income breakdown (retained yield telemetry).** `advance_labor_allocation` rebuilds
-`LaborAllocation.last_yields` each turn — one `SourceYield { actual, sustainable }` (f32 provisions)
+`LaborAllocation.last_yields` each turn — one `SourceYield { actual, sustainable, workers_needed }`
+(f32 provisions + a worker count)
 per assignment, **in the same index order** as `assignments` (so the snapshot zips by index). It is
 **derived, not persisted**: it is out of rollback (`#[serde]` never sees it; `labor_allocation_from_state`
 restores only the assignments, leaving it empty until the next tick) and is **excluded from
@@ -915,13 +916,24 @@ hunt.provisions_per_biomass × output_multiplier`** (MSY at the *pre-take* bioma
 is shared by hunt + forage (`fauna.rs`); `net_biomass_delta` remains the **actual** per-turn biomass
 evolution used by `regrow_biomass`/`advance_herds` (0 at K — correct there, unchanged).
 A Sustain gather/hunt reads `actual ≈ sustainable`; an over-draw reads `actual > sustainable` (the
-overdraw ⚠). Scout/Warrior push `{0,0}`. The snapshot surfaces this: each `LaborAssignment` row
-carries `actualYield`/`sustainableYield`, and each `PopulationCohortState` carries band-level
+overdraw ⚠). Scout/Warrior push `{0,0,0}`. **`workers_needed`** is the parallel **overstaffing**
+signal: the *minimum* assigned workers that would have produced the same take — `ceil(take_biomass /
+per_worker_capacity)` clamped into `[1, assigned]` when anything was taken, else `0`, computed in both
+the Forage arm (capacity = `forage.per_worker_biomass_capacity × seasonal_weight`, matching
+`forage_take`'s worker cap so a low-season labor-bound patch isn't falsely flagged) and the Hunt arm
+(capacity = `hunt.per_worker_biomass_capacity`, no seasonal) via the shared `workers_needed_for_take`
+helper. A *tended* patch / *corralled* herd (maintenance labor, not scaling gather) is fixed at `1`
+(`TENDED_SOURCE_WORKERS_NEEDED`). When the binding constraint on a source's take is **not** labor
+(policy ceiling / biomass / regrowth), `workers_needed < assigned` → the source is overstaffed and the
+extra workers were idle. The snapshot surfaces all of this: each `LaborAssignment` row
+carries `actualYield`/`sustainableYield`/**`workersNeeded`** (client accessor `workersNeeded()`), and
+each `PopulationCohortState` carries band-level
 `foodIncome` (Σ per-source `actual`) + `foodConsumption` (the same one-turn `food_demand` `daysOfFood`
 divides by). All derived at capture (0 on a rehydrated save before the next tick). **The client
 consumes these next** (allocation-panel rows + tooltip + ledger footer, a follow-up PR): a per-turn
 `actual > sustainable` is the client-derived **overhunting signal** — a *leading* flow indicator,
-distinct from the stock-based `ecology_phase`.
+distinct from the stock-based `ecology_phase` — and `workers > workersNeeded` is the **overstaffing**
+indicator (flag the wasted labor on the source row + the forage biomass/cap tile-card row).
 
 This is the general mechanism the arc scales: raise reach/throughput for settlements/cities, and a
 future **trade policy** adds a consent gate + a priced return flow on *cross-faction* edges (see the

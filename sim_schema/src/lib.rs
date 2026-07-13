@@ -1087,6 +1087,12 @@ pub struct LaborAssignmentState {
     /// Derived per-turn at capture. Appended (append-only).
     #[serde(default)]
     pub sustainable_yield: f32,
+    /// Minimum workers that would have produced this turn's take — the **overstaffing** signal.
+    /// `workers > workers_needed` ⇒ the binding constraint was not labor, so the extra workers were
+    /// idle. `0` when the source produced nothing; a tended patch / corralled herd (maintenance
+    /// labor) reports `1`. Derived per-turn at capture. Appended (append-only).
+    #[serde(default)]
+    pub workers_needed: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -3113,6 +3119,7 @@ fn create_populations<'a>(
                                 policy,
                                 actualYield: assignment.actual_yield,
                                 sustainableYield: assignment.sustainable_yield,
+                                workersNeeded: assignment.workers_needed,
                             },
                         )
                     })
