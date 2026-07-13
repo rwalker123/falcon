@@ -408,6 +408,8 @@ const FOOD_SITE_KIND_GAME_TRAIL := "game_trail"
 # the map to the source being worked (a forage tile, or a hunted herd's CURRENT tile). Scout/Warrior
 # are band-wide roles with no tile, so their rows stay plain labels and never carry this.
 const SOURCE_ROW_FOCUS_HINT := "Click to show this source on the map."
+# The same affordance on an Active-expeditions row (the whole row is the button there).
+const EXPEDITION_ROW_FOCUS_HINT := "Click to show this expedition on the map."
 # Per-source food yield readout on the allocation rows. Yields are food/turn floats; render to
 # 2 decimals with an explicit sign ("+0.31 /turn").
 const YIELD_DECIMALS := 2
@@ -504,7 +506,10 @@ const FOOD_LABEL_EATEN := "Eaten"
 # resident band's allocation panel.
 const EXPEDITION_MISSION_SCOUT := "scout"
 const EXPEDITION_MISSION_HUNT := "hunt"
+const EXPEDITION_PHASE_OUTBOUND := "outbound"
 const EXPEDITION_PHASE_AWAITING := "awaiting"
+const EXPEDITION_PHASE_HUNTING := "hunting"
+const EXPEDITION_PHASE_DELIVERING := "delivering"
 const EXPEDITION_PHASE_RETURNING := "returning"
 const EXPEDITION_MISSION_LABELS := {
 	"scout": "Scouting expedition",
@@ -552,9 +557,40 @@ const SEND_HUNT_POLICY_HINTS := {
 	"market": "Market — repeated trips; grinds the herd down.",
 	"eradicate": "Eradicate — hunt to extinction; no food (denial).",
 }
-# Suffix marking an optimistic (not-yet-confirmed) allocation row, tinted amber to tie it to
-# the amber pending hex on the map.
-const PENDING_ROW_SUFFIX := "  · pending"
+# ---- Action-status vocabulary: row GLYPHS, tooltip WORDS ---------------------------------------
+# A Current-actions / Active-expeditions row states its state with a GLYPH (`FoodIcons.STATUS_ICONS`,
+# the one glyph registry, exactly like the policy icons) and moves the WORDS into the row tooltip.
+# The rows were spelling everything out (`🌰 Forage (27, 26) [sustain] · pending`) — long, and the
+# pending row is ALREADY amber, so "· pending" repeated what the tint said.
+# Two orthogonal layers (see `FoodIcons.STATUS_ICONS`), kept deliberately separate:
+#   • STATUS — what the action is doing: a confirmed local forage/hunt row has no sim phase, it is
+#     simply `working`; an expedition's is the sim's `ExpeditionPhase`.
+#   • `pending` — a state of the ORDER, not the action (composed locally, not yet acknowledged by the
+#     sim, resolves on turn advance). It rides on ANY row, is a MODIFIER (never a phase member), and
+#     takes the row's glyph slot + keeps the amber label tint that ties it to the pending map hex.
+# EXCEPTION — `awaiting` KEEPS ITS WORDS. It is not a status but a DEMAND ON THE PLAYER: the party is
+# parked at its objective burning provisions until you act. A status you already expect is fine to
+# hide behind a hover; a call to action must never require one. So an awaiting row renders
+# glyph + WARN-tinted words, while every other state is glyph-only.
+# Separates a row's trailing glyphs from its label (and from each other): "🌰 Forage (27, 26)  ♻  ●".
+const ROW_GLYPH_SEPARATOR := "  "
+# Word forms for the two ORDER-level statuses. The expedition PHASE words are NOT duplicated here —
+# `_status_label` reads them from `EXPEDITION_PHASE_LABELS`, their single source of truth.
+const STATUS_LABELS := {
+	FoodIcons.STATUS_PENDING: "Pending",
+	FoodIcons.STATUS_WORKING: "Working",
+}
+# The one-line behaviour hint the tooltip appends after the status word ("" = the word says it all).
+const STATUS_HINTS := {
+	FoodIcons.STATUS_PENDING: "starts when you advance the turn",
+	FoodIcons.STATUS_WORKING: "",
+	EXPEDITION_PHASE_OUTBOUND: "heading to the target",
+	EXPEDITION_PHASE_AWAITING: "parked at the objective — it needs an order",
+	EXPEDITION_PHASE_HUNTING: "taking food from the herd",
+	EXPEDITION_PHASE_DELIVERING: "bringing the haul home",
+	EXPEDITION_PHASE_RETURNING: "heading home",
+}
+const STATUS_HINT_FORMAT := "%s — %s"
 # The single player band, captured from the latest snapshot populations (there is exactly
 # one player band in the current start). assign_labor / move_band / clear-all target it; the
 # herd/tile assign controls also read its labor_assignments to show the current staffing.
@@ -1606,21 +1642,81 @@ func _effective_idle(band: Dictionary) -> int:
         assigned += int((merged[key] as Dictionary).get("workers", 0))
     return max(0, int(band.get("working_age", 0)) - assigned)
 
+## A trailing glyph on a row ("  ♻" / "  ●"), separated from the label — "" for an unknown/absent
+## glyph, so a row with no policy / no status renders bare rather than trailing whitespace.
+func _row_glyph_suffix(glyph: String) -> String:
+    return "" if glyph == "" else ROW_GLYPH_SEPARATOR + glyph
+
+## The WORDS behind a status glyph. Order-level statuses come from `STATUS_LABELS`; an expedition
+## PHASE reads from `EXPEDITION_PHASE_LABELS` (`_expedition_phase_label`), which stays the single
+## source of truth for the phase words — they are never re-typed here.
+func _status_label(status: String) -> String:
+    var key := status.strip_edges().to_lower()
+    if key == "":
+        return ""
+    if STATUS_LABELS.has(key):
+        return String(STATUS_LABELS[key])
+    return _expedition_phase_label(key)
+
+## One tooltip line spelling a status glyph out: the word plus its behaviour hint ("Pending — starts
+## when you advance the turn"); a status whose word says it all (`Working`) renders bare.
+func _status_tooltip_line(status: String) -> String:
+    var label := _status_label(status)
+    if label == "":
+        return ""
+    var hint := String(STATUS_HINTS.get(status.strip_edges().to_lower(), ""))
+    return label if hint == "" else STATUS_HINT_FORMAT % [label, hint]
+
+## Append the status words to a row tooltip. The glyph on the row is terse by design, so the hover
+## must carry what it encodes — composed WITH the tooltip the row already had (yield readout,
+## overstaffing explanation, policy hint), never replacing it.
+func _append_status_tooltip(tooltip: String, status: String) -> String:
+    var status_line := _status_tooltip_line(status)
+    if status_line == "":
+        return tooltip
+    return status_line if tooltip == "" else tooltip + TOOLTIP_LINE_SEPARATOR + status_line
+
+## Join the non-empty parts of a row tooltip (yield readout · policy behaviour · …) into one block.
+func _join_tooltip_lines(lines: Array) -> String:
+    var parts: Array[String] = []
+    for line in lines:
+        var text := String(line)
+        if text != "":
+            parts.append(text)
+    return TOOLTIP_LINE_SEPARATOR.join(parts)
+
+## The behaviour hint for a source's take policy, so the row's policy GLYPH is spelled out on hover.
+## Reuses the picker's existing hint strings (kind-specific: gathering a patch vs culling a herd) —
+## the same sentence the player read when they chose the policy.
+func _policy_hint(kind: String, policy: String) -> String:
+    var key := policy.strip_edges().to_lower()
+    if kind == LABOR_KIND_FORAGE:
+        return String(FORAGE_POLICY_HINTS.get(key, ""))
+    return String(HUNT_POLICY_HINTS.get(key, ""))
+
 ## A "<label>   − N +" worker-count row. `on_change` is called with the new count
 ## when either stepper is pressed. `plus_enabled` gates the + (e.g. no idle workers).
-## `pending` marks an optimistic (not-yet-confirmed) row: the label reads amber with a
-## "· pending" suffix, tying it to the amber pending hex on the map.
+## `status` is the row's action status (`FoodIcons.STATUS_WORKING` for a confirmed forage/hunt
+## source; "" for the band-wide Scout/Warrior roles, which report no per-action state), and
+## `pending` marks an optimistic (not-yet-confirmed) ORDER, which overrides the status: the row
+## renders the `◌` glyph instead of `●` and its label reads amber, tying it to the amber pending hex
+## on the map. Either way the state is a GLYPH, never a word — `tooltip` carries the words (see the
+## action-status vocabulary above); the status line is appended to it here so every caller composes
+## it the same way.
 ## `on_focus_source` (optional) makes the LABEL a clickable inline link that jumps the map to the
 ## row's source — a Forage tile / a hunted herd's live tile. It is a separate child from the
 ## steppers, so the −/+ buttons keep working untouched and the count stays right-aligned. Band-wide
 ## roles (Scout/Warrior) have no tile, so they pass nothing and keep a plain Label.
-func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable()) -> HBoxContainer:
+func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable(), status: String = "") -> HBoxContainer:
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    if tooltip != "":
-        row.tooltip_text = tooltip
-    var row_text := label_text + (PENDING_ROW_SUFFIX if pending else "")
+    # Pending is a state of the ORDER, so it wins the glyph slot over whatever the action is doing.
+    var status_key := FoodIcons.STATUS_PENDING if pending else status
+    var row_tooltip := _append_status_tooltip(tooltip, status_key)
+    if row_tooltip != "":
+        row.tooltip_text = row_tooltip
+    var row_text := label_text + _row_glyph_suffix(FoodIcons.for_status(status_key))
     var row_ink: Color = HudStyle.WARN if pending else HudStyle.INK
     var name_label: Control
     if on_focus_source.is_valid():
@@ -1628,15 +1724,15 @@ func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, o
         link.text = row_text
         link.alignment = HORIZONTAL_ALIGNMENT_LEFT
         HudStyle.apply_link_button(link, row_ink)
-        link.tooltip_text = (tooltip + "\n" if tooltip != "" else "") + SOURCE_ROW_FOCUS_HINT
+        link.tooltip_text = (row_tooltip + TOOLTIP_LINE_SEPARATOR if row_tooltip != "" else "") + SOURCE_ROW_FOCUS_HINT
         link.pressed.connect(func() -> void: on_focus_source.call())
         name_label = link
     else:
         var plain := Label.new()
         plain.text = row_text
         plain.add_theme_color_override("font_color", row_ink)
-        if tooltip != "":
-            plain.tooltip_text = tooltip
+        if row_tooltip != "":
+            plain.tooltip_text = row_tooltip
         name_label = plain
     row.add_child(name_label)
     # Overhunting flag: a WARN-tinted ⚠ sits directly after the label (before the stepper), so an
@@ -1645,8 +1741,8 @@ func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, o
         var warn_label := Label.new()
         warn_label.text = OVERHUNT_FLAG
         warn_label.add_theme_color_override("font_color", HudStyle.WARN)
-        if tooltip != "":
-            warn_label.tooltip_text = tooltip
+        if row_tooltip != "":
+            warn_label.tooltip_text = row_tooltip
         row.add_child(warn_label)
     # Overstaffing note ("· only 1 of 5 working"): WARN-tinted, sits after the label/⚠ so the wasted
     # labor reads at a glance without recoloring the whole row. Deliberately NOT the ⚠ flag — that
@@ -1656,8 +1752,8 @@ func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, o
         var note_label := Label.new()
         note_label.text = note
         note_label.add_theme_color_override("font_color", HudStyle.WARN)
-        if tooltip != "":
-            note_label.tooltip_text = tooltip
+        if row_tooltip != "":
+            note_label.tooltip_text = row_tooltip
         row.add_child(note_label)
     # A spacer (not name_label's expand) pushes the −/+ stepper to the right edge, keeping the
     # label + ⚠ adjacent at the left.
@@ -1980,21 +2076,28 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
             has_source = true
             var fx := int(m.get("x", -1))
             var fy := int(m.get("y", -1))
-            # Policy is now populated for forage assignments (sim writes the string field). Tag the
-            # row like Hunt does; an older snapshot without a policy falls back to no tag. Re-staffing
+            # Policy is now populated for forage assignments (sim writes the string field). The row
+            # carries it as the shared POLICY GLYPH (`FoodIcons.for_policy` — the same icon on the
+            # picker button and the map's yield label), not the old "[sustain]" word; the tooltip
+            # spells it out. An older snapshot without a policy falls back to no glyph. Re-staffing
             # via the stepper preserves the policy (default Sustain when absent).
             var fpolicy := String(m.get("policy", "")).strip_edges().to_lower()
-            var forage_tag := " [%s]" % fpolicy if fpolicy in FORAGE_POLICY_OPTIONS else ""
+            var forage_policy_glyph := _row_glyph_suffix(FoodIcons.for_policy(fpolicy)) \
+                if fpolicy in FORAGE_POLICY_OPTIONS else ""
             var forage_emit_policy := fpolicy if fpolicy in FORAGE_POLICY_OPTIONS else DEFAULT_HUNT_POLICY
             # Lead with the resource glyph the map draws on that tile (FoodIcons — one source of
             # truth), so a source reads identically in the panel and on the map. Unknown module → "".
             var forage_icon := _source_icon_prefix(_food_module_icon(fx, fy))
             actions_block.add_child(_build_worker_stepper(
-                "%sForage (%d, %d)%s%s" % [forage_icon, fx, fy, forage_tag, yld.label_suffix], workers, can_add,
+                "%sForage (%d, %d)%s%s" % [forage_icon, fx, fy, yld.label_suffix, forage_policy_glyph],
+                workers, can_add,
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_FORAGE, n, fx, fy, "", forage_emit_policy),
-                pending, yld.warn, yld.tooltip, yld.note,
+                pending, yld.warn,
+                _join_tooltip_lines([yld.tooltip, _policy_hint(kind, fpolicy)]), yld.note,
                 # A forage patch is a fixed tile: the assignment's own target IS its live location.
-                func() -> void: _focus_labor_source(fx, fy)))
+                func() -> void: _focus_labor_source(fx, fy),
+                # A confirmed local forage row has no sim phase — it is simply working.
+                FoodIcons.STATUS_WORKING))
         elif kind == LABOR_KIND_HUNT and (workers > 0 or pending):
             has_source = true
             var herd_id := String(m.get("herd_id", ""))
@@ -2008,12 +2111,18 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
             var herd_label := _herd_label_for_id(herd_id)
             var hunt_icon := _source_icon_prefix(FoodIcons.for_herd(herd_label))
             actions_block.add_child(_build_worker_stepper(
-                "%sHunt %s [%s]%s" % [hunt_icon, herd_label, policy, yld.label_suffix], workers, can_add,
+                "%sHunt %s%s%s" % [
+                    hunt_icon, herd_label, yld.label_suffix,
+                    _row_glyph_suffix(FoodIcons.for_policy(policy))],
+                workers, can_add,
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_HUNT, n, hx, hy, herd_id, policy),
-                pending, yld.warn, yld.tooltip, yld.note,
+                pending, yld.warn,
+                _join_tooltip_lines([yld.tooltip, _policy_hint(kind, policy)]), yld.note,
                 # Herds MIGRATE, so resolve the herd's live tile at CLICK time (hx/hy is only the
                 # assignment's launch-time target, kept as the fallback for an unknown herd).
-                func() -> void: _focus_hunt_source(herd_id, hx, hy)))
+                func() -> void: _focus_hunt_source(herd_id, hx, hy),
+                # A confirmed local hunt row has no sim phase — it is simply working.
+                FoodIcons.STATUS_WORKING))
     if not has_source:
         actions_block.add_child(_alloc_hint_label(ALLOC_NO_SOURCES_HINT))
     blocks.append(actions_block)
@@ -3327,10 +3436,14 @@ func _build_panel_expeditions_block(band: Dictionary) -> VBoxContainer:
         block.add_child(_build_panel_expedition_row(exp))
     return block
 
-## One clickable "Active expeditions" row: mission glyph + compact summary. Click routes the map
-## selection to the expedition (its detail then shows in the Occupants card's expedition drawer),
-## via the same signal path a roster click uses.
+## One clickable "Active expeditions" row: mission glyph + compact summary + the phase GLYPH. Click
+## routes the map selection to the expedition (its detail then shows in the Occupants card's
+## expedition drawer), via the same signal path a roster click uses.
+## An `awaiting` row is the ONE state that keeps its words and reads WARN-amber: the party is parked
+## at its objective burning provisions until the player acts, and a call to action must not hide
+## behind a hover (see the action-status vocabulary).
 func _build_panel_expedition_row(exp: Dictionary) -> Button:
+    var phase := _expedition_phase_key(exp)
     var btn := Button.new()
     btn.text = _panel_expedition_summary(exp)
     btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -3338,34 +3451,57 @@ func _build_panel_expedition_row(exp: Dictionary) -> Button:
     btn.clip_text = true
     btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     HudStyle.apply_button(btn, "ghost")
+    if phase == EXPEDITION_PHASE_AWAITING:
+        btn.add_theme_color_override("font_color", HudStyle.WARN)
+    btn.tooltip_text = _expedition_row_tooltip(exp, phase)
     var entity := int(exp.get("entity", -1))
     var x := int(exp.get("current_x", -1))
     var y := int(exp.get("current_y", -1))
     btn.pressed.connect(func() -> void: _on_panel_expedition_selected(entity, x, y))
     return btn
 
-## Compact one-line expedition summary: hunt → `🏹 <herd> · <Phase> · <Policy>`;
-## scout → `⚑ → (x, y) · <Phase>`.
+## The expedition's sim phase key, normalized (the wire's `ExpeditionPhase` string).
+func _expedition_phase_key(exp: Dictionary) -> String:
+    return String(exp.get("expedition_phase", "")).strip_edges().to_lower()
+
+## The phase as it renders ON the row: the glyph alone, except `awaiting`, which keeps its words
+## (`▮▮ Awaiting orders`) — a demand on the player must read without a hover.
+func _expedition_phase_suffix(phase: String) -> String:
+    var suffix := _row_glyph_suffix(FoodIcons.for_status(phase))
+    if phase == EXPEDITION_PHASE_AWAITING:
+        return "%s %s" % [suffix, _expedition_phase_label(phase)]
+    return suffix
+
+## The row's hover text: everything the glyphs encode, in words — the mission, the hunt policy's
+## behaviour hint, the phase + what it means, and the click affordance.
+func _expedition_row_tooltip(exp: Dictionary, phase: String) -> String:
+    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
+    var policy_hint := ""
+    if mission == EXPEDITION_MISSION_HUNT:
+        var policy := String(exp.get("expedition_hunt_policy", "")).strip_edges().to_lower()
+        policy_hint = String(SEND_HUNT_POLICY_HINTS.get(policy, ""))
+    return _join_tooltip_lines([
+        _expedition_mission_label(mission), policy_hint,
+        _status_tooltip_line(phase), EXPEDITION_ROW_FOCUS_HINT])
+
+## Compact one-line expedition summary: hunt → `🏹 <herd> · <Policy>  <phase glyph>`;
+## scout → `⚑ → (x, y)  <phase glyph>`. Policy AND phase read as GLYPHS here exactly as they do on the
+## Current-actions rows (one concept, one rendering, in both sections of the same panel); the words
+## live in the tooltip. A scout has no policy → `for_policy` returns "" → `_row_glyph_suffix` emits
+## nothing, so the row carries the phase glyph alone with no orphaned separator. Only `awaiting` keeps
+## its words (`_expedition_phase_suffix`).
 func _panel_expedition_summary(exp: Dictionary) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
-    var phase := _expedition_phase_label(String(exp.get("expedition_phase", "")))
+    var phase_suffix := _expedition_phase_suffix(_expedition_phase_key(exp))
+    var policy_suffix := _row_glyph_suffix(
+        FoodIcons.for_policy(String(exp.get("expedition_hunt_policy", ""))))
     if mission == EXPEDITION_MISSION_HUNT:
-        var parts: Array = []
         var herd := _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
-        if herd != "":
-            parts.append(herd)
-        if phase != "":
-            parts.append(phase)
-        var policy := String(exp.get("expedition_hunt_policy", "")).strip_edges()
-        if policy != "":
-            parts.append(policy.capitalize())
-        return "%s %s" % [PANEL_EXPEDITION_HUNT_GLYPH, " · ".join(parts)]
+        return "%s %s%s%s" % [PANEL_EXPEDITION_HUNT_GLYPH, herd, policy_suffix, phase_suffix]
     var x := int(exp.get("current_x", -1))
     var y := int(exp.get("current_y", -1))
-    var scout_parts: Array = ["→ (%d, %d)" % [x, y]]
-    if phase != "":
-        scout_parts.append(phase)
-    return "%s %s" % [PANEL_EXPEDITION_SCOUT_GLYPH, " · ".join(scout_parts)]
+    return "%s → (%d, %d)%s%s" % [
+        PANEL_EXPEDITION_SCOUT_GLYPH, x, y, policy_suffix, phase_suffix]
 
 ## Select an expedition (from the panel's Active-expeditions list) on the map: recenter + select
 ## its hex (rebuilds that hex's roster), then pin the exact expedition so the map ring moves and the

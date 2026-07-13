@@ -158,6 +158,21 @@ func _ready() -> void:
 		await _settle()
 		await _save(state["name"])
 
+	# ROW STATUS GLYPHS — the vocabulary frame. One band whose Current actions carry a CONFIRMED
+	# forage row (● working, overstaffed → "· only 2 of 5 working") + a CONFIRMED hunt row (● working,
+	# overdrawing → ⚠), plus a PENDING forage row on a DIFFERENT tile (◌, amber) so pending and working
+	# read side by side and the ⚠/overstaffing notes prove they still compose. Active expeditions cover
+	# every phase glyph: outbound ➤ / hunting ● / delivering ◄ / returning ◄ / awaiting ▮▮ + words.
+	_hud.show_tile_selection({})   # clear the foreign selection so the panel band is the subject
+	# Drop the earlier bug-2 pending assign (it targets the same tile as the confirmed forage row and
+	# would mask it) so this frame shows a CONFIRMED row and a PENDING row side by side.
+	_hud._pending_labor.clear()
+	_hud.update_band_alerts([_band_fixture()] + _phase_expedition_fixtures())
+	_hud._emit_assign_labor(_hud._panel_band, "forage", 4, 72, 19, "", "surplus")
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	await _save("band_panel_status_glyphs")
+
 	# Fit-to-content height (no clipping) — push a TALLER band: starving + full morale breakdown +
 	# output row + the send-expedition section, so the summary column is much taller than the old fixed
 	# T/B PANEL_HEIGHT would allow. Dock top/bottom and confirm every column's bottom row is visible and
@@ -247,9 +262,11 @@ func _band_fixture() -> Dictionary:
 		"food_income": 0.94,
 		"food_consumption": 0.68,
 		# The hunt overdraws (actual 0.46 > sustainable 0.20) so the ⚠ overhunting flag renders on its
-		# allocation row; the forage is renewable (actual == sustainable) so it never flags.
+		# allocation row; the forage is renewable (actual == sustainable) so it never flags. The forage
+		# is also OVERSTAFFED (5 assigned, 2 needed) → the "· only 2 of 5 working" note, and carries a
+		# `policy` so its row shows the ♻ policy glyph — both must survive beside the ● status glyph.
 		"labor_assignments": [
-			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
+			{"kind": "forage", "workers": 5, "workers_needed": 2, "policy": "sustain", "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
 			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20},
 			{"kind": "scout", "workers": 2},
 			{"kind": "warrior", "workers": 2},
@@ -305,6 +322,27 @@ func _scout_expedition_fixture() -> Dictionary:
 		"expedition_phase": "outbound",
 		"home_band_entity": 904,
 	}
+
+## One expedition per PHASE, all homed on band 904 — the fixture set behind `band_panel_status_glyphs`:
+## the Active-expeditions rows must render a distinct, legible glyph for each (➤ outbound / ● hunting /
+## ◄ delivering / ◄ returning) and spell `awaiting` out in WARN amber (▮▮ Awaiting orders), since a
+## parked party is a demand on the player, not a status.
+func _phase_expedition_fixtures() -> Array:
+	var scout_outbound := _scout_expedition_fixture()
+	var scout_awaiting := _scout_expedition_fixture()
+	scout_awaiting["entity"] = 953
+	scout_awaiting["id"] = "Scouts 2"
+	scout_awaiting["expedition_phase"] = "awaiting"
+	var scout_returning := _scout_expedition_fixture()
+	scout_returning["entity"] = 954
+	scout_returning["id"] = "Scouts 3"
+	scout_returning["expedition_phase"] = "returning"
+	var hunt_hunting := _hunt_expedition_fixture()
+	var hunt_delivering := _hunt_expedition_fixture()
+	hunt_delivering["entity"] = 955
+	hunt_delivering["id"] = "Hunters 2"
+	hunt_delivering["expedition_phase"] = "delivering"
+	return [scout_outbound, scout_awaiting, scout_returning, hunt_hunting, hunt_delivering]
 
 ## A detached HUNT expedition outfitted by band 904, following game_deer_79 under a Surplus policy.
 func _hunt_expedition_fixture() -> Dictionary:

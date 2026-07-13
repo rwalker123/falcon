@@ -63,6 +63,39 @@ const POLICY_ICONS := {
 static func for_policy(policy: String) -> String:
 	return String(POLICY_ICONS.get(policy.strip_edges().to_lower(), ""))
 
+# Action-STATUS glyphs, read by the Band panel's Current-actions + Active-expeditions rows (Hud) so
+# a row states what it is doing with a glyph instead of a word (the words move into the row
+# tooltip). TWO ORTHOGONAL LAYERS ride the same vocabulary and must stay separate:
+#   • STATUS — what the action IS DOING. A confirmed local forage/hunt row has no sim phase: it is
+#     simply `working`. An expedition's status is the sim's `ExpeditionPhase` (`outbound` /
+#     `awaiting` / `hunting` / `delivering` / `returning`) — the same keys the wire sends, so
+#     `for_status` maps a phase string straight through.
+#   • `pending` — a state of the ORDER, not of the action: composed locally, not yet acknowledged by
+#     the sim, resolves on turn advance. It rides on ANY row and is a MODIFIER, never a phase member.
+# `hunting` deliberately shares `working`'s glyph — a hunt party in its hunting phase IS just working
+# — and `delivering` shares `returning`'s: both are "coming home", and the tooltip is what
+# distinguishes them.
+# Legibility (the 🪙/💰 lesson): these are drawn at HUD label size (~13px), where pictographic emoji
+# collapse into a grey blob. Only BOLD LINE ART survives, so every glyph here is a geometric shape
+# (◌ ● ➤ ▮▮ ◄) — verified at true size in `band_panel_status_glyphs.png`. ⏸ (U+23F8) was rejected for
+# `awaiting`: it carries emoji presentation and renders as tofu/a blob in the HUD font.
+const STATUS_PENDING := "pending"
+const STATUS_WORKING := "working"
+const STATUS_ICONS := {
+	STATUS_PENDING: "○",
+	STATUS_WORKING: "●",
+	"outbound": "➤",
+	"awaiting": "▮▮",
+	"hunting": "●",
+	"delivering": "◄",
+	"returning": "◄",
+}
+
+## Icon for an action status / expedition phase ("" for an unknown/absent key, so callers render
+## bare text).
+static func for_status(status: String) -> String:
+	return String(STATUS_ICONS.get(status.strip_edges().to_lower(), ""))
+
 const ICONS := {
 	"coastal_littoral": "🐚",
 	"riverine_delta": "🐟",
