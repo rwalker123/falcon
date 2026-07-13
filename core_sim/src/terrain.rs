@@ -590,47 +590,78 @@ const ANOMALY_SELECT_MASK: u32 = 0x0F;
 /// Number of distinct anomaly biomes the selection field cycles across.
 const ANOMALY_BIOME_COUNT: u32 = 6;
 
+/// Does the caller have REAL bathymetry for this tile — i.e. a band raster (land/shelf/
+/// slope/deep-ocean) plus a restamped elevation field — or is it the preset-less legacy
+/// path with nothing but a tile hash?
+///
+/// This gates `classify_terrain`'s three **legacy map-border "edge rings"** (see below).
+/// It is derived from the caller's *context* (`elevation.is_some()` in
+/// [`terrain_for_position_with_classifier`]), never from a config flag — the preset-less
+/// path must keep its historical behavior exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BathymetryContext {
+    /// Bands + elevation decided water vs. land already (every preset map).
+    Present,
+    /// No bands, no elevation — the classifier is the only coastline model available.
+    Absent,
+}
+
 pub fn classify_terrain(
     position: UVec2,
     grid_size: UVec2,
     classifier: &TerrainClassifierConfig,
+    bathymetry: BathymetryContext,
 ) -> TerrainType {
     let width = grid_size.x.max(1) as f32;
     let height = grid_size.y.max(1) as f32;
     let fx = position.x as f32 / width;
     let fy = position.y as f32 / height;
-    let edge = fx.min(1.0 - fx).min(fy).min(1.0 - fy);
     let dist_from_equator = (fy - 0.5).abs();
     let is_high_latitude = dist_from_equator >= classifier.high_latitude_threshold;
     let noise = tile_noise(position);
     let humidity = ((noise >> 8) & 0xFF) as f32 / 255.0;
 
-    if edge < classifier.coastal_deep_ocean_edge {
-        return pick(
-            noise,
-            &[TerrainType::DeepOcean, TerrainType::HydrothermalVentField],
-        );
-    }
-    if edge < classifier.coastal_shelf_edge {
-        return pick(
-            noise,
-            &[
-                TerrainType::ContinentalShelf,
-                TerrainType::CoralShelf,
-                TerrainType::TidalFlat,
-                TerrainType::MangroveSwamp,
-            ],
-        );
-    }
-    if edge < classifier.coastal_inland_edge {
-        // NOTE: RiverDelta is intentionally NOT a candidate here. Deltas are a
-        // river-mouth feature and are stamped exclusively by the hydrology pass
-        // (see `generate_hydrology` in hydrology.rs). Picking them by noise here
-        // scattered deltas across the coast with no relation to actual rivers.
-        return pick(
-            noise,
-            &[TerrainType::InlandSea, TerrainType::FreshwaterMarsh],
-        );
+    // LEGACY, PRESET-LESS ONLY — the three map-border "edge rings".
+    //
+    // `edge` is the distance to the MAP FRAME, not to a coastline. In the pre-bands
+    // (preset-less) world that was the only coastline proxy available, so the frame stood in
+    // for "the sea is out there". Under a preset the map has real bathymetry: `classify_bands`
+    // already partitioned the world into Land / ContinentalShelf / InlandSea / DeepOcean, and
+    // this function is only ever called for tiles the bands declared **Land**. Running the
+    // rings there noise-coin-flipped hundreds of border land tiles per map into water biomes —
+    // deleting the land out from under legitimate shelf rings (orphaned shelf) and pinching off
+    // isolated deep pockets. So with bathymetry present we skip them entirely and fall through
+    // to the polar/anomaly/humidity LAND ladder below; a band-`Land` tile can then never come
+    // back WATER-tagged. See core_sim/CLAUDE.md → World Generation Pipeline.
+    if bathymetry == BathymetryContext::Absent {
+        let edge = fx.min(1.0 - fx).min(fy).min(1.0 - fy);
+        if edge < classifier.coastal_deep_ocean_edge {
+            return pick(
+                noise,
+                &[TerrainType::DeepOcean, TerrainType::HydrothermalVentField],
+            );
+        }
+        if edge < classifier.coastal_shelf_edge {
+            return pick(
+                noise,
+                &[
+                    TerrainType::ContinentalShelf,
+                    TerrainType::CoralShelf,
+                    TerrainType::TidalFlat,
+                    TerrainType::MangroveSwamp,
+                ],
+            );
+        }
+        if edge < classifier.coastal_inland_edge {
+            // NOTE: RiverDelta is intentionally NOT a candidate here. Deltas are a
+            // river-mouth feature and are stamped exclusively by the hydrology pass
+            // (see `generate_hydrology` in hydrology.rs). Picking them by noise here
+            // scattered deltas across the coast with no relation to actual rivers.
+            return pick(
+                noise,
+                &[TerrainType::InlandSea, TerrainType::FreshwaterMarsh],
+            );
+        }
     }
 
     if dist_from_equator >= classifier.polar_latitude_cutoff {
@@ -797,7 +828,14 @@ pub fn terrain_for_position_with_classifier(
     mountain: Option<(MountainType, f32)>,
     classifier: &TerrainClassifierConfig,
 ) -> (TerrainType, TerrainTags) {
-    let mut terrain = classify_terrain(position, grid_size, classifier);
+    // The bands path passes `Some(elevation)` (real bathymetry decided land/water upstream);
+    // the preset-less fallback passes `None` and keeps the legacy edge-ring behavior.
+    let bathymetry = if elevation.is_some() {
+        BathymetryContext::Present
+    } else {
+        BathymetryContext::Absent
+    };
+    let mut terrain = classify_terrain(position, grid_size, classifier, bathymetry);
     let mut definition = terrain_definition(terrain);
     let mut tags = definition.tags;
     let moisture = moisture.unwrap_or(0.5);
@@ -995,7 +1033,12 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for y in 20..76 {
             for x in 20..76 {
-                let terrain = classify_terrain(UVec2::new(x, y), grid, &classifier);
+                let terrain = classify_terrain(
+                    UVec2::new(x, y),
+                    grid,
+                    &classifier,
+                    BathymetryContext::Absent,
+                );
                 if ANOMALY_BIOMES.contains(&terrain) {
                     seen.insert(terrain);
                 }
@@ -1020,7 +1063,12 @@ mod tests {
         let mut total = 0usize;
         for y in 20..76 {
             for x in 20..76 {
-                let terrain = classify_terrain(UVec2::new(x, y), grid, &classifier);
+                let terrain = classify_terrain(
+                    UVec2::new(x, y),
+                    grid,
+                    &classifier,
+                    BathymetryContext::Absent,
+                );
                 if ANOMALY_BIOMES.contains(&terrain) {
                     anomaly += 1;
                 }

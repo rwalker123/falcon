@@ -240,7 +240,7 @@ pub use systems::{
 };
 pub use terrain::{
     biome_must_have, biome_niche, classify_terrain, terrain_definition, terrain_for_position,
-    BiomeNiche, MovementProfile, TerrainDefinition, TerrainResourceBias,
+    BathymetryContext, BiomeNiche, MovementProfile, TerrainDefinition, TerrainResourceBias,
 };
 
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
