@@ -100,6 +100,13 @@ uniform float noise_cell;     // FEATURE value-noise cell size in px (config fea
                               // DECOUPLED from blend_noise_cell so retuning the interlock grain can't move any
                               // coastline, treeline or footline.
 uniform bool blend_enabled;   // false below the LOD radius → base only (no shimmer at far zoom)
+// RUGGED-LAND eligibility (config blend_rugged_land, default FALSE = the shipped same-class rule). When TRUE
+// the LAND seam gate widens from same-class to "both sides are land": a rugged biome's BASE FLOOR then blends
+// with any land neighbour (flat↔rugged and rugged↔rugged), instead of ending in a razor-straight hexagon.
+// land↔water is untouched (still hard — that seam is the shoreline) and water↔water still takes the depth
+// field. OFF by default because rugged base textures are high-contrast/structured and the height term can
+// shred them — see EDGE_BLEND_DEFAULT_RUGGED_LAND in MapView.gd.
+uniform bool blend_rugged_land;
 uniform bool fow_enabled;
 uniform vec4 bg_color;        // out-of-map fill (matches the direct path background)
 uniform vec4 fog_color;       // unexplored fill
@@ -175,6 +182,28 @@ const float SHORE_SAND_PLATEAU_MAX = 0.6; // plateau ≤ this fraction of the sa
 const float SHORE_WISP_STRENGTH = 0.45;   // second foam wisp max opacity (its GEOMETRY is a config lever —
                                           // see wisp_center_band / wisp_half_band)
 const float CANOPY_TREELINE_NOISE = 0.6;  // how hard world-noise waves the treeline in/out (× overhang)
+// --- PEAK CAST SHADOW: it must die off with DISTANCE FROM THE RELIEF, never with the hex grid ---
+// The occlusion term (the multi-tap look back toward the light) is near-CONSTANT across a whole neighbour hex,
+// because the peak art is near-opaque almost everywhere it is sampled. On its own it therefore painted a flat
+// darkening over every hex merely ADJACENT to relief, terminating on THAT hex's own boundary: dark HEXAGONS in
+// the neighbouring biome. So the occlusion is enveloped by the signed distance to the peak↔non-peak boundary —
+// the same quantity the overhang already uses, and evaluated identically on both sides of a shared edge (the
+// discipline the shoreline's signed coast coordinate `u` follows), so nothing can pop at the hex line.
+// The envelope is FULL at the (noise-wobbled) footline and smoothsteps to 0 over a reach that is:
+//   * elevation-scaled — a high massif throws a longer shadow (PEAK_SHADOW_ELEV_FLOOR is the reach at elev 0);
+//   * DIRECTIONAL — full length where the relief lies TOWARD the light (we are down-light of it, i.e. in its
+//     cast shadow) and shrinking to PEAK_SHADOW_UPLIGHT_REACH of it on the LIT side, which leaves a short
+//     contact/ambient skirt at the foot instead of a hard angular cutoff. A hard cutoff on dot(light, normal)
+//     would step to zero at the footline on the lit side, where the relief art is only ~half opaque and the
+//     shadowed ground shows through — i.e. it would trade the hexagon for a dark crescent.
+// The envelope is a MAX over the qualifying boundary edges, never a sum: a hex touching relief on two sides
+// takes the nearer/darker of the two and cannot double-darken into a seam. (A single-nearest-edge envelope
+// would have been discontinuous along the bisector where the nearest edge switches, because the two edges'
+// light alignments differ; max-of-continuous is continuous everywhere.)
+const float PEAK_SHADOW_ELEV_FLOOR = 0.4;     // shadow reach at elevation 0, as a fraction of peak_shadow_len
+const float PEAK_SHADOW_UPLIGHT_REACH = 0.15; // …and on the LIT side of the relief, as a fraction of the reach
+const float PEAK_SHADOW_REACH_MIN = 1e-3;     // px floor, so the envelope's smoothstep can never divide by zero
+const int PEAK_SHADOW_TAPS = 4;               // occlusion samples along the light ray (nearer occluder = darker)
 // Fog-of-war visibility states, as written into the vis-map's R channel by MapView._rebuild_terrain_shader_maps.
 // The tint is a CONTINUOUS function of the (cross-edge smoothed) visibility scalar between these anchors, so
 // the pure states still look exactly as they did under the old per-state branch: 1 = clear, 0.5 = mist, 0 = fog.
@@ -355,7 +384,10 @@ void fragment() {
 		// terrain id. flat↔flat (grass↔soil ecotones) and water↔water (deep ocean grading into shelf) both
 		// qualify; land↔water is a CLASS CHANGE, so it stays hard — that seam is the SHORELINE, owned by the
 		// foam/beach pass below, and softening it would wash the coastline out. rugged (class 2) never blends.
-		bool own_blendable = own_class == CLASS_FLAT || own_class == CLASS_WATER;
+		// blend_rugged_land widens the LAND half of that rule to "both sides are land" (see the uniform).
+		bool own_land = own_class != CLASS_WATER;
+		bool own_blendable = own_class == CLASS_FLAT || own_class == CLASS_WATER
+			|| (blend_rugged_land && own_class == CLASS_RUGGED);
 		if (blend_enabled && own_class == CLASS_WATER) {
 			// --- WATER: a continuous DEPTH FIELD, not a seam (see WATER_FIELD_PLATEAU_MAX) ---
 			// EVERY qualifying water neighbour contributes at once, weighted by proximity to THAT shared edge;
@@ -423,7 +455,13 @@ void fragment() {
 				vec4 npx = texture(id_map, nuv);
 				int nlayer = int(npx.r * 255.0 + 0.5);
 				int nclass = int(npx.g * 255.0 + 0.5);
-				if (nclass != own_class || nlayer == own_layer) { continue; } // same class & different id only
+				// Eligibility: same class by default; with blend_rugged_land, ANY land neighbour (own is land
+				// here, so this is flat↔rugged / rugged↔rugged). Water is excluded either way — that seam is
+				// the shoreline. Symmetric on both sides of the edge, so the seam stays continuous.
+				bool nb_eligible = blend_rugged_land && own_land
+					? nclass != CLASS_WATER
+					: nclass == own_class;
+				if (!nb_eligible || nlayer == own_layer) { continue; }
 				vec2 nb_c = hex_center(ncol, nrow);
 				vec2 dir_v = normalize(nb_c - own_c);
 				float half_dist = 0.5 * distance(own_c, nb_c);
@@ -647,6 +685,15 @@ void fragment() {
 			float pk_best_d = -1e9;                         // nearest boundary edge = max signed distance
 			int nb_peak_code = 0;
 			float nb_peak_elev = 0.0;                       // elevation of that nearest peak-neighbour hex
+			float own_elev = texture(elev_map, id_uv).r;    // 0..1; the peak's own height when own_is_peak
+			// The footline wobble, shared by the shadow ENVELOPE and the peak composite below so the shadow's
+			// onset meanders with the art's footline instead of tracing the hex edge. Map-space noise, so a
+			// world point reads the same value from both sides of an edge — continuity survives it.
+			float tn = vnoise(v_map / noise_cell + vec2(7.0, 5.0));
+			float pk_wobble = (tn - 0.5) * 2.0 * peak_overhang * CANOPY_TREELINE_NOISE;
+			// Cast-shadow envelope: 1 at the footline, 0 beyond the (elevation-scaled, DIRECTIONAL) reach.
+			// See the PEAK_SHADOW_* consts — this is what keeps the shadow off the hex grid.
+			float shadow_env = 0.0;
 			for (int dir = 0; dir < 6; dir++) {
 				ivec2 off = neighbor_offset(row, dir);
 				int ncol = col + off.x;
@@ -665,12 +712,35 @@ void fragment() {
 				vec2 dir_v = normalize(nb_c - own_c);
 				float half_dist = 0.5 * distance(own_c, nb_c);
 				float d = dot(v_world - own_c, dir_v) - half_dist; // <=0 inside own hex, larger = nearer edge
+				float nb_elev = texture(elev_map, nuv).r;      // same uv we read its id/peak-code from
 				if (d > pk_best_d) {
 					pk_best_d = d;
 					nb_peak_code = ncode;
-					nb_peak_elev = texture(elev_map, nuv).r;   // same uv we read its id/peak-code from
+					nb_peak_elev = nb_elev;
 				}
+				// --- this edge's contribution to the cast-shadow envelope (see the PEAK_SHADOW_* consts) ---
+				// Recast the edge in RELIEF terms, identically from either side of it: q = signed distance INTO
+				// the relief (so the shared edge reads q = 0 from both hexes), m = the unit normal pointing INTO
+				// the relief (dir_v points at the peak neighbour when we are the ground; when we ARE the peak,
+				// dir_v points at the ground neighbour, so the relief is the other way).
+				float q = own_is_peak ? -d : d;
+				vec2 m = own_is_peak ? -dir_v : dir_v;
+				float pk_elev = own_is_peak ? own_elev : nb_elev;
+				// +1 when the relief lies straight TOWARD the light (we are down-light of it → deepest shadow),
+				// -1 when it lies away from it (we are on its LIT side → only the short contact skirt).
+				float align = dot(peak_light_dir, m);
+				float lit_side = align * 0.5 + 0.5;           // remap the dot from [-1,1] to [0,1]
+				float reach = peak_shadow_len
+					* mix(PEAK_SHADOW_ELEV_FLOOR, 1.0, pk_elev)
+					* mix(PEAK_SHADOW_UPLIGHT_REACH, 1.0, lit_side);
+				// Distance BEYOND the wobbled footline (0 anywhere under the relief, growing outward from it).
+				float out_dist = max(0.0, -(q + pk_wobble));
+				float env = 1.0 - smoothstep(0.0, max(reach, PEAK_SHADOW_REACH_MIN), out_dist);
+				shadow_env = max(shadow_env, env);            // MAX, never a sum → no double-darkening seam
 			}
+			// A hex deep inside a massif has no peak↔non-peak edge at all, so the loop above never ran: its
+			// ground is under the relief and fully occluded.
+			if (own_is_peak && pk_best_d < -1e8) { shadow_env = 1.0; }
 			int peak_code = own_is_peak ? own_peak : nb_peak_code;
 			// signed distance into the relief (+inside, 0 at footline, -outside); interior massif → +big.
 			float s;
@@ -683,27 +753,31 @@ void fragment() {
 				// Use the PEAK's elevation for prominence + shadow: own hex when it's the peak, else the
 				// captured peak-neighbour's — so the overhang/shadow on the ground side of the seam reads the
 				// peak's height, not the low neighbour-ground hex's (which discontinued across the seam).
-				float peak_elev = own_is_peak ? texture(elev_map, id_uv).r : nb_peak_elev;  // 0..1
+				float peak_elev = own_is_peak ? own_elev : nb_peak_elev;  // 0..1
 				vec2 puv = v_map / (2.0 * hex_radius) * peak_scale;       // continuous world UV (like canopy cuv)
 				float prom = mix(peak_min_prominence, 1.0, peak_elev);
 
 				// --- CAST SHADOW: look back toward the light; if a peak occludes, darken this ground ---
 				// peak_light_dir points TOWARD the light (top-left). A fragment is shadowed if a peak sits
 				// between it and the light, i.e. at puv + light_dir * t. Multi-tap for a soft ramp.
+				// The peak art is near-opaque wherever it is sampled, so this term alone is ~CONSTANT across a
+				// whole neighbour hex — it is shadow_env (the signed-distance envelope built above) that makes
+				// the result die off with distance from the RELIEF rather than with the hex grid.
 				float shadow = 0.0;
-				float slen_uv = (peak_shadow_len * (0.4 + 0.6 * peak_elev)) / (2.0 * hex_radius) * peak_scale;
-				const int TAPS = 4;
-				for (int k = 1; k <= TAPS; k++) {
-					float t = float(k) / float(TAPS);
-					vec2 sp = puv + peak_light_dir * (slen_uv * t);
-					float a = texture(peak_tex, vec3(sp, float(peak_code - 1))).a;
-					shadow = max(shadow, a * (1.0 - t));   // nearer occluder = darker
+				if (shadow_env > 0.0) {
+					float slen_uv = peak_shadow_len * mix(PEAK_SHADOW_ELEV_FLOOR, 1.0, peak_elev)
+						/ (2.0 * hex_radius) * peak_scale;
+					for (int k = 1; k <= PEAK_SHADOW_TAPS; k++) {
+						float t = float(k) / float(PEAK_SHADOW_TAPS);
+						vec2 sp = puv + peak_light_dir * (slen_uv * t);
+						float a = texture(peak_tex, vec3(sp, float(peak_code - 1))).a;
+						shadow = max(shadow, a * (1.0 - t));   // nearer occluder = darker
+					}
 				}
-				result *= mix(1.0, 1.0 - peak_shadow_strength, clamp(shadow, 0.0, 1.0));
+				result *= mix(1.0, 1.0 - peak_shadow_strength, clamp(shadow * shadow_env, 0.0, 1.0));
 
 				// --- PEAK COMPOSITE (over the shadowed ground) ---
-				float tn = vnoise(v_map / noise_cell + vec2(7.0, 5.0));
-				float ss = s + (tn - 0.5) * 2.0 * peak_overhang * CANOPY_TREELINE_NOISE;  // bumpy footline
+				float ss = s + pk_wobble;   // bumpy footline — the same wobble the shadow envelope rides
 				if (ss > -peak_overhang) {
 					float dens = canopy_density(ss, peak_overhang, peak_softness) * prom;  // reuse canopy_density
 					if (dens > 0.0) {

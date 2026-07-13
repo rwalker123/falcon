@@ -190,6 +190,17 @@ const EDGE_BLEND_DEFAULT_NOISE_SCALE := 0.25
 # of the weight range at the seam: a visible meander, still far short of reaching a hex interior.
 const EDGE_BLEND_DEFAULT_NOISE_AMOUNT := 0.3
 const EDGE_BLEND_DEFAULT_FEATURE_NOISE_CELL := 6.0
+# RUGGED-LAND ELIGIBILITY (config `blend_rugged_land` → the shader's blend_rugged_land uniform). The bare seam
+# gate is SAME-CLASS, so a rugged biome's base floor would never blend and would end in a razor-straight
+# hexagon against its neighbour — the "rolling hills are CUT OFF at the hex edge" report (a peak biome's base
+# IS the whole ground under its relief overlay). ON widens the LAND half of the gate to "both sides are land"
+# (flat↔rugged and rugged↔rugged blend, through the EXISTING flat levers; land↔water stays hard and water
+# keeps its depth field, so no frame without a rugged hex moves — verified bit-identical).
+# SHIPPED ON, but only after the whole rugged roster was swept for SHREDDING (the height term tearing holes in
+# a structured texture's interior — see EDGE_BLEND_DEFAULT_HEIGHT_INFLUENCE): every rugged biome was rendered
+# as an ISOLATED hex surrounded by a contrasting one, in a flat field AND in a rugged field
+# (tools/blend_probe.tscn state R). A straight band seam cannot show shredding — never judge this on one.
+const EDGE_BLEND_DEFAULT_RUGGED_LAND := true
 # --- WATER↔WATER seam levers (terrain_config's "water_blend" block) ---
 # Blend eligibility is SAME-CLASS (see CLAUDE.md → Edge Blending): flat↔flat AND water↔water both blend;
 # land↔water stays hard (that seam is the shoreline). The five levers above are tuned for LAND, where the
@@ -4409,6 +4420,10 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 	var feature_noise_cell: float = maxf(
 		float(config.get("feature_noise_cell", EDGE_BLEND_DEFAULT_FEATURE_NOISE_CELL)), 1.0
 	)  # shoreline reach/wisp + canopy treeline + peak footline
+	# Widens the LAND seam gate from same-class to both-sides-land (see EDGE_BLEND_DEFAULT_RUGGED_LAND).
+	var blend_rugged_land: bool = bool(
+		config.get("blend_rugged_land", EDGE_BLEND_DEFAULT_RUGGED_LAND)
+	)
 	# WATER↔WATER overrides (wider/softer/wobblier than land — see WATER_BLEND_DEFAULT_*). Same clamps as
 	# the land levers, so water can never exceed the caps the land path is held to either.
 	var water_blend: Dictionary = config.get("water_blend", {})
@@ -4432,6 +4447,7 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 	m.set_shader_parameter("blend_height_influence", blend_height_influence)  # detail-following NUDGE
 	m.set_shader_parameter("blend_noise_cell", blend_noise_scale * radius)  # seam-wobble cell in px
 	m.set_shader_parameter("blend_noise_amount", blend_noise_amount)        # seam-wobble amplitude
+	m.set_shader_parameter("blend_rugged_land", blend_rugged_land)          # rugged base floors blend too
 	# The water↔water triple the shader swaps in when the hex's blend_class is water (see the same-class gate).
 	m.set_shader_parameter("water_blend_band", water_width * radius)
 	m.set_shader_parameter("water_blend_soft", water_soft)

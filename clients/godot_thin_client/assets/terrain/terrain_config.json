@@ -5,6 +5,7 @@
   "blend_height_influence": 0.25,
   "blend_noise_scale": 0.25,
   "blend_noise_amount": 0.3,
+  "blend_rugged_land": true,
   "feature_noise_cell": 6.0,
   "water_blend": {
     "blend_width": 0.45,

@@ -259,6 +259,63 @@ const LAKE_VARIANTS := [
 	{"name": "L4_tenth", "reach_scale": LAKE_TENTH_REACH_SCALE, "wisp_scale": 1.0},  # whole profile → ~10%·r
 ]
 
+# --- state 11 (H): ROLLING HILLS — "the hills are CUT OFF at the hex edge" ---
+# rolling_hills (24) is a PEAK biome: its base texture is a plain grass FLOOR and the mounds live in the
+# `peaks/` overlay. It is also blend_class `rugged`, and rugged never blends in the base seam pass — so the
+# grass floor ends in a razor-straight hexagon against its neighbour while the mound overlay overhangs.
+# Two candidate causes, and this state is what tells them apart (one camera, one crop set, every frame):
+#   H1 — the mound OVERHANG is too weak/short to read, so the mounds look sliced at the hex line.
+#   H2 — the mounds overhang fine and what is actually cut is the BASE GRASS FLOOR under them.
+# H_base_only (peaks LOD pushed above the render radius, so the peak pass is skipped) isolates the base and
+# is decisive for H2; the H_before − H_base_only pixel diff is exactly the peak pass's footprint and is
+# decisive for H1 (it shows whether the mounds paint across the hex boundary at all).
+# High-contrast neighbours, as in the user's screenshot: rocky_reg (16, dark brown) west, prairie (11, tan)
+# east — so the hills' green floor is cut against BOTH a darker and a lighter biome in one frame.
+const HILLS_GRID_W := 14
+const HILLS_GRID_H := 10
+const HILLS_HEX_RADIUS := 75.0
+const HILLS_ID := 24               # rolling_hills — the peak biome under test
+const HILLS_WEST_FIELD_ID := 16    # rocky_reg — dark brown
+const HILLS_EAST_FIELD_ID := 11    # prairie_steppe — tan
+const HILLS_FIELD_SPLIT_COL := 7   # cols < split are the west field, cols >= split the east field
+# A blob straddling the field split (so one frame carries hills↔rocky AND hills↔prairie seams) …
+const HILLS_BLOB_HEXES := [
+	Vector2i(5, 3), Vector2i(6, 3), Vector2i(7, 3), Vector2i(8, 3),
+	Vector2i(4, 4), Vector2i(5, 4), Vector2i(6, 4), Vector2i(7, 4), Vector2i(8, 4),
+	Vector2i(5, 5), Vector2i(6, 5), Vector2i(7, 5),
+]
+# … plus ISOLATED hills hexes (all six neighbours are the field biome). MANDATORY for any base-blend change:
+# a straight band seam looks fine even when the blend is shredding hex interiors — only a surrounded hex
+# shows it (that is how the shredding regression shipped). One in each field.
+const HILLS_ISO_ROCKY := Vector2i(2, 7)
+const HILLS_ISO_PRAIRIE := Vector2i(11, 7)
+# …and an isolated ALPINE hex, because the rugged gate is GLOBAL: turning it on lets EVERY rugged biome's base
+# blend, and alpine is the high-contrast/structured texture the height term is most likely to shred. rolling_hills'
+# base is a plain grass floor and would never expose that, so the gate must also be judged here.
+const HILLS_ISO_ALPINE := Vector2i(12, 5)   # mid-frame, so its crop is never clipped by the frame edge
+const HILLS_ISO_ALPINE_ID := 26    # alpine_mountain — structured rock, the shred-risk case
+# Crops (native resolution — the downscaled full frame hides exactly the edge under judgement).
+const HILLS_SEAM_CROP_RADII := 2.4   # the blob's west edge: hills floor + mounds against dark rocky_reg
+const HILLS_SEAM_CROP := Vector2i(4, 4)
+const HILLS_ISO_CROP_RADII := 1.7    # one isolated hills hex plus its full collar of field biome
+# Peaks OFF: `peak_min_radius` is the peak pass's LOD floor in px, so a value far above any on-screen hex
+# radius makes `peaks_lod_enabled` false → the whole peak pass is skipped. No shader edit needed.
+const HILLS_PEAKS_OFF_MIN_RADIUS := 100000.0
+# Candidate fix 1 — a LONGER, SOFTER mound overhang, so crowns of the mound field clearly spill across the
+# boundary instead of stopping at it (shipped: overhang 0.6 · softness 0.4, both fractions of the radius).
+const HILLS_FIX_OVERHANG_WIDTH := 1.2
+const HILLS_FIX_OVERHANG_SOFTNESS := 0.5
+# Candidate fix 2 — let the rugged BASE floor blend (the new `blend_rugged_land` gate; shipped default false).
+const HILLS_FIX_BASE_KEY := "blend_rugged_land"
+# The diff frames: |before − base_only|, amplified so the peak pass's footprint is legible. Any painted pixel
+# OUTSIDE a hills hexagon is mound overhang; a footprint that stops dead at the hex line is H1.
+const HILLS_DIFF_GAIN := 6.0
+# The rugged gate must not move any NON-hills seam. These two frames are re-rendered with the gate ON and
+# byte-compared against the shipped ones (`blend_bands_full` / `V7_coast_unchanged`): a flat↔flat band strip
+# and the ragged coast contain no rugged hex, so they must come out bit-identical.
+const HILLS_GATE_BANDS_NAME := "H_gate_bands_full"
+const HILLS_GATE_COAST_NAME := "H_gate_coast"
+
 # Contact-sheet layout (a 2×2 grid of the sweep frames, each captioned).
 const SHEET_COLS := 2
 const SHEET_BG := Color(0.06, 0.06, 0.08)
@@ -299,6 +356,85 @@ const X_WATER_CROP_COL := 2
 const X_WATER_CROP_ROW := 5
 const X_WATER_CROP_RADII := 2.6
 
+# --- state 12 (R): the RUGGED-GATE SWEEP — every rugged biome as an ISOLATED hex, gate ON ---
+# `blend_rugged_land` is a GLOBAL gate: flipping it lets EVERY rugged biome's base floor blend, not just
+# rolling_hills. The failure mode it can reintroduce is SHREDDING (the height term punching holes deep inside a
+# hex interior, neighbour texture leaking far in, winner-takes-all-by-luminance patches) — and a straight band
+# seam CANNOT show it. So every rugged biome gets the mandatory case: ONE hex of it, ISOLATED (all six
+# neighbours are a contrasting biome), at the game's r ≈ 75 with the grid overlay OFF, cropped at native res.
+# Two fields, because the gate widens eligibility to BOTH flat↔rugged and rugged↔rugged:
+#   R1 — a flat field, dark rocky_reg west / tan prairie east (the flat↔rugged case, high contrast both ways).
+#   R2 — a RUGGED field of canyon_badlands (dark, high-variance structured rock: the harshest rugged↔rugged
+#        partner) with the peak/canopy rugged biomes dropped in.
+const R_GRID_W := 14
+const R_GRID_H := 10
+const R_HEX_RADIUS := 75.0
+const R_WEST_FIELD_ID := 16        # rocky_reg — dark brown
+const R_EAST_FIELD_ID := 11        # prairie_steppe — tan
+const R_FIELD_SPLIT_COL := 7       # cols < split are the west field, cols >= split the east field
+const R_RUGGED_FIELD_ID := 28      # canyon_badlands — the rugged↔rugged partner
+const R_CROP_RADII := 1.7          # one isolated hex plus its full collar of field biome
+# Isolated-hex slots: EVEN col and EVEN row, so no two subjects are ever neighbours (odd-r offset: every
+# neighbour of an (even, even) hex has an odd col or an odd row). Kept off the frame edge so no crop clips.
+const R_SLOT_COLS := [2, 4, 6, 8, 10, 12]
+const R_SLOT_ROWS := [2, 4, 6]
+# The biomes under test. alpine_mountain (26) and rolling_hills (24) already passed in state H, so they are
+# only re-checked in the rugged field (R2), where their partner is structured rock rather than flat soil.
+const R_SWEEP_FLAT := [
+	{"id": 28, "name": "canyon_badlands"},
+	{"id": 30, "name": "basaltic_lava_field"},
+	{"id": 29, "name": "active_volcano_slope"},
+	{"id": 27, "name": "karst_highland"},
+	{"id": 13, "name": "boreal_taiga"},
+	{"id": 7, "name": "mangrove_swamp"},
+	{"id": 25, "name": "high_plateau"},
+	{"id": 19, "name": "oasis_basin"},
+	{"id": 32, "name": "fumarole_basin"},
+	{"id": 33, "name": "impact_crater_field"},
+	{"id": 34, "name": "karst_cavern_mouth"},
+	{"id": 35, "name": "sinkhole_field"},
+	{"id": 36, "name": "aquifer_ceiling"},
+]
+const R_SWEEP_RUGGED = [
+	{"id": 26, "name": "alpine_mountain"},
+	{"id": 24, "name": "rolling_hills"},
+	{"id": 30, "name": "basaltic_lava_field"},
+	{"id": 13, "name": "boreal_taiga"},
+	{"id": 27, "name": "karst_highland"},
+	{"id": 7, "name": "mangrove_swamp"},
+]
+
+# --- state 13 (S): the PEAK CAST-SHADOW HEXAGONS ---
+# The peak block darkens the ground wherever `peak_code > 0` — which is true for any hex merely ADJACENT to
+# relief — and the mound texture is near-opaque almost everywhere, so the occlusion term is roughly CONSTANT
+# across that whole neighbour hex and then terminates on the hex's own boundary: a dark HEXAGON painted into
+# the neighbouring biome. This state renders exactly that: an alpine massif + an isolated rolling_hills hex in
+# a flat rocky_reg field (a light, uniform-ish floor is where a hex-shaped darkening is most legible), r ≈ 75,
+# grid overlay OFF. The fix must kill the hexagons while KEEPING a directional cast shadow (long down-light of
+# the massif, short up-light of it), so both crops straddle the massif's light axis.
+const S_GRID_W := 14
+const S_GRID_H := 10
+const S_HEX_RADIUS := 75.0
+const S_FIELD_ID := 11             # prairie_steppe — light tan, so the cast shadow reads clearly
+const S_MASSIF_ID := 26            # alpine_mountain
+const S_ISO_ID := 24               # rolling_hills — the single-hex case (its shadow hexagon has no massif to hide in)
+const S_MASSIF_HEXES := [
+	Vector2i(5, 3), Vector2i(6, 3),
+	Vector2i(5, 4), Vector2i(6, 4), Vector2i(7, 4),
+	Vector2i(6, 5),
+]
+const S_ISO_HEX := Vector2i(11, 6)
+const S_NAME := "S_shadow"
+const S_NOCAST_NAME := "S_shadow_nocast"   # the same frame with the cast shadow switched off, for the diff
+const S_NO_SHADOW_STRENGTH := 0.0          # `peaks.shadow_strength` 0 = no cast shadow at all
+# The massif plus its whole ring of neighbours: the light comes from the top-left, so the up-light neighbours
+# must stay clean and the down-light ones must carry a shadow that FADES rather than filling their hexagon.
+const S_CROP := Vector2i(6, 4)
+const S_CROP_RADII := 2.8
+# The isolated hills hex plus its collar — the decisive crop: one hex of relief, six neighbours, and any
+# hex-shaped darkening in them has nowhere to hide.
+const S_ISO_CROP_RADII := 2.0
+
 var _map: Node2D
 # The inland_sea `shore_profile` as SHIPPED in terrain_config, captured before the lake sweep overrides it.
 var _shipped_lake_profile: Dictionary = {}
@@ -306,12 +442,18 @@ var _shipped_lake_profile: Dictionary = {}
 
 func _ready() -> void:
 	var win := get_window()
-	win.size = CANVAS_SIZE
-	win.content_scale_size = CANVAS_SIZE          # 1:1 canvas — no content scaling between px and map px
-	win.content_scale_factor = 1.0
+	_pin_canvas(win)
 	DirAccess.make_dir_absolute(OUT_DIR)
 	_map = MAP_VIEW.new()
 	add_child(_map)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	# Re-assert: project.godot opens the window MAXIMIZED (window/size/mode=3) and the WM applies that a few
+	# frames in — AFTER _ready's first size assignment. That silently defeats the whole point of this harness:
+	# the viewport becomes the monitor, _fit_map_to_view lands r ≈ 154 instead of the game's ~75 (the blend is
+	# radius-relative, so the frames stop being an honest proxy), and the taller states overflow the canvas so
+	# the native-res close-ups clip. Pin it again once the mode change has settled.
+	_pin_canvas(win)
 	await get_tree().process_frame
 	await get_tree().process_frame
 
@@ -446,7 +588,302 @@ func _ready() -> void:
 		await _render_lake_variant(variant)
 	_restore_lake_shore_profile()
 
+	# --- state 11 (H): rolling_hills cut off at the hex edge (see the const block) ---
+	await _render_hills_state()
+
+	# --- state 12 (R): the rugged-gate sweep — every rugged biome, isolated, gate ON (see the const block) ---
+	await _render_rugged_sweep()
+
+	# --- state 13 (S): the peak cast-shadow hexagons (see the const block) ---
+	await _render_peak_shadow_state()
+
 	get_tree().quit()
+
+
+func _override_config(overrides: Dictionary) -> Array:
+	## Apply lever overrides to the LIVE terrain_config (MapView re-reads it on every redraw) and return a
+	## restore token. Restoring must ERASE a key that was ABSENT, never write `null` back over it: MapView
+	## reads levers as `bool(config.get(key, DEFAULT))` / `float(...)`, and the default only applies when the
+	## key is MISSING — a key present with a null value reaches `bool(null)`, which is a RUNTIME ERROR
+	## ("Nonexistent 'bool' constructor") that aborts _update_terrain_shader_quad *before it pushes a single
+	## uniform*. Every later frame then renders with STALE uniforms and silently lies. This bit us on
+	## `blend_rugged_land`, the first lever with no entry in terrain_config.json.
+	var previous: Dictionary = {}
+	var had: Dictionary = {}
+	for key: String in overrides:
+		had[key] = TerrainTextureManager.terrain_config.has(key)
+		previous[key] = TerrainTextureManager.terrain_config.get(key)
+		TerrainTextureManager.terrain_config[key] = overrides[key]
+	return [previous, had]
+
+
+func _restore_config(token: Array) -> void:
+	var previous: Dictionary = token[0]
+	var had: Dictionary = token[1]
+	for key: String in previous:
+		if bool(had[key]):
+			TerrainTextureManager.terrain_config[key] = previous[key]
+		else:
+			TerrainTextureManager.terrain_config.erase(key)
+
+
+func _pin_canvas(win: Window) -> void:
+	## The 1:1 1920×1080 canvas this harness's grid dims (and therefore its target hex radii) assume.
+	win.mode = Window.MODE_WINDOWED
+	win.size = CANVAS_SIZE
+	win.content_scale_size = CANVAS_SIZE          # 1:1 canvas — no content scaling between px and map px
+	win.content_scale_factor = 1.0
+
+
+func _render_rugged_sweep() -> void:
+	## The mandatory shred check for the GLOBAL `blend_rugged_land` gate: one ISOLATED hex per rugged biome,
+	## against a flat field (R1) and against a rugged field (R2), with the gate forced ON. One full frame with
+	## the gate OFF first, as the razor-hexagon reference.
+	_map.set_fow_enabled(false)
+	_map._show_grid_lines = false   # a drawn hexagon would answer the very question under test
+	_map.display_snapshot(_snapshot_rugged_sweep(R_SWEEP_FLAT, 0))
+	await _refit(R_HEX_RADIUS)
+	# The gate-OFF pair of every frame, so each biome is judged as a controlled A/B: the razor-cut hexagon
+	# (today's shipped look) against the blended one. Without it there is no way to tell a blend artifact from
+	# something the biome's own art was always doing.
+	await _render_sweep_field(R_SWEEP_FLAT, "R_flatoff")
+
+	var token: Array = _override_config({HILLS_FIX_BASE_KEY: true})
+	await _render_sweep_field(R_SWEEP_FLAT, "R_flat")
+	_restore_config(token)
+
+	_map.display_snapshot(_snapshot_rugged_sweep(R_SWEEP_RUGGED, R_RUGGED_FIELD_ID))
+	await _refit(R_HEX_RADIUS)
+	await _render_sweep_field(R_SWEEP_RUGGED, "R_ruggedoff")
+	token = _override_config({HILLS_FIX_BASE_KEY: true})
+	await _render_sweep_field(R_SWEEP_RUGGED, "R_rugged")
+	_restore_config(token)
+
+
+func _render_sweep_field(sweep: Array, prefix: String) -> void:
+	## One full frame of the already-displayed sweep field, then a native-res close-up of EVERY isolated hex in
+	## it — the crop is the only frame a shredded interior can be judged on.
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("%s_field_full" % prefix)
+	for i in sweep.size():
+		var slot: Vector2i = _sweep_slot(i)
+		await _settle()
+		await _save_crop(
+			"%s_%02d_%s" % [prefix, int(sweep[i]["id"]), sweep[i]["name"]],
+			slot.x,
+			slot.y,
+			R_CROP_RADII
+		)
+
+
+func _sweep_slot(index: int) -> Vector2i:
+	## Row-major over the isolated-hex slots (even col, even row → never adjacent to another subject).
+	var col: int = R_SLOT_COLS[index % R_SLOT_COLS.size()]
+	var row: int = R_SLOT_ROWS[(index / R_SLOT_COLS.size()) % R_SLOT_ROWS.size()]
+	return Vector2i(col, row)
+
+
+func _snapshot_rugged_sweep(sweep: Array, field_id: int) -> Dictionary:
+	## A field with one ISOLATED hex per swept biome. field_id 0 = the split flat field (dark rocky_reg west,
+	## tan prairie east); any other id = a uniform field of that biome (the rugged↔rugged case).
+	var arr: Array = []
+	arr.resize(R_GRID_W * R_GRID_H)
+	for y in range(R_GRID_H):
+		for x in range(R_GRID_W):
+			var field: int = field_id
+			if field_id == 0:
+				field = R_WEST_FIELD_ID if x < R_FIELD_SPLIT_COL else R_EAST_FIELD_ID
+			arr[y * R_GRID_W + x] = field
+	for i in sweep.size():
+		var slot: Vector2i = _sweep_slot(i)
+		arr[slot.y * R_GRID_W + slot.x] = int(sweep[i]["id"])
+	return _snapshot(arr, R_GRID_W, R_GRID_H)
+
+
+func _render_peak_shadow_state() -> void:
+	## The peak cast-shadow frames: an alpine massif + an isolated rolling_hills hex in a light flat field.
+	## Rendered with whatever the shader currently does — the BEFORE/AFTER pair is captured by running this
+	## harness on either side of the shader edit (the shadow is shader code, not a config lever).
+	_map.set_fow_enabled(false)
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_peak_shadow())
+	await _refit(S_HEX_RADIUS)
+	await _settle()
+	await _save(S_NAME)
+	await _settle()
+	await _save_crop("%s_closeup" % S_NAME, S_CROP.x, S_CROP.y, S_CROP_RADII)
+	await _settle()
+	await _save_crop("%s_iso" % S_NAME, S_ISO_HEX.x, S_ISO_HEX.y, S_ISO_CROP_RADII)
+
+	# The cast shadow IN ISOLATION. The relief art overhangs the footline and is semi-transparent out there, so
+	# eyeballing (or sampling) the ground near a massif cannot separate "shadow" from "dark mound fringe". Render
+	# the identical frame with shadow_strength 0 and diff: the amplified difference IS the shadow's exact
+	# footprint — the frame that answers "is it hex-shaped?" and "is it still directional?".
+	var token: Array = _override_config(_peak_overrides({"shadow_strength": S_NO_SHADOW_STRENGTH}))
+	_map.queue_redraw()   # MapView pushes the shader uniforms from _draw — a config change alone redraws nothing
+	await _settle()
+	await _save(S_NOCAST_NAME)
+	await _settle()
+	await _save_crop("%s_closeup" % S_NOCAST_NAME, S_CROP.x, S_CROP.y, S_CROP_RADII)
+	await _settle()
+	await _save_crop("%s_iso" % S_NOCAST_NAME, S_ISO_HEX.x, S_ISO_HEX.y, S_ISO_CROP_RADII)
+	_restore_config(token)
+	_save_diff(S_NAME, S_NOCAST_NAME, "%s_footprint" % S_NAME)
+	_save_diff(
+		"%s_closeup" % S_NAME, "%s_closeup" % S_NOCAST_NAME, "%s_footprint_closeup" % S_NAME
+	)
+	_save_diff("%s_iso" % S_NAME, "%s_iso" % S_NOCAST_NAME, "%s_footprint_iso" % S_NAME)
+
+
+func _peak_overrides(changes: Dictionary) -> Dictionary:
+	## The shipped `peaks` block with specific levers replaced — every other peak lever stays as configured.
+	var peaks: Dictionary = (
+		(TerrainTextureManager.terrain_config.get("peaks", {}) as Dictionary).duplicate(true)
+	)
+	for key: String in changes:
+		peaks[key] = changes[key]
+	return {"peaks": peaks}
+
+
+func _snapshot_peak_shadow() -> Dictionary:
+	var arr: Array = []
+	arr.resize(S_GRID_W * S_GRID_H)
+	arr.fill(S_FIELD_ID)
+	for hex: Vector2i in S_MASSIF_HEXES:
+		arr[hex.y * S_GRID_W + hex.x] = S_MASSIF_ID
+	arr[S_ISO_HEX.y * S_GRID_W + S_ISO_HEX.x] = S_ISO_ID
+	return _snapshot(arr, S_GRID_W, S_GRID_H)
+
+
+func _render_hills_state() -> void:
+	## The rolling_hills "cut off at the edges" report. One camera + one crop set across every frame:
+	## the shipped look, the base-only look (peaks skipped), the two candidate fixes and both together,
+	## plus the before−base_only diff (the peak pass's exact footprint) and the two rugged-gate
+	## regression frames. Lever overrides go through _override_config/_restore_config (see the null trap there).
+	_map.set_fow_enabled(false)
+	# Grid lines OFF: the question is whether the TERRAIN cuts along the hex boundary, and a drawn hexagon
+	# would answer it for us. (Scoped to this state; the earlier states keep the harness's shipped look.)
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_hills())
+	await _refit(HILLS_HEX_RADIUS)
+
+	await _render_hills_variant({}, "H_before")
+	await _render_hills_variant(_hills_peaks_off_overrides(), "H_base_only")
+	await _render_hills_variant(_hills_overhang_overrides(), "H_fix_overhang")
+	await _render_hills_variant({HILLS_FIX_BASE_KEY: true}, "H_fix_base")
+	var both: Dictionary = _hills_overhang_overrides()
+	both[HILLS_FIX_BASE_KEY] = true
+	await _render_hills_variant(both, "H_fix_both")
+
+	# The peak pass in isolation: before − base_only. Painted pixels beyond a hills hexagon ARE the overhang.
+	_save_diff("H_before", "H_base_only", "H_peaks_only")
+	_save_diff("H_before_closeup", "H_base_only_closeup", "H_peaks_only_closeup")
+	_save_diff("H_before_iso", "H_base_only_iso", "H_peaks_only_iso")
+
+	# Regression: the rugged gate must leave every non-rugged seam bit-identical (byte-compared outside).
+	# Grid lines back ON first — the shipped baselines these are compared against (`blend_bands_full` /
+	# `V7_coast_unchanged`) were rendered with the harness's default grid, so the pair must match in that too.
+	_map._show_grid_lines = true
+	_map.display_snapshot(_snapshot_flat_bands())
+	await _refit(GAME_HEX_RADIUS)
+	await _render_variant({HILLS_FIX_BASE_KEY: true}, HILLS_GATE_BANDS_NAME, 0, SEAM_ROW, SEAM_CROP_RADII)
+	_map.display_snapshot(_snapshot_coast())
+	await _refit(WATER_HEX_RADIUS)
+	await _render_variant(
+		{HILLS_FIX_BASE_KEY: true},
+		HILLS_GATE_COAST_NAME,
+		V10_SHORE_CROP_COL,
+		V10_SHORE_CROP_ROW,
+		V10_SHORE_CROP_RADII
+	)
+
+
+func _hills_peaks_off_overrides() -> Dictionary:
+	## The shipped `peaks` block with its LOD floor pushed above any on-screen radius → the peak pass is
+	## skipped entirely (mounds off), which isolates the BASE grass floor.
+	return _peak_overrides({"peak_min_radius": HILLS_PEAKS_OFF_MIN_RADIUS})
+
+
+func _hills_overhang_overrides() -> Dictionary:
+	## The shipped `peaks` block with ONLY the overhang geometry widened — every other peak lever (texture
+	## scale, shadow, prominence, light) stays exactly as configured, so the frame isolates the overhang.
+	return _peak_overrides({
+		"overhang_width": HILLS_FIX_OVERHANG_WIDTH,
+		"softness_width": HILLS_FIX_OVERHANG_SOFTNESS,
+	})
+
+
+func _render_hills_variant(overrides: Dictionary, name: String) -> void:
+	## One hills frame: the full view, the blob's west seam (hills vs dark rocky_reg), and the ISOLATED
+	## hills hex in that same field — the only crop that can expose a shredded interior.
+	var token: Array = _override_config(overrides)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save(name)
+	# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+	await _settle()
+	await _save_crop(
+		"%s_closeup" % name, HILLS_SEAM_CROP.x, HILLS_SEAM_CROP.y, HILLS_SEAM_CROP_RADII
+	)
+	await _settle()
+	await _save_crop("%s_iso" % name, HILLS_ISO_ROCKY.x, HILLS_ISO_ROCKY.y, HILLS_ISO_CROP_RADII)
+	# The shred check on the structured rugged texture (see HILLS_ISO_ALPINE).
+	await _settle()
+	await _save_crop(
+		"%s_alpine" % name, HILLS_ISO_ALPINE.x, HILLS_ISO_ALPINE.y, HILLS_ISO_CROP_RADII
+	)
+	_restore_config(token)
+
+
+func _snapshot_hills() -> Dictionary:
+	## rolling_hills blob + two isolated hills hexes, in a field that is dark rocky_reg west of
+	## HILLS_FIELD_SPLIT_COL and tan prairie east of it (both high-contrast against the hills' green floor).
+	var arr: Array = []
+	arr.resize(HILLS_GRID_W * HILLS_GRID_H)
+	for y in range(HILLS_GRID_H):
+		for x in range(HILLS_GRID_W):
+			var field: int = (
+				HILLS_WEST_FIELD_ID if x < HILLS_FIELD_SPLIT_COL else HILLS_EAST_FIELD_ID
+			)
+			arr[y * HILLS_GRID_W + x] = field
+	for hex: Vector2i in HILLS_BLOB_HEXES:
+		arr[hex.y * HILLS_GRID_W + hex.x] = HILLS_ID
+	for hex: Vector2i in [HILLS_ISO_ROCKY, HILLS_ISO_PRAIRIE]:
+		arr[hex.y * HILLS_GRID_W + hex.x] = HILLS_ID
+	arr[HILLS_ISO_ALPINE.y * HILLS_GRID_W + HILLS_ISO_ALPINE.x] = HILLS_ISO_ALPINE_ID
+	return _snapshot(arr, HILLS_GRID_W, HILLS_GRID_H)
+
+
+func _save_diff(a_name: String, b_name: String, out_name: String) -> void:
+	## |a − b| × HILLS_DIFF_GAIN, written as a PNG: the pixels ONE pass paints and the other doesn't.
+	var a := Image.load_from_file(ProjectSettings.globalize_path("%s/%s.png" % [OUT_DIR, a_name]))
+	var b := Image.load_from_file(ProjectSettings.globalize_path("%s/%s.png" % [OUT_DIR, b_name]))
+	if a == null or b == null:
+		push_warning("blend_probe: diff could not load %s / %s" % [a_name, b_name])
+		return
+	if a.get_size() != b.get_size():
+		push_warning("blend_probe: diff size mismatch %s vs %s" % [a_name, b_name])
+		return
+	var out := Image.create_empty(a.get_width(), a.get_height(), false, Image.FORMAT_RGB8)
+	var changed: int = 0
+	for y in range(a.get_height()):
+		for x in range(a.get_width()):
+			var ca := a.get_pixel(x, y)
+			var cb := b.get_pixel(x, y)
+			var d := Vector3(absf(ca.r - cb.r), absf(ca.g - cb.g), absf(ca.b - cb.b))
+			if d.length() > 0.0:
+				changed += 1
+			out.set_pixel(x, y, Color(
+				minf(d.x * HILLS_DIFF_GAIN, 1.0),
+				minf(d.y * HILLS_DIFF_GAIN, 1.0),
+				minf(d.z * HILLS_DIFF_GAIN, 1.0)
+			))
+	var err := out.save_png("%s/%s.png" % [OUT_DIR, out_name])
+	if err != OK:
+		push_error("blend_probe: failed to save %s (err %d)" % [out_name, err])
+	else:
+		print("blend_probe: saved %s.png (%d px differ)" % [out_name, changed])
 
 
 func _render_lake_variant(variant: Dictionary) -> void:
@@ -576,6 +1013,10 @@ func _shore_sweep_overrides(variant: Dictionary) -> Dictionary:
 func _refit(target_radius: float) -> void:
 	## Fit, settle, and assert the achieved hex radius — the blend look is radius-relative, so a frame is
 	## only an honest proxy for the game when it was rendered at the game's on-screen radius.
+	# Re-pin the canvas first: the WM can still push the window back to the project's MAXIMIZED mode after
+	# _ready has run (see _pin_canvas), and a maximized viewport throws every radius off target.
+	_pin_canvas(get_window())
+	await _settle()
 	_map._fit_map_to_view()
 	await _settle()
 	# Settle twice: the window's backing scale (HiDPI) can land a frame late, and the first capture after a
@@ -598,10 +1039,7 @@ func _render_variant(
 ) -> void:
 	## Re-render with config levers overridden in the live config (MapView re-reads the config every frame
 	## in _update_terrain_shader_quad, so a redraw is all it takes), then restore the shipped values.
-	var previous: Dictionary = {}
-	for key: String in overrides:
-		previous[key] = TerrainTextureManager.terrain_config.get(key)
-		TerrainTextureManager.terrain_config[key] = overrides[key]
+	var token: Array = _override_config(overrides)
 	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
 	await _settle()
 	await _save(name)
@@ -611,8 +1049,7 @@ func _render_variant(
 	# (black) viewport texture.
 	await _settle()
 	await _save_crop("%s_closeup" % name, crop_col, crop_row, crop_radii)
-	for key: String in previous:
-		TerrainTextureManager.terrain_config[key] = previous[key]
+	_restore_config(token)
 
 
 func _snapshot_flat_bands() -> Dictionary:
