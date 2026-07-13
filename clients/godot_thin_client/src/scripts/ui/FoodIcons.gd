@@ -81,11 +81,15 @@ static func for_policy(policy: String) -> String:
 # `awaiting`: it carries emoji presentation and renders as tofu/a blob in the HUD font.
 const STATUS_PENDING := "pending"
 const STATUS_WORKING := "working"
+# The one expedition phase named here: `awaiting` is a DEMAND ON THE PLAYER, so besides the row it
+# also drives the turn-orb attention producer (Hud `ATTENTION_KIND_AWAITING_ORDERS`) and the orb's
+# kind→icon map reads its glyph from here — one glyph, panel row and orb row alike.
+const STATUS_AWAITING := "awaiting"
 const STATUS_ICONS := {
 	STATUS_PENDING: "○",
 	STATUS_WORKING: "●",
 	"outbound": "➤",
-	"awaiting": "▮▮",
+	STATUS_AWAITING: "▮▮",
 	"hunting": "●",
 	"delivering": "◄",
 	"returning": "◄",

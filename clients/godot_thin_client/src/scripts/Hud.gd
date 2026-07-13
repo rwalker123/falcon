@@ -127,12 +127,30 @@ const COMMAND_FEED_MIN_HEIGHT := 72.0
 const COMMAND_FEED_BOTTOM_MARGIN := 12.0
 const PLAYER_FACTION_ID := 0
 # Turn-orb attention contract (see TurnOrb.gd). The folded-in Alerts panel became
-# three producers here: starving (critical), losing_population (warn), idle_workers (warn).
+# three producers here: starving (critical), losing_population (warn), idle_workers (warn) —
+# plus a fourth, awaiting_orders (warn): an expedition parked at its objective, burning provisions
+# until the player acts. That is structurally the SAME class as idle workers (a demand on the
+# player, an efficiency loss, not a crisis), so it shares their WARN severity and, like them, must
+# be discoverable from the orb rather than only by having the right band panel open.
 const ATTENTION_KIND_STARVING := "starving"
 const ATTENTION_KIND_LOSING_POPULATION := "losing_population"
 const ATTENTION_KIND_IDLE_WORKERS := "idle_workers"
+const ATTENTION_KIND_AWAITING_ORDERS := "awaiting_orders"
 const ATTENTION_SEVERITY_CRITICAL := "critical"
 const ATTENTION_SEVERITY_WARN := "warn"
+# Awaiting expeditions are listed ONE ROW EACH (not one aggregate like idle workers): each parked
+# party is a SEPARATE decision with its own destination, so an aggregate row would have nowhere to
+# jump. The popover is positioned ABOVE the orb (`TurnOrb._position_popover`), so an unbounded list
+# would climb off the top of the screen and take the `Advance ▸` footer with it — hence a cap, past
+# which the remainder folds into a single overflow row that jumps to the first party beyond it.
+const ATTENTION_AWAITING_MAX_ROWS := 3
+const ATTENTION_AWAITING_OVERFLOW_LABEL_FORMAT := "+%d more awaiting orders"
+const ATTENTION_AWAITING_OVERFLOW_DETAIL := "Jump to the next parked party"
+# The row's context line: "<mission> · <objective>" (the objective is the herd for a hunt party, the
+# party's own tile for a scout). Mission words come from EXPEDITION_MISSION_LABELS, the demand
+# headline from EXPEDITION_PHASE_LABELS — neither is retyped here.
+const ATTENTION_AWAITING_DETAIL_FORMAT := "%s · %s"
+const ATTENTION_TILE_FORMAT := "(%d, %d)"
 # Top-bar glyph for the discovered-Wondrous-Sites readout (a faceted-gem marker).
 const DISCOVERIES_GLYPH := "◈"
 # Separator between the Cultivation / Herding tracks in the top-bar intensification readout.
@@ -507,7 +525,8 @@ const FOOD_LABEL_EATEN := "Eaten"
 const EXPEDITION_MISSION_SCOUT := "scout"
 const EXPEDITION_MISSION_HUNT := "hunt"
 const EXPEDITION_PHASE_OUTBOUND := "outbound"
-const EXPEDITION_PHASE_AWAITING := "awaiting"
+# One source: the phase key `awaiting` is also the status-glyph key + the orb producer's key.
+const EXPEDITION_PHASE_AWAITING := FoodIcons.STATUS_AWAITING
 const EXPEDITION_PHASE_HUNTING := "hunting"
 const EXPEDITION_PHASE_DELIVERING := "delivering"
 const EXPEDITION_PHASE_RETURNING := "returning"
@@ -1222,7 +1241,16 @@ func _on_zoom_in_pressed() -> void:
 func _on_zoom_fit_pressed() -> void:
     emit_signal("map_zoom_fit")
 
+## An orb row's "Jump →". A row that locates an AWAITING EXPEDITION routes through the SAME path the
+## Band panel's Active-expeditions row click uses (`_on_panel_expedition_selected`: recenter + pin the
+## exact expedition so its drawer opens and the panel band isn't hijacked) rather than a second,
+## weaker jump that would only recenter the hex and auto-select whatever occupant sits on it. Every
+## other producer (band-located) keeps the plain recenter.
 func _on_turn_orb_focus(x: int, y: int) -> void:
+    var exp := _awaiting_expedition_at(x, y)
+    if not exp.is_empty():
+        _on_panel_expedition_selected(int(exp.get("entity", -1)), x, y)
+        return
     emit_signal("alert_focus_requested", x, y)
 
 func _on_turn_orb_advance() -> void:
@@ -3503,6 +3531,68 @@ func _panel_expedition_summary(exp: Dictionary) -> String:
     return "%s → (%d, %d)%s%s" % [
         PANEL_EXPEDITION_SCOUT_GLYPH, x, y, policy_suffix, phase_suffix]
 
+## The expedition's OBJECTIVE in words — the herd it follows (hunt) or the tile it is parked on
+## (scout) — the "where do I have to go / what is this about" half of an attention row's context.
+func _expedition_objective(exp: Dictionary) -> String:
+    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
+    if mission == EXPEDITION_MISSION_HUNT:
+        return _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
+    return ATTENTION_TILE_FORMAT % [int(exp.get("current_x", -1)), int(exp.get("current_y", -1))]
+
+## Turn-orb attention items for every expedition parked in `awaiting` (Producer 4). ONE ROW PER
+## PARTY — each is its own decision with its own place to go (unlike idle workers, which are
+## genuinely one aggregate per band) — capped at ATTENTION_AWAITING_MAX_ROWS, with the remainder
+## folded into a single overflow row that jumps to the first party beyond the cap (so even the
+## aggregate row is actionable rather than a dead "Open ▸" stub).
+func _awaiting_orders_attention(expeditions: Array) -> Array:
+    var awaiting: Array = []
+    for exp_variant in expeditions:
+        if not (exp_variant is Dictionary):
+            continue
+        var exp: Dictionary = exp_variant
+        if _expedition_phase_key(exp) == EXPEDITION_PHASE_AWAITING:
+            awaiting.append(exp)
+    var items: Array = []
+    for i in awaiting.size():
+        var exp: Dictionary = awaiting[i]
+        var x := int(exp.get("current_x", -1))
+        var y := int(exp.get("current_y", -1))
+        if i >= ATTENTION_AWAITING_MAX_ROWS:
+            # Overflow: one aggregate row for the rest, locating to this (the first uncapped) party.
+            items.append({
+                "kind": ATTENTION_KIND_AWAITING_ORDERS,
+                "severity": ATTENTION_SEVERITY_WARN,
+                "label": ATTENTION_AWAITING_OVERFLOW_LABEL_FORMAT % (awaiting.size() - i),
+                "detail": ATTENTION_AWAITING_OVERFLOW_DETAIL,
+                "x": x, "y": y,
+            })
+            break
+        items.append({
+            "kind": ATTENTION_KIND_AWAITING_ORDERS,
+            "severity": ATTENTION_SEVERITY_WARN,
+            # The demand headline reuses the phase words ("Awaiting orders"); the context line names
+            # the mission + its objective, so the row is actionable without opening anything.
+            "label": _expedition_phase_label(EXPEDITION_PHASE_AWAITING),
+            "detail": ATTENTION_AWAITING_DETAIL_FORMAT % [
+                _expedition_mission_label(String(exp.get("expedition_mission", ""))),
+                _expedition_objective(exp)],
+            "x": x, "y": y,
+        })
+    return items
+
+## The awaiting expedition standing on (x, y), or {} — lets the orb's Jump reuse the panel's own
+## expedition-focus path instead of a second, weaker one (see `_on_turn_orb_focus`).
+func _awaiting_expedition_at(x: int, y: int) -> Dictionary:
+    for exp_variant in _player_expeditions:
+        if not (exp_variant is Dictionary):
+            continue
+        var exp: Dictionary = exp_variant
+        if _expedition_phase_key(exp) != EXPEDITION_PHASE_AWAITING:
+            continue
+        if int(exp.get("current_x", -1)) == x and int(exp.get("current_y", -1)) == y:
+            return exp
+    return {}
+
 ## Select an expedition (from the panel's Active-expeditions list) on the map: recenter + select
 ## its hex (rebuilds that hex's roster), then pin the exact expedition so the map ring moves and the
 ## Occupants card renders its expedition drawer. Mirrors `cycle_panel_band`'s routing. The Band/City
@@ -4343,6 +4433,10 @@ func update_band_alerts(populations_variant: Variant) -> void:
                 "detail": band_name,
                 "x": x, "y": y,
             })
+    # Producer 4 — awaiting orders: a detached party parked at its objective, burning provisions
+    # until the player acts (amber/warn, same class as idle labor). Runs over the EXPEDITIONS split
+    # out above, not the bands — an expedition is never "Band N", so it never enters the band loop.
+    attention.append_array(_awaiting_orders_attention(player_expeditions))
     _prev_band_sizes = new_sizes
     _player_band = player_band
     _player_bands = player_bands

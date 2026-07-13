@@ -580,6 +580,40 @@ func _ready() -> void:
 	await _settle()
 	await _save("turn_orb_attention")
 
+	# State 7b — turn orb, AWAITING-ORDERS producer: an expedition parked at its objective is a
+	# demand on the player (it burns provisions doing nothing), structurally the same class as idle
+	# workers — so it produces its OWN attention row per party. Here: one band with idle workers
+	# (the two producers must coexist) + FOUR awaiting parties (a scout and a hunt party name their
+	# objective; the 4th trips the ATTENTION_AWAITING_MAX_ROWS cap → an aggregate "+1 more awaiting
+	# orders" row). A non-awaiting (outbound) expedition proves only `awaiting` produces a row. The
+	# popover must still fit above the orb with its `Advance ▸` footer on-screen.
+	_hud.turn_orb.set_attention([])   # drop State 7's registry so this frame is only these rows
+	_hud.update_band_alerts([
+		{"faction": 0, "entity": 701, "size": 60, "days_of_food": 999.0, "activity": "forage",
+			"current_x": 12, "current_y": 9, "idle_workers": 4},
+		{"faction": 0, "entity": 751, "size": 6, "days_of_food": 9.0, "is_expedition": true,
+			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
+			"current_x": 39, "current_y": 26},
+		# The hunt party names its OBJECTIVE by species (game_deer_07 → "Red Deer" via the world-herd
+		# list pushed above), not the raw fauna id — the row has to be actionable at a glance.
+		{"faction": 0, "entity": 752, "size": 5, "days_of_food": 7.0, "is_expedition": true,
+			"expedition_mission": "hunt", "expedition_phase": "awaiting", "home_band_entity": 701,
+			"expedition_target_herd": "game_deer_07", "current_x": 64, "current_y": 11},
+		{"faction": 0, "entity": 753, "size": 4, "days_of_food": 6.0, "is_expedition": true,
+			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
+			"current_x": 18, "current_y": 44},
+		{"faction": 0, "entity": 754, "size": 4, "days_of_food": 5.0, "is_expedition": true,
+			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
+			"current_x": 51, "current_y": 8},
+		{"faction": 0, "entity": 755, "size": 6, "days_of_food": 9.0, "is_expedition": true,
+			"expedition_mission": "scout", "expedition_phase": "outbound", "home_band_entity": 701,
+			"current_x": 33, "current_y": 30},
+	])
+	_hud.turn_orb.open_popover()
+	await _settle()
+	await _save("turn_orb_awaiting_orders")
+	_hud.turn_orb.toggle_popover()   # close, so later states render without it
+
 	# State 8 — reserved-space docking (Slice 1 refactor): a left-edge reservation of
 	# RESERVED_PROBE_WIDTH px insets the whole HUD (LayoutRoot.offset_left), so the top/bottom
 	# bars start that much further right — mirroring how the docked Inspector shrinks the play

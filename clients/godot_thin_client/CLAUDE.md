@@ -1062,19 +1062,44 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   knows nothing about producers; it renders a list of generic **Attention** dicts:
   `{kind, severity ("info"|"warn"|"critical" → SIGNAL/WARN/DANGER), label, detail, x, y}` where
   `x < 0` = non-locating (renders `Open ▸`, a no-op stub for now). Kind→icon (in `TurnOrb.gd`):
-  `starving`→🍖, `losing_population`→📉, `idle_workers`→🛠, unknown→●. Wiring stays stable via Hud
+  `starving`→🍖, `losing_population`→📉, `idle_workers`→🛠, `awaiting_orders`→▮▮ (read from
+  `FoodIcons.STATUS_ICONS` — the same glyph the Band panel's awaiting row wears), unknown→●.
+  Row labels **clip** and `POPOVER_WIDTH` is sized to the widest producer row: a row's inner HBox is
+  anchored to its Button (not a container child), so an over-wide label used to spill its `Jump →`
+  outside the card instead of widening it. Wiring stays stable via Hud
   relays: a row's jump → `focus_requested` → `alert_focus_requested` → `MapView.focus_on_tile`
   (the same centering the retired Alerts panel used); the footer → `advance_requested` →
-  `next_turn_requested(1)`; `update_overlay` pushes the turn number via `set_turn`. The **three live
-  producers** (all in `Hud.update_band_alerts`, one loop over the player faction, each pushed with the
-  band tile `current_x`/`current_y` so Jump locates it) — the folded-in Alerts panel:
+  `next_turn_requested(1)`; `update_overlay` pushes the turn number via `set_turn`. The **four live
+  producers** (all in `Hud.update_band_alerts`, each pushed with the tile `current_x`/`current_y` so
+  Jump locates it) — the folded-in Alerts panel, plus the expedition one. The first three run in one
+  loop over the player faction's BANDS:
   - **`starving`** (critical) — `BandFoodStatus.is_critical(days)`; label `"<band> starving"`, detail = `_food_days_text(days)`.
   - **`losing_population`** (warn) — shrank vs the previous snapshot (`_prev_band_sizes`); label `"<band> losing population"`, detail = `_decline_reason(days, morale, morale_cause, last_emigrated)` (`— starving` / `— people leaving` / `— harsh terrain|climate|unrest` / `— low morale`).
   - **`idle_workers`** (warn) — `idle_workers > 0`; label `"N idle workers"`, detail = band name. Supersedes the old `activity == idle` alert (a worker count is more actionable).
 
+  The fourth (`_awaiting_orders_attention`) runs over the **EXPEDITIONS** split out of that loop:
+  - **`awaiting_orders`** (warn) — an expedition in `ExpeditionPhase::Awaiting`: parked at its
+    objective, burning provisions, doing nothing until the player acts. Structurally the same class
+    as idle workers (a demand on the player, an efficiency loss, not a crisis) — hence WARN, and
+    hence it belongs on the orb rather than only on a band panel you happen to have open. **One row
+    per party, not one aggregate** (each is a separate decision with its own destination; idle
+    workers genuinely IS one aggregate): label = the phase words from `EXPEDITION_PHASE_LABELS`
+    ("Awaiting orders"), detail = `"<mission> · <objective>"` (mission from
+    `EXPEDITION_MISSION_LABELS`; objective = the followed herd for a hunt party, the party's tile for
+    a scout). Capped at `ATTENTION_AWAITING_MAX_ROWS` — the popover is positioned ABOVE the orb, so an
+    unbounded list would climb off-screen and take the `Advance ▸` footer with it — with the remainder
+    folded into one `"+N more awaiting orders"` row that jumps to the first party past the cap (so
+    even the aggregate row is actionable, not a dead `Open ▸` stub). **Its Jump reuses the Band
+    panel's expedition-row path**: `Hud._on_turn_orb_focus` resolves an awaiting expedition standing
+    on the jumped-to tile (`_awaiting_expedition_at`) and routes through
+    `_on_panel_expedition_selected` (recenter + pin that exact expedition so its drawer opens),
+    falling back to the plain `alert_focus_requested` recenter for the band-located producers.
+
   The orb severity-sorts (critical floats up), so a starving band tops the popover. Future producers
-  (`war` / `decision` / `expedition_awaiting`) are stubs the model already fits — one producer each,
-  **no orb changes**.
+  (`war` / `decision`) are stubs the model already fits — one producer each, **no orb changes** (the
+  awaiting one needed only a kind→icon entry). ui_preview: `turn_orb_attention` (the three band
+  producers) / `turn_orb_awaiting_orders` (awaiting rows + idle workers coexisting, incl. the cap's
+  overflow row).
 - **Targeting: move-band + send-expedition + send-hunt-expedition** (`Hud.gd`): the single-task
   forage/scout/hunt/follow `_pending_*` flows were retired with labor allocation. Three targeting
   flows remain, all built on the same `_pending_*` → `_current_targeting_info()` →
