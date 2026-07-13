@@ -27,6 +27,23 @@ var terrain_config: Dictionary = {}
 var use_terrain_textures: bool = false
 var use_edge_blending: bool = false
 
+# Per-base-layer MEAN LUMINANCE (0..1), one entry per terrain id, computed once at build time from the
+# CPU-side layer images. Feeds the shader's HEIGHT BLENDING at flat↔flat seams: with no height maps we use
+# each texture's own per-pixel luminance as a pseudo-height, and the mean is what ZERO-CENTRES it — without
+# it a bright prairie would always out-"height" a dark soil and the seam would be biased entirely to one
+# biome instead of interlocking. Exposed to the shader as `layer_luma_texture` (1×N single-channel), so the
+# layer count never has to be baked into the shader as a fixed array size.
+var layer_mean_luma: PackedFloat32Array = PackedFloat32Array()
+var layer_luma_texture: ImageTexture = null
+
+# Mean luminance is measured on a downscaled copy of each layer (Lanczos ≈ area-average) instead of walking
+# every texel of a 512² image ×37 layers — same mean to well within the blend's sensitivity, ~1000× fewer
+# get_pixel calls.
+const MEAN_LUMA_SAMPLE_SIZE := 16
+# Rec.709 luma weights — MUST match the luma() helper in terrain_blend.gdshader, or the shader's
+# zero-centring would subtract a mean measured on a different quantity than it compares against.
+const LUMA_WEIGHTS := Vector3(0.2126, 0.7152, 0.0722)
+
 # CPU-side copy of every terrain layer, captured ONCE at build time. Reused by the hex-texture
 # cache and the get_terrain_image readback so we never call Texture2DArray.get_layer_data() again — a
 # second readback returns a blank image on some drivers, which blanked the base terrain on any cache rebuild.
@@ -148,8 +165,44 @@ func _build_terrain_texture_array() -> Texture2DArray:
 
 	# Retain the CPU-side layer Images so hex/edge caches never re-read back from the GPU array.
 	_layer_images = images
+	_build_layer_luma()
 
 	return array_tex
+
+
+func _build_layer_luma() -> void:
+	## Measure each base layer's mean luminance (pseudo-height zero-point for the shader's height blending)
+	## and pack it into a 1×N single-channel float texture the shader fetches by layer index.
+	layer_mean_luma = PackedFloat32Array()
+	layer_luma_texture = null
+	if _layer_images.is_empty():
+		return
+	var luma_img := Image.create(_layer_images.size(), 1, false, Image.FORMAT_RF)
+	for layer: int in range(_layer_images.size()):
+		var mean: float = _mean_luma(_layer_images[layer])
+		layer_mean_luma.append(mean)
+		luma_img.set_pixel(layer, 0, Color(mean, 0.0, 0.0, 1.0))
+	layer_luma_texture = ImageTexture.create_from_image(luma_img)
+
+
+func _mean_luma(img: Image) -> float:
+	## Mean Rec.709 luminance of a layer, sampled from a MEAN_LUMA_SAMPLE_SIZE² Lanczos downscale
+	## (an area-average of the full image) rather than every texel.
+	if img == null:
+		return 0.0
+	var small: Image = img.duplicate()
+	small.resize(MEAN_LUMA_SAMPLE_SIZE, MEAN_LUMA_SAMPLE_SIZE, Image.INTERPOLATE_LANCZOS)
+	var total: float = 0.0
+	for y: int in range(MEAN_LUMA_SAMPLE_SIZE):
+		for x: int in range(MEAN_LUMA_SAMPLE_SIZE):
+			var c: Color = small.get_pixel(x, y)
+			total += c.r * LUMA_WEIGHTS.x + c.g * LUMA_WEIGHTS.y + c.b * LUMA_WEIGHTS.z
+	return total / float(MEAN_LUMA_SAMPLE_SIZE * MEAN_LUMA_SAMPLE_SIZE)
+
+
+func get_layer_mean_luma() -> PackedFloat32Array:
+	## Per-terrain-id mean luminance (0..1) of the base layers; empty until textures are built.
+	return layer_mean_luma
 
 
 func _build_canopy_texture_array() -> Texture2DArray:

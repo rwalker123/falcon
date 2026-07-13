@@ -142,15 +142,75 @@ const HOVER_HEX_OUTLINE_WIDTH := 1.5
 const ICON_MIN_DETAIL_RADIUS := 16.0
 # Edge blending (Approach B — per-pixel biome-blend shader; see CLAUDE.md → Edge Blending):
 # below this hex radius the shader renders base-only (no blend) so far-zoom tiny hexes don't shimmer.
-# The band width + value-noise cell fallbacks mirror terrain_config.json (blend_width/blend_noise_cell).
+# The flat↔flat seam is ALWAYS A CONTINUOUS WEIGHTED MIX: a symmetric signed-distance splat weight (the
+# LEAD term), perturbed by world value noise (organic meander) and — optionally, weakly — by the two
+# textures' zero-centred luminance (a detail-following NUDGE), then feathered through a smoothstep into a
+# mix factor. Two rejected predecessors were both 1-bit picks in disguise: the original dither
+# (`neighbour if p > vnoise(...)`) — user-rejected as chunky blobs — and height blending with
+# blend_height_influence 4.0, where the luma term dwarfed the distance weight and degenerated into
+# winner-takes-all-by-luminance: dark soil punched torn holes deep into prairie-hex interiors ("this isn't
+# a blend at all"). Hence the invariant: the WEIGHTS LEAD, the heights only NUDGE, and the last step is a mix.
+# The fallbacks below mirror terrain_config.json (blend_width/blend_soft/blend_height_influence/
+# blend_noise_scale/blend_noise_amount/feature_noise_cell). The two noises stay DECOUPLED: the blend noise
+# wobbles ONLY the flat↔flat seam, while feature_noise_cell grains the shoreline reach/wisp + canopy
+# treeline + peak footline — so retuning the seam can never move a coastline, treeline or footline.
+# UNITS DIFFER ON PURPOSE: blend_noise_scale is a FRACTION OF THE HEX RADIUS (× radius → px, like
+# blend_width), so the wobble's cell stays the same fraction of a hex at EVERY zoom. A raw-px cell did not:
+# a hex is ~45px on screen in-game but several times that in a zoomed-in preview frame, so one fixed 6px
+# cell meant a far coarser grain per hex in the game than in the preview it was judged in (the "preview
+# doesn't match the game" report). feature_noise_cell stays a RAW PIXEL size (the shore/treeline/footline
+# look is tuned in px).
 const EDGE_BLEND_MIN_RADIUS := ICON_MIN_DETAIL_RADIUS
-const EDGE_BLEND_DEFAULT_WIDTH := 0.42
-const EDGE_BLEND_DEFAULT_NOISE_CELL := 6.0
-# Shoreline (land↔water coasts): foam wash on the water side + sand beach on the land side. Widths are
-# fractions of the hex radius (× radius → px band, like blend_width). Fallbacks mirror terrain_config's
-# "shore" block; universal for now (every land↔water edge blends, no per-biome gating).
+# REACH — how far across the seam the two biomes are allowed to mix (× radius → the blend_band px uniform).
+# This is the ecotone's width. The user wants a SHALLOW transition confined to the hex edge, so it is kept
+# small: 0.25·radius ≈ 19px at the on-screen r≈75, a shallow band that never reaches a hex interior.
+const EDGE_BLEND_DEFAULT_WIDTH := 0.25
+# FEATHER SOFTNESS — half-width (in seam-weight units, so 0..0.5 is the meaningful span) of the smoothstep
+# that converts the perturbed seam weight into the mix factor. SMALL (≈0.03) ⇒ the mix snaps between the two
+# biomes wherever the noise/detail carries the weight past 0.5, reading as a fine crisp stipple; LARGE
+# (≈0.35) ⇒ a smooth gradient where the noise only leans the crossfade. It is never 0 in the shader
+# (BLEND_SOFT_MIN floors it) so the smoothstep can't degenerate into a hard step.
+const EDGE_BLEND_DEFAULT_SOFT := 0.35
+const EDGE_BLEND_MAX_SOFT := 0.5  # past 0.5 the feather spans the whole weight range — no seam left
+# HEIGHT INFLUENCE — the detail-following NUDGE: the two textures' zero-centred luminances bend the boundary
+# toward the darker/lighter side so it follows their own tufts/grains. It is deliberately WEAK — typical luma
+# deviations are ±0.3, so at 0.25 the nudge moves the weight by ≤ ~0.08, a fraction of the 0..1 distance
+# weight it perturbs. It must NEVER out-vote that weight: at 4.0 the term dominated and the blend degenerated
+# into a luminance-driven winner-takes-all that tore holes in hex interiors (user-rejected). 0 = pure
+# distance+noise feather. EDGE_BLEND_MAX_HEIGHT_INFLUENCE is the hard ceiling that keeps it a nudge.
+const EDGE_BLEND_DEFAULT_HEIGHT_INFLUENCE := 0.25
+const EDGE_BLEND_MAX_HEIGHT_INFLUENCE := 0.5
+# WOBBLE CELL — the seam-perturbation noise cell as a FRACTION of the hex radius (→ blend_noise_cell px).
+# It is the WAVELENGTH at which the boundary meanders: coarse (≈0.25·radius ≈ 19px at r=75) gives a few
+# organic lobes per hex edge, which is what stops the seam reading as the straight hex polyline; very fine
+# (≈0.05) turns it into a per-pixel speckle instead.
+const EDGE_BLEND_DEFAULT_NOISE_SCALE := 0.25
+# WOBBLE AMOUNT — amplitude of that perturbation, ADDED to the seam weight (never thresholded against it —
+# this is not a dither) and enveloped so it dies at both ends of the band. 0.30 swings the boundary by ±0.15
+# of the weight range at the seam: a visible meander, still far short of reaching a hex interior.
+const EDGE_BLEND_DEFAULT_NOISE_AMOUNT := 0.3
+const EDGE_BLEND_DEFAULT_FEATURE_NOISE_CELL := 6.0
+# --- WATER↔WATER seam levers (terrain_config's "water_blend" block) ---
+# Blend eligibility is SAME-CLASS (see CLAUDE.md → Edge Blending): flat↔flat AND water↔water both blend;
+# land↔water stays hard (that seam is the shoreline). The five levers above are tuned for LAND, where the
+# textures carry detail for the height term to interlock on. Water textures are smooth and low-variance, so
+# a land-width seam there just draws a clean soft-edged HEXAGON: the wobble is the only thing dissolving the
+# silhouette, and at land amplitude/reach it cannot. Ocean depth also grades gradually in nature, so water
+# gets its OWN wider/softer/wobblier reach (rendered side-by-side at r≈77: the land levers left visible hex
+# outlines on a deep-ocean patch, these dissolved them). Only these three differ — the wobble CELL and the
+# height nudge stay shared (a finer cell would speckle; the height term is a no-op on flat water anyway).
+const WATER_BLEND_DEFAULT_WIDTH := 0.45          # reach (× radius → px), vs 0.25 on land
+const WATER_BLEND_DEFAULT_SOFT := 0.45           # feather half-width, vs 0.35 on land (capped as land is)
+const WATER_BLEND_DEFAULT_NOISE_AMOUNT := 0.45   # wobble amplitude, vs 0.30 on land
+# Shoreline (land↔water coasts): sand shallows + surf, BOTH on the WATER side (the land hex keeps its own
+# texture). Widths are fractions of the hex radius (× radius → px band, like blend_width). Fallbacks mirror
+# terrain_config's "shore" block; universal for now (every land↔water edge blends, no per-biome gating).
+# land_beach_width is the OPT-IN damp rim on the land side and defaults to 0 (off) — a land-side beach at
+# full strength met the water-side foam along the shared edge and drew a hard tan↔white hexagon outline,
+# and it also overpainted the land texture ~0.4·radius deep. See the shader's shoreline block.
+const SHORE_DEFAULT_SAND_WIDTH := 0.35
 const SHORE_DEFAULT_FOAM_WIDTH := 0.55
-const SHORE_DEFAULT_BEACH_WIDTH := 0.4
+const SHORE_DEFAULT_LAND_BEACH_WIDTH := 0.0
 const SHORE_DEFAULT_FOAM_COLOR := Vector3(0.874, 0.949, 0.968)
 const SHORE_DEFAULT_BEACH_COLOR := Vector3(0.847, 0.733, 0.541)
 # Canopy overlay (forest = grass floor + overhanging tree crowns): overhang reach + treeline softness
@@ -4254,6 +4314,9 @@ func _setup_terrain_blend_shader() -> void:
 	_terrain_blend_material = ShaderMaterial.new()
 	_terrain_blend_material.shader = shader
 	_terrain_blend_material.set_shader_parameter("biome_array", TerrainTextureManager.terrain_textures)
+	# Per-layer mean luminance (1×N, fetched by layer index): the zero-point of each base texture's
+	# pseudo-height for the flat↔flat HEIGHT BLENDING. Built once with the base array, so it's set once here.
+	_terrain_blend_material.set_shader_parameter("layer_luma_map", TerrainTextureManager.layer_luma_texture)
 	# Canopy: a SECOND Texture2DArray in the same canvas shader. Disabled (and the sampler harmlessly
 	# bound to the base array) when no canopy asset exists.
 	var canopy_arr: Texture2DArray = TerrainTextureManager.canopy_textures
@@ -4293,25 +4356,69 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 		_rebuild_terrain_shader_maps()
 	var config: Dictionary = TerrainTextureManager.terrain_config
 	var blend_width: float = clampf(float(config.get("blend_width", EDGE_BLEND_DEFAULT_WIDTH)), 0.02, 1.0)
-	var noise_cell: float = maxf(float(config.get("blend_noise_cell", EDGE_BLEND_DEFAULT_NOISE_CELL)), 1.0)
+	# Feather softness + the detail-following nudge (see EDGE_BLEND_DEFAULT_SOFT / _HEIGHT_INFLUENCE).
+	var blend_soft: float = clampf(
+		float(config.get("blend_soft", EDGE_BLEND_DEFAULT_SOFT)), 0.0, EDGE_BLEND_MAX_SOFT
+	)
+	# Hard-clamped to EDGE_BLEND_MAX_HEIGHT_INFLUENCE: the height term is only ever a NUDGE. Letting it
+	# out-vote the distance weight is what shredded prairie hexes (see EDGE_BLEND_DEFAULT_HEIGHT_INFLUENCE).
+	var blend_height_influence: float = clampf(
+		float(config.get("blend_height_influence", EDGE_BLEND_DEFAULT_HEIGHT_INFLUENCE)),
+		0.0,
+		EDGE_BLEND_MAX_HEIGHT_INFLUENCE
+	)
+	# Seam-wobble cell is a FRACTION of the hex radius (× radius → px, like blend_width) so the boundary
+	# meanders at the same scale relative to a hex at every zoom (see EDGE_BLEND_DEFAULT_NOISE_SCALE).
+	var blend_noise_scale: float = clampf(
+		float(config.get("blend_noise_scale", EDGE_BLEND_DEFAULT_NOISE_SCALE)), 0.02, 4.0
+	)
+	var blend_noise_amount: float = clampf(
+		float(config.get("blend_noise_amount", EDGE_BLEND_DEFAULT_NOISE_AMOUNT)), 0.0, 2.0
+	)
+	var feature_noise_cell: float = maxf(
+		float(config.get("feature_noise_cell", EDGE_BLEND_DEFAULT_FEATURE_NOISE_CELL)), 1.0
+	)  # shoreline reach/wisp + canopy treeline + peak footline
+	# WATER↔WATER overrides (wider/softer/wobblier than land — see WATER_BLEND_DEFAULT_*). Same clamps as
+	# the land levers, so water can never exceed the caps the land path is held to either.
+	var water_blend: Dictionary = config.get("water_blend", {})
+	var water_width: float = clampf(
+		float(water_blend.get("blend_width", WATER_BLEND_DEFAULT_WIDTH)), 0.02, 1.0
+	)
+	var water_soft: float = clampf(
+		float(water_blend.get("blend_soft", WATER_BLEND_DEFAULT_SOFT)), 0.0, EDGE_BLEND_MAX_SOFT
+	)
+	var water_noise_amount: float = clampf(
+		float(water_blend.get("blend_noise_amount", WATER_BLEND_DEFAULT_NOISE_AMOUNT)), 0.0, 2.0
+	)
 	var m := _terrain_blend_material
 	m.set_shader_parameter("grid_w", grid_width)
 	m.set_shader_parameter("grid_h", grid_height)
 	m.set_shader_parameter("hex_radius", radius)
 	m.set_shader_parameter("hex_origin", origin)
 	m.set_shader_parameter("wrap_h", _wrap_horizontal)
-	m.set_shader_parameter("blend_band", blend_width * radius)  # interlock half-band width in px
-	m.set_shader_parameter("noise_cell", noise_cell)
+	m.set_shader_parameter("blend_band", blend_width * radius)  # transition half-band width in px
+	m.set_shader_parameter("blend_soft", blend_soft)                          # feather half-width
+	m.set_shader_parameter("blend_height_influence", blend_height_influence)  # detail-following NUDGE
+	m.set_shader_parameter("blend_noise_cell", blend_noise_scale * radius)  # seam-wobble cell in px
+	m.set_shader_parameter("blend_noise_amount", blend_noise_amount)        # seam-wobble amplitude
+	# The water↔water triple the shader swaps in when the hex's blend_class is water (see the same-class gate).
+	m.set_shader_parameter("water_blend_band", water_width * radius)
+	m.set_shader_parameter("water_blend_soft", water_soft)
+	m.set_shader_parameter("water_blend_noise_amount", water_noise_amount)
+	m.set_shader_parameter("noise_cell", feature_noise_cell)   # shore/canopy/peak grain — raw px, decoupled
 	# Base biome texture is sampled in continuous world space (kills the per-hex repeat grid); one tile
 	# spans ~1/base_scale hex-rows. See BASE_DEFAULT_TEXTURE_SCALE / CLAUDE.md → Edge Blending.
 	var base_scale: float = maxf(float(config.get("base_texture_scale", BASE_DEFAULT_TEXTURE_SCALE)), 0.01)
 	m.set_shader_parameter("base_scale", base_scale)
 	m.set_shader_parameter("blend_enabled", radius >= EDGE_BLEND_MIN_RADIUS)  # LOD: base-only at far zoom
 	var shore: Dictionary = config.get("shore", {})
+	var sand_frac: float = clampf(float(shore.get("sand_width", SHORE_DEFAULT_SAND_WIDTH)), 0.0, 2.0)
 	var foam_frac: float = clampf(float(shore.get("foam_width", SHORE_DEFAULT_FOAM_WIDTH)), 0.0, 2.0)
-	var beach_frac: float = clampf(float(shore.get("beach_width", SHORE_DEFAULT_BEACH_WIDTH)), 0.0, 2.0)
-	m.set_shader_parameter("foam_band", foam_frac * radius)   # foam reach on the water side (px)
-	m.set_shader_parameter("beach_band", beach_frac * radius) # beach reach on the land side (px)
+	var land_beach_frac: float = clampf(
+		float(shore.get("land_beach_width", SHORE_DEFAULT_LAND_BEACH_WIDTH)), 0.0, 2.0)
+	m.set_shader_parameter("sand_band", sand_frac * radius)   # sand shallows, water side (px)
+	m.set_shader_parameter("foam_band", foam_frac * radius)   # surf beyond the sand, water side (px)
+	m.set_shader_parameter("land_beach_band", land_beach_frac * radius)  # opt-in damp rim, land side (px)
 	m.set_shader_parameter("foam_color", _shore_color(shore.get("foam_color", null), SHORE_DEFAULT_FOAM_COLOR))
 	m.set_shader_parameter("beach_color", _shore_color(shore.get("beach_color", null), SHORE_DEFAULT_BEACH_COLOR))
 	var canopy: Dictionary = config.get("canopy", {})

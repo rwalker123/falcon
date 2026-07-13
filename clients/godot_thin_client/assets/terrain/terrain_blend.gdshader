@@ -4,12 +4,14 @@ render_mode blend_mix;
 // Approach B — per-pixel biome blend for the 2D hex map (see clients/.../CLAUDE.md → Edge Blending).
 // One whole-map quad runs this fragment shader. Each fragment inverts the pointy-top odd-r hex layout
 // (MUST match MapView._hex_center / _axial_center exactly) to find its hex, samples that hex's biome
-// from the Texture2DArray, and — only when the hex AND a neighbour across a shared edge are both
-// blend_class "flat" and different biomes — dithers the neighbour's texture in near the seam. The mix
-// is symmetric (0.5 at the exact edge on both sides) and driven by WORLD-space value noise (varies per
-// hex, no baked tiling). water/rugged INLAND edges never blend (hard). Separately, land↔water edges get
-// a SHORELINE wash (foam on the water side, sand beach on the land side) — see the shoreline block. See
-// the id-map (splatmap) below.
+// from the Texture2DArray, and — only when the hex AND a neighbour across a shared edge share a BLENDABLE
+// blend_class (SAME class, different biome: flat↔flat or water↔water) — MIXES the neighbour's texture in
+// near the seam: a symmetric signed-distance splat weight (a tie at the exact edge), wobbled by WORLD-space
+// value noise (varies per hex, no baked tiling), optionally nudged by the two textures' luminance detail,
+// and feathered through a smoothstep into a continuous mix factor — never a 1-bit pick (see the const
+// block). rugged edges never blend, and neither does any CLASS CHANGE — land↔water stays hard because that
+// seam is the SHORELINE, which gets its own wash instead (sand shallows then surf, BOTH on the water side;
+// the land keeps its texture) — see the shoreline block. See the id-map (splatmap) below.
 
 uniform sampler2DArray biome_array : filter_linear, repeat_enable;
 // Canopy overlay array: whole tree crowns on transparency (RGBA), sampled in MAP space (v_map, the
@@ -41,6 +43,12 @@ uniform float peak_shadow_len;    // cast-shadow reach toward the light, in px (
 uniform float peak_shadow_strength; // max darkening a fully-occluding peak casts on the ground (0..1)
 uniform float peak_min_prominence;  // relief opacity floor at the lowest elevation (0..1); scales to 1 at peak elev
 uniform vec2 peak_light_dir;      // normalized direction TOWARD the light in canvas space (+y DOWN → top-left is -,-)
+// Per-base-layer MEAN LUMINANCE, a 1×N single-channel texture fetched by layer index (N = terrain count,
+// so the layer count is never baked into this shader as a fixed array size). Height blending uses each
+// texture's per-pixel luminance as a pseudo-height (we have no height maps); subtracting the layer's mean
+// ZERO-CENTRES it, without which a bright biome would always out-height a dark one and the seam would
+// collapse onto one side instead of interlocking. Built by TerrainTextureManager.
+uniform sampler2D layer_luma_map : filter_nearest;
 // id-map splatmap: R = terrain id (0..255), G = blend_class code (0 water, 1 flat, 2 rugged),
 // B = canopy code (0 = no canopy, else canopy-array layer + 1),
 // A = peak code (0 = no peaks, else peak-array layer + 1).
@@ -55,29 +63,88 @@ uniform int grid_h;
 uniform float hex_radius;
 uniform vec2 hex_origin;      // MapView last_origin, in this quad's local space (== MapView local space)
 uniform bool wrap_h;
-uniform float blend_band;     // interlock half-band width in px (blend_width * radius)
-uniform float noise_cell;     // world-space value-noise cell size in px (blend_noise_cell)
+uniform float blend_band;     // transition half-band width in px (blend_width * radius) — the seam's REACH
+uniform float blend_soft;     // FEATHER SOFTNESS: half-width (in seam-weight units) of the smoothstep that
+                              // turns the seam weight into the mix factor. Small ⇒ a crisp, stippled edge
+                              // that follows the noise/detail closely; large ⇒ a smooth gradient.
+uniform float blend_height_influence; // how strongly texture detail NUDGES the boundary (vs. the distance
+                              // weight, which always LEADS). Keep SMALL (0..~0.5): the weights decide, the
+                              // heights only bend the 50/50 line toward the darker/lighter side.
+uniform float blend_noise_cell; // flat↔flat INTERLOCK-only value-noise cell size in px = the wobble's cell.
+                              // Fed as blend_noise_scale * hex_radius (config blend_noise_scale, a
+                              // FRACTION of the hex radius) so the grain-per-hex is zoom-invariant — a fixed
+                              // px cell made the grain grow/shrink relative to a hex as you zoomed.
+uniform float blend_noise_amount; // amplitude of that boundary wobble (added to the seam weight, NOT
+                              // thresholded against it — this is not a dither).
+// WATER↔WATER overrides of the three levers above (config "water_blend"). The land levers assume the two
+// textures carry detail for the height term to interlock on; water is smooth and low-variance, so at land
+// reach/amplitude the seam just draws a soft-edged HEXAGON. Water therefore gets a wider reach, a softer
+// feather and a bigger wobble (ocean depth grades gradually anyway). Selected per-fragment by own_class.
+// The wobble CELL and the height nudge are deliberately NOT overridden (shared with land).
+uniform float water_blend_band;
+uniform float water_blend_soft;
+uniform float water_blend_noise_amount;
+uniform float noise_cell;     // FEATURE value-noise cell size in px (config feature_noise_cell) — shared by the
+                              // shoreline reach/wisp, the canopy treeline and the peak footline. Deliberately
+                              // DECOUPLED from blend_noise_cell so retuning the interlock grain can't move any
+                              // coastline, treeline or footline.
 uniform bool blend_enabled;   // false below the LOD radius → base only (no shimmer at far zoom)
 uniform bool fow_enabled;
 uniform vec4 bg_color;        // out-of-map fill (matches the direct path background)
 uniform vec4 fog_color;       // unexplored fill
 uniform vec3 mist_color;      // discovered multiply tint (matches _fow_texture_tint_for_state)
 uniform float mist_blend;
-// Shoreline (land↔water coasts): a surf/foam wash on the WATER side + a sand beach on the LAND side.
-// Universal for now — every land↔water edge gets both (flat-land and rugged-land alike). Same
-// signed-distance-to-shared-edge machinery as the flat interlock; LOD-suppressed via blend_enabled.
-uniform float foam_band;      // foam reach on the water side, in px (foam_width * radius)
-uniform float beach_band;     // beach reach on the land side, in px (beach_width * radius)
+// Shoreline (land↔water coasts). EVERYTHING LIVES ON THE WATER SIDE: sand shallows hug the land edge,
+// the surf breaks over their seaward lip, then open water. The LAND hex keeps its own texture (the
+// land-side rim is an opt-in damp rim, default OFF). Why: when both sides painted their own colour at
+// full strength AT the shared edge, the land went solid tan and the water solid white and they met along
+// the hex boundary — a hard tan↔white line that TRACED THE HEXAGON — and the land-side beach also
+// overpainted the land texture radius-deep. Same signed-distance-to-shared-edge machinery as the flat
+// interlock; LOD-suppressed via blend_enabled.
+uniform float sand_band;       // sand-shallows reach on the WATER side, in px (sand_width * radius)
+uniform float foam_band;       // surf reach BEYOND the sand, on the WATER side, in px (foam_width * radius)
+uniform float land_beach_band; // optional damp-rim reach on the LAND side, in px (land_beach_width * radius);
+                               // 0 (the default) = the land texture is left completely untouched
 uniform vec3 foam_color;      // surf line color (light desaturated cyan / near-white)
-uniform vec3 beach_color;     // sand beach color (warm tan)
+uniform vec3 beach_color;     // sand color — the water-side shallows (and the optional land damp rim)
 
 const float SQRT3 = 1.7320508075688772;
+// blend_class codes, as packed into the id-map's G channel by MapView._blend_class_code. The SAME-CLASS
+// eligibility rule below is expressed in these, never in bare literals.
+const int CLASS_WATER = 0;
+const int CLASS_FLAT = 1;
+const int CLASS_RUGGED = 2;  // never blends (discrete-object textures must not bleed) — see the gate
 // Shore look tuning (fixed feel; the widths/colors are the config levers).
 const float SHORE_REACH_NOISE_MIN = 0.35; // min fraction of the shore band the noise leaves → wavy fingers
-const float SHORE_WISP_CENTER = 1.35;     // inner foam wisp center, as a multiple of foam_band (out past the main band)
+const float SHORE_REACH_MIN_PX = 1.0;     // floor on any noise-shrunk reach, so no fade ever divides by ~0
+const float SHORE_SAND_OPACITY = 0.85;    // max sand wash over the water texture — deliberately < 1 so the
+                                          // shallows keep the water's own detail and never read as flat paint
+const float SHORE_SAND_PLATEAU = 0.45;    // fraction of the sand band that stays at FULL sand before it fades
+                                          // out at its seaward lip. Without a plateau the surf (which rises
+                                          // across the same band) whitened the sand almost everywhere and the
+                                          // coast read as one pale wash instead of sand-then-surf.
+const float SHORE_FOAM_OPACITY = 0.9;     // max surf opacity at the break line
+const float SHORE_WISP_CENTER = 1.35;     // inner foam wisp center, as a multiple of the surf's OUTER edge
 const float SHORE_WISP_HALF = 0.35;       // inner foam wisp half-thickness (× foam_band)
 const float SHORE_WISP_STRENGTH = 0.45;   // inner foam wisp max opacity
 const float CANOPY_TREELINE_NOISE = 0.6;  // how hard world-noise waves the treeline in/out (× overhang)
+// Flat↔flat transition look tuning: the reach is blend_width (→ blend_band px), the feather softness is
+// blend_soft, the boundary wobble is blend_noise_scale (a FRACTION OF THE HEX RADIUS → blend_noise_cell px)
+// × blend_noise_amount, and blend_height_influence is an OPTIONAL detail-following nudge.
+// THE INVARIANT: the seam is ALWAYS a continuous weighted mix (`mix(own, nb, t)`), never a 1-bit pick.
+// Two rejected attempts were both 1-bit picks in disguise: (1) the original dither
+// (`if (best_p > vnoise(...)) result = neighbour;`) — user verdict "chunky blobs"; (2) height blending with
+// a large blend_height_influence and a small overlap depth, where the luminance term dwarfed the distance
+// weight and degenerated into winner-takes-all-by-luma — user verdict "shredded, this isn't a blend at all"
+// (dark soil punched holes deep into grass-hex interiors, because a dark patch of grass ANYWHERE in the band
+// lost outright). Hence: the DISTANCE WEIGHT LEADS, heights only NUDGE (influence stays ≤ ~0.5), and the
+// final step is always a smoothstep-weighted mix.
+// Perturbation envelope: the noise + height perturbation is scaled by 4·p·(1−p), a parabola peaking at the
+// seam (p = 0.5) and vanishing at both ends of the band, so a perturbation can never leak neighbour texture
+// into hex interiors nor leave a straight discontinuity along the band's outer edge.
+const float BLEND_PERTURB_ENVELOPE_PEAK = 4.0; // normalizes p·(1−p) (max 0.25) to a peak of 1.0 at p = 0.5
+const float BLEND_SOFT_MIN = 1e-3;             // floor on blend_soft so the smoothstep never degenerates
+                                               // into a divide-by-zero / hard step
 
 // v_world is the quad-LOCAL (viewport/screen-fixed) coordinate — it does NOT track the map on
 // pan/zoom. hex_origin (= MapView last_origin) moves with the pan/zoom, so hex-anchored terms
@@ -106,6 +173,17 @@ float vnoise(vec2 p) {
 	float c = hash21(i + vec2(0.0, 1.0));
 	float d = hash21(i + vec2(1.0, 1.0));
 	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// Rec.709 luminance — the pseudo-height of a texel for height blending. MUST match LUMA_WEIGHTS in
+// TerrainTextureManager, which measures each layer's mean of exactly this quantity.
+float luma(vec3 c) {
+	return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+// Mean luminance of a base layer (the zero-point of its pseudo-height), fetched by layer index.
+float mean_luma(int layer) {
+	return texelFetch(layer_luma_map, ivec2(layer, 0), 0).r;
 }
 
 // Canopy density across the treeline. s = signed distance to the canopy↔non-canopy boundary,
@@ -192,7 +270,17 @@ void fragment() {
 		vec2 base_uv = v_map / (2.0 * hex_radius) * base_scale;
 		vec3 result = texture(biome_array, vec3(base_uv, float(own_layer))).rgb;
 
-		if (blend_enabled && own_class == 1) {
+		// SAME-CLASS eligibility: a hex blends only with a neighbour of its OWN blend_class and a different
+		// terrain id. flat↔flat (grass↔soil ecotones) and water↔water (deep ocean grading into shelf) both
+		// qualify; land↔water is a CLASS CHANGE, so it stays hard — that seam is the SHORELINE, owned by the
+		// foam/beach pass below, and softening it would wash the coastline out. rugged (class 2) never blends.
+		bool own_blendable = own_class == CLASS_FLAT || own_class == CLASS_WATER;
+		if (blend_enabled && own_blendable) {
+			// Per-class seam levers: water gets the wider/softer/wobblier set (see the uniforms).
+			bool water_seam = own_class == CLASS_WATER;
+			float seam_band = water_seam ? water_blend_band : blend_band;
+			float seam_soft = water_seam ? water_blend_soft : blend_soft;
+			float seam_noise_amount = water_seam ? water_blend_noise_amount : blend_noise_amount;
 			float best_p = 0.0;
 			int best_layer = -1;
 			for (int dir = 0; dir < 6; dir++) {
@@ -212,31 +300,57 @@ void fragment() {
 				vec4 npx = texture(id_map, nuv);
 				int nlayer = int(npx.r * 255.0 + 0.5);
 				int nclass = int(npx.g * 255.0 + 0.5);
-				if (nclass != 1 || nlayer == own_layer) { continue; } // flat & different only
+				if (nclass != own_class || nlayer == own_layer) { continue; } // same class & different id only
 				vec2 nb_c = hex_center(ncol, nrow);
 				vec2 dir_v = normalize(nb_c - own_c);
 				float half_dist = 0.5 * distance(own_c, nb_c);
 				// signed distance to the shared edge (the perpendicular bisector); <=0 inside own hex.
 				float d = dot(v_world - own_c, dir_v) - half_dist;
-				float p = clamp(0.5 + d / (2.0 * blend_band), 0.0, 1.0); // 0.5 AT the edge → symmetric
+				float p = clamp(0.5 + d / (2.0 * seam_band), 0.0, 1.0); // 0.5 AT the edge → symmetric
 				if (p > best_p) {
 					best_p = p;
 					best_layer = nlayer;
 				}
 			}
-			if (best_layer >= 0 && best_p > vnoise(v_map / noise_cell)) {
-				// Sample the neighbour biome at the SAME continuous world position as the base (only the
-				// array layer differs), so the flat↔flat dither interlocks two world-sampled biomes at one
-				// world point — the cross-edge blend stays continuous with the new base sampling.
-				result = texture(biome_array, vec3(base_uv, float(best_layer))).rgb;
+			if (best_layer >= 0) {
+				// FEATHERED, WOBBLED, DETAIL-NUDGED MIX — always continuous, never a pick.
+				// best_p is the SPLAT WEIGHT (0 deep in own hex, 0.5 exactly at the shared edge, 1 deep in
+				// the neighbour). It LEADS. Two perturbations bend it, both enveloped by 4·p·(1−p) so they
+				// peak at the seam and vanish at the band's ends (no leakage into hex interiors):
+				//   · world value noise → an organic, meandering boundary instead of the straight hex line;
+				//   · the two textures' zero-centred luminances (their pseudo-height, we have no height maps)
+				//     → the boundary bends toward the darker/lighter side so it follows the textures' own
+				//     tufts and grains. This is a NUDGE: blend_height_influence stays small, so it can never
+				//     out-vote the distance weight (which is exactly what shredded the hexes at 4.0).
+				// The perturbed weight is then feathered through a smoothstep of half-width blend_soft and
+				// used as a plain mix factor: every pixel in the band is a genuine blend of the two biomes.
+				// The neighbour is sampled at the SAME continuous world position as the base (only the array
+				// layer differs), so both competitors are the same world point of two biomes.
+				vec3 own_rgb = result;
+				vec3 nb_rgb = texture(biome_array, vec3(base_uv, float(best_layer))).rgb;
+
+				float perturb_env = BLEND_PERTURB_ENVELOPE_PEAK * best_p * (1.0 - best_p);
+				float n = vnoise(v_map / blend_noise_cell);
+				float wobble = (n - 0.5) * seam_noise_amount;
+				// positive when OWN is the taller/brighter texture here → push the boundary toward the
+				// neighbour (own keeps the pixel), i.e. SUBTRACT from the neighbour's weight.
+				float h = (luma(own_rgb) - mean_luma(own_layer)) - (luma(nb_rgb) - mean_luma(best_layer));
+				float pw = clamp(best_p + (wobble - h * blend_height_influence) * perturb_env, 0.0, 1.0);
+
+				float soft = max(seam_soft, BLEND_SOFT_MIN);
+				float t = smoothstep(0.5 - soft, 0.5 + soft, pw);
+				result = mix(own_rgb, nb_rgb, t);
 			}
 		}
 
-		// --- shoreline: foam wash on the water side, sand beach on the land side, at land↔water edges ---
-		// Universal: fires for ANY edge where exactly one side is water (own_class 0). Inland flat↔flat
-		// and rugged↔* edges are untouched (both sides non-water → skipped). LOD-gated like the blend.
+		// --- shoreline: sand shallows + surf, BOTH on the water side, at land↔water edges ---
+		// Universal: fires for ANY edge where exactly one side is water. Inland flat↔flat, water↔water and
+		// rugged↔* edges are untouched (both sides same wetness → skipped). LOD-gated like the blend.
+		// Seaward read: land (its own texture) → sand shallows → surf → open water. Every fade is a
+		// smoothstep (no linear ramp's kink, and — crucially — no term saturates against the land texture
+		// at the shared edge, which is what used to draw a hard tan↔white hexagon outline there).
 		if (blend_enabled) {
-			bool own_water = own_class == 0;
+			bool own_water = own_class == CLASS_WATER;
 			float best_d = -1e9; // nearest qualifying edge = max signed distance (closest to the seam)
 			for (int dir = 0; dir < 6; dir++) {
 				ivec2 off = neighbor_offset(row, dir);
@@ -251,7 +365,7 @@ void fragment() {
 				}
 				vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
 				int nclass = int(texture(id_map, nuv).g * 255.0 + 0.5);
-				bool nb_water = nclass == 0;
+				bool nb_water = nclass == CLASS_WATER;
 				if (own_water == nb_water) { continue; } // exactly one side must be water
 				vec2 nb_c = hex_center(ncol, nrow);
 				vec2 dir_v = normalize(nb_c - own_c);
@@ -260,17 +374,38 @@ void fragment() {
 			}
 			if (best_d > -1e8) {
 				float dist_in = max(-best_d, 0.0);            // 0 at the coast edge, grows away from it
-				float band = own_water ? foam_band : beach_band;
+				// The SAME world-noise wobble scales every reach, so the sand's outer lip, the surf line and
+				// the wisp all meander together (organic fingers) instead of drawing concentric clean stripes.
 				float n = vnoise(v_map / noise_cell);
-				float reach = max(band * mix(SHORE_REACH_NOISE_MIN, 1.0, n), 1.0); // wavy inward extent
-				float amount = clamp(1.0 - dist_in / reach, 0.0, 1.0); // strongest at the edge, fades away
-				result = mix(result, own_water ? foam_color : beach_color, amount);
+				float wobble = mix(SHORE_REACH_NOISE_MIN, 1.0, n);
 				if (own_water) {
-					// optional faint second wisp: a thinner surf line further out over open water
-					float wisp = clamp(1.0 - abs(dist_in - foam_band * SHORE_WISP_CENTER)
-						/ max(foam_band * SHORE_WISP_HALF, 1.0), 0.0, 1.0);
+					// 1. SAND SHALLOWS — full against the land edge across the plateau, then fading out at
+					// their seaward lip (sand_reach).
+					float sand_reach = max(sand_band * wobble, SHORE_REACH_MIN_PX);
+					float sand_plateau = sand_reach * SHORE_SAND_PLATEAU;
+					float sand = smoothstep(sand_reach, sand_plateau, dist_in) * SHORE_SAND_OPACITY;
+					result = mix(result, beach_color, sand);
+					// 2. SURF — breaks OVER the sand's seaward lip, never against the land: it rises across
+					// the sand's fade-out (crossfading sand → foam), peaks at the lip, and fades into open
+					// water. ZERO at the coast edge is the whole point — a foam term that peaked at the edge
+					// is what put a white line right up against the land texture, tracing the hexagon.
+					float foam_reach = max(foam_band * wobble, SHORE_REACH_MIN_PX);
+					float foam_outer = sand_reach + foam_reach;
+					float surf = smoothstep(sand_plateau, sand_reach, dist_in)
+						* smoothstep(foam_outer, sand_reach, dist_in);
+					result = mix(result, foam_color, surf * SHORE_FOAM_OPACITY);
+					// 3. faint second wisp: a thinner surf line further out over open water
+					float wisp_center = foam_outer * SHORE_WISP_CENTER;
+					float wisp_half = max(foam_reach * SHORE_WISP_HALF, SHORE_REACH_MIN_PX);
+					float wisp = smoothstep(wisp_half, 0.0, abs(dist_in - wisp_center));
 					float wn = vnoise(v_map / noise_cell + vec2(17.0, 5.0));
 					result = mix(result, foam_color, wisp * SHORE_WISP_STRENGTH * wn);
+				} else if (land_beach_band > 0.0) {
+					// OPT-IN damp rim on the land side (default width 0 → skipped entirely, land texture
+					// untouched). Kept as a lever in case a bone-dry land↔sand meeting reads too abrupt.
+					float rim_reach = max(land_beach_band * wobble, SHORE_REACH_MIN_PX);
+					float rim = smoothstep(rim_reach, 0.0, dist_in) * SHORE_SAND_OPACITY;
+					result = mix(result, beach_color, rim);
 				}
 			}
 		}

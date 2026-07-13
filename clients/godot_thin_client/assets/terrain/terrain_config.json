@@ -1,14 +1,24 @@
 {
   "base_texture_scale": 0.25,
-  "blend_width": 0.42,
-  "blend_noise_cell": 6.0,
+  "blend_width": 0.25,
+  "blend_soft": 0.35,
+  "blend_height_influence": 0.25,
+  "blend_noise_scale": 0.25,
+  "blend_noise_amount": 0.3,
+  "feature_noise_cell": 6.0,
+  "water_blend": {
+    "blend_width": 0.45,
+    "blend_soft": 0.45,
+    "blend_noise_amount": 0.45
+  },
   "use_terrain_textures": true,
   "use_edge_blending": true,
   "lod_near_distance": 50.0,
   "lod_far_distance": 200.0,
   "shore": {
+    "sand_width": 0.35,
     "foam_width": 0.55,
-    "beach_width": 0.4,
+    "land_beach_width": 0.0,
     "foam_color": [223, 242, 247],
     "beach_color": [216, 187, 138]
   },
