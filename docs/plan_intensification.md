@@ -86,18 +86,35 @@ herd → husbandry`.
 
 The animal template is two fields on `Herd` — `domestication_progress: f32` (0→1) and
 `owner: Option<FactionId>` — where progress accrues **only while a Sustain assignment works a
-Thriving herd** (`progress_per_turn`), decays otherwise (`decay_per_turn`), and a `claim_threshold`
-lets the `domesticate` command finish early. Domesticated = **steady yield without depleting biomass**
-+ **collapse-immune regrowth** + **counts toward sedentarization**.
+Thriving herd** (`progress_per_turn`) and decays otherwise (`decay_per_turn`). Domesticated =
+**steady yield without depleting biomass** + **collapse-immune regrowth** + **counts toward
+sedentarization**.
 
-Transpose it wholesale onto forage patches as **cultivation**:
-- `cultivation_progress` + `owner` on the (now stateful) patch.
-- Accrues while **Sustain-Forage works a Thriving patch**; decays untended; `claim_threshold` → a
-  `cultivate` command (mirror `domesticate`) finishes early.
-- At `progress ≥ 1.0` the patch is **domesticated** — it converts into a tended patch (§4).
+Transpose it onto forage patches as **cultivation** — `cultivation_progress` + `owner` on the (now
+stateful) patch, reaching a tended patch (§4) at `progress ≥ 1.0`.
 
-Low-invention by construction: this is the `HusbandryConfig` pattern (`progress_per_turn`,
-`decay_per_turn`, `claim_threshold`, `provisions_per_biomass`) re-instantiated for plants.
+> **Amended in implementation — a free upgrade is not a decision.** The first cut had cultivation
+> accrue *silently and for free under Sustain*, with a `claim_threshold` early-claim mirroring
+> `domesticate`. That was wrong, and playtest killed it. The argument that cultivating "anchors you,
+> and the anchor is the cost" does not hold: **foraging already requires a worker standing on that
+> same tile**, so tending costs nothing extra — a free ~3× yield upgrade is *always* taken, and there
+> is no choice to make. Cultivation is therefore an **explicit `Cultivate` policy with a real
+> up-front cost** (and its animal twin, `Corral`):
+>
+> - **While preparing, the patch pays only `cultivating_yield_fraction × its Sustain/MSY ceiling`**
+>   (0.25) — the crew is clearing and planting, not gathering. That dip *is* the investment. It is a
+>   fraction of MSY, so it stays sustainable and the patch remains Thriving (which the accrual gate
+>   needs) — the cost is forgone yield, not depletion.
+> - **The early-claim is removed.** It existed to skip the investment, which is the whole point.
+> - **Sustain no longer tames anything.** It only *teaches* the faction Cultivation knowledge (§4b).
+>
+> Break-even at the shipped defaults: ~7 provisions forgone over ~25 preparing turns, repaid ~8–9
+> turns after the patch completes. **Cultivating is correct only if you intend to stay** — which is
+> precisely the decision the free version erased, and precisely the decision this arc exists to
+> create.
+
+Still low-invention: the `HusbandryConfig` pattern (`progress_per_turn`, `decay_per_turn`,
+`provisions_per_biomass`) re-instantiated for plants, plus the one new investment lever.
 
 ### 4. The place-bound payoff: tended patch + corral (Phase 1)
 
@@ -131,16 +148,25 @@ domestication) — never start-granted. Each rung raises output *and* deepens th
 pull grows with intensification.
 
 **Plant path:**
-1. **Sustain-forage** hexes → accrue faction **Cultivation** knowledge.
-2. Know Cultivation → a tended hex converts to a **tended patch**: higher output, but **worker-tended
-   and place-local** (paid to the band that staffs it, near it), and it **goes feral** if abandoned.
-3. **Sustain-tend patches** → accrue **Seed Germination** knowledge.
+1. **Sustain-forage** a Thriving hex → accrue faction **Cultivation** knowledge (~20 turns). This is
+   *all* Sustain earns — it never tames the patch itself.
+2. Know Cultivation → **choose** the `Cultivate` policy on a Thriving patch and **pay the investment**
+   (a reduced take for ~25 turns, §3) → it becomes a **tended patch**: higher output, but
+   **worker-tended and place-local** (paid to the band that staffs it, near it), and it **goes feral**
+   if abandoned.
+3. **Tend patches** → accrue **Seed Germination** knowledge.
 4. Know Seed Germination → **plant crops on arbitrary tiles** (not just existing forage) — higher
    output still, still worker-tended.
 
-**Animal path (parallel):**
-1. **Sustain-hunt** → **Domestication** (built) → **corral** (pen a domesticated herd → higher yield,
-   worker-tended, place-local) → accrue **Husbandry** → …
+**Animal path (parallel, and mechanically the same shape):**
+1. **Sustain-hunt** a Thriving herd → accrue **Domestication** on that herd *and* faction **Herding**
+   knowledge → **choose** the `Corral` policy and pay the same kind of investment (a reduced take
+   while the pen is built) → a **corralled herd**: higher yield, worker-tended, place-local →
+   accrue **Husbandry** → …
+
+**Asymmetry worth keeping straight:** Herding gates only *corralling*. Mobile domestication
+(pastoralism) stays ungated — a herd you drive with you needs no place-binding knowledge, whereas a
+patch cannot even begin to be tamed until the faction knows Cultivation.
 
 **The load-bearing invariant:** a tier's yield is **place-local and requires a tending worker** — the
 band that staffs the hex collects it, and an unstaffed improvement decays/goes feral. That is the
@@ -192,7 +218,8 @@ the `surplus`/`resource_density` terms).
 | 1 | Depletion is the engine; **local resource exhaustion under population pressure** is the carrying-capacity mechanic | Replaces the scrapped flat carry-cap with the honest driver; makes intensification/settling *rational* rather than gated. |
 | 2 | Forage reaches **full parity with hunting** — depletable + the policy axis (Phase 0) | The plant path is a transpose of the animal path; parity is the prerequisite and the elegance. |
 | 3 | **Mirror the herd resource model closely** (biomass / carrying_capacity / logistic regrowth / ecology phases) | The code is literally reusable; the parallelism *is* the design. |
-| 4 | Cultivation = the **husbandry mechanic transposed** (`progress`/`owner`/Sustain-accrual/`claim_threshold`) | Lowest-invention path; a proven, clean template. |
+| 4 | Cultivation = the **husbandry mechanic transposed** (`progress`/`owner`/gated accrual) | Lowest-invention path; a proven, clean template. |
+| 4b | A higher tier must have a **real cost**, so it is an **explicit policy with an up-front investment** (`Cultivate`/`Corral`: a reduced take while preparing), not free accrual under Sustain. The `claim_threshold` early-claim is **removed** | "It anchors you" is *not* a cost when foraging already requires a worker on that same tile — a free 3× upgrade is always taken and there is no decision. The dip makes intensifying a bet on staying. (Corrected in implementation; see §3.) |
 | 5 | Domestication *completes* into a **place-bound improvement** — tended patch (farming) / corral (pastoral) | These are already named in `plan_settlement_population.md`'s catalog; the arc **realizes** them, not reinvents. |
 | 6 | **Preserve the product asymmetry** — mobile livestock vs fixed patch/corral | The asymmetry *is* the sedentarization pull; the honest nomad→settle bridge. |
 | 7 | Depletable ecology state persists via **one shared `EcologyState` record**, fixing herds (a latent rollback gap) *and* enabling forage together | Herd biomass isn't actually rollback-persisted today either; a shared record + the codebase's uniform snapshot convention makes it a one-time foundation, not per-resource bespoke work. Phase 0's first slice. |
@@ -213,34 +240,56 @@ the `surplus`/`resource_density` terms).
      Hunt carries its policy.
    *No cultivation yet — this just makes forage a real depletable resource with tradeoffs and turns
    on the pressure.*
-1. **Cultivation + the intensification ladder (Phase 1)** — the earned, labor-tended ladder of §4b,
-   built one rung at a time:
-   - **1 (shipped, sim).** Cultivation transpose: `cultivation_progress`/`owner` on the patch,
-     Sustain-Forage accrual, `cultivate` command, folded sedentarization signal.
-   - **1a.** **Tended patch = worker-tended + place-local + higher-output + feral-if-abandoned** —
-     replaces the even-split passive yield with the "pins the band" mechanic (paid to the tending
-     band; decays to wild if unstaffed).
-   - **1b.** **Cultivation-knowledge ladder + gate** — Sustain-forage accrues faction **Cultivation**
-     knowledge (a `KnowledgeFragment` / `DiscoveryProgressLedger`); knowing it gates converting a hex
-     to a tended patch.
-   - **1c.** **Corral** — pen a domesticated herd (place-local, worker-tended); `herding` gate.
-   - **Later rungs.** Seed Germination → plant crops on arbitrary tiles; Husbandry; etc.
+1. **Cultivation + the intensification ladder (Phase 1) — SHIPPED.** The earned, labor-tended ladder
+   of §4b, built one rung at a time:
+   - **1 (shipped).** Cultivation transpose: `cultivation_progress`/`owner` on the patch, the
+     `cultivate` command, folded sedentarization signal.
+   - **1a (shipped).** **Tended patch = worker-tended + place-local + higher-output +
+     feral-if-abandoned** — replaces the even-split passive yield with the "pins the band" mechanic
+     (paid to the tending band; decays to wild if unstaffed).
+   - **1b (shipped).** **Cultivation-knowledge ladder + gate** — Sustain-forage a Thriving patch
+     accrues faction **Cultivation** knowledge (`DiscoveryProgressLedger`), which gates the
+     `Cultivate` policy. **Amended from the original plan:** Sustain accrues *knowledge only*; the
+     patch itself is tamed by paying the `Cultivate` investment (§3).
+   - **1c (shipped).** **Corral** — pen a domesticated herd (place-local, worker-tended), behind an
+     earned **Herding** knowledge gate and the same investment cost.
+   - **Client rendering (shipped).** Both ladders on screen: cultivation/corral progress, the
+     Cultivation/Herding knowledge meters, tended-patch + corralled indicators, per-source yields on
+     the panel and the map, and locked rungs that name their remedy ("♻ Sustain-hunt this Thriving
+     herd to finish taming it") rather than just their prerequisite.
+   - **Later rungs — the next arc, not Phase 2.** **Seed Germination** → plant crops on *arbitrary*
+     tiles (the payoff rung: today cultivation is place-*bound* — you upgrade a patch where nature put
+     it; germination is what actually invents agriculture). Then **Husbandry** past the corral.
    Feeds `SedentarizationScore`. The generic settlement `build`/footprint/decay catalog stays with the
    settlement arc.
-- **Cross-cutting: command yield-vector + pre-commit forecast.** Model the multi-dimensional output;
-  surface husbandry/cultivation progress + trade goods live; add the compose-time forecast. Lands
-  alongside Phase 0/1 (forecast is most valuable once policies create tradeoffs).
+- **Cross-cutting: command yield-vector + pre-commit forecast — SHIPPED.** Per-source `actual` vs
+  `sustainable` yields with an overdraw ⚠, an overstaffing signal, and a compose-time **"Expected
+  yield"** (including "preparing X → then Y" for the investment rungs). The load-bearing invariant is
+  **forecast == actual**: the forecast and the take path call the *same* pure helpers
+  (`sustainable_yield` / `*_policy_ceiling` / `forecast_expected_take`), guarded by tests, so the UI
+  cannot promise a number the sim won't pay. A fresh assignment is seeded from its own forecast, so it
+  shows its real expected yield instead of `+0.00` before the turn resolves.
 - **Deferred (documented):** the full improvement catalog (dwellings/storage/defense), larder
   spoilage + storage tiers, richer crop/livestock variety, the settlement-cluster derivation — all
   owned by `plan_settlement_population.md`; this arc delivers the food-tending seam that feeds them.
 
 ## Open tuning dials (settle live)
 
-Forage regrowth rate & carrying capacity (vs herd equivalents); the forage policy set/semantics
-(how literally Market/Eradicate map to gathering); cultivation `progress_per_turn` / `decay_per_turn`
-/ `claim_threshold` (vs husbandry's 0.04 / 0.01 / 0.6); tended-patch yield vs a wild patch; the
-sedentarization weight for cultivation/tended-patch; how aggressively depletion bites relative to
-band growth (the whole loop's pacing). All config, per the no-magic-numbers convention.
+All config, per the no-magic-numbers convention. The ones that decide whether the arc *feels* right:
+
+- **The investment bite** — `cultivating_yield_fraction` / `corralling_yield_fraction` (0.25: you
+  keep a quarter of the source's Sustain yield while preparing) and `progress_per_turn` /
+  `corral_build_progress_per_turn` (0.04 → ~25 turns). Together these are the price of intensifying.
+  Too cheap and it's the free upgrade again; too dear and nobody ever settles.
+- **The knowledge grind** — `knowledge_progress_per_turn` (0.05 → ~20 Sustain turns to learn
+  Cultivation or Herding). This is the gate on the whole ladder.
+- **The payoff** — `tended_provisions_per_biomass` / `corral_provisions_per_biomass` vs the wild MSY
+  skim (currently ~3.2× and out-paying mobile pastoralism respectively). Keep
+  `tended_provisions_per_biomass > regrowth_rate/4 × forage.provisions_per_biomass` or intensifying
+  never pays.
+- Forage regrowth rate & carrying capacity (vs the herd equivalents); how literally Market/Eradicate
+  map to gathering; the sedentarization weight for cultivation/tended-patch; and how aggressively
+  depletion bites relative to band growth — the whole loop's pacing.
 
 ## See Also
 
