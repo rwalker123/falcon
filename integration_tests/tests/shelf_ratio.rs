@@ -30,11 +30,14 @@ use sim_runtime::{TerrainType, WorldSnapshot};
 const EARTHLIKE_COAST_HEIGHT_THRESHOLD: f64 = 0.10;
 
 /// Per-map sanity band for the shelf fraction of ocean. Non-trivial (the shelf is a real
-/// slice) but well short of covering all ocean. Measured across 80x52..256x192 earthlike
-/// maps the player-facing fraction (slope folds into deep water) now runs ~17%..35% — a touch
-/// higher again since the final `reconcile_coastal_shelf` pass stamps shelf on the gentle coasts
-/// hydrology/the tag solver create after `classify_bands` (deltas, marshes, polar tundra) — and
-/// still shrinks as the open ocean grows, so this band leaves comfortable margin on both ends. The
+/// slice) but well short of covering all ocean. **Re-measured after the border-ring bathymetry
+/// fix** (`classify_terrain`'s legacy map-frame edge rings no longer drown ~250 band-`Land` tiles
+/// per 80x52 map, so the coastline is real and the orphaned offshore shelf those drowned tiles
+/// used to strand is gone): across 80x52..256x192 earthlike maps the player-facing fraction (slope
+/// folds into deep water) now runs ~14%..33% (was ~17%..35% with the bug) — it still includes the
+/// gentle coasts the final `reconcile_coastal_shelf` pass stamps after `classify_bands` (deltas,
+/// marshes, polar tundra), and still shrinks as the open ocean grows, so this band leaves
+/// comfortable margin on both ends (min sample 14.0% vs. a 6% floor). The
 /// band-level hex-diagonal-gap fix is guarded by
 /// `mapgen::tests::earthlike_bands_have_no_gentle_coast_shelf_gap`, and the strict FINAL-map
 /// invariant by `earthlike_no_deep_ocean_touches_gentle_land_on_final_map` below (the snapshot is

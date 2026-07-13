@@ -93,8 +93,9 @@
         "volcanic_coastal_gain": 0.7
       },
       "climate_band_weights": { "polar": 0.12, "temperate": 0.46, "tropical": 0.42 },
+      "_comment_water_target": "terrain_tag_targets.Water MUST track 1 - macro_land.target_land_pct (0.38 -> 0.62). The landmask decides land vs. water; this locked target only tells the tag-budget solver what that same map should already look like. Set it too high and the solver's add-water branch scatters DeepOcean over COASTAL land tiles (~125 drowned at 0.65); too low and it mass-converts ocean into Tundra/AlluvialPlain. Either way the solver invents bathymetry the pipeline never modeled. Keep the two in lockstep.",
       "terrain_tag_targets": {
-        "Water": 0.65,
+        "Water": 0.62,
         "Coastal": 0.06,
         "Wetland": 0.06,
         "Fertile": 0.22,
