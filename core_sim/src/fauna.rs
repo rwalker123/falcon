@@ -1172,6 +1172,18 @@ pub(crate) fn sustainable_yield(biomass: f32, cap: f32, ecology: &EcologyConfig)
     net_biomass_delta(biomass.min(cap * MSY_BIOMASS_FRACTION), cap, ecology).max(0.0)
 }
 
+/// The **most biomass a group can add in one turn**, whatever its current state: the logistic curve
+/// evaluated at its peak (K/2, the MSY point — the same curve `regrow_biomass` applies, so no second
+/// copy of the model). A group above or below K/2 regrows *less*, and a sub-Allee one *loses*
+/// biomass, so this bounds every herd's per-turn growth from above.
+///
+/// `pub(crate)` for the hunt-trip forecast's O(1) "this party cannot possibly fill its pack"
+/// short-circuit (`systems::hunt_trip_provisions_bound`), which needs a **true upper bound** on the
+/// biomass a herd can hand a party over the forecast horizon without simulating it turn by turn.
+pub(crate) fn peak_regrowth(cap: f32, ecology: &EcologyConfig) -> f32 {
+    logistic_regrowth(cap * MSY_BIOMASS_FRACTION, cap, ecology.regrowth_rate)
+}
+
 /// **THE single source of the per-policy hunt take ceiling** (in *biomass*), shared by every hunter
 /// of a herd: the band's Hunt labor arm, the scout's opportunistic replenish, and the hunting
 /// expedition (all via `hunt_take` / `hunt_trip_forecast` in `systems.rs`). One word, one meaning:

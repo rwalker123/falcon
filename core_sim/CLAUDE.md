@@ -603,6 +603,32 @@ mission:
   - Past the horizon the answer is "**won't fill**", not a number: `viability_warn_turns` is 20, so a
     60+-turn trip is emphatically not viable and the precise value carries no actionable information
     — and the bound is what keeps the per-snapshot export cheap.
+  - **The "cannot fill" answer is O(1), not 60 simulated turns** (`hunt_trip_provisions_bound`). Most
+    of the exported estimate table is trips that never fill — small game under every policy, Sustain
+    on most herds — and simulating one to its horizon is spending the entire budget proving a "no" the
+    slowest possible way (measured: **85% of the table's cost**). So before simulating, the forecast
+    computes a **true upper bound** on the provisions the party could land over the whole horizon:
+    `min(horizon × party throughput, ecology)`, where *ecology* is `horizon × fauna::peak_regrowth`
+    for Sustain (a per-turn *flow* ceiling, capped by the logistic peak at K/2) and standing headroom
+    down to `hunt_expedition_floor` **plus** `horizon × peak_regrowth` for the depleting policies (a
+    *stock* draw-down — by conservation, everything the party can ever remove). Bound `< carry cap` →
+    "won't fill", returned after simulating only the **first** turn (the forecast still reports its
+    opening rate). Both terms over-estimate by construction, and the bound carries an explicit
+    rounding cushion (`CANNOT_FILL_BOUND_MARGIN` + the `Scalar` quantization slack — load-bearing:
+    the sim's `f32` conversion can land *exactly* on a cap an `f64` bound reads a hair below), so it
+    can never reject a trip that would have filled. Pinned by `systems::hunt_trip_bound_tests`, which
+    asserts the short-circuited forecast is **identical** to the unabridged simulation across every
+    policy × party size × herd state (wild + domesticated, sub-Allee → at-capacity), on the shipped
+    levers *and* off-nominal hot-reloadable ones. Exported table unchanged; measured **~2.3 ms →
+    ~0.8 ms per snapshot** at 122 herds (~19% → ~7% of a ~11.5 ms capture).
+    - *Not done, and why:* collapsing the 8 party sizes into one simulation where the trip is
+      throughput-bound (rate and cap both scale with workers → identical `turns_to_fill`) is
+      **measurably worthless on the shipped levers**: a hunter's 40 biomass/turn exceeds every game
+      herd's ceiling (Sustain's MSY is `0.0125 × K` — under 40 for any `K < 3200`, i.e. all non-
+      migratory herds), so the *herd* binds, not the party, and `turns_to_fill` genuinely varies with
+      party size. Only **4 of 488** (herd × policy) rows on a real map are constant across all 8
+      sizes — 0.005 ms of an 0.8 ms table. Revisit only if `hunt.per_worker_biomass_capacity` drops
+      far enough to make parties throughput-bound.
   - Shipped-lever reality check (4 hunters, full herd): Red Deer ~5 turns under Surplus/Market and ~54
     under Sustain; Rabbit Warren/Wild Fowl **never fill inside the horizon** under *any* policy (the
     true numbers are ~320 under Sustain, ~495 under Surplus/Market). Small game simply cannot provision

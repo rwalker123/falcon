@@ -41,6 +41,23 @@ const DEER_SURPLUS_TRIP_TURNS := 6
 const MAMMOTH_SURPLUS_TRIP_TURNS := 3
 # 0 = the forward simulation never fills the party within the forecast horizon ("won't fill").
 const NEVER_FILLS_TRIP_TURNS := 0
+# The SAME herd that can't fill a 4-worker party fills a 1-worker party's (4× smaller) pack in 9 turns.
+const SMALL_PARTY_TRIP_TURNS := 9
+const IMPOSSIBLE_SMALL_PARTY := 1
+# The REAL per-(policy, party-size) estimate ROWS the sim exports at the shipped levers, for a herd
+# sitting at carrying capacity — transcribed from a live snapshot, party sizes 1..8 left-to-right.
+# `0` = does not fill within the sim's forecast horizon. These are what the impossible-trip row scan
+# must reason over, and they are why generic "send a smaller party" advice was WRONG:
+#   Rabbit + Sustain — the whole row is zeros: NO party size ever fills. Stepping is pointless.
+#   Red Deer + Surplus — 1–5 workers fill in 5 turns, 6 in 23, 7 in 49, and 8 NEVER: cranking the party
+#     UP to "get more food" is what makes the trip impossible. The row is not monotonic, so only the row
+#     itself knows which size to recommend.
+const RABBIT_SUSTAIN_ROW := [0, 0, 0, 0, 0, 0, 0, 0]
+const RABBIT_SURPLUS_ROW := [23, 0, 0, 0, 0, 0, 0, 0]
+const DEER_SUSTAIN_ROW := [14, 27, 40, 54, 0, 0, 0, 0]
+const DEER_SURPLUS_ROW := [5, 5, 5, 5, 5, 23, 49, 0]
+# The party that trips the Red Deer + Surplus trap (impossible), and the largest one that still fills.
+const DEER_SURPLUS_TRAP_PARTY := 8
 # The three fog-of-war states MapView tags onto tile_info (mirrors Hud.VISIBILITY_*).
 const VIS_ACTIVE := "active"
 const VIS_DISCOVERED := "discovered"
@@ -478,6 +495,81 @@ func _ready() -> void:
 		_hud._build_herd_assign_controls(far_herd)
 		await _settle()
 		await _save(String(state["name"]))
+
+	# States 3p–3r — the IMPOSSIBLE trip: the one case that is BLOCKED rather than warned. A slow trip
+	# (3l's 54 turns) is a real tradeoff — told, then trusted, button enabled. A trip that provably
+	# CANNOT fill has no upside at all, so offering the button would be offering a mistake.
+	#   3p impossible    — Rabbit Warren, 4-worker party: the sim says turns_to_fill = 0 → the button is
+	#                      DISABLED and says why + the way out.
+	#   3q smaller party — the SAME herd, party stepped down to 1: a 1-worker pack is 4× smaller and the
+	#                      warren CAN fill it (9 turns) → the button comes back to life. This is the
+	#                      payoff for gating on the sim's per-(policy, party-size) verdict instead of a
+	#                      species/size_class/biomass proxy, which would have banned the herd outright.
+	#   3r eradicate     — the SAME herd on Eradicate: it never "fills" BY DESIGN (delivers_food = false),
+	#                      so it must stay ENABLED. Blocking on "won't fill" alone would ban denial.
+	var impossible_herd := _impossible_herd()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(impossible_herd)
+	_hud._hunt_assign_count = HUNT_FORECAST_PARTY
+	_hud._build_herd_assign_controls(impossible_herd)
+	await _settle()
+	await _save("herd_hunt_impossible")
+
+	_hud._hunt_assign_count = IMPOSSIBLE_SMALL_PARTY
+	_hud._build_herd_assign_controls(impossible_herd)
+	await _settle()
+	await _save("herd_hunt_impossible_smaller_party")
+
+	_hud._hunt_assign_count = HUNT_FORECAST_PARTY
+	_hud._hunt_assign_policy = "eradicate"
+	_hud._build_herd_assign_controls(impossible_herd)
+	await _settle()
+	await _save("herd_hunt_impossible_eradicate")
+	_hud._hunt_assign_policy = "sustain"
+
+	# States 3s–3t — the ROW SCAN. When a trip is impossible the client scans the CURRENT policy's row of
+	# the sim's estimate table and says something TRUE and SPECIFIC, instead of the old generic "send a
+	# smaller party" — which was a flat lie on a herd whose whole row is zeros, and points the WRONG WAY
+	# on Red Deer + Surplus. Both fixtures carry the REAL exported rows (see the *_ROW consts).
+	#   3s no size fills — Rabbit Warren + Sustain, party 4: EVERY size is 0, so the panel says "can't
+	#                      fill packs at any party size — hunt it locally instead" and offers no stepper
+	#                      advice at all (sending the player up and down the stepper is the failure mode).
+	#   3t slow only     — the SAME Rabbit on Surplus, party 4: a lone hunter DOES fill — in 23 turns, past
+	#                      the 20-turn warn line, so nothing on the row is viable. Name the best there is
+	#                      (the fastest), but word it "fills, but takes 23 turns": recommending it as a fix
+	#                      would have the UI cheerfully suggesting a trip it elsewhere calls too slow.
+	#   3u bigger trap   — Red Deer + Surplus, party 8: impossible — and the row's largest FILLING size is
+	#                      7 (49 turns), which this same UI would flag NOT VIABLE. So the recommendation is
+	#                      the largest VIABLE size: 5, in 5 turns (~7× the food per turn of the 7-party).
+	#                      Cranking the party UP is what broke the trip. Needs a band that can field 8.
+	var no_size_herd := _msy_rabbit_herd()
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(no_size_herd)
+	_hud._hunt_assign_count = HUNT_FORECAST_PARTY
+	_hud._build_herd_assign_controls(no_size_herd)
+	await _settle()
+	await _save("herd_hunt_impossible_no_size")
+
+	_hud._hunt_assign_policy = "surplus"
+	_hud._build_herd_assign_controls(no_size_herd)
+	await _settle()
+	await _save("herd_hunt_impossible_slow_only")
+	_hud._hunt_assign_policy = "sustain"
+
+	var trap_herd := _msy_deer_herd()
+	_hud._player_bands = [_hunt_preview_full_party_band()]
+	_hud._player_band = _hud._player_bands[0]
+	_hud._hunt_assign_key = ""
+	_hud._hunt_assign_band = -1
+	_hud.show_herd_selection(trap_herd)
+	_hud._hunt_assign_count = DEER_SURPLUS_TRAP_PARTY
+	_hud._hunt_assign_policy = "surplus"
+	_hud._build_herd_assign_controls(trap_herd)
+	await _settle()
+	await _save("herd_hunt_impossible_bigger_party")
+	_hud._hunt_assign_policy = "sustain"
 
 	# States 3n–3o — the same panel's LOCAL branch (herd within hunt_reach). A local hunt has NO carry
 	# cap, so turns-to-fill is meaningless; the live number that decides a standing assignment is its
@@ -987,6 +1079,73 @@ func _hunt_distance_herd() -> Dictionary:
 	var herd := _herd_fixture()
 	herd["tile_info"] = _plain_herd_tile_info()
 	return herd
+
+## A herd that CANNOT fill a full party's packs but CAN fill a small one's — the case the block exists
+## for, and why it keys off the sim's per-(policy, party-size) verdict rather than a species/biomass
+## proxy. A rabbit warren: 4 hunters carry 4×4 = 16 provisions of packs and the warren's trickle never
+## fills them within the horizon (`turns_to_fill = 0`), but 1 hunter's 4-provision pack fills in 9
+## turns. So stepping the party DOWN re-enables the button — the payoff for gating on the real answer.
+## Eradicate stays `delivers_food = false` at every size: a denial mission never "fills", by design, and
+## must stay enabled (blocking on "won't fill" alone would ban it outright).
+func _impossible_herd() -> Dictionary:
+	var herd := _assign_preview_herd("game_rabbit_02", "Rabbit Warren", "thriving", 0.05,
+		NEVER_FILLS_TRIP_TURNS, NEVER_FILLS_TRIP_TURNS)
+	herd["size_class"] = "small"
+	herd["hunt_trip_estimates"] = {
+		"sustain:1": {"turns_to_fill": SMALL_PARTY_TRIP_TURNS, "delivers_food": true},
+		"sustain:2": {"turns_to_fill": NEVER_FILLS_TRIP_TURNS, "delivers_food": true},
+		"sustain:3": {"turns_to_fill": NEVER_FILLS_TRIP_TURNS, "delivers_food": true},
+		"sustain:4": {"turns_to_fill": NEVER_FILLS_TRIP_TURNS, "delivers_food": true},
+		"surplus:4": {"turns_to_fill": NEVER_FILLS_TRIP_TURNS, "delivers_food": true},
+		"market:4": {"turns_to_fill": NEVER_FILLS_TRIP_TURNS, "delivers_food": true},
+		"eradicate:1": {"turns_to_fill": 0, "delivers_food": false},
+		"eradicate:4": {"turns_to_fill": 0, "delivers_food": false},
+	}
+	return herd
+
+## The full estimate TABLE the sim exports on a herd, built from its two real policy rows (index i = a
+## party of i+1). Market mirrors Surplus (both strip stock headroom), and Eradicate is a DENIAL row at
+## every size — `delivers_food = false`, never an ETA — so the impossible-trip row scan must skip it
+## entirely rather than reporting "no party size fills" for a mission that is not supposed to fill.
+func _msy_estimate_table(sustain_row: Array, surplus_row: Array) -> Dictionary:
+	var table := {}
+	for i in sustain_row.size():
+		table["sustain:%d" % (i + 1)] = {
+			"turns_to_fill": int(sustain_row[i]), "delivers_food": true,
+		}
+	for i in surplus_row.size():
+		var turns := int(surplus_row[i])
+		table["surplus:%d" % (i + 1)] = {"turns_to_fill": turns, "delivers_food": true}
+		table["market:%d" % (i + 1)] = {"turns_to_fill": turns, "delivers_food": true}
+		table["eradicate:%d" % (i + 1)] = {"turns_to_fill": 0, "delivers_food": false}
+	return table
+
+## A Rabbit Warren carrying its REAL exported table: on Sustain NO party size fills (the whole row is
+## zeros), so the panel must say exactly that and point the player at a local hunt — never at the
+## stepper. On Surplus a lone hunter fills in 23 turns, so the same herd's OTHER row does name a party.
+func _msy_rabbit_herd() -> Dictionary:
+	var herd := _assign_preview_herd("game_rabbit_02", "Rabbit Warren", "thriving", 0.05,
+		NEVER_FILLS_TRIP_TURNS, NEVER_FILLS_TRIP_TURNS)
+	herd["size_class"] = "small"
+	herd["hunt_trip_estimates"] = _msy_estimate_table(RABBIT_SUSTAIN_ROW, RABBIT_SURPLUS_ROW)
+	return herd
+
+## A Red Deer carrying its REAL exported table — the "bigger party breaks the trip" trap: a party of 8
+## on Surplus never fills, while 7 fills in 49 turns (and 5 in 5). The row scan must name 7, which no
+## "send a smaller party" heuristic and no one-step-down rule would ever land on.
+func _msy_deer_herd() -> Dictionary:
+	var herd := _assign_preview_herd("game_deer_07", "Red Deer", "thriving", 0.30,
+		DEER_SUSTAIN_TRIP_TURNS, DEER_SURPLUS_TRIP_TURNS)
+	herd["hunt_trip_estimates"] = _msy_estimate_table(DEER_SUSTAIN_ROW, DEER_SURPLUS_ROW)
+	return herd
+
+## The far band with enough idle workers to actually field the 8-strong party the Red Deer trap needs
+## (the row scan is capped at what the band could field, so a 6-idle band could never be told "7").
+func _hunt_preview_full_party_band() -> Dictionary:
+	var band := _hunt_preview_far_band()
+	band["working_age"] = 14
+	band["idle_workers"] = 12
+	return band
 
 ## A hex in a given SIGHT state, deliberately carrying a herd in ALL THREE — including the unseen
 ## ones, where MapView would never have put one (it fog-gates `_herds_on_tile` at source). Feeding the

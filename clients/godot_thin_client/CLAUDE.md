@@ -722,10 +722,46 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     click, so it's live, not a confirmation; missing levers/ceilings → no line, panel otherwise
     unchanged): the **expedition** branch renders the SAME turns-to-fill line as the targeting banner
     (`_hunt_trip_forecast` → `_hunt_forecast_line_bbcode`, shared — the two entry points can't quote
-    different numbers) and gives the **button itself** the warning when the trip is a trap
-    (`_style_send_hunt_button`: WARN-amber `"armed"` + `Send Anyway (≈54 turns)` / `Send Anyway — party
-    returns empty` / the denial `Send (delivers no food)`; never disabled, never a confirm dialog — the
-    player can always send); the **local** branch has no carry cap, so turns-to-fill is meaningless and
+    different numbers) and gives the **button itself** the verdict (`_style_send_hunt_button`).
+    **WARNED vs BLOCKED — the line that matters:** a **slow** trip (finite ETA past
+    `viability_warn_turns`) is a real tradeoff, so it is WARN-amber `"armed"` + `Send Anyway
+    (≈54 turns)` and stays **enabled** — the player is told, then trusted (no confirm dialog, ever). A
+    **denial** mission likewise stays enabled (`Send (delivers no food)`). But a trip that **provably
+    cannot fill** (`_hunt_trip_impossible`: `delivers_food && turns_to_fill == 0`) is not a tradeoff —
+    it's a mistake with no upside, so the button is **DISABLED** (`Can't fill this party's packs`). The
+    `delivers_food` carve-out is essential: Eradicate never fills BY DESIGN, so blocking on "won't fill"
+    alone would ban denial outright. Keyed off the sim's per-(policy, **party-size**) verdict — never a
+    species/`size_class`/biomass proxy.
+    **The refusal SCANS THE ROW, it does not guess** (`_hunt_impossible_reason` → `_recommended_party`,
+    a table SCAN of the current policy's row — still zero client arithmetic): generic "send a smaller party"
+    advice was measurably WRONG against the sim's real tables. Three branches, one helper, used verbatim by
+    **both** entry points (panel reason line + disabled-button tooltip, and the targeting-click command-feed
+    refusal), so they can never disagree:
+      • **a viable size exists** → name the **largest party that fills AND is viable**
+        (`turns <= expedition_viability_warn_turns`, the band's own exported lever — never hardcoded) and its
+        ETA: `SEND_HUNT_IMPOSSIBLE_ALTERNATIVE_REASON`, "Red Deer can't fill packs for a party of 8. A party
+        of 5 fills in 5 turns." Largest-that-*fills* is the WRONG objective — on that row it names 7 (49
+        turns), a trip this same UI flags "too slow to be worth sending", i.e. recommending an option we
+        elsewhere warn against; the party of 5 hauls ~7× the food per turn. Maximize haul **among trips worth
+        making**. It is NOT "one smaller" either: the row is **not monotonic** (Surplus fills at 1–5 in 5
+        turns, 6 in 23, 7 in 49, never at 8 — cranking the party UP is what breaks the trip), so only the row
+        knows. Capped at `_expedition_party_cap` so the named party is one the band could actually field.
+      • **some size fills but NONE is viable** (Rabbit + Surplus: only 1 → 23 turns, past the warn line) →
+        name the best there is — the **fastest**-filling size, since with nothing viable left time dominates
+        haul — but word it as the marginal trip it is, not as a fix: `SEND_HUNT_IMPOSSIBLE_SLOW_REASON`,
+        "Rabbit Warren can't fill packs for a party of 4. A party of 1 fills, but takes 23 turns."
+      • **no size fills** (whole row zeros — a Rabbit Warren on Sustain) → say exactly that and point
+        elsewhere, never at the stepper: `SEND_HUNT_IMPOSSIBLE_NO_SIZE_REASON`, "Rabbit Warren can't fill
+        packs at any party size — hunt it locally instead."
+    Eradicate rows (`delivers_food == false`) are skipped by the scan — a denial mission is not "impossible".
+    Because a **bigger** party can break a working trip, the expedition Party stepper also carries a
+    `SEND_HUNT_STEP_UP_IMPOSSIBLE_TOOLTIP` row tooltip when the very next size up is impossible (hover-only,
+    so no clutter on an otherwise-fine panel). `_hunt_estimate_key` is the one definition of the
+    `"<policy>:<workers>"` estimate key, shared by the single-cell lookup and the row scan.
+    The **band-first targeting flow gates identically**: `_try_dispatch_pending_send_hunt_expedition`
+    refuses to emit on an impossible herd and posts the SAME `_hunt_impossible_reason` sentence to the
+    command feed, staying in targeting — the click is never silently swallowed
+    (mirrors the existing "no huntable herd there" nudge). The **local** branch has no carry cap, so turns-to-fill is meaningless and
     it instead previews the **per-turn food yield** of the standing assignment
     (`_local_hunt_preview_bbcode`: `min(workers × hunt_per_worker_provisions, band_ceiling(policy)) ×
     output_multiplier` — the resident band applies its morale/discontent productivity modifier at
@@ -747,7 +783,17 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     EXPEDITION ceiling — the regression test for the band-vs-expedition ceiling mixup) /
     `herd_hunt_forecast_never_fills` / `herd_hunt_forecast_eradicate` (expedition branch: cyan line +
     primary button; amber "Send Anyway (≈54 turns)"; red collapsed-herd "Send Anyway — party returns
-    empty"; amber denial "Send (delivers no food)") and `herd_hunt_local_sustain` /
+    empty"; amber denial "Send (delivers no food)"), the BLOCKED set `herd_hunt_impossible` (disabled +
+    the row-scanned reason naming a party of 1 at ≈9 turns) / `herd_hunt_impossible_smaller_party` (SAME
+    herd, party 1 → button comes alive at ≈9 turns — the regression guard for gating on the real
+    per-party verdict) / `herd_hunt_impossible_no_size` (Rabbit Warren + Sustain on the REAL exported
+    row — every size is 0 → "can't fill packs at any party size", no stepper advice) /
+    `herd_hunt_impossible_slow_only` (SAME Rabbit on Surplus — only a lone hunter fills, past the warn line
+    → "A party of 1 fills, but takes 23 turns") / `herd_hunt_impossible_bigger_party` (Red Deer + Surplus,
+    party 8, REAL row → names the largest **viable** party: "A party of 5 fills in 5 turns", NOT the largest
+    that merely fills (7 → 49 turns, which the same UI calls too slow) — the guard that the recommendation
+    is scanned AND viability-filtered, not "one smaller") /
+    `herd_hunt_impossible_eradicate` (SAME herd, denial → still enabled), and `herd_hunt_local_sustain` /
     `herd_hunt_local_overdraw` (local branch: green `≈ +0.27 /turn · renewable` vs amber `⚠ ≈ +0.54
     /turn — overdraws the herd`).
   - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): the

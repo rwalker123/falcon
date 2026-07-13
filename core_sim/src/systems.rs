@@ -4155,17 +4155,30 @@ fn hunt_expedition_ceiling(
     carrying_capacity: f32,
     fauna: &FaunaConfig,
 ) -> f32 {
-    let floor = match policy {
+    match hunt_expedition_floor(policy, carrying_capacity, fauna) {
         // A flow, not a stock target — defer to the shared per-policy ceiling.
-        FollowPolicy::Sustain => {
-            return fauna::hunt_policy_ceiling(policy, biomass, carrying_capacity, fauna)
-        }
+        None => fauna::hunt_policy_ceiling(policy, biomass, carrying_capacity, fauna),
+        Some(floor) => (biomass - floor).max(0.0),
+    }
+}
+
+/// The **standing biomass an expedition's take leaves behind** under `policy` — the stock floor the
+/// depleting policies draw down toward. `None` for Sustain, whose ceiling is a *flow* (MSY) and
+/// therefore has no floor at all. Split out of [`hunt_expedition_ceiling`] so its one caller's twin —
+/// the O(1) fill bound ([`hunt_trip_provisions_bound`]) — reads the *same* floor the take obeys
+/// instead of re-deriving it.
+fn hunt_expedition_floor(
+    policy: FollowPolicy,
+    carrying_capacity: f32,
+    fauna: &FaunaConfig,
+) -> Option<f32> {
+    match policy {
+        FollowPolicy::Sustain => None,
         FollowPolicy::Surplus | FollowPolicy::Market => {
-            fauna.ecology.collapse_fraction * carrying_capacity
+            Some(fauna.ecology.collapse_fraction * carrying_capacity)
         }
-        FollowPolicy::Eradicate => 0.0,
-    };
-    (biomass - floor).max(0.0)
+        FollowPolicy::Eradicate => Some(0.0),
+    }
 }
 
 /// **THE** expedition's per-turn take, in *biomass*, before carry room: the party's throughput capped
@@ -4332,6 +4345,67 @@ pub fn hunt_per_worker_provisions(labor: &LaborConfig, fauna: &FaunaConfig) -> f
 /// the party makes its first take). Travel is not counted — see [`hunt_trip_forecast`].
 const FIRST_HUNTING_TURN: u32 = 1;
 
+/// Half a `Scalar` tick — the most `Scalar::from_f32`'s round-to-nearest can add to a single take
+/// (`fauna::hunt_provisions` quantizes each one). The simulated larder can therefore run up to this
+/// much *above* its own real-arithmetic value on every simulated turn, so an upper bound on the trip
+/// must carry `horizon ×` it or it would not be an upper bound on what the simulation counts.
+const SCALAR_ROUNDING_SLACK: f64 = 0.5 / Scalar::SCALE as f64;
+
+/// Relative cushion baked into [`hunt_trip_provisions_bound`], covering the float rounding between
+/// the bound's `f64` arithmetic and the simulation's `f32` arithmetic. It is **load-bearing, not
+/// paranoia**: the sim converts a take with the `f32` constant `provisions_per_biomass` (`0.02`
+/// stored as `0.019999999552965164`) and lands *exactly* on a carry cap that the same product in
+/// `f64` reads a hair *below* — an un-cushioned bound would then reject a trip that fills on turn 1
+/// (caught by `hunt_trip_bound_tests`). It costs nothing in rejection power: a trip the bound really
+/// rejects misses its cap by *whole provisions*, never by one part in ten thousand.
+const CANNOT_FILL_BOUND_MARGIN: f64 = 1e-4;
+
+/// An **O(1) upper bound** on the provisions a party of `workers` could land from `herd` under
+/// `policy` across the *entire* forecast horizon — the short-circuit that lets [`hunt_trip_forecast`]
+/// answer "this pack cannot possibly fill" without simulating the horizon turn by turn (the
+/// overwhelmingly common case: a rabbit warren cannot fill an 8-hunter pack under any policy, and
+/// proving that by simulation costs 60 wasted steps per party size).
+///
+/// It bounds the same two limits the simulated take obeys, and reuses the sim's own helpers rather
+/// than re-deriving the ecology:
+/// - **Throughput** — the party can never carry off more than `horizon × workers ×
+///   per_worker_biomass_capacity`, whatever the herd holds.
+/// - **Ecology** — for **Sustain** the ceiling is a per-turn *flow* ([`fauna::hunt_policy_ceiling`],
+///   regrowth at K/2 or below), so at most `horizon × peak_regrowth`. For the **depleting** policies
+///   it is *stock* headroom down to [`hunt_expedition_floor`], so by conservation of biomass
+///   everything the party can ever remove is that standing headroom plus every turn's regrowth —
+///   each at most [`fauna::peak_regrowth`], the logistic curve's maximum.
+///
+/// Both terms over-estimate by construction (a herd's real regrowth is below the peak, its real
+/// Sustain ceiling below the peak flow), and the result carries [`CANNOT_FILL_BOUND_MARGIN`] +
+/// `horizon ×` [`SCALAR_ROUNDING_SLACK`] on top for the arithmetic the *simulation* rounds its own
+/// way, so the bound is **never** an under-estimate. It may say "might fill" about a trip that will
+/// not (the simulation then settles it); it may never say "cannot fill" about a trip that would.
+/// Pinned exhaustively against the unabridged simulation — shipped levers *and* off-nominal ones —
+/// by `hunt_trip_bound_tests`.
+fn hunt_trip_provisions_bound(
+    workers: u32,
+    herd: &Herd,
+    policy: FollowPolicy,
+    fauna: &FaunaConfig,
+    labor: &LaborConfig,
+    expedition: &ExpeditionConfig,
+) -> f64 {
+    let horizon = expedition.hunt.forecast_horizon_turns as f64;
+    let peak_regrowth =
+        fauna::peak_regrowth(herd.carrying_capacity, &fauna.ecology).max(0.0) as f64;
+    let throughput =
+        horizon * workers as f64 * labor.hunt.per_worker_biomass_capacity.max(0.0) as f64;
+    let ecology = match hunt_expedition_floor(policy, herd.carrying_capacity, fauna) {
+        None => horizon * peak_regrowth,
+        Some(floor) => (herd.biomass - floor).max(0.0) as f64 + horizon * peak_regrowth,
+    };
+    let provisions = throughput.min(ecology)
+        * fauna.hunt.provisions_per_biomass.max(0.0) as f64
+        * EXPEDITION_OUTPUT_MULTIPLIER as f64;
+    provisions * (1.0 + CANNOT_FILL_BOUND_MARGIN) + horizon * SCALAR_ROUNDING_SLACK
+}
+
 /// Forecast a hunting trip by **simulating it** — running the party's take forward turn by turn
 /// against the herd's own ecology, on the sim's arithmetic, until the pack is full or
 /// `hunt.forecast_horizon_turns` is hit. It does **not** divide a carry cap by a rate.
@@ -4364,6 +4438,39 @@ pub fn hunt_trip_forecast(
     labor: &LaborConfig,
     expedition: &ExpeditionConfig,
 ) -> HuntTripForecast {
+    let full_horizon = expedition.hunt.forecast_horizon_turns;
+    let cap = scalar_from_f32(workers as f32 * expedition.hunt.per_worker_carry);
+    // O(1) rejection. Most (herd, policy, party size) triples in the exported estimate table cannot
+    // fill their pack *at all* — small game under every policy, Sustain on most herds — and proving
+    // that by simulation costs the whole horizon, every time. [`hunt_trip_provisions_bound`] is a
+    // true upper bound on the trip's total landing, so a bound below the carry cap settles the
+    // question in constant time. The trip is still simulated for its **first** turn: even a rejected
+    // trip reports its opening rate (`first_turn_provisions`), and that is one step, not sixty.
+    let cannot_fill = policy.delivers_food()
+        && cap > scalar_zero()
+        && hunt_trip_provisions_bound(workers, herd, policy, fauna, labor, expedition)
+            < cap.to_f32() as f64;
+    let horizon = if cannot_fill {
+        FIRST_HUNTING_TURN.min(full_horizon)
+    } else {
+        full_horizon
+    };
+    simulate_hunt_trip(workers, herd, policy, fauna, labor, expedition, horizon)
+}
+
+/// The forecast's forward simulation, over an explicit `horizon` — [`hunt_trip_forecast`]'s body,
+/// split out so the O(1) short-circuit can run it for a single turn *and* so the bound's safety can
+/// be pinned against the **unabridged** run (`hunt_trip_bound_tests`). Everything the doc comment on
+/// `hunt_trip_forecast` promises lives here.
+fn simulate_hunt_trip(
+    workers: u32,
+    herd: &Herd,
+    policy: FollowPolicy,
+    fauna: &FaunaConfig,
+    labor: &LaborConfig,
+    expedition: &ExpeditionConfig,
+    horizon: u32,
+) -> HuntTripForecast {
     let delivers_food = policy.delivers_food();
     let cap = scalar_from_f32(workers as f32 * expedition.hunt.per_worker_carry);
     // Denial carries nothing home, and an empty party has no pack to fill — either way a
@@ -4382,7 +4489,7 @@ pub fn hunt_trip_forecast(
     let mut larder = scalar_zero();
     let mut first_turn_provisions = 0.0_f32;
 
-    for turn in 1..=expedition.hunt.forecast_horizon_turns {
+    for turn in 1..=horizon {
         // Logistics: the herd's ecology moves first (regrowth, or the depensation decline), exactly
         // as `advance_herds` runs before the Population stage's take.
         fauna::regrow_biomass(&mut quarry, &fauna.ecology);
@@ -7078,5 +7185,157 @@ mod labor_yield_tests {
             hunt.actual,
             hunt.sustainable
         );
+    }
+}
+
+#[cfg(test)]
+mod hunt_trip_bound_tests {
+    //! The O(1) "this party cannot possibly fill its pack" short-circuit
+    //! ([`hunt_trip_provisions_bound`]) must be a **true upper bound**: it may decline to reject a
+    //! doomed trip (the simulation then settles it), but it may **never** reject a trip that would
+    //! actually have filled. These sweeps pin the short-circuited [`hunt_trip_forecast`] against the
+    //! unabridged [`simulate_hunt_trip`] over the whole regime space — every policy, every legal
+    //! party size, herds from nearly-extinct to at-capacity, wild and domesticated, across the
+    //! shipped levers *and* off-nominal ones (the configs are hot-reloadable, so the bound has to
+    //! hold for values we don't ship).
+
+    use super::*;
+    use crate::fauna_config::{FaunaConfig, SizeClass};
+    use crate::labor_config::LaborConfig;
+    use bevy::math::UVec2;
+
+    /// Carrying capacities spanning the shipped species table (rabbit 200 → mammoth 12 000) plus a
+    /// degenerate empty herd.
+    const CAPS: [f32; 6] = [0.0, 200.0, 600.0, 1_200.0, 9_000.0, 12_000.0];
+    /// Biomass as a fraction of capacity: straddles the Allee threshold (0.15), the MSY point (0.5)
+    /// and capacity, and includes a herd already under the extinction floor (0.02).
+    const BIOMASS_FRACTIONS: [f32; 10] = [0.0, 0.01, 0.02, 0.1, 0.149, 0.15, 0.16, 0.5, 0.9, 1.0];
+    /// Party sizes: 0 (no pack) through one past `max_party_size`.
+    const WORKER_SWEEP: std::ops::RangeInclusive<u32> = 0..=9;
+
+    fn herd(cap: f32, biomass: f32, domesticated: bool) -> Herd {
+        let mut herd = Herd::new(
+            "game_sweep".to_string(),
+            "Sweep Beast".to_string(),
+            SizeClass::Small,
+            vec![UVec2::new(1, 1)],
+            biomass,
+            cap,
+        );
+        if domesticated {
+            herd.domestication_progress = 1.0;
+        }
+        herd
+    }
+
+    /// Every (config, herd, policy, party size) the sweeps visit, checked two ways: the forecast the
+    /// sim actually ships must be **identical** to the unabridged full-horizon simulation, and the
+    /// bound must never have rejected a trip that fills. Returns how many trips the bound rejected,
+    /// so a caller can assert the sweep is not vacuous.
+    fn assert_short_circuit_matches_full_simulation(
+        fauna: &FaunaConfig,
+        labor: &LaborConfig,
+        expedition: &ExpeditionConfig,
+    ) -> u32 {
+        let mut rejected = 0;
+        for domesticated in [false, true] {
+            for cap in CAPS {
+                for fraction in BIOMASS_FRACTIONS {
+                    let herd = herd(cap, cap * fraction, domesticated);
+                    for &policy in FollowPolicy::ALL.iter() {
+                        for workers in WORKER_SWEEP {
+                            let bounded = hunt_trip_forecast(
+                                workers, &herd, policy, fauna, labor, expedition,
+                            );
+                            let full = simulate_hunt_trip(
+                                workers,
+                                &herd,
+                                policy,
+                                fauna,
+                                labor,
+                                expedition,
+                                expedition.hunt.forecast_horizon_turns,
+                            );
+                            let case = format!(
+                                "cap={cap} biomass={} domesticated={domesticated} \
+                                 policy={} workers={workers}",
+                                cap * fraction,
+                                policy.as_str()
+                            );
+                            assert_eq!(
+                                bounded.turns_to_fill, full.turns_to_fill,
+                                "short-circuit changed turns_to_fill ({case})"
+                            );
+                            assert_eq!(
+                                bounded.delivers_food, full.delivers_food,
+                                "short-circuit changed delivers_food ({case})"
+                            );
+                            assert_eq!(
+                                bounded.first_turn_provisions, full.first_turn_provisions,
+                                "short-circuit changed first_turn_provisions ({case})"
+                            );
+
+                            let cap_provisions =
+                                scalar_from_f32(workers as f32 * expedition.hunt.per_worker_carry);
+                            let bound = hunt_trip_provisions_bound(
+                                workers, &herd, policy, fauna, labor, expedition,
+                            );
+                            if policy.delivers_food()
+                                && cap_provisions > scalar_zero()
+                                && bound < cap_provisions.to_f32() as f64
+                            {
+                                rejected += 1;
+                                assert!(
+                                    full.turns_to_fill.is_none(),
+                                    "bound rejected a trip that actually fills in {:?} turns ({case})",
+                                    full.turns_to_fill
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        rejected
+    }
+
+    #[test]
+    fn bound_never_rejects_a_trip_that_actually_fills_on_shipped_levers() {
+        let fauna = FaunaConfig::builtin();
+        let labor = LaborConfig::builtin();
+        let expedition = ExpeditionConfig::builtin();
+        let rejected = assert_short_circuit_matches_full_simulation(&fauna, &labor, &expedition);
+        // The sweep would be vacuous if the bound never fired — the whole point is that it rejects
+        // the bulk of the exported table (small game under every policy, Sustain on most herds).
+        assert!(
+            rejected > 100,
+            "the bound short-circuited only {rejected} trips — the sweep proves nothing"
+        );
+    }
+
+    #[test]
+    fn bound_never_rejects_a_trip_that_actually_fills_on_off_nominal_levers() {
+        let base_fauna = FaunaConfig::builtin();
+        let base_labor = LaborConfig::builtin();
+        let base_expedition = ExpeditionConfig::builtin();
+        // Levers the configs expose and a player/designer could hot-reload: a far more productive
+        // ecology, a herd that can be stripped to nothing (no collapse floor), a punishing pack,
+        // and a hunter throughput at both extremes. Each pushes a different term of the bound.
+        for regrowth_rate in [0.0_f32, 0.05, 0.6] {
+            for collapse_fraction in [0.0_f32, 0.15, 0.5] {
+                for per_worker_carry in [0.5_f32, 4.0, 40.0] {
+                    for per_worker_biomass_capacity in [0.0_f32, 40.0, 4_000.0] {
+                        let mut fauna = (*base_fauna).clone();
+                        fauna.ecology.regrowth_rate = regrowth_rate;
+                        fauna.ecology.collapse_fraction = collapse_fraction;
+                        let mut labor = (*base_labor).clone();
+                        labor.hunt.per_worker_biomass_capacity = per_worker_biomass_capacity;
+                        let mut expedition = (*base_expedition).clone();
+                        expedition.hunt.per_worker_carry = per_worker_carry;
+                        assert_short_circuit_matches_full_simulation(&fauna, &labor, &expedition);
+                    }
+                }
+            }
+        }
     }
 }
