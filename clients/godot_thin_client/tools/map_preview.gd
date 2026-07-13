@@ -133,6 +133,15 @@ const RIVER_LAKE_HEXES := [[0, 0], [1, 0], [0, 1]]
 const RIVER_SEAM_CROP := Rect2(0.22, 0.10, 0.28, 0.50)    # mid edge-chain: the Minor→Major class change + turns
 const RIVER_NAV_CROP := Rect2(0.52, 0.36, 0.36, 0.64)     # the trunk: several hexes, so hex-to-hex CONTINUITY shows
 const RIVER_MOUTH_CROP := Rect2(0.76, 0.42, 0.20, 0.45)   # the mouth: channel → open sea + the delta lobe
+# The HEAD of the trunk, close: the hex where the edge rivers hand over. It flanks three river edges (two
+# Major + the Minor tributary) and used to fill with water; the two INFLOW SPURS must now arrive at their
+# own class widths, each at a hex VERTEX, and merge into the channel with no notch. Judged ZOOMED IN and
+# hex-anchored (State R's idiom), not as a fraction of the fitted frame: at fit, a hex is ~60 px across and
+# a Minor spur a couple of px — far too coarse to see whether the join has a notch.
+# Kept modest: the crop is a REGION of the framebuffer, so a crop taller than the (short, wide) window gets
+# clamped and the head slides off-centre. 3 steps puts the head hex at a few hundred px and still fits.
+const RIVER_JOIN_ZOOM_STEPS := 3   # zoom-in steps before the close-up
+const RIVER_JOIN_CROP_RADII := 1.6 # crop half-size = this × hex_radius → the head hex plus its joins
 # The map is COVER-fit and the fit is the zoom FLOOR (MapView.MIN_ZOOM_FACTOR = 1.0 — you cannot zoom out
 # past it), so on a window wider than the grid's aspect the lowest rows are simply off-screen. The river,
 # its trunk and the lake all live in those lower rows, so the state PANS up (the swim state's idiom) to
@@ -140,6 +149,22 @@ const RIVER_MOUTH_CROP := Rect2(0.76, 0.42, 0.20, 0.45)   # the mouth: channel �
 const RIVER_PAN_ROWS := -4.5
 const RIVER_CLASS_MINOR := 1     # 2-bit edge classes (must match core_sim RiverClass)
 const RIVER_CLASS_MAJOR := 2
+const RIVER_CLASS_BITS := 2      # bits per slot in BOTH masks (river_edges by side, river_inflow by corner)
+const RIVER_CLASS_MASK := 0b11
+const RIVER_CORNERS := 6
+# Corner `i` is the vertex at angle 60*i + 30 with +y DOWN (MapView._hex_points order, and the wire
+# contract river_inflow is packed against): 0 lower-right, 1 bottom, 2 lower-left, 3 upper-left, 4 top,
+# 5 upper-right. Side `dir` spans corners {dir - 1, dir}.
+const RIVER_CORNER_ANGLE_STEP_DEG := 60.0
+const RIVER_CORNER_ANGLE_OFFSET_DEG := 30.0
+# The MINOR tributary (below) hands over at the trunk head's BOTTOM vertex — the far end of the head's SW
+# side, which is the last edge of that chain.
+const RIVER_TRIB_TERMINUS_CORNER := 1
+# The Minor tributary's 3 edges, walked OUT from the trunk head as (hex-from-head via these steps, side):
+# (head, SW), (head's W neighbour, SE), (head's SW neighbour, W). Each consecutive pair shares a corner
+# (three hexes meet at every corner), so the chain is contiguous by construction on either row parity.
+const RIVER_DIR_SW := 2
+const RIVER_DIR_W := 3
 const RIVER_MAJOR_FROM_FRAC := 0.45  # fraction along the edge chain where Minor becomes Major
 # The river's mean row, as a fraction of grid height. Kept in the UPPER half deliberately: the map is
 # COVER-fit and the fit is the zoom floor, so on a window wider than the grid's aspect the lower rows are
@@ -571,6 +596,24 @@ func _ready() -> void:
 	# The MOUTH: the channel must reach the sea and the delta lobe — no dead-end, and crucially NO surf line
 	# drawn ACROSS the mouth (a river meeting the sea is not a coast; the shore pass skips navigable edges).
 	await _save_crop_rect("map_rivers_mouth", RIVER_MOUTH_CROP)
+	# The HAND-OVER, zoomed: the trunk HEAD is the hex where the edge rivers hand over. It flanks THREE
+	# river edges (two Major + the Minor tributary) — the shape that used to fill the hex with water — and
+	# is fed by TWO inflow spurs on different corners. It must read as a channel with two tributaries
+	# entering at VERTICES, each at its own class width, merging with no notch. Zoom in and re-center on the
+	# head (State R's hex-anchored crop), because a fitted hex is far too few pixels to judge that on.
+	var nav_start: int = GRID_W - RIVER_OCEAN_COLS - RIVER_NAV_HEXES
+	var head := Vector2i(nav_start - 1, _river_bank_row(nav_start - 1, GRID_W, GRID_H, nav_start))
+	for _i in range(RIVER_JOIN_ZOOM_STEPS):
+		_map.zoom_step(1)
+	await _settle()
+	# Re-center: the zoom is about the viewport center, so the head drifts off-frame without this. Recompute
+	# its screen center AFTER the pan settles — MapView clamps pan_offset, so the request is not the result.
+	_map.pan_offset += get_viewport().get_visible_rect().size * 0.5 \
+		- _map._hex_center(head.x, head.y, _map.last_hex_radius, _map.last_origin)
+	_map.queue_redraw()
+	await _settle()
+	var head_center: Vector2 = _map._hex_center(head.x, head.y, _map.last_hex_radius, _map.last_origin)
+	await _save_crop_px("map_rivers_join", head_center, RIVER_JOIN_CROP_RADII * _map.last_hex_radius)
 	# Far-zoom LOD: the same field on a large grid so hexes go tiny (radius ≪ EDGE_BLEND_MIN_RADIUS, so
 	# the flat↔flat blend is off). The DECOUPLED river LOD (river_min_radius) must keep the river drawn,
 	# smooth (mipmapped river array) and not shimmering.
@@ -617,8 +660,12 @@ func _save_crop(name: String, fx0: float, fy0: float, fx1: float, fy1: float) ->
 func _save_crop_rect(name: String, frac: Rect2) -> void:
 	await _save_crop(name, frac.position.x, frac.position.y, frac.end.x, frac.end.y)
 
-## Save a square crop of `2*half` px centered on `center` (viewport pixels), clamped to the image
-## bounds — used by State R to lock onto the SAME hex across fit/pan/zoom so a swim shows as a shift.
+## Save a square crop of `2*half` px centered on `center` (VIEWPORT pixels — e.g. a hex center from
+## MapView._hex_center), clamped to the image bounds. Used by State R to lock onto the SAME hex across
+## fit/pan/zoom so a swim shows as a shift, and by the rivers state for the trunk-head close-up.
+## The captured framebuffer can be LARGER than the viewport's logical rect (HiDPI / window content scale —
+## e.g. a 3921-px-wide viewport captured as a 5120-px image), so the incoming viewport-space center and
+## half-size are rescaled into IMAGE pixels first; without that the crop lands a hex or two off target.
 func _save_crop_px(name: String, center: Vector2, half: float) -> void:
 	var image := get_viewport().get_texture().get_image()
 	if image == null:
@@ -626,10 +673,14 @@ func _save_crop_px(name: String, center: Vector2, half: float) -> void:
 		return
 	var w := image.get_width()
 	var h := image.get_height()
-	var x0 := clampi(int(center.x - half), 0, w - 1)
-	var y0 := clampi(int(center.y - half), 0, h - 1)
-	var x1 := clampi(int(center.x + half), 0, w)
-	var y1 := clampi(int(center.y + half), 0, h)
+	var px_scale := float(w) / maxf(get_viewport().get_visible_rect().size.x, 1.0)  # viewport px → image px
+	var cx := center.x * px_scale
+	var cy := center.y * px_scale
+	var half_px := half * px_scale
+	var x0 := clampi(int(cx - half_px), 0, w - 1)
+	var y0 := clampi(int(cy - half_px), 0, h - 1)
+	var x1 := clampi(int(cx + half_px), 0, w)
+	var y1 := clampi(int(cy + half_px), 0, h)
 	var rect := Rect2i(x0, y0, maxi(x1 - x0, 1), maxi(y1 - y0, 1))
 	var crop := image.get_region(rect)
 	var err := crop.save_png("%s/%s.png" % [OUT_DIR, name])
@@ -1030,6 +1081,37 @@ func _river_set_edge(masks: Dictionary, x: int, y: int, dir: int, nb: Vector2i, 
 	var back: int = (dir + 3) % 6
 	masks[nb] = (int(masks.get(nb, 0)) & ~(3 << (2 * back))) | (cls << (2 * back))
 
+## The CORNER an edge chain running along this hex's sides terminates on, plus that chain's class — the
+## fixture's stand-in for the sim's `river_inflow` (which the real snapshot ships per tile). Side `dir`
+## spans corners {dir - 1, dir}, so within one hex's carried edges a corner has DEGREE 2 where the chain
+## turns and DEGREE 1 at each of its two ends. This river flows west→east, so the downstream end — the
+## vertex the water leaves the edge model at and enters the trunk through — is the degree-1 corner
+## furthest EAST. Returns Vector2i(corner, class), or (-1, 0) when the hex carries no edge chain.
+func _river_inflow_corner(mask: int) -> Vector2i:
+	var degree := PackedInt32Array()
+	degree.resize(RIVER_CORNERS)
+	var corner_class := PackedInt32Array()
+	corner_class.resize(RIVER_CORNERS)
+	for dir in range(RIVER_CORNERS):
+		var cls: int = (mask >> (RIVER_CLASS_BITS * dir)) & RIVER_CLASS_MASK
+		if cls == 0:
+			continue
+		for corner: int in [(dir + RIVER_CORNERS - 1) % RIVER_CORNERS, dir]:
+			degree[corner] += 1
+			corner_class[corner] = maxi(corner_class[corner], cls)  # the wider class wins (as in the sim)
+	var best := -1
+	var best_x := -INF
+	for corner in range(RIVER_CORNERS):
+		if degree[corner] != 1:
+			continue
+		var cx: float = cos(deg_to_rad(RIVER_CORNER_ANGLE_STEP_DEG * corner + RIVER_CORNER_ANGLE_OFFSET_DEG))
+		if cx > best_x:
+			best_x = cx
+			best = corner
+	if best < 0:
+		return Vector2i(-1, 0)
+	return Vector2i(best, corner_class[best])
+
 ## Terrain + per-tile river-edge masks for State "rivers": a Minor→Major edge river wandering west→east
 ## with corner turns, joining a NavigableRiver hex chain that runs out to the eastern sea.
 func _snapshot_rivers(gw: int, gh: int) -> Dictionary:
@@ -1056,11 +1138,35 @@ func _snapshot_rivers(gw: int, gh: int) -> Dictionary:
 					RIVER_CLASS_MAJOR if x >= major_from else RIVER_CLASS_MINOR)
 
 	# The navigable chain starts at the SOUTH-bank hex the last edge flanks, so the edge river and the hex
-	# river join with no gap (exactly how the sim hands off at the navigable discharge threshold) — that hex
-	# carries Major bits in its own mask, which is what arms its channel back toward the incoming edge river.
-	# From there it WALKS to the sea, turning corners on the way.
+	# river join with no gap (exactly how the sim hands off at the navigable discharge threshold). That HEAD
+	# hex flanks the incoming Major chain along two of its sides — and an edge river ends at a VERTEX, not
+	# mid-edge, so what the trunk needs to know is WHICH CORNER the chain terminates on. That is the sim's
+	# river_inflow (nonzero on the head only); here it is reconstructed geometrically. From the head the
+	# chain WALKS to the sea, turning corners on the way.
 	var mouth_col: int = gw - RIVER_OCEAN_COLS - 1   # last land column; everything beyond is open sea
-	var p := Vector2i(nav_start - 1, _river_bank_row(nav_start - 1, gw, gh, nav_start))
+	var head := Vector2i(nav_start - 1, _river_bank_row(nav_start - 1, gw, gh, nav_start))
+	var inflow: Dictionary = {}
+	var trunk_inflow := _river_inflow_corner(int(masks.get(head, 0)))
+	if trunk_inflow.x >= 0:
+		inflow[head] = int(trunk_inflow.y) << (RIVER_CLASS_BITS * int(trunk_inflow.x))
+
+	# A SECOND tributary — MINOR — joining the same head at a DIFFERENT corner (its bottom vertex). Three
+	# jobs: it puts a THIRD river edge on the head (the playtest case that used to blob: several river edges
+	# on one navigable hex → several fat centre→midpoint arms → a hex full of water); it proves a tributary
+	# arrives at ITS OWN width, not the trunk's, since the Major and Minor spurs land side by side; and it
+	# proves the inflow mask is read for ALL SIX corners, not just one.
+	var head_w := _river_neighbor(head.x, head.y, RIVER_DIR_W, gw, gh)
+	var head_sw := _river_neighbor(head.x, head.y, RIVER_DIR_SW, gw, gh)
+	if head_w.x >= 0 and head_sw.x >= 0:
+		_river_set_edge(masks, head.x, head.y, RIVER_DIR_SW, head_sw, RIVER_CLASS_MINOR)
+		_river_set_edge(masks, head_w.x, head_w.y, RIVER_DIR_SE, head_sw, RIVER_CLASS_MINOR)
+		var trib_up := _river_neighbor(head_sw.x, head_sw.y, RIVER_DIR_W, gw, gh)
+		if trib_up.x >= 0:
+			_river_set_edge(masks, head_sw.x, head_sw.y, RIVER_DIR_W, trib_up, RIVER_CLASS_MINOR)
+		inflow[head] = int(inflow.get(head, 0)) \
+			| (RIVER_CLASS_MINOR << (RIVER_CLASS_BITS * RIVER_TRIB_TERMINUS_CORNER))
+
+	var p := head
 	terrain[p.y * gw + p.x] = RIVER_NAVIGABLE_ID
 	var step := 0
 	while p.x < mouth_col and step < RIVER_NAV_MAX_STEPS:
@@ -1087,6 +1193,8 @@ func _snapshot_rivers(gw: int, gh: int) -> Dictionary:
 		var ly: int = clampi(lake_row + int(cell[1]), 0, gh - 1)
 		terrain[ly * gw + lx] = RIVER_LAKE_ID
 
+	# One tile dict per hex carrying either mask — shaped exactly like the native decoder's tile_to_dict
+	# (river_edges by SIDE, river_inflow by CORNER; the head carries both).
 	var tiles: Array = []
 	for key: Vector2i in masks:
 		tiles.append({
@@ -1094,6 +1202,17 @@ func _snapshot_rivers(gw: int, gh: int) -> Dictionary:
 			"x": key.x,
 			"y": key.y,
 			"river_edges": int(masks[key]),
+			"river_inflow": int(inflow.get(key, 0)),
+		})
+	for key: Vector2i in inflow:
+		if masks.has(key):
+			continue  # already emitted above with both masks
+		tiles.append({
+			"entity": key.y * gw + key.x,
+			"x": key.x,
+			"y": key.y,
+			"river_edges": 0,
+			"river_inflow": int(inflow[key]),
 		})
 	return {
 		"grid": {"width": gw, "height": gh, "wrap_horizontal": false},

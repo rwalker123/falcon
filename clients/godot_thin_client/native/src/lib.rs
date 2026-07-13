@@ -4047,6 +4047,15 @@ fn tile_to_dict(tile: fb::TileState<'_>) -> VarDictionary {
     // MapView packs this into the shader's RG8 river-map splatmap (see _rebuild_terrain_shader_maps).
     // Navigable rivers are NOT here — they are an ordinary water terrain (TerrainType::NavigableRiver).
     let _ = dict.insert("river_edges", tile.riverEdges() as i64);
+    // Where an edge river HANDS OVER to a navigable trunk. Same 12-bit packing, but keyed by hex CORNER
+    // (class = (river_inflow >> (2*corner)) & 0b11), corner i being the vertex at angle 60*i + 30 with +y
+    // down — exactly MapView._hex_points order. An edge river runs ALONG a side and so ends at a VERTEX,
+    // never mid-edge; river_edges (which records sides) cannot say which vertex, so the sim states it here.
+    // Nonzero ONLY on the first hex of a navigable chain (0 everywhere else, and 0 for a river that was
+    // navigable from its first step — no tributary). MapView packs it into the river-map splatmap's B/A
+    // channels, and the shader draws the channel's INFLOW SPUR from the hex centre out to that vertex, at
+    // the tributary's own Minor/Major width.
+    let _ = dict.insert("river_inflow", tile.riverInflow() as i64);
     let _ = dict.insert("culture_layer", tile.cultureLayer() as i64);
     let _ = dict.insert("mountain_kind", i64::from(tile.mountainKind().0));
     let _ = dict.insert("mountain_relief", tile.mountainRelief());
