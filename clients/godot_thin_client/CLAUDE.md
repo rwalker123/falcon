@@ -649,8 +649,14 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     food-income **green**; a source that overdraws (`actual_yield > sustainable_yield + ε`, reusing the
     panel's overdraw test) reads **WARN amber + a `⚠`** — an over-hunted herd, or a non-Sustain forage
     patch now that the forage policy axis can decline one (a Sustain forage gathers at regrowth, so it
-    stays green). The
-    label font scales with the hex radius (clamped) and the whole annotation is **LOD-suppressed below
+    stays green). The label sits on a **dark rounded banner/pill plate** (`_draw_pill_plate`, the shared
+    pill chrome extracted out of `_draw_count_pill` — the `×N`/`+N` badges draw the same primitive):
+    bare drop-shadowed text washed out on the light tan biomes (prairie/desert), so the plate is sized to
+    the MEASURED text+glyph run plus symmetric padding (`YIELD_LABEL_PLATE_PAD_FACTOR`, a fraction of the
+    font size) and centered on the label's existing anchor, near-black + slightly translucent
+    (`YIELD_LABEL_PLATE_BG`) so the terrain still reads through. The
+    label font scales with the hex radius (clamped) and the whole annotation (plate included) is
+    **LOD-suppressed below
     `ICON_MIN_DETAIL_RADIUS`** (like the secondary markers) so far zoom stays clean. Scout/Warrior
     produce no food → no label. **Scouting draws no map highlight** — staffed scouts extend the band's
     real sight range (visible directly in the fog as a wider Active radius); the old faint-blue scouted

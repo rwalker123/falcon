@@ -130,6 +130,7 @@ const MARKER_BADGE_BG := Color(0.05, 0.06, 0.08, 0.9)
 const MARKER_BADGE_FG := Color(0.95, 0.97, 1.0, 1.0)
 const MARKER_BADGE_FONT_SIZE := 11
 const MARKER_BADGE_HEIGHT_FACTOR := 1.15     # pill height as a factor of glyph height
+const MARKER_BADGE_PAD_X := 0.0              # a count badge is short: its round end caps ARE its padding
 
 # Selected / hovered hex outline (replaces the old brown-circle selection feel).
 const SELECTED_HEX_OUTLINE_COLOR := Color(1.0, 1.0, 1.0, 0.9)
@@ -275,7 +276,8 @@ const HUNT_WORKED_LINK_COLOR := Color(0.92, 0.34, 0.30, 0.60)
 const HUNT_WORKED_LINK_WIDTH := 2.5
 # On-tile per-source yield annotations on the selected band's worked forage tiles / hunted herds:
 # the assignment's `actual_yield` (food/turn) as a small drop-shadow label above the tile center
-# (reusing `_draw_marker_glyph`), sign-formatted to 2 decimals, food-income green — with a WARN-amber
+# (reusing `_draw_marker_glyph` over the shared rounded-pill plate — see `_draw_pill_plate`),
+# sign-formatted to 2 decimals, food-income green — with a WARN-amber
 # `⚠` overhunting flag when `actual > sustainable + ε` (mirrors the allocation panel; forage is
 # renewable so never trips). ε/decimals mirror Hud's `OVERHUNT_EPSILON`/`YIELD_DECIMALS` (separate
 # script, so named here rather than shared). LOD-suppressed below ICON_MIN_DETAIL_RADIUS.
@@ -287,6 +289,12 @@ const YIELD_LABEL_OFFSET_FACTOR := 0.78   # above the tile center, as a fraction
 const YIELD_LABEL_DECIMALS := 2
 const YIELD_OVERHUNT_EPSILON := 0.001
 const YIELD_OVERHUNT_FLAG := "⚠"
+# Backing plate: bare drop-shadowed text washed out against light terrain (tan prairie/desert), so the
+# label sits on the SAME rounded dark pill chrome as the `×N`/`+N` count badges (`_draw_pill_plate`).
+# Slightly translucent so the terrain still reads through. Padding is symmetric about the label's
+# existing anchor (so the text does not shift) and scales with the font, like the label itself.
+const YIELD_LABEL_PLATE_BG := Color(0.04, 0.05, 0.07, 0.82)
+const YIELD_LABEL_PLATE_PAD_FACTOR := 0.45   # horizontal padding per side, as a fraction of the font size
 # Optimistic PENDING actions (Early-Game Labor slice 3b UX): a distinct amber DASHED style
 # (clearly apart from the solid confirmed green/cyan/blue/red) marks a just-issued assign/move
 # that the snapshot hasn't confirmed yet. Ties to the amber "· pending" rows in the HUD panel.
@@ -2145,6 +2153,12 @@ func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radiu
 		text += " " + policy_icon
 	var font_size := clampi(int(radius * YIELD_LABEL_SIZE_FACTOR), YIELD_LABEL_MIN_FONT, YIELD_LABEL_MAX_FONT)
 	var label_center := tile_center + Vector2(0.0, -radius * YIELD_LABEL_OFFSET_FACTOR)
+	# Dark rounded plate behind the text so the label pops on ANY terrain (bare text washed out on the
+	# light tan biomes). Same pill chrome as the count badges, sized to the MEASURED text+glyph run.
+	var font: Font = ThemeDB.fallback_font
+	if font != null:
+		var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+		_draw_pill_plate(label_center, text_size, font_size * YIELD_LABEL_PLATE_PAD_FACTOR, YIELD_LABEL_PLATE_BG)
 	_draw_marker_glyph(label_center, text, font_size, color)
 
 ## Signed, fixed-decimal food-rate string for the on-tile yield labels ("+0.48" / "-0.30"). Mirrors
@@ -2153,18 +2167,26 @@ func _format_yield_signed(value: float) -> String:
 	var magnitude := String.num(absf(value), YIELD_LABEL_DECIMALS).pad_decimals(YIELD_LABEL_DECIMALS)
 	return ("+" if value >= 0.0 else "-") + magnitude
 
+## The shared rounded-pill PLATE: a dark rounded-rect (draw_rect body + two end-cap circles) centered
+## on `center`, sized to an already-measured `text_size` plus `pad_x` of symmetric horizontal padding.
+## Single source of truth for the pill look — used by the `×N`/`+N` count badges (`_draw_count_pill`,
+## no extra padding: the end caps are its padding) and by the on-tile yield labels
+## (`_draw_yield_label`, padded so the plate hugs the text+glyph run).
+func _draw_pill_plate(center: Vector2, text_size: Vector2, pad_x: float, bg: Color) -> void:
+	var half_w: float = text_size.x * 0.5 + pad_x
+	var half_h: float = text_size.y * 0.5 * MARKER_BADGE_HEIGHT_FACTOR
+	draw_rect(Rect2(center.x - half_w, center.y - half_h, half_w * 2.0, half_h * 2.0), bg)
+	draw_circle(Vector2(center.x - half_w, center.y), half_h, bg)
+	draw_circle(Vector2(center.x + half_w, center.y), half_h, bg)
+
 ## A small dark rounded pill with centered text — shared by the primary `×N` count
-## badge and the secondary `+N` overflow chip (draw_rect body + two end-cap circles).
+## badge and the secondary `+N` overflow chip.
 func _draw_count_pill(center: Vector2, text: String) -> void:
 	var font: Font = ThemeDB.fallback_font
 	if font == null or text == "":
 		return
 	var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, MARKER_BADGE_FONT_SIZE)
-	var half_w: float = text_size.x * 0.5
-	var half_h: float = text_size.y * 0.5 * MARKER_BADGE_HEIGHT_FACTOR
-	draw_rect(Rect2(center.x - half_w, center.y - half_h, text_size.x, half_h * 2.0), MARKER_BADGE_BG)
-	draw_circle(Vector2(center.x - half_w, center.y), half_h, MARKER_BADGE_BG)
-	draw_circle(Vector2(center.x + half_w, center.y), half_h, MARKER_BADGE_BG)
+	_draw_pill_plate(center, text_size, MARKER_BADGE_PAD_X, MARKER_BADGE_BG)
 	draw_string(font, Vector2(center.x - text_size.x * 0.5, center.y + text_size.y * 0.32), text, HORIZONTAL_ALIGNMENT_LEFT, -1, MARKER_BADGE_FONT_SIZE, MARKER_BADGE_FG)
 
 ## Per-tile `+N` overflow chip pass (secondaries beyond SECONDARY_VISIBLE_CAP).

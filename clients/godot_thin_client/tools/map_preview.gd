@@ -38,6 +38,16 @@ const STACK_STAGE_CYCLE := [STAGE_NOMADIC, STAGE_CAMP, STAGE_VILLAGE, STAGE_NONE
 # Far-zoom LOD grid: large enough that fitted hexes fall under ICON_MIN_DETAIL_RADIUS.
 const FAR_GRID_W := 72
 const FAR_GRID_H := 52
+# Yield-label LOD guard grid. `_fit_map_to_view` IS the minimum zoom (MIN_ZOOM_FACTOR == 1.0), so the
+# only way to push the fitted radius under the LOD gate is a bigger grid — and at this harness's
+# 1000×800 window FAR_GRID (72×52) fits at radius ≈19.6, i.e. ABOVE the gate, so the state had
+# silently stopped guarding anything. This grid fits at radius ≈13 (< LOD_MIN_RADIUS), so the
+# yield-label suppression is genuinely exercised. `_ready` asserts the radius, so a future window/grid
+# change can't silently un-guard it again.
+const YIELD_FAR_GRID_W := 110
+const YIELD_FAR_GRID_H := 80
+# Mirrors MapView.ICON_MIN_DETAIL_RADIUS (the LOD threshold under which the annotation is suppressed).
+const LOD_MIN_RADIUS := 16.0
 # Multi-biome baseline: the four terrain ids that today have REAL base textures (the other 33 are
 # noise placeholders), laid out as four vertical bands 4 columns wide each across GRID_W (16).
 const BIOME_BAND_IDS := [15, 11, 12, 0]  # hot_desert_erg / prairie_steppe / mixed_woodland / deep_ocean
@@ -93,6 +103,8 @@ func _ready() -> void:
 	_map.selected_tile = Vector2i(-1, -1)
 	_map._fit_map_to_view()
 	await _settle()
+	if _map.last_hex_radius >= LOD_MIN_RADIUS:
+		push_warning("map_preview: yield-farzoom fitted radius %.1f >= LOD gate %.1f — this state no longer guards the LOD suppression; grow YIELD_FAR_GRID_*" % [_map.last_hex_radius, LOD_MIN_RADIUS])
 	await _save("map_band_yield_farzoom")
 
 	# State B — the same band with scouts staffed: scouting no longer draws a map highlight
@@ -600,10 +612,10 @@ func _snapshot_herd_on_tile() -> Dictionary:
 ## makes hexes tiny — exercises the yield-label LOD suppression at far zoom.
 func _snapshot_far_work() -> Dictionary:
 	var terrain: Array = []
-	terrain.resize(FAR_GRID_W * FAR_GRID_H)
+	terrain.resize(YIELD_FAR_GRID_W * YIELD_FAR_GRID_H)
 	terrain.fill(TERRAIN_ID)
-	var cx := FAR_GRID_W / 2
-	var cy := FAR_GRID_H / 2
+	var cx := YIELD_FAR_GRID_W / 2
+	var cy := YIELD_FAR_GRID_H / 2
 	var assignments := [
 		{"kind": "forage", "workers": 5, "target_x": cx + 1, "target_y": cy, "actual_yield": 0.48, "sustainable_yield": 0.48},
 		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": cx + 2, "target_y": cy, "actual_yield": 0.46, "sustainable_yield": 0.20},
@@ -613,7 +625,7 @@ func _snapshot_far_work() -> Dictionary:
 		"id": "Band 1", "work_range": 2, "scout_reveal_radius": 2, "labor_assignments": assignments,
 	}, STAGE_NOMADIC)
 	return {
-		"grid": {"width": FAR_GRID_W, "height": FAR_GRID_H, "wrap_horizontal": false},
+		"grid": {"width": YIELD_FAR_GRID_W, "height": YIELD_FAR_GRID_H, "wrap_horizontal": false},
 		"overlays": {"terrain": terrain},
 		"populations": [band],
 		"herds": [{"id": "game_deer_07", "label": "Red Deer (game_deer_07)", "x": cx + 2, "y": cy, "biomass": 800.0, "huntable": true}],
