@@ -723,12 +723,36 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   (SIGNAL tint via `_husbandry_value_hex`) once fully domesticated. Progress builds while a
   band Sustain-follows a Thriving herd; the `domesticate` command claims it early (see
   `core_sim` Fauna & Wild Game — Domestication / husbandry).
+- **Herd corral readout** (`Hud.gd` `_herd_summary_lines`): when a herd's `corralled`
+  (snapshot `HerdTelemetryState.corralled`, decoded beside `domestication` in
+  `native/src/lib.rs herds_to_array`) is true, a **Corral** row shows "🐄 Corralled"
+  (SIGNAL tint). The herd end of the intensification ladder — a penned, domesticated herd.
+- **Forage-patch cultivation readout** (`Hud.gd` `_tile_terrain_lines`): a forage tile's
+  intensification state, mirroring the herd Husbandry row. `native/src/lib.rs
+  forage_patches_to_array` decodes `foragePatches[]` (`ForagePatchState`) into both the
+  snapshot and delta dicts under `forage_patches`; `MapView.display_snapshot` ingests it into
+  the tile-keyed `forage_patch_lookup`, and `_tile_info_at` cross-refs it onto `tile_info`
+  (`cultivation_progress` / `is_cultivated` / `patch_ecology_phase` / `patch_has_owner` /
+  `patch_owner`, all in `FOW_DISCOVERED_HIDDEN_KEYS` so a remembered tile redacts them). The
+  card shows a **Cultivation** row: "N%" while the patch is being tended, "🌾 Tended Patch"
+  (SIGNAL tint via `_cultivation_value_hex`) once `is_cultivated`, plus an optional **Patch
+  health** ecology row (reusing `_ecology_phase_label` / `_ecology_value_hex`). See `core_sim`
+  intensification ladder — cultivation.
 - **Sedentarization meter** (`Hud.gd` `update_sedentarization`, dispatched from `Main.gd`):
   the player faction's `SedentarizationState.score` (snapshot `sedentarization[]`) shows as a
   compact top-bar block-glyph meter (`▰▰▰▰▰▱▱ 62/100 · soft`, `SedentarizationLabel` in
   `TurnBlock`), tinted amber (soft) / cyan (hard) by stage and hidden until the score is
   meaningful. The soft/hard threshold prompts themselves arrive in the command feed
   (`CommandEventKind::SedentarizationPrompt`). See `core_sim` Campaign Loop — Sedentarization.
+- **Intensification-knowledge meters** (`Hud.gd` `update_intensification`, dispatched from
+  `Main.gd`): the player faction's Cultivation / Herding knowledge from
+  `IntensificationKnowledgeState` (snapshot `intensification_knowledge[]`, decoded in
+  `native/src/lib.rs intensification_knowledge_to_array` into snapshot + delta dicts) shows as a
+  compact top-bar block-glyph meter mirroring the Sedentarization one (`Cultivation ▰▰▰▱▱▱
+  learning · Herding ✔ known`, `IntensificationLabel` in `TurnBlock`). Each track (0..1 progress)
+  is hidden until the faction begins learning it (the snapshot row is sparse) and reads "✔ known"
+  once complete; the label tints cyan when every learned track is fully known, else neutral ink.
+  See `core_sim` intensification ladder — knowledge.
 - **Demographics readout** (`Hud.gd` `update_demographics`, dispatched from `Main.gd`): the player
   faction's age structure from `PopulationDemographicsState` (snapshot `demographics[]`) shows as a
   top-bar line (`Pop 100  👶34 🛠51 🧓15  dep 96/100`, `DemographicsLabel` in `TurnBlock`) — total

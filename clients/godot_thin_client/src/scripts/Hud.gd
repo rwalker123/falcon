@@ -63,6 +63,7 @@ var _server_build: String = "?"
 @onready var sedentarization_label: Label = %SedentarizationLabel
 @onready var demographics_label: Label = %DemographicsLabel
 @onready var discoveries_label: Label = %DiscoveriesLabel
+@onready var intensification_label: Label = %IntensificationLabel
 @onready var nav_backing: PanelContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking
 @onready var zoom_rail: VBoxContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail
 @onready var zoom_in_button2: Button = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail/ZoomInButton
@@ -134,6 +135,8 @@ const ATTENTION_SEVERITY_CRITICAL := "critical"
 const ATTENTION_SEVERITY_WARN := "warn"
 # Top-bar glyph for the discovered-Wondrous-Sites readout (a faceted-gem marker).
 const DISCOVERIES_GLYPH := "◈"
+# Separator between the Cultivation / Herding tracks in the top-bar intensification readout.
+const INTENSIFICATION_SEGMENT_SEP := "  ·  "
 const FOOD_MODULE_LABELS := {
     "coastal_littoral": "Coastal Littoral",
     "riverine_delta": "Riverine Delta",
@@ -818,6 +821,45 @@ func update_discoveries(discovered_variant: Variant) -> void:
         suffix = "  %s" % " ".join(glyphs)
     discoveries_label.text = "%s Discoveries %d%s" % [DISCOVERIES_GLYPH, sites.size(), suffix]
     discoveries_label.add_theme_color_override("font_color", HudStyle.SIGNAL)
+
+## Show the player faction's intensification-ladder knowledge (Cultivation / Herding) as a
+## compact top-bar block-glyph meter, mirroring the Sedentarization readout. Each track is
+## hidden until the faction begins learning it (the snapshot row is sparse); a completed
+## track reads "✔ known" (SIGNAL) instead of the bar.
+func update_intensification(intensification_variant: Variant) -> void:
+    if intensification_label == null:
+        return
+    var cultivation := -1.0
+    var herding := -1.0
+    if intensification_variant is Array:
+        for entry in intensification_variant:
+            if entry is Dictionary and int(entry.get("faction", -1)) == PLAYER_FACTION_ID:
+                cultivation = float(entry.get("cultivation", 0.0))
+                herding = float(entry.get("herding", 0.0))
+                break
+    var segments: Array[String] = []
+    var all_known := true
+    if cultivation > 0.0:
+        segments.append("Cultivation %s" % _knowledge_meter_text(cultivation))
+        all_known = all_known and cultivation >= 1.0
+    if herding > 0.0:
+        segments.append("Herding %s" % _knowledge_meter_text(herding))
+        all_known = all_known and herding >= 1.0
+    if segments.is_empty():
+        intensification_label.visible = false
+        return
+    intensification_label.visible = true
+    intensification_label.text = INTENSIFICATION_SEGMENT_SEP.join(segments)
+    # Cyan once every learned track is fully known; neutral while any is still in progress.
+    intensification_label.add_theme_color_override(
+        "font_color", HudStyle.SIGNAL if all_known else HudStyle.INK_DIM)
+
+## One knowledge track's readout: the block-glyph bar + "learning" while in progress,
+## a "✔ known" badge once complete. `progress` is 0..1.
+func _knowledge_meter_text(progress: float) -> String:
+    if progress >= 1.0:
+        return "✔ known"
+    return "%s learning" % _meter_bar(progress * 100.0)
 
 ## Tint the dependency readout: amber when dependents outnumber workers, cyan when there is a
 ## healthy labor surplus, neutral otherwise.
@@ -2444,6 +2486,19 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     if weight > 0.0:
         food_line += " (weight %.2f)" % weight
     lines.append(food_line)
+    # Forage-patch intensification ladder: while a patch is being tended it shows the
+    # cultivation progress; once cultivated it reads as a "Tended Patch" (SIGNAL tint).
+    # Mirrors the herd Husbandry row. Only when the snapshot carries the field so we
+    # never invent a state on a patch that isn't being worked.
+    if bool(tile_info.get("is_cultivated", false)):
+        lines.append("Cultivation: %s" % _cultivation_label(1.0, true))
+        var tended_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
+        if tended_phase != "":
+            lines.append("Patch health: %s" % _ecology_phase_label(tended_phase))
+    elif tile_info.has("cultivation_progress"):
+        var cultivation_progress := float(tile_info["cultivation_progress"])
+        if cultivation_progress > 0.0:
+            lines.append("Cultivation: %s" % _cultivation_label(cultivation_progress, false))
     return lines
 
 # ---- Occupants roster ------------------------------------------------------
@@ -3229,6 +3284,10 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     var domestication := float(herd_data.get("domestication", 0.0))
     if domestication > 0.0:
         lines.append("Husbandry: %s" % _husbandry_label(domestication))
+    # A corralled herd is penned by the band (intensification ladder). SIGNAL-tinted,
+    # mirroring the Husbandry/Ecology row treatment.
+    if bool(herd_data.get("corralled", false)):
+        lines.append("Corral: 🐄 Corralled")
     var x := int(herd_data.get("x", -1))
     var y := int(herd_data.get("y", -1))
     if x >= 0 and y >= 0:
@@ -3275,6 +3334,21 @@ func _husbandry_label(progress: float) -> String:
 ## ink while it's still being tamed. Matched on the label produced by `_husbandry_label`.
 func _husbandry_value_hex(value: String) -> String:
     if value.to_lower().contains("domesticated"):
+        return HudStyle.SIGNAL_HEX
+    return HudStyle.INK_HEX
+
+## Player-facing cultivation label for a forage patch. A fully-tended patch shows a crop
+## glyph; an in-progress patch shows the percentage. Mirrors `_husbandry_label`;
+## `_format_detail_bbcode` tints a Tended value via `_cultivation_value_hex`.
+func _cultivation_label(progress: float, cultivated: bool) -> String:
+    if cultivated or progress >= 1.0:
+        return "🌾 Tended Patch"
+    return "%d%%" % int(round(progress * 100.0))
+
+## BBCode hex for a "Cultivation" value: signal (positive) for a tended patch, normal ink
+## while it's still being cultivated. Matched on the label from `_cultivation_label`.
+func _cultivation_value_hex(value: String) -> String:
+    if value.to_lower().contains("tended"):
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
 
@@ -3341,10 +3415,14 @@ func _format_detail_bbcode(lines: Array) -> String:
             elif String(kv[0]) == "Habitability":
                 # The tile's habitability rating tints by its bucket (green→red).
                 value_hex = TileHabitability.hex_for_rating(String(kv[1]))
-            elif String(kv[0]) == "Ecology":
+            elif String(kv[0]) == "Ecology" or String(kv[0]) == "Patch health":
                 value_hex = _ecology_value_hex(String(kv[1]))
             elif String(kv[0]) == "Husbandry":
                 value_hex = _husbandry_value_hex(String(kv[1]))
+            elif String(kv[0]) == "Cultivation":
+                value_hex = _cultivation_value_hex(String(kv[1]))
+            elif String(kv[0]) == "Corral":
+                value_hex = HudStyle.SIGNAL_HEX
             # A disclosure row (Food/Morale) renders its key as a clickable cyan `[url]` + ▸/▾ caret,
             # toggling its breakdown sub-lines via `meta_clicked` → `_on_detail_meta_clicked`. Which
             # rows are disclosures (and their open-state) is set in `_unit_summary_lines`.

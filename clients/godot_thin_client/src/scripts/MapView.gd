@@ -188,6 +188,8 @@ const FOW_EXPLORED_THRESHOLD := 0.3  # Above this a tile is at least Discovered
 # retains the terrain memory, not what is happening on the tile right now.
 const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"food_module", "food_module_label", "food_module_weight", "food_kind",
+	"cultivation_progress", "is_cultivated", "patch_has_owner", "patch_owner",
+	"patch_ecology_phase",
 	"units", "herds", "unit_count", "herd_count",
 	"harvest_tasks", "harvest_active", "scout_tasks", "scout_active",
 ]
@@ -461,6 +463,9 @@ var discovered_sites: Array = []
 var discovered_site_lookup: Dictionary = {}
 var harvest_sites: Dictionary = {}
 var scout_sites: Dictionary = {}
+# Forage patches (cultivation/tended state, decoded from ForagePatchState), keyed by
+# Vector2i(x, y); read by `_tile_info_at` for the Tile-card cultivation/tended readout.
+var forage_patch_lookup: Dictionary = {}
 var tile_lookup: Dictionary = {}
 # Per-tile habitability (band-independent morale drain, decoded from TileState),
 # keyed by Vector2i(x, y); read by `_tile_info_at` for the Tile-card Habitability row.
@@ -815,6 +820,17 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 					var wy: int = int(wsite.get("y", -1))
 					if wx >= 0 and wy >= 0:
 						discovered_site_lookup[Vector2i(wx, wy)] = wsite
+		forage_patch_lookup.clear()
+		var patch_variant: Variant = snapshot.get("forage_patches", [])
+		if patch_variant is Array:
+			for entry in patch_variant:
+				if not (entry is Dictionary):
+					continue
+				var patch: Dictionary = (entry as Dictionary).duplicate(true)
+				var px: int = int(patch.get("x", -1))
+				var py: int = int(patch.get("y", -1))
+				if px >= 0 and py >= 0:
+					forage_patch_lookup[Vector2i(px, py)] = patch
 	var population_variant: Variant = snapshot.get("populations", [])
 	if population_variant is Array:
 		for entry in population_variant:
@@ -2778,6 +2794,15 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 	info["food_module"] = module_key
 	info["food_module_label"] = _food_module_label(module_key)
 	info["food_module_weight"] = module_weight
+	# Forage-patch cultivation/tended state (intensification ladder). Read by
+	# Hud._tile_terrain_lines for the "Cultivation N%" / "🌾 Tended Patch" row.
+	if forage_patch_lookup.has(tile_key):
+		var patch: Dictionary = forage_patch_lookup[tile_key]
+		info["cultivation_progress"] = float(patch.get("cultivation_progress", 0.0))
+		info["is_cultivated"] = bool(patch.get("is_cultivated", false))
+		info["patch_has_owner"] = bool(patch.get("has_owner", false))
+		info["patch_owner"] = int(patch.get("owner", 0))
+		info["patch_ecology_phase"] = String(patch.get("ecology_phase", ""))
 	var units_here := _units_on_tile(col, row)
 	var herds_here := _herds_on_tile(col, row)
 	info["units"] = units_here

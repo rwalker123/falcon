@@ -1157,6 +1157,17 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
         );
     }
 
+    if let Some(forage_patches) = delta.foragePatches() {
+        let _ = dict.insert("forage_patches", &forage_patches_to_array(forage_patches));
+    }
+
+    if let Some(intensification) = delta.intensificationKnowledge() {
+        let _ = dict.insert(
+            "intensification_knowledge",
+            &intensification_knowledge_to_array(intensification),
+        );
+    }
+
     if let Some(demographics) = delta.demographics() {
         let _ = dict.insert("demographics", &demographics_to_array(demographics));
     }
@@ -2658,6 +2669,17 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         );
     }
 
+    if let Some(forage_patches) = snapshot.foragePatches() {
+        let _ = dict.insert("forage_patches", &forage_patches_to_array(forage_patches));
+    }
+
+    if let Some(intensification) = snapshot.intensificationKnowledge() {
+        let _ = dict.insert(
+            "intensification_knowledge",
+            &intensification_knowledge_to_array(intensification),
+        );
+    }
+
     if let Some(demographics) = snapshot.demographics() {
         let _ = dict.insert("demographics", &demographics_to_array(demographics));
     }
@@ -2998,6 +3020,43 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
             let _ = dict.insert("ecology_phase", ecology_phase);
         }
         let _ = dict.insert("domestication", herd.domestication());
+        let _ = dict.insert("corralled", herd.corralled());
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn forage_patches_to_array(
+    patches: Vector<'_, ForwardsUOffset<fb::ForagePatchState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for patch in patches {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("x", patch.x() as i64);
+        let _ = dict.insert("y", patch.y() as i64);
+        let _ = dict.insert("cultivation_progress", patch.cultivationProgress());
+        let _ = dict.insert("is_cultivated", patch.isCultivated());
+        let _ = dict.insert("has_owner", patch.hasOwner());
+        let _ = dict.insert("owner", patch.owner() as i64);
+        let _ = dict.insert("biomass", patch.biomass());
+        let _ = dict.insert("carrying_capacity", patch.carryingCapacity());
+        if let Some(ecology_phase) = patch.ecologyPhase() {
+            let _ = dict.insert("ecology_phase", ecology_phase);
+        }
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn intensification_knowledge_to_array(
+    states: Vector<'_, ForwardsUOffset<fb::IntensificationKnowledgeState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for state in states {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("faction", state.faction() as i64);
+        let _ = dict.insert("cultivation", state.cultivation());
+        let _ = dict.insert("herding", state.herding());
         array.push(&dict.to_variant());
     }
     array

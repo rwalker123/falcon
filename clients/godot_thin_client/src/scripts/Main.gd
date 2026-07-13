@@ -227,6 +227,8 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_sedentarization", [snapshot["sedentarization"]])
     if snapshot.has("demographics"):
         _hud_invoke("update_demographics", [snapshot["demographics"]])
+    if snapshot.has("intensification_knowledge"):
+        _hud_invoke("update_intensification", [snapshot["intensification_knowledge"]])
     if snapshot.has("discovered_sites"):
         _hud_invoke("update_discoveries", [snapshot["discovered_sites"]])
     if snapshot.has("grid"):

@@ -46,6 +46,10 @@ func _ready() -> void:
 	# Top-bar demographics readout (faction 0 age structure + dependency ratio).
 	_hud.update_demographics([{"faction": 0, "children": 34, "working": 51, "elders": 15}])
 
+	# Top-bar intensification-knowledge meters (faction 0): Cultivation still learning
+	# (block-glyph bar + "learning"), Herding fully mastered ("✔ known"). Visible across frames.
+	_hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
+
 	# Top-bar Wondrous-Sites discoveries readout (faction 0): a landmark + a settle-site, so
 	# the count reads `◈ Discoveries 2  ⛰ ⛲` and the distinct glyphs show.
 	_hud.update_discoveries([{
@@ -234,6 +238,12 @@ func _ready() -> void:
 	await _settle()
 	await _save("food_tile")
 
+	# State 2-tended — a fully-cultivated forage patch: the Tile card's cultivation row reads
+	# "🌾 Tended Patch" (SIGNAL tint) with a "Patch health: Thriving" ecology row beneath it.
+	_hud.show_tile_selection(_tended_tile_fixture())
+	await _settle()
+	await _save("tended_tile")
+
 	# State 2b — the same food tile, single FAR band (~21 tiles away, beyond work_range 2): foraging is
 	# stationary gathering with NO expedition fallback, so the Forage button is DISABLED and an
 	# out-of-range hint shows ("(66,10) is 21 tiles away — beyond this band's forage range (2)").
@@ -287,7 +297,8 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_collapsing")
 
-	# State 3c — a domesticated herd: the husbandry readout shows "🐄 Domesticated".
+	# State 3c — a domesticated + corralled herd: the drawer shows "Husbandry 🐄 Domesticated"
+	# AND "Corral 🐄 Corralled" (SIGNAL tint), the herd end of the intensification ladder.
 	_hud.show_herd_selection(_domesticated_herd_fixture())
 	await _settle()
 	await _save("herd_domesticated")
@@ -827,7 +838,24 @@ func _food_tile_fixture() -> Dictionary:
 		"food_kind": "savanna_track",
 		# A discovered Wondrous Site on this tile → the Tile card shows a "Site: …" line.
 		"site_name": "Verdant Basin",
+		# Forage patch being worked toward cultivation → the Tile card's "Cultivation 60%" row.
+		"cultivation_progress": 0.6,
+		"is_cultivated": false,
+		"patch_has_owner": true,
+		"patch_owner": 0,
+		"patch_ecology_phase": "thriving",
 	}
+
+## A fully-tended forage patch: the Tile card shows the "🌾 Tended Patch" badge (SIGNAL tint)
+## plus a "Patch health" ecology row, instead of the in-progress "Cultivation N%".
+func _tended_tile_fixture() -> Dictionary:
+	var tile := _food_tile_fixture()
+	tile["x"] = 67
+	tile["y"] = 11
+	tile["cultivation_progress"] = 1.0
+	tile["is_cultivated"] = true
+	tile["patch_ecology_phase"] = "thriving"
+	return tile
 
 func _herd_fixture() -> Dictionary:
 	return {
@@ -902,6 +930,18 @@ func _collapsing_herd_fixture() -> Dictionary:
 func _domesticated_herd_fixture() -> Dictionary:
 	var fixture := _herd_fixture()
 	fixture["domestication"] = 1.0
+	# A fully-domesticated herd is penned: the drawer adds a "🐄 Corralled" row.
+	fixture["corralled"] = true
+	# Compact NON-food tile_info (like the hunt-distance herd) so the tile card stays short and
+	# the drawer's Husbandry + Corral rows land in-frame rather than below the dock scroll fold.
+	fixture["tile_info"] = {
+		"x": 66, "y": 10,
+		"terrain_label": "Prairie Steppe",
+		"tags_text": "Fertile",
+		"visibility_state": "active",
+		"food_module": "",
+		"food_module_label": "None",
+	}
 	return fixture
 
 ## A base terrain legend (key == "terrain") shaped exactly like
