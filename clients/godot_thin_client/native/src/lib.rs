@@ -1157,6 +1157,17 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
         );
     }
 
+    if let Some(forage_patches) = delta.foragePatches() {
+        let _ = dict.insert("forage_patches", &forage_patches_to_array(forage_patches));
+    }
+
+    if let Some(intensification) = delta.intensificationKnowledge() {
+        let _ = dict.insert(
+            "intensification_knowledge",
+            &intensification_knowledge_to_array(intensification),
+        );
+    }
+
     if let Some(demographics) = delta.demographics() {
         let _ = dict.insert("demographics", &demographics_to_array(demographics));
     }
@@ -2658,6 +2669,17 @@ fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> VarDictionary {
         );
     }
 
+    if let Some(forage_patches) = snapshot.foragePatches() {
+        let _ = dict.insert("forage_patches", &forage_patches_to_array(forage_patches));
+    }
+
+    if let Some(intensification) = snapshot.intensificationKnowledge() {
+        let _ = dict.insert(
+            "intensification_knowledge",
+            &intensification_knowledge_to_array(intensification),
+        );
+    }
+
     if let Some(demographics) = snapshot.demographics() {
         let _ = dict.insert("demographics", &demographics_to_array(demographics));
     }
@@ -3037,6 +3059,77 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
             }
             let _ = dict.insert("hunt_trip_estimates", &estimate_dict);
         }
+        let _ = dict.insert("corralled", herd.corralled());
+        // Pen-construction meter 0..1 accrued while a keeper band works this herd under the Corral
+        // policy — the animal twin of `ForagePatchState.cultivationProgress`. Read by Hud's herd
+        // drawer for the "Corral: Building N%" row.
+        let _ = dict.insert("corral_progress", herd.corralProgress());
+        // Pre-commit yield forecast (food/turn at the herd's CURRENT biomass, exported at
+        // output_multiplier 1.0 — the client scales by the acting band's multiplier):
+        //   expected(workers, policy) = min(workers * per_worker_yield, ceiling_<policy>)
+        //   max_useful_workers(policy) = ceil(ceiling_<policy> / per_worker_yield)
+        // Read by Hud's %HerdAssignControls to show the expected yield live and to cap the
+        // hunter stepper at what the herd can actually absorb.
+        let _ = dict.insert("per_worker_yield", herd.perWorkerYield());
+        let _ = dict.insert("ceiling_sustain", herd.ceilingSustain());
+        let _ = dict.insert("ceiling_surplus", herd.ceilingSurplus());
+        let _ = dict.insert("ceiling_market", herd.ceilingMarket());
+        let _ = dict.insert("ceiling_eradicate", herd.ceilingEradicate());
+        // The Corral INVESTMENT rung (hunt-only): `ceiling_corral` is the food/turn the herd pays
+        // WHILE the pen is being built (the deliberate dip), `corral_yield` what it pays once penned.
+        // Together they drive the pre-commit "Preparing: +X → then +Y" forecast on %HerdAssignControls.
+        let _ = dict.insert("ceiling_corral", herd.ceilingCorral());
+        let _ = dict.insert("corral_yield", herd.corralYield());
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn forage_patches_to_array(
+    patches: Vector<'_, ForwardsUOffset<fb::ForagePatchState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for patch in patches {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("x", patch.x() as i64);
+        let _ = dict.insert("y", patch.y() as i64);
+        let _ = dict.insert("cultivation_progress", patch.cultivationProgress());
+        let _ = dict.insert("is_cultivated", patch.isCultivated());
+        let _ = dict.insert("has_owner", patch.hasOwner());
+        let _ = dict.insert("owner", patch.owner() as i64);
+        let _ = dict.insert("biomass", patch.biomass());
+        let _ = dict.insert("carrying_capacity", patch.carryingCapacity());
+        if let Some(ecology_phase) = patch.ecologyPhase() {
+            let _ = dict.insert("ecology_phase", ecology_phase);
+        }
+        // Pre-commit yield forecast — identical contract to the herd fields above (food/turn at
+        // the patch's CURRENT biomass, at output_multiplier 1.0). MapView cross-refs these onto
+        // `tile_info` (as `patch_*`) so %ForageAssignControls can forecast + cap the stepper.
+        let _ = dict.insert("per_worker_yield", patch.perWorkerYield());
+        let _ = dict.insert("ceiling_sustain", patch.ceilingSustain());
+        let _ = dict.insert("ceiling_surplus", patch.ceilingSurplus());
+        let _ = dict.insert("ceiling_market", patch.ceilingMarket());
+        let _ = dict.insert("ceiling_eradicate", patch.ceilingEradicate());
+        // The Cultivate INVESTMENT rung (forage-only): `ceiling_cultivate` is the food/turn the patch
+        // pays WHILE it is being prepared (the deliberate dip), `tended_yield` what it pays once
+        // cultivated. MapView cross-refs both onto `tile_info` (as `patch_*`) for the pre-commit
+        // "Preparing: +X → then +Y" forecast on %ForageAssignControls.
+        let _ = dict.insert("ceiling_cultivate", patch.ceilingCultivate());
+        let _ = dict.insert("tended_yield", patch.tendedYield());
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
+fn intensification_knowledge_to_array(
+    states: Vector<'_, ForwardsUOffset<fb::IntensificationKnowledgeState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for state in states {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("faction", state.faction() as i64);
+        let _ = dict.insert("cultivation", state.cultivation());
+        let _ = dict.insert("herding", state.herding());
         array.push(&dict.to_variant());
     }
     array
@@ -3689,6 +3782,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // is renewable, so its two values match; only depletable herds diverge.
             let _ = entry.insert("actual_yield", assignment.actualYield() as f64);
             let _ = entry.insert("sustainable_yield", assignment.sustainableYield() as f64);
+            // Minimum workers that would have produced this turn's take. `workers > workers_needed`
+            // (with needed > 0) means labor was NOT the binding constraint — the source's yield is
+            // capped by its policy ceiling / resource biomass, so the surplus workers idled here.
+            // The allocation row surfaces that as the "only N of M working" overstaffing note.
+            // 0 on a rehydrated save / older snapshot ⇒ the note degrades to hidden, never wrong.
+            let _ = entry.insert("workers_needed", assignment.workersNeeded() as i64);
             if let Some(fauna_id) = assignment.faunaId() {
                 let _ = entry.insert("fauna_id", fauna_id);
             }

@@ -581,6 +581,12 @@ table LaborAssignment {
   // actualYield > sustainableYield is the client-derived overhunting signal. Appended (append-only).
   actualYield:float = 0;
   sustainableYield:float = 0;
+  // Minimum workers that would have produced this turn's take = the overstaffing signal. workers >
+  // workersNeeded ⇒ the binding constraint was not labor, so the extra workers were idle (client
+  // flags the wasted labor). 0 when the source produced nothing; a tended patch / corralled herd
+  // (maintenance labor) reports 1. Derived per-turn at capture (0 on a rehydrated save before the
+  // next tick). Appended (append-only).
+  workersNeeded:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -788,6 +794,62 @@ table SedentarizationState {
   stage:string;
 }
 
+// One depletable forage patch's cultivation + ecology state for the client tile card
+// (Intensification Phase 1a). Keyed by tile `(x,y)`. `cultivationProgress` is the 0..1 taming meter;
+// `isCultivated` = a completed tended patch (progress >= 1.0). `owner`/`hasOwner` carry the tending
+// faction (`hasOwner = false` = a wild/untended patch, since faction 0 is a valid id).
+// `biomass`/`carryingCapacity`/`ecologyPhase` let the client optionally show patch health.
+table ForagePatchState {
+  x:uint;
+  y:uint;
+  cultivationProgress:float = 0;
+  isCultivated:bool = false;
+  hasOwner:bool = false;
+  owner:uint = 0;
+  biomass:float = 0;
+  carryingCapacity:float = 0;
+  ecologyPhase:string;
+  // --- Pre-commit yield forecast (appended, append-only schema discipline) ---
+  // Food/turn at this patch's CURRENT biomass, so the client can show "Expected yield: +X.XX /turn"
+  // and cap its worker stepper WHILE the player composes an assignment (the per-assignment
+  // `workersNeeded` telemetry is post-hoc — it only reports after a turn is committed).
+  // Computed at capture with an output_multiplier of 1.0: multiply every field below by the acting
+  // band's `PopulationCohortState.outputMultiplier` (a linear factor, so `maxUsefulWorkers` is
+  // unaffected by it). Compose:
+  //   expected(workers, policy) = min(workers * perWorkerYield, ceiling<Policy>)
+  //   maxUsefulWorkers(policy)  = ceil(ceiling<Policy> / perWorkerYield)   [perWorkerYield > 0]
+  // Each ceiling is already clamped to the patch's remaining biomass, so that min IS the take the
+  // sim pays (`forage_take` and the forecast share the ceiling/conversion helpers — forecast ==
+  // actual is an invariant, see core_sim/CLAUDE.md).
+  // A CULTIVATED (tended) patch reports its tended yield as every ceiling, with perWorkerYield equal
+  // to it — one worker suffices (maxUsefulWorkers = 1); the policy is irrelevant to a tended patch.
+  // perWorkerYield folds in this tile's seasonal weight (as `forage_take` does); it can be 0 in a
+  // dead season — do not divide by it.
+  perWorkerYield:float = 0;
+  ceilingSustain:float = 0;
+  ceilingSurplus:float = 0;
+  ceilingMarket:float = 0;
+  ceilingEradicate:float = 0;
+  // --- The Cultivate investment rung (appended) ---
+  // `ceilingCultivate` = food/turn WHILE the patch is being prepared under the Cultivate policy
+  // (= cultivating_yield_fraction × ceilingSustain — the deliberate yield dip that buys the tended
+  // patch). `tendedYield` = food/turn the patch will pay ONCE cultivated (maintenance labor: one
+  // worker suffices). Together they let the client show "preparing X → then Y" before the player
+  // commits to the investment. Cultivate is FORAGE-ONLY (the herd twin is Corral).
+  ceilingCultivate:float = 0;
+  tendedYield:float = 0;
+}
+
+// Per-faction intensification-ladder knowledge (Intensification Rung 1b/1c): the faction's progress
+// on the Cultivation (discovery 2003) and Herding (discovery 2004) discoveries, each 0..1
+// (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client renders
+// learning/known meters. Only factions that have begun learning either ladder appear here.
+table IntensificationKnowledgeState {
+  faction:uint;
+  cultivation:float = 0;
+  herding:float = 0;
+}
+
 // One discovered Wondrous Site in a faction's registry. `category`/`display_name`/`glyph` are
 // resolved from the sites catalog at capture so the client needs no config. Only sites the
 // faction has revealed appear here (undiscovered sites are NOT in TileState — no fog leak).
@@ -868,14 +930,49 @@ table HerdTelemetryState {
   huntable:bool = false;
   ecologyPhase:string;
   domestication:float = 0;
-  // Per-policy BAND / local-hunt take ceilings for this herd's current state (one entry per
-  // FollowPolicy). With the cohort's `huntPerWorkerProvisions` + `outputMultiplier` this is
-  // everything the client needs to preview a RESIDENT BAND's hunt yield as pure arithmetic — it must
-  // NOT re-derive the ecology model. Appended (append-only discipline).
+  // Intensification Rung 1c corral state: true iff the herd is penned (`corralled_at.is_some()`),
+  // so the client can show a corral (place-bound) indicator distinct from a mobile domesticated
+  // herd. Appended (append-only schema discipline).
+  corralled:bool = false;
+  // Pen-construction progress 0..1 (1.0 = penned) accrued while a keeper band works this herd under
+  // the Corral policy — the animal twin of `ForagePatchState.cultivationProgress`. Appended.
+  corralProgress:float = 0;
+  // --- Pre-commit yield forecast (appended, append-only schema discipline) ---
+  // The herd-side twin of `ForagePatchState`'s forecast block — food/turn at this herd's CURRENT
+  // biomass, for a live "Expected yield" readout + worker-stepper cap while the player composes a
+  // Hunt assignment. Captured with an output_multiplier of 1.0 (scale by the band's
+  // `outputMultiplier`). Compose:
+  //   expected(workers, policy) = min(workers * perWorkerYield, ceiling<Policy>)
+  //   maxUsefulWorkers(policy)  = ceil(ceiling<Policy> / perWorkerYield)   [perWorkerYield > 0]
+  // Ceilings are already clamped to the herd's remaining biomass; `hunt_take` and the forecast share
+  // the ceiling/conversion helpers, so forecast == actual (see core_sim/CLAUDE.md).
+  // A CORRALLED herd reports its corral yield as every ceiling with perWorkerYield equal to it — one
+  // keeper suffices (maxUsefulWorkers = 1) and the policy is irrelevant.
+  perWorkerYield:float = 0;
+  ceilingSustain:float = 0;
+  ceilingSurplus:float = 0;
+  ceilingMarket:float = 0;
+  ceilingEradicate:float = 0;
+  // --- The Corral investment rung (appended) --- the herd twin of `ForagePatchState`'s Cultivate
+  // block. `ceilingCorral` = food/turn WHILE the pen is being built under the Corral policy
+  // (= corralling_yield_fraction × ceilingSustain — the yield dip that buys the pen). `corralYield`
+  // = food/turn the herd will pay ONCE penned (maintenance labor: one keeper suffices). Corral is
+  // HUNT-ONLY (the patch twin is Cultivate).
+  ceilingCorral:float = 0;
+  corralYield:float = 0;
+  // Per-policy BAND / local-hunt take ceilings for this herd's current state — one entry per
+  // FollowPolicy valid on a Hunt assignment: the four extractive rungs PLUS corral (cultivate is
+  // forage-only, so a herd has no cultivate row). Phase-correct: a penned herd's rows all read its
+  // corral yield. These are the same numbers as the ceiling* scalars above, projected as a list.
+  // With the cohort's `huntPerWorkerProvisions` + `outputMultiplier` this is everything the client
+  // needs to preview a RESIDENT BAND's hunt yield as pure arithmetic — it must NOT re-derive the
+  // ecology model. Appended (append-only discipline).
   huntPolicyCeilings:[HuntPolicyCeiling];
   // The sim's pre-launch trip estimates for a hunting EXPEDITION against this herd — one entry per
-  // (policy × party size 1..=maxExpeditionPartySize), so the outfit UI is a table lookup and the
-  // client does no arithmetic at all. Empty for a non-huntable herd. Appended last (append-only).
+  // (EXTRACTIVE policy × party size 1..=maxExpeditionPartySize), so the outfit UI is a table lookup
+  // and the client does no arithmetic at all. The investment policies (cultivate/corral) are
+  // place-bound band work that `send_hunt_expedition` rejects, so they get NO rows here. Empty for a
+  // non-huntable herd. Appended last (append-only).
   huntTripEstimates:[HuntTripEstimate];
 }
 
@@ -1014,6 +1111,8 @@ table WorldSnapshot {
   sedentarization:[SedentarizationState];
   discoveredSites:[DiscoveredSitesState];
   demographics:[PopulationDemographicsState];
+  foragePatches:[ForagePatchState];
+  intensificationKnowledge:[IntensificationKnowledgeState];
   moistureRaster:FloatRaster;
   hydrologyOverlay:HydrologyOverlay; // rivers/streams polylines
   elevationOverlay:ElevationOverlay;
@@ -1067,6 +1166,8 @@ table WorldDelta {
   sedentarization:[SedentarizationState];
   discoveredSites:[DiscoveredSitesState];
   demographics:[PopulationDemographicsState];
+  foragePatches:[ForagePatchState];
+  intensificationKnowledge:[IntensificationKnowledgeState];
   moistureRaster:FloatRaster;
   axisBias:AxisBiasState;
   sentiment:SentimentTelemetryState;

@@ -63,6 +63,7 @@ var _server_build: String = "?"
 @onready var sedentarization_label: Label = %SedentarizationLabel
 @onready var demographics_label: Label = %DemographicsLabel
 @onready var discoveries_label: Label = %DiscoveriesLabel
+@onready var intensification_label: Label = %IntensificationLabel
 @onready var nav_backing: PanelContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking
 @onready var zoom_rail: VBoxContainer = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail
 @onready var zoom_in_button2: Button = $LayoutRoot/RootColumn/BottomBar/NavBacking/NavCluster/ZoomRail/ZoomInButton
@@ -126,14 +127,34 @@ const COMMAND_FEED_MIN_HEIGHT := 72.0
 const COMMAND_FEED_BOTTOM_MARGIN := 12.0
 const PLAYER_FACTION_ID := 0
 # Turn-orb attention contract (see TurnOrb.gd). The folded-in Alerts panel became
-# three producers here: starving (critical), losing_population (warn), idle_workers (warn).
+# three producers here: starving (critical), losing_population (warn), idle_workers (warn) —
+# plus a fourth, awaiting_orders (warn): an expedition parked at its objective, burning provisions
+# until the player acts. That is structurally the SAME class as idle workers (a demand on the
+# player, an efficiency loss, not a crisis), so it shares their WARN severity and, like them, must
+# be discoverable from the orb rather than only by having the right band panel open.
 const ATTENTION_KIND_STARVING := "starving"
 const ATTENTION_KIND_LOSING_POPULATION := "losing_population"
 const ATTENTION_KIND_IDLE_WORKERS := "idle_workers"
+const ATTENTION_KIND_AWAITING_ORDERS := "awaiting_orders"
 const ATTENTION_SEVERITY_CRITICAL := "critical"
 const ATTENTION_SEVERITY_WARN := "warn"
+# Awaiting expeditions are listed ONE ROW EACH (not one aggregate like idle workers): each parked
+# party is a SEPARATE decision with its own destination, so an aggregate row would have nowhere to
+# jump. The popover is positioned ABOVE the orb (`TurnOrb._position_popover`), so an unbounded list
+# would climb off the top of the screen and take the `Advance ▸` footer with it — hence a cap, past
+# which the remainder folds into a single overflow row that jumps to the first party beyond it.
+const ATTENTION_AWAITING_MAX_ROWS := 3
+const ATTENTION_AWAITING_OVERFLOW_LABEL_FORMAT := "+%d more awaiting orders"
+const ATTENTION_AWAITING_OVERFLOW_DETAIL := "Jump to the next parked party"
+# The row's context line: "<mission> · <objective>" (the objective is the herd for a hunt party, the
+# party's own tile for a scout). Mission words come from EXPEDITION_MISSION_LABELS, the demand
+# headline from EXPEDITION_PHASE_LABELS — neither is retyped here.
+const ATTENTION_AWAITING_DETAIL_FORMAT := "%s · %s"
+const ATTENTION_TILE_FORMAT := "(%d, %d)"
 # Top-bar glyph for the discovered-Wondrous-Sites readout (a faceted-gem marker).
 const DISCOVERIES_GLYPH := "◈"
+# Separator between the Cultivation / Herding tracks in the top-bar intensification readout.
+const INTENSIFICATION_SEGMENT_SEP := "  ·  "
 const FOOD_MODULE_LABELS := {
     "coastal_littoral": "Coastal Littoral",
     "riverine_delta": "Riverine Delta",
@@ -251,6 +272,12 @@ var _selected_herd: Dictionary = {}
 # doesn't list it — e.g. an inspector-driven herd selection). Rebuilt each render.
 var _roster_units: Array = []
 var _roster_herds: Array = []
+# Every herd in the snapshot (`snapshot["herds"]`, pushed by Main each turn). The roster above only
+# holds the SELECTED hex's herds, so it can't answer "where is the herd this band hunts?" — herds
+# MIGRATE, so a hunt assignment's `target_x/target_y` is a stale launch position. This is the live
+# position + label source for the Current-actions Hunt row (label + jump), mirroring
+# `MapView.herds` / `MapView._herd_by_id`, which the hunted-herd ring already resolves through.
+var _world_herds: Array = []
 var _selected_food_module: String = ""
 var _selected_food_is_hunt: bool = false
 # Days-of-food of the currently-selected band's larder, so the detail formatter
@@ -278,16 +305,87 @@ const LABOR_KIND_FORAGE := "forage"
 const LABOR_KIND_HUNT := "hunt"
 const LABOR_KIND_SCOUT := "scout"
 const LABOR_KIND_WARRIOR := "warrior"
-# Hunt take policies a labor Hunt assignment can carry (no "single" one-shot anymore).
+# EXTRACTIVE take policies — the four rungs that take from a wild source without changing it. Shared
+# by forage + hunt (and the only ones a hunting EXPEDITION can carry: a detached party builds no pen).
 const LABOR_HUNT_POLICIES := ["sustain", "surplus", "market", "eradicate"]
-const DEFAULT_HUNT_POLICY := "sustain"
-# Forage take policies reuse the same option set (LABOR_HUNT_POLICIES) + the same picker, but carry
-# forage-appropriate behaviour hints (gathering a plant patch's regrowth, not culling a herd).
+# The Sustain rung by name: the default compose policy AND the one policy that TEACHES — every
+# intensification track (cultivation / herding knowledge, herd domestication) accrues only while a
+# band works a Thriving source under Sustain, so the gate reasons below point back at it.
+const LABOR_POLICY_SUSTAIN := "sustain"
+const DEFAULT_HUNT_POLICY := LABOR_POLICY_SUSTAIN
+# INVESTMENT rungs (Intensification): an up-front cost — the source pays only its `ceiling_cultivate`
+# / `ceiling_corral` dip yield while the workers prepare it, then flips to the much higher tended /
+# corral yield. Kind-specific, and the sim REJECTS the cross pairing: Cultivate is forage-only,
+# Corral is hunt-only.
+const LABOR_POLICY_CULTIVATE := "cultivate"
+const LABOR_POLICY_CORRAL := "corral"
+# The full picker option sets per source kind (extractive rungs + that kind's one investment rung).
+const FORAGE_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "cultivate"]
+const HUNT_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "corral"]
+# Forage take policies reuse the hunt picker, but carry forage-appropriate behaviour hints
+# (gathering a plant patch's regrowth, not culling a herd).
 const FORAGE_POLICY_HINTS := {
     "sustain": "Sustain — gather at the patch's regrowth; it stays healthy.",
     "surplus": "Surplus — gather more now; the patch declines.",
     "market": "Market — gather for trade goods; faster decline.",
     "eradicate": "Eradicate — strip the patch bare.",
+    "cultivate": "Cultivate — prepare this patch: low yield while you work it, then a much higher tended yield. It must stay staffed or it goes feral.",
+}
+# GATES on the investment rungs. The option stays VISIBLE but disabled with its reasons, so the player
+# learns the prerequisite BEFORE acting rather than never discovering the rung exists. Both gates
+# mirror the sim's `assign_labor` validation (faction knowledge complete + the source ready).
+#
+# Each reason states WHAT'S MISSING + HOW FAR ALONG IT IS + THE ACTION THAT CLOSES IT — naming the
+# prerequisite alone ("Herd must be domesticated") tells the player a door is locked without saying
+# where the key is. All three tracks are taught by the SAME action: Sustain-work a THRIVING source
+# (`core_sim/src/systems.rs` — cultivation/herding knowledge and per-herd domestication accrue only
+# under Sustain on a Thriving patch/herd). The remedy therefore names the Sustain glyph, pulled from
+# the shared `FoodIcons.POLICY_ICONS` map so it is literally the icon on the button beside it.
+# Format args: %d = the live progress percent off the snapshot, %s = that Sustain glyph.
+const GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT := "Cultivation knowledge %d%% — %s Sustain-forage a Thriving patch to learn it"
+const GATE_REASON_HERDING_KNOWLEDGE_FORMAT := "Herding knowledge %d%% — %s Sustain-hunt a Thriving herd to learn it"
+const GATE_REASON_HERD_DOMESTICATED_FORMAT := "Herd %d%% tamed — %s Sustain-hunt this Thriving herd to finish taming it"
+# The patch-ecology gate is a STOCK condition, not a policy one, so its remedy is the opposite advice:
+# a fully staffed Sustain takes the whole regrowth and holds a Stressed patch Stressed forever. The
+# patch only climbs back to Thriving when the take is LESS than the growth — fewer workers, or none.
+# %s = the live `patch_ecology_phase`, capitalized.
+const GATE_REASON_PATCH_THRIVING_FORMAT := "Patch is %s — ease workers off and let it regrow to Thriving"
+# A patch with no streamed phase (older snapshot / redacted remembered tile) still fails the Thriving
+# test; it reads as unknown rather than asserting a phase we don't have.
+const GATE_PHASE_UNKNOWN_LABEL := "not Thriving"
+# A single-reason gate reads as a compact one-liner under the picker row ("🌱 Cultivate — <reason>").
+const GATE_REASON_LINE_FORMAT := "%s — %s"
+# Two or more reasons are far too long for one line, so they render as a header + one bullet each
+# ("🌱 Cultivate needs:" / "   · <reason>").
+const GATE_REASON_HEADER_FORMAT := "%s needs:"
+const GATE_REASON_BULLET_FORMAT := "   · %s"
+# The disabled button's tooltip carries every reason, one per line.
+const GATE_REASON_TOOLTIP_SEPARATOR := "\n"
+# 0..1 progress tracks (knowledge, domestication) render as whole percents.
+const PROGRESS_PERCENT_SCALE := 100.0
+# A knowledge track (0..1) is usable only once fully learned; a domestication track likewise.
+const KNOWLEDGE_COMPLETE := 1.0
+const DOMESTICATION_COMPLETE := 1.0
+# Herd drawer "Corral" row: the pen-build meter (0..1) reads "Building N%" until it completes, then
+# the penned badge — the herd twin of the tile card's "Cultivation N%" → "🌾 Tended Patch" row.
+const CORRAL_PROGRESS_COMPLETE := 1.0
+const CORRAL_BUILDING_LABEL := "Building"
+const CORRAL_GLYPH := "🐄"
+# The one ecology phase a patch can be cultivated from (matches `EcologyPhase::as_str`).
+const ECOLOGY_PHASE_THRIVING := "thriving"
+# The two intensification knowledge tracks (the `intensification_knowledge[]` row's field names),
+# each gating one investment rung.
+const KNOWLEDGE_TRACK_CULTIVATION := "cultivation"
+const KNOWLEDGE_TRACK_HERDING := "herding"
+# Command-feed nudge fired ONCE when a track completes: the rung it unlocks is a new verb the player
+# has never seen, so learning the discovery has to say what it bought.
+const KNOWLEDGE_UNLOCK_LABELS := {
+    "cultivation": "Cultivation learned",
+    "herding": "Herding learned",
+}
+const KNOWLEDGE_UNLOCK_NOTES := {
+    "cultivation": "The Cultivate policy is now available on Thriving patches.",
+    "herding": "The Corral policy is now available on domesticated herds.",
 }
 # The policy hint under a LOCAL (resident-band) hunt's picker. The live yield line above it already
 # carries the NUMBER; these carry the CONSEQUENCE, which is otherwise invisible — above all Sustain's,
@@ -298,11 +396,17 @@ const FORAGE_POLICY_HINTS := {
 # credits FOOD ONLY — no husbandry accrual, no trade goods — so `SEND_HUNT_POLICY_HINTS` below
 # deliberately promises neither. Do not merge the two sets; the asymmetry is real (a known v1 gap,
 # tracked server-side), and a hint that claims a payoff the sim never pays is a lie to the player.
+#
+# Corral (the herd-side INVESTMENT rung) lives HERE and only here — it is a LOCAL-hunt policy: a
+# detached party follows the herd and builds no pen, so the expedition set has no Corral entry (and
+# the sim rejects a Corral expedition outright). This is also the local set `_policy_hint` spells out
+# on a worked Hunt row's tooltip — those rows are always a resident band's.
 const LOCAL_HUNT_POLICY_HINTS := {
     "sustain": "Sustain — takes only the herd's renewable yield, so it stays healthy forever; on a thriving herd the hunt also tames it, building husbandry toward livestock that pays food every turn without being hunted down.",
     "surplus": "Surplus — more food now; the herd slowly declines. The fuller larder pushes the band toward settling.",
     "market": "Market — sells the take as trade goods rather than eating it; the herd declines fast. Trade has little effect yet.",
     "eradicate": "Eradicate — hunts the herd toward extinction. No food, no husbandry, no trade — denial only.",
+    "corral": "Corral — pen this herd: low yield while you build, then a much higher penned yield. It must stay staffed or the herd goes wild again.",
 }
 # One worker per −/+ stepper press.
 const WORKER_STEP := 1
@@ -327,6 +431,15 @@ const ALLOC_HEADER_ROLES := "Band roles"
 const ALLOC_NO_SOURCES_HINT := "No sources worked yet — select a tile or herd to assign foragers/hunters."
 const SCOUT_ROLE_HINT := "Posts scouts that see around obstacles — more scouts range farther. Staff with −/+."
 const WARRIOR_ROLE_HINT := "Guards the band — matters once threats arrive."
+# A food module whose kind is a game trail is HUNTED, not gathered — `FoodIcons.for_site` swaps in the
+# hunt glyph for it. Mirrors `MapView._draw_food_site`'s `kind == "game_trail"` test.
+const FOOD_SITE_KIND_GAME_TRAIL := "game_trail"
+# Appended to a clickable Current-actions row's tooltip: the row's LABEL is an inline link that jumps
+# the map to the source being worked (a forage tile, or a hunted herd's CURRENT tile). Scout/Warrior
+# are band-wide roles with no tile, so their rows stay plain labels and never carry this.
+const SOURCE_ROW_FOCUS_HINT := "Click to show this source on the map."
+# The same affordance on an Active-expeditions row (the whole row is the button there).
+const EXPEDITION_ROW_FOCUS_HINT := "Click to show this expedition on the map."
 # Per-source food yield readout on the allocation rows. Yields are food/turn floats; render to
 # 2 decimals with an explicit sign ("+0.31 /turn").
 const YIELD_DECIMALS := 2
@@ -338,6 +451,62 @@ const OVERHUNT_EPSILON := 0.001
 const OVERHUNT_FLAG := "⚠"
 const YIELD_TOOLTIP_RENEWABLE := " · renewable"
 const YIELD_TOOLTIP_OVERDRAW := " — overdrawing"
+# Overstaffing (wasted labor) — DISTINCT from the ⚠ overdraw flag above. Every policy caps a
+# source's take at its ceiling (policy ceiling / resource biomass), so past `workers_needed`
+# extra workers produce nothing HERE and should move elsewhere. A source can be overstaffed while
+# perfectly sustainable (and overdrawn while fully used), so this reads as its own WARN-tinted note
+# on the row rather than borrowing the ⚠. `workers_needed == 0` (rehydrated save / older snapshot)
+# means "unknown" ⇒ no note, never a wrong one.
+const OVERSTAFF_NOTE_FORMAT := " · only %d of %d working"
+const OVERSTAFF_TOOLTIP := "Overstaffed — this source's yield is capped at its sustainable/policy ceiling; the extra workers produce nothing here. Reassign them to another source."
+# Joins the yield readout and the overstaffing explanation into one row tooltip.
+const TOOLTIP_LINE_SEPARATOR := "\n"
+# PRE-COMMIT YIELD FORECAST on the assign controls (%ForageAssignControls / %HerdAssignControls).
+# The overstaffing note above is POST-HOC — it tells you a turn later that workers were wasted. The
+# forecast is the same truth shown WHILE COMPOSING: the sim exports, with identical field names on
+# both the forage patch and the herd, a `per_worker_yield` plus one take ceiling per policy — all
+# food/turn at the source's CURRENT biomass and at output_multiplier 1.0:
+#     expected(workers, policy) = min(workers × per_worker_yield, ceiling[policy]) × band output
+#     max_useful_workers(policy) = ceil(ceiling[policy] / per_worker_yield)
+# The ceilings are already biomass-clamped, so that `min` IS the take. The worker stepper caps at
+# max-useful (the `+` goes dead there, explained by MAX_USEFUL_NOTE_FORMAT) so over-assignment is
+# impossible up front; the post-hoc note still covers a source whose biomass FELL after staffing.
+# max_useful is independent of the band's output multiplier — it scales both terms linearly.
+const FORECAST_PER_WORKER_KEY := "per_worker_yield"
+const FORECAST_CEILING_KEYS := {
+    "sustain": "ceiling_sustain",
+    "surplus": "ceiling_surplus",
+    "market": "ceiling_market",
+    "eradicate": "ceiling_eradicate",
+    # The INVESTMENT rungs' ceiling is the DIP yield paid while the patch/pen is being prepared —
+    # so the same expected(workers, policy) math shows the cost of the investment while composing.
+    "cultivate": "ceiling_cultivate",
+    "corral": "ceiling_corral",
+}
+# The PAYOFF the investment buys — the food/turn the source pays once prepared (one worker suffices).
+# Only the investment rungs have one; an extractive rung's forecast is a single number.
+const FORECAST_PAYOFF_KEYS := {
+    "cultivate": "tended_yield",
+    "corral": "corral_yield",
+}
+# The investment forecast states the DEAL, not a single yield: "Preparing: +0.09 /turn → then +1.20 /turn".
+const INVESTMENT_FORECAST_FORMAT := "Preparing: %s → then %s"
+# A herd dict carries the forecast fields bare; `tile_info` carries the forage patch's under a
+# `patch_` prefix (MapView._tile_info_at cross-refs them off `forage_patch_lookup`).
+const HERD_FORECAST_PREFIX := ""
+const FORAGE_FORECAST_PREFIX := "patch_"
+# Below this a worker produces nothing here (a dead-season forage tile, or an older snapshot with no
+# forecast fields). Dividing by it would blow max-useful up to infinity, so instead: no forecast row,
+# and the stepper keeps its plain idle-worker cap.
+const FORECAST_MIN_PER_WORKER := 0.0001
+# Sentinel for "no forecast data" → the stepper is not forecast-capped.
+const MAX_USEFUL_UNBOUNDED := -1
+const FORECAST_LABEL_FORMAT := "Expected yield: %s"
+# A tended patch / corralled herd collapses max-useful to exactly 1, so this note has to read
+# "max 1 worker" — pluralize the noun rather than shipping "max 1 workers".
+const MAX_USEFUL_NOTE_FORMAT := "max %d %s useful here — more would be idle"
+const MAX_USEFUL_NOUN_ONE := "worker"
+const MAX_USEFUL_NOUN_MANY := "workers"
 # Band food flow lives on the Food summary line: `Food 15 (19 days) · −0.77 /turn` (net =
 # food_income − food_consumption, sign-tinted), with a click-to-expand category breakdown
 # (Gathered/Hunted/Eaten) underneath — mirroring the morale breakdown. `FOOD_FLOW_MIN` gates both
@@ -354,6 +523,18 @@ const BREAKDOWN_KIND_MORALE := "morale"
 # The detail-row labels the disclosure attaches to (must equal the `Key` in `_split_detail_kv`).
 const DETAIL_ROW_FOOD := "Food"
 const DETAIL_ROW_MORALE := "Morale"
+# ---- Band/City panel identity grid ---------------------------------------------------------------
+# The panel's own header already states the band's name + settlement stage, so the summary rows there
+# drop the `Unit: <name>` row (a THIRD copy of the same name) and replace `Size: <n>` (population
+# under another name) with the labor line — same numbers, one row, in the identity grid where they
+# belong. The Occupants-card drawer (FOREIGN bands, and the no-panel ui_preview fallback) keeps
+# Unit/Size: it has no panel header naming the band, and a foreign band exposes no worker breakdown.
+# Hence `_unit_summary_lines(unit, in_panel)` rather than deleting the rows outright.
+const DETAIL_ROW_POPULATION := "Population"
+# The labor line's numbers. ONE format, two hosts: the panel's identity-grid row renders it without
+# the leading label (the grid supplies that), the legacy in-card allocation block with it.
+const WORKERS_VALUE_FORMAT := "%d · Workers %d (Idle %d)"
+const WORKERS_HEADER_FORMAT := "%s %s" % [DETAIL_ROW_POPULATION, WORKERS_VALUE_FORMAT]
 # Category breakdown rows under Food reuse the morale breakdown's indent + ▲/▼ glyphs, so they flow
 # through the SAME `_format_detail_bbcode` indented-sub-line path (sign-tinted: ▲ income green, ▼
 # eaten amber) — no inline color tags, which mis-layout between the KV table segments.
@@ -367,7 +548,11 @@ const FOOD_LABEL_EATEN := "Eaten"
 # resident band's allocation panel.
 const EXPEDITION_MISSION_SCOUT := "scout"
 const EXPEDITION_MISSION_HUNT := "hunt"
-const EXPEDITION_PHASE_AWAITING := "awaiting"
+const EXPEDITION_PHASE_OUTBOUND := "outbound"
+# One source: the phase key `awaiting` is also the status-glyph key + the orb producer's key.
+const EXPEDITION_PHASE_AWAITING := FoodIcons.STATUS_AWAITING
+const EXPEDITION_PHASE_HUNTING := "hunting"
+const EXPEDITION_PHASE_DELIVERING := "delivering"
 const EXPEDITION_PHASE_RETURNING := "returning"
 const EXPEDITION_MISSION_LABELS := {
 	"scout": "Scouting expedition",
@@ -546,9 +731,40 @@ const OCCUPANTS_UNKNOWN_UNEXPLORED := "Nobody has been here. Send a band to reve
 # is comm-range gated), so the roster CAN be non-empty on an unseen hex while still hiding everything
 # that isn't ours. Listing only your own party without a word would quietly imply it's alone there.
 const OCCUPANTS_UNSEEN_OTHERS_HINT := "Out of sight — you can't see anything here but your own."
-# Suffix marking an optimistic (not-yet-confirmed) allocation row, tinted amber to tie it to
-# the amber pending hex on the map.
-const PENDING_ROW_SUFFIX := "  · pending"
+# ---- Action-status vocabulary: row GLYPHS, tooltip WORDS ---------------------------------------
+# A Current-actions / Active-expeditions row states its state with a GLYPH (`FoodIcons.STATUS_ICONS`,
+# the one glyph registry, exactly like the policy icons) and moves the WORDS into the row tooltip.
+# The rows were spelling everything out (`🌰 Forage (27, 26) [sustain] · pending`) — long, and the
+# pending row is ALREADY amber, so "· pending" repeated what the tint said.
+# Two orthogonal layers (see `FoodIcons.STATUS_ICONS`), kept deliberately separate:
+#   • STATUS — what the action is doing: a confirmed local forage/hunt row has no sim phase, it is
+#     simply `working`; an expedition's is the sim's `ExpeditionPhase`.
+#   • `pending` — a state of the ORDER, not the action (composed locally, not yet acknowledged by the
+#     sim, resolves on turn advance). It rides on ANY row, is a MODIFIER (never a phase member), and
+#     takes the row's glyph slot + keeps the amber label tint that ties it to the pending map hex.
+# EXCEPTION — `awaiting` KEEPS ITS WORDS. It is not a status but a DEMAND ON THE PLAYER: the party is
+# parked at its objective burning provisions until you act. A status you already expect is fine to
+# hide behind a hover; a call to action must never require one. So an awaiting row renders
+# glyph + WARN-tinted words, while every other state is glyph-only.
+# Separates a row's trailing glyphs from its label (and from each other): "🌰 Forage (27, 26)  ♻  ●".
+const ROW_GLYPH_SEPARATOR := "  "
+# Word forms for the two ORDER-level statuses. The expedition PHASE words are NOT duplicated here —
+# `_status_label` reads them from `EXPEDITION_PHASE_LABELS`, their single source of truth.
+const STATUS_LABELS := {
+	FoodIcons.STATUS_PENDING: "Pending",
+	FoodIcons.STATUS_WORKING: "Working",
+}
+# The one-line behaviour hint the tooltip appends after the status word ("" = the word says it all).
+const STATUS_HINTS := {
+	FoodIcons.STATUS_PENDING: "starts when you advance the turn",
+	FoodIcons.STATUS_WORKING: "",
+	EXPEDITION_PHASE_OUTBOUND: "heading to the target",
+	EXPEDITION_PHASE_AWAITING: "parked at the objective — it needs an order",
+	EXPEDITION_PHASE_HUNTING: "taking food from the herd",
+	EXPEDITION_PHASE_DELIVERING: "bringing the haul home",
+	EXPEDITION_PHASE_RETURNING: "heading home",
+}
+const STATUS_HINT_FORMAT := "%s — %s"
 # The single player band, captured from the latest snapshot populations (there is exactly
 # one player band in the current start). assign_labor / move_band / clear-all target it; the
 # herd/tile assign controls also read its labor_assignments to show the current staffing.
@@ -618,6 +834,12 @@ var _forage_assign_policy: String = DEFAULT_HUNT_POLICY
 var _hunt_assign_key: String = ""
 var _hunt_assign_count: int = 0
 var _hunt_assign_policy: String = DEFAULT_HUNT_POLICY
+# Per-faction intensification knowledge from the latest snapshot: entity → {cultivation, herding},
+# each 0..1. Gates the Cultivate/Corral picker options (a rung needs its track fully learned) and
+# backs the top-bar meters; the previous value is what makes the one-shot unlock nudge possible.
+var _intensification_knowledge: Dictionary = {}
+# "<faction>:<track>" keys already announced to the command feed, so the nudge fires once.
+var _knowledge_announced: Dictionary = {}
 # The band-picker selection (actor band entity) for each assign control, persisted across the
 # per-snapshot re-renders of the same source. Re-defaults to _resolve_assign_band() when the
 # selected source changes; -1 means "fall back to the resolved band".
@@ -1099,6 +1321,89 @@ func update_discoveries(discovered_variant: Variant) -> void:
     discoveries_label.text = "%s Discoveries %d%s" % [DISCOVERIES_GLYPH, sites.size(), suffix]
     discoveries_label.add_theme_color_override("font_color", HudStyle.SIGNAL)
 
+## Show the player faction's intensification-ladder knowledge (Cultivation / Herding) as a
+## compact top-bar block-glyph meter, mirroring the Sedentarization readout. Each track is
+## hidden until the faction begins learning it (the snapshot row is sparse); a completed
+## track reads "✔ known" (SIGNAL) instead of the bar.
+func update_intensification(intensification_variant: Variant) -> void:
+    _ingest_intensification(intensification_variant)
+    if intensification_label == null:
+        return
+    var cultivation := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_CULTIVATION)
+    var herding := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_HERDING)
+    var segments: Array[String] = []
+    var all_known := true
+    if cultivation > 0.0:
+        segments.append("Cultivation %s" % _knowledge_meter_text(cultivation))
+        all_known = all_known and cultivation >= 1.0
+    if herding > 0.0:
+        segments.append("Herding %s" % _knowledge_meter_text(herding))
+        all_known = all_known and herding >= 1.0
+    if segments.is_empty():
+        intensification_label.visible = false
+        return
+    intensification_label.visible = true
+    intensification_label.text = INTENSIFICATION_SEGMENT_SEP.join(segments)
+    # Cyan once every learned track is fully known; neutral while any is still in progress.
+    intensification_label.add_theme_color_override(
+        "font_color", HudStyle.SIGNAL if all_known else HudStyle.INK_DIM)
+
+## Capture the per-faction intensification tracks off the snapshot AND announce the moment one
+## COMPLETES — the transition (`< 1.0` last snapshot, `>= 1.0` now) is exactly when a new policy
+## becomes usable, and nothing else in the HUD would tell the player. One-shot per faction+track
+## (`_knowledge_announced`), so it never re-fires on subsequent snapshots; a track already complete
+## on the first snapshot we see (fresh connect / rehydrated save) has no prior value and is NOT
+## announced — a nudge about something learned long ago is noise.
+func _ingest_intensification(intensification_variant: Variant) -> void:
+    if not (intensification_variant is Array):
+        return
+    for entry in intensification_variant:
+        if not (entry is Dictionary):
+            continue
+        var row := entry as Dictionary
+        var faction := int(row.get("faction", -1))
+        if faction < 0:
+            continue
+        var previous: Dictionary = _intensification_knowledge.get(faction, {})
+        var current := {
+            KNOWLEDGE_TRACK_CULTIVATION: float(row.get(KNOWLEDGE_TRACK_CULTIVATION, 0.0)),
+            KNOWLEDGE_TRACK_HERDING: float(row.get(KNOWLEDGE_TRACK_HERDING, 0.0)),
+        }
+        for track in KNOWLEDGE_UNLOCK_NOTES:
+            if not previous.has(track):
+                continue
+            if float(previous[track]) >= KNOWLEDGE_COMPLETE:
+                continue
+            if float(current[track]) < KNOWLEDGE_COMPLETE:
+                continue
+            _announce_knowledge_unlock(faction, String(track))
+        _intensification_knowledge[faction] = current
+
+## Post the one-shot "policy unlocked" nudge to the command feed. Player faction only — another
+## faction's tech is not the player's to see, and every other intensification readout filters the
+## same way; the announced set is still keyed per faction so the dedupe is correct for all of them.
+func _announce_knowledge_unlock(faction: int, track: String) -> void:
+    var key := "%d:%s" % [faction, track]
+    if _knowledge_announced.has(key):
+        return
+    _knowledge_announced[key] = true
+    if faction != PLAYER_FACTION_ID:
+        return
+    _note_command_feed(String(KNOWLEDGE_UNLOCK_LABELS[track]), String(KNOWLEDGE_UNLOCK_NOTES[track]))
+
+## A faction's progress (0..1) on one intensification track; 0 when the faction has not begun it
+## (the snapshot row is sparse) or no snapshot has arrived yet.
+func _faction_knowledge(faction: int, track: String) -> float:
+    var tracks: Dictionary = _intensification_knowledge.get(faction, {})
+    return float(tracks.get(track, 0.0))
+
+## One knowledge track's readout: the block-glyph bar + "learning" while in progress,
+## a "✔ known" badge once complete. `progress` is 0..1.
+func _knowledge_meter_text(progress: float) -> String:
+    if progress >= 1.0:
+        return "✔ known"
+    return "%s learning" % _meter_bar(progress * 100.0)
+
 ## Tint the dependency readout: amber when dependents outnumber workers, cyan when there is a
 ## healthy labor surplus, neutral otherwise.
 func _dependency_color(working: int, dependency: int) -> Color:
@@ -1225,7 +1530,16 @@ func _on_zoom_in_pressed() -> void:
 func _on_zoom_fit_pressed() -> void:
     emit_signal("map_zoom_fit")
 
+## An orb row's "Jump →". A row that locates an AWAITING EXPEDITION routes through the SAME path the
+## Band panel's Active-expeditions row click uses (`_on_panel_expedition_selected`: recenter + pin the
+## exact expedition so its drawer opens and the panel band isn't hijacked) rather than a second,
+## weaker jump that would only recenter the hex and auto-select whatever occupant sits on it. Every
+## other producer (band-located) keeps the plain recenter.
 func _on_turn_orb_focus(x: int, y: int) -> void:
+    var exp := _awaiting_expedition_at(x, y)
+    if not exp.is_empty():
+        _on_panel_expedition_selected(int(exp.get("entity", -1)), x, y)
+        return
     emit_signal("alert_focus_requested", x, y)
 
 func _on_turn_orb_advance() -> void:
@@ -1279,6 +1593,59 @@ func set_grid_dimensions(grid: Variant) -> void:
     _grid_width = int(g.get("width", _grid_width))
     _grid_height = int(g.get("height", _grid_height))
     _grid_wrap_horizontal = bool(g.get("wrap_horizontal", _grid_wrap_horizontal))
+
+## The world's herds captured each snapshot (Main forwards the snapshot `herds` key, the same array
+## `MapView._rebuild_herd_markers` consumes). Herds MIGRATE every turn, so this — not a hunt
+## assignment's launch-time `target_x/target_y` — is the authority on where a hunted herd IS.
+func update_herds(herds_variant: Variant) -> void:
+    if not (herds_variant is Array):
+        return
+    _world_herds = herds_variant
+
+## The snapshot herd with this id, wherever it is on the map; {} when unknown.
+## Mirrors `MapView._herd_by_id` (the hunted-herd ring's resolver).
+func _find_world_herd(herd_id: String) -> Dictionary:
+    if herd_id == "":
+        return {}
+    for herd in _world_herds:
+        if herd is Dictionary and String((herd as Dictionary).get("id", "")) == herd_id:
+            return herd
+    return {}
+
+## The world's food modules captured each snapshot (Main forwards the snapshot `food_modules` key,
+## the same array `MapView` ingests into `food_site_lookup`). Keyed by tile so a forage assignment's
+## `target_x/target_y` resolves to the module the map draws there — that's how a Current-actions
+## Forage row shows the SAME resource glyph as the map marker (`FoodIcons.for_site`).
+var _food_module_by_tile: Dictionary = {}
+
+func update_food_modules(modules_variant: Variant) -> void:
+    if not (modules_variant is Array):
+        return
+    _food_module_by_tile.clear()
+    for entry in modules_variant:
+        if not (entry is Dictionary):
+            continue
+        var site: Dictionary = entry
+        var sx := int(site.get("x", -1))
+        var sy := int(site.get("y", -1))
+        if sx >= 0 and sy >= 0:
+            _food_module_by_tile[Vector2i(sx, sy)] = site
+
+## "<glyph> " for a resolved glyph, "" for none — so a Current-actions row degrades to bare text
+## (no stray leading space) when the resource can't be resolved.
+func _source_icon_prefix(icon: String) -> String:
+    return "%s " % icon if icon != "" else ""
+
+## The resource glyph for the food module on (x, y) — the same icon `MapView._draw_food_site` draws
+## there. "" when the tile has no known module (older snapshot / undiscovered), so the row renders
+## bare rather than with a misleading fallback sprig.
+func _food_module_icon(x: int, y: int) -> String:
+    var site: Variant = _food_module_by_tile.get(Vector2i(x, y), null)
+    if not (site is Dictionary):
+        return ""
+    var module_key := String((site as Dictionary).get("module", ""))
+    var is_hunt := String((site as Dictionary).get("kind", "")) == FOOD_SITE_KIND_GAME_TRAIL
+    return FoodIcons.for_site(module_key, is_hunt)
 
 ## The band's current tile (col,row), reading the raw cohort `current_x/y` (snapshot entries) or the
 ## MapView marker's `pos` fallback; (-1,-1) when unknown.
@@ -1405,7 +1772,9 @@ func _policy_for_hunt(band: Dictionary, herd_id: String) -> String:
         var a: Dictionary = entry
         if String(a.get("kind", "")).to_lower() == LABOR_KIND_HUNT and String(a.get("fauna_id", "")) == herd_id:
             var policy := String(a.get("policy", "")).strip_edges().to_lower()
-            if policy in LABOR_HUNT_POLICIES:
+            # HUNT_POLICY_OPTIONS, not the extractive four: a herd already being Corralled must
+            # re-seed the compose picker as Corral, or re-staffing it would silently drop the pen.
+            if policy in HUNT_POLICY_OPTIONS:
                 return policy
     return DEFAULT_HUNT_POLICY
 
@@ -1418,17 +1787,25 @@ func _policy_for_forage(band: Dictionary, x: int, y: int) -> String:
         if String(a.get("kind", "")).to_lower() == LABOR_KIND_FORAGE \
                 and int(a.get("target_x", -1)) == x and int(a.get("target_y", -1)) == y:
             var policy := String(a.get("policy", "")).strip_edges().to_lower()
-            if policy in LABOR_HUNT_POLICIES:
+            # FORAGE_POLICY_OPTIONS, not the extractive four: a patch already being Cultivated must
+            # re-seed the compose picker as Cultivate, or re-staffing it would silently drop the
+            # investment back to Sustain (and the patch would go feral).
+            if policy in FORAGE_POLICY_OPTIONS:
                 return policy
     return DEFAULT_HUNT_POLICY
 
-## A friendlier label for a herd id — the roster/selected herd's label when known.
+## A friendlier label for a herd id — the roster/selected herd's label when known, else the
+## snapshot-wide herd list (a hunted herd usually sits on a DIFFERENT hex than the one selected,
+## so the roster alone left those rows reading the raw `game_deer_07` id).
 func _herd_label_for_id(herd_id: String) -> String:
     var herd := _find_roster_herd(herd_id)
     if not herd.is_empty():
         return String(herd.get("species", herd.get("label", herd_id)))
     if String(_selected_herd.get("id", "")) == herd_id:
         return String(_selected_herd.get("species", _selected_herd.get("label", herd_id)))
+    var world_herd := _find_world_herd(herd_id)
+    if not world_herd.is_empty():
+        return String(world_herd.get("species", world_herd.get("label", herd_id)))
     return herd_id
 
 ## Emit an assign_labor request for the given band, and record it as an OPTIMISTIC pending
@@ -1534,6 +1911,8 @@ func _effective_worker_map(band: Dictionary) -> Dictionary:
             "actual_yield": float(a.get("actual_yield", 0.0)),
             "sustainable_yield": float(a.get("sustainable_yield", 0.0)),
             "has_yield": a.has("actual_yield"),
+            # Min workers that produced this turn's take — drives the overstaffing note.
+            "workers_needed": int(a.get("workers_needed", 0)),
         }
     var pend := _pending_assigns_for(int(band.get("entity", -1)))
     for key in pend:
@@ -1543,7 +1922,10 @@ func _effective_worker_map(band: Dictionary) -> Dictionary:
             "x": int(pd.get("x", -1)), "y": int(pd.get("y", -1)),
             "herd_id": String(pd.get("herd_id", "")), "policy": String(pd.get("policy", "")), "pending": true,
             # A pending (optimistic) assign has no confirmed yield yet — render no yield number.
+            # Likewise no confirmed workers_needed, so 0 ⇒ "unknown" ⇒ no overstaffing note until
+            # the next snapshot resolves what the source actually used.
             "actual_yield": 0.0, "sustainable_yield": 0.0, "has_yield": false,
+            "workers_needed": 0,
         }
     return merged
 
@@ -1577,21 +1959,100 @@ func _effective_idle(band: Dictionary) -> int:
         assigned += int((merged[key] as Dictionary).get("workers", 0))
     return max(0, int(band.get("working_age", 0)) - assigned)
 
+## A trailing glyph on a row ("  ♻" / "  ●"), separated from the label — "" for an unknown/absent
+## glyph, so a row with no policy / no status renders bare rather than trailing whitespace.
+func _row_glyph_suffix(glyph: String) -> String:
+    return "" if glyph == "" else ROW_GLYPH_SEPARATOR + glyph
+
+## The WORDS behind a status glyph. Order-level statuses come from `STATUS_LABELS`; an expedition
+## PHASE reads from `EXPEDITION_PHASE_LABELS` (`_expedition_phase_label`), which stays the single
+## source of truth for the phase words — they are never re-typed here.
+func _status_label(status: String) -> String:
+    var key := status.strip_edges().to_lower()
+    if key == "":
+        return ""
+    if STATUS_LABELS.has(key):
+        return String(STATUS_LABELS[key])
+    return _expedition_phase_label(key)
+
+## One tooltip line spelling a status glyph out: the word plus its behaviour hint ("Pending — starts
+## when you advance the turn"); a status whose word says it all (`Working`) renders bare.
+func _status_tooltip_line(status: String) -> String:
+    var label := _status_label(status)
+    if label == "":
+        return ""
+    var hint := String(STATUS_HINTS.get(status.strip_edges().to_lower(), ""))
+    return label if hint == "" else STATUS_HINT_FORMAT % [label, hint]
+
+## Append the status words to a row tooltip. The glyph on the row is terse by design, so the hover
+## must carry what it encodes — composed WITH the tooltip the row already had (yield readout,
+## overstaffing explanation, policy hint), never replacing it.
+func _append_status_tooltip(tooltip: String, status: String) -> String:
+    var status_line := _status_tooltip_line(status)
+    if status_line == "":
+        return tooltip
+    return status_line if tooltip == "" else tooltip + TOOLTIP_LINE_SEPARATOR + status_line
+
+## Join the non-empty parts of a row tooltip (yield readout · policy behaviour · …) into one block.
+func _join_tooltip_lines(lines: Array) -> String:
+    var parts: Array[String] = []
+    for line in lines:
+        var text := String(line)
+        if text != "":
+            parts.append(text)
+    return TOOLTIP_LINE_SEPARATOR.join(parts)
+
+## The behaviour hint for a source's take policy, so the row's policy GLYPH is spelled out on hover.
+## Reuses the picker's existing hint strings (kind-specific: gathering a patch vs culling a herd) —
+## the same sentence the player read when they chose the policy. A worked source row is ALWAYS a
+## resident band's standing assignment, so the hunt side reads the LOCAL hints (never the expedition
+## set, whose payoffs differ).
+func _policy_hint(kind: String, policy: String) -> String:
+    var key := policy.strip_edges().to_lower()
+    if kind == LABOR_KIND_FORAGE:
+        return String(FORAGE_POLICY_HINTS.get(key, ""))
+    return String(LOCAL_HUNT_POLICY_HINTS.get(key, ""))
+
 ## A "<label>   − N +" worker-count row. `on_change` is called with the new count
 ## when either stepper is pressed. `plus_enabled` gates the + (e.g. no idle workers).
-## `pending` marks an optimistic (not-yet-confirmed) row: the label reads amber with a
-## "· pending" suffix, tying it to the amber pending hex on the map.
-func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "") -> HBoxContainer:
+## `status` is the row's action status (`FoodIcons.STATUS_WORKING` for a confirmed forage/hunt
+## source; "" for the band-wide Scout/Warrior roles, which report no per-action state), and
+## `pending` marks an optimistic (not-yet-confirmed) ORDER, which overrides the status: the row
+## renders the `◌` glyph instead of `●` and its label reads amber, tying it to the amber pending hex
+## on the map. Either way the state is a GLYPH, never a word — `tooltip` carries the words (see the
+## action-status vocabulary above); the status line is appended to it here so every caller composes
+## it the same way.
+## `on_focus_source` (optional) makes the LABEL a clickable inline link that jumps the map to the
+## row's source — a Forage tile / a hunted herd's live tile. It is a separate child from the
+## steppers, so the −/+ buttons keep working untouched and the count stays right-aligned. Band-wide
+## roles (Scout/Warrior) have no tile, so they pass nothing and keep a plain Label.
+func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, on_change: Callable, pending: bool = false, warn: bool = false, tooltip: String = "", note: String = "", on_focus_source: Callable = Callable(), status: String = "") -> HBoxContainer:
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    if tooltip != "":
-        row.tooltip_text = tooltip
-    var name_label := Label.new()
-    name_label.text = label_text + (PENDING_ROW_SUFFIX if pending else "")
-    name_label.add_theme_color_override("font_color", HudStyle.WARN if pending else HudStyle.INK)
-    if tooltip != "":
-        name_label.tooltip_text = tooltip
+    # Pending is a state of the ORDER, so it wins the glyph slot over whatever the action is doing.
+    var status_key := FoodIcons.STATUS_PENDING if pending else status
+    var row_tooltip := _append_status_tooltip(tooltip, status_key)
+    if row_tooltip != "":
+        row.tooltip_text = row_tooltip
+    var row_text := label_text + _row_glyph_suffix(FoodIcons.for_status(status_key))
+    var row_ink: Color = HudStyle.WARN if pending else HudStyle.INK
+    var name_label: Control
+    if on_focus_source.is_valid():
+        var link := Button.new()
+        link.text = row_text
+        link.alignment = HORIZONTAL_ALIGNMENT_LEFT
+        HudStyle.apply_link_button(link, row_ink)
+        link.tooltip_text = (row_tooltip + TOOLTIP_LINE_SEPARATOR if row_tooltip != "" else "") + SOURCE_ROW_FOCUS_HINT
+        link.pressed.connect(func() -> void: on_focus_source.call())
+        name_label = link
+    else:
+        var plain := Label.new()
+        plain.text = row_text
+        plain.add_theme_color_override("font_color", row_ink)
+        if row_tooltip != "":
+            plain.tooltip_text = row_tooltip
+        name_label = plain
     row.add_child(name_label)
     # Overhunting flag: a WARN-tinted ⚠ sits directly after the label (before the stepper), so an
     # overdrawn herd row pops without recoloring the whole label. Forage never trips this.
@@ -1599,9 +2060,20 @@ func _build_worker_stepper(label_text: String, count: int, plus_enabled: bool, o
         var warn_label := Label.new()
         warn_label.text = OVERHUNT_FLAG
         warn_label.add_theme_color_override("font_color", HudStyle.WARN)
-        if tooltip != "":
-            warn_label.tooltip_text = tooltip
+        if row_tooltip != "":
+            warn_label.tooltip_text = row_tooltip
         row.add_child(warn_label)
+    # Overstaffing note ("· only 1 of 5 working"): WARN-tinted, sits after the label/⚠ so the wasted
+    # labor reads at a glance without recoloring the whole row. Deliberately NOT the ⚠ flag — that
+    # means "overdrawing" (ecological); this means "extra workers idle here" (see
+    # `_source_yield_readout`). The tooltip carries the full explanation.
+    if note != "":
+        var note_label := Label.new()
+        note_label.text = note
+        note_label.add_theme_color_override("font_color", HudStyle.WARN)
+        if row_tooltip != "":
+            note_label.tooltip_text = row_tooltip
+        row.add_child(note_label)
     # A spacer (not name_label's expand) pushes the −/+ stepper to the right edge, keeping the
     # label + ⚠ adjacent at the left.
     var spacer := Control.new()
@@ -1661,28 +2133,110 @@ func _format_signed(value: float) -> String:
 func _format_yield(value: float) -> String:
     return _format_signed(value) + YIELD_PER_TURN_SUFFIX
 
-## Resolve a worked source's yield readout: the row-label suffix (headline actual yield), whether
-## it's overhunting (WARN ⚠), and the actual-vs-sustainable tooltip. Returns empty parts when the
-## source carries no confirmed yield (pending assign / older snapshot) so the row renders bare.
+## Resolve a worked source's row readout. Two INDEPENDENT signals ride the same row:
+##   • overdraw (`warn` → the ⚠ flag) — ecological: the take exceeds the renewable ceiling.
+##   • overstaffed (`note` → "· only N of M working") — labor: the source's take was capped below
+##     what the assigned workers could produce, so the surplus workers idled HERE and should be
+##     reassigned. True for ALL policies (every source has a ceiling), and orthogonal to overdraw —
+##     a source can be overstaffed while perfectly sustainable, or overdrawn while fully used.
+## Parts are empty when the source carries no confirmed data (pending assign / older snapshot), so
+## the row degrades to bare rather than asserting a wrong state.
 func _source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
-    if not bool(m.get("has_yield", false)):
-        return {"label_suffix": "", "warn": false, "tooltip": ""}
-    var actual := float(m.get("actual_yield", 0.0))
-    var sustainable := float(m.get("sustainable_yield", 0.0))
-    # A source overdraws when its actual take exceeds its renewable-sustainable ceiling. Forage on
-    # Sustain gathers at the patch's regrowth (actual == sustainable → never trips, reads
-    # "· renewable"); a Surplus/Market/Eradicate forage patch OR an over-hunted herd pushes actual
-    # above sustainable → the ⚠ flag.
-    var overhunting := _is_overdraw(actual, sustainable)
-    var renewable := kind == LABOR_KIND_FORAGE and not overhunting
-    var tooltip := "Actual %s" % _format_yield(actual)
-    if renewable:
-        tooltip += YIELD_TOOLTIP_RENEWABLE
+    var label_suffix := ""
+    var warn := false
+    var tooltip := ""
+    if bool(m.get("has_yield", false)):
+        var actual := float(m.get("actual_yield", 0.0))
+        var sustainable := float(m.get("sustainable_yield", 0.0))
+        # A source overdraws when its actual take exceeds its renewable-sustainable ceiling. Forage on
+        # Sustain gathers at the patch's regrowth (actual == sustainable → never trips, reads
+        # "· renewable"); a Surplus/Market/Eradicate forage patch OR an over-hunted herd pushes actual
+        # above sustainable → the ⚠ flag. ONE definition of the test (`_is_overdraw`), shared with the
+        # local-hunt yield preview so the row and the preview can never disagree.
+        warn = _is_overdraw(actual, sustainable)
+        var renewable := kind == LABOR_KIND_FORAGE and not warn
+        tooltip = "Actual %s" % _format_yield(actual)
+        if renewable:
+            tooltip += YIELD_TOOLTIP_RENEWABLE
+        else:
+            tooltip += " · Sustainable %s" % _format_yield(sustainable)
+            if warn:
+                tooltip += YIELD_TOOLTIP_OVERDRAW
+        label_suffix = " %s" % _format_yield(actual)
+    # Overstaffing: fewer workers were needed than are assigned, so the remainder produced nothing
+    # here. `workers_needed == 0` means "unknown" (rehydrated/older snapshot) → no note.
+    var note := ""
+    var workers := int(m.get("workers", 0))
+    var needed := int(m.get("workers_needed", 0))
+    if needed > 0 and workers > needed:
+        note = OVERSTAFF_NOTE_FORMAT % [needed, workers]
+        tooltip = OVERSTAFF_TOOLTIP if tooltip == "" \
+            else tooltip + TOOLTIP_LINE_SEPARATOR + OVERSTAFF_TOOLTIP
+    return {"label_suffix": label_suffix, "warn": warn, "note": note, "tooltip": tooltip}
+
+## PRE-COMMIT FORECAST (the compose-time counterpart to `_source_yield_readout`'s post-hoc note).
+## Pull the source's per-worker yield + the take ceiling for `policy` — both food/turn at its
+## CURRENT biomass, at output_multiplier 1.0. `src` is a herd dict (bare keys) or a tile_info (the
+## patch's fields, `patch_`-prefixed); `known` is false for a dead-season source or an older
+## snapshot that carries no forecast fields, in which case callers show no row and apply no cap.
+## An INVESTMENT policy additionally carries `payoff` (the tended/corral yield the preparation buys)
+## and `investment: true`, so `_forecast_yield_row` can state the deal instead of one number.
+func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictionary:
+    var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
+    var policy_key: String = policy if policy in FORECAST_CEILING_KEYS else DEFAULT_HUNT_POLICY
+    var ceiling := float(src.get(prefix + String(FORECAST_CEILING_KEYS[policy_key]), 0.0))
+    var investment: bool = policy_key in FORECAST_PAYOFF_KEYS
+    var payoff := 0.0
+    if investment:
+        payoff = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[policy_key]), 0.0))
+    return {
+        "per_worker": per_worker,
+        "ceiling": ceiling,
+        "payoff": payoff,
+        "investment": investment,
+        "known": per_worker >= FORECAST_MIN_PER_WORKER,
+    }
+
+## Workers beyond this produce nothing at this source under the selected policy —
+## ceil(ceiling / per_worker). MAX_USEFUL_UNBOUNDED when there's no forecast data. A tended patch /
+## corralled herd reports every ceiling == per_worker, so this collapses to 1 (policy irrelevant).
+func _max_useful_workers(forecast: Dictionary) -> int:
+    if not bool(forecast.get("known", false)):
+        return MAX_USEFUL_UNBOUNDED
+    return int(ceilf(float(forecast["ceiling"]) / float(forecast["per_worker"])))
+
+## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling), scaled by the
+## acting band's output multiplier (the sim exports the forecast at 1.0).
+func _expected_yield(forecast: Dictionary, workers: int, band: Dictionary) -> float:
+    var raw := minf(float(workers) * float(forecast.get("per_worker", 0.0)),
+        float(forecast.get("ceiling", 0.0)))
+    return raw * float(band.get("output_multiplier", OUTPUT_FULL))
+
+## Cap the worker stepper at what the source can absorb: min(the band's assignable workers,
+## max-useful). Returns `{cap, note}` — `note` is set ONLY when max-useful is the binding cap, so a
+## dead `+` button is always explained rather than mysterious (the idle-worker cap explains itself).
+func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
+    var useful := _max_useful_workers(forecast)
+    if useful == MAX_USEFUL_UNBOUNDED or useful >= assignable:
+        return {"cap": assignable, "note": ""}
+    var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
+    return {"cap": useful, "note": MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
+
+## The live "Expected yield: +0.48 /turn" row on the assign controls. Food income → HEALTHY green,
+## matching the map's per-source yield annotations and the Food line's income tint. Under an
+## INVESTMENT policy (Cultivate/Corral) it states the deal instead — "Preparing: +0.09 /turn → then
+## +1.20 /turn" — so the up-front cost AND the payoff are visible BEFORE the player commits. Both
+## halves are scaled by the acting band's output multiplier, exactly as the plain forecast is.
+func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary) -> Label:
+    var row := Label.new()
+    var expected := _format_yield(_expected_yield(forecast, workers, band))
+    if bool(forecast.get("investment", false)):
+        var payoff := float(forecast.get("payoff", 0.0)) * float(band.get("output_multiplier", OUTPUT_FULL))
+        row.text = INVESTMENT_FORECAST_FORMAT % [expected, _format_yield(payoff)]
     else:
-        tooltip += " · Sustainable %s" % _format_yield(sustainable)
-        if overhunting:
-            tooltip += YIELD_TOOLTIP_OVERDRAW
-    return {"label_suffix": " %s" % _format_yield(actual), "warn": overhunting, "tooltip": tooltip}
+        row.text = FORECAST_LABEL_FORMAT % expected
+    row.add_theme_color_override("font_color", HudStyle.HEALTHY)
+    return row
 
 ## THE overdraw test: a take above the source's renewable-sustainable ceiling (by more than the
 ## epsilon) draws the source down. One definition, shared by the confirmed allocation rows
@@ -1811,10 +2365,15 @@ func _build_allocation_panel(band: Dictionary, target: VBoxContainer = null) -> 
 ## changed from one flat container to its section block. `rebuild` is called by the local-state
 ## controls (party stepper / send-policy picker) to re-render the host; labor edits re-render
 ## themselves through `_after_pending_change`.
-func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
+## `with_population_header` hosts the `Population N · Workers W (Idle I)` line as the allocation
+## stack's first block. The Band/City panel passes **false**: that line is the band's identity, not an
+## allocation section, and riding along with the blocks it rendered wherever CURRENT ACTIONS did —
+## stranded between Active expeditions and Current actions. There it lives in the summary's identity
+## grid instead (`_unit_summary_lines(unit, in_panel = true)`), off the SAME `_effective_idle`. The
+## legacy flat in-card host (no dock injected — the HUD-only ui_preview fallback) still shows it here,
+## since that path renders no identity grid of its own.
+func _build_allocation_sections(band: Dictionary, rebuild: Callable, with_population_header: bool = true) -> Array:
     var blocks: Array = []
-    var population := int(band.get("size", 0))
-    var working := int(band.get("working_age", 0))
     # Idle counts OPTIMISTICALLY (confirmed idle overlaid with any pending changes) so the
     # math reflects a just-issued assignment immediately.
     var idle := _effective_idle(band)
@@ -1822,14 +2381,16 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
     # Workers block — clarified header: population (all people) vs the working-age labor split, so
     # nobody expects "Idle" to equal the 30 people — only the ~16 workers labor (children/elders eat
     # but don't work). E.g. "Population 30 · Workers 16 (Idle 16)".
-    var workers_block := _make_alloc_block()
-    var header := Label.new()
-    header.text = "Population %d · Workers %d (Idle %d)" % [population, working, idle]
-    header.add_theme_color_override("font_color", HudStyle.SIGNAL if can_add else HudStyle.INK_DIM)
-    header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    workers_block.add_child(header)
-    blocks.append(workers_block)
+    if with_population_header:
+        var workers_block := _make_alloc_block()
+        var header := Label.new()
+        header.text = WORKERS_HEADER_FORMAT % [
+            int(band.get("size", 0)), int(band.get("working_age", 0)), idle]
+        header.add_theme_color_override("font_color", HudStyle.SIGNAL if can_add else HudStyle.INK_DIM)
+        header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        workers_block.add_child(header)
+        blocks.append(workers_block)
     # "Current actions" block — the report of what each group is doing (confirmed + optimistic).
     var actions_block := _make_alloc_block()
     actions_block.add_child(_alloc_section_label(ALLOC_HEADER_ACTIONS))
@@ -1848,28 +2409,53 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
             has_source = true
             var fx := int(m.get("x", -1))
             var fy := int(m.get("y", -1))
-            # Policy is now populated for forage assignments (sim writes the string field). Tag the
-            # row like Hunt does; an older snapshot without a policy falls back to no tag. Re-staffing
+            # Policy is now populated for forage assignments (sim writes the string field). The row
+            # carries it as the shared POLICY GLYPH (`FoodIcons.for_policy` — the same icon on the
+            # picker button and the map's yield label), not the old "[sustain]" word; the tooltip
+            # spells it out. An older snapshot without a policy falls back to no glyph. Re-staffing
             # via the stepper preserves the policy (default Sustain when absent).
             var fpolicy := String(m.get("policy", "")).strip_edges().to_lower()
-            var forage_tag := " [%s]" % fpolicy if fpolicy in LABOR_HUNT_POLICIES else ""
-            var forage_emit_policy := fpolicy if fpolicy in LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY
+            var forage_policy_glyph := _row_glyph_suffix(FoodIcons.for_policy(fpolicy)) \
+                if fpolicy in FORAGE_POLICY_OPTIONS else ""
+            var forage_emit_policy := fpolicy if fpolicy in FORAGE_POLICY_OPTIONS else DEFAULT_HUNT_POLICY
+            # Lead with the resource glyph the map draws on that tile (FoodIcons — one source of
+            # truth), so a source reads identically in the panel and on the map. Unknown module → "".
+            var forage_icon := _source_icon_prefix(_food_module_icon(fx, fy))
             actions_block.add_child(_build_worker_stepper(
-                "Forage (%d, %d)%s%s" % [fx, fy, forage_tag, yld.label_suffix], workers, can_add,
+                "%sForage (%d, %d)%s%s" % [forage_icon, fx, fy, yld.label_suffix, forage_policy_glyph],
+                workers, can_add,
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_FORAGE, n, fx, fy, "", forage_emit_policy),
-                pending, yld.warn, yld.tooltip))
+                pending, yld.warn,
+                _join_tooltip_lines([yld.tooltip, _policy_hint(kind, fpolicy)]), yld.note,
+                # A forage patch is a fixed tile: the assignment's own target IS its live location.
+                func() -> void: _focus_labor_source(fx, fy),
+                # A confirmed local forage row has no sim phase — it is simply working.
+                FoodIcons.STATUS_WORKING))
         elif kind == LABOR_KIND_HUNT and (workers > 0 or pending):
             has_source = true
             var herd_id := String(m.get("herd_id", ""))
             var hx := int(m.get("x", -1))
             var hy := int(m.get("y", -1))
             var policy := String(m.get("policy", ""))
-            if not (policy in LABOR_HUNT_POLICIES):
+            if not (policy in HUNT_POLICY_OPTIONS):
                 policy = _policy_for_hunt(band, herd_id)
+            # Same species glyph the map's herd marker uses (FoodIcons.for_herd, keyed off the herd
+            # label/species) — the panel row and the map marker read as the same animal.
+            var herd_label := _herd_label_for_id(herd_id)
+            var hunt_icon := _source_icon_prefix(FoodIcons.for_herd(herd_label))
             actions_block.add_child(_build_worker_stepper(
-                "Hunt %s [%s]%s" % [_herd_label_for_id(herd_id), policy, yld.label_suffix], workers, can_add,
+                "%sHunt %s%s%s" % [
+                    hunt_icon, herd_label, yld.label_suffix,
+                    _row_glyph_suffix(FoodIcons.for_policy(policy))],
+                workers, can_add,
                 func(n: int) -> void: _emit_assign_labor(band, LABOR_KIND_HUNT, n, hx, hy, herd_id, policy),
-                pending, yld.warn, yld.tooltip))
+                pending, yld.warn,
+                _join_tooltip_lines([yld.tooltip, _policy_hint(kind, policy)]), yld.note,
+                # Herds MIGRATE, so resolve the herd's live tile at CLICK time (hx/hy is only the
+                # assignment's launch-time target, kept as the fallback for an unknown herd).
+                func() -> void: _focus_hunt_source(herd_id, hx, hy),
+                # A confirmed local hunt row has no sim phase — it is simply working.
+                FoodIcons.STATUS_WORKING))
     if not has_source:
         actions_block.add_child(_alloc_hint_label(ALLOC_NO_SOURCES_HINT))
     blocks.append(actions_block)
@@ -1904,7 +2490,8 @@ func _build_allocation_sections(band: Dictionary, rebuild: Callable) -> Array:
     clear_btn.text = "Clear all"
     HudStyle.apply_button(clear_btn, "ghost")
     clear_btn.tooltip_text = "Return every worker to idle (clears all assignments)."
-    clear_btn.disabled = not has_source and idle >= working
+    # Nothing to clear when no source is staffed AND every worker is already idle (roles included).
+    clear_btn.disabled = not has_source and idle >= int(band.get("working_age", 0))
     clear_btn.pressed.connect(_on_clear_all_pressed.bind(band))
     actions.add_child(clear_btn)
     orders_block.add_child(actions)
@@ -2063,7 +2650,39 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     # Beyond reach → expedition. Unknown distance (missing tiles) falls back to the local hunt.
     var is_expedition := distance >= 0 and distance > reach
     # Local hunt caps at the band's assignable hunt workers; an expedition caps at the party ceiling.
-    var cap := _expedition_party_cap(band) if is_expedition else _assignable_hunt_workers(band, herd_id)
+    var assignable := _expedition_party_cap(band) if is_expedition else _assignable_hunt_workers(band, herd_id)
+    # Policy options: the Corral INVESTMENT rung is offered on a LOCAL hunt only — a detached party
+    # follows the herd and hauls food home; it builds no pen. An expedition keeps the extractive four.
+    var hunt_options: Array = LABOR_HUNT_POLICIES if is_expedition else HUNT_POLICY_OPTIONS
+    var hunt_gates := {} if is_expedition else _hunt_policy_gates(herd)
+    # A gated rung can never be the composed policy (the herd may still be taming under a standing
+    # Corral selection), so re-validate every render — not just when the selected herd changes.
+    if not (_hunt_assign_policy in hunt_options) \
+            or not _gate_reasons(hunt_gates, _hunt_assign_policy).is_empty():
+        _hunt_assign_policy = DEFAULT_HUNT_POLICY
+    # Pre-commit forecast — LOCAL hunt only. An expedition travels for several turns and accumulates
+    # toward a carry cap, so the herd's per-turn take ceiling is NOT the bound on its party size;
+    # forecasting a per-turn yield for it would be a lie. On a local hunt the ceiling caps the
+    # stepper (no over-assigning) and drives the live expected-yield row; both recompute here on
+    # every stepper/policy change, since both re-render these controls.
+    var forecast := _forecast_inputs(herd, HERD_FORECAST_PREFIX, _hunt_assign_policy)
+    # ONE yield row per rung — each rung gets the row that actually informs ITS decision:
+    #   INVESTMENT (Corral) → `_forecast_yield_row` states the DEAL ("Preparing: +0.23 → then +1.05"):
+    #       what you give up, for how long, to get what. That IS the Corral decision, and the local
+    #       preview below structurally cannot express it (a dip/payoff pair is not a single rate).
+    #       Corral draws sustainably by design, so no overdraw verdict is lost by using this row.
+    #   EXTRACTIVE (the four) → `_local_hunt_preview_bbcode` below, which carries the same per-turn
+    #       number PLUS the sustainability verdict (`· renewable` / `⚠ overdraws the herd`).
+    # Rendering both was the merge's mistake: the two paths are independently computed but agree
+    # numerically (verified — the flat `per_worker_yield`/`ceiling_*` scalars and the
+    # `hunt_policy_ceilings` list are two views of ONE sim hunt model, both yielding +0.54 on a Market
+    # take), so the second row added no information and, worse, argued with the first — a HEALTHY-green
+    # "Expected yield" sitting directly above a WARN-amber "⚠ overdraws the herd" for the same number.
+    var forecast_active := not is_expedition and bool(forecast["known"]) \
+        and bool(forecast["investment"])
+    var capped := {"cap": assignable, "note": ""} if is_expedition \
+        else _forecast_worker_cap(forecast, assignable)
+    var cap := int(capped["cap"])
     _hunt_assign_count = clampi(_hunt_assign_count, 0, cap)
     # On an expedition the party stepper is a real decision (a bigger party carries bigger packs, so
     # stepping UP can turn a working trip impossible) — warn on the row itself when the next size up is.
@@ -2075,9 +2694,19 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
             _hunt_assign_count = clampi(n, 0, cap)
             _build_herd_assign_controls(herd),
         false, false, stepper_tooltip))
+    var cap_note := String(capped["note"])
+    if cap_note != "":
+        herd_assign_controls.add_child(_alloc_hint_label(cap_note))
     herd_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _hunt_assign_policy = policy
-        _build_herd_assign_controls(herd)))
+        _build_herd_assign_controls(herd), _hunt_assign_policy, hunt_options, hunt_gates))
+    # The policy hint is rendered per BRANCH below, never here: a resident band and a detached party
+    # earn DIFFERENT payoffs from the same policy word (the band tames the herd and trades the take;
+    # an expedition's Hunting arm credits food only), so one shared hint line under the picker would
+    # promise the expedition player a payoff the sim never pays.
+    if forecast_active:
+        herd_assign_controls.add_child(
+            _forecast_yield_row(forecast, _hunt_assign_count, band))
     if is_expedition:
         herd_assign_controls.add_child(_alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
@@ -2088,16 +2717,19 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
         # stepper tick and policy click, so the forecast tracks the compose state instead of arriving
         # as a confirmation — and it comes from the SAME helpers the targeting banner uses, so the two
         # entry points can never quote different numbers.
-        var forecast := _hunt_trip_forecast(band, herd, _hunt_assign_policy, _hunt_assign_count)
-        var forecast_line := _hunt_forecast_line_bbcode(forecast, _herd_label_for_id(herd_id))
+        # `trip`, NOT `forecast`: the outer `forecast` is the LOCAL hunt's per-turn ceiling inputs
+        # (client arithmetic over the BAND flow ceiling). This one is the sim's forward-simulated TRIP
+        # estimate — a pure table lookup, zero client arithmetic. The two must never be confused.
+        var trip := _hunt_trip_forecast(band, herd, _hunt_assign_policy, _hunt_assign_count)
+        var forecast_line := _hunt_forecast_line_bbcode(trip, _herd_label_for_id(herd_id))
         if forecast_line != "":
             herd_assign_controls.add_child(_forecast_label(forecast_line))
         # The row-scanned refusal — computed ONCE and used for both the button tooltip and the reason
         # line, and identical to what the targeting flow posts to the command feed.
-        var impossible := _hunt_trip_impossible(forecast)
+        var impossible := _hunt_trip_impossible(trip)
         var reason := _hunt_impossible_reason(
             band, herd, _hunt_assign_policy, _hunt_assign_count) if impossible else ""
-        _style_send_hunt_button(assign_btn, forecast, reason)
+        _style_send_hunt_button(assign_btn, trip, reason)
         # The reason is spelled out beside the button too — a disabled control's tooltip is easy to
         # miss, and the named alternative (a party size that DOES fill) is the actionable half.
         if impossible:
@@ -2110,9 +2742,14 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
             String(LOCAL_HUNT_POLICY_HINTS.get(_hunt_assign_policy, ""))))
         # LIVE per-turn yield for the standing assignment being composed (no carry cap on a local
         # hunt, so turns-to-fill is meaningless — food/turn is the number that decides it).
-        var yield_line := _local_hunt_preview_bbcode(band, herd, _hunt_assign_policy, _hunt_assign_count)
-        if yield_line != "":
-            herd_assign_controls.add_child(_forecast_label(yield_line))
+        # EXTRACTIVE rungs ONLY — the investment rung (Corral) is answered by the dip→payoff row above
+        # (`forecast_active`), and rendering both put two rows with the same number on the panel. See
+        # the ONE-yield-row-per-rung note there.
+        if not bool(forecast["investment"]):
+            var yield_line := _local_hunt_preview_bbcode(
+                band, herd, _hunt_assign_policy, _hunt_assign_count)
+            if yield_line != "":
+                herd_assign_controls.add_child(_forecast_label(yield_line))
         assign_btn.text = ASSIGN_LOCAL_HUNT_BUTTON
         HudStyle.apply_button(assign_btn, "primary")
     if is_expedition:
@@ -2277,20 +2914,107 @@ func _forecast_label(bbcode: String) -> RichTextLabel:
     label.text = bbcode
     return label
 
-## A sustain/surplus/market/eradicate policy radio; `on_pick` fires with the chosen policy. The
-## highlighted option is `selected` (defaults to the herd-assign compose policy so existing callers
-## are unchanged; the send-hunt-expedition picker passes `_send_hunt_policy`).
-func _build_policy_picker(on_pick: Callable, selected: String = "") -> HBoxContainer:
+## A 0..1 progress track (knowledge / domestication) as a whole percent. 0 is a MEANINGFUL reading in
+## a gate reason — it tells the player they haven't started the track at all.
+func _progress_percent(progress: float) -> int:
+    return int(round(clampf(progress, 0.0, 1.0) * PROGRESS_PERCENT_SCALE))
+
+## Unmet prerequisites for the FORAGE investment rung (Cultivate), keyed policy → Array[String] of
+## reasons (each already carrying its own remedy). Empty when every rung is available. Mirrors the
+## sim's `assign_labor` validation: the faction must have fully learned Cultivation, and only a
+## Thriving patch can be prepared.
+func _forage_policy_gates(tile_info: Dictionary) -> Dictionary:
+    var sustain_icon := FoodIcons.for_policy(LABOR_POLICY_SUSTAIN)
+    var reasons: Array[String] = []
+    var cultivation := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_CULTIVATION)
+    if cultivation < KNOWLEDGE_COMPLETE:
+        reasons.append(GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT % [
+            _progress_percent(cultivation), sustain_icon])
+    var phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
+    if phase != ECOLOGY_PHASE_THRIVING:
+        var phase_label := phase.capitalize() if phase != "" else GATE_PHASE_UNKNOWN_LABEL
+        reasons.append(GATE_REASON_PATCH_THRIVING_FORMAT % phase_label)
+    if reasons.is_empty():
+        return {}
+    return {LABOR_POLICY_CULTIVATE: reasons}
+
+## Unmet prerequisites for the HUNT investment rung (Corral), keyed policy → Array[String] of reasons.
+## The herd twin of `_forage_policy_gates`: the faction must have fully learned Herding, and the herd
+## must be fully domesticated before a pen can be built for it.
+func _hunt_policy_gates(herd: Dictionary) -> Dictionary:
+    var sustain_icon := FoodIcons.for_policy(LABOR_POLICY_SUSTAIN)
+    var reasons: Array[String] = []
+    var herding := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_HERDING)
+    if herding < KNOWLEDGE_COMPLETE:
+        reasons.append(GATE_REASON_HERDING_KNOWLEDGE_FORMAT % [
+            _progress_percent(herding), sustain_icon])
+    var domestication := float(herd.get("domestication", 0.0))
+    if domestication < DOMESTICATION_COMPLETE:
+        reasons.append(GATE_REASON_HERD_DOMESTICATED_FORMAT % [
+            _progress_percent(domestication), sustain_icon])
+    if reasons.is_empty():
+        return {}
+    return {LABOR_POLICY_CORRAL: reasons}
+
+## The take-policy radio; `on_pick` fires with the chosen policy. The highlighted option is
+## `selected` (defaults to the herd-assign compose policy so existing callers are unchanged; the
+## send-hunt-expedition picker passes `_send_hunt_policy`). `options` is the option set for this
+## source kind — the four extractive rungs by default, plus that kind's INVESTMENT rung on the
+## forage/herd assign controls (FORAGE_POLICY_OPTIONS / HUNT_POLICY_OPTIONS).
+##
+## `gates` maps a policy → an Array[String] of its unmet-prerequisite reasons (empty / absent =
+## available). A gated option is **shown, greyed, and explained** rather than hidden: it is disabled,
+## its tooltip carries every reason (one per line), and the reasons render under the row — one
+## compact line when there is a single reason, a "<policy> needs:" header + one bullet per reason
+## when there are several (each reason now names its remedy, so two on one line would not fit). The
+## player discovers the rung, what it costs to unlock, AND how to unlock it, BEFORE trying to use it.
+func _build_policy_picker(
+    on_pick: Callable,
+    selected: String = "",
+    options: Array = LABOR_HUNT_POLICIES,
+    gates: Dictionary = {}) -> VBoxContainer:
     var current := selected if selected != "" else _hunt_assign_policy
+    var block := VBoxContainer.new()
+    block.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", WORKER_STEPPER_SEPARATION)
-    for policy in LABOR_HUNT_POLICIES:
+    for policy in options:
+        var policy_key := String(policy)
+        var icon := FoodIcons.for_policy(policy_key)
+        var reasons := _gate_reasons(gates, policy_key)
         var btn := Button.new()
-        btn.text = String(policy).capitalize()
-        HudStyle.apply_button(btn, "primary" if policy == current else "ghost")
-        btn.pressed.connect(func() -> void: on_pick.call(policy))
+        # Glyph + name, from the shared FoodIcons policy map — the same icon the map's yield labels
+        # append, so a policy reads identically on the picker and on the worked tile/herd.
+        btn.text = "%s%s" % [_source_icon_prefix(icon), policy_key.capitalize()]
+        HudStyle.apply_button(btn, "primary" if policy_key == current else "ghost")
+        btn.disabled = not reasons.is_empty()
+        if btn.disabled:
+            btn.tooltip_text = GATE_REASON_TOOLTIP_SEPARATOR.join(reasons)
+        else:
+            btn.pressed.connect(func() -> void: on_pick.call(policy_key))
         row.add_child(btn)
-    return row
+    block.add_child(row)
+    # Spell the unmet prerequisites out in the panel — a greyed button alone doesn't teach.
+    for policy in options:
+        var policy_key := String(policy)
+        var reasons := _gate_reasons(gates, policy_key)
+        if reasons.is_empty():
+            continue
+        var titled := "%s%s" % [
+            _source_icon_prefix(FoodIcons.for_policy(policy_key)), policy_key.capitalize()]
+        if reasons.size() == 1:
+            block.add_child(_alloc_hint_label(GATE_REASON_LINE_FORMAT % [titled, reasons[0]]))
+            continue
+        block.add_child(_alloc_hint_label(GATE_REASON_HEADER_FORMAT % titled))
+        for reason in reasons:
+            block.add_child(_alloc_hint_label(GATE_REASON_BULLET_FORMAT % reason))
+    return block
+
+## The unmet-prerequisite reasons a `gates` dict holds for one policy — empty (available) for an
+## absent key. The single reader of the gates contract, so callers never re-assert its shape.
+func _gate_reasons(gates: Dictionary, policy: String) -> Array:
+    var reasons: Variant = gates.get(policy, null)
+    return reasons if reasons is Array else []
 
 ## The tile "Assign foragers" controls (compose a count, then Assign). Shown only for a
 ## tile with a food module while a player band exists to staff it — and only on a hex the player can
@@ -2344,19 +3068,36 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     # Forage take policy (Sustain/Surplus/Market/Eradicate, default Sustain) — reuses the hunt policy
     # radio + option set (LABOR_HUNT_POLICIES) but shows forage-appropriate behaviour hints. Persisted
     # across re-renders like the hunt policy; re-seeded from current staffing when the tile changes.
-    if not (_forage_assign_policy in LABOR_HUNT_POLICIES):
+    var forage_gates := _forage_policy_gates(tile_info)
+    # A gated rung can never be the composed policy — the patch may have left Thriving under a
+    # standing Cultivate selection, so re-validate every render, not just on a tile change.
+    if not (_forage_assign_policy in FORAGE_POLICY_OPTIONS) \
+            or not _gate_reasons(forage_gates, _forage_assign_policy).is_empty():
         _forage_assign_policy = DEFAULT_HUNT_POLICY
     forage_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _forage_assign_policy = policy
-        _build_forage_assign_controls(tile_info), _forage_assign_policy))
+        _build_forage_assign_controls(tile_info), _forage_assign_policy, FORAGE_POLICY_OPTIONS, forage_gates))
     forage_assign_controls.add_child(_alloc_hint_label(String(FORAGE_POLICY_HINTS.get(_forage_assign_policy, ""))))
-    var cap := _assignable_forage_workers(band, x, y)
+    # Pre-commit forecast: the patch's per-worker yield + the SELECTED policy's ceiling cap the
+    # stepper at max-useful workers, so the player CAN'T over-assign while composing. Both the
+    # stepper and the policy picker re-render these controls, so the cap and the expected-yield row
+    # below recompute on every change (a Market/Eradicate ceiling is higher than Sustain's, so
+    # switching policy moves the cap).
+    var forecast := _forecast_inputs(tile_info, FORAGE_FORECAST_PREFIX, _forage_assign_policy)
+    var capped := _forecast_worker_cap(forecast, _assignable_forage_workers(band, x, y))
+    var cap := int(capped["cap"])
     _forage_assign_count = clampi(_forage_assign_count, 0, cap)
     forage_assign_controls.add_child(_build_worker_stepper(
         "Foragers", _forage_assign_count, _forage_assign_count < cap,
         func(n: int) -> void:
             _forage_assign_count = clampi(n, 0, cap)
             _build_forage_assign_controls(tile_info)))
+    var cap_note := String(capped["note"])
+    if cap_note != "":
+        forage_assign_controls.add_child(_alloc_hint_label(cap_note))
+    if bool(forecast["known"]):
+        forage_assign_controls.add_child(
+            _forecast_yield_row(forecast, _forage_assign_count, band))
     # Range-aware: foraging is stationary gathering (there is NO forage-expedition alternative), so a
     # tile beyond the SELECTED band's work_range DISABLES the button + shows an out-of-range hint,
     # rather than a fallback. Distance is wrap-aware from the picked band's OWN tile — distance,
@@ -2988,14 +3729,38 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     var food_label := String(tile_info.get("food_module_label", "None")).strip_edges()
     if food_label == "":
         food_label = "None"
-    var weight: float = float(tile_info.get("food_module_weight", 0.0))
     var food_kind := String(tile_info.get("food_kind", "")).strip_edges()
     var food_line := "Forage: %s" % food_label
     if food_kind != "":
         food_line = "%s — %s" % [food_line, _format_food_kind_label(food_kind)]
-    if weight > 0.0:
-        food_line += " (weight %.2f)" % weight
+    # NOTE: the module's `seasonal_weight` is deliberately NOT printed — it is an internal
+    # yield coefficient, meaningless to the player (it still drives the sim's yield math).
     lines.append(food_line)
+    # Standing forage stock vs the patch's ceiling — the patch counterpart to a herd's "Biomass"
+    # row, so a foraged patch reads like wild game does ("how much there is"). Foraging draws the
+    # biomass down and it regrows logistically toward the capacity. Only rendered when the snapshot
+    # carries a real patch (capacity > 0), so a plain food-module tile with no patch stays bare.
+    var patch_capacity := float(tile_info.get("patch_carrying_capacity", 0.0))
+    if patch_capacity > 0.0:
+        lines.append("Forage biomass: %.0f / %.0f" % [float(tile_info.get("patch_biomass", 0.0)), patch_capacity])
+    # Ecology phase of the patch — ALWAYS shown for any tile carrying a patch (not just a
+    # cultivated one): the phase gates whether cultivation can accrue at all, so it is the
+    # single most important condition on a forage tile. Same row name / label / tint as the
+    # herd's Ecology row (`_ecology_phase_label` + `_ecology_value_hex`), so a stressed patch
+    # and a stressed herd read identically.
+    var patch_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
+    if patch_phase != "":
+        lines.append("Ecology: %s" % _ecology_phase_label(patch_phase))
+    # Forage-patch intensification ladder: while a patch is being tended it shows the
+    # cultivation progress; once cultivated it reads as a "Tended Patch" (SIGNAL tint).
+    # Mirrors the herd Husbandry row. Only when the snapshot carries the field so we
+    # never invent a state on a patch that isn't being worked.
+    if bool(tile_info.get("is_cultivated", false)):
+        lines.append("Cultivation: %s" % _cultivation_label(1.0, true))
+    elif tile_info.has("cultivation_progress"):
+        var cultivation_progress := float(tile_info["cultivation_progress"])
+        if cultivation_progress > 0.0:
+            lines.append("Cultivation: %s" % _cultivation_label(cultivation_progress, false))
     return lines
 
 # ---- Occupants roster ------------------------------------------------------
@@ -3068,6 +3833,12 @@ func _build_herd_row(herd: Dictionary) -> Button:
     var glyph := FoodIcons.for_herd(label)
     var name_text := String(herd.get("species", label))
     row.add_child(_roster_name_label("%s %s" % [glyph, name_text], selected))
+    # The fauna id as a DIM meta suffix (the roster's existing muted-ink convention, same label the
+    # size class uses). It appears nowhere else in the UI and it is the handle the command feed
+    # names, so it must survive the `Herd: Red Deer (game_deer_07)` row's removal — as secondary
+    # text beside the name, not as a detail row restating it.
+    if herd_id != "":
+        row.add_child(_roster_meta_label(herd_id))
     var size_class := String(herd.get("size_class", "")).strip_edges()
     if size_class != "":
         row.add_child(_roster_meta_label("%s game" % size_class.capitalize()))
@@ -3255,7 +4026,9 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     # The panel's Food/Morale labels are the same click-to-expand disclosures as the Occupants drawer.
     # This RichTextLabel is rebuilt each render, so wire its `meta_clicked` here (bound is_panel = true).
     detail_label.meta_clicked.connect(_on_detail_meta_clicked.bind(true))
-    detail_label.text = _format_detail_bbcode(_unit_summary_lines(_panel_band))
+    # `in_panel`: the panel header already names the band + stage, so the summary drops the Unit row
+    # and folds the population/workers line into the identity grid (see `_unit_summary_lines`).
+    detail_label.text = _format_detail_bbcode(_unit_summary_lines(_panel_band, true))
     summary_block.add_child(detail_label)
     blocks.append(summary_block)
     # "Active expeditions" block the panel band has detached (grouped by home_band_entity); omitted
@@ -3266,7 +4039,9 @@ func _render_band_into_panel(unit: Dictionary) -> void:
     # Allocation section blocks (closures capture the stable `_panel_band`; the party/policy controls
     # re-render the panel via `_rerender_panel_allocation`, which re-runs this whole assembly).
     var rebuild := func() -> void: _rerender_panel_allocation()
-    blocks.append_array(_build_allocation_sections(_panel_band, rebuild))
+    # No population header block here — the panel's identity grid carries that line (above), so it
+    # can't strand itself between Active expeditions and Current actions.
+    blocks.append_array(_build_allocation_sections(_panel_band, rebuild, false))
     _band_city_panel.set_band_sections(blocks)
     # Header: settlement stage glyph + name + stage label (glyph/label already flow onto the
     # marker/cohort dict; fall back to a neutral glyph when the stage is absent).
@@ -3299,10 +4074,14 @@ func _build_panel_expeditions_block(band: Dictionary) -> VBoxContainer:
         block.add_child(_build_panel_expedition_row(exp))
     return block
 
-## One clickable "Active expeditions" row: mission glyph + compact summary. Click routes the map
-## selection to the expedition (its detail then shows in the Occupants card's expedition drawer),
-## via the same signal path a roster click uses.
+## One clickable "Active expeditions" row: mission glyph + compact summary + the phase GLYPH. Click
+## routes the map selection to the expedition (its detail then shows in the Occupants card's
+## expedition drawer), via the same signal path a roster click uses.
+## An `awaiting` row is the ONE state that keeps its words and reads WARN-amber: the party is parked
+## at its objective burning provisions until the player acts, and a call to action must not hide
+## behind a hover (see the action-status vocabulary).
 func _build_panel_expedition_row(exp: Dictionary) -> Button:
+    var phase := _expedition_phase_key(exp)
     var btn := Button.new()
     btn.text = _panel_expedition_summary(exp)
     btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -3310,34 +4089,119 @@ func _build_panel_expedition_row(exp: Dictionary) -> Button:
     btn.clip_text = true
     btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     HudStyle.apply_button(btn, "ghost")
+    if phase == EXPEDITION_PHASE_AWAITING:
+        btn.add_theme_color_override("font_color", HudStyle.WARN)
+    btn.tooltip_text = _expedition_row_tooltip(exp, phase)
     var entity := int(exp.get("entity", -1))
     var x := int(exp.get("current_x", -1))
     var y := int(exp.get("current_y", -1))
     btn.pressed.connect(func() -> void: _on_panel_expedition_selected(entity, x, y))
     return btn
 
-## Compact one-line expedition summary: hunt → `🏹 <herd> · <Phase> · <Policy>`;
-## scout → `⚑ → (x, y) · <Phase>`.
+## The expedition's sim phase key, normalized (the wire's `ExpeditionPhase` string).
+func _expedition_phase_key(exp: Dictionary) -> String:
+    return String(exp.get("expedition_phase", "")).strip_edges().to_lower()
+
+## The phase as it renders ON the row: the glyph alone, except `awaiting`, which keeps its words
+## (`▮▮ Awaiting orders`) — a demand on the player must read without a hover.
+func _expedition_phase_suffix(phase: String) -> String:
+    var suffix := _row_glyph_suffix(FoodIcons.for_status(phase))
+    if phase == EXPEDITION_PHASE_AWAITING:
+        return "%s %s" % [suffix, _expedition_phase_label(phase)]
+    return suffix
+
+## The row's hover text: everything the glyphs encode, in words — the mission, the hunt policy's
+## behaviour hint, the phase + what it means, and the click affordance.
+func _expedition_row_tooltip(exp: Dictionary, phase: String) -> String:
+    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
+    var policy_hint := ""
+    if mission == EXPEDITION_MISSION_HUNT:
+        var policy := String(exp.get("expedition_hunt_policy", "")).strip_edges().to_lower()
+        policy_hint = String(SEND_HUNT_POLICY_HINTS.get(policy, ""))
+    return _join_tooltip_lines([
+        _expedition_mission_label(mission), policy_hint,
+        _status_tooltip_line(phase), EXPEDITION_ROW_FOCUS_HINT])
+
+## Compact one-line expedition summary: hunt → `🏹 <herd> · <Policy>  <phase glyph>`;
+## scout → `⚑ → (x, y)  <phase glyph>`. Policy AND phase read as GLYPHS here exactly as they do on the
+## Current-actions rows (one concept, one rendering, in both sections of the same panel); the words
+## live in the tooltip. A scout has no policy → `for_policy` returns "" → `_row_glyph_suffix` emits
+## nothing, so the row carries the phase glyph alone with no orphaned separator. Only `awaiting` keeps
+## its words (`_expedition_phase_suffix`).
 func _panel_expedition_summary(exp: Dictionary) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
-    var phase := _expedition_phase_label(String(exp.get("expedition_phase", "")))
+    var phase_suffix := _expedition_phase_suffix(_expedition_phase_key(exp))
+    var policy_suffix := _row_glyph_suffix(
+        FoodIcons.for_policy(String(exp.get("expedition_hunt_policy", ""))))
     if mission == EXPEDITION_MISSION_HUNT:
-        var parts: Array = []
         var herd := _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
-        if herd != "":
-            parts.append(herd)
-        if phase != "":
-            parts.append(phase)
-        var policy := String(exp.get("expedition_hunt_policy", "")).strip_edges()
-        if policy != "":
-            parts.append(policy.capitalize())
-        return "%s %s" % [PANEL_EXPEDITION_HUNT_GLYPH, " · ".join(parts)]
+        return "%s %s%s%s" % [PANEL_EXPEDITION_HUNT_GLYPH, herd, policy_suffix, phase_suffix]
     var x := int(exp.get("current_x", -1))
     var y := int(exp.get("current_y", -1))
-    var scout_parts: Array = ["→ (%d, %d)" % [x, y]]
-    if phase != "":
-        scout_parts.append(phase)
-    return "%s %s" % [PANEL_EXPEDITION_SCOUT_GLYPH, " · ".join(scout_parts)]
+    return "%s → (%d, %d)%s%s" % [
+        PANEL_EXPEDITION_SCOUT_GLYPH, x, y, policy_suffix, phase_suffix]
+
+## The expedition's OBJECTIVE in words — the herd it follows (hunt) or the tile it is parked on
+## (scout) — the "where do I have to go / what is this about" half of an attention row's context.
+func _expedition_objective(exp: Dictionary) -> String:
+    var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
+    if mission == EXPEDITION_MISSION_HUNT:
+        return _herd_label_for_id(String(exp.get("expedition_target_herd", "")).strip_edges())
+    return ATTENTION_TILE_FORMAT % [int(exp.get("current_x", -1)), int(exp.get("current_y", -1))]
+
+## Turn-orb attention items for every expedition parked in `awaiting` (Producer 4). ONE ROW PER
+## PARTY — each is its own decision with its own place to go (unlike idle workers, which are
+## genuinely one aggregate per band) — capped at ATTENTION_AWAITING_MAX_ROWS, with the remainder
+## folded into a single overflow row that jumps to the first party beyond the cap (so even the
+## aggregate row is actionable rather than a dead "Open ▸" stub).
+func _awaiting_orders_attention(expeditions: Array) -> Array:
+    var awaiting: Array = []
+    for exp_variant in expeditions:
+        if not (exp_variant is Dictionary):
+            continue
+        var exp: Dictionary = exp_variant
+        if _expedition_phase_key(exp) == EXPEDITION_PHASE_AWAITING:
+            awaiting.append(exp)
+    var items: Array = []
+    for i in awaiting.size():
+        var exp: Dictionary = awaiting[i]
+        var x := int(exp.get("current_x", -1))
+        var y := int(exp.get("current_y", -1))
+        if i >= ATTENTION_AWAITING_MAX_ROWS:
+            # Overflow: one aggregate row for the rest, locating to this (the first uncapped) party.
+            items.append({
+                "kind": ATTENTION_KIND_AWAITING_ORDERS,
+                "severity": ATTENTION_SEVERITY_WARN,
+                "label": ATTENTION_AWAITING_OVERFLOW_LABEL_FORMAT % (awaiting.size() - i),
+                "detail": ATTENTION_AWAITING_OVERFLOW_DETAIL,
+                "x": x, "y": y,
+            })
+            break
+        items.append({
+            "kind": ATTENTION_KIND_AWAITING_ORDERS,
+            "severity": ATTENTION_SEVERITY_WARN,
+            # The demand headline reuses the phase words ("Awaiting orders"); the context line names
+            # the mission + its objective, so the row is actionable without opening anything.
+            "label": _expedition_phase_label(EXPEDITION_PHASE_AWAITING),
+            "detail": ATTENTION_AWAITING_DETAIL_FORMAT % [
+                _expedition_mission_label(String(exp.get("expedition_mission", ""))),
+                _expedition_objective(exp)],
+            "x": x, "y": y,
+        })
+    return items
+
+## The awaiting expedition standing on (x, y), or {} — lets the orb's Jump reuse the panel's own
+## expedition-focus path instead of a second, weaker one (see `_on_turn_orb_focus`).
+func _awaiting_expedition_at(x: int, y: int) -> Dictionary:
+    for exp_variant in _player_expeditions:
+        if not (exp_variant is Dictionary):
+            continue
+        var exp: Dictionary = exp_variant
+        if _expedition_phase_key(exp) != EXPEDITION_PHASE_AWAITING:
+            continue
+        if int(exp.get("current_x", -1)) == x and int(exp.get("current_y", -1)) == y:
+            return exp
+    return {}
 
 ## Select an expedition (from the panel's Active-expeditions list) on the map: recenter + select
 ## its hex (rebuilds that hex's roster), then pin the exact expedition so the map ring moves and the
@@ -3353,6 +4217,34 @@ func _on_panel_expedition_selected(entity: int, x: int, y: int) -> void:
         emit_signal("roster_occupant_selected", "unit", entity)
     if not panel_band_keep.is_empty() and int(_panel_band.get("entity", -1)) != int(panel_band_keep.get("entity", -1)):
         _render_band_into_panel(panel_band_keep)
+
+## A Current-actions row's label was clicked: show the source the band is working. Recenter + select
+## its hex (`alert_focus_requested` → `MapView.focus_and_select_tile`) and, for a hunted herd, pin
+## the herd itself (`roster_occupant_selected` → `MapView.select_occupant`) so its drawer opens on
+## the herd rather than whatever occupant the hex auto-selects. This is exactly the routing the
+## Active-expeditions rows and the turn-orb "Jump →" use — no new path. The Band/City panel stays on
+## its band: focusing a hex that hosts another band would otherwise hijack the panel.
+func _focus_labor_source(x: int, y: int, herd_id: String = "") -> void:
+    if x < 0 or y < 0:
+        return
+    var panel_band_keep: Dictionary = _panel_band.duplicate(true) if not _panel_band.is_empty() else {}
+    emit_signal("alert_focus_requested", x, y)
+    # The focus above rebuilt the hex's roster, so the herd is resolvable now.
+    if herd_id != "" and not _find_roster_herd(herd_id).is_empty():
+        _select_roster_occupant("herd", herd_id)
+        emit_signal("roster_occupant_selected", "herd", herd_id)
+    if not panel_band_keep.is_empty() and int(_panel_band.get("entity", -1)) != int(panel_band_keep.get("entity", -1)):
+        _render_band_into_panel(panel_band_keep)
+
+## Show a hunted herd. Herds MIGRATE each turn, so the hunt assignment's `target_x/target_y` is a
+## stale launch position: resolve the herd's LIVE tile from the snapshot herd list first, exactly as
+## `MapView._draw_band_work_highlights` resolves the hunted-herd ring (`_herd_by_id`, falling back to
+## the assignment target when the herd is unknown — e.g. it left the visible fauna set).
+func _focus_hunt_source(herd_id: String, fallback_x: int, fallback_y: int) -> void:
+    var herd := _find_world_herd(herd_id)
+    var x := int(herd.get("x", fallback_x))
+    var y := int(herd.get("y", fallback_y))
+    _focus_labor_source(x, y, herd_id)
 
 ## Re-render the panel band into the panel container, keyed off `_panel_band` (never the current
 ## selection). The panel's own allocation rebuilds (optimistic pending, etc.) route through this so
@@ -3439,22 +4331,43 @@ func _select_band_on_map(band: Dictionary) -> void:
 func _is_player_unit(unit: Dictionary) -> bool:
     return int(unit.get("faction", PLAYER_FACTION_ID)) == PLAYER_FACTION_ID
 
-func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
+## The band summary rows. **No row here restates what its host's own header already shows.** Both
+## hosts name the band above the detail — the Band/City dock in its panel header, the Occupants card
+## in the band's roster row — and the roster row also carries the band's SIZE, so neither the
+## `Unit: <name>` row nor the `Size: <n>` row survives.
+## `in_panel` = rendered into the dock, which is the only host with a labor readout to give: there the
+## population becomes the **Population** row carrying the labor line (`29 · Workers 14 (Idle 12)`) —
+## the same reading the allocation block used to strand between Active expeditions and Current
+## actions. The Occupants-card drawer (foreign bands / the no-panel fallback) has no worker breakdown
+## to show for a band that isn't ours, so it states no population at all; the roster row has it.
+func _unit_summary_lines(unit_data: Dictionary, in_panel: bool = false) -> Array[String]:
     if bool(unit_data.get("is_expedition", false)):
         return _expedition_summary_lines(unit_data)
     var lines: Array[String] = []
-    # Disclosure carets are rebuilt per render; drop last render's Food/Morale entries.
+    # Disclosure carets + the tint context are rebuilt per render. Reset BOTH here, not inside
+    # `_band_food_line` — a foreign band skips that call entirely (below), and a skipped Food row
+    # must not inherit the previous render's caret or its food-days tint.
     _disclosure_state = {}
-    var label := String(unit_data.get("id", "Band"))
-    lines.append("Unit: %s" % label)
-    var size_value: int = int(unit_data.get("size", 0))
-    lines.append("Size: %d" % size_value)
-    lines.append(_band_food_line(unit_data))
-    # Category-aggregated food breakdown under Food: a click-to-expand disclosure (auto-shown when
-    # concerning). `_band_food_line` set `_food_flow_present`; `_register_disclosure` records the row
-    # so `_format_detail_bbcode` draws the caret + clickable meta.
-    if _food_flow_present and _register_disclosure(DETAIL_ROW_FOOD, BREAKDOWN_KIND_FOOD, unit_data):
-        lines.append_array(_food_breakdown_lines(unit_data))
+    _food_flow_present = false
+    _selected_band_food_days = NAN
+    if in_panel:
+        # Idle counts OPTIMISTICALLY via the SAME `_effective_idle` the `+` stepper gates on — the
+        # calculation is moved here, never forked.
+        lines.append("%s: %s" % [DETAIL_ROW_POPULATION, WORKERS_VALUE_FORMAT % [
+            int(unit_data.get("size", 0)), int(unit_data.get("working_age", 0)),
+            _effective_idle(unit_data)]])
+    # Food, like Morale below, is our OWN bands' business only. A rival's cohort carries no
+    # `days_of_food`/`stores` on the wire, so rendering the row for one printed a FABRICATED
+    # `Food 0 (∞)` in healthy green — the UI claiming we'd counted a larder we cannot see. A foreign
+    # band shows only what we can honestly observe from outside: where it is (Position) and roughly
+    # how many (its roster row's size).
+    if _is_player_unit(unit_data):
+        lines.append(_band_food_line(unit_data))
+        # Category-aggregated food breakdown under Food: a click-to-expand disclosure (auto-shown
+        # when concerning). `_band_food_line` set `_food_flow_present`; `_register_disclosure`
+        # records the row so `_format_detail_bbcode` draws the caret + clickable meta.
+        if _food_flow_present and _register_disclosure(DETAIL_ROW_FOOD, BREAKDOWN_KIND_FOOD, unit_data):
+            lines.append_array(_food_breakdown_lines(unit_data))
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
@@ -3489,11 +4402,15 @@ func _unit_summary_lines(unit_data: Dictionary) -> Array[String]:
 ## mission, humanized phase, party size, and carried food (from stores/daysOfFood). A hunt
 ## expedition (§2b) also lists the target herd it follows. Expeditions have no labor in v1, so
 ## this replaces the band's labor/morale rows entirely.
+## Like the band + herd drawers, it carries NO identity row: an expedition rides the same
+## `_roster_units` path as a band, so its roster row (`_build_band_row`) already shows the very
+## `id` the old `Unit:` line printed — nothing is lost with it (unlike the herd's fauna id, which
+## had to move INTO the row). `Policy` / `Phase` deliberately keep their WORDS here: the compact
+## Active-expeditions row is where the glyph vocabulary belongs; this block IS the disclosure.
 func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
     var lines: Array[String] = []
     var mission := String(unit_data.get("expedition_mission", ""))
     var is_hunt := mission == EXPEDITION_MISSION_HUNT
-    lines.append("Unit: %s" % String(unit_data.get("id", "Expedition")))
     lines.append("Mission: %s" % _expedition_mission_label(mission))
     if is_hunt:
         # The migratory herd it follows (species label from the fauna_id, falling back to the id).
@@ -3507,7 +4424,8 @@ func _expedition_summary_lines(unit_data: Dictionary) -> Array[String]:
     var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
     if phase != "":
         lines.append("Phase: %s" % _expedition_phase_label(phase))
-    lines.append("Party: %d" % int(unit_data.get("size", 0)))
+    # NO `Party` row: it printed `unit_data["size"]` — the exact field the roster row already shows as
+    # its size meta (`Hunters 1 … 5`), so it was the band `Size` restatement under another name.
     # Food it carries — larder-drawn provisions for a scout, the hunted haul for a hunt party —
     # days from daysOfFood. Reuse the food-days tint context (`_selected_band_food_days`, read
     # back in `_format_detail_bbcode`).
@@ -3767,15 +4685,11 @@ func _format_food_kind_label(kind_value: String) -> String:
     return " ".join(parts)
 
 func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
+    # NO identity rows. The herd's own roster row above this drawer already shows the species glyph +
+    # name, the `<size> game` class, AND (as a dim meta) the fauna id — so `Herd` / `Species` / `Size`
+    # were the same three facts a second time (the name three times, counting the `Herd` row's
+    # "Red Deer (game_deer_07)"). What follows is only what the header CAN'T show: the herd's state.
     var lines: Array[String] = []
-    var label: String = String(herd_data.get("label", herd_data.get("id", "Herd")))
-    lines.append("Herd: %s" % label)
-    var species := String(herd_data.get("species", ""))
-    if species != "":
-        lines.append("Species: %s" % species)
-    var size_class := String(herd_data.get("size_class", "")).strip_edges()
-    if size_class != "":
-        lines.append("Size: %s game" % size_class.capitalize())
     var biomass: float = float(herd_data.get("biomass", 0.0))
     if biomass > 0.0:
         lines.append("Biomass: %.0f" % biomass)
@@ -3785,6 +4699,15 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     var domestication := float(herd_data.get("domestication", 0.0))
     if domestication > 0.0:
         lines.append("Husbandry: %s" % _husbandry_label(domestication))
+    # A corralled herd is penned by the band (intensification ladder). SIGNAL-tinted, mirroring the
+    # Husbandry/Ecology row treatment. While the keepers are still BUILDING the pen (0 < progress < 1
+    # under the Corral policy) the same row reports the meter — the animal twin of the tile card's
+    # "Cultivation N%" row, so the investment the player committed to is visibly under way.
+    var corral_progress := float(herd_data.get("corral_progress", 0.0))
+    if bool(herd_data.get("corralled", false)):
+        lines.append("Corral: %s" % _corral_label(CORRAL_PROGRESS_COMPLETE, true))
+    elif corral_progress > 0.0:
+        lines.append("Corral: %s" % _corral_label(corral_progress, false))
     var x := int(herd_data.get("x", -1))
     var y := int(herd_data.get("y", -1))
     if x >= 0 and y >= 0:
@@ -3831,6 +4754,36 @@ func _husbandry_label(progress: float) -> String:
 ## ink while it's still being tamed. Matched on the label produced by `_husbandry_label`.
 func _husbandry_value_hex(value: String) -> String:
     if value.to_lower().contains("domesticated"):
+        return HudStyle.SIGNAL_HEX
+    return HudStyle.INK_HEX
+
+## Player-facing cultivation label for a forage patch. A fully-tended patch shows a crop
+## glyph; an in-progress patch shows the percentage. Mirrors `_husbandry_label`;
+## `_format_detail_bbcode` tints a Tended value via `_cultivation_value_hex`.
+func _cultivation_label(progress: float, cultivated: bool) -> String:
+    if cultivated or progress >= 1.0:
+        return "🌾 Tended Patch"
+    return "%d%%" % int(round(progress * 100.0))
+
+## BBCode hex for a "Cultivation" value: signal (positive) for a tended patch, normal ink
+## while it's still being cultivated. Matched on the label from `_cultivation_label`.
+func _cultivation_value_hex(value: String) -> String:
+    if value.to_lower().contains("tended"):
+        return HudStyle.SIGNAL_HEX
+    return HudStyle.INK_HEX
+
+## Player-facing corral label from pen-build progress (0.0–1.0) — the herd twin of
+## `_cultivation_label`. A finished pen shows the livestock glyph; an in-progress one reads
+## "Building N%", naming the work under way. `_format_detail_bbcode` tints via `_corral_value_hex`.
+func _corral_label(progress: float, corralled: bool) -> String:
+    if corralled or progress >= CORRAL_PROGRESS_COMPLETE:
+        return "%s Corralled" % CORRAL_GLYPH
+    return "%s %d%%" % [CORRAL_BUILDING_LABEL, int(round(progress * 100.0))]
+
+## BBCode hex for a "Corral" value: signal (positive) once penned, normal ink while it's being
+## built. Matched on the label from `_corral_label`, mirroring `_cultivation_value_hex`.
+func _corral_value_hex(value: String) -> String:
+    if value.to_lower().contains("corralled"):
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
 
@@ -3901,9 +4854,17 @@ func _format_detail_bbcode(lines: Array) -> String:
                 # The tile's sight state: live cyan when in sight, dim when only remembered/unknown.
                 value_hex = _sight_value_hex(String(kv[1]))
             elif String(kv[0]) == "Ecology":
+                # Shared by the herd drawer and the forage-patch tile card — both name the row
+                # "Ecology" and take the same neutral/amber/red phase tint.
                 value_hex = _ecology_value_hex(String(kv[1]))
             elif String(kv[0]) == "Husbandry":
                 value_hex = _husbandry_value_hex(String(kv[1]))
+            elif String(kv[0]) == "Cultivation":
+                value_hex = _cultivation_value_hex(String(kv[1]))
+            elif String(kv[0]) == "Corral":
+                value_hex = _corral_value_hex(String(kv[1]))
+            elif String(kv[0]) == "Corral":
+                value_hex = HudStyle.SIGNAL_HEX
             # A disclosure row (Food/Morale) renders its key as a clickable cyan `[url]` + ▸/▾ caret,
             # toggling its breakdown sub-lines via `meta_clicked` → `_on_detail_meta_clicked`. Which
             # rows are disclosures (and their open-state) is set in `_unit_summary_lines`.
@@ -4107,6 +5068,10 @@ func update_band_alerts(populations_variant: Variant) -> void:
                 "detail": band_name,
                 "x": x, "y": y,
             })
+    # Producer 4 — awaiting orders: a detached party parked at its objective, burning provisions
+    # until the player acts (amber/warn, same class as idle labor). Runs over the EXPEDITIONS split
+    # out above, not the bands — an expedition is never "Band N", so it never enters the band loop.
+    attention.append_array(_awaiting_orders_attention(player_expeditions))
     _prev_band_sizes = new_sizes
     _player_band = player_band
     _player_bands = player_bands

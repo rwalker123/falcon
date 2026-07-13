@@ -130,6 +130,7 @@ const MARKER_BADGE_BG := Color(0.05, 0.06, 0.08, 0.9)
 const MARKER_BADGE_FG := Color(0.95, 0.97, 1.0, 1.0)
 const MARKER_BADGE_FONT_SIZE := 11
 const MARKER_BADGE_HEIGHT_FACTOR := 1.15     # pill height as a factor of glyph height
+const MARKER_BADGE_PAD_X := 0.0              # a count badge is short: its round end caps ARE its padding
 
 # Selected / hovered hex outline (replaces the old brown-circle selection feel).
 const SELECTED_HEX_OUTLINE_COLOR := Color(1.0, 1.0, 1.0, 0.9)
@@ -142,16 +143,110 @@ const HOVER_HEX_OUTLINE_WIDTH := 1.5
 const ICON_MIN_DETAIL_RADIUS := 16.0
 # Edge blending (Approach B — per-pixel biome-blend shader; see CLAUDE.md → Edge Blending):
 # below this hex radius the shader renders base-only (no blend) so far-zoom tiny hexes don't shimmer.
-# The band width + value-noise cell fallbacks mirror terrain_config.json (blend_width/blend_noise_cell).
+# The flat↔flat seam is ALWAYS A CONTINUOUS WEIGHTED MIX: a symmetric signed-distance splat weight (the
+# LEAD term), perturbed by world value noise (organic meander) and — optionally, weakly — by the two
+# textures' zero-centred luminance (a detail-following NUDGE), then feathered through a smoothstep into a
+# mix factor. Two rejected predecessors were both 1-bit picks in disguise: the original dither
+# (`neighbour if p > vnoise(...)`) — user-rejected as chunky blobs — and height blending with
+# blend_height_influence 4.0, where the luma term dwarfed the distance weight and degenerated into
+# winner-takes-all-by-luminance: dark soil punched torn holes deep into prairie-hex interiors ("this isn't
+# a blend at all"). Hence the invariant: the WEIGHTS LEAD, the heights only NUDGE, and the last step is a mix.
+# The fallbacks below mirror terrain_config.json (blend_width/blend_soft/blend_height_influence/
+# blend_noise_scale/blend_noise_amount/feature_noise_cell). The two noises stay DECOUPLED: the blend noise
+# wobbles ONLY the flat↔flat seam, while feature_noise_cell grains the shoreline reach/wisp + canopy
+# treeline + peak footline — so retuning the seam can never move a coastline, treeline or footline.
+# UNITS DIFFER ON PURPOSE: blend_noise_scale is a FRACTION OF THE HEX RADIUS (× radius → px, like
+# blend_width), so the wobble's cell stays the same fraction of a hex at EVERY zoom. A raw-px cell did not:
+# a hex is ~45px on screen in-game but several times that in a zoomed-in preview frame, so one fixed 6px
+# cell meant a far coarser grain per hex in the game than in the preview it was judged in (the "preview
+# doesn't match the game" report). feature_noise_cell stays a RAW PIXEL size (the shore/treeline/footline
+# look is tuned in px).
 const EDGE_BLEND_MIN_RADIUS := ICON_MIN_DETAIL_RADIUS
-const EDGE_BLEND_DEFAULT_WIDTH := 0.42
-const EDGE_BLEND_DEFAULT_NOISE_CELL := 6.0
-# Shoreline (land↔water coasts): foam wash on the water side + sand beach on the land side. Widths are
-# fractions of the hex radius (× radius → px band, like blend_width). Fallbacks mirror terrain_config's
-# "shore" block; universal for now (every land↔water edge blends, no per-biome gating).
-const SHORE_DEFAULT_FOAM_WIDTH := 0.55
-const SHORE_DEFAULT_BEACH_WIDTH := 0.4
-const SHORE_DEFAULT_FOAM_COLOR := Vector3(0.874, 0.949, 0.968)
+# REACH — how far across the seam the two biomes are allowed to mix (× radius → the blend_band px uniform).
+# This is the ecotone's width. The user wants a SHALLOW transition confined to the hex edge, so it is kept
+# small: 0.25·radius ≈ 19px at the on-screen r≈75, a shallow band that never reaches a hex interior.
+const EDGE_BLEND_DEFAULT_WIDTH := 0.25
+# FEATHER SOFTNESS — half-width (in seam-weight units, so 0..0.5 is the meaningful span) of the smoothstep
+# that converts the perturbed seam weight into the mix factor. SMALL (≈0.03) ⇒ the mix snaps between the two
+# biomes wherever the noise/detail carries the weight past 0.5, reading as a fine crisp stipple; LARGE
+# (≈0.35) ⇒ a smooth gradient where the noise only leans the crossfade. It is never 0 in the shader
+# (BLEND_SOFT_MIN floors it) so the smoothstep can't degenerate into a hard step.
+const EDGE_BLEND_DEFAULT_SOFT := 0.35
+const EDGE_BLEND_MAX_SOFT := 0.5  # past 0.5 the feather spans the whole weight range — no seam left
+# HEIGHT INFLUENCE — the detail-following NUDGE: the two textures' zero-centred luminances bend the boundary
+# toward the darker/lighter side so it follows their own tufts/grains. It is deliberately WEAK — typical luma
+# deviations are ±0.3, so at 0.25 the nudge moves the weight by ≤ ~0.08, a fraction of the 0..1 distance
+# weight it perturbs. It must NEVER out-vote that weight: at 4.0 the term dominated and the blend degenerated
+# into a luminance-driven winner-takes-all that tore holes in hex interiors (user-rejected). 0 = pure
+# distance+noise feather. EDGE_BLEND_MAX_HEIGHT_INFLUENCE is the hard ceiling that keeps it a nudge.
+const EDGE_BLEND_DEFAULT_HEIGHT_INFLUENCE := 0.25
+const EDGE_BLEND_MAX_HEIGHT_INFLUENCE := 0.5
+# WOBBLE CELL — the seam-perturbation noise cell as a FRACTION of the hex radius (→ blend_noise_cell px).
+# It is the WAVELENGTH at which the boundary meanders: coarse (≈0.25·radius ≈ 19px at r=75) gives a few
+# organic lobes per hex edge, which is what stops the seam reading as the straight hex polyline; very fine
+# (≈0.05) turns it into a per-pixel speckle instead.
+const EDGE_BLEND_DEFAULT_NOISE_SCALE := 0.25
+# WOBBLE AMOUNT — amplitude of that perturbation, ADDED to the seam weight (never thresholded against it —
+# this is not a dither) and enveloped so it dies at both ends of the band. 0.30 swings the boundary by ±0.15
+# of the weight range at the seam: a visible meander, still far short of reaching a hex interior.
+const EDGE_BLEND_DEFAULT_NOISE_AMOUNT := 0.3
+const EDGE_BLEND_DEFAULT_FEATURE_NOISE_CELL := 6.0
+# RUGGED-LAND ELIGIBILITY (config `blend_rugged_land` → the shader's blend_rugged_land uniform). The bare seam
+# gate is SAME-CLASS, so a rugged biome's base floor would never blend and would end in a razor-straight
+# hexagon against its neighbour — the "rolling hills are CUT OFF at the hex edge" report (a peak biome's base
+# IS the whole ground under its relief overlay). ON widens the LAND half of the gate to "both sides are land"
+# (flat↔rugged and rugged↔rugged blend, through the EXISTING flat levers; land↔water stays hard and water
+# keeps its depth field, so no frame without a rugged hex moves — verified bit-identical).
+# SHIPPED ON, but only after the whole rugged roster was swept for SHREDDING (the height term tearing holes in
+# a structured texture's interior — see EDGE_BLEND_DEFAULT_HEIGHT_INFLUENCE): every rugged biome was rendered
+# as an ISOLATED hex surrounded by a contrasting one, in a flat field AND in a rugged field
+# (tools/blend_probe.tscn state R). A straight band seam cannot show shredding — never judge this on one.
+const EDGE_BLEND_DEFAULT_RUGGED_LAND := true
+# --- WATER↔WATER seam levers (terrain_config's "water_blend" block) ---
+# Blend eligibility is SAME-CLASS (see CLAUDE.md → Edge Blending): flat↔flat AND water↔water both blend;
+# land↔water stays hard (that seam is the shoreline). The five levers above are tuned for LAND, where the
+# textures carry detail for the height term to interlock on. Water textures are smooth and low-variance, so
+# a land-width seam there just draws a clean soft-edged HEXAGON: the wobble is the only thing dissolving the
+# silhouette, and at land amplitude/reach it cannot. Ocean depth also grades gradually in nature, so water
+# gets its OWN wider/softer/wobblier reach (rendered side-by-side at r≈77: the land levers left visible hex
+# outlines on a deep-ocean patch, these dissolved them). Only these three differ — the wobble CELL and the
+# height nudge stay shared (a finer cell would speckle; the height term is a no-op on flat water anyway).
+const WATER_BLEND_DEFAULT_WIDTH := 0.45          # reach (× radius → px), vs 0.25 on land
+const WATER_BLEND_DEFAULT_SOFT := 0.45           # feather half-width, vs 0.35 on land (capped as land is)
+const WATER_BLEND_DEFAULT_NOISE_AMOUNT := 0.45   # wobble amplitude, vs 0.30 on land
+# Shoreline (land↔water coasts): a continuous profile — land → sand → surf → water — built from a SIGNED
+# coast coordinate that straddles the shared edge, so no boundary in that chain is a hard step (see the
+# shader's shoreline block for the three rejected passes this replaced). The three reaches are fractions of
+# the hex radius (× radius → px band, like blend_width); fallbacks mirror terrain_config's "shore" block.
+# Universal for now (every land↔water edge gets it, no per-biome gating).
+# SAND_WIDTH is the sand's reach INLAND and is deliberately SHORT (0.25 < the 0.4 the first land-side beach
+# used): the sand must fade into the land art, not bury it. There is NO sand on the water side at all — the
+# sand↔foam blend is bought instead with FOAM_INLAND_WIDTH, the distance the surf washes UP the beach and
+# crossfades with the sand.
+const SHORE_DEFAULT_SAND_WIDTH := 0.25
+const SHORE_DEFAULT_FOAM_INLAND_WIDTH := 0.15
+const SHORE_DEFAULT_FOAM_WIDTH := 0.41
+# The faint SECOND surf line out over open water. Both levers are fractions of the hex radius, exactly like
+# FOAM_WIDTH — the wisp used to be a fixed multiple of the surf's reach, which chained the two together so
+# the surf could not be shortened without dragging the wisp in with it. Config must keep the band clear of
+# the surf (centre − half > foam_width) or the two merge into one wide white smear; the shipped values put
+# the wisp at 0.42–0.68·r against a surf that dies at 0.41·r. wisp_half_width 0 turns the wisp off.
+const SHORE_DEFAULT_WISP_CENTER_WIDTH := 0.55
+const SHORE_DEFAULT_WISP_HALF_WIDTH := 0.13
+# THE WATERLINE BASE CROSS-FADE — the half-reach (fraction of the hex radius) over which the LAND base
+# texture and the WATER base texture cross-fade through the coastline. Without it the base STEPS at the
+# waterline (raw land meeting raw water on a cliff coast), and the opaque surf peak was the only thing
+# hiding that step — which is why the surf could never be muted. This is a WET EDGE, not an ecotone: it is
+# deliberately well under the sand's 0.25 reach, so no land texture reads out to sea and no water texture
+# reads up the beach. Chosen on `blend_probe` state SURF's foam-off step check over the CLIFF coast (the
+# worst case: deep_ocean has no beach either), where 0.08 already dissolves the step, 0.14 reads as a natural
+# wet-rock rim, and 0.20 starts ghosting land pebbles out into the water — so 0.14 ships.
+# 0 disables it (and then FOAM_OPACITY must go back to 1). See the shader's waterline_band.
+const SHORE_DEFAULT_WATERLINE_WIDTH := 0.14
+# The surf's PEAK opacity (and, scaled with it, the offshore wisp's) — a translucent highlight instead of the
+# opaque white ring the foam had to be while it was covering the base step above.
+const SHORE_DEFAULT_FOAM_OPACITY := 0.55
+const SHORE_DEFAULT_FOAM_COLOR := Vector3(0.690, 0.761, 0.804)
 const SHORE_DEFAULT_BEACH_COLOR := Vector3(0.847, 0.733, 0.541)
 # Canopy overlay (forest = grass floor + overhanging tree crowns): overhang reach + treeline softness
 # are fractions of the hex radius (× radius → px); texture_scale is the world-UV multiplier (1.0 = one
@@ -205,6 +300,11 @@ const FOW_EXPLORED_THRESHOLD := 0.3  # Above this a tile is at least Discovered
 # retains the terrain memory, not what is happening on the tile right now.
 const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"food_module", "food_module_label", "food_module_weight", "food_kind",
+	"cultivation_progress", "is_cultivated", "patch_has_owner", "patch_owner",
+	"patch_ecology_phase", "patch_biomass", "patch_carrying_capacity",
+	"patch_per_worker_yield", "patch_ceiling_sustain", "patch_ceiling_surplus",
+	"patch_ceiling_market", "patch_ceiling_eradicate",
+	"patch_ceiling_cultivate", "patch_tended_yield",
 	"units", "herds", "unit_count", "herd_count",
 	"harvest_tasks", "harvest_active", "scout_tasks", "scout_active",
 ]
@@ -213,6 +313,22 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 const DEFAULT_FOW_MIST_COLOR := Color(0.45, 0.48, 0.55, 1.0)
 const DEFAULT_FOW_MIST_BLEND := 0.35
 const DEFAULT_FOW_FOG_FILL_COLOR := Color(0.08, 0.08, 0.12, 1.0)
+# Shader-path FoW SOFTENING (heightfield_config's "fog_of_war" block; only the blend-shader path reads them —
+# the per-hex CPU path is hard-edged by construction). The vis-map is per-hex/NEAREST, so an active↔discovered
+# adjacency drew a hard HEXAGONAL brightness step even across uniform water. FOW_DEFAULT_SOFTNESS is the
+# cross-edge smoothing reach as a FRACTION OF THE HEX RADIUS (× radius → the fow_soft px uniform, like
+# blend_width — so the softness is zoom-invariant); at 0.6 the mist boundary reads as a gradient over most of
+# the shared edge's approach. FOW_DEFAULT_NOISE_AMOUNT wisps that boundary with world noise (0 = a clean arc);
+# it is enveloped in-shader so it only bites at boundaries and never tints a pure Active/Discovered interior.
+const FOW_DEFAULT_SOFTNESS := 0.6
+const FOW_DEFAULT_NOISE_AMOUNT := 0.15
+# Config bounds. The LOWER bound of both is 0 ON PURPOSE — softness 0 fully disables the smoothing (the raw
+# per-hex tint), which blend_probe state 8/W renders as the BEFORE frame of the FoW hex-step fix, and noise 0
+# is a clean, unwisped fog line. The UPPER bounds only stop a bad config from swamping the visibility states:
+# a softness beyond ~2 radii averages hexes that are nowhere near the fragment, and a noise amount beyond 1
+# could push the smoothed scalar clean across a state gap.
+const FOW_MAX_SOFTNESS := 2.0
+const FOW_MAX_NOISE_AMOUNT := 1.0
 const HEIGHTFIELD_CONFIG_PATH := "res://src/data/heightfield_config.json"
 const MIN_ZOOM_FACTOR := 1.0
 const MAX_ZOOM_FACTOR := 4.0
@@ -288,7 +404,8 @@ const HUNT_WORKED_LINK_COLOR := Color(0.92, 0.34, 0.30, 0.60)
 const HUNT_WORKED_LINK_WIDTH := 2.5
 # On-tile per-source yield annotations on the selected band's worked forage tiles / hunted herds:
 # the assignment's `actual_yield` (food/turn) as a small drop-shadow label above the tile center
-# (reusing `_draw_marker_glyph`), sign-formatted to 2 decimals, food-income green — with a WARN-amber
+# (reusing `_draw_marker_glyph` over the shared rounded-pill plate — see `_draw_pill_plate`),
+# sign-formatted to 2 decimals, food-income green — with a WARN-amber
 # `⚠` overhunting flag when `actual > sustainable + ε` (mirrors the allocation panel; forage is
 # renewable so never trips). ε/decimals mirror Hud's `OVERHUNT_EPSILON`/`YIELD_DECIMALS` (separate
 # script, so named here rather than shared). LOD-suppressed below ICON_MIN_DETAIL_RADIUS.
@@ -300,6 +417,12 @@ const YIELD_LABEL_OFFSET_FACTOR := 0.78   # above the tile center, as a fraction
 const YIELD_LABEL_DECIMALS := 2
 const YIELD_OVERHUNT_EPSILON := 0.001
 const YIELD_OVERHUNT_FLAG := "⚠"
+# Backing plate: bare drop-shadowed text washed out against light terrain (tan prairie/desert), so the
+# label sits on the SAME rounded dark pill chrome as the `×N`/`+N` count badges (`_draw_pill_plate`).
+# Slightly translucent so the terrain still reads through. Padding is symmetric about the label's
+# existing anchor (so the text does not shift) and scales with the font, like the label itself.
+const YIELD_LABEL_PLATE_BG := Color(0.04, 0.05, 0.07, 0.82)
+const YIELD_LABEL_PLATE_PAD_FACTOR := 0.45   # horizontal padding per side, as a fraction of the font size
 # Optimistic PENDING actions (Early-Game Labor slice 3b UX): a distinct amber DASHED style
 # (clearly apart from the solid confirmed green/cyan/blue/red) marks a just-issued assign/move
 # that the snapshot hasn't confirmed yet. Ties to the amber "· pending" rows in the HUD panel.
@@ -478,6 +601,9 @@ var discovered_sites: Array = []
 var discovered_site_lookup: Dictionary = {}
 var harvest_sites: Dictionary = {}
 var scout_sites: Dictionary = {}
+# Forage patches (cultivation/tended state, decoded from ForagePatchState), keyed by
+# Vector2i(x, y); read by `_tile_info_at` for the Tile-card cultivation/tended readout.
+var forage_patch_lookup: Dictionary = {}
 var tile_lookup: Dictionary = {}
 # Per-tile habitability (band-independent morale drain, decoded from TileState),
 # keyed by Vector2i(x, y); read by `_tile_info_at` for the Tile-card Habitability row.
@@ -581,6 +707,10 @@ var _secondary_overflow: Dictionary = {}
 # Optimistic pending-labor map (per band entity), pushed from the HUD via set_labor_pending.
 # Drawn for the selected band in a distinct dashed-amber style until the snapshot confirms.
 var _labor_pending: Dictionary = {}
+# DEFERRED per-source yield labels (see _queue_yield_label / _flush_yield_labels). The labels are an
+# annotation ON TOP OF the map, so they must be the LAST thing drawn: collected during the
+# work-highlight pass, flushed at the very end of _draw.
+var _deferred_yield_labels: Array[Dictionary] = []
 var biome_color_buffer: PackedColorArray = PackedColorArray()
 var _hovered_tile: Vector2i = Vector2i(-1, -1)
 var _fow_enabled: bool = false
@@ -589,6 +719,9 @@ var _fow_enabled: bool = false
 var _fow_mist_color: Color = DEFAULT_FOW_MIST_COLOR
 var _fow_mist_blend: float = DEFAULT_FOW_MIST_BLEND
 var _fow_fog_fill_color: Color = DEFAULT_FOW_FOG_FILL_COLOR
+# Shader-path-only FoW boundary softening (see FOW_DEFAULT_* — kills the hard hexagonal mist steps).
+var _fow_softness: float = FOW_DEFAULT_SOFTNESS
+var _fow_noise_amount: float = FOW_DEFAULT_NOISE_AMOUNT
 
 # 2D Minimap (uses shared MinimapPanel component)
 const MinimapPanelScript := preload("res://src/scripts/ui/MinimapPanel.gd")
@@ -652,6 +785,14 @@ func _load_fow_config() -> void:
 	_fow_mist_color = _color_from_config(cfg.get("mist_color"), DEFAULT_FOW_MIST_COLOR)
 	_fow_mist_blend = float(cfg.get("mist_blend", DEFAULT_FOW_MIST_BLEND))
 	_fow_fog_fill_color = _color_from_config(cfg.get("fog_fill_color"), DEFAULT_FOW_FOG_FILL_COLOR)
+	# Boundary-softening levers (blend-shader path only): a fraction of the hex radius, and the wispiness
+	# amplitude. Clamped to the documented bounds — 0 is a legitimate setting on BOTH (softness 0 = smoothing
+	# OFF, i.e. the raw per-hex tint the probe's before-frame renders; noise 0 = an unwisped fog line); the
+	# upper bounds are what keep a bad config from swamping the visibility states. See the const block.
+	_fow_softness = clampf(float(cfg.get("fow_softness", FOW_DEFAULT_SOFTNESS)), 0.0, FOW_MAX_SOFTNESS)
+	_fow_noise_amount = clampf(
+		float(cfg.get("fow_noise_amount", FOW_DEFAULT_NOISE_AMOUNT)), 0.0, FOW_MAX_NOISE_AMOUNT
+	)
 
 ## Parse an [r, g, b] (or [r, g, b, a]) config array into a Color, or return the fallback.
 func _color_from_config(value, fallback: Color) -> Color:
@@ -833,6 +974,17 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 					var wy: int = int(wsite.get("y", -1))
 					if wx >= 0 and wy >= 0:
 						discovered_site_lookup[Vector2i(wx, wy)] = wsite
+		forage_patch_lookup.clear()
+		var patch_variant: Variant = snapshot.get("forage_patches", [])
+		if patch_variant is Array:
+			for entry in patch_variant:
+				if not (entry is Dictionary):
+					continue
+				var patch: Dictionary = (entry as Dictionary).duplicate(true)
+				var px: int = int(patch.get("x", -1))
+				var py: int = int(patch.get("y", -1))
+				if px >= 0 and py >= 0:
+					forage_patch_lookup[Vector2i(px, py)] = patch
 	var population_variant: Variant = snapshot.get("populations", [])
 	if population_variant is Array:
 		for entry in population_variant:
@@ -1069,7 +1221,8 @@ func _draw() -> void:
 
 	# Selected player band: highlight what it's working (forage tiles / hunted herds) and
 	# its assignable reach (work-range ring). Drawn before the
-	# unit/herd markers so those sit on top of the tile tints.
+	# unit/herd markers so those sit on top of the tile tints. Its per-source yield LABELS are the
+	# exception — they are queued here and flushed at the very end of _draw (see _flush_yield_labels).
 	_draw_band_work_highlights(radius, origin)
 
 	_draw_supply_links(radius, origin)
@@ -1091,6 +1244,12 @@ func _draw() -> void:
 		_draw_route(order, radius, origin)
 
 	_draw_targeting(radius, origin)
+
+	# TOPMOST: the selected band's per-source yield labels, collected during _draw_band_work_highlights
+	# and held back to here. They annotate the map, so they must survive every layer above the tile
+	# tints — herd/food glyphs, rings, band→herd links and the dashed pending overlays all used to
+	# scribble across the text.
+	_flush_yield_labels()
 
 	# Profiling output
 	if _profiling_enabled:
@@ -1779,6 +1938,9 @@ func _draw_band_status(unit: Dictionary, center: Vector2, marker_radius: float) 
 ##    the work-range ring — hunt reach = work_range + leash).
 ## All cleared automatically when the band is deselected (selected_unit_id < 0 → early out).
 func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
+	# Start every frame's annotation batch empty (cleared BEFORE the early-outs, so a deselected band
+	# leaves no stale labels for the flush to paint).
+	_deferred_yield_labels.clear()
 	if selected_unit_id < 0:
 		return
 	var band := _selected_player_band()
@@ -1846,7 +2008,8 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 				var fcenter := _hex_center(tcol, trow, radius, origin)
 				var forage_overdraw := float(entry.get("actual_yield", 0.0)) \
 					> float(entry.get("sustainable_yield", 0.0)) + YIELD_OVERHUNT_EPSILON
-				_draw_yield_label(fcenter, float(entry.get("actual_yield", 0.0)), forage_overdraw, radius)
+				_queue_yield_label(fcenter, float(entry.get("actual_yield", 0.0)), forage_overdraw, radius,
+					String(entry.get("policy", "")))
 		elif kind == LABOR_KIND_HUNT:
 			var herd := _herd_by_id(String(entry.get("fauna_id", "")))
 			var herd_col := int(entry.get("target_x", -1))
@@ -1865,7 +2028,8 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			if show_yields and entry.has("actual_yield"):
 				var overhunt := float(entry.get("actual_yield", 0.0)) \
 					> float(entry.get("sustainable_yield", 0.0)) + YIELD_OVERHUNT_EPSILON
-				_draw_yield_label(hc, float(entry.get("actual_yield", 0.0)), overhunt, radius)
+				_queue_yield_label(hc, float(entry.get("actual_yield", 0.0)), overhunt, radius,
+					String(entry.get("policy", "")))
 
 	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
 	#    the snapshot hasn't confirmed yet. Drawn last so it reads on top of the confirmed styles.
@@ -2132,16 +2296,50 @@ func _draw_marker_glyph(center: Vector2, glyph: String, size: int, color: Color)
 	draw_string(font, baseline + MARKER_GLYPH_SHADOW_OFFSET, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, MARKER_GLYPH_SHADOW_COLOR)
 	draw_string(font, baseline, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
 
+## DEFER a per-source yield label instead of drawing it inline. The label is an annotation OVER the
+## map: drawn during the highlight pass it was painted over by every later layer (the dashed-amber
+## pending overlays, the band→herd links, the hunted-herd rings, and the secondary herd/food glyphs —
+## a deer glyph landing squarely on the number). Callers queue here; `_flush_yield_labels` renders the
+## batch at the very END of `_draw`, on top of everything. The far-zoom LOD gate stays at the CALL
+## SITE (`show_yields`), so a suppressed label is never queued and deferral can't bypass it.
+func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, policy: String = "") -> void:
+	_deferred_yield_labels.append({
+		"tile_center": tile_center,
+		"value": value,
+		"overhunt": overhunt,
+		"radius": radius,
+		"policy": policy,
+	})
+
+## Render (and drain) the deferred yield-label batch. Called LAST in `_draw` — after the markers,
+## rings, links, pending overlays and targeting — so nothing paints over the labels.
+func _flush_yield_labels() -> void:
+	for label in _deferred_yield_labels:
+		_draw_yield_label(label["tile_center"], label["value"], label["overhunt"], label["radius"],
+			label["policy"])
+	_deferred_yield_labels.clear()
+
 ## A small drop-shadow per-source yield label above a worked tile's center (reuses `_draw_marker_glyph`
 ## for legibility over terrain). Food-income green normally; WARN amber + a `⚠` suffix when `overhunt`.
-func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float) -> void:
+## `policy` (the assignment's take policy) appends the shared `FoodIcons` policy glyph — the SAME icon
+## the Hud policy-picker buttons show — so the worked source reads "+0.38 ♻" on the map; "" = no glyph.
+func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, policy: String = "") -> void:
 	var text := _format_yield_signed(value)
 	var color := HudStyle.HEALTHY
 	if overhunt:
 		text += " " + YIELD_OVERHUNT_FLAG
 		color = HudStyle.WARN
+	var policy_icon := FoodIcons.for_policy(policy)
+	if policy_icon != "":
+		text += " " + policy_icon
 	var font_size := clampi(int(radius * YIELD_LABEL_SIZE_FACTOR), YIELD_LABEL_MIN_FONT, YIELD_LABEL_MAX_FONT)
 	var label_center := tile_center + Vector2(0.0, -radius * YIELD_LABEL_OFFSET_FACTOR)
+	# Dark rounded plate behind the text so the label pops on ANY terrain (bare text washed out on the
+	# light tan biomes). Same pill chrome as the count badges, sized to the MEASURED text+glyph run.
+	var font: Font = ThemeDB.fallback_font
+	if font != null:
+		var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+		_draw_pill_plate(label_center, text_size, font_size * YIELD_LABEL_PLATE_PAD_FACTOR, YIELD_LABEL_PLATE_BG)
 	_draw_marker_glyph(label_center, text, font_size, color)
 
 ## Signed, fixed-decimal food-rate string for the on-tile yield labels ("+0.48" / "-0.30"). Mirrors
@@ -2150,18 +2348,26 @@ func _format_yield_signed(value: float) -> String:
 	var magnitude := String.num(absf(value), YIELD_LABEL_DECIMALS).pad_decimals(YIELD_LABEL_DECIMALS)
 	return ("+" if value >= 0.0 else "-") + magnitude
 
+## The shared rounded-pill PLATE: a dark rounded-rect (draw_rect body + two end-cap circles) centered
+## on `center`, sized to an already-measured `text_size` plus `pad_x` of symmetric horizontal padding.
+## Single source of truth for the pill look — used by the `×N`/`+N` count badges (`_draw_count_pill`,
+## no extra padding: the end caps are its padding) and by the on-tile yield labels
+## (`_draw_yield_label`, padded so the plate hugs the text+glyph run).
+func _draw_pill_plate(center: Vector2, text_size: Vector2, pad_x: float, bg: Color) -> void:
+	var half_w: float = text_size.x * 0.5 + pad_x
+	var half_h: float = text_size.y * 0.5 * MARKER_BADGE_HEIGHT_FACTOR
+	draw_rect(Rect2(center.x - half_w, center.y - half_h, half_w * 2.0, half_h * 2.0), bg)
+	draw_circle(Vector2(center.x - half_w, center.y), half_h, bg)
+	draw_circle(Vector2(center.x + half_w, center.y), half_h, bg)
+
 ## A small dark rounded pill with centered text — shared by the primary `×N` count
-## badge and the secondary `+N` overflow chip (draw_rect body + two end-cap circles).
+## badge and the secondary `+N` overflow chip.
 func _draw_count_pill(center: Vector2, text: String) -> void:
 	var font: Font = ThemeDB.fallback_font
 	if font == null or text == "":
 		return
 	var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, MARKER_BADGE_FONT_SIZE)
-	var half_w: float = text_size.x * 0.5
-	var half_h: float = text_size.y * 0.5 * MARKER_BADGE_HEIGHT_FACTOR
-	draw_rect(Rect2(center.x - half_w, center.y - half_h, text_size.x, half_h * 2.0), MARKER_BADGE_BG)
-	draw_circle(Vector2(center.x - half_w, center.y), half_h, MARKER_BADGE_BG)
-	draw_circle(Vector2(center.x + half_w, center.y), half_h, MARKER_BADGE_BG)
+	_draw_pill_plate(center, text_size, MARKER_BADGE_PAD_X, MARKER_BADGE_BG)
 	draw_string(font, Vector2(center.x - text_size.x * 0.5, center.y + text_size.y * 0.32), text, HORIZONTAL_ALIGNMENT_LEFT, -1, MARKER_BADGE_FONT_SIZE, MARKER_BADGE_FG)
 
 ## Per-tile `+N` overflow chip pass (secondaries beyond SECONDARY_VISIBLE_CAP).
@@ -2825,6 +3031,32 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 	info["food_module"] = module_key
 	info["food_module_label"] = _food_module_label(module_key)
 	info["food_module_weight"] = module_weight
+	# Forage-patch cultivation/tended state (intensification ladder). Read by
+	# Hud._tile_terrain_lines for the "Cultivation N%" / "🌾 Tended Patch" row.
+	if forage_patch_lookup.has(tile_key):
+		var patch: Dictionary = forage_patch_lookup[tile_key]
+		info["cultivation_progress"] = float(patch.get("cultivation_progress", 0.0))
+		info["is_cultivated"] = bool(patch.get("is_cultivated", false))
+		info["patch_has_owner"] = bool(patch.get("has_owner", false))
+		info["patch_owner"] = int(patch.get("owner", 0))
+		info["patch_ecology_phase"] = String(patch.get("ecology_phase", ""))
+		# Standing forage stock vs the patch's ceiling — "how much there is", the patch
+		# counterpart to a herd's Biomass row (Hud._tile_terrain_lines renders both).
+		info["patch_biomass"] = float(patch.get("biomass", 0.0))
+		info["patch_carrying_capacity"] = float(patch.get("carrying_capacity", 0.0))
+		# Pre-commit yield forecast (food/turn at the patch's current biomass, at
+		# output_multiplier 1.0). Read by Hud._build_forage_assign_controls to show the live
+		# "Expected yield" row and to cap the forager stepper at the patch's max-useful workers.
+		info["patch_per_worker_yield"] = float(patch.get("per_worker_yield", 0.0))
+		info["patch_ceiling_sustain"] = float(patch.get("ceiling_sustain", 0.0))
+		info["patch_ceiling_surplus"] = float(patch.get("ceiling_surplus", 0.0))
+		info["patch_ceiling_market"] = float(patch.get("ceiling_market", 0.0))
+		info["patch_ceiling_eradicate"] = float(patch.get("ceiling_eradicate", 0.0))
+		# The Cultivate investment rung: the dip yield while the patch is being prepared, and the
+		# tended yield it pays afterwards. Hud._build_forage_assign_controls turns the pair into the
+		# pre-commit "Preparing: +X → then +Y" forecast.
+		info["patch_ceiling_cultivate"] = float(patch.get("ceiling_cultivate", 0.0))
+		info["patch_tended_yield"] = float(patch.get("tended_yield", 0.0))
 	var units_here := _units_on_tile(col, row)
 	var herds_here := _herds_on_tile(col, row)
 	info["units"] = units_here
@@ -4321,6 +4553,17 @@ func _setup_terrain_blend_shader() -> void:
 	_terrain_blend_material = ShaderMaterial.new()
 	_terrain_blend_material.shader = shader
 	_terrain_blend_material.set_shader_parameter("biome_array", TerrainTextureManager.terrain_textures)
+	# Per-layer mean luminance (1×N, fetched by layer index): the zero-point of each base texture's
+	# pseudo-height for the flat↔flat HEIGHT BLENDING. Built once with the base array, so it's set once here.
+	_terrain_blend_material.set_shader_parameter("layer_luma_map", TerrainTextureManager.layer_luma_texture)
+	# Per-water-terrain SHORE PROFILE (1×N RGBA float, fetched by layer index): R = sand_scale (the beach's
+	# inland reach; 0 = a CLIFF), G = foam_scale (the main wave's reaches, never its peak), B = wisp_scale (the
+	# offshore disturbance's centre, half-width and strength). Applied to the shore pass on the WATER side's
+	# terrain — a deep-ocean cliff, a shelf beach and an inland-sea lake wear different coasts — and blended
+	# across the water neighbours by shared-edge proximity, so those coasts transition rather than switch.
+	# Neutral (1, 1, 1) for every terrain without a `shore_profile` block. Bound once (the manager updates
+	# the texture in place on a rebuild, so the binding survives).
+	_terrain_blend_material.set_shader_parameter("layer_shore_map", TerrainTextureManager.layer_shore_texture)
 	# Canopy: a SECOND Texture2DArray in the same canvas shader. Disabled (and the sampler harmlessly
 	# bound to the base array) when no canopy asset exists.
 	var canopy_arr: Texture2DArray = TerrainTextureManager.canopy_textures
@@ -4360,25 +4603,91 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 		_rebuild_terrain_shader_maps()
 	var config: Dictionary = TerrainTextureManager.terrain_config
 	var blend_width: float = clampf(float(config.get("blend_width", EDGE_BLEND_DEFAULT_WIDTH)), 0.02, 1.0)
-	var noise_cell: float = maxf(float(config.get("blend_noise_cell", EDGE_BLEND_DEFAULT_NOISE_CELL)), 1.0)
+	# Feather softness + the detail-following nudge (see EDGE_BLEND_DEFAULT_SOFT / _HEIGHT_INFLUENCE).
+	var blend_soft: float = clampf(
+		float(config.get("blend_soft", EDGE_BLEND_DEFAULT_SOFT)), 0.0, EDGE_BLEND_MAX_SOFT
+	)
+	# Hard-clamped to EDGE_BLEND_MAX_HEIGHT_INFLUENCE: the height term is only ever a NUDGE. Letting it
+	# out-vote the distance weight is what shredded prairie hexes (see EDGE_BLEND_DEFAULT_HEIGHT_INFLUENCE).
+	var blend_height_influence: float = clampf(
+		float(config.get("blend_height_influence", EDGE_BLEND_DEFAULT_HEIGHT_INFLUENCE)),
+		0.0,
+		EDGE_BLEND_MAX_HEIGHT_INFLUENCE
+	)
+	# Seam-wobble cell is a FRACTION of the hex radius (× radius → px, like blend_width) so the boundary
+	# meanders at the same scale relative to a hex at every zoom (see EDGE_BLEND_DEFAULT_NOISE_SCALE).
+	var blend_noise_scale: float = clampf(
+		float(config.get("blend_noise_scale", EDGE_BLEND_DEFAULT_NOISE_SCALE)), 0.02, 4.0
+	)
+	var blend_noise_amount: float = clampf(
+		float(config.get("blend_noise_amount", EDGE_BLEND_DEFAULT_NOISE_AMOUNT)), 0.0, 2.0
+	)
+	var feature_noise_cell: float = maxf(
+		float(config.get("feature_noise_cell", EDGE_BLEND_DEFAULT_FEATURE_NOISE_CELL)), 1.0
+	)  # shoreline reach/wisp + canopy treeline + peak footline
+	# Widens the LAND seam gate from same-class to both-sides-land (see EDGE_BLEND_DEFAULT_RUGGED_LAND).
+	var blend_rugged_land: bool = bool(
+		config.get("blend_rugged_land", EDGE_BLEND_DEFAULT_RUGGED_LAND)
+	)
+	# WATER↔WATER overrides (wider/softer/wobblier than land — see WATER_BLEND_DEFAULT_*). Same clamps as
+	# the land levers, so water can never exceed the caps the land path is held to either.
+	var water_blend: Dictionary = config.get("water_blend", {})
+	var water_width: float = clampf(
+		float(water_blend.get("blend_width", WATER_BLEND_DEFAULT_WIDTH)), 0.02, 1.0
+	)
+	var water_soft: float = clampf(
+		float(water_blend.get("blend_soft", WATER_BLEND_DEFAULT_SOFT)), 0.0, EDGE_BLEND_MAX_SOFT
+	)
+	var water_noise_amount: float = clampf(
+		float(water_blend.get("blend_noise_amount", WATER_BLEND_DEFAULT_NOISE_AMOUNT)), 0.0, 2.0
+	)
 	var m := _terrain_blend_material
 	m.set_shader_parameter("grid_w", grid_width)
 	m.set_shader_parameter("grid_h", grid_height)
 	m.set_shader_parameter("hex_radius", radius)
 	m.set_shader_parameter("hex_origin", origin)
 	m.set_shader_parameter("wrap_h", _wrap_horizontal)
-	m.set_shader_parameter("blend_band", blend_width * radius)  # interlock half-band width in px
-	m.set_shader_parameter("noise_cell", noise_cell)
+	m.set_shader_parameter("blend_band", blend_width * radius)  # transition half-band width in px
+	m.set_shader_parameter("blend_soft", blend_soft)                          # feather half-width
+	m.set_shader_parameter("blend_height_influence", blend_height_influence)  # detail-following NUDGE
+	m.set_shader_parameter("blend_noise_cell", blend_noise_scale * radius)  # seam-wobble cell in px
+	m.set_shader_parameter("blend_noise_amount", blend_noise_amount)        # seam-wobble amplitude
+	m.set_shader_parameter("blend_rugged_land", blend_rugged_land)          # rugged base floors blend too
+	# The water↔water triple the shader swaps in when the hex's blend_class is water (see the same-class gate).
+	m.set_shader_parameter("water_blend_band", water_width * radius)
+	m.set_shader_parameter("water_blend_soft", water_soft)
+	m.set_shader_parameter("water_blend_noise_amount", water_noise_amount)
+	m.set_shader_parameter("noise_cell", feature_noise_cell)   # shore/canopy/peak grain — raw px, decoupled
 	# Base biome texture is sampled in continuous world space (kills the per-hex repeat grid); one tile
 	# spans ~1/base_scale hex-rows. See BASE_DEFAULT_TEXTURE_SCALE / CLAUDE.md → Edge Blending.
 	var base_scale: float = maxf(float(config.get("base_texture_scale", BASE_DEFAULT_TEXTURE_SCALE)), 0.01)
 	m.set_shader_parameter("base_scale", base_scale)
 	m.set_shader_parameter("blend_enabled", radius >= EDGE_BLEND_MIN_RADIUS)  # LOD: base-only at far zoom
+	# Shoreline: the three reaches of the ONE continuous land→sand→surf→water profile, measured from the
+	# coastline (the signed coast coordinate u in the shader), inland and seaward.
 	var shore: Dictionary = config.get("shore", {})
+	var sand_frac: float = clampf(
+		float(shore.get("sand_width", SHORE_DEFAULT_SAND_WIDTH)), 0.0, 2.0)
+	var foam_inland_frac: float = clampf(
+		float(shore.get("foam_inland_width", SHORE_DEFAULT_FOAM_INLAND_WIDTH)), 0.0, 2.0)
 	var foam_frac: float = clampf(float(shore.get("foam_width", SHORE_DEFAULT_FOAM_WIDTH)), 0.0, 2.0)
-	var beach_frac: float = clampf(float(shore.get("beach_width", SHORE_DEFAULT_BEACH_WIDTH)), 0.0, 2.0)
-	m.set_shader_parameter("foam_band", foam_frac * radius)   # foam reach on the water side (px)
-	m.set_shader_parameter("beach_band", beach_frac * radius) # beach reach on the land side (px)
+	var wisp_center_frac: float = clampf(
+		float(shore.get("wisp_center_width", SHORE_DEFAULT_WISP_CENTER_WIDTH)), 0.0, 2.0)
+	var wisp_half_frac: float = clampf(
+		float(shore.get("wisp_half_width", SHORE_DEFAULT_WISP_HALF_WIDTH)), 0.0, 2.0)
+	# The waterline base cross-fade (the wet edge that removed the base's own step at u = 0) and the surf's
+	# peak opacity, which only became a lever once that step was gone. See the SHORE_DEFAULT_* consts.
+	var waterline_frac: float = clampf(
+		float(shore.get("waterline_width", SHORE_DEFAULT_WATERLINE_WIDTH)), 0.0, 1.0)
+	var foam_opacity: float = clampf(
+		float(shore.get("foam_opacity", SHORE_DEFAULT_FOAM_OPACITY)), 0.0, 1.0)
+	m.set_shader_parameter("waterline_band", waterline_frac * radius)  # base cross-fade half-reach (px)
+	m.set_shader_parameter("foam_opacity", foam_opacity)               # surf + wisp peak opacity
+	m.set_shader_parameter("sand_band", sand_frac * radius)            # sand INLAND of the waterline (px)
+	m.set_shader_parameter("foam_inland_band", foam_inland_frac * radius)  # surf washing UP the beach (px)
+	m.set_shader_parameter("foam_band", foam_frac * radius)            # surf SEAWARD of the waterline (px)
+	m.set_shader_parameter("wisp_center_band", wisp_center_frac * radius)  # 2nd surf line's centre (px)
+	m.set_shader_parameter("wisp_half_band", wisp_half_frac * radius)      # 2nd surf line's half-width (px)
 	m.set_shader_parameter("foam_color", _shore_color(shore.get("foam_color", null), SHORE_DEFAULT_FOAM_COLOR))
 	m.set_shader_parameter("beach_color", _shore_color(shore.get("beach_color", null), SHORE_DEFAULT_BEACH_COLOR))
 	var canopy: Dictionary = config.get("canopy", {})
@@ -4422,6 +4731,9 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 	m.set_shader_parameter("fog_color", _fow_fog_fill_color)
 	m.set_shader_parameter("mist_color", Vector3(_fow_mist_color.r, _fow_mist_color.g, _fow_mist_color.b))
 	m.set_shader_parameter("mist_blend", _fow_mist_blend)
+	# FoW boundary softening: radius-relative (like blend_band) so the mist gradient is zoom-invariant.
+	m.set_shader_parameter("fow_soft", _fow_softness * radius)
+	m.set_shader_parameter("fow_noise_amount", _fow_noise_amount)
 	_terrain_blend_quad.visible = true
 	_terrain_blend_quad.set_rect_size(viewport_size)
 	_terrain_blend_quad.queue_redraw()

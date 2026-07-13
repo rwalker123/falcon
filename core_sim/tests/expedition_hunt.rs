@@ -727,15 +727,26 @@ fn exported_hunt_trip_estimates_match_a_real_party_run() {
         );
         assert_eq!(
             exported.hunt_trip_estimates.len(),
-            FollowPolicy::ALL.len() * cfg.max_party_size as usize,
-            "{id}: every policy × every legal party size must export an estimate"
+            FollowPolicy::EXTRACTIVE.len() * cfg.max_party_size as usize,
+            "{id}: every EXTRACTIVE policy × every legal party size must export an estimate"
         );
+        // The investment policies are place-bound band work — `send_hunt_expedition` rejects them, so
+        // a trip estimate for one would be a number for a trip that cannot be launched.
+        for investment in [FollowPolicy::Cultivate, FollowPolicy::Corral] {
+            assert!(
+                !exported
+                    .hunt_trip_estimates
+                    .iter()
+                    .any(|e| e.policy == investment.as_str()),
+                "{id}: {investment:?} is not an expedition policy and must export no trip estimate"
+            );
+        }
 
         // A home band far from THIS herd, so the near-band early-delivery gate never fires: the trip
         // can end only on a full pack (which is what the estimate predicts).
         let home = spawn_home_band(&mut app, baseline.position());
 
-        for policy in FollowPolicy::ALL {
+        for policy in FollowPolicy::EXTRACTIVE {
             for workers in ESTIMATE_PARTY_SIZES {
                 let estimate = exported
                     .hunt_trip_estimates
@@ -997,7 +1008,7 @@ const DEPLETED_CAP_FRACTION: f32 = 0.2;
 /// Surplus ≤ 0.08 × biomass), so the biomass clamp is inert under today's levers — but it is a
 /// *config lever*, and a designer raising it (or `surplus_multiplier` / `market.take_fraction`) must
 /// not silently break the client's preview. At 2.0 the Surplus/Sustain ceiling on a
-/// `DEPLETED_CAP_FRACTION` herd is ~1.6×/~0.3× its biomass, so `hunt_ceiling_provisions`' clamp
+/// `DEPLETED_CAP_FRACTION` herd is ~1.6×/~0.3× its biomass, so the exported ceiling's biomass clamp
 /// (and `hunt_take`'s) genuinely binds and the two must still agree.
 const CLAMP_BINDING_REGROWTH_RATE: f32 = 2.0;
 
@@ -1047,7 +1058,16 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
             .find(|h| &h.id == id)
             .unwrap_or_else(|| panic!("{case}: herd {id} is in the snapshot"));
 
-        for policy in FollowPolicy::ALL {
+        assert!(
+            !exported
+                .hunt_policy_ceilings
+                .iter()
+                .any(|c| c.policy == FollowPolicy::Cultivate.as_str()),
+            "{case}: {id}: Cultivate is forage-only — a herd has no cultivate ceiling row"
+        );
+        // Every policy a Hunt assignment accepts — the four extractive rungs AND Corral, whose
+        // deliberately dipped yield the player must see before committing to the pen.
+        for policy in FollowPolicy::HUNT_POLICIES {
             let ceiling = exported
                 .hunt_policy_ceilings
                 .iter()

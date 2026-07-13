@@ -3673,4 +3673,205 @@ mod tests {
             metrics.polar_relief_cells
         );
     }
+
+    // -------------------------------------------------------------------------------------
+    // Bathymetry invariants (see core_sim/CLAUDE.md → World Generation Pipeline).
+    //
+    // These run the REAL full pipeline (`build_headless_app` Startup chain: bands →
+    // biomes → hydrology → tag solver → palette clamp → `reconcile_coastal_shelf`) and
+    // then compare the FINAL map against the band raster the very same seed produces.
+    // They guard the legacy map-border "edge ring" bug: `classify_terrain`'s three
+    // `edge < coastal_*_edge` rings proxy a coastline only in the preset-less world; under
+    // a preset they read the MAP FRAME, and used to coin-flip hundreds of band-`Land`
+    // tiles per map into water biomes along the border — deleting the land out from under
+    // legitimate shelf rings (orphaned shelf) and pinching off isolated deep pockets.
+    // -------------------------------------------------------------------------------------
+
+    /// Full-pipeline map plus the band raster / restamped elevation for the same seed.
+    struct GeneratedWorld {
+        snapshot: sim_schema::WorldSnapshot,
+        bands: BandsResult,
+        width: usize,
+        height: usize,
+        wrap_horizontal: bool,
+        shelf: ShelfConfig,
+    }
+
+    impl GeneratedWorld {
+        fn idx(&self, x: usize, y: usize) -> usize {
+            y * self.width + x
+        }
+
+        fn terrain(&self, x: usize, y: usize) -> sim_runtime::TerrainType {
+            self.snapshot.terrain.samples[self.idx(x, y)].terrain
+        }
+
+        fn is_water(&self, x: usize, y: usize) -> bool {
+            crate::terrain::terrain_definition(self.terrain(x, y))
+                .tags
+                .contains(sim_runtime::TerrainTags::WATER)
+        }
+
+        fn neighbors(&self, x: usize, y: usize) -> Vec<(usize, usize)> {
+            crate::grid_utils::hex_neighbors_wrapped(
+                x as u32,
+                y as u32,
+                self.width as u32,
+                self.height as u32,
+                self.wrap_horizontal,
+            )
+            .map(|(nx, ny)| (nx as usize, ny as usize))
+            .collect()
+        }
+    }
+
+    /// Runs the full Startup pipeline for `earthlike` at the given size/seed and rebuilds the
+    /// band raster from the same resolved inputs (deterministic, so the two agree tile-for-tile).
+    fn generate_earthlike_world(width: u32, height: u32, seed: u64) -> GeneratedWorld {
+        let mut app = crate::build_headless_app();
+        if let Some(mut md) = app
+            .world
+            .get_resource_mut::<crate::resources::SimulationConfigMetadata>()
+        {
+            md.set_seed_random(false);
+        }
+        {
+            let mut cfg = app.world.resource_mut::<SimulationConfig>();
+            cfg.map_preset_id = "earthlike".to_string();
+            cfg.grid_size = UVec2::new(width, height);
+            cfg.map_seed = seed;
+        }
+        app.update();
+
+        let config = app.world.resource::<SimulationConfig>().clone();
+        let presets = app
+            .world
+            .resource::<crate::map_preset::MapPresetsHandle>()
+            .get();
+        let preset = presets
+            .get(&config.map_preset_id)
+            .expect("earthlike preset");
+        let world_seed = config.map_seed;
+
+        let elevation = build_elevation_field(&config, Some(preset), world_seed);
+        let bands = build_bands(
+            &elevation,
+            preset.sea_level,
+            &preset.macro_land,
+            &preset.shelf,
+            &preset.islands,
+            &preset.inland_sea,
+            &preset.ocean,
+            preset.moisture_scale,
+            &preset.biomes,
+            world_seed,
+            preset.mountain_scale,
+            &preset.mountains,
+            config.map_topology.wrap_horizontal,
+        );
+
+        let snapshot = app
+            .world
+            .resource::<crate::SnapshotHistory>()
+            .last_snapshot
+            .as_ref()
+            .map(|s| (**s).clone())
+            .expect("snapshot after worldgen");
+
+        GeneratedWorld {
+            snapshot,
+            bands,
+            width: width as usize,
+            height: height as usize,
+            wrap_horizontal: config.map_topology.wrap_horizontal,
+            shelf: preset.shelf.clone(),
+        }
+    }
+
+    #[test]
+    fn earthlike_band_land_never_ends_water_tagged() {
+        // THE core invariant Part 1 of the border-ring fix establishes: `classify_terrain` is
+        // only ever called for tiles the band raster declared `Land`, so no such tile may come
+        // back WATER-tagged on the final map. Before the fix the legacy map-border edge rings
+        // coin-flipped 248-295 band-`Land` tiles per 80x52 map (~16-19% of all land) into
+        // DeepOcean/shelf/marsh biomes hugging the map frame.
+        for (w, h, seed) in [
+            (80u32, 52u32, 0x0FA1_C0DEu64),
+            (80, 52, 0x5EED_F00D),
+            (128, 96, 0x0000_BEEF),
+        ] {
+            let world = generate_earthlike_world(w, h, seed);
+            let mut drowned: Vec<String> = Vec::new();
+            for y in 0..world.height {
+                for x in 0..world.width {
+                    if world.bands.terrain[world.idx(x, y)] != TerrainBand::Land {
+                        continue;
+                    }
+                    if world.is_water(x, y) {
+                        drowned.push(format!("({x},{y})={:?}", world.terrain(x, y)));
+                    }
+                }
+            }
+            assert!(
+                drowned.is_empty(),
+                "{w}x{h} seed={seed:#x}: {} band-Land tiles ended WATER-tagged: {}",
+                drowned.len(),
+                drowned
+                    .iter()
+                    .take(12)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
+
+    #[test]
+    fn earthlike_shelf_is_never_orphaned() {
+        // The shelf is a coastal fringe: every `ContinentalShelf` tile must sit within the
+        // effective shelf width of land (1 tile at every shipped size — `min_width_tiles` floors
+        // the sub-tile earthlike width), i.e. it has >= 1 land hex-neighbour. The border-ring bug
+        // deleted the land out from under legitimate shelf rings, stranding 118-153 shelf tiles
+        // per 80x52 map with NO land hex-neighbour, 3-7 hexes out to sea.
+        for (w, h, seed) in [
+            (80u32, 52u32, 0x0FA1_C0DEu64),
+            (80, 52, 0x5EED_F00D),
+            (128, 96, 0x0000_BEEF),
+        ] {
+            let world = generate_earthlike_world(w, h, seed);
+            let width_tiles = effective_shelf_width(&world.shelf, world.width, world.height);
+            assert!(
+                width_tiles <= 1.0,
+                "this test asserts the d=1 fringe; earthlike {w}x{h} widened the shelf to \
+                 {width_tiles} tiles - extend it to a hex distance transform"
+            );
+
+            let mut orphans: Vec<String> = Vec::new();
+            for y in 0..world.height {
+                for x in 0..world.width {
+                    if world.terrain(x, y) != sim_runtime::TerrainType::ContinentalShelf {
+                        continue;
+                    }
+                    let has_land_neighbour = world
+                        .neighbors(x, y)
+                        .into_iter()
+                        .any(|(nx, ny)| !world.is_water(nx, ny));
+                    if !has_land_neighbour {
+                        orphans.push(format!("({x},{y})"));
+                    }
+                }
+            }
+            assert!(
+                orphans.is_empty(),
+                "{w}x{h} seed={seed:#x}: {} ContinentalShelf tiles have no land hex-neighbour: {}",
+                orphans.len(),
+                orphans
+                    .iter()
+                    .take(12)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
 }

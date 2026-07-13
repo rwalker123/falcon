@@ -27,6 +27,51 @@ var terrain_config: Dictionary = {}
 var use_terrain_textures: bool = false
 var use_edge_blending: bool = false
 
+# Per-base-layer MEAN LUMINANCE (0..1), one entry per terrain id, computed once at build time from the
+# CPU-side layer images. Feeds the shader's HEIGHT BLENDING at flat↔flat seams: with no height maps we use
+# each texture's own per-pixel luminance as a pseudo-height, and the mean is what ZERO-CENTRES it — without
+# it a bright prairie would always out-"height" a dark soil and the seam would be biased entirely to one
+# biome instead of interlocking. Exposed to the shader as `layer_luma_texture` (1×N single-channel), so the
+# layer count never has to be baked into the shader as a fixed array size.
+var layer_mean_luma: PackedFloat32Array = PackedFloat32Array()
+var layer_luma_texture: ImageTexture = null
+
+# PER-WATER-TERRAIN SHORE PROFILE (R = sand_scale, G = foam_scale, B = wisp_scale), one texel per terrain id
+# — the same 1×N by-layer-index lookup table as layer_luma_texture, but RGBA float. The shipped shore profile
+# (sand → surf → offshore wisp) is ONE global, ocean-tuned coast, and a coast is not one thing:
+#   · deep_ocean never touches ordinary land (the natural sequence is deep → shelf → land), so where it DOES
+#     meet land it is a CLIFF — no beach at all, and the full dramatic surf.
+#   · continental_shelf is the ordinary beach — sand, and a more muted wave.
+#   · inland_sea is a handful of hexes, and the ocean profile swamps it (the offshore wisp reads as noise
+#     across the middle of a lake).
+# So each WATER terrain scales its OWN coastline's profile along three independent axes:
+#   sand_scale — multiplies the beach's INLAND reach (sand_band). 0.0 = NO BEACH AT ALL (the cliff).
+#   foam_scale — multiplies the MAIN WAVE's reaches, both ways: the wash up the beach (foam_inland_band) and
+#                the surf's seaward reach (foam_band). REACH only — the surf's PEAK is never scaled, because
+#                that peak is what conceals the base's own step at the waterline.
+#   wisp_scale — multiplies the secondary offshore disturbance: its centre distance, its half-width AND its
+#                strength (0 = no second disturbance).
+# A water terrain with no `shore_profile` block gets the NEUTRAL default (1, 1, 1), i.e. exactly the global
+# profile — bit-identical to before this table existed. Read by the shader as `layer_shore_map` and blended
+# across the water NEIGHBOURS by shared-edge proximity, so a cliff coast transitions into a beach coast
+# instead of switching at a bisector (see terrain_blend.gdshader's shore block).
+var layer_shore_texture: ImageTexture = null
+
+const SHORE_PROFILE_DEFAULT_SAND_SCALE := 1.0
+const SHORE_PROFILE_DEFAULT_FOAM_SCALE := 1.0
+const SHORE_PROFILE_DEFAULT_WISP_SCALE := 1.0
+# Guard rails on the config values: a negative scale is meaningless, and nothing needs to more than double
+# the shipped (ocean-tuned) profile.
+const SHORE_PROFILE_MAX_SCALE := 2.0
+
+# Mean luminance is measured on a downscaled copy of each layer (Lanczos ≈ area-average) instead of walking
+# every texel of a 512² image ×37 layers — same mean to well within the blend's sensitivity, ~1000× fewer
+# get_pixel calls.
+const MEAN_LUMA_SAMPLE_SIZE := 16
+# Rec.709 luma weights — MUST match the luma() helper in terrain_blend.gdshader, or the shader's
+# zero-centring would subtract a mean measured on a different quantity than it compares against.
+const LUMA_WEIGHTS := Vector3(0.2126, 0.7152, 0.0722)
+
 # CPU-side copy of every terrain layer, captured ONCE at build time. Reused by the hex-texture
 # cache and the get_terrain_image readback so we never call Texture2DArray.get_layer_data() again — a
 # second readback returns a blank image on some drivers, which blanked the base terrain on any cache rebuild.
@@ -38,6 +83,7 @@ var _blend_class_by_id: Dictionary = {}
 func _ready() -> void:
 	_load_config()
 	_build_blend_class_map()
+	rebuild_layer_shore_map()
 	_load_textures()
 
 
@@ -148,8 +194,90 @@ func _build_terrain_texture_array() -> Texture2DArray:
 
 	# Retain the CPU-side layer Images so hex/edge caches never re-read back from the GPU array.
 	_layer_images = images
+	_build_layer_luma()
 
 	return array_tex
+
+
+func _build_layer_luma() -> void:
+	## Measure each base layer's mean luminance (pseudo-height zero-point for the shader's height blending)
+	## and pack it into a 1×N single-channel float texture the shader fetches by layer index.
+	layer_mean_luma = PackedFloat32Array()
+	layer_luma_texture = null
+	if _layer_images.is_empty():
+		return
+	var luma_img := Image.create(_layer_images.size(), 1, false, Image.FORMAT_RF)
+	for layer: int in range(_layer_images.size()):
+		var mean: float = _mean_luma(_layer_images[layer])
+		layer_mean_luma.append(mean)
+		luma_img.set_pixel(layer, 0, Color(mean, 0.0, 0.0, 1.0))
+	layer_luma_texture = ImageTexture.create_from_image(luma_img)
+
+
+func rebuild_layer_shore_map() -> void:
+	## Pack each terrain's optional `shore_profile` block into a 1×N RGBA float texture the shader fetches by
+	## layer index (same construction/binding pattern as _build_layer_luma). Terrains with no block get the
+	## neutral (1, 1, 1) default, which is a no-op on the shore profile.
+	## PUBLIC because it re-reads `terrain_config` from scratch: the blend probe sweeps per-terrain shore
+	## profiles by mutating the live config and calling this. The ImageTexture is UPDATED in place (never
+	## replaced) so MapView's one-time `layer_shore_map` binding stays valid across a rebuild.
+	var terrain_count: int = TerrainDefinitions.get_terrain_count()
+	if terrain_count <= 0:
+		return
+	var neutral := Color(
+		SHORE_PROFILE_DEFAULT_SAND_SCALE,
+		SHORE_PROFILE_DEFAULT_FOAM_SCALE,
+		SHORE_PROFILE_DEFAULT_WISP_SCALE,
+		1.0
+	)
+	var shore_img := Image.create(terrain_count, 1, false, Image.FORMAT_RGBAF)
+	for terrain_id: int in range(terrain_count):
+		shore_img.set_pixel(terrain_id, 0, neutral)
+	for entry: Variant in terrain_config.get("terrains", []):
+		if not (entry is Dictionary):
+			continue
+		var tid: int = int(entry.get("id", -1))
+		if tid < 0 or tid >= terrain_count:
+			continue
+		var profile: Variant = entry.get("shore_profile", null)
+		if not (profile is Dictionary):
+			continue
+		shore_img.set_pixel(tid, 0, Color(
+			_shore_scale(profile, "sand_scale", SHORE_PROFILE_DEFAULT_SAND_SCALE),
+			_shore_scale(profile, "foam_scale", SHORE_PROFILE_DEFAULT_FOAM_SCALE),
+			_shore_scale(profile, "wisp_scale", SHORE_PROFILE_DEFAULT_WISP_SCALE),
+			1.0
+		))
+	if layer_shore_texture == null:
+		layer_shore_texture = ImageTexture.create_from_image(shore_img)
+	else:
+		layer_shore_texture.update(shore_img)
+
+
+func _shore_scale(profile: Dictionary, key: String, fallback: float) -> float:
+	## One `shore_profile` scale, defaulted and guard-railed. A missing key is NEUTRAL (the water keeps the
+	## global profile on that axis), so a partial block is legal.
+	return clampf(float(profile.get(key, fallback)), 0.0, SHORE_PROFILE_MAX_SCALE)
+
+
+func _mean_luma(img: Image) -> float:
+	## Mean Rec.709 luminance of a layer, sampled from a MEAN_LUMA_SAMPLE_SIZE² Lanczos downscale
+	## (an area-average of the full image) rather than every texel.
+	if img == null:
+		return 0.0
+	var small: Image = img.duplicate()
+	small.resize(MEAN_LUMA_SAMPLE_SIZE, MEAN_LUMA_SAMPLE_SIZE, Image.INTERPOLATE_LANCZOS)
+	var total: float = 0.0
+	for y: int in range(MEAN_LUMA_SAMPLE_SIZE):
+		for x: int in range(MEAN_LUMA_SAMPLE_SIZE):
+			var c: Color = small.get_pixel(x, y)
+			total += c.r * LUMA_WEIGHTS.x + c.g * LUMA_WEIGHTS.y + c.b * LUMA_WEIGHTS.z
+	return total / float(MEAN_LUMA_SAMPLE_SIZE * MEAN_LUMA_SAMPLE_SIZE)
+
+
+func get_layer_mean_luma() -> PackedFloat32Array:
+	## Per-terrain-id mean luminance (0..1) of the base layers; empty until textures are built.
+	return layer_mean_luma
 
 
 func _build_canopy_texture_array() -> Texture2DArray:

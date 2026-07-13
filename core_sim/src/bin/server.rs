@@ -21,9 +21,11 @@ use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::{
-    apply_port_base_override, available_workers, resolve_active_profile, ActiveStartProfile,
+    apply_port_base_override, available_workers, forage_source_yield_preview,
+    hunt_source_yield_preview, output_multiplier, resolve_active_profile, ActiveStartProfile,
     BandTravel, CampaignLabel, Expedition, ExpeditionConfigHandle, ExpeditionMission,
-    ExpeditionPhase, LaborAllocation, LaborTarget, LocalStore, ResidentBand, StartProfileOverrides,
+    ExpeditionPhase, FoodModuleTag, LaborAllocation, LaborTarget, LocalStore, ResidentBand,
+    StartProfileOverrides, WellbeingConfigHandle,
 };
 use core_sim::{
     build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place,
@@ -32,18 +34,19 @@ use core_sim::{
     CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
     CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
     CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
-    CrisisTelemetryConfigMetadata, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
-    EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate, EspionageRoster,
-    FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle,
-    FogRevealLedger, FollowPolicy, GenerationId, GenerationRegistry, HerdRegistry,
-    InfluencerImpacts, InfluentialRoster, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns,
-    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy,
-    SentimentAxisBias, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
-    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
-    StartingUnit, StoredSnapshot, SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry,
-    TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle, TurnPipelineConfigMetadata,
-    TurnQueue, FOOD,
+    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EcologyPhase, EspionageAgentHandle,
+    EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
+    EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
+    FactionSecurityPolicies, FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry,
+    GenerationId, GenerationRegistry, HerdRegistry, InfluencerImpacts, InfluentialRoster,
+    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
+    QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
+    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
+    SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
+    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, CULTIVATION_DISCOVERY_ID,
+    FOOD, HERDING_DISCOVERY_ID,
 };
 use sim_runtime::{
     commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
@@ -563,6 +566,20 @@ fn main() {
             Command::Domesticate { faction, herd_id } => {
                 handle_domesticate(&mut app, faction, herd_id);
             }
+            Command::Cultivate {
+                faction,
+                target_x,
+                target_y,
+            } => {
+                handle_cultivate(&mut app, faction, UVec2::new(target_x, target_y));
+            }
+            Command::Corral {
+                faction,
+                target_x,
+                target_y,
+            } => {
+                handle_corral(&mut app, faction, UVec2::new(target_x, target_y));
+            }
             Command::CancelOrder {
                 faction,
                 band_entity_bits,
@@ -697,6 +714,16 @@ enum Command {
     Domesticate {
         faction: FactionId,
         herd_id: String,
+    },
+    Cultivate {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
+    },
+    Corral {
+        faction: FactionId,
+        target_x: u32,
+        target_y: u32,
     },
     CancelOrder {
         faction: FactionId,
@@ -1413,12 +1440,237 @@ fn band_allocation_mut(
         .expect("labor allocation inserted above")
 }
 
+/// Seed the touched source's **yield telemetry** (`LaborAllocation.last_yields`) from its
+/// **pre-commit forecast**, right after the allocation is mutated.
+///
+/// Without this, telemetry is only ever written during turn resolution (`advance_labor_allocation`),
+/// so between "player assigns workers" and "player advances the turn" a brand-new source has no row
+/// and the display snapshot serializes `actual_yield = 0.0` — the client cannot tell "0 because not
+/// computed yet" from "0 because the source is barren", and every fresh assignment reads `+0.00`.
+///
+/// The seeded row is exactly what the turn will pay under unchanged conditions: it reuses the same
+/// forecast helpers the take path reads (`forecast == actual` — see "Pre-commit Yield Forecast" in
+/// `core_sim/CLAUDE.md`), and it is the same number the client's compose-time "Expected yield" row
+/// promises — so there is no jump when the turn lands, and it is overwritten by the resolved take.
+///
+/// Only the **one source the command touched** is seeded (other sources keep their real actuals), and
+/// only where the resolution path would actually pay: a source the turn would skip (out of the band's
+/// work range / past the hunt leash, an unseeded patch, a vanished herd) keeps its zero row, and a
+/// genuinely barren source seeds `0.0` — `+0.00` stays reachable, and correct, there.
+fn seed_source_yield(
+    app: &mut bevy::prelude::App,
+    band: Entity,
+    target: &LaborTarget,
+    workers: u32,
+) {
+    // Unassigned (`workers == 0`): `set_assignment` already dropped the source's row with its
+    // assignment. Scout/Warrior are band-wide roles with no food yield — the resolution path leaves
+    // them at zero, so seeding must too.
+    if workers == 0
+        || !matches!(
+            target,
+            LaborTarget::Forage { .. } | LaborTarget::Hunt { .. }
+        )
+    {
+        return;
+    }
+    let Some(cohort) = app.world.get::<PopulationCohort>(band) else {
+        return;
+    };
+    let current_tile = cohort.current_tile;
+    // The band's productivity multiplier is applied at payout in the resolution path, so the forecast
+    // must fold it in too (the snapshot's per-source forecast is captured at 1.0 and scaled client-side
+    // by this same multiplier).
+    let wellbeing = app.world.resource::<WellbeingConfigHandle>().get();
+    let output_mult = output_multiplier(cohort, &wellbeing).to_f32();
+    let Some(band_pos) = app
+        .world
+        .get::<Tile>(current_tile)
+        .map(|tile| tile.position)
+    else {
+        return;
+    };
+    let grid_width = app.world.resource::<TileRegistry>().width;
+    let wrap_horizontal = app
+        .world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+
+    let seeded = match target {
+        LaborTarget::Forage { tile, policy } => {
+            // Out of the band's work range → the turn pays 0 (assignment kept). Keep the zero row.
+            if hex_distance_wrapped(band_pos, *tile, grid_width, wrap_horizontal)
+                > labor.band_work_range
+            {
+                return;
+            }
+            let Some(tile_entity) = app.world.resource::<TileRegistry>().index(tile.x, tile.y)
+            else {
+                return;
+            };
+            let Some(module) = app.world.get::<FoodModuleTag>(tile_entity) else {
+                return; // no food module on the tile → the turn pays 0.
+            };
+            let seasonal = module.seasonal_weight.max(0.0);
+            let Some(patch) = app.world.resource::<ForageRegistry>().patch(*tile) else {
+                return; // unseeded patch → the turn pays 0.
+            };
+            forage_source_yield_preview(
+                patch,
+                &labor.forage,
+                seasonal,
+                output_mult,
+                workers,
+                *policy,
+            )
+        }
+        LaborTarget::Hunt { fauna_id, policy } => {
+            let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
+                return; // herd gone → the assignment lapses next turn.
+            };
+            // Past the leash → the assignment lapses next turn; keep the zero row.
+            if hex_distance_wrapped(band_pos, herd.position(), grid_width, wrap_horizontal)
+                > labor.hunt_reach()
+            {
+                return;
+            }
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            hunt_source_yield_preview(
+                herd,
+                &fauna,
+                labor.hunt.per_worker_biomass_capacity,
+                output_mult,
+                workers,
+                *policy,
+            )
+        }
+        LaborTarget::Scout | LaborTarget::Warrior => return,
+    };
+    band_allocation_mut(app, band).set_source_yield(target, seeded);
+}
+
+/// Validate a labor target's **policy** against the source it names, returning a player-facing
+/// rejection reason (`Err`) or `Ok`. Two independent checks:
+///
+/// 1. **Kind.** The two *investment* policies are kind-exclusive: `Cultivate` is Forage-only,
+///    `Corral` is Hunt-only (`FollowPolicy::valid_for_forage` / `valid_for_hunt`). An invalid combo
+///    is rejected outright rather than silently coerced.
+/// 2. **Gates.** Cultivate requires the faction to **know Cultivation** and the patch to be
+///    **Thriving** (and not already tended, and not someone else's). Corral requires the faction to
+///    **know Herding** and to own the **domesticated** herd (and it not already be penned). These are
+///    the same gates the retired early-claim commands enforced — they now guard the *policy* instead.
+///
+/// The extractive policies (Sustain/Surplus/Market/Eradicate) are always valid on either kind.
+fn validate_labor_policy(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    target: &LaborTarget,
+) -> Result<(), String> {
+    match target {
+        LaborTarget::Forage { tile, policy } => {
+            if !policy.valid_for_forage() {
+                return Err(format!(
+                    "'{}' is not a foraging policy — it applies to herds.",
+                    policy.as_str()
+                ));
+            }
+            if !matches!(policy, FollowPolicy::Cultivate) {
+                return Ok(());
+            }
+            let cultivation = app
+                .world
+                .resource::<LaborConfigHandle>()
+                .get()
+                .forage
+                .cultivation
+                .clone();
+            let knows_cultivation = app
+                .world
+                .resource::<DiscoveryProgressLedger>()
+                .get_progress(faction, CULTIVATION_DISCOVERY_ID)
+                >= scalar_from_f32(cultivation.knowledge_completion_threshold);
+            if !knows_cultivation {
+                return Err("Your people have not learned Cultivation yet. Sustain-forage thriving patches to learn it.".to_string());
+            }
+            let Some(patch) = app.world.resource::<ForageRegistry>().patch(*tile) else {
+                return Err(format!("No forage patch at ({}, {}).", tile.x, tile.y));
+            };
+            if patch.is_cultivated() {
+                return Err(format!(
+                    "The patch at ({}, {}) is already cultivated — forage it to tend it.",
+                    tile.x, tile.y
+                ));
+            }
+            if patch.ecology_phase != EcologyPhase::Thriving {
+                return Err(format!(
+                    "The patch at ({}, {}) is not thriving — let it recover before cultivating it.",
+                    tile.x, tile.y
+                ));
+            }
+            if patch.owner.is_some_and(|owner| owner != faction) {
+                return Err(format!(
+                    "Another people are cultivating the patch at ({}, {}).",
+                    tile.x, tile.y
+                ));
+            }
+            Ok(())
+        }
+        LaborTarget::Hunt { fauna_id, policy } => {
+            if !policy.valid_for_hunt() {
+                return Err(format!(
+                    "'{}' is not a hunting policy — it applies to forage patches.",
+                    policy.as_str()
+                ));
+            }
+            if !matches!(policy, FollowPolicy::Corral) {
+                return Ok(());
+            }
+            let knowledge_threshold = app
+                .world
+                .resource::<FaunaConfigHandle>()
+                .get()
+                .husbandry
+                .knowledge_completion_threshold;
+            let knows_herding = app
+                .world
+                .resource::<DiscoveryProgressLedger>()
+                .get_progress(faction, HERDING_DISCOVERY_ID)
+                >= scalar_from_f32(knowledge_threshold);
+            if !knows_herding {
+                return Err("Your people have not learned Herding yet. Sustain-hunt thriving herds to learn it.".to_string());
+            }
+            let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
+                return Err(format!("No herd '{}' to corral.", fauna_id));
+            };
+            if herd.is_corralled() {
+                return Err(format!("{} is already corralled.", fauna_id));
+            }
+            if !herd.is_domesticated() {
+                return Err(format!(
+                    "{} is not domesticated. Sustain-hunt it to tame it before building a pen.",
+                    fauna_id
+                ));
+            }
+            if herd.owner != Some(faction) {
+                return Err(format!("You do not own {}.", fauna_id));
+            }
+            Ok(())
+        }
+        LaborTarget::Scout | LaborTarget::Warrior => Ok(()),
+    }
+}
+
 /// Set the worker count for one labor target on a band (idempotent; `0` unassigns; clamps to the
 /// band's free working-age headroom). Text forms:
-///   `assign_labor <faction> <band> forage <x> <y> <workers>`
-///   `assign_labor <faction> <band> hunt <herd_id> <policy> <workers>`
+///   `assign_labor <faction> <band> forage <x> <y> [policy] <workers>`
+///   `assign_labor <faction> <band> hunt <herd_id> [policy] <workers>`
 ///   `assign_labor <faction> <band> scout <workers>`
 ///   `assign_labor <faction> <band> warrior <workers>`
+///
+/// `policy` accepts the four extractive rungs plus the kind-specific **investment** rungs
+/// (`cultivate` on forage, `corral` on hunt) — see `validate_labor_policy` for the gates.
 #[allow(clippy::too_many_arguments)]
 fn handle_assign_labor(
     app: &mut bevy::prelude::App,
@@ -1482,6 +1734,16 @@ fn handle_assign_labor(
         LaborTarget::Warrior => CommandEventKind::CancelOrder,
     };
 
+    // Kind + gate validation for the policy (notably the two investment policies, Cultivate/Corral).
+    // Unassigning (`workers == 0`) is always allowed — a player must be able to abandon an
+    // investment even if its gates have since lapsed.
+    if workers > 0 {
+        if let Err(reason) = validate_labor_policy(app, faction, &target) {
+            emit_command_failure(app, event_kind, faction, reason);
+            return;
+        }
+    }
+
     let Some(band) =
         select_starting_band(app, faction, band_entity_bits, "assign_labor", event_kind)
     else {
@@ -1497,9 +1759,13 @@ fn handle_assign_labor(
     let kind_label = target.kind();
     let (applied, assigned_total) = {
         let mut allocation = band_allocation_mut(app, band.entity);
-        let applied = allocation.set_assignment(target, workers, available);
+        let applied = allocation.set_assignment(target.clone(), workers, available);
         (applied, allocation.assigned_total())
     };
+    // Show the source's expected yield immediately (workers added/removed OR policy changed — every
+    // shape of this command that moves the number): without the seed the row reads `+0.00` until the
+    // player advances a turn.
+    seed_source_yield(app, band.entity, &target, applied);
 
     let tick = app.world.resource::<SimulationTick>().0;
     let clamp_note = if applied < workers {
@@ -1748,15 +2014,20 @@ fn handle_send_hunt_expedition(
     // Market are opposite ecological behaviors, so a typo must not silently flip the herd's fate.
     let policy: FollowPolicy = match policy.as_deref() {
         None => FollowPolicy::Sustain,
-        Some(token) => match token.parse() {
-            Ok(parsed) => parsed,
-            Err(_) => {
+        // The two **investment** policies are place-bound improvements a *resident* band builds and
+        // then tends — a detached expedition can't pen a herd and walk home, so they are rejected here
+        // alongside an unparseable token (the four extractive rungs are the expedition's whole axis).
+        Some(token) => match token.parse::<FollowPolicy>() {
+            Ok(parsed) if !matches!(parsed, FollowPolicy::Cultivate | FollowPolicy::Corral) => {
+                parsed
+            }
+            _ => {
                 emit_command_failure(
                     app,
                     CommandEventKind::ExpeditionSent,
                     faction,
                     format!(
-                        "send_hunt_expedition: unknown follow policy '{}' — valid options are \
+                        "send_hunt_expedition: unusable take policy '{}' — valid options are \
                          sustain, surplus, market, eradicate.",
                         token
                     ),
@@ -2229,6 +2500,203 @@ fn handle_domesticate(app: &mut bevy::prelude::App, faction: FactionId, herd_id:
             );
         }
     }
+}
+
+/// **Set the Cultivate policy** on the forage patch at `tile` for the band(s) already working it
+/// (Intensification — "Cultivate & Corral as explicit policies"). This is the command form of what
+/// the client's policy picker does; it does **not** claim or complete anything.
+///
+/// The old early-claim (snap `cultivation_progress` to `1.0` once past a `claim_threshold`) is
+/// **gone**: it would let the player skip the investment, which is the entire decision. Cultivating
+/// now costs a real yield dip — while preparing, the patch pays only
+/// `cultivation.cultivating_yield_fraction × its Sustain (MSY) ceiling` — and takes
+/// `1 / progress_per_turn` turns of sustained work.
+///
+/// Gates (via the shared `validate_labor_policy`): the faction must know **Cultivation**, and the
+/// patch must be **Thriving**, not already cultivated, and not another faction's.
+fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
+    let target = LaborTarget::Forage {
+        tile,
+        policy: FollowPolicy::Cultivate,
+    };
+    if let Err(reason) = validate_labor_policy(app, faction, &target) {
+        warn!(
+            target: "shadow_scale::command",
+            command = "cultivate",
+            faction = %faction.0,
+            x = tile.x,
+            y = tile.y,
+            reason = %reason,
+            "command.cultivate.rejected"
+        );
+        emit_command_failure(app, CommandEventKind::Cultivate, faction, reason);
+        return;
+    }
+
+    let switched = set_policy_on_working_bands(app, faction, &target);
+    if switched == 0 {
+        emit_command_failure(
+            app,
+            CommandEventKind::Cultivate,
+            faction,
+            format!(
+                "No band is foraging ({}, {}). Assign foragers to the patch first, then cultivate it.",
+                tile.x, tile.y
+            ),
+        );
+        return;
+    }
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "cultivate",
+        faction = %faction.0,
+        x = tile.x,
+        y = tile.y,
+        bands = switched,
+        "command.cultivate.preparing"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Cultivate,
+        faction,
+        format!(
+            "Preparing patch at ({}, {}) for cultivation",
+            tile.x, tile.y
+        ),
+        Some(format!(
+            "status=preparing action=cultivate x={} y={} bands={}",
+            tile.x, tile.y, switched
+        )),
+    );
+}
+
+/// **Set the Corral policy** on the domesticated herd standing at `tile` for the band(s) already
+/// hunting it — the animal mirror of `handle_cultivate`, and the command form of the client's policy
+/// picker. While the pen is built the keeper takes only
+/// `husbandry.corralling_yield_fraction × the herd's Sustain (MSY) ceiling`; at
+/// `corral_progress == 1.0` the herd is penned (`Herd::corral_at`), stops roaming, and pays the
+/// higher place-local corral yield. There is no early claim.
+///
+/// Gates (via the shared `validate_labor_policy`): the faction must know **Herding** and own the
+/// **domesticated**, not-yet-penned herd.
+fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
+    let Some(fauna_id) = app
+        .world
+        .resource::<HerdRegistry>()
+        .herds
+        .iter()
+        .find(|herd| herd.position() == tile)
+        .map(|herd| herd.id.clone())
+    else {
+        warn!(
+            target: "shadow_scale::command",
+            command = "corral",
+            faction = %faction.0,
+            x = tile.x,
+            y = tile.y,
+            "command.corral.rejected=unknown_herd"
+        );
+        emit_command_failure(
+            app,
+            CommandEventKind::Corral,
+            faction,
+            format!("No herd at ({}, {}) to corral.", tile.x, tile.y),
+        );
+        return;
+    };
+
+    let target = LaborTarget::Hunt {
+        fauna_id: fauna_id.clone(),
+        policy: FollowPolicy::Corral,
+    };
+    if let Err(reason) = validate_labor_policy(app, faction, &target) {
+        warn!(
+            target: "shadow_scale::command",
+            command = "corral",
+            faction = %faction.0,
+            herd = %fauna_id,
+            reason = %reason,
+            "command.corral.rejected"
+        );
+        emit_command_failure(app, CommandEventKind::Corral, faction, reason);
+        return;
+    }
+
+    let switched = set_policy_on_working_bands(app, faction, &target);
+    if switched == 0 {
+        emit_command_failure(
+            app,
+            CommandEventKind::Corral,
+            faction,
+            format!(
+                "No band is hunting {}. Assign herders to it first, then corral it.",
+                fauna_id
+            ),
+        );
+        return;
+    }
+
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "corral",
+        faction = %faction.0,
+        herd = %fauna_id,
+        x = tile.x,
+        y = tile.y,
+        bands = switched,
+        "command.corral.building"
+    );
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::Corral,
+        faction,
+        format!(
+            "Building a corral for {} at ({}, {})",
+            fauna_id, tile.x, tile.y
+        ),
+        Some(format!(
+            "status=building action=corral herd={} x={} y={} bands={}",
+            fauna_id, tile.x, tile.y, switched
+        )),
+    );
+}
+
+/// Re-point every band of `faction` **already working** `target`'s source (matched by
+/// `LaborTarget::same_source`, so the tile / herd id) at `target`'s policy, keeping each band's
+/// worker count. Returns how many bands were switched (`0` = nobody is working that source, which the
+/// callers report as a rejection). The shared body of the repurposed `cultivate` / `corral` commands:
+/// both now *set a policy* on an existing assignment rather than claiming the improvement outright.
+fn set_policy_on_working_bands(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    target: &LaborTarget,
+) -> usize {
+    let bands: Vec<(Entity, u32, u32)> = app
+        .world
+        .query::<(Entity, &PopulationCohort, &LaborAllocation)>()
+        .iter(&app.world)
+        .filter(|(_, cohort, _)| cohort.faction == faction)
+        .filter_map(|(entity, cohort, allocation)| {
+            let workers = allocation.workers_on(target);
+            (workers > 0).then(|| (entity, workers, available_workers(cohort.working)))
+        })
+        .collect();
+    for (entity, workers, available) in &bands {
+        let applied = {
+            let mut allocation = band_allocation_mut(app, *entity);
+            allocation.set_assignment(target.clone(), *workers, *available)
+        };
+        // A policy switch changes the expected yield (e.g. Sustain → Cultivate drops to the preparing
+        // bite), so re-seed the source's telemetry from the new policy's forecast — same reason as in
+        // `handle_assign_labor`, which this command is the shorthand for.
+        seed_source_yield(app, *entity, target, applied);
+    }
+    bands.len()
 }
 
 fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<String>) {
@@ -2936,6 +3404,24 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             faction: FactionId(faction_id),
             herd_id,
         }),
+        ProtoCommandPayload::Cultivate {
+            faction_id,
+            target_x,
+            target_y,
+        } => Some(Command::Cultivate {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+        }),
+        ProtoCommandPayload::Corral {
+            faction_id,
+            target_x,
+            target_y,
+        } => Some(Command::Corral {
+            faction: FactionId(faction_id),
+            target_x,
+            target_y,
+        }),
         ProtoCommandPayload::CancelOrder {
             faction_id,
             band_entity_bits,
@@ -3265,6 +3751,8 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Forage => "Harvest",
         CommandEventKind::Hunt => "Hunt",
         CommandEventKind::Domesticate => "Domesticate",
+        CommandEventKind::Cultivate => "Cultivate",
+        CommandEventKind::Corral => "Corral",
         CommandEventKind::CancelOrder => "Cancel order",
         CommandEventKind::SedentarizationPrompt => "Sedentarization",
         CommandEventKind::SiteDiscovered => "Site discovered",
@@ -4077,5 +4565,783 @@ fn handle_rollback(
     }
     if let Some(server) = snapshot_server_flat {
         server.broadcast(entry.encoded_snapshot_flat.as_ref());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::math::UVec2;
+    use core_sim::{build_headless_app, ForagePatch};
+
+    /// Insert a **Thriving, wild** patch — a valid Cultivate target (there is no early claim any
+    /// more; progress must be earned under the Cultivate policy).
+    fn seed_thriving_patch(app: &mut bevy::prelude::App, coord: UVec2) {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = ForagePatch::new(coord, 100.0);
+        assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
+        registry.patches.insert(coord, patch);
+    }
+
+    /// A band of `faction` sitting on tile entity `home` with one labor assignment (the band the
+    /// repurposed `cultivate` / `corral` commands re-point at the investment policy).
+    fn spawn_working_band(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        target: LaborTarget,
+    ) -> Entity {
+        let home = app.world.spawn_empty().id();
+        app.world
+            .spawn((
+                PopulationCohort {
+                    home,
+                    current_tile: home,
+                    size: 30,
+                    children: core_sim::scalar_zero(),
+                    working: scalar_from_f32(30.0),
+                    elders: core_sim::scalar_zero(),
+                    stores: LocalStore::new(),
+                    morale: core_sim::scalar_one(),
+                    last_morale_delta: core_sim::scalar_zero(),
+                    last_morale_cause: Default::default(),
+                    last_morale_contributions: Default::default(),
+                    discontent_fraction: core_sim::scalar_zero(),
+                    grievance: core_sim::scalar_zero(),
+                    last_emigrated: 0,
+                    last_immigrated: 0,
+                    age_turns: 0,
+                    generation: 0,
+                    faction,
+                    knowledge: Vec::new(),
+                    migration: None,
+                },
+                LaborAllocation {
+                    assignments: vec![core_sim::LaborAssignment {
+                        target,
+                        workers: BAND_WORKERS,
+                    }],
+                    ..Default::default()
+                },
+            ))
+            .id()
+    }
+
+    /// Workers each test band staffs on its source.
+    const BAND_WORKERS: u32 = 5;
+
+    /// The policy the band's single assignment currently carries.
+    fn band_policy(app: &bevy::prelude::App, band: Entity) -> FollowPolicy {
+        match &app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .assignments[0]
+            .target
+        {
+            LaborTarget::Forage { policy, .. } | LaborTarget::Hunt { policy, .. } => *policy,
+            other => panic!("unexpected labor target {other:?}"),
+        }
+    }
+
+    fn cultivate_rejected_for_unknown(app: &bevy::prelude::App) -> bool {
+        app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            matches!(entry.kind, CommandEventKind::Cultivate)
+                && entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("learned Cultivation"))
+        })
+    }
+
+    /// Rung 1b gate: `cultivate` is rejected when the faction has not learned Cultivation, and the
+    /// band's Forage policy is left untouched.
+    #[test]
+    fn cultivate_rejected_when_cultivation_unknown() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_thriving_patch(&mut app, coord);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_cultivate(&mut app, faction, coord);
+
+        assert!(
+            cultivate_rejected_for_unknown(&app),
+            "cultivate must emit a NotKnown failure when Cultivation is unknown"
+        );
+        assert_eq!(
+            band_policy(&app, band),
+            FollowPolicy::Sustain,
+            "a rejected cultivate must not switch the band's policy"
+        );
+    }
+
+    /// `cultivate` is rejected on a **non-Thriving** patch (the second gate) even when known.
+    #[test]
+    fn cultivate_rejected_on_a_stressed_patch() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_thriving_patch(&mut app, coord);
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).unwrap();
+            patch.ecology_phase = EcologyPhase::Stressed;
+        }
+        grant_cultivation(&mut app, faction);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_cultivate(&mut app, faction, coord);
+
+        assert!(
+            cultivate_failure_detail_contains(&app, "not thriving"),
+            "cultivate must reject a stressed patch"
+        );
+        assert_eq!(band_policy(&app, band), FollowPolicy::Sustain);
+    }
+
+    /// The repurposed `cultivate`: with Cultivation known and a Thriving patch, it **sets the
+    /// Cultivate policy** on the band already foraging the tile (it claims nothing — the investment
+    /// must still be worked off).
+    #[test]
+    fn cultivate_sets_the_cultivate_policy_on_the_working_band() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_thriving_patch(&mut app, coord);
+        grant_cultivation(&mut app, faction);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_cultivate(&mut app, faction, coord);
+
+        assert_eq!(
+            band_policy(&app, band),
+            FollowPolicy::Cultivate,
+            "cultivate switches the working band onto the investment policy"
+        );
+        assert!(
+            !app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .unwrap()
+                .is_cultivated(),
+            "there is no early claim — the patch must still be prepared"
+        );
+    }
+
+    /// With nobody foraging the tile there is no assignment to re-point: `cultivate` is rejected and
+    /// tells the player to staff the patch first.
+    #[test]
+    fn cultivate_rejected_when_no_band_is_foraging_the_patch() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_thriving_patch(&mut app, coord);
+        grant_cultivation(&mut app, faction);
+
+        handle_cultivate(&mut app, faction, coord);
+
+        assert!(cultivate_failure_detail_contains(
+            &app,
+            "No band is foraging"
+        ));
+    }
+
+    fn grant_cultivation(app: &mut bevy::prelude::App, faction: FactionId) {
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(faction, CULTIVATION_DISCOVERY_ID, scalar_from_f32(1.0));
+    }
+
+    fn cultivate_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
+        app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            matches!(entry.kind, CommandEventKind::Cultivate)
+                && entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains(needle))
+        })
+    }
+
+    /// Seed a herd standing on `coord`, optionally domesticated + owned by `owner`. Returns its id.
+    fn seed_herd(app: &mut bevy::prelude::App, coord: UVec2, owner: Option<FactionId>) -> String {
+        use core_sim::{Herd, SizeClass};
+        let mut herd = Herd::new(
+            "game_corral_test".to_string(),
+            "Test Deer".to_string(),
+            SizeClass::Small,
+            vec![coord],
+            60.0,
+            100.0,
+        );
+        if let Some(faction) = owner {
+            herd.claim_domestication(faction);
+        }
+        let id = herd.id.clone();
+        app.world.resource_mut::<HerdRegistry>().herds.push(herd);
+        id
+    }
+
+    fn grant_herding(app: &mut bevy::prelude::App, faction: FactionId) {
+        app.world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(faction, HERDING_DISCOVERY_ID, scalar_from_f32(1.0));
+    }
+
+    fn herd_is_corralled(app: &bevy::prelude::App, id: &str) -> bool {
+        app.world
+            .resource::<HerdRegistry>()
+            .find(id)
+            .is_some_and(|herd| herd.is_corralled())
+    }
+
+    fn corral_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
+        app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            matches!(entry.kind, CommandEventKind::Corral)
+                && entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains(needle))
+        })
+    }
+
+    /// Rung 1c gate: `corral` is rejected when the faction has not learned Herding, even on a
+    /// domesticated herd it owns, and the herd stays mobile.
+    #[test]
+    fn corral_rejected_when_herding_unknown() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, Some(faction));
+
+        handle_corral(&mut app, faction, coord);
+
+        assert!(
+            corral_failure_detail_contains(&app, "learned Herding"),
+            "corral must emit a NotKnown failure when Herding is unknown"
+        );
+        assert!(
+            !herd_is_corralled(&app, &id),
+            "a rejected corral leaves the herd mobile"
+        );
+    }
+
+    /// `corral` is rejected on a herd that isn't domesticated (needs husbandry first), even when the
+    /// faction knows Herding.
+    #[test]
+    fn corral_rejected_when_not_domesticated() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, None);
+        grant_herding(&mut app, faction);
+
+        handle_corral(&mut app, faction, coord);
+
+        assert!(
+            corral_failure_detail_contains(&app, "not domesticated"),
+            "corral must reject a wild herd as NotDomesticated"
+        );
+        assert!(!herd_is_corralled(&app, &id));
+    }
+
+    /// `corral` is rejected for a faction that doesn't own the domesticated herd.
+    #[test]
+    fn corral_rejected_for_non_owner() {
+        let mut app = build_headless_app();
+        let owner = FactionId(0);
+        let intruder = FactionId(1);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, Some(owner));
+        grant_herding(&mut app, intruder);
+
+        handle_corral(&mut app, intruder, coord);
+
+        assert!(
+            corral_failure_detail_contains(&app, "do not own"),
+            "corral must reject a non-owner"
+        );
+        assert!(!herd_is_corralled(&app, &id));
+    }
+
+    /// The repurposed `corral`: a faction that knows Herding and owns the domesticated herd on the
+    /// tile **sets the Corral policy** on the band already hunting it. The pen is not built yet — that
+    /// costs `1 / corral_build_progress_per_turn` turns of the reduced Corral take.
+    #[test]
+    fn corral_sets_the_corral_policy_on_the_working_band() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let id = seed_herd(&mut app, coord, Some(faction));
+        grant_herding(&mut app, faction);
+        let band = spawn_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Hunt {
+                fauna_id: id.clone(),
+                policy: FollowPolicy::Sustain,
+            },
+        );
+
+        handle_corral(&mut app, faction, coord);
+
+        assert_eq!(
+            band_policy(&app, band),
+            FollowPolicy::Corral,
+            "corral switches the working band onto the investment policy"
+        );
+        assert!(
+            !herd_is_corralled(&app, &id),
+            "there is no early claim — the pen must still be built"
+        );
+    }
+
+    /// With nobody hunting the herd there is no assignment to re-point: `corral` is rejected.
+    #[test]
+    fn corral_rejected_when_no_band_is_hunting_the_herd() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_herd(&mut app, coord, Some(faction));
+        grant_herding(&mut app, faction);
+
+        handle_corral(&mut app, faction, coord);
+
+        assert!(corral_failure_detail_contains(&app, "No band is hunting"));
+    }
+
+    /// **The investment policies never reach an expedition.** Penning a herd (or preparing a patch)
+    /// is place-bound work a *resident* band does — a detached party cannot pen a herd and walk home
+    /// — so `send_hunt_expedition` refuses `corral`/`cultivate` at launch, alongside an unparseable
+    /// token. This rejection is load-bearing: it is the ONLY thing standing between the player and
+    /// `hunt_expedition_ceiling`'s unreachable arm (which takes nothing and `debug_assert!`s). No
+    /// party may be spawned, and the failure must name the four policies that ARE valid.
+    #[test]
+    fn send_hunt_expedition_rejects_the_investment_policies() {
+        for token in ["corral", "cultivate"] {
+            let mut app = build_headless_app();
+            let faction = FactionId(0);
+            let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
+
+            handle_send_hunt_expedition(
+                &mut app,
+                faction,
+                None,
+                1,
+                herd_id,
+                Some(token.to_string()),
+            );
+
+            let rejected = app.world.resource::<CommandEventLog>().iter().any(|entry| {
+                matches!(entry.kind, CommandEventKind::ExpeditionSent)
+                    && entry.detail.as_deref().is_some_and(|detail| {
+                        detail.contains("unusable take policy") && detail.contains(token)
+                    })
+            });
+            assert!(
+                rejected,
+                "{token} is not an expedition policy — the launch must be refused with a clear reason"
+            );
+            let parties = app
+                .world
+                .query::<&Expedition>()
+                .iter(&app.world)
+                .peekable()
+                .peek()
+                .is_some();
+            assert!(!parties, "{token}: no expedition may be spawned");
+        }
+    }
+
+    /// The kind gates: `Cultivate` on a Hunt assignment and `Corral` on a Forage assignment are both
+    /// rejected outright by `validate_labor_policy` (the `assign_labor` guard).
+    #[test]
+    fn cross_kind_investment_policies_are_rejected() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_thriving_patch(&mut app, coord);
+        let id = seed_herd(&mut app, coord, Some(faction));
+
+        let corral_on_forage = validate_labor_policy(
+            &app,
+            faction,
+            &LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Corral,
+            },
+        );
+        assert!(
+            corral_on_forage
+                .as_ref()
+                .is_err_and(|reason| reason.contains("not a foraging policy")),
+            "Corral is not a forage policy: {corral_on_forage:?}"
+        );
+
+        let cultivate_on_hunt = validate_labor_policy(
+            &app,
+            faction,
+            &LaborTarget::Hunt {
+                fauna_id: id,
+                policy: FollowPolicy::Cultivate,
+            },
+        );
+        assert!(
+            cultivate_on_hunt
+                .as_ref()
+                .is_err_and(|reason| reason.contains("not a hunting policy")),
+            "Cultivate is not a hunt policy: {cultivate_on_hunt:?}"
+        );
+    }
+
+    // --- Assign-time yield seeding (the `+0.00` fix) ----------------------------------------------
+    //
+    // `LaborAllocation.last_yields` used to be written ONLY during turn resolution, so between
+    // "player assigns workers" and "player advances the turn" a brand-new source had no telemetry row
+    // and the display snapshot serialized `actual_yield = 0.0` — every fresh assignment read `+0.00`.
+    // `handle_assign_labor` now seeds the touched source's row from its pre-commit forecast, which
+    // (by the forecast == actual invariant) is exactly what the turn then pays: no jump.
+
+    /// f32 slack between the seeded forecast (provisions, direct f32 math) and the resolved take
+    /// (biomass → fixed-point provisions): different multiplication order + a 1e-6 fixed-point grid.
+    const SEED_EPSILON: f32 = 1e-4;
+    /// Side of the square tile grid the seeding tests build.
+    const GRID: u32 = 3;
+
+    /// A `GRID`×`GRID` tile world + its `TileRegistry` (labor commands resolve band/source positions
+    /// through it), with a full-weight `FoodModuleTag` on `source` so a Forage assignment there
+    /// resolves. Returns the tile entity at `source`.
+    fn seed_tile_grid(app: &mut bevy::prelude::App, source: UVec2) -> Entity {
+        use core_sim::{FoodModule, FoodSiteKind};
+        let tiles: Vec<Entity> = (0..GRID)
+            .flat_map(|y| (0..GRID).map(move |x| UVec2::new(x, y)))
+            .map(|position| {
+                app.world
+                    .spawn(Tile {
+                        position,
+                        ..Default::default()
+                    })
+                    .id()
+            })
+            .collect();
+        let source_tile = tiles[(source.y * GRID + source.x) as usize];
+        app.world.entity_mut(source_tile).insert(FoodModuleTag {
+            module: FoodModule::SavannaGrassland,
+            seasonal_weight: 1.0,
+            kind: FoodSiteKind::SavannaTrack,
+        });
+        app.world.insert_resource(TileRegistry {
+            tiles,
+            width: GRID,
+            height: GRID,
+        });
+        source_tile
+    }
+
+    /// A resident band standing on `tile` with **no** assignments — the state `assign_labor` acts on.
+    fn spawn_idle_band(app: &mut bevy::prelude::App, faction: FactionId, tile: Entity) -> Entity {
+        let band = spawn_working_band(app, faction, LaborTarget::Scout);
+        app.world
+            .entity_mut(band)
+            .insert((
+                StartingUnit::new("test_band".to_string(), Vec::new()),
+                ResidentBand,
+            ))
+            .insert(LaborAllocation::default());
+        let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
+        cohort.home = tile;
+        cohort.current_tile = tile;
+        band
+    }
+
+    /// Insert a **wild** patch at `coord` with the given biomass (`0.0` = barren) and ecology phase.
+    fn seed_patch_with_biomass(
+        app: &mut bevy::prelude::App,
+        coord: UVec2,
+        biomass: f32,
+        phase: EcologyPhase,
+    ) {
+        let cap = forage_carrying_capacity(app);
+        let mut patch = ForagePatch::new(coord, cap);
+        patch.biomass = biomass;
+        patch.ecology_phase = phase;
+        app.world
+            .resource_mut::<ForageRegistry>()
+            .patches
+            .insert(coord, patch);
+    }
+
+    /// The configured per-patch carrying capacity (the tests stock patches as a fraction of it rather
+    /// than hard-coding biomass).
+    fn forage_carrying_capacity(app: &bevy::prelude::App) -> f32 {
+        app.world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .carrying_capacity
+    }
+
+    /// Drive the real command handler (band resolved by the default resident-band picker).
+    fn assign_forage(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        coord: UVec2,
+        policy: &str,
+        workers: u32,
+    ) {
+        handle_assign_labor(
+            app,
+            faction,
+            None,
+            "forage".to_string(),
+            workers,
+            Some(coord.x),
+            Some(coord.y),
+            None,
+            Some(policy.to_string()),
+        );
+    }
+
+    fn assign_hunt(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        fauna_id: &str,
+        policy: &str,
+        workers: u32,
+    ) {
+        handle_assign_labor(
+            app,
+            faction,
+            None,
+            "hunt".to_string(),
+            workers,
+            None,
+            None,
+            Some(fauna_id.to_string()),
+            Some(policy.to_string()),
+        );
+    }
+
+    /// The single source's seeded/resolved `actual` yield.
+    fn source_actual(app: &bevy::prelude::App, band: Entity) -> f32 {
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .last_yields
+            .first()
+            .expect("the staffed source has a telemetry row")
+            .actual
+    }
+
+    /// Resolve one turn of labor (the only system that used to write yield telemetry).
+    fn resolve_labor(app: &mut bevy::prelude::App) {
+        use bevy_ecs::system::RunSystemOnce;
+        app.world
+            .run_system_once(core_sim::advance_labor_allocation);
+    }
+
+    /// **Forage.** A brand-new assignment reports its expected yield immediately — BEFORE any turn is
+    /// advanced — and that seed is exactly what the pre-commit forecast promises.
+    #[test]
+    fn assigning_forage_workers_seeds_the_expected_yield_before_the_turn() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        // Half cap → a clear positive MSY skim; Thriving is the phase that biomass implies.
+        let stocked = forage_carrying_capacity(&app) * 0.5;
+        seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
+
+        let seeded = source_actual(&app, band);
+        assert!(
+            seeded > 0.0,
+            "a staffed, stocked forage patch must not read +0.00 before the turn: {seeded}"
+        );
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let patch = app.world.resource::<ForageRegistry>().patch(coord).unwrap();
+        let expected = forage_source_yield_preview(
+            patch,
+            &labor.forage,
+            1.0,
+            1.0,
+            BAND_WORKERS,
+            FollowPolicy::Sustain,
+        );
+        assert!(
+            (seeded - expected.actual).abs() < SEED_EPSILON,
+            "seed {seeded} must equal the forecast {}",
+            expected.actual
+        );
+    }
+
+    /// **Forage, no jump.** Advancing the turn pays exactly the seeded number (the forecast == actual
+    /// invariant): the displayed yield does not move when the turn lands.
+    #[test]
+    fn resolved_forage_yield_equals_the_seeded_yield() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        let stocked = forage_carrying_capacity(&app) * 0.5;
+        seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
+        let seeded = source_actual(&app, band);
+        resolve_labor(&mut app);
+        let resolved = source_actual(&app, band);
+
+        assert!(
+            (resolved - seeded).abs() < SEED_EPSILON,
+            "the turn must pay the seeded yield (seed {seeded}, resolved {resolved})"
+        );
+    }
+
+    /// **Hunt.** Same seed-before-the-turn guarantee on the animal side.
+    #[test]
+    fn assigning_hunt_workers_seeds_the_expected_yield_before_the_turn() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        let id = seed_herd(&mut app, coord, None);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_hunt(&mut app, faction, &id, "sustain", BAND_WORKERS);
+
+        let seeded = source_actual(&app, band);
+        assert!(
+            seeded > 0.0,
+            "a staffed, thriving herd must not read +0.00 before the turn: {seeded}"
+        );
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
+        let expected = hunt_source_yield_preview(
+            herd,
+            &fauna,
+            labor.hunt.per_worker_biomass_capacity,
+            1.0,
+            BAND_WORKERS,
+            FollowPolicy::Sustain,
+        );
+        assert!(
+            (seeded - expected.actual).abs() < SEED_EPSILON,
+            "seed {seeded} must equal the forecast {}",
+            expected.actual
+        );
+    }
+
+    /// **Hunt, no jump.** The resolved take equals the seed.
+    #[test]
+    fn resolved_hunt_yield_equals_the_seeded_yield() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        let id = seed_herd(&mut app, coord, None);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_hunt(&mut app, faction, &id, "sustain", BAND_WORKERS);
+        let seeded = source_actual(&app, band);
+        resolve_labor(&mut app);
+        let resolved = source_actual(&app, band);
+
+        assert!(
+            (resolved - seeded).abs() < SEED_EPSILON,
+            "the turn must pay the seeded yield (seed {seeded}, resolved {resolved})"
+        );
+    }
+
+    /// **Policy change re-seeds.** Switching an existing assignment from Sustain (the MSY skim) to
+    /// Eradicate (strip the patch) raises the displayed expectation immediately — the seed tracks
+    /// every shape of the command that moves the number, not just a fresh staffing.
+    #[test]
+    fn changing_the_policy_reseeds_the_expected_yield() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        let stocked = forage_carrying_capacity(&app) * 0.5;
+        seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
+        let sustain = source_actual(&app, band);
+        assign_forage(&mut app, faction, coord, "eradicate", BAND_WORKERS);
+        let eradicate = source_actual(&app, band);
+
+        assert!(
+            eradicate > sustain,
+            "Eradicate must re-seed a higher expectation than Sustain (sustain {sustain}, eradicate {eradicate})"
+        );
+    }
+
+    /// **A barren source still reads `+0.00`.** The seed is a forecast, not a fiction: a patch with no
+    /// biomass yields nothing, so `+0.00` stays reachable — and correct — there.
+    #[test]
+    fn a_barren_source_seeds_zero() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        seed_patch_with_biomass(&mut app, coord, 0.0, EcologyPhase::Collapsing);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
+
+        assert_eq!(
+            source_actual(&app, band),
+            0.0,
+            "a barren patch must still seed a zero yield"
+        );
+    }
+
+    /// **Unassigning drops the row.** Setting a source to zero workers removes its assignment *and* its
+    /// telemetry row, so the derived `last_yields` stays index-aligned with `assignments` (the snapshot
+    /// zips the two by index — a stale row would be attributed to another source).
+    #[test]
+    fn unassigning_a_source_drops_its_yield_row() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        let stocked = forage_carrying_capacity(&app) * 0.5;
+        seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
+        assign_forage(&mut app, faction, coord, "sustain", 0);
+
+        let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+        assert!(allocation.assignments.is_empty(), "the source is unstaffed");
+        assert!(
+            allocation.last_yields.is_empty(),
+            "its telemetry row must go with it"
+        );
     }
 }

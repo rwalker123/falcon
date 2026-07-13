@@ -23,6 +23,9 @@ class_name TurnOrb
 ## Palette comes entirely from HudStyle (no hardcoded hexes).
 
 const HudStyle := preload("res://src/scripts/ui/HudStyle.gd")
+# Only for the awaiting-orders row icon: the orb stays producer-agnostic, but that glyph must be the
+# SAME one the Band panel's awaiting row wears, so it comes from the shared registry, not a copy.
+const FoodIcons := preload("res://src/scripts/ui/FoodIcons.gd")
 
 ## Jump the camera to (x, y) — reuses the Alerts-panel focus wiring in Hud/Main.
 signal focus_requested(x: int, y: int)
@@ -38,10 +41,12 @@ const SEVERITY_RANK := {SEVERITY_CRITICAL: 3, SEVERITY_WARN: 2, SEVERITY_INFO: 1
 const KIND_IDLE_WORKERS := "idle_workers"
 const KIND_STARVING := "starving"
 const KIND_LOSING_POPULATION := "losing_population"
+const KIND_AWAITING_ORDERS := "awaiting_orders"
 const KIND_ICON := {
 	KIND_IDLE_WORKERS: "🛠",
 	KIND_STARVING: "🍖",
 	KIND_LOSING_POPULATION: "📉",
+	KIND_AWAITING_ORDERS: FoodIcons.STATUS_ICONS[FoodIcons.STATUS_AWAITING],
 }
 const KIND_ICON_FALLBACK := "●"
 
@@ -80,8 +85,12 @@ const BADGE_RADIUS := 13.0
 const BADGE_INSET := 3.0
 const BADGE_FONT_SIZE := 13
 
-# Popover.
-const POPOVER_WIDTH := 320
+# Popover. WIDTH is sized to the widest producer row — `awaiting_orders`, whose detail names the
+# mission AND its objective ("Hunting expedition · Red Deer"). A row's inner HBox is anchored to its
+# Button (not a container child), so its min size does NOT grow the Button: an over-wide row used to
+# spill its `Jump →` OUTSIDE the card instead of widening it. The labels below therefore also clip
+# (ellipsis), which bounds ANY future producer's text to the card rather than letting it escape.
+const POPOVER_WIDTH := 420
 const POPOVER_GAP := 14.0
 const ROW_MIN_HEIGHT := 52.0
 const ROW_H_PADDING := 12
@@ -459,14 +468,19 @@ func _reason_row(entry: Variant) -> Button:
 	text_box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	text_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	text_box.add_theme_constant_override("separation", 1)
+	# Both labels CLIP (see POPOVER_WIDTH): a Label reports its full text as its minimum width, and
+	# this HBox is anchored to a Button (which never grows to it), so an unclipped long label pushed
+	# the `Jump →` out past the card's edge. Clipping keeps every row inside the card.
 	var label := Label.new()
 	label.text = String(entry.get("label", ""))
 	label.add_theme_color_override("font_color", HudStyle.INK)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.clip_text = true
 	var detail := Label.new()
 	detail.text = String(entry.get("detail", ""))
 	detail.add_theme_color_override("font_color", HudStyle.INK_FAINT)
 	detail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	detail.clip_text = true
 	text_box.add_child(label)
 	text_box.add_child(detail)
 	row.add_child(text_box)

@@ -158,6 +158,18 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "domesticate <faction_id> <herd_id>",
     },
     CommandVerbHelp {
+        verb: "cultivate",
+        aliases: &[],
+        summary: "Set the Cultivate policy on the bands foraging a Thriving patch: an investment that pays a reduced yield while the crop is prepared, then a higher tended yield (needs Cultivation knowledge, earned by Sustain foraging).",
+        usage: "cultivate <faction_id> <x> <y>",
+    },
+    CommandVerbHelp {
+        verb: "corral",
+        aliases: &[],
+        summary: "Set the Corral policy on the bands hunting your domesticated herd at a tile: an investment that pays a reduced take while the pen is built, then pins the herd there (needs Herding knowledge, earned by Sustain hunting).",
+        usage: "corral <faction_id> <x> <y>",
+    },
+    CommandVerbHelp {
         verb: "cancel_order",
         aliases: &[],
         summary: "Clear all of a band's labor assignments and stop movement (fully idle).",
@@ -731,6 +743,38 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 herd_id: herd_id.to_string(),
             })
         }
+        "cultivate" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            Ok(CommandPayload::Cultivate {
+                faction_id: parse_u32(faction_str, "cultivate faction")?,
+                target_x: parse_u32(x_str, "cultivate target_x")?,
+                target_y: parse_u32(y_str, "cultivate target_y")?,
+            })
+        }
+        "corral" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let x_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("target_y"))?;
+            Ok(CommandPayload::Corral {
+                faction_id: parse_u32(faction_str, "corral faction")?,
+                target_x: parse_u32(x_str, "corral target_x")?,
+                target_y: parse_u32(y_str, "corral target_y")?,
+            })
+        }
         "cancel_order" => {
             let faction_str = parts
                 .next()
@@ -1090,6 +1134,40 @@ mod tests {
         assert!(matches!(
             parse_command_line("domesticate 0"),
             Err(CommandParseError::MissingArgument("herd_id"))
+        ));
+    }
+
+    #[test]
+    fn parse_cultivate_command() {
+        assert_eq!(
+            parse_command_line("cultivate 0 7 3").unwrap(),
+            CommandPayload::Cultivate {
+                faction_id: 0,
+                target_x: 7,
+                target_y: 3,
+            }
+        );
+        // Both coordinates are required.
+        assert!(matches!(
+            parse_command_line("cultivate 0 7"),
+            Err(CommandParseError::MissingArgument("target_y"))
+        ));
+    }
+
+    #[test]
+    fn parse_corral_command() {
+        assert_eq!(
+            parse_command_line("corral 0 7 3").unwrap(),
+            CommandPayload::Corral {
+                faction_id: 0,
+                target_x: 7,
+                target_y: 3,
+            }
+        );
+        // Both coordinates are required.
+        assert!(matches!(
+            parse_command_line("corral 0 7"),
+            Err(CommandParseError::MissingArgument("target_y"))
         ));
     }
 

@@ -187,16 +187,48 @@ pub struct HerdTelemetryState {
     pub ecology_phase: String,
     #[serde(default)]
     pub domestication: f32,
-    /// Per-policy **band / local-hunt** take ceilings for this herd's current state (one entry per
-    /// `FollowPolicy`). With the cohort's `hunt_per_worker_provisions` and `output_multiplier` this
-    /// is everything the client needs to preview a *resident band's* hunt yield as pure arithmetic —
-    /// it must never re-derive the ecology model. Derived at capture. Appended (append-only wire).
+    /// Intensification Rung 1c corral state: `true` iff the herd is penned (`corralled_at.is_some()`).
+    #[serde(default)]
+    pub corralled: bool,
+    /// Pen-construction progress 0..1 (`1.0` = penned) while a keeper works the herd under the
+    /// **Corral** policy. The animal twin of `ForagePatchState::cultivation_progress`.
+    #[serde(default)]
+    pub corral_progress: f32,
+    /// Pre-commit yield forecast at the herd's current biomass (food/turn, `output_multiplier = 1`).
+    /// See `ForagePatchState`'s forecast fields — this is the herd-side twin.
+    #[serde(default)]
+    pub per_worker_yield: f32,
+    #[serde(default)]
+    pub ceiling_sustain: f32,
+    #[serde(default)]
+    pub ceiling_surplus: f32,
+    #[serde(default)]
+    pub ceiling_market: f32,
+    #[serde(default)]
+    pub ceiling_eradicate: f32,
+    /// Food/turn under the **Corral** policy — what the herd pays *while the pen is being built*
+    /// (`corralling_yield_fraction × the Sustain/MSY ceiling`, the investment dip).
+    #[serde(default)]
+    pub ceiling_corral: f32,
+    /// Food/turn the herd will pay **once penned** (the corral's managed harvest at its current
+    /// biomass). With `ceiling_corral`, lets the client show "preparing X → then Y" pre-commit.
+    #[serde(default)]
+    pub corral_yield: f32,
+    /// Per-policy **band / local-hunt** take ceilings for this herd's current state — one entry per
+    /// [`FollowPolicy`] valid on a Hunt assignment: the four extractive rungs **plus Corral**
+    /// (`Cultivate` is forage-only, so a herd has no cultivate row). Phase-correct: a penned herd's
+    /// rows all read its corral yield. The same numbers as the `ceiling_*` scalars above, projected
+    /// as a list; with the cohort's `hunt_per_worker_provisions` and `output_multiplier` this is
+    /// everything the client needs to preview a *resident band's* hunt yield as pure arithmetic — it
+    /// must never re-derive the ecology model. Derived at capture. Appended (append-only wire).
     #[serde(default)]
     pub hunt_policy_ceilings: Vec<HuntPolicyCeilingState>,
-    /// The sim's **pre-launch trip estimates** for a hunting expedition against this herd — one entry
-    /// per (policy × party size `1..=max_party_size`), so the outfit UI is a **table lookup** and the
-    /// client does no arithmetic at all. Empty for a non-huntable herd. See [`HuntTripEstimateState`]
-    /// for why the trip is simulated rather than divided. Derived at capture. Appended last.
+    /// The sim's **pre-launch trip estimates** for a hunting *expedition* against this herd — one
+    /// entry per (**extractive** policy × party size `1..=max_party_size`), so the outfit UI is a
+    /// **table lookup** and the client does no arithmetic at all. The investment policies
+    /// (Cultivate/Corral) are place-bound band work that `send_hunt_expedition` rejects, so they get
+    /// no rows here. Empty for a non-huntable herd. See [`HuntTripEstimateState`] for why the trip is
+    /// simulated rather than divided. Derived at capture. Appended last.
     #[serde(default)]
     pub hunt_trip_estimates: Vec<HuntTripEstimateState>,
 }
@@ -217,10 +249,85 @@ impl Default for HerdTelemetryState {
             huntable: false,
             ecology_phase: String::new(),
             domestication: 0.0,
+            corralled: false,
+            corral_progress: 0.0,
+            per_worker_yield: 0.0,
+            ceiling_sustain: 0.0,
+            ceiling_surplus: 0.0,
+            ceiling_market: 0.0,
+            ceiling_eradicate: 0.0,
+            ceiling_corral: 0.0,
+            corral_yield: 0.0,
             hunt_policy_ceilings: Vec::new(),
             hunt_trip_estimates: Vec::new(),
         }
     }
+}
+
+/// One depletable forage patch's cultivation + ecology state for the client tile card
+/// (Intensification Phase 1a). Keyed by tile `(x, y)`. `cultivation_progress` is the 0..1 taming
+/// meter; `is_cultivated` = a completed tended patch. `owner` is the tending faction (`None` = a
+/// wild/untended patch). `biomass`/`carrying_capacity`/`ecology_phase` let the client show patch
+/// health. Mirrors `HerdTelemetryState`'s display-telemetry role for the plant side.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ForagePatchState {
+    pub x: u32,
+    pub y: u32,
+    #[serde(default)]
+    pub cultivation_progress: f32,
+    #[serde(default)]
+    pub is_cultivated: bool,
+    #[serde(default)]
+    pub owner: Option<u32>,
+    #[serde(default)]
+    pub biomass: f32,
+    #[serde(default)]
+    pub carrying_capacity: f32,
+    #[serde(default)]
+    pub ecology_phase: String,
+    /// **Pre-commit yield forecast** at the patch's current biomass (food/turn, captured at
+    /// `output_multiplier = 1.0` — the client scales by the band's `outputMultiplier`). Lets the
+    /// client show "Expected yield: +X.XX /turn" and cap its worker stepper *while the player is
+    /// composing an assignment*, before anything is committed:
+    /// `expected(workers, policy) = min(workers × per_worker_yield, ceiling_<policy>)` and
+    /// `max_useful_workers(policy) = ceil(ceiling_<policy> / per_worker_yield)`.
+    /// Food/turn one forager contributes (this tile's seasonal weight folded in, as the take does);
+    /// `0.0` in a dead season — do not divide by it.
+    #[serde(default)]
+    pub per_worker_yield: f32,
+    /// Food/turn ceiling under Sustain (MSY), already clamped to the patch's remaining biomass.
+    #[serde(default)]
+    pub ceiling_sustain: f32,
+    /// Food/turn ceiling under Surplus, biomass-clamped.
+    #[serde(default)]
+    pub ceiling_surplus: f32,
+    /// Food/turn ceiling under Market, biomass-clamped.
+    #[serde(default)]
+    pub ceiling_market: f32,
+    /// Food/turn ceiling under Eradicate, biomass-clamped.
+    #[serde(default)]
+    pub ceiling_eradicate: f32,
+    /// Food/turn under the **Cultivate** policy — what the patch pays *while it is being prepared*
+    /// (`cultivating_yield_fraction × the Sustain/MSY ceiling`, the investment dip).
+    #[serde(default)]
+    pub ceiling_cultivate: f32,
+    /// Food/turn the patch will pay **once cultivated** (the tended harvest on its current standing
+    /// crop). With `ceiling_cultivate`, lets the client show "preparing X → then Y" pre-commit.
+    #[serde(default)]
+    pub tended_yield: f32,
+}
+
+/// Per-faction intensification-ladder knowledge (Intensification Rung 1b/1c): the faction's progress
+/// on the Cultivation (discovery 2003) and Herding (discovery 2004) discoveries, each 0..1
+/// (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client renders
+/// learning/known meters.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct IntensificationKnowledgeState {
+    pub faction: u32,
+    #[serde(default)]
+    pub cultivation: f32,
+    #[serde(default)]
+    pub herding: f32,
 }
 
 /// Shared depletable-ecology record round-tripped through the rollback snapshot. Mirrors the
@@ -284,6 +391,16 @@ pub struct HerdState {
     /// Next intended hex (client heading arrow); `None` while loitering/grazing.
     #[serde(default)]
     pub next_pos: Option<(u32, u32)>,
+    /// Corral (Rung 1c): the tile a **penned** herd is fixed at, or `None` for a mobile herd. A
+    /// corralled herd doesn't roam and is paid its keeper place-local. Authoritative sim state —
+    /// persisted so a rollback preserves the pen.
+    #[serde(default)]
+    pub corralled_at: Option<(u32, u32)>,
+    /// Pen-construction progress 0..1 accrued under the **Corral** policy (`1.0` = penned). Persisted
+    /// alongside `corralled_at` so a rollback rewinds a half-built pen rather than losing the
+    /// investment.
+    #[serde(default)]
+    pub corral_progress: f32,
     #[serde(default)]
     pub ecology: EcologyState,
 }
@@ -1111,6 +1228,12 @@ pub struct LaborAssignmentState {
     /// Derived per-turn at capture. Appended (append-only).
     #[serde(default)]
     pub sustainable_yield: f32,
+    /// Minimum workers that would have produced this turn's take — the **overstaffing** signal.
+    /// `workers > workers_needed` ⇒ the binding constraint was not labor, so the extra workers were
+    /// idle. `0` when the source produced nothing; a tended patch / corralled herd (maintenance
+    /// labor) reports `1`. Derived per-turn at capture. Appended (append-only).
+    #[serde(default)]
+    pub workers_needed: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -1819,6 +1942,12 @@ pub struct WorldSnapshot {
     pub discovered_sites: Vec<DiscoveredSitesState>,
     #[serde(default)]
     pub demographics: Vec<PopulationDemographicsState>,
+    /// Per-tile depletable-forage cultivation/ecology display state (Intensification Phase 1a).
+    #[serde(default)]
+    pub forage_patches: Vec<ForagePatchState>,
+    /// Per-faction Cultivation/Herding knowledge progress (Intensification Rung 1b/1c).
+    #[serde(default)]
+    pub intensification_knowledge: Vec<IntensificationKnowledgeState>,
     pub moisture_raster: FloatRasterState,
     pub hydrology_overlay: HydrologyOverlayState,
     pub elevation_overlay: ElevationOverlayState,
@@ -1875,6 +2004,8 @@ pub struct WorldDelta {
     pub sedentarization: Option<Vec<SedentarizationState>>,
     pub discovered_sites: Option<Vec<DiscoveredSitesState>>,
     pub demographics: Option<Vec<PopulationDemographicsState>>,
+    pub forage_patches: Option<Vec<ForagePatchState>>,
+    pub intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub hydrology_overlay: Option<HydrologyOverlayState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
@@ -2079,6 +2210,9 @@ fn build_snapshot_flatbuffer<'a>(
     let sedentarization_vec = create_sedentarization(builder, &snapshot.sedentarization);
     let discovered_sites_vec = create_discovered_sites(builder, &snapshot.discovered_sites);
     let demographics_vec = create_demographics(builder, &snapshot.demographics);
+    let forage_patches_vec = create_forage_patches(builder, &snapshot.forage_patches);
+    let intensification_knowledge_vec =
+        create_intensification_knowledge(builder, &snapshot.intensification_knowledge);
     let hydrology_overlay = create_hydrology_overlay(builder, &snapshot.hydrology_overlay);
     let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
     let elevation_overlay = create_elevation_overlay(builder, &snapshot.elevation_overlay);
@@ -2136,6 +2270,8 @@ fn build_snapshot_flatbuffer<'a>(
             sedentarization: Some(sedentarization_vec),
             discoveredSites: Some(discovered_sites_vec),
             demographics: Some(demographics_vec),
+            foragePatches: Some(forage_patches_vec),
+            intensificationKnowledge: Some(intensification_knowledge_vec),
             moistureRaster: Some(moisture_raster),
             hydrologyOverlay: Some(hydrology_overlay),
             elevationOverlay: Some(elevation_overlay),
@@ -2200,6 +2336,14 @@ fn build_delta_flatbuffer<'a>(
         .demographics
         .as_ref()
         .map(|entries| create_demographics(builder, entries));
+    let forage_patches = delta
+        .forage_patches
+        .as_ref()
+        .map(|entries| create_forage_patches(builder, entries));
+    let intensification_knowledge = delta
+        .intensification_knowledge
+        .as_ref()
+        .map(|entries| create_intensification_knowledge(builder, entries));
     let command_events = delta
         .command_events
         .as_ref()
@@ -2377,6 +2521,8 @@ fn build_delta_flatbuffer<'a>(
             sedentarization,
             discoveredSites: discovered_sites,
             demographics,
+            foragePatches: forage_patches,
+            intensificationKnowledge: intensification_knowledge,
             moistureRaster: moisture_raster,
             elevationOverlay: elevation_overlay,
             axisBias: axis_bias,
@@ -2803,9 +2949,70 @@ fn create_herds<'a>(
                 huntable: herd.huntable,
                 ecologyPhase: Some(ecology_phase),
                 domestication: herd.domestication,
+                corralled: herd.corralled,
+                corralProgress: herd.corral_progress,
+                perWorkerYield: herd.per_worker_yield,
+                ceilingSustain: herd.ceiling_sustain,
+                ceilingSurplus: herd.ceiling_surplus,
+                ceilingMarket: herd.ceiling_market,
+                ceilingEradicate: herd.ceiling_eradicate,
+                ceilingCorral: herd.ceiling_corral,
+                corralYield: herd.corral_yield,
                 // Appended after every earlier-shipped field (append-only wire discipline).
                 huntPolicyCeilings: hunt_policy_ceilings,
                 huntTripEstimates: hunt_trip_estimates,
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+fn create_forage_patches<'a>(
+    builder: &mut FbBuilder<'a>,
+    patches: &[ForagePatchState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::ForagePatchState<'a>>>> {
+    let mut entries = Vec::with_capacity(patches.len());
+    for patch in patches {
+        let ecology_phase = builder.create_string(patch.ecology_phase.as_str());
+        let entry = fb::ForagePatchState::create(
+            builder,
+            &fb::ForagePatchStateArgs {
+                x: patch.x,
+                y: patch.y,
+                cultivationProgress: patch.cultivation_progress,
+                isCultivated: patch.is_cultivated,
+                hasOwner: patch.owner.is_some(),
+                owner: patch.owner.unwrap_or(0),
+                biomass: patch.biomass,
+                carryingCapacity: patch.carrying_capacity,
+                ecologyPhase: Some(ecology_phase),
+                perWorkerYield: patch.per_worker_yield,
+                ceilingSustain: patch.ceiling_sustain,
+                ceilingSurplus: patch.ceiling_surplus,
+                ceilingMarket: patch.ceiling_market,
+                ceilingEradicate: patch.ceiling_eradicate,
+                ceilingCultivate: patch.ceiling_cultivate,
+                tendedYield: patch.tended_yield,
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+fn create_intensification_knowledge<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[IntensificationKnowledgeState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::IntensificationKnowledgeState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let entry = fb::IntensificationKnowledgeState::create(
+            builder,
+            &fb::IntensificationKnowledgeStateArgs {
+                faction: state.faction,
+                cultivation: state.cultivation,
+                herding: state.herding,
             },
         );
         entries.push(entry);
@@ -3133,6 +3340,7 @@ fn create_populations<'a>(
                                 policy,
                                 actualYield: assignment.actual_yield,
                                 sustainableYield: assignment.sustainable_yield,
+                                workersNeeded: assignment.workers_needed,
                             },
                         )
                     })

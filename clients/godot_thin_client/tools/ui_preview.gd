@@ -90,6 +90,10 @@ func _ready() -> void:
 	# Top-bar demographics readout (faction 0 age structure + dependency ratio).
 	_hud.update_demographics([{"faction": 0, "children": 34, "working": 51, "elders": 15}])
 
+	# Top-bar intensification-knowledge meters (faction 0): Cultivation still learning
+	# (block-glyph bar + "learning"), Herding fully mastered ("✔ known"). Visible across frames.
+	_hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
+
 	# Top-bar Wondrous-Sites discoveries readout (faction 0): a landmark + a settle-site, so
 	# the count reads `◈ Discoveries 2  ⛰ ⛲` and the distinct glyphs show.
 	_hud.update_discoveries([{
@@ -103,6 +107,17 @@ func _ready() -> void:
 	# The labor-allocation UI (Early-Game Labor slice 3b) targets the single player band;
 	# seed it so the herd/tile "assign" controls resolve a band to staff.
 	_hud._player_band = _band_fixture()
+	# The world's herds (Main pushes snapshot["herds"]): the Current-actions Hunt row reads the herd's
+	# species from here and, when clicked, jumps to its LIVE tile (it has migrated away from the hunt
+	# assignment's launch target).
+	_hud.update_herds([
+		{"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120, "ecology_phase": "stressed"},
+	])
+	# The world's food modules (Main pushes snapshot["food_modules"]): each Forage row leads with the
+	# module's map glyph, so the panel row and the map marker read as the same resource.
+	_hud.update_food_modules([
+		{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"},
+	])
 
 	# State 1 — a single band selected (GOOD state): the Occupants roster + the labor allocation panel.
 	# Food + Morale are healthy, so BOTH summary rows read collapsed with a ▸ disclosure caret
@@ -110,6 +125,15 @@ func _ready() -> void:
 	_hud.show_unit_selection(_band_fixture())
 	await _settle()
 	await _save("band")
+
+	# State 1-foreign — a NON-player band selected. The drawer is the same `_unit_summary_lines` host,
+	# but almost none of it applies: morale/output/breakdowns are player-only (someone else's band is
+	# not ours to read), there is no allocation panel, and the identity rows (name, size) now live in
+	# the roster row above. So the check this state exists for: does the drawer collapse to an empty
+	# card once `Unit`/`Size` are gone? (It keeps the bare larder Food line + Position.)
+	_hud.show_unit_selection(_foreign_band_fixture())
+	await _settle()
+	await _save("band_foreign")
 
 	# State 1-forage-policy — the forage allocation row carries a policy tag like Hunt does. This band
 	# forages on Market policy, which the sim gathers past the patch's regrowth, so actual_yield (0.62)
@@ -296,6 +320,66 @@ func _ready() -> void:
 	await _settle()
 	await _save("food_tile")
 
+	# State 2-forecast — the same food tile with the Foragers stepper parked AT the forecast cap
+	# (3 = the Sustain ceiling's max-useful workers, below the band's 10 idle): the `+` button is
+	# DISABLED, the "max 3 workers useful here — more would be idle" note explains why, and the
+	# "Expected yield" row reads the ceiling itself (+0.96 /turn = min(3 × 0.32, 0.96)).
+	_hud._forage_assign_count = 3
+	_hud._build_forage_assign_controls(_food_tile_fixture())
+	await _settle()
+	await _save("forage_forecast_cap")
+
+	# State 2-tended — a fully-cultivated forage patch: the Tile card's cultivation row reads
+	# "🌾 Tended Patch" (SIGNAL tint) with an "Ecology: Thriving" row above it. A tended
+	# patch's ceilings all equal its per-worker yield, so the forecast caps the stepper at 1 worker.
+	_hud.show_tile_selection(_tended_tile_fixture())
+	await _settle()
+	await _save("tended_tile")
+
+	# State 2-stressed — an over-drawn (uncultivated) forage patch: the Ecology row reads a WARN-amber
+	# "⚠ Stressed" right under "Forage biomass", exactly like a stressed herd's Ecology row. Proves the
+	# row is NOT gated on cultivation.
+	_hud._forage_assign_count = 1
+	_hud.show_tile_selection(_stressed_tile_fixture())
+	await _settle()
+	await _save("food_tile_stressed")
+
+	# ---- Cultivate: the forage INVESTMENT rung (gated, then unlocked) ----------------------------
+	# State 2-cultivate-locked — the faction has NOT finished learning Cultivation (the top-bar meter
+	# reads "Cultivation ▰▰▰… learning"): the 🌱 Cultivate option is still SHOWN in the picker, greyed,
+	# with "🌱 Cultivate — Cultivation knowledge 55% — ♻ Sustain-forage a Thriving patch to learn it"
+	# spelled out under the row. The player learns the rung exists, how far along the track is, AND the
+	# action that finishes it, BEFORE they can use it.
+	_hud._forage_assign_count = 1
+	_hud.show_tile_selection(_food_tile_fixture())
+	await _settle()
+	await _save("forage_cultivate_locked")
+
+	# Learning Cultivation crosses 0.55 → 1.0 between snapshots: the one-shot command-feed nudge fires
+	# ("Cultivation learned — The Cultivate policy is now available on Thriving patches."), visible in
+	# the left-dock Command Feed card in every frame from here on.
+	_hud.update_intensification([{"faction": 0, "cultivation": 1.0, "herding": 1.0}])
+
+	# State 2-cultivate — knowledge known + a Thriving patch: 🌱 Cultivate is ENABLED and selected. The
+	# forecast states the DEAL instead of a single number — "Preparing: +0.24 /turn → then +1.20 /turn"
+	# (ceiling_cultivate → tended_yield) — and the stepper caps at 1 worker (a managed source needs one).
+	_hud.show_tile_selection(_food_tile_fixture())
+	_hud._forage_assign_policy = "cultivate"
+	_hud._build_forage_assign_controls(_food_tile_fixture())
+	await _settle()
+	await _save("forage_cultivate")
+
+	# State 2-cultivate-stressed — knowledge known, but the patch is ⚠ Stressed: Cultivate stays visible
+	# and greyed with the OTHER reason — "Patch is Stressed — ease workers off and let it regrow to
+	# Thriving" (the ecology gate, not the knowledge one). The remedy is deliberately NOT "Sustain it":
+	# a fully staffed Sustain takes the whole regrowth and holds a Stressed patch Stressed forever.
+	_hud.show_tile_selection(_stressed_tile_fixture())
+	await _settle()
+	await _save("forage_cultivate_stressed")
+
+	# Back to a plain Sustain compose for the range states below.
+	_hud._forage_assign_policy = "sustain"
+
 	# States 2-fog-a/b/c — the three SIGHT states. The player must always be able to tell "there is
 	# nothing here" apart from "I can't see what's here", so the Tile card leads with a `Sight:` row and
 	# an unseen hex REPLACES its Occupants roster with a statement instead of rendering an empty one.
@@ -398,10 +482,46 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_collapsing")
 
-	# State 3c — a domesticated herd: the husbandry readout shows "🐄 Domesticated".
+	# State 3c — a domesticated + corralled herd: the drawer shows "Husbandry 🐄 Domesticated"
+	# AND "Corral 🐄 Corralled" (SIGNAL tint), the herd end of the intensification ladder.
 	_hud.show_herd_selection(_domesticated_herd_fixture())
 	await _settle()
 	await _save("herd_domesticated")
+
+	# ---- Corral: the hunt INVESTMENT rung (gated, then enabled) ----------------------------------
+	# State 3c-corral-locked-both — BOTH halves of the Corral gate unmet (Herding 35% learned, herd 40%
+	# tamed): the MULTI-reason layout — a "🐄 Corral needs:" header with one indented "· <reason>" bullet
+	# per unmet prerequisite, each naming its remedy (♻ Sustain-hunt a Thriving herd). The knowledge
+	# meter in the top bar reads the same 35%.
+	_hud.update_intensification([{"faction": 0, "cultivation": 1.0, "herding": 0.35}])
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_corral_locked_herd_fixture())
+	await _settle()
+	await _save("herd_corral_locked_both")
+
+	# State 3c-corral-locked — the SAME wild herd (domestication 0.4) once Herding is fully known: only
+	# the herd half of the gate remains, so 🐄 Corral greys with the single compact one-liner
+	# "🐄 Corral — Herd 40% tamed — ♻ Sustain-hunt this Thriving herd to finish taming it".
+	_hud.update_intensification([{"faction": 0, "cultivation": 1.0, "herding": 1.0}])
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_corral_locked_herd_fixture())
+	await _settle()
+	await _save("herd_corral_locked")
+
+	# State 3d-corral — a fully-domesticated, not-yet-penned herd with the pen 40% built: 🐄 Corral is
+	# ENABLED and selected, the forecast states the deal ("Preparing: +0.23 /turn → then +1.05 /turn",
+	# ceiling_corral → corral_yield, stepper capped at the 1 keeper a managed source needs), and the
+	# drawer carries the "Corral: Building 40%" row — the herd twin of the tile's "Cultivation N%".
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_corral_ready_herd_fixture())
+	_hud._hunt_assign_policy = "corral"
+	_hud._build_herd_assign_controls(_corral_ready_herd_fixture())
+	await _settle()
+	await _save("herd_corral")
+
+	# Back to a plain Sustain compose for the band-picker / distance states below.
+	_hud._hunt_assign_policy = "sustain"
+	_hud._hunt_assign_key = ""
 
 	# State 3f — TWO player bands: the "Assign hunters" controls' "Band:" dropdown lists both
 	# (positional "Band 1" / "Band 2"). Default selection is the resolved band (Band 1, 12 idle);
@@ -739,6 +859,40 @@ func _ready() -> void:
 	await _settle()
 	await _save("turn_orb_attention")
 
+	# State 7b — turn orb, AWAITING-ORDERS producer: an expedition parked at its objective is a
+	# demand on the player (it burns provisions doing nothing), structurally the same class as idle
+	# workers — so it produces its OWN attention row per party. Here: one band with idle workers
+	# (the two producers must coexist) + FOUR awaiting parties (a scout and a hunt party name their
+	# objective; the 4th trips the ATTENTION_AWAITING_MAX_ROWS cap → an aggregate "+1 more awaiting
+	# orders" row). A non-awaiting (outbound) expedition proves only `awaiting` produces a row. The
+	# popover must still fit above the orb with its `Advance ▸` footer on-screen.
+	_hud.turn_orb.set_attention([])   # drop State 7's registry so this frame is only these rows
+	_hud.update_band_alerts([
+		{"faction": 0, "entity": 701, "size": 60, "days_of_food": 999.0, "activity": "forage",
+			"current_x": 12, "current_y": 9, "idle_workers": 4},
+		{"faction": 0, "entity": 751, "size": 6, "days_of_food": 9.0, "is_expedition": true,
+			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
+			"current_x": 39, "current_y": 26},
+		# The hunt party names its OBJECTIVE by species (game_deer_07 → "Red Deer" via the world-herd
+		# list pushed above), not the raw fauna id — the row has to be actionable at a glance.
+		{"faction": 0, "entity": 752, "size": 5, "days_of_food": 7.0, "is_expedition": true,
+			"expedition_mission": "hunt", "expedition_phase": "awaiting", "home_band_entity": 701,
+			"expedition_target_herd": "game_deer_07", "current_x": 64, "current_y": 11},
+		{"faction": 0, "entity": 753, "size": 4, "days_of_food": 6.0, "is_expedition": true,
+			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
+			"current_x": 18, "current_y": 44},
+		{"faction": 0, "entity": 754, "size": 4, "days_of_food": 5.0, "is_expedition": true,
+			"expedition_mission": "scout", "expedition_phase": "awaiting", "home_band_entity": 701,
+			"current_x": 51, "current_y": 8},
+		{"faction": 0, "entity": 755, "size": 6, "days_of_food": 9.0, "is_expedition": true,
+			"expedition_mission": "scout", "expedition_phase": "outbound", "home_band_entity": 701,
+			"current_x": 33, "current_y": 30},
+	])
+	_hud.turn_orb.open_popover()
+	await _settle()
+	await _save("turn_orb_awaiting_orders")
+	_hud.turn_orb.toggle_popover()   # close, so later states render without it
+
 	# State 8 — reserved-space docking (Slice 1 refactor): a left-edge reservation of
 	# RESERVED_PROBE_WIDTH px insets the whole HUD (LayoutRoot.offset_left), so the top/bottom
 	# bars start that much further right — mirroring how the docked Inspector shrinks the play
@@ -840,6 +994,29 @@ func _assert_turn_orb(label: String, ok: bool) -> void:
 	else:
 		push_error("ui_preview: FAIL turn-orb — %s" % label)
 
+## A NON-player band (faction 1): what a rival's cohort actually looks like on the wire — an identity,
+## a size, a position, and nothing of ours to read (no morale/output/labor/flow fields). Backs the
+## `band_foreign` state, which exists to prove the drawer doesn't collapse to an empty card now that
+## the identity rows moved into the roster row.
+func _foreign_band_fixture() -> Dictionary:
+	return {
+		"id": "Ashen Kin",
+		"size": 96,
+		"entity": 977,
+		"faction": 1,
+		"pos": [71, 18],
+		"current_x": 71,
+		"current_y": 18,
+		"activity": "forage",
+		"settlement_stage_icon": "⛺",
+		"settlement_stage_label": "Nomadic band",
+		"tile_info": {
+			"x": 71, "y": 18,
+			"terrain_label": "Prairie Steppe",
+			"visibility_state": "active",
+		},
+	}
+
 func _band_fixture() -> Dictionary:
 	return {
 		"id": "Band 2",
@@ -885,9 +1062,14 @@ func _band_fixture() -> Dictionary:
 		# The Gathered/Hunted breakdown sums the assignment actual_yields (0.48 / 0.46) by kind.
 		"food_income": 0.94,
 		"food_consumption": 0.68,
+		# `workers_needed` is the overstaffing axis, INDEPENDENT of the overdraw (⚠) axis — the two
+		# rows below deliberately cross them so one frame proves both:
+		#   • forage: 5 assigned but only 1 needed (the patch's ceiling caps the take) → the amber
+		#     "· only 1 of 5 working" note, and NO ⚠ (actual == sustainable, perfectly renewable).
+		#   • hunt: 4 assigned, 4 needed → no note, but it DOES overdraw (0.46 > 0.20) → the ⚠.
 		"labor_assignments": [
-			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48},
-			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20},
+			{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1},
+			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20, "workers_needed": 4},
 			{"kind": "scout", "workers": 2},
 			{"kind": "warrior", "workers": 2},
 		],
@@ -1292,6 +1474,30 @@ func _food_tile_fixture() -> Dictionary:
 		"food_kind": "savanna_track",
 		# A discovered Wondrous Site on this tile → the Tile card shows a "Site: …" line.
 		"site_name": "Verdant Basin",
+		# Forage patch being worked toward cultivation → the Tile card's "Cultivation 60%" row.
+		"cultivation_progress": 0.6,
+		"is_cultivated": false,
+		"patch_has_owner": true,
+		"patch_owner": 0,
+		"patch_ecology_phase": "thriving",
+		# Standing forage stock vs the patch ceiling (sim default capacity 120) → the Tile card's
+		# "Forage biomass 84 / 120" row, the patch counterpart to a herd's Biomass row.
+		"patch_biomass": 84.0,
+		"patch_carrying_capacity": 120.0,
+		# Pre-commit yield forecast (food/turn at THIS biomass, exported at output_multiplier 1.0).
+		# Sustain's ceiling admits ceil(0.96 / 0.32) = 3 useful foragers — below band 821's 10 idle
+		# workers, so the Foragers stepper caps at 3 and shows the "max 3 workers useful here" note.
+		# The higher-policy ceilings admit 6 / 9 / 15, so switching policy visibly moves the cap.
+		"patch_per_worker_yield": 0.32,
+		"patch_ceiling_sustain": 0.96,
+		"patch_ceiling_surplus": 1.92,
+		"patch_ceiling_market": 2.88,
+		"patch_ceiling_eradicate": 4.80,
+		# The Cultivate INVESTMENT rung: while the patch is being prepared it pays only a fraction of
+		# its Sustain ceiling (the dip the player is buying with), then flips to the tended yield.
+		# Both are food/turn at output_multiplier 1.0, like the ceilings above.
+		"patch_ceiling_cultivate": 0.24,
+		"patch_tended_yield": 1.20,
 	}
 
 ## The three pre-launch hunt-forecast states, each a hovered hex carrying one huntable herd whose
@@ -1344,6 +1550,19 @@ func _forecast_herd(id: String, species: String, phase: String, sustain_ceiling:
 		"ecology_phase": phase,
 		"x": 66, "y": 10,
 		"biomass": 820.0,
+		# A LIVE herd carries BOTH forecast field sets, so this fixture must too (they were split
+		# across two disjoint fixtures once, which hid every interaction between them):
+		#   • the bare `per_worker_yield` / `ceiling_*` pre-commit fields, which drive the shared
+		#     `_forecast_inputs` → cap + "Expected yield" / "Preparing → then" row, and
+		#   • `hunt_policy_ceilings` / `hunt_trip_estimates` below (the BAND flow ceiling and the
+		#     sim's forward-simulated EXPEDITION trip answers).
+		# Per-worker matches the band's `hunt_per_worker_provisions` (0.8) and the ceilings match the
+		# band ceilings, because the sim exports one hunt model — the two paths must agree.
+		"per_worker_yield": 0.8,
+		"ceiling_sustain": sustain_ceiling,
+		"ceiling_surplus": sustain_ceiling * 4.0,
+		"ceiling_market": sustain_ceiling * 2.0,
+		"ceiling_eradicate": 0.0,
 		"hunt_policy_ceilings": {
 			"sustain": sustain_ceiling,
 			"surplus": sustain_ceiling * 4.0,
@@ -1373,6 +1592,34 @@ func _herd_hover_tile(herd: Dictionary) -> Dictionary:
 	tile["herds"] = [herd]
 	return tile
 
+## An over-drawn, UNCULTIVATED forage patch: the Tile card's "Ecology" row must still render
+## (the phase gates cultivation, so it always shows on a patch) as a WARN-amber "⚠ Stressed".
+## Biomass is well below capacity, mirroring a patch foraged past its regrowth.
+func _stressed_tile_fixture() -> Dictionary:
+	var tile := _food_tile_fixture()
+	tile["cultivation_progress"] = 0.0
+	tile["is_cultivated"] = false
+	tile["patch_ecology_phase"] = "stressed"
+	tile["patch_biomass"] = 22.0
+	return tile
+
+## A fully-tended forage patch: the Tile card shows the "🌾 Tended Patch" badge (SIGNAL tint)
+## plus an "Ecology" row, instead of the in-progress "Cultivation N%".
+func _tended_tile_fixture() -> Dictionary:
+	var tile := _food_tile_fixture()
+	tile["x"] = 67
+	tile["y"] = 11
+	tile["cultivation_progress"] = 1.0
+	tile["is_cultivated"] = true
+	tile["patch_ecology_phase"] = "thriving"
+	# A TENDED patch reports every policy ceiling == per_worker_yield, so max-useful collapses to 1
+	# worker regardless of policy — the stepper caps at 1 ("max 1 workers useful here").
+	tile["patch_ceiling_sustain"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_surplus"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_market"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
+	return tile
+
 func _herd_fixture() -> Dictionary:
 	return {
 		"id": "game_deer_07",
@@ -1385,6 +1632,20 @@ func _herd_fixture() -> Dictionary:
 		"x": 66, "y": 10,
 		"biomass": 820.0,
 		"route_length": 3,
+		# Pre-commit yield forecast — the SAME field names the forage patch carries (food/turn at this
+		# herd's biomass, at output_multiplier 1.0). Sustain admits ceil(0.90 / 0.30) = 3 useful
+		# hunters, below the reference band's 7 assignable (3 idle + the 4 it already has on this
+		# herd), so the Hunters stepper caps at 3 with the "max 3 workers useful here" note.
+		"per_worker_yield": 0.30,
+		"ceiling_sustain": 0.90,
+		"ceiling_surplus": 1.80,
+		"ceiling_market": 2.70,
+		"ceiling_eradicate": 4.50,
+		# The Corral INVESTMENT rung (the herd twin of the patch's Cultivate pair): the dip yield paid
+		# while the pen is being built, then the yield the penned herd pays.
+		"ceiling_corral": 0.23,
+		"corral_yield": 1.05,
+		"corral_progress": 0.0,
 		"tile_info": _food_tile_fixture(),
 	}
 
@@ -1443,9 +1704,49 @@ func _collapsing_herd_fixture() -> Dictionary:
 	fixture["domestication"] = 0.0
 	return fixture
 
+## A still-WILD herd (domestication 0.4) on the same compact tile as the corral-ready one: the Corral
+## rung is gated on the herd half of its prerequisite, so the picker greys it with "Herd must be
+## domesticated" (the faction already knows Herding).
+func _corral_locked_herd_fixture() -> Dictionary:
+	var fixture := _corral_ready_herd_fixture()
+	fixture["domestication"] = 0.4
+	fixture["corral_progress"] = 0.0
+	return fixture
+
+## A fully-domesticated herd whose pen is HALF-BUILT (not yet corralled): the Corral investment rung
+## is available (knowledge + domestication both satisfied) and under way, so the hunt picker offers
+## 🐄 Corral and the drawer reads "Corral: Building 40%". Compact non-food tile_info (like the
+## domesticated fixture) so the Tile card stays short and the drawer rows land in-frame.
+func _corral_ready_herd_fixture() -> Dictionary:
+	var fixture := _herd_fixture()
+	fixture["domestication"] = 1.0
+	fixture["corralled"] = false
+	fixture["corral_progress"] = 0.4
+	fixture["tile_info"] = {
+		"x": 66, "y": 10,
+		"terrain_label": "Prairie Steppe",
+		"tags_text": "Fertile",
+		"visibility_state": "active",
+		"food_module": "",
+		"food_module_label": "None",
+	}
+	return fixture
+
 func _domesticated_herd_fixture() -> Dictionary:
 	var fixture := _herd_fixture()
 	fixture["domestication"] = 1.0
+	# A fully-domesticated herd is penned: the drawer adds a "🐄 Corralled" row.
+	fixture["corralled"] = true
+	# Compact NON-food tile_info (like the hunt-distance herd) so the tile card stays short and
+	# the drawer's Husbandry + Corral rows land in-frame rather than below the dock scroll fold.
+	fixture["tile_info"] = {
+		"x": 66, "y": 10,
+		"terrain_label": "Prairie Steppe",
+		"tags_text": "Fertile",
+		"visibility_state": "active",
+		"food_module": "",
+		"food_module_label": "None",
+	}
 	return fixture
 
 ## A base terrain legend (key == "terrain") shaped exactly like

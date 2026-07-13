@@ -14,6 +14,7 @@ extends Node2D
 
 const MAP_VIEW := preload("res://src/scripts/MapView.gd")
 const OUT_DIR := "res://ui_preview_out"
+const WARMUP_SETTLES := 3   # frames burned before the first capture (the window is still sizing)
 
 const GRID_W := 16
 const GRID_H := 12
@@ -26,6 +27,13 @@ const TRAVEL_SEAM_BAND_X := 1      # band column near the left edge for the seam
 const TRAVEL_SEAM_TARGET_X := 14   # target near the right edge → short path wraps LEFT across seam
 const TRAVEL_EXPEDITION_ENTITY := 9301
 const HERD_ON_TILE_ID := "game_boar_03"   # herd id used by the selected-hex herd fixture
+# First worked forage tile of the work fixture — named because the draw-order guard (State A-overlap)
+# parks a herd on exactly this tile so its glyph collides with that tile's yield label.
+const FORAGE_A_X := 7
+const FORAGE_A_Y := 6
+const OVERLAP_HERD_ID := "game_boar_11"   # the herd parked on the worked forage tile
+const OVERLAP_MOVE_X := 10                # pending-move target; band→target dash crosses forage tile B's label
+const OVERLAP_MOVE_Y := 10
 # Canned settlement-stage tokens (the native bridge doesn't run here, so preview band dicts must
 # carry settlement_stage_* directly). Icons are opaque sim strings — the emoji here just mirror the
 # current config so the map token glyphs render. EMPTY exercises the neutral non-circular fallback marker (square).
@@ -38,6 +46,16 @@ const STACK_STAGE_CYCLE := [STAGE_NOMADIC, STAGE_CAMP, STAGE_VILLAGE, STAGE_NONE
 # Far-zoom LOD grid: large enough that fitted hexes fall under ICON_MIN_DETAIL_RADIUS.
 const FAR_GRID_W := 72
 const FAR_GRID_H := 52
+# Yield-label LOD guard grid. `_fit_map_to_view` IS the minimum zoom (MIN_ZOOM_FACTOR == 1.0), so the
+# only way to push the fitted radius under the LOD gate is a bigger grid — and at this harness's
+# 1000×800 window FAR_GRID (72×52) fits at radius ≈19.6, i.e. ABOVE the gate, so the state had
+# silently stopped guarding anything. This grid fits at radius ≈13 (< LOD_MIN_RADIUS), so the
+# yield-label suppression is genuinely exercised. `_ready` asserts the radius, so a future window/grid
+# change can't silently un-guard it again.
+const YIELD_FAR_GRID_W := 110
+const YIELD_FAR_GRID_H := 80
+# Mirrors MapView.ICON_MIN_DETAIL_RADIUS (the LOD threshold under which the annotation is suppressed).
+const LOD_MIN_RADIUS := 16.0
 # Multi-biome baseline: the four terrain ids that today have REAL base textures (the other 33 are
 # noise placeholders), laid out as four vertical bands 4 columns wide each across GRID_W (16).
 const BIOME_BAND_IDS := [15, 11, 12, 0]  # hot_desert_erg / prairie_steppe / mixed_woodland / deep_ocean
@@ -92,6 +110,11 @@ func _ready() -> void:
 	add_child(_map)
 	await get_tree().process_frame
 	await get_tree().process_frame
+	# Warm-up: the FIRST captured state came back all-black — the window is still sizing on the opening
+	# frames, so the first viewport read-back has nothing in it. Burn a few settles here so State A is a
+	# real frame like every state after it.
+	for _i in WARMUP_SETTLES:
+		await _settle()
 
 	# State A — a band working two forage tiles + hunting a distant herd. Shows the
 	# work-range ring (Chebyshev square), two strong-green worked forage tiles, and the
@@ -102,6 +125,26 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_band_work")
 
+	# State A-overlap — the draw-ORDER guard for the yield labels. Every layer that used to paint OVER
+	# them is forced to collide with one here: a herd parked ON a worked forage tile (its glyph lands in
+	# a secondary slot right under that tile's label), a pending hunt on the already-hunted deer (dashed
+	# hex + dashed band→herd link straight across the herd's label, on top of the confirmed red ring +
+	# link), and a pending move whose dashed link crosses the second forage tile's label. The labels are
+	# flushed LAST in _draw, so all of it must read UNDER the pills — no glyph or dash on the numbers.
+	_map.display_snapshot(_snapshot_work_overlap())
+	_map.selected_unit_id = BAND_ENTITY
+	_map.set_labor_pending({
+		BAND_ENTITY: {
+			"turn": 0,
+			"assign": {"hunt:game_deer_07": {"kind": "hunt", "x": 13, "y": 6, "herd_id": "game_deer_07"}},
+			"move": {"x": OVERLAP_MOVE_X, "y": OVERLAP_MOVE_Y},
+		}
+	})
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_band_label_overlap")
+	_map.set_labor_pending({})  # leave the pending overlay clear for the following states
+
 	# State A-far — the SAME worked band on a large grid so fitted hexes go tiny (radius <
 	# ICON_MIN_DETAIL_RADIUS): the per-source yield labels + ⚠ must LOD-SUPPRESS so far zoom stays a
 	# clean token/highlight view, not floating-text soup. Regression guard for the yield-label LOD gate.
@@ -110,6 +153,8 @@ func _ready() -> void:
 	_map.selected_tile = Vector2i(-1, -1)
 	_map._fit_map_to_view()
 	await _settle()
+	if _map.last_hex_radius >= LOD_MIN_RADIUS:
+		push_warning("map_preview: yield-farzoom fitted radius %.1f >= LOD gate %.1f — this state no longer guards the LOD suppression; grow YIELD_FAR_GRID_*" % [_map.last_hex_radius, LOD_MIN_RADIUS])
 	await _save("map_band_yield_farzoom")
 
 	# State B — the same band with scouts staffed: scouting no longer draws a map highlight
@@ -524,12 +569,27 @@ func _snapshot_work() -> Dictionary:
 	# Per-source yields annotate the worked tiles/herd on the map. Forage is renewable (actual ==
 	# sustainable, no ⚠); the hunt OVERDRAWS (0.46 > 0.20) so its herd label shows the amber ⚠ flag.
 	var assignments := [
-		{"kind": "forage", "workers": 5, "target_x": 7, "target_y": 6, "actual_yield": 0.48, "sustainable_yield": 0.48},
-		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "actual_yield": 0.27, "sustainable_yield": 0.27},
+		# Policies drive the yield label's trailing policy glyph (♻ sustain / ⬆ surplus / 🪙 market /
+		# 💀 eradicate) — two different ones here so the map read is verifiable in one frame.
+		{"kind": "forage", "workers": 5, "target_x": FORAGE_A_X, "target_y": FORAGE_A_Y, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48},
+		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "policy": "market", "actual_yield": 0.27, "sustainable_yield": 0.20},
 		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 13, "target_y": 6, "actual_yield": 0.46, "sustainable_yield": 0.20},
 		{"kind": "warrior", "workers": 2},
 	]
 	return _base_snapshot(_band(assignments, 2, 2), [_deer_herd()])
+
+## State A-overlap fixture: the worked band, plus a herd standing ON the first worked forage tile so
+## its secondary glyph is drawn over that tile's yield label (the reported failure).
+func _snapshot_work_overlap() -> Dictionary:
+	var snap := _snapshot_work()
+	var herds: Array = snap["herds"]
+	herds.append({
+		"id": OVERLAP_HERD_ID,
+		"label": "Wild Boar (%s)" % OVERLAP_HERD_ID,
+		"x": FORAGE_A_X, "y": FORAGE_A_Y,
+		"biomass": 400.0, "huntable": true,
+	})
+	return snap
 
 func _snapshot_scout() -> Dictionary:
 	var assignments := [
@@ -657,10 +717,10 @@ func _snapshot_herd_on_tile() -> Dictionary:
 ## makes hexes tiny — exercises the yield-label LOD suppression at far zoom.
 func _snapshot_far_work() -> Dictionary:
 	var terrain: Array = []
-	terrain.resize(FAR_GRID_W * FAR_GRID_H)
+	terrain.resize(YIELD_FAR_GRID_W * YIELD_FAR_GRID_H)
 	terrain.fill(TERRAIN_ID)
-	var cx := FAR_GRID_W / 2
-	var cy := FAR_GRID_H / 2
+	var cx := YIELD_FAR_GRID_W / 2
+	var cy := YIELD_FAR_GRID_H / 2
 	var assignments := [
 		{"kind": "forage", "workers": 5, "target_x": cx + 1, "target_y": cy, "actual_yield": 0.48, "sustainable_yield": 0.48},
 		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": cx + 2, "target_y": cy, "actual_yield": 0.46, "sustainable_yield": 0.20},
@@ -670,7 +730,7 @@ func _snapshot_far_work() -> Dictionary:
 		"id": "Band 1", "work_range": 2, "scout_reveal_radius": 2, "labor_assignments": assignments,
 	}, STAGE_NOMADIC)
 	return {
-		"grid": {"width": FAR_GRID_W, "height": FAR_GRID_H, "wrap_horizontal": false},
+		"grid": {"width": YIELD_FAR_GRID_W, "height": YIELD_FAR_GRID_H, "wrap_horizontal": false},
 		"overlays": {"terrain": terrain},
 		"populations": [band],
 		"herds": [{"id": "game_deer_07", "label": "Red Deer (game_deer_07)", "x": cx + 2, "y": cy, "biomass": 800.0, "huntable": true}],

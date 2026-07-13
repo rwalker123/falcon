@@ -16,6 +16,7 @@ use tracing::info;
 use crate::{
     components::{PopulationCohort, ResidentBand, FOOD},
     fauna::{HerdDensityMap, HerdRegistry},
+    forage::ForageRegistry,
     orders::FactionId,
     resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
     sedentarization_config::{SedentarizationConfig, SedentarizationConfigHandle},
@@ -114,6 +115,7 @@ pub fn sedentarization_tick(
     tick: Res<SimulationTick>,
     config: Res<SedentarizationConfigHandle>,
     herds: Res<HerdRegistry>,
+    forage: Res<ForageRegistry>,
     density: Res<HerdDensityMap>,
     // `With<ResidentBand>`: the sedentarization score aggregates real bands' surplus/population; a
     // detached expedition's carried larder is not settled "tether".
@@ -147,7 +149,10 @@ pub fn sedentarization_tick(
 
     for faction in factions {
         let pop = population[&faction];
-        let domesticated = herds.domesticated_count(faction) as f32;
+        // Plant + animal domestication share the driver: cultivated patches fold into the same
+        // "domestication" signal as domesticated herds (no new weight, no re-balance).
+        let domesticated =
+            (herds.domesticated_count(faction) + forage.cultivated_count(faction)) as f32;
         let faction_surplus = surplus.get(&faction).copied().unwrap_or(0.0);
 
         let dom_norm = (domesticated / (refs.domesticated_herds.max(1) as f32)).clamp(0.0, 1.0);

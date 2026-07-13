@@ -78,7 +78,7 @@ pub use components::{
     available_workers, BandTravel, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
     FollowPolicy, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
     LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
-    Settlement, StartingUnit, Tile, TownCenter, TradeLink, FOOD,
+    Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, FOOD,
 };
 pub use crisis::{
     ActiveCrisisLedger, CrisisGaugeSnapshot, CrisisMetricKind, CrisisMetricsSnapshot,
@@ -118,9 +118,10 @@ pub use expedition_config::{
     ExpeditionConfigMetadata, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
-    advance_herds, advance_husbandry, hunt_policy_ceiling, hunt_provisions, repopulate_fauna,
-    spawn_initial_herds, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    HerdTelemetryEntry, RoamState,
+    advance_herds, advance_husbandry, forecast_expected_take, hunt_policy_ceiling, hunt_provisions,
+    hunt_source_yield_preview, repopulate_fauna, spawn_initial_herds, EcologyPhase, Herd,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, RoamState,
+    SourceYieldForecast, HERDING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata, SizeClass,
@@ -130,7 +131,10 @@ pub use food::{
     classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,
     FoodSiteKind, DEFAULT_HARVEST_TRAVEL_TILES_PER_TURN, DEFAULT_HARVEST_WORK_TURNS,
 };
-pub use forage::{advance_forage_regrowth, spawn_initial_forage, ForagePatch, ForageRegistry};
+pub use forage::{
+    advance_cultivation, advance_forage_regrowth, forage_source_yield_preview,
+    spawn_initial_forage, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID,
+};
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use great_discovery::{
     ConstellationRequirement, GreatDiscoveryCandidateEvent, GreatDiscoveryDefinition,
@@ -237,13 +241,13 @@ pub use snapshot::{
 pub use systems::spawn_initial_world;
 pub use systems::{
     advance_band_movement, advance_expeditions, advance_labor_allocation,
-    expedition_take_provisions, hunt_ceiling_provisions, hunt_per_worker_provisions, hunt_take,
-    hunt_trip_forecast, output_multiplier, simulate_power, HuntTripForecast,
-    MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent,
+    expedition_take_provisions, hunt_per_worker_provisions, hunt_take, hunt_trip_forecast,
+    output_multiplier, simulate_power, HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams,
+    TradeDiffusionEvent,
 };
 pub use terrain::{
     biome_must_have, biome_niche, classify_terrain, terrain_definition, terrain_for_position,
-    BiomeNiche, MovementProfile, TerrainDefinition, TerrainResourceBias,
+    BathymetryContext, BiomeNiche, MovementProfile, TerrainDefinition, TerrainResourceBias,
 };
 
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
@@ -558,6 +562,7 @@ pub fn build_headless_app() -> App {
                 systems::simulate_logistics,
                 advance_herds,
                 advance_forage_regrowth,
+                advance_cultivation,
                 repopulate_fauna,
                 advance_husbandry,
                 supply::balance_supply_networks,

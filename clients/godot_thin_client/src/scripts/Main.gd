@@ -227,10 +227,20 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_sedentarization", [snapshot["sedentarization"]])
     if snapshot.has("demographics"):
         _hud_invoke("update_demographics", [snapshot["demographics"]])
+    if snapshot.has("intensification_knowledge"):
+        _hud_invoke("update_intensification", [snapshot["intensification_knowledge"]])
     if snapshot.has("discovered_sites"):
         _hud_invoke("update_discoveries", [snapshot["discovered_sites"]])
     if snapshot.has("grid"):
         _hud_invoke("set_grid_dimensions", [snapshot["grid"]])
+    if snapshot.has("food_modules"):
+        # The HUD needs the tile→food-module map to lead each Current-actions Forage row with the
+        # SAME resource glyph the map draws on that tile. Same array MapView ingests.
+        _hud_invoke("update_food_modules", [snapshot["food_modules"]])
+    if snapshot.has("herds"):
+        # The HUD needs the live herd positions (herds migrate) to jump the map to a hunted herd
+        # from the band panel's Current-actions rows, and to name it. Same array MapView renders.
+        _hud_invoke("update_herds", [snapshot["herds"]])
     if snapshot.has("populations"):
         _hud_invoke("update_band_alerts", [snapshot["populations"]])
     if not is_delta:

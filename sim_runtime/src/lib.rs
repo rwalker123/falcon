@@ -409,6 +409,8 @@ pub mod knowledge {
                 sedentarization: Vec::new(),
                 discovered_sites: Vec::new(),
                 demographics: Vec::new(),
+                forage_patches: Vec::new(),
+                intensification_knowledge: Vec::new(),
                 moisture_raster: FloatRasterState::default(),
                 terrain: TerrainOverlayState::default(),
                 logistics_raster: ScalarRasterState::default(),

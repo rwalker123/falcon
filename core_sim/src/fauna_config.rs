@@ -278,6 +278,21 @@ impl Default for FollowConfig {
 /// being actively sustained decays by `decay_per_turn`. The explicit `domesticate`
 /// command may claim a herd early once progress reaches `claim_threshold`. A domesticated
 /// herd yields `biomass * provisions_per_biomass` provisions to its owner each turn.
+///
+/// **Corral (Rung 1c) levers.** Corralling is an **explicit `Corral` policy with an investment
+/// cost**, the animal twin of Cultivate: while the pen is being built (`Herd::corral_progress` < 1.0)
+/// the crew takes only `corralling_yield_fraction × the herd's Sustain (MSY) ceiling` — a sustainable
+/// draw, so the herd stays healthy — accruing `corral_build_progress_per_turn` each turn; at `1.0` the
+/// herd is penned (`corralled_at`) and pays `corral_provisions_per_biomass` on its full standing
+/// biomass, place-local to the keeper and without draw-down. That penned rate is set **higher** than
+/// the mobile `provisions_per_biomass` so pinning a herd pays more (mirroring how the forage
+/// `tended_provisions_per_biomass` beats the wild MSY skim). `knowledge_progress_per_turn` /
+/// `knowledge_completion_threshold` are the earned-**Herding**-knowledge levers (the animal mirror of
+/// `CultivationConfig`'s `knowledge_*`): a Sustain-hunt on a Thriving herd teaches the faction Herding
+/// (into the `DiscoveryProgressLedger`, discovery `HERDING_DISCOVERY_ID`), the gate the `Corral` policy
+/// checks. Note the asymmetry vs. cultivation — mobile *domestication* stays ungated; only corralling
+/// needs Herding. `claim_threshold` remains the **`domesticate`** command's early-claim gate on
+/// *mobile* taming (unrelated to corralling, which has no early claim).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct HusbandryConfig {
@@ -285,6 +300,26 @@ pub struct HusbandryConfig {
     pub decay_per_turn: f32,
     pub claim_threshold: f32,
     pub provisions_per_biomass: f32,
+    /// Corral (Rung 1c): provisions/turn per unit of a **penned** herd's biomass, paid place-local to
+    /// the keeper without draw-down. Higher than `provisions_per_biomass` (the mobile even-split rate)
+    /// — corralling pays more but pins the herd.
+    pub corral_provisions_per_biomass: f32,
+    /// **The investment cost of corralling** (the animal twin of `cultivating_yield_fraction`): while
+    /// the pen is being built, the Hunt take ceiling is this fraction of the herd's **Sustain (MSY)**
+    /// ceiling — the crew is building, not hunting. A fraction of MSY is a sustainable draw, so the
+    /// herd stays Thriving (which the accrual gate wants). Validated `0 < f < 1`.
+    pub corralling_yield_fraction: f32,
+    /// Pen construction accrued per turn a band works a domesticated herd it owns under the **Corral**
+    /// policy (`Herd::corral_progress`, `1.0` = penned). At `0.04` a pen takes 25 turns to build,
+    /// matching the plant side's `cultivation.progress_per_turn`.
+    pub corral_build_progress_per_turn: f32,
+    /// Rung 1b/1c earned knowledge: faction **Herding** knowledge accrued per turn a band
+    /// Sustain-hunts a Thriving herd (into the `DiscoveryProgressLedger`). Herding is *learned by
+    /// hunting*, never start-granted; the `corral` command is refused until the faction knows it.
+    pub knowledge_progress_per_turn: f32,
+    /// Ledger progress (`0..=1`) at which the faction **knows** Herding and may `corral`. `1.0` = the
+    /// ledger's completion value (`DiscoveryProgressLedger` clamps accrual to `1.0`).
+    pub knowledge_completion_threshold: f32,
 }
 
 impl Default for HusbandryConfig {
@@ -294,9 +329,25 @@ impl Default for HusbandryConfig {
             decay_per_turn: 0.01,
             claim_threshold: 0.6,
             provisions_per_biomass: 0.01,
+            corral_provisions_per_biomass: 0.02,
+            corralling_yield_fraction: DEFAULT_CORRALLING_YIELD_FRACTION,
+            corral_build_progress_per_turn: DEFAULT_CORRAL_BUILD_PROGRESS_PER_TURN,
+            knowledge_progress_per_turn: 0.05,
+            knowledge_completion_threshold: 1.0,
         }
     }
 }
+
+/// **The investment cost of corralling**: while the pen is being built, a Corral hunt takes only this
+/// fraction of the herd's Sustain (MSY) ceiling. Mirrors the plant side's
+/// `labor_config::DEFAULT_CULTIVATION_CULTIVATING_YIELD_FRACTION` (same 0.25 dip, same reasoning:
+/// ~25 turns at ~75% of the herd's Sustain yield forgone, recouped shortly after the pen pays the
+/// higher `corral_provisions_per_biomass`).
+const DEFAULT_CORRALLING_YIELD_FRACTION: f32 = 0.25;
+/// Pen construction per turn under the Corral policy → 25 turns to build, matching the plant side's
+/// `cultivation.progress_per_turn`. A dedicated lever (not the taming `progress_per_turn`) so pen
+/// speed and tame speed can be tuned independently.
+const DEFAULT_CORRAL_BUILD_PROGRESS_PER_TURN: f32 = 0.04;
 
 /// Market-hunting tuning: the commercial Follow policy over-harvests a large fixed share
 /// of biomass each turn (`take_fraction`) and sells it, yielding `trade_goods_multiplier`×
@@ -544,6 +595,20 @@ mod tests {
         assert!(config.husbandry.claim_threshold > 0.0);
         assert!(config.husbandry.claim_threshold < 1.0);
         assert!(config.husbandry.provisions_per_biomass > 0.0);
+        // Corral (Rung 1c): penning pays a higher place-local rate than the mobile even-split, and
+        // Herding knowledge accrues positively toward a completion threshold in (0, 1].
+        assert!(
+            config.husbandry.corral_provisions_per_biomass
+                > config.husbandry.provisions_per_biomass
+        );
+        assert!(config.husbandry.knowledge_progress_per_turn > 0.0);
+        assert!(config.husbandry.knowledge_completion_threshold > 0.0);
+        assert!(config.husbandry.knowledge_completion_threshold <= 1.0);
+        // The corral investment cost: a strict yield *dip* while the pen is built (a positive
+        // fraction of the herd's MSY ceiling, but less than it), completing in finite turns.
+        assert!(config.husbandry.corralling_yield_fraction > 0.0);
+        assert!(config.husbandry.corralling_yield_fraction < 1.0);
+        assert!(config.husbandry.corral_build_progress_per_turn > 0.0);
         // Market hunting takes a meaningful share and sells at a premium trade rate.
         assert!(config.market.take_fraction > 0.0);
         assert!(config.market.take_fraction < 1.0);
