@@ -18,6 +18,17 @@
     "texture_scale": 1.0,
     "canopy_min_radius": 3.0
   },
+  "peaks": {
+    "overhang_width": 0.6,
+    "softness_width": 0.4,
+    "texture_scale": 0.2,
+    "peak_min_radius": 3.0,
+    "shadow_length": 0.5,
+    "shadow_strength": 0.45,
+    "min_prominence": 0.35,
+    "light_dir_x": -0.7,
+    "light_dir_y": -0.7
+  },
   "terrains": [
     { "id": 0, "name": "deep_ocean", "label": "Deep Ocean", "category": "water", "blend_class": "water", "color": [11, 30, 61] },
     { "id": 1, "name": "continental_shelf", "label": "Continental Shelf", "category": "water", "blend_class": "water", "color": [20, 64, 94] },

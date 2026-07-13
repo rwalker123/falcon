@@ -55,6 +55,23 @@ const BIOME_BAY_COL_MIN := 8
 const REPEAT_ALPINE_ID := 26   # rugged, detailed staged texture
 const REPEAT_PRAIRIE_ID := 11  # flat prairie boundary band
 const REPEAT_PRAIRIE_COLS := 4 # left columns prairie; the rest alpine
+# State "swatch" (reusable AI-texture check): a LARGE field of a single configurable biome bordering a
+# known-good prairie band, so we can judge (a) the biome's own tiling and (b) cohesion + the flat↔flat
+# blend against prairie. SWATCH_BIOME_ID is the ONE lever — change it to preview a different biome.
+const SWATCH_BIOME_ID := 2            # the biome id rendered in the swatch harness — one-line change to preview any biome
+const SWATCH_PRAIRIE_ID := 11         # prairie_steppe, the accepted flat neighbour to blend against
+const SWATCH_PRAIRIE_COLS := 4        # left columns prairie (of GRID_W); the rest the swatch biome
+const SWATCH_FAR_PRAIRIE_COLS := 18   # left prairie columns on the far-zoom grid (of FAR_GRID_W)
+# State "cohesion" (accepted-set whole-set check): the FIVE accepted AI biomes laid out as vertical
+# bands left→right — desert · scrub · prairie · woodland · tundra — so the set can be judged as one art
+# family (stylization/palette/detail cohesion, per-biome distinctiveness, and the flat↔flat blends at
+# every adjacent seam, all `flat`). Rendered at two zooms like State Q: a normal-zoom grid (a few hex
+# columns per band) and a far-zoom grid (hexes go small, whole-region read).
+const COHESION_BIOME_IDS := [15, 17, 11, 12, 20]  # desert · scrub · prairie · woodland(canopy) · tundra
+const COHESION_GRID_W := 20            # 4 hex columns per band (COHESION_GRID_W / 5)
+const COHESION_GRID_H := 12
+const COHESION_FAR_GRID_W := 70        # 14 columns per band on the far-zoom grid → tiny hexes
+const COHESION_FAR_GRID_H := 52
 # State R (pan/zoom swim regression): a target hex solidly inside the mixed_woodland band (cols 8–11)
 # on a LOWER row (below the bay) so tree crowns are in the crop. The pan and crop context are in units
 # of the frame's hex radius so the SAME hex stays framed across fit/pan/zoom.
@@ -367,6 +384,48 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_repetition_after")
 	await _save_crop("map_repetition_after_zoom", 0.42, 0.12, 0.98, 0.88)
+
+	# State "swatch" — reusable single-biome AI-texture check (the biome under SWATCH_BIOME_ID, whatever
+	# it's currently set to): a large field of that biome bordering a prairie (id 11) band, blend on.
+	# Rendered at TWO zooms like
+	# State Q: a normal-zoom frame (judge the biome's own tiling + the flat↔flat blend against prairie)
+	# and a far-zoom frame on the large grid (judge whole-region cohesion / read as a distinct biome).
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(true)
+	TerrainTextureManager.use_edge_blending = true
+	_map._map_cache_enabled = false
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map.display_snapshot(_snapshot_swatch(GRID_W, GRID_H, SWATCH_PRAIRIE_COLS))
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_swatch")
+	_map.display_snapshot(_snapshot_swatch(FAR_GRID_W, FAR_GRID_H, SWATCH_FAR_PRAIRIE_COLS))
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_swatch_farzoom")
+
+	# State "cohesion" — the FIVE accepted AI biomes side by side (desert · scrub · prairie · woodland ·
+	# tundra), blend on, to judge the SET as a cohesive whole: art-family consistency, per-biome
+	# distinctiveness, and the flat↔flat blends at every adjacent seam. Rendered at two zooms like State Q.
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(true)
+	TerrainTextureManager.use_edge_blending = true
+	_map._map_cache_enabled = false
+	_map.selected_unit_id = -1
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map.display_snapshot(_snapshot_cohesion(COHESION_GRID_W, COHESION_GRID_H))
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_cohesion")
+	_map.display_snapshot(_snapshot_cohesion(COHESION_FAR_GRID_W, COHESION_FAR_GRID_H))
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_cohesion_farzoom")
 
 	get_tree().quit()
 
@@ -735,6 +794,41 @@ func _snapshot_repetition() -> Dictionary:
 			arr[y * GRID_W + x] = REPEAT_PRAIRIE_ID if x < REPEAT_PRAIRIE_COLS else REPEAT_ALPINE_ID
 	return {
 		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": arr},
+		"populations": [],
+		"herds": [],
+	}
+
+## Terrain-only single-biome swatch: left `prairie_cols` columns prairie (SWATCH_PRAIRIE_ID, flat), the
+## rest a large field of SWATCH_BIOME_ID — a reusable one-biome AI-texture check (own tiling + the
+## flat↔flat blend + cohesion against the accepted prairie). Sized to the passed grid so the same builder
+## serves both the normal and far-zoom frames.
+func _snapshot_swatch(grid_w: int, grid_h: int, prairie_cols: int) -> Dictionary:
+	var arr: Array = []
+	arr.resize(grid_w * grid_h)
+	for y in range(grid_h):
+		for x in range(grid_w):
+			arr[y * grid_w + x] = SWATCH_PRAIRIE_ID if x < prairie_cols else SWATCH_BIOME_ID
+	return {
+		"grid": {"width": grid_w, "height": grid_h, "wrap_horizontal": false},
+		"overlays": {"terrain": arr},
+		"populations": [],
+		"herds": [],
+	}
+
+## Terrain-only cohesion field: the five accepted biomes (COHESION_BIOME_IDS) as equal vertical bands
+## across the passed grid, left→right. All `flat`, so every adjacent seam flat↔flat dither-blends. Sized
+## to the passed grid so the same builder serves both the normal and far-zoom frames.
+func _snapshot_cohesion(grid_w: int, grid_h: int) -> Dictionary:
+	var band_cols: int = grid_w / COHESION_BIOME_IDS.size()
+	var arr: Array = []
+	arr.resize(grid_w * grid_h)
+	for y in range(grid_h):
+		for x in range(grid_w):
+			var band: int = mini(x / band_cols, COHESION_BIOME_IDS.size() - 1)
+			arr[y * grid_w + x] = COHESION_BIOME_IDS[band]
+	return {
+		"grid": {"width": grid_w, "height": grid_h, "wrap_horizontal": false},
 		"overlays": {"terrain": arr},
 		"populations": [],
 		"herds": [],

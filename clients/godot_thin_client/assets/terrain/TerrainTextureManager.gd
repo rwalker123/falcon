@@ -10,9 +10,19 @@ var terrain_textures: Texture2DArray = null
 # Canopy overlay: whole tree crowns on transparency (RGBA), a SECOND Texture2DArray sampled by the
 # blend shader over the (grass) forest floor so crowns can overhang the hex boundary. Only the biomes
 # with a `textures/canopy/NN_name.png` asset get a layer; `canopy_layer_by_id` maps terrain id → that
-# array layer (absent = no canopy). Today only 12 (mixed_woodland) has a canopy.
+# array layer (absent = no canopy). Layers are auto-discovered from whatever files are present in
+# `textures/canopy/` — any biome with a `NN_name.png` there gets a canopy layer, so there's no fixed
+# count to keep in sync here.
 var canopy_textures: Texture2DArray = null
 var canopy_layer_by_id: Dictionary = {}
+# Peak overlay: faceted mountain relief on transparency (RGBA), a THIRD Texture2DArray sampled by the
+# blend shader over the (rocky) highland/volcanic base floor — the mountain-drama analog of the canopy
+# overlay. Only biomes with a `textures/peaks/NN_name.png` asset get a layer; `peak_layer_by_id` maps
+# terrain id → that array layer (absent = no peaks). Layers are auto-discovered from whatever files are
+# present in `textures/peaks/` — any biome with a `NN_name.png` there gets a peak layer, so there's no
+# fixed count to keep in sync here.
+var peak_textures: Texture2DArray = null
+var peak_layer_by_id: Dictionary = {}
 var terrain_config: Dictionary = {}
 var use_terrain_textures: bool = false
 var use_edge_blending: bool = false
@@ -77,6 +87,8 @@ func _load_textures() -> void:
 	# Build the companion canopy array (transparent tree crowns) — only for biomes with a canopy asset.
 	if terrain_textures != null:
 		canopy_textures = _build_canopy_texture_array()
+		# Build the companion peak array (transparent mountain relief) — only for biomes with a peak asset.
+		peak_textures = _build_peak_texture_array()
 
 
 func _build_terrain_texture_array() -> Texture2DArray:
@@ -191,6 +203,59 @@ func _build_canopy_texture_array() -> Texture2DArray:
 func canopy_layer_for(terrain_id: int) -> int:
 	## Canopy array layer for a terrain, or -1 when the biome has no canopy overlay.
 	return int(canopy_layer_by_id.get(terrain_id, -1))
+
+
+func _build_peak_texture_array() -> Texture2DArray:
+	## Build the peak Texture2DArray from `textures/peaks/NN_name.png` (RGBA faceted mountain relief on
+	## transparency). Mirrors the canopy build exactly (once-only Image.load_from_file, mipmaps + trilinear
+	## for far-zoom stability). Skips biomes with no peak file, recording `peak_layer_by_id[terrain_id] =
+	## array layer` for the ones present. Returns null when no peak asset exists (shader runs peak-disabled).
+	const PEAK_PATH := "res://assets/terrain/textures/peaks/"
+	var terrain_count: int = TerrainDefinitions.get_terrain_count()
+	var terrain_names: Dictionary = TerrainDefinitions.get_names_dict()
+	var images: Array[Image] = []
+	var first_size: Vector2i = Vector2i.ZERO
+	peak_layer_by_id.clear()
+
+	for terrain_id: int in range(terrain_count):
+		var tname: String = terrain_names.get(terrain_id, "unknown")
+		var filename := "%02d_%s.png" % [terrain_id, tname]
+		var abs_path := ProjectSettings.globalize_path(PEAK_PATH + filename)
+		if not FileAccess.file_exists(abs_path):
+			continue
+		var img: Image = Image.load_from_file(abs_path)
+		if img == null:
+			continue
+		if first_size == Vector2i.ZERO:
+			first_size = Vector2i(img.get_width(), img.get_height())
+		elif Vector2i(img.get_width(), img.get_height()) != first_size:
+			img.resize(first_size.x, first_size.y)
+		if img.get_format() != Image.FORMAT_RGBA8:
+			img.convert(Image.FORMAT_RGBA8)
+		# Mipmaps so the blend shader's trilinear (filter_linear_mipmap) peak sampler AVERAGES the faceted
+		# relief into a smooth raised mountain mass at far zoom instead of shimmering/aliasing (same reason
+		# as the canopy crowns — whole peaks tile many times per tiny hex when zoomed out).
+		img.generate_mipmaps()
+		peak_layer_by_id[terrain_id] = images.size()
+		images.append(img)
+
+	if images.is_empty():
+		print("[TerrainTextureManager] No peak textures found (peak overlay disabled)")
+		return null
+
+	var array_tex := Texture2DArray.new()
+	var err := array_tex.create_from_images(images)
+	if err != OK:
+		push_error("[TerrainTextureManager] Failed to create peak Texture2DArray: %d" % err)
+		peak_layer_by_id.clear()
+		return null
+	print("[TerrainTextureManager] Loaded peak textures: %d layers" % images.size())
+	return array_tex
+
+
+func peak_layer_for(terrain_id: int) -> int:
+	## Peak array layer for a terrain, or -1 when the biome has no peak overlay.
+	return int(peak_layer_by_id.get(terrain_id, -1))
 
 
 func get_config_value(key: String, default: Variant = null) -> Variant:

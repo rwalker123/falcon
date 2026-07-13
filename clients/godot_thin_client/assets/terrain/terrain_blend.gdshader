@@ -27,11 +27,28 @@ uniform float canopy_scale;       // world-UV scale multiplier (1.0 = one crown 
 uniform float base_scale;         // base biome-texture world-UV scale: like canopy_scale, one texture tile
                                   // spans (1/base_scale) hex-rows in world space (continuous across hexes,
                                   // so adjacent hexes show DIFFERENT regions of the texture → no per-hex repeat)
+// Peak overlay array: faceted mountain relief on transparency (RGBA), the mountain-drama analog of the
+// canopy pass — sampled in MAP space (v_map) so peaks are continuous across hexes, overhang the boundary,
+// and cast a shadow onto the neighbour. Indexed by peak-array layer (id-map A - 1). Trilinear (mipmap)
+// filtering so far-zoom relief AVERAGES into a smooth raised mountain mass (crown array is built with mipmaps).
+uniform sampler2DArray peak_tex : filter_linear_mipmap, repeat_enable;
+uniform bool peaks_enabled;       // false when no peak asset exists → skip the peak pass entirely
+uniform bool peaks_lod_enabled;   // peak LOD gate — DECOUPLED from blend_enabled so relief stays at far zoom
+uniform float peak_overhang;      // how far relief overhangs past the footline, in px (overhang_width * radius)
+uniform float peak_softness;      // inner footline ramp half-width, in px (softness_width * radius)
+uniform float peak_scale;         // world-UV scale multiplier (1.0 = one peak tile per hex, matching the base)
+uniform float peak_shadow_len;    // cast-shadow reach toward the light, in px (shadow_length * radius)
+uniform float peak_shadow_strength; // max darkening a fully-occluding peak casts on the ground (0..1)
+uniform float peak_min_prominence;  // relief opacity floor at the lowest elevation (0..1); scales to 1 at peak elev
+uniform vec2 peak_light_dir;      // normalized direction TOWARD the light in canvas space (+y DOWN → top-left is -,-)
 // id-map splatmap: R = terrain id (0..255), G = blend_class code (0 water, 1 flat, 2 rugged),
-// B = canopy code (0 = no canopy, else canopy-array layer + 1).
+// B = canopy code (0 = no canopy, else canopy-array layer + 1),
+// A = peak code (0 = no peaks, else peak-array layer + 1).
 uniform sampler2D id_map : filter_nearest;
 // visibility raster: R = 0 unexplored / 0.5 discovered / 1 active (only read when fow_enabled).
 uniform sampler2D vis_map : filter_nearest;
+// elevation raster: R = per-hex relative height 0..1 (0..100 scaled), drives peak prominence + shadow length.
+uniform sampler2D elev_map : filter_nearest;
 
 uniform int grid_w;
 uniform int grid_h;
@@ -307,6 +324,84 @@ void fragment() {
 					vec2 cuv = v_map / (2.0 * hex_radius) * canopy_scale; // map-space, continuous + pan/zoom-anchored
 					vec4 crown = texture(canopy_tex, vec3(cuv, float(forest_code - 1)));
 					result = mix(result, crown.rgb, crown.a * dens);
+				}
+			}
+		}
+
+		// --- peak overlay: faceted mountain relief over highland/volcanic biomes, overhanging + casting a
+		// shadow onto the neighbour (the mountain-drama analog of the canopy pass). Same signed-distance-to-
+		// shared-edge machinery vs the peak↔non-peak boundary gives s (+inside relief) and peak_code (own,
+		// else the nearest peak-neighbour's, so the overhang/shadow region reads the right layer). Elevation
+		// (elev_map) drives per-hex prominence + shadow length. Composited after canopy, before FoW.
+		if (peaks_enabled && peaks_lod_enabled) {
+			int own_peak = int(idpx.a * 255.0 + 0.5);      // 0 = none, else peak layer + 1
+			bool own_is_peak = own_peak > 0;
+			float pk_best_d = -1e9;                         // nearest boundary edge = max signed distance
+			int nb_peak_code = 0;
+			float nb_peak_elev = 0.0;                       // elevation of that nearest peak-neighbour hex
+			for (int dir = 0; dir < 6; dir++) {
+				ivec2 off = neighbor_offset(row, dir);
+				int ncol = col + off.x;
+				int nrow = row + off.y;
+				if (nrow < 0 || nrow >= grid_h) { continue; }
+				int ncol_id = ncol;
+				if (wrap_h) {
+					ncol_id = wrap_col(ncol);
+				} else if (ncol < 0 || ncol >= grid_w) {
+					continue;
+				}
+				vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
+				int ncode = int(texture(id_map, nuv).a * 255.0 + 0.5);
+				if (own_is_peak == (ncode > 0)) { continue; } // only peak↔non-peak edges are boundaries
+				vec2 nb_c = hex_center(ncol, nrow);
+				vec2 dir_v = normalize(nb_c - own_c);
+				float half_dist = 0.5 * distance(own_c, nb_c);
+				float d = dot(v_world - own_c, dir_v) - half_dist; // <=0 inside own hex, larger = nearer edge
+				if (d > pk_best_d) {
+					pk_best_d = d;
+					nb_peak_code = ncode;
+					nb_peak_elev = texture(elev_map, nuv).r;   // same uv we read its id/peak-code from
+				}
+			}
+			int peak_code = own_is_peak ? own_peak : nb_peak_code;
+			// signed distance into the relief (+inside, 0 at footline, -outside); interior massif → +big.
+			float s;
+			if (own_is_peak) {
+				s = (pk_best_d > -1e8) ? -pk_best_d : 1e9;   // no non-peak neighbour → deep interior
+			} else {
+				s = (pk_best_d > -1e8) ? pk_best_d : -1e9;   // no peak neighbour → no overhang
+			}
+			if (peak_code > 0) {
+				// Use the PEAK's elevation for prominence + shadow: own hex when it's the peak, else the
+				// captured peak-neighbour's — so the overhang/shadow on the ground side of the seam reads the
+				// peak's height, not the low neighbour-ground hex's (which discontinued across the seam).
+				float peak_elev = own_is_peak ? texture(elev_map, id_uv).r : nb_peak_elev;  // 0..1
+				vec2 puv = v_map / (2.0 * hex_radius) * peak_scale;       // continuous world UV (like canopy cuv)
+				float prom = mix(peak_min_prominence, 1.0, peak_elev);
+
+				// --- CAST SHADOW: look back toward the light; if a peak occludes, darken this ground ---
+				// peak_light_dir points TOWARD the light (top-left). A fragment is shadowed if a peak sits
+				// between it and the light, i.e. at puv + light_dir * t. Multi-tap for a soft ramp.
+				float shadow = 0.0;
+				float slen_uv = (peak_shadow_len * (0.4 + 0.6 * peak_elev)) / (2.0 * hex_radius) * peak_scale;
+				const int TAPS = 4;
+				for (int k = 1; k <= TAPS; k++) {
+					float t = float(k) / float(TAPS);
+					vec2 sp = puv + peak_light_dir * (slen_uv * t);
+					float a = texture(peak_tex, vec3(sp, float(peak_code - 1))).a;
+					shadow = max(shadow, a * (1.0 - t));   // nearer occluder = darker
+				}
+				result *= mix(1.0, 1.0 - peak_shadow_strength, clamp(shadow, 0.0, 1.0));
+
+				// --- PEAK COMPOSITE (over the shadowed ground) ---
+				float tn = vnoise(v_map / noise_cell + vec2(7.0, 5.0));
+				float ss = s + (tn - 0.5) * 2.0 * peak_overhang * CANOPY_TREELINE_NOISE;  // bumpy footline
+				if (ss > -peak_overhang) {
+					float dens = canopy_density(ss, peak_overhang, peak_softness) * prom;  // reuse canopy_density
+					if (dens > 0.0) {
+						vec4 pk = texture(peak_tex, vec3(puv, float(peak_code - 1)));
+						result = mix(result, pk.rgb, pk.a * dens);
+					}
 				}
 			}
 		}
