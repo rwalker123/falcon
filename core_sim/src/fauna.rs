@@ -10,16 +10,19 @@ use tracing::info;
 use std::hash::{Hash, Hasher};
 
 use crate::{
-    components::{PopulationCohort, Tile, FOOD},
+    components::{FollowPolicy, PopulationCohort, SourceYield, Tile, FOOD},
     fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle, SizeClass, SpeciesDef},
     food::{classify_food_module, FoodModule},
     grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT},
     hashing::FnvHasher,
     mapgen::WorldGenSeed,
     orders::FactionId,
-    resources::{SimulationConfig, SimulationTick, StartLocation, TileRegistry},
+    resources::{
+        CommandEventEntry, CommandEventKind, CommandEventLog, SimulationConfig, SimulationTick,
+        StartLocation, TileRegistry,
+    },
     scalar::{scalar_from_f32, scalar_zero, Scalar},
-    systems::output_multiplier,
+    systems::{output_multiplier, workers_needed_for_take, TENDED_SOURCE_WORKERS_NEEDED},
     wellbeing_config::WellbeingConfigHandle,
 };
 
@@ -38,6 +41,19 @@ const HERD_MOVEMENT_SEED_SALT: u64 = 0x4D0E_9A17_C0FF_EE21;
 const GAME_ID_PREFIX: &str = "game_";
 
 pub const HERD_DENSITY_REFERENCE_BIOMASS: f32 = 8_000.0;
+
+/// Discovery id for the faction-level **Herding** knowledge (Intensification Rung 1c — the
+/// earned-knowledge gate on the animal-pen path, `docs/plan_intensification.md` §4b; the animal
+/// mirror of `forage::CULTIVATION_DISCOVERY_ID`). Knowledge is **earned by doing**: a band
+/// Sustain-hunting a Thriving herd accrues this discovery in the per-faction
+/// `DiscoveryProgressLedger` (`advance_labor_allocation`), and the `corral` command is refused until
+/// the faction knows Herding. Declared as a start-profile knowledge tag (`herding` → this id in
+/// `data/start_profile_knowledge_tags.json`) purely so it is mappable; it is deliberately **not**
+/// listed in any start profile's `starting_knowledge_tags`, so no faction starts knowing it. Note
+/// the asymmetry vs. Cultivation: mobile *domestication* (pastoralism) stays ungated — only
+/// **corralling** (pinning a domesticated herd) needs Herding. Next free id after
+/// `cultivation` (2003).
+pub const HERDING_DISCOVERY_ID: u32 = 2004;
 
 /// Coarse ecological health band derived from a group's biomass vs its carrying
 /// capacity (thresholds in `EcologyConfig`). Surfaced to the client as an early
@@ -179,6 +195,34 @@ pub struct Herd {
     pub domestication_progress: f32,
     /// Faction tending/owning this group (`Some` iff `domestication_progress > 0`).
     pub owner: Option<FactionId>,
+    /// Corral (Rung 1c): the tile a **penned** herd is fixed at, or `None` for a mobile herd.
+    /// `Some` = the herd does NOT roam (`advance_herds` skips its movement — it stays put) and is
+    /// paid its keeper **place-local** at the higher corral rate (via the tending Hunt assignment in
+    /// `advance_labor_allocation`), not the mobile even-split husbandry yield. Only a *domesticated*
+    /// herd whose owner knows Herding can be corralled (`corral` command). Authoritative sim state —
+    /// snapshot-persisted. The animal mirror of a cultivated patch being a fixed tended patch;
+    /// contrast the deliberate asymmetry — an *un*corralled domesticated herd stays mobile
+    /// (pastoralism travels with the band).
+    pub corralled_at: Option<UVec2>,
+    /// Pen-construction progress in `[0.0, 1.0]`; `1.0` = the pen is built (and `corralled_at` is set
+    /// that same turn). Accrues **only** while a band works this herd under the explicit
+    /// `FollowPolicy::Corral` policy (faction knows Herding + owns the *domesticated* herd), at
+    /// `husbandry.corral_build_progress_per_turn`. The animal mirror of
+    /// `ForagePatch::cultivation_progress`, and the investment the `corralling_yield_fraction` dip
+    /// buys. Authoritative sim state — snapshot-persisted (`HerdState.corral_progress`), so a rollback
+    /// rewinds a half-built pen rather than losing it. Unlike cultivation it does **not** decay
+    /// gradually — but the two ends of its life differ: a **mid-build** gate lapse *keeps* progress
+    /// (materials on the ground, not a field growing back over), while a **completed pen that
+    /// escapes** (`advance_husbandry`) resets it to `0.0` — the pen is lost along with the herd that
+    /// roamed off it, so re-penning pays the full investment again.
+    pub corral_progress: f32,
+    /// Transient per-turn flag: a Hunt assignment tended this corralled herd this turn (set in
+    /// `advance_labor_allocation`, Population). `advance_husbandry` (Logistics, the *next* turn —
+    /// Logistics runs before Population) reads it: a corralled herd tended this turn is spared, an
+    /// untended one **escapes** (reverts to mobile). Mirrors `ForagePatch::tended_this_turn`. **Not**
+    /// snapshot-persisted (derived) — a rehydrated corralled herd reads `false` until tended again,
+    /// so a rollback can only *delay* an escape by one turn, never resurrect a broken-out herd.
+    pub corralled_tended_this_turn: bool,
 }
 
 impl Herd {
@@ -216,6 +260,9 @@ impl Herd {
             ecology_phase: EcologyPhase::Thriving,
             domestication_progress: 0.0,
             owner: None,
+            corralled_at: None,
+            corral_progress: 0.0,
+            corralled_tended_this_turn: false,
         }
     }
 
@@ -268,6 +315,43 @@ impl Herd {
         self.domestication_progress = 1.0;
     }
 
+    /// A **corralled** (penned) herd: fixed at `corralled_at`, doesn't roam, and is paid its keeper
+    /// place-local at the higher corral rate. The animal mirror of `ForagePatch::is_cultivated`
+    /// gating the tended-patch behaviour.
+    pub fn is_corralled(&self) -> bool {
+        self.corralled_at.is_some()
+    }
+
+    /// Pen the herd at `tile` — called when `corral_progress` reaches `1.0` (the pen is finished).
+    /// Fixes its position and grants a one-turn "tended" grace (`corralled_tended_this_turn = true`)
+    /// so the first `advance_husbandry` pass after penning spares it — the keeper's Hunt assignment
+    /// then re-marks it tended each Population stage to keep it penned.
+    pub fn corral_at(&mut self, tile: UVec2) {
+        self.corralled_at = Some(tile);
+        self.current_pos = tile;
+        self.next_pos = None;
+        self.corral_progress = 1.0;
+        self.corralled_tended_this_turn = true;
+    }
+
+    /// Accrue pen-construction progress for `faction` (the keeper band, working the herd under
+    /// `FollowPolicy::Corral`); at `1.0` the pen is finished and the herd is penned at `tile`. Only
+    /// the herd's owner builds (a domesticated herd always has one). Returns `true` on the turn the
+    /// pen completes, so the caller can announce it. The animal mirror of
+    /// `ForagePatch::accrue_cultivation` (which latches via `is_cultivated`); called **after** the
+    /// turn's take so the pre-commit forecast can't lie about which yield this turn pays.
+    pub(crate) fn accrue_corral(&mut self, faction: FactionId, amount: f32, tile: UVec2) -> bool {
+        if self.is_corralled() || self.owner != Some(faction) {
+            return false;
+        }
+        self.corral_progress = (self.corral_progress + amount).min(1.0);
+        if self.corral_progress >= 1.0 {
+            self.corral_at(tile);
+            return true;
+        }
+        false
+    }
+
     /// The herd's live tile — walked one hex per move by `advance_herds` (graze-wander /
     /// loiter-migrate), no longer a teleport to `route[step_index]`.
     pub fn position(&self) -> UVec2 {
@@ -296,6 +380,12 @@ pub struct HerdTelemetryEntry {
     pub ecology_phase: String,
     /// Husbandry progress in `[0.0, 1.0]` (`1.0` = domesticated).
     pub domestication: f32,
+    /// Rung 1c corral state: `true` iff the herd is penned (`Herd::is_corralled`). Client shows a
+    /// place-bound corral indicator distinct from a mobile domesticated herd.
+    pub corralled: bool,
+    /// Pen-construction progress in `[0.0, 1.0]` (`Herd::corral_progress`) — the client's "pen
+    /// building N%" meter while a keeper works the herd under the Corral policy.
+    pub corral_progress: f32,
     pub position: UVec2,
     pub biomass: f32,
     pub route_length: u32,
@@ -369,6 +459,10 @@ fn herd_from_state(state: &HerdState) -> Herd {
         ecology_phase: EcologyPhase::from_key(&state.ecology.ecology_phase),
         domestication_progress: state.ecology.progress,
         owner: state.ecology.owner.map(FactionId),
+        corralled_at: state.corralled_at.map(|(x, y)| UVec2::new(x, y)),
+        corral_progress: state.corral_progress,
+        // Transient (not persisted) — a rehydrated corralled herd is "untended" until worked again.
+        corralled_tended_this_turn: false,
     }
 }
 
@@ -724,16 +818,22 @@ pub fn advance_herds(
             SmallRng::seed_from_u64(base_seed ^ HERD_MOVEMENT_SEED_SALT ^ hasher.finish());
         // Movement cadence levers for this species (fall back to a slow game default if unresolved).
         let def = fauna.species_by_display(&herd.species);
-        advance_herd_roam(
-            herd,
-            def,
-            &tile_registry,
-            &tiles,
-            &mut rng,
-            width,
-            height,
-            wrap,
-        );
+        // A corralled (penned) herd is fixed at `corralled_at` — it does NOT roam (Rung 1c). It
+        // still grazes/regrows (ecology is independent of movement); only its wander is skipped.
+        if herd.is_corralled() {
+            herd.next_pos = None;
+        } else {
+            advance_herd_roam(
+                herd,
+                def,
+                &tile_registry,
+                &tiles,
+                &mut rng,
+                width,
+                height,
+                wrap,
+            );
+        }
         regrow_biomass(herd, ecology);
         let position = herd.position();
         info!(
@@ -1069,10 +1169,20 @@ pub fn repopulate_fauna(
 /// progress on any not-yet-tamed group. Runs before the same turn's accrual in
 /// `advance_fauna_pursuits` (`Population`), so a Sustain-followed group nets
 /// `progress_per_turn - decay_per_turn` while an untended one only decays.
+///
+/// **Corral (Rung 1c).** A **corralled** herd is exempt from the mobile even-split yield here — its
+/// keeper is paid place-local by the tending Hunt assignment (`advance_labor_allocation`) — and this
+/// pass instead runs its **escape** check: a corralled herd tended last turn is spared; an untended
+/// one clears `corralled_at` **and zeroes `corral_progress`** (the pen is lost with the herd — see
+/// the escape branch), pushes a `CommandEventKind::Corral` feed line so the destroyed investment is
+/// never silent, and reverts to a mobile domesticated herd. The animal mirror of
+/// `forage::advance_cultivation`'s feral pass.
 pub fn advance_husbandry(
     mut registry: ResMut<HerdRegistry>,
     fauna_config: Res<FaunaConfigHandle>,
     wellbeing_config: Res<WellbeingConfigHandle>,
+    mut event_log: ResMut<CommandEventLog>,
+    tick: Res<SimulationTick>,
     mut cohorts: Query<&mut PopulationCohort>,
 ) {
     let fauna = fauna_config.get();
@@ -1087,6 +1197,62 @@ pub fn advance_husbandry(
     let mut yields: HashMap<FactionId, Scalar> = HashMap::new();
     for herd in registry.herds.iter_mut() {
         if herd.is_domesticated() {
+            // Corral (Rung 1c): a penned herd is paid its keeper **place-local** by the tending Hunt
+            // assignment (`advance_labor_allocation`, at the higher `corral_provisions_per_biomass`),
+            // NOT the mobile even-split below — and it **escapes** if left untended. Logistics runs
+            // before Population, so the `corralled_tended_this_turn` flag read here was written last
+            // turn (a one-turn lag, mirroring `ForagePatch::tended_this_turn`): a herd tended every
+            // turn is always spared; a herd whose keeper leaves breaks out one turn later, reverting
+            // to a mobile domesticated herd (which resumes the even-split yield next turn).
+            if herd.is_corralled() {
+                if herd.corralled_tended_this_turn {
+                    herd.corralled_tended_this_turn = false;
+                } else {
+                    let pen = herd.corralled_at;
+                    herd.corralled_at = None;
+                    // The pen is LOST, not merely opened: zero the build progress so re-penning pays
+                    // the full `corral_build_progress_per_turn` investment again. **A patch is a
+                    // place and a herd is not** — `cultivation_progress` may decay gradually because
+                    // the improvement sits on a tile that cannot move, so partial progress still
+                    // refers to the same patch; `corral_progress` lives on the *herd*, which roams,
+                    // so any retained progress would re-materialize the pen at whatever tile the
+                    // animal has since wandered to (a teleporting corral) and make abandoning a pen
+                    // cost one turn instead of the rebuild. Contrast the **mid-build** gate lapse,
+                    // which is NOT this branch (it only fires on a completed pen): a half-built pen
+                    // keeps its progress — materials on the ground at a tile the herd is still at.
+                    herd.corral_progress = 0.0;
+                    info!(
+                        target: "shadow_scale::analytics",
+                        event = "corral_escape",
+                        herd = %herd.id,
+                        faction = herd.owner.map(|f| f.0).unwrap_or_default(),
+                    );
+                    // Tell the player. The escape now DESTROYS a 25-turn investment (the reset
+                    // above), so it must never be silent: the corral meter would otherwise snap
+                    // 1.0 → 0.0 with no explanation. Same `CommandEventKind::Corral` the pen's
+                    // *completion* pushes from `advance_labor_allocation` — one feed line for the
+                    // pen's whole life. Human text names the **species** (`herd.species`), not the
+                    // internal id, and says what happened AND why; the detail carries the
+                    // machine-readable `status=… reason=… herd=…` fields.
+                    if let Some(owner) = herd.owner {
+                        let (pen_x, pen_y) = pen.map(|t| (t.x, t.y)).unwrap_or_default();
+                        event_log.push(CommandEventEntry::new(
+                            tick.0,
+                            CommandEventKind::Corral,
+                            owner,
+                            format!(
+                                "The {} herd broke out — untended, the pen is lost",
+                                herd.species
+                            ),
+                            Some(format!(
+                                "status=escaped reason=untended action=corral herd={} x={} y={}",
+                                herd.id, pen_x, pen_y
+                            )),
+                        ));
+                    }
+                }
+                continue;
+            }
             let Some(owner) = herd.owner else {
                 continue;
             };
@@ -1127,6 +1293,253 @@ pub fn advance_husbandry(
                 cohort.stores.add(FOOD, share * mult);
             }
         }
+    }
+}
+
+/// Pre-commit **yield forecast** for one worked source (a herd or a forage patch), as the client
+/// needs it to show "Expected yield: +X.XX /turn" and cap its worker stepper *while the player is
+/// composing an assignment* — before anything is committed (the `SourceYield` telemetry is
+/// post-hoc). Every field is **provisions (food) per turn** at the source's CURRENT biomass, with
+/// the caller's `output_multiplier` already folded in (the snapshot exports it at `1.0`, so the
+/// client scales by the band's `outputMultiplier` — a linear factor on every field, which leaves
+/// `max_useful_workers` invariant).
+///
+/// The consumer composes:
+/// - `expected(workers, policy) = min(workers × per_worker_yield, ceiling(policy))`
+/// - `max_useful_workers(policy) = ceil(ceiling(policy) / per_worker_yield)`
+///
+/// Each `ceiling_*` is the policy ceiling **already clamped to the source's remaining biomass**, so
+/// that `min` IS the take the sim pays. **Forecast == actual is an invariant**: the forecast and
+/// the take path (`hunt_take` / `forage::forage_take`) share the same ceiling + conversion helpers
+/// (`hunt_policy_ceiling`/`hunt_provisions`, `forage_policy_ceiling`/`forage_provisions`) — never
+/// duplicate the formulas, or the UI will lie.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SourceYieldForecast {
+    /// Food/turn one worker contributes at this source (throughput → provisions), before the policy
+    /// ceiling binds. `0.0` means no worker can extract anything this turn (e.g. a zero seasonal
+    /// weight) — consumers must not divide by it.
+    pub per_worker_yield: f32,
+    /// Food/turn cap under **Sustain** (the MSY skim).
+    pub ceiling_sustain: f32,
+    /// Food/turn cap under **Surplus**.
+    pub ceiling_surplus: f32,
+    /// Food/turn cap under **Market**.
+    pub ceiling_market: f32,
+    /// Food/turn cap under **Eradicate**.
+    pub ceiling_eradicate: f32,
+    /// Food/turn cap under the source's **investment** policy — `Cultivate` for a forage patch,
+    /// `Corral` for a herd (the two are kind-exclusive, so one field serves both). This is the
+    /// **preparing** yield: `fraction × the Sustain (MSY) ceiling`, the up-front cost of the
+    /// improvement. Crosses the wire as `ForagePatchState.ceilingCultivate` /
+    /// `HerdTelemetryState.ceilingCorral`.
+    pub ceiling_prepare: f32,
+    /// Food/turn the source pays **once the improvement completes** — the tended-patch harvest
+    /// (`tended_provisions`) / the corral harvest (`corral_provisions`) at its current biomass. Lets
+    /// the client show the payoff ("preparing X → then Y") *before* the player commits to the dip.
+    /// Crosses the wire as `ForagePatchState.tendedYield` / `HerdTelemetryState.corralYield`.
+    pub managed_yield: f32,
+}
+
+impl SourceYieldForecast {
+    /// A **tended** improvement — a corralled herd or a cultivated (tended) patch. It is maintenance
+    /// labor, not scaling gather: a single worker (`TENDED_SOURCE_WORKERS_NEEDED`) collects the whole
+    /// managed yield and the policy is irrelevant. So every ceiling *is* that yield and
+    /// `per_worker_yield` equals it — the client's `max_useful_workers` then falls out as `1`.
+    pub(crate) fn tended(yield_per_turn: f32) -> Self {
+        Self {
+            per_worker_yield: yield_per_turn,
+            ceiling_sustain: yield_per_turn,
+            ceiling_surplus: yield_per_turn,
+            ceiling_market: yield_per_turn,
+            ceiling_eradicate: yield_per_turn,
+            // The improvement is already built — "preparing" and "once complete" are both just the
+            // managed yield it pays now.
+            ceiling_prepare: yield_per_turn,
+            managed_yield: yield_per_turn,
+        }
+    }
+
+    /// The food/turn cap this source pays under `policy` — the `ceiling[policy]` lookup over the
+    /// exposed ceilings (wire: `ceilingSustain`/…). The two **investment** policies are kind-exclusive
+    /// and share the one `ceiling_prepare` field (wire: `ceilingCultivate` / `ceilingCorral`): while
+    /// the improvement is being prepared the source pays the reduced
+    /// `cultivating_yield_fraction`/`corralling_yield_fraction` bite. Once the improvement *completes*
+    /// the source is `tended()`, whose every ceiling already **is** `managed_yield` — so this one
+    /// lookup covers both sides of the investment without a second formula.
+    pub fn ceiling_for(&self, policy: FollowPolicy) -> f32 {
+        match policy {
+            FollowPolicy::Sustain => self.ceiling_sustain,
+            FollowPolicy::Surplus => self.ceiling_surplus,
+            FollowPolicy::Market => self.ceiling_market,
+            FollowPolicy::Eradicate => self.ceiling_eradicate,
+            FollowPolicy::Cultivate | FollowPolicy::Corral => self.ceiling_prepare,
+        }
+    }
+}
+
+/// **The expected take**: the food/turn `workers` will produce at this source under `policy` —
+/// `min(workers × per_worker_yield, ceiling(policy))`, the exact composition the take path
+/// (`forage_take` / `hunt_take`, both `min(worker_cap, policy_ceiling)` clamped to biomass — the
+/// clamp is already folded into every `ceiling_*`) pays and the client's "Expected yield" row
+/// promises. The one place that formula lives: the client's compose-time preview, the assign-time
+/// telemetry seed (`SourceYield` — so a brand-new assignment displays its yield before the turn
+/// resolves), and the forecast==actual tests all call it.
+pub fn forecast_expected_take(
+    forecast: &SourceYieldForecast,
+    workers: u32,
+    policy: FollowPolicy,
+) -> f32 {
+    (workers as f32 * forecast.per_worker_yield).min(forecast.ceiling_for(policy))
+}
+
+/// Compose the **seeded** `SourceYield` telemetry row for a source from its pre-commit forecast —
+/// what the source *will* pay next turn under this staffing/policy, written at assign time so the
+/// map annotation and the band panel never show `+0.00` for an assignment that has simply not been
+/// resolved yet. Mirrors the rows `advance_labor_allocation` writes:
+/// - `actual` = [`forecast_expected_take`],
+/// - `sustainable` = the caller's MSY-based sustainable rate (`sustainable_yield × provisions ×
+///   output_multiplier`, the same value the resolution path records) — except a **managed** source
+///   (tended patch / corralled herd), whose harvest never overdraws, so `sustainable == actual`
+///   (no ⚠), exactly as the tended/corral arms record it,
+/// - `workers_needed` = the overstaffing signal, inverted from the expected take by the per-worker
+///   throughput (a ratio, so provisions-space matches the resolution path's biomass-space result);
+///   a managed source is fixed at [`TENDED_SOURCE_WORKERS_NEEDED`] (maintenance labor, not scaling
+///   gather), again as the resolution path defines it.
+pub(crate) fn forecast_source_yield(
+    forecast: &SourceYieldForecast,
+    sustainable: f32,
+    managed: bool,
+    workers: u32,
+    policy: FollowPolicy,
+) -> SourceYield {
+    let actual = forecast_expected_take(forecast, workers, policy);
+    if managed {
+        return SourceYield {
+            actual,
+            sustainable: actual,
+            workers_needed: TENDED_SOURCE_WORKERS_NEEDED,
+        };
+    }
+    SourceYield {
+        actual,
+        sustainable,
+        workers_needed: workers_needed_for_take(actual, forecast.per_worker_yield, workers),
+    }
+}
+
+/// The assign-time yield telemetry seed for a **Hunt** source: what staffing `herd` with `workers`
+/// hunters under `policy` will pay next turn, in the same shape the Hunt arm of
+/// `advance_labor_allocation` records after the take. Reuses `hunt_forecast` (hence `hunt_take`'s own
+/// ceiling/conversion helpers) and the shared MSY `sustainable_yield`, so the seed is exactly the
+/// number the turn then produces — no jump. The plant mirror is `forage::forage_source_yield_preview`.
+pub fn hunt_source_yield_preview(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    per_worker_biomass_capacity: f32,
+    output_multiplier: f32,
+    workers: u32,
+    policy: FollowPolicy,
+) -> SourceYield {
+    let forecast = hunt_forecast(herd, fauna, per_worker_biomass_capacity, output_multiplier);
+    let sustainable = hunt_provisions(
+        sustainable_yield(herd.biomass, herd.carrying_capacity, &fauna.ecology),
+        fauna,
+        output_multiplier,
+    );
+    forecast_source_yield(&forecast, sustainable, herd.is_corralled(), workers, policy)
+}
+
+/// The per-policy **biomass** ceiling on a hunt take at the herd's current stock — the single source
+/// of the Sustain/Surplus/Market/Eradicate rungs, shared by `systems::hunt_take` (the take path) and
+/// `hunt_forecast` (the pre-commit forecast). Sustain = the Maximum Sustainable Yield (regrowth at
+/// K/2, so a herd at capacity still yields and a collapsing one yields nothing), Surplus = that ×
+/// `follow.surplus_multiplier`, Market = `market.take_fraction × biomass` (a commercial share),
+/// Eradicate = `hunt.take_from(biomass)` (max take). Not yet clamped to biomass — callers do that
+/// alongside their own throughput cap.
+pub(crate) fn hunt_policy_ceiling(
+    policy: FollowPolicy,
+    biomass: f32,
+    carrying_capacity: f32,
+    fauna: &FaunaConfig,
+) -> f32 {
+    match policy {
+        FollowPolicy::Sustain => sustainable_yield(biomass, carrying_capacity, &fauna.ecology),
+        FollowPolicy::Surplus => {
+            sustainable_yield(biomass, carrying_capacity, &fauna.ecology)
+                * fauna.follow.surplus_multiplier
+        }
+        FollowPolicy::Market => fauna.market.take_fraction * biomass,
+        FollowPolicy::Eradicate => fauna.hunt.take_from(biomass),
+        // The investment dip while the pen is built: a *fraction* of the MSY ceiling (the same shared
+        // `sustainable_yield` helper), so the preparing take is sustainable and the herd stays healthy.
+        FollowPolicy::Corral => {
+            sustainable_yield(biomass, carrying_capacity, &fauna.ecology)
+                * fauna.husbandry.corralling_yield_fraction
+        }
+        // `Cultivate` is a plant-only policy — rejected on a Hunt assignment at `assign_labor`
+        // (`FollowPolicy::valid_for_hunt`). Unreachable in practice; defensively yields nothing.
+        FollowPolicy::Cultivate => 0.0,
+    }
+}
+
+/// Biomass → provisions for a hunt take (× the caller's productivity multiplier) — the one
+/// conversion `hunt_take` pays, shared with the forecast so the two can't drift.
+pub(crate) fn hunt_provisions(
+    biomass_take: f32,
+    fauna: &FaunaConfig,
+    output_multiplier: f32,
+) -> f32 {
+    biomass_take * fauna.hunt.provisions_per_biomass * output_multiplier
+}
+
+/// The place-local managed yield a **corralled** herd pays its tending keeper band each turn
+/// (`biomass × corral_provisions_per_biomass`, no biomass drawn down). Shared by the Hunt arm of
+/// `advance_labor_allocation` (the payout) and `hunt_forecast` (the forecast).
+pub(crate) fn corral_provisions(biomass: f32, fauna: &FaunaConfig, output_multiplier: f32) -> f32 {
+    biomass * fauna.husbandry.corral_provisions_per_biomass * output_multiplier
+}
+
+/// Pre-commit yield forecast for hunting `herd` with `per_worker_biomass_capacity` biomass/hunter
+/// (`labor_config.json` `hunt.per_worker_biomass_capacity`). Mirrors `systems::hunt_take` exactly:
+/// same per-policy ceilings, same biomass clamp, same biomass→provisions conversion. A **corralled**
+/// herd forecasts its corral yield with one worker (see `SourceYieldForecast::tended`). The band
+/// Hunt labor has no carry limit (it passes `carry_room_biomass = f32::INFINITY` to `hunt_take`), so
+/// the forecast models no carry clamp either — a hunting *expedition*'s carry cap is out of scope.
+pub(crate) fn hunt_forecast(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    per_worker_biomass_capacity: f32,
+    output_multiplier: f32,
+) -> SourceYieldForecast {
+    if herd.is_corralled() {
+        return SourceYieldForecast::tended(corral_provisions(
+            herd.biomass,
+            fauna,
+            output_multiplier,
+        ));
+    }
+    let ceiling = |policy| {
+        hunt_provisions(
+            hunt_policy_ceiling(policy, herd.biomass, herd.carrying_capacity, fauna)
+                .clamp(0.0, herd.biomass),
+            fauna,
+            output_multiplier,
+        )
+    };
+    SourceYieldForecast {
+        per_worker_yield: hunt_provisions(
+            per_worker_biomass_capacity.max(0.0),
+            fauna,
+            output_multiplier,
+        ),
+        ceiling_sustain: ceiling(FollowPolicy::Sustain),
+        ceiling_surplus: ceiling(FollowPolicy::Surplus),
+        ceiling_market: ceiling(FollowPolicy::Market),
+        ceiling_eradicate: ceiling(FollowPolicy::Eradicate),
+        // The investment rung: what the herd pays *while the pen is built* (Corral), and what it will
+        // pay *once penned* — so the client can show "preparing X → then Y" before committing.
+        ceiling_prepare: ceiling(FollowPolicy::Corral),
+        managed_yield: corral_provisions(herd.biomass, fauna, output_multiplier),
     }
 }
 
@@ -1198,6 +1611,8 @@ fn to_entry(herd: &Herd) -> HerdTelemetryEntry {
         huntable: true,
         ecology_phase: herd.ecology_phase.as_str().to_string(),
         domestication: herd.domestication_progress,
+        corralled: herd.is_corralled(),
+        corral_progress: herd.corral_progress,
         position: herd.position(),
         biomass: herd.biomass,
         route_length: herd.route_length() as u32,

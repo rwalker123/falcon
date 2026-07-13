@@ -19,14 +19,15 @@ use sim_runtime::{
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry, EcologyState,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FoodModuleState,
-    ForageState, GenerationState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
-    GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdRoamState, HerdState,
-    HerdTelemetryState, HydrologyOverlayState, InfluentialIndividualState,
-    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
-    LaborAssignmentState, LogisticsLinkState, MountainKind, PendingMigrationState,
-    PopulationCohortState, PopulationDemographicsState as SchemaPopulationDemographicsState,
-    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState,
-    ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
+    ForagePatchState, ForageState, GenerationState, GreatDiscoveryDefinitionState,
+    GreatDiscoveryProgressState, GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdRoamState,
+    HerdState, HerdTelemetryState, HydrologyOverlayState, InfluentialIndividualState,
+    IntensificationKnowledgeState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
+    KnowledgeTimelineEventState, LaborAssignmentState, LogisticsLinkState, MountainKind,
+    PendingMigrationState, PopulationCohortState,
+    PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
+    PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState,
+    SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, StartMarkerState, TerrainOverlayState, TerrainSample,
     TileState, TradeLinkKnowledge, TradeLinkState, VictoryModeSnapshotState, VictoryResultState,
@@ -47,9 +48,12 @@ use crate::{
         CultureTensionRecord, CultureTraitAxis as SimCultureTraitAxis,
     },
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
-    fauna::{Herd, HerdDensityMap, HerdRegistry, HerdTelemetry},
+    fauna::{
+        hunt_forecast, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, HERDING_DISCOVERY_ID,
+    },
+    fauna_config::{FaunaConfig, FaunaConfigHandle},
     food::FoodModuleTag,
-    forage::{ForagePatch, ForageRegistry},
+    forage::{forage_forecast, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID},
     generations::{GenerationProfile, GenerationRegistry},
     great_discovery::{
         snapshot_definitions, snapshot_discoveries, snapshot_progress, snapshot_telemetry,
@@ -66,6 +70,7 @@ use crate::{
         encode_ledger_key, KnowledgeLedger, KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle,
         KnowledgeSnapshotPayload, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
     },
+    labor_config::ForageLaborConfig,
     map_preset::MapPresetsHandle,
     metrics::SimulationMetrics,
     orders::FactionId,
@@ -126,6 +131,10 @@ pub struct SnapshotContext<'w> {
     /// (`forage_registry`) so a rollback rewinds patch biomass / ecology phase. Mirrors
     /// `herd_registry` — see the forage-depletion note in `core_sim/CLAUDE.md`.
     pub forage_registry: Res<'w, ForageRegistry>,
+    /// Fauna tuning (ecology / hunt / market / husbandry). Read at capture to compute each herd's
+    /// **pre-commit yield forecast** (`fauna::hunt_forecast`) — the client's live "Expected yield" +
+    /// worker-stepper cap while the player composes a Hunt assignment.
+    pub fauna_config: Res<'w, FaunaConfigHandle>,
     pub fog_reveals: Res<'w, FogRevealLedger>,
     pub hydrology: Res<'w, HydrologyState>,
     pub elevation: Res<'w, ElevationField>,
@@ -160,6 +169,15 @@ pub struct SnapshotContext<'w> {
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
 const CHANNEL_LABELS: [&str; 4] = ["Popular", "Peer", "Institutional", "Humanitarian"];
 const DEFAULT_STOCKPILE_ACCESS_RADIUS: u32 = 0;
+/// The per-source **yield forecast** (`ForagePatchState`/`HerdTelemetryState` `per_worker_yield` +
+/// policy ceilings) is captured band-agnostically: the productivity multiplier is a per-band value
+/// (`PopulationCohortState.output_multiplier`) that scales every forecast field linearly, so the
+/// snapshot exports the un-scaled forecast and the client multiplies by the acting band's own.
+const FORECAST_OUTPUT_MULTIPLIER: f32 = 1.0;
+/// Seasonal gather weight assumed for a forage patch whose tile carries no `FoodModuleTag` (not
+/// reachable today — patches are seeded from those tiles — so it forecasts nothing rather than
+/// inventing a weight).
+const NO_SEASONAL_WEIGHT: f32 = 0.0;
 
 #[derive(Clone)]
 pub struct StoredSnapshot {
@@ -242,6 +260,8 @@ pub struct SnapshotHistory {
     sedentarization: Vec<SchemaSedentarizationState>,
     discovered_sites: Vec<SchemaDiscoveredSitesState>,
     demographics: Vec<SchemaPopulationDemographicsState>,
+    forage_patches: Vec<ForagePatchState>,
+    intensification_knowledge: Vec<IntensificationKnowledgeState>,
     command_events: Vec<CommandEventState>,
     herds: Vec<HerdTelemetryState>,
     food_modules: Vec<FoodModuleState>,
@@ -305,6 +325,8 @@ impl SnapshotHistory {
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
             demographics: Vec::new(),
+            forage_patches: Vec::new(),
+            intensification_knowledge: Vec::new(),
             command_events: Vec::new(),
             herds: Vec::new(),
             food_modules: Vec::new(),
@@ -600,6 +622,19 @@ impl SnapshotHistory {
         } else {
             Some(demographics_state.clone())
         };
+        let forage_patches_state = snapshot.forage_patches.clone();
+        let forage_patches_delta = if self.forage_patches == forage_patches_state {
+            None
+        } else {
+            Some(forage_patches_state.clone())
+        };
+        let intensification_knowledge_state = snapshot.intensification_knowledge.clone();
+        let intensification_knowledge_delta =
+            if self.intensification_knowledge == intensification_knowledge_state {
+                None
+            } else {
+                Some(intensification_knowledge_state.clone())
+            };
         let command_events_state = snapshot.command_events.clone();
         let command_events_delta = if self.command_events == command_events_state {
             None
@@ -655,6 +690,8 @@ impl SnapshotHistory {
             sedentarization: sedentarization_delta.clone(),
             discovered_sites: discovered_sites_delta.clone(),
             demographics: demographics_delta.clone(),
+            forage_patches: forage_patches_delta.clone(),
+            intensification_knowledge: intensification_knowledge_delta.clone(),
             herds: herds_delta.clone(),
             food_modules: food_modules_delta.clone(),
             knowledge_timeline: knowledge_timeline_delta.clone(),
@@ -730,6 +767,8 @@ impl SnapshotHistory {
         self.sedentarization = sedentarization_state;
         self.discovered_sites = discovered_sites_state;
         self.demographics = demographics_state;
+        self.forage_patches = forage_patches_state;
+        self.intensification_knowledge = intensification_knowledge_state;
         self.command_events = command_events_state;
         self.herds = herd_state;
         self.food_modules = food_modules_state;
@@ -810,6 +849,8 @@ impl SnapshotHistory {
         self.sedentarization = entry.snapshot.sedentarization.clone();
         self.discovered_sites = entry.snapshot.discovered_sites.clone();
         self.demographics = entry.snapshot.demographics.clone();
+        self.forage_patches = entry.snapshot.forage_patches.clone();
+        self.intensification_knowledge = entry.snapshot.intensification_knowledge.clone();
         self.command_events = entry.snapshot.command_events.clone();
         self.herds = entry.snapshot.herds.clone();
         self.food_modules = entry.snapshot.food_modules.clone();
@@ -904,6 +945,8 @@ impl SnapshotHistory {
             sedentarization: None,
             discovered_sites: None,
             demographics: None,
+            forage_patches: None,
+            intensification_knowledge: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1082,6 +1125,8 @@ impl SnapshotHistory {
             sedentarization: None,
             discovered_sites: None,
             demographics: None,
+            forage_patches: None,
+            intensification_knowledge: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1190,6 +1235,8 @@ impl SnapshotHistory {
             sedentarization: None,
             discovered_sites: None,
             demographics: None,
+            forage_patches: None,
+            intensification_knowledge: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1301,6 +1348,7 @@ pub fn capture_snapshot(
         herds,
         herd_registry,
         forage_registry,
+        fauna_config,
         hydrology,
         fog_reveals,
         elevation,
@@ -1347,8 +1395,15 @@ pub fn capture_snapshot(
         .start_profile_overrides
         .stockpile_access_radius
         .unwrap_or(DEFAULT_STOCKPILE_ACCESS_RADIUS);
-    for (entity, tile, _) in tiles.iter() {
+    // Per-tile seasonal gather weight, keyed by coord — the same `FoodModuleTag::seasonal_weight` the
+    // Forage arm of `advance_labor_allocation` folds into `forage_take`'s worker cap. The forage
+    // patch forecast (below) needs it to report a per-worker yield that matches what the sim pays.
+    let mut seasonal_weights: HashMap<UVec2, f32> = HashMap::new();
+    for (entity, tile, food_module) in tiles.iter() {
         tile_states.push(tile_state(entity, tile, &morale_pressure_cfg));
+        if let Some(module) = food_module {
+            seasonal_weights.insert(tile.position, module.seasonal_weight);
+        }
     }
     for site in food_sites.sites() {
         food_module_states.push(FoodModuleState {
@@ -1703,7 +1758,13 @@ pub fn capture_snapshot(
         .into_iter()
         .map(|entry| entry.to_schema())
         .collect();
-    let herd_states = herd_snapshot_entries(&herds);
+    let fauna = fauna_config.get();
+    let herd_states = herd_snapshot_entries(
+        &herds,
+        &herd_registry,
+        &fauna,
+        labor_config.hunt.per_worker_biomass_capacity,
+    );
     // Authoritative herd state for rollback (distinct from the lossy display `herd_states` above),
     // sorted deterministically by herd id like the generation states.
     let mut herd_registry_states: Vec<HerdState> =
@@ -1718,6 +1779,9 @@ pub fn capture_snapshot(
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
     let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
     let demographics_state = snapshot_demographics(&population_states);
+    let forage_patches_state =
+        snapshot_forage_patches(&forage_registry, &labor_config.forage, &seasonal_weights);
+    let intensification_knowledge_state = snapshot_intensification_knowledge(&discovery_progress);
     let command_events_state = command_events_to_state(&command_events);
     let victory_snapshot_state = victory_snapshot_from_resource(&victory);
     let capability_bits = capability_flags.bits();
@@ -1752,6 +1816,8 @@ pub fn capture_snapshot(
         sedentarization: sedentarization_state.clone(),
         discovered_sites: discovered_sites_state.clone(),
         demographics: demographics_state.clone(),
+        forage_patches: forage_patches_state.clone(),
+        intensification_knowledge: intensification_knowledge_state.clone(),
         command_events: command_events_state.clone(),
         capability_flags: capability_bits,
         axis_bias: axis_bias_state,
@@ -3751,6 +3817,7 @@ fn labor_assignment_to_state(
         workers: assignment.workers,
         actual_yield: yields.actual,
         sustainable_yield: yields.sustainable,
+        workers_needed: yields.workers_needed,
         ..Default::default()
     };
     match &assignment.target {
@@ -3864,6 +3931,7 @@ fn population_state(
     const NO_YIELD: SourceYield = SourceYield {
         actual: 0.0,
         sustainable: 0.0,
+        workers_needed: 0,
     };
     let labor_assignments = allocation
         .map(|a| {
@@ -4124,6 +4192,8 @@ fn herd_state(herd: &Herd) -> HerdState {
             loiter_turns_left: herd.roam.loiter_turns_left(),
         },
         next_pos: herd.next_pos.map(|p| (p.x, p.y)),
+        corralled_at: herd.corralled_at.map(|p| (p.x, p.y)),
+        corral_progress: herd.corral_progress,
         ecology: EcologyState {
             biomass: herd.biomass,
             carrying_capacity: herd.carrying_capacity,
@@ -4135,9 +4205,9 @@ fn herd_state(herd: &Herd) -> HerdState {
 }
 
 /// Capture a live `ForagePatch` into its authoritative snapshot mirror for rollback (the inverse is
-/// `forage::ForageRegistry::update_from_states`). The depletable-ecology subset goes into the shared
-/// `EcologyState`; `progress`/`owner` stay `0.0`/`None` (cultivation is Phase 1). Coordinates cross
-/// as the `(x, y)` tile key.
+/// `forage::ForageRegistry::update_from_states`). The depletable-ecology subset — including
+/// cultivation (`progress`/`owner`, Phase 1a) — goes into the shared `EcologyState`, mirroring
+/// `herd_state`. Coordinates cross as the `(x, y)` tile key.
 pub(crate) fn forage_state(patch: &ForagePatch) -> ForageState {
     ForageState {
         x: patch.tile.x,
@@ -4146,8 +4216,8 @@ pub(crate) fn forage_state(patch: &ForagePatch) -> ForageState {
             biomass: patch.biomass,
             carrying_capacity: patch.carrying_capacity,
             ecology_phase: patch.ecology_phase.as_str().to_string(),
-            progress: 0.0,
-            owner: None,
+            progress: patch.cultivation_progress,
+            owner: patch.owner.map(|f| f.0),
         },
     }
 }
@@ -4275,24 +4345,139 @@ fn snapshot_demographics(
         .collect()
 }
 
-fn herd_snapshot_entries(telemetry: &HerdTelemetry) -> Vec<HerdTelemetryState> {
+/// Display herd telemetry for the client, plus each herd's **pre-commit yield forecast**
+/// (`fauna::hunt_forecast` — the same ceiling/conversion helpers `hunt_take` pays with, so
+/// forecast == actual). The forecast needs the herd's `carrying_capacity`, which the display
+/// telemetry doesn't carry, so it is resolved from the authoritative `HerdRegistry` by id (a herd
+/// that vanished between the two — not possible in the capture, both are read in the same frame —
+/// simply reports a zeroed forecast). Captured at `output_multiplier = 1.0`: the client scales by
+/// the acting band's `outputMultiplier`.
+fn herd_snapshot_entries(
+    telemetry: &HerdTelemetry,
+    registry: &HerdRegistry,
+    fauna: &FaunaConfig,
+    hunt_per_worker_biomass_capacity: f32,
+) -> Vec<HerdTelemetryState> {
     telemetry
         .entries
         .iter()
-        .map(|entry| HerdTelemetryState {
-            id: entry.id.clone(),
-            label: entry.label.clone(),
-            species: entry.species.clone(),
-            x: entry.position.x,
-            y: entry.position.y,
-            biomass: entry.biomass,
-            route_length: entry.route_length,
-            next_x: entry.next_position.map(|pos| pos.x as i32).unwrap_or(-1),
-            next_y: entry.next_position.map(|pos| pos.y as i32).unwrap_or(-1),
-            size_class: entry.size_class.clone(),
-            huntable: entry.huntable,
-            ecology_phase: entry.ecology_phase.clone(),
-            domestication: entry.domestication,
+        .map(|entry| {
+            let forecast = registry
+                .find(&entry.id)
+                .map(|herd| {
+                    hunt_forecast(
+                        herd,
+                        fauna,
+                        hunt_per_worker_biomass_capacity,
+                        FORECAST_OUTPUT_MULTIPLIER,
+                    )
+                })
+                .unwrap_or_default();
+            HerdTelemetryState {
+                id: entry.id.clone(),
+                label: entry.label.clone(),
+                species: entry.species.clone(),
+                x: entry.position.x,
+                y: entry.position.y,
+                biomass: entry.biomass,
+                route_length: entry.route_length,
+                next_x: entry.next_position.map(|pos| pos.x as i32).unwrap_or(-1),
+                next_y: entry.next_position.map(|pos| pos.y as i32).unwrap_or(-1),
+                size_class: entry.size_class.clone(),
+                huntable: entry.huntable,
+                ecology_phase: entry.ecology_phase.clone(),
+                domestication: entry.domestication,
+                corralled: entry.corralled,
+                corral_progress: entry.corral_progress,
+                per_worker_yield: forecast.per_worker_yield,
+                ceiling_sustain: forecast.ceiling_sustain,
+                ceiling_surplus: forecast.ceiling_surplus,
+                ceiling_market: forecast.ceiling_market,
+                ceiling_eradicate: forecast.ceiling_eradicate,
+                // The Corral investment rung: the preparing dip + the payoff once penned.
+                ceiling_corral: forecast.ceiling_prepare,
+                corral_yield: forecast.managed_yield,
+            }
+        })
+        .collect()
+}
+
+/// Per-tile depletable-forage cultivation/ecology display state (Intensification Phase 1a) for the
+/// client tile card, plus each patch's **pre-commit yield forecast** (`forage::forage_forecast` —
+/// the same ceiling/conversion helpers `forage_take` pays with, so forecast == actual). One entry per
+/// live `ForagePatch`, emitted in a stable `(y, x)` order so the snapshot is deterministic (the
+/// `ForageRegistry` map iteration order is not). `owner` crosses as the tending faction's `u32`
+/// (`None` for a wild/untended patch).
+///
+/// `seasonal_weights` maps tile coord → that tile's `FoodModuleTag::seasonal_weight`, folded into the
+/// forecast's per-worker throughput exactly as the Forage labor arm folds it into `forage_take`. A
+/// patch whose tile carries no food module (not reachable today — patches are seeded from
+/// `FoodModuleTag` tiles) forecasts at a zero seasonal weight, i.e. no per-worker yield. Captured at
+/// `output_multiplier = 1.0`: the client scales by the acting band's `outputMultiplier`.
+fn snapshot_forage_patches(
+    registry: &ForageRegistry,
+    forage: &ForageLaborConfig,
+    seasonal_weights: &HashMap<UVec2, f32>,
+) -> Vec<ForagePatchState> {
+    let mut patches: Vec<ForagePatchState> = registry
+        .patches
+        .values()
+        .map(|patch| {
+            let seasonal = seasonal_weights
+                .get(&patch.tile)
+                .copied()
+                .unwrap_or(NO_SEASONAL_WEIGHT);
+            let forecast = forage_forecast(patch, forage, seasonal, FORECAST_OUTPUT_MULTIPLIER);
+            ForagePatchState {
+                x: patch.tile.x,
+                y: patch.tile.y,
+                cultivation_progress: patch.cultivation_progress,
+                is_cultivated: patch.is_cultivated(),
+                owner: patch.owner.map(|faction| faction.0),
+                biomass: patch.biomass,
+                carrying_capacity: patch.carrying_capacity,
+                ecology_phase: patch.ecology_phase.as_str().to_string(),
+                per_worker_yield: forecast.per_worker_yield,
+                ceiling_sustain: forecast.ceiling_sustain,
+                ceiling_surplus: forecast.ceiling_surplus,
+                ceiling_market: forecast.ceiling_market,
+                ceiling_eradicate: forecast.ceiling_eradicate,
+                // The Cultivate investment rung: the preparing dip + the payoff once cultivated.
+                ceiling_cultivate: forecast.ceiling_prepare,
+                tended_yield: forecast.managed_yield,
+            }
+        })
+        .collect();
+    patches.sort_unstable_by_key(|patch| (patch.y, patch.x));
+    patches
+}
+
+/// Per-faction Cultivation (discovery 2003) / Herding (discovery 2004) knowledge progress
+/// (Intensification Rung 1b/1c) for the client learning/known meters. Iterates the ledger's factions
+/// in sorted order; a faction is emitted only when it has begun learning at least one ladder (both
+/// zero → skipped), mirroring how `discovery_progress_entries` skips empty progress.
+fn snapshot_intensification_knowledge(
+    ledger: &DiscoveryProgressLedger,
+) -> Vec<IntensificationKnowledgeState> {
+    let mut factions: Vec<u32> = ledger.progress.keys().map(|faction| faction.0).collect();
+    factions.sort_unstable();
+    factions.dedup();
+    factions
+        .into_iter()
+        .filter_map(|faction_id| {
+            let faction = FactionId(faction_id);
+            let cultivation = ledger
+                .get_progress(faction, CULTIVATION_DISCOVERY_ID)
+                .to_f32();
+            let herding = ledger.get_progress(faction, HERDING_DISCOVERY_ID).to_f32();
+            if cultivation <= 0.0 && herding <= 0.0 {
+                return None;
+            }
+            Some(IntensificationKnowledgeState {
+                faction: faction_id,
+                cultivation,
+                herding,
+            })
         })
         .collect()
 }
@@ -4313,6 +4498,7 @@ pub fn command_events_to_state(log: &CommandEventLog) -> Vec<CommandEventState> 
 mod tests {
     use super::*;
     use crate::{
+        labor_config::LaborConfig,
         orders::FactionId,
         power::PowerIncidentSeverity as GridIncidentSeverity,
         resources::{CorruptionTelemetry, DiscoveryProgressLedger},
@@ -4344,11 +4530,15 @@ mod tests {
                 loiter_turns_left: 9,
             },
             next_pos: Some((7, 2)),
+            // Rung 1c: a corralled (penned) herd round-trips its pen tile AND its pen-construction
+            // progress through the snapshot (a rollback must not lose a half-built — or finished — pen).
+            corralled_at: Some((5, 6)),
+            corral_progress: 1.0,
             ecology: EcologyState {
                 biomass: 4321.0,
                 carrying_capacity: 8000.0,
                 ecology_phase: "stressed".to_string(),
-                progress: 0.42,
+                progress: 1.0,
                 owner: Some(1),
             },
         };
@@ -4356,9 +4546,46 @@ mod tests {
         // HerdState -> Herd (restore side) -> HerdState (capture side) must be an identity.
         let registry = HerdRegistry::from_states(std::slice::from_ref(&original));
         let herd = registry.entries().first().expect("one herd restored");
+        assert!(herd.is_corralled(), "corralled_at restores the pen");
         let restored = herd_state(herd);
 
         assert_eq!(restored, original);
+    }
+
+    /// A **half-built** pen (the Corral investment mid-flight) must round-trip through the rollback
+    /// snapshot: a rollback rewinds the investment, it never silently loses it. The herd is still
+    /// mobile (`corralled_at` is `None`) until `corral_progress` reaches `1.0`.
+    #[test]
+    fn half_built_corral_progress_round_trips() {
+        const HALF_BUILT: f32 = 0.44;
+        let original = HerdState {
+            id: "herd_penning".to_string(),
+            size_class: "small".to_string(),
+            route: vec![(2, 2)],
+            current_pos: (2, 2),
+            roam: HerdRoamState {
+                mode: "graze_wander".to_string(),
+                loiter_turns_left: 0,
+            },
+            // Mid-build: the pen is not finished, so the herd is still mobile.
+            corralled_at: None,
+            corral_progress: HALF_BUILT,
+            ecology: EcologyState {
+                biomass: 60.0,
+                carrying_capacity: 100.0,
+                ecology_phase: "thriving".to_string(),
+                // Domesticated + owned — the gates the Corral policy requires to keep building.
+                progress: 1.0,
+                owner: Some(2),
+            },
+            ..Default::default()
+        };
+
+        let registry = HerdRegistry::from_states(std::slice::from_ref(&original));
+        let herd = registry.entries().first().expect("one herd restored");
+        assert!(!herd.is_corralled(), "a half-built pen is not yet a corral");
+        assert_eq!(herd.corral_progress, HALF_BUILT);
+        assert_eq!(herd_state(herd), original);
     }
 
     fn tile(entity: u64, x: u32, y: u32) -> TileState {
@@ -4414,6 +4641,8 @@ mod tests {
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
             demographics: Vec::new(),
+            forage_patches: Vec::new(),
+            intensification_knowledge: Vec::new(),
             terrain: overlay,
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
@@ -4474,6 +4703,8 @@ mod tests {
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
             demographics: Vec::new(),
+            forage_patches: Vec::new(),
+            intensification_knowledge: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
@@ -4529,6 +4760,8 @@ mod tests {
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
             demographics: Vec::new(),
+            forage_patches: Vec::new(),
+            intensification_knowledge: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
@@ -4647,10 +4880,12 @@ mod tests {
                 SourceYield {
                     actual: 2.5,
                     sustainable: 2.5,
+                    workers_needed: 1,
                 },
                 SourceYield {
                     actual: 0.5,
                     sustainable: 0.25,
+                    workers_needed: 5,
                 },
             ],
         };
@@ -4688,6 +4923,9 @@ mod tests {
         assert!((state.labor_assignments[0].sustainable_yield - 2.5).abs() < 1e-5);
         assert!((state.labor_assignments[1].actual_yield - 0.5).abs() < 1e-5);
         assert!((state.labor_assignments[1].sustainable_yield - 0.25).abs() < 1e-5);
+        // The overstaffing signal (workers_needed) carries onto the display state, zipped by index.
+        assert_eq!(state.labor_assignments[0].workers_needed, 1);
+        assert_eq!(state.labor_assignments[1].workers_needed, 5);
     }
 
     /// A rehydrated allocation (empty `last_yields`) reports zero food income and zero per-row yields
@@ -4715,6 +4953,7 @@ mod tests {
         assert_eq!(state.labor_assignments.len(), 1);
         assert_eq!(state.labor_assignments[0].actual_yield, 0.0);
         assert_eq!(state.labor_assignments[0].sustainable_yield, 0.0);
+        assert_eq!(state.labor_assignments[0].workers_needed, 0);
     }
 
     /// A `LaborTarget::Forage` policy round-trips through the snapshot (§0-iii): `to_state` writes
@@ -4734,6 +4973,7 @@ mod tests {
             SourceYield {
                 actual: 0.0,
                 sustainable: 0.0,
+                workers_needed: 0,
             },
         );
         assert_eq!(state.policy, "market", "policy serialized");
@@ -5347,5 +5587,93 @@ mod tests {
         assert_eq!(d.working, 5);
         assert_eq!(d.children, 0);
         assert_eq!(d.elders, 0);
+    }
+
+    #[test]
+    fn snapshot_forage_patches_reports_cultivation_and_owner() {
+        let mut registry = ForageRegistry::default();
+        // A wild, untended patch: no cultivation, no owner.
+        let wild = ForagePatch::new(UVec2::new(1, 0), 100.0);
+        // A tended (cultivated) patch owned by faction 3.
+        let mut tended = ForagePatch::new(UVec2::new(0, 1), 100.0);
+        tended.cultivation_progress = 1.0;
+        tended.owner = Some(FactionId(3));
+        registry.patches.insert(wild.tile, wild);
+        registry.patches.insert(tended.tile, tended);
+
+        let labor = LaborConfig::builtin();
+        let patches = snapshot_forage_patches(&registry, &labor.forage, &HashMap::new());
+        assert_eq!(patches.len(), 2);
+        // Emitted in stable (y, x) order: (1,0) then (0,1).
+        assert_eq!((patches[0].x, patches[0].y), (1, 0));
+        assert_eq!((patches[1].x, patches[1].y), (0, 1));
+
+        let w = &patches[0];
+        assert!(!w.is_cultivated);
+        assert_eq!(w.cultivation_progress, 0.0);
+        assert_eq!(w.owner, None);
+
+        let t = &patches[1];
+        assert!(t.is_cultivated);
+        assert!((t.cultivation_progress - 1.0).abs() < 1e-6);
+        assert_eq!(t.owner, Some(3));
+    }
+
+    #[test]
+    fn snapshot_intensification_knowledge_reports_learned_ladders() {
+        let mut ledger = DiscoveryProgressLedger::default();
+        // Faction 2 fully knows Cultivation and is partway to Herding.
+        ledger.add_progress(FactionId(2), CULTIVATION_DISCOVERY_ID, Scalar::one());
+        ledger.add_progress(FactionId(2), HERDING_DISCOVERY_ID, Scalar::from_f32(0.5));
+        // Faction 5 has only unrelated discovery progress → no intensification row.
+        ledger.add_progress(FactionId(5), 1, Scalar::one());
+
+        let rows = snapshot_intensification_knowledge(&ledger);
+        assert_eq!(rows.len(), 1, "only factions on the ladders appear");
+        let f2 = &rows[0];
+        assert_eq!(f2.faction, 2);
+        assert!((f2.cultivation - 1.0).abs() < 1e-6);
+        assert!((f2.herding - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn herd_snapshot_reports_corralled_state() {
+        use crate::fauna_config::SizeClass;
+        let mut registry = HerdRegistry::default();
+        let mut penned = Herd::new(
+            "herd_pen".to_string(),
+            "Aurochs".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(4, 4)],
+            50.0,
+            100.0,
+        );
+        penned.corral_at(UVec2::new(4, 4));
+        registry.herds.push(penned);
+        // A second, un-penned herd stays mobile (corralled = false).
+        registry.herds.push(Herd::new(
+            "herd_wild".to_string(),
+            "Red Deer".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(1, 1)],
+            50.0,
+            100.0,
+        ));
+
+        let telemetry = HerdTelemetry {
+            entries: registry.snapshot_entries(),
+        };
+        let labor = LaborConfig::builtin();
+        let fauna = FaunaConfigHandle::default().get();
+        let states = herd_snapshot_entries(
+            &telemetry,
+            &registry,
+            &fauna,
+            labor.hunt.per_worker_biomass_capacity,
+        );
+        let pen = states.iter().find(|h| h.id == "herd_pen").unwrap();
+        assert!(pen.corralled, "a penned herd reports corralled");
+        let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
+        assert!(!wild.corralled, "a mobile herd reports not corralled");
     }
 }

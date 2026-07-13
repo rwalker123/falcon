@@ -130,6 +130,7 @@ const MARKER_BADGE_BG := Color(0.05, 0.06, 0.08, 0.9)
 const MARKER_BADGE_FG := Color(0.95, 0.97, 1.0, 1.0)
 const MARKER_BADGE_FONT_SIZE := 11
 const MARKER_BADGE_HEIGHT_FACTOR := 1.15     # pill height as a factor of glyph height
+const MARKER_BADGE_PAD_X := 0.0              # a count badge is short: its round end caps ARE its padding
 
 # Selected / hovered hex outline (replaces the old brown-circle selection feel).
 const SELECTED_HEX_OUTLINE_COLOR := Color(1.0, 1.0, 1.0, 0.9)
@@ -205,6 +206,11 @@ const FOW_EXPLORED_THRESHOLD := 0.3  # Above this a tile is at least Discovered
 # retains the terrain memory, not what is happening on the tile right now.
 const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"food_module", "food_module_label", "food_module_weight", "food_kind",
+	"cultivation_progress", "is_cultivated", "patch_has_owner", "patch_owner",
+	"patch_ecology_phase", "patch_biomass", "patch_carrying_capacity",
+	"patch_per_worker_yield", "patch_ceiling_sustain", "patch_ceiling_surplus",
+	"patch_ceiling_market", "patch_ceiling_eradicate",
+	"patch_ceiling_cultivate", "patch_tended_yield",
 	"units", "herds", "unit_count", "herd_count",
 	"harvest_tasks", "harvest_active", "scout_tasks", "scout_active",
 ]
@@ -288,7 +294,8 @@ const HUNT_WORKED_LINK_COLOR := Color(0.92, 0.34, 0.30, 0.60)
 const HUNT_WORKED_LINK_WIDTH := 2.5
 # On-tile per-source yield annotations on the selected band's worked forage tiles / hunted herds:
 # the assignment's `actual_yield` (food/turn) as a small drop-shadow label above the tile center
-# (reusing `_draw_marker_glyph`), sign-formatted to 2 decimals, food-income green — with a WARN-amber
+# (reusing `_draw_marker_glyph` over the shared rounded-pill plate — see `_draw_pill_plate`),
+# sign-formatted to 2 decimals, food-income green — with a WARN-amber
 # `⚠` overhunting flag when `actual > sustainable + ε` (mirrors the allocation panel; forage is
 # renewable so never trips). ε/decimals mirror Hud's `OVERHUNT_EPSILON`/`YIELD_DECIMALS` (separate
 # script, so named here rather than shared). LOD-suppressed below ICON_MIN_DETAIL_RADIUS.
@@ -300,6 +307,12 @@ const YIELD_LABEL_OFFSET_FACTOR := 0.78   # above the tile center, as a fraction
 const YIELD_LABEL_DECIMALS := 2
 const YIELD_OVERHUNT_EPSILON := 0.001
 const YIELD_OVERHUNT_FLAG := "⚠"
+# Backing plate: bare drop-shadowed text washed out against light terrain (tan prairie/desert), so the
+# label sits on the SAME rounded dark pill chrome as the `×N`/`+N` count badges (`_draw_pill_plate`).
+# Slightly translucent so the terrain still reads through. Padding is symmetric about the label's
+# existing anchor (so the text does not shift) and scales with the font, like the label itself.
+const YIELD_LABEL_PLATE_BG := Color(0.04, 0.05, 0.07, 0.82)
+const YIELD_LABEL_PLATE_PAD_FACTOR := 0.45   # horizontal padding per side, as a fraction of the font size
 # Optimistic PENDING actions (Early-Game Labor slice 3b UX): a distinct amber DASHED style
 # (clearly apart from the solid confirmed green/cyan/blue/red) marks a just-issued assign/move
 # that the snapshot hasn't confirmed yet. Ties to the amber "· pending" rows in the HUD panel.
@@ -478,6 +491,9 @@ var discovered_sites: Array = []
 var discovered_site_lookup: Dictionary = {}
 var harvest_sites: Dictionary = {}
 var scout_sites: Dictionary = {}
+# Forage patches (cultivation/tended state, decoded from ForagePatchState), keyed by
+# Vector2i(x, y); read by `_tile_info_at` for the Tile-card cultivation/tended readout.
+var forage_patch_lookup: Dictionary = {}
 var tile_lookup: Dictionary = {}
 # Per-tile habitability (band-independent morale drain, decoded from TileState),
 # keyed by Vector2i(x, y); read by `_tile_info_at` for the Tile-card Habitability row.
@@ -581,6 +597,10 @@ var _secondary_overflow: Dictionary = {}
 # Optimistic pending-labor map (per band entity), pushed from the HUD via set_labor_pending.
 # Drawn for the selected band in a distinct dashed-amber style until the snapshot confirms.
 var _labor_pending: Dictionary = {}
+# DEFERRED per-source yield labels (see _queue_yield_label / _flush_yield_labels). The labels are an
+# annotation ON TOP OF the map, so they must be the LAST thing drawn: collected during the
+# work-highlight pass, flushed at the very end of _draw.
+var _deferred_yield_labels: Array[Dictionary] = []
 var biome_color_buffer: PackedColorArray = PackedColorArray()
 var _hovered_tile: Vector2i = Vector2i(-1, -1)
 var _fow_enabled: bool = false
@@ -833,6 +853,17 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 					var wy: int = int(wsite.get("y", -1))
 					if wx >= 0 and wy >= 0:
 						discovered_site_lookup[Vector2i(wx, wy)] = wsite
+		forage_patch_lookup.clear()
+		var patch_variant: Variant = snapshot.get("forage_patches", [])
+		if patch_variant is Array:
+			for entry in patch_variant:
+				if not (entry is Dictionary):
+					continue
+				var patch: Dictionary = (entry as Dictionary).duplicate(true)
+				var px: int = int(patch.get("x", -1))
+				var py: int = int(patch.get("y", -1))
+				if px >= 0 and py >= 0:
+					forage_patch_lookup[Vector2i(px, py)] = patch
 	var population_variant: Variant = snapshot.get("populations", [])
 	if population_variant is Array:
 		for entry in population_variant:
@@ -1069,7 +1100,8 @@ func _draw() -> void:
 
 	# Selected player band: highlight what it's working (forage tiles / hunted herds) and
 	# its assignable reach (work-range ring). Drawn before the
-	# unit/herd markers so those sit on top of the tile tints.
+	# unit/herd markers so those sit on top of the tile tints. Its per-source yield LABELS are the
+	# exception — they are queued here and flushed at the very end of _draw (see _flush_yield_labels).
 	_draw_band_work_highlights(radius, origin)
 
 	_draw_supply_links(radius, origin)
@@ -1091,6 +1123,12 @@ func _draw() -> void:
 		_draw_route(order, radius, origin)
 
 	_draw_targeting(radius, origin)
+
+	# TOPMOST: the selected band's per-source yield labels, collected during _draw_band_work_highlights
+	# and held back to here. They annotate the map, so they must survive every layer above the tile
+	# tints — herd/food glyphs, rings, band→herd links and the dashed pending overlays all used to
+	# scribble across the text.
+	_flush_yield_labels()
 
 	# Profiling output
 	if _profiling_enabled:
@@ -1775,6 +1813,9 @@ func _draw_band_status(unit: Dictionary, center: Vector2, marker_radius: float) 
 ##    the work-range ring — hunt reach = work_range + leash).
 ## All cleared automatically when the band is deselected (selected_unit_id < 0 → early out).
 func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
+	# Start every frame's annotation batch empty (cleared BEFORE the early-outs, so a deselected band
+	# leaves no stale labels for the flush to paint).
+	_deferred_yield_labels.clear()
 	if selected_unit_id < 0:
 		return
 	var band := _selected_player_band()
@@ -1842,7 +1883,8 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 				var fcenter := _hex_center(tcol, trow, radius, origin)
 				var forage_overdraw := float(entry.get("actual_yield", 0.0)) \
 					> float(entry.get("sustainable_yield", 0.0)) + YIELD_OVERHUNT_EPSILON
-				_draw_yield_label(fcenter, float(entry.get("actual_yield", 0.0)), forage_overdraw, radius)
+				_queue_yield_label(fcenter, float(entry.get("actual_yield", 0.0)), forage_overdraw, radius,
+					String(entry.get("policy", "")))
 		elif kind == LABOR_KIND_HUNT:
 			var herd := _herd_by_id(String(entry.get("fauna_id", "")))
 			var herd_col := int(entry.get("target_x", -1))
@@ -1861,7 +1903,8 @@ func _draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			if show_yields and entry.has("actual_yield"):
 				var overhunt := float(entry.get("actual_yield", 0.0)) \
 					> float(entry.get("sustainable_yield", 0.0)) + YIELD_OVERHUNT_EPSILON
-				_draw_yield_label(hc, float(entry.get("actual_yield", 0.0)), overhunt, radius)
+				_queue_yield_label(hc, float(entry.get("actual_yield", 0.0)), overhunt, radius,
+					String(entry.get("policy", "")))
 
 	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
 	#    the snapshot hasn't confirmed yet. Drawn last so it reads on top of the confirmed styles.
@@ -2128,16 +2171,50 @@ func _draw_marker_glyph(center: Vector2, glyph: String, size: int, color: Color)
 	draw_string(font, baseline + MARKER_GLYPH_SHADOW_OFFSET, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, MARKER_GLYPH_SHADOW_COLOR)
 	draw_string(font, baseline, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
 
+## DEFER a per-source yield label instead of drawing it inline. The label is an annotation OVER the
+## map: drawn during the highlight pass it was painted over by every later layer (the dashed-amber
+## pending overlays, the band→herd links, the hunted-herd rings, and the secondary herd/food glyphs —
+## a deer glyph landing squarely on the number). Callers queue here; `_flush_yield_labels` renders the
+## batch at the very END of `_draw`, on top of everything. The far-zoom LOD gate stays at the CALL
+## SITE (`show_yields`), so a suppressed label is never queued and deferral can't bypass it.
+func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, policy: String = "") -> void:
+	_deferred_yield_labels.append({
+		"tile_center": tile_center,
+		"value": value,
+		"overhunt": overhunt,
+		"radius": radius,
+		"policy": policy,
+	})
+
+## Render (and drain) the deferred yield-label batch. Called LAST in `_draw` — after the markers,
+## rings, links, pending overlays and targeting — so nothing paints over the labels.
+func _flush_yield_labels() -> void:
+	for label in _deferred_yield_labels:
+		_draw_yield_label(label["tile_center"], label["value"], label["overhunt"], label["radius"],
+			label["policy"])
+	_deferred_yield_labels.clear()
+
 ## A small drop-shadow per-source yield label above a worked tile's center (reuses `_draw_marker_glyph`
 ## for legibility over terrain). Food-income green normally; WARN amber + a `⚠` suffix when `overhunt`.
-func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float) -> void:
+## `policy` (the assignment's take policy) appends the shared `FoodIcons` policy glyph — the SAME icon
+## the Hud policy-picker buttons show — so the worked source reads "+0.38 ♻" on the map; "" = no glyph.
+func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, policy: String = "") -> void:
 	var text := _format_yield_signed(value)
 	var color := HudStyle.HEALTHY
 	if overhunt:
 		text += " " + YIELD_OVERHUNT_FLAG
 		color = HudStyle.WARN
+	var policy_icon := FoodIcons.for_policy(policy)
+	if policy_icon != "":
+		text += " " + policy_icon
 	var font_size := clampi(int(radius * YIELD_LABEL_SIZE_FACTOR), YIELD_LABEL_MIN_FONT, YIELD_LABEL_MAX_FONT)
 	var label_center := tile_center + Vector2(0.0, -radius * YIELD_LABEL_OFFSET_FACTOR)
+	# Dark rounded plate behind the text so the label pops on ANY terrain (bare text washed out on the
+	# light tan biomes). Same pill chrome as the count badges, sized to the MEASURED text+glyph run.
+	var font: Font = ThemeDB.fallback_font
+	if font != null:
+		var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+		_draw_pill_plate(label_center, text_size, font_size * YIELD_LABEL_PLATE_PAD_FACTOR, YIELD_LABEL_PLATE_BG)
 	_draw_marker_glyph(label_center, text, font_size, color)
 
 ## Signed, fixed-decimal food-rate string for the on-tile yield labels ("+0.48" / "-0.30"). Mirrors
@@ -2146,18 +2223,26 @@ func _format_yield_signed(value: float) -> String:
 	var magnitude := String.num(absf(value), YIELD_LABEL_DECIMALS).pad_decimals(YIELD_LABEL_DECIMALS)
 	return ("+" if value >= 0.0 else "-") + magnitude
 
+## The shared rounded-pill PLATE: a dark rounded-rect (draw_rect body + two end-cap circles) centered
+## on `center`, sized to an already-measured `text_size` plus `pad_x` of symmetric horizontal padding.
+## Single source of truth for the pill look — used by the `×N`/`+N` count badges (`_draw_count_pill`,
+## no extra padding: the end caps are its padding) and by the on-tile yield labels
+## (`_draw_yield_label`, padded so the plate hugs the text+glyph run).
+func _draw_pill_plate(center: Vector2, text_size: Vector2, pad_x: float, bg: Color) -> void:
+	var half_w: float = text_size.x * 0.5 + pad_x
+	var half_h: float = text_size.y * 0.5 * MARKER_BADGE_HEIGHT_FACTOR
+	draw_rect(Rect2(center.x - half_w, center.y - half_h, half_w * 2.0, half_h * 2.0), bg)
+	draw_circle(Vector2(center.x - half_w, center.y), half_h, bg)
+	draw_circle(Vector2(center.x + half_w, center.y), half_h, bg)
+
 ## A small dark rounded pill with centered text — shared by the primary `×N` count
-## badge and the secondary `+N` overflow chip (draw_rect body + two end-cap circles).
+## badge and the secondary `+N` overflow chip.
 func _draw_count_pill(center: Vector2, text: String) -> void:
 	var font: Font = ThemeDB.fallback_font
 	if font == null or text == "":
 		return
 	var text_size: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, MARKER_BADGE_FONT_SIZE)
-	var half_w: float = text_size.x * 0.5
-	var half_h: float = text_size.y * 0.5 * MARKER_BADGE_HEIGHT_FACTOR
-	draw_rect(Rect2(center.x - half_w, center.y - half_h, text_size.x, half_h * 2.0), MARKER_BADGE_BG)
-	draw_circle(Vector2(center.x - half_w, center.y), half_h, MARKER_BADGE_BG)
-	draw_circle(Vector2(center.x + half_w, center.y), half_h, MARKER_BADGE_BG)
+	_draw_pill_plate(center, text_size, MARKER_BADGE_PAD_X, MARKER_BADGE_BG)
 	draw_string(font, Vector2(center.x - text_size.x * 0.5, center.y + text_size.y * 0.32), text, HORIZONTAL_ALIGNMENT_LEFT, -1, MARKER_BADGE_FONT_SIZE, MARKER_BADGE_FG)
 
 ## Per-tile `+N` overflow chip pass (secondaries beyond SECONDARY_VISIBLE_CAP).
@@ -2796,6 +2881,32 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 	info["food_module"] = module_key
 	info["food_module_label"] = _food_module_label(module_key)
 	info["food_module_weight"] = module_weight
+	# Forage-patch cultivation/tended state (intensification ladder). Read by
+	# Hud._tile_terrain_lines for the "Cultivation N%" / "🌾 Tended Patch" row.
+	if forage_patch_lookup.has(tile_key):
+		var patch: Dictionary = forage_patch_lookup[tile_key]
+		info["cultivation_progress"] = float(patch.get("cultivation_progress", 0.0))
+		info["is_cultivated"] = bool(patch.get("is_cultivated", false))
+		info["patch_has_owner"] = bool(patch.get("has_owner", false))
+		info["patch_owner"] = int(patch.get("owner", 0))
+		info["patch_ecology_phase"] = String(patch.get("ecology_phase", ""))
+		# Standing forage stock vs the patch's ceiling — "how much there is", the patch
+		# counterpart to a herd's Biomass row (Hud._tile_terrain_lines renders both).
+		info["patch_biomass"] = float(patch.get("biomass", 0.0))
+		info["patch_carrying_capacity"] = float(patch.get("carrying_capacity", 0.0))
+		# Pre-commit yield forecast (food/turn at the patch's current biomass, at
+		# output_multiplier 1.0). Read by Hud._build_forage_assign_controls to show the live
+		# "Expected yield" row and to cap the forager stepper at the patch's max-useful workers.
+		info["patch_per_worker_yield"] = float(patch.get("per_worker_yield", 0.0))
+		info["patch_ceiling_sustain"] = float(patch.get("ceiling_sustain", 0.0))
+		info["patch_ceiling_surplus"] = float(patch.get("ceiling_surplus", 0.0))
+		info["patch_ceiling_market"] = float(patch.get("ceiling_market", 0.0))
+		info["patch_ceiling_eradicate"] = float(patch.get("ceiling_eradicate", 0.0))
+		# The Cultivate investment rung: the dip yield while the patch is being prepared, and the
+		# tended yield it pays afterwards. Hud._build_forage_assign_controls turns the pair into the
+		# pre-commit "Preparing: +X → then +Y" forecast.
+		info["patch_ceiling_cultivate"] = float(patch.get("ceiling_cultivate", 0.0))
+		info["patch_tended_yield"] = float(patch.get("tended_yield", 0.0))
 	var units_here := _units_on_tile(col, row)
 	var herds_here := _herds_on_tile(col, row)
 	info["units"] = units_here

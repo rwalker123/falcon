@@ -27,10 +27,13 @@ use crate::{
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
     demographics_config::{DemographicsConfig, DemographicsConfigHandle, DemographicsConsumption},
-    fauna::{sustainable_yield, EcologyPhase, Herd, HerdDensityMap, HerdRegistry},
+    fauna::{
+        corral_provisions, hunt_policy_ceiling, hunt_provisions, sustainable_yield, EcologyPhase,
+        Herd, HerdDensityMap, HerdRegistry, HERDING_DISCOVERY_ID,
+    },
     fauna_config::{FaunaConfig, FaunaConfigHandle},
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
-    forage::{forage_take, ForageRegistry},
+    forage::{forage_take, tended_provisions, ForageRegistry, CULTIVATION_DISCOVERY_ID},
     generations::GenerationRegistry,
     heightfield::{build_elevation_field, ElevationField},
     hydrology::HydrologyState,
@@ -4017,6 +4020,13 @@ pub fn advance_expeditions(
                             FollowPolicy::Market => (false, full || near_band_gate),
                             // Eradicate never delivers — it grinds to extinction (→ lost-herd guard).
                             FollowPolicy::Eradicate => (false, false),
+                            // The investment policies (Cultivate/Corral) are place-bound improvements
+                            // a resident band builds; `send_hunt_expedition` rejects them at launch,
+                            // so this is unreachable. Behave like the conservative Sustain trip.
+                            FollowPolicy::Cultivate | FollowPolicy::Corral => (
+                                herd_biomass <= sustain_floor || full || near_band_gate,
+                                false,
+                            ),
                         };
 
                         if done {
@@ -4087,6 +4097,29 @@ pub fn advance_expeditions(
     }
 }
 
+/// A *tended* improvement (cultivated patch / corralled herd) is **maintenance labor**, not scaling
+/// gather: it needs a tending presence, not a headcount proportional to the take. Its
+/// `SourceYield.workers_needed` is defined as exactly this many workers.
+pub(crate) const TENDED_SOURCE_WORKERS_NEEDED: u32 = 1;
+
+/// `SourceYield.workers_needed` — the **minimum** assigned workers that would have produced `take`
+/// biomass this turn at `per_worker_capacity` biomass/worker (the overstaffing signal; see
+/// `SourceYield`). `0` when nothing was taken; otherwise `ceil(take / per_worker_capacity)` clamped
+/// into `[1, assigned]`. For forage `per_worker_capacity` is the **effective** per-turn throughput
+/// `per_worker_biomass_capacity × seasonal_weight` (mirroring `forage_take`'s worker cap), so a
+/// low-season, fully-labor-bound patch is not falsely flagged overstaffed; hunt has no seasonal
+/// factor. `per_worker_capacity ≤ 0` (a zero-throughput turn that somehow still took biomass) can't
+/// be inverted, so it conservatively reports `assigned` (no overstaffing flagged).
+pub(crate) fn workers_needed_for_take(take: f32, per_worker_capacity: f32, assigned: u32) -> u32 {
+    if take <= 0.0 {
+        return 0;
+    }
+    if per_worker_capacity <= 0.0 {
+        return assigned;
+    }
+    ((take / per_worker_capacity).ceil() as u32).clamp(1, assigned)
+}
+
 /// The shared **"take food from a nearby source"** primitive (`docs/plan_exploration_and_sites.md`
 /// §2b). Resolves the per-policy ecology ceiling, caps it by the hunting group's throughput
 /// (`workers × per_worker_biomass_capacity`), clamps to the herd's biomass, **subtracts it from the
@@ -4107,7 +4140,11 @@ fn hunt_expedition_floor(
     collapse_fraction: f32,
 ) -> f32 {
     match policy {
-        FollowPolicy::Sustain => sustain_floor_fraction * carrying_capacity,
+        // The investment policies never reach an expedition (`send_hunt_expedition` rejects them —
+        // penning is a resident band's place-bound work), so they take the conservative Sustain floor.
+        FollowPolicy::Sustain | FollowPolicy::Cultivate | FollowPolicy::Corral => {
+            sustain_floor_fraction * carrying_capacity
+        }
         FollowPolicy::Surplus | FollowPolicy::Market => collapse_fraction * carrying_capacity,
         FollowPolicy::Eradicate => 0.0,
     }
@@ -4122,21 +4159,10 @@ pub(crate) fn hunt_take(
     output_multiplier: f32,
     carry_room_biomass: f32,
 ) -> Scalar {
-    let ecology = &fauna.ecology;
-    let follow = &fauna.follow;
-    let market = &fauna.market;
-    let hunt = &fauna.hunt;
     // Per-policy ecology ceiling: Sustain = one turn's net regrowth (a collapsing group gives
     // nothing), Surplus = that × multiplier, Market = a commercial share, Eradicate = max take.
-    let policy_ceiling = match policy {
-        FollowPolicy::Sustain => sustainable_yield(herd.biomass, herd.carrying_capacity, ecology),
-        FollowPolicy::Surplus => {
-            sustainable_yield(herd.biomass, herd.carrying_capacity, ecology)
-                * follow.surplus_multiplier
-        }
-        FollowPolicy::Market => market.take_fraction * herd.biomass,
-        FollowPolicy::Eradicate => hunt.take_from(herd.biomass),
-    };
+    // Shared with the pre-commit forecast (`fauna::hunt_forecast`) so the two can never disagree.
+    let policy_ceiling = hunt_policy_ceiling(policy, herd.biomass, herd.carrying_capacity, fauna);
     // The hunting group's throughput caps the take; below the Sustain ceiling the herd nets growth.
     // `carry_room_biomass` additionally caps the take at the biomass the caller can carry home
     // (conservation — the herd loses only what's kept); the band Hunt passes `f32::INFINITY`
@@ -4149,7 +4175,7 @@ pub(crate) fn hunt_take(
         .min(carry_room_biomass.max(0.0));
     herd.biomass -= take;
     // FOOD income is fully fractional (a few hunters may yield < 1/turn).
-    scalar_from_f32(take * hunt.provisions_per_biomass * output_multiplier)
+    scalar_from_f32(hunt_provisions(take, fauna, output_multiplier))
 }
 
 /// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired
@@ -4176,6 +4202,7 @@ pub fn advance_labor_allocation(
     mut registry: ResMut<HerdRegistry>,
     mut forage_registry: ResMut<ForageRegistry>,
     mut inventory: ResMut<FactionInventory>,
+    mut discovery: ResMut<DiscoveryProgressLedger>,
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
     tile_registry: Res<TileRegistry>,
@@ -4195,6 +4222,19 @@ pub fn advance_labor_allocation(
     let market = &fauna.market;
     let work_range = labor.band_work_range;
     let hunt_reach = labor.hunt_reach();
+    // Rung 1b (earned Cultivation knowledge): the per-turn ledger accrual and the "known" threshold,
+    // hoisted out of the per-cohort loop. A **Sustain**-forage on a Thriving patch teaches the faction
+    // Cultivation (knowledge is still learned by ordinary foraging); a patch cannot accrue
+    // `cultivation_progress` until the faction's ledger progress reaches `knowledge_threshold` AND a
+    // band explicitly works it under the **Cultivate** policy.
+    let cultivation = &labor.forage.cultivation;
+    let knowledge_delta = scalar_from_f32(cultivation.knowledge_progress_per_turn);
+    let knowledge_threshold = scalar_from_f32(cultivation.knowledge_completion_threshold);
+    // Rung 1c (earned Herding knowledge, the animal mirror): a Sustain-hunt on a Thriving herd
+    // teaches the faction Herding, the gate the **Corral** policy checks. Mobile domestication stays
+    // ungated (only *penning* needs Herding).
+    let herding_knowledge_delta = scalar_from_f32(husbandry.knowledge_progress_per_turn);
+    let herding_knowledge_threshold = scalar_from_f32(husbandry.knowledge_completion_threshold);
     // In-range checks use true hex distance (not Chebyshev on offset coords, whose square
     // corners are actually 3 hex-steps away), wrap-aware to match the rest of the sim.
     let grid_width = tile_registry.width;
@@ -4219,14 +4259,10 @@ pub fn advance_labor_allocation(
         let mut lapsed: Vec<usize> = Vec::new();
         // Retained per-source yield telemetry (derived, not persisted): one entry per assignment in
         // iteration order, pre-seeded to zero so any arm that `continue`s (out of range, module
-        // lost, herd gone) leaves a correct 0-yield row and index alignment is preserved.
-        let mut yields: Vec<SourceYield> = vec![
-            SourceYield {
-                actual: 0.0,
-                sustainable: 0.0
-            };
-            allocation.assignments.len()
-        ];
+        // lost, herd gone) leaves a correct 0-yield row and index alignment is preserved. This also
+        // *overwrites* any assign-time forecast seed (`LaborAllocation::set_source_yield`) with the
+        // resolved take — the seed is only the pre-resolution stand-in.
+        let mut yields: Vec<SourceYield> = vec![SourceYield::ZERO; allocation.assignments.len()];
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
             let workers = assignment.workers;
             if workers == 0 {
@@ -4259,12 +4295,92 @@ pub fn advance_labor_allocation(
                     let Some(patch) = forage_registry.patch_mut(*tile) else {
                         continue;
                     };
+                    // Rung 1b — the earned-knowledge ladder (§4b). A **Sustain** forage on a Thriving
+                    // patch **teaches the faction Cultivation** (accrued in the shared
+                    // `DiscoveryProgressLedger`, never start-granted). Knowledge only — it no longer
+                    // tames the patch: cultivation is an **explicit `Cultivate` policy with an
+                    // investment cost** (below), not a free by-product of Sustain.
+                    if matches!(policy, FollowPolicy::Sustain)
+                        && patch.ecology_phase == EcologyPhase::Thriving
+                    {
+                        discovery.add_progress(faction, CULTIVATION_DISCOVERY_ID, knowledge_delta);
+                    }
+                    // A cultivated ("tended") patch is worked, not wild-gathered (Rung 1a): the band
+                    // whose Forage assignment tends it (≥1 worker here → place-local by construction)
+                    // is paid `biomass × tended_provisions_per_biomass` — a **managed harvest** of the
+                    // full standing crop, WITHOUT drawing biomass down (a tended patch regrows freely,
+                    // so biomass sits near cap and the yield out-runs the same patch's wild MSY skim,
+                    // the intensification incentive). This is maintenance labor: the amount is
+                    // biomass-based (presence, not head-count, gates it beyond the `workers == 0`
+                    // check above). Marking the patch tended-this-turn stops `advance_cultivation`
+                    // taking it feral. Sustainable == actual (a managed harvest never overdraws → no
+                    // ⚠). Mirrors a domesticated herd's husbandry income, but paid place-local here
+                    // instead of split across the owner's bands.
+                    if patch.is_cultivated() {
+                        patch.tended_this_turn = true;
+                        // Shared with the pre-commit forecast (`forage::forage_forecast`) so the
+                        // client's "expected yield" for a tended patch is exactly what it is paid.
+                        let provisions = scalar_from_f32(tended_provisions(
+                            patch.biomass,
+                            &labor.forage,
+                            mult_f,
+                        ));
+                        if provisions > scalar_zero() {
+                            cohort.stores.add(FOOD, provisions);
+                        }
+                        let tended = provisions.to_f32();
+                        // A tended patch is maintenance labor (biomass-based payout, presence-gated),
+                        // not scaling gather → a fixed one-worker "need" (never overstaffed by count).
+                        yields[idx] = SourceYield {
+                            actual: tended,
+                            sustainable: tended,
+                            workers_needed: TENDED_SOURCE_WORKERS_NEEDED,
+                        };
+                        continue;
+                    }
                     let biomass_before = patch.biomass;
                     let provisions =
                         forage_take(patch, workers, *policy, &labor.forage, mult_f, seasonal);
                     let take = biomass_before - patch.biomass;
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
+                    }
+                    // **Cultivate — the investment policy.** The crew is clearing and planting, not
+                    // gathering: `forage_take` above already paid only the reduced Cultivate ceiling
+                    // (`cultivating_yield_fraction × MSY` — the up-front cost), and here the patch
+                    // accrues toward becoming a tended crop. Gates: the faction must **know
+                    // Cultivation** (earned by Sustain-foraging, above) and the patch must be
+                    // **Thriving**. If a gate lapses mid-run (e.g. another band overdraws the patch to
+                    // Stressed) progress simply **stops accruing that turn** — it is neither lost nor
+                    // silently switched; the patch is still marked worked below, so it doesn't decay
+                    // either, and accrual resumes when the patch recovers.
+                    //
+                    // **Ordering: accrue AFTER the take.** The patch pays this turn per its state at
+                    // the *start* of the turn, so the pre-commit forecast the client showed is exactly
+                    // what the sim paid (forecast == actual). The turn progress reaches `1.0` is the
+                    // last preparing take; the full tended yield starts the next turn.
+                    if matches!(policy, FollowPolicy::Cultivate) {
+                        // Marked worked-as-improvement so `advance_cultivation` spares it: a patch
+                        // under active preparation neither goes feral nor bleeds its partial progress.
+                        patch.tended_this_turn = true;
+                        let knows_cultivation = discovery
+                            .get_progress(faction, CULTIVATION_DISCOVERY_ID)
+                            >= knowledge_threshold;
+                        if knows_cultivation && patch.ecology_phase == EcologyPhase::Thriving {
+                            patch.accrue_cultivation(faction, cultivation.progress_per_turn);
+                            if patch.is_cultivated() {
+                                event_log.push(CommandEventEntry::new(
+                                    tick.0,
+                                    CommandEventKind::Cultivate,
+                                    faction,
+                                    format!("Cultivated patch at ({}, {})", tile.x, tile.y),
+                                    Some(format!(
+                                        "status=complete action=cultivate x={} y={}",
+                                        tile.x, tile.y
+                                    )),
+                                ));
+                            }
+                        }
                     }
                     // Market forage = gathered goods sold: convert the raw take to trade goods
                     // (mirror of the Hunt-Market arm). Only Market sells — Sustain/Surplus/Eradicate
@@ -4289,9 +4405,18 @@ pub fn advance_labor_allocation(
                         &labor.forage.ecology,
                     ) * labor.forage.provisions_per_biomass
                         * mult_f;
+                    // Overstaffing: invert the take by the **effective** per-worker throughput this
+                    // turn (`per_worker_biomass_capacity × seasonal`, matching `forage_take`'s worker
+                    // cap) so a labor-bound low-season patch isn't falsely flagged.
+                    let workers_needed = workers_needed_for_take(
+                        take,
+                        labor.forage.per_worker_biomass_capacity * seasonal,
+                        workers,
+                    );
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
                         sustainable,
+                        workers_needed,
                     };
                 }
                 LaborTarget::Hunt { fauna_id, policy } => {
@@ -4332,6 +4457,32 @@ pub fn advance_labor_allocation(
                     else {
                         continue;
                     };
+                    // Corral (Rung 1c): a Hunt assignment on a **corralled** (penned) herd is
+                    // herding/tending it, not hunting. The keeper band collects the corral's
+                    // place-local managed yield (`biomass × corral_provisions_per_biomass`, higher
+                    // than the passive even-split rate) WITHOUT drawing biomass down (managed harvest
+                    // of the full standing crop — biomass regrows freely), and marks it tended so it
+                    // doesn't escape in `advance_husbandry`. The animal mirror of the tended-patch arm
+                    // in Forage; reconciles the "corralled herd isn't both hunt-drawn AND paid".
+                    if herd.is_corralled() {
+                        herd.corralled_tended_this_turn = true;
+                        // Shared with the pre-commit forecast (`fauna::hunt_forecast`) so the
+                        // client's "expected yield" for a corralled herd is exactly what it is paid.
+                        let provisions =
+                            scalar_from_f32(corral_provisions(herd.biomass, &fauna, mult_f));
+                        if provisions > scalar_zero() {
+                            cohort.stores.add(FOOD, provisions);
+                        }
+                        let tended = provisions.to_f32();
+                        // A corralled herd is worker-tended maintenance (the animal mirror of the
+                        // tended patch): a fixed one-worker "need", not scaling with the take.
+                        yields[idx] = SourceYield {
+                            actual: tended,
+                            sustainable: tended,
+                            workers_needed: TENDED_SOURCE_WORKERS_NEEDED,
+                        };
+                        continue;
+                    }
                     // Take food via the shared primitive (per-policy ceiling + worker-cap +
                     // biomass→provisions, × the band's productivity multiplier). Read biomass
                     // before/after for the raw take that trade goods + husbandry are scaled from.
@@ -4348,11 +4499,53 @@ pub fn advance_labor_allocation(
                         f32::INFINITY,
                     );
                     let take = biomass_before - herd.biomass;
-                    // Phase E husbandry: a Sustain hunt on a Thriving group tames it over time.
+                    // Phase E husbandry + Rung 1c Herding knowledge: a Sustain hunt on a Thriving
+                    // group tames it over time AND teaches the faction Herding (the **Corral** policy's
+                    // gate, accrued in the shared `DiscoveryProgressLedger`, never start-granted).
+                    // Taming stays ungated — mobile pastoralism needs no knowledge; only penning does.
                     if matches!(policy, FollowPolicy::Sustain)
                         && herd.ecology_phase == EcologyPhase::Thriving
                     {
+                        discovery.add_progress(
+                            faction,
+                            HERDING_DISCOVERY_ID,
+                            herding_knowledge_delta,
+                        );
                         herd.accrue_domestication(faction, husbandry.progress_per_turn);
+                    }
+                    // **Corral — the investment policy** (the animal twin of Cultivate). The crew is
+                    // building the pen, not hunting: `hunt_take` above already paid only the reduced
+                    // Corral ceiling (`corralling_yield_fraction × MSY` — the up-front cost), and here
+                    // the pen accrues. Gates: the faction must **know Herding** and **own a
+                    // domesticated herd**. A gate that lapses mid-build just stops accrual that turn
+                    // (progress is kept — a half-built pen is materials on the ground). Accrued
+                    // **after** the take, so this turn pays exactly what the pre-commit forecast
+                    // promised; the corral yield starts the turn after the pen completes.
+                    if matches!(policy, FollowPolicy::Corral) {
+                        let knows_herding = discovery.get_progress(faction, HERDING_DISCOVERY_ID)
+                            >= herding_knowledge_threshold;
+                        if knows_herding && herd.is_domesticated() && herd.owner == Some(faction) {
+                            let pen_tile = herd.position();
+                            if herd.accrue_corral(
+                                faction,
+                                husbandry.corral_build_progress_per_turn,
+                                pen_tile,
+                            ) {
+                                event_log.push(CommandEventEntry::new(
+                                    tick.0,
+                                    CommandEventKind::Corral,
+                                    faction,
+                                    format!(
+                                        "Corralled {} at ({}, {})",
+                                        fauna_id, pen_tile.x, pen_tile.y
+                                    ),
+                                    Some(format!(
+                                        "status=complete action=corral herd={} x={} y={}",
+                                        fauna_id, pen_tile.x, pen_tile.y
+                                    )),
+                                ));
+                            }
+                        }
                     }
                     let trade_multiplier = if matches!(policy, FollowPolicy::Market) {
                         market.trade_goods_multiplier
@@ -4377,9 +4570,17 @@ pub fn advance_labor_allocation(
                         sustainable_yield(biomass_before, herd.carrying_capacity, &fauna.ecology)
                             * hunt.provisions_per_biomass
                             * mult_f;
+                    // Overstaffing: invert the biomass take by the per-hunter throughput (hunt has no
+                    // seasonal factor, unlike forage).
+                    let workers_needed = workers_needed_for_take(
+                        take,
+                        labor.hunt.per_worker_biomass_capacity,
+                        workers,
+                    );
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
                         sustainable,
+                        workers_needed,
                     };
                 }
                 LaborTarget::Scout => {
@@ -6524,19 +6725,24 @@ mod labor_yield_tests {
     //! biomass K/2, so a resource at carrying capacity still reads a positive sustainable harvest;
     //! a Sustain gather skims exactly that, so `actual ≈ sustainable`); a hunt's `sustainable` uses
     //! the same formula; and an overdraw reads `actual > sustainable`.
-    use super::advance_labor_allocation;
+    use super::{advance_labor_allocation, TENDED_SOURCE_WORKERS_NEEDED};
     use crate::components::{
         FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause,
         PopulationCohort, Tile,
     };
-    use crate::fauna::{sustainable_yield, Herd, HerdRegistry};
+    use crate::fauna::{
+        forecast_expected_take, hunt_forecast, sustainable_yield, EcologyPhase, Herd, HerdRegistry,
+        SourceYieldForecast, HERDING_DISCOVERY_ID,
+    };
     use crate::fauna_config::{FaunaConfigHandle, SizeClass};
     use crate::food::{FoodModule, FoodModuleTag, FoodSiteKind};
+    use crate::forage::{advance_forage_regrowth, forage_forecast, CULTIVATION_DISCOVERY_ID};
     use crate::forage::{ForagePatch, ForageRegistry};
     use crate::labor_config::LaborConfigHandle;
     use crate::orders::FactionId;
     use crate::resources::{
-        CommandEventLog, FactionInventory, SimulationConfig, SimulationTick, TileRegistry,
+        CommandEventLog, DiscoveryProgressLedger, FactionInventory, SimulationConfig,
+        SimulationTick, TileRegistry,
     };
     use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
     use crate::wellbeing_config::WellbeingConfigHandle;
@@ -6546,6 +6752,8 @@ mod labor_yield_tests {
 
     const HERD_ID: &str = "game_test";
     const CAP: f32 = 100.0;
+    /// The faction every `spawn_band` band belongs to in this harness.
+    const BAND_FACTION: FactionId = FactionId(0);
     /// Whole workers on each assignment: large enough that forage yields clearly and the hunt's
     /// per-worker biomass cap never binds (so a Sustain take is set by the regrowth ceiling).
     const WORKERS: u32 = 10;
@@ -6561,6 +6769,7 @@ mod labor_yield_tests {
         world.insert_resource(LaborConfigHandle::default());
         world.insert_resource(WellbeingConfigHandle::default());
         world.insert_resource(FactionInventory::default());
+        world.insert_resource(DiscoveryProgressLedger::default());
         world.insert_resource(CommandEventLog::default());
         world.insert_resource(SimulationTick::default());
 
@@ -6798,6 +7007,939 @@ mod labor_yield_tests {
             "a Sustain draw off a full herd skims exactly MSY: {} vs {}",
             hunt.actual,
             hunt.sustainable
+        );
+    }
+
+    use crate::components::FOOD;
+
+    /// Set the source-tile forage patch cultivated (owned by faction 0) at the given biomass.
+    fn cultivate_source_patch(world: &mut World, biomass: f32) {
+        let ecology = world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .ecology
+            .clone();
+        let mut registry = world.resource_mut::<ForageRegistry>();
+        let patch = registry.patches.get_mut(&UVec2::new(0, 0)).unwrap();
+        patch.cultivation_progress = 1.0;
+        patch.owner = Some(FactionId(0));
+        patch.biomass = biomass;
+        patch.refresh_ecology_phase(&ecology);
+    }
+
+    /// Set the (wild, un-cultivated) source patch's biomass and refresh its ecology phase — for the
+    /// `workers_needed` overstaffing tests, which need a full patch so the per-policy biomass-fraction
+    /// ceiling binds rather than the seeded half-cap stock.
+    fn set_wild_patch_biomass(world: &mut World, biomass: f32) {
+        let ecology = world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .ecology
+            .clone();
+        let mut registry = world.resource_mut::<ForageRegistry>();
+        let patch = registry.patches.get_mut(&UVec2::new(0, 0)).unwrap();
+        patch.biomass = biomass;
+        patch.refresh_ecology_phase(&ecology);
+    }
+
+    /// Run a single Forage assignment (given policy) with `WORKERS` on a full patch and return the
+    /// captured `workers_needed` — the throughput to invert the per-policy take into a worker count.
+    fn forage_workers_needed(policy: FollowPolicy) -> u32 {
+        let (mut world, tile) = world_with_source(CAP);
+        let patch_cap = world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .carrying_capacity;
+        set_wild_patch_biomass(&mut world, patch_cap);
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: UVec2::new(0, 0),
+                    policy,
+                },
+                workers: WORKERS,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        world.get::<LaborAllocation>(band).unwrap().last_yields[0].workers_needed
+    }
+
+    /// Overstaffing: a Sustain hunt whose take is set by the regrowth (MSY) ceiling — not labor —
+    /// needs a **single** worker even with 5 assigned, so `workers_needed == 1 < assigned`.
+    #[test]
+    fn sustain_source_overstaffed_reports_one_worker_needed() {
+        let (mut world, tile) = world_with_source(CAP * 0.5); // half cap → clear positive MSY skim.
+        let assigned = 5;
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: assigned,
+            }],
+        );
+
+        world.run_system_once(advance_labor_allocation);
+
+        let hunt = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        assert!(
+            hunt.actual > 0.0,
+            "the sustain hunt produced food: {hunt:?}"
+        );
+        assert_eq!(
+            hunt.workers_needed, 1,
+            "the MSY throughput needs a single worker: {hunt:?}"
+        );
+        assert!(
+            hunt.workers_needed < assigned,
+            "the source is overstaffed (extra workers idle): {hunt:?}"
+        );
+    }
+
+    /// The other extreme: when worker throughput is the binding constraint (few workers, a high
+    /// biomass-fraction Eradicate ceiling), every assigned worker was productive → `workers_needed ==
+    /// assigned` (no overstaffing).
+    #[test]
+    fn labor_bound_take_reports_all_assigned_workers_needed() {
+        let (mut world, tile) = world_with_source(CAP);
+        let cfg = world.resource::<LaborConfigHandle>().get();
+        let patch_cap = cfg.forage.carrying_capacity;
+        let capacity = cfg.forage.per_worker_biomass_capacity;
+        let eradicate_fraction = cfg.forage.eradicate.take_fraction;
+        drop(cfg);
+        set_wild_patch_biomass(&mut world, patch_cap); // full patch.
+        let assigned = 2;
+        // The scenario is labor-bound iff worker throughput is below the Eradicate biomass ceiling.
+        assert!(
+            assigned as f32 * capacity < eradicate_fraction * patch_cap,
+            "test precondition: the take must be labor-bound, not ceiling-bound"
+        );
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: UVec2::new(0, 0),
+                    policy: FollowPolicy::Eradicate,
+                },
+                workers: assigned,
+            }],
+        );
+
+        world.run_system_once(advance_labor_allocation);
+
+        let forage = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        assert_eq!(
+            forage.workers_needed, assigned,
+            "a labor-bound take needs every assigned worker: {forage:?}"
+        );
+    }
+
+    /// A higher-take policy needs more workers on the **same** resource: Market/Eradicate draw a large
+    /// biomass fraction, so their inverted worker count exceeds Sustain's MSY skim on identical full
+    /// patches.
+    #[test]
+    fn market_and_eradicate_need_more_workers_than_sustain() {
+        let sustain = forage_workers_needed(FollowPolicy::Sustain);
+        let market = forage_workers_needed(FollowPolicy::Market);
+        let eradicate = forage_workers_needed(FollowPolicy::Eradicate);
+        assert!(
+            market > sustain,
+            "market's larger take needs more workers: {market} vs {sustain}"
+        );
+        assert!(
+            eradicate > sustain,
+            "eradicate's larger take needs more workers: {eradicate} vs {sustain}"
+        );
+        assert!(
+            eradicate >= market,
+            "eradicate's ceiling is ≥ market's: {eradicate} vs {market}"
+        );
+    }
+
+    /// A tended (cultivated) patch and a corralled herd are maintenance labor, not scaling gather, so
+    /// each reports `workers_needed == 1` regardless of how many workers tend it.
+    #[test]
+    fn tended_patch_and_corral_report_one_worker_needed() {
+        let (mut world, tile) = world_with_source(CAP);
+        let patch_cap = world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .carrying_capacity;
+        cultivate_source_patch(&mut world, patch_cap);
+        // Pen the herd in place (Rung 1c) so a Hunt assignment tends rather than hunts it.
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            registry.herds[0].corral_at(UVec2::new(0, 0));
+        }
+
+        let forager = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: UVec2::new(0, 0),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+        let keeper = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+
+        world.run_system_once(advance_labor_allocation);
+
+        let tended = world.get::<LaborAllocation>(forager).unwrap().last_yields[0];
+        let corral = world.get::<LaborAllocation>(keeper).unwrap().last_yields[0];
+        assert!(
+            tended.actual > 0.0 && corral.actual > 0.0,
+            "both tended sources pay out: tended={tended:?} corral={corral:?}"
+        );
+        assert_eq!(
+            tended.workers_needed, 1,
+            "a tended patch needs one tending presence: {tended:?}"
+        );
+        assert_eq!(
+            corral.workers_needed, 1,
+            "a corralled herd needs one keeper: {corral:?}"
+        );
+    }
+
+    // --- Pre-commit yield forecast: forecast == actual (the client's "Expected yield") -------------
+    //
+    // The snapshot exposes a per-source forecast (`per_worker_yield` + the four policy ceilings) so
+    // the client can show "Expected yield: +X.XX /turn" and cap its worker stepper BEFORE the player
+    // commits. It only works if the forecast agrees with what the sim actually pays — these tests are
+    // the guard: they run the REAL `advance_labor_allocation` and compare its payout against the
+    // client's composition `min(workers × per_worker_yield, ceiling[policy])`.
+
+    /// The tile coord `world_with_source` anchors its forage patch + herd on.
+    const SOURCE: UVec2 = UVec2::new(0, 0);
+    /// The `FoodModuleTag::seasonal_weight` `world_with_source` stamps on the source tile — the same
+    /// weight the client reads for the tile and folds into its forecast.
+    const SEASONAL_WEIGHT: f32 = 1.0;
+    /// `spawn_band` bands sit at morale 1.0 → a neutral productivity multiplier, which is also the
+    /// multiplier the snapshot captures forecasts at (`FORECAST_OUTPUT_MULTIPLIER`).
+    const NEUTRAL_OUTPUT_MULT: f32 = 1.0;
+    /// f32 slack between the forecast (`workers × per_worker_yield`, provisions) and the sim's take
+    /// (biomass → fixed-point provisions): different multiplication order + a 1e-6 fixed-point grid.
+    /// Orders of magnitude below one provision.
+    const FORECAST_EPSILON: f32 = 1e-4;
+    /// Every policy a **Forage** assignment accepts: the four extractive rungs + the Cultivate
+    /// investment rung (whose ceiling is the *preparing* dip).
+    const FORAGE_POLICIES: [FollowPolicy; 5] = [
+        FollowPolicy::Sustain,
+        FollowPolicy::Surplus,
+        FollowPolicy::Market,
+        FollowPolicy::Eradicate,
+        FollowPolicy::Cultivate,
+    ];
+    /// Every policy a **Hunt** assignment accepts: the four extractive rungs + the Corral investment
+    /// rung.
+    const HUNT_POLICIES: [FollowPolicy; 5] = [
+        FollowPolicy::Sustain,
+        FollowPolicy::Surplus,
+        FollowPolicy::Market,
+        FollowPolicy::Eradicate,
+        FollowPolicy::Corral,
+    ];
+
+    /// The client's composition: what it would display as the expected yield for this staffing. The
+    /// shared helper — the *same* one the assign-time telemetry seed uses — so these tests pin the
+    /// number the client shows, not a re-derivation of it.
+    fn expected_yield(forecast: &SourceYieldForecast, workers: u32, policy: FollowPolicy) -> f32 {
+        forecast_expected_take(forecast, workers, policy)
+    }
+
+    /// The client's worker-stepper cap.
+    fn max_useful_workers(forecast: &SourceYieldForecast, policy: FollowPolicy) -> u32 {
+        (forecast.ceiling_for(policy) / forecast.per_worker_yield).ceil() as u32
+    }
+
+    /// Re-seat the test herd at `biomass`/`cap` (the harness's default 100-cap herd saturates every
+    /// hunt policy ceiling with a single 40-biomass hunter, so a labor-bound hunt needs a bigger one).
+    fn reseat_herd(world: &mut World, biomass: f32, cap: f32) {
+        let ecology = world.resource::<FaunaConfigHandle>().get().ecology.clone();
+        let mut registry = world.resource_mut::<HerdRegistry>();
+        let herd = &mut registry.herds[0];
+        herd.carrying_capacity = cap;
+        herd.biomass = biomass;
+        herd.refresh_ecology_phase(&ecology);
+    }
+
+    /// **Forage forecast == actual.** For every policy × staffing (labor-bound, ceiling-bound), the
+    /// client's `min(workers × per_worker_yield, ceiling[policy])` equals the provisions
+    /// `advance_labor_allocation` actually pays. Both binding regimes are asserted to have been
+    /// exercised, so this can't silently degenerate into testing one branch.
+    #[test]
+    fn forage_forecast_equals_actual_take_for_every_policy_and_staffing() {
+        let mut saw_labor_bound = false;
+        let mut saw_ceiling_bound = false;
+        for policy in FORAGE_POLICIES {
+            for workers in [1u32, 2, 20] {
+                let (mut world, tile) = world_with_source(CAP);
+                // Forecast off the PRE-turn patch state, exactly as the client reads it from the
+                // snapshot captured at the end of last turn.
+                let patch = world
+                    .resource::<ForageRegistry>()
+                    .patch(SOURCE)
+                    .cloned()
+                    .expect("seeded patch");
+                let labor = world.resource::<LaborConfigHandle>().get();
+                let forecast =
+                    forage_forecast(&patch, &labor.forage, SEASONAL_WEIGHT, NEUTRAL_OUTPUT_MULT);
+                drop(labor);
+
+                let band = spawn_band(
+                    &mut world,
+                    tile,
+                    vec![LaborAssignment {
+                        target: LaborTarget::Forage {
+                            tile: SOURCE,
+                            policy,
+                        },
+                        workers,
+                    }],
+                );
+                world.run_system_once(advance_labor_allocation);
+                let actual = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+
+                let labor_term = workers as f32 * forecast.per_worker_yield;
+                let ceiling = forecast.ceiling_for(policy);
+                if labor_term < ceiling {
+                    saw_labor_bound = true;
+                } else {
+                    saw_ceiling_bound = true;
+                }
+                let expected = expected_yield(&forecast, workers, policy);
+                assert!(
+                    (actual - expected).abs() < FORECAST_EPSILON,
+                    "forage forecast must equal the actual take ({policy:?}, {workers} workers): \
+                     forecast={expected} actual={actual} ({forecast:?})"
+                );
+            }
+        }
+        assert!(
+            saw_labor_bound && saw_ceiling_bound,
+            "both regimes must be covered: labor-bound={saw_labor_bound} ceiling-bound={saw_ceiling_bound}"
+        );
+    }
+
+    /// **Hunt forecast == actual.** The fauna twin of the forage test. The herd is re-seated at a
+    /// large capacity so the Eradicate ceiling exceeds a single hunter's throughput (a labor-bound
+    /// case); 20 hunters overstaff every policy (the ceiling binds).
+    #[test]
+    fn hunt_forecast_equals_actual_take_for_every_policy_and_staffing() {
+        const BIG_HERD_CAP: f32 = 1_000.0;
+        let mut saw_labor_bound = false;
+        let mut saw_ceiling_bound = false;
+        for policy in HUNT_POLICIES {
+            for workers in [1u32, 2, 20] {
+                let (mut world, tile) = world_with_source(CAP);
+                reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
+                let herd = world
+                    .resource::<HerdRegistry>()
+                    .find(HERD_ID)
+                    .cloned()
+                    .expect("seeded herd");
+                let fauna = world.resource::<FaunaConfigHandle>().get();
+                let per_worker = world
+                    .resource::<LaborConfigHandle>()
+                    .get()
+                    .hunt
+                    .per_worker_biomass_capacity;
+                let forecast = hunt_forecast(&herd, &fauna, per_worker, NEUTRAL_OUTPUT_MULT);
+                drop(fauna);
+
+                let band = spawn_band(
+                    &mut world,
+                    tile,
+                    vec![LaborAssignment {
+                        target: LaborTarget::Hunt {
+                            fauna_id: HERD_ID.to_string(),
+                            policy,
+                        },
+                        workers,
+                    }],
+                );
+                world.run_system_once(advance_labor_allocation);
+                let actual = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+
+                let labor_term = workers as f32 * forecast.per_worker_yield;
+                let ceiling = forecast.ceiling_for(policy);
+                if labor_term < ceiling {
+                    saw_labor_bound = true;
+                } else {
+                    saw_ceiling_bound = true;
+                }
+                let expected = expected_yield(&forecast, workers, policy);
+                assert!(
+                    (actual - expected).abs() < FORECAST_EPSILON,
+                    "hunt forecast must equal the actual take ({policy:?}, {workers} workers): \
+                     forecast={expected} actual={actual} ({forecast:?})"
+                );
+            }
+        }
+        assert!(
+            saw_labor_bound && saw_ceiling_bound,
+            "both regimes must be covered: labor-bound={saw_labor_bound} ceiling-bound={saw_ceiling_bound}"
+        );
+    }
+
+    /// A **tended patch** / **corralled herd** forecasts its managed yield with ONE worker: every
+    /// policy ceiling is that yield, `per_worker_yield` equals it (→ `max_useful_workers == 1`), and
+    /// it is exactly what the sim pays the tending/keeping band.
+    #[test]
+    fn tended_patch_and_corral_forecast_full_yield_with_one_worker() {
+        let (mut world, tile) = world_with_source(CAP);
+        let patch_cap = world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .carrying_capacity;
+        cultivate_source_patch(&mut world, patch_cap);
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            registry.herds[0].corral_at(SOURCE);
+        }
+
+        let patch = world
+            .resource::<ForageRegistry>()
+            .patch(SOURCE)
+            .cloned()
+            .expect("seeded patch");
+        let labor = world.resource::<LaborConfigHandle>().get();
+        let patch_forecast =
+            forage_forecast(&patch, &labor.forage, SEASONAL_WEIGHT, NEUTRAL_OUTPUT_MULT);
+        let hunt_per_worker = labor.hunt.per_worker_biomass_capacity;
+        drop(labor);
+        let herd = world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .cloned()
+            .expect("seeded herd");
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let herd_forecast = hunt_forecast(&herd, &fauna, hunt_per_worker, NEUTRAL_OUTPUT_MULT);
+        drop(fauna);
+
+        // One worker suffices, and no policy changes the managed yield (including the investment
+        // rungs — the improvement is already built, so "preparing" reads as the managed yield too).
+        for policy in FORAGE_POLICIES {
+            assert_eq!(max_useful_workers(&patch_forecast, policy), 1);
+        }
+        for policy in HUNT_POLICIES {
+            assert_eq!(max_useful_workers(&herd_forecast, policy), 1);
+        }
+
+        // A single tending/keeping worker collects the whole forecast yield — and that IS what the
+        // sim pays (both bands staff one worker here).
+        let forager = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: SOURCE,
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: TENDED_SOURCE_WORKERS_NEEDED,
+            }],
+        );
+        let keeper = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: TENDED_SOURCE_WORKERS_NEEDED,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+
+        let tended = world.get::<LaborAllocation>(forager).unwrap().last_yields[0].actual;
+        let corral = world.get::<LaborAllocation>(keeper).unwrap().last_yields[0].actual;
+        let tended_forecast = expected_yield(
+            &patch_forecast,
+            TENDED_SOURCE_WORKERS_NEEDED,
+            FollowPolicy::Sustain,
+        );
+        let corral_forecast = expected_yield(
+            &herd_forecast,
+            TENDED_SOURCE_WORKERS_NEEDED,
+            FollowPolicy::Sustain,
+        );
+        assert!(tended_forecast > 0.0 && corral_forecast > 0.0);
+        assert!(
+            (tended - tended_forecast).abs() < FORECAST_EPSILON,
+            "tended patch forecast must equal the actual payout: {tended_forecast} vs {tended}"
+        );
+        assert!(
+            (corral - corral_forecast).abs() < FORECAST_EPSILON,
+            "corral forecast must equal the actual payout: {corral_forecast} vs {corral}"
+        );
+    }
+
+    /// Rung 1a: a tended (cultivated) patch pays the band that tends it (a Forage assignment on the
+    /// tile) `biomass × tended_provisions_per_biomass` — higher than the same patch's wild MSY skim —
+    /// **without** drawing biomass down, and marks the patch tended-this-turn.
+    #[test]
+    fn tended_patch_pays_tending_band_above_msy_no_drawdown() {
+        let (mut world, tile) = world_with_source(CAP);
+        let cfg = world.resource::<LaborConfigHandle>().get();
+        let patch_cap = cfg.forage.carrying_capacity;
+        // A tended patch regrows freely toward the cap; harvest is on its full standing crop.
+        let biomass = patch_cap;
+        let tended_rate = cfg.forage.cultivation.tended_provisions_per_biomass;
+        let wild_msy = sustainable_yield(biomass, patch_cap, &cfg.forage.ecology)
+            * cfg.forage.provisions_per_biomass;
+        drop(cfg);
+        cultivate_source_patch(&mut world, biomass);
+
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: UVec2::new(0, 0),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+
+        world.run_system_once(advance_labor_allocation);
+
+        let expected = biomass * tended_rate; // output multiplier 1.0 at morale 1.
+        let paid = world
+            .get::<PopulationCohort>(band)
+            .unwrap()
+            .stores
+            .get(FOOD)
+            .to_f32();
+        assert!(
+            (paid - expected).abs() < 1e-3,
+            "tended band paid biomass × tended rate: {paid} vs {expected}"
+        );
+        assert!(
+            paid > wild_msy,
+            "tended yield out-yields the wild MSY skim: {paid} vs {wild_msy}"
+        );
+        // No draw-down: a tended patch is a managed harvest, biomass unchanged.
+        let patch = world
+            .resource::<ForageRegistry>()
+            .patch(UVec2::new(0, 0))
+            .unwrap();
+        assert!(
+            (patch.biomass - biomass).abs() < 1e-6,
+            "tended patch is not gather-drawn: {} vs {biomass}",
+            patch.biomass
+        );
+        assert!(patch.tended_this_turn, "tending marks the patch worked");
+        // Telemetry: a managed harvest never overdraws → actual == sustainable (no ⚠).
+        let row = world.get::<LaborAllocation>(band).unwrap().last_yields[0];
+        assert!((row.actual - expected).abs() < 1e-3);
+        assert!((row.actual - row.sustainable).abs() < 1e-6);
+    }
+
+    /// Place-locality: only the band that tends the cultivated patch is paid. A second same-faction
+    /// band that does not tend it (forages an empty neighbor tile) receives nothing — the retired
+    /// even-split would have paid it a share.
+    #[test]
+    fn tended_yield_is_place_local_not_split() {
+        let (mut world, tile) = world_with_source(CAP);
+        let patch_cap = world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .carrying_capacity;
+        cultivate_source_patch(&mut world, patch_cap);
+
+        // Band A tends the cultivated patch on (0,0).
+        let tending = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: UVec2::new(0, 0),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+        // Band B (same faction) forages the neighbor tile (1,0), which has no food module/patch →
+        // it earns nothing from the cultivated patch.
+        let idle_tile = world.resource::<TileRegistry>().tiles[1];
+        let non_tending = spawn_band(
+            &mut world,
+            idle_tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: UVec2::new(1, 0),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+
+        world.run_system_once(advance_labor_allocation);
+
+        let tending_food = world
+            .get::<PopulationCohort>(tending)
+            .unwrap()
+            .stores
+            .get(FOOD)
+            .to_f32();
+        let other_food = world
+            .get::<PopulationCohort>(non_tending)
+            .unwrap()
+            .stores
+            .get(FOOD)
+            .to_f32();
+        assert!(
+            tending_food > 0.0,
+            "the tending band is paid: {tending_food}"
+        );
+        assert!(
+            other_food.abs() < 1e-9,
+            "a non-tending same-faction band gets no tended yield (no even-split): {other_food}"
+        );
+    }
+
+    /// **The free path is gone.** Sustain-foraging a Thriving patch still *teaches the faction
+    /// Cultivation* (Rung 1b knowledge, earned by doing), but it **never** accrues
+    /// `cultivation_progress` any more — not even once the faction knows Cultivation. Cultivating is
+    /// an explicit policy with an investment cost, not a free by-product of gathering.
+    #[test]
+    fn sustain_forage_teaches_cultivation_but_never_accrues_patch_progress() {
+        let (mut world, tile) = world_with_source(CAP * 0.5);
+        spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: SOURCE,
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+
+        world.run_system_once(advance_labor_allocation);
+        let learned = world
+            .resource::<DiscoveryProgressLedger>()
+            .get_progress(FactionId(0), CULTIVATION_DISCOVERY_ID)
+            .to_f32();
+        assert!(
+            learned > 0.0,
+            "Sustain-forage still earns Cultivation knowledge: {learned}"
+        );
+        assert_eq!(
+            patch_progress(&world),
+            0.0,
+            "Sustain must not silently tame the patch"
+        );
+
+        // Even with Cultivation fully known, Sustain still accrues nothing — the old free path.
+        world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(FactionId(0), CULTIVATION_DISCOVERY_ID, scalar_one());
+        world.run_system_once(advance_labor_allocation);
+        assert_eq!(
+            patch_progress(&world),
+            0.0,
+            "knowing Cultivation must not make Sustain tame the patch — Cultivate is the only path"
+        );
+    }
+
+    /// The source patch's live `cultivation_progress`.
+    fn patch_progress(world: &World) -> f32 {
+        world
+            .resource::<ForageRegistry>()
+            .patch(SOURCE)
+            .expect("seeded patch")
+            .cultivation_progress
+    }
+
+    /// Grant the harness faction full knowledge of a discovery (the Rung 1b/1c ledger gate that the
+    /// Cultivate / Corral investment policies check).
+    fn grant_knowledge(world: &mut World, discovery: u32) {
+        world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(BAND_FACTION, discovery, scalar_one());
+    }
+
+    /// **Cultivate is an investment.** With Cultivation known and the patch Thriving, working it under
+    /// the `Cultivate` policy pays only `cultivating_yield_fraction × the Sustain (MSY) yield` (the
+    /// dip) while accruing progress each turn; once progress reaches `1.0` the patch is cultivated and
+    /// pays the full tended yield instead — strictly more than the wild Sustain skim.
+    #[test]
+    fn cultivate_policy_pays_the_dip_then_the_tended_yield() {
+        let (mut world, tile) = world_with_source(CAP);
+        grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
+        let (fraction, progress_per_turn) = {
+            let labor = world.resource::<LaborConfigHandle>().get();
+            (
+                labor.forage.cultivation.cultivating_yield_fraction,
+                labor.forage.cultivation.progress_per_turn,
+            )
+        };
+
+        // Baseline: what the same patch pays under Sustain (the MSY skim) with ample workers.
+        let sustain_world_band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: SOURCE,
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        let sustain_yield = world
+            .get::<LaborAllocation>(sustain_world_band)
+            .unwrap()
+            .last_yields[0]
+            .actual;
+
+        // Cultivate on a fresh patch: the take is the dip, and progress accrues.
+        let (mut world, tile) = world_with_source(CAP);
+        grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: SOURCE,
+                    policy: FollowPolicy::Cultivate,
+                },
+                workers: WORKERS,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        let preparing = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+        assert!(
+            (preparing - fraction * sustain_yield).abs() < FORECAST_EPSILON,
+            "preparing pays fraction × the Sustain yield: {preparing} vs {}",
+            fraction * sustain_yield
+        );
+        assert!(
+            (patch_progress(&world) - progress_per_turn).abs() < 1e-6,
+            "one Cultivate turn accrues progress_per_turn: {}",
+            patch_progress(&world)
+        );
+
+        // Run it to completion. The regrowth system runs alongside (as it does in the real Logistics
+        // stage) — the preparing take is a *fraction* of MSY, so it is sustainable and the patch stays
+        // healthy while the ground is prepared: exactly the point of drawing the dip off the MSY
+        // ceiling rather than depleting the patch to pay for the investment.
+        let turns_to_prepare = (1.0 / progress_per_turn).ceil() as u32;
+        for _ in 0..turns_to_prepare {
+            world.run_system_once(advance_forage_regrowth);
+            world.run_system_once(advance_labor_allocation);
+        }
+        assert_eq!(
+            world
+                .resource::<ForageRegistry>()
+                .patch(SOURCE)
+                .unwrap()
+                .ecology_phase,
+            EcologyPhase::Thriving,
+            "the preparing dip is a sustainable draw — the patch never leaves Thriving"
+        );
+        assert!(
+            world
+                .resource::<ForageRegistry>()
+                .patch(SOURCE)
+                .unwrap()
+                .is_cultivated(),
+            "sustained Cultivate work completes the patch"
+        );
+        world.run_system_once(advance_labor_allocation);
+        let tended = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+        assert!(
+            tended > sustain_yield,
+            "a tended patch out-pays the wild Sustain skim: {tended} vs {sustain_yield}"
+        );
+        assert!(
+            tended > preparing,
+            "the payoff exceeds the preparing dip: {tended} vs {preparing}"
+        );
+    }
+
+    /// **Corral mirrors Cultivate.** With Herding known and a domesticated herd it owns, a band working
+    /// it under `Corral` takes only `corralling_yield_fraction × the Sustain (MSY) yield` while the pen
+    /// accrues; at `corral_progress == 1.0` the herd is penned and pays the corral yield.
+    #[test]
+    fn corral_policy_pays_the_dip_then_pens_and_pays_the_corral_yield() {
+        const BIG_HERD_CAP: f32 = 1_000.0;
+        let (fraction, build_per_turn) = {
+            let (world, _) = world_with_source(CAP);
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            (
+                fauna.husbandry.corralling_yield_fraction,
+                fauna.husbandry.corral_build_progress_per_turn,
+            )
+        };
+
+        // Baseline Sustain hunt yield on the same herd (ample hunters → ceiling-bound = MSY).
+        let (mut world, tile) = world_with_source(CAP);
+        reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
+        let sustain_band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: WORKERS,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        let sustain_yield = world
+            .get::<LaborAllocation>(sustain_band)
+            .unwrap()
+            .last_yields[0]
+            .actual;
+
+        // Corral on a domesticated herd the faction owns + knows Herding for.
+        let (mut world, tile) = world_with_source(CAP);
+        reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
+        grant_knowledge(&mut world, HERDING_DISCOVERY_ID);
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            registry.herds[0].claim_domestication(BAND_FACTION);
+        }
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Corral,
+                },
+                workers: WORKERS,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        let preparing = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+        assert!(
+            (preparing - fraction * sustain_yield).abs() < FORECAST_EPSILON,
+            "building the pen pays fraction × the Sustain yield: {preparing} vs {}",
+            fraction * sustain_yield
+        );
+
+        let turns_to_build = (1.0 / build_per_turn).ceil() as u32;
+        for _ in 0..turns_to_build {
+            world.run_system_once(advance_labor_allocation);
+        }
+        assert!(
+            world
+                .resource::<HerdRegistry>()
+                .find(HERD_ID)
+                .unwrap()
+                .is_corralled(),
+            "sustained Corral work finishes the pen"
+        );
+        world.run_system_once(advance_labor_allocation);
+        let corral_yield = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+        assert!(
+            corral_yield > preparing,
+            "a penned herd out-pays the build dip: {corral_yield} vs {preparing}"
+        );
+    }
+
+    /// Without the earned knowledge, the investment policies accrue **nothing** — the take is still the
+    /// reduced preparing dip (the crew tries, and gets nowhere), but no progress is made. The command
+    /// layer rejects the assignment outright; this guards the sim-side gate underneath it.
+    #[test]
+    fn investment_policies_accrue_nothing_without_the_knowledge() {
+        let (mut world, tile) = world_with_source(CAP);
+        spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: SOURCE,
+                    policy: FollowPolicy::Cultivate,
+                },
+                workers: WORKERS,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        assert_eq!(
+            patch_progress(&world),
+            0.0,
+            "Cultivate without Cultivation knowledge accrues nothing"
+        );
+
+        let (mut world, tile) = world_with_source(CAP);
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            registry.herds[0].claim_domestication(BAND_FACTION);
+        }
+        spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Corral,
+                },
+                workers: WORKERS,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
+        assert_eq!(
+            herd.corral_progress, 0.0,
+            "Corral without Herding knowledge builds nothing"
+        );
+        assert!(!herd.is_corralled());
+    }
+
+    /// A Corral assignment on a herd that is **not domesticated** builds nothing (the second gate).
+    #[test]
+    fn corral_accrues_nothing_on_a_wild_herd() {
+        let (mut world, tile) = world_with_source(CAP);
+        grant_knowledge(&mut world, HERDING_DISCOVERY_ID);
+        spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Corral,
+                },
+                workers: WORKERS,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
+        assert_eq!(
+            herd.corral_progress, 0.0,
+            "a wild herd cannot be penned — tame it first"
         );
     }
 }

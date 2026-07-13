@@ -615,10 +615,30 @@ pub struct LaborAssignment {
 /// herd's net regrowth this turn (`net_biomass_delta(..).max(0) × provisions_per_biomass`, scaled
 /// by the same output multiplier). A per-turn `actual > sustainable` is the (client-derived)
 /// overhunting signal — a *leading* flow indicator, distinct from the stock-based `ecology_phase`.
+///
+/// `workers_needed` = the **minimum** assigned workers that would have produced the same take — the
+/// **overstaffing** signal. A source's take is `min(policy_ceiling, workers × per_worker_capacity,
+/// biomass, …)`; when the binding constraint is NOT labor, the extra workers were idle. It is
+/// `ceil(take_biomass / per_worker_capacity)` clamped into `[1, assigned]` when anything was taken,
+/// else `0`; a *tended* patch / *corralled* herd (maintenance labor, not scaling gather) is defined
+/// as `1`. `workers_needed < assigned` ⇒ the source is overstaffed (client flags the wasted labor).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SourceYield {
     pub actual: f32,
     pub sustainable: f32,
+    pub workers_needed: u32,
+}
+
+impl SourceYield {
+    /// A source that has produced nothing: the row every assignment starts each turn's resolution
+    /// with (so an arm that bails — out of range, module lost, herd gone — leaves a correct 0-yield
+    /// row), and the row a freshly-staffed assignment carries until it is seeded from its pre-commit
+    /// forecast (`set_source_yield`) or resolved by a turn.
+    pub const ZERO: Self = Self {
+        actual: 0.0,
+        sustainable: 0.0,
+        workers_needed: 0,
+    };
 }
 
 /// A band's partition of its working-age pool across labor demands. Replaces the retired
@@ -663,10 +683,24 @@ impl LaborAllocation {
             .sum()
     }
 
+    /// Keep the derived `last_yields` the same length as `assignments` — the snapshot **zips the two
+    /// by index**, so a mutation that adds/removes an assignment without touching the telemetry would
+    /// hand one source's yield row to another. Padding with [`SourceYield::ZERO`] is the correct
+    /// default: a source with no telemetry has produced nothing yet.
+    fn align_yields(&mut self) {
+        self.last_yields
+            .resize(self.assignments.len(), SourceYield::ZERO);
+    }
+
     /// Set/replace the worker count for `target`, keeping `Σ ≤ available`. `workers == 0` removes
     /// the assignment (per-source unassign — the new "cancel"). An over-budget request is
     /// **clamped** to the free headroom (not rejected). Returns the worker count actually applied
     /// so the caller can report a clamp.
+    ///
+    /// The touched source's yield telemetry is dropped alongside its assignment and a freshly-staffed
+    /// source gets a [`SourceYield::ZERO`] row, which the command handler immediately overwrites with
+    /// the source's pre-commit forecast (`set_source_yield`) so the client never displays `+0.00` for
+    /// an assignment that will in fact produce next turn.
     pub fn set_assignment(&mut self, target: LaborTarget, workers: u32, available: u32) -> u32 {
         // Free headroom excludes any existing assignment on the same source (it is being replaced).
         let others: u32 = self
@@ -677,16 +711,40 @@ impl LaborAllocation {
             .sum();
         let headroom = available.saturating_sub(others);
         let applied = workers.min(headroom);
-        // Drop any prior assignment on this source, then re-add if non-zero (captures a new policy).
-        self.assignments.retain(|a| !a.target.same_source(&target));
+        self.align_yields();
+        // Drop any prior assignment on this source (and its now-stale telemetry row), then re-add if
+        // non-zero (captures a new policy).
+        if let Some(idx) = self
+            .assignments
+            .iter()
+            .position(|a| a.target.same_source(&target))
+        {
+            self.assignments.remove(idx);
+            self.last_yields.remove(idx);
+        }
         if applied > 0 {
-            self.assignments.push(LaborAssignment { target, workers });
-            // Re-store the clamped count (the push above used the requested value).
-            if let Some(last) = self.assignments.last_mut() {
-                last.workers = applied;
-            }
+            self.assignments.push(LaborAssignment {
+                target,
+                workers: applied,
+            });
+            self.last_yields.push(SourceYield::ZERO);
         }
         applied
+    }
+
+    /// Overwrite one source's derived yield telemetry row (assign-time **forecast seeding**: the row
+    /// is set to what the source is expected to produce next turn, so the map annotation and the band
+    /// panel show the real number the moment workers are committed instead of `+0.00`). A no-op when
+    /// the source is not staffed.
+    pub fn set_source_yield(&mut self, target: &LaborTarget, yields: SourceYield) {
+        self.align_yields();
+        if let Some(idx) = self
+            .assignments
+            .iter()
+            .position(|a| a.target.same_source(target))
+        {
+            self.last_yields[idx] = yields;
+        }
     }
 
     /// Trim assignments so `Σ ≤ available` (called each turn in case `working` shrank). Reduces
@@ -705,11 +763,13 @@ impl LaborAllocation {
             }
             total = self.assigned_total();
         }
+        self.align_yields();
     }
 
     /// Clear every assignment (the repurposed `cancel_order` — band goes fully idle).
     pub fn clear(&mut self) {
         self.assignments.clear();
+        self.last_yields.clear();
     }
 }
 
@@ -722,10 +782,24 @@ pub struct BandTravel {
     pub target: UVec2,
 }
 
-/// Auto-hunt policy for a Follow: how much biomass the band takes each turn once
-/// adjacent. Sustain ≈ regrowth (group stable), Surplus > regrowth (slow decline),
-/// Market = large commercial share (fast decline → collapse, boosted trade goods),
-/// Eradicate = max (drives the group toward local extinction).
+/// Take policy for a worked food source — shared by the Forage and Hunt labor arms.
+///
+/// **The four extractive rungs** size how much biomass the band draws each turn: Sustain ≈ regrowth
+/// (source stable), Surplus > regrowth (slow decline), Market = large commercial share (fast decline
+/// → collapse, boosted trade goods), Eradicate = max (drives the source toward local extinction).
+///
+/// **The two investment rungs** (Intensification — "Cultivate & Corral as explicit policies") are
+/// *not* extractive: they spend the crew's turns **preparing the ground / building the pen** instead
+/// of gathering. While preparing, the source's take ceiling is only
+/// `cultivating_yield_fraction` / `corralling_yield_fraction` × its **Sustain (MSY)** ceiling — a
+/// deliberate **yield dip**, drawn sustainably so the source stays healthy — and it accrues
+/// `ForagePatch::cultivation_progress` / `Herd::corral_progress` at `progress_per_turn`. At progress
+/// `1.0` the source becomes a **tended patch / corralled herd** and pays the full managed yield.
+/// This makes intensifying an *investment with a real up-front cost*, gated on the player's time
+/// horizon, instead of a free by-product of Sustain.
+///
+/// The two are **kind-specific** (validated at `assign_labor`): `Cultivate` is Forage-only,
+/// `Corral` is Hunt-only. See [`FollowPolicy::valid_for_forage`] / [`FollowPolicy::valid_for_hunt`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FollowPolicy {
     #[default]
@@ -733,6 +807,10 @@ pub enum FollowPolicy {
     Surplus,
     Market,
     Eradicate,
+    /// **Forage-only.** Prepare the patch into a tended crop (see the enum docs).
+    Cultivate,
+    /// **Hunt-only.** Build the pen for a domesticated herd (see the enum docs).
+    Corral,
 }
 
 impl FollowPolicy {
@@ -742,7 +820,22 @@ impl FollowPolicy {
             FollowPolicy::Surplus => "surplus",
             FollowPolicy::Market => "market",
             FollowPolicy::Eradicate => "eradicate",
+            FollowPolicy::Cultivate => "cultivate",
+            FollowPolicy::Corral => "corral",
         }
+    }
+
+    /// Policies a **Forage** assignment accepts: the four extractive rungs plus `Cultivate`.
+    /// `Corral` is an animal-only investment — a forage assignment carrying it is rejected at
+    /// `assign_labor` (and defensively yields nothing in `forage_policy_ceiling`).
+    pub fn valid_for_forage(self) -> bool {
+        !matches!(self, FollowPolicy::Corral)
+    }
+
+    /// Policies a **Hunt** assignment accepts: the four extractive rungs plus `Corral`.
+    /// `Cultivate` is a plant-only investment — see [`FollowPolicy::valid_for_forage`].
+    pub fn valid_for_hunt(self) -> bool {
+        !matches!(self, FollowPolicy::Cultivate)
     }
 }
 
@@ -754,6 +847,8 @@ impl FromStr for FollowPolicy {
             "surplus" => Ok(FollowPolicy::Surplus),
             "market" => Ok(FollowPolicy::Market),
             "eradicate" => Ok(FollowPolicy::Eradicate),
+            "cultivate" => Ok(FollowPolicy::Cultivate),
+            "corral" => Ok(FollowPolicy::Corral),
             "sustain" | "" => Ok(FollowPolicy::Sustain),
             _ => Err(()),
         }

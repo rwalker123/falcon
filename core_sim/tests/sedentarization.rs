@@ -9,11 +9,12 @@ use bevy::MinimalPlugins;
 use core_sim::{
     scalar_one, scalar_zero, sedentarization_tick, spawn_initial_herds, spawn_initial_world,
     CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
-    FactionInventory, FaunaConfigHandle, FogRevealLedger, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, Scalar, SedentarizationConfigHandle, SedentarizationScore,
-    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, FOOD,
+    FactionInventory, FaunaConfigHandle, FogRevealLedger, ForagePatch, ForageRegistry,
+    GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore,
+    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, Scalar,
+    SedentarizationConfigHandle, SedentarizationScore, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, FOOD,
 };
 
 fn spawn_world() -> App {
@@ -55,6 +56,7 @@ fn spawn_world() -> App {
     app.world.insert_resource(SedentarizationScore::default());
     app.world
         .insert_resource(SedentarizationConfigHandle::default());
+    app.world.insert_resource(ForageRegistry::default());
     app.world.run_system_once(spawn_initial_herds);
     app
 }
@@ -106,6 +108,18 @@ fn domesticate(app: &mut App, faction: FactionId, count: usize) {
     }
 }
 
+/// Insert `count` cultivated forage patches owned by `faction` — the plant half of the
+/// domestication signal (`ForageRegistry::cultivated_count`).
+fn cultivate_patches(app: &mut App, faction: FactionId, count: u32) {
+    let mut registry = app.world.resource_mut::<ForageRegistry>();
+    for i in 0..count {
+        let mut patch = ForagePatch::new(bevy::math::UVec2::new(i, 900), 120.0);
+        patch.cultivation_progress = 1.0;
+        patch.owner = Some(faction);
+        registry.patches.insert(patch.tile, patch);
+    }
+}
+
 fn run_tick(app: &mut App) {
     app.world.run_system_once(sedentarization_tick);
 }
@@ -141,6 +155,27 @@ fn score_rises_with_domestication_and_surplus() {
     assert!(
         after > baseline + 30.0,
         "domestication + surplus should raise the score: {baseline} -> {after}"
+    );
+}
+
+/// Cultivated forage patches feed the SAME domestication signal as domesticated herds: with no
+/// herds tamed, cultivating patches alone raises the score above a bare tribe's baseline.
+#[test]
+fn cultivated_patches_feed_domestication_signal() {
+    let mut app = spawn_world();
+    spawn_cohort(&mut app, FactionId(0), 300);
+    run_tick(&mut app);
+    let baseline = score(&app, FactionId(0));
+
+    // No herds domesticated — the domestication input comes purely from cultivated patches.
+    cultivate_patches(&mut app, FactionId(0), 3);
+    for _ in 0..6 {
+        run_tick(&mut app);
+    }
+    let after = score(&app, FactionId(0));
+    assert!(
+        after > baseline,
+        "cultivated patches should raise the domestication signal: {baseline} -> {after}"
     );
 }
 

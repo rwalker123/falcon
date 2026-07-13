@@ -160,3 +160,58 @@ static func apply_button(button: Button, variant: String = "ghost") -> void:
 	button.add_theme_color_override("font_pressed_color", text)
 	button.add_theme_color_override("font_focus_color", INK)
 	button.add_theme_color_override("font_disabled_color", INK_FAINT)
+
+# ---- inline link buttons ---------------------------------------------------
+# Padding around an inline link's text. Deliberately far tighter than the boxed
+# `_button_stylebox` chrome (11 × 9) so a clickable label keeps a plain label's
+# footprint and never grows the row it shares with other widgets (e.g. the Band
+# panel's Current-actions rows, whose label sits beside a −/+ worker stepper).
+const LINK_PADDING_X := 4
+const LINK_PADDING_Y := 2
+const LINK_CORNER_RADIUS := 5
+
+static func _link_hover_stylebox() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	# The ghost button's hover fill/border — same "this is actionable" language,
+	# just without the at-rest box.
+	sb.bg_color = Color(0.090, 0.188, 0.161, 1.0)   # #173029
+	sb.set_corner_radius_all(LINK_CORNER_RADIUS)
+	sb.set_border_width_all(1)
+	sb.border_color = SIGNAL_DEEP
+	sb.content_margin_left = LINK_PADDING_X
+	sb.content_margin_right = LINK_PADDING_X
+	sb.content_margin_top = LINK_PADDING_Y
+	sb.content_margin_bottom = LINK_PADDING_Y
+	return sb
+
+static func _link_rest_stylebox() -> StyleBoxEmpty:
+	var sb := StyleBoxEmpty.new()
+	# Same content margins as the hover skin, so the text does not shift on hover.
+	sb.content_margin_left = LINK_PADDING_X
+	sb.content_margin_right = LINK_PADDING_X
+	sb.content_margin_top = LINK_PADDING_Y
+	sb.content_margin_bottom = LINK_PADDING_Y
+	return sb
+
+## Apply the **inline link** treatment to a Button: reads as a plain label at rest
+## (no box), tints its background + border and lifts its text to `SIGNAL` on hover,
+## with a pointing-hand cursor — so an in-row label advertises itself as clickable
+## without shouting like a full ghost button. `base_color` is the at-rest font color,
+## so a caller's semantic tint (e.g. `WARN` on a pending row) survives.
+static func apply_link_button(button: Button, base_color: Color = INK) -> void:
+	if button == null:
+		return
+	button.add_theme_stylebox_override("normal", _link_rest_stylebox())
+	button.add_theme_stylebox_override("hover", _link_hover_stylebox())
+	button.add_theme_stylebox_override("pressed", _link_hover_stylebox())
+	button.add_theme_stylebox_override("disabled", _link_rest_stylebox())
+	var focus := _link_hover_stylebox()
+	focus.draw_center = false
+	button.add_theme_stylebox_override("focus", focus)
+	button.add_theme_color_override("font_color", base_color)
+	button.add_theme_color_override("font_hover_color", SIGNAL)
+	button.add_theme_color_override("font_pressed_color", SIGNAL)
+	button.add_theme_color_override("font_focus_color", base_color)
+	button.add_theme_color_override("font_disabled_color", INK_FAINT)
+	button.focus_mode = Control.FOCUS_NONE
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND

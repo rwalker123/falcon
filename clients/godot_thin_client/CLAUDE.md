@@ -59,8 +59,8 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/TurnOrb.gd` / `ui/TurnOrb.tscn` | The bottom-right **turn orb** (replaces the old "Advance Turn" button): calm cyan pulse when the attention registry is empty, else a severity-tinted count badge + a reasons popover (see "Turn orb & attention model"). Re-emits `focus_requested` (jump) / `advance_requested` so Main's advance/jump wiring is unchanged; palette from `HudStyle`, all geometry/severity/kind as named constants |
 | `ui/MagnifierButton.gd` | Zoom-rail in/out button that `_draw`s a crisp magnifier icon (lens + handle + inner `+`/`−`, `zoom_sign` picks which) — font magnifier glyphs render as tofu/blobs. Monochrome `HudStyle` ink → `SIGNAL` on hover |
 | `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content |
-| `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, and `apply_button(btn, "primary"/"ghost"/"armed")`. Every HUD surface styles through here |
-| `ui/FoodIcons.gd` | Shared map-marker emoji glyphs — food modules (`for_site`) and fauna herds (`for_herd`, species keyword matched in the herd label, longest-first). Covers migratory species plus wild game (deer/boar/rabbit/fowl). Used by the Harvest/Hunt button (`Hud.gd`) and the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`) so a source always reads the same |
+| `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, `apply_button(btn, "primary"/"ghost"/"armed")`, and `apply_link_button(btn, base_color)` — the **inline link** treatment for a clickable label inside a row (no box at rest; hover tint + cyan text + pointing hand), used by the band panel's clickable Current-actions rows. Every HUD surface styles through here |
+| `ui/FoodIcons.gd` | Shared glyph vocabulary — food modules (`for_site`), fauna herds (`for_herd`, species keyword matched in the herd label, longest-first), and **take policies** (`for_policy`, `POLICY_ICONS`: the four extractive rungs sustain ♻ / surplus ⬆ / market ⇄ / eradicate 💀, plus the two **investment** rungs cultivate 🌱 / corral 🐄 — 🐄 is the same glyph the herd drawer's Domesticated/Corralled badge uses; both verified legible at picker size in `forage_cultivate.png` / `herd_corral.png`; `""` for unknown). Used by the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`), the Harvest/Hunt button + the **band panel's Current-actions rows** (each row leads with its resource glyph), and — for policies — BOTH the Hud policy-picker buttons (`_build_policy_picker`) and the map's yield labels (`MapView._draw_yield_label` appends the icon: `+0.38 ♻`), so a resource/policy always reads the same on the panel and on the map. **Policy glyphs are deliberately line-art** (♻ ⬆ ⇄) plus the high-contrast 💀: pictographic emoji (🪙 coin, 💰 money bag) render as a featureless grey blob at the ~12–13px these are drawn at, and ⚖ renders tiny/faint — same glyph-legibility hazard that forced `MagnifierButton` to hand-draw. Verified in `band_panel_left.png` / `map_band_work.png`. Also the **action-status** glyphs (`for_status`, `STATUS_ICONS`) the Band panel's Current-actions + Active-expeditions rows use instead of words — `pending ○` (the ORDER isn't acknowledged yet; a modifier that rides on any row, amber) / `working ●` (a confirmed local forage/hunt row, and expedition phase `hunting`) / `outbound ➤` / `awaiting ▮▮` / `delivering ◄` = `returning ◄` (both are "coming home"; the tooltip distinguishes them). Same line-art rule and the same hazard: `◌` (dotted circle) was tried for `pending` and rejected — it renders thin and faint at row size — and `⏸` for `awaiting` carries emoji presentation (tofu/blob), so `▮▮` is used. Verified at true size in `band_panel_status_glyphs.png` |
 | `tools/ui_preview.gd` / `.tscn` | Dev-only preview harness: instances the real `HudLayer` with canned selection/targeting data, renders each state, and saves PNGs to `ui_preview_out/` (gitignored). Iterate on HUD styling without a server: `godot --path . res://tools/ui_preview.tscn` |
 | `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link; scouting draws no disc — it extends sight in the fog) without a server: `godot --path . res://tools/map_preview.tscn` |
 | `tools/band_panel_preview.gd` / `.tscn` | Dev-only preview harness for the **Band/City dockable panel**: instances the real `BandCityPanel` + `HudLayer`, injects the panel into the HUD, pushes a seeded player band through `update_band_alerts`, and dumps the panel docked left/right/top/bottom + collapsed (`band_panel_*.png`) so the chrome + the relocated band detail + the HUD reflow can be eyeballed without a server: `godot --path . res://tools/band_panel_preview.tscn` |
@@ -587,7 +587,22 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   wildlife on the hex, built at runtime into `%RosterList` as two sub-groups
   (`Bands (N)` / `Wildlife (N)`); each row is a `Button` hosting a mouse-transparent
   HBox — a selection accent, a **vitality dot**, name, size, and (bands) an
-  activity glyph. Below the roster, `%OccupantDetail` is the selected occupant's
+  activity glyph; a **wildlife** row also carries the **fauna id** as a dim meta suffix
+  (`🦌 Red Deer   game_deer_07   Big game`). **A detail row never restates what its
+  roster row already shows** (the same rule the Band/City panel header follows). The roster
+  row IS the identity line — name + size (+ the herd's fauna id) — so every drawer dropped
+  the rows that echoed it: band → `Unit` + `Size`; herd → `Herd` / `Species` / `Size`
+  (the name appeared three times, the size twice); expedition → `Unit` + `Party` (`Party`
+  printed the same `size` field the row's meta shows). The herd's **fauna id moved INTO the
+  row** as a dim meta — it appears nowhere else in the UI and the command feed names herds
+  by it, so it had to survive the `Herd:` row; nothing else was load-bearing (an expedition
+  rides `_roster_units`, so `_build_band_row` already prints the very `id` its `Unit` line
+  did). What's left in a drawer is only what the row can't show — herd: Biomass / Ecology /
+  Husbandry / Corral / Position; expedition: Mission / Target / Policy / Phase / Carried /
+  Position. **Expedition `Policy` / `Phase` keep their WORDS** — the compact
+  Active-expeditions row is where the glyph vocabulary belongs; the drawer IS the
+  disclosure. Below the roster,
+  `%OccupantDetail` is the selected occupant's
   **detail drawer** for **herds/expeditions** (`_herd_summary_lines` +
   `%HerdAssignControls`; expedition → `_build_expedition_panel` into
   `%AllocationPanel`). **Player-band detail relocated out of the Occupants card into
@@ -614,20 +629,64 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   workers (built for N even though only one exists live). Three runtime-built control sets replace the retired single-task Scout/Cancel,
   Hunt/policy, and Forage buttons:
   - **`%AllocationPanel`** (band drawer, player band only, `_build_allocation_panel`): reads as a
-    "current actions" report — a `Population <size> · Workers <working_age> (Idle <n>)` header (spells
-    out that only the ~16 working-age labor, not the 30 people — children/elders are dependents), a
+    "current actions" report — a `Population <size> · Workers <working_age> (Idle <n>)` line (spells
+    out that only the ~16 working-age labor, not the 30 people — children/elders are dependents;
+    `WORKERS_HEADER_FORMAT`, idle from `_effective_idle` so it counts optimistically), a
     **Current actions** section with one `−/+` **worker-stepper** row per staffed Forage tile / Hunt
-    herd (from the cohort's `labor_assignments`; an empty-state hint when none). **Both source kinds
-    tag their take policy** like `[sustain]` (Forage `(x, y) [sustain]`, Hunt `<herd> [sustain]`),
-    read off the assignment's `policy` field (now populated for forage too); an older snapshot with no
-    forage policy falls back to no tag. **Each source row headlines its per-turn food yield**
+    herd (from the cohort's `labor_assignments`; an empty-state hint when none). **A row states its
+    policy and its status as GLYPHS, not words** (`🌰 Forage (27, 26) +0.48 /turn  ♻  ●`) — the old
+    `[sustain]` / `· pending` word-tags were long and, for pending, redundant with the amber tint.
+    Both come from the one glyph registry, `FoodIcons` (`for_policy` / `for_status`; see the
+    **action-status vocabulary** header block in `Hud.gd`), and the WORDS move into the row tooltip
+    (policy name + its existing `FORAGE_POLICY_HINTS`/`HUNT_POLICY_HINTS` behaviour hint, plus the
+    status in words), composed WITH the tooltip the row already carried (yield readout, overstaffing
+    explanation, click-to-focus hint). Two orthogonal layers: **status** = what the action is doing
+    (a confirmed local forage/hunt row has no sim phase — it is simply `working` `●`), and
+    **`pending`** = a state of the ORDER (composed locally, not yet acknowledged; it rides on ANY row,
+    is a modifier rather than a phase member, wins the glyph slot with `○`, and keeps the amber label
+    tint). The policy glyph is read off the assignment's `policy` field (populated for forage too); an
+    older snapshot with no policy falls back to no glyph. **Each source row headlines its per-turn food yield**
     (`… +0.31 /turn`, the assignment's `actual_yield`), with a WARN-tinted `⚠` **overdraw flag** when
     `actual > sustainable + ε` (`OVERHUNT_EPSILON`). A Sustain source gathers at its renewable ceiling
     (`actual == sustainable` → no flag, reads `… · renewable`); a Surplus/Market/Eradicate **forage
     patch** or an over-hunted herd pushes `actual` above `sustainable` → the flag trips (forage is no
     longer hardcoded renewable now that the policy axis can decline a patch). A
-    `tooltip_text` spells out actual-vs-sustainable.
-    `actual_yield`/`sustainable_yield` are decoded per assignment in `native/src/lib.rs` (inside
+    `tooltip_text` spells out actual-vs-sustainable. **Each source row also flags overstaffing** — a
+    WARN-tinted `· only N of M working` note (`OVERSTAFF_NOTE_FORMAT`) when `workers > workers_needed`
+    (and `workers_needed > 0`), i.e. the source's take was capped at its ceiling so the surplus workers
+    idled HERE and should be reassigned; the `tooltip_text` (`OVERSTAFF_TOOLTIP`) explains it. This is
+    **orthogonal to the ⚠ overdraw flag** and deliberately NOT the same glyph: overdraw is *ecological*
+    (taking past regrowth), overstaffing is *labor* (wasted workers) — a source can be overstaffed while
+    perfectly sustainable (every policy has a ceiling), or overdrawn while fully used. `workers_needed
+    == 0` (rehydrated/older snapshot, or a pending optimistic assign) means "unknown" → no note, never a
+    wrong one. Both the ⚠ and the note are rendered by `_build_worker_stepper` (`warn` / `note` params)
+    off one `_source_yield_readout`, so Forage and Hunt rows share the logic.
+    **Each source row leads with its resource glyph** — `FoodIcons.for_site(module)` for a Forage
+    row (resolved from `_food_module_by_tile`, the snapshot `food_modules` array pushed by `Main` →
+    **`Hud.update_food_modules`**, keyed by tile) and `FoodIcons.for_herd(species)` for a Hunt row —
+    the SAME icon the map marker draws, so a source reads identically in the panel and on the map. An
+    unresolvable module renders the row bare (no fallback sprig).
+    **Each source row's LABEL is clickable — it jumps the map to the source being worked.**
+    `_build_worker_stepper`'s optional `on_focus_source` Callable turns the label into an inline link
+    Button (`HudStyle.apply_link_button` — plain at rest, hover tint + `SIGNAL` text + pointing-hand
+    cursor, a far tighter padding than the boxed ghost chrome); it is a *separate child* from the
+    `−`/`+` stepper, which is untouched, and the count stays right-aligned. Both handlers route
+    through `_focus_labor_source` — the SAME path the Active-expeditions rows and the turn-orb
+    "Jump →" use: `alert_focus_requested` → `MapView.focus_and_select_tile`, plus (herd only)
+    `roster_occupant_selected` → `MapView.select_occupant` so the herd's own drawer opens rather than
+    whatever occupant the hex auto-selects; `_panel_band` is restored afterwards, so focusing a hex
+    that hosts another band can't hijack the panel. **Forage** jumps to the assignment's
+    `target_x/target_y` (a patch is a fixed tile). **Hunt** deliberately does NOT — herds MIGRATE, so
+    `_focus_hunt_source` resolves the herd's **live** tile from `_world_herds` via `_find_world_herd`
+    (the Hud mirror of `MapView._herd_by_id`, which the hunted-herd ring already resolves through),
+    falling back to the assignment target only when the herd is unknown. `_world_herds` is the
+    snapshot `herds` array, pushed each snapshot by `Main` → **`Hud.update_herds`**; it also backs
+    `_herd_label_for_id`'s new fallback, so an off-hex hunted herd reads "Red Deer" instead of the raw
+    `game_deer_07` id. **Scout/Warrior are band-wide roles with no tile → plain, non-clickable
+    labels.** Verified by `band_panel_preview` state `band_panel_source_row_hover` (the harness
+    force-hovers the Hunt link, so the affordance shows in a static frame).
+    `actual_yield`/`sustainable_yield`/`workers_needed` are decoded per assignment in
+    `native/src/lib.rs` (inside
     `labor_assignments`); the band-level food flow (net rate + Gathered/Hunted/Eaten breakdown) lives
     on the **Food summary line**, not here — see "Band food status". Then a **Band roles**
     section with the always-shown **Scout** + **Warrior** rows (even at 0), each with a one-line hint so
@@ -639,8 +698,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   - **Optimistic pending feedback** (slice 3b UX): assigning workers or moving the band shows
     immediately, before the next snapshot. `_emit_assign_labor` / `_try_dispatch_pending_move_band`
     record a HUD-local **pending** entry per band entity (`_pending_labor[entity] = {turn, assign:{key→…},
-    move:{x,y}}`) and re-render. In the panel, a pending source row reads **amber with a "· pending"
-    suffix** and the header **Idle** counts optimistically (`_effective_idle` = working-age − effective
+    move:{x,y}}`) and re-render. In the panel, a pending source row reads **amber with the `○` pending
+    glyph** (the words live in its tooltip — "Pending — starts when you advance the turn"; the amber
+    stays the primary signal, tying the row to the amber pending hex on the map) and the header
+    **Idle** counts optimistically (`_effective_idle` = working-age − effective
     assigned, overlaying pending). **Reconciliation is turn-based:** each pending entry is tagged with the
     snapshot `turn` (header tick, set in `update_overlay`); `_reconcile_pending` (called from
     `update_band_alerts` each snapshot) drops entries issued on an OLDER turn — a newer-turn snapshot is
@@ -660,10 +721,25 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     food-income **green**; a source that overdraws (`actual_yield > sustainable_yield + ε`, reusing the
     panel's overdraw test) reads **WARN amber + a `⚠`** — an over-hunted herd, or a non-Sustain forage
     patch now that the forage policy axis can decline one (a Sustain forage gathers at regrowth, so it
-    stays green). The
-    label font scales with the hex radius (clamped) and the whole annotation is **LOD-suppressed below
+    stays green). The label sits on a **dark rounded banner/pill plate** (`_draw_pill_plate`, the shared
+    pill chrome extracted out of `_draw_count_pill` — the `×N`/`+N` badges draw the same primitive):
+    bare drop-shadowed text washed out on the light tan biomes (prairie/desert), so the plate is sized to
+    the MEASURED text+glyph run plus symmetric padding (`YIELD_LABEL_PLATE_PAD_FACTOR`, a fraction of the
+    font size) and centered on the label's existing anchor, near-black + slightly translucent
+    (`YIELD_LABEL_PLATE_BG`) so the terrain still reads through. The
+    label font scales with the hex radius (clamped) and the whole annotation (plate included) is
+    **LOD-suppressed below
     `ICON_MIN_DETAIL_RADIUS`** (like the secondary markers) so far zoom stays clean. Scout/Warrior
-    produce no food → no label. **Scouting draws no map highlight** — staffed scouts extend the band's
+    produce no food → no label. **The labels are DEFERRED to the very end of `_draw`** — they are an
+    annotation OVER the map, and drawn inline in the highlight pass they were painted over by every
+    later layer (the dashed-amber pending overlays, the band→herd links, the hunted-herd rings, and the
+    secondary herd/food glyphs — a deer glyph landing squarely on the number). The highlight pass now
+    `_queue_yield_label`s each request into `_deferred_yield_labels` (cleared at the top of
+    `_draw_band_work_highlights`, before its early-outs) and `_flush_yield_labels()` renders the batch
+    as the LAST draw call, after the markers/rings/links/pending/targeting. The LOD gate stays at the
+    QUEUE site (`show_yields`), so a far-zoom label is never queued and deferral can't bypass the
+    suppression. Guarded by `map_preview` state `map_band_label_overlap` (a herd parked ON a worked
+    forage tile + a pending hunt dashing across the hunted herd's label) and `map_band_yield_farzoom`. **Scouting draws no map highlight** — staffed scouts extend the band's
     real sight range (visible directly in the fog as a wider Active radius); the old faint-blue scouted
     disc was removed because `scout_reveal_radius` no longer means a reveal-disc radius — it now carries
     the band's effective sight-range bonus (extra tiles beyond base, `0` when no scouts), which the
@@ -734,6 +810,88 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `food_forage_out_of_range` (single far band) / `food_forage_band_near` + `food_forage_band_far`
     (two bands, one tile — picker flips enabled↔disabled).
 
+  - **Cultivate / Corral — the INVESTMENT rungs** (on BOTH assign controls; the sim's
+    `FollowPolicy::Cultivate` / `Corral`): the extractive four take from a wild source; these two pay
+    an **up-front cost** — while the patch is being prepared / the pen built, the source yields only
+    its `ceilingCultivate` / `ceilingCorral` dip yield, then flips to the much higher `tendedYield` /
+    `corralYield`. **Kind-specific and the sim rejects the cross pairing**: Cultivate is forage-only
+    (`FORAGE_POLICY_OPTIONS`), Corral hunt-only (`HUNT_POLICY_OPTIONS`) — and Corral is offered on a
+    **local hunt only** (a hunting expedition follows the herd and builds no pen, so it keeps the
+    extractive `LABOR_HUNT_POLICIES`, as does the send-expedition launch picker).
+    - **Disabled-with-reason-AND-remedy, never hidden.** `_build_policy_picker(on_pick, selected,
+      options, gates)` renders a gated option **greyed, with every reason in the tooltip (one per
+      line) AND spelled out under the row**, so the player discovers the rung and its prerequisites
+      *before* acting. `gates` maps **policy → `Array[String]` of reasons** (read only through
+      `_gate_reasons`); **1 reason** renders the compact one-liner `🌱 Cultivate — <reason>`, **2+**
+      render a `🐄 Corral needs:` header + one indented `· <reason>` bullet each (a reason now carries
+      its remedy, so two on one line would not fit).
+      **Each reason states what's missing + live progress + the action that fixes it** — naming the
+      prerequisite alone told the player a door was locked without saying where the key is. All three
+      tracks are taught by the same action, so the remedy names the **Sustain** glyph (pulled from
+      `FoodIcons.POLICY_ICONS`, i.e. literally the button beside it): `Cultivation knowledge 55% — ♻
+      Sustain-forage a Thriving patch to learn it` / `Herding knowledge 35% — ♻ Sustain-hunt a Thriving
+      herd to learn it` / `Herd 40% tamed — ♻ Sustain-hunt this Thriving herd to finish taming it`.
+      The **patch-ecology** gate is a *stock* condition, not a policy one — a fully staffed Sustain
+      takes the whole regrowth and holds a Stressed patch Stressed forever — so its remedy is the
+      opposite advice: `Patch is Stressed — ease workers off and let it regrow to Thriving` (live
+      `patch_ecology_phase`, capitalized). Gates (`_forage_policy_gates` / `_hunt_policy_gates`,
+      mirroring the sim's `assign_labor` validation): Cultivate needs faction `cultivation >= 1.0`
+      **and** a Thriving patch; Corral needs `herding >= 1.0` **and** `domestication >= 1.0`. A gated
+      rung can never be the composed policy (re-validated every render, since a patch can leave
+      Thriving under a standing selection). **Known gap:** `_hunt_policy_gates` does NOT check herd
+      **ownership** — the sim's domestication track is per-faction, so a herd domesticated by ANOTHER
+      faction would enable Corral client-side while the sim rejects the assign.
+    - **The forecast states the deal.** `_forecast_inputs` maps an investment policy's ceiling to the
+      DIP yield and additionally returns its `payoff`; `_forecast_yield_row` then reads
+      **`Preparing: +0.24 /turn → then +1.20 /turn`** instead of `Expected yield:` — both halves
+      scaled by the band's `output_multiplier` like every other forecast. The managed source reports
+      per-worker == ceiling, so the stepper caps at **1 worker**, as it should.
+    - **Progress meters.** The tile card's `Cultivation N%` row is joined by the herd drawer's
+      `Corral: Building N%` (`corralProgress`, `_corral_label` / `_corral_value_hex`), flipping to the
+      SIGNAL-tinted `🐄 Corralled` once penned — the animal twin of `🌾 Tended Patch`.
+    - **Knowledge-unlock nudge.** `_ingest_intensification` keeps the per-faction tracks and fires a
+      ONE-SHOT command-feed note the turn a track crosses to complete ("Cultivation learned — The
+      Cultivate policy is now available on Thriving patches."). Only a real `<1 → >=1` transition
+      fires it (a track already complete on the first snapshot / a rehydrated save is silent), and
+      only for the player faction; the announced set is keyed per faction+track.
+    - Wire fields decoded in `native/src/lib.rs` (snapshot + delta, both paths share the same
+      `herds_to_array` / `forage_patches_to_array`): `ForagePatchState.ceilingCultivate` /
+      `tendedYield` → `patch_ceiling_cultivate` / `patch_tended_yield` on `tile_info` (and in
+      `FOW_DISCOVERED_HIDDEN_KEYS`); `HerdTelemetryState.ceilingCorral` / `corralYield` /
+      `corralProgress` → bare keys on the herd dict.
+    - ui_preview: `forage_cultivate` (enabled + the Preparing→then forecast + the feed nudge) /
+      `forage_cultivate_locked` (1 reason — knowledge 55% + its Sustain-forage remedy) /
+      `forage_cultivate_stressed` (1 reason — the ease-off-and-regrow ecology remedy) / `herd_corral`
+      (enabled + `Corral: Building 40%`) / `herd_corral_locked` (1 reason — herd 40% tamed) /
+      `herd_corral_locked_both` (**2 reasons** — the `🐄 Corral needs:` header + bullets layout).
+  - **Pre-commit yield forecast** (on BOTH assign controls): setting up a forage/hunt assignment used
+    to give no feedback — you staffed 6 workers, committed, advanced a turn, and only then learned 5
+    were wasted. The sim now streams, with **identical field names** on `ForagePatchState` and
+    `HerdTelemetryState` (`perWorkerYield` / `ceilingSustain` / `ceilingSurplus` / `ceilingMarket` /
+    `ceilingEradicate` — all food/turn at the source's **current biomass**, exported at
+    `output_multiplier = 1.0`), enough to compute the take *while composing*:
+    `expected(workers, policy) = min(workers × per_worker_yield, ceiling[policy])` (the ceilings are
+    already biomass-clamped, so that `min` IS the take) and `max_useful_workers(policy) =
+    ceil(ceiling[policy] / per_worker_yield)`. Decoded in `native/src/lib.rs`
+    (`herds_to_array` bare / `forage_patches_to_array`, both the snapshot + delta paths), carried to
+    the controls via the herd dict and — for the patch — via `forage_patch_lookup` → `_tile_info_at`
+    as `patch_`-prefixed keys (in `FOW_DISCOVERED_HIDDEN_KEYS`, so a remembered tile redacts them).
+    Two affordances, both recomputed on **every** stepper *and* policy change (both already re-render
+    the controls): a live HEALTHY-green **"Expected yield: +X.XX /turn"** row (scaled by the
+    **selected band's `output_multiplier`** — the sim exports at 1.0), and a **worker-stepper cap** of
+    `min(idle-worker cap, max_useful_workers(policy))` — the `+` goes dead at the cap and, when
+    max-useful is the binding one, a `"max N worker(s) useful here — more would be idle"` note
+    explains why (a Market/Eradicate ceiling exceeds Sustain's, so switching policy moves the cap).
+    Shared helpers `_forecast_inputs` / `_max_useful_workers` / `_expected_yield` /
+    `_forecast_worker_cap` / `_forecast_yield_row` serve both controls. **Guards:**
+    `per_worker_yield == 0` (dead-season tile, or an older snapshot with no forecast fields) → no row,
+    no cap, never a divide-by-zero; a **tended patch / corralled herd** reports every ceiling ==
+    `per_worker_yield` ⇒ max-useful 1, policy irrelevant. Applied to the **local hunt only** — an
+    expedition accumulates toward a carry cap over several turns of travel, so the herd's per-turn
+    ceiling is not the bound on its party size. The **post-hoc** `"· only N of M working"` overstaffing
+    note on the allocation rows stays: it still covers a source whose biomass FELL after you staffed
+    it. ui_preview: `food_tile` / `forage_forecast_cap` / `tended_tile` / `herd_hunt_band_near`.
+
   All emit `assign_labor_requested(payload)` (payload: `faction/band/kind/workers/x/y/herd_id/policy`);
   `Main._on_hud_assign_labor` formats the `assign_labor …` text command. **Clear all** emits
   `cancel_order_requested` (the repurposed `cancel_order` = clear-all → fully idle). The roster
@@ -768,12 +926,55 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   (SIGNAL tint via `_husbandry_value_hex`) once fully domesticated. Progress builds while a
   band Sustain-follows a Thriving herd; the `domesticate` command claims it early (see
   `core_sim` Fauna & Wild Game — Domestication / husbandry).
+- **Herd corral readout** (`Hud.gd` `_herd_summary_lines`): when a herd's `corralled`
+  (snapshot `HerdTelemetryState.corralled`, decoded beside `domestication` in
+  `native/src/lib.rs herds_to_array`) is true, a **Corral** row shows "🐄 Corralled"
+  (SIGNAL tint). The herd end of the intensification ladder — a penned, domesticated herd.
+  While the pen is still being built under the Corral policy (`corralProgress`, decoded as
+  `corral_progress`; `0 < p < 1`) the SAME row reports the meter — "Corral: Building 40%" —
+  the animal twin of the tile card's "Cultivation N%". See the Cultivate/Corral investment-rung
+  bullet under **Labor allocation UI**.
+- **Forage-patch cultivation readout** (`Hud.gd` `_tile_terrain_lines`): a forage tile's
+  intensification state, mirroring the herd Husbandry row. `native/src/lib.rs
+  forage_patches_to_array` decodes `foragePatches[]` (`ForagePatchState`) into both the
+  snapshot and delta dicts under `forage_patches`; `MapView.display_snapshot` ingests it into
+  the tile-keyed `forage_patch_lookup`, and `_tile_info_at` cross-refs it onto `tile_info`
+  (`cultivation_progress` / `is_cultivated` / `patch_ecology_phase` / `patch_has_owner` /
+  `patch_owner` / `patch_biomass` / `patch_carrying_capacity`, all in `FOW_DISCOVERED_HIDDEN_KEYS`
+  so a remembered tile redacts them). The
+  card shows a **Cultivation** row: "N%" while the patch is being tended, "🌾 Tended Patch"
+  (SIGNAL tint via `_cultivation_value_hex`) once `is_cultivated`. See `core_sim`
+  intensification ladder — cultivation.
+  It also shows an **Ecology** row (`patch_ecology_phase`) for **every** tile carrying a patch —
+  cultivated or not, directly under **Forage biomass**. The phase gates whether cultivation can
+  accrue at all, so it is the tile's headline condition; it is deliberately **not** gated on
+  `is_cultivated` (it was, which hid it on exactly the ordinary forage tiles that needed it).
+  Named and rendered **identically to the herd's Ecology row** — same `_ecology_phase_label`
+  (neutral `Thriving`, warned `⚠ Stressed` / `⚠ Collapsing`) and the same `_ecology_value_hex`
+  amber/red tint applied by `_format_detail_bbcode`, which now keys one shared `"Ecology"` case
+  for both surfaces. The module's internal `seasonal_weight` is **not** printed on the `Forage:`
+  row (it is a yield coefficient, meaningless to the player); it still drives the sim's yield.
+  ui_preview: `food_tile` (Thriving) / `food_tile_stressed` (⚠ Stressed) / `tended_tile`.
+  It also shows a **Forage biomass** row — `Forage biomass: 84 / 120` (`biomass` /
+  `carryingCapacity`, decoded in `forage_patches_to_array`) — the patch counterpart to a herd's
+  **Biomass** row, so a foraged patch reads like wild game does ("how much there is"). Foraging draws
+  the biomass down and it regrows logistically toward the capacity (sim default 120). Rendered only
+  when `patch_carrying_capacity > 0`, so a plain food-module tile with no patch stays bare.
 - **Sedentarization meter** (`Hud.gd` `update_sedentarization`, dispatched from `Main.gd`):
   the player faction's `SedentarizationState.score` (snapshot `sedentarization[]`) shows as a
   compact top-bar block-glyph meter (`▰▰▰▰▰▱▱ 62/100 · soft`, `SedentarizationLabel` in
   `TurnBlock`), tinted amber (soft) / cyan (hard) by stage and hidden until the score is
   meaningful. The soft/hard threshold prompts themselves arrive in the command feed
   (`CommandEventKind::SedentarizationPrompt`). See `core_sim` Campaign Loop — Sedentarization.
+- **Intensification-knowledge meters** (`Hud.gd` `update_intensification`, dispatched from
+  `Main.gd`): the player faction's Cultivation / Herding knowledge from
+  `IntensificationKnowledgeState` (snapshot `intensification_knowledge[]`, decoded in
+  `native/src/lib.rs intensification_knowledge_to_array` into snapshot + delta dicts) shows as a
+  compact top-bar block-glyph meter mirroring the Sedentarization one (`Cultivation ▰▰▰▱▱▱
+  learning · Herding ✔ known`, `IntensificationLabel` in `TurnBlock`). Each track (0..1 progress)
+  is hidden until the faction begins learning it (the snapshot row is sparse) and reads "✔ known"
+  once complete; the label tints cyan when every learned track is fully known, else neutral ink.
+  See `core_sim` intensification ladder — knowledge.
 - **Demographics readout** (`Hud.gd` `update_demographics`, dispatched from `Main.gd`): the player
   faction's age structure from `PopulationDemographicsState` (snapshot `demographics[]`) shows as a
   top-bar line (`Pop 100  👶34 🛠51 🧓15  dep 96/100`, `DemographicsLabel` in `TurnBlock`) — total
@@ -805,7 +1006,16 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   key `food_days.{warn,critical}`; `999` = not food-limited → ∞). Surfaced three ways:
   (1) `MapView._draw_band_status` draws a food-days dot on each **player** band
   (`_is_player_unit`); (2) `Hud._band_food_line` adds a `Food  <N>  (<D> days)`
-  row to the band selection panel, tinted by the thresholds via `_format_detail_bbcode`;
+  row to the band selection panel, tinted by the thresholds via `_format_detail_bbcode`
+  — **player bands only** (`_is_player_unit`, the same gate Morale uses, and for the same
+  reason: **a rival's larder is not ours to see**). A foreign cohort carries no
+  `days_of_food`/`stores` on the wire, so rendering the row for one **fabricated knowledge**
+  — a healthy-green `Food 0 (∞)`, the UI claiming we'd counted a larder we cannot observe.
+  A foreign band's drawer now shows only what is honestly observable from outside: its
+  **Position**, plus the name/size on its roster row. The reset of the disclosure context
+  (`_food_flow_present` / `_selected_band_food_days` / `_disclosure_state`) lives at the top
+  of `_unit_summary_lines`, NOT inside `_band_food_line` — the skipped call must not leave the
+  previous render's caret or food-days tint behind;
   (3) `MapView._draw_supply_links` faint-chains player bands sharing a `supply_network_id` (`0` = solo).
   **Band food flow on the Food line** (snapshot `PopulationCohortState.foodIncome`/`foodConsumption`,
   decoded as `food_income`/`food_consumption`, flowed onto the MapView unit marker + guarded by
@@ -922,19 +1132,44 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   knows nothing about producers; it renders a list of generic **Attention** dicts:
   `{kind, severity ("info"|"warn"|"critical" → SIGNAL/WARN/DANGER), label, detail, x, y}` where
   `x < 0` = non-locating (renders `Open ▸`, a no-op stub for now). Kind→icon (in `TurnOrb.gd`):
-  `starving`→🍖, `losing_population`→📉, `idle_workers`→🛠, unknown→●. Wiring stays stable via Hud
+  `starving`→🍖, `losing_population`→📉, `idle_workers`→🛠, `awaiting_orders`→▮▮ (read from
+  `FoodIcons.STATUS_ICONS` — the same glyph the Band panel's awaiting row wears), unknown→●.
+  Row labels **clip** and `POPOVER_WIDTH` is sized to the widest producer row: a row's inner HBox is
+  anchored to its Button (not a container child), so an over-wide label used to spill its `Jump →`
+  outside the card instead of widening it. Wiring stays stable via Hud
   relays: a row's jump → `focus_requested` → `alert_focus_requested` → `MapView.focus_on_tile`
   (the same centering the retired Alerts panel used); the footer → `advance_requested` →
-  `next_turn_requested(1)`; `update_overlay` pushes the turn number via `set_turn`. The **three live
-  producers** (all in `Hud.update_band_alerts`, one loop over the player faction, each pushed with the
-  band tile `current_x`/`current_y` so Jump locates it) — the folded-in Alerts panel:
+  `next_turn_requested(1)`; `update_overlay` pushes the turn number via `set_turn`. The **four live
+  producers** (all in `Hud.update_band_alerts`, each pushed with the tile `current_x`/`current_y` so
+  Jump locates it) — the folded-in Alerts panel, plus the expedition one. The first three run in one
+  loop over the player faction's BANDS:
   - **`starving`** (critical) — `BandFoodStatus.is_critical(days)`; label `"<band> starving"`, detail = `_food_days_text(days)`.
   - **`losing_population`** (warn) — shrank vs the previous snapshot (`_prev_band_sizes`); label `"<band> losing population"`, detail = `_decline_reason(days, morale, morale_cause, last_emigrated)` (`— starving` / `— people leaving` / `— harsh terrain|climate|unrest` / `— low morale`).
   - **`idle_workers`** (warn) — `idle_workers > 0`; label `"N idle workers"`, detail = band name. Supersedes the old `activity == idle` alert (a worker count is more actionable).
 
+  The fourth (`_awaiting_orders_attention`) runs over the **EXPEDITIONS** split out of that loop:
+  - **`awaiting_orders`** (warn) — an expedition in `ExpeditionPhase::Awaiting`: parked at its
+    objective, burning provisions, doing nothing until the player acts. Structurally the same class
+    as idle workers (a demand on the player, an efficiency loss, not a crisis) — hence WARN, and
+    hence it belongs on the orb rather than only on a band panel you happen to have open. **One row
+    per party, not one aggregate** (each is a separate decision with its own destination; idle
+    workers genuinely IS one aggregate): label = the phase words from `EXPEDITION_PHASE_LABELS`
+    ("Awaiting orders"), detail = `"<mission> · <objective>"` (mission from
+    `EXPEDITION_MISSION_LABELS`; objective = the followed herd for a hunt party, the party's tile for
+    a scout). Capped at `ATTENTION_AWAITING_MAX_ROWS` — the popover is positioned ABOVE the orb, so an
+    unbounded list would climb off-screen and take the `Advance ▸` footer with it — with the remainder
+    folded into one `"+N more awaiting orders"` row that jumps to the first party past the cap (so
+    even the aggregate row is actionable, not a dead `Open ▸` stub). **Its Jump reuses the Band
+    panel's expedition-row path**: `Hud._on_turn_orb_focus` resolves an awaiting expedition standing
+    on the jumped-to tile (`_awaiting_expedition_at`) and routes through
+    `_on_panel_expedition_selected` (recenter + pin that exact expedition so its drawer opens),
+    falling back to the plain `alert_focus_requested` recenter for the band-located producers.
+
   The orb severity-sorts (critical floats up), so a starving band tops the popover. Future producers
-  (`war` / `decision` / `expedition_awaiting`) are stubs the model already fits — one producer each,
-  **no orb changes**.
+  (`war` / `decision`) are stubs the model already fits — one producer each, **no orb changes** (the
+  awaiting one needed only a kind→icon entry). ui_preview: `turn_orb_attention` (the three band
+  producers) / `turn_orb_awaiting_orders` (awaiting rows + idle workers coexisting, incl. the cap's
+  overflow row).
 - **Targeting: move-band + send-expedition + send-hunt-expedition** (`Hud.gd`): the single-task
   forage/scout/hunt/follow `_pending_*` flows were retired with labor allocation. Three targeting
   flows remain, all built on the same `_pending_*` → `_current_targeting_info()` →
@@ -1044,6 +1279,22 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   (`set_cycler`) over `_player_bands`, a 2×2 **dock chooser** (active edge
   highlighted), and a **collapse** toggle. `cycle_requested(delta)` → Main relays
   to `Hud.cycle_panel_band`.
+- **Header rows — no restated identity.** The panel's own chrome already states the band's **name +
+  settlement stage**, so its summary grid does NOT repeat them: `_unit_summary_lines(unit, in_panel =
+  true)` **drops the `Unit: <name>` row** (it was a third copy of the name) and **replaces `Size: <n>`**
+  — population under another name — with a **`Population  29 · Workers 14 (Idle 12)`** row
+  (`WORKERS_VALUE_FORMAT`, idle from the SAME `_effective_idle` the `+` steppers gate on). That labor
+  line used to render as the allocation stack's first block, which meant it appeared wherever CURRENT
+  ACTIONS did — **stranded between Active expeditions and Current actions**; the panel now passes
+  `with_population_header = false` to `_build_allocation_sections`, so it exists once, in the identity
+  grid. The header reads: name / stage / Population / Food / Morale / Position.
+  `Unit` and `Size` are gone from **both** hosts — the Occupants drawer's roster row names the band
+  and shows its size, so they restated it there too. `in_panel` survives as the gate on the
+  **Population** row alone: the dock is the only host with a labor readout, and a foreign band has no
+  `working_age`/`idle_workers`, so rendering it in the drawer would print a fabricated
+  `Workers 0 (Idle 0)`. `_unit_summary_lines` is still shared with the Occupants-card drawer (foreign
+  bands + the no-panel `ui_preview` fallback), and the legacy in-card allocation host keeps the
+  population header block.
 - **Content relocation (from the Occupants card).** The **player-band** branch of
   `Hud._render_occupant_drawer` now renders into the panel via `_render_band_into_panel`,
   which assembles an ordered array of **section blocks** — a summary block
@@ -1072,8 +1323,15 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   builds a self-contained expeditions **section block** (handed to the panel in the section
   array, so it's its own flow item / stack row) with one ghost-button
   row per `_player_expeditions` entry whose `home_band_entity == _panel_band.entity`
-  (correct for N bands; omitted when none). Row summary: hunt `🏹 <herd> · <Phase> ·
-  <Policy>`, scout `⚑ → (x,y) · <Phase>`. A row click reuses the cycler's routing —
+  (correct for N bands; omitted when none). Row summary — mission glyph + subject + the sim
+  `ExpeditionPhase` as a **glyph** (`FoodIcons.for_status`), the phase WORD having moved into the row
+  tooltip: hunt `🏹 <herd> · <Policy>  ●`, scout `⚑ → (x,y)  ➤`. The tooltip spells out the mission,
+  the hunt policy's behaviour hint, the phase + what it means, and the click affordance.
+  **`awaiting` is the one exception — it keeps its words, WARN-amber** (`▮▮ Awaiting orders`): it is
+  not a status but a demand on the player (the party is parked at its objective burning provisions
+  until you act), and a call to action must never require a hover to find. (A follow-up will make
+  `awaiting` a turn-orb attention producer; the orb model already fits it.)
+  A row click reuses the cycler's routing —
   `alert_focus_requested`→`focus_and_select_tile` + `roster_occupant_selected`→
   `MapView.select_occupant` — so the map ring moves to the expedition and the
   **Occupants card** (not the band panel) renders its `_build_expedition_panel`
@@ -1102,8 +1360,12 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   min is width-independent so there's no resize feedback) on `set_band_sections`, dock/collapse change,
   and viewport resize. **Wide** (TOP/BOTTOM) = **manual balanced-column packing** (`_pack_wide_columns`):
   column count from the
-  available width (`num_cols = clamp(avail / (SECTION_COLUMN_WIDTH + WIDE_FLOW_SEPARATION), 1,
-  #blocks)`), blocks distributed **greedily into the shortest column** so the tallest column
+  available width (`num_cols = clamp(avail / (_widest_block_width() + WIDE_FLOW_SEPARATION), 1,
+  #blocks)` — the budget is `max(SECTION_COLUMN_WIDTH, widest section's own min width)`, NOT the
+  nominal column width: a section wider than nominal (a Current-actions row now carries a resource
+  glyph + label + policy tag + yield + ⚠ + the stepper) grows its column, and budgeting off the
+  nominal width summed the columns past the window — the last one clipped behind a horizontal
+  scrollbar), blocks distributed **greedily into the shortest column** so the tallest column
   is minimized, columns in an HBox. The panel then **sizes its T/B height to the content** —
   the reservation it reports (`reservation_changed`) is `header + tallest-column + margins`,
   so the map/HUD reflow to exactly fit and **nothing clips** (fit-to-content, not a fixed
@@ -1116,7 +1378,11 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   stops it wrapping.)
 - Verify chrome + reflow via `tools/band_panel_preview.gd`
   (`godot --path . res://tools/band_panel_preview.tscn` → `ui_preview_out/
-  band_panel_{left,right,top,bottom,collapsed}.png`).
+  band_panel_{left,right,top,bottom,collapsed}.png`). State `band_panel_status_glyphs` is the
+  **row-vocabulary** frame: a confirmed working forage row (`●` + `♻` + the overstaffing note) and a
+  working hunt row (`●` + `⚠`) beside a pending row (`○`, amber), plus one Active-expeditions row per
+  phase (`➤` outbound / `●` hunting / `◄` delivering / `◄` returning / `▮▮ Awaiting orders` in amber)
+  — read it at true size whenever a glyph changes.
 
 ## Inspector Panels
 

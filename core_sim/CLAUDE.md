@@ -39,8 +39,8 @@ cargo run -p core_sim --bin server
 | `src/data/influencer_config.json` | Roster caps, decay factors, scope thresholds |
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
-| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: `carrying_capacity` per-patch cap, `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles) |
-| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield) / `market` (commercial-hunt take + trade multiplier) tuning |
+| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: `carrying_capacity` per-patch cap, `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting — **plus the Phase 1a/1b `cultivation` block** `progress_per_turn`/`decay_per_turn`/**`cultivating_yield_fraction`**/`tended_provisions_per_biomass` + the Rung 1b earned-knowledge levers `knowledge_progress_per_turn`/`knowledge_completion_threshold` (Rung 1a: cultivation is the explicit **`Cultivate` policy** — while preparing, the patch yields only `cultivating_yield_fraction × its Sustain/MSY ceiling` (the investment cost) and accrues `progress_per_turn`; at 1.0 the tended patch pays the tending band `biomass × tended_provisions_per_biomass` place-local, higher than wild MSY, and goes feral if abandoned. Rung 1b: Sustain-forage earns faction **Cultivation** knowledge in the `DiscoveryProgressLedger`, the gate on the Cultivate policy — Sustain itself never tames a patch, and the old `claim_threshold` early-claim is **removed**); see "Cultivation"), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles) |
+| `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim/yield + the **`Corral` policy** investment levers `corralling_yield_fraction`/`corral_build_progress_per_turn`) / `market` (commercial-hunt take + trade multiplier) tuning |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
@@ -305,7 +305,9 @@ staffed, scaling with head-count); Warrior is inert until the predator slice. `m
 worker count (0 unassigns; clamps to free headroom); `cancel_order` clears all assignments + stops
 movement (fully idle). The snapshot exports `laborAssignments`/`idleWorkers`/`workingAge`, and still
 summarizes `activity` (target-kind with most workers) + `huntMode` (largest Hunt's policy) for the
-pre-3b client. Husbandry re-homes here: a Sustain Hunt on a Thriving herd accrues domestication. Config:
+pre-3b client. Husbandry re-homes here: a Sustain Hunt on a Thriving herd accrues domestication. The
+**investment policies** `Cultivate` (Forage-only) / `Corral` (Hunt-only) also resolve here — a reduced
+take while the improvement is prepared, then the managed yield; see "Cultivation" / "Corral". Config:
 `labor_config.json`. Client allocation panel is PR 3b.
 
 **Ecology — critical-depensation collapse (Phase D)** — `advance_herds` applies one
@@ -358,8 +360,110 @@ Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
 
 Ecology/husbandry tunables live in the `ecology` (`regrowth_rate`, `collapse_fraction`,
 `collapse_rate`, `stressed_fraction`, `extinction_floor`), `immigration`, and `husbandry`
-(`progress_per_turn`, `decay_per_turn`, `claim_threshold`, `provisions_per_biomass`) blocks
-of `fauna_config.json`.
+(`progress_per_turn`, `decay_per_turn`, `claim_threshold`, `provisions_per_biomass`, plus the
+Rung 1c corral levers `corral_provisions_per_biomass` / `corralling_yield_fraction` /
+`corral_build_progress_per_turn` / `knowledge_progress_per_turn` / `knowledge_completion_threshold` —
+see "Corral" below) blocks of `fauna_config.json`.
+
+### Corral (Intensification Rung 1c)
+
+The **animal mirror of the tended patch** (`docs/plan_intensification.md` §4b) — the place-bound form
+of the *existing* herd domestication, and the fauna-side twin of "Cultivation" under Depletable
+Forage. Taming a herd is *symmetric* with preparing a patch, but the **product differs and that
+difference is the settle mechanic**: an *un*corralled domesticated herd stays **mobile** (pastoralism
+travels with the band); **corralling pins it**. Like Cultivate, corralling is an **explicit `Corral`
+policy with an investment cost** — not a free command. A `Herd` carries `corral_progress: f32` (0–1,
+the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at that tile) + a transient
+`corralled_tended_this_turn` flag. *Sim-only — the client readout is a follow-up (see below).*
+
+- **Rung 1c earned-knowledge gate — Herding.** The animal parallel of Cultivation knowledge, *learned
+  by doing* and **never start-granted**: a **Sustain** hunt on a **Thriving** herd accrues faction
+  **Herding** knowledge (discovery `HERDING_DISCOVERY_ID` = 2004, `fauna.rs`) in the per-faction
+  `DiscoveryProgressLedger` at `husbandry.knowledge_progress_per_turn` (in the Hunt arm of
+  `advance_labor_allocation`, alongside the existing domestication accrual). The **`Corral` policy** (and
+  the `corral` command that sets it) is refused until
+  `get_progress(faction, 2004) >= knowledge_completion_threshold`. The `herding` tag →
+  discovery 2004 mapping is declared in `start_profile_knowledge_tags.json` purely so it is mappable;
+  **no start profile lists it**. **Asymmetry vs. Cultivation:** Herding gates *only corralling* —
+  mobile domestication (pastoralism) stays ungated (a patch, by contrast, cannot even *tame* until the
+  faction knows Cultivation), because a mobile herd needs no place-binding knowledge.
+- **The `Corral` policy — the investment.** In `advance_labor_allocation`'s **Hunt** arm, a herd worked
+  under `FollowPolicy::Corral` (Hunt-only) **costs a yield dip while the pen is built**: the take
+  ceiling is `husbandry.corralling_yield_fraction × sustainable_yield(..)` (`hunt_policy_ceiling`,
+  reusing the **shared** MSY helper — the crew is building, not hunting; a fraction of MSY is a
+  sustainable draw, so the herd stays healthy) and `corral_progress` accrues
+  `husbandry.corral_build_progress_per_turn` (0.04 → 25 turns). **Gates:** the faction knows **Herding**
+  AND owns the **domesticated** herd; a gate that lapses **mid-build** just stops accrual that turn
+  (progress is kept — a half-built pen is materials on the ground; unlike cultivation it does **not**
+  decay *gradually*). That "progress is kept" applies to a **mid-build** lapse only — a **completed
+  pen whose herd escapes loses its progress outright** (reset to `0.0`; see *Escapes-if-untended*
+  below). Accrued **after** the take, so the turn pays exactly what the forecast promised. At `1.0`
+  `Herd::corral_at` pens it (sets `corralled_at`, stops roaming, grants the one-turn tended grace) and
+  pushes a `CommandEventKind::Corral` feed line.
+- **`corral` command (repurposed)** — `corral <faction> <x> <y>` (`handle_corral`; unchanged
+  proto/runtime/text plumbing, `CommandEventKind::Corral`, `CorralCommand` proto field 38) now **sets
+  the `Corral` policy** on the band(s) already hunting the herd standing on that tile — the command
+  form of the client's policy picker. It **pens nothing outright**. Rejections: no herd there / faction
+  hasn't learned Herding / not domesticated / not the owner / already corralled / **no band is hunting
+  it** (staff it first). Same gates as the `assign_labor … corral` path (`validate_labor_policy`).
+- **Corralled = fixed + place-local worker-tended + escapes-if-untended** (mirrors the tended patch):
+  - *Fixed* — `advance_herds` skips a corralled herd's `advance_herd_roam` (it stays at `corralled_at`,
+    no heading arrow); it still grazes/regrows (ecology is independent of movement).
+  - *Place-local worker-tended* — a **Hunt assignment on a corralled herd** is herding/tending it: in
+    `advance_labor_allocation`'s Hunt arm the keeper band is paid `biomass ×
+    husbandry.corral_provisions_per_biomass` directly into its `stores` (FOOD) **without** drawing the
+    herd down (managed harvest), and the herd is marked `corralled_tended_this_turn`. This
+    reconciles the "not both hunt-drawn AND paid": a corralled herd takes the tend branch and
+    `continue`s before `hunt_take`. `corral_provisions_per_biomass` is set **higher** than the mobile
+    `provisions_per_biomass` (0.02 vs 0.01) so penning out-pays mobile pastoralism — mirroring how
+    forage's `tended_provisions_per_biomass` beats the wild MSY skim.
+  - *Escapes-if-untended* — in `advance_husbandry` (Logistics, which runs *before* Population — a
+    deliberate one-turn-lag flag, exactly like `ForagePatch::tended_this_turn`) a corralled herd
+    tended last turn is spared; an **untended** one **escapes**: `corralled_at` is cleared, **and
+    `corral_progress` is reset to `0.0`**, reverting it to a mobile domesticated herd (resuming the
+    passive even-split husbandry yield). **The pen is lost, not merely opened** — re-penning pays the
+    full 25-turn `Corral` investment again, at the herd's new position. *Why zero, when a patch's
+    `cultivation_progress` only decays gradually:* **a patch is a place and a herd is not.**
+    `cultivation_progress` can survive partially because the improvement sits on a tile that cannot
+    move, so leftover progress still refers to the same patch; `corral_progress` lives on the **herd**,
+    which roams — so any retained progress would re-materialize the pen at whatever tile the animal has
+    since wandered to (a teleporting corral) and make abandoning a pen cost **one** turn instead of the
+    rebuild. Losing the pen is what makes the tending obligation real (the "pins the band" mechanic).
+    Because the escape now **destroys a 25-turn investment**, it is **never silent**: it pushes a
+    `CommandEventKind::Corral` feed line to the owner — the same kind the pen's *completion* pushes
+    (one kind for the pen's whole life) — reading `"The <species> herd broke out — untended, the pen
+    is lost"` (human text names the **species**, never the internal herd id) with
+    `status=escaped reason=untended action=corral herd=<id> x=<x> y=<y>` in the detail field.
+    A corralled herd is exempt from the even-split here (it's paid place-local by its keeper).
+    `corral_at` grants a one-turn grace so a freshly-penned herd doesn't escape before its keeper can
+    tend it.
+- **Persistence** — `corralled_at` **and `corral_progress`** round-trip through the rollback snapshot on
+  `HerdState` (authoritative sim state), so a rollback rewinds a half-built pen rather than losing the
+  investment; `corralled_tended_this_turn` is transient (not persisted), so a rollback can only *delay*
+  an escape by one turn, never resurrect a broken-out herd.
+- **Config** (`fauna_config.json` `husbandry`): `corral_provisions_per_biomass` (0.02),
+  **`corralling_yield_fraction` (0.25 — the investment cost, the animal twin of
+  `cultivating_yield_fraction`)**, **`corral_build_progress_per_turn` (0.04 → 25 turns to build; a
+  dedicated lever so pen speed and *tame* speed tune independently)**, `knowledge_progress_per_turn`
+  (0.05 — ~20 Sustain-hunt turns to learn Herding), `knowledge_completion_threshold` (1.0).
+  `claim_threshold` (0.6) stays — it is the **`domesticate`** command's early-claim gate on *mobile*
+  taming, unrelated to corralling (which has no early claim). Validation invariants (`fauna_config.rs`):
+  `corral_provisions_per_biomass > provisions_per_biomass`, `0 < corralling_yield_fraction < 1`,
+  `corral_build_progress_per_turn > 0`, `knowledge_progress_per_turn > 0`,
+  `0 < knowledge_completion_threshold <= 1`.
+- **Display snapshot (on the wire).** The corral state is exposed to the client stream on both
+  `WorldSnapshot` and `WorldDelta` (`snapshot.fbs`, `sim_schema`, `snapshot.rs`
+  `herd_snapshot_entries`): `HerdTelemetryState.corralled:bool` (= `Herd::is_corralled()`) and
+  **`corralProgress:float`** (0..1, the pen-building meter — the animal twin of
+  `ForagePatchState.cultivationProgress`), plus the forecast pair `ceilingCorral` / `corralYield` (see
+  "Pre-commit Yield Forecast"). See "Intensification display snapshot" under Cultivation for the
+  plant-side + faction-knowledge fields.
+- **Follow-up (final Phase-1 slice):** the **client _rendering_ for both ladders** — cultivation +
+  Cultivation-knowledge + tended-patch on the plant side, and domestication + Herding-knowledge +
+  corral on the animal side — is the last remaining client-dev slice (the data is now all on the wire).
+
+See Also: "Cultivation (Intensification Phase 1a)" under Depletable Forage — the plant twin of this
+mechanic (the two are near-mechanical transposes).
 
 > `FaunaPursuit` is **not** snapshot-persisted (unlike `HarvestAssignment`): a
 > `rollback` mid-pursuit cleanly cancels the in-flight hunt (the rehydrated cohort
@@ -368,8 +472,8 @@ of `fauna_config.json`.
 
 > **The authoritative `HerdRegistry` *is* rollback-persisted** (as of the intensification
 > arc's first slice, `docs/plan_intensification.md` §0-i). Each live `Herd` — identity,
-> movement (`route`/`step_index`/`current_pos`/`dwell_remaining`/`roam`/`next_pos`), **and** its
-> depletable-ecology subset (`biomass`/`carrying_capacity`/`ecology_phase`/
+> movement (`route`/`step_index`/`current_pos`/`dwell_remaining`/`roam`/`next_pos`/`corralled_at`),
+> **and** its depletable-ecology subset (`biomass`/`carrying_capacity`/`ecology_phase`/
 > `domestication_progress`/`owner`) — round-trips through a serde `HerdState` (the ecology subset
 > embedded as a shared `EcologyState`) captured into `WorldSnapshot.herd_registry` and rebuilt on
 > restore via `HerdRegistry::update_from_states`, following the `GenerationRegistry` round-trip
@@ -382,10 +486,10 @@ of `fauna_config.json`.
 > per-tile `ForageState`.
 
 Market hunting shipped as the `Market` follow policy; `SedentarizationScore` shipped (see
-"Sedentarization" under Campaign Loop). Still deferred (`docs/plan_wildlife_hunting_overlay.md`):
-the `Camp` entity + corrals, and wiring the sedentarization hard prompt to an actual
-`found_settlement`. The tile-based `HuntGame` handler stays neutralized (its client button no
-longer surfaces).
+"Sedentarization" under Campaign Loop); **corrals shipped** (Intensification Rung 1c — see "Corral"
+below). Still deferred (`docs/plan_wildlife_hunting_overlay.md`): the `Camp` entity, and wiring the
+sedentarization hard prompt to an actual `found_settlement`. The tile-based `HuntGame` handler stays
+neutralized (its client button no longer surfaces).
 
 ---
 
@@ -449,12 +553,237 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
 - **Persistence** — `ForageRegistry` round-trips through the rollback snapshot exactly like the
   `HerdRegistry` (the §0-i pattern): a per-tile `ForageState` (= tile key + the shared
   `sim_schema::EcologyState`) captured coord-sorted into `WorldSnapshot.forage_registry` and rebuilt
-  on restore via `ForageRegistry::update_from_states`. `progress`/`owner` on `EcologyState` stay
-  `0.0`/`None` here — **cultivation is Phase 1**. Not wired to the FlatBuffers client stream.
+  on restore via `ForageRegistry::update_from_states`. `progress`/`owner` on `EcologyState` now carry
+  **cultivation** (Phase 1a, below) — a mutate-then-restore rewinds it like biomass. Not wired to the
+  FlatBuffers client stream.
 - **Companion client slice:** the sim side of the forage policy axis (§0-iii) is complete — the
   client `%ForageAssignControls` policy picker (mirroring `%HerdAssignControls`) that emits the
   policy in the `assign_labor forage` command is a **client-dev follow-up**. A client patch-ecology
   readout (thriving/stressed/collapsing on the map/tile, like herds) is a possible later slice.
+
+### Cultivation (Intensification Phase 1a)
+
+The **plant analog of animal husbandry** (`docs/plan_intensification.md` §3), evolved past the
+mechanical husbandry transpose into **Rung 1a — the worker-tended, place-local tended patch**, and now
+into an **explicit policy with an investment cost**. A patch carries `cultivation_progress` (0–1,
+`1.0` = cultivated) + `owner: Option<FactionId>` on `ForagePatch`, mirroring a `Herd`'s
+`domestication_progress`/`owner`, and rides the shared `EcologyState` (`progress`/`owner`) through the
+rollback snapshot. A completed patch is a **tended patch**: **worker-tended + place-local +
+higher-output + feral-if-abandoned**. *Sim-only — the client readout is a follow-up.*
+
+> **The free path is gone (design fix).** Cultivation used to accrue **silently and for free** under
+> Sustain: same labor, same tile, no cost ⇒ cultivating was always correct and there was **no
+> decision**. It is now the **`Cultivate` policy** (`FollowPolicy::Cultivate`, Forage-only) with a real
+> up-front cost, and the **early-claim `claim_threshold` is removed** (it would let the player skip the
+> investment — the whole point). Sustain still *teaches* the faction Cultivation knowledge; it just
+> never tames a patch. The animal twin is the **`Corral` policy** — see "Corral".
+- **Rung 1b — the earned-knowledge gate (`docs/plan_intensification.md` §4b).** Cultivation is a
+  faction-level knowledge *learned by doing*, **never start-granted**: a **Sustain** forage on a
+  **Thriving** patch accrues faction **Cultivation** knowledge (discovery `CULTIVATION_DISCOVERY_ID`
+  = 2003, `forage.rs`) in the per-faction `DiscoveryProgressLedger` at
+  `cultivation.knowledge_progress_per_turn` (`add_progress`, clamped to `1.0`). **A patch cannot accrue
+  `cultivation_progress` until the faction *knows* Cultivation** — `advance_labor_allocation` only calls
+  `accrue_cultivation` once `ledger.get_progress(faction, 2003) >= knowledge_completion_threshold`.
+  Knowledge is all Sustain earns — it **never** accrues `cultivation_progress`. The `cultivation` tag →
+  discovery 2003 mapping is declared in `start_profile_knowledge_tags.json` purely so it is mappable;
+  **no start profile lists it**, so no faction begins knowing Cultivation.
+- **The `Cultivate` policy — the investment.** In `advance_labor_allocation`'s **Forage** arm
+  (Population), a patch worked under `FollowPolicy::Cultivate`:
+  - **Costs a yield dip while preparing.** Its take ceiling is
+    `cultivation.cultivating_yield_fraction × sustainable_yield(..)` — a *fraction of the MSY ceiling*
+    (`forage_policy_ceiling`, reusing the **shared** `sustainable_yield` helper, never a second
+    formula). The crew is clearing and planting, not gathering. Because the take is a fraction of MSY
+    it is **sustainable**, so the patch stays Thriving (which the accrual gate requires) — the cost is
+    a pure yield dip, not a depletion.
+  - **Accrues `progress_per_turn`** toward `1.0` (sets `owner` on first accrual; only the owner
+    accrues), **gated** on the faction *knowing Cultivation* AND the patch being **Thriving**. If a
+    gate lapses mid-run (another band overdraws the patch to Stressed) progress simply **stops accruing
+    that turn** — it is not lost and the policy is not silently switched; the patch is still marked
+    worked, so it doesn't decay either, and accrual resumes when it recovers.
+  - **Accrues AFTER the turn's take**, so the turn pays exactly what the pre-commit forecast promised
+    (forecast == actual). The turn progress reaches `1.0` is the last preparing take; the full tended
+    yield starts the next turn.
+  - **Marks the patch `tended_this_turn`**, so `advance_cultivation` spares a patch under active
+    preparation — the investment accrues at the **full** `progress_per_turn` (25 turns at the default),
+    not net-of-decay.
+  - **Break-even** (defaults `fraction` 0.25, `progress_per_turn` 0.04): the dip costs ~75% of that
+    patch's Sustain yield for ~25 turns ≈ `0.75 × 0.375 × 25` ≈ **7 prov** forgone; the tended patch
+    then out-pays wild Sustain by `1.2 − 0.375` = **0.825 prov/turn**, recouping the investment ~8–9
+    turns after completion. Cultivating is correct only if you intend to stay — the decision the free
+    auto-accrual erased.
+  - `ForagePatch` methods: `is_cultivated`/`accrue_cultivation`/`decay_cultivation` (the early-claim
+    `claim_cultivation` is **removed**).
+- **Tended yield — paid to the tending band, place-local, higher output** — a tended (cultivated)
+  patch is **worked, not passive**. In the **Forage** arm, when the assignment's patch
+  `is_cultivated()`, the band whose Forage assignment tends it (≥1 worker on the tile → place-local by
+  construction) is paid `biomass × cultivation.tended_provisions_per_biomass × output_multiplier`
+  directly into `cohort.stores` (FOOD) — a **managed harvest** of the full standing crop **without**
+  drawing biomass down (a tended patch regrows freely, so biomass sits near cap). It is *maintenance
+  labor*: presence gates it (the `workers == 0` skip above), the amount is biomass-based, not
+  head-count-scaled. The patch is marked `tended_this_turn` (a transient, non-persisted per-turn flag)
+  so the decay pass can tell tended from abandoned. Yield telemetry reads `actual == sustainable` (a
+  managed harvest never overdraws — no ⚠). **This out-yields the same patch's wild MSY skim** — the
+  intensification incentive: a tended patch pays `K × 0.01` ≈ 1.2 prov/turn vs a wild patch's best
+  sustainable MSY `regrowth_rate × K/4 × forage.provisions_per_biomass` ≈ 0.375 prov/turn (~3.2×; see
+  the `CultivationConfig` tuning note). The old even-split-across-all-the-owner's-bands payment in
+  `advance_cultivation` is **retired**.
+- **Feral if unworked** — `advance_cultivation` (`forage.rs`, `TurnStage::Logistics` alongside
+  `advance_forage_regrowth`) is the **decay/feral** pass only. A patch **worked as an improvement this
+  turn** (`tended_this_turn` — tending a completed patch *or* preparing one under Cultivate) is
+  **spared**; everything else decays by `decay_per_turn`. So an **untended cultivated** patch **goes
+  feral** (drops below `1.0` → reverts to a wild gather patch, then decays to 0 over
+  ~`1/decay_per_turn` turns; owner clears at 0) and an **abandoned part-prepared** patch loses its
+  investment the same way. **Stage-ordering:** Logistics runs *before* Population, so the
+  `tended_this_turn` flag this pass reads was written by the labor arm **last** turn (a deliberate
+  one-turn-lag carry-across-turns signal; the flag is cleared here and re-set next Population stage).
+  Net: a patch worked every turn never decays; a patch whose band leaves reverts one turn later.
+- **The loop (the settle pull).** Sustain-forage a thriving patch → *learn* Cultivation → **choose** to
+  pay the Cultivate dip for ~25 turns → the patch becomes tended → a band tending it collects the
+  higher tended yield **place-locally** → move the band away and it goes feral, reverting to wild.
+  Place-locality + feral + a sunk investment = the band is **pinned near its farm**: intensifying
+  raises output *and* deepens the anchor.
+- **`cultivate` command (repurposed)** — `cultivate <faction> <x> <y>` (`handle_cultivate`; unchanged
+  proto/runtime/text plumbing, `CommandEventKind::Cultivate`) now **sets the `Cultivate` policy** on
+  the band(s) already foraging that tile (`set_policy_on_working_bands`) — the command form of what the
+  client's policy picker does. It **claims nothing**. Gates (shared with `assign_labor` via
+  `validate_labor_policy`): faction knows Cultivation, patch is **Thriving**, not already cultivated,
+  not another faction's; plus a rejection when **no band is foraging** the tile (staff it first).
+- **Policy validation** — `FollowPolicy::valid_for_forage` / `valid_for_hunt`: `Cultivate` is
+  Forage-only and `Corral` Hunt-only. `handle_assign_labor` rejects an invalid combo (and a failed
+  gate) with a clear failure event before touching the allocation; unassigning (`workers == 0`) is
+  always allowed, so a player can always abandon an investment.
+- **Sedentarization (folded)** — `sedentarization_tick` reads `herds.domesticated_count(faction) +
+  forage.cultivated_count(faction)` for its **domestication** input: plant + animal domestication
+  share the one driver (no new weight, no re-balance).
+- **Config** (`labor_config.json` `forage.cultivation`, `CultivationConfig`, cloning
+  `HusbandryConfig`): `progress_per_turn` (0.04 → 25 turns to prepare), `decay_per_turn` (0.01, the
+  feral-reversion rate), **`cultivating_yield_fraction` (0.25 — the investment cost: the preparing take
+  ceiling as a fraction of the patch's Sustain/MSY ceiling)**, `tended_provisions_per_biomass` (0.01 —
+  the **tended-harvest** rate on the full standing crop, distinct from and *lower per-biomass* than the
+  gather `forage.provisions_per_biomass`, but paid on the whole crop so it beats the wild MSY skim;
+  keep it `> regrowth_rate/4 × forage.provisions_per_biomass` so intensifying always pays), plus the
+  **Rung 1b earned-knowledge** levers `knowledge_progress_per_turn` (0.05 — faction Cultivation earned
+  per Sustain-forage-Thriving turn, ~20 turns to know) and `knowledge_completion_threshold` (1.0 = the
+  ledger's completion value). The early-claim `claim_threshold` is **removed**. Validation invariants:
+  `progress_per_turn > decay_per_turn`, `0 < cultivating_yield_fraction < 1`,
+  `tended_provisions_per_biomass > 0`, `knowledge_progress_per_turn > 0`,
+  `0 < knowledge_completion_threshold <= 1`.
+- **Intensification display snapshot (on the wire, consumed by the client-dev rendering slice next).**
+  The intensification-ladder state is now exported to the FlatBuffers client stream (append-only per
+  the schema discipline; `snapshot.fbs`, `sim_schema`, `snapshot.rs`), on both `WorldSnapshot` and
+  `WorldDelta`:
+  - **Forage patch cultivation** — a new per-tile `foragePatches:[ForagePatchState]` list
+    (`snapshot_forage_patches`, from the `ForageRegistry`, stable `(y, x)` order). Per patch: tile
+    `(x, y)`, `cultivationProgress:float` (0..1), `isCultivated:bool` (tended = progress ≥ 1.0),
+    `owner`/`hasOwner` (tending faction; `hasOwner = false` = wild), plus `biomass`/`carryingCapacity`/
+    `ecologyPhase` for optional patch-health. This is the client's first per-tile forage-patch payload
+    (previously forage was visible only via `laborAssignments`).
+  - **Faction Cultivation/Herding knowledge** — a new per-faction
+    `intensificationKnowledge:[IntensificationKnowledgeState{ faction, cultivation, herding }]` list
+    (`snapshot_intensification_knowledge`, from the `DiscoveryProgressLedger`), mirroring
+    `sedentarization[]`. `cultivation`/`herding` are the 0..1 progress on discoveries
+    `CULTIVATION_DISCOVERY_ID` (2003) / `HERDING_DISCOVERY_ID` (2004); a faction is emitted only once it
+    has begun learning either ladder (both zero → skipped). Client renders these as learning/known
+    meters like the sedentarization meter.
+  - **Herd corral** — `HerdTelemetryState.corralled` (see the corral section above).
+- **Follow-ups:** **Rung 1c — corral** (the fauna-side pen behind a `herding` gate) **shipped** — see
+  "Corral (Intensification Rung 1c)" under Fauna & Wild Game. The **client _rendering_ for both ladders**
+  (tile-card cultivation N% / tended-patch + Cultivation/Herding knowledge meters + herd corral
+  indicator) is the **final Phase-1 slice** and remains a client-dev follow-up; the sim/schema data is
+  now all on the wire (fields above).
+
+---
+
+## Pre-commit Yield Forecast (per-source, on the wire)
+
+The **retained yield telemetry** (`SourceYield.actual/sustainable/workers_needed`, above) is
+**post-hoc** — the player only learns they over-assigned *after* committing and advancing a turn. The
+forecast is its pre-commit twin: per in-range source, the snapshot exposes enough for the client to
+show a live **"Expected yield: +X.XX /turn"** and **cap its worker stepper at the max-useful count
+while the player is composing an assignment**.
+
+**Wire fields** (append-only, on both `WorldSnapshot` and `WorldDelta`) — the same shape on
+`ForagePatchState` (per tile) and `HerdTelemetryState` (per herd):
+`perWorkerYield:float` + `ceilingSustain` / `ceilingSurplus` / `ceilingMarket` / `ceilingEradicate`
+(all `float`, **food/turn**, at the source's CURRENT biomass), **plus the investment rung**:
+`ForagePatchState.ceilingCultivate` + `tendedYield` and `HerdTelemetryState.ceilingCorral` +
+`corralYield`. The investment policy's `ceiling*` is the **preparing** yield
+(`fraction × ceilingSustain` — the dip); `tendedYield`/`corralYield` is what the source will pay
+**once the improvement completes**, so the client can show **"preparing X → then Y"** *before* the
+player commits to the cost. (Sim-side both live on the shared `SourceYieldForecast` as
+`ceiling_prepare` / `managed_yield` — the two investment policies are kind-exclusive, so one field
+serves both.)
+- `perWorkerYield` = food/turn one worker contributes (throughput → provisions; **forage folds in the
+  tile's `seasonal_weight`**, as `forage_take` does — it can be `0` in a dead season, so consumers must
+  not divide by it; hunt has no seasonal factor).
+- Each `ceiling*` = that policy's food/turn cap, **already clamped to the source's remaining biomass**.
+- Captured at `output_multiplier = 1.0` (the productivity multiplier is per-band): the client scales
+  every field by the acting band's `PopulationCohortState.outputMultiplier` — a linear factor, so
+  `max_useful_workers` is invariant to it.
+- Client composition: `expected(workers, policy) = min(workers × perWorkerYield, ceiling[policy])`,
+  `max_useful_workers(policy) = ceil(ceiling[policy] / perWorkerYield)`.
+- A **tended (cultivated) patch** / **corralled herd** is maintenance labor, not scaling gather: every
+  ceiling is its managed yield and `perWorkerYield` equals it, so `max_useful_workers == 1`
+  (`TENDED_SOURCE_WORKERS_NEEDED`) and the policy is irrelevant.
+
+**Invariant: forecast == actual — no duplicated yield math.** The forecast and the take path read the
+*same* pure helpers, so the UI can never promise a number the sim won't pay:
+- forage (`forage.rs`): `forage_policy_ceiling` (the 4 extractive rungs **+ Cultivate**, biomass) · `forage_per_worker_biomass`
+  (`per_worker_biomass_capacity × seasonal`) · `forage_provisions` (biomass→provisions ×
+  `output_multiplier`) · `tended_provisions` (the tended-patch managed harvest) — all called by both
+  `forage_take` / the tended-patch arm of `advance_labor_allocation` **and** `forage_forecast`.
+- fauna (`fauna.rs`): `hunt_policy_ceiling` (the 4 extractive rungs **+ Corral**) · `hunt_provisions` · `corral_provisions` — called by both
+  `systems::hunt_take` / the corral arm of `advance_labor_allocation` **and** `hunt_forecast`. The
+  shared `SourceYieldForecast` struct (with `::tended`) is the common return shape.
+- Guarded by `systems::labor_yield_tests::{forage,hunt}_forecast_equals_actual_take_for_every_policy_and_staffing`
+  (every policy × labor-bound/ceiling-bound staffing, comparing against the payout of a real
+  `advance_labor_allocation` run) and `tended_patch_and_corral_forecast_full_yield_with_one_worker`.
+  **Any change to the take math must go through these helpers** — never re-derive a ceiling or a
+  biomass→provisions conversion at a call site.
+
+Capture: `snapshot_forage_patches` / `herd_snapshot_entries` (`snapshot.rs`); the herd's
+`carrying_capacity` (absent from the display telemetry) is resolved from the authoritative
+`HerdRegistry`, and the per-tile `seasonal_weight` from the `FoodModuleTag` query.
+**Client follow-up:** rendering the live "Expected yield" line + the worker-stepper cap in the
+forage/herd assign controls.
+
+### Assign-time yield seeding (the `+0.00` fix)
+
+The retained `SourceYield` telemetry used to be written **only** during turn resolution, so between
+"player assigns workers" and "player advances the turn" a brand-new source had no row and the display
+snapshot serialized `actual_yield = 0.0` — the map annotation and the Band panel read **`+0.00`** for
+every fresh assignment, and the client cannot distinguish "0 because not computed yet" from "0 because
+the source is barren". Fixed server-side: `handle_assign_labor` (and the `cultivate`/`corral` policy
+shorthands, via `set_policy_on_working_bands`) **seeds the touched source's `SourceYield` from its
+pre-commit forecast** right after mutating the `LaborAllocation` (`server.rs::seed_source_yield` →
+`LaborAllocation::set_source_yield`). Because forecast == actual (above), the seeded number is exactly
+what the turn then pays under unchanged conditions — **no jump** — and it is the same number the
+client's compose-time "Expected yield" row promises. Shape:
+- **The expected take** is the one shared helper `fauna::forecast_expected_take(&SourceYieldForecast,
+  workers, policy) = min(workers × per_worker_yield, forecast.ceiling_for(policy))`
+  (`SourceYieldForecast::ceiling_for` is the `ceiling[policy]` lookup; the two investment policies
+  share `ceiling_prepare`, the reduced `cultivating_yield_fraction`/`corralling_yield_fraction` bite —
+  once the improvement *completes* the source is `::tended`, whose every ceiling already **is**
+  `managed_yield`). The client preview, the seed, and the forecast==actual tests all call it.
+- The kind-specific seeds `forage::forage_source_yield_preview` / `fauna::hunt_source_yield_preview`
+  compose the full row through the shared `forecast_source_yield`: `actual` = the expected take,
+  `sustainable` = the same MSY value the resolution path records (a *managed* source reads
+  `sustainable == actual` — no ⚠), `workers_needed` = the same overstaffing inversion (a managed source
+  = `TENDED_SOURCE_WORKERS_NEEDED`). No new formula, no new config lever.
+- **Only the source the command touched** is seeded (other sources keep their real actuals), and only
+  where the turn would actually pay: out of `band_work_range` / past the hunt leash, an unseeded patch
+  or a vanished herd keeps its zero row, and a **genuinely barren source still seeds `0.0`** — `+0.00`
+  stays reachable, and correct, there. Consequence (intended): a fresh assignment now *previews* its
+  contribution to the Food-line net rate + the Gathered/Hunted breakdown, and can pre-trip the
+  overdraw ⚠ if the chosen policy would overdraw — ⚠ is a leading flow signal by design.
+- `LaborAllocation` now keeps `last_yields` **index-aligned with `assignments`** across every mutation
+  (`set_assignment`/`normalize`/`clear` — the snapshot zips the two by index, so a row left behind by a
+  removed assignment used to be attributed to the *next* source). New rows default to
+  `SourceYield::ZERO`.
+- Guarded by `server::tests::{assigning_forage,assigning_hunt}_workers_seeds_the_expected_yield_before_the_turn`,
+  `resolved_{forage,hunt}_yield_equals_the_seeded_yield` (the no-jump property),
+  `changing_the_policy_reseeds_the_expected_yield`, `a_barren_source_seeds_zero`,
+  `unassigning_a_source_drops_its_yield_row`.
 
 ---
 
@@ -731,12 +1060,16 @@ vantage_distance_per_scout, vantage_distance_max)`, `0` with no scouts — since
 posting forward-observer vantages that see around obstacles; field name kept for wire compat).
 
 **Per-source food-income breakdown (retained yield telemetry).** `advance_labor_allocation` rebuilds
-`LaborAllocation.last_yields` each turn — one `SourceYield { actual, sustainable }` (f32 provisions)
-per assignment, **in the same index order** as `assignments` (so the snapshot zips by index). It is
+`LaborAllocation.last_yields` each turn — one `SourceYield { actual, sustainable, workers_needed }`
+(f32 provisions + a worker count)
+per assignment, **in the same index order** as `assignments` (so the snapshot zips by index — every
+`LaborAllocation` mutator keeps the two aligned; see "Assign-time yield seeding"). It is
 **derived, not persisted**: it is out of rollback (`#[serde]` never sees it; `labor_allocation_from_state`
 restores only the assignments, leaving it empty until the next tick) and is **excluded from
 `LaborAllocation`'s equality** (manual `PartialEq` compares assignments only) so it can't perturb the
-persisted-intent comparison. Definitions: **`actual`** = the provisions the source produced this turn
+persisted-intent comparison. A row is also written **at assign time**, seeded from the source's
+pre-commit forecast, so a brand-new assignment shows its expected yield instead of `+0.00` before the
+turn resolves (see "Assign-time yield seeding (the `+0.00` fix)" under Pre-commit Yield Forecast). Definitions: **`actual`** = the provisions the source produced this turn
 (the value added to the larder); **`sustainable`** = what it could yield without drawing down its
 stock. As of §0-ii **forage is depletable too**, so a forage `sustainable =
 sustainable_yield(biomass_before, carrying_capacity, forage.ecology) × forage.provisions_per_biomass ×
@@ -747,13 +1080,29 @@ hunt.provisions_per_biomass × output_multiplier`** (MSY at the *pre-take* bioma
 is shared by hunt + forage (`fauna.rs`); `net_biomass_delta` remains the **actual** per-turn biomass
 evolution used by `regrow_biomass`/`advance_herds` (0 at K — correct there, unchanged).
 A Sustain gather/hunt reads `actual ≈ sustainable`; an over-draw reads `actual > sustainable` (the
-overdraw ⚠). Scout/Warrior push `{0,0}`. The snapshot surfaces this: each `LaborAssignment` row
-carries `actualYield`/`sustainableYield`, and each `PopulationCohortState` carries band-level
+overdraw ⚠). Scout/Warrior push `{0,0,0}`. **`workers_needed`** is the parallel **overstaffing**
+signal: the *minimum* assigned workers that would have produced the same take — `ceil(take_biomass /
+per_worker_capacity)` clamped into `[1, assigned]` when anything was taken, else `0`, computed in both
+the Forage arm (capacity = `forage.per_worker_biomass_capacity × seasonal_weight`, matching
+`forage_take`'s worker cap so a low-season labor-bound patch isn't falsely flagged) and the Hunt arm
+(capacity = `hunt.per_worker_biomass_capacity`, no seasonal) via the shared `workers_needed_for_take`
+helper. A *tended* patch / *corralled* herd (maintenance labor, not scaling gather) is fixed at `1`
+(`TENDED_SOURCE_WORKERS_NEEDED`). When the binding constraint on a source's take is **not** labor
+(policy ceiling / biomass / regrowth), `workers_needed < assigned` → the source is overstaffed and the
+extra workers were idle. The snapshot surfaces all of this: each `LaborAssignment` row
+carries `actualYield`/`sustainableYield`/**`workersNeeded`** (client accessor `workersNeeded()`), and
+each `PopulationCohortState` carries band-level
 `foodIncome` (Σ per-source `actual`) + `foodConsumption` (the same one-turn `food_demand` `daysOfFood`
 divides by). All derived at capture (0 on a rehydrated save before the next tick). **The client
 consumes these next** (allocation-panel rows + tooltip + ledger footer, a follow-up PR): a per-turn
 `actual > sustainable` is the client-derived **overhunting signal** — a *leading* flow indicator,
-distinct from the stock-based `ecology_phase`.
+distinct from the stock-based `ecology_phase` — and `workers > workersNeeded` is the **overstaffing**
+indicator (flag the wasted labor on the source row + the forage biomass/cap tile-card row).
+
+All of the above is **post-hoc** (it reports what a committed turn produced). Its **pre-commit** twin —
+the per-source `perWorkerYield` + policy ceilings the client uses to show an expected yield and cap the
+worker stepper *before* the player commits — is the "Pre-commit Yield Forecast" section below, which
+shares the take path's yield helpers so forecast == actual.
 
 This is the general mechanism the arc scales: raise reach/throughput for settlements/cities, and a
 future **trade policy** adds a consent gate + a priced return flow on *cross-faction* edges (see the
@@ -768,8 +1117,9 @@ settlement chain, and the consumer of Phase E's domestication seam.
 `sedentarization_tick` (`sedentarization.rs`, `TurnStage::Population` after
 `advance_labor_allocation`) computes a per-faction 0–100 **`SedentarizationScore`** each turn as
 a config-weighted blend of normalized inputs, then **EMA-smooths** it (`smoothing`):
-- **domestication** = `HerdRegistry::domesticated_count(faction) / references.domesticated_herds`
-  (the Phase E seam),
+- **domestication** = `(HerdRegistry::domesticated_count(faction) +
+  ForageRegistry::cultivated_count(faction)) / references.domesticated_herds` (the Phase E seam +
+  the Phase 1a cultivation fold-in — plant + animal domestication share one driver; see "Cultivation"),
 - **surplus** = Σ band `stores` food larders / `references.surplus` (band-local food, Phase 1),
 - **resource density** = `HerdDensityMap::normalized_average()` (map-wide game richness — a v1
   baseline; per-faction-local density is a future refinement),
