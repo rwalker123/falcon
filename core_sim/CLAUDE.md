@@ -414,9 +414,14 @@ flag. *Sim-only — the client readout is a follow-up (see below).*
   `knowledge_completion_threshold` (1.0). Validation invariants (`fauna_config.rs`):
   `corral_provisions_per_biomass > provisions_per_biomass`, `knowledge_progress_per_turn > 0`,
   `0 < knowledge_completion_threshold <= 1`.
-- **Follow-up (final Phase-1 slice):** the **client readout for both ladders** — cultivation +
+- **Display snapshot (on the wire).** The corral state is exposed to the client stream:
+  `HerdTelemetryState.corralled:bool` (= `Herd::is_corralled()`, captured on the `HerdTelemetryEntry`
+  exactly like `domestication`) on both `WorldSnapshot` and `WorldDelta` (`snapshot.fbs`, `sim_schema`,
+  `snapshot.rs` `herd_snapshot_entries`). See "Intensification display snapshot" under Cultivation for
+  the plant-side + faction-knowledge fields.
+- **Follow-up (final Phase-1 slice):** the **client _rendering_ for both ladders** — cultivation +
   Cultivation-knowledge + tended-patch on the plant side, and domestication + Herding-knowledge +
-  corral on the animal side — is the last remaining client-dev slice.
+  corral on the animal side — is the last remaining client-dev slice (the data is now all on the wire).
 
 See Also: "Cultivation (Intensification Phase 1a)" under Depletable Forage — the plant twin of this
 mechanic (the two are near-mechanical transposes).
@@ -595,11 +600,29 @@ passive yield). *Sim-only — the client readout is a follow-up.*
   ledger's completion value). Validation invariants: `progress_per_turn > decay_per_turn`,
   `0 < claim_threshold < 1`, `tended_provisions_per_biomass > 0`,
   `knowledge_progress_per_turn > 0`, `0 < knowledge_completion_threshold <= 1`.
+- **Intensification display snapshot (on the wire, consumed by the client-dev rendering slice next).**
+  The intensification-ladder state is now exported to the FlatBuffers client stream (append-only per
+  the schema discipline; `snapshot.fbs`, `sim_schema`, `snapshot.rs`), on both `WorldSnapshot` and
+  `WorldDelta`:
+  - **Forage patch cultivation** — a new per-tile `foragePatches:[ForagePatchState]` list
+    (`snapshot_forage_patches`, from the `ForageRegistry`, stable `(y, x)` order). Per patch: tile
+    `(x, y)`, `cultivationProgress:float` (0..1), `isCultivated:bool` (tended = progress ≥ 1.0),
+    `owner`/`hasOwner` (tending faction; `hasOwner = false` = wild), plus `biomass`/`carryingCapacity`/
+    `ecologyPhase` for optional patch-health. This is the client's first per-tile forage-patch payload
+    (previously forage was visible only via `laborAssignments`).
+  - **Faction Cultivation/Herding knowledge** — a new per-faction
+    `intensificationKnowledge:[IntensificationKnowledgeState{ faction, cultivation, herding }]` list
+    (`snapshot_intensification_knowledge`, from the `DiscoveryProgressLedger`), mirroring
+    `sedentarization[]`. `cultivation`/`herding` are the 0..1 progress on discoveries
+    `CULTIVATION_DISCOVERY_ID` (2003) / `HERDING_DISCOVERY_ID` (2004); a faction is emitted only once it
+    has begun learning either ladder (both zero → skipped). Client renders these as learning/known
+    meters like the sedentarization meter.
+  - **Herd corral** — `HerdTelemetryState.corralled` (see the corral section above).
 - **Follow-ups:** **Rung 1c — corral** (the fauna-side pen behind a `herding` gate) **shipped** — see
-  "Corral (Intensification Rung 1c)" under Fauna & Wild Game. The **client readout for both ladders**
-  (patch cultivation/owner/tended + Cultivation-knowledge on the plant side, herd domestication +
-  Herding-knowledge + corral on the animal side, on the tile card / HUD) is the **final Phase-1 slice**
-  and remains a client-dev follow-up.
+  "Corral (Intensification Rung 1c)" under Fauna & Wild Game. The **client _rendering_ for both ladders**
+  (tile-card cultivation N% / tended-patch + Cultivation/Herding knowledge meters + herd corral
+  indicator) is the **final Phase-1 slice** and remains a client-dev follow-up; the sim/schema data is
+  now all on the wire (fields above).
 
 ---
 

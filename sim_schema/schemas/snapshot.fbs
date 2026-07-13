@@ -774,6 +774,33 @@ table SedentarizationState {
   stage:string;
 }
 
+// One depletable forage patch's cultivation + ecology state for the client tile card
+// (Intensification Phase 1a). Keyed by tile `(x,y)`. `cultivationProgress` is the 0..1 taming meter;
+// `isCultivated` = a completed tended patch (progress >= 1.0). `owner`/`hasOwner` carry the tending
+// faction (`hasOwner = false` = a wild/untended patch, since faction 0 is a valid id).
+// `biomass`/`carryingCapacity`/`ecologyPhase` let the client optionally show patch health.
+table ForagePatchState {
+  x:uint;
+  y:uint;
+  cultivationProgress:float = 0;
+  isCultivated:bool = false;
+  hasOwner:bool = false;
+  owner:uint = 0;
+  biomass:float = 0;
+  carryingCapacity:float = 0;
+  ecologyPhase:string;
+}
+
+// Per-faction intensification-ladder knowledge (Intensification Rung 1b/1c): the faction's progress
+// on the Cultivation (discovery 2003) and Herding (discovery 2004) discoveries, each 0..1
+// (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client renders
+// learning/known meters. Only factions that have begun learning either ladder appear here.
+table IntensificationKnowledgeState {
+  faction:uint;
+  cultivation:float = 0;
+  herding:float = 0;
+}
+
 // One discovered Wondrous Site in a faction's registry. `category`/`display_name`/`glyph` are
 // resolved from the sites catalog at capture so the client needs no config. Only sites the
 // faction has revealed appear here (undiscovered sites are NOT in TileState — no fog leak).
@@ -814,6 +841,10 @@ table HerdTelemetryState {
   huntable:bool = false;
   ecologyPhase:string;
   domestication:float = 0;
+  // Intensification Rung 1c corral state: true iff the herd is penned (`corralled_at.is_some()`),
+  // so the client can show a corral (place-bound) indicator distinct from a mobile domesticated
+  // herd. Appended (append-only schema discipline).
+  corralled:bool = false;
 }
 
 table CommandEventState {
@@ -951,6 +982,8 @@ table WorldSnapshot {
   sedentarization:[SedentarizationState];
   discoveredSites:[DiscoveredSitesState];
   demographics:[PopulationDemographicsState];
+  foragePatches:[ForagePatchState];
+  intensificationKnowledge:[IntensificationKnowledgeState];
   moistureRaster:FloatRaster;
   hydrologyOverlay:HydrologyOverlay; // rivers/streams polylines
   elevationOverlay:ElevationOverlay;
@@ -1004,6 +1037,8 @@ table WorldDelta {
   sedentarization:[SedentarizationState];
   discoveredSites:[DiscoveredSitesState];
   demographics:[PopulationDemographicsState];
+  foragePatches:[ForagePatchState];
+  intensificationKnowledge:[IntensificationKnowledgeState];
   moistureRaster:FloatRaster;
   axisBias:AxisBiasState;
   sentiment:SentimentTelemetryState;

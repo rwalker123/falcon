@@ -345,6 +345,9 @@ pub struct HerdTelemetryEntry {
     pub ecology_phase: String,
     /// Husbandry progress in `[0.0, 1.0]` (`1.0` = domesticated).
     pub domestication: f32,
+    /// Rung 1c corral state: `true` iff the herd is penned (`Herd::is_corralled`). Client shows a
+    /// place-bound corral indicator distinct from a mobile domesticated herd.
+    pub corralled: bool,
     pub position: UVec2,
     pub biomass: f32,
     pub route_length: u32,
@@ -1283,6 +1286,7 @@ fn to_entry(herd: &Herd) -> HerdTelemetryEntry {
         huntable: true,
         ecology_phase: herd.ecology_phase.as_str().to_string(),
         domestication: herd.domestication_progress,
+        corralled: herd.is_corralled(),
         position: herd.position(),
         biomass: herd.biomass,
         route_length: herd.route_length() as u32,

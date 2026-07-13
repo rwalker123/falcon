@@ -19,14 +19,15 @@ use sim_runtime::{
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry, EcologyState,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FoodModuleState,
-    ForageState, GenerationState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
-    GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdRoamState, HerdState,
-    HerdTelemetryState, HydrologyOverlayState, InfluentialIndividualState,
-    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
-    LaborAssignmentState, LogisticsLinkState, MountainKind, PendingMigrationState,
-    PopulationCohortState, PopulationDemographicsState as SchemaPopulationDemographicsState,
-    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState,
-    ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
+    ForagePatchState, ForageState, GenerationState, GreatDiscoveryDefinitionState,
+    GreatDiscoveryProgressState, GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdRoamState,
+    HerdState, HerdTelemetryState, HydrologyOverlayState, InfluentialIndividualState,
+    IntensificationKnowledgeState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
+    KnowledgeTimelineEventState, LaborAssignmentState, LogisticsLinkState, MountainKind,
+    PendingMigrationState, PopulationCohortState,
+    PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
+    PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState,
+    SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, StartMarkerState, TerrainOverlayState, TerrainSample,
     TileState, TradeLinkKnowledge, TradeLinkState, VictoryModeSnapshotState, VictoryResultState,
@@ -47,9 +48,9 @@ use crate::{
         CultureTensionRecord, CultureTraitAxis as SimCultureTraitAxis,
     },
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
-    fauna::{Herd, HerdDensityMap, HerdRegistry, HerdTelemetry},
+    fauna::{Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, HERDING_DISCOVERY_ID},
     food::FoodModuleTag,
-    forage::{ForagePatch, ForageRegistry},
+    forage::{ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID},
     generations::{GenerationProfile, GenerationRegistry},
     great_discovery::{
         snapshot_definitions, snapshot_discoveries, snapshot_progress, snapshot_telemetry,
@@ -242,6 +243,8 @@ pub struct SnapshotHistory {
     sedentarization: Vec<SchemaSedentarizationState>,
     discovered_sites: Vec<SchemaDiscoveredSitesState>,
     demographics: Vec<SchemaPopulationDemographicsState>,
+    forage_patches: Vec<ForagePatchState>,
+    intensification_knowledge: Vec<IntensificationKnowledgeState>,
     command_events: Vec<CommandEventState>,
     herds: Vec<HerdTelemetryState>,
     food_modules: Vec<FoodModuleState>,
@@ -305,6 +308,8 @@ impl SnapshotHistory {
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
             demographics: Vec::new(),
+            forage_patches: Vec::new(),
+            intensification_knowledge: Vec::new(),
             command_events: Vec::new(),
             herds: Vec::new(),
             food_modules: Vec::new(),
@@ -600,6 +605,19 @@ impl SnapshotHistory {
         } else {
             Some(demographics_state.clone())
         };
+        let forage_patches_state = snapshot.forage_patches.clone();
+        let forage_patches_delta = if self.forage_patches == forage_patches_state {
+            None
+        } else {
+            Some(forage_patches_state.clone())
+        };
+        let intensification_knowledge_state = snapshot.intensification_knowledge.clone();
+        let intensification_knowledge_delta =
+            if self.intensification_knowledge == intensification_knowledge_state {
+                None
+            } else {
+                Some(intensification_knowledge_state.clone())
+            };
         let command_events_state = snapshot.command_events.clone();
         let command_events_delta = if self.command_events == command_events_state {
             None
@@ -655,6 +673,8 @@ impl SnapshotHistory {
             sedentarization: sedentarization_delta.clone(),
             discovered_sites: discovered_sites_delta.clone(),
             demographics: demographics_delta.clone(),
+            forage_patches: forage_patches_delta.clone(),
+            intensification_knowledge: intensification_knowledge_delta.clone(),
             herds: herds_delta.clone(),
             food_modules: food_modules_delta.clone(),
             knowledge_timeline: knowledge_timeline_delta.clone(),
@@ -730,6 +750,8 @@ impl SnapshotHistory {
         self.sedentarization = sedentarization_state;
         self.discovered_sites = discovered_sites_state;
         self.demographics = demographics_state;
+        self.forage_patches = forage_patches_state;
+        self.intensification_knowledge = intensification_knowledge_state;
         self.command_events = command_events_state;
         self.herds = herd_state;
         self.food_modules = food_modules_state;
@@ -810,6 +832,8 @@ impl SnapshotHistory {
         self.sedentarization = entry.snapshot.sedentarization.clone();
         self.discovered_sites = entry.snapshot.discovered_sites.clone();
         self.demographics = entry.snapshot.demographics.clone();
+        self.forage_patches = entry.snapshot.forage_patches.clone();
+        self.intensification_knowledge = entry.snapshot.intensification_knowledge.clone();
         self.command_events = entry.snapshot.command_events.clone();
         self.herds = entry.snapshot.herds.clone();
         self.food_modules = entry.snapshot.food_modules.clone();
@@ -904,6 +928,8 @@ impl SnapshotHistory {
             sedentarization: None,
             discovered_sites: None,
             demographics: None,
+            forage_patches: None,
+            intensification_knowledge: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1082,6 +1108,8 @@ impl SnapshotHistory {
             sedentarization: None,
             discovered_sites: None,
             demographics: None,
+            forage_patches: None,
+            intensification_knowledge: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1190,6 +1218,8 @@ impl SnapshotHistory {
             sedentarization: None,
             discovered_sites: None,
             demographics: None,
+            forage_patches: None,
+            intensification_knowledge: None,
             knowledge_timeline: Vec::new(),
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1718,6 +1748,8 @@ pub fn capture_snapshot(
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
     let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
     let demographics_state = snapshot_demographics(&population_states);
+    let forage_patches_state = snapshot_forage_patches(&forage_registry);
+    let intensification_knowledge_state = snapshot_intensification_knowledge(&discovery_progress);
     let command_events_state = command_events_to_state(&command_events);
     let victory_snapshot_state = victory_snapshot_from_resource(&victory);
     let capability_bits = capability_flags.bits();
@@ -1752,6 +1784,8 @@ pub fn capture_snapshot(
         sedentarization: sedentarization_state.clone(),
         discovered_sites: discovered_sites_state.clone(),
         demographics: demographics_state.clone(),
+        forage_patches: forage_patches_state.clone(),
+        intensification_knowledge: intensification_knowledge_state.clone(),
         command_events: command_events_state.clone(),
         capability_flags: capability_bits,
         axis_bias: axis_bias_state,
@@ -4294,6 +4328,60 @@ fn herd_snapshot_entries(telemetry: &HerdTelemetry) -> Vec<HerdTelemetryState> {
             huntable: entry.huntable,
             ecology_phase: entry.ecology_phase.clone(),
             domestication: entry.domestication,
+            corralled: entry.corralled,
+        })
+        .collect()
+}
+
+/// Per-tile depletable-forage cultivation/ecology display state (Intensification Phase 1a) for the
+/// client tile card. One entry per live `ForagePatch`, emitted in a stable `(y, x)` order so the
+/// snapshot is deterministic (the `ForageRegistry` map iteration order is not). `owner` crosses as
+/// the tending faction's `u32` (`None` for a wild/untended patch).
+fn snapshot_forage_patches(registry: &ForageRegistry) -> Vec<ForagePatchState> {
+    let mut patches: Vec<ForagePatchState> = registry
+        .patches
+        .values()
+        .map(|patch| ForagePatchState {
+            x: patch.tile.x,
+            y: patch.tile.y,
+            cultivation_progress: patch.cultivation_progress,
+            is_cultivated: patch.is_cultivated(),
+            owner: patch.owner.map(|faction| faction.0),
+            biomass: patch.biomass,
+            carrying_capacity: patch.carrying_capacity,
+            ecology_phase: patch.ecology_phase.as_str().to_string(),
+        })
+        .collect();
+    patches.sort_unstable_by_key(|patch| (patch.y, patch.x));
+    patches
+}
+
+/// Per-faction Cultivation (discovery 2003) / Herding (discovery 2004) knowledge progress
+/// (Intensification Rung 1b/1c) for the client learning/known meters. Iterates the ledger's factions
+/// in sorted order; a faction is emitted only when it has begun learning at least one ladder (both
+/// zero → skipped), mirroring how `discovery_progress_entries` skips empty progress.
+fn snapshot_intensification_knowledge(
+    ledger: &DiscoveryProgressLedger,
+) -> Vec<IntensificationKnowledgeState> {
+    let mut factions: Vec<u32> = ledger.progress.keys().map(|faction| faction.0).collect();
+    factions.sort_unstable();
+    factions.dedup();
+    factions
+        .into_iter()
+        .filter_map(|faction_id| {
+            let faction = FactionId(faction_id);
+            let cultivation = ledger
+                .get_progress(faction, CULTIVATION_DISCOVERY_ID)
+                .to_f32();
+            let herding = ledger.get_progress(faction, HERDING_DISCOVERY_ID).to_f32();
+            if cultivation <= 0.0 && herding <= 0.0 {
+                return None;
+            }
+            Some(IntensificationKnowledgeState {
+                faction: faction_id,
+                cultivation,
+                herding,
+            })
         })
         .collect()
 }
@@ -4418,6 +4506,8 @@ mod tests {
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
             demographics: Vec::new(),
+            forage_patches: Vec::new(),
+            intensification_knowledge: Vec::new(),
             terrain: overlay,
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
@@ -4478,6 +4568,8 @@ mod tests {
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
             demographics: Vec::new(),
+            forage_patches: Vec::new(),
+            intensification_knowledge: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
@@ -4533,6 +4625,8 @@ mod tests {
             sedentarization: Vec::new(),
             discovered_sites: Vec::new(),
             demographics: Vec::new(),
+            forage_patches: Vec::new(),
+            intensification_knowledge: Vec::new(),
             moisture_raster: FloatRasterState::default(),
             hydrology_overlay: HydrologyOverlayState::default(),
             elevation_overlay: ElevationOverlayState::default(),
@@ -5351,5 +5445,84 @@ mod tests {
         assert_eq!(d.working, 5);
         assert_eq!(d.children, 0);
         assert_eq!(d.elders, 0);
+    }
+
+    #[test]
+    fn snapshot_forage_patches_reports_cultivation_and_owner() {
+        let mut registry = ForageRegistry::default();
+        // A wild, untended patch: no cultivation, no owner.
+        let wild = ForagePatch::new(UVec2::new(1, 0), 100.0);
+        // A tended (cultivated) patch owned by faction 3.
+        let mut tended = ForagePatch::new(UVec2::new(0, 1), 100.0);
+        tended.claim_cultivation(FactionId(3));
+        registry.patches.insert(wild.tile, wild);
+        registry.patches.insert(tended.tile, tended);
+
+        let patches = snapshot_forage_patches(&registry);
+        assert_eq!(patches.len(), 2);
+        // Emitted in stable (y, x) order: (1,0) then (0,1).
+        assert_eq!((patches[0].x, patches[0].y), (1, 0));
+        assert_eq!((patches[1].x, patches[1].y), (0, 1));
+
+        let w = &patches[0];
+        assert!(!w.is_cultivated);
+        assert_eq!(w.cultivation_progress, 0.0);
+        assert_eq!(w.owner, None);
+
+        let t = &patches[1];
+        assert!(t.is_cultivated);
+        assert!((t.cultivation_progress - 1.0).abs() < 1e-6);
+        assert_eq!(t.owner, Some(3));
+    }
+
+    #[test]
+    fn snapshot_intensification_knowledge_reports_learned_ladders() {
+        let mut ledger = DiscoveryProgressLedger::default();
+        // Faction 2 fully knows Cultivation and is partway to Herding.
+        ledger.add_progress(FactionId(2), CULTIVATION_DISCOVERY_ID, Scalar::one());
+        ledger.add_progress(FactionId(2), HERDING_DISCOVERY_ID, Scalar::from_f32(0.5));
+        // Faction 5 has only unrelated discovery progress → no intensification row.
+        ledger.add_progress(FactionId(5), 1, Scalar::one());
+
+        let rows = snapshot_intensification_knowledge(&ledger);
+        assert_eq!(rows.len(), 1, "only factions on the ladders appear");
+        let f2 = &rows[0];
+        assert_eq!(f2.faction, 2);
+        assert!((f2.cultivation - 1.0).abs() < 1e-6);
+        assert!((f2.herding - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn herd_snapshot_reports_corralled_state() {
+        use crate::fauna_config::SizeClass;
+        let mut registry = HerdRegistry::default();
+        let mut penned = Herd::new(
+            "herd_pen".to_string(),
+            "Aurochs".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(4, 4)],
+            50.0,
+            100.0,
+        );
+        penned.corral_at(UVec2::new(4, 4));
+        registry.herds.push(penned);
+        // A second, un-penned herd stays mobile (corralled = false).
+        registry.herds.push(Herd::new(
+            "herd_wild".to_string(),
+            "Red Deer".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(1, 1)],
+            50.0,
+            100.0,
+        ));
+
+        let telemetry = HerdTelemetry {
+            entries: registry.snapshot_entries(),
+        };
+        let states = herd_snapshot_entries(&telemetry);
+        let pen = states.iter().find(|h| h.id == "herd_pen").unwrap();
+        assert!(pen.corralled, "a penned herd reports corralled");
+        let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
+        assert!(!wild.corralled, "a mobile herd reports not corralled");
     }
 }

@@ -132,6 +132,9 @@ pub struct HerdTelemetryState {
     pub ecology_phase: String,
     #[serde(default)]
     pub domestication: f32,
+    /// Intensification Rung 1c corral state: `true` iff the herd is penned (`corralled_at.is_some()`).
+    #[serde(default)]
+    pub corralled: bool,
 }
 
 impl Default for HerdTelemetryState {
@@ -150,8 +153,45 @@ impl Default for HerdTelemetryState {
             huntable: false,
             ecology_phase: String::new(),
             domestication: 0.0,
+            corralled: false,
         }
     }
+}
+
+/// One depletable forage patch's cultivation + ecology state for the client tile card
+/// (Intensification Phase 1a). Keyed by tile `(x, y)`. `cultivation_progress` is the 0..1 taming
+/// meter; `is_cultivated` = a completed tended patch. `owner` is the tending faction (`None` = a
+/// wild/untended patch). `biomass`/`carrying_capacity`/`ecology_phase` let the client show patch
+/// health. Mirrors `HerdTelemetryState`'s display-telemetry role for the plant side.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ForagePatchState {
+    pub x: u32,
+    pub y: u32,
+    #[serde(default)]
+    pub cultivation_progress: f32,
+    #[serde(default)]
+    pub is_cultivated: bool,
+    #[serde(default)]
+    pub owner: Option<u32>,
+    #[serde(default)]
+    pub biomass: f32,
+    #[serde(default)]
+    pub carrying_capacity: f32,
+    #[serde(default)]
+    pub ecology_phase: String,
+}
+
+/// Per-faction intensification-ladder knowledge (Intensification Rung 1b/1c): the faction's progress
+/// on the Cultivation (discovery 2003) and Herding (discovery 2004) discoveries, each 0..1
+/// (1.0 = known). Mirrors `SedentarizationState`'s per-faction shape; the client renders
+/// learning/known meters.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct IntensificationKnowledgeState {
+    pub faction: u32,
+    #[serde(default)]
+    pub cultivation: f32,
+    #[serde(default)]
+    pub herding: f32,
 }
 
 /// Shared depletable-ecology record round-tripped through the rollback snapshot. Mirrors the
@@ -1733,6 +1773,12 @@ pub struct WorldSnapshot {
     pub discovered_sites: Vec<DiscoveredSitesState>,
     #[serde(default)]
     pub demographics: Vec<PopulationDemographicsState>,
+    /// Per-tile depletable-forage cultivation/ecology display state (Intensification Phase 1a).
+    #[serde(default)]
+    pub forage_patches: Vec<ForagePatchState>,
+    /// Per-faction Cultivation/Herding knowledge progress (Intensification Rung 1b/1c).
+    #[serde(default)]
+    pub intensification_knowledge: Vec<IntensificationKnowledgeState>,
     pub moisture_raster: FloatRasterState,
     pub hydrology_overlay: HydrologyOverlayState,
     pub elevation_overlay: ElevationOverlayState,
@@ -1789,6 +1835,8 @@ pub struct WorldDelta {
     pub sedentarization: Option<Vec<SedentarizationState>>,
     pub discovered_sites: Option<Vec<DiscoveredSitesState>>,
     pub demographics: Option<Vec<PopulationDemographicsState>>,
+    pub forage_patches: Option<Vec<ForagePatchState>>,
+    pub intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
     pub moisture_raster: Option<FloatRasterState>,
     pub hydrology_overlay: Option<HydrologyOverlayState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
@@ -1993,6 +2041,9 @@ fn build_snapshot_flatbuffer<'a>(
     let sedentarization_vec = create_sedentarization(builder, &snapshot.sedentarization);
     let discovered_sites_vec = create_discovered_sites(builder, &snapshot.discovered_sites);
     let demographics_vec = create_demographics(builder, &snapshot.demographics);
+    let forage_patches_vec = create_forage_patches(builder, &snapshot.forage_patches);
+    let intensification_knowledge_vec =
+        create_intensification_knowledge(builder, &snapshot.intensification_knowledge);
     let hydrology_overlay = create_hydrology_overlay(builder, &snapshot.hydrology_overlay);
     let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
     let elevation_overlay = create_elevation_overlay(builder, &snapshot.elevation_overlay);
@@ -2050,6 +2101,8 @@ fn build_snapshot_flatbuffer<'a>(
             sedentarization: Some(sedentarization_vec),
             discoveredSites: Some(discovered_sites_vec),
             demographics: Some(demographics_vec),
+            foragePatches: Some(forage_patches_vec),
+            intensificationKnowledge: Some(intensification_knowledge_vec),
             moistureRaster: Some(moisture_raster),
             hydrologyOverlay: Some(hydrology_overlay),
             elevationOverlay: Some(elevation_overlay),
@@ -2114,6 +2167,14 @@ fn build_delta_flatbuffer<'a>(
         .demographics
         .as_ref()
         .map(|entries| create_demographics(builder, entries));
+    let forage_patches = delta
+        .forage_patches
+        .as_ref()
+        .map(|entries| create_forage_patches(builder, entries));
+    let intensification_knowledge = delta
+        .intensification_knowledge
+        .as_ref()
+        .map(|entries| create_intensification_knowledge(builder, entries));
     let command_events = delta
         .command_events
         .as_ref()
@@ -2291,6 +2352,8 @@ fn build_delta_flatbuffer<'a>(
             sedentarization,
             discoveredSites: discovered_sites,
             demographics,
+            foragePatches: forage_patches,
+            intensificationKnowledge: intensification_knowledge,
             moistureRaster: moisture_raster,
             elevationOverlay: elevation_overlay,
             axisBias: axis_bias,
@@ -2677,6 +2740,52 @@ fn create_herds<'a>(
                 huntable: herd.huntable,
                 ecologyPhase: Some(ecology_phase),
                 domestication: herd.domestication,
+                corralled: herd.corralled,
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+fn create_forage_patches<'a>(
+    builder: &mut FbBuilder<'a>,
+    patches: &[ForagePatchState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::ForagePatchState<'a>>>> {
+    let mut entries = Vec::with_capacity(patches.len());
+    for patch in patches {
+        let ecology_phase = builder.create_string(patch.ecology_phase.as_str());
+        let entry = fb::ForagePatchState::create(
+            builder,
+            &fb::ForagePatchStateArgs {
+                x: patch.x,
+                y: patch.y,
+                cultivationProgress: patch.cultivation_progress,
+                isCultivated: patch.is_cultivated,
+                hasOwner: patch.owner.is_some(),
+                owner: patch.owner.unwrap_or(0),
+                biomass: patch.biomass,
+                carryingCapacity: patch.carrying_capacity,
+                ecologyPhase: Some(ecology_phase),
+            },
+        );
+        entries.push(entry);
+    }
+    builder.create_vector(&entries)
+}
+
+fn create_intensification_knowledge<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[IntensificationKnowledgeState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::IntensificationKnowledgeState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let entry = fb::IntensificationKnowledgeState::create(
+            builder,
+            &fb::IntensificationKnowledgeStateArgs {
+                faction: state.faction,
+                cultivation: state.cultivation,
+                herding: state.herding,
             },
         );
         entries.push(entry);
