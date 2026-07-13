@@ -135,6 +135,18 @@ pub struct HerdTelemetryState {
     /// Intensification Rung 1c corral state: `true` iff the herd is penned (`corralled_at.is_some()`).
     #[serde(default)]
     pub corralled: bool,
+    /// Pre-commit yield forecast at the herd's current biomass (food/turn, `output_multiplier = 1`).
+    /// See `ForagePatchState`'s forecast fields — this is the herd-side twin.
+    #[serde(default)]
+    pub per_worker_yield: f32,
+    #[serde(default)]
+    pub ceiling_sustain: f32,
+    #[serde(default)]
+    pub ceiling_surplus: f32,
+    #[serde(default)]
+    pub ceiling_market: f32,
+    #[serde(default)]
+    pub ceiling_eradicate: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -154,6 +166,11 @@ impl Default for HerdTelemetryState {
             ecology_phase: String::new(),
             domestication: 0.0,
             corralled: false,
+            per_worker_yield: 0.0,
+            ceiling_sustain: 0.0,
+            ceiling_surplus: 0.0,
+            ceiling_market: 0.0,
+            ceiling_eradicate: 0.0,
         }
     }
 }
@@ -179,6 +196,28 @@ pub struct ForagePatchState {
     pub carrying_capacity: f32,
     #[serde(default)]
     pub ecology_phase: String,
+    /// **Pre-commit yield forecast** at the patch's current biomass (food/turn, captured at
+    /// `output_multiplier = 1.0` — the client scales by the band's `outputMultiplier`). Lets the
+    /// client show "Expected yield: +X.XX /turn" and cap its worker stepper *while the player is
+    /// composing an assignment*, before anything is committed:
+    /// `expected(workers, policy) = min(workers × per_worker_yield, ceiling_<policy>)` and
+    /// `max_useful_workers(policy) = ceil(ceiling_<policy> / per_worker_yield)`.
+    /// Food/turn one forager contributes (this tile's seasonal weight folded in, as the take does);
+    /// `0.0` in a dead season — do not divide by it.
+    #[serde(default)]
+    pub per_worker_yield: f32,
+    /// Food/turn ceiling under Sustain (MSY), already clamped to the patch's remaining biomass.
+    #[serde(default)]
+    pub ceiling_sustain: f32,
+    /// Food/turn ceiling under Surplus, biomass-clamped.
+    #[serde(default)]
+    pub ceiling_surplus: f32,
+    /// Food/turn ceiling under Market, biomass-clamped.
+    #[serde(default)]
+    pub ceiling_market: f32,
+    /// Food/turn ceiling under Eradicate, biomass-clamped.
+    #[serde(default)]
+    pub ceiling_eradicate: f32,
 }
 
 /// Per-faction intensification-ladder knowledge (Intensification Rung 1b/1c): the faction's progress
@@ -2747,6 +2786,11 @@ fn create_herds<'a>(
                 ecologyPhase: Some(ecology_phase),
                 domestication: herd.domestication,
                 corralled: herd.corralled,
+                perWorkerYield: herd.per_worker_yield,
+                ceilingSustain: herd.ceiling_sustain,
+                ceilingSurplus: herd.ceiling_surplus,
+                ceilingMarket: herd.ceiling_market,
+                ceilingEradicate: herd.ceiling_eradicate,
             },
         );
         entries.push(entry);
@@ -2773,6 +2817,11 @@ fn create_forage_patches<'a>(
                 biomass: patch.biomass,
                 carryingCapacity: patch.carrying_capacity,
                 ecologyPhase: Some(ecology_phase),
+                perWorkerYield: patch.per_worker_yield,
+                ceilingSustain: patch.ceiling_sustain,
+                ceilingSurplus: patch.ceiling_surplus,
+                ceilingMarket: patch.ceiling_market,
+                ceilingEradicate: patch.ceiling_eradicate,
             },
         );
         entries.push(entry);

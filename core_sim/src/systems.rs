@@ -28,11 +28,12 @@ use crate::{
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
     demographics_config::{DemographicsConfig, DemographicsConfigHandle, DemographicsConsumption},
     fauna::{
-        sustainable_yield, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HERDING_DISCOVERY_ID,
+        corral_provisions, hunt_policy_ceiling, hunt_provisions, sustainable_yield, EcologyPhase,
+        Herd, HerdDensityMap, HerdRegistry, HERDING_DISCOVERY_ID,
     },
     fauna_config::{FaunaConfig, FaunaConfigHandle},
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
-    forage::{forage_take, ForageRegistry, CULTIVATION_DISCOVERY_ID},
+    forage::{forage_take, tended_provisions, ForageRegistry, CULTIVATION_DISCOVERY_ID},
     generations::GenerationRegistry,
     heightfield::{build_elevation_field, ElevationField},
     hydrology::HydrologyState,
@@ -4147,21 +4148,10 @@ pub(crate) fn hunt_take(
     output_multiplier: f32,
     carry_room_biomass: f32,
 ) -> Scalar {
-    let ecology = &fauna.ecology;
-    let follow = &fauna.follow;
-    let market = &fauna.market;
-    let hunt = &fauna.hunt;
     // Per-policy ecology ceiling: Sustain = one turn's net regrowth (a collapsing group gives
     // nothing), Surplus = that × multiplier, Market = a commercial share, Eradicate = max take.
-    let policy_ceiling = match policy {
-        FollowPolicy::Sustain => sustainable_yield(herd.biomass, herd.carrying_capacity, ecology),
-        FollowPolicy::Surplus => {
-            sustainable_yield(herd.biomass, herd.carrying_capacity, ecology)
-                * follow.surplus_multiplier
-        }
-        FollowPolicy::Market => market.take_fraction * herd.biomass,
-        FollowPolicy::Eradicate => hunt.take_from(herd.biomass),
-    };
+    // Shared with the pre-commit forecast (`fauna::hunt_forecast`) so the two can never disagree.
+    let policy_ceiling = hunt_policy_ceiling(policy, herd.biomass, herd.carrying_capacity, fauna);
     // The hunting group's throughput caps the take; below the Sustain ceiling the herd nets growth.
     // `carry_room_biomass` additionally caps the take at the biomass the caller can carry home
     // (conservation — the herd loses only what's kept); the band Hunt passes `f32::INFINITY`
@@ -4174,7 +4164,7 @@ pub(crate) fn hunt_take(
         .min(carry_room_biomass.max(0.0));
     herd.biomass -= take;
     // FOOD income is fully fractional (a few hunters may yield < 1/turn).
-    scalar_from_f32(take * hunt.provisions_per_biomass * output_multiplier)
+    scalar_from_f32(hunt_provisions(take, fauna, output_multiplier))
 }
 
 /// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired
@@ -4329,11 +4319,13 @@ pub fn advance_labor_allocation(
                     // instead of split across the owner's bands.
                     if patch.is_cultivated() {
                         patch.tended_this_turn = true;
-                        let provisions = scalar_from_f32(
-                            patch.biomass
-                                * labor.forage.cultivation.tended_provisions_per_biomass
-                                * mult_f,
-                        );
+                        // Shared with the pre-commit forecast (`forage::forage_forecast`) so the
+                        // client's "expected yield" for a tended patch is exactly what it is paid.
+                        let provisions = scalar_from_f32(tended_provisions(
+                            patch.biomass,
+                            &labor.forage,
+                            mult_f,
+                        ));
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
                         }
@@ -4438,9 +4430,10 @@ pub fn advance_labor_allocation(
                     // in Forage; reconciles the "corralled herd isn't both hunt-drawn AND paid".
                     if herd.is_corralled() {
                         herd.corralled_tended_this_turn = true;
-                        let provisions = scalar_from_f32(
-                            herd.biomass * husbandry.corral_provisions_per_biomass * mult_f,
-                        );
+                        // Shared with the pre-commit forecast (`fauna::hunt_forecast`) so the
+                        // client's "expected yield" for a corralled herd is exactly what it is paid.
+                        let provisions =
+                            scalar_from_f32(corral_provisions(herd.biomass, &fauna, mult_f));
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
                         }
@@ -6662,15 +6655,15 @@ mod labor_yield_tests {
     //! biomass K/2, so a resource at carrying capacity still reads a positive sustainable harvest;
     //! a Sustain gather skims exactly that, so `actual ≈ sustainable`); a hunt's `sustainable` uses
     //! the same formula; and an overdraw reads `actual > sustainable`.
-    use super::advance_labor_allocation;
+    use super::{advance_labor_allocation, TENDED_SOURCE_WORKERS_NEEDED};
     use crate::components::{
         FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause,
         PopulationCohort, Tile,
     };
-    use crate::fauna::{sustainable_yield, Herd, HerdRegistry};
+    use crate::fauna::{hunt_forecast, sustainable_yield, Herd, HerdRegistry, SourceYieldForecast};
     use crate::fauna_config::{FaunaConfigHandle, SizeClass};
     use crate::food::{FoodModule, FoodModuleTag, FoodSiteKind};
-    use crate::forage::CULTIVATION_DISCOVERY_ID;
+    use crate::forage::{forage_forecast, CULTIVATION_DISCOVERY_ID};
     use crate::forage::{ForagePatch, ForageRegistry};
     use crate::labor_config::LaborConfigHandle;
     use crate::orders::FactionId;
@@ -7151,6 +7144,274 @@ mod labor_yield_tests {
         assert_eq!(
             corral.workers_needed, 1,
             "a corralled herd needs one keeper: {corral:?}"
+        );
+    }
+
+    // --- Pre-commit yield forecast: forecast == actual (the client's "Expected yield") -------------
+    //
+    // The snapshot exposes a per-source forecast (`per_worker_yield` + the four policy ceilings) so
+    // the client can show "Expected yield: +X.XX /turn" and cap its worker stepper BEFORE the player
+    // commits. It only works if the forecast agrees with what the sim actually pays — these tests are
+    // the guard: they run the REAL `advance_labor_allocation` and compare its payout against the
+    // client's composition `min(workers × per_worker_yield, ceiling[policy])`.
+
+    /// The tile coord `world_with_source` anchors its forage patch + herd on.
+    const SOURCE: UVec2 = UVec2::new(0, 0);
+    /// The `FoodModuleTag::seasonal_weight` `world_with_source` stamps on the source tile — the same
+    /// weight the client reads for the tile and folds into its forecast.
+    const SEASONAL_WEIGHT: f32 = 1.0;
+    /// `spawn_band` bands sit at morale 1.0 → a neutral productivity multiplier, which is also the
+    /// multiplier the snapshot captures forecasts at (`FORECAST_OUTPUT_MULTIPLIER`).
+    const NEUTRAL_OUTPUT_MULT: f32 = 1.0;
+    /// f32 slack between the forecast (`workers × per_worker_yield`, provisions) and the sim's take
+    /// (biomass → fixed-point provisions): different multiplication order + a 1e-6 fixed-point grid.
+    /// Orders of magnitude below one provision.
+    const FORECAST_EPSILON: f32 = 1e-4;
+    const POLICIES: [FollowPolicy; 4] = [
+        FollowPolicy::Sustain,
+        FollowPolicy::Surplus,
+        FollowPolicy::Market,
+        FollowPolicy::Eradicate,
+    ];
+
+    /// The client's `ceiling[policy]` lookup over the forecast's four exposed ceilings.
+    fn ceiling_for(forecast: &SourceYieldForecast, policy: FollowPolicy) -> f32 {
+        match policy {
+            FollowPolicy::Sustain => forecast.ceiling_sustain,
+            FollowPolicy::Surplus => forecast.ceiling_surplus,
+            FollowPolicy::Market => forecast.ceiling_market,
+            FollowPolicy::Eradicate => forecast.ceiling_eradicate,
+        }
+    }
+
+    /// The client's composition: what it would display as the expected yield for this staffing.
+    fn expected_yield(forecast: &SourceYieldForecast, workers: u32, policy: FollowPolicy) -> f32 {
+        (workers as f32 * forecast.per_worker_yield).min(ceiling_for(forecast, policy))
+    }
+
+    /// The client's worker-stepper cap.
+    fn max_useful_workers(forecast: &SourceYieldForecast, policy: FollowPolicy) -> u32 {
+        (ceiling_for(forecast, policy) / forecast.per_worker_yield).ceil() as u32
+    }
+
+    /// Re-seat the test herd at `biomass`/`cap` (the harness's default 100-cap herd saturates every
+    /// hunt policy ceiling with a single 40-biomass hunter, so a labor-bound hunt needs a bigger one).
+    fn reseat_herd(world: &mut World, biomass: f32, cap: f32) {
+        let ecology = world.resource::<FaunaConfigHandle>().get().ecology.clone();
+        let mut registry = world.resource_mut::<HerdRegistry>();
+        let herd = &mut registry.herds[0];
+        herd.carrying_capacity = cap;
+        herd.biomass = biomass;
+        herd.refresh_ecology_phase(&ecology);
+    }
+
+    /// **Forage forecast == actual.** For every policy × staffing (labor-bound, ceiling-bound), the
+    /// client's `min(workers × per_worker_yield, ceiling[policy])` equals the provisions
+    /// `advance_labor_allocation` actually pays. Both binding regimes are asserted to have been
+    /// exercised, so this can't silently degenerate into testing one branch.
+    #[test]
+    fn forage_forecast_equals_actual_take_for_every_policy_and_staffing() {
+        let mut saw_labor_bound = false;
+        let mut saw_ceiling_bound = false;
+        for policy in POLICIES {
+            for workers in [1u32, 2, 20] {
+                let (mut world, tile) = world_with_source(CAP);
+                // Forecast off the PRE-turn patch state, exactly as the client reads it from the
+                // snapshot captured at the end of last turn.
+                let patch = world
+                    .resource::<ForageRegistry>()
+                    .patch(SOURCE)
+                    .cloned()
+                    .expect("seeded patch");
+                let labor = world.resource::<LaborConfigHandle>().get();
+                let forecast =
+                    forage_forecast(&patch, &labor.forage, SEASONAL_WEIGHT, NEUTRAL_OUTPUT_MULT);
+                drop(labor);
+
+                let band = spawn_band(
+                    &mut world,
+                    tile,
+                    vec![LaborAssignment {
+                        target: LaborTarget::Forage {
+                            tile: SOURCE,
+                            policy,
+                        },
+                        workers,
+                    }],
+                );
+                world.run_system_once(advance_labor_allocation);
+                let actual = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+
+                let labor_term = workers as f32 * forecast.per_worker_yield;
+                let ceiling = ceiling_for(&forecast, policy);
+                if labor_term < ceiling {
+                    saw_labor_bound = true;
+                } else {
+                    saw_ceiling_bound = true;
+                }
+                let expected = expected_yield(&forecast, workers, policy);
+                assert!(
+                    (actual - expected).abs() < FORECAST_EPSILON,
+                    "forage forecast must equal the actual take ({policy:?}, {workers} workers): \
+                     forecast={expected} actual={actual} ({forecast:?})"
+                );
+            }
+        }
+        assert!(
+            saw_labor_bound && saw_ceiling_bound,
+            "both regimes must be covered: labor-bound={saw_labor_bound} ceiling-bound={saw_ceiling_bound}"
+        );
+    }
+
+    /// **Hunt forecast == actual.** The fauna twin of the forage test. The herd is re-seated at a
+    /// large capacity so the Eradicate ceiling exceeds a single hunter's throughput (a labor-bound
+    /// case); 20 hunters overstaff every policy (the ceiling binds).
+    #[test]
+    fn hunt_forecast_equals_actual_take_for_every_policy_and_staffing() {
+        const BIG_HERD_CAP: f32 = 1_000.0;
+        let mut saw_labor_bound = false;
+        let mut saw_ceiling_bound = false;
+        for policy in POLICIES {
+            for workers in [1u32, 2, 20] {
+                let (mut world, tile) = world_with_source(CAP);
+                reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
+                let herd = world
+                    .resource::<HerdRegistry>()
+                    .find(HERD_ID)
+                    .cloned()
+                    .expect("seeded herd");
+                let fauna = world.resource::<FaunaConfigHandle>().get();
+                let per_worker = world
+                    .resource::<LaborConfigHandle>()
+                    .get()
+                    .hunt
+                    .per_worker_biomass_capacity;
+                let forecast = hunt_forecast(&herd, &fauna, per_worker, NEUTRAL_OUTPUT_MULT);
+                drop(fauna);
+
+                let band = spawn_band(
+                    &mut world,
+                    tile,
+                    vec![LaborAssignment {
+                        target: LaborTarget::Hunt {
+                            fauna_id: HERD_ID.to_string(),
+                            policy,
+                        },
+                        workers,
+                    }],
+                );
+                world.run_system_once(advance_labor_allocation);
+                let actual = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+
+                let labor_term = workers as f32 * forecast.per_worker_yield;
+                let ceiling = ceiling_for(&forecast, policy);
+                if labor_term < ceiling {
+                    saw_labor_bound = true;
+                } else {
+                    saw_ceiling_bound = true;
+                }
+                let expected = expected_yield(&forecast, workers, policy);
+                assert!(
+                    (actual - expected).abs() < FORECAST_EPSILON,
+                    "hunt forecast must equal the actual take ({policy:?}, {workers} workers): \
+                     forecast={expected} actual={actual} ({forecast:?})"
+                );
+            }
+        }
+        assert!(
+            saw_labor_bound && saw_ceiling_bound,
+            "both regimes must be covered: labor-bound={saw_labor_bound} ceiling-bound={saw_ceiling_bound}"
+        );
+    }
+
+    /// A **tended patch** / **corralled herd** forecasts its managed yield with ONE worker: every
+    /// policy ceiling is that yield, `per_worker_yield` equals it (→ `max_useful_workers == 1`), and
+    /// it is exactly what the sim pays the tending/keeping band.
+    #[test]
+    fn tended_patch_and_corral_forecast_full_yield_with_one_worker() {
+        let (mut world, tile) = world_with_source(CAP);
+        let patch_cap = world
+            .resource::<LaborConfigHandle>()
+            .get()
+            .forage
+            .carrying_capacity;
+        cultivate_source_patch(&mut world, patch_cap);
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            registry.herds[0].corral_at(SOURCE);
+        }
+
+        let patch = world
+            .resource::<ForageRegistry>()
+            .patch(SOURCE)
+            .cloned()
+            .expect("seeded patch");
+        let labor = world.resource::<LaborConfigHandle>().get();
+        let patch_forecast =
+            forage_forecast(&patch, &labor.forage, SEASONAL_WEIGHT, NEUTRAL_OUTPUT_MULT);
+        let hunt_per_worker = labor.hunt.per_worker_biomass_capacity;
+        drop(labor);
+        let herd = world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .cloned()
+            .expect("seeded herd");
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let herd_forecast = hunt_forecast(&herd, &fauna, hunt_per_worker, NEUTRAL_OUTPUT_MULT);
+        drop(fauna);
+
+        // One worker suffices, and no policy changes the managed yield.
+        for policy in POLICIES {
+            assert_eq!(max_useful_workers(&patch_forecast, policy), 1);
+            assert_eq!(max_useful_workers(&herd_forecast, policy), 1);
+        }
+
+        // A single tending/keeping worker collects the whole forecast yield — and that IS what the
+        // sim pays (both bands staff one worker here).
+        let forager = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: SOURCE,
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: TENDED_SOURCE_WORKERS_NEEDED,
+            }],
+        );
+        let keeper = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Sustain,
+                },
+                workers: TENDED_SOURCE_WORKERS_NEEDED,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+
+        let tended = world.get::<LaborAllocation>(forager).unwrap().last_yields[0].actual;
+        let corral = world.get::<LaborAllocation>(keeper).unwrap().last_yields[0].actual;
+        let tended_forecast = expected_yield(
+            &patch_forecast,
+            TENDED_SOURCE_WORKERS_NEEDED,
+            FollowPolicy::Sustain,
+        );
+        let corral_forecast = expected_yield(
+            &herd_forecast,
+            TENDED_SOURCE_WORKERS_NEEDED,
+            FollowPolicy::Sustain,
+        );
+        assert!(tended_forecast > 0.0 && corral_forecast > 0.0);
+        assert!(
+            (tended - tended_forecast).abs() < FORECAST_EPSILON,
+            "tended patch forecast must equal the actual payout: {tended_forecast} vs {tended}"
+        );
+        assert!(
+            (corral - corral_forecast).abs() < FORECAST_EPSILON,
+            "corral forecast must equal the actual payout: {corral_forecast} vs {corral}"
         );
     }
 

@@ -32,7 +32,10 @@ use sim_schema::ForageState;
 
 use crate::{
     components::{FollowPolicy, Tile},
-    fauna::{classify_ecology_phase, logistic_regrowth, sustainable_yield, EcologyPhase},
+    fauna::{
+        classify_ecology_phase, logistic_regrowth, sustainable_yield, EcologyPhase,
+        SourceYieldForecast,
+    },
     fauna_config::EcologyConfig,
     food::FoodModuleTag,
     labor_config::{ForageLaborConfig, LaborConfigHandle},
@@ -332,28 +335,112 @@ pub(crate) fn forage_take(
     output_multiplier: f32,
     seasonal: f32,
 ) -> Scalar {
-    let ecology = &forage.ecology;
-    // Per-policy ecology ceiling: Sustain = Maximum Sustainable Yield (regrowth at K/2, so a full
-    // patch still yields), Surplus = that × multiplier, Market = a commercial share, Eradicate = an
-    // aggressive strip. Market/Eradicate deplete a healthy patch; Sustain draws it toward K/2.
-    let policy_ceiling = match policy {
-        FollowPolicy::Sustain => sustainable_yield(patch.biomass, patch.carrying_capacity, ecology),
-        FollowPolicy::Surplus => {
-            sustainable_yield(patch.biomass, patch.carrying_capacity, ecology)
-                * forage.surplus_multiplier
-        }
-        FollowPolicy::Market => forage.market.take_fraction * patch.biomass,
-        FollowPolicy::Eradicate => forage.eradicate.take_fraction * patch.biomass,
-    };
-    // Gather throughput caps the take (seasonal folded in); clamp to the patch's remaining biomass.
-    let worker_cap = workers as f32 * forage.per_worker_biomass_capacity * seasonal.max(0.0);
+    // Per-policy ecology ceiling + gather throughput, both from the shared helpers the pre-commit
+    // forecast (`forage_forecast`) reads — the take and the forecast can never disagree.
+    let policy_ceiling =
+        forage_policy_ceiling(policy, patch.biomass, patch.carrying_capacity, forage);
+    let worker_cap = workers as f32 * forage_per_worker_biomass(forage, seasonal);
     let take = worker_cap
         .min(policy_ceiling)
         .max(0.0)
         .clamp(0.0, patch.biomass);
     patch.biomass -= take;
     // FOOD income is fully fractional (a few foragers may gather < 1 provision/turn).
-    scalar_from_f32(take * forage.provisions_per_biomass * output_multiplier)
+    scalar_from_f32(forage_provisions(take, forage, output_multiplier))
+}
+
+/// The per-policy **biomass** ceiling on a gather at the patch's current stock — the single source of
+/// the Sustain/Surplus/Market/Eradicate rungs, shared by `forage_take` (the take path) and
+/// `forage_forecast` (the pre-commit forecast). Sustain = Maximum Sustainable Yield (regrowth at K/2,
+/// so a full patch still yields and a collapsed one yields nothing), Surplus = that ×
+/// `surplus_multiplier`, Market = `market.take_fraction × biomass`, Eradicate =
+/// `eradicate.take_fraction × biomass`. Not yet clamped to biomass — callers do that alongside their
+/// own throughput cap. The plant mirror of `fauna::hunt_policy_ceiling`.
+pub(crate) fn forage_policy_ceiling(
+    policy: FollowPolicy,
+    biomass: f32,
+    carrying_capacity: f32,
+    forage: &ForageLaborConfig,
+) -> f32 {
+    let ecology = &forage.ecology;
+    match policy {
+        FollowPolicy::Sustain => sustainable_yield(biomass, carrying_capacity, ecology),
+        FollowPolicy::Surplus => {
+            sustainable_yield(biomass, carrying_capacity, ecology) * forage.surplus_multiplier
+        }
+        FollowPolicy::Market => forage.market.take_fraction * biomass,
+        FollowPolicy::Eradicate => forage.eradicate.take_fraction * biomass,
+    }
+}
+
+/// Biomass one forager can gather this turn (`per_worker_biomass_capacity × seasonal_weight`) — the
+/// per-worker throughput `forage_take`'s worker cap multiplies by the head-count, shared with the
+/// forecast. Hunting has no seasonal factor, so it has no counterpart helper.
+pub(crate) fn forage_per_worker_biomass(forage: &ForageLaborConfig, seasonal: f32) -> f32 {
+    forage.per_worker_biomass_capacity * seasonal.max(0.0)
+}
+
+/// Biomass → provisions for a gather take (× the caller's productivity multiplier) — the one
+/// conversion `forage_take` pays, shared with the forecast. The plant mirror of
+/// `fauna::hunt_provisions`.
+pub(crate) fn forage_provisions(
+    biomass_take: f32,
+    forage: &ForageLaborConfig,
+    output_multiplier: f32,
+) -> f32 {
+    biomass_take * forage.provisions_per_biomass * output_multiplier
+}
+
+/// The place-local managed harvest a **tended** (cultivated) patch pays the band tending it each turn
+/// (`biomass × cultivation.tended_provisions_per_biomass`, no biomass drawn down). Shared by the
+/// Forage arm of `advance_labor_allocation` (the payout) and `forage_forecast` (the forecast). The
+/// plant mirror of `fauna::corral_provisions`.
+pub(crate) fn tended_provisions(
+    biomass: f32,
+    forage: &ForageLaborConfig,
+    output_multiplier: f32,
+) -> f32 {
+    biomass * forage.cultivation.tended_provisions_per_biomass * output_multiplier
+}
+
+/// Pre-commit yield forecast for foraging `patch` at this tile's `seasonal` weight (its
+/// `FoodModuleTag::seasonal_weight`). Mirrors `forage_take` exactly: same per-policy ceilings, same
+/// seasonal-folded per-worker throughput, same biomass clamp, same biomass→provisions conversion — so
+/// the client's `min(workers × per_worker_yield, ceiling[policy])` IS the take the sim pays. A
+/// **cultivated (tended)** patch forecasts its tended yield with one worker (see
+/// `SourceYieldForecast::tended`). The plant mirror of `fauna::hunt_forecast`.
+pub(crate) fn forage_forecast(
+    patch: &ForagePatch,
+    forage: &ForageLaborConfig,
+    seasonal: f32,
+    output_multiplier: f32,
+) -> SourceYieldForecast {
+    if patch.is_cultivated() {
+        return SourceYieldForecast::tended(tended_provisions(
+            patch.biomass,
+            forage,
+            output_multiplier,
+        ));
+    }
+    let ceiling = |policy| {
+        forage_provisions(
+            forage_policy_ceiling(policy, patch.biomass, patch.carrying_capacity, forage)
+                .clamp(0.0, patch.biomass),
+            forage,
+            output_multiplier,
+        )
+    };
+    SourceYieldForecast {
+        per_worker_yield: forage_provisions(
+            forage_per_worker_biomass(forage, seasonal),
+            forage,
+            output_multiplier,
+        ),
+        ceiling_sustain: ceiling(FollowPolicy::Sustain),
+        ceiling_surplus: ceiling(FollowPolicy::Surplus),
+        ceiling_market: ceiling(FollowPolicy::Market),
+        ceiling_eradicate: ceiling(FollowPolicy::Eradicate),
+    }
 }
 
 #[cfg(test)]

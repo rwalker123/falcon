@@ -626,6 +626,54 @@ passive yield). *Sim-only — the client readout is a follow-up.*
 
 ---
 
+## Pre-commit Yield Forecast (per-source, on the wire)
+
+The **retained yield telemetry** (`SourceYield.actual/sustainable/workers_needed`, above) is
+**post-hoc** — the player only learns they over-assigned *after* committing and advancing a turn. The
+forecast is its pre-commit twin: per in-range source, the snapshot exposes enough for the client to
+show a live **"Expected yield: +X.XX /turn"** and **cap its worker stepper at the max-useful count
+while the player is composing an assignment**.
+
+**Wire fields** (append-only, on both `WorldSnapshot` and `WorldDelta`) — the same five on
+`ForagePatchState` (per tile) and `HerdTelemetryState` (per herd):
+`perWorkerYield:float` + `ceilingSustain` / `ceilingSurplus` / `ceilingMarket` / `ceilingEradicate`
+(all `float`, **food/turn**, at the source's CURRENT biomass).
+- `perWorkerYield` = food/turn one worker contributes (throughput → provisions; **forage folds in the
+  tile's `seasonal_weight`**, as `forage_take` does — it can be `0` in a dead season, so consumers must
+  not divide by it; hunt has no seasonal factor).
+- Each `ceiling*` = that policy's food/turn cap, **already clamped to the source's remaining biomass**.
+- Captured at `output_multiplier = 1.0` (the productivity multiplier is per-band): the client scales
+  every field by the acting band's `PopulationCohortState.outputMultiplier` — a linear factor, so
+  `max_useful_workers` is invariant to it.
+- Client composition: `expected(workers, policy) = min(workers × perWorkerYield, ceiling[policy])`,
+  `max_useful_workers(policy) = ceil(ceiling[policy] / perWorkerYield)`.
+- A **tended (cultivated) patch** / **corralled herd** is maintenance labor, not scaling gather: every
+  ceiling is its managed yield and `perWorkerYield` equals it, so `max_useful_workers == 1`
+  (`TENDED_SOURCE_WORKERS_NEEDED`) and the policy is irrelevant.
+
+**Invariant: forecast == actual — no duplicated yield math.** The forecast and the take path read the
+*same* pure helpers, so the UI can never promise a number the sim won't pay:
+- forage (`forage.rs`): `forage_policy_ceiling` (the 4 policy rungs, biomass) · `forage_per_worker_biomass`
+  (`per_worker_biomass_capacity × seasonal`) · `forage_provisions` (biomass→provisions ×
+  `output_multiplier`) · `tended_provisions` (the tended-patch managed harvest) — all called by both
+  `forage_take` / the tended-patch arm of `advance_labor_allocation` **and** `forage_forecast`.
+- fauna (`fauna.rs`): `hunt_policy_ceiling` · `hunt_provisions` · `corral_provisions` — called by both
+  `systems::hunt_take` / the corral arm of `advance_labor_allocation` **and** `hunt_forecast`. The
+  shared `SourceYieldForecast` struct (with `::tended`) is the common return shape.
+- Guarded by `systems::labor_yield_tests::{forage,hunt}_forecast_equals_actual_take_for_every_policy_and_staffing`
+  (every policy × labor-bound/ceiling-bound staffing, comparing against the payout of a real
+  `advance_labor_allocation` run) and `tended_patch_and_corral_forecast_full_yield_with_one_worker`.
+  **Any change to the take math must go through these helpers** — never re-derive a ceiling or a
+  biomass→provisions conversion at a call site.
+
+Capture: `snapshot_forage_patches` / `herd_snapshot_entries` (`snapshot.rs`); the herd's
+`carrying_capacity` (absent from the display telemetry) is resolved from the authoritative
+`HerdRegistry`, and the per-tile `seasonal_weight` from the `FoodModuleTag` query.
+**Client follow-up:** rendering the live "Expected yield" line + the worker-stepper cap in the
+forage/herd assign controls.
+
+---
+
 ## Wondrous Sites
 
 Data-driven catalog of notable map features tiles can hold, hidden under fog until a faction's
@@ -934,6 +982,11 @@ consumes these next** (allocation-panel rows + tooltip + ledger footer, a follow
 `actual > sustainable` is the client-derived **overhunting signal** — a *leading* flow indicator,
 distinct from the stock-based `ecology_phase` — and `workers > workersNeeded` is the **overstaffing**
 indicator (flag the wasted labor on the source row + the forage biomass/cap tile-card row).
+
+All of the above is **post-hoc** (it reports what a committed turn produced). Its **pre-commit** twin —
+the per-source `perWorkerYield` + policy ceilings the client uses to show an expected yield and cap the
+worker stepper *before* the player commits — is the "Pre-commit Yield Forecast" section below, which
+shares the take path's yield helpers so forecast == actual.
 
 This is the general mechanism the arc scales: raise reach/throughput for settlements/cities, and a
 future **trade policy** adds a consent gate + a priced return flow on *cross-faction* edges (see the

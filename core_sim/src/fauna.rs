@@ -10,7 +10,7 @@ use tracing::info;
 use std::hash::{Hash, Hasher};
 
 use crate::{
-    components::{PopulationCohort, Tile, FOOD},
+    components::{FollowPolicy, PopulationCohort, Tile, FOOD},
     fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle, SizeClass, SpeciesDef},
     food::{classify_food_module, FoodModule},
     grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT},
@@ -1215,6 +1215,136 @@ pub fn advance_husbandry(
                 cohort.stores.add(FOOD, share * mult);
             }
         }
+    }
+}
+
+/// Pre-commit **yield forecast** for one worked source (a herd or a forage patch), as the client
+/// needs it to show "Expected yield: +X.XX /turn" and cap its worker stepper *while the player is
+/// composing an assignment* — before anything is committed (the `SourceYield` telemetry is
+/// post-hoc). Every field is **provisions (food) per turn** at the source's CURRENT biomass, with
+/// the caller's `output_multiplier` already folded in (the snapshot exports it at `1.0`, so the
+/// client scales by the band's `outputMultiplier` — a linear factor on every field, which leaves
+/// `max_useful_workers` invariant).
+///
+/// The consumer composes:
+/// - `expected(workers, policy) = min(workers × per_worker_yield, ceiling(policy))`
+/// - `max_useful_workers(policy) = ceil(ceiling(policy) / per_worker_yield)`
+///
+/// Each `ceiling_*` is the policy ceiling **already clamped to the source's remaining biomass**, so
+/// that `min` IS the take the sim pays. **Forecast == actual is an invariant**: the forecast and
+/// the take path (`hunt_take` / `forage::forage_take`) share the same ceiling + conversion helpers
+/// (`hunt_policy_ceiling`/`hunt_provisions`, `forage_policy_ceiling`/`forage_provisions`) — never
+/// duplicate the formulas, or the UI will lie.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SourceYieldForecast {
+    /// Food/turn one worker contributes at this source (throughput → provisions), before the policy
+    /// ceiling binds. `0.0` means no worker can extract anything this turn (e.g. a zero seasonal
+    /// weight) — consumers must not divide by it.
+    pub per_worker_yield: f32,
+    /// Food/turn cap under **Sustain** (the MSY skim).
+    pub ceiling_sustain: f32,
+    /// Food/turn cap under **Surplus**.
+    pub ceiling_surplus: f32,
+    /// Food/turn cap under **Market**.
+    pub ceiling_market: f32,
+    /// Food/turn cap under **Eradicate**.
+    pub ceiling_eradicate: f32,
+}
+
+impl SourceYieldForecast {
+    /// A **tended** improvement — a corralled herd or a cultivated (tended) patch. It is maintenance
+    /// labor, not scaling gather: a single worker (`TENDED_SOURCE_WORKERS_NEEDED`) collects the whole
+    /// managed yield and the policy is irrelevant. So every ceiling *is* that yield and
+    /// `per_worker_yield` equals it — the client's `max_useful_workers` then falls out as `1`.
+    pub(crate) fn tended(yield_per_turn: f32) -> Self {
+        Self {
+            per_worker_yield: yield_per_turn,
+            ceiling_sustain: yield_per_turn,
+            ceiling_surplus: yield_per_turn,
+            ceiling_market: yield_per_turn,
+            ceiling_eradicate: yield_per_turn,
+        }
+    }
+}
+
+/// The per-policy **biomass** ceiling on a hunt take at the herd's current stock — the single source
+/// of the Sustain/Surplus/Market/Eradicate rungs, shared by `systems::hunt_take` (the take path) and
+/// `hunt_forecast` (the pre-commit forecast). Sustain = the Maximum Sustainable Yield (regrowth at
+/// K/2, so a herd at capacity still yields and a collapsing one yields nothing), Surplus = that ×
+/// `follow.surplus_multiplier`, Market = `market.take_fraction × biomass` (a commercial share),
+/// Eradicate = `hunt.take_from(biomass)` (max take). Not yet clamped to biomass — callers do that
+/// alongside their own throughput cap.
+pub(crate) fn hunt_policy_ceiling(
+    policy: FollowPolicy,
+    biomass: f32,
+    carrying_capacity: f32,
+    fauna: &FaunaConfig,
+) -> f32 {
+    match policy {
+        FollowPolicy::Sustain => sustainable_yield(biomass, carrying_capacity, &fauna.ecology),
+        FollowPolicy::Surplus => {
+            sustainable_yield(biomass, carrying_capacity, &fauna.ecology)
+                * fauna.follow.surplus_multiplier
+        }
+        FollowPolicy::Market => fauna.market.take_fraction * biomass,
+        FollowPolicy::Eradicate => fauna.hunt.take_from(biomass),
+    }
+}
+
+/// Biomass → provisions for a hunt take (× the caller's productivity multiplier) — the one
+/// conversion `hunt_take` pays, shared with the forecast so the two can't drift.
+pub(crate) fn hunt_provisions(
+    biomass_take: f32,
+    fauna: &FaunaConfig,
+    output_multiplier: f32,
+) -> f32 {
+    biomass_take * fauna.hunt.provisions_per_biomass * output_multiplier
+}
+
+/// The place-local managed yield a **corralled** herd pays its tending keeper band each turn
+/// (`biomass × corral_provisions_per_biomass`, no biomass drawn down). Shared by the Hunt arm of
+/// `advance_labor_allocation` (the payout) and `hunt_forecast` (the forecast).
+pub(crate) fn corral_provisions(biomass: f32, fauna: &FaunaConfig, output_multiplier: f32) -> f32 {
+    biomass * fauna.husbandry.corral_provisions_per_biomass * output_multiplier
+}
+
+/// Pre-commit yield forecast for hunting `herd` with `per_worker_biomass_capacity` biomass/hunter
+/// (`labor_config.json` `hunt.per_worker_biomass_capacity`). Mirrors `systems::hunt_take` exactly:
+/// same per-policy ceilings, same biomass clamp, same biomass→provisions conversion. A **corralled**
+/// herd forecasts its corral yield with one worker (see `SourceYieldForecast::tended`). The band
+/// Hunt labor has no carry limit (it passes `carry_room_biomass = f32::INFINITY` to `hunt_take`), so
+/// the forecast models no carry clamp either — a hunting *expedition*'s carry cap is out of scope.
+pub(crate) fn hunt_forecast(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    per_worker_biomass_capacity: f32,
+    output_multiplier: f32,
+) -> SourceYieldForecast {
+    if herd.is_corralled() {
+        return SourceYieldForecast::tended(corral_provisions(
+            herd.biomass,
+            fauna,
+            output_multiplier,
+        ));
+    }
+    let ceiling = |policy| {
+        hunt_provisions(
+            hunt_policy_ceiling(policy, herd.biomass, herd.carrying_capacity, fauna)
+                .clamp(0.0, herd.biomass),
+            fauna,
+            output_multiplier,
+        )
+    };
+    SourceYieldForecast {
+        per_worker_yield: hunt_provisions(
+            per_worker_biomass_capacity.max(0.0),
+            fauna,
+            output_multiplier,
+        ),
+        ceiling_sustain: ceiling(FollowPolicy::Sustain),
+        ceiling_surplus: ceiling(FollowPolicy::Surplus),
+        ceiling_market: ceiling(FollowPolicy::Market),
+        ceiling_eradicate: ceiling(FollowPolicy::Eradicate),
     }
 }
 

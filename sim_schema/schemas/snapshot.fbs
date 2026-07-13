@@ -795,6 +795,27 @@ table ForagePatchState {
   biomass:float = 0;
   carryingCapacity:float = 0;
   ecologyPhase:string;
+  // --- Pre-commit yield forecast (appended, append-only schema discipline) ---
+  // Food/turn at this patch's CURRENT biomass, so the client can show "Expected yield: +X.XX /turn"
+  // and cap its worker stepper WHILE the player composes an assignment (the per-assignment
+  // `workersNeeded` telemetry is post-hoc — it only reports after a turn is committed).
+  // Computed at capture with an output_multiplier of 1.0: multiply every field below by the acting
+  // band's `PopulationCohortState.outputMultiplier` (a linear factor, so `maxUsefulWorkers` is
+  // unaffected by it). Compose:
+  //   expected(workers, policy) = min(workers * perWorkerYield, ceiling<Policy>)
+  //   maxUsefulWorkers(policy)  = ceil(ceiling<Policy> / perWorkerYield)   [perWorkerYield > 0]
+  // Each ceiling is already clamped to the patch's remaining biomass, so that min IS the take the
+  // sim pays (`forage_take` and the forecast share the ceiling/conversion helpers — forecast ==
+  // actual is an invariant, see core_sim/CLAUDE.md).
+  // A CULTIVATED (tended) patch reports its tended yield as every ceiling, with perWorkerYield equal
+  // to it — one worker suffices (maxUsefulWorkers = 1); the policy is irrelevant to a tended patch.
+  // perWorkerYield folds in this tile's seasonal weight (as `forage_take` does); it can be 0 in a
+  // dead season — do not divide by it.
+  perWorkerYield:float = 0;
+  ceilingSustain:float = 0;
+  ceilingSurplus:float = 0;
+  ceilingMarket:float = 0;
+  ceilingEradicate:float = 0;
 }
 
 // Per-faction intensification-ladder knowledge (Intensification Rung 1b/1c): the faction's progress
@@ -851,6 +872,22 @@ table HerdTelemetryState {
   // so the client can show a corral (place-bound) indicator distinct from a mobile domesticated
   // herd. Appended (append-only schema discipline).
   corralled:bool = false;
+  // --- Pre-commit yield forecast (appended, append-only schema discipline) ---
+  // The herd-side twin of `ForagePatchState`'s forecast block — food/turn at this herd's CURRENT
+  // biomass, for a live "Expected yield" readout + worker-stepper cap while the player composes a
+  // Hunt assignment. Captured with an output_multiplier of 1.0 (scale by the band's
+  // `outputMultiplier`). Compose:
+  //   expected(workers, policy) = min(workers * perWorkerYield, ceiling<Policy>)
+  //   maxUsefulWorkers(policy)  = ceil(ceiling<Policy> / perWorkerYield)   [perWorkerYield > 0]
+  // Ceilings are already clamped to the herd's remaining biomass; `hunt_take` and the forecast share
+  // the ceiling/conversion helpers, so forecast == actual (see core_sim/CLAUDE.md).
+  // A CORRALLED herd reports its corral yield as every ceiling with perWorkerYield equal to it — one
+  // keeper suffices (maxUsefulWorkers = 1) and the policy is irrelevant.
+  perWorkerYield:float = 0;
+  ceilingSustain:float = 0;
+  ceilingSurplus:float = 0;
+  ceilingMarket:float = 0;
+  ceilingEradicate:float = 0;
 }
 
 table CommandEventState {
