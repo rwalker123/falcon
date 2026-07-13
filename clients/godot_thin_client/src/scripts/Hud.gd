@@ -290,7 +290,11 @@ const LABOR_KIND_WARRIOR := "warrior"
 # EXTRACTIVE take policies — the four rungs that take from a wild source without changing it. Shared
 # by forage + hunt (and the only ones a hunting EXPEDITION can carry: a detached party builds no pen).
 const LABOR_HUNT_POLICIES := ["sustain", "surplus", "market", "eradicate"]
-const DEFAULT_HUNT_POLICY := "sustain"
+# The Sustain rung by name: the default compose policy AND the one policy that TEACHES — every
+# intensification track (cultivation / herding knowledge, herd domestication) accrues only while a
+# band works a Thriving source under Sustain, so the gate reasons below point back at it.
+const LABOR_POLICY_SUSTAIN := "sustain"
+const DEFAULT_HUNT_POLICY := LABOR_POLICY_SUSTAIN
 # INVESTMENT rungs (Intensification): an up-front cost — the source pays only its `ceiling_cultivate`
 # / `ceiling_corral` dip yield while the workers prepare it, then flips to the much higher tended /
 # corral yield. Kind-specific, and the sim REJECTS the cross pairing: Cultivate is forage-only,
@@ -318,17 +322,38 @@ const HUNT_POLICY_HINTS := {
     "eradicate": "Eradicate — hunt the herd to extinction.",
     "corral": "Corral — pen this herd: low yield while you build, then a much higher penned yield. It must stay staffed or the herd goes wild again.",
 }
-# GATES on the investment rungs. The option stays VISIBLE but disabled with its reason, so the player
+# GATES on the investment rungs. The option stays VISIBLE but disabled with its reasons, so the player
 # learns the prerequisite BEFORE acting rather than never discovering the rung exists. Both gates
 # mirror the sim's `assign_labor` validation (faction knowledge complete + the source ready).
-const GATE_REASON_CULTIVATION_KNOWLEDGE := "Requires Cultivation knowledge"
-const GATE_REASON_PATCH_THRIVING := "Patch must be Thriving"
-const GATE_REASON_HERDING_KNOWLEDGE := "Requires Herding knowledge"
-const GATE_REASON_HERD_DOMESTICATED := "Herd must be domesticated"
-# Joins two unmet reasons on one disabled option ("Requires Cultivation knowledge · Patch must be Thriving").
-const GATE_REASON_SEPARATOR := " · "
-# A gated option's reason line reads "🌱 Cultivate — <reasons>" under the picker row.
+#
+# Each reason states WHAT'S MISSING + HOW FAR ALONG IT IS + THE ACTION THAT CLOSES IT — naming the
+# prerequisite alone ("Herd must be domesticated") tells the player a door is locked without saying
+# where the key is. All three tracks are taught by the SAME action: Sustain-work a THRIVING source
+# (`core_sim/src/systems.rs` — cultivation/herding knowledge and per-herd domestication accrue only
+# under Sustain on a Thriving patch/herd). The remedy therefore names the Sustain glyph, pulled from
+# the shared `FoodIcons.POLICY_ICONS` map so it is literally the icon on the button beside it.
+# Format args: %d = the live progress percent off the snapshot, %s = that Sustain glyph.
+const GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT := "Cultivation knowledge %d%% — %s Sustain-forage a Thriving patch to learn it"
+const GATE_REASON_HERDING_KNOWLEDGE_FORMAT := "Herding knowledge %d%% — %s Sustain-hunt a Thriving herd to learn it"
+const GATE_REASON_HERD_DOMESTICATED_FORMAT := "Herd %d%% tamed — %s Sustain-hunt this Thriving herd to finish taming it"
+# The patch-ecology gate is a STOCK condition, not a policy one, so its remedy is the opposite advice:
+# a fully staffed Sustain takes the whole regrowth and holds a Stressed patch Stressed forever. The
+# patch only climbs back to Thriving when the take is LESS than the growth — fewer workers, or none.
+# %s = the live `patch_ecology_phase`, capitalized.
+const GATE_REASON_PATCH_THRIVING_FORMAT := "Patch is %s — ease workers off and let it regrow to Thriving"
+# A patch with no streamed phase (older snapshot / redacted remembered tile) still fails the Thriving
+# test; it reads as unknown rather than asserting a phase we don't have.
+const GATE_PHASE_UNKNOWN_LABEL := "not Thriving"
+# A single-reason gate reads as a compact one-liner under the picker row ("🌱 Cultivate — <reason>").
 const GATE_REASON_LINE_FORMAT := "%s — %s"
+# Two or more reasons are far too long for one line, so they render as a header + one bullet each
+# ("🌱 Cultivate needs:" / "   · <reason>").
+const GATE_REASON_HEADER_FORMAT := "%s needs:"
+const GATE_REASON_BULLET_FORMAT := "   · %s"
+# The disabled button's tooltip carries every reason, one per line.
+const GATE_REASON_TOOLTIP_SEPARATOR := "\n"
+# 0..1 progress tracks (knowledge, domestication) render as whole percents.
+const PROGRESS_PERCENT_SCALE := 100.0
 # A knowledge track (0..1) is usable only once fully learned; a domestication track likewise.
 const KNOWLEDGE_COMPLETE := 1.0
 const DOMESTICATION_COMPLETE := 1.0
@@ -2190,7 +2215,7 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
     # A gated rung can never be the composed policy (the herd may still be taming under a standing
     # Corral selection), so re-validate every render — not just when the selected herd changes.
     if not (_hunt_assign_policy in hunt_options) \
-            or String(hunt_gates.get(_hunt_assign_policy, "")) != "":
+            or not _gate_reasons(hunt_gates, _hunt_assign_policy).is_empty():
         _hunt_assign_policy = DEFAULT_HUNT_POLICY
     # Pre-commit forecast — LOCAL hunt only. An expedition travels for several turns and accumulates
     # toward a carry cap, so the herd's per-turn take ceiling is NOT the bound on its party size;
@@ -2244,32 +2269,47 @@ func _build_herd_assign_controls(herd: Dictionary) -> void:
                 herd_x, herd_y, herd_id, _hunt_assign_policy))
     herd_assign_controls.add_child(assign_btn)
 
-## Unmet prerequisites for the FORAGE investment rung (Cultivate), keyed policy → reason. Empty when
-## every rung is available. Mirrors the sim's `assign_labor` validation: the faction must have fully
-## learned Cultivation, and only a Thriving patch can be prepared.
+## A 0..1 progress track (knowledge / domestication) as a whole percent. 0 is a MEANINGFUL reading in
+## a gate reason — it tells the player they haven't started the track at all.
+func _progress_percent(progress: float) -> int:
+    return int(round(clampf(progress, 0.0, 1.0) * PROGRESS_PERCENT_SCALE))
+
+## Unmet prerequisites for the FORAGE investment rung (Cultivate), keyed policy → Array[String] of
+## reasons (each already carrying its own remedy). Empty when every rung is available. Mirrors the
+## sim's `assign_labor` validation: the faction must have fully learned Cultivation, and only a
+## Thriving patch can be prepared.
 func _forage_policy_gates(tile_info: Dictionary) -> Dictionary:
+    var sustain_icon := FoodIcons.for_policy(LABOR_POLICY_SUSTAIN)
     var reasons: Array[String] = []
-    if _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_CULTIVATION) < KNOWLEDGE_COMPLETE:
-        reasons.append(GATE_REASON_CULTIVATION_KNOWLEDGE)
+    var cultivation := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_CULTIVATION)
+    if cultivation < KNOWLEDGE_COMPLETE:
+        reasons.append(GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT % [
+            _progress_percent(cultivation), sustain_icon])
     var phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
     if phase != ECOLOGY_PHASE_THRIVING:
-        reasons.append(GATE_REASON_PATCH_THRIVING)
+        var phase_label := phase.capitalize() if phase != "" else GATE_PHASE_UNKNOWN_LABEL
+        reasons.append(GATE_REASON_PATCH_THRIVING_FORMAT % phase_label)
     if reasons.is_empty():
         return {}
-    return {LABOR_POLICY_CULTIVATE: GATE_REASON_SEPARATOR.join(reasons)}
+    return {LABOR_POLICY_CULTIVATE: reasons}
 
-## Unmet prerequisites for the HUNT investment rung (Corral), keyed policy → reason. The herd twin of
-## `_forage_policy_gates`: the faction must have fully learned Herding, and the herd must be fully
-## domesticated before a pen can be built for it.
+## Unmet prerequisites for the HUNT investment rung (Corral), keyed policy → Array[String] of reasons.
+## The herd twin of `_forage_policy_gates`: the faction must have fully learned Herding, and the herd
+## must be fully domesticated before a pen can be built for it.
 func _hunt_policy_gates(herd: Dictionary) -> Dictionary:
+    var sustain_icon := FoodIcons.for_policy(LABOR_POLICY_SUSTAIN)
     var reasons: Array[String] = []
-    if _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_HERDING) < KNOWLEDGE_COMPLETE:
-        reasons.append(GATE_REASON_HERDING_KNOWLEDGE)
-    if float(herd.get("domestication", 0.0)) < DOMESTICATION_COMPLETE:
-        reasons.append(GATE_REASON_HERD_DOMESTICATED)
+    var herding := _faction_knowledge(PLAYER_FACTION_ID, KNOWLEDGE_TRACK_HERDING)
+    if herding < KNOWLEDGE_COMPLETE:
+        reasons.append(GATE_REASON_HERDING_KNOWLEDGE_FORMAT % [
+            _progress_percent(herding), sustain_icon])
+    var domestication := float(herd.get("domestication", 0.0))
+    if domestication < DOMESTICATION_COMPLETE:
+        reasons.append(GATE_REASON_HERD_DOMESTICATED_FORMAT % [
+            _progress_percent(domestication), sustain_icon])
     if reasons.is_empty():
         return {}
-    return {LABOR_POLICY_CORRAL: GATE_REASON_SEPARATOR.join(reasons)}
+    return {LABOR_POLICY_CORRAL: reasons}
 
 ## The take-policy radio; `on_pick` fires with the chosen policy. The highlighted option is
 ## `selected` (defaults to the herd-assign compose policy so existing callers are unchanged; the
@@ -2277,10 +2317,12 @@ func _hunt_policy_gates(herd: Dictionary) -> Dictionary:
 ## source kind — the four extractive rungs by default, plus that kind's INVESTMENT rung on the
 ## forage/herd assign controls (FORAGE_POLICY_OPTIONS / HUNT_POLICY_OPTIONS).
 ##
-## `gates` maps a policy → its unmet-prerequisite reason ("" / absent = available). A gated option is
-## **shown, greyed, and explained** rather than hidden: it is disabled, its tooltip carries the
-## reason, and the reason renders as a line under the row — so the player discovers the rung and
-## what it costs to unlock BEFORE trying to use it.
+## `gates` maps a policy → an Array[String] of its unmet-prerequisite reasons (empty / absent =
+## available). A gated option is **shown, greyed, and explained** rather than hidden: it is disabled,
+## its tooltip carries every reason (one per line), and the reasons render under the row — one
+## compact line when there is a single reason, a "<policy> needs:" header + one bullet per reason
+## when there are several (each reason now names its remedy, so two on one line would not fit). The
+## player discovers the rung, what it costs to unlock, AND how to unlock it, BEFORE trying to use it.
 func _build_policy_picker(
     on_pick: Callable,
     selected: String = "",
@@ -2294,15 +2336,15 @@ func _build_policy_picker(
     for policy in options:
         var policy_key := String(policy)
         var icon := FoodIcons.for_policy(policy_key)
-        var reason := String(gates.get(policy_key, ""))
+        var reasons := _gate_reasons(gates, policy_key)
         var btn := Button.new()
         # Glyph + name, from the shared FoodIcons policy map — the same icon the map's yield labels
         # append, so a policy reads identically on the picker and on the worked tile/herd.
         btn.text = "%s%s" % [_source_icon_prefix(icon), policy_key.capitalize()]
         HudStyle.apply_button(btn, "primary" if policy_key == current else "ghost")
-        btn.disabled = reason != ""
-        if reason != "":
-            btn.tooltip_text = reason
+        btn.disabled = not reasons.is_empty()
+        if btn.disabled:
+            btn.tooltip_text = GATE_REASON_TOOLTIP_SEPARATOR.join(reasons)
         else:
             btn.pressed.connect(func() -> void: on_pick.call(policy_key))
         row.add_child(btn)
@@ -2310,14 +2352,24 @@ func _build_policy_picker(
     # Spell the unmet prerequisites out in the panel — a greyed button alone doesn't teach.
     for policy in options:
         var policy_key := String(policy)
-        var reason := String(gates.get(policy_key, ""))
-        if reason == "":
+        var reasons := _gate_reasons(gates, policy_key)
+        if reasons.is_empty():
             continue
-        block.add_child(_alloc_hint_label(GATE_REASON_LINE_FORMAT % [
-            "%s%s" % [_source_icon_prefix(FoodIcons.for_policy(policy_key)), policy_key.capitalize()],
-            reason,
-        ]))
+        var titled := "%s%s" % [
+            _source_icon_prefix(FoodIcons.for_policy(policy_key)), policy_key.capitalize()]
+        if reasons.size() == 1:
+            block.add_child(_alloc_hint_label(GATE_REASON_LINE_FORMAT % [titled, reasons[0]]))
+            continue
+        block.add_child(_alloc_hint_label(GATE_REASON_HEADER_FORMAT % titled))
+        for reason in reasons:
+            block.add_child(_alloc_hint_label(GATE_REASON_BULLET_FORMAT % reason))
     return block
+
+## The unmet-prerequisite reasons a `gates` dict holds for one policy — empty (available) for an
+## absent key. The single reader of the gates contract, so callers never re-assert its shape.
+func _gate_reasons(gates: Dictionary, policy: String) -> Array:
+    var reasons: Variant = gates.get(policy, null)
+    return reasons if reasons is Array else []
 
 ## The tile "Assign foragers" controls (compose a count, then Assign). Shown only for a
 ## tile with a food module while a player band exists to staff it.
@@ -2372,7 +2424,7 @@ func _build_forage_assign_controls(tile_info: Dictionary) -> void:
     # A gated rung can never be the composed policy — the patch may have left Thriving under a
     # standing Cultivate selection, so re-validate every render, not just on a tile change.
     if not (_forage_assign_policy in FORAGE_POLICY_OPTIONS) \
-            or String(forage_gates.get(_forage_assign_policy, "")) != "":
+            or not _gate_reasons(forage_gates, _forage_assign_policy).is_empty():
         _forage_assign_policy = DEFAULT_HUNT_POLICY
     forage_assign_controls.add_child(_build_policy_picker(func(policy: String) -> void:
         _forage_assign_policy = policy

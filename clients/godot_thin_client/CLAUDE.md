@@ -746,14 +746,29 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     (`FORAGE_POLICY_OPTIONS`), Corral hunt-only (`HUNT_POLICY_OPTIONS`) — and Corral is offered on a
     **local hunt only** (a hunting expedition follows the herd and builds no pen, so it keeps the
     extractive `LABOR_HUNT_POLICIES`, as does the send-expedition launch picker).
-    - **Disabled-with-reason, never hidden.** `_build_policy_picker(on_pick, selected, options,
-      gates)` renders a gated option **greyed, with its reason in the tooltip AND spelled out as a
-      line under the row** (`🌱 Cultivate — Requires Cultivation knowledge · Patch must be
-      Thriving`), so the player discovers the rung and its prerequisites *before* acting. Gates
-      (`_forage_policy_gates` / `_hunt_policy_gates`, mirroring the sim's `assign_labor` validation):
-      Cultivate needs faction `cultivation >= 1.0` **and** a Thriving patch; Corral needs
-      `herding >= 1.0` **and** `domestication >= 1.0`. A gated rung can never be the composed policy
-      (re-validated every render, since a patch can leave Thriving under a standing selection).
+    - **Disabled-with-reason-AND-remedy, never hidden.** `_build_policy_picker(on_pick, selected,
+      options, gates)` renders a gated option **greyed, with every reason in the tooltip (one per
+      line) AND spelled out under the row**, so the player discovers the rung and its prerequisites
+      *before* acting. `gates` maps **policy → `Array[String]` of reasons** (read only through
+      `_gate_reasons`); **1 reason** renders the compact one-liner `🌱 Cultivate — <reason>`, **2+**
+      render a `🐄 Corral needs:` header + one indented `· <reason>` bullet each (a reason now carries
+      its remedy, so two on one line would not fit).
+      **Each reason states what's missing + live progress + the action that fixes it** — naming the
+      prerequisite alone told the player a door was locked without saying where the key is. All three
+      tracks are taught by the same action, so the remedy names the **Sustain** glyph (pulled from
+      `FoodIcons.POLICY_ICONS`, i.e. literally the button beside it): `Cultivation knowledge 55% — ♻
+      Sustain-forage a Thriving patch to learn it` / `Herding knowledge 35% — ♻ Sustain-hunt a Thriving
+      herd to learn it` / `Herd 40% tamed — ♻ Sustain-hunt this Thriving herd to finish taming it`.
+      The **patch-ecology** gate is a *stock* condition, not a policy one — a fully staffed Sustain
+      takes the whole regrowth and holds a Stressed patch Stressed forever — so its remedy is the
+      opposite advice: `Patch is Stressed — ease workers off and let it regrow to Thriving` (live
+      `patch_ecology_phase`, capitalized). Gates (`_forage_policy_gates` / `_hunt_policy_gates`,
+      mirroring the sim's `assign_labor` validation): Cultivate needs faction `cultivation >= 1.0`
+      **and** a Thriving patch; Corral needs `herding >= 1.0` **and** `domestication >= 1.0`. A gated
+      rung can never be the composed policy (re-validated every render, since a patch can leave
+      Thriving under a standing selection). **Known gap:** `_hunt_policy_gates` does NOT check herd
+      **ownership** — the sim's domestication track is per-faction, so a herd domesticated by ANOTHER
+      faction would enable Corral client-side while the sim rejects the assign.
     - **The forecast states the deal.** `_forecast_inputs` maps an investment policy's ceiling to the
       DIP yield and additionally returns its `payoff`; `_forecast_yield_row` then reads
       **`Preparing: +0.24 /turn → then +1.20 /turn`** instead of `Expected yield:` — both halves
@@ -773,9 +788,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       `FOW_DISCOVERED_HIDDEN_KEYS`); `HerdTelemetryState.ceilingCorral` / `corralYield` /
       `corralProgress` → bare keys on the herd dict.
     - ui_preview: `forage_cultivate` (enabled + the Preparing→then forecast + the feed nudge) /
-      `forage_cultivate_locked` (Requires Cultivation knowledge) / `forage_cultivate_stressed` (Patch
-      must be Thriving) / `herd_corral` (enabled + `Corral: Building 40%`) / `herd_corral_locked`
-      (Herd must be domesticated).
+      `forage_cultivate_locked` (1 reason — knowledge 55% + its Sustain-forage remedy) /
+      `forage_cultivate_stressed` (1 reason — the ease-off-and-regrow ecology remedy) / `herd_corral`
+      (enabled + `Corral: Building 40%`) / `herd_corral_locked` (1 reason — herd 40% tamed) /
+      `herd_corral_locked_both` (**2 reasons** — the `🐄 Corral needs:` header + bullets layout).
   - **Pre-commit yield forecast** (on BOTH assign controls): setting up a forage/hunt assignment used
     to give no feedback — you staffed 6 workers, committed, advanced a turn, and only then learned 5
     were wasted. The sim now streams, with **identical field names** on `ForagePatchState` and

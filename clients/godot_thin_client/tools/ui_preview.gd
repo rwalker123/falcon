@@ -276,8 +276,9 @@ func _ready() -> void:
 	# ---- Cultivate: the forage INVESTMENT rung (gated, then unlocked) ----------------------------
 	# State 2-cultivate-locked — the faction has NOT finished learning Cultivation (the top-bar meter
 	# reads "Cultivation ▰▰▰… learning"): the 🌱 Cultivate option is still SHOWN in the picker, greyed,
-	# with "🌱 Cultivate — Requires Cultivation knowledge" spelled out under the row. The player learns
-	# the rung exists and what it costs BEFORE they can use it.
+	# with "🌱 Cultivate — Cultivation knowledge 55% — ♻ Sustain-forage a Thriving patch to learn it"
+	# spelled out under the row. The player learns the rung exists, how far along the track is, AND the
+	# action that finishes it, BEFORE they can use it.
 	_hud._forage_assign_count = 1
 	_hud.show_tile_selection(_food_tile_fixture())
 	await _settle()
@@ -298,7 +299,9 @@ func _ready() -> void:
 	await _save("forage_cultivate")
 
 	# State 2-cultivate-stressed — knowledge known, but the patch is ⚠ Stressed: Cultivate stays visible
-	# and greyed with the OTHER reason, "Patch must be Thriving" (the ecology gate, not the knowledge one).
+	# and greyed with the OTHER reason — "Patch is Stressed — ease workers off and let it regrow to
+	# Thriving" (the ecology gate, not the knowledge one). The remedy is deliberately NOT "Sustain it":
+	# a fully staffed Sustain takes the whole regrowth and holds a Stressed patch Stressed forever.
 	_hud.show_tile_selection(_stressed_tile_fixture())
 	await _settle()
 	await _save("forage_cultivate_stressed")
@@ -366,9 +369,20 @@ func _ready() -> void:
 	await _save("herd_domesticated")
 
 	# ---- Corral: the hunt INVESTMENT rung (gated, then enabled) ----------------------------------
-	# State 3c-corral-locked — a WILD herd (domestication 0.4) with Herding fully known: 🐄 Corral is
-	# SHOWN in the hunt picker, greyed, with "🐄 Corral — Herd must be domesticated" spelled out under
-	# the row (the knowledge half of the gate is already satisfied, so only the herd reason lists).
+	# State 3c-corral-locked-both — BOTH halves of the Corral gate unmet (Herding 35% learned, herd 40%
+	# tamed): the MULTI-reason layout — a "🐄 Corral needs:" header with one indented "· <reason>" bullet
+	# per unmet prerequisite, each naming its remedy (♻ Sustain-hunt a Thriving herd). The knowledge
+	# meter in the top bar reads the same 35%.
+	_hud.update_intensification([{"faction": 0, "cultivation": 1.0, "herding": 0.35}])
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_corral_locked_herd_fixture())
+	await _settle()
+	await _save("herd_corral_locked_both")
+
+	# State 3c-corral-locked — the SAME wild herd (domestication 0.4) once Herding is fully known: only
+	# the herd half of the gate remains, so 🐄 Corral greys with the single compact one-liner
+	# "🐄 Corral — Herd 40% tamed — ♻ Sustain-hunt this Thriving herd to finish taming it".
+	_hud.update_intensification([{"faction": 0, "cultivation": 1.0, "herding": 1.0}])
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_corral_locked_herd_fixture())
 	await _settle()
