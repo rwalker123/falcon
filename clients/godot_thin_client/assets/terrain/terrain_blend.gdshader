@@ -49,6 +49,12 @@ uniform vec2 peak_light_dir;      // normalized direction TOWARD the light in ca
 // ZERO-CENTRES it, without which a bright biome would always out-height a dark one and the seam would
 // collapse onto one side instead of interlocking. Built by TerrainTextureManager.
 uniform sampler2D layer_luma_map : filter_nearest;
+// PER-TERRAIN SHORE PROFILE, a 1×N RG texture fetched by layer index (same table shape as layer_luma_map):
+// R = reach_scale (multiplies ALL FOUR shore reaches), G = wisp_scale (multiplies the offshore wisp's
+// half-width AND its strength; 0 = no wisp). The shipped global profile is ocean-tuned; a small inland_sea
+// needs a lighter coast. Terrains with no `shore_profile` block read the neutral (1, 1), which is a
+// bit-exact no-op — oceans render exactly as before. Built by TerrainTextureManager.
+uniform sampler2D layer_shore_map : filter_nearest;
 // id-map splatmap: R = terrain id (0..255), G = blend_class code (0 water, 1 flat, 2 rugged),
 // B = canopy code (0 = no canopy, else canopy-array layer + 1),
 // A = peak code (0 = no peaks, else peak-array layer + 1).
@@ -254,6 +260,11 @@ float luma(vec3 c) {
 // Mean luminance of a base layer (the zero-point of its pseudo-height), fetched by layer index.
 float mean_luma(int layer) {
 	return texelFetch(layer_luma_map, ivec2(layer, 0), 0).r;
+}
+
+// Shore profile of a terrain: (reach_scale, wisp_scale), fetched by layer index. See layer_shore_map.
+vec2 shore_profile(int layer) {
+	return texelFetch(layer_shore_map, ivec2(layer, 0), 0).rg;
 }
 
 // Canopy density across the treeline. s = signed distance to the canopy↔non-canopy boundary,
@@ -464,6 +475,15 @@ void fragment() {
 		if (blend_enabled) {
 			bool own_water = own_class == CLASS_WATER;
 			float best_d = -1e9; // nearest qualifying edge = max signed distance (closest to the seam)
+			// THE PROFILE IS KEYED ON THE WATER SIDE — a correctness requirement, not a preference. The
+			// profile must be the SAME function on both sides of the waterline, or the smoothsteps of u would
+			// evaluate with different reaches on the land hex and the water hex and re-introduce exactly the
+			// hard line at the hex edge that the signed coast coordinate exists to prevent. The water hex's
+			// terrain is the only side both fragments can agree on (the land biome differs from hex to hex
+			// along a coast, the body of water does not), and it is also the meaningful one: "is this a lake
+			// or an ocean?" is a property of the water. So: own layer when we ARE the water, else the layer of
+			// the nearest qualifying water NEIGHBOUR (the same edge best_d is measured to).
+			int water_layer = own_layer;
 			for (int dir = 0; dir < 6; dir++) {
 				ivec2 off = neighbor_offset(row, dir);
 				int ncol = col + off.x;
@@ -476,15 +496,24 @@ void fragment() {
 					continue;
 				}
 				vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
-				int nclass = int(texture(id_map, nuv).g * 255.0 + 0.5);
+				vec4 nidpx = texture(id_map, nuv);
+				int nclass = int(nidpx.g * 255.0 + 0.5);
 				bool nb_water = nclass == CLASS_WATER;
 				if (own_water == nb_water) { continue; } // exactly one side must be water
 				vec2 nb_c = hex_center(ncol, nrow);
 				vec2 dir_v = normalize(nb_c - own_c);
 				float half_dist = 0.5 * distance(own_c, nb_c);
-				best_d = max(best_d, dot(v_world - own_c, dir_v) - half_dist); // <=0 inside own hex
+				float d = dot(v_world - own_c, dir_v) - half_dist; // <=0 inside own hex
+				if (d > best_d) {
+					best_d = d; // nearest qualifying edge
+					if (!own_water) { water_layer = int(nidpx.r * 255.0 + 0.5); }
+				}
 			}
 			if (best_d > -1e8) {
+				// (1, 1) for any water terrain without a `shore_profile` — a bit-exact no-op below.
+				vec2 profile = shore_profile(water_layer);
+				float reach_scale = profile.r;  // scales ALL FOUR reaches
+				float wisp_scale = profile.g;   // scales the wisp's half-width AND its strength
 				float dist_in = max(-best_d, 0.0);            // 0 at the coast edge, grows away from it
 				// THE SIGNED COAST COORDINATE. dist_in → 0 at the shared edge on BOTH sides, so negating it
 				// on the land side gives one coordinate that runs continuously through the coastline:
@@ -498,9 +527,18 @@ void fragment() {
 				// the edge at a given world point — the profile's continuity survives the wobble.
 				float n = vnoise(v_map / noise_cell);
 				float wobble = mix(SHORE_REACH_NOISE_MIN, 1.0, n);
-				float sand_reach = max(sand_band * wobble, SHORE_REACH_MIN_PX);        // inland, u < 0
-				float wash_reach = max(foam_inland_band * wobble, SHORE_REACH_MIN_PX); // surf up the beach, u < 0
-				float foam_reach = max(foam_band * wobble, SHORE_REACH_MIN_PX);        // surf out to sea, u > 0
+				// …and the WATER terrain's reach_scale then scales every reach (1.0 = the global, ocean-tuned
+				// profile), so a lake can wear a shorter coastline than an ocean.
+				// GROUPED AS `reach_scale * wobble` ON PURPOSE: folding the scale into the wobble factor means
+				// a neutral 1.0 reduces each expression to the ORIGINAL `band * wobble` bit-for-bit, so every
+				// water terrain without a shore_profile (i.e. every ocean) renders EXACTLY as it did before
+				// this table existed. Scaling each band separately instead (`(band * reach_scale) * wobble`)
+				// is the same value in exact arithmetic but rounds a different intermediate, which moved a
+				// handful of ocean pixels by 1/255 — a no-op, but not a bit-identical one.
+				float reach_wobble = reach_scale * wobble;
+				float sand_reach = max(sand_band * reach_wobble, SHORE_REACH_MIN_PX);        // inland, u < 0
+				float wash_reach = max(foam_inland_band * reach_wobble, SHORE_REACH_MIN_PX); // surf up the beach, u < 0
+				float foam_reach = max(foam_band * reach_wobble, SHORE_REACH_MIN_PX);        // surf out to sea, u > 0
 
 				// 1. SAND — the LAND side only (the water hex gets no sand at all). FULL from the waterline
 				// across the surf's inland wash (the plateau — see SHORE_SAND_PLATEAU_MAX: the surf is painted
@@ -530,13 +568,18 @@ void fragment() {
 				// every other reach, so the wisp meanders with the surf instead of drawing a perfect ring.
 				// wisp_half_band = 0 turns the wisp off (the REACH_MIN_PX floor would otherwise keep a 1px
 				// ring alive).
-				float wisp_center = max(wisp_center_band * wobble, SHORE_REACH_MIN_PX);
-				float wisp_half = max(wisp_half_band * wobble, SHORE_REACH_MIN_PX);
-				float wisp = wisp_half_band > 0.0
+				// The wisp takes BOTH per-terrain scales: reach_scale pulls its whole band in with the rest of
+				// the profile, while wisp_scale thins it (half-width) and fades it (strength) on its own — so
+				// wisp_scale = 0 cleanly removes the second disturbance, which reads as noise on a small lake,
+				// without touching that water's sand or surf. Same neutral-1.0 grouping as the reaches above.
+				float wisp_reach_wobble = reach_wobble * wisp_scale;
+				float wisp_center = max(wisp_center_band * reach_wobble, SHORE_REACH_MIN_PX);
+				float wisp_half = max(wisp_half_band * wisp_reach_wobble, SHORE_REACH_MIN_PX);
+				float wisp = wisp_half_band * wisp_scale > 0.0
 					? smoothstep(wisp_half, 0.0, abs(u - wisp_center))
 					: 0.0;
 				float wn = vnoise(v_map / noise_cell + vec2(17.0, 5.0));
-				result = mix(result, foam_color, wisp * SHORE_WISP_STRENGTH * wn);
+				result = mix(result, foam_color, wisp * (SHORE_WISP_STRENGTH * wisp_scale) * wn);
 			}
 		}
 

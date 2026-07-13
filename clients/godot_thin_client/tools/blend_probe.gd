@@ -224,6 +224,41 @@ const V11_SHORE_VARIANTS := [
 	{"name": "D_no_wisp", "foam_width": 0.41, "wisp_center_width": 0.55, "wisp_half_width": 0.0},
 ]
 
+# --- state 10 (L): the PER-TERRAIN shore profile on a SMALL INLAND SEA (the lake) ---
+# The shipped shore profile (sand → surf → offshore wisp) was tuned on an OCEAN coast, where its reaches are a
+# small fraction of a huge body of water. An `inland_sea` is typically a HANDFUL of hexes, and the same profile
+# swamps it — in particular the second offshore wisp reads as noise on a lake. `shore_profile` (a per-terrain
+# block on the WATER terrain, → the shader's `layer_shore_map`) scales the profile per water body; this state
+# is where the lake variants are chosen. A real lake shape (7 hexes) in a field of DARK land — prairie's tan
+# camouflages both the sand and the foam, so a lighter coast cannot be judged on it (the same trap the
+# invisible-beach bug fell into). Same camera + crop in every frame, at the game's r ≈ 75.
+const LAKE_WATER_ID := 2           # inland_sea — the terrain whose shore_profile is under test
+const LAKE_LAND_ID := 16           # rocky_regolith — dark land, so sand + foam are actually visible
+# A rounded 7-hex blob (offset col,row): a plausible lake, NOT an open-water expanse.
+const LAKE_HEXES := [
+	Vector2i(6, 3),
+	Vector2i(5, 4), Vector2i(6, 4), Vector2i(7, 4),
+	Vector2i(6, 5), Vector2i(7, 5),
+	Vector2i(6, 6),
+]
+const LAKE_CROP_COL := 6
+const LAKE_CROP_ROW := 4
+const LAKE_CROP_RADII := 3.4       # the whole lake plus its land collar, at native resolution
+# The four candidate profiles. reach_scale multiplies ALL FOUR shore reaches (sand / foam_inland / foam /
+# wisp centre+half); wisp_scale multiplies the wisp's half-width AND its strength (0 = no second disturbance).
+# L4 ("shrink the whole thing"): the profile's OUTERMOST reach is the wisp's far edge, wisp_center +
+# wisp_half = 0.55 + 0.13 = 0.68·r. To land the lake's total shore disturbance at ~10% of a hex radius:
+# reach_scale = 0.10 / 0.68 = 0.147 → total seaward reach 0.68 × 0.147 = 0.0999·r ≈ 0.10·r (with the wisp KEPT).
+const LAKE_TOTAL_REACH_TARGET := 0.10                  # fraction of a hex radius the whole profile may reach
+const LAKE_SHIPPED_OUTER_REACH := 0.68                 # = shore.wisp_center_width + shore.wisp_half_width
+const LAKE_TENTH_REACH_SCALE := LAKE_TOTAL_REACH_TARGET / LAKE_SHIPPED_OUTER_REACH  # ≈ 0.147
+const LAKE_VARIANTS := [
+	{"name": "L1_current", "reach_scale": 1.0, "wisp_scale": 1.0},   # today's GLOBAL profile = the BEFORE
+	{"name": "L2_no_wisp", "reach_scale": 1.0, "wisp_scale": 0.0},   # kill the wisp, keep sand + surf
+	{"name": "L3_half", "reach_scale": 0.5, "wisp_scale": 0.0},      # lighter coast AND no wisp
+	{"name": "L4_tenth", "reach_scale": LAKE_TENTH_REACH_SCALE, "wisp_scale": 1.0},  # whole profile → ~10%·r
+]
+
 # Contact-sheet layout (a 2×2 grid of the sweep frames, each captioned).
 const SHEET_COLS := 2
 const SHEET_BG := Color(0.06, 0.06, 0.08)
@@ -265,6 +300,8 @@ const X_WATER_CROP_ROW := 5
 const X_WATER_CROP_RADII := 2.6
 
 var _map: Node2D
+# The inland_sea `shore_profile` as SHIPPED in terrain_config, captured before the lake sweep overrides it.
+var _shipped_lake_profile: Dictionary = {}
 
 
 func _ready() -> void:
@@ -282,6 +319,13 @@ func _ready() -> void:
 	_map.enable_terrain_textures(true)
 	TerrainTextureManager.use_edge_blending = true
 	_map._map_cache_enabled = false               # the shader path bypasses the cache anyway
+	# DETERMINISM: the probe renders in a REAL window, so MapView's _unhandled_input would pick up the OS
+	# cursor and draw a faint HOVER hex outline wherever the mouse happens to sit — a run-to-run difference of
+	# a few thousand pixels that silently defeats the pixel-diff this harness exists to support (it is exactly
+	# the magnitude of a shore-profile regression). No frame here is driven by input, so drop input entirely.
+	_map.set_process_unhandled_input(false)
+	var lake_entry: Dictionary = _lake_terrain_entry()
+	_shipped_lake_profile = (lake_entry.get("shore_profile", {}) as Dictionary).duplicate(true)
 
 	# --- state 1: the straight flat↔flat band seam, at the game's r ≈ 45 ---
 	_map.display_snapshot(_snapshot_flat_bands())
@@ -395,7 +439,62 @@ func _ready() -> void:
 		"%s_closeup" % X_WATER_NAME, X_WATER_CROP_COL, X_WATER_CROP_ROW, X_WATER_CROP_RADII
 	)
 
+	# --- state 10 (L): the per-terrain shore profile on a SMALL inland sea (see the const block) ---
+	_map.display_snapshot(_snapshot_lake())
+	await _refit(WATER_HEX_RADIUS)
+	for variant: Dictionary in LAKE_VARIANTS:
+		await _render_lake_variant(variant)
+	_restore_lake_shore_profile()
+
 	get_tree().quit()
+
+
+func _render_lake_variant(variant: Dictionary) -> void:
+	## Override the inland_sea terrain's `shore_profile` in the live config, rebuild the shader's
+	## layer_shore_map (the manager updates the ImageTexture in place, so MapView's binding survives), and
+	## dump one full frame + one native-res close-up of the lake. Same camera/crop in every variant.
+	_set_lake_shore_profile({
+		"reach_scale": float(variant["reach_scale"]),
+		"wisp_scale": float(variant["wisp_scale"]),
+	})
+	var name: String = String(variant["name"])
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save("%s_full" % name)
+	# Re-settle: a second get_image() in the same frame as the full-frame save reads back a stale viewport.
+	await _settle()
+	await _save_crop(name, LAKE_CROP_COL, LAKE_CROP_ROW, LAKE_CROP_RADII)
+
+
+func _set_lake_shore_profile(profile: Dictionary) -> void:
+	var entry: Dictionary = _lake_terrain_entry()
+	if entry.is_empty():
+		push_warning("blend_probe: inland_sea (id %d) missing from terrain_config" % LAKE_WATER_ID)
+		return
+	entry["shore_profile"] = profile
+	TerrainTextureManager.rebuild_layer_shore_map()
+
+
+func _restore_lake_shore_profile() -> void:
+	## Put the SHIPPED inland_sea profile back, so any frame rendered after this state is judged on config.
+	_set_lake_shore_profile(_shipped_lake_profile)
+
+
+func _lake_terrain_entry() -> Dictionary:
+	for entry: Variant in TerrainTextureManager.terrain_config.get("terrains", []):
+		if entry is Dictionary and int(entry.get("id", -1)) == LAKE_WATER_ID:
+			return entry
+	return {}
+
+
+func _snapshot_lake() -> Dictionary:
+	## A small inland_sea (LAKE_HEXES) in a field of dark rocky land — a lake, not an open-water expanse.
+	var arr: Array = []
+	arr.resize(WATER_GRID_W * WATER_GRID_H)
+	arr.fill(LAKE_LAND_ID)
+	for hex: Vector2i in LAKE_HEXES:
+		arr[hex.y * WATER_GRID_W + hex.x] = LAKE_WATER_ID
+	return _snapshot(arr, WATER_GRID_W, WATER_GRID_H)
 
 
 func _snapshot_real_water() -> Dictionary:

@@ -4343,6 +4343,11 @@ func _setup_terrain_blend_shader() -> void:
 	# Per-layer mean luminance (1×N, fetched by layer index): the zero-point of each base texture's
 	# pseudo-height for the flat↔flat HEIGHT BLENDING. Built once with the base array, so it's set once here.
 	_terrain_blend_material.set_shader_parameter("layer_luma_map", TerrainTextureManager.layer_luma_texture)
+	# Per-terrain SHORE PROFILE (1×N RG, fetched by layer index): R = reach_scale, G = wisp_scale, applied to
+	# the shore pass on the WATER side's terrain, so a small inland_sea can carry a lighter coast than an
+	# ocean. Neutral (1, 1) for every terrain without a `shore_profile` block. Bound once (the manager updates
+	# the texture in place on a rebuild, so the binding survives).
+	_terrain_blend_material.set_shader_parameter("layer_shore_map", TerrainTextureManager.layer_shore_texture)
 	# Canopy: a SECOND Texture2DArray in the same canvas shader. Disabled (and the sampler harmlessly
 	# bound to the base array) when no canopy asset exists.
 	var canopy_arr: Texture2DArray = TerrainTextureManager.canopy_textures
