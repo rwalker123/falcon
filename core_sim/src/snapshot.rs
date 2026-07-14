@@ -1402,6 +1402,9 @@ pub fn capture_snapshot(
         hardness_penalty_scale: population_cfg.hardness_penalty_scale(),
     };
 
+    // Forage potential (per-tile) is read from the biome table here, so the labor config is resolved
+    // ahead of the tile loop (it is reused for the labor/expedition readouts further down).
+    let labor_config = labor.get();
     let mut tile_states: Vec<TileState> = Vec::new();
     let mut food_module_states: Vec<FoodModuleState> = Vec::new();
     let start_position = start_location.position();
@@ -1419,6 +1422,7 @@ pub fn capture_snapshot(
             tile,
             &morale_pressure_cfg,
             graze_registry.patch(tile.position),
+            &labor_config.forage,
         ));
         if let Some(module) = food_module {
             seasonal_weights.insert(tile.position, module.seasonal_weight);
@@ -1456,7 +1460,6 @@ pub fn capture_snapshot(
 
     let demographics_config = demographics.get();
     let wellbeing_config = wellbeing.get();
-    let labor_config = labor.get();
     let settlement_stage_config = settlement_stage.get();
     // Global labor config today (identical for every band); the work-range ring is surfaced
     // per-band so the client reads it off the selected band (future-proof if bands diverge).
@@ -3680,6 +3683,7 @@ fn tile_state(
     tile: &Tile,
     morale_pressure_cfg: &MoralePressureConfig,
     graze: Option<&GrazePatch>,
+    forage: &ForageLaborConfig,
 ) -> TileState {
     let (mountain_kind, mountain_relief) = match tile.mountain {
         Some(meta) => (map_mountain_kind(meta.kind), meta.relief),
@@ -3713,6 +3717,13 @@ fn tile_state(
             .map(|patch| patch.carrying_capacity)
             .unwrap_or_default(),
         graze_ecology_phase: graze_phase_code(graze),
+        // FORAGE POTENTIAL — the human-edible twin of `graze_capacity`. Read straight from the biome
+        // table for EVERY tile, NOT from the sparse `ForageRegistry`, so the potential shows on the
+        // ~95% of tiles that carry no patch (all the best cropland). On a food-module tile that DOES
+        // hold a `ForagePatch`, that patch was seeded at this same `capacity_for(biome)`, so this
+        // equals the patch's `carrying_capacity` — no drift between potential and realized. Non-zero
+        // on fishery water (shelf/coral/inland sea); only a stated-zero biome reads 0.
+        forage_capacity: forage.capacity_for(tile.terrain),
     }
 }
 
@@ -4788,7 +4799,61 @@ mod tests {
             graze_biomass: 0.0,
             graze_capacity: 0.0,
             graze_ecology_phase: GRAZE_PHASE_NONE,
+            forage_capacity: 0.0,
         }
+    }
+
+    /// `TileState::forage_capacity` is the biome's HUMAN-food potential, read straight from
+    /// `forage.capacity_by_biome` for EVERY tile (not from the sparse `ForagePatch`). Confirms the
+    /// four contract cases + the no-drift consistency check against a seeded patch.
+    #[test]
+    fn tile_state_exports_forage_potential_from_biome_table() {
+        let labor = LaborConfig::builtin();
+        let forage = &labor.forage;
+        // The place-based morale terms are irrelevant to the forage readout; zero them out.
+        let morale_cfg = MoralePressureConfig {
+            ambient_temperature: Scalar::zero(),
+            temperature_morale_penalty: Scalar::zero(),
+            temperature_morale_tolerance: Scalar::zero(),
+            attrition_penalty_scale: Scalar::zero(),
+            hardness_penalty_scale: Scalar::zero(),
+        };
+        let at = |terrain: TerrainType| Tile {
+            position: UVec2::new(1, 1),
+            element: ElementKind::Arborite,
+            mass: Scalar::zero(),
+            temperature: Scalar::zero(),
+            terrain,
+            terrain_tags: TerrainTags::empty(),
+            mountain: None,
+        };
+        let entity = Entity::from_raw(1);
+        let capture = |terrain: TerrainType, graze: Option<&GrazePatch>| {
+            tile_state(entity, &at(terrain), &morale_cfg, graze, forage).forage_capacity
+        };
+
+        // (a) A food-module tile that DOES hold a `ForagePatch` — the patch was seeded at
+        //     `capacity_for(biome)`, so the exported potential must equal its carrying capacity (no
+        //     drift between the potential and the realized patch).
+        let module_terrain = TerrainType::MixedWoodland;
+        let seeded = ForagePatch::new(
+            at(module_terrain).position,
+            forage.capacity_for(module_terrain),
+        );
+        assert_eq!(capture(module_terrain, None), seeded.carrying_capacity);
+
+        // (b) A non-food-module LAND tile with a positive-forage biome still exports a NON-ZERO
+        //     potential — the whole point: the client sees the biome's potential everywhere, not only
+        //     where a patch happens to sit.
+        assert!(capture(TerrainType::PrairieSteppe, None) > 0.0);
+
+        // (c) Fishery WATER carries a non-zero fishing value — the deliberate divergence from graze
+        //     (where all water is zero): a fishery is a food module on water.
+        assert!(capture(TerrainType::ContinentalShelf, None) > 0.0);
+
+        // (d) A genuinely-zero biome reads a STATED zero.
+        assert_eq!(capture(TerrainType::Glacier, None), 0.0);
+        assert_eq!(capture(TerrainType::DeepOcean, None), 0.0);
     }
 
     fn snapshot_with_overlay(
@@ -5251,6 +5316,7 @@ mod tests {
             graze_biomass: 0.0,
             graze_capacity: 0.0,
             graze_ecology_phase: GRAZE_PHASE_NONE,
+            forage_capacity: 0.0,
         };
         let base_overlay = TerrainOverlayState {
             width: 1,

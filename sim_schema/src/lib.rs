@@ -1224,6 +1224,17 @@ pub struct TileState {
     /// pasture is healthy".
     #[serde(default)]
     pub graze_ecology_phase: u8,
+    /// **Forage potential** — the *human-edible* twin of [`graze_capacity`](Self::graze_capacity).
+    /// The land's per-biome human-food capacity (`forage.capacity_by_biome`, `labor_config.json`),
+    /// read from the config table for *every* tile — **not** from the sparse `ForagePatch`, which
+    /// exists only on food-module tiles. That is the point: the client draws a Forage overlay of the
+    /// biome's *potential* everywhere (the mirror of the pasture overlay), including the ~95% of tiles
+    /// that carry no patch. Unlike graze this is **non-zero on fishery water** (`ContinentalShelf` /
+    /// `CoralShelf` / `InlandSea`) — a fishery is a food module on water. Only a *stated-zero* biome
+    /// (deep ocean, glacier, lava, salt flat) reads `0`. Derived at capture from
+    /// `ForageLaborConfig::capacity_for(tile.terrain)` — see `docs/plan_grazing_foundation.md` §1.1.
+    #[serde(default)]
+    pub forage_capacity: f32,
 }
 
 /// `TileState::graze_ecology_phase` — the biome carries no pasture at all (water, ice, bare rock).
@@ -3239,6 +3250,7 @@ fn create_tiles<'a>(
                     grazeBiomass: tile.graze_biomass,
                     grazeCapacity: tile.graze_capacity,
                     grazeEcologyPhase: tile.graze_ecology_phase,
+                    forageCapacity: tile.forage_capacity,
                 },
             )
         })

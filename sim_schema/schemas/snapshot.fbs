@@ -427,6 +427,13 @@ table TileState {
   // `moraleCause:ubyte` idiom) because this rides every tile; `none` is the default so "no pasture"
   // can never be mistaken for "healthy pasture".
   grazeEcologyPhase:ubyte = 0;
+  // FORAGE POTENTIAL — the HUMAN-edible twin of grazeCapacity. The land's per-biome human-food
+  // capacity (`forage.capacity_by_biome`, labor_config.json), read from the config table for EVERY
+  // tile — NOT from the sparse ForagePatch (which lives only on food-module tiles). So the client can
+  // draw a Forage overlay of the biome's *potential* everywhere, the exact mirror of the pasture
+  // overlay. Unlike graze, this is NON-ZERO on fishery water (ContinentalShelf/CoralShelf/InlandSea):
+  // a fishery is a food module on water. Only a stated-zero biome (deep ocean, glacier, lava) reads 0.
+  forageCapacity:float = 0;
 }
 
 table LogisticsLinkState {

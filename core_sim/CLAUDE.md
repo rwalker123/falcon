@@ -985,6 +985,19 @@ earthlike 80×52, seeds 11/4242/90210 — run with `--nocapture` for the joint h
   signal on the tile card), and re-ship **whole** on any single tile's change, where `TileState` is
   **per-entity diffed** and so costs *zero* delta bytes on an ungrazed turn. The dense shape is the
   one place graze deliberately diverges from `ForagePatchState`.
+- **Forage-potential twin — `TileState.forageCapacity:float`** (append-only, beside the graze fields on
+  both `WorldSnapshot` and `WorldDelta`). The exact human-food mirror of `grazeCapacity`, so the client
+  can draw a **Forage overlay** the same way it draws the pasture one. Sourced **directly from
+  `forage.capacity_by_biome` (`ForageLaborConfig::capacity_for(tile.terrain)`)** for *every* tile —
+  **not** from the sparse `ForageRegistry` — precisely so the biome's potential shows on the ~95% of
+  tiles (all the best cropland) that carry no `ForagePatch`. Consequence, preserved deliberately: it is
+  **non-zero on fishery water** (`ContinentalShelf` 130 / `CoralShelf` 180 / `InlandSea` 110 — a fishery
+  is a food module on water), a real divergence from graze where all water is 0; only a *stated-zero*
+  biome (deep ocean, glacier, lava, salt flat) reads 0. On a food-module tile that *does* hold a
+  `ForagePatch`, that patch was seeded at the same `capacity_for(biome)`, so `forageCapacity` equals the
+  patch's `carryingCapacity` — no drift between the potential and the realized patch. Cost: **+1 float
+  per tile** (per-entity diffed, so zero delta bytes on an unchanged tile). Populated at capture beside
+  the graze fields in `snapshot.rs::tile_state`.
 - **Distribution, measured on real maps** (`integration_tests/tests/graze_distribution.rs` — run with
   `--nocapture` for the histogram; the guards keep the model claims true under retuning). Earthlike
   80×52, three seeds: ~1500–1560 land tiles carry ~162–177 k total graze capacity, and only
@@ -995,10 +1008,11 @@ earthlike 80×52, seeds 11/4242/90210 — run with `--nocapture` for the joint h
   absorbing both of them as their niche-mate, no longer carries the map's pasture: at graze 110 its
   share of total graze falls to ~16–24% (from 37–48%), and the *dominant* pasture is the steppe again,
   not the fallback biome. See "The two food webs" for the joint (graze + forage) measurement.
-- **Follow-ups:** the **client** pasture overlay + tile-card readout (a client-dev slice: the data is
-  on the wire; note the overlay must be built from `TileState`, since graze is not a raster channel).
-  Then **Phase 2b** — herds eat it, and `K_herd` becomes `range graze flow / fodder_per_biomass`,
-  retiring `pen.capacity_fraction` and per-species `K`.
+- **Follow-ups:** the **client** pasture overlay + tile-card readout — and the twin **Forage overlay**
+  off `TileState.forageCapacity` (both are client-dev slices: the data is on the wire; note each overlay
+  must be built from `TileState`, since neither graze nor forage is a raster channel). Then **Phase 2b**
+  — herds eat it, and `K_herd` becomes `range graze flow / fodder_per_biomass`, retiring
+  `pen.capacity_fraction` and per-species `K`.
 
 See Also: `docs/plan_grazing_foundation.md` (design), "Depletable Forage" (the human-edible twin and
 the `ForageRegistry` pattern this mirrors), "Fauna & Wild Game" (the model this becomes the substrate
