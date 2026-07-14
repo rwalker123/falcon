@@ -52,8 +52,6 @@ uniform bool rivers_lod_enabled;   // river LOD gate — DECOUPLED from blend_en
                                    // so rivers persist at far zoom where the flat↔flat blend is off
 uniform bool river_navigable_enabled; // false when the river array has no navigable layer → skip that pass
 uniform int river_navigable_terrain_id; // terrain id of NavigableRiver (from terrain_config, by NAME)
-uniform int river_delta_terrain_id;     // terrain id of RiverDelta — the sim makes the chain's MOUTH a delta,
-                                   // a LAND tile, so the channel must arm toward it or it dead-ends short of the sea
 uniform float river_navigable_half_width; // navigable CHANNEL half-width, in px (navigable_width * radius)
 uniform float river_minor_half_width; // Minor half-band half-width, in px (minor_width * radius)
 uniform float river_major_half_width; // Major half-band half-width, in px (major_width * radius)
@@ -83,6 +81,14 @@ uniform bool river_highlight;      // debug toggle (Map tab): tint the rivers ha
 //         trunk (nonzero on the trunk's first hex only). An edge river runs along a side and therefore
 //         ends at a corner, never mid-edge; this is what the channel's inflow SPUR is drawn to.
 uniform sampler2D river_map : filter_nearest;
+// river-CHANNEL splatmap, R8 — the per-tile 6-bit riverChannel mask (1 bit per odd-r direction:
+// exits(dir) = (mask >> dir) & 1), naming the sides a NAVIGABLE hex's channel actually flows out through.
+// Its own texture because the RGBA8 river_map's 32 bits are all spoken for (two 12-bit masks).
+// THE TRUNK'S CONNECTIVITY IS SIM-AUTHORED, and must stay that way: this pass used to infer an arm for
+// every navigable/water/delta NEIGHBOUR, which cross-linked adjacent chains (and a chain bending back on
+// itself) into a WEB of triangles. A chain is a PATH — only the sim's tracer knows which two neighbours
+// are its upstream and downstream — so arm ONLY the set bits. Do not "simplify" this back to terrain.
+uniform sampler2D river_channel_map : filter_nearest;
 // id-map splatmap: R = terrain id (0..255), G = blend_class code (0 water, 1 flat, 2 rugged),
 // B = canopy code (0 = no canopy, else canopy-array layer + 1),
 // A = peak code (0 = no peaks, else peak-array layer + 1).
@@ -509,13 +515,21 @@ void fragment() {
 		// uses — which is what fuses them into one connected body with rounded joins, for free:
 		//
 		// 1. TRUNK ARMS, at the channel's own (navigable) width: hex CENTRE → the MIDPOINT of each side the
-		//    river actually continues through. That is: the neighbour is navigable too (the chain), or is
-		//    water (the sea/lake it drains into), or is a RiverDelta (the sim makes the chain's MOUTH a
-		//    delta — a LAND tile — so without this the river dead-ends one hex short of the sea).
-		//    NOTE it is deliberately NOT armed by this hex's own river_edges bits. An edge river runs ALONG
-		//    a side; it does not flow through the side's midpoint, and a trunk hex can flank two or three of
-		//    them (the tributary ran along several of its sides on the way in) — arming on the mask drew
-		//    three fat centre→midpoint arms at the TRUNK's width and the hex filled with water.
+		//    river actually flows out through — and the SIM says which those are, in the per-tile
+		//    riverChannel mask (river_channel_map, 1 bit per odd-r direction). It is NOT inferred from the
+		//    neighbouring terrain. Arming every navigable/water/delta neighbour, as this pass used to, is
+		//    what drew the WEB: a river is a PATH — each hex links only to its upstream and downstream
+		//    neighbour — so wherever two chain hexes merely sat side by side (parallel reaches, a chain
+		//    bending back on itself), the terrain rule cross-linked them and the corridor filled with a mesh
+		//    of triangles. Only the tracer knows the path, so only the tracer can name the exits.
+		//    The mask is symmetric across a shared side EXCEPT at the MOUTH, where the final hex also exits
+		//    into the sea / inland sea / RiverDelta it drains into (open water carries no channel of its
+		//    own, so that bit is not mirrored back) — which is what keeps the river from dead-ending a hex
+		//    short of the sea. So read only the OWN hex's bits; never assume the neighbour agrees.
+		//    NOTE it is also NOT armed by this hex's own river_edges bits. An edge river runs ALONG a side;
+		//    it does not flow through the side's midpoint, and a trunk hex can flank two or three of them
+		//    (the tributary ran along several of its sides on the way in) — arming on that mask drew three
+		//    fat centre→midpoint arms at the TRUNK's width and the hex filled with water.
 		// 2. INFLOW SPURS, at the TRIBUTARY's own Minor/Major width: hex CENTRE → the CORNER the riverInflow
 		//    mask names. An edge river ends at a VERTEX, so that vertex is where the water enters the trunk,
 		//    and it enters as itself — a Minor stays a hairline until the channel swallows it. The mask
@@ -526,6 +540,9 @@ void fragment() {
 		if (river_navigable_enabled && rivers_lod_enabled && own_navigable) {
 			vec4 rvpx = texture(river_map, id_uv);
 			int inflow = int(rvpx.b * 255.0 + 0.5) | (int(rvpx.a * 255.0 + 0.5) << 8);
+			// The sim-authored channel-exit mask: 1 bit per odd-r direction, and the ONLY thing that arms a
+			// trunk arm (see the pass header — the terrain-inferred rule is what wove the web).
+			int channel = int(texture(river_channel_map, id_uv).r * 255.0 + 0.5);
 			// The SAME organic machinery as the edge pass — meander warp, low-frequency swell along the
 			// reach, ragged banks — all sampled in WORLD space, which is what keeps the channel CONTINUOUS
 			// across adjacent navigable hexes: both hexes warp the same point and read the same width at
@@ -563,32 +580,15 @@ void fragment() {
 			vec2 best_tangent = vec2(1.0, 0.0);
 			int arms = 0;
 			for (int dir = 0; dir < 6; dir++) {
-				ivec2 off = neighbor_offset(row, dir);
-				int ncol = col + off.x;
-				int nrow = row + off.y;
-				bool arm = false;
-				if (nrow >= 0 && nrow < grid_h) {
-					int ncol_id = ncol;
-					bool nb_in = true;
-					if (wrap_h) {
-						ncol_id = wrap_col(ncol);
-					} else if (ncol < 0 || ncol >= grid_w) {
-						nb_in = false;
-					}
-					if (nb_in) {
-						// The one id-map fetch this pass makes — terrain id (R) and blend_class (G) at once,
-						// exactly as the other passes read their neighbour texel.
-						vec4 npx = texture(id_map, (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim);
-						int nlayer = int(npx.r * 255.0 + 0.5);
-						int nclass = int(npx.g * 255.0 + 0.5);
-						arm = nlayer == river_navigable_terrain_id   // the chain continues
-							|| nclass == BLEND_CLASS_WATER            // drains into the sea / a lake
-							|| nlayer == river_delta_terrain_id;      // ... or into its delta at the mouth
-					}
-				}
-				if (!arm) { continue; }
+				// The exit bit IS the arm rule — no neighbour fetch, and none possible: the mask is
+				// asymmetric at the mouth, so the neighbour's opinion is not a substitute for the own hex's.
+				// Needing no neighbour texel, an arm also draws correctly at the map border / wrap seam (the
+				// geometry only wants the neighbour's CENTRE, and hex_center is pure math on the raw,
+				// unwrapped column — so the arm points the right way even across the seam).
+				if (((channel >> dir) & 1) == 0) { continue; }
 				arms++;
-				vec2 nb_c = hex_center(ncol, nrow);
+				ivec2 off = neighbor_offset(row, dir);
+				vec2 nb_c = hex_center(col + off.x, row + off.y);
 				// The arm SEGMENT: own centre → the shared edge's midpoint. Clamped to the segment (like the
 				// edge pass clamps to the edge), so the channel stops at the hex boundary instead of
 				// smearing along an infinite ray — the neighbour paints its own half.

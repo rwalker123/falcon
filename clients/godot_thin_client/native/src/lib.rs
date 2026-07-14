@@ -4056,6 +4056,15 @@ fn tile_to_dict(tile: fb::TileState<'_>) -> VarDictionary {
     // channels, and the shader draws the channel's INFLOW SPUR from the hex centre out to that vertex, at
     // the tributary's own Minor/Major width.
     let _ = dict.insert("river_inflow", tile.riverInflow() as i64);
+    // Which SIDES a navigable hex's channel actually flows out through: 1 bit per odd-r direction
+    // (exits(dir) = (river_channel >> dir) & 1), same direction order as river_edges. A navigable river
+    // is a chain of water hexes, and a chain is a PATH — a hex links only to its upstream and downstream
+    // neighbours. Terrain cannot say which those are, so a renderer that armed every navigable/water
+    // neighbour cross-linked adjacent chains into a WEB of triangles. The sim states the path here; the
+    // shader arms ONLY the set sides. Symmetric across a shared side EXCEPT at the mouth, where the last
+    // hex also exits into the sea / delta it drains into (open water carries no channel, so that bit is
+    // not mirrored back). MapView packs it into its own R8 river-channel splatmap.
+    let _ = dict.insert("river_channel", tile.riverChannel() as i64);
     let _ = dict.insert("culture_layer", tile.cultureLayer() as i64);
     let _ = dict.insert("mountain_kind", i64::from(tile.mountainKind().0));
     let _ = dict.insert("mountain_relief", tile.mountainRelief());
