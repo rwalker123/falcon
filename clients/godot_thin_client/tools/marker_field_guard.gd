@@ -67,10 +67,9 @@ const PANEL_CONSUMED_KEYS := [
 	"expedition_hunt_policy", # hunt expedition policy (panel readout)
 	"expedition_carry_cap",   # hunt expedition carry ceiling (panel Carried X / cap)
 	"home_band_entity",       # Band/City panel groups a band's active expeditions by this
-	# Global config levers echoed on every cohort. NONE of them computes an expedition's trip length —
+	# Global config levers echoed on every cohort. NEITHER computes an expedition's trip length —
 	# that is a pure lookup into the herd's `hunt_trip_estimates` (Hud._hunt_trip_forecast), which
 	# divides nothing. Band = flow arithmetic; expedition = lookup.
-	"expedition_per_worker_carry",     # pack size (carry cap = party × this); display lever
 	"hunt_per_worker_provisions",      # RESIDENT-BAND local-hunt take rate (Hud._hunt_take_rate)
 	"expedition_viability_warn_turns"  # viable/not-viable threshold applied to turns_to_fill
 ]
@@ -124,7 +123,6 @@ const FIXTURE_ENTRY := {
 	"expedition_carry_cap": 16.0,
 	"home_band_entity": 7777,
 	# Pre-launch hunt-trip forecast levers (global config echoed on every cohort).
-	"expedition_per_worker_carry": 4.0,
 	"hunt_per_worker_provisions": 0.8,
 	"expedition_viability_warn_turns": 20,
 }
@@ -173,7 +171,6 @@ func _ready() -> void:
 	_expect_str(marker, "expedition_hunt_policy", "surplus")
 	_expect_float(marker, "expedition_carry_cap", 16.0)
 	_expect_int(marker, "home_band_entity", 7777)
-	_expect_float(marker, "expedition_per_worker_carry", 4.0)
 	_expect_float(marker, "hunt_per_worker_provisions", 0.8)
 	_expect_int(marker, "expedition_viability_warn_turns", 20)
 	if not bool(marker.get("is_expedition", false)):

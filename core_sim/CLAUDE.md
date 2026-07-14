@@ -1105,10 +1105,9 @@ lookup**:
   its managed yield, one keeper suffices). There is **no expedition ceiling field** — the retired
   `expeditionProvisionsPerTurn` was exactly the "one number that means a flow for Sustain and a stock
   for Surplus/Market" design smell the estimate table replaces.
-- `PopulationCohortState.expeditionPerWorkerCarry:float` (`expedition_config.hunt.per_worker_carry` —
-  sizes the pack for display: cap = `workers × this`), `.huntPerWorkerProvisions:float` (one hunter's
+- `PopulationCohortState.huntPerWorkerProvisions:float` (one hunter's
   provisions/turn throughput = `labor_config.hunt.per_worker_biomass_capacity ×
-  fauna_config.hunt.provisions_per_biomass`), and `.expeditionViabilityWarnTurns:uint`
+  fauna_config.hunt.provisions_per_biomass`) and `.expeditionViabilityWarnTurns:uint`
   (`expedition_config.hunt.viability_warn_turns` — the NOT-VIABLE threshold the client applies to
   `turnsToFill`) — global levers echoed onto **every** cohort (the `maxExpeditionPartySize` idiom; the
   outfit UI lives on the resident-band panel).

@@ -1857,11 +1857,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     `min(workers × huntPerWorkerProvisions, ceiling) × outputMultiplier` (`_hunt_take_rate` →
     `_local_hunt_preview_bbcode`) — but it must still never re-derive the ecology/MSY model.
   Plus the global levers echoed on every cohort (same idiom as `maxExpeditionPartySize`, decoded +
-  flowed onto the MapView unit marker + covered by `marker_field_guard`). **None of them is an input
-  to an expedition's trip length** — that is the lookup above, and the client must NEVER divide a
-  carry cap by a take rate. Their real jobs: `expeditionPerWorkerCarry` = the **pack size** (carry cap
-  = party × this; display only — no client code reads it today, see the `marker_field_guard` note),
-  `expeditionViabilityWarnTurns` = the **viable/not-viable threshold** applied to `turnsToFill`, and
+  flowed onto the MapView unit marker + covered by `marker_field_guard`). **Neither of them is an
+  input to an expedition's trip length** — that is the lookup above, and the client must NEVER divide
+  a carry cap by a take rate. Their real jobs: `expeditionViabilityWarnTurns` = the
+  **viable/not-viable threshold** applied to `turnsToFill`, and
   `huntPerWorkerProvisions` = the **resident-band local-hunt take rate** (the one legitimate piece of
   client arithmetic, pinned by `exported_snapshot_fields_reproduce_band_hunt_take`). The one-liner
   that keeps this straight: **band = flow arithmetic; expedition = lookup.** Missing estimate /

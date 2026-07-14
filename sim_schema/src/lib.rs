@@ -1443,10 +1443,6 @@ pub struct PopulationCohortState {
     /// expedition_viability_warn_turns` (or `turns_to_fill == 0` → "won't fill"). An `eradicate`
     /// party has `delivers_food == false`: render "no food delivered (denial)", never an ETA.
     ///
-    /// Carry cap per hunter, in provisions (`expedition_config.hunt.per_worker_carry`) — sizes the
-    /// pack for display (cap = `workers × this`).
-    #[serde(default)]
-    pub expedition_per_worker_carry: f32,
     /// One hunter's per-turn provisions throughput (`labor_config.hunt.per_worker_biomass_capacity ×
     /// fauna_config.hunt.provisions_per_biomass`). With a herd's **band** ceiling this drives the
     /// resident-band local-hunt yield preview.
@@ -3462,7 +3458,6 @@ fn create_populations<'a>(
                     settlementStage: Some(settlement_stage),
                     foodIncome: cohort.food_income,
                     foodConsumption: cohort.food_consumption,
-                    expeditionPerWorkerCarry: cohort.expedition_per_worker_carry,
                     huntPerWorkerProvisions: cohort.hunt_per_worker_provisions,
                     expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
                 },

@@ -3860,7 +3860,6 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // its stock exhausts mid-trip, so any closed form drifts from the take the sim actually
     // performs. Pinned by core_sim/tests/expedition_hunt.rs.
     // What each lever is actually FOR:
-    //   expedition_per_worker_carry     — pack size (carry cap = party × this), shown as "Carried X / cap"
     //   expedition_viability_warn_turns — the viable/not-viable threshold applied to `turns_to_fill`
     //   hunt_per_worker_provisions      — one hunter's throughput, used ONLY by the RESIDENT-BAND
     //     local-hunt preview, which genuinely IS arithmetic:
@@ -3868,10 +3867,6 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //     over the herd's `hunt_policy_ceilings` (a renewable FLOW), pinned by
     //     `exported_snapshot_fields_reproduce_band_hunt_take`.
     // Band = flow arithmetic; expedition = lookup.
-    let _ = dict.insert(
-        "expedition_per_worker_carry",
-        f64::from(cohort.expeditionPerWorkerCarry()),
-    );
     let _ = dict.insert(
         "hunt_per_worker_provisions",
         f64::from(cohort.huntPerWorkerProvisions()),

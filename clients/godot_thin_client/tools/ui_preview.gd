@@ -1046,16 +1046,14 @@ func _band_fixture() -> Dictionary:
 		# Server's hard party-size cap (expedition config, default 8) — the outfit stepper maxes at
 		# min(idle, this).
 		"max_expedition_party_size": 8,
-		# Global config levers echoed on every cohort. They are DISPLAY levers — none of them computes
+		# Global config levers echoed on every cohort. They are DISPLAY levers — neither computes
 		# a trip length. The targeting banner's turns-to-fill is a PURE LOOKUP into the target herd's
 		# `hunt_trip_estimates` (the sim forward-simulates the trip and exports the answer); the client
 		# does ZERO arithmetic for an expedition and never divides a carry cap by a rate.
-		#   expedition_per_worker_carry     — pack size, for the "Carried X / cap" readout.
 		#   expedition_viability_warn_turns — the viable/not-viable threshold applied to turns_to_fill.
 		#   hunt_per_worker_provisions      — one hunter's throughput, used ONLY by the resident-band
 		#     LOCAL hunt preview, which IS arithmetic: min(workers × 0.8, band_ceiling) × output_mult.
 		# Band = flow arithmetic; expedition = lookup.
-		"expedition_per_worker_carry": 4.0,
 		"hunt_per_worker_provisions": 0.8,
 		"expedition_viability_warn_turns": 20,
 		"work_range": 2,
@@ -1451,7 +1449,6 @@ func _hunt_preview_far_band() -> Dictionary:
 		"current_x": 86, "current_y": 24, "pos": [86, 24],
 		"working_age": 10, "idle_workers": 6,
 		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
-		"expedition_per_worker_carry": 4.0,
 		"hunt_per_worker_provisions": 0.8,
 		"expedition_viability_warn_turns": 20,
 		"activity": "forage", "labor_assignments": [],

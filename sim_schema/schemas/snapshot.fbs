@@ -557,12 +557,10 @@ table PopulationCohortState {
   //     simulated answer out of the target herd's `huntTripEstimates` (policy × partyWorkers →
   //     turnsToFill), then flags NOT VIABLE when turnsToFill > expeditionViabilityWarnTurns (or
   //     turnsToFill == 0 → "won't fill").
-  //   - `expeditionPerWorkerCarry` sizes the pack for display (carry cap = workers × this).
   //   - `huntPerWorkerProvisions` × the BAND ceiling drives the resident-band local-hunt preview:
   //     min(workers × huntPerWorkerProvisions, huntPolicyCeilings[policy].provisionsPerTurn)
   //       × outputMultiplier
   // Appended last (append-only schema discipline).
-  expeditionPerWorkerCarry:float = 0;   // expedition_config.hunt.per_worker_carry (provisions/worker)
   huntPerWorkerProvisions:float = 0;    // one hunter's provisions/turn throughput
   expeditionViabilityWarnTurns:uint = 0; // expedition_config.hunt.viability_warn_turns
 }

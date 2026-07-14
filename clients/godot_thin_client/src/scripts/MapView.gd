@@ -2735,14 +2735,12 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"max_expedition_party_size": int(entry.get("max_expedition_party_size", 0)),
 				# Global expedition/labor config levers echoed on every cohort. They ride the marker
 				# because the targeting flow carries a copy of the band dict, and the pre-launch
-				# forecast reads its threshold + the local-hunt preview its take rate off it. None of
-				# them computes an expedition's trip length: that is a PURE LOOKUP into the target
-				# herd's sim-simulated `hunt_trip_estimates` (the client never divides a carry cap by a
-				# rate). `expedition_per_worker_carry` = pack size (display),
-				# `expedition_viability_warn_turns` = the viable/not-viable threshold on turns_to_fill,
-				# `hunt_per_worker_provisions` = the RESIDENT-BAND local-hunt take rate, which IS
-				# arithmetic. Band = flow arithmetic; expedition = lookup.
-				"expedition_per_worker_carry": float(entry.get("expedition_per_worker_carry", 0.0)),
+				# forecast reads its threshold + the local-hunt preview its take rate off it. Neither
+				# computes an expedition's trip length: that is a PURE LOOKUP into the target herd's
+				# sim-simulated `hunt_trip_estimates` (the client never divides a carry cap by a
+				# rate). `expedition_viability_warn_turns` = the viable/not-viable threshold on
+				# turns_to_fill, `hunt_per_worker_provisions` = the RESIDENT-BAND local-hunt take
+				# rate, which IS arithmetic. Band = flow arithmetic; expedition = lookup.
 				"hunt_per_worker_provisions": float(entry.get("hunt_per_worker_provisions", 0.0)),
 				"expedition_viability_warn_turns": int(entry.get("expedition_viability_warn_turns", 0)),
 			"labor_assignments": (entry.get("labor_assignments", []) as Array).duplicate(true) if entry.get("labor_assignments", []) is Array else [],

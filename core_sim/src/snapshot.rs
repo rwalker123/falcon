@@ -4108,7 +4108,6 @@ fn population_state(
         food_consumption,
         // Pre-launch hunt-forecast levers (global config, echoed onto every cohort — the outfit UI
         // reads them off the selected resident band).
-        expedition_per_worker_carry: expedition_levers.hunt_per_worker_carry,
         hunt_per_worker_provisions: expedition_levers.hunt_per_worker_provisions,
         expedition_viability_warn_turns: expedition_levers.hunt_viability_warn_turns,
     }
