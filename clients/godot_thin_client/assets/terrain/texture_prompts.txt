@@ -155,3 +155,18 @@
 # between the shelf and the inland sea. Watch for the neon failure on the way: crushing R toward 0
 # gives pure cyan; lift the RED channel rather than dropping saturation.
 # ============================================================================
+
+# Navigable-river BANK (base/37) — the hex is a bank; the shader paints the channel on top
+#
+# NOTE the counter-intuitive grading rule here. The obvious move is to match the bank's tone to
+# the biome it sits in (prairie, bright 112) — and one candidate did so almost exactly. That is
+# WRONG: the worldgen tag solver promotes river-adjacent tiles to Floodplain (58) and
+# AlluvialPlain (55), so a river corridor borders BOTH bright open land and dark fertile land.
+# Matching either one perfectly just moves the flat<->flat dither's speckle to the other seam.
+# The bank is graded to ~90 — the tone minimising the WORST-case gap across both families.
+# (The floodplain placeholder used during development sat at 58 against prairie's 112, a 55-point
+# gap, and the dither read as green confetti scattered over the grass. That is the failure mode.)
+# Pick the FLATTEST, lowest-contrast candidate, not the most characterful one: contrast at the
+# seam becomes noise, and a repeating feature (one candidate's moss blobs) becomes a visible
+# lattice when tiled.
+37_navigable_river: Seamless tileable river floodplain bank texture, top-down view, damp silty gravel and fine sand, scattered smooth pebbles, sparse patchy grass tufts, muted earthy browns and grey-greens, low contrast, soft even lighting, no water, no shoreline, no river, painterly style, 512x512 game asset

@@ -83,7 +83,7 @@
     { "id": 34, "name": "karst_cavern_mouth", "label": "Karst Cavern Mouth", "category": "special", "blend_class": "rugged", "color": [46, 79, 92] },
     { "id": 35, "name": "sinkhole_field", "label": "Sinkhole Field", "category": "special", "blend_class": "rugged", "color": [79, 75, 51] },
     { "id": 36, "name": "aquifer_ceiling", "label": "Aquifer Ceiling", "category": "special", "blend_class": "rugged", "color": [47, 143, 178] },
-    { "id": 37, "name": "navigable_river", "label": "Navigable River", "category": "water", "blend_class": "flat", "color": [138, 152, 103] }
+    { "id": 37, "name": "navigable_river", "label": "Navigable River", "category": "water", "blend_class": "flat", "color": [94, 89, 76] }
   ],
   "categories": {
     "water": { "wang_priority": 1 },
