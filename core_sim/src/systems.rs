@@ -484,6 +484,10 @@ pub fn spawn_initial_world(
             terrain: proto.terrain,
             terrain_tags: proto.tags,
             mountain: proto.mountain,
+            // Populated by `generate_hydrology`, which runs after the world is spawned.
+            river_edges: 0,
+            river_inflow: 0,
+            river_channel: 0,
         };
         let power_component = PowerNode {
             id: node_id,
@@ -1290,19 +1294,17 @@ pub fn apply_tag_budget_solver(
         }
     }
 
-    let mut river_mask = vec![false; total];
-    if let Some(hydro) = hydro.as_ref() {
-        for river in hydro.rivers.iter() {
-            for point in river.path.iter() {
-                if point.x < registry.width && point.y < registry.height {
-                    let idx = (point.y * registry.width + point.x) as usize;
-                    if idx < river_mask.len() {
-                        river_mask[idx] = true;
-                    }
-                }
-            }
-        }
-    }
+    // River-adjacency: a hex flanks a river edge, or is part of a navigable river's hex chain.
+    let river_mask = hydro
+        .as_ref()
+        .map(|hydro| {
+            hydro.river_tile_mask(
+                registry.width,
+                registry.height,
+                config.map_topology.wrap_horizontal,
+            )
+        })
+        .unwrap_or_else(|| vec![false; total]);
 
     fn apply_tile_change(
         tiles: &mut Query<&mut Tile>,
@@ -1499,6 +1501,9 @@ pub fn apply_tag_budget_solver(
                     if tile_info[idx]
                         .tags
                         .contains(sim_runtime::TerrainTags::WATER)
+                        // Preserve hydrology-placed navigable rivers: draining one back into land
+                        // would cut a real waterway in half (same protection RiverDelta gets).
+                        && tile_info[idx].terrain != sim_runtime::TerrainType::NavigableRiver
                     {
                         let is_polar =
                             climate_band_for_position(tile_info[idx].position, height as u32)
@@ -5984,6 +5989,9 @@ mod terrain_tag_tests {
                     terrain,
                     terrain_tags: tags,
                     mountain,
+                    river_edges: 0,
+                    river_inflow: 0,
+                    river_channel: 0,
                 })
                 .id();
             tile_entities.push(entity);
@@ -6091,6 +6099,9 @@ mod terrain_tag_tests {
                         terrain,
                         terrain_tags: def.tags,
                         mountain: None,
+                        river_edges: 0,
+                        river_inflow: 0,
+                        river_channel: 0,
                     })
                     .id();
                 tile_entities.push(entity);
@@ -6242,6 +6253,7 @@ mod terrain_tag_tests {
             fallback_min_length: Some(4),
             spacing: Some(8.0),
             uphill_gain_pct: Some(0.07),
+            ..Default::default()
         };
 
         world.insert_resource(config);
@@ -6269,14 +6281,16 @@ mod terrain_tag_tests {
         let width = registry.width as usize;
         let height = registry.height as usize;
 
-        // Every tile a river polyline passes through.
-        let river_tiles: std::collections::HashSet<usize> = world
-            .resource::<crate::HydrologyState>()
-            .rivers
-            .iter()
-            .flat_map(|river| river.path.iter())
-            .map(|pos| pos.y as usize * width + pos.x as usize)
-            .collect();
+        // Every tile a river touches: flanking a river edge, or on a navigable river's hex chain.
+        let wrap = world
+            .resource::<SimulationConfig>()
+            .map_topology
+            .wrap_horizontal;
+        let river_mask = world.resource::<crate::HydrologyState>().river_tile_mask(
+            registry.width,
+            registry.height,
+            wrap,
+        );
 
         let is_water = |terrain: TerrainType| {
             matches!(
@@ -6286,6 +6300,7 @@ mod terrain_tag_tests {
                     | TerrainType::CoralShelf
                     | TerrainType::HydrothermalVentField
                     | TerrainType::InlandSea
+                    | TerrainType::NavigableRiver
             )
         };
 
@@ -6304,7 +6319,7 @@ mod terrain_tag_tests {
                 continue;
             }
             delta_count += 1;
-            if !river_tiles.contains(&idx) {
+            if !river_mask[idx] {
                 orphan_deltas += 1;
             }
             let x = (idx % width) as i32;
@@ -6560,6 +6575,9 @@ mod power_tests {
                             terrain: TerrainType::AlluvialPlain,
                             terrain_tags: TerrainTags::empty(),
                             mountain: None,
+                            river_edges: 0,
+                            river_inflow: 0,
+                            river_channel: 0,
                         },
                         PowerNode {
                             id: PowerNodeId(idx as u32),

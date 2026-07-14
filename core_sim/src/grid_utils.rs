@@ -171,6 +171,38 @@ pub fn hex_neighbors_wrapped(
 /// Number of hex directions (odd-r), i.e. the six neighbors around any tile.
 pub const HEX_DIRECTION_COUNT: usize = 6;
 
+/// Number of **corners** (vertices) incident to a hex. A pointy-top hex has six of them, one
+/// between each adjacent pair of sides.
+///
+/// # The corner-index convention — a wire contract
+///
+/// Corner `i` sits at screen angle `60 * i + 30` degrees with **+y pointing down** (the client's
+/// `MapView._hex_points`), so going clockwise from the lower-right:
+///
+/// | `i` | 0 | 1 | 2 | 3 | 4 | 5 |
+/// |---|---|---|---|---|---|---|
+/// | | lower-right | bottom | lower-left | upper-left | top | upper-right |
+///
+/// This is the indexing of [`crate::components::Tile::river_inflow`], so the sim and the renderer
+/// must agree on it exactly — see `hex_edge_corner_indices` and the hydrology corner model
+/// (`hydrology::HexGrid::local_corner_index`), which is unit-tested against this table.
+pub const HEX_CORNER_COUNT: usize = 6;
+
+/// The two hex-corner indices (see [`HEX_CORNER_COUNT`]) that the side in odd-r direction `dir`
+/// runs between: a hex edge is a segment from corner to corner, so a river riding that edge
+/// terminates on one of these two.
+///
+/// With both tables clockwise and offset by half a step, side `dir` spans corners
+/// `{dir, dir - 1}` (mod 6): the E side (`dir = 0`) runs from upper-right (5) to lower-right (0),
+/// the SE side (`dir = 1`) from lower-right (0) to bottom (1), and so on around the hex.
+/// Out-of-range directions yield `None` — this is a lookup, not an assertion site.
+pub const fn hex_edge_corner_indices(dir: usize) -> Option<[usize; 2]> {
+    if dir >= HEX_DIRECTION_COUNT {
+        return None;
+    }
+    Some([(dir + HEX_CORNER_COUNT - 1) % HEX_CORNER_COUNT, dir])
+}
+
 /// Odd-r neighbor offsets, one row per hex direction (clockwise from E).
 /// Format: `(dx_even, dx_odd, dy)` — the x-shift depends on the source row's parity.
 /// Single source of truth for both `hex_neighbor` and `hex_neighbors_wrapped`.

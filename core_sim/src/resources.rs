@@ -32,6 +32,14 @@ pub struct HydrologyOverrides {
     pub fallback_min_length: Option<usize>,
     pub spacing: Option<f32>,
     pub uphill_gain_pct: Option<f32>,
+    /// Corner discharge at which a river edge becomes `Major` (overrides the preset's
+    /// `river_class_major_min_discharge`).
+    pub class_major_min_discharge: Option<u32>,
+    /// Corner discharge at which a river becomes a `NavigableRiver` hex chain (overrides the
+    /// preset's `river_class_navigable_min_discharge`).
+    pub class_navigable_min_discharge: Option<u32>,
+    /// Kill switch for navigable rivers (overrides the preset's `river_navigable_enabled`).
+    pub navigable_enabled: Option<bool>,
 }
 
 /// Configuration for map topology (wrapping behavior).
@@ -346,6 +354,9 @@ struct HydrologyOverridesData {
     fallback_min_length: Option<usize>,
     spacing: Option<f32>,
     uphill_gain_pct: Option<f32>,
+    river_class_major_min_discharge: Option<u32>,
+    river_class_navigable_min_discharge: Option<u32>,
+    river_navigable_enabled: Option<bool>,
 }
 
 impl HydrologyOverridesData {
@@ -361,6 +372,9 @@ impl HydrologyOverridesData {
             fallback_min_length: self.fallback_min_length,
             spacing: self.spacing,
             uphill_gain_pct: self.uphill_gain_pct,
+            class_major_min_discharge: self.river_class_major_min_discharge,
+            class_navigable_min_discharge: self.river_class_navigable_min_discharge,
+            navigable_enabled: self.river_navigable_enabled,
         }
     }
 }

@@ -577,10 +577,17 @@ pub enum TerrainType {
     KarstCavernMouth = 34,
     SinkholeField = 35,
     AquiferCeiling = 36,
+    /// A river so large it is a body of water in its own right: you need a boat to enter it.
+    /// Stamped **only** by the hydrology pass, on the downstream tail of a river whose corner
+    /// discharge crosses `river_class_navigable_min_discharge`. Reuses every existing water
+    /// mechanic (it is `WATER | FRESHWATER`-tagged, mirroring `InlandSea`), which is exactly why
+    /// it is a terrain and not a `RiverClass` — minor/major rivers are *edges* between hexes,
+    /// a navigable river *is* the hex.
+    NavigableRiver = 37,
 }
 
 impl TerrainType {
-    pub const VALUES: [TerrainType; 37] = [
+    pub const VALUES: [TerrainType; 38] = [
         TerrainType::DeepOcean,
         TerrainType::ContinentalShelf,
         TerrainType::InlandSea,
@@ -618,7 +625,78 @@ impl TerrainType {
         TerrainType::KarstCavernMouth,
         TerrainType::SinkholeField,
         TerrainType::AquiferCeiling,
+        TerrainType::NavigableRiver,
     ];
+}
+
+/// The class of river running along **one side of a hex** (an odd-r hex *edge*).
+///
+/// Packed 2 bits per direction into `Tile::river_edges` / `TileState::river_edges`, so a tile
+/// carries the class of the river on each of its six sides. This is the primitive a movement
+/// system reads: "entering hex H across direction d crosses `H.river_class_on_side(d)`".
+///
+/// A river that outgrows `Major` does **not** get a variant here — it becomes a
+/// [`TerrainType::NavigableRiver`] hex instead (a body of water you need a boat to enter), so
+/// value `3` is deliberately left reserved rather than spent on "navigable".
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default, PartialOrd, Ord,
+)]
+#[repr(u8)]
+pub enum RiverClass {
+    #[default]
+    None = 0,
+    Minor = 1,
+    Major = 2,
+}
+
+impl RiverClass {
+    /// Bits per direction in a packed river-edge mask.
+    pub const BITS_PER_DIR: u32 = 2;
+    /// Bits per **corner** in a packed river-inflow mask. A corner slot holds the same class in the
+    /// same 2 bits as a direction slot — one packing layout, keyed two ways (side vs. vertex).
+    pub const BITS_PER_CORNER: u32 = Self::BITS_PER_DIR;
+    /// Mask of a single direction's (or corner's) slot.
+    pub const SLOT_MASK: u16 = 0b11;
+
+    pub const fn bits(self) -> u16 {
+        self as u16
+    }
+
+    /// Decode a 2-bit slot. The reserved value `3` decodes to `None` (no river) rather than
+    /// panicking — an unknown class must never be read as a crossable river.
+    pub const fn from_bits(bits: u16) -> Self {
+        match bits & Self::SLOT_MASK {
+            1 => RiverClass::Minor,
+            2 => RiverClass::Major,
+            _ => RiverClass::None,
+        }
+    }
+
+    pub const fn is_some(self) -> bool {
+        !matches!(self, RiverClass::None)
+    }
+}
+
+/// The bit layout of a packed **channel-exit** mask (`Tile::river_channel` /
+/// `TileState::river_channel`): one bit per odd-r direction, set when a hex's *navigable* channel
+/// flows out through that side.
+///
+/// Why it exists: a navigable river is a chain of water **hexes**, and a chain is a PATH — hex `A`
+/// connects to its upstream and downstream neighbours and to nothing else. The terrain alone cannot
+/// say which neighbours those are, so a renderer that arms every navigable/water neighbour draws a
+/// cross-linked **web** wherever two chains run side by side or a chain bends back on itself. Only
+/// the tracer knows the chain, so it states it here. Symmetric across a shared side (like
+/// `river_edges`), except at the mouth, where the exit points into the open water/delta the river
+/// drains into and that water carries no channel of its own.
+pub struct RiverChannel;
+
+impl RiverChannel {
+    /// Bits per direction: a channel either exits through a side or it does not — there is no class
+    /// here (the *water* is the river; `RiverClass` grades only edge rivers). Callers range-check
+    /// `dir` against `grid_utils::HEX_DIRECTION_COUNT`, exactly as they do for `RiverClass`.
+    pub const BITS_PER_DIR: u32 = 1;
+    /// Mask of a single direction's slot.
+    pub const SLOT_MASK: u8 = 0b1;
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, Hash)]
@@ -1088,27 +1166,6 @@ pub struct TerrainOverlayState {
     pub samples: Vec<TerrainSample>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
-pub struct HydrologyPointState {
-    pub x: u32,
-    pub y: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
-pub struct RiverSegmentState {
-    pub id: u32,
-    pub order: u8,
-    pub width: u8,
-    #[serde(default)]
-    pub points: Vec<HydrologyPointState>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
-pub struct HydrologyOverlayState {
-    #[serde(default)]
-    pub rivers: Vec<RiverSegmentState>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ElevationOverlayState {
     pub width: u32,
@@ -1164,6 +1221,31 @@ pub struct TileState {
     /// bigger = harsher). Band-independent — a property of the place. Derived at capture.
     #[serde(default)]
     pub habitability: i64,
+    /// Packed per-side river classes: `class = RiverClass::from_bits(river_edges >> (2 * dir))`
+    /// for each odd-r direction `dir` (0=E, 1=SE, 2=SW, 3=W, 4=NW, 5=NE). Both hexes flanking a
+    /// river edge carry it, each on their own side. Replaces the old polyline hydrology overlay:
+    /// together with `TerrainType::NavigableRiver` this fully determines the river render.
+    #[serde(default)]
+    pub river_edges: u16,
+    /// Packed per-**corner** river inflow: `class = RiverClass::from_bits(river_inflow >> (2 *
+    /// corner))` for each hex corner (`0` lower-right, `1` bottom, `2` lower-left, `3` upper-left,
+    /// `4` top, `5` upper-right — screen space, +y down).
+    ///
+    /// Set only on the **first hex of a `NavigableRiver` chain**, at the corner where the edge-river
+    /// chain terminates and hands its water to the navigable trunk, with the class of the last edge
+    /// it emitted. An edge river ends at a *vertex*, never mid-side, so this is where the renderer
+    /// must join the tributary to the trunk hex. `0` everywhere else.
+    #[serde(default)]
+    pub river_inflow: u16,
+    /// Packed per-side **channel exits** of a navigable river — 1 bit per odd-r direction (see
+    /// [`RiverChannel`]): `exits(dir) = (river_channel >> dir) & 1`.
+    ///
+    /// The trunk channel is a **path**, and only the tracer knows which neighbours a navigable hex
+    /// actually links to; a renderer that infers them from terrain draws a web. Arm only the sides
+    /// whose bit is set. Symmetric across a shared side, except at the mouth (the exit into the
+    /// ocean/inland sea/delta is not mirrored back). `0` on every hex with no navigable channel.
+    #[serde(default)]
+    pub river_channel: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1953,7 +2035,6 @@ pub struct WorldSnapshot {
     #[serde(default)]
     pub intensification_knowledge: Vec<IntensificationKnowledgeState>,
     pub moisture_raster: FloatRasterState,
-    pub hydrology_overlay: HydrologyOverlayState,
     pub elevation_overlay: ElevationOverlayState,
     pub start_marker: Option<StartMarkerState>,
     pub terrain: TerrainOverlayState,
@@ -2011,7 +2092,6 @@ pub struct WorldDelta {
     pub forage_patches: Option<Vec<ForagePatchState>>,
     pub intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
     pub moisture_raster: Option<FloatRasterState>,
-    pub hydrology_overlay: Option<HydrologyOverlayState>,
     pub elevation_overlay: Option<ElevationOverlayState>,
     pub start_marker: Option<StartMarkerState>,
     pub axis_bias: Option<AxisBiasState>,
@@ -2217,7 +2297,6 @@ fn build_snapshot_flatbuffer<'a>(
     let forage_patches_vec = create_forage_patches(builder, &snapshot.forage_patches);
     let intensification_knowledge_vec =
         create_intensification_knowledge(builder, &snapshot.intensification_knowledge);
-    let hydrology_overlay = create_hydrology_overlay(builder, &snapshot.hydrology_overlay);
     let moisture_raster = create_float_raster(builder, &snapshot.moisture_raster);
     let elevation_overlay = create_elevation_overlay(builder, &snapshot.elevation_overlay);
     let terrain_overlay = create_terrain_overlay(builder, &snapshot.terrain);
@@ -2277,7 +2356,6 @@ fn build_snapshot_flatbuffer<'a>(
             foragePatches: Some(forage_patches_vec),
             intensificationKnowledge: Some(intensification_knowledge_vec),
             moistureRaster: Some(moisture_raster),
-            hydrologyOverlay: Some(hydrology_overlay),
             elevationOverlay: Some(elevation_overlay),
             terrainOverlay: Some(terrain_overlay),
             logisticsRaster: Some(logistics_raster),
@@ -2423,10 +2501,6 @@ fn build_delta_flatbuffer<'a>(
         .moisture_raster
         .as_ref()
         .map(|raster| create_float_raster(builder, raster));
-    let hydrology_overlay = delta
-        .hydrology_overlay
-        .as_ref()
-        .map(|overlay| create_hydrology_overlay(builder, overlay));
     let elevation_overlay = delta
         .elevation_overlay
         .as_ref()
@@ -2537,7 +2611,6 @@ fn build_delta_flatbuffer<'a>(
             influencers: Some(influencers_vec),
             removedInfluencers: Some(removed_influencers_vec),
             terrainOverlay: terrain_overlay,
-            hydrologyOverlay: hydrology_overlay,
             logisticsRaster: logistics_raster,
             sentimentRaster: sentiment_raster,
             corruptionRaster: corruption_raster,
@@ -2557,42 +2630,6 @@ fn build_delta_flatbuffer<'a>(
         &fb::EnvelopeArgs {
             payload_type: fb::SnapshotPayload::delta,
             payload: Some(delta_table.as_union_value()),
-        },
-    )
-}
-
-fn create_hydrology_overlay<'a>(
-    builder: &mut FbBuilder<'a>,
-    overlay: &HydrologyOverlayState,
-) -> WIPOffset<fb::HydrologyOverlay<'a>> {
-    let rivers_vec: Vec<_> = overlay
-        .rivers
-        .iter()
-        .map(|river| {
-            let points: Vec<_> = river
-                .points
-                .iter()
-                .map(|p| {
-                    fb::HydrologyPoint::create(builder, &fb::HydrologyPointArgs { x: p.x, y: p.y })
-                })
-                .collect();
-            let points_vec = builder.create_vector(&points);
-            fb::RiverSegment::create(
-                builder,
-                &fb::RiverSegmentArgs {
-                    id: river.id,
-                    order: river.order,
-                    width: river.width,
-                    points: Some(points_vec),
-                },
-            )
-        })
-        .collect();
-    let rivers_fb = builder.create_vector(&rivers_vec);
-    fb::HydrologyOverlay::create(
-        builder,
-        &fb::HydrologyOverlayArgs {
-            rivers: Some(rivers_fb),
         },
     )
 }
@@ -3139,6 +3176,9 @@ fn create_tiles<'a>(
                     mountainKind: to_fb_mountain_kind(tile.mountain_kind),
                     mountainRelief: tile.mountain_relief,
                     habitability: tile.habitability,
+                    riverEdges: tile.river_edges,
+                    riverInflow: tile.river_inflow,
+                    riverChannel: tile.river_channel,
                 },
             )
         })
@@ -4400,6 +4440,7 @@ fn to_fb_terrain_type(terrain: TerrainType) -> fb::TerrainType {
         TerrainType::KarstCavernMouth => fb::TerrainType::KarstCavernMouth,
         TerrainType::SinkholeField => fb::TerrainType::SinkholeField,
         TerrainType::AquiferCeiling => fb::TerrainType::AquiferCeiling,
+        TerrainType::NavigableRiver => fb::TerrainType::NavigableRiver,
     }
 }
 

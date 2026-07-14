@@ -63,6 +63,22 @@ const VIS_ACTIVE := "active"
 const VIS_DISCOVERED := "discovered"
 const VIS_UNEXPLORED := "unexplored"
 
+# Hex-edge river fixtures. The wire mask is 12 bits, 2 bits per odd-r direction, in the SIM's
+# direction order (clockwise from E: 0=E, 1=SE, 2=SW, 3=W, 4=NW, 5=NE) — built here with the
+# same RiverEdges vocabulary the UI decodes with, so the fixture can't drift from the contract.
+const RIVER_MASK_NONE := 0
+# Minor on E + SE — one class, so one row.
+const RIVER_MASK_SINGLE_CLASS := (
+	(RiverEdges.CLASS_MINOR << (RiverEdges.BITS_PER_DIRECTION * 0))
+	| (RiverEdges.CLASS_MINOR << (RiverEdges.BITS_PER_DIRECTION * 1))
+)
+# Major on NE + NW, Minor on SW — the two-class case: "Major River: NE, NW" then "Minor River: SW".
+const RIVER_MASK_TWO_CLASS := (
+	(RiverEdges.CLASS_MAJOR << (RiverEdges.BITS_PER_DIRECTION * 5))
+	| (RiverEdges.CLASS_MAJOR << (RiverEdges.BITS_PER_DIRECTION * 4))
+	| (RiverEdges.CLASS_MINOR << (RiverEdges.BITS_PER_DIRECTION * 2))
+)
+
 var _hud: HudLayer
 
 func _ready() -> void:
@@ -343,6 +359,24 @@ func _ready() -> void:
 	_hud.show_tile_selection(_stressed_tile_fixture())
 	await _settle()
 	await _save("food_tile_stressed")
+
+	# ---- Hex-edge rivers on the Tile card (ui/RiverEdges.gd, the shared text formatter) -----------
+	# State 2-river-both — the interesting case: a tile whose sides carry BOTH classes. The card must
+	# read "Major River: NE, NW" then "Minor River: SW" — Major first (the bigger river reads first),
+	# directions in compass order from NE clockwise, NOT the sim's bit order (which starts at E).
+	_hud.show_tile_selection(_river_tile_fixture(RIVER_MASK_TWO_CLASS))
+	await _settle()
+	await _save("river_tile_both")
+
+	# State 2-river-minor — a single-class tile: one "Minor River: E, SE" row, no Major row.
+	_hud.show_tile_selection(_river_tile_fixture(RIVER_MASK_SINGLE_CLASS))
+	await _settle()
+	await _save("river_tile_minor")
+
+	# State 2-river-none — mask 0: NO river row at all (not an empty "River:" label).
+	_hud.show_tile_selection(_river_tile_fixture(RIVER_MASK_NONE))
+	await _settle()
+	await _save("river_tile_none")
 
 	# ---- Cultivate: the forage INVESTMENT rung (gated, then unlocked) ----------------------------
 	# State 2-cultivate-locked — the faction has NOT finished learning Cultivation (the top-bar meter
@@ -1509,6 +1543,20 @@ func _food_tile_fixture() -> Dictionary:
 		# Both are food/turn at output_multiplier 1.0, like the ceilings above.
 		"patch_ceiling_cultivate": 0.24,
 		"patch_tended_yield": 1.20,
+	}
+
+## A plain (no forage patch) tile carrying hex-EDGE rivers on some of its sides. Deliberately
+## bare of food-module keys so the Tile card is just the terrain-intrinsic rows and the river
+## row(s) read unobstructed.
+func _river_tile_fixture(river_mask: int) -> Dictionary:
+	return {
+		"x": 9, "y": 36,
+		"terrain_label": "Sinkhole Field",
+		"tags_text": "none",
+		"visibility_state": "active",
+		"habitability": 0.03,
+		"temperature": 15.0,
+		"river_edges": river_mask,
 	}
 
 ## The three pre-launch hunt-forecast states, each a hovered hex carrying one huntable herd whose

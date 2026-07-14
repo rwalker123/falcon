@@ -70,10 +70,22 @@ pub struct MapPreset {
     pub river_source_sea_buffer: f32,
     #[serde(default = "default_river_min_spacing")]
     pub river_min_spacing: f32,
-    #[serde(default = "default_river_uphill_step_limit")]
-    pub river_uphill_step_limit: u8,
     #[serde(default = "default_river_uphill_gain_pct")]
     pub river_uphill_gain_pct: f32,
+    /// Corner flow-accumulation at which a river edge stops being `Minor` and becomes `Major`.
+    /// Class is per-edge and grows downstream, so this is where a stream widens into a river.
+    #[serde(default = "default_river_class_major_min_discharge")]
+    pub river_class_major_min_discharge: u32,
+    /// Corner flow-accumulation at which a river outgrows the edge model entirely: from here down
+    /// it is a chain of `TerrainType::NavigableRiver` **hexes** (a body of water you need a boat to
+    /// enter). Navigable rivers bisect landmasses, so this is tuned to fire for only the largest
+    /// one or two rivers on a map.
+    #[serde(default = "default_river_class_navigable_min_discharge")]
+    pub river_class_navigable_min_discharge: u32,
+    /// Kill switch for the navigable tail: with this off, a river that crosses
+    /// `river_class_navigable_min_discharge` simply stays `Major` all the way to its mouth.
+    #[serde(default = "default_river_navigable_enabled")]
+    pub river_navigable_enabled: bool,
 
     #[serde(default)]
     pub macro_land: MacroLandConfig,
@@ -130,7 +142,11 @@ impl Default for BiomePaletteConfig {
         // The §4.2 illustrative defaults: a small map reads ~one biome per climate zone
         // plus a couple of discovery-flavor anomalies; a large map fills back out.
         let niches = [
-            ("Ocean", 2, 4),
+            // Ocean carries FOUR must-haves (DeepOcean, ContinentalShelf, InlandSea and the
+            // hydrology-placed NavigableRiver), so k_large must exceed them for the two
+            // *interchangeable* ocean flavours (CoralShelf, HydrothermalVentField) to be reachable
+            // at all — 6 = full membership on a large map.
+            ("Ocean", 2, 6),
             ("CoastWetland", 1, 4),
             ("FertileLowland", 2, 5),
             ("AridLowland", 1, 4),
@@ -448,12 +464,20 @@ const fn default_river_min_spacing() -> f32 {
     12.0
 }
 
-const fn default_river_uphill_step_limit() -> u8 {
-    2
-}
-
 const fn default_river_uphill_gain_pct() -> f32 {
     0.05
+}
+
+pub(crate) const fn default_river_class_major_min_discharge() -> u32 {
+    16
+}
+
+pub(crate) const fn default_river_class_navigable_min_discharge() -> u32 {
+    32
+}
+
+const fn default_river_navigable_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -3718,6 +3718,13 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     if tile_info.has("temperature"):
         var temperature := float(tile_info["temperature"])
         lines.append("Climate: %s" % TileClimate.band_for(temperature))
+    # Hex-edge rivers — which SIDES of this tile carry water (the sides a crossing cost will
+    # apply to). Terrain-intrinsic permanent geography, so it renders before the discovered
+    # early-return, like Habitability/Climate. Guarded on the key so a rehydrated/older snapshot
+    # degrades to no row instead of a wrong one; RiverEdges returns [] on a riverless tile, so it
+    # never emits an empty "River:" label. Same formatter the map hover tooltip uses.
+    if tile_info.has("river_edges"):
+        lines.append_array(RiverEdges.summary_lines(int(tile_info["river_edges"])))
     # A discovered Wondrous Site is known knowledge — fine on a remembered tile — so surface
     # it before the discovered early-return. Only when the field is present.
     var site_name := String(tile_info.get("site_name", "")).strip_edges()
@@ -5450,6 +5457,13 @@ func show_tooltip(info: Dictionary) -> void:
     var terrain := String(info.get("terrain_label", ""))
     if terrain != "":
         lines.append("Terrain: %s" % terrain)
+
+    # Hex-edge rivers: which SIDES of the hovered hex carry water. Permanent geography, so it
+    # reads on a remembered tile too — hence above the "(last seen)" note. Same RiverEdges
+    # formatter as the Tile card; [] on a riverless tile, so no empty row.
+    if info.has("river_edges"):
+        for river_line in RiverEdges.summary_lines(int(info["river_edges"])):
+            lines.append(river_line)
 
     # Remembered (Discovered) tiles: flag that contents are stale/incomplete.
     if String(info.get("visibility_state", "")) == "discovered":

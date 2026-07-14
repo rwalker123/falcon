@@ -76,9 +76,12 @@ impl BiomeNiche {
 pub const fn biome_niche(terrain: TerrainType) -> BiomeNiche {
     use TerrainType::*;
     match terrain {
-        DeepOcean | ContinentalShelf | InlandSea | CoralShelf | HydrothermalVentField => {
-            BiomeNiche::Ocean
-        }
+        DeepOcean
+        | ContinentalShelf
+        | InlandSea
+        | CoralShelf
+        | HydrothermalVentField
+        | NavigableRiver => BiomeNiche::Ocean,
         RiverDelta | TidalFlat | MangroveSwamp | FreshwaterMarsh | PeatHeath => {
             BiomeNiche::CoastWetland
         }
@@ -136,6 +139,10 @@ pub const fn biome_must_have(terrain: TerrainType) -> bool {
             | Tundra
             | RiverDelta
             | Glacier
+            // A navigable river is a real, hydrology-placed body of water: if it fell off the
+            // palette the Ocean-niche remap would repaint it `DeepOcean` and cut the continent in
+            // half with open sea. Same surgical reason as `InlandSea`.
+            | NavigableRiver
     )
 }
 
@@ -573,6 +580,19 @@ pub fn terrain_definition(terrain: TerrainType) -> TerrainDefinition {
             1.55,
             rb(1, 2, 2),
         ),
+        // Mirrors `InlandSea` exactly — a navigable river is standing/flowing fresh water you need
+        // a boat to enter, so it reuses the inland-water movement/logistics/attrition profile
+        // rather than inventing a new one.
+        TerrainType::NavigableRiver => def(
+            terrain,
+            Tag::WATER | Tag::FRESHWATER,
+            mp(3.5, 3.3, 3.6, 0.8),
+            1.3,
+            0.28,
+            -0.05,
+            2.0,
+            rb(1, 3, 3),
+        ),
     }
 }
 
@@ -992,7 +1012,7 @@ mod tests {
     }
 
     #[test]
-    fn must_have_set_is_exactly_the_documented_eight() {
+    fn must_have_set_is_exactly_the_documented_nine() {
         let mut must: Vec<TerrainType> = TerrainType::VALUES
             .into_iter()
             .filter(|&t| biome_must_have(t))
@@ -1009,6 +1029,9 @@ mod tests {
                 TerrainType::PrairieSteppe,
                 TerrainType::Tundra,
                 TerrainType::Glacier,
+                // A navigable river is hydrology-placed water: off-palette it would remap to
+                // DeepOcean and cut the continent in half with open sea.
+                TerrainType::NavigableRiver,
             ]
         );
     }

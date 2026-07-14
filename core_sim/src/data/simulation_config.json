@@ -17,7 +17,10 @@
     "min_length": 8,
     "fallback_min_length": 4,
     "spacing": 8.0,
-    "uphill_gain_pct": 0.1
+    "uphill_gain_pct": 0.1,
+    "river_class_major_min_discharge": 16,
+    "river_class_navigable_min_discharge": 32,
+    "river_navigable_enabled": true
   },
   "ambient_temperature": 18.0,
   "temperature_lerp": 0.05,

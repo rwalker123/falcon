@@ -3807,6 +3807,13 @@ mod tests {
                     if world.bands.terrain[world.idx(x, y)] != TerrainBand::Land {
                         continue;
                     }
+                    // A NavigableRiver is the one legitimate way a band-Land tile ends WATER-tagged:
+                    // the hydrology pass deliberately carves a big river's tail into a waterway
+                    // through the land. This invariant guards against the *classifier* drowning land
+                    // by noise (the border-ring bug), not against hydrology doing its job.
+                    if world.terrain(x, y) == sim_runtime::TerrainType::NavigableRiver {
+                        continue;
+                    }
                     if world.is_water(x, y) {
                         drowned.push(format!("({x},{y})={:?}", world.terrain(x, y)));
                     }
