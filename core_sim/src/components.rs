@@ -4,7 +4,8 @@ use std::str::FromStr;
 
 use bevy::{math::UVec2, prelude::*};
 use sim_runtime::{
-    KnownTechFragment as ContractKnowledgeFragment, RiverClass, TerrainTags, TerrainType,
+    KnownTechFragment as ContractKnowledgeFragment, RiverChannel, RiverClass, TerrainTags,
+    TerrainType,
 };
 
 use crate::{
@@ -47,6 +48,17 @@ pub struct Tile {
     /// Zero on every other tile, and zero for a river that was navigable from its first step (no
     /// edge chain, so no inflow to name).
     pub river_inflow: u16,
+    /// Packed per-side **channel exits** — 1 bit per odd-r direction (see `RiverChannel`): does
+    /// this hex's navigable channel flow out through side `dir`?
+    ///
+    /// A navigable river is a chain of water hexes, and a chain is a **path**: a hex connects to its
+    /// upstream and downstream neighbours and to nothing else. Terrain alone cannot say which those
+    /// are — a renderer that arms every navigable/water neighbour cross-links adjacent chains into a
+    /// **web**. Only the tracer knows the chain, so `generate_hydrology` writes it here, symmetric
+    /// across each shared side (both hexes of a consecutive pair agree), plus one exit on the final
+    /// hex pointing at the water body/delta the river drains into — otherwise the drawn river stops
+    /// one hex short of the sea. A confluence hex carries the **union** of the chains through it.
+    pub river_channel: u8,
 }
 
 impl Tile {
@@ -100,6 +112,33 @@ impl Tile {
     /// Whether any of the six corners takes an edge river's inflow.
     pub fn has_any_river_inflow(&self) -> bool {
         self.river_inflow != 0
+    }
+
+    /// Whether this hex's navigable channel flows out through side `dir` (odd-r direction, `0..6`).
+    /// An out-of-range direction reads `false` — this is a lookup, not an assertion site.
+    pub fn channel_exits(&self, dir: u8) -> bool {
+        if usize::from(dir) >= HEX_DIRECTION_COUNT {
+            return false;
+        }
+        (self.river_channel >> (u32::from(dir) * RiverChannel::BITS_PER_DIR))
+            & RiverChannel::SLOT_MASK
+            != 0
+    }
+
+    /// Record a channel exit through side `dir`. Out-of-range directions are ignored. Bits are
+    /// **OR-ed**: a hex where two chains meet carries the union of their exits, never the last one
+    /// written.
+    pub fn set_channel_exit(&mut self, dir: u8) {
+        if usize::from(dir) >= HEX_DIRECTION_COUNT {
+            return;
+        }
+        self.river_channel |=
+            RiverChannel::SLOT_MASK << (u32::from(dir) * RiverChannel::BITS_PER_DIR);
+    }
+
+    /// Whether this hex carries a navigable channel at all.
+    pub fn has_any_channel_exit(&self) -> bool {
+        self.river_channel != 0
     }
 }
 
@@ -1050,6 +1089,7 @@ impl Default for Tile {
             mountain: None,
             river_edges: 0,
             river_inflow: 0,
+            river_channel: 0,
         }
     }
 }

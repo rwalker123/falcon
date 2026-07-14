@@ -1968,6 +1968,7 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             ),
             river_edges: tile_state.river_edges,
             river_inflow: tile_state.river_inflow,
+            river_channel: tile_state.river_channel,
         });
 
         if let Some(power_state) = power_lookup.get(&tile_state.entity) {
@@ -3639,6 +3640,7 @@ fn tile_state(
         habitability,
         river_edges: tile.river_edges,
         river_inflow: tile.river_inflow,
+        river_channel: tile.river_channel,
     }
 }
 
@@ -4572,6 +4574,7 @@ mod tests {
             habitability: 0,
             river_edges: 0,
             river_inflow: 0,
+            river_channel: 0,
         }
     }
 
@@ -5020,6 +5023,7 @@ mod tests {
             habitability: 0,
             river_edges: 0,
             river_inflow: 0,
+            river_channel: 0,
         };
         let base_overlay = TerrainOverlayState {
             width: 1,

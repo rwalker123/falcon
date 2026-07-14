@@ -595,6 +595,28 @@ impl RiverClass {
     }
 }
 
+/// The bit layout of a packed **channel-exit** mask (`Tile::river_channel` /
+/// `TileState::river_channel`): one bit per odd-r direction, set when a hex's *navigable* channel
+/// flows out through that side.
+///
+/// Why it exists: a navigable river is a chain of water **hexes**, and a chain is a PATH — hex `A`
+/// connects to its upstream and downstream neighbours and to nothing else. The terrain alone cannot
+/// say which neighbours those are, so a renderer that arms every navigable/water neighbour draws a
+/// cross-linked **web** wherever two chains run side by side or a chain bends back on itself. Only
+/// the tracer knows the chain, so it states it here. Symmetric across a shared side (like
+/// `river_edges`), except at the mouth, where the exit points into the open water/delta the river
+/// drains into and that water carries no channel of its own.
+pub struct RiverChannel;
+
+impl RiverChannel {
+    /// Bits per direction: a channel either exits through a side or it does not — there is no class
+    /// here (the *water* is the river; `RiverClass` grades only edge rivers). Callers range-check
+    /// `dir` against `grid_utils::HEX_DIRECTION_COUNT`, exactly as they do for `RiverClass`.
+    pub const BITS_PER_DIR: u32 = 1;
+    /// Mask of a single direction's slot.
+    pub const SLOT_MASK: u8 = 0b1;
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, Hash)]
 #[serde(transparent)]
 pub struct TerrainTags(pub u16);
@@ -1133,6 +1155,15 @@ pub struct TileState {
     /// must join the tributary to the trunk hex. `0` everywhere else.
     #[serde(default)]
     pub river_inflow: u16,
+    /// Packed per-side **channel exits** of a navigable river — 1 bit per odd-r direction (see
+    /// [`RiverChannel`]): `exits(dir) = (river_channel >> dir) & 1`.
+    ///
+    /// The trunk channel is a **path**, and only the tracer knows which neighbours a navigable hex
+    /// actually links to; a renderer that infers them from terrain draws a web. Arm only the sides
+    /// whose bit is set. Symmetric across a shared side, except at the mouth (the exit into the
+    /// ocean/inland sea/delta is not mirrored back). `0` on every hex with no navigable channel.
+    #[serde(default)]
+    pub river_channel: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -3004,6 +3035,7 @@ fn create_tiles<'a>(
                     habitability: tile.habitability,
                     riverEdges: tile.river_edges,
                     riverInflow: tile.river_inflow,
+                    riverChannel: tile.river_channel,
                 },
             )
         })

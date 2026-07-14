@@ -26,8 +26,53 @@ const TEST_SEED: u64 = 119_304_647;
 /// so a 0 here would generate a different map every run and make this test flap.
 const CENSUS_SEEDS: [u64; 6] = [1, 2, 3, 4, 5, TEST_SEED];
 
+/// The seed of a reported playtest map (80×52 earthlike, **shipped** hydrology config) whose
+/// navigable rivers came out as a 21-hex, 2–4 hex wide **blob** of water rather than a river: 28
+/// navigable tiles, 13 of them with 3+ navigable neighbours. The `CENSUS_SEEDS` maps are nearly
+/// barren of navigable rivers (0–12 tiles), so they never exercised this — the blob has to be
+/// carried as its own regression seed, generated with the config a *player* actually gets.
+const BLOB_REGRESSION_SEED: u64 = 7_375_689_689_846_694_675;
+
 fn earthlike_world() -> World {
     earthlike_world_seeded(TEST_SEED)
+}
+
+/// An earthlike world with the **shipped** hydrology config (`simulation_config.json`), unlike
+/// `earthlike_world_seeded`, which applies the tuned overrides this file's other assertions are
+/// calibrated against. This is the map the player sees, so it is what the anti-blob invariant is
+/// held to.
+fn earthlike_world_shipped_hydrology(seed: u64) -> World {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+
+    let mut config = SimulationConfig::builtin();
+    config.map_preset_id = "earthlike".to_string();
+    config.map_seed = seed;
+
+    app.world.insert_resource(config);
+    app.world
+        .insert_resource(MapPresetsHandle::new(MapPresets::builtin()));
+    app.world
+        .insert_resource(GenerationRegistry::with_seed(42, 8));
+    app.world.insert_resource(SimulationTick::default());
+    app.world.insert_resource(CultureManager::new());
+    app.world.insert_resource(StartLocation::default());
+    app.world
+        .insert_resource(DiscoveryProgressLedger::default());
+    app.world.insert_resource(FactionInventory::default());
+    app.world
+        .insert_resource(StartProfileKnowledgeTagsHandle::new(
+            StartProfileKnowledgeTags::builtin(),
+        ));
+    app.world.insert_resource(SnapshotOverlaysConfigHandle::new(
+        SnapshotOverlaysConfig::builtin(),
+    ));
+
+    app.add_systems(bevy::app::Startup, spawn_initial_world);
+    app.update();
+
+    generate_hydrology(&mut app.world);
+    app.world
 }
 
 fn earthlike_world_seeded(seed: u64) -> World {
@@ -646,5 +691,249 @@ fn the_first_navigable_hex_reports_the_edge_chains_terminal_corner() {
     assert!(
         tiles_with_inflow > 0,
         "expected at least one edge chain to hand off into a navigable trunk across the sweep"
+    );
+}
+
+/// The **anti-blob invariant**: a navigable river is a PATH of water hexes, not a lake.
+///
+/// A hex in a path has exactly **2** channel neighbours (upstream + downstream); an endpoint (the
+/// head, or the mouth) has **1**; a **confluence** — where a tributary chain merges into a trunk,
+/// which `truncate_at_existing_channel` deliberately creates — has **3** (trunk in, trunk out,
+/// tributary in). **4 or more has no hydrological reading at all**: it means water is spreading in
+/// two dimensions, which is a lake, and a future movement system would have to treat it as a wall of
+/// impassable terrain rather than a river to cross or sail.
+///
+/// So the bound asserted here is `<= 3`, and it is the *structure* of a river tree that fixes it —
+/// not a number chosen to make the current maps pass. Before merge-on-contact the reported blob had
+/// six hexes with 4 neighbours and two with 5.
+///
+/// Cause of the blob (fixed, and worth restating because the bound only holds while the fix does):
+/// the flow accumulation barely concentrates, so several branches of one drainage each crossed the
+/// navigable threshold *independently* in the same flat coastal basin and each traced its own hex
+/// chain to the same sink. The chains ran side by side and packed together. Rivers merge on contact
+/// in the world; now they do here too.
+#[test]
+fn navigable_rivers_are_paths_not_blobs() {
+    /// A confluence hex legitimately touches 3 channel hexes (see above); 4+ is a 2D water body.
+    const MAX_NAVIGABLE_NEIGHBORS: usize = 3;
+
+    let mut total_navigable = 0usize;
+    let mut confluences = 0usize;
+
+    // The tuned sweep, plus the reported blob map generated exactly as a player would get it.
+    let worlds = CENSUS_SEEDS
+        .iter()
+        .map(|&seed| (seed, "tuned", earthlike_world_seeded(seed)))
+        .chain(std::iter::once((
+            BLOB_REGRESSION_SEED,
+            "shipped",
+            earthlike_world_shipped_hydrology(BLOB_REGRESSION_SEED),
+        )));
+
+    for (seed, cfg, world) in worlds {
+        let config = world.resource::<SimulationConfig>();
+        let (width, height, wrap) = (
+            config.grid_size.x,
+            config.grid_size.y,
+            config.map_topology.wrap_horizontal,
+        );
+        let registry = world.resource::<TileRegistry>().clone();
+
+        let is_navigable = |pos: UVec2| -> bool {
+            let idx = (pos.y * width + pos.x) as usize;
+            world
+                .get::<Tile>(registry.tiles[idx])
+                .expect("tile entity exists")
+                .terrain
+                == TerrainType::NavigableRiver
+        };
+
+        for y in 0..height {
+            for x in 0..width {
+                let pos = UVec2::new(x, y);
+                if !is_navigable(pos) {
+                    continue;
+                }
+                total_navigable += 1;
+                let neighbors = hex_neighbors_wrapped(x, y, width, height, wrap)
+                    .filter(|&(nx, ny)| is_navigable(UVec2::new(nx, ny)))
+                    .count();
+                if neighbors == MAX_NAVIGABLE_NEIGHBORS {
+                    confluences += 1;
+                }
+                assert!(
+                    neighbors <= MAX_NAVIGABLE_NEIGHBORS,
+                    "seed {seed} ({cfg} config): navigable hex {pos:?} has {neighbors} navigable \
+                     neighbours — a river hex has 2 (1 at an end, 3 at a confluence); more than \
+                     {MAX_NAVIGABLE_NEIGHBORS} means the channel has spread into a 2D blob of water"
+                );
+            }
+        }
+    }
+
+    assert!(
+        total_navigable > 0,
+        "expected the sweep to produce navigable rivers at all"
+    );
+    println!(
+        "navigable-river shape census: {total_navigable} navigable hexes, \
+         {confluences} confluence hexes (3 neighbours), 0 with 4+"
+    );
+}
+
+/// The **channel-exit mask** (`Tile::river_channel`) is what the client draws the trunk from, and it
+/// exists because terrain alone cannot say which neighbours a navigable hex is chained to — a
+/// renderer that armed every navigable/water neighbour drew a cross-linked **web** wherever two
+/// chains ran adjacent. So the mask must be exactly the chain:
+///
+/// 1. **symmetric** — consecutive chain hexes agree about the channel between them,
+/// 2. **connected end-to-end** — every consecutive pair in every chain is armed, so the client can
+///    walk a chain from head to mouth through the bits alone,
+/// 3. **reaches the water** — a chain's final hex (unless it merged into a trunk, which carries the
+///    water on) exits toward the ocean / inland sea / `RiverDelta` it drains into, so the drawn
+///    river does not stop one hex short of the sea,
+/// 4. **anti-web** — no navigable hex exits toward a navigable hex that is not its neighbour in some
+///    segment's chain. This is the invariant the whole mask exists to enforce.
+#[test]
+fn navigable_channel_exits_are_the_chain_and_only_the_chain() {
+    let mut checked_chains = 0usize;
+    let mut mouths = 0usize;
+
+    let worlds = CENSUS_SEEDS
+        .iter()
+        .map(|&seed| (seed, "tuned", earthlike_world_seeded(seed)))
+        .chain(std::iter::once((
+            BLOB_REGRESSION_SEED,
+            "shipped",
+            earthlike_world_shipped_hydrology(BLOB_REGRESSION_SEED),
+        )));
+
+    for (seed, cfg, world) in worlds {
+        let config = world.resource::<SimulationConfig>();
+        let (width, height, wrap) = (
+            config.grid_size.x,
+            config.grid_size.y,
+            config.map_topology.wrap_horizontal,
+        );
+        let registry = world.resource::<TileRegistry>().clone();
+        let hydrology = world.resource::<HydrologyState>();
+
+        let tile_at = |pos: UVec2| -> &Tile {
+            let idx = (pos.y * width + pos.x) as usize;
+            world
+                .get::<Tile>(registry.tiles[idx])
+                .expect("tile entity exists")
+        };
+        let step = |pos: UVec2, dir: u8| -> Option<UVec2> {
+            core_sim::grid_utils::hex_neighbor(pos.x, pos.y, usize::from(dir), width, height, wrap)
+                .map(|(x, y)| UVec2::new(x, y))
+        };
+        let opposite = |dir: u8| -> u8 { (dir + 3) % HEX_DIRECTION_COUNT as u8 };
+
+        // Every unordered pair of hexes that some chain genuinely runs between. Anything the mask
+        // links that is NOT in here is a fabricated cross-link — the web.
+        let mut chain_pairs: std::collections::HashSet<(UVec2, UVec2)> =
+            std::collections::HashSet::new();
+        for river in &hydrology.rivers {
+            for pair in river.navigable_hexes.windows(2) {
+                chain_pairs.insert((pair[0], pair[1]));
+                chain_pairs.insert((pair[1], pair[0]));
+            }
+        }
+
+        for river in &hydrology.rivers {
+            if river.navigable_hexes.is_empty() {
+                continue;
+            }
+            checked_chains += 1;
+
+            // (1) + (2): every consecutive pair is armed on BOTH hexes, facing each other.
+            for pair in river.navigable_hexes.windows(2) {
+                let (from, to) = (pair[0], pair[1]);
+                let dir = (0..HEX_DIRECTION_COUNT as u8)
+                    .find(|&d| step(from, d) == Some(to))
+                    .expect("a contiguous chain steps between adjacent hexes");
+                assert!(
+                    tile_at(from).channel_exits(dir),
+                    "seed {seed} ({cfg}): {from:?} has no channel exit toward its downstream \
+                     neighbour {to:?}"
+                );
+                assert!(
+                    tile_at(to).channel_exits(opposite(dir)),
+                    "seed {seed} ({cfg}): {to:?} does not agree with {from:?} about the channel \
+                     between them (asymmetric exit)"
+                );
+            }
+
+            // (3): the chain reaches the water — unless it merged into another chain, which then
+            // carries the water on (its final hex is a confluence, not a mouth).
+            let last = *river.navigable_hexes.last().expect("non-empty chain");
+            let upstream = river.navigable_hexes.iter().rev().nth(1).and_then(|&prev| {
+                (0..HEX_DIRECTION_COUNT as u8).find(|&d| step(last, d) == Some(prev))
+            });
+            let merged_into_a_trunk = (0..HEX_DIRECTION_COUNT as u8).any(|dir| {
+                Some(dir) != upstream
+                    && tile_at(last).channel_exits(dir)
+                    && step(last, dir)
+                        .map(|n| tile_at(n).terrain == TerrainType::NavigableRiver)
+                        .unwrap_or(false)
+            });
+            if !merged_into_a_trunk {
+                let reaches_water = (0..HEX_DIRECTION_COUNT as u8).any(|dir| {
+                    Some(dir) != upstream
+                        && tile_at(last).channel_exits(dir)
+                        && step(last, dir)
+                            .map(|n| {
+                                let t = tile_at(n).terrain;
+                                is_water(t) || t == TerrainType::RiverDelta
+                            })
+                            .unwrap_or(false)
+                });
+                assert!(
+                    reaches_water,
+                    "seed {seed} ({cfg}): river {} ends at {last:?} with no channel exit toward the \
+                     water it drains into — the drawn river stops one hex short of the sea",
+                    river.id
+                );
+                mouths += 1;
+            }
+        }
+
+        // (4) THE ANTI-WEB INVARIANT: a navigable hex never exits toward a navigable hex that no
+        // chain actually runs to. This is what stopped the trunk rendering as a mesh of triangles.
+        for y in 0..height {
+            for x in 0..width {
+                let pos = UVec2::new(x, y);
+                let tile = tile_at(pos);
+                if tile.terrain != TerrainType::NavigableRiver {
+                    continue;
+                }
+                for dir in 0..HEX_DIRECTION_COUNT as u8 {
+                    if !tile.channel_exits(dir) {
+                        continue;
+                    }
+                    let Some(neighbor) = step(pos, dir) else {
+                        continue;
+                    };
+                    if tile_at(neighbor).terrain != TerrainType::NavigableRiver {
+                        continue; // an exit into the sea/delta at the mouth — legitimate.
+                    }
+                    assert!(
+                        chain_pairs.contains(&(pos, neighbor)),
+                        "seed {seed} ({cfg}): {pos:?} claims a channel to the navigable hex \
+                         {neighbor:?}, but no river chain runs between them — this is the \
+                         cross-link that renders the trunk as a web"
+                    );
+                }
+            }
+        }
+    }
+
+    assert!(
+        checked_chains > 0,
+        "expected the sweep to produce navigable chains to check"
+    );
+    println!(
+        "channel-exit census: {checked_chains} navigable chains, {mouths} of them reaching open water"
     );
 }

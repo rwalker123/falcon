@@ -18,7 +18,7 @@ use crate::{
     terrain::terrain_definition,
 };
 
-use sim_runtime::{RiverClass, TerrainTags, TerrainType};
+use sim_runtime::{RiverChannel, RiverClass, TerrainTags, TerrainType};
 
 // ---------------------------------------------------------------------------
 // The corner graph
@@ -1115,6 +1115,20 @@ fn widen_tile_river_class(mask: &mut [u16], tile_idx: usize, slot: u8, class: Ri
     set_tile_river_class(mask, tile_idx, slot, widest);
 }
 
+/// Record a **channel exit** through side `slot` in a packed channel mask. OR-ed, never
+/// overwritten — a confluence hex carries the union of every chain running through it. The single
+/// place the channel packing is applied on the sim side (`Tile::set_channel_exit` is its component
+/// twin).
+fn set_tile_channel_exit(mask: &mut [u8], tile_idx: usize, slot: u8) {
+    mask[tile_idx] |= RiverChannel::SLOT_MASK << (u32::from(slot) * RiverChannel::BITS_PER_DIR);
+}
+
+/// The odd-r direction stepping from `from` to its neighbour `to`, or `None` if the two are not
+/// adjacent. Wrap-aware, because it asks `grid.neighbor` rather than differencing coordinates.
+fn direction_between(from: UVec2, to: UVec2, grid: &HexGrid) -> Option<u8> {
+    (0..HEX_DIRECTION_COUNT as u8).find(|dir| grid.neighbor(from, *dir) == Some(to))
+}
+
 /// Everything a single river trace needs: the corner graph it routes on, the hex flow field its
 /// navigable tail falls back to, and the water mask that tells it where the map's water already is.
 struct SegmentTraceContext<'a> {
@@ -1157,7 +1171,10 @@ impl SegmentTraceContext<'_> {
 
     /// Trace one river from a head hex: an edge chain on the corner graph, plus — if its discharge
     /// outgrew the edge model — a `NavigableRiver` hex chain traced on the hex centers.
-    fn trace(&self, head: UVec2) -> Option<TracedRiver> {
+    ///
+    /// `existing_navigable` holds the tile indices of every **already-accepted** segment's navigable
+    /// chain, so this trace can **merge on contact** (see `truncate_at_existing_channel`).
+    fn trace(&self, head: UVec2, existing_navigable: &HashSet<usize>) -> Option<TracedRiver> {
         let start = self.corner_field.drain_corner(head)?;
         let head_elev = self.elevation_field.sample(head.x, head.y);
         let corner = trace_river_edges(
@@ -1184,10 +1201,15 @@ impl SegmentTraceContext<'_> {
             // trace is square-8-connected, so bridge it into a hex-contiguous chain first: a
             // waterway whose hexes don't touch is not a waterway.
             let chain = hex_contiguous_chain(&path, &self.grid, self.elevation_field);
-            navigable_hexes = chain
+            let chain: Vec<UVec2> = chain
                 .into_iter()
                 .take_while(|pos| !self.is_water(*pos))
                 .collect();
+            // A river that reaches water already flowing to the sea has *joined* it — it does not
+            // dig a second channel alongside. Without this, every river that independently crossed
+            // the navigable threshold in the same coastal lowland traced its own parallel chain to
+            // the coast and the chains packed together into a 2D blob of water hexes.
+            navigable_hexes = truncate_at_existing_channel(chain, &self.grid, existing_navigable);
             termination = nav_termination.or(termination);
         }
 
@@ -1205,6 +1227,50 @@ impl SegmentTraceContext<'_> {
             termination,
         })
     }
+}
+
+/// **Merge on contact.** Cut a freshly traced navigable chain at the first hex that is *already*
+/// navigable water (stamped by an earlier-accepted segment), keeping that hex as the chain's last
+/// element: it is the confluence, the hex where this river hands its water to the trunk.
+///
+/// Why: the flow accumulation barely concentrates (see the "Known limitation" note on the class
+/// thresholds), so a drainage's branches do not merge into one trunk upstream — several of them
+/// independently cross `river_class_navigable_min_discharge` in the same flat coastal basin. Each
+/// then traced its own hex chain to the *same* sink, the chains ran side by side, and the result was
+/// a 2–4 hex wide **blob** of `NavigableRiver` water rather than a river (the largest measured was
+/// 21 hexes across 6 chains). Rivers in the world merge; so do their channels here. The contact hex
+/// belongs to both chains, so the channel-exit masks of both OR together there and the confluence is
+/// connected — see `river_channel`.
+fn truncate_at_existing_channel(
+    chain: Vec<UVec2>,
+    grid: &HexGrid,
+    existing_navigable: &HashSet<usize>,
+) -> Vec<UVec2> {
+    // Contact is ADJACENCY, not identity: two water hexes that touch are one body of water. A chain
+    // that merely runs *alongside* an existing channel has already joined it — testing identity
+    // alone let parallel chains slide past each other one hex apart and re-form the blob (measured
+    // on the reported map: 13 blobby hexes → 7 with identity, → 0 with adjacency).
+    for (index, pos) in chain.iter().enumerate() {
+        if existing_navigable.contains(&grid.tile_index(*pos)) {
+            // Stepped onto the trunk itself: this chain ends there, on the shared confluence hex.
+            return chain.into_iter().take(index + 1).collect();
+        }
+
+        // Merely *beside* the trunk. The chain still ends here, but it must end **on** the trunk hex
+        // it joined, not next to it: a chain that stopped alongside would be a dead end reaching
+        // neither the trunk nor the sea, and the renderer would draw a river that runs into a bank.
+        // Ending on the trunk makes the confluence a genuine shared chain hex, so both chains' exit
+        // bits meet there and the water flows on down the trunk.
+        let trunk = (0..HEX_DIRECTION_COUNT as u8)
+            .filter_map(|dir| grid.neighbor(*pos, dir))
+            .find(|n| existing_navigable.contains(&grid.tile_index(*n)));
+        if let Some(trunk) = trunk {
+            let mut merged: Vec<UVec2> = chain.into_iter().take(index + 1).collect();
+            merged.push(trunk);
+            return merged;
+        }
+    }
+    chain
 }
 
 /// Reject a source whose head sits within the current min-spacing of an already-accepted head.
@@ -1227,6 +1293,7 @@ fn accept_river(
     grid: &HexGrid,
     rivers: &mut Vec<RiverSegment>,
     river_tiles: &mut HashSet<usize>,
+    navigable_tiles: &mut HashSet<usize>,
     accepted_heads: &mut HashSet<usize>,
     head_positions: &mut Vec<UVec2>,
 ) {
@@ -1242,6 +1309,11 @@ fn accept_river(
     };
     for pos in touched_hexes(&segment.edges, &segment.navigable_hexes, grid) {
         river_tiles.insert(grid.tile_index(pos));
+    }
+    // The channel this segment just laid down is what a later segment merges *into* (see
+    // `truncate_at_existing_channel`), so it must be visible to the traces that follow.
+    for pos in &segment.navigable_hexes {
+        navigable_tiles.insert(grid.tile_index(*pos));
     }
     rivers.push(segment);
 }
@@ -1888,6 +1960,10 @@ pub fn generate_hydrology(world: &mut World) {
     );
 
     let mut accepted_heads: HashSet<usize> = HashSet::new();
+    // Tile indices of every accepted segment's navigable chain: what a later trace merges into
+    // rather than running a parallel channel alongside (`truncate_at_existing_channel`). Segments
+    // are accepted in a stable source order, so the merge is deterministic.
+    let mut navigable_tiles: HashSet<usize> = HashSet::new();
     let mut head_positions: Vec<UVec2> = Vec::new();
     let base_spacing = preset_opt
         .as_ref()
@@ -1932,7 +2008,7 @@ pub fn generate_hydrology(world: &mut World) {
                     continue;
                 }
 
-                let Some(traced) = segment_ctx.trace(head) else {
+                let Some(traced) = segment_ctx.trace(head, &navigable_tiles) else {
                     continue;
                 };
                 let hex_len = traced.hex_length();
@@ -1973,6 +2049,7 @@ pub fn generate_hydrology(world: &mut World) {
                         &grid,
                         &mut rivers,
                         &mut river_tiles,
+                        &mut navigable_tiles,
                         &mut accepted_heads,
                         &mut head_positions,
                     );
@@ -1994,7 +2071,7 @@ pub fn generate_hydrology(world: &mut World) {
         if let Some(&(base_idx, head_idx)) = fallback_sources_clone.first() {
             if flow_accum[base_idx] >= 1 {
                 let head = UVec2::new(head_idx as u32 % width, head_idx as u32 / width);
-                if let Some(traced) = segment_ctx.trace(head) {
+                if let Some(traced) = segment_ctx.trace(head, &navigable_tiles) {
                     let hex_len = traced.hex_length();
                     tracing::debug!(
                         target: "shadow_scale::mapgen",
@@ -2017,6 +2094,7 @@ pub fn generate_hydrology(world: &mut World) {
                             &grid,
                             &mut rivers,
                             &mut river_tiles,
+                            &mut navigable_tiles,
                             &mut accepted_heads,
                             &mut head_positions,
                         );
@@ -2198,6 +2276,84 @@ pub fn generate_hydrology(world: &mut World) {
         );
     }
 
+    // Per-tile channel-exit mask: which sides a navigable hex's channel actually flows out through.
+    // The chain is a PATH — each hex links only to its upstream and downstream neighbours — and only
+    // the tracer knows which those are. Without this the renderer had to guess from terrain, arming
+    // every navigable/water neighbour, so adjacent chains cross-linked into a web of triangles.
+    // Bits are OR-ed, never overwritten: a confluence hex carries the union of the chains through it.
+    let mut tile_river_channel = vec![0u8; total_tiles_usize];
+
+    // Pass 1 — the chain itself. Consecutive pairs are symmetric, exactly like `river_edges`: hex A
+    // exits toward B and B exits back toward A, so the two never disagree about the channel between
+    // them. Every segment is laid down before any mouth is decided, so pass 2 sees the finished
+    // network rather than a half-built one (order-independence).
+    for segment in rivers.iter() {
+        for pair in segment.navigable_hexes.windows(2) {
+            let (from, to) = (pair[0], pair[1]);
+            let Some(dir) = direction_between(from, to, &grid) else {
+                continue;
+            };
+            set_tile_channel_exit(&mut tile_river_channel, grid.tile_index(from), dir);
+            set_tile_channel_exit(
+                &mut tile_river_channel,
+                grid.tile_index(to),
+                opposite_dir(dir),
+            );
+        }
+    }
+
+    // Pass 2 — the mouth. A chain's final hex must also exit toward the water it drains into (the
+    // ocean, an inland sea, or the `RiverDelta` stamped at its own mouth), or the drawn river stops
+    // one hex short of the sea. The water body carries no channel of its own, so this exit is
+    // deliberately **not** mirrored back — it is the one asymmetric bit in the mask.
+    //
+    // Only a genuine **dead end** earns it. A tributary that merged into an existing trunk
+    // (`truncate_at_existing_channel`) also *ends* on its last hex, but that hex is a confluence in
+    // the middle of the trunk: the channel already flows on through it, and handing it a second exit
+    // into whatever water it happens to sit beside would draw a spurious arm off the side of the
+    // trunk. "Has no exit but the one back upstream" is exactly the test for that, and it does not
+    // depend on the order segments were traced in.
+    for segment in rivers.iter() {
+        let Some(&last) = segment.navigable_hexes.last() else {
+            continue;
+        };
+        let last_idx = grid.tile_index(last);
+        let upstream = segment
+            .navigable_hexes
+            .iter()
+            .rev()
+            .nth(1)
+            .and_then(|prev| direction_between(last, *prev, &grid));
+
+        let flows_on = (0..HEX_DIRECTION_COUNT as u8)
+            .filter(|dir| Some(*dir) != upstream)
+            .any(|dir| {
+                tile_river_channel[last_idx]
+                    & (RiverChannel::SLOT_MASK << (u32::from(dir) * RiverChannel::BITS_PER_DIR))
+                    != 0
+            });
+        if flows_on {
+            continue; // A confluence inside a trunk, not a mouth — the water already has a way out.
+        }
+
+        let mouth = (0..HEX_DIRECTION_COUNT as u8)
+            .filter(|dir| Some(*dir) != upstream)
+            .find(|dir| {
+                grid.neighbor(last, *dir)
+                    .map(|n| {
+                        let idx = grid.tile_index(n);
+                        // Only open water or the river's own delta — never another *navigable* hex,
+                        // which would invent exactly the cross-link this mask exists to prevent.
+                        delta_set.contains(&idx)
+                            || (is_water_idx(idx, &tile_terrain) && !navigable_set.contains(&idx))
+                    })
+                    .unwrap_or(false)
+            });
+        if let Some(dir) = mouth {
+            set_tile_channel_exit(&mut tile_river_channel, last_idx, dir);
+        }
+    }
+
     let mut delta_tiles_applied = 0usize;
     let mut navigable_tiles_applied = 0usize;
     let updates: Vec<(usize, Entity)> = if let Some(registry) = world.get_resource::<TileRegistry>()
@@ -2219,6 +2375,7 @@ pub fn generate_hydrology(world: &mut World) {
         };
         tile.river_edges = tile_river_edges[idx];
         tile.river_inflow = tile_river_inflow[idx];
+        tile.river_channel = tile_river_channel[idx];
 
         if navigable_set.contains(&idx) && tile.terrain != TerrainType::NavigableRiver {
             // A navigable river IS the hex — take the terrain's own tags wholesale rather than
@@ -2360,6 +2517,7 @@ impl HexGrid {
 mod tests {
     use super::*;
     use crate::components::{ElementKind, Tile};
+    use crate::grid_utils::hex_edge_corner_indices;
     use crate::resources::TileRegistry;
     use crate::scalar::scalar_zero;
 
@@ -2563,6 +2721,136 @@ mod tests {
                             "{hex:?} does not cover all six corner indices"
                         );
                     }
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // The corner tables, pinned ABSOLUTELY to the client's geometry.
+    //
+    // `local_corner_index_is_a_bijection_on_every_hex` proves the table is *internally consistent*
+    // (six distinct corners that round-trip) — and a table rotated by one position passes that
+    // happily while putting every tributary on the wrong vertex. So the two tests below never ask
+    // the table about itself: they compute each corner's WORLD POSITION twice, once through the
+    // sim's `(hex, TOP|BOTTOM)` corner model and once through the client's `corner i at angle
+    // 60*i + 30` circle, and assert the two constructions land on the same point.
+    // -----------------------------------------------------------------------
+
+    /// Hex circumradius for the geometry proofs. Any positive value works (every assertion compares
+    /// two constructions at the *same* radius); `1.0` keeps the arithmetic exact and readable.
+    const GEOMETRY_HEX_RADIUS: f64 = 1.0;
+
+    /// Slack when comparing two floating-point constructions of the same vertex. The coordinates are
+    /// O(radius), so this is ~9 orders of magnitude tighter than the smallest real disagreement
+    /// (adjacent vertices of a hex are `radius` apart).
+    const GEOMETRY_EPSILON: f64 = 1e-9;
+
+    /// The centre of hex `(col, row)` in the pointy-top odd-r layout the client renders (+y **down**,
+    /// odd rows shifted half a column right) — `MapView._offset_to_axial` + `_axial_center`.
+    fn hex_center_world(pos: UVec2, radius: f64) -> (f64, f64) {
+        let x = f64::sqrt(3.0) * radius * (f64::from(pos.x) + 0.5 * f64::from(pos.y & 1));
+        let y = 1.5 * radius * f64::from(pos.y);
+        (x, y)
+    }
+
+    /// The world position of the **sim's** corner `(hex, slot)`: the top vertex of a pointy-top hex
+    /// sits one circumradius above its centre, the bottom vertex one below (+y down).
+    fn sim_corner_world(pos: UVec2, slot: u8, radius: f64) -> (f64, f64) {
+        let (cx, cy) = hex_center_world(pos, radius);
+        if slot == CORNER_TOP {
+            (cx, cy - radius)
+        } else {
+            (cx, cy + radius)
+        }
+    }
+
+    /// The world position of the **client's** vertex `index` of `hex`: corner `i` at screen angle
+    /// `60 * i + 30` degrees on the circumradius, +y down (`MapView._hex_points`, and the corner
+    /// geometry in `terrain_blend.gdshader`).
+    fn client_corner_world(pos: UVec2, index: usize, radius: f64) -> (f64, f64) {
+        let (cx, cy) = hex_center_world(pos, radius);
+        let angle = (60.0 * index as f64 + 30.0).to_radians();
+        (cx + radius * angle.cos(), cy + radius * angle.sin())
+    }
+
+    fn assert_same_point(a: (f64, f64), b: (f64, f64), what: &str) {
+        assert!(
+            (a.0 - b.0).abs() < GEOMETRY_EPSILON && (a.1 - b.1).abs() < GEOMETRY_EPSILON,
+            "{what}: sim puts it at {a:?}, the client draws it at {b:?}"
+        );
+    }
+
+    /// **The absolute proof of `HEX_CORNER_LAYOUT`.** For every hex and every one of its six corners,
+    /// the vertex the table names — resolved through the sim's `(hex, TOP|BOTTOM)` corner model —
+    /// must be *the same point in the world* as the client's corner `i`. A table rotated by one
+    /// position fails here even though it is internally consistent.
+    #[test]
+    fn hex_corner_layout_matches_the_clients_corner_geometry() {
+        let g = grid(6, 6, false);
+        // Interior hexes only: with wrap off, a border hex's off-map corner owners have no world
+        // position to compare against (and a wrapped grid's seam would alias two distinct points).
+        for y in 1..g.height - 1 {
+            for x in 1..g.width - 1 {
+                let hex = UVec2::new(x, y);
+                for (index, &(dir, slot)) in HEX_CORNER_LAYOUT.iter().enumerate() {
+                    let owner = match dir {
+                        Some(dir) => g
+                            .neighbor(hex, dir)
+                            .expect("interior hex has all neighbours"),
+                        None => hex,
+                    };
+                    assert_same_point(
+                        sim_corner_world(owner, slot, GEOMETRY_HEX_RADIUS),
+                        client_corner_world(hex, index, GEOMETRY_HEX_RADIUS),
+                        &format!("corner {index} of {hex:?}"),
+                    );
+                }
+            }
+        }
+    }
+
+    /// **The absolute proof of `grid_utils::hex_edge_corner_indices`.** The two corners it names for
+    /// side `dir` must be exactly the two endpoints of the edge `H` genuinely *shares* with its
+    /// neighbour in that direction — computed as the geometric intersection of the two hexes' vertex
+    /// sets, never by consulting the table.
+    #[test]
+    fn hex_edge_corner_indices_are_the_shared_edges_endpoints() {
+        let g = grid(6, 6, false);
+        for y in 1..g.height - 1 {
+            for x in 1..g.width - 1 {
+                let hex = UVec2::new(x, y);
+                for dir in 0..HEX_DIRECTION_COUNT {
+                    let neighbor = g
+                        .neighbor(hex, dir as u8)
+                        .expect("interior hex has all neighbours");
+
+                    // The endpoints of the shared side = the vertices the two hexes have in common.
+                    let shared: Vec<usize> = (0..HEX_CORNER_COUNT)
+                        .filter(|&i| {
+                            let p = client_corner_world(hex, i, GEOMETRY_HEX_RADIUS);
+                            (0..HEX_CORNER_COUNT).any(|j| {
+                                let q = client_corner_world(neighbor, j, GEOMETRY_HEX_RADIUS);
+                                (p.0 - q.0).abs() < GEOMETRY_EPSILON
+                                    && (p.1 - q.1).abs() < GEOMETRY_EPSILON
+                            })
+                        })
+                        .collect();
+                    assert_eq!(
+                        shared.len(),
+                        2,
+                        "{hex:?} and its neighbour in direction {dir} must share exactly one side \
+                         (two vertices), found {shared:?}"
+                    );
+
+                    let mut named = hex_edge_corner_indices(dir).expect("dir is in range");
+                    named.sort_unstable();
+                    assert_eq!(
+                        named.to_vec(),
+                        shared,
+                        "side {dir} of {hex:?}: the table names corners {named:?}, but the side it \
+                         actually shares with {neighbor:?} runs between corners {shared:?}"
+                    );
                 }
             }
         }
@@ -2801,6 +3089,7 @@ mod tests {
                         mountain: None,
                         river_edges: 0,
                         river_inflow: 0,
+                        river_channel: 0,
                     })
                     .id();
                 tiles.push(entity);

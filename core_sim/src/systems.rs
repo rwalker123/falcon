@@ -486,6 +486,7 @@ pub fn spawn_initial_world(
             // Populated by `generate_hydrology`, which runs after the world is spawned.
             river_edges: 0,
             river_inflow: 0,
+            river_channel: 0,
         };
         let power_component = PowerNode {
             id: node_id,
@@ -5583,6 +5584,7 @@ mod terrain_tag_tests {
                     mountain,
                     river_edges: 0,
                     river_inflow: 0,
+                    river_channel: 0,
                 })
                 .id();
             tile_entities.push(entity);
@@ -5692,6 +5694,7 @@ mod terrain_tag_tests {
                         mountain: None,
                         river_edges: 0,
                         river_inflow: 0,
+                        river_channel: 0,
                     })
                     .id();
                 tile_entities.push(entity);
@@ -6167,6 +6170,7 @@ mod power_tests {
                             mountain: None,
                             river_edges: 0,
                             river_inflow: 0,
+                            river_channel: 0,
                         },
                         PowerNode {
                             id: PowerNodeId(idx as u32),

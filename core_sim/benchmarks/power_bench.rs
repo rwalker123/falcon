@@ -79,6 +79,7 @@ fn spawn_power_nodes(
                         mountain: None,
                         river_edges: 0,
                         river_inflow: 0,
+                        river_channel: 0,
                     },
                     PowerNode {
                         id: PowerNodeId(idx as u32),
