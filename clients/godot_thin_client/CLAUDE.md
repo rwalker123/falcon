@@ -64,6 +64,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/FoodIcons.gd` | Shared glyph vocabulary — food modules (`for_site`), fauna herds (`for_herd`, species keyword matched in the herd label, longest-first), and **take policies** (`for_policy`, `POLICY_ICONS`: the four extractive rungs sustain ♻ / surplus ⬆ / market ⇄ / eradicate 💀, plus the two **investment** rungs cultivate 🌱 / corral 🐄 — 🐄 is the same glyph the herd drawer's Domesticated/Corralled badge uses; both verified legible at picker size in `forage_cultivate.png` / `herd_corral.png`; `""` for unknown). Used by the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`), the Harvest/Hunt button + the **band panel's Current-actions rows** (each row leads with its resource glyph), and — for policies — BOTH the Hud policy-picker buttons (`_build_policy_picker`) and the map's yield labels (`MapView._draw_yield_label` appends the icon: `+0.38 ♻`), so a resource/policy always reads the same on the panel and on the map. **Policy glyphs are deliberately line-art** (♻ ⬆ ⇄) plus the high-contrast 💀: pictographic emoji (🪙 coin, 💰 money bag) render as a featureless grey blob at the ~12–13px these are drawn at, and ⚖ renders tiny/faint — same glyph-legibility hazard that forced `MagnifierButton` to hand-draw. Verified in `band_panel_left.png` / `map_band_work.png`. Also the **action-status** glyphs (`for_status`, `STATUS_ICONS`) the Band panel's Current-actions + Active-expeditions rows use instead of words — `pending ○` (the ORDER isn't acknowledged yet; a modifier that rides on any row, amber) / `working ●` (a confirmed local forage/hunt row, and expedition phase `hunting`) / `outbound ➤` / `awaiting ▮▮` / `delivering ◄` = `returning ◄` (both are "coming home"; the tooltip distinguishes them). Same line-art rule and the same hazard: `◌` (dotted circle) was tried for `pending` and rejected — it renders thin and faint at row size — and `⏸` for `awaiting` carries emoji presentation (tofu/blob), so `▮▮` is used. Verified at true size in `band_panel_status_glyphs.png` |
 | `tools/ui_preview.gd` / `.tscn` | Dev-only preview harness: instances the real `HudLayer` with canned selection/targeting data, renders each state, and saves PNGs to `ui_preview_out/` (gitignored). Iterate on HUD styling without a server: `godot --path . res://tools/ui_preview.tscn` |
 | `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link; scouting draws no disc — it extends sight in the fog), the terrain/blend states, and the **rivers** state (`map_rivers*.png` — hex-edge Minor/Major rivers + the NavigableRiver terrain chain, incl. `map_rivers_join.png`: a zoomed, hex-anchored close-up of the trunk HEAD, where two tributaries hand over at corners — the frame the `river_inflow` spurs are judged on — `map_rivers_head_minor.png`: a second navigable head fed by a **Minor tributary only**, the frame the HEAD TAPER is judged on; and `map_rivers_web.png`: a solid CLUMP of adjacent navigable hexes with `river_channel` winding through it as ONE snake — the **regression guard** for the spider-web bug, since the other river fixtures build their chain by hand and are paths by construction, which is why the harness never caught it. Any cross-link/triangle there = the terrain-inferred arm rule is back) without a server: `godot --path . res://tools/map_preview.tscn` |
+| `tools/blend_probe.gd` / `.tscn` | Dev-only **edge-blend probe rendered at the GAME's on-screen hex radius** — the other harnesses *fit* their grid to the window (r ≈ 83–178) and the blend look is radius-relative, so every judgement made in a fitted frame was wrong. Pins a 1:1 1920×1080 canvas + a grid sized so `_fit_map_to_view` lands on the target radius (it prints the achieved radius and warns if it drifts). **Two states:** (1) a **band strip** of flat biomes at r≈45 (desert · prairie · scrub · alluvial · tundra · salt flat — every adjacent pair is a flat↔flat seam) → `blend_bands_*.png`; (2) **ISOLATED prairie hexes surrounded on all six sides by dark rocky soil** at **r≈75** (the user's on-screen size) → `blend_isolated_shipped.png` + one full frame & native-res close-up per tuning variant + a labelled contact sheet (`V6_*.png`). **State 2 is mandatory for any blend change**: a straight band seam looks fine even when the blend is tearing holes in hex interiors — only a surrounded hex exposes it (that is how the shredding regression shipped). **Two more states (V7, water↔water):** (3) an irregular **deep-ocean region embedded in continental shelf** (plus isolated deep hexes) at r≈77 → `V7_water_W1.png` (water on the shared LAND levers — still a soft-edged hexagon) vs `V7_water_W2.png` (the shipped `water_blend` block — the silhouette dissolves); (4) a ragged **coast** frame with a single water id → `V7_coast_unchanged.png`, the **bit-identical reference** any blend-eligibility change is pixel-diffed against (it must not move the shoreline). **Two more states:** (5, V8) the water patch rendered **FoW OFF vs FoW ON** (a mix of active + discovered hexes, nothing unexplored) → `V8_water_fow_off.png` / `V8_water_fow_on.png` — the FoW tint comes from a **per-hex, NEAREST-sampled vis-map**, which used to make every discovered↔active adjacency a **hard hex-shaped tint boundary that is not a terrain seam**. Any "hard straight edges are back" report must be checked against this pair BEFORE the blend is touched. This is also the frame the **FoW boundary softening** is judged on (see Fog-of-war softening: the steps must be gone, pure states unchanged); (6, V10) the shipped **shoreline profile** on the ragged coast at r≈75, rendered against TWO land biomes → `V10_shore.png` + `V10_shore_closeup.png` (prairie) and **`V10_shore_dark_land.png` + `V10_shore_dark_land_closeup.png`** (rocky_regolith). The close-ups are where the "is there a hard line anywhere on land→sand→foam→water?" call is made (the downscaled full frame hides a 1px line; see Shoreline), and **the DARK-land one is decisive** — prairie's tan hides sand-vs-land contrast and masked an invisible-beach bug through several passes, so never judge the beach on prairie alone. `_render_variant(overrides, name, crop…)` overrides any `terrain_config` lever (incl. the nested `water_blend` / `shore` blocks) live, which is how the shipped values were swept. **One more state (8, W): the FoW hex-step BEFORE vs AFTER the boundary softening** — one camera, one terrain, one visibility map, only `fow_softness` varying → `W_fow_off.png` (FoW off, the terrain-only reference: the deep-ocean blob's edges are already soft, which **exonerates the blend**), `W_fow_on.png` (softness `0` — reproduces the **unsmoothed per-hex tint**, i.e. the hard hexagonal brightness steps), `W_fow_fixed.png` (the shipped softness — steps gone, mist preserved). Each also dumps a `_closeup` and, decisively, a **`_same_terrain`** crop straddling hexes **(4,3) Active / (3,3) Discovered — BOTH continental shelf**, so the only thing that can draw an edge between them is the FoW tint. That crop answers any "hard straight edges in open water, even between hexes of the same terrain" report. **One more state (9, X): the DARK-WATER report on REAL game terrain** → `X_dark_water.png` + `X_dark_water_closeup.png`, rendered from a **verbatim 14×10 window of a LIVE snapshot's id-map** (`X_WATER_IDS`), FoW OFF, r≈75. The synthetic water states (3/5/8) never reproduced the "dark patches of open water with hard full-hexagon edges" report because their deep-ocean region is ONE clean ragged blob; the real ocean is **salt-and-pepper** shelf/deep, and a lone deep hex ringed by shelf can only read as a dark HEXAGON. **Any "dark water hexagons" report must be rendered on THIS state** — a synthetic blob will not show it. It is the frame the water **depth field** (see Edge Blending → water) was verified against. **One more state (10, L): the PER-WATER-TERRAIN shore profile on a SMALL INLAND SEA** → `L1_current.png` / `L2_no_wisp.png` / `L3_half.png` / `L4_tenth.png` (+ `*_full.png`), a 7-hex `inland_sea` lake in a field of **dark rocky_regolith** (prairie's tan camouflages both sand and foam) at r≈75, one camera/crop across all four. `_render_lake_variant` overrides the inland_sea entry's `shore_profile` in the live config and calls `TerrainTextureManager.rebuild_layer_shore_map()` — the sweep for choosing a lake's coast (now in the three-scale scheme; **L3 IS the shipped lake**, `sand 0.5 / foam 0.5 / wisp 0`, and L4 = the whole profile scaled so its OUTERMOST reach, `wisp_center + wisp_half` = 0.68·r, lands at ~0.10·r → 0.147). **The harness disables `MapView._unhandled_input`** — it renders in a REAL window, so the OS cursor otherwise drew a faint HOVER hex outline into the frames, a run-to-run difference of a few thousand pixels that silently defeats the pixel-diff the coast states exist for. With it off, consecutive runs are **byte-identical**, so `V7_coast_unchanged.png` / `V10_shore*.png` are usable as strict bit-identity references. **One more state (11, H): ROLLING HILLS "cut off at the hex edge"** → `H_*.png`, a `rolling_hills` (24) blob + **isolated** hills hexes + an **isolated alpine (26)** hex in a field that is dark `rocky_reg` west / tan `prairie` east, at r≈75 with the **hex grid overlay OFF** (a drawn hexagon would answer the very question under test). Frames: `H_before` (the artifact), **`H_base_only`** (peaks skipped by pushing `peak_min_radius` above the render radius — isolates the BASE floor, and is what proved the cut is the rugged base hexagon, **not** a weak mound overhang), `H_peaks_only` (the amplified `before − base_only` pixel diff = the peak pass's exact footprint: it shows the mounds DO overhang, and that the peak **cast shadow darkens the whole neighbour hex**, a second hard hexagon), and the candidate fixes `H_fix_overhang` / **`H_fix_base`** (`blend_rugged_land`) / `H_fix_both`. Each renders a full frame + a seam close-up + the **isolated-hex** and **alpine** close-ups (the mandatory shred checks). `H_gate_bands_full` / `H_gate_coast` re-render the flat↔flat strip and the coast with the rugged gate ON — they must byte-compare **identical** to `blend_bands_full` / `V7_coast_unchanged`. **One more state (12, R): the RUGGED-GATE SWEEP** — `blend_rugged_land` is GLOBAL, so shipping it lets EVERY rugged biome's base floor blend, and the failure mode is SHREDDING. R renders **each rugged biome as an ISOLATED hex** (even col + even row ⇒ never adjacent to another subject) in TWO fields, each **gate OFF vs gate ON** so every biome is a controlled A/B: `R_flatoff_*` / `R_flat_*` (dark `rocky_reg` west, tan `prairie` east) and `R_ruggedoff_*` / `R_rugged_*` (a field of `canyon_badlands` — the rugged↔rugged case), plus `R_*_field_full`. **The gate-OFF pair is not optional**: several biomes' own art (e.g. `karst_highland`'s semi-transparent overhanging spires) *looks* like neighbour texture leaking into the hex, and only the A/B tells art from tear. **One more state (13, S): the PEAK CAST-SHADOW HEXAGONS** — an alpine massif + an isolated `rolling_hills` hex in a light prairie field, grid OFF → `S_shadow.png` + `_closeup` + `_iso`, and decisively **`S_shadow_footprint*.png`**, the amplified diff against a `shadow_strength = 0` render (the cast shadow **in isolation** — the only frame on which "is it hex-shaped? is it still directional?" can actually be answered, since the semi-transparent mound fringe contaminates every other measurement). **Two harness bugs were fixed here and must not regress:** (a) `project.godot` opens the window **MAXIMIZED** (`window/size/mode=3`) and the WM applies that a few frames into the run — *after* `_ready` sized it — so the viewport became the whole monitor and every state after the second silently rendered at **r ≈ 154, not the game's 75** (and the taller states overflowed the canvas, clipping the close-ups). `_pin_canvas` re-asserts WINDOWED + 1920×1080 on every `_refit`. (b) Lever overrides now go through **`_override_config`/`_restore_config`**, which **ERASE** a key that was absent instead of writing `null` back: MapView reads levers as `bool(config.get(key, DEFAULT))`, the default only applies when the key is **missing**, and a present-but-null key reaches `bool(null)` — a **runtime error that aborts `_update_terrain_shader_quad` before it pushes a single uniform**, so every later frame renders with STALE uniforms and lies. **One more state (14, G): the REAL NEIGHBOURHOOD from the user's screenshot** — the "hills are STILL cut off, with the rugged gate ON" report → `G_*.png`. State H could not see why: its hills blob sits in FLAT fields only, so every peak edge in it is a peak↔non-peak one (which the overhang feathers). G rebuilds the screenshot — a `rolling_hills` blob against `canyon_badlands` (rugged, **no** peak asset), **`alpine_mountain` (which HAS one → the peak↔PEAK case)**, `high_plateau` (a peak at ~the SAME elevation as the hills → the near-zero-Δ case), `alluvial_plain`, `rocky_reg` and an `inland_sea` lake hex — at r ≈ 75, grid OFF. It is the **only** probe state that ships a real **elevation raster** (`G_ELEVATION_BY_ID` + `elevation_sea_level`): every other snapshot omits the channel, so MapView falls back to `PEAK_ELEV_FALLBACK` for EVERY hex and **no elevation asymmetry can be judged in them**. Frames: `G_before` (shipped), **`G_no_peaks`** (peak pass skipped — it renders the same seam as a soft ecotone, which **exonerated the base blend** and convicted the peak overlay), `G_no_shadow` (cast shadow off, peaks on — attributes a residual line to the shadow vs the art), `G_peaks_only` (the amplified diff = the peak pass's exact footprint), each with native-res crops `_peakpeak` (hills↔alpine, big Δelev), `_sameelev` (hills↔plateau, Δ≈0 → must stay a soft symmetric cross-fade), `_canyon` (peak↔non-peak — the control), `_lake` (the shoreline — hard BY DESIGN), `_iso` + `_iso_alpine` (the mandatory isolated-hex shred checks; both sit on the LEFT of the frame because MapView's minimap CanvasLayer is NOT hidden and a bottom-right crop captures IT). **A `--only=` state filter** (`godot --path . res://tools/blend_probe.tscn -- --only=G`, or `--only=1,4,G`; keys are `<number>/<letter>`, no filter = every state) renders one state instead of all 14 — a diagnosis loop re-renders one state many times. **A third harness bug was fixed here and must not regress:** `project.godot` opens the window **MAXIMIZED** and macOS applies — and **RE-applies** — that asynchronously, many frames in, so a fixed pair of `process_frame`s is a RACE that does not stay won. A filtered run puts a radius-critical state FIRST and it fitted at **r ≈ 154, not the game's 75**; a re-maximize BETWEEN two frames of one state rendered them at different resolutions (the pixel-diff then dies on a size mismatch); and one DURING a crop sequence made the captured image the monitor's while the viewport still reported the pinned size (`content_scale_size` pins the viewport, so **only `get_window().size` can see the maximize**) — the crop then landed off-frame as a 686×1 sliver. `_ensure_canvas` (called from `_settle`) re-pins and WAITS on the window; `_capture` re-draws until the captured geometry is the canvas's (or an integer HiDPI multiple) instead of silently saving a bad frame. **One more state (15, D): the THREE-SCALE shore profile — CLIFF vs BEACH vs LAKE, and the MIXED coast** → `D*.png`, the ragged coast against **dark `rocky_reg`** (prairie's tan camouflages both sand and foam) at r≈75, **grid overlay OFF**, one camera/crop per comparison set. `_snapshot_coast(shore_id, water_id)` now takes the SEA's id, which is what selects the `shore_profile` under test. Frames: **`D1_cliff`** (`deep_ocean` meeting land — NO sand anywhere, big surf, and the full-strength surf peak must still conceal the base's own step at the waterline, since there is no sand out there to hide it); **`D2_shelf_C1/C2/C3`** (the shelf's muting ladder, `foam_scale` 0.85/0.75/0.65 × `wisp_scale` 0.5 — the surf's measured footprint falls 18.0k → 15.8k → 13.9k → 12.2k px against the cliff's; **C2 ships**); **`D3_mixed_coast`** — THE DECISIVE FRAME: a `deep_ocean` hex and a `continental_shelf` hex **adjacent along ONE coastline**, both touching the same land (`_snapshot_mixed_coast` swaps the sea by row), where a nearest-water PICK would jump the profile at their bisector and make the sand appear along a **hard line**; the weighted-mean profile field must instead **fade the beach in** along the shore (measured: the land-pixel difference vs `D1_cliff` ramps from 0.00 over ~220px ≈ 3 hex radii — not a step); and **`D4_lake_unchanged`** (the lake, shipped config — the two-lever → three-scale migration must be a no-op). **One more state (16, SURF): THE BRIGHT WHITE SHORELINE OUTLINE** → `W_*.png`, the state the **waterline base cross-fade** + **`foam_opacity`** were built and chosen on (r≈75, grid OFF; the archipelago frames also render at **r≈30 — map scale**, which is the zoom the complaint was made at). The report was that the surf reads as "an obvious bright white outline on most land". Every frame uses the **MIXED coast** (`_snapshot_mixed_coast`: deep_ocean CLIFF in the north rows, continental_shelf BEACH in the south, both against **dark rocky_reg**) so each rung is cropped on **both coast types at once** (`_cliff` / `_beach`) — they fail differently. Frames: `W_base` (the shipped near-white ring — the complaint, and it is unmistakable); **`W_optA_1/2/3`** (option A, the **recolour-only** ladder: still an OPAQUE ring, just greyer — rendered so the "just make it grey" idea can be *seen* to be insufficient); **`W_optB_1/2/3`** (option B's `foam_opacity` ladder 0.35/0.55/0.75 on the cross-fade + muted colour; **0.55 ships**); and **THE MAKE-OR-BREAK PAIR — `W_step_control` vs `W_optB_step_check`**, the CLIFF coast with the **foam disabled entirely** (`foam_opacity 0` kills surf *and* wisp): the control (cross-fade also off) shows the **raw base step — a razor-straight hex-edge cut**, which is what the opaque foam was hiding all along, and the step check must show it GONE. **Any change to the surf must re-render that pair** — a translucent surf over a live base step is exactly the bug that broke this shoreline four times. `W_step_wl_1/2/3` is the `waterline_width` sweep it was chosen on (0.08 dissolves the step, **0.14** reads as a wet-rock rim, 0.20 ghosts land pebbles out to sea). **Judge the step check at 4× magnification** — at 1:1 the cross-fade and the razor step look nearly identical, and the first (too-narrow) cut was wrongly passed by eye before the magnified strip caught it. `W_base_wide` / `W_optB_wide` (+ `_farzoom`) are the **archipelago** (`_snapshot_archipelago` — islands on a lattice, alternating shelf-ringed BEACH coasts and deep-touching CLIFF coasts, so both types are in one frame; deterministic and grid-size independent, so the same map renders at r≈75 and at map scale): **`W_base_farzoom` vs `W_optB_farzoom` is the frame that actually answers the complaint.** `godot --path . res://tools/blend_probe.tscn` (or `-- --only=SURF`) |
 | `tools/band_panel_preview.gd` / `.tscn` | Dev-only preview harness for the **Band/City dockable panel**: instances the real `BandCityPanel` + `HudLayer`, injects the panel into the HUD, pushes a seeded player band through `update_band_alerts`, and dumps the panel docked left/right/top/bottom + collapsed (`band_panel_*.png`) so the chrome + the relocated band detail + the HUD reflow can be eyeballed without a server: `godot --path . res://tools/band_panel_preview.tscn` |
 | `tools/marker_field_guard.gd` / `.tscn` | Headless **regression guard** for the "unit marker drops a panel-consumed field" bug class (twice hit: `hunt_mode`, then `working_age`/`idle_workers`). Feeds one realistic population entry through the real `MapView._rebuild_unit_markers` and asserts the produced marker is a superset of `PANEL_CONSUMED_KEYS` (the keys `Hud._unit_summary_lines` + `_build_allocation_panel` read off `_selected_unit`) and that the drop-prone fields round-trip (not defaulted). Exits non-zero on failure (CI-usable). No rendering, so headless: `godot --headless --path . res://tools/marker_field_guard.tscn`. When the panel starts reading a new marker field, add it to `PANEL_CONSUMED_KEYS`. |
 | `assets/terrain/TerrainTextureManager.gd` | Autoload singleton for terrain texture loading |
@@ -198,20 +199,45 @@ Textures are loaded at runtime from individual PNGs and combined into a `Texture
   "use_terrain_textures": true,
   "use_edge_blending": true,
   "texture_scale": 4.0,
-  "blend_width": 0.42,
-  "blend_noise_cell": 6.0,
+  "blend_width": 0.25,
+  "blend_soft": 0.35,
+  "blend_height_influence": 0.25,
+  "blend_noise_scale": 0.25,
+  "blend_noise_amount": 0.3,
+  "feature_noise_cell": 6.0,
+  "water_blend": { "blend_width": 0.45, "blend_soft": 0.45, "blend_noise_amount": 0.45 },
   "lod_near_distance": 50.0,
   "lod_far_distance": 200.0
 }
 ```
 Every terrain entry also carries a `"blend_class"` (`flat` | `water` | `rugged`) — the single
-source of truth for edge-blend eligibility (see Edge Blending below). `blend_width` is the
-interlock band fraction; `blend_noise_cell` is the dither value-noise cell size (px).
+source of truth for edge-blend eligibility, which is **same-class** (flat↔flat and water↔water blend;
+land↔water and rugged stay hard — see Edge Blending below). The top-level `blend_*` keys are the
+**seam** levers, tuned for LAND (`blend_width` = the ecotone's reach, `blend_soft` = the feather
+softness, `blend_height_influence` = the detail-following nudge, `blend_noise_scale`/`blend_noise_amount`
+= the boundary wobble); the `water_blend` block **overrides width/soft/noise_amount for water↔water
+only** (smooth low-variance water needs a wider, softer, wobblier seam). All documented under Edge
+Blending below. `feature_noise_cell` is the value-noise cell size
+(**raw px**) for the **other** noise-driven features — the shoreline reach/wisp, the canopy treeline and
+the peak footline. The blend noise and the feature noise are deliberately **decoupled** (one uniform each)
+so retuning the seam can never move a coastline, treeline or footline. **The units differ on purpose:**
+`blend_noise_scale` is a **fraction of the hex radius** (→ `blend_noise_cell = blend_noise_scale · radius`
+px) so the seam's character is identical at every zoom (a fixed px cell drifted — a hex is ~45px on screen
+in-game but several times that in a zoomed-in preview frame, so the same 6px cell read very differently in
+the game than in the preview it was judged in), while the shore/treeline/footline look is tuned in
+absolute pixels. **Judge any blend change at the GAME's hex radius (~45px)** — use
+`tools/blend_probe.tscn`, which pins it.
 
 ### Texture Loading (TerrainTextureManager)
 - Autoload singleton loads textures once at startup for the 2D map renderer
 - Builds `Texture2DArray` from individual PNGs in `textures/base/`
 - Exposes: `terrain_textures` (Texture2DArray), `terrain_config`, `use_terrain_textures`, `use_edge_blending`
+- Also computes each base layer's **mean luminance** at build time (`layer_mean_luma` /
+  `get_layer_mean_luma()`, measured on a 16² Lanczos downscale of the retained CPU-side Image) and packs it
+  into `layer_luma_texture` (a 1×N single-channel `ImageTexture`, one texel per terrain id). This is the
+  zero-point of each texture's pseudo-height for the shader's flat↔flat **height blending** (see Edge
+  Blending); MapView binds it once as the `layer_luma_map` uniform. The Rec.709 weights here MUST match the
+  shader's `luma()` helper
 - Also builds `canopy_textures` (a second Texture2DArray of RGBA crowns from `textures/canopy/`) +
   `canopy_layer_by_id` / `canopy_layer_for(id)` (`terrain_id → canopy array layer`, -1 = none) for the
   blend shader's canopy overlay (see Edge Blending → Canopy overlay), and `peak_textures` (a third
@@ -236,22 +262,87 @@ interlock band fraction; `blend_noise_cell` is the dither value-noise cell size 
 
 ### Edge Blending — per-pixel biome-blend shader (Approach B)
 When `use_edge_blending` is enabled, biome **seams** blend per-pixel in a **fragment shader**
-(`assets/terrain/terrain_blend.gdshader`): a symmetric, world-noise **dither** where the two biomes
-interlock across the boundary, NOT a gradient blur (blur ghosts on detailed textures). It is
-deliberately narrow in scope: only truly *flat* biomes blend, and only against each other; every
-other seam stays a **crisp hard edge**. Approach B replaced the earlier baked-overlay dither
-(Approach A), fixing its three caveats: **symmetric** mutual intrusion (0.5 at the exact edge on
-both sides via signed distance), **no tiling** (world-space noise varies per hex), and **cleaner
-grain** (smooth in-shader value noise).
+(`assets/terrain/terrain_blend.gdshader`): a symmetric **height blend** (texture splatting) where the two
+biomes interlock across the boundary — each texture competes on its own per-pixel height, so one settles
+into the *cracks* of the other. It is neither a gradient blur (blur ghosts on detailed textures) nor a
+dither (see below). It is deliberately narrow in scope: a biome blends only against biomes of its **own
+blend_class**, and only the *flat* and *water* classes blend at all; every other seam — rugged, and every
+class change (notably the land↔water shoreline) — stays a **crisp hard edge**. Approach B replaced the earlier baked-overlay
+dither (Approach A), fixing its three caveats: **symmetric** mutual intrusion (a tie at the exact edge via
+signed distance), **no tiling** (world-space noise varies per hex), and **cleaner grain**.
 
-**Eligibility — `blend_class` (config, `terrain_config.json`):** every terrain carries a
-`blend_class` of `flat` | `water` | `rugged`. Blend fires for an edge **only** when this hex is
-`flat` AND the neighbour across that edge is `flat` AND their terrain ids differ. Any `water`
-(crisp shoreline) or `rugged` (forests/hills/mountains/volcanic — never bleed discrete-object
-textures) on either side → hard edge. `MapView._terrain_is_flat` / `_blend_class_code` read a cached
-`_terrain_blend_class` map (`_build_terrain_blend_class_map`); `TerrainTextureManager.blend_class_for`
-mirrors it. On the 4-texture preview this means **desert↔prairie blends**; prairie↔forest and
-forest↔ocean stay hard.
+**Eligibility — SAME CLASS (`blend_class`, config `terrain_config.json`):** every terrain carries a
+`blend_class` of `flat` | `water` | `rugged` (id-map G channel: 0 water / 1 flat / 2 rugged, named
+`CLASS_WATER`/`CLASS_FLAT`/`CLASS_RUGGED` in the shader). Blend fires for an edge **only** when both
+sides share the **same blendable class** and their terrain ids differ:
+- **flat↔flat** (grass↔soil ecotones) → blends.
+- **water↔water** (deep_ocean ↔ continental_shelf ↔ inland_sea …) → **blends**. Two adjacent ocean
+  depths are a gradient, not a cliff; before this rule the `water` class forbade *all* water blending
+  and deep-vs-shelf showed razor-sharp hexagon silhouettes.
+- **land↔water** (a CLASS CHANGE) → **hard**. That seam is the **shoreline**, owned by the foam/beach
+  pass; softening it would wash the coastline out. This is the whole reason `water` is its own class —
+  but the old gate over-reached and also banned water↔water.
+- **rugged↔anything** → hard (forests/hills/mountains/volcanic — never bleed discrete-object textures),
+  **unless `blend_rugged_land` is on** — see below.
+
+`MapView._terrain_is_flat` / `_blend_class_code` read a cached `_terrain_blend_class` map
+(`_build_terrain_blend_class_map`); `TerrainTextureManager.blend_class_for` mirrors it.
+
+**`blend_rugged_land` — the RUGGED-LAND gate (config bool, `terrain_config.json`, **SHIPPED `true`**;
+`EDGE_BLEND_DEFAULT_RUGGED_LAND` in `MapView.gd` → the shader's `blend_rugged_land` uniform).** Under
+the bare same-class rule a rugged biome's BASE FLOOR never blends, so it ends in a razor-straight
+hexagon against its neighbour — and for a **peak** biome that floor is the *whole* ground under the
+relief overlay (`rolling_hills`' base is plain grass; the mounds are a `peaks/` overlay), which is the
+"rolling hills look CUT OFF at the hex edge" report. This gate widens the **land** half of the rule from
+*same class* to *both sides are land*: flat↔rugged and rugged↔rugged blend through the **existing** flat
+levers (no new tuning), so a hills/alpine hex feathers into its neighbour instead of cookie-cutting.
+**land↔water is untouched** (still hard — that seam is the shoreline) and water keeps its depth field,
+so it is **bit-identical** on every frame with no rugged hex (verified: `blend_bands_full`,
+`blend_isolated_shipped`, `V7_coast_unchanged` and `V10_shore_dark_land_closeup` all byte-compare equal
+with it on).
+It shipped only after the **whole rugged roster** was swept for SHREDDING (the height term tearing holes
+in a structured texture's interior — high-contrast rugged art is exactly what is at risk): **`blend_probe`
+state R** renders EVERY rugged biome as an **ISOLATED hex surrounded by a contrasting one**, in a flat
+field *and* in a rugged field, gate OFF vs ON. All held — interiors stay solid, only the rim feathers,
+including the extreme-contrast cases (white `fumarole_basin` on dark rocky_reg; black `basaltic_lava_field`
+and white `karst_highland` on orange `canyon_badlands`). **A straight band seam cannot show shredding —
+never judge this gate on one.** What it *does* cost is that a high-contrast rugged pair (bright karst
+against orange canyon) now reads as a wide hazy ecotone rather than crisp geology; that is a look call,
+not a tear.
+
+**WATER IS A DEPTH FIELD, NOT A SEAM** (the fix for the "dark patches of open water with hard
+full-hexagon edges, FoW off" report). A hex's water id is a **quantized sample of a continuous seafloor**,
+and the real map's ocean is **salt-and-pepper**, not clean blobs: a live 80×52 snapshot's id-map carried
+**2332 deep_ocean↔continental_shelf hex adjacencies** and **16 deep hexes whose six water neighbours were all
+a different id**. Under the flat↔flat *nearest-edge* seam blend such a hex can only ever read as a **dark
+hexagon** — the rim feathers, but the interior keeps the (far darker) deep texture and the silhouette IS the
+hex. That artifact is **TERRAIN, not the FoW tint**: with FoW off the shader never reads the vis-map at all
+(`fow_enabled` gates the whole block) and `_rebuild_terrain_shader_maps` writes vis = 255 everywhere, so
+**fog off already means every hex renders fully lit** — no mist, no dim, nowhere in the client (the CPU path's
+`_visibility_state_at` returns `""` → `Color.WHITE`, and the overlay-color path is `_fow_enabled`-gated too).
+So water takes its **own branch**: every qualifying water neighbour (same class, different id) contributes
+**at once**, weighted by how close the fragment is to **that** shared edge — the same 6-neighbour cross-edge
+weighting the FoW softening uses — and the result is the **normalized weighted mean** of the water textures.
+The weight reaches 1 exactly **at** a shared edge, so the mean there is `(own + nb)/2` read from BOTH sides:
+continuous across every boundary by construction. The flat↔flat interlock is **untouched** and water no longer
+takes it. Verify with `blend_probe` **state 9 (X)** below.
+
+**The three water levers** (`terrain_config.json` → `water_blend` block:
+`blend_width` **0.45** / `blend_soft` **0.45** / `blend_noise_amount` **0.45**, vs the land
+0.25/0.35/0.30; fallbacks are `WATER_BLEND_DEFAULT_*` in `MapView.gd`, pushed as the
+`water_blend_band`/`water_blend_soft`/`water_blend_noise_amount` uniforms). They keep their names but, under
+the depth field, they mean:
+- `blend_width` → the field's **REACH**: how far into the own hex a neighbour's depth still bleeds.
+- `blend_soft` → the **PLATEAU**, as a fraction of that reach: how far back from the shared edge a neighbour
+  already carries FULL weight. **This is the lever that dissolves the hexagon** (a pure ramp only softens its
+  rim). Capped in-shader by `WATER_FIELD_PLATEAU_MAX` (0.5) so a ramp always survives — a plateau spanning the
+  whole reach would put a hard step at the reach's outer edge.
+- `blend_noise_amount` → the amplitude of the world-noise displacement of the depth boundary (in reach units),
+  so the depth contour meanders organically instead of tracing hex geometry. Sampled in map space, so a world
+  point reads the same value from both sides of an edge — continuity survives it.
+
+The wobble **cell** (`blend_noise_scale`) and the height nudge stay **shared with land** — a finer cell would
+speckle, and the height term is a no-op on smooth low-variance water anyway.
 
 **Mechanism — whole-map shader quad + hex splatmap:**
 - `terrain_blend.gdshader` (canvas_item) is drawn as **one whole-map rect** by a dedicated child
@@ -261,30 +352,132 @@ forest↔ocean stay hard.
   pushes uniforms each frame. Per fragment the shader **inverts the pointy-top odd-r hex layout**
   (MUST match `MapView._hex_center`/`_axial_center`/`_offset_to_axial` + the `hex_origin`/`hex_radius`
   uniforms exactly — this is the alignment contract with grid lines/selection/markers), reads its
-  hex's biome from the **`sampler2DArray`**, and — if flat — checks the 6 neighbours (wrap-aware) for
-  a different flat biome; near a qualifying shared edge it dithers the neighbour's array sample in.
-  The mix is **symmetric**: `p = clamp(0.5 + signed_dist_to_edge / (2·blend_band), 0, 1)` is 0.5 at
-  the edge on both sides; `show neighbour if p > value_noise(world_pos / noise_cell)`.
+  hex's biome from the **`sampler2DArray`**, and — if its class is blendable (flat or water) — checks the
+  6 neighbours (wrap-aware) for a **same-class, different-id** biome; near the nearest qualifying shared
+  edge it **height-blends** the neighbour's
+  array sample in. The seam weight is **symmetric**: `p = clamp(0.5 + signed_dist_to_edge /
+  (2·blend_band), 0, 1)` is 0.5 at the edge on both sides.
+- **THE INVARIANT: the seam is ALWAYS a continuous weighted mix, never a 1-bit pick.** The splat weight
+  `p` **leads**; two enveloped perturbations only **bend** it; a `smoothstep` feathers the result into a
+  mix factor:
+  ```glsl
+  float env = 4.0 * p * (1.0 - p);                          // dies at both ends of the band
+  float h   = (luma(own) - mean_luma(own_layer)) - (luma(nb) - mean_luma(nb_layer));
+  float pw  = clamp(p + ((noise - 0.5) * blend_noise_amount - h * blend_height_influence) * env, 0.0, 1.0);
+  result    = mix(own, nb, smoothstep(0.5 - blend_soft, 0.5 + blend_soft, pw));
+  ```
+  The **wobble** (world `vnoise`, cell `blend_noise_cell`) gives an organic, meandering boundary instead
+  of the straight hex line, and carries **low-variance pairs** (smooth sand ↔ smooth soil) where there is
+  little detail to follow. The **height term** is a *detail-following NUDGE*: with no height maps each
+  texture's **zero-centred luminance** is its pseudo-height (`luma(rgb) − mean_luma(layer)`, Rec.709; the
+  per-layer means come from `TerrainTextureManager.layer_luma_texture`, a 1×N single-channel texture
+  fetched by layer index — **zero-centring is essential**, or a bright biome always out-heights a dark one
+  and the seam collapses to one side), and it bends the boundary toward the darker/lighter side so it
+  follows the textures' own tufts and grains. `blend_height_influence` **must stay small** (≤
+  `EDGE_BLEND_MAX_HEIGHT_INFLUENCE` = 0.5) so it can never out-vote the distance weight. The `4·p·(1−p)`
+  envelope guarantees no perturbation can leak neighbour texture into a hex interior nor leave a straight
+  discontinuity at the band's outer edge.
+- **Rejected alternatives (do NOT reintroduce)** — the first two are the SAME BUG (a 1-bit pick) in two
+  disguises: (1) the **dither** (`result = neighbour if p > vnoise(...)`) — a binary pick makes every pixel
+  100% one biome, so the seam can only ever be **discrete hard-edged blobs**; the user's verdict on the live
+  game was "the blobs are too big… I shouldn't really even notice the blending, but it is very obvious". No
+  noise tuning fixes it (coarse noise → chunky blobs, fine noise → pixel shimmer) — *the approach was the
+  bug*. (1b) **Height blending with `blend_height_influence` 4.0 + a small overlap depth** (`blend_depth`,
+  now gone): the luma term (±0.3 × 4 = ±1.2) **dwarfed** the 0..1 distance weight, so it degenerated into
+  winner-takes-all-by-luminance — wherever prairie was dark, soil won outright, *deep inside the hex*. The
+  user's verdict: prairie hexes looked **shredded**, "this isn't a blend at all". A straight band seam looks
+  fine under this bug — **only an isolated hex surrounded by the other biome exposes it**, which is exactly
+  what `blend_probe`'s isolated-hex state renders. (2) A plain
+  linear crossfade — it ghosts two detailed textures over each other. (3) A 3-octave "wander" noise +
+  an S-curve on `p` (tried under the dither) — big smooth lobes.
 - **Base biome UV — CONTINUOUS world space** (like the canopy pass, NOT per-hex-normalized): the base
   biome is sampled at `base_uv = v_map / (2·hex_radius) · base_scale` (`v_map = v_world - hex_origin`,
   pan/zoom-anchored), so **one texture tile spans ~`1/base_scale` hex-rows** and adjacent hexes show
   DIFFERENT regions of it. This kills the **per-hex identical-repeat grid** (with diagonal seams) that
   any *detailed* (non-homogeneous) base texture used to show when each hex was mapped to one whole
   centered copy — invisible on homogeneous grass/water, obvious on a rocky/alpine texture. The
-  **flat↔flat dither samples the neighbour biome at the SAME `base_uv`** (only the array layer differs),
+  **flat↔flat height blend samples the neighbour biome at the SAME `base_uv`** (only the array layer differs),
   so the cross-edge interlock stays continuous (two world-sampled biomes at one world point). `repeat_enable`
   tiles the array. The canopy pass already sampled this way; the base now matches it.
 - **id-map splatmap** (`_rebuild_terrain_shader_maps`, per snapshot): a `grid_w × grid_h` **RGBA8**
   texture, R = terrain id, G = `blend_class` code (0 water / 1 flat / 2 rugged), B = canopy code
   (0 none, else canopy layer + 1), A = 255, NEAREST-sampled. A
   companion **R8 vis-map** carries FoW state (0 unexplored / 0.5 discovered / 1 active).
-- **Config levers:** `blend_width` (→ `blend_band = blend_width · radius`, the interlock half-band in
-  px), `blend_noise_cell` (world-noise cell px), and top-level `base_texture_scale`
+- **Config levers (all fallbacks mirrored as `EDGE_BLEND_DEFAULT_*` consts in `MapView.gd`):**
+  - `blend_width` (**0.25** → `blend_band = blend_width · radius`, the half-band in px) — the **REACH**, i.e.
+    the width of the ecotone. The user wants a **shallow** transition confined to the hex edge, so it is
+    small: `0.25·radius` ≈ 19px at the on-screen r≈75, a band that never reaches a hex interior.
+  - `blend_soft` (**0.35**, capped at `EDGE_BLEND_MAX_SOFT` = 0.5) — the **FEATHER SOFTNESS**: the
+    smoothstep's half-width in seam-weight units. **Small** (≈0.03) ⇒ the mix snaps wherever the
+    noise/detail carries the weight past 0.5 → a fine crisp **stipple**; **large** (≈0.35) ⇒ a smooth
+    **gradient** the noise only leans. Floored in-shader (`BLEND_SOFT_MIN`) so it can never become a hard step.
+  - `blend_height_influence` (**0.25**, hard-capped at `EDGE_BLEND_MAX_HEIGHT_INFLUENCE` = 0.5) — the
+    detail-following **NUDGE** (see the invariant above). Typical zero-centred luma deviations are ±0.3, so
+    0.25 moves the weight by ≤ ~0.08 — a fraction of the 0..1 distance weight it perturbs. `0` = a pure
+    distance+noise feather. **Never raise it past the cap**: at 4.0 it out-voted the distance weight and
+    shredded hex interiors (see Rejected alternatives).
+  - `blend_noise_scale` (**0.25**, a **fraction of the hex radius** → the `blend_noise_cell` px uniform) —
+    the **WAVELENGTH** of the boundary wobble: ≈19px at r=75, i.e. a few organic lobes per hex edge, which
+    is what stops the seam reading as the straight hex polyline. Very fine (≈0.05) turns it into a
+    per-pixel speckle instead (which only reads as a boundary at all when `blend_soft` is also tiny).
+  - `blend_noise_amount` (**0.3**) — the wobble's amplitude, **added to** the seam weight (never
+    thresholded against it — this is not a dither) and enveloped so it dies at both ends of the band.
+  - `blend_rugged_land` (**true**, shipped) — the rugged-land eligibility gate (see the gate above). It
+    changes only *which* seams blend, never *how*: rugged land reuses the five levers above verbatim.
+  - The blend look is **zoom-invariant** (band + wobble are both radius-relative), so a preview frame is an
+    honest proxy for the game *only if it is rendered at the game's on-screen hex radius* (**r ≈ 75px**;
+    hexes read ~150px across on the user's screen). `tools/blend_probe.tscn` pins that, and — critically —
+    renders **isolated hexes surrounded by another biome**, the only state that exposes hex shredding.
+    `tools/map_preview.gd` *fits* (r ≈ 83–178) and only ever shows straight band seams, so judgements made
+    in it are not trustworthy for the blend.
+  - `feature_noise_cell` (default `6.0`, the world-noise cell **px** for the
+    shoreline reach/wisp + canopy treeline + peak footline; **decoupled** from the blend noise — it
+    drives the shader's `noise_cell` uniform, so the seam can be retuned without moving any
+    coastline/treeline/footline; verified by pixel-diff).
+  - Top-level `base_texture_scale`
   (→ `base_scale`, default `0.25` = one base texture spans ~4 hex-rows; smaller covers MORE hexes,
   larger fewer — `BASE_DEFAULT_TEXTURE_SCALE` in `MapView.gd`). **LOD:** below `EDGE_BLEND_MIN_RADIUS`
   (`= ICON_MIN_DETAIL_RADIUS`) the shader renders base-only (no shimmer at far zoom). **FoW:** the
   shader applies the same discovered-mist multiply / unexplored-fog fill as the per-hex path
-  (`_fow_texture_tint_for_state` semantics) via the vis-map — it dims, never drops, the blend.
+  (`_fow_texture_tint_for_state` semantics) via the vis-map — it dims, never drops, the blend. It also
+  **softens the mist across hex boundaries** — see Fog-of-war softening below.
+
+**Fog-of-war softening — the hex steps (shader path only).** The vis-map is **per-hex, NEAREST-sampled**
+(0 unexplored / 0.5 discovered / 1 active), so reading it raw made every **active↔discovered adjacency a
+hard HEXAGONAL brightness step** — straight edges cutting across even *uniform water*, where no terrain
+seam exists at all. (This is why "hard straight edges are back" reports must be checked against
+`blend_probe` state 5 *before* the blend is touched: the culprit was usually the FoW tint, not the blend.)
+Fixed in two halves, both in the shader's `fow_enabled` block:
+1. **Smooth the visibility SCALAR across hex boundaries**, reusing the same 6-neighbour
+   signed-distance machinery as the blend/shore: each neighbour's visibility is weighted by
+   `smoothstep(-fow_soft, 0, d)` — how close the fragment is to **that** shared edge — and the weighted
+   mean replaces the raw per-hex value. At a shared edge the neighbour's weight → 1, so `vis → (own+nb)/2`
+   from **both** sides — equal, hence **continuous across the boundary**; deep inside a hex all six weights
+   → 0 and `vis → own`, so interiors are untouched.
+2. **Map `vis` to the tint CONTINUOUSLY** (the old per-state `if` chain was itself a step function):
+   `fog_amt = 1 − smoothstep(FOW_UNEXPLORED, FOW_DISCOVERED, vis)` and
+   `mist_amt = (1 − smoothstep(FOW_DISCOVERED, FOW_ACTIVE, vis)) · mist_blend`, composited with the
+   **existing** `mist_color`/`fog_color`/`mist_blend` uniforms. At the pure states this reproduces today's
+   look **exactly** (verified bit-identical: vis 1 = clear, 0.5 = the same mist multiply, 0 = fog fill) —
+   only the boundaries change.
+- **Optional wispiness:** the smoothed scalar is perturbed by world `vnoise` (reusing `noise_cell`) so the
+  fog line reads cloudy rather than a clean arc. It is **enveloped by `|smoothed − own|`** (normalized by
+  `FOW_NOISE_EDGE_PEAK`, the 0.25 that a 6-neighbour average can shift the scalar across one state gap), so
+  it bites **only at boundaries** and can never tint a pure Active/Discovered/Unexplored interior.
+- **Config levers** (`heightfield_config.json` → `fog_of_war`, beside the existing mist/fog colours —
+  FoW appearance stays in one place): `fow_softness` (**0.6**, a **fraction of the hex radius** → the
+  `fow_soft` px uniform, like `blend_width`, so the gradient is zoom-invariant) and `fow_noise_amount`
+  (**0.15**; `0` disables the wisps). Fallbacks are `FOW_DEFAULT_SOFTNESS` / `FOW_DEFAULT_NOISE_AMOUNT` in
+  `MapView.gd`. The **per-hex CPU path is unaffected** (it is hard-edged by construction).
+- **Verify** with `blend_probe` state 5 → `V8_water_fow_on.png`: on uniform shelf water the mist boundary
+  must read as a soft cloudy gradient with **no hexagonal brightness steps**, while pure Active and pure
+  Discovered areas are unchanged. State **8 (W)** makes the before/after explicit —
+  `W_fow_on_same_terrain.png` (softness `0` = the unsmoothed tint) vs `W_fow_fixed_same_terrain.png`, on two
+  adjacent **shelf** hexes across an Active/Discovered boundary. **This is the FIRST thing to render on any
+  "hard straight full-hexagon edges are back in open water" report**: the tone-only steps in water are the
+  FoW tint, NOT the blend (which `W_fow_off.png` shows already dissolving the deep-ocean silhouette). The
+  mist multiply lands exactly on the hex boundary, so it **re-imposes a hard hexagonal edge on water the
+  blend has just softened** — and it does so between hexes of the SAME terrain id, where no seam exists.
 - **Integration:** the shader is the base-terrain renderer whenever `use_terrain_textures` and no
   overlay and `use_edge_blending` (`_shader_terrain_active`); it **bypasses the CPU map cache** (a
   single cheap GPU draw, so the cache's per-hex-loop purpose is moot). With `use_edge_blending` off,
@@ -292,29 +485,188 @@ forest↔ocean stay hard.
   `CachedMapRenderer`) renders crisp hard hexes — that is the blend-OFF reference. Overlay/solid
   modes are unchanged.
 
-**Shoreline — foam + sand beach at land↔water coasts (universal for now):** separate from the
-flat↔flat interlock, every **land↔water** edge gets a two-sided coastal treatment in the same shader,
-reusing the signed-distance-to-shared-edge machinery. It fires for any edge where **exactly one side is
-water** (`blend_class` code 0) — so it's independent of the land side's class (**both flat-land and
-rugged-land** coasts get it) and never touches inland edges (flat↔flat interlock and rugged↔* inland
-edges stay exactly as before — both sides non-water → skipped).
-- **Foam (water side):** in a water hex within `foam_band` px of a non-water neighbour edge, `result`
-  mixes toward `foam_color` (light desaturated cyan/near-white), strongest at the seam and fading
-  seaward. The inward reach is noise-perturbed (`reach = foam_band · mix(SHORE_REACH_NOISE_MIN, 1, noise)`,
-  reusing the same `noise_cell`) so the surf reads as irregular fingers, not a clean stripe, plus a
-  faint second **inner wisp** further out (`SHORE_WISP_*` consts).
-- **Beach (land side):** in a non-water hex (flat OR rugged) within `beach_band` px of a water-neighbour
-  edge, `result` mixes toward `beach_color` (warm tan), strongest at the seam and fading inland,
-  noise-modulated the same way. Net read at a coast: land → thin beach → foam → water.
-- **Config levers** (`terrain_config.json` → `shore` block): `foam_width` / `beach_width` (fractions of
-  the hex radius → `foam_band` / `beach_band` px uniforms, computed in `MapView._update_terrain_shader_quad`
-  like `blend_width`), and `foam_color` / `beach_color` (RGB 0–255, parsed by `MapView._shore_color` into
-  normalized `vec3` uniforms). Fallbacks are the `SHORE_DEFAULT_*` consts in `MapView.gd`. LOD-suppressed
-  and FoW-tinted like the rest of the shader (shares the `blend_enabled` gate + the vis-map).
-- **Per-biome shore gating is deliberately NOT built yet** — all coasts render identical beach+foam.
-  Verify via `tools/map_preview.gd` State Q (`_biome_band_terrain` now carves an ocean bay so the ocean
-  borders BOTH prairie (grassy shore) and woodland (wooded shore)) → `map_biome_blend.png` +
-  `map_biome_shore_seam.png` (coast close-up).
+**Shoreline — ONE continuous coastal profile straddling the coast (universal for now):** separate from the
+flat↔flat interlock, every **land↔water** edge gets a coastal treatment in the same shader, reusing the
+signed-distance-to-shared-edge machinery. It fires for any edge where **exactly one side is water**
+(`blend_class` code 0) — so it's independent of the land side's class (**both flat-land and rugged-land**
+coasts get it) and never touches inland edges (flat↔flat interlock and rugged↔* inland edges stay exactly
+as before — both sides non-water → skipped). **The one exception is a `NavigableRiver` hex, whose edges are
+excluded from the pass entirely — a river meeting the sea is not a coast; see Rivers → NavigableRiver for why
+it cannot be expressed as a `shore_profile`.** Seaward read: **land → sand → surf → open water**, and the
+requirement is that **NO boundary in that chain is a hard line** — not sand↔land, not sand↔foam, not
+foam↔water.
+- **THE SIGNED COAST COORDINATE `u` — why this can't step at the hex edge.** The shore pass computes
+  `dist_in` = distance from the shared land↔water edge INTO the own hex, which tends to **0 on BOTH sides**
+  at that edge. Negating it on the land side gives one coordinate running continuously through the
+  coastline: `u < 0` inland · `u = 0` **exactly at the waterline** · `u > 0` seaward. Every shore weight is
+  a `smoothstep` **of `u` alone**, so its value at `u = 0` is identical whether the fragment belongs to the
+  land hex or the water hex — the profile is continuous across the boundary **by construction**, and no
+  term can pop there. (The world-noise wobble that meanders the reaches is sampled in **map space**, so it
+  too is the same value on both sides of the edge at a given world point.)
+- **The three rejected passes — all the same bug class** (a term saturating AT the hex edge, or sand where
+  the user does not want it). (1) A **two-sided** pass (tan beach on the land, foam on the water) with
+  LINEAR fades `1 − dist_in/reach`, which are **≈1 AT the shared edge on BOTH sides**: the land went solid
+  tan, the water solid white, and they met along the boundary — a **hard tan↔white line TRACING THE
+  HEXAGON**. (2) The fix for *that* pushed everything onto the **water side** (`land_beach_width = 0`),
+  which killed the sand↔foam line but left the sand **stopping dead at the hex edge against the raw land
+  texture** — a **new hard sand↔land line**. (3) Sand on **BOTH** sides (`sand_land_band` + `sand_sea_band`)
+  straddling the edge: every hard line was gone, but the beach then read **TWICE AS WIDE** — **sand in the
+  water hex is not wanted at all**. Hence the shipped shape: sand is **LAND-ONLY**, and the sand↔foam blend
+  is bought by letting the **surf wash INLAND over the beach** instead of by putting sand in the sea.
+- **Sand — LAND SIDE ONLY** (`u ≤ 0`; the water hex gets **zero** sand, by construction — the term is
+  ternary-gated on the sign of `u`). It is **FULL from the waterline across the surf's inland wash** (the
+  **plateau**), then `smoothstep`-fades inland into the biome art over the rest of `sand_band`. Capped at
+  `SHORE_SAND_OPACITY` (< 1) so the land art reads through and the beach never looks like flat paint, and
+  its reach is deliberately SHORT (0.25·r) so it tints rather than buries the biome.
+  **The plateau is anchored to `foam_inland_band`, and that anchor is load-bearing** (`SHORE_SAND_PLATEAU_MAX`
+  caps it at 0.6 of the sand reach, so a fade window always survives): the surf is composited **over** the
+  sand and peaks at ~1 at the waterline, so wherever the wash is strong the sand is whitewashed and
+  contributes nothing. A sand that *also* decayed from the waterline (a plain `1 − smoothstep(0, sand_reach,
+  −u)`) was down to ~30% opacity by the time the foam cleared and gone entirely a hair further inland — the
+  beach was **invisible** and the coast read **land → surf → water with NO SAND AT ALL** (caught against a
+  dark rocky-regolith coast, where white foam met bare rock; **prairie's tan hides this** — always judge the
+  beach on a DARK land biome). Holding the sand full across the wash means the **retreating surf uncovers a
+  full-strength beach** — that IS the sand↔foam crossfade.
+- **THE WATERLINE BASE CROSS-FADE (`waterline_width`) — the last hard seam in the shader, and the reason the
+  surf no longer has to be opaque.** Until this existed the **base texture itself stepped at `u = 0`**: on a
+  beach coast the (sand-tinted) land met open water with nothing in between; on a **cliff** coast
+  (`deep_ocean`, `sand_scale` 0) it was **raw land meeting raw water**. The full-strength foam peak was the
+  ONLY thing papering over that flip — which is why **every previous attempt to "just soften the foam"
+  re-exposed a hard land↔water line and had to be reverted** (four times). So the base now cross-fades across
+  a short reach either side of the coastline: `mixed = mix(land_base, water_base, smoothstep(-w, w, u))`,
+  held at full across `±w` and handing back to the true base over `SHORE_WATERLINE_FADE` beyond it.
+  * **`land_base` / `water_base` are the SAME weighted-mean-over-{own + 6 neighbours} construction as the
+    shore-profile field** (weight `smoothstep(−apothem, 0, d)`, unwobbled, own = 1) — so both are pure
+    functions of the **id-map and the world UV**, never of `result` (which carries the own hex's
+    interlock/depth-field history). The land hex and the water hex therefore compute the **same pair** at a
+    given world point, `mixed` is frame-independent, and at `u = 0` both sides land on it **exactly**:
+    continuous across the hex boundary by construction, like every other shore term. See
+    `SHORE_PROFILE_REACH_APOTHEMS` for why that mean is exactly continuous.
+  * **It is a WET EDGE, not an ecotone.** `waterline_width` **0.14** (·r) sits well under the sand's 0.25, so
+    no land texture reads out to sea and no water texture reads up the beach. **Chosen on the foam-off step
+    check** (`blend_probe` state **SURF**, cliff coast — the worst case, no sand out there either): 0.08
+    already dissolves the step, **0.14** reads as a natural wet-rock rim, 0.20 starts **ghosting land pebbles
+    into the water**. `0` disables it bit-exactly (and then `foam_opacity` must go back to 1).
+  * **DO NOT envelope it with a ramp that also peaks at `u = 0`.** The first cut multiplied the cross-fade by
+    `1 − smoothstep(0, w, |u|)` — two ramps peaking at the waterline — so the water content on the land side
+    was already down to **8% at half the reach**: the visible gradient was a **quarter** of the configured one
+    (~4px) and **the base step survived**. Hence `SHORE_WATERLINE_FADE`: full weight across the reach, fade
+    back to the true base outside it.
+- **Surf — peaks AT the waterline and washes BOTH ways.** Inland over the sand across `foam_inland_band`
+  (the crossfade that kills the sand↔foam line) and seaward into open water across `foam_band`. **Its peak is
+  the `foam_opacity` lever (shipped 0.55)** — and it is a lever *only because the waterline cross-fade above
+  removed the base step it used to conceal*. With `waterline_width = 0` the peak is load-bearing again and
+  `foam_opacity` must go back to ~1. It scales the **wisp** (`SHORE_WISP_STRENGTH`) too, so the whole surf
+  mutes as one gesture rather than the peak fading while the offshore froth stays bright. `1.0` is a
+  bit-exact no-op. This is what answers the **"obvious bright white outline on most land"** report: with the
+  base step gone the surf can be a translucent highlight instead of an opaque cover-up.
+- **Wisp — the faint SECOND surf line out over open water.** Its geometry is **its own pair of
+  radius-relative levers** (`wisp_center_width` / `wisp_half_width` → the `wisp_center_band` /
+  `wisp_half_band` px uniforms), **not** a multiple of `foam_band` as it once was — that chaining meant the
+  surf could not be shortened without dragging the wisp in with it (and the wisp could not be pulled in at
+  all). Config is responsible for keeping the wisp band **clear of the surf** (`wisp_center − wisp_half >
+  foam_width`) so the two read as two lines; overlap just merges them into one wide white smear.
+  `wisp_half_width = 0` turns the wisp off. Only its opacity (`SHORE_WISP_STRENGTH`) stays a shader const.
+- **Every falloff is a `smoothstep`** (no linear ramp's slope kink, no hard cutoff anywhere). All reaches
+  are noise-modulated by the SAME world-noise wobble (`mix(SHORE_REACH_NOISE_MIN, 1, noise)`, reusing
+  `noise_cell`), so the sand's inland edge, the surf line and the wisp meander together as organic fingers
+  rather than concentric clean stripes.
+- **Config levers** (`terrain_config.json` → `shore` block): `sand_width` (**0.25** — sand reach INLAND of
+  the coastline; **land-only**) / `foam_inland_width` (**0.15** — how far the surf washes UP the beach) /
+  `foam_width` (**0.41** — surf reach SEAWARD) / `wisp_center_width` (**0.55**) / `wisp_half_width`
+  (**0.13**) — the second surf line's centre and half-thickness, so it spans 0.42–0.68·r, clear of the surf
+  that dies at 0.41·r — and **`waterline_width`** (**0.14** — the base cross-fade's half-reach; see the
+  waterline bullet above). **All six are fractions of the hex radius** → the `sand_band` / `foam_inland_band` /
+  `foam_band` / `wisp_center_band` / `wisp_half_band` / `waterline_band` px uniforms (computed in
+  `MapView._update_terrain_shader_quad` like `blend_width`), plus **`foam_opacity`** (**0.55** — the surf's +
+  wisp's peak opacity, a unit scalar) and `foam_color` / `beach_color` (RGB 0–255, parsed by
+  `MapView._shore_color` into normalized `vec3` uniforms). **`foam_color` ships MUTED — `[176, 194, 205]`, a
+  grey-blue** (it was `[223, 242, 247]`, a near-white that read as a hard bright outline at map-scale zoom);
+  the recolour alone was rendered as a candidate ("option A") and rejected — it only greys the ring, it does
+  not stop it being an opaque ring, because the ring's opacity was structural. Fallbacks are the
+  `SHORE_DEFAULT_*` consts in `MapView.gd`; the fixed feel-tuning (`SHORE_SAND_PLATEAU_MAX` /
+  `SHORE_SAND_OPACITY` / `SHORE_WISP_STRENGTH` / `SHORE_WATERLINE_FADE`) is named consts in the shader. The `land_beach_width` / `sand_land_width` / `sand_sea_width` keys of the rejected passes are
+  **gone**. Note the visible beach is intrinsically narrow: the surf covers the inner `foam_inland_width` of
+  it, so only the `sand_width − foam_inland_width` annulus (0.10·r) reads as open sand — that is the
+  specified geometry, not a bug. LOD-suppressed and FoW-tinted like the rest of the shader (shares the
+  `blend_enabled` gate + the vis-map).
+- **Verify at the game's hex radius** with `tools/blend_probe.tscn` **state 6 (V10)** — the shipped profile
+  on the ragged coast at r≈75 → `V10_shore.png` + `V10_shore_closeup.png` **and `V10_shore_dark_land.png` +
+  `V10_shore_dark_land_closeup.png`** (the same coast against **rocky_regolith**). **The dark-land frame is
+  the decisive one** — prairie is tan and hides sand-vs-land contrast, which masked the invisible-beach bug
+  through several passes. **Judge on the close-ups**: the full frame is downscaled when viewed, which hides
+  exactly the 1px line this pass exists to prevent. A coast rendered in a *fitted* harness frame is not a
+  trustworthy proxy either (the look is radius-relative — same caveat as the blend). `_render_variant` can
+  still sweep the three width levers.
+- **PER-WATER-TERRAIN shore profile (`shore_profile`) — A COAST IS NOT ONE THING.** The five levers above are
+  the GLOBAL profile, tuned for OCEAN coasts. But the worldgen's water sequence is **deep_ocean →
+  continental_shelf → land**: deep ocean *never* meets ordinary land, so where it DOES touch land it is a
+  **CLIFF** (no beach at all, full dramatic surf), the **shelf** is the ordinary **beach** (sand, a muted
+  wave), and an **`inland_sea`** is a handful of hexes that the ocean profile swamps (its offshore **wisp**
+  reads as noise across the middle of a lake). So a WATER terrain entry in `terrain_config.json` may carry an
+  optional block scaling the profile of **its own** coastline, along **three independent axes**:
+  `{ "id": 1, "name": "continental_shelf", …, "shore_profile": { "sand_scale": 1.0, "foam_scale": 0.75, "wisp_scale": 0.5 } }`
+  - `sand_scale` multiplies the beach's INLAND reach (`sand_band`). **`0.0` = no beach at all** (the cliff).
+  - `foam_scale` multiplies the MAIN WAVE's reaches **both ways** (`foam_inland_band` = the wash up the beach
+    **and** `foam_band` = the surf's seaward reach). **REACH only — the surf's PEAK is the GLOBAL
+    `foam_opacity` lever**, not a per-water one (see the Surf bullet above). `foam_scale 0` is not a legal
+    profile.
+  - `wisp_scale` multiplies the secondary offshore disturbance — its **centre distance, its half-width AND its
+    strength** — so it recedes toward the shore and fades as one gesture; `0.0` removes it cleanly.
+  - **A water terrain with no `shore_profile` gets the neutral default (1, 1, 1)** —
+    `SHORE_PROFILE_DEFAULT_{SAND,FOAM,WISP}_SCALE` in `TerrainTextureManager` — a bit-exact no-op (a partial
+    block is legal too: a missing key is neutral on that axis).
+  - **Plumbing mirrors the per-layer mean-luminance table** (`layer_luma_texture`): `TerrainTextureManager`
+    packs the profiles into `layer_shore_texture`, a **1×N FORMAT_RGBAF** image (R = sand_scale, G =
+    foam_scale, B = wisp_scale, one texel per terrain id), bound once by MapView as the `layer_shore_map`
+    uniform and fetched in-shader by layer index (`shore_profile(layer)` → `vec3`).
+    `rebuild_layer_shore_map()` is public and **updates the ImageTexture in place** (so the binding survives)
+    — that is how `blend_probe` sweeps profiles live.
+  - **THE PROFILE IS KEYED ON THE WATER, on BOTH sides of the waterline.** A *correctness* requirement, not a
+    style choice: every shore weight is one smoothstep of the signed coast coordinate `u` evaluated on both
+    sides of the shared edge, so if the two sides read different scales the profile would be discontinuous
+    **at the hex edge** — reintroducing exactly the hard line `u` exists to prevent. The water is also the only
+    side both fragments can agree on (the land biome varies along a coast; the body of water does not) and the
+    meaningful one ("cliff, beach or lake?" is a property of the water).
+  - **AND IT IS A CONTINUOUS FIELD, NEVER A NEAREST-PICK** (the fix for what used to be filed here as a "known
+    limitation"). One land hex can border a deep_ocean hex **AND** a continental_shelf hex along the SAME
+    coastline. Taking the *nearest* water neighbour's profile makes the profile **JUMP at the bisector**
+    between them — and with `sand_scale` 0 on one side and 1 on the other that is a **HARD LINE of sand
+    appearing out of nowhere along the beach** (it was only a faint seam while all the profiles were similar;
+    the cliff/beach split makes it glaring). So **every water hex in `{own + 6 neighbours}` contributes at
+    once**, weighted by proximity to **that** shared edge, and the profile is their **normalized weighted
+    mean** — the water depth field's discipline. A cliff coast **transitions into** a beach coast over ~a hex
+    instead of switching.
+    * **The weight** is `smoothstep(−reach, 0, d)` on the signed distance `d` to that neighbour's shared edge
+      (own water = weight 1 by construction; land contributes nothing — it has no profile), with `reach` =
+      `SHORE_PROFILE_REACH_APOTHEMS` (**1.0**) × the hex **apothem** (the `half_dist` the loop already
+      computes). It is deliberately **unwobbled** — a noise displacement here would break the cross-edge
+      agreement below.
+    * **Why 1.0 apothem is the cap, and why the mean is EXACTLY continuous across every hex edge** (including
+      the land↔water one, where it must be, per `u` above). On the shared edge of hexes A|B: (i) a water hex
+      **C that neighbours BOTH** reads the *same* signed distance from A's frame and from B's frame — the
+      three bisectors meeting at that corner are symmetric under the 120° rotation about it — so both frames
+      give C the same weight; (ii) a water hex enumerated from **only one** frame has signed distance
+      `≤ −apothem` there, so its weight is exactly **0** and the frame that cannot see it agrees. Raising the
+      reach past 1.0 apothem breaks (ii) and re-introduces a step at the hex boundary.
+    * **The beach fades out with its own reach** (`sand_fade`): `SHORE_REACH_MIN_PX` floors every reach so no
+      fade divides by ~0, but on a cliff coast (`sand_scale → 0`) that floor would keep a **1px, full-strength
+      tan hairline** alive at the waterline — and worse, the beach would **POP** into existence at full
+      opacity the instant `sand_scale` left 0 as a cliff profile blended into a beach one. So the sand's
+      opacity is scaled by `min(sand_reach_raw / SHORE_REACH_MIN_PX, 1)`: exactly **1.0 (a bit-exact no-op)
+      for any beach wider than the floor**, and a continuous grow-in from nothing below it.
+  - **Shipped:** `deep_ocean` **(0, 1, 1)** — the cliff · `continental_shelf` **(1, 0.75, 0.5)** — the ordinary
+    beach, main wave muted, disturbance halved · `inland_sea` **(0.5, 0.5, 0)** — the approved lake. Every
+    other water terrain (coral_shelf, hydrothermal_vent_field) is neutral. Per-**LAND**-biome shore gating (a
+    grassy shore vs a wooded shore) is still deliberately NOT built — all coasts render the same beach+foam
+    art. Verify via `tools/map_preview.gd` State Q (`_biome_band_terrain` carves an ocean bay so the ocean
+    borders BOTH prairie and woodland) → `map_biome_blend.png` + `map_biome_shore_seam.png` (coast close-up),
+    the lake via `blend_probe` **state 10 (L)**, and the cliff/beach/mixed coasts via **state 15 (D)** below.
+  - **NOTE for the next pixel-diff:** because the shipped `continental_shelf` profile is no longer neutral,
+    `V7_coast_unchanged` / `V10_shore*` / `H_gate_coast` (whose sea IS the shelf) **moved** when it landed —
+    that is the shipped muting, not a regression. They remain the bit-identical reference for any blend
+    **eligibility** change; re-baseline them after a deliberate `shore_profile` edit. Frames with no ocean hex
+    (`blend_bands_*`, every `H_*`/`S_*`/`G_*`, the `L*` lake) must stay byte-identical through both.
 
 **Canopy overlay — forest = grass floor + overhanging tree crowns:** a forest biome is split into a
 **ground layer** that blends like any flat land and a **canopy overlay** of whole crowns that overhang
@@ -343,7 +695,7 @@ silhouette. Today the only canopy biome is **12 (mixed_woodland)** — its `blen
 - **Map-space canopy UV:** `cuv = v_map / (2·hex_radius) · canopy_scale`, where `v_map = v_world -
   hex_origin` is the pan/zoom-anchored MAP coordinate (raw `v_world` is the quad-LOCAL/screen-fixed
   coord and would slide against the grid on pan/zoom — all map-space terms, canopy UV + the
-  dither/shore/treeline noise, use `v_map`). Continuous across hexes (a crown straddling a boundary
+  blend-wobble/shore/treeline noise, use `v_map`). Continuous across hexes (a crown straddling a boundary
   reads as one tree). The base biome now samples in the same continuous world space (see **Base biome
   UV** above), so `canopy_scale` and `base_scale` are the two independent world-UV density knobs (a
   crown tile per hex at `canopy_scale = 1.0`; a base tile per ~`1/base_scale` hexes). FoW-tinted like the rest.
@@ -400,6 +752,80 @@ biome — its drama is incision, handled at the base-floor level, not raised rel
   the shadowed ground using the shared `canopy_density(s, overhang, softness)` × prominence and the
   world-noise `CANOPY_TREELINE_NOISE` bumpy footline (reused, not duplicated). Peak UV = the same
   continuous map-space `v_map / (2·hex_radius) · peak_scale` as the canopy.
+- **PEAK ↔ PEAK IS A SEAM TOO — and the TALLER relief overhangs the LOWER one** (the fix for the "rolling
+  hills STILL have hard straight edges, even with `blend_rugged_land` on" report). A peak↔**non**-peak edge is
+  a footline (the relief overhangs it and thins away), but an edge between two hexes that BOTH carry relief
+  used to be **no boundary at all** — the scan skipped it (`own_is_peak == (ncode > 0) → continue`), so each
+  hex composited its OWN peak layer at full density right up to the shared edge and the art switched **1-bit
+  ON the hex line**: rolling_hills' green mounds ended in a razor-straight diagonal and alpine_mountain's
+  spires began. **The base floor under them was blending correctly the whole time** — it is simply invisible
+  under near-opaque relief art, which is why the `blend_rugged_land` gate did not help this seam (`blend_probe`
+  state **G** proves it: `G_no_peaks` renders the same seam as a soft organic ecotone).
+  So a relief↔relief edge now **cross-fades the two peak layers**, as a CONTINUOUS WEIGHTED MIX (never a pick),
+  with the seam's **centre — not its shape — driven by elevation** (the `elev_map` the pass already reads):
+  * `asym` = a smooth ODD function of Δelev (`2·smoothstep(−D, D, Δ) − 1`, `D = PEAK_BLEND_FULL_DELTA` = 0.25
+    of the 0..1 relative-height scale): +1 when the neighbour towers over us, −1 when we tower over it, **0 at
+    equal height**.
+  * the 50/50 line sits at depth `m = (peak_overhang − peak_softness) · asym` **into our hex**, and the
+    neighbour layer's coverage is `w = 1 − smoothstep(m − peak_softness, m + peak_softness, depth)`. So the
+    taller relief spills across the edge and dies exactly `peak_overhang` px in — **the same reach it has onto
+    flat ground, and no further** (offsetting by the *full* overhang stacks the feather on top of it and pushes
+    the alpine art a whole hex radius into the hills, swallowing them), while the lower relief does **not climb
+    uphill**. At Δelev → 0 it degrades to `m = 0`: a symmetric cross-fade of half-width `peak_softness`.
+  * **CONTINUITY** (the shoreline's signed-coast-coordinate discipline): the neighbour computes the same edge
+    with `asym`, hence `m`, **negated**, and smoothstep is symmetric about its centre — so at the shared edge
+    (depth = 0 from **both** sides) the two hexes assign the **same** coverage to the **same** layer, for every
+    elevation pair. The seam-centre **wobble** (world noise, so the cross-fade meanders instead of tracing the
+    straight hex line) must therefore be applied **ANTISYMMETRICALLY**, signed by the peak **layer index** — a
+    total order both sides agree on and that never ties.
+  * Neighbours contribute **all at once**, weighted, and the result is their **weighted mean** (own weight =
+    what the neighbours have not claimed; denominator `max(1, Σw)`, continuous) — the water depth field's
+    discipline, so a hex meeting two different reliefs cannot seam along the bisector. Elevation is averaged
+    with the same weights, so **prominence follows the art actually showing** (a tall neighbour's spires
+    overhang at THEIR prominence, not faded down to ours). No new config levers: the reach and feather reuse
+    `peaks.overhang_width` / `softness_width`.
+  * The mean is taken in **PREMULTIPLIED alpha** (`premultiplied`/`unpremultiplied` helpers). Relief art is
+    RGBA with large transparent regions, and a straight-alpha mean lets a transparent texel's keyed-out RGB
+    pollute the colour wherever the other layer is opaque — it drew bright dotted fringes **along** the seam.
+  * **Every `peak_tex` fetch uses `textureGrad`** with gradients taken **before any branch** (`puv_dx`/`puv_dy`,
+    hoisted above `if (!in_map)`). The peak pass's fetches all sit in divergent control flow, where implicit-LOD
+    `texture()` has **UNDEFINED derivatives**: on a 2×2 quad straddling a relief↔relief seam the lanes take
+    different branches, the driver picks a garbage mip, and the fetch returns the wrong resolution — which drew
+    a **1-pixel dark column exactly along the hex edge**, i.e. a razor line hiding inside an otherwise correct
+    cross-fade. This was invisible before only because the seam it hid in was already hard.
+  * A snapshot with **no elevation raster** (preview/rehydrated frames) writes `PEAK_ELEV_FALLBACK` for every
+    hex, so Δelev = 0 everywhere and every relief↔relief seam is the symmetric cross-fade.
+  * **Still a nearest-edge pick:** a **ground** hex touching two DIFFERENT reliefs picks the *nearest* one's
+    layer for the overhang/shadow (`nb_peak_code`). Same 1-bit bug class, not yet hit in a frame; the
+    accumulator above is the shape of the fix if it ever shows.
+- **THE CAST SHADOW MUST DIE OFF WITH DISTANCE FROM THE RELIEF, NOT WITH THE HEX GRID** (the fix for the
+  "dark hexagons in the rocky field next to the hills" report). `peak_code > 0` is true for any hex merely
+  **ADJACENT** to relief, and the peak art is near-opaque wherever the occlusion taps sample it — so the
+  raw occlusion term is roughly **CONSTANT across the whole neighbour hex** and then terminates on **that
+  hex's own boundary**: a flat, hex-shaped dark patch painted into the neighbouring biome, on all six sides
+  at once (not even directional). Fix: the occlusion is multiplied by a **`shadow_env` envelope** built from
+  the very signed distance to the peak↔non-peak boundary the overhang already computes —
+  `env = 1 − smoothstep(0, reach, out_dist)`, where `out_dist` is the distance **beyond the (noise-wobbled)
+  footline**, so the envelope is FULL at the footline and 0 within `reach`. `reach` is
+  `peak_shadow_len` × an **elevation** factor (`PEAK_SHADOW_ELEV_FLOOR`… 1 — a high massif throws a longer
+  shadow) × a **DIRECTIONAL** factor: full length where the relief lies TOWARD the light (we are down-light
+  of it → in its cast shadow), shrinking to `PEAK_SHADOW_UPLIGHT_REACH` of it on the LIT side. It stays a
+  *directional cast shadow*, **not a symmetric halo** — but the lit side keeps a short **contact skirt**
+  rather than a hard angular cutoff, because a hard `dot(light, normal) > 0` gate would step to zero right
+  at the footline, where the art is only ~half opaque and the shadowed ground shows through: that trades the
+  hexagon for a dark crescent.
+  **Continuity, the same discipline as the shoreline's signed coast coordinate `u`:** the envelope is
+  evaluated per boundary edge from quantities that read **identically on both sides of a shared edge**
+  (the signed distance is 0 there from both hexes, and the relief-normal is the same vector), so nothing
+  pops at the hex line. It is a **MAX over the qualifying edges, never a sum** — a hex touching relief on two
+  sides takes the deeper of the two and cannot **double-darken into a seam**. (Enveloping by the *single
+  nearest* edge only — the discipline `peak_code`/prominence still follow — would have been **discontinuous
+  along the bisector** where the nearest edge switches, since the two edges' light alignments differ; a max
+  of continuous functions is continuous everywhere.) Verify on **`blend_probe` state S**, and judge it on
+  **`S_shadow_footprint*.png`** — the amplified diff against a `shadow_strength = 0` render, i.e. the cast
+  shadow **in isolation**. That frame is necessary because the relief art overhangs the footline and is
+  semi-transparent out there, so neither the eye nor a pixel sample can separate "shadow" from "dark mound
+  fringe" in the composited frame.
 - **Peak LOD is DECOUPLED from the blend LOD** (own `peaks_lod_enabled`, `radius ≥ peak_min_radius`,
   default 3.0 ≪ `EDGE_BLEND_MIN_RADIUS`), so the mountain mass persists at far zoom; trilinear-mipmapped
   peak array keeps it smooth (no shimmer).
@@ -525,7 +951,13 @@ as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` p
   - The shore pass additionally **skips any edge with a navigable hex on EITHER side**: `blend_class`
     alone is not enough at the MOUTH, where the (now-land) bank would take a beach and the sea across from
     it would draw a **surf line across the river's mouth** — the river visibly walled off from the sea it
-    drains into. A river meeting the sea is not a coast.
+    drains into. A river meeting the sea is not a coast. **This must be an EDGE-LEVEL exclusion, not a
+    `shore_profile` entry** (see Shoreline → per-water-terrain shore profile): the profile field is keyed on
+    the **water** side — only a `CLASS_WATER` hex contributes one — and a navigable hex is land-class by
+    construction, so it can never supply a profile. The profile that would apply at the mouth is the **sea's**,
+    and that sea must keep it for its coast everywhere else. Dropping the edge removes the whole chain at once
+    (profile, waterline cross-fade, sand, surf, wisp all live under the pass's `best_d` guard) and does so
+    symmetrically from **both** hexes' frames, so no half-drawn coast can survive on one side of it.
   - The **channel** (`river_tex` **layer 2**, `textures/rivers/02_navigable.png` — the deep teal water that
     used to be the terrain's base) is TWO kinds of stroke, unioned by the **max-coverage (min-distance)**
     pick — the same trick that rounds the Minor/Major corner joins, here fusing them into one connected

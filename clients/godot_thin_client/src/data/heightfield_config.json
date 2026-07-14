@@ -19,6 +19,8 @@
       0.08,
       0.12,
       1.0
-    ]
+    ],
+    "fow_softness": 0.6,
+    "fow_noise_amount": 0.15
   }
 }
