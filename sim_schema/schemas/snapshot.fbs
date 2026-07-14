@@ -415,6 +415,18 @@ table TileState {
   // Tile-intrinsic per-turn morale drain (fixed-point, FIXED_POINT_SCALE = 1e6; >= 0, bigger =
   // harsher). Band-independent property of the place — the sim's `tile_morale_pressure` total.
   habitability:long = 0;
+  // GRAZE (PASTURE) LAYER — docs/plan_grazing_foundation.md. The land's ANIMAL-edible vegetal stock
+  // (grass/browse), which is a different stock on a different distribution from the HUMAN-edible
+  // forage (`ForagePatchState`, food-module tiles only): a closed-canopy forest is rich in nuts and
+  // poor in graze; a prairie steppe is the reverse. Carried per-TileState rather than as a patch list
+  // because graze sits on nearly EVERY land tile (~2000/map) — and TileState is per-entity diffed, so
+  // an ungrazed turn costs zero delta bytes. Drives both the pasture map overlay and the tile card.
+  grazeBiomass:float = 0;    // live grazeable stock on this tile (0 = no pasture / eaten out)
+  grazeCapacity:float = 0;   // the LAND's capacity, from its biome (0 = this biome carries no pasture)
+  // 0 = none (no pasture at all), 1 = thriving, 2 = stressed, 3 = collapsing. A compact code (the
+  // `moraleCause:ubyte` idiom) because this rides every tile; `none` is the default so "no pasture"
+  // can never be mistaken for "healthy pasture".
+  grazeEcologyPhase:ubyte = 0;
 }
 
 table LogisticsLinkState {

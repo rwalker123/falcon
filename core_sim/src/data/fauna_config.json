@@ -138,5 +138,58 @@
   "market": {
     "take_fraction": 0.20,
     "trade_goods_multiplier": 4.0
+  },
+  "_comment_graze": "THE GRAZE (PASTURE) LAYER — docs/plan_grazing_foundation.md. The land's ANIMAL-edible vegetal stock (grass, browse, forbs), on ANY vegetated land tile. It is a DIFFERENT stock on a DIFFERENT distribution from the human-edible forage (labor_config.json `forage`, seeds/nuts/tubers, food-module tiles only): humans cannot digest cellulose, and that is the entire economic basis of herding. Phase 2a ships the layer INERT — it regrows, persists and exports, and NOTHING reads it for gameplay yet.",
+  "graze": {
+    "_comment_capacity_by_biome": "A DATA TABLE OVER THE 37 BIOMES, NOT A FORMULA. Grazeable biomass a tile of each biome carries at capacity. Every biome must appear (validate() rejects a partial table — a missing row would silently read as an invisible zero-graze dead zone). Anchor: PrairieSteppe = 240 is THE reference pasture; every other row is a claim about that biome relative to it. The ABSOLUTE scale is a free parameter — only the ratios matter until Phase 2b's fodder_per_biomass denominates it into animals. Note MixedWoodland (55) and BorealTaiga (40): a closed-canopy forest is rich in NUTS and poor in GRAZE, because the canopy shades out the ground cover — that inversion is the whole point of splitting the two stocks.",
+    "capacity_by_biome": {
+      "DeepOcean": 0.0,
+      "ContinentalShelf": 0.0,
+      "InlandSea": 0.0,
+      "CoralShelf": 0.0,
+      "HydrothermalVentField": 0.0,
+      "TidalFlat": 200.0,
+      "RiverDelta": 220.0,
+      "MangroveSwamp": 60.0,
+      "FreshwaterMarsh": 160.0,
+      "Floodplain": 230.0,
+      "AlluvialPlain": 230.0,
+      "PrairieSteppe": 240.0,
+      "MixedWoodland": 55.0,
+      "BorealTaiga": 40.0,
+      "PeatHeath": 110.0,
+      "HotDesertErg": 8.0,
+      "RockyReg": 10.0,
+      "SemiAridScrub": 90.0,
+      "SaltFlat": 0.0,
+      "OasisBasin": 150.0,
+      "Tundra": 70.0,
+      "PeriglacialSteppe": 130.0,
+      "Glacier": 0.0,
+      "SeasonalSnowfield": 25.0,
+      "RollingHills": 150.0,
+      "HighPlateau": 45.0,
+      "AlpineMountain": 30.0,
+      "KarstHighland": 50.0,
+      "CanyonBadlands": 12.0,
+      "ActiveVolcanoSlope": 0.0,
+      "BasalticLavaField": 0.0,
+      "AshPlain": 0.0,
+      "FumaroleBasin": 0.0,
+      "ImpactCraterField": 5.0,
+      "KarstCavernMouth": 20.0,
+      "SinkholeField": 20.0,
+      "AquiferCeiling": 80.0
+    },
+    "_comment_ecology": "GRASS REGROWS FAST — it is the quickest-renewing vegetal stock in the model, and that is the economic premise of herding: a pasture eaten to the ground is back within a few seasons, a nut grove is not. Ordering (a claim about biology, not a knob): wild fauna 0.05 << forage 0.25 (labor_config.json) < GRAZE 0.40 << a fed pen 0.90 (a hyper-managed system, not a wild one). At r = 0.40 a tile's sustainable flow is r*K/4 = 0.10*K per turn and a stripped pasture climbs back to ~90% of capacity in ~20 turns (vs ~35 at forage's 0.25). collapse_rate is INERT for graze — grass has no Allee depensation, so advance_graze_regrowth runs pure logistic regrowth and never the collapse branch; the shared EcologyConfig simply carries the field (exactly as labor_config's forage ecology does). collapse_fraction/stressed_fraction are read, for the phase bands the overgrazing readout uses.",
+    "ecology": {
+      "regrowth_rate": 0.40,
+      "collapse_fraction": 0.15,
+      "collapse_rate": 0.20,
+      "stressed_fraction": 0.40,
+      "extinction_floor": 0.0
+    },
+    "_comment_reseed_floor_fraction": "The exact mirror of forage.reseed_floor_fraction. Grass reseeds from the surrounding ground, so GRAZE IS NEVER PERMANENTLY DEAD: an eaten-out tile is lifted to this small standing crop before regrowth each turn and recovers via the normal logistic curve, instead of sticking at 0 forever (logistic_regrowth(0, ..) == 0). Kept BELOW collapse_fraction (validated) so a stripped pasture still reads Collapsing — the floor stops permanent death, it does not hide overgrazing.",
+    "reseed_floor_fraction": 0.02
   }
 }

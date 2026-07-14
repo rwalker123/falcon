@@ -17,6 +17,7 @@ use std::{
 use bevy::prelude::Resource;
 use rand::{rngs::SmallRng, Rng};
 use serde::Deserialize;
+use sim_runtime::TerrainType;
 use thiserror::Error;
 
 pub const BUILTIN_FAUNA_CONFIG: &str = include_str!("data/fauna_config.json");
@@ -497,6 +498,74 @@ impl Default for MarketConfig {
     }
 }
 
+/// **The graze (pasture) layer** — the land's *animal-edible* vegetal stock (grass, browse, forbs),
+/// distinct from the human-edible `ForagePatch.biomass` (seeds/nuts/tubers) on food-module tiles.
+/// Authoritative design: `docs/plan_grazing_foundation.md`. It lives on **any vegetated land tile**,
+/// with a capacity set by that tile's biome — a temperate forest is rich in nuts and poor in graze
+/// (the canopy shades out ground cover); a prairie steppe is the reverse.
+///
+/// **Homed in `fauna_config.json`, not a file of its own**, because graze is the *substrate of the
+/// fauna model*: every consumer of it (herd carrying capacity, competition, overgrazing, migration,
+/// spawn placement — Phase 2b/2c) is a fauna system, and no labor/human system may ever read it. That
+/// also lets it reuse [`FaunaConfig::validate`] and its `validate_ecology` helper verbatim rather
+/// than forking a second loader, env override and error enum.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct GrazeConfig {
+    /// Grazeable biomass a tile of each biome carries at capacity. **A pure data table, not a
+    /// formula** — every one of the 37 [`TerrainType`]s must appear (enforced by
+    /// [`FaunaConfig::validate`]: a missing biome would silently read as zero graze, i.e. an
+    /// invisible dead zone). `0.0` is the *deliberate* reading for water, glacier, bare rock and lava.
+    /// The absolute scale is a free parameter — only the *ratios* matter until Phase 2b's
+    /// `fodder_per_biomass` denominates it into animals.
+    pub capacity_by_biome: HashMap<TerrainType, f32>,
+    /// Graze regrowth + the Thriving/Stressed/Collapsing phase bands. **Grass has no Allee
+    /// depensation** — `advance_graze_regrowth` runs pure `logistic_regrowth`, never
+    /// `net_biomass_delta`'s collapse branch — so `collapse_rate` here is *inert* (it is read by no
+    /// graze code path; the shared [`EcologyConfig`] simply carries it, exactly as `labor_config`'s
+    /// forage ecology does). `regrowth_rate` is tuned **well above** forage's 0.25 and fauna's 0.05:
+    /// see [`DEFAULT_GRAZE_REGROWTH_RATE`].
+    pub ecology: EcologyConfig,
+    /// The reseed standing crop, as a fraction of the tile's capacity, that a depleted patch is
+    /// lifted to before regrowth each turn — the exact mirror of `forage.reseed_floor_fraction`.
+    /// Grass reseeds from surrounding ground, so **graze is never permanently dead**: an eaten-out
+    /// tile recovers from this seed stock via the normal logistic curve instead of sticking at `0`
+    /// (`logistic_regrowth(0, ..) == 0`). Kept below `ecology.collapse_fraction` so a stripped pasture
+    /// still reads Collapsing — the floor stops permanent death, it does not hide overgrazing.
+    pub reseed_floor_fraction: f32,
+}
+
+/// Graze regrows **fast** — it is the quickest-renewing vegetal stock in the model, and that is the
+/// whole economic premise of herding: a pasture eaten to the ground is back within a few seasons,
+/// where a nut grove is not.
+///
+/// Ordering (each rung is a claim about the biology, not a knob): wild fauna `0.05` ≪ forage
+/// `0.25` (`labor_config.json`) < **graze `0.40`** ≪ a fed pen `0.90` (a hyper-managed system, not a
+/// wild one). At `r = 0.40` a tile's sustainable flow is `r·K/4 = 0.10·K` per turn and a stripped
+/// pasture climbs back to ~90% of capacity in ~20 turns (vs ~35 at forage's `0.25`).
+const DEFAULT_GRAZE_REGROWTH_RATE: f32 = 0.40;
+
+/// Mirrors `forage.reseed_floor_fraction` (0.02) — see [`GrazeConfig::reseed_floor_fraction`].
+const DEFAULT_GRAZE_RESEED_FLOOR_FRACTION: f32 = 0.02;
+
+impl Default for GrazeConfig {
+    fn default() -> Self {
+        Self {
+            // Deliberately **empty**. The 37-row table is *data*, and its single authoritative copy is
+            // `fauna_config.json` — duplicating it here would guarantee the two drift. A config whose
+            // `graze` block omits (or under-fills) the table is *rejected* by [`FaunaConfig::validate`]
+            // and the builtin — which has it — is used, so an incomplete table can never quietly
+            // produce a map with no pasture on it.
+            capacity_by_biome: HashMap::new(),
+            ecology: EcologyConfig {
+                regrowth_rate: DEFAULT_GRAZE_REGROWTH_RATE,
+                ..EcologyConfig::default()
+            },
+            reseed_floor_fraction: DEFAULT_GRAZE_RESEED_FLOOR_FRACTION,
+        }
+    }
+}
+
 /// Root fauna configuration.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
@@ -509,7 +578,26 @@ pub struct FaunaConfig {
     pub immigration: ImmigrationConfig,
     pub husbandry: HusbandryConfig,
     pub market: MarketConfig,
+    /// The per-biome graze (pasture) layer — see [`GrazeConfig`].
+    pub graze: GrazeConfig,
 }
+
+impl GrazeConfig {
+    /// Grazeable biomass a `terrain` tile carries at capacity. An **unknown** biome reads `0.0`, but
+    /// [`FaunaConfig::validate`] guarantees the table is total over [`TerrainType::VALUES`], so on any
+    /// loaded config this is a real lookup, never a silent default.
+    pub fn capacity_for(&self, terrain: TerrainType) -> f32 {
+        self.capacity_by_biome
+            .get(&terrain)
+            .copied()
+            .unwrap_or(NO_GRAZE_CAPACITY)
+    }
+}
+
+/// A biome that carries no animal-edible vegetation at all (open water, glacier, bare rock, lava,
+/// salt flat). Named rather than bare so a `0.0` in the table reads as *"deliberately barren"* and a
+/// `0.0` in code reads as *"the same thing"*, not as a fallback that lost its lookup.
+pub const NO_GRAZE_CAPACITY: f32 = 0.0;
 
 /// The largest a fraction-valued lever may be (`[0, 1]` / `(0, 1]` bounds in [`FaunaConfig::validate`]).
 const MAX_FRACTION: f32 = 1.0;
@@ -687,6 +775,11 @@ impl FaunaConfig {
             self.immigration.chance_per_turn,
         )?;
 
+        // --- The graze (pasture) layer. Same ecology invariants as every other rung; plus the two
+        // that make the *table* trustworthy.
+        validate_ecology("graze.ecology", &self.graze.ecology)?;
+        validate_graze(&self.graze)?;
+
         Ok(())
     }
 
@@ -720,6 +813,63 @@ impl FaunaConfig {
         out.sort_by(|a, b| a.0.cmp(b.0));
         out
     }
+}
+
+/// The graze table's own invariants — the ones that decide whether the **land layer** is trustworthy.
+///
+/// - **Totality.** The table must name every one of the 37 biomes. A missing row silently reads
+///   `0.0` ([`NO_GRAZE_CAPACITY`]) — an invisible dead zone in the pasture layer that no error, no
+///   log line and no overlay would ever explain. Zero must be *stated*, never *defaulted*.
+/// - **At least one positive row.** An all-zero table disables the entire layer (no herd could be
+///   fed anywhere) while parsing perfectly — exactly the class of "silently turns a feature off"
+///   lever this validation exists to catch.
+/// - **`reseed_floor_fraction` below `collapse_fraction`.** The floor exists to stop *permanent*
+///   death, not to hide overgrazing: at or above the collapse band a stripped pasture would be lifted
+///   straight back into a healthier phase every turn, and the ecology phase (and the client's
+///   overgrazing warning) would never be able to read Collapsing.
+fn validate_graze(graze: &GrazeConfig) -> Result<(), FaunaConfigError> {
+    let mut positive_rows = 0usize;
+    for terrain in TerrainType::VALUES {
+        let Some(&capacity) = graze.capacity_by_biome.get(&terrain) else {
+            return Err(FaunaConfigError::Invalid {
+                field: "graze.capacity_by_biome",
+                constraint: format!(
+                    "name every one of the {} biomes (missing {terrain:?}); an absent biome silently \
+                     reads as zero graze",
+                    TerrainType::VALUES.len()
+                ),
+                value: format!("{} rows", graze.capacity_by_biome.len()),
+            });
+        };
+        if !capacity.is_finite() || capacity < NO_GRAZE_CAPACITY {
+            return Err(FaunaConfigError::Invalid {
+                field: "graze.capacity_by_biome",
+                constraint: format!("be finite and at least {NO_GRAZE_CAPACITY} for every biome"),
+                value: format!("{terrain:?} = {capacity}"),
+            });
+        }
+        if capacity > NO_GRAZE_CAPACITY {
+            positive_rows += 1;
+        }
+    }
+    if positive_rows == 0 {
+        return Err(FaunaConfigError::Invalid {
+            field: "graze.capacity_by_biome",
+            constraint: "give at least one biome a positive capacity, or there is no pasture \
+                         anywhere on any map"
+                .to_string(),
+            value: "every biome is 0".to_string(),
+        });
+    }
+
+    require_in_unit_range("graze.reseed_floor_fraction", graze.reseed_floor_fraction)?;
+    require_greater_than(
+        "graze.ecology.collapse_fraction",
+        graze.ecology.collapse_fraction,
+        "graze.reseed_floor_fraction",
+        graze.reseed_floor_fraction,
+    )?;
+    Ok(())
 }
 
 /// Every ecology block (wild / pastoral / pen — and each is a full [`EcologyConfig`]) shares the same
@@ -1173,5 +1323,76 @@ mod tests {
     fn size_class_round_trips() {
         assert_eq!(SizeClass::Big.as_str(), "big");
         assert_eq!(SizeClass::Migratory.as_str(), "migratory");
+    }
+
+    /// The graze table must be **total** over the 37 biomes. A missing row would silently read as
+    /// zero graze — an invisible dead zone in the pasture layer that nothing would ever explain.
+    #[test]
+    fn validate_rejects_a_partial_graze_biome_table() {
+        let err = reject(|json| {
+            json["graze"]["capacity_by_biome"]
+                .as_object_mut()
+                .expect("table")
+                .remove("PrairieSteppe");
+        });
+        assert_rejects_field(err, "graze.capacity_by_biome");
+    }
+
+    /// An all-zero table parses perfectly and disables the entire layer — no pasture anywhere, on any
+    /// map. Exactly the "silently turns a feature off" class of lever validation exists to catch.
+    #[test]
+    fn validate_rejects_an_all_zero_graze_table() {
+        let err = reject(|json| {
+            let table = json["graze"]["capacity_by_biome"]
+                .as_object_mut()
+                .expect("table");
+            for value in table.values_mut() {
+                *value = (0.0).into();
+            }
+        });
+        assert_rejects_field(err, "graze.capacity_by_biome");
+    }
+
+    #[test]
+    fn validate_rejects_a_negative_graze_capacity() {
+        let err =
+            reject(|json| json["graze"]["capacity_by_biome"]["PrairieSteppe"] = (-1.0).into());
+        assert_rejects_field(err, "graze.capacity_by_biome");
+    }
+
+    /// A dead graze ecology (`r = 0`) means grass never regrows — every pasture is a one-shot stock
+    /// and, from Phase 2b, every herd starves.
+    #[test]
+    fn validate_rejects_a_dead_graze_ecology() {
+        let err = reject(|json| json["graze"]["ecology"]["regrowth_rate"] = (0.0).into());
+        assert_rejects_field(err, "graze.ecology.regrowth_rate");
+    }
+
+    /// The reseed floor stops *permanent* death; it must not hide overgrazing. At or above
+    /// `collapse_fraction` a stripped pasture is lifted back into a healthier band every turn and the
+    /// Collapsing phase (and the client's overgrazing warning) becomes unreachable.
+    #[test]
+    fn validate_rejects_a_reseed_floor_that_hides_overgrazing() {
+        let err = reject(|json| json["graze"]["reseed_floor_fraction"] = (0.5).into());
+        assert_rejects_field(err, "graze.ecology.collapse_fraction");
+    }
+
+    /// The shipped table's model claims, asserted rather than assumed: open grassland is pasture,
+    /// closed-canopy forest is not, and water/ice/rock carry nothing at all.
+    #[test]
+    fn builtin_graze_table_is_total_and_sane() {
+        let config = FaunaConfig::builtin();
+        let graze = &config.graze;
+        assert_eq!(graze.capacity_by_biome.len(), TerrainType::VALUES.len());
+        let prairie = graze.capacity_for(TerrainType::PrairieSteppe);
+        assert!(prairie > 0.0);
+        assert!(prairie > graze.capacity_for(TerrainType::MixedWoodland));
+        assert!(prairie > graze.capacity_for(TerrainType::Tundra));
+        assert_eq!(
+            graze.capacity_for(TerrainType::DeepOcean),
+            NO_GRAZE_CAPACITY
+        );
+        assert_eq!(graze.capacity_for(TerrainType::Glacier), NO_GRAZE_CAPACITY);
+        assert!(graze.reseed_floor_fraction < graze.ecology.collapse_fraction);
     }
 }

@@ -455,6 +455,21 @@ pub struct ForageState {
     pub ecology: EcologyState,
 }
 
+/// Authoritative mirror of a live **graze (pasture) patch** (`GrazeRegistry`), round-tripped through
+/// the rollback snapshot so a rollback rewinds grazing draw-down — the animal-edible counterpart of
+/// `ForageState`, on the same shared `EcologyState` record. Graze is **wild ground**: it is never
+/// owned, tended or improved, so `EcologyState`'s `progress` / `owner` ride at their defaults.
+/// The `(x, y)` tile key is the patch's location. See `docs/plan_grazing_foundation.md`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct GrazeState {
+    #[serde(default)]
+    pub x: u32,
+    #[serde(default)]
+    pub y: u32,
+    #[serde(default)]
+    pub ecology: EcologyState,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FoodModuleState {
     pub x: u32,
@@ -1191,7 +1206,36 @@ pub struct TileState {
     /// bigger = harsher). Band-independent — a property of the place. Derived at capture.
     #[serde(default)]
     pub habitability: i64,
+    /// **Graze (pasture) readout** — the tile's live *animal-edible* biomass (grass/browse), the stock
+    /// herds eat. `0` on water/ice/rock and on any tile with no pasture. Distinct from the
+    /// *human-edible* forage stock (`ForagePatchState`, food-module tiles only) — see
+    /// `docs/plan_grazing_foundation.md`. Derived at capture from the `GrazeRegistry`.
+    #[serde(default)]
+    pub graze_biomass: f32,
+    /// The tile's graze **capacity** — a property of the *land* (its biome), not of any animal. `0`
+    /// means the biome carries no pasture at all; `graze_biomass / graze_capacity` is the pasture's
+    /// health (and, from Phase 2b, the overgrazing signal).
+    #[serde(default)]
+    pub graze_capacity: f32,
+    /// The tile's pasture phase, as [`GRAZE_PHASE_NONE`] / [`GRAZE_PHASE_THRIVING`] /
+    /// [`GRAZE_PHASE_STRESSED`] / [`GRAZE_PHASE_COLLAPSING`]. A compact code rather than the string
+    /// the sparse herd/forage payloads use, because this rides *every* tile (the `moraleCause:ubyte`
+    /// idiom). `NONE` is the default, so "this biome has no pasture" is never confused with "this
+    /// pasture is healthy".
+    #[serde(default)]
+    pub graze_ecology_phase: u8,
 }
+
+/// `TileState::graze_ecology_phase` — the biome carries no pasture at all (water, ice, bare rock).
+/// Deliberately the zero/default value: an absent reading must never masquerade as a healthy one.
+pub const GRAZE_PHASE_NONE: u8 = 0;
+/// `TileState::graze_ecology_phase` — pasture at or above the stressed band (healthy).
+pub const GRAZE_PHASE_THRIVING: u8 = 1;
+/// `TileState::graze_ecology_phase` — pasture drawn down into the stressed band (overgrazed).
+pub const GRAZE_PHASE_STRESSED: u8 = 2;
+/// `TileState::graze_ecology_phase` — pasture stripped below the collapse band (severely overgrazed;
+/// it still recovers — grass reseeds — but slowly).
+pub const GRAZE_PHASE_COLLAPSING: u8 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LogisticsLinkState {
@@ -1981,6 +2025,12 @@ pub struct WorldSnapshot {
     /// the FlatBuffers client stream; rollback restore reads it via `ForageRegistry::update_from_states`.
     #[serde(default)]
     pub forage_registry: Vec<ForageState>,
+    /// Authoritative graze/pasture sim state (`GrazeRegistry`), round-tripped for rollback correctness
+    /// (biomass / ecology phase per land tile). Like `herd_registry` / `forage_registry` this is the
+    /// *sim* record and is not on the FlatBuffers client stream — the client reads graze off the
+    /// per-tile `TileState.graze_*` fields. Restore reads it via `GrazeRegistry::update_from_states`.
+    #[serde(default)]
+    pub graze_registry: Vec<GrazeState>,
     #[serde(default)]
     pub food_modules: Vec<FoodModuleState>,
     #[serde(default)]
@@ -3186,6 +3236,9 @@ fn create_tiles<'a>(
                     mountainKind: to_fb_mountain_kind(tile.mountain_kind),
                     mountainRelief: tile.mountain_relief,
                     habitability: tile.habitability,
+                    grazeBiomass: tile.graze_biomass,
+                    grazeCapacity: tile.graze_capacity,
+                    grazeEcologyPhase: tile.graze_ecology_phase,
                 },
             )
         })

@@ -41,8 +41,8 @@ use sim_schema::ForageState;
 use crate::{
     components::{FollowPolicy, SourceYield, Tile},
     fauna::{
-        classify_ecology_phase, forecast_source_yield, logistic_regrowth, sustainable_yield,
-        EcologyPhase, SourceYieldForecast,
+        classify_ecology_phase, forecast_source_yield, reseeding_logistic_regrowth,
+        sustainable_yield, EcologyPhase, SourceYieldForecast,
     },
     fauna_config::EcologyConfig,
     food::FoodModuleTag,
@@ -315,13 +315,14 @@ pub fn advance_cultivation(
 /// floor — a healthy patch is untouched — and the floor is small (below `collapse_fraction`), so
 /// Eradicate still crashes a patch hard into the Collapsing band; it just can't hold it at `0`.
 fn regrow_patch(patch: &mut ForagePatch, ecology: &EcologyConfig, reseed_floor_fraction: f32) {
-    let cap = patch.carrying_capacity;
-    // Reseed a depleted patch up to the floor (no-op for a healthy patch) so it has a seed stock to
-    // regrow from — plants reseed, so a crashed patch is never permanently stuck at 0.
-    let reseed_floor = reseed_floor_fraction * cap;
-    patch.biomass = patch.biomass.max(reseed_floor);
-    let delta = logistic_regrowth(patch.biomass, cap, ecology.regrowth_rate);
-    patch.biomass = (patch.biomass + delta).clamp(0.0, cap);
+    // The reseed lift + logistic step is the shared plant curve (`fauna::reseeding_logistic_regrowth`),
+    // so the human-edible forage stock and the animal-edible graze stock can never drift apart.
+    patch.biomass = reseeding_logistic_regrowth(
+        patch.biomass,
+        patch.carrying_capacity,
+        ecology.regrowth_rate,
+        reseed_floor_fraction,
+    );
     patch.refresh_ecology_phase(ecology);
 }
 

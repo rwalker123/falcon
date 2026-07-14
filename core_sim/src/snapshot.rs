@@ -19,7 +19,7 @@ use sim_runtime::{
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry, EcologyState,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FoodModuleState,
-    ForagePatchState, ForageState, GenerationState, GreatDiscoveryDefinitionState,
+    ForagePatchState, ForageState, GenerationState, GrazeState, GreatDiscoveryDefinitionState,
     GreatDiscoveryProgressState, GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdRoamState,
     HerdState, HerdTelemetryState, HuntPolicyCeilingState, HuntTripEstimateState,
     HydrologyOverlayState, InfluentialIndividualState, IntensificationKnowledgeState,
@@ -31,7 +31,8 @@ use sim_runtime::{
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, StartMarkerState, TerrainOverlayState, TerrainSample,
     TileState, TradeLinkKnowledge, TradeLinkState, VictoryModeSnapshotState, VictoryResultState,
-    VictorySnapshotState, WorldDelta, WorldSnapshot,
+    VictorySnapshotState, WorldDelta, WorldSnapshot, GRAZE_PHASE_COLLAPSING, GRAZE_PHASE_NONE,
+    GRAZE_PHASE_STRESSED, GRAZE_PHASE_THRIVING,
 };
 
 use crate::{
@@ -50,13 +51,14 @@ use crate::{
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
     expedition_config::ExpeditionConfig,
     fauna::{
-        hunt_forecast, pen_upkeep, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
+        hunt_forecast, pen_upkeep, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
         SourceYieldForecast, HERDING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
     food::FoodModuleTag,
     forage::{forage_forecast, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID},
     generations::{GenerationProfile, GenerationRegistry},
+    graze::{GrazePatch, GrazeRegistry},
     great_discovery::{
         snapshot_definitions, snapshot_discoveries, snapshot_progress, snapshot_telemetry,
         GreatDiscoveryId, GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
@@ -136,6 +138,10 @@ pub struct SnapshotContext<'w> {
     /// (`forage_registry`) so a rollback rewinds patch biomass / ecology phase. Mirrors
     /// `herd_registry` — see the forage-depletion note in `core_sim/CLAUDE.md`.
     pub forage_registry: Res<'w, ForageRegistry>,
+    /// Authoritative graze/pasture sim state, captured into the rollback snapshot (`graze_registry`)
+    /// so a rollback rewinds grazing draw-down. The *client* readout rides `TileState.graze_*` (graze
+    /// is on nearly every land tile, so a per-patch list would be the wrong shape) — see `graze.rs`.
+    pub graze_registry: Res<'w, GrazeRegistry>,
     pub fog_reveals: Res<'w, FogRevealLedger>,
     pub hydrology: Res<'w, HydrologyState>,
     pub elevation: Res<'w, ElevationField>,
@@ -1355,6 +1361,7 @@ pub fn capture_snapshot(
         herds,
         herd_registry,
         forage_registry,
+        graze_registry,
         hydrology,
         fog_reveals,
         elevation,
@@ -1407,7 +1414,12 @@ pub fn capture_snapshot(
     // patch forecast (below) needs it to report a per-worker yield that matches what the sim pays.
     let mut seasonal_weights: HashMap<UVec2, f32> = HashMap::new();
     for (entity, tile, food_module) in tiles.iter() {
-        tile_states.push(tile_state(entity, tile, &morale_pressure_cfg));
+        tile_states.push(tile_state(
+            entity,
+            tile,
+            &morale_pressure_cfg,
+            graze_registry.patch(tile.position),
+        ));
         if let Some(module) = food_module {
             seasonal_weights.insert(tile.position, module.seasonal_weight);
         }
@@ -1783,6 +1795,11 @@ pub fn capture_snapshot(
     let mut forage_registry_states: Vec<ForageState> =
         forage_registry.patches.values().map(forage_state).collect();
     forage_registry_states.sort_unstable_by_key(|state| (state.y, state.x));
+    // Authoritative graze/pasture state for rollback, same coord-sorted shape as the forage registry.
+    // (The *client* readout is on `TileState`, captured above — this is the sim record only.)
+    let mut graze_registry_states: Vec<GrazeState> =
+        graze_registry.patches.values().map(graze_state).collect();
+    graze_registry_states.sort_unstable_by_key(|state| (state.y, state.x));
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
     let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
@@ -1818,6 +1835,7 @@ pub fn capture_snapshot(
         herds: herd_states.clone(),
         herd_registry: herd_registry_states,
         forage_registry: forage_registry_states,
+        graze_registry: graze_registry_states,
         food_modules: food_module_states.clone(),
         campaign_profiles: campaign_profiles_state,
         faction_inventory: faction_inventory_state.clone(),
@@ -2226,6 +2244,14 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         forage_registry.update_from_states(&snapshot.forage_registry);
     } else {
         world.insert_resource(ForageRegistry::from_states(&snapshot.forage_registry));
+    }
+
+    // Rebuild the authoritative graze/pasture registry, same round-trip. Note this also means
+    // `spawn_initial_graze`'s "already populated → skip" guard sees a restored world as seeded.
+    if let Some(mut graze_registry) = world.get_resource_mut::<GrazeRegistry>() {
+        graze_registry.update_from_states(&snapshot.graze_registry);
+    } else {
+        world.insert_resource(GrazeRegistry::from_states(&snapshot.graze_registry));
     }
 
     let influencer_config = if let Some(handle) = world.get_resource::<InfluencerConfigHandle>() {
@@ -3653,6 +3679,7 @@ fn tile_state(
     entity: Entity,
     tile: &Tile,
     morale_pressure_cfg: &MoralePressureConfig,
+    graze: Option<&GrazePatch>,
 ) -> TileState {
     let (mountain_kind, mountain_relief) = match tile.mountain {
         Some(meta) => (map_mountain_kind(meta.kind), meta.relief),
@@ -3679,6 +3706,13 @@ fn tile_state(
         mountain_kind,
         mountain_relief,
         habitability,
+        // The pasture readout (Phase 2a). A tile with no patch is a biome that carries no graze at
+        // all, and reads a stated zero + `GRAZE_PHASE_NONE` — never a "healthy" default.
+        graze_biomass: graze.map(|patch| patch.biomass).unwrap_or_default(),
+        graze_capacity: graze
+            .map(|patch| patch.carrying_capacity)
+            .unwrap_or_default(),
+        graze_ecology_phase: graze_phase_code(graze),
     }
 }
 
@@ -4253,6 +4287,35 @@ pub(crate) fn forage_state(patch: &ForagePatch) -> ForageState {
     }
 }
 
+/// Capture a live `GrazePatch` into its authoritative snapshot mirror for rollback (the inverse is
+/// `graze::GrazeRegistry::update_from_states`). Mirrors `forage_state`; graze is **wild ground**, so
+/// the shared `EcologyState`'s cultivation fields (`progress`/`owner`) stay at their defaults.
+pub(crate) fn graze_state(patch: &GrazePatch) -> GrazeState {
+    GrazeState {
+        x: patch.tile.x,
+        y: patch.tile.y,
+        ecology: EcologyState {
+            biomass: patch.biomass,
+            carrying_capacity: patch.carrying_capacity,
+            ecology_phase: patch.ecology_phase.as_str().to_string(),
+            progress: 0.0,
+            owner: None,
+        },
+    }
+}
+
+/// The compact per-tile pasture-phase code the client reads off `TileState` (`GRAZE_PHASE_*`).
+/// A tile with **no patch** (a biome that carries no pasture: water, ice, bare rock) is
+/// [`GRAZE_PHASE_NONE`] — the zero/default, so an absent pasture can never be misread as a healthy one.
+fn graze_phase_code(patch: Option<&GrazePatch>) -> u8 {
+    match patch.map(|patch| patch.ecology_phase) {
+        None => GRAZE_PHASE_NONE,
+        Some(EcologyPhase::Thriving) => GRAZE_PHASE_THRIVING,
+        Some(EcologyPhase::Stressed) => GRAZE_PHASE_STRESSED,
+        Some(EcologyPhase::Collapsing) => GRAZE_PHASE_COLLAPSING,
+    }
+}
+
 fn snapshot_faction_inventory(inventory: &FactionInventory) -> Vec<SchemaFactionInventoryState> {
     let mut states = Vec::new();
     for (faction, items) in inventory.iter() {
@@ -4722,6 +4785,9 @@ mod tests {
             mountain_kind: MountainKind::None,
             mountain_relief: 1.0,
             habitability: 0,
+            graze_biomass: 0.0,
+            graze_capacity: 0.0,
+            graze_ecology_phase: GRAZE_PHASE_NONE,
         }
     }
 
@@ -4756,6 +4822,7 @@ mod tests {
             herds: Vec::new(),
             herd_registry: Vec::new(),
             forage_registry: Vec::new(),
+            graze_registry: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -4818,6 +4885,7 @@ mod tests {
             herds: Vec::new(),
             herd_registry: Vec::new(),
             forage_registry: Vec::new(),
+            graze_registry: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -4875,6 +4943,7 @@ mod tests {
             herds: Vec::new(),
             herd_registry: Vec::new(),
             forage_registry: Vec::new(),
+            graze_registry: Vec::new(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -5179,6 +5248,9 @@ mod tests {
             mountain_kind: MountainKind::None,
             mountain_relief: 1.0,
             habitability: 0,
+            graze_biomass: 0.0,
+            graze_capacity: 0.0,
+            graze_ecology_phase: GRAZE_PHASE_NONE,
         };
         let base_overlay = TerrainOverlayState {
             width: 1,

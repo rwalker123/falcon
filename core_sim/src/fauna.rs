@@ -1880,6 +1880,28 @@ pub(crate) fn logistic_regrowth(biomass: f32, cap: f32, regrowth_rate: f32) -> f
     (regrowth_rate * biomass * (1.0 - biomass / cap)).max(0.0)
 }
 
+/// One turn of **reseeding pure-logistic regrowth**: the new biomass a plant stock at `biomass`
+/// reaches, growing toward `cap` at `regrowth_rate`, after first being lifted to a **reseed floor**
+/// (`reseed_floor_fraction × cap`).
+///
+/// The single source of the plant regrowth curve, shared by `forage::regrow_patch` (the human-edible
+/// stock) and `graze::regrow_graze_patch` (the animal-edible one). Plants have **no Allee crash**
+/// (that is `net_biomass_delta`, the animal curve), so a depleted patch always recovers. The floor is
+/// what makes "always recovers" true rather than merely intended: `logistic_regrowth` returns `0` at
+/// `biomass == 0`, so a stock driven to exactly `0` would otherwise stick there forever. The lift is a
+/// `max()`, so a healthy stock is untouched; and the floor is kept below `collapse_fraction`, so a
+/// stripped patch still reads Collapsing — it just cannot be held at `0`.
+pub(crate) fn reseeding_logistic_regrowth(
+    biomass: f32,
+    cap: f32,
+    regrowth_rate: f32,
+    reseed_floor_fraction: f32,
+) -> f32 {
+    let reseeded = biomass.max(reseed_floor_fraction * cap);
+    let delta = logistic_regrowth(reseeded, cap, regrowth_rate);
+    (reseeded + delta).clamp(0.0, cap)
+}
+
 /// Net per-turn biomass change with **critical depensation**. Above the Allee
 /// threshold (`collapse_fraction * cap`) the group regrows logistically; below it the
 /// group is non-viable and declines by `collapse_rate` of its biomass each turn — an
