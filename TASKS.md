@@ -91,6 +91,17 @@
 - [x] Provide serde-compatible adapters for early testing.
 - [x] Extend trade link schema with openness/knowledge diffusion fields and migration knowledge summary payloads (Owner: Devi, Estimate: 1.5d; Deps: coordinate with `core_sim` turn pipeline + population serialization).
 - [x] Add `CorruptionLedger` structs and subsystem hooks to snapshots (Owner: Devi, Estimate: 2d; Deps: align with logistics/trade/military component schemas).
+- [ ] **Collapse the duplicate band-ceiling wire representation.** `HerdTelemetryState` carries the
+  per-policy band hunt ceiling **twice**: the flat scalars (`ceilingSustain`/`ceilingSurplus`/
+  `ceilingMarket`/`ceilingEradicate`/`ceilingCorral` + `corralYield`/`perWorkerYield`) and the
+  `huntPolicyCeilings:[{policy, provisionsPerTurn}]` list. They are the **same numbers** — the list is a
+  projection of the herd's `fauna::hunt_forecast`, the same object the scalars export, so they cannot
+  drift. **The list should win:** a free-form `policy` string means a new policy needs no schema change,
+  matching the convention already used for `species` (and `huntTripEstimates`). Retiring the scalars is
+  a schema change **plus** a client refactor (the existing UI reads them), so it was deliberately
+  deferred out of PR #117. Scope: drop the scalar fields from `snapshot.fbs`/`sim_schema`/`snapshot.rs`,
+  repoint `Hud.gd`'s ceiling lookup at the list, keep `SourceYieldForecast` as the single sim-side
+  source.
 
 ## Godot Inspector Pivot
 - [x] Extend Godot snapshot decoder to expose influencer, corruption, sentiment, and demographic data currently consumed by the CLI (Owner: TBD, Estimate: 1.5d; Deps: FlatBuffers topics stable).
@@ -363,6 +374,21 @@ systems. Realizes the Settlement arc's food-tending improvement class (tended pa
   land the **corral** (pastoral) — the place-bound food-tending improvements from
   `plan_settlement_population.md`, knowledge-gated (`farming`/`herding`), built/tended/decaying. Pulls
   forward a slice of the Settlement arc's `build`/improvement system. Feeds `SedentarizationScore`.
+- [ ] **Corral as a managed population (food upkeep → herd size → yield).** A corral should be a
+  **population in its own right**, not a flat multiplier on a frozen biomass number. The penned animals
+  need **resources — food — to flourish**: the pen's output derives from **the number of animals you
+  have**, which is in turn driven by **the food (and other resources) you feed it** each turn. So:
+  (a) yield = f(animal count), not `corral_provisions_per_biomass × biomass`; (b) the penned herd
+  **consumes food each turn (upkeep)** — feeding it grows the herd toward a pen capacity, underfeeding
+  **shrinks** the herd and with it the yield; (c) the corral becomes an **ongoing commitment with a
+  running cost** instead of a one-off 25-turn build that then prints food forever — which is what makes
+  penning a real decision rather than a strictly-dominant one. **Current stopgap being replaced:** the
+  completed pen pays a flat `husbandry.corral_provisions_per_biomass × biomass` with **no upkeep**,
+  rebalanced (interim) to **3× the Market rate** (`corral_provisions_per_biomass = 0.012 = 3 ×
+  market.take_fraction × hunt.provisions_per_biomass`) — sustainable, but still ~48× the Sustain/MSY
+  baseline because a stock-share and a flow-share aren't commensurable. That flat-rate model is exactly
+  what this arc retires. See `core_sim/CLAUDE.md` → Fauna & Wild Game → **Corral (Intensification Rung
+  1c)** and `docs/plan_intensification.md` → *Open tuning dials* (the payoff dial).
 - [ ] **Cross-cutting — command yield-vector + pre-commit forecast.** Model a command's
   multi-dimensional output (food + husbandry/cultivation progress + trade goods + discovery) and
   surface it live + as a compose-time **forecast** (projection fn mirroring the sim yield math, no

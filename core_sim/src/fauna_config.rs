@@ -284,9 +284,11 @@ impl Default for FollowConfig {
 /// the crew takes only `corralling_yield_fraction × the herd's Sustain (MSY) ceiling` — a sustainable
 /// draw, so the herd stays healthy — accruing `corral_build_progress_per_turn` each turn; at `1.0` the
 /// herd is penned (`corralled_at`) and pays `corral_provisions_per_biomass` on its full standing
-/// biomass, place-local to the keeper and without draw-down. That penned rate is set **higher** than
-/// the mobile `provisions_per_biomass` so pinning a herd pays more (mirroring how the forage
-/// `tended_provisions_per_biomass` beats the wild MSY skim). `knowledge_progress_per_turn` /
+/// biomass, place-local to the keeper and without draw-down. That penned rate is **anchored to
+/// Market** — `3 × market.take_fraction × hunt.provisions_per_biomass` — so pinning a herd out-pays
+/// both the mobile `provisions_per_biomass` even-split and the commercial hunt, but sustainably (see
+/// [`DEFAULT_CORRAL_PROVISIONS_PER_BIOMASS`] for the full derivation *and* the residual ratio vs.
+/// Sustain). `knowledge_progress_per_turn` /
 /// `knowledge_completion_threshold` are the earned-**Herding**-knowledge levers (the animal mirror of
 /// `CultivationConfig`'s `knowledge_*`): a Sustain-hunt on a Thriving herd teaches the faction Herding
 /// (into the `DiscoveryProgressLedger`, discovery `HERDING_DISCOVERY_ID`), the gate the `Corral` policy
@@ -302,7 +304,9 @@ pub struct HusbandryConfig {
     pub provisions_per_biomass: f32,
     /// Corral (Rung 1c): provisions/turn per unit of a **penned** herd's biomass, paid place-local to
     /// the keeper without draw-down. Higher than `provisions_per_biomass` (the mobile even-split rate)
-    /// — corralling pays more but pins the herd.
+    /// — corralling pays more but pins the herd. Default
+    /// [`DEFAULT_CORRAL_PROVISIONS_PER_BIOMASS`], whose derivation (and its honest residual vs.
+    /// Sustain) is documented there — read it before retuning.
     pub corral_provisions_per_biomass: f32,
     /// **The investment cost of corralling** (the animal twin of `cultivating_yield_fraction`): while
     /// the pen is being built, the Hunt take ceiling is this fraction of the herd's **Sustain (MSY)**
@@ -329,7 +333,7 @@ impl Default for HusbandryConfig {
             decay_per_turn: 0.01,
             claim_threshold: 0.6,
             provisions_per_biomass: 0.01,
-            corral_provisions_per_biomass: 0.02,
+            corral_provisions_per_biomass: DEFAULT_CORRAL_PROVISIONS_PER_BIOMASS,
             corralling_yield_fraction: DEFAULT_CORRALLING_YIELD_FRACTION,
             corral_build_progress_per_turn: DEFAULT_CORRAL_BUILD_PROGRESS_PER_TURN,
             knowledge_progress_per_turn: 0.05,
@@ -337,6 +341,26 @@ impl Default for HusbandryConfig {
         }
     }
 }
+
+/// **The completed pen's payout rate, ANCHORED TO MARKET** — a finished corral pays **3× the Market
+/// rate**, and pays it **sustainably** (a managed harvest of the standing crop, no biomass drawn
+/// down), where Market only reaches its rate by crashing the herd toward collapse. Derivation:
+///
+/// ```text
+/// Market provisions/turn = market.take_fraction × B × hunt.provisions_per_biomass = 0.20 × B × 0.02 = 0.004 × B
+/// Corral (3× Market)     = 3 × 0.20 × 0.02                                                        = 0.012 × B
+/// ```
+///
+/// **Residual, stated honestly:** 3× Market is still **~48× the Sustain (MSY) baseline** — because
+/// Market is itself ~16× Sustain. The two rungs are computed against *different denominators*: the pen
+/// (like Market) pays a share of standing **stock**, while Sustain pays out of the herd's regrowth
+/// **flow** (MSY = `regrowth_rate/4` = 1.25% of capacity). No choice of this scalar makes a
+/// stock-share and a flow-share commensurable; anchoring to Market at least prices the pen against the
+/// other stock-share rung. Closing the gap for real means making the corral a **managed population
+/// with food upkeep** (yield derived from the animal count you feed, not a flat fraction of a frozen
+/// biomass number) — the "Corral as a managed population" arc in `TASKS.md`. This flat rate is the
+/// interim stopgap that arc replaces.
+const DEFAULT_CORRAL_PROVISIONS_PER_BIOMASS: f32 = 0.012;
 
 /// **The investment cost of corralling**: while the pen is being built, a Corral hunt takes only this
 /// fraction of the herd's Sustain (MSY) ceiling. Mirrors the plant side's

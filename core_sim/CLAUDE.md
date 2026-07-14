@@ -418,9 +418,19 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
     husbandry.corral_provisions_per_biomass` directly into its `stores` (FOOD) **without** drawing the
     herd down (managed harvest), and the herd is marked `corralled_tended_this_turn`. This
     reconciles the "not both hunt-drawn AND paid": a corralled herd takes the tend branch and
-    `continue`s before `hunt_take`. `corral_provisions_per_biomass` is set **higher** than the mobile
-    `provisions_per_biomass` (0.02 vs 0.01) so penning out-pays mobile pastoralism — mirroring how
-    forage's `tended_provisions_per_biomass` beats the wild MSY skim.
+    `continue`s before `hunt_take`. `corral_provisions_per_biomass` is **anchored to Market** — `3 ×
+    market.take_fraction × hunt.provisions_per_biomass` = `3 × 0.20 × 0.02` = **0.012** — so a finished
+    pen pays **3× the Market rate** and pays it **sustainably** (no draw-down), where Market only
+    reaches its rate by crashing the herd; it also out-pays the mobile even-split
+    `provisions_per_biomass` (0.012 vs 0.01), mirroring how forage's `tended_provisions_per_biomass`
+    beats the wild MSY skim. **Residual, stated honestly:** 3× Market is still **~48× the Sustain (MSY)
+    baseline** (Market is itself ~16× Sustain) — the pen pays a share of standing **stock** while
+    Sustain pays out of regrowth **flow** (`regrowth_rate/4` = 1.25% of capacity), so the two are not
+    commensurable and no scalar makes them so. Measured at capacity (provisions/turn): Red Deer
+    (K=1200) Sustain 0.30 / Market 4.80 / build-dip 0.075 / **penned 14.40**; Rabbit Warren (K=200)
+    Sustain 0.05 / Market 0.80 / dip 0.0125 / **penned 2.40**. The flat rate is an **interim stopgap** —
+    the pen is meant to become a *managed population* whose yield follows the animal count you feed
+    (see `TASKS.md` → **"Corral as a managed population (food upkeep → herd size → yield)"**).
   - *Escapes-if-untended* — in `advance_husbandry` (Logistics, which runs *before* Population — a
     deliberate one-turn-lag flag, exactly like `ForagePatch::tended_this_turn`) a corralled herd
     tended last turn is spared; an **untended** one **escapes**: `corralled_at` is cleared, **and
@@ -445,7 +455,9 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   `HerdState` (authoritative sim state), so a rollback rewinds a half-built pen rather than losing the
   investment; `corralled_tended_this_turn` is transient (not persisted), so a rollback can only *delay*
   an escape by one turn, never resurrect a broken-out herd.
-- **Config** (`fauna_config.json` `husbandry`): `corral_provisions_per_biomass` (0.02),
+- **Config** (`fauna_config.json` `husbandry`): `corral_provisions_per_biomass` (**0.012** = `3 ×
+  market.take_fraction × hunt.provisions_per_biomass` — the completed pen pays 3× Market, sustainably;
+  ~48× Sustain/MSY, see above),
   **`corralling_yield_fraction` (0.25 — the investment cost, the animal twin of
   `cultivating_yield_fraction`)**, **`corral_build_progress_per_turn` (0.04 → 25 turns to build; a
   dedicated lever so pen speed and *tame* speed tune independently)**, `knowledge_progress_per_turn`
