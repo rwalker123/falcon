@@ -53,6 +53,41 @@
 - [x] Document palette alignment across `shadow_scale_strategy_game_concept_technical_plan_v_0.md` and `docs/architecture.md` (Owner: TBD, Estimate: 0.5d; Deps: verified Godot palette mapping).
 - [x] Add Godot/CLI terrain legend surfaced from shared palette data (Owner: TBD, Estimate: 1d; Deps: palette documentation).
 
+### Fluvial erosion in the heightfield (the next hydrology arc)
+The drainage-network rewrite (`docs/plan_rivers_drainage_network.md`, merged) made hydrology route on
+the real landscape: depression-filled, precipitation-weighted steepest descent, main-stem
+decomposition, flow-through lakes, Strahler on the real channel tree. **The router is no longer the
+bottleneck — the heightfield is**, and the numbers say so:
+
+- **Continents are sponges.** 48–64% of a continent's *tiles touch water*, because the shoreline is an
+  iso-contour of fractal noise and fractal contours have enormous perimeter. ~578 outlets over ~2050
+  interior land corners on an 80×52 map, so basins cannot grow.
+- **Compact continents still shed radially.** Seed 1: a 721-tile continent, biggest basin **16 hexes
+  (2%)**. Seed 4: 1179 tiles — only 1.6× bigger — biggest basin **546 (46%)**, because its terrain
+  *tilts* and one trunk captures the interior. A 34× spread that is **not** landmass size: it is the
+  absence of carved valleys to capture the wedges.
+- **Navigable rivers cap at ~13 hexes at ANY threshold.** Probed down to a trickle (`navigable_min`
+  8.0 → 92 segments, but max run still 13). The threshold buys **count, not length**: chain length is
+  bounded by the distance from the threshold crossing to the sea. You cannot tune your way to a
+  Mississippi.
+- **Two cheap levers were TESTED and do not work:** `macro_land.jitter` (swept 0.18 → 0.00; coastal%
+  barely moves, basins don't improve — the crenellation comes from the near-sea-level *elevation*
+  noise, not the landmask jitter), and shelf-vs-deep-ocean sinks (moving the terminator one hex
+  seaward merges basins *in the water*, where no river is drawn).
+
+- [ ] **Fluvial erosion pass on the elevation field.** It fixes both failures at once: it carves trunk
+      valleys (→ **capture**, which seeds 1/3 lack) and incises the coast so the shoreline contour
+      steepens (→ **de-sponging**, which every seed lacks). Expected payoff: basin/landmass ratios like
+      seed 4's on *every* map, and navigable rivers with real length. Re-run
+      `hydrology_earthlike::drainage_census` + `drainage_threshold_sweep` and re-tune the three
+      discharge thresholds against the new distribution.
+- [ ] *(Cheap partial, optional first step)* **Morphological open/close on the land mask** — a ~30-line
+      majority filter that fills 1-hex nooks and deletes 1-hex specks, attacking crenellation directly
+      where `macro_land.jitter` cannot. **Seed 3 proves it insufficient alone** (44% coastal, still
+      only 7% basin), so it is a partial, not the fix.
+
+See `core_sim/CLAUDE.md` → Rivers → "Known limitation (the next arc)" for the full measured baseline.
+
 ### Trade Knowledge Diffusion
 - [x] Introduce `TradeKnowledgeDiffusion` stage that consumes openness metrics to share discoveries between factions (Owner: Ravi, Estimate: 2d; Blocked by schema/runtime helpers).
 - [x] Integrate migration-driven knowledge seeding into population movement systems (Owner: Elena, Estimate: 1.5d; Requires migration knowledge fragments in snapshots).

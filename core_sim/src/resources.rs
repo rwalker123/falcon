@@ -20,25 +20,29 @@ use crate::{
 };
 use bitflags::bitflags;
 
+/// Per-map hydrology levers, each overriding the active preset's `river_*` key (overrides > preset
+/// > default). Every field is documented on `MapPreset`.
 #[derive(Debug, Clone, Default)]
 pub struct HydrologyOverrides {
+    /// How wet the map reads: a multiplier on the channel-extraction threshold.
     pub river_density: Option<f32>,
-    pub river_min_count: Option<usize>,
-    pub river_max_count: Option<usize>,
-    pub accumulation_threshold_factor: Option<f32>,
-    pub source_percentile: Option<f32>,
-    pub source_sea_buffer: Option<f32>,
+    /// The noise gate, in hexes.
     pub min_length: Option<usize>,
-    pub fallback_min_length: Option<usize>,
-    pub spacing: Option<f32>,
-    pub uphill_gain_pct: Option<f32>,
-    /// Corner discharge at which a river edge becomes `Major` (overrides the preset's
-    /// `river_class_major_min_discharge`).
-    pub class_major_min_discharge: Option<u32>,
-    /// Corner discharge at which a river becomes a `NavigableRiver` hex chain (overrides the
-    /// preset's `river_class_navigable_min_discharge`).
-    pub class_navigable_min_discharge: Option<u32>,
-    /// Kill switch for navigable rivers (overrides the preset's `river_navigable_enabled`).
+    /// The depression fill's drainage gradient across flats.
+    pub fill_epsilon: Option<f32>,
+    /// Elevation tie-break amplitude on flats.
+    pub flat_jitter: Option<f32>,
+    /// Per-hex runoff floor.
+    pub base_runoff: Option<f32>,
+    /// How hard rainfall drives discharge.
+    pub moisture_weight: Option<f32>,
+    /// Discharge at which a corner becomes a channel (the network-extraction threshold).
+    pub channel_min_discharge: Option<f32>,
+    /// Discharge at which a river edge becomes `Major`.
+    pub class_major_min_discharge: Option<f32>,
+    /// Discharge at which a river becomes a `NavigableRiver` hex chain.
+    pub class_navigable_min_discharge: Option<f32>,
+    /// Kill switch for navigable rivers.
     pub navigable_enabled: Option<bool>,
 }
 
@@ -345,17 +349,14 @@ struct MassBoundsData {
 #[derive(Debug, Deserialize, Default)]
 struct HydrologyOverridesData {
     river_density: Option<f32>,
-    river_min_count: Option<usize>,
-    river_max_count: Option<usize>,
-    accumulation_threshold_factor: Option<f32>,
-    source_percentile: Option<f32>,
-    source_sea_buffer: Option<f32>,
     min_length: Option<usize>,
-    fallback_min_length: Option<usize>,
-    spacing: Option<f32>,
-    uphill_gain_pct: Option<f32>,
-    river_class_major_min_discharge: Option<u32>,
-    river_class_navigable_min_discharge: Option<u32>,
+    river_fill_epsilon: Option<f32>,
+    river_flat_jitter: Option<f32>,
+    river_base_runoff: Option<f32>,
+    river_moisture_weight: Option<f32>,
+    river_channel_min_discharge: Option<f32>,
+    river_class_major_min_discharge: Option<f32>,
+    river_class_navigable_min_discharge: Option<f32>,
     river_navigable_enabled: Option<bool>,
 }
 
@@ -363,15 +364,12 @@ impl HydrologyOverridesData {
     fn into_overrides(self) -> HydrologyOverrides {
         HydrologyOverrides {
             river_density: self.river_density,
-            river_min_count: self.river_min_count,
-            river_max_count: self.river_max_count,
-            accumulation_threshold_factor: self.accumulation_threshold_factor,
-            source_percentile: self.source_percentile,
-            source_sea_buffer: self.source_sea_buffer,
             min_length: self.min_length,
-            fallback_min_length: self.fallback_min_length,
-            spacing: self.spacing,
-            uphill_gain_pct: self.uphill_gain_pct,
+            fill_epsilon: self.river_fill_epsilon,
+            flat_jitter: self.river_flat_jitter,
+            base_runoff: self.river_base_runoff,
+            moisture_weight: self.river_moisture_weight,
+            channel_min_discharge: self.river_channel_min_discharge,
             class_major_min_discharge: self.river_class_major_min_discharge,
             class_navigable_min_discharge: self.river_class_navigable_min_discharge,
             navigable_enabled: self.river_navigable_enabled,

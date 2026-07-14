@@ -6242,19 +6242,8 @@ mod terrain_tag_tests {
         let mut config = SimulationConfig::builtin();
         config.map_preset_id = "earthlike".to_string();
         config.map_seed = 119304647;
-        config.hydrology = crate::HydrologyOverrides {
-            river_density: Some(1.4),
-            river_min_count: Some(8),
-            river_max_count: Some(24),
-            accumulation_threshold_factor: Some(0.2),
-            source_percentile: Some(0.55),
-            source_sea_buffer: Some(0.04),
-            min_length: Some(8),
-            fallback_min_length: Some(4),
-            spacing: Some(8.0),
-            uphill_gain_pct: Some(0.07),
-            ..Default::default()
-        };
+        // The shipped hydrology config — the map a player actually gets. With a real drainage
+        // network there is no override set that manufactures a different river count.
 
         world.insert_resource(config);
         world.insert_resource(SimulationTick::default());

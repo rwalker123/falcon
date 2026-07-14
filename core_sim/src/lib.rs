@@ -143,6 +143,8 @@ pub use great_discovery::{
     GreatDiscoveryResolvedEvent, GreatDiscoveryTelemetry, ObservationLedger,
 };
 pub use hydrology::{generate_hydrology, HydrologyState};
+// The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
+pub use hydrology::{debug_drainage_census, DrainageCensus};
 pub use influencers::{
     tick_influencers, InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerCultureResonance,
     InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel, BUILTIN_INFLUENCER_CONFIG,

@@ -179,6 +179,14 @@ const RIVER_DIR_W := 3
 const RIVER_DIR_NW := 4
 const RIVER_DIR_NE := 5
 const RIVER_BRANCH_TERMINUS_CORNER := 4   # top vertex — the mirror of RIVER_TRIB_TERMINUS_CORNER
+# A MID-CHAIN tributary junction — the case a real drainage network produces and the old fixtures never
+# did (they only ever fed a chain's HEAD). Since the network landed, river_inflow means "a tributary hands
+# over at this vertex", which is true of ANY navigable hex; the shader must therefore NOT read a nonzero
+# inflow as "this is a chain head" and taper the trunk there, or the full-width channel pinches to the
+# tributary's width at that hex's centre and swells back on both sides — an HOURGLASS in mid-channel. This
+# hangs the SAME 3-edge Minor tributary as the trunk head's onto a hex in the MIDDLE of the trunk (>= 2
+# channel exits), so map_rivers_midchain.png is the frame that gate is judged on: constant width THROUGH the
+# junction, and the spur still reaching the vertex.
 const RIVER_MAJOR_FROM_FRAC := 0.45  # fraction along the edge chain where Minor becomes Major
 # State "rivers web" — THE REGRESSION GUARD for the spider-web bug. The main rivers state builds its
 # navigable chain by hand, so it is a PATH by construction and can never cross-link — which is exactly why
@@ -220,6 +228,9 @@ var _map: Node2D
 # back rather than recomputed, because the placement walks the trunk and has to dodge it; (-1, -1) if the
 # grid left no room for one (the far-zoom grid is built after the close-ups, so it may overwrite this).
 var _river_branch_head := Vector2i(-1, -1)
+# Where _snapshot_rivers put the MID-CHAIN tributary junction (see RIVER_MIDCHAIN_MIN_COL_MARGIN). Reported
+# back for the same reason as the branch head; (-1, -1) if the grid left no room for one.
+var _river_midchain_junction := Vector2i(-1, -1)
 
 func _ready() -> void:
 	get_window().size = Vector2i(1000, 800)
@@ -660,6 +671,23 @@ func _ready() -> void:
 		await _save_crop_px("map_rivers_head_minor", branch_center, RIVER_JOIN_CROP_RADII * _map.last_hex_radius)
 	else:
 		push_warning("map_preview: no Minor-only navigable head placed — head-taper frame skipped")
+	# The MID-CHAIN JUNCTION, same zoom: a Minor tributary hands over at a vertex of a hex in the MIDDLE of
+	# the trunk (upstream AND downstream channel exits). Since the drainage network, river_inflow means "a
+	# tributary hands over here", not "this is a chain head" — so the shader gates the head taper on the
+	# channel-EXIT COUNT instead. Read for: the trunk holding CONSTANT full width straight through the
+	# junction (any pinch-and-swell at the hex centre is the HOURGLASS this gate exists to prevent), and the
+	# Minor spur still reaching its vertex to meet the tributary — no gap, no dead-end.
+	if _river_midchain_junction.x >= 0:
+		_map.pan_offset += get_viewport().get_visible_rect().size * 0.5 \
+			- _map._hex_center(_river_midchain_junction.x, _river_midchain_junction.y,
+				_map.last_hex_radius, _map.last_origin)
+		_map.queue_redraw()
+		await _settle()
+		var mid_center: Vector2 = _map._hex_center(
+			_river_midchain_junction.x, _river_midchain_junction.y, _map.last_hex_radius, _map.last_origin)
+		await _save_crop_px("map_rivers_midchain", mid_center, RIVER_JOIN_CROP_RADII * _map.last_hex_radius)
+	else:
+		push_warning("map_preview: no mid-chain tributary junction placed — hourglass frame skipped")
 	# Far-zoom LOD: the same field on a large grid so hexes go tiny (radius ≪ EDGE_BLEND_MIN_RADIUS, so
 	# the flat↔flat blend is off). The DECOUPLED river LOD (river_min_radius) must keep the river drawn,
 	# smooth (mipmapped river array) and not shimmering.
@@ -1151,6 +1179,33 @@ func _river_set_edge(masks: Dictionary, x: int, y: int, dir: int, nb: Vector2i, 
 	var back: int = (dir + 3) % 6
 	masks[nb] = (int(masks.get(nb, 0)) & ~(3 << (2 * back))) | (cls << (2 * back))
 
+## Hang the standard 3-edge MINOR tributary off navigable hex `h`, handing over at h's BOTTOM vertex
+## (RIVER_TRIB_TERMINUS_CORNER): the edges (h, SW), (h's W neighbour, SE) and (h's SW neighbour, W), each
+## consecutive pair sharing a corner, so the chain is contiguous on either row parity. Sets the inflow bit on
+## `h` — ORed, because a hex may be fed by more than one tributary (the trunk head is fed by two). Used for
+## BOTH the head's Minor tributary and the MID-CHAIN junction: the sim's river_inflow no longer says anything
+## about where in the chain a hex sits, so the fixture builds the two cases from one construction.
+## Returns false (touching nothing) if the tributary's own hexes are off-map or are not plain land — running
+## river edges over the trunk or the sea would be a lie about the geometry the shader is being judged on.
+func _river_attach_minor_tributary(masks: Dictionary, inflow: Dictionary, terrain: Array, h: Vector2i,
+		gw: int, gh: int) -> bool:
+	var h_w := _river_neighbor(h.x, h.y, RIVER_DIR_W, gw, gh)
+	var h_sw := _river_neighbor(h.x, h.y, RIVER_DIR_SW, gw, gh)
+	if h_w.x < 0 or h_sw.x < 0:
+		return false
+	if int(terrain[h_w.y * gw + h_w.x]) != RIVER_LAND_ID:
+		return false
+	if int(terrain[h_sw.y * gw + h_sw.x]) != RIVER_LAND_ID:
+		return false
+	_river_set_edge(masks, h.x, h.y, RIVER_DIR_SW, h_sw, RIVER_CLASS_MINOR)
+	_river_set_edge(masks, h_w.x, h_w.y, RIVER_DIR_SE, h_sw, RIVER_CLASS_MINOR)
+	var trib_up := _river_neighbor(h_sw.x, h_sw.y, RIVER_DIR_W, gw, gh)
+	if trib_up.x >= 0 and int(terrain[trib_up.y * gw + trib_up.x]) == RIVER_LAND_ID:
+		_river_set_edge(masks, h_sw.x, h_sw.y, RIVER_DIR_W, trib_up, RIVER_CLASS_MINOR)
+	inflow[h] = int(inflow.get(h, 0)) \
+		| (RIVER_CLASS_MINOR << (RIVER_CLASS_BITS * RIVER_TRIB_TERMINUS_CORNER))
+	return true
+
 ## Set the channel-EXIT bit for odd-r direction `dir` on `hex` — the fixture's stand-in for the sim's
 ## `river_channel`. OR-ed, never overwritten: a hex mid-chain carries both its upstream and its downstream
 ## side, and a confluence carries the union of the chains through it.
@@ -1279,16 +1334,7 @@ func _snapshot_rivers(gw: int, gh: int) -> Dictionary:
 	# on one navigable hex → several fat centre→midpoint arms → a hex full of water); it proves a tributary
 	# arrives at ITS OWN width, not the trunk's, since the Major and Minor spurs land side by side; and it
 	# proves the inflow mask is read for ALL SIX corners, not just one.
-	var head_w := _river_neighbor(head.x, head.y, RIVER_DIR_W, gw, gh)
-	var head_sw := _river_neighbor(head.x, head.y, RIVER_DIR_SW, gw, gh)
-	if head_w.x >= 0 and head_sw.x >= 0:
-		_river_set_edge(masks, head.x, head.y, RIVER_DIR_SW, head_sw, RIVER_CLASS_MINOR)
-		_river_set_edge(masks, head_w.x, head_w.y, RIVER_DIR_SE, head_sw, RIVER_CLASS_MINOR)
-		var trib_up := _river_neighbor(head_sw.x, head_sw.y, RIVER_DIR_W, gw, gh)
-		if trib_up.x >= 0:
-			_river_set_edge(masks, head_sw.x, head_sw.y, RIVER_DIR_W, trib_up, RIVER_CLASS_MINOR)
-		inflow[head] = int(inflow.get(head, 0)) \
-			| (RIVER_CLASS_MINOR << (RIVER_CLASS_BITS * RIVER_TRIB_TERMINUS_CORNER))
+	_river_attach_minor_tributary(masks, inflow, terrain, head, gw, gh)
 
 	var p := head
 	terrain[p.y * gw + p.x] = RIVER_NAVIGABLE_ID
@@ -1343,6 +1389,33 @@ func _snapshot_rivers(gw: int, gh: int) -> Dictionary:
 		# of the chains through it). That one arm is what the head taper is judged on.
 		_river_link_channel(channel, b, trunk[i], gw, gh)
 		_river_branch_head = b
+		break
+
+	# The MID-CHAIN TRIBUTARY JUNCTION — the case the drainage network created and this fixture never had.
+	# The same 3-edge Minor tributary as the head's, but hung on a hex in the MIDDLE of the trunk: it has an
+	# upstream AND a downstream channel exit, so it is NOT a chain head, yet it now carries a nonzero
+	# river_inflow. The shader must gate its head taper on the EXIT COUNT, not on that inflow, or the trunk
+	# pinches to the Minor's width at this hex's centre — the hourglass. Read map_rivers_midchain.png for:
+	# constant full width straight through the junction, and the Minor spur still reaching its vertex.
+	# Placement is not free: the tributary hangs off the junction's W and SW neighbours, and on most steps of
+	# RIVER_NAV_STEPS the trunk's own UPSTREAM hex already sits there (an E step arrives from the W; an NE
+	# step from the SW), so the tributary would be drawn over the channel. Only a hex the trunk entered from
+	# the NW (an SE step) has both slots free — and they must also be clear of the EDGE chain's own masks, or
+	# the Minor would fuse into the staircase river instead of reading as its own tributary.
+	_river_midchain_junction = Vector2i(-1, -1)
+	for i in range(1, trunk.size() - 1):   # never the head (i = 0) nor the mouth (the last hex)
+		var m: Vector2i = trunk[i]
+		if inflow.has(m):
+			continue  # already fed (the trunk head) — this frame is about a hex that is NOT a head
+		var m_w := _river_neighbor(m.x, m.y, RIVER_DIR_W, gw, gh)
+		var m_sw := _river_neighbor(m.x, m.y, RIVER_DIR_SW, gw, gh)
+		if m_w.x < 0 or m_sw.x < 0:
+			continue
+		if masks.has(m_w) or masks.has(m_sw):
+			continue  # would collide with the edge chain's river
+		if not _river_attach_minor_tributary(masks, inflow, terrain, m, gw, gh):
+			continue  # a trunk hex (or the sea) is sitting where the tributary would run
+		_river_midchain_junction = m
 		break
 
 	# The MOUTH: the final navigable hex sits against OPEN SEA on its seaward side and a RiverDelta

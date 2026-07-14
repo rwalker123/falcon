@@ -48,40 +48,41 @@ pub struct MapPreset {
     pub locked_terrain_tags: Vec<String>,
     #[serde(default)]
     pub mountains: MountainsConfig,
-    #[serde(default = "default_river_accum_threshold_factor")]
-    pub river_accum_threshold_factor: f32,
-    #[serde(default = "default_river_min_accum")]
-    pub river_min_accum: u16,
+    /// The noise gate, in hexes: an emitted river shorter than this is dropped. The **only**
+    /// river-count lever left — spacing, count targets and source percentiles are gone with the
+    /// drainage-network rewrite; the network is whatever the landscape drains.
     #[serde(default = "default_river_min_length")]
     pub river_min_length: usize,
-    #[serde(default = "default_river_fallback_min_length")]
-    pub river_fallback_min_length: usize,
-    #[serde(default = "default_river_accum_percentile")]
-    pub river_accum_percentile: f32,
-    #[serde(default = "default_river_land_ratio")]
-    pub river_land_ratio: f32,
-    #[serde(default = "default_river_min_count")]
-    pub river_min_count: usize,
-    #[serde(default = "default_river_max_count")]
-    pub river_max_count: usize,
-    #[serde(default = "default_river_source_percentile")]
-    pub river_source_percentile: f32,
-    #[serde(default = "default_river_source_sea_buffer")]
-    pub river_source_sea_buffer: f32,
-    #[serde(default = "default_river_min_spacing")]
-    pub river_min_spacing: f32,
-    #[serde(default = "default_river_uphill_gain_pct")]
-    pub river_uphill_gain_pct: f32,
-    /// Corner flow-accumulation at which a river edge stops being `Minor` and becomes `Major`.
-    /// Class is per-edge and grows downstream, so this is where a stream widens into a river.
+    /// The drainage gradient the depression fill lays across a filled flat (see
+    /// `hydrology::FlowConfig::fill_epsilon`).
+    #[serde(default = "default_river_fill_epsilon")]
+    pub river_fill_epsilon: f32,
+    /// Amplitude of the deterministic elevation tie-break jitter. Must be `>> river_fill_epsilon`
+    /// and `<<` real relief (see `hydrology::FlowConfig::flat_jitter`).
+    #[serde(default = "default_river_flat_jitter")]
+    pub river_flat_jitter: f32,
+    /// Per-hex runoff floor, so an arid basin still trickles.
+    #[serde(default = "default_river_base_runoff")]
+    pub river_base_runoff: f32,
+    /// How hard rainfall drives discharge: a hex contributes `base_runoff + moisture_weight ×
+    /// precipitation` to its drainage.
+    #[serde(default = "default_river_moisture_weight")]
+    pub river_moisture_weight: f32,
+    /// Discharge at which a corner becomes a **channel** — the network-extraction threshold.
+    /// Scaled by `river_density` (higher density → lower threshold → more channels).
+    #[serde(default = "default_river_channel_min_discharge")]
+    pub river_channel_min_discharge: f32,
+    /// Discharge at which a river edge stops being `Minor` and becomes `Major`. Class is per-edge
+    /// and grows downstream, so this is where a stream widens into a river.
+    ///
+    /// Discharge is **precipitation-weighted upstream drainage area in hex-equivalents**, so this is
+    /// an **absolute**, map-size-independent value.
     #[serde(default = "default_river_class_major_min_discharge")]
-    pub river_class_major_min_discharge: u32,
-    /// Corner flow-accumulation at which a river outgrows the edge model entirely: from here down
-    /// it is a chain of `TerrainType::NavigableRiver` **hexes** (a body of water you need a boat to
-    /// enter). Navigable rivers bisect landmasses, so this is tuned to fire for only the largest
-    /// one or two rivers on a map.
+    pub river_class_major_min_discharge: f32,
+    /// Discharge at which a river outgrows the edge model entirely: from here down it is a chain of
+    /// `TerrainType::NavigableRiver` **hexes** (a body of water you need a boat to enter).
     #[serde(default = "default_river_class_navigable_min_discharge")]
-    pub river_class_navigable_min_discharge: u32,
+    pub river_class_navigable_min_discharge: f32,
     /// Kill switch for the navigable tail: with this off, a river that crosses
     /// `river_class_navigable_min_discharge` simply stays `Major` all the way to its mouth.
     #[serde(default = "default_river_navigable_enabled")]
@@ -420,60 +421,56 @@ const fn default_belt_texture() -> f32 {
     0.06
 }
 
-const fn default_river_accum_threshold_factor() -> f32 {
-    0.35
-}
-
-const fn default_river_min_accum() -> u16 {
-    6
-}
-
-const fn default_river_min_length() -> usize {
-    8
-}
-
-const fn default_river_fallback_min_length() -> usize {
-    4
-}
-
-const fn default_river_accum_percentile() -> f32 {
-    0.98
-}
-
-const fn default_river_land_ratio() -> f32 {
-    300.0
-}
-
-const fn default_river_min_count() -> usize {
+/// The noise gate, in hexes. Deliberately **low**: with a real drainage network the river set is
+/// whatever the landscape drains, and this only suppresses one-hex specks.
+pub(crate) const fn default_river_min_length() -> usize {
     2
 }
 
-const fn default_river_max_count() -> usize {
-    128
+/// How wet the map reads: a multiplier on the channel threshold (higher → more channels).
+pub(crate) const fn default_river_density() -> f32 {
+    1.0
 }
 
-const fn default_river_source_percentile() -> f32 {
-    0.7
+/// The fill's drainage gradient across flats. Far above `f32` noise at map elevations (~1e-7) and
+/// far below `river_flat_jitter`, so the jitter decides ties the fill cannot.
+pub(crate) const fn default_river_fill_epsilon() -> f32 {
+    1.0e-5
 }
 
-const fn default_river_source_sea_buffer() -> f32 {
-    0.08
+/// Elevation tie-break amplitude: 50× `river_fill_epsilon` (so it dominates the fill gradient on a
+/// flat) and well under the ~1e-2 relief of real terrain (so it can never reorder it).
+pub(crate) const fn default_river_flat_jitter() -> f32 {
+    5.0e-4
 }
 
-const fn default_river_min_spacing() -> f32 {
+/// A bone-dry hex still sheds a fifth of a wet one's runoff.
+pub(crate) const fn default_river_base_runoff() -> f32 {
+    0.2
+}
+
+/// With `river_base_runoff` = 0.2 this makes a fully-wet hex contribute exactly **1.0** — so
+/// discharge reads directly as precipitation-weighted drainage area in hex-equivalents.
+pub(crate) const fn default_river_moisture_weight() -> f32 {
+    0.8
+}
+
+/// The network-extraction threshold, in hex-equivalents of drainage area. Tuned from the 45-cell
+/// `drainage_threshold_sweep`: yields ~21 rivers per 80×52 map.
+pub(crate) const fn default_river_channel_min_discharge() -> f32 {
+    3.0
+}
+
+/// Minor → Major, in hex-equivalents. Tuned from the sweep: 73% Minor / 27% Major.
+pub(crate) const fn default_river_class_major_min_discharge() -> f32 {
     12.0
 }
 
-const fn default_river_uphill_gain_pct() -> f32 {
-    0.05
-}
-
-pub(crate) const fn default_river_class_major_min_discharge() -> u32 {
-    16
-}
-
-pub(crate) const fn default_river_class_navigable_min_discharge() -> u32 {
-    32
+/// Major → `NavigableRiver`, in hex-equivalents. Tuned from the sweep: 5 navigable segments / 22
+/// navigable hexes per map, present on 5 of 6 census seeds. **Raising or lowering this buys COUNT,
+/// not LENGTH** — see the "known limitation" note in `core_sim/CLAUDE.md` → Rivers.
+pub(crate) const fn default_river_class_navigable_min_discharge() -> f32 {
+    25.0
 }
 
 const fn default_river_navigable_enabled() -> bool {

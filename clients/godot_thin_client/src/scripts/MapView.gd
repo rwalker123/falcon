@@ -296,10 +296,12 @@ const RIVER_DEFAULT_MAJOR_WIDTH := 0.09
 # great RIVER, not a flood: only somewhat wider than Major (0.09). Far wider and the hex stops being a bank
 # with a channel through it and becomes a puddle again, which is the read this whole pass exists to kill.
 const RIVER_DEFAULT_NAVIGABLE_WIDTH := 0.14
-# HEAD TAPER — on the FIRST hex of a navigable chain (the one hex with a nonzero river_inflow) the trunk
-# starts at the widest inflowing tributary's half-width and swells to the full navigable width by the hex
-# EDGE, instead of springing to a great river at the centre. This is the exponent applied to the swell's
-# smoothstep: 1.0 = plain smoothstep, < 1 swells early (wide sooner), > 1 holds the tributary's width
+# HEAD TAPER — on the FIRST hex of a navigable chain (the hex whose river_channel names at most ONE exit,
+# i.e. it has a downstream link but no upstream one — NOT "the hex with a nonzero river_inflow", which
+# since the drainage network is true of any navigable hex a tributary joins, mid-chain ones included) the
+# trunk starts at the widest inflowing tributary's half-width and swells to the full navigable width by
+# the hex EDGE, instead of springing to a great river at the centre. This is the exponent applied to the
+# swell's smoothstep: 1.0 = plain smoothstep, < 1 swells early (wide sooner), > 1 holds the tributary's width
 # longer and swells late. It is an EXPONENT, never a width, so it does not disturb the exact
 # navigable-width match at the hex edge (pow(1, k) == 1 for any k) — which is what keeps the head hex
 # meeting the next, constant-width, navigable hex with no step.
@@ -691,8 +693,10 @@ var crisis_annotations: Array = []
 # pass), keyed by Vector2i(x, y). Feeds the river-map splatmap's R/G; the shader does the drawing.
 var tile_river_edges: Dictionary = {}
 # Per-tile river-INFLOW mask (12 bits, 2 per hex CORNER), keyed by Vector2i(x, y): the vertex an edge
-# river hands over to a navigable trunk at, and with what class. Nonzero only on the first hex of a
-# navigable chain. Feeds the river-map splatmap's B/A; the shader draws the channel's inflow SPUR from it.
+# river hands over to the navigable channel at, and with what class. Set on ANY navigable hex a tributary
+# joins — a real drainage network joins tributaries to trunks MID-CHAIN, so this is no longer a "chain
+# head" flag and the shader must not use it as one (it gates the head taper on the river_channel exit
+# count instead). Feeds the river-map splatmap's B/A; the shader draws the channel's inflow SPUR from it.
 var tile_river_inflow: Dictionary = {}
 # Per-tile river-CHANNEL mask (6 bits, 1 per odd-r direction), keyed by Vector2i(x, y): the sides a
 # NAVIGABLE hex's channel flows out through — its upstream/downstream neighbours in its own chain, plus
