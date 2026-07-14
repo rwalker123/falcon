@@ -775,6 +775,17 @@ const LOCAL_HUNT_YIELD_FORMAT := "≈ %s"
 # The Sustain ceiling IS the herd's sustainable yield, so a take above it draws the herd down — flagged
 # with the same ⚠ / WARN amber (and the same `_is_overdraw` test) as the allocation rows.
 const LOCAL_HUNT_OVERDRAW_SUFFIX := " — overdraws the herd"
+# Tile-card PASTURE rows (the graze layer). The twin of `Forage biomass`, and the pair is the point:
+# forage is what HUMANS can eat here (seeds, nuts, tubers — food-module tiles only), pasture is what
+# ANIMALS can eat here (grass and browse — cellulose humans cannot digest, on nearly every land tile).
+# Your best farm is usually not your best pasture. Rendered ONLY where the ground actually carries
+# pasture (`graze_capacity > 0`): on a glacier the card prints nothing, never "0 / 0".
+const PASTURE_KEY := "Pasture"
+# Its own row key rather than the shared "Ecology" one — a forage tile would otherwise show two rows
+# both called "Ecology" (the patch's and the pasture's) with no way to tell them apart. The LABEL and
+# the TINT are still the shared `_ecology_phase_label` / `_ecology_value_hex` path, so a stressed
+# pasture reads exactly like a stressed herd or a stressed patch.
+const PASTURE_ECOLOGY_KEY := "Pasture ecology"
 # Tile-card SIGHT row — the player must ALWAYS be able to tell "there is nothing here" apart from
 # "I cannot see what is here". Herds/bands are LIVE state and are fog-gated out of `tile_info`
 # (MapView._herds_on_tile), so on a remembered hex an empty Occupants list would otherwise read as
@@ -3852,6 +3863,19 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     var site_name := String(tile_info.get("site_name", "")).strip_edges()
     if site_name != "":
         lines.append("Site: %s" % site_name)
+    # PASTURE — the animal-edible stock (see PASTURE_KEY). Surfaced BEFORE the discovered
+    # early-return because, like the biome and the habitability above it, grass is a property of the
+    # GROUND: you can read a steppe from a ridge, and a remembered tile already remembers its biome.
+    # (What a remembered tile redacts is live CONTENTS — the bands and herds standing on it.) Only
+    # when the ground carries pasture at all, so a glacier prints nothing rather than "0 / 0".
+    var graze_capacity := float(tile_info.get("graze_capacity", 0.0))
+    if graze_capacity > 0.0:
+        lines.append("%s: %.0f / %.0f" % [
+            PASTURE_KEY, float(tile_info.get("graze_biomass", 0.0)), graze_capacity
+        ])
+        var graze_phase := String(tile_info.get("graze_ecology_phase", "")).strip_edges().to_lower()
+        if graze_phase != "":
+            lines.append("%s: %s" % [PASTURE_ECOLOGY_KEY, _ecology_phase_label(graze_phase)])
     if visibility_state == VISIBILITY_DISCOVERED:
         lines.append("Last seen — information incomplete. Scout to update.")
         return lines
@@ -5070,9 +5094,11 @@ func _format_detail_bbcode(lines: Array) -> String:
             elif String(kv[0]) == TILE_SIGHT_KEY:
                 # The tile's sight state: live cyan when in sight, dim when only remembered/unknown.
                 value_hex = _sight_value_hex(String(kv[1]))
-            elif String(kv[0]) == "Ecology":
-                # Shared by the herd drawer and the forage-patch tile card — both name the row
-                # "Ecology" and take the same neutral/amber/red phase tint.
+            elif String(kv[0]) == "Ecology" or String(kv[0]) == PASTURE_ECOLOGY_KEY:
+                # Shared by the herd drawer, the forage-patch tile card and the tile card's PASTURE
+                # row — one phase tint (neutral/amber/red) for every ecology in the game. The pasture
+                # row keeps its own KEY only so a forage tile doesn't print two rows named "Ecology";
+                # the styling path is deliberately not forked.
                 value_hex = _ecology_value_hex(String(kv[1]))
             elif String(kv[0]) == "Husbandry":
                 value_hex = _husbandry_value_hex(String(kv[1]))

@@ -370,6 +370,31 @@ func _ready() -> void:
 	await _settle()
 	await _save("food_tile_stressed")
 
+	# ---- Pasture: the ANIMAL-edible stock on the tile card (Grazing Phase 2a) --------------------
+	# State 2-pasture-stressed — the graze drawn down into the stressed band: "Pasture 61 / 240" with a
+	# WARN-amber "⚠ Stressed" under it, identical in label and tint to a stressed herd or patch. (The
+	# healthy pair — "Forage biomass 84 / 120" beside "Pasture 240 / 240 · Thriving" — is on `food_tile`.)
+	_hud._forage_assign_count = 1
+	_hud.show_tile_selection(_overgrazed_tile_fixture())
+	await _settle()
+	await _save("tile_pasture_stressed")
+
+	# State 2-pasture-none — a GLACIER: the biome carries no pasture at all, so the sim holds no patch
+	# and the card prints NOTHING about pasture. "0 / 0" would be a lie of a different kind — a starved
+	# pasture rather than an absent one — and this frame is the guard against it.
+	_hud.show_tile_selection(_no_pasture_tile_fixture())
+	await _settle()
+	await _save("tile_pasture_none")
+
+	# State 2-pasture-legend — the map legend for the `pasture` overlay channel (rows produced by
+	# MapView._build_pasture_legend; see map_preview's "pasture" state for the map itself). The barren
+	# tones sit OFF the straw→grass ramp: dead ground and water are their own rows, so "no pasture at
+	# all" can never be read as "poor pasture".
+	_hud.update_overlay_legend(_pasture_legend_fixture())
+	await _settle()
+	await _save("pasture_legend")
+	_hud.clear_selection()
+
 	# ---- Cultivate: the forage INVESTMENT rung (gated, then unlocked) ----------------------------
 	# State 2-cultivate-locked — the faction has NOT finished learning Cultivation (the top-bar meter
 	# reads "Cultivation ▰▰▰… learning"): the 🌱 Cultivate option is still SHOWN in the picker, greyed,
@@ -1621,6 +1646,37 @@ func _food_tile_fixture() -> Dictionary:
 		# Both are food/turn at output_multiplier 1.0, like the ceilings above.
 		"patch_ceiling_cultivate": 0.24,
 		"patch_tended_yield": 1.20,
+		# The GRAZE (pasture) layer — the ANIMAL-edible twin of the forage patch above (Grazing Phase
+		# 2a). Prairie steppe is the reference pasture: capacity 240, standing full, hence Thriving.
+		# Rendered as the `Pasture` / `Pasture ecology` rows right under `Forage biomass`, so the card
+		# states the two facts side by side: what HUMANS can eat here, and what ANIMALS can eat here.
+		"graze_biomass": 240.0,
+		"graze_capacity": 240.0,
+		"graze_ecology_phase": "thriving",
+	}
+
+## An OVERGRAZED pasture: the standing graze has been drawn deep into the stressed band, so the
+## `Pasture ecology` row reads a WARN-amber "⚠ Stressed" — the SAME label + tint a stressed herd or a
+## stressed forage patch gets (one ecology vocabulary, one styling path). Nothing eats graze until
+## Phase 2b, so this state cannot occur in a live 2a map; it renders the path the tint will take.
+func _overgrazed_tile_fixture() -> Dictionary:
+	var tile := _food_tile_fixture()
+	tile["x"] = 68
+	tile["graze_biomass"] = 61.0
+	tile["graze_ecology_phase"] = "stressed"
+	return tile
+
+## Ground that carries NO pasture at all (a glacier — the biome's graze capacity is a stated 0, so the
+## sim holds no patch there and the tile carries no graze fields). The card must print NOTHING about
+## pasture here — never "0 / 0", which would read as a starved pasture rather than an absent one.
+func _no_pasture_tile_fixture() -> Dictionary:
+	return {
+		"x": 66, "y": 3,
+		"terrain_label": "Glacier",
+		"tags_text": "Polar",
+		"visibility_state": "active",
+		"habitability": 0.09,
+		"temperature": -14.0,
 	}
 
 ## The three pre-launch hunt-forecast states, each a hovered hex carrying one huntable herd whose
@@ -1922,6 +1978,26 @@ func _starving_pen_herd_fixture() -> Dictionary:
 ## MapView._build_terrain_legend's output: rows carry color/label/value_text plus
 ## the numeric `count` the sort control keys off. Counts are deliberately varied
 ## and out of both name/count order so the sorting is obvious.
+## MapView._build_pasture_legend's output, transcribed from the map_preview "pasture" state (it prints
+## the legend dict) so the two harnesses cannot disagree. The swatch colors are read off MapView's own
+## constants rather than restated, so a ramp retune moves the legend with the map.
+func _pasture_legend_fixture() -> Dictionary:
+	var poor: Color = MAP_VIEW_SCRIPT.PASTURE_POOR_COLOR
+	var rich: Color = MAP_VIEW_SCRIPT.PASTURE_RICH_COLOR
+	return {
+		"key": "pasture",
+		"title": "Pasture (Graze Capacity)",
+		"description": "Graze capacity — the ANIMAL-edible stock (grass and browse; humans cannot digest it).\nStanding stock 100% of capacity across 346 pasture tiles.",
+		"rows": [
+			{"color": poor.lerp(rich, 8.0 / 240.0), "label": "Poorest pasture", "value_text": "8 graze"},
+			{"color": poor.lerp(rich, 138.0 / 240.0), "label": "Average pasture", "value_text": "138 graze"},
+			{"color": rich, "label": "Richest pasture", "value_text": "240 graze"},
+			{"color": MAP_VIEW_SCRIPT.PASTURE_DEAD_COLOR, "label": "Barren ground", "value_text": "50 tiles"},
+			{"color": MAP_VIEW_SCRIPT.PASTURE_WATER_COLOR, "label": "Water", "value_text": "72 tiles"},
+		],
+		"stats": {"min": 8.0, "avg": 138.0, "max": 240.0},
+	}
+
 func _terrain_legend_fixture() -> Dictionary:
 	return {
 		"key": "terrain",
