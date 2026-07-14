@@ -551,6 +551,20 @@ table PopulationCohortState {
   // without re-summing the assignment rows. Appended last (append-only schema discipline).
   foodIncome:float = 0;
   foodConsumption:float = 0;
+  // The food this band ACTUALLY PAID for pen feed this turn (summed across every corral it keeps —
+  // the real `LocalStore::take` debit, not the demanded amount; a band that could only part-pay
+  // records only what it handed over, and its herds starve for the rest).
+  //
+  // A pen's feed comes straight off the band's stores, so it is in NEITHER foodIncome (per-source
+  // yields) NOR foodConsumption (the PEOPLE's food demand). Draw it as its own NEGATIVE line in the
+  // food ledger — "my people ate X" and "my animals ate Y" are deliberately separate rows; it is not
+  // folded into foodConsumption. The sim answers it so the client does no arithmetic:
+  //
+  //   larder_delta == foodIncome - foodConsumption - penFeedUpkeep       (pinned by a sim test)
+  //
+  // Derived per-turn, not persisted (a rehydrated cohort reads 0 until the next tick), same as
+  // foodIncome. Appended (append-only schema discipline).
+  penFeedUpkeep:float = 0;
   // Hunt levers. Global config echoed per-cohort (same idiom as `maxExpeditionPartySize`, and
   // populated for EVERY cohort — the outfit/hunt UI lives on the resident-band panel).
   //   - The pre-launch EXPEDITION trip length is NOT computed here: the client reads the sim's

@@ -4698,6 +4698,12 @@ pub fn advance_labor_allocation(
         // *overwrites* any assign-time forecast seed (`LaborAllocation::set_source_yield`) with the
         // resolved take — the seed is only the pre-resolution stand-in.
         let mut yields: Vec<SourceYield> = vec![SourceYield::ZERO; allocation.assignments.len()];
+        // The pen feed this band ACTUALLY pays this turn, summed across every pen it keeps (a band may
+        // keep more than one). Rebuilt from scratch each turn, exactly like `yields` — it is the real
+        // debit off `cohort.stores`, and it appears in neither `food_income` nor `food_consumption`, so
+        // the snapshot must export it or the band's net-food readout overstates the surplus by exactly
+        // this much (see `LaborAllocation::last_pen_feed_upkeep`).
+        let mut pen_feed_paid = 0.0_f32;
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
             let workers = assignment.workers;
             if workers == 0 {
@@ -4922,6 +4928,7 @@ pub fn advance_labor_allocation(
                         herd.corralled_tended_this_turn = true;
                         let demand = pen_upkeep(herd, &fauna);
                         let paid = cohort.stores.take(FOOD, scalar_from_f32(demand)).to_f32();
+                        pen_feed_paid += paid;
                         // Nothing demanded (a zero-biomass pen / a zero upkeep lever) = fully fed.
                         herd.pen_fed_fraction = if demand > 0.0 {
                             (paid / demand).clamp(0.0, 1.0)
@@ -5072,6 +5079,7 @@ pub fn advance_labor_allocation(
             yields.remove(idx);
         }
         allocation.last_yields = yields;
+        allocation.last_pen_feed_upkeep = pen_feed_paid;
     }
 }
 

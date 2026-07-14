@@ -3972,6 +3972,13 @@ fn population_state(
         .map(|a| a.last_yields.iter().map(|y| y.actual).sum())
         .unwrap_or(0.0);
     let food_consumption = demand.to_f32();
+    // The pen feed this band ACTUALLY paid this turn (the real `LocalStore::take` debit, summed across
+    // its pens by `advance_labor_allocation`). It is in NEITHER of the two terms above — a pen's feed
+    // comes straight off `cohort.stores` — so without exporting it the client's
+    // `food_income − food_consumption` net-food row overstates the surplus by exactly the upkeep, and
+    // the player watches the larder drain with no explanation. Derived, like `food_income`: `0.0` on a
+    // rehydrated save until the next tick.
+    let pen_feed_upkeep = allocation.map(|a| a.last_pen_feed_upkeep).unwrap_or(0.0);
     // Expedition discriminators + persistence fields (empty/false for a normal band).
     let (
         is_expedition,
@@ -4106,6 +4113,7 @@ fn population_state(
         settlement_stage,
         food_income,
         food_consumption,
+        pen_feed_upkeep,
         // Pre-launch hunt-forecast levers (global config, echoed onto every cohort — the outfit UI
         // reads them off the selected resident band).
         hunt_per_worker_provisions: expedition_levers.hunt_per_worker_provisions,
@@ -5003,6 +5011,7 @@ mod tests {
                     workers_needed: 5,
                 },
             ],
+            last_pen_feed_upkeep: 0.0,
         };
         let (cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
@@ -5056,6 +5065,7 @@ mod tests {
                 workers: 10,
             }],
             last_yields: Vec::new(),
+            last_pen_feed_upkeep: 0.0,
         };
         let (cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),

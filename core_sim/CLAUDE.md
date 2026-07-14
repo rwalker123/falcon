@@ -563,6 +563,25 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
     pen, including the ones you are about to harvest), so `net > 0 ⟺ u < r·p/(2 + r)`. A violating
     override would silently make corralling a permanent **net food loss**. See "The husbandry yield
     ladder" for the full validated list.
+- **The band's food ledger — `PopulationCohortState.penFeedUpkeep` (the per-band roll-up).** A pen's
+  feed is taken straight off `cohort.stores` (`LocalStore::take`, the corral-tend branch), so it lands
+  in **neither** `foodIncome` (Σ per-source `actual`) **nor** `foodConsumption` (the *people's*
+  `food_demand`). A band keeping a pen would therefore display a surplus **overstated by exactly the
+  upkeep** — on a Red Deer pen a phantom **+1.74/turn** against a band that eats ~1.2 — and the player
+  would watch the larder drain unexplained. `penFeedUpkeep` is **the food the band actually PAID** this
+  turn (the summed `LocalStore::take` *return*, not the demand — a band that can only part-pay reports
+  only what it handed over, and its herds starve for the rest), carried on
+  `LaborAllocation::last_pen_feed_upkeep` (derived per-turn, not persisted, excluded from equality —
+  same treatment as `last_yields`). It closes the identity
+  ```text
+  larder_delta == foodIncome − foodConsumption − penFeedUpkeep
+  ```
+  which `integration_tests/tests/pen_food_ledger.rs` pins against a **real turn** through the real
+  systems and the real snapshot export, both fully-fed and part-fed. **It is deliberately NOT folded
+  into `foodConsumption`**: "my people ate X" and "my animals ate Y" are separate lines, and that
+  separation is the readout this arc exists to give. The sim answers the number so the **client does
+  zero arithmetic** (it must not sum `penUpkeep` across herds itself) — the same discipline as the
+  Pre-commit Yield Forecast.
 - **Display snapshot (on the wire).** The corral state is exposed to the client stream on both
   `WorldSnapshot` and `WorldDelta` (`snapshot.fbs`, `sim_schema`, `snapshot.rs`
   `herd_snapshot_entries`): `HerdTelemetryState.corralled:bool` (= `Herd::is_corralled()`) and
@@ -570,9 +589,8 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   `ForagePatchState.cultivationProgress`), plus **`penUpkeep:float`** (food/turn the pen demands at the
   herd's CURRENT biomass; `0` when not corralled) and **`penFedFraction:float`** (last turn's fed
   fraction; `1.0` = fully fed, `< 1` = **starving** — the herd and its yield are shrinking, and it
-  recovers when fed again). `corralYield` is the **gross** managed yield, so the client renders
-  `penUpkeep` as a *negative* row against it in the band's food ledger (the `foodIncome` /
-  `foodConsumption` seam already exists). Plus the forecast pair `ceilingCorral` / `corralYield` (see
+  recovers when fed again). Those two are **per-herd** (the herd drawer + the starving warning).
+  Plus the forecast pair `ceilingCorral` / `corralYield` (see
   "Pre-commit Yield Forecast"). See "Intensification display snapshot" under Cultivation for the
   plant-side + faction-knowledge fields.
 - **Follow-up (final Phase-1 slice):** the **client _rendering_ for both ladders** — cultivation +

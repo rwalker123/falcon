@@ -1452,9 +1452,27 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub food_income: f32,
     /// Band-level per-turn food consumption = `food_demand(children, working, elders)` (the same
-    /// one-turn demand `days_of_food` divides by). Derived per-turn at capture. Appended last.
+    /// one-turn demand `days_of_food` divides by) — **the PEOPLE's food only**. Derived per-turn at
+    /// capture. Appended last.
     #[serde(default)]
     pub food_consumption: f32,
+    /// **The food this band actually PAID for pen feed this turn**, summed across every corral it
+    /// keeps — the real `LocalStore::take` debit, not the demanded amount (a band that could only
+    /// part-pay records only what it handed over, and its herds starve for the rest).
+    ///
+    /// A pen's feed comes straight off the band's stores, so it is in **neither** [`Self::food_income`]
+    /// **nor** [`Self::food_consumption`]. Render it as its own **negative** row in the food ledger —
+    /// "my people ate X" and "my animals ate Y" are deliberately separate lines, and it is *not* folded
+    /// into `food_consumption`. The sim answers it so the client does no arithmetic:
+    ///
+    /// ```text
+    /// larder_delta == food_income − food_consumption − pen_feed_upkeep
+    /// ```
+    ///
+    /// (pinned by `core_sim/tests/fauna_husbandry.rs`). Derived per-turn, not persisted (a rehydrated
+    /// cohort reads `0.0` until the next tick), exactly like `food_income`. Appended.
+    #[serde(default)]
+    pub pen_feed_upkeep: f32,
     /// Hunt levers — global config echoed per-cohort (same idiom as `max_expedition_party_size`, and
     /// populated for **every** cohort, since the outfit/hunt UI lives on the resident-band panel).
     ///
@@ -3480,6 +3498,7 @@ fn create_populations<'a>(
                     moraleUnrest: cohort.morale_unrest,
                     settlementStage: Some(settlement_stage),
                     foodIncome: cohort.food_income,
+                    penFeedUpkeep: cohort.pen_feed_upkeep,
                     foodConsumption: cohort.food_consumption,
                     huntPerWorkerProvisions: cohort.hunt_per_worker_provisions,
                     expeditionViabilityWarnTurns: cohort.expedition_viability_warn_turns,
