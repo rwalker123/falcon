@@ -479,7 +479,9 @@ func _build_river_texture_array() -> Texture2DArray:
 	## mipmaps, so the trilinear river sampler averages a thin band into a stable line at far zoom instead
 	## of shimmering) with ONE difference: a river is not a biome, so the layer is keyed by the file's
 	## numeric prefix, not by terrain id — 0 = Minor / 1 = Major (the hex-EDGE classes, layer = class - 1)
-	## and 2 = the navigable CHANNEL water. Returns null when no river asset exists (shader runs
+	## and 2 = the navigable CHANNEL water. **Layer 0 (Minor) is REQUIRED** — it anchors the `class - 1`
+	## indexing, so without it every class would sample the wrong water; higher layers may be densified
+	## from layer 0. Returns null when no river asset exists, or when layer 0 is missing (shader runs
 	## river-disabled).
 	const RIVER_PATH := "res://assets/terrain/textures/rivers/"
 	# Layers 0/1 are the 2-bit edge mask's Minor/Major (class 3 is reserved and never drawn); layer 2 is the
@@ -518,8 +520,15 @@ func _build_river_texture_array() -> Texture2DArray:
 		print("[TerrainTextureManager] No river textures found (river overlay disabled)")
 		return null
 
-	# The shader indexes the array by (class - 1), so the layers must be dense from 0 — a gap would make
-	# every higher class sample the wrong water. Fill any hole with the lowest present layer.
+	# The shader indexes the array by (class - 1), so layer 0 IS Minor and the layers must be dense from
+	# 0. Without layer 0 the indexing premise is void — every class would sample the wrong water (Minor
+	# would render as Major) — so bail like the empty-directory case rather than densify a lie.
+	const RIVER_ANCHOR_LAYER := 0
+	if not by_layer.has(RIVER_ANCHOR_LAYER):
+		push_warning("[TerrainTextureManager] River layer %d (Minor) missing — the array is indexed by (river class - 1), so without it every class would sample the wrong water. River overlay disabled." % RIVER_ANCHOR_LAYER)
+		return null
+
+	# Any remaining hole is densified from the anchor (never from "the lowest present layer").
 	var layers: Array = by_layer.keys()
 	layers.sort()
 	var images: Array[Image] = []
@@ -527,8 +536,8 @@ func _build_river_texture_array() -> Texture2DArray:
 		if by_layer.has(layer):
 			images.append(by_layer[layer])
 		else:
-			push_warning("[TerrainTextureManager] River layer %d missing — reusing layer %d" % [layer, int(layers[0])])
-			images.append(by_layer[layers[0]])
+			push_warning("[TerrainTextureManager] River layer %d missing — reusing layer %d" % [layer, RIVER_ANCHOR_LAYER])
+			images.append(by_layer[RIVER_ANCHOR_LAYER])
 
 	var array_tex := Texture2DArray.new()
 	var err := array_tex.create_from_images(images)
