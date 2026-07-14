@@ -1,9 +1,10 @@
 extends RefCounted
 class_name PenStatus
 
-## Single source of truth for "is this pen's herd starving?" — the one test the HUD's herd drawer
-## asks (`Hud._corral_label` + the Pen feed row), and the one any future map/alert affordance must
-## reuse, so no two surfaces can disagree about which pen is dying.
+## Single source of truth for "is this pen's herd starving?" — the ONE test the HUD's herd drawer
+## (`Hud._corral_label` + the Pen feed row), the map's distress badge (`MapView._draw_herd`) and the
+## turn orb's `starving_pen` attention producer all ask, so no two surfaces can disagree about which
+## pen is dying.
 ##
 ## A corralled herd is a managed POPULATION (docs/plan_corral_managed_population.md): it cannot
 ## graze, so its keeper band hauls it `pen_upkeep` food/turn off the larder. The sim exports the
@@ -29,3 +30,8 @@ static func fed_fraction(herd: Dictionary) -> float:
 ## reads it once for both its rows — does not fetch it twice.
 static func is_starving(fed: float) -> bool:
 	return fed < FULLY_FED - FED_EPSILON
+
+## For a caller holding only the herd dict (the map marker, the turn-orb producer): is this herd's
+## pen unfed? A herd that is NOT corralled is never starving, whatever its (defaulted) fraction says.
+static func herd_is_starving(herd: Dictionary) -> bool:
+	return bool(herd.get("corralled", false)) and is_starving(fed_fraction(herd))

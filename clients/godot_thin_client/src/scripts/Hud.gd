@@ -136,6 +136,24 @@ const ATTENTION_KIND_STARVING := "starving"
 const ATTENTION_KIND_LOSING_POPULATION := "losing_population"
 const ATTENTION_KIND_IDLE_WORKERS := "idle_workers"
 const ATTENTION_KIND_AWAITING_ORDERS := "awaiting_orders"
+# A pen whose keeper could not pay this turn's feed: the herd is SHRINKING every turn, and with it
+# the yield a 25-turn investment was built for. It recovers if fed again, so this is a reversible
+# loss the player must be told about WHILE it is reversible — exactly what the orb is for.
+#
+# SEVERITY IS DELIBERATELY WARN, NOT CRITICAL, and that is a framing decision about DOUBLE-REPORTING:
+# a pen only goes unfed when the keeper's larder came up short, so the SAME empty larder normally
+# also trips `starving` (critical) on that band. The two are not one alert twice — they are two
+# different LOSSES from one cause (the people are dying / the herd is dying), with two different
+# subjects, two different jumps (the band's tile / the herd's tile) and two different remedies. But
+# only ONE of them gets to shout: the band's `starving` row stays the critical headline, and the pen
+# row rides below it as the consequence the player would otherwise never see coming.
+const ATTENTION_KIND_STARVING_PEN := "starving_pen"
+const ATTENTION_PEN_LABEL_FORMAT := "%s pen starving"
+# The detail carries the fed fraction and the consequence — and NOTHING else. It deliberately does
+# NOT name the keeper band: the orb's rows CLIP at POPOVER_WIDTH (sized to the widest producer), and
+# appending "· Band 1" pushed this row past it (rendered, looked at, cut). The row already names the
+# herd, and its Jump lands on that herd — the band adds nothing the player can act on here.
+const ATTENTION_PEN_DETAIL_FORMAT := "%d%% fed — the herd is shrinking"
 const ATTENTION_SEVERITY_CRITICAL := "critical"
 const ATTENTION_SEVERITY_WARN := "warn"
 # Awaiting expeditions are listed ONE ROW EACH (not one aggregate like idle workers): each parked
@@ -514,16 +532,27 @@ const FORECAST_FEED_KEYS := {
 }
 # The investment forecast states the DEAL, not a single yield: "Preparing: +0.09 /turn → then +1.20 /turn".
 const INVESTMENT_FORECAST_FORMAT := "Preparing: %s → then %s"
-# The same deal for a rung that also carries a running feed cost, in the two cases the wire admits:
-#   • the feed is KNOWN — the herd is already penned, so the sim exports its real `pen_upkeep` at the
-#     current biomass: "Preparing: +0.75 /turn → then +5.40 /turn − 1.74 feed" (a pure subtraction of
-#     two numbers the sim exported for THIS herd; the client models no ecology).
-#   • the feed is UNKNOWN — the herd is NOT penned yet, so `pen_upkeep` is 0 (there is no pen to
-#     feed). The pre-build feed is NOT on the wire, so we say the payoff is a GROSS figure rather
-#     than fake a projection: "Preparing: +0.75 /turn → then +5.40 /turn before feed". The picker's
-#     Corral hint right below spells out that the feed is drawn from the larder every turn.
+# The same deal for a rung that also carries a running feed cost:
+#   "Preparing: +0.75 /turn → then +5.40 /turn − 1.74 feed"
+# `pen_upkeep` answers "what would this pen cost?" for an UNPENNED herd too (a projection at the
+# herd's current biomass, on the SAME basis `corral_yield` uses — see `fauna::pen_upkeep`), so the
+# pre-commit row quotes the real running cost at the moment the player actually decides. The
+# subtraction is a pure difference of two numbers the sim exported for THIS herd; the client models
+# no ecology. (Before the sim exported that projection this row said "before feed"; it no longer
+# has to.) An older snapshot with no `pen_upkeep` degrades to the plain no-feed format above rather
+# than printing a fabricated "− 0.00 feed".
 const INVESTMENT_FORECAST_FEED_FORMAT := "Preparing: %s → then %s − %s feed"
-const INVESTMENT_FORECAST_FEED_UNKNOWN_FORMAT := "Preparing: %s → then %s before feed"
+# A ZERO PAYOFF IS DATA, NOT A MISSING NUMBER — and it is the single most valuable thing this row can
+# say. The pen's harvest is constant ESCAPEMENT (take only the biomass standing above `K/2`), so a
+# herd at or below the MSY point honestly pays **0.00** until it rebuilds: penning it would eat feed
+# every turn and pay nothing. That must never be suppressed, blanked, or em-dashed away — a player
+# who pens a depleted herd because the UI declined to show them a zero has been actively misled. So
+# the zero renders in full, and the row EMPHASIZES it: WARN-amber instead of income-green, plus this
+# note naming the remedy (let it rebuild). The feed line still shows, because the feed is what makes
+# a zero payoff a net LOSS rather than merely a nothing.
+# (The "is it zero" floor is the shared `FOOD_FLOW_MIN` — one definition of "below this, there is no
+# flow here", used by the band ledger's rows and by this row alike.)
+const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would eat feed and pay nothing until the herd rebuilds."
 # A herd dict carries the forecast fields bare; `tile_info` carries the forage patch's under a
 # `patch_` prefix (MapView._tile_info_at cross-refs them off `forage_patch_lookup`).
 const HERD_FORECAST_PREFIX := ""
@@ -1579,6 +1608,13 @@ func _on_turn_orb_focus(x: int, y: int) -> void:
     if not exp.is_empty():
         _on_panel_expedition_selected(int(exp.get("entity", -1)), x, y)
         return
+    # A starving-pen row jumps to the HERD, not just its hex: `_focus_labor_source` (the very path
+    # the Band panel's Hunt row uses) recenters AND pins the herd, so the drawer that explains the
+    # alert — the "⚠ Starving" Corral row + the Pen feed cost — is what actually opens.
+    var pen_herd := _starving_pen_at(x, y)
+    if pen_herd != "":
+        _focus_labor_source(x, y, pen_herd)
+        return
     emit_signal("alert_focus_requested", x, y)
 
 func _on_turn_orb_advance() -> void:
@@ -2281,26 +2317,33 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
 ## +1.20 /turn" — so the up-front cost AND the payoff are visible BEFORE the player commits. Both
 ## halves are scaled by the acting band's output multiplier, exactly as the plain forecast is.
 ##
-## The Corral payoff is GROSS (the pen's feed is a separate debit on the keeper's larder), so its
-## row never shows the payoff bare: it either subtracts the herd's real exported `pen_upkeep`, or —
-## while the herd is un-penned and the sim exports no feed figure — says the number is "before feed"
-## rather than inventing a projection. The feed is NEVER silently folded away.
+## The Corral payoff is GROSS (the pen's feed is a separate debit on the keeper's larder), so its row
+## never shows the payoff bare — it subtracts the herd's own exported `pen_upkeep` (which the sim now
+## projects for an un-penned herd too, on the same biomass basis). The feed is NEVER folded away, and
+## a **zero payoff is rendered, loudly** (see INVESTMENT_FORECAST_DEPLETED_NOTE) — a depleted herd
+## below the escapement point pays nothing, and that is the row's most important reading.
 func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary) -> Label:
     var row := Label.new()
     var expected := _format_yield(_expected_yield(forecast, workers, band))
+    var hex := HudStyle.HEALTHY
     if bool(forecast.get("investment", false)):
         var output := float(band.get("output_multiplier", OUTPUT_FULL))
-        var payoff := _format_yield(float(forecast.get("payoff", 0.0)) * output)
+        var payoff := float(forecast.get("payoff", 0.0)) * output
         var feed := float(forecast.get("feed", 0.0)) * output
-        if not bool(forecast.get("feed_rung", false)):
-            row.text = INVESTMENT_FORECAST_FORMAT % [expected, payoff]
-        elif feed >= FOOD_FLOW_MIN:
-            row.text = INVESTMENT_FORECAST_FEED_FORMAT % [expected, payoff, _format_magnitude(feed)]
+        var has_feed := bool(forecast.get("feed_rung", false)) and feed >= FOOD_FLOW_MIN
+        if has_feed:
+            row.text = INVESTMENT_FORECAST_FEED_FORMAT % [
+                expected, _format_yield(payoff), _format_magnitude(feed)]
         else:
-            row.text = INVESTMENT_FORECAST_FEED_UNKNOWN_FORMAT % [expected, payoff]
+            row.text = INVESTMENT_FORECAST_FORMAT % [expected, _format_yield(payoff)]
+        # A prepared source that pays NOTHING is a trap, and one that pays nothing while EATING every
+        # turn is a net loss. Say so — amber, in words, without hiding the zeros that prove it.
+        if has_feed and payoff < FOOD_FLOW_MIN:
+            row.text += "\n%s" % INVESTMENT_FORECAST_DEPLETED_NOTE
+            hex = HudStyle.WARN
     else:
         row.text = FORECAST_LABEL_FORMAT % expected
-    row.add_theme_color_override("font_color", HudStyle.HEALTHY)
+    row.add_theme_color_override("font_color", hex)
     return row
 
 ## THE overdraw test: a take above the source's renewable-sustainable ceiling (by more than the
@@ -4278,6 +4321,62 @@ func _awaiting_orders_attention(expeditions: Array) -> Array:
 
 ## The awaiting expedition standing on (x, y), or {} — lets the orb's Jump reuse the panel's own
 ## expedition-focus path instead of a second, weaker one (see `_on_turn_orb_focus`).
+## Turn-orb attention items for the STARVING PENS one band keeps (Producer 5). One row per pen — a
+## pen is a distinct 25-turn investment with its own herd, its own tile and its own fed fraction, so
+## (unlike idle workers) there is nothing meaningful to aggregate. Driven by `PenStatus`, the same
+## test the herd drawer and the map badge ask, so the three surfaces cannot disagree.
+##
+## The pens are found through the band's OWN Corral labor assignments: the client has no owner field
+## on a herd, so scanning `_world_herds` would happily alarm on a RIVAL's starving pen.
+func _starving_pen_attention(band: Dictionary) -> Array:
+    var items: Array = []
+    for a_variant in _labor_assignments_of(band):
+        if not (a_variant is Dictionary):
+            continue
+        var a: Dictionary = a_variant
+        if String(a.get("kind", "")).to_lower() != LABOR_KIND_HUNT:
+            continue
+        if String(a.get("policy", "")).to_lower() != LABOR_POLICY_CORRAL:
+            continue
+        var herd_id := String(a.get("fauna_id", ""))
+        var herd := _find_world_herd(herd_id)
+        if herd.is_empty() or not PenStatus.herd_is_starving(herd):
+            continue
+        var fed := PenStatus.fed_fraction(herd)
+        items.append({
+            "kind": ATTENTION_KIND_STARVING_PEN,
+            "severity": ATTENTION_SEVERITY_WARN,
+            "label": ATTENTION_PEN_LABEL_FORMAT % _herd_label_for_id(herd_id),
+            "detail": ATTENTION_PEN_DETAIL_FORMAT % int(round(fed * PROGRESS_PERCENT_SCALE)),
+            # The HERD's live tile — a penned herd is pinned, but the jump must still land on the
+            # animals (that is where the drawer with the fed fraction and the feed cost opens),
+            # not on the keeper band.
+            "x": int(herd.get("x", -1)), "y": int(herd.get("y", -1)),
+        })
+    return items
+
+## The starving pen (if any) standing on `(x, y)`, for the orb's jump routing — the herd twin of
+## `_awaiting_expedition_at`. Only pens the player's own bands keep, via the same producer path.
+func _starving_pen_at(x: int, y: int) -> String:
+    for band_variant in _player_bands:
+        if not (band_variant is Dictionary):
+            continue
+        for a_variant in _labor_assignments_of(band_variant):
+            if not (a_variant is Dictionary):
+                continue
+            var a: Dictionary = a_variant
+            if String(a.get("kind", "")).to_lower() != LABOR_KIND_HUNT:
+                continue
+            if String(a.get("policy", "")).to_lower() != LABOR_POLICY_CORRAL:
+                continue
+            var herd_id := String(a.get("fauna_id", ""))
+            var herd := _find_world_herd(herd_id)
+            if herd.is_empty() or not PenStatus.herd_is_starving(herd):
+                continue
+            if int(herd.get("x", -1)) == x and int(herd.get("y", -1)) == y:
+                return herd_id
+    return ""
+
 func _awaiting_expedition_at(x: int, y: int) -> Dictionary:
     for exp_variant in _player_expeditions:
         if not (exp_variant is Dictionary):
@@ -5187,6 +5286,11 @@ func update_band_alerts(populations_variant: Variant) -> void:
                 "detail": band_name,
                 "x": x, "y": y,
             })
+        # Producer 5 — a starving pen this band keeps (amber/warn; see ATTENTION_KIND_STARVING_PEN
+        # for why it is not critical). Keyed off the band's OWN Corral assignments, never a scan of
+        # every herd on the wire: that is what makes it the PLAYER's pen (a herd carries no owner
+        # field client-side) and what lets the row name the keeper who has to fix it.
+        attention.append_array(_starving_pen_attention(entry))
     # Producer 4 — awaiting orders: a detached party parked at its objective, burning provisions
     # until the player acts (amber/warn, same class as idle labor). Runs over the EXPEDITIONS split
     # out above, not the bands — an expedition is never "Band N", so it never enters the band loop.

@@ -118,9 +118,7 @@ func _ready() -> void:
 	# The world's herds (Main pushes snapshot["herds"]): the Current-actions Hunt row reads the herd's
 	# species from here and, when clicked, jumps to its LIVE tile (it has migrated away from the hunt
 	# assignment's launch target).
-	_hud.update_herds([
-		{"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120, "ecology_phase": "stressed"},
-	])
+	_hud.update_herds(_world_herds_fixture())
 	# The world's food modules (Main pushes snapshot["food_modules"]): each Forage row leads with the
 	# module's map glyph, so the panel row and the map marker read as the same resource.
 	_hud.update_food_modules([
@@ -562,6 +560,17 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_corral")
 
+	# State 3d-corral-depleted — the SAME rung on a herd BELOW the pen's escapement point (K/2). The
+	# managed harvest takes only the biomass standing above that point, so the payoff is honestly
+	# +0.00 /turn while the feed is still 0.14 — a pure loss. The row must SHOW both zeros and turn
+	# amber with "⚠ Too depleted to pen", never suppress the zero as if it were missing data.
+	_hud._hunt_assign_key = ""
+	_hud.show_herd_selection(_depleted_corral_herd_fixture())
+	_hud._hunt_assign_policy = "corral"
+	_hud._build_herd_assign_controls(_depleted_corral_herd_fixture())
+	await _settle()
+	await _save("herd_corral_depleted")
+
 	# Back to a plain Sustain compose for the band-picker / distance states below.
 	_hud._hunt_assign_policy = "sustain"
 	_hud._hunt_assign_key = ""
@@ -939,6 +948,27 @@ func _ready() -> void:
 	_hud.turn_orb.open_popover()
 	await _settle()
 	await _save("turn_orb_awaiting_orders")
+
+	# State 7c — turn orb, STARVING-PEN producer: the band that keeps the pen could not pay its feed,
+	# so the penned herd is shrinking every turn and 25 turns of investment are draining away. Two
+	# rows here ON PURPOSE, and they are NOT the same alert twice: the empty larder is one cause with
+	# two different losses — the PEOPLE are starving (critical, jumps to the band) and the HERD is
+	# starving (warn, jumps to the herd, where the fed fraction + feed cost are). Only one shouts.
+	_hud.turn_orb.set_attention([])
+	_hud.update_herds([_starving_pen_herd_fixture()])
+	_hud.update_band_alerts([
+		{"faction": 0, "entity": 801, "size": 46, "days_of_food": 1.0, "activity": "hunt",
+			"current_x": 64, "current_y": 11, "idle_workers": 0,
+			"labor_assignments": [
+				{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "corral",
+					"target_x": 66, "target_y": 10, "actual_yield": 0.84, "sustainable_yield": 0.84},
+			]},
+	])
+	_hud.turn_orb.open_popover()
+	await _settle()
+	await _save("turn_orb_starving_pen")
+	_hud.update_herds(_world_herds_fixture())   # restore the shared world-herd list
+
 	_hud.turn_orb.toggle_popover()   # close, so later states render without it
 
 	# State 8 — reserved-space docking (Slice 1 refactor): a left-edge reservation of
@@ -1714,6 +1744,13 @@ func _tended_tile_fixture() -> Dictionary:
 	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
 	return tile
 
+## The world's herd list (Main pushes snapshot["herds"]). Named because the turn-orb starving-pen
+## state swaps in its own list and must restore this one.
+func _world_herds_fixture() -> Array:
+	return [
+		{"id": "game_deer_07", "species": "Red Deer", "x": 68, "y": 15, "population": 120, "ecology_phase": "stressed"},
+	]
+
 func _herd_fixture() -> Dictionary:
 	return {
 		"id": "game_deer_07",
@@ -1816,6 +1853,10 @@ func _corral_ready_herd_fixture() -> Dictionary:
 	fixture["domestication"] = 1.0
 	fixture["corralled"] = false
 	fixture["corral_progress"] = 0.4
+	# `pen_upkeep` is the feed this pen WOULD demand once built (the sim projects it at the herd's
+	# current biomass, on the same basis as `corral_yield`) — so the pre-commit row can quote the
+	# real running cost at the moment the player decides, rather than saying "before feed".
+	fixture["pen_upkeep"] = 0.34
 	fixture["tile_info"] = {
 		"x": 66, "y": 10,
 		"terrain_label": "Prairie Steppe",
@@ -1846,6 +1887,24 @@ func _domesticated_herd_fixture() -> Dictionary:
 		"food_module": "",
 		"food_module_label": "None",
 	}
+	return fixture
+
+## A DOMESTICATED but DEPLETED herd (biomass below the pen's escapement point, K/2): the pen's
+## harvest takes only the biomass standing ABOVE K/2, so `corral_yield` is honestly **0.00** — penning
+## this herd would eat 0.14 food/turn and pay nothing until it rebuilds. The zero is the whole point
+## of the frame: it must render in full (never blanked or em-dashed) and be EMPHASIZED, because a
+## player who pens this herd on a hidden zero has been misled by the UI.
+func _depleted_corral_herd_fixture() -> Dictionary:
+	var fixture := _corral_ready_herd_fixture()
+	fixture["biomass"] = 260.0
+	fixture["ecology_phase"] = "stressed"
+	fixture["corral_progress"] = 0.0
+	# Everything scales off the shrunken herd — including the dip, which is a share of its MSY.
+	fixture["per_worker_yield"] = 0.10
+	fixture["ceiling_sustain"] = 0.10
+	fixture["ceiling_corral"] = 0.05
+	fixture["corral_yield"] = 0.0     # below K/2 → the escapement harvest takes NOTHING
+	fixture["pen_upkeep"] = 0.14      # …and it would still have to be fed
 	return fixture
 
 ## The SAME penned herd, STARVING: its keeper paid only 40% of the 1.74/turn feed, so the herd is

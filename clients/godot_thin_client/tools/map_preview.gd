@@ -259,6 +259,18 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_herd_selected")
 
+	# State J-starving — a CORRALLED herd whose keeper could not pay this turn's feed. A penned herd
+	# cannot graze, so an unfed one is SHRINKING every turn (docs/plan_corral_managed_population.md);
+	# the marker flags it with a DANGER ring + a hand-drawn "!" badge. **The fed pen beside it must
+	# stay clean** — that A/B is the whole point of the frame (a tint-only treatment passed the "it's
+	# red-ish" eye test and failed this one: full-color emoji swallow a modulate).
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map.display_snapshot(_snapshot_pens())
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_herd_starving")
+
 	# State K — split-state guard: the selected band (selected_unit_id) stands on a DIFFERENT hex than
 	# selected_tile, simulating a band that migrated off the clicked hex on turn-advance. The outline
 	# stays on selected_tile; NO active-ring may draw on the band's actual hex (group_tile !=
@@ -564,6 +576,19 @@ func _band(assignments: Array, work_range: int, scout_radius: int) -> Dictionary
 func _deer_herd() -> Dictionary:
 	# Well outside the work-range ring (Chebyshev distance 5 from the band).
 	return {"id": "game_deer_07", "label": "Red Deer (game_deer_07)", "x": 13, "y": 6, "biomass": 800.0, "huntable": true}
+
+## Two pens side by side: one FED, one STARVING. `corralled` + `pen_fed_fraction` < 1 is the sim's
+## starving signal — the herd is losing biomass every turn, and the map must show WHICH pen.
+func _snapshot_pens() -> Dictionary:
+	var fed := _deer_herd()
+	fed["corralled"] = true
+	fed["pen_fed_fraction"] = 1.0
+	var starving := {
+		"id": "game_aurochs_03", "label": "Aurochs (game_aurochs_03)",
+		"x": 10, "y": 7, "biomass": 310.0, "huntable": true,
+		"corralled": true, "pen_fed_fraction": 0.4,
+	}
+	return _base_snapshot(_band([], 2, 2), [fed, starving])
 
 func _snapshot_work() -> Dictionary:
 	# Per-source yields annotate the worked tiles/herd on the map. Forage is renewable (actual ==

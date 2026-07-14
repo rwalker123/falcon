@@ -114,6 +114,32 @@ const SECONDARY_VISIBLE_CAP := 3             # icons drawn before the +N overflo
 const SECONDARY_ICON_SIZE_FACTOR := 0.55     # of hex radius (was ~1.05 over a backing disc)
 const SECONDARY_ICON_MIN_SIZE := 10.0
 const SECONDARY_ICON_COLOR := Color(0.97, 0.98, 0.94, 1.0)
+# STARVING-PEN DISTRESS BADGE (docs/plan_corral_managed_population.md). A corralled herd whose keeper
+# could not pay this turn's feed is SHRINKING every turn — the drawer must not be the only place that
+# says so. The affordance is DRAWN GEOMETRY, never a tint or a glyph: a herd marker is a full-color
+# EMOJI, so `modulate` leaves it looking like an ordinary brown animal (measured — see the rejected
+# tint below), and a font ⚠ carries emoji presentation and renders as a blob at marker size (the same
+# hazard that forced `MagnifierButton` and the line-art policy icons to hand-draw). So:
+#   • a DANGER ring around the herd's slot (the same primitive as the food-harvest ring), and
+#   • a filled DANGER disc badge on the icon's upper-right with a hand-drawn white "!".
+# Driven by `PenStatus.herd_is_starving` — the same test the herd drawer's "⚠ Starving" row uses.
+const HERD_DISTRESS_COLOR := HudStyle.DANGER
+const HERD_DISTRESS_RING_FACTOR := 0.46        # of hex radius — just outside the food-harvest ring
+const HERD_DISTRESS_RING_WIDTH := 2.5
+const HERD_DISTRESS_RING_SEGMENTS := 24
+# The badge, sized off the icon (not the hex) so it tracks the glyph it annotates at every zoom.
+const HERD_DISTRESS_BADGE_RADIUS_FACTOR := 0.38   # of the icon size
+const HERD_DISTRESS_BADGE_OFFSET_FACTOR := Vector2(0.42, -0.42)   # of the icon size, from its center
+const HERD_DISTRESS_BADGE_RIM_COLOR := Color(0.12, 0.05, 0.05, 0.9)
+const HERD_DISTRESS_BADGE_RIM_WIDTH := 1.5
+const HERD_DISTRESS_BADGE_SEGMENTS := 16
+# The hand-drawn "!" inside the badge: a tapered stem plus a dot, as fractions of the badge radius.
+const HERD_DISTRESS_BANG_COLOR := Color(1.0, 1.0, 1.0, 1.0)
+const HERD_DISTRESS_BANG_STEM_TOP := -0.55
+const HERD_DISTRESS_BANG_STEM_BOTTOM := 0.12
+const HERD_DISTRESS_BANG_STEM_WIDTH := 0.24
+const HERD_DISTRESS_BANG_DOT_Y := 0.46
+const HERD_DISTRESS_BANG_DOT_RADIUS := 0.15
 # Legibility without the old dark backing disc: a 1px-offset drop shadow under the glyph.
 const MARKER_GLYPH_SHADOW_OFFSET := Vector2(1.0, 1.0)
 const MARKER_GLYPH_SHADOW_COLOR := Color(0.0, 0.0, 0.0, 0.6)
@@ -2296,6 +2322,27 @@ func _draw_marker_glyph(center: Vector2, glyph: String, size: int, color: Color)
 	draw_string(font, baseline + MARKER_GLYPH_SHADOW_OFFSET, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, MARKER_GLYPH_SHADOW_COLOR)
 	draw_string(font, baseline, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
 
+## The starving-pen distress badge: a filled DANGER disc with a dark rim and a HAND-DRAWN white "!",
+## pinned to the upper-right of a marker glyph. Hand-drawn for the same reason `MagnifierButton` is —
+## a font ⚠/❗ renders as an emoji blob at this size — and geometric so it reads OVER the full-color
+## emoji it annotates. Sized off `icon_size`, so it shrinks with the marker at far zoom (and the
+## caller is already LOD-gated by the secondary-slot system).
+func _draw_distress_badge(icon_center: Vector2, icon_size: int) -> void:
+	var badge_r: float = float(icon_size) * HERD_DISTRESS_BADGE_RADIUS_FACTOR
+	var center := icon_center + HERD_DISTRESS_BADGE_OFFSET_FACTOR * float(icon_size)
+	draw_circle(center, badge_r, HERD_DISTRESS_COLOR)
+	draw_arc(center, badge_r, 0, TAU, HERD_DISTRESS_BADGE_SEGMENTS,
+		HERD_DISTRESS_BADGE_RIM_COLOR, HERD_DISTRESS_BADGE_RIM_WIDTH)
+	# The "!": a stem (a rect, so it stays crisp at small sizes) over a dot.
+	var stem_w: float = badge_r * HERD_DISTRESS_BANG_STEM_WIDTH
+	var stem_top: float = badge_r * HERD_DISTRESS_BANG_STEM_TOP
+	var stem_bottom: float = badge_r * HERD_DISTRESS_BANG_STEM_BOTTOM
+	draw_rect(Rect2(
+		center + Vector2(-stem_w * 0.5, stem_top),
+		Vector2(stem_w, stem_bottom - stem_top)), HERD_DISTRESS_BANG_COLOR)
+	draw_circle(center + Vector2(0.0, badge_r * HERD_DISTRESS_BANG_DOT_Y),
+		badge_r * HERD_DISTRESS_BANG_DOT_RADIUS, HERD_DISTRESS_BANG_COLOR)
+
 ## DEFER a per-source yield label instead of drawing it inline. The label is an annotation OVER the
 ## map: drawn during the highlight pass it was painted over by every later layer (the dashed-amber
 ## pending overlays, the band→herd links, the hunted-herd rings, and the secondary herd/food glyphs —
@@ -2397,13 +2444,18 @@ func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	var tile_center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
 	var icon_center := _secondary_slot_center(tile_center, slot, radius)
 	var herd_icon := FoodIcons.for_herd(String(herd.get("label", herd.get("id", "Herd"))))
-	# NOTE: a STARVING pen (`PenStatus.is_starving`) is deliberately NOT flagged here. Tinting the
-	# marker DANGER was tried and does not read: a herd glyph is a full-color EMOJI, so `modulate`
-	# leaves it looking like an ordinary brown animal (verified in map_preview) — the same glyph
-	# hazard that forced the line-art policy icons. Surfacing a dying pen on the map needs a real
-	# affordance (a distress ring/badge), which is a design call, not a tint. The herd drawer carries
-	# the alarm today (Hud._corral_label's "⚠ Starving" + the Pen feed row).
-	_draw_marker_glyph(icon_center, herd_icon, _secondary_icon_size(radius), SECONDARY_ICON_COLOR)
+	var icon_size := _secondary_icon_size(radius)
+	# A starving pen's DANGER ring goes UNDER the glyph (it frames the animal); the badge goes OVER it
+	# (it must never be occluded by a wide emoji). REJECTED: tinting the glyph — a herd marker is a
+	# full-color emoji, so `modulate` just yields a slightly-darker brown animal (rendered, looked at,
+	# reverted). The distress read has to be geometry the emoji cannot swallow.
+	var starving := PenStatus.herd_is_starving(herd)
+	if starving:
+		draw_arc(icon_center, radius * HERD_DISTRESS_RING_FACTOR, 0, TAU, HERD_DISTRESS_RING_SEGMENTS,
+			HERD_DISTRESS_COLOR, HERD_DISTRESS_RING_WIDTH)
+	_draw_marker_glyph(icon_center, herd_icon, icon_size, SECONDARY_ICON_COLOR)
+	if starving:
+		_draw_distress_badge(icon_center, icon_size)
 
 	# Migration arrow — thinner, and only on the hovered/selected herd tile to cut clutter.
 	var tile := Vector2i(x, y)
