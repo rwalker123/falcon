@@ -90,6 +90,9 @@ pub struct MapPreset {
 
     #[serde(default)]
     pub macro_land: MacroLandConfig,
+    /// Stream-power fluvial erosion on the base heightfield, applied **before** the land mask.
+    #[serde(default)]
+    pub erosion: ErosionConfig,
     #[serde(default)]
     pub shelf: ShelfConfig,
     #[serde(default)]
@@ -475,6 +478,148 @@ pub(crate) const fn default_river_class_navigable_min_discharge() -> f32 {
 
 const fn default_river_navigable_enabled() -> bool {
     true
+}
+
+/// Stream-power fluvial erosion on the **base heightfield**, run at the end of
+/// `heightfield::build_elevation_field` — i.e. *before* the land mask, which is what makes it
+/// work: `mapgen::generate_land_mask` ranks tiles by elevation, so the coastline is an
+/// **iso-contour of the heightfield**, and eroding the field therefore reshapes the coastline
+/// itself. Incision-only (no uplift): `dz = erodibility × A^m × S^n × timestep` over a bounded
+/// iteration count carves valleys without flattening the map.
+///
+/// See `core_sim/CLAUDE.md` → Rivers → "Fluvial erosion" for the measured motivation.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ErosionConfig {
+    /// Kill switch. With this off the heightfield is the raw fractal field — i.e. exactly the
+    /// pre-erosion maps — which is also the A/B control the census measures against.
+    pub enabled: bool,
+    /// How many incision passes to run. Each pass re-fills depressions, re-routes D8 and
+    /// re-accumulates, so more iterations deepen *and* re-organise the drainage. Bounded because
+    /// stream power with no uplift term eventually planes the landscape flat.
+    pub iterations: u32,
+    /// Stream-power coefficient `K`. The overall erosion strength; scales linearly with
+    /// `timestep`, which is kept separate only to preserve the classic form.
+    pub erodibility: f32,
+    /// Drainage-area exponent `m` in `A^m`. Classic stream power uses ≈0.5; larger values
+    /// concentrate incision in the big trunks (deep valleys, untouched headwaters).
+    pub area_exponent: f32,
+    /// Slope exponent `n` in `S^n`. Classic stream power uses ≈1.0.
+    pub slope_exponent: f32,
+    /// Per-pass timestep `Δt`. Only `erodibility × timestep` matters; split for readability.
+    pub timestep: f32,
+    /// Slope floor, so a filled flat still incises a little instead of freezing (`S = 0` → no
+    /// erosion → the flat can never carve an outlet valley for itself).
+    pub min_slope: f32,
+    /// The depression fill's drainage gradient across a filled flat — the priority-flood epsilon.
+    /// Same role as `river_fill_epsilon` on the hydrology side, on the square raster.
+    pub fill_epsilon: f32,
+    /// Hillslope diffusivity `D` — the other half of the classic landscape-evolution model
+    /// (`∂z/∂t = D∇²z − K·A^m·S^n`). Stream power *incises*; diffusion *smooths*. It is the
+    /// diffusion term that de-sponges: the coastline is an iso-contour of this field, and the
+    /// crenellation is high-frequency noise sitting on that contour, which incision (concentrated
+    /// where `A` is large, i.e. nowhere near a headwater coast) cannot touch. `0.0` disables it.
+    pub diffusivity: f32,
+    /// Incision floor, as a **fraction of the land band** (`[sea_level, 1]`) above sea level: a
+    /// land cell never erodes below `sea_level + incision_floor × (1 − sea_level)`.
+    ///
+    /// This is load-bearing, and the reason is the land mask: `generate_land_mask` ranks tiles by
+    /// elevation and takes the top `target_land_pct`, so a valley incised all the way **to** the
+    /// coastline contour ranks below it and **drowns** — the trunk becomes a sea inlet and takes
+    /// its basin with it. `0.0` lets a valley cut right to base level (measured best: the drowned
+    /// stretches read as estuaries, and the coastline gets *smoother*, not more ragged).
+    pub incision_floor: f32,
+    /// Rescale the field afterwards so the land mask's coastline sits exactly on `sea_level`
+    /// (`heightfield::anchor_contour_to_sea_level`). **This is what lets the carved valleys reach
+    /// hydrology at all**: `mapgen::restamp_elevation` clamps every land cell below `sea_level`
+    /// flat *onto* `sea_level`, and on the earthlike preset a third of all land is below it.
+    /// Strictly monotone, so it cannot reorder the field or change which tiles the mask picks.
+    pub anchor_contour_to_sea_level: bool,
+}
+
+impl Default for ErosionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_erosion_enabled(),
+            iterations: default_erosion_iterations(),
+            erodibility: default_erosion_erodibility(),
+            area_exponent: default_erosion_area_exponent(),
+            slope_exponent: default_erosion_slope_exponent(),
+            timestep: default_erosion_timestep(),
+            min_slope: default_erosion_min_slope(),
+            fill_epsilon: default_erosion_fill_epsilon(),
+            diffusivity: default_erosion_diffusivity(),
+            incision_floor: default_erosion_incision_floor(),
+            anchor_contour_to_sea_level: default_erosion_anchor_contour(),
+        }
+    }
+}
+
+const fn default_erosion_enabled() -> bool {
+    true
+}
+
+/// Enough passes for a trunk to organise the drainage it captures, few enough that the interior
+/// keeps its relief. Swept 40/60/80/100 against `hydrology_earthlike::drainage_census`: past ~40 the
+/// sponge stops improving and the big basins start planing away.
+const fn default_erosion_iterations() -> u32 {
+    40
+}
+
+/// `K`. Swept 0.02 → 3.0. Below ~0.05 nothing is carved; above ~0.3 incision saturates against the
+/// downstream clamp (every cell erodes to its neighbour and the result stops depending on `K` at
+/// all) and the coastline gets *worse*. 0.1 is the middle of the working band.
+const fn default_erosion_erodibility() -> f32 {
+    0.1
+}
+
+/// `m` — the classic stream-power drainage-area exponent.
+const fn default_erosion_area_exponent() -> f32 {
+    0.5
+}
+
+/// `n` — the classic stream-power slope exponent.
+const fn default_erosion_slope_exponent() -> f32 {
+    1.0
+}
+
+/// `Δt`. See [`default_erosion_erodibility`] for the `K·Δt` budget this is half of.
+const fn default_erosion_timestep() -> f32 {
+    0.1
+}
+
+/// A floor two orders below real lowland relief (~1e-2), so it only matters on the flats the fill
+/// created — where it is what lets a filled basin cut itself an outlet.
+const fn default_erosion_min_slope() -> f32 {
+    1.0e-4
+}
+
+/// The priority-flood gradient across a filled flat: far above `f32` noise at map elevations
+/// (~1e-7) and far below `min_slope`, so it orders a flat without adding relief to it.
+const fn default_erosion_fill_epsilon() -> f32 {
+    1.0e-6
+}
+
+/// `D`. This is the term that moves the SPONGE metric — stream power alone barely does (measured:
+/// coastal 59.2% → 57.5% on incision alone, → 50–53% once diffusion is on). Swept 0.3 → 3.0: past
+/// ~2 it starts planing the continent's real relief and the big basins go with it.
+const fn default_erosion_diffusivity() -> f32 {
+    1.0
+}
+
+/// The pipeline assumes "land ⟺ above sea level" in half a dozen places (the shelf gate, the
+/// climate lapse, `restamp_elevation`'s lowland compression); on the raw field that assumption is
+/// simply false. On by default so it is true.
+const fn default_erosion_anchor_contour() -> bool {
+    true
+}
+
+/// Zero — a trunk may incise all the way to base level. Swept 0 / 0.05 / 0.1 / 0.25: raising the
+/// floor *hurt* both metrics. The drowned stretches read as estuaries and rias, and (against the
+/// intuition that they would shred the coast) they leave it **smoother**, because a drowned valley
+/// is a single clean inlet where the un-eroded coast was a field of noise nooks.
+const fn default_erosion_incision_floor() -> f32 {
+    0.0
 }
 
 #[derive(Debug, Clone, Deserialize)]

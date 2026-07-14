@@ -158,7 +158,7 @@ pub use labor_config::{
     load_labor_config_from_env, LaborConfig, LaborConfigHandle, LaborConfigMetadata,
     BUILTIN_LABOR_CONFIG,
 };
-pub use map_preset::{MapPreset, MapPresets, MapPresetsHandle};
+pub use map_preset::{ErosionConfig, MapPreset, MapPresets, MapPresetsHandle, BUILTIN_MAP_PRESETS};
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
 };

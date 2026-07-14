@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use bevy::app::App;
 use bevy::prelude::{UVec2, World};
@@ -9,10 +10,11 @@ use core_sim::{
     grid_utils::{
         hex_edge_corner_indices, hex_neighbors_wrapped, HEX_CORNER_COUNT, HEX_DIRECTION_COUNT,
     },
-    spawn_initial_world, CultureManager, DiscoveryProgressLedger, FactionInventory,
+    spawn_initial_world, CultureManager, DiscoveryProgressLedger, ErosionConfig, FactionInventory,
     GenerationRegistry, HydrologyOverrides, HydrologyState, MapPresets, MapPresetsHandle,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, Tile, TileRegistry,
+    BUILTIN_MAP_PRESETS,
 };
 use sim_runtime::{RiverClass, TerrainTags, TerrainType};
 
@@ -39,6 +41,42 @@ fn earthlike_world_seeded(seed: u64) -> World {
 }
 
 fn earthlike_world_with(seed: u64, hydrology: Option<HydrologyOverrides>) -> World {
+    earthlike_world_full(seed, hydrology, MapPresets::builtin())
+}
+
+/// The builtin presets with every preset's `erosion` block overridden — the A/B control for the
+/// fluvial-erosion census (`enabled: false` reproduces the pre-erosion heightfield exactly).
+fn presets_with_erosion(erosion: &ErosionConfig) -> Arc<MapPresets> {
+    let mut file: serde_json::Value =
+        serde_json::from_str(BUILTIN_MAP_PRESETS).expect("builtin map presets parse");
+    let patch = serde_json::json!({
+        "enabled": erosion.enabled,
+        "iterations": erosion.iterations,
+        "erodibility": erosion.erodibility,
+        "area_exponent": erosion.area_exponent,
+        "slope_exponent": erosion.slope_exponent,
+        "timestep": erosion.timestep,
+        "min_slope": erosion.min_slope,
+        "fill_epsilon": erosion.fill_epsilon,
+        "diffusivity": erosion.diffusivity,
+        "incision_floor": erosion.incision_floor,
+        "anchor_contour_to_sea_level": erosion.anchor_contour_to_sea_level,
+    });
+    for preset in file["presets"]
+        .as_array_mut()
+        .expect("presets is an array")
+        .iter_mut()
+    {
+        preset["erosion"] = patch.clone();
+    }
+    Arc::new(MapPresets::from_json_str(&file.to_string()).expect("patched map presets parse"))
+}
+
+fn earthlike_world_full(
+    seed: u64,
+    hydrology: Option<HydrologyOverrides>,
+    presets: Arc<MapPresets>,
+) -> World {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
 
@@ -50,8 +88,7 @@ fn earthlike_world_with(seed: u64, hydrology: Option<HydrologyOverrides>) -> Wor
     }
 
     app.world.insert_resource(config);
-    app.world
-        .insert_resource(MapPresetsHandle::new(MapPresets::builtin()));
+    app.world.insert_resource(MapPresetsHandle::new(presets));
     app.world
         .insert_resource(GenerationRegistry::with_seed(42, 8));
     app.world.insert_resource(SimulationTick::default());
@@ -839,6 +876,111 @@ impl Stats {
 /// A corner has 3 neighbours, so the contributor histogram runs 0..=3.
 const MAX_CORNER_CONTRIBUTORS: usize = 3;
 
+/// The two LANDSCAPE failures the fluvial-erosion arc exists to fix, measured independently of the
+/// river extraction (see `core_sim/CLAUDE.md` → Rivers):
+///
+/// - **SPONGE** — the share of the largest landmass's tiles that touch water. A compact blob is
+///   ~14%; an iso-contour of fractal noise is 48–64%, and a sponge cannot grow basins because every
+///   tile is a hex or two from its own private outlet. Must FALL.
+/// - **CAPTURE** — the biggest basin as a share of that landmass. 2–4% on seeds 1/3 (noise domes
+///   shedding radially) vs 46% on seed 4 (one trunk captures the interior). Must RISE, and the
+///   spread between seeds must NARROW.
+///
+/// `NavigableRiver` hexes count as **land** here, deliberately: they are the thing this arc is
+/// trying to create, so counting them as water would let a successful run register as *more* sponge
+/// (every new river hex would coast its neighbours) and would bisect the landmass it just drained.
+/// The metric is the shoreline of the continent, not of its rivers.
+struct Landscape {
+    largest_landmass: usize,
+    coastal: usize,
+    max_basin: f64,
+}
+
+impl Landscape {
+    fn of(world: &World, accumulation: &[f64]) -> Self {
+        let config = world.resource::<SimulationConfig>();
+        let (w, h, wrap) = (
+            config.grid_size.x,
+            config.grid_size.y,
+            config.map_topology.wrap_horizontal,
+        );
+        let registry = world.resource::<TileRegistry>().clone();
+        let total = (w * h) as usize;
+
+        let is_land: Vec<bool> = (0..total)
+            .map(|i| {
+                let tile = world
+                    .get::<Tile>(registry.tiles[i])
+                    .expect("tile entity exists");
+                tile.terrain == TerrainType::NavigableRiver || !is_water(tile.terrain)
+            })
+            .collect();
+
+        // Largest connected landmass (hex adjacency, honouring horizontal wrap).
+        let mut component = vec![usize::MAX; total];
+        let mut sizes: Vec<usize> = Vec::new();
+        for start in 0..total {
+            if !is_land[start] || component[start] != usize::MAX {
+                continue;
+            }
+            let id = sizes.len();
+            let mut size = 0usize;
+            let mut stack = vec![start];
+            component[start] = id;
+            while let Some(idx) = stack.pop() {
+                size += 1;
+                let (x, y) = ((idx as u32) % w, (idx as u32) / w);
+                for (nx, ny) in hex_neighbors_wrapped(x, y, w, h, wrap) {
+                    let n = (ny * w + nx) as usize;
+                    if is_land[n] && component[n] == usize::MAX {
+                        component[n] = id;
+                        stack.push(n);
+                    }
+                }
+            }
+            sizes.push(size);
+        }
+        let largest_id = sizes
+            .iter()
+            .enumerate()
+            .max_by_key(|(id, size)| (**size, std::cmp::Reverse(*id)))
+            .map(|(id, _)| id);
+
+        let mut largest_landmass = 0usize;
+        let mut coastal = 0usize;
+        if let Some(largest_id) = largest_id {
+            for (idx, &owner) in component.iter().enumerate() {
+                if owner != largest_id {
+                    continue;
+                }
+                largest_landmass += 1;
+                let (x, y) = ((idx as u32) % w, (idx as u32) / w);
+                if hex_neighbors_wrapped(x, y, w, h, wrap)
+                    .any(|(nx, ny)| !is_land[(ny * w + nx) as usize])
+                {
+                    coastal += 1;
+                }
+            }
+        }
+
+        Self {
+            largest_landmass,
+            coastal,
+            // The biggest basin on the map: the largest land-corner flow accumulation, in
+            // hex-equivalents — directly comparable to a tile count.
+            max_basin: accumulation.iter().copied().fold(0.0, f64::max),
+        }
+    }
+
+    fn coastal_pct(&self) -> f64 {
+        100.0 * self.coastal as f64 / self.largest_landmass.max(1) as f64
+    }
+
+    fn basin_pct(&self) -> f64 {
+        100.0 * self.max_basin / self.largest_landmass.max(1) as f64
+    }
+}
+
 /// One map's drainage shape, gathered from the sim.
 struct MapCensus {
     accumulation: Vec<f64>,
@@ -1005,9 +1147,9 @@ fn report(label: &str, c: &MapCensus) {
     println!("  {:<26} {}", "rivers (segments)", c.rivers);
 }
 
-#[test]
-#[ignore = "measurement harness, not an assertion"]
-fn drainage_census() {
+/// One arm of the census: every seed under one `erosion` setting. Prints the per-seed drainage
+/// report and the landscape (sponge/capture) table, and returns the aggregate of both.
+fn census_pass(label: &str, erosion: &ErosionConfig) -> (MapCensus, Vec<(u64, Landscape)>) {
     let mut aggregate = MapCensus {
         accumulation: Vec::new(),
         discharge: Vec::new(),
@@ -1021,28 +1163,28 @@ fn drainage_census() {
         minor: 0,
         major: 0,
     };
+    let mut landscapes: Vec<(u64, Landscape)> = Vec::new();
 
-    println!("\n=== DRAINAGE CENSUS (shipped config, earthlike, default grid) ===");
-    println!("discharge unit: precipitation-weighted upstream drainage area in HEX-EQUIVALENTS");
-    {
-        // Print the thresholds the census actually ran at, rather than a comment that can rot.
-        let shipped = SimulationConfig::builtin().hydrology;
-        println!(
-            "thresholds (shipped): channel_min={:?} / river_density={:?}, major>={:?}, \
-             navigable>={:?}",
-            shipped.channel_min_discharge,
-            shipped.river_density,
-            shipped.class_major_min_discharge,
-            shipped.class_navigable_min_discharge
-        );
-    }
+    println!("\n############ EROSION {label} ############");
+    println!("erosion: {erosion:?}");
 
+    let presets = presets_with_erosion(erosion);
     for seed in CENSUS_SEEDS {
-        let world = earthlike_world_seeded(seed);
+        let world = earthlike_world_full(seed, None, presets.clone());
         let config = world.resource::<SimulationConfig>();
         let (width, height) = (config.grid_size.x, config.grid_size.y);
         let c = MapCensus::of(&world);
+        let landscape = Landscape::of(&world, &c.accumulation);
         report(&format!("\n--- seed {seed} ({width}x{height}) ---"), &c);
+        println!(
+            "  {:<26} landmass={} coastal={:.1}% | max basin={:.0} ({:.1}% of landmass)",
+            "landscape",
+            landscape.largest_landmass,
+            landscape.coastal_pct(),
+            landscape.max_basin,
+            landscape.basin_pct()
+        );
+        landscapes.push((seed, landscape));
 
         aggregate.accumulation.extend(c.accumulation);
         aggregate.discharge.extend(c.discharge);
@@ -1066,9 +1208,119 @@ fn drainage_census() {
     }
 
     report(
-        &format!("\n=== AGGREGATE over {} seeds ===", CENSUS_SEEDS.len()),
+        &format!(
+            "\n=== AGGREGATE over {} seeds ({label}) ===",
+            CENSUS_SEEDS.len()
+        ),
         &aggregate,
     );
+    (aggregate, landscapes)
+}
+
+/// The two landscape metrics, A/B, in one table.
+fn landscape_table(off: &[(u64, Landscape)], on: &[(u64, Landscape)]) {
+    println!(
+        "\n=== LANDSCAPE A/B (largest landmass per seed) ===\n\
+         {:<22} | {:>26} | {:>26}",
+        "", "EROSION OFF", "EROSION ON"
+    );
+    println!(
+        "{:<22} | {:>7} {:>7} {:>10} | {:>7} {:>7} {:>10}",
+        "seed", "tiles", "coastal", "basin/land", "tiles", "coastal", "basin/land"
+    );
+    for ((seed, a), (_, b)) in off.iter().zip(on.iter()) {
+        println!(
+            "{:<22} | {:>7} {:>6.1}% {:>9.1}% | {:>7} {:>6.1}% {:>9.1}%",
+            seed,
+            a.largest_landmass,
+            a.coastal_pct(),
+            a.basin_pct(),
+            b.largest_landmass,
+            b.coastal_pct(),
+            b.basin_pct()
+        );
+    }
+    let mean = |xs: &[(u64, Landscape)], f: fn(&Landscape) -> f64| -> f64 {
+        xs.iter().map(|(_, l)| f(l)).sum::<f64>() / xs.len().max(1) as f64
+    };
+    let spread = |xs: &[(u64, Landscape)], f: fn(&Landscape) -> f64| -> f64 {
+        let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+        for (_, l) in xs {
+            lo = lo.min(f(l));
+            hi = hi.max(f(l));
+        }
+        hi - lo
+    };
+    println!(
+        "{:<22} | {:>7} {:>6.1}% {:>9.1}% | {:>7} {:>6.1}% {:>9.1}%",
+        "MEAN",
+        "",
+        mean(off, Landscape::coastal_pct),
+        mean(off, Landscape::basin_pct),
+        "",
+        mean(on, Landscape::coastal_pct),
+        mean(on, Landscape::basin_pct)
+    );
+    println!(
+        "{:<22} | {:>7} {:>6.1}% {:>9.1}% | {:>7} {:>6.1}% {:>9.1}%",
+        "SPREAD (max-min)",
+        "",
+        spread(off, Landscape::coastal_pct),
+        spread(off, Landscape::basin_pct),
+        "",
+        spread(on, Landscape::coastal_pct),
+        spread(on, Landscape::basin_pct)
+    );
+}
+
+#[test]
+#[ignore = "measurement harness, not an assertion"]
+fn drainage_census() {
+    println!("\n=== DRAINAGE CENSUS (shipped config, earthlike, default grid) ===");
+    println!("discharge unit: precipitation-weighted upstream drainage area in HEX-EQUIVALENTS");
+    {
+        // Print the thresholds the census actually ran at, rather than a comment that can rot.
+        let shipped = SimulationConfig::builtin().hydrology;
+        println!(
+            "thresholds (shipped): channel_min={:?} / river_density={:?}, major>={:?}, \
+             navigable>={:?}",
+            shipped.channel_min_discharge,
+            shipped.river_density,
+            shipped.class_major_min_discharge,
+            shipped.class_navigable_min_discharge
+        );
+    }
+
+    // The A/B: `enabled: false` is the pre-erosion heightfield exactly, so the two arms are
+    // directly comparable at identical river thresholds.
+    let off_cfg = ErosionConfig {
+        enabled: false,
+        ..ErosionConfig::default()
+    };
+    let (off, off_landscapes) = census_pass("OFF (control)", &off_cfg);
+    let (on, on_landscapes) = census_pass("ON (shipped)", &ErosionConfig::default());
+
+    landscape_table(&off_landscapes, &on_landscapes);
+
+    let runs = |c: &MapCensus| -> String {
+        let max = c.navigable_runs.iter().copied().max().unwrap_or(0);
+        let mean = if c.navigable_runs.is_empty() {
+            0.0
+        } else {
+            c.navigable_runs.iter().sum::<usize>() as f64 / c.navigable_runs.len() as f64
+        };
+        format!(
+            "segments={:<3} hexes={:<4} mean run={mean:.1} MAX RUN={max}",
+            c.navigable_runs.len(),
+            c.navigable_runs.iter().sum::<usize>()
+        )
+    };
+    println!(
+        "\n=== NAVIGABLE RIVERS A/B (aggregate over {} seeds) ===",
+        CENSUS_SEEDS.len()
+    );
+    println!("  OFF: {}", runs(&off));
+    println!("  ON : {}", runs(&on));
     println!();
 }
 

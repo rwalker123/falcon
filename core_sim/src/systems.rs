@@ -6268,7 +6268,6 @@ mod terrain_tag_tests {
             .expect("tile registry after spawn")
             .clone();
         let width = registry.width as usize;
-        let height = registry.height as usize;
 
         // Every tile a river touches: flanking a river edge, or on a navigable river's hex chain.
         let wrap = world
@@ -6311,26 +6310,21 @@ mod terrain_tag_tests {
             if !river_mask[idx] {
                 orphan_deltas += 1;
             }
-            let x = (idx % width) as i32;
-            let y = (idx / width) as i32;
-            let borders_water = [
-                (-1, 0),
-                (1, 0),
-                (0, -1),
-                (0, 1),
-                (-1, -1),
-                (1, 1),
-                (-1, 1),
-                (1, -1),
-            ]
-            .iter()
-            .any(|(dx, dy)| {
-                let nx = x + dx;
-                let ny = y + dy;
-                if nx < 0 || ny < 0 || nx as usize >= width || ny as usize >= height {
-                    return false;
-                }
-                terrain_by_idx[ny as usize * width + nx as usize]
+            // The map's OWN topology: hex adjacency, honouring the horizontal wrap. A square 3x3
+            // stencil would call a delta on the seam column landlocked when the water it drains
+            // into is one hex away across the wrap — which is where hydrology legitimately puts
+            // some of them.
+            let x = (idx % width) as u32;
+            let y = (idx / width) as u32;
+            let borders_water = crate::grid_utils::hex_neighbors_wrapped(
+                x,
+                y,
+                registry.width,
+                registry.height,
+                wrap,
+            )
+            .any(|(nx, ny)| {
+                terrain_by_idx[(ny * registry.width + nx) as usize]
                     .map(is_water)
                     .unwrap_or(false)
             });

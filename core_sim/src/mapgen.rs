@@ -3578,47 +3578,47 @@ mod tests {
     fn earthlike_regression_metrics_stable() {
         let metrics = regression_metrics_for_preset("earthlike", Some(0xE47E_51DE_2024u64));
         assert!(
-            (metrics.land_ratio - 0.392).abs() <= 0.01,
+            (metrics.land_ratio - 0.394).abs() <= 0.01,
             "earthlike land ratio drift: {}",
             metrics.land_ratio
         );
         assert!(
-            (metrics.fold as isize - 1204).abs() <= 32,
+            (metrics.fold as isize - 1617).abs() <= 32,
             "earthlike fold count drift: {}",
             metrics.fold
         );
         assert!(
-            (metrics.fault as isize - 129).abs() <= 16,
+            (metrics.fault as isize - 160).abs() <= 16,
             "earthlike fault count drift: {}",
             metrics.fault
         );
         assert!(
-            (metrics.volcanic as isize - 16).abs() <= 6,
+            (metrics.volcanic as isize - 18).abs() <= 6,
             "earthlike volcanic count drift: {}",
             metrics.volcanic
         );
         assert!(
-            (metrics.dome as isize - 885).abs() <= 32,
+            (metrics.dome as isize - 872).abs() <= 32,
             "earthlike dome count drift: {}",
             metrics.dome
         );
         assert!(
-            (metrics.polar_fold as isize - 712).abs() <= 32,
+            (metrics.polar_fold as isize - 1035).abs() <= 32,
             "earthlike polar fold drift: {}",
             metrics.polar_fold
         );
         assert!(
-            (metrics.polar_fault as isize - 69).abs() <= 16,
+            (metrics.polar_fault as isize - 44).abs() <= 16,
             "earthlike polar fault drift: {}",
             metrics.polar_fault
         );
         assert!(
-            (metrics.polar_uplift_cells as isize - 109).abs() <= 20,
+            (metrics.polar_uplift_cells as isize - 124).abs() <= 20,
             "earthlike polar uplift cells drift: {}",
             metrics.polar_uplift_cells
         );
         assert!(
-            (metrics.polar_relief_cells as isize - 27).abs() <= 10,
+            (metrics.polar_relief_cells as isize - 44).abs() <= 10,
             "earthlike polar relief cap drift: {}",
             metrics.polar_relief_cells
         );
@@ -3628,47 +3628,47 @@ mod tests {
     fn polar_contrast_regression_metrics_stable() {
         let metrics = regression_metrics_for_preset("polar_contrast", None);
         assert!(
-            (metrics.land_ratio - 0.414).abs() <= 0.01,
+            (metrics.land_ratio - 0.415).abs() <= 0.01,
             "polar_contrast land ratio drift: {}",
             metrics.land_ratio
         );
         assert!(
-            (metrics.fold as isize - 2048).abs() <= 40,
+            (metrics.fold as isize - 1303).abs() <= 40,
             "polar_contrast fold count drift: {}",
             metrics.fold
         );
         assert!(
-            (metrics.fault as isize - 438).abs() <= 24,
+            (metrics.fault as isize - 365).abs() <= 24,
             "polar_contrast fault count drift: {}",
             metrics.fault
         );
         assert!(
-            (metrics.volcanic as isize - 62).abs() <= 10,
+            (metrics.volcanic as isize - 64).abs() <= 10,
             "polar_contrast volcanic count drift: {}",
             metrics.volcanic
         );
         assert!(
-            (metrics.dome as isize - 1041).abs() <= 40,
+            (metrics.dome as isize - 1081).abs() <= 40,
             "polar_contrast dome count drift: {}",
             metrics.dome
         );
         assert!(
-            (metrics.polar_fold as isize - 823).abs() <= 36,
+            (metrics.polar_fold as isize - 468).abs() <= 36,
             "polar_contrast polar fold drift: {}",
             metrics.polar_fold
         );
         assert!(
-            (metrics.polar_fault as isize - 187).abs() <= 18,
+            (metrics.polar_fault as isize - 186).abs() <= 18,
             "polar_contrast polar fault drift: {}",
             metrics.polar_fault
         );
         assert!(
-            (metrics.polar_uplift_cells as isize - 163).abs() <= 14,
+            (metrics.polar_uplift_cells as isize - 44).abs() <= 14,
             "polar_contrast polar uplift cells drift: {}",
             metrics.polar_uplift_cells
         );
         assert!(
-            (metrics.polar_relief_cells as isize - 121).abs() <= 18,
+            (metrics.polar_relief_cells as isize - 83).abs() <= 18,
             "polar_contrast polar relief cap drift: {}",
             metrics.polar_relief_cells
         );

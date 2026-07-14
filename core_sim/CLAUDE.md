@@ -358,76 +358,101 @@ precipitation-weighted elevation surface, decomposed into main stems and tributa
   **The three discharge thresholds were tuned from a 45-cell sweep**, not guessed:
   `hydrology_earthlike::drainage_threshold_sweep` (`#[ignore]`d) crosses
   `channel × major × navigable` over `CENSUS_SEEDS` and reports rivers/edges/class-split/navigable
-  runs per cell. The shipped cell gives, per 80×52 earthlike map: **20.7 rivers, 72.7% Minor / 27.3%
-  Major, 5.0 navigable segments / 22 navigable hexes**, with navigable rivers present on **5 of 6**
-  seeds — ~4× the navigable count and ~4× the navigable water of the pre-rewrite baseline (1.3
-  segments / 5.2 hexes per map). Re-run the sweep before changing any of the three.
+  runs per cell. Re-run the sweep before changing any of the three. **They were NOT re-tuned for the
+  erosion pass** (below) — they were deliberately held fixed so the erosion A/B is attributable.
 
-  **Measured** shape at those thresholds (`hydrology_earthlike::drainage_census`, `#[ignore]`d; run
-  with `-- --ignored --nocapture`), aggregate over 6 seeds: land-corner accumulation p50 = 0.58 /
-  p95 = 11.5 / p99 = 48.4 / **max 546**; corner confluences **11.7%** of land corners (was 4.1%);
-  Strahler on the drainage tree o1 = 11794, o2 = 2193, o3 = 730, o4 = 268, o5 = 17 (Horton ratios
-  ≈ 5.4 / 3.0 / 2.7). Per-seed spread is large and *should* be — see the note below.
+  **Measured** shape at those thresholds, on the **eroded** landscape
+  (`hydrology_earthlike::drainage_census`, `#[ignore]`d; run with `-- --ignored --nocapture`),
+  aggregate over 6 seeds of an 80×52 earthlike map: **21.8 rivers per map**, 76.3% Minor / 23.7%
+  Major, **5.2 navigable segments / 23.7 navigable hexes** per map; land-corner accumulation p50 =
+  0.60 / p95 = 10.2 / p99 = 64.4 / **max 587**; corner confluences **11.6%** of land corners (4.1%
+  before the drainage-network rewrite); Strahler on the drainage tree o1 = 12366, o2 = 2246,
+  o3 = 837, o4 = 254, o5 = 34. Per-seed spread is large and *should* be — see the verdict below.
 
-  > ### Known limitation (the next arc): the LANDSCAPE, not the router, is now the limit.
-  >
-  > The routing is no longer the bottleneck. **The heightfield is.** Everything below is measured, so
-  > the erosion arc can start from here rather than re-deriving it — exactly as this arc started from
-  > the note that used to sit in this slot.
-  >
-  > **1. Continents are sponges.** 48–64% of a continent's *tiles touch water*. A compact 700-tile
-  > blob has a ~14% perimeter; these have 4× that, because the shoreline is an **iso-contour of
-  > fractal noise** and fractal contours have enormous perimeter. Basins therefore cannot grow: most
-  > land is a hex or two from its own private outlet. On an 80×52 map that is **~578 outlets over
-  > ~2050 interior land corners**.
-  >
-  > **2. And even a compact continent sheds radially.** Crenellation sets the ceiling; the absence of
-  > carved valleys means you don't even reach it. Largest-landmass area vs. the share of it the
-  > biggest basin drains:
-  >
-  > | seed | biggest landmass | coastal | max basin | basin / landmass |
-  > |---|---|---|---|---|
-  > | 1 | 721 | 58% | 16 | **2%** |
-  > | 3 | 757 | 58% | 27 | **4%** |
-  > | 4 | 1179 | **48%** | 546 | **46%** |
-  > | TEST | 1398 | 58% | 88 | 6% |
-  >
-  > **This is not landmass size.** Seed 1 has a 721-tile continent and a 16-hex basin; seed 4's is
-  > only 1.6× bigger and reaches **546** — a 34× difference. Seed 4's terrain evidently *tilts* (a
-  > range on one flank), so one trunk captures the interior; the others are noise-domes that shed in
-  > wedges with no trunk to capture them. Seed 3 stays at 7% even at 44% coastal.
-  >
-  > **3. Navigable run length is capped at ~13 hexes at ANY threshold.** Probed below the sweep, down
-  > to a trickle:
-  >
-  > | `navigable_min` | segments (6 seeds) | hexes | mean run | **max run** |
-  > |---|---|---|---|---|
-  > | 8.0 | 92 | 337 | 3.7 | **13** |
-  > | 15.0 | 46 | 193 | 4.2 | **13** |
-  > | 25.0 (shipped) | 30 | 132 | 4.4 | **10** |
-  >
-  > Dropping the threshold 3× adds 62 segments and moves the longest river from 10 to 13. **The
-  > threshold buys COUNT, not LENGTH** — chain length is bounded by the distance from the threshold
-  > crossing to the sea, which on a sponge is 4–10 hexes. Do not try to tune your way to a
-  > Mississippi; you will only manufacture puddles.
-  >
-  > **Two cheap levers were TESTED and do NOT work:**
-  > - **`macro_land.jitter`** (the landmask white noise), swept 0.18 → 0.05 → 0.00: coastal% barely
-  >   moves (58% → 56%) and basins do not systematically improve (the TEST seed *drops*, 88 → 58).
-  >   The crenellation comes from the near-sea-level **elevation** noise deciding land vs. water, not
-  >   from the landmask jitter, so this knob is aimed at the wrong thing.
-  > - **Suppressing sinks on shelf hexes** (deep-ocean-only sinks): a sink's only job is to terminate
-  >   accumulation. Moving the terminator one hex seaward cannot merge two land basins that reach the
-  >   sea at different nooks — they would merge *in the water*, which is precisely where no river is
-  >   drawn. Land-corner accumulation is unchanged.
-  >
-  > **The real fix is FLUVIAL EROSION in the heightfield**, and it fixes both failures at once: it
-  > carves trunk valleys (→ capture, which is what seeds 1/3 lack) *and* incises the coast so the
-  > shoreline contour steepens and de-sponges (→ interior, which every seed lacks). A **morphological
-  > open/close on the land mask** (a ~30-line majority filter that fills 1-hex nooks and deletes
-  > 1-hex specks) is a cheap partial that attacks crenellation directly where `macro_land.jitter`
-  > cannot — but **seed 3 proves it insufficient alone**: a compact continent still sheds radially.
-  > See `TASKS.md` → "Fluvial erosion".
+### Fluvial erosion — the heightfield the drainage runs on
+The drainage-network rewrite left the *router* correct and the *landscape* wrong: continents were
+**sponges** (48–64% of a continent's tiles touched water, because the coastline is an iso-contour of
+fractal noise) and they **shed radially** with no trunk valleys to capture drainage across a divide.
+`heightfield::apply_fluvial_erosion` attacks the landscape directly, at the end of
+`build_elevation_field` — **before** `mapgen::generate_land_mask`, which is the whole point: the mask
+ranks tiles by elevation, so the coastline *is* a level set of this field, and reshaping the field
+reshapes the coast.
+
+- **The model** is the classic landscape-evolution equation minus uplift: `∂z/∂t = D∇²z − K·A^m·S^n`,
+  iterated on the **square raster** (D8 — the hex/corner graph is hydrology's and stays there). Per
+  pass: priority-flood the depressions (+`fill_epsilon`), route D8 steepest descent on the *filled*
+  surface, accumulate **uniform** unit drainage (this is landscape evolution, *not* the
+  precipitation-weighted discharge model), incise, then diffuse. Deterministic: pure arithmetic, no
+  RNG, explicit index tie-breaks on every sort and every descent comparison.
+- **Both terms are needed, and they do different jobs** (measured, not assumed): **stream power**
+  carves the trunk valleys that give a continent *capture* but leaves the coastline noise untouched
+  (it is concentrated where `A` is large, which is nowhere near a headwater coast); **diffusion** is
+  what planes that noise off and *de-sponges*. Incision alone moved coastal 59.2% → 57.5%; with
+  diffusion it reaches **52.8%**.
+
+> #### Two things the pass had to learn the hard way — do not "simplify" them away
+>
+> **1. Base level is the land-mask's rank contour, NOT `sea_level`.** On the earthlike preset only
+> **24–37%** of cells sit above `sea_level = 0.62`, while `macro_land.target_land_pct` claims **38%**
+> of them for land — so the coastline actually falls at elevation **0.55–0.61, *below* sea level**.
+> A pass that freezes everything under `sea_level` freezes the entire coastal band it exists to
+> reshape, and measures as a **no-op** (it did: coastal 59.2% → 58.8%). `heightfield::land_contour`
+> computes the real thing.
+>
+> **2. A valley incised *to* base level DROWNS.** The mask ranks by elevation, so a trunk cut to the
+> contour ranks below it and becomes a sea inlet — taking its basin with it (measured: seed 4's
+> biggest basin collapsed **546 → 99**). `incision_floor` exists to bound this; it ships at **0.0**
+> because measurement said the drowned stretches read as *estuaries* and leave the coast **smoother**
+> — but the lever is there, and the failure mode is real.
+>
+> **3. `anchor_contour_to_sea_level` is what lets the carving reach hydrology at all.**
+> `restamp_elevation`'s lowland branch is only order-preserving *above* sea level; below it,
+> `((v − sea_level)/(1 − sea_level)).clamp(0,1)` is an **order-destroying clamp** that plates every
+> such cell — **a third of all land** — flat onto exactly `sea_level`. Carving valleys there is
+> pointless: they are erased before hydrology sees them. So the pass finishes with a strictly
+> monotone, piecewise-linear rescale that puts the coastline exactly on `sea_level`, making the
+> pipeline's "land ⟺ above sea level" assumption *true*. Monotone ⇒ it cannot reorder the field, so
+> the land mask still picks the same tiles.
+
+**Config** — the `erosion` block of each preset in `map_presets.json` (`ErosionConfig`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | true | Kill switch. `false` reproduces the pre-erosion maps **exactly**, and is the A/B control the census measures against. |
+| `iterations` | 40 | Passes. Past ~40 the sponge stops improving and the big basins start planing away. |
+| `erodibility` | 0.1 | Stream-power `K`. Below ~0.05 nothing carves; above ~0.3 incision **saturates** against the downstream clamp (the result stops depending on `K` at all) and the coast gets *worse*. |
+| `area_exponent` | 0.5 | `m` — classic. |
+| `slope_exponent` | 1.0 | `n` — classic. |
+| `timestep` | 0.1 | `Δt`. Only `K·Δt` matters; split for readability. |
+| `min_slope` | 1e-4 | Slope floor, so a filled flat still incises and can cut itself an outlet. |
+| `fill_epsilon` | 1e-6 | The priority-flood's gradient across a filled flat. |
+| `diffusivity` | 1.0 | Hillslope `D`. **The term that de-sponges.** Past ~2 it planes real relief off the continent. |
+| `incision_floor` | 0.0 | How far above base level a valley may cut, as a fraction of the land band. See note 2. |
+| `anchor_contour_to_sea_level` | true | See note 3. |
+
+**Measured A/B** (`hydrology_earthlike::drainage_census`, `#[ignore]`d, 6 seeds, 80×52, shipped
+river thresholds held at 3.0/12.0/25.0 so the comparison is clean):
+
+| metric | erosion OFF | erosion ON |
+|---|---|---|
+| coastal tiles of the largest landmass (**SPONGE** — must fall) | **59.2%** (spread 14.3) | **52.8%** (spread **9.6**) |
+| biggest basin / largest landmass (**CAPTURE** — must rise) | 11.0% (spread 39.5) | 13.3% (spread 34.1) |
+| navigable rivers | 30 segments / 132 hexes / **max run 10** | 31 / 142 / **max run 25** |
+
+> **Honest verdict: one of the two failures is fixed, the other is only dented.** The **sponge is
+> genuinely better** — every seed improves and the spread halves — and the **~13-hex navigable
+> ceiling is gone** (longest river 10 → **25** hexes; the ceiling was never the threshold, it was the
+> landscape). **Capture is not fixed.** The mean barely moves and the spread stays huge: seed 5 goes
+> 4.7% → 21.0% and seeds 1/3 roughly double (2.2 → 4.2, 3.5 → 5.2), but seeds 1/3/TEST are still
+> single-digit while seed 4 still runs at 38%. **Incision deepens the valleys a continent already
+> has; it does not move its divides.** The divides come from the continent-scale fbm, so the next
+> lever is the *noise*, not the erosion — see `TASKS.md`.
+>
+> `apply_coastal_smoothing` was **measured, not assumed** (the suspicion was that its 3×3 blur would
+> soften the incised valleys right where they matter). It does not blunt the result: the sponge metric
+> is **bit-identical** with the blur zeroed (the land mask is decided from the base field *before*
+> `restamp_elevation` ever runs), and zeroing it actually made rivers **worse** (max navigable run
+> 25 → 15). Leave it alone.
 
 ### Tile Temperature — latitude + elevation climate model
 `Tile.temperature` is a real climate, **not** the old `(x+y)%4` element checkerboard. The single
