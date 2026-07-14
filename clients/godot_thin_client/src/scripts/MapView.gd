@@ -4571,6 +4571,15 @@ func _setup_terrain_blend_shader() -> void:
 	# Neutral (1, 1, 1) for every terrain without a `shore_profile` block. Bound once (the manager updates
 	# the texture in place on a rebuild, so the binding survives).
 	_terrain_blend_material.set_shader_parameter("layer_shore_map", TerrainTextureManager.layer_shore_texture)
+	# Per-terrain BLEND PROFILE (1×N RGBA float, fetched by layer index) — the flat↔flat seam's twin of the
+	# shore profile: R = width_scale (the ecotone's REACH), G = noise_scale (the boundary wobble's AMPLITUDE),
+	# B = noise_cell_scale (its WAVELENGTH). A terrain whose texture is far from its neighbours' in BOTH tone
+	# and hue (the NavigableRiver bank against prairie one side, floodplain the other) needs a wider, wobblier
+	# seam than the global levers give, or it reads as a hexagon with a blurred edge. Combined across an edge
+	# with max(), which is commutative → both hexes agree → the seam stays continuous. Neutral (1, 1, 1) for
+	# every terrain with no `blend_profile` block, so every other seam is bit-identical. Bound once (the manager
+	# updates the texture in place on a rebuild, so the binding survives).
+	_terrain_blend_material.set_shader_parameter("layer_blend_map", TerrainTextureManager.layer_blend_texture)
 	# Canopy: a SECOND Texture2DArray in the same canvas shader. Disabled (and the sampler harmlessly
 	# bound to the base array) when no canopy asset exists.
 	var canopy_arr: Texture2DArray = TerrainTextureManager.canopy_textures

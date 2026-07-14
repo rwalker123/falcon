@@ -119,6 +119,26 @@ uniform sampler2D layer_luma_map : filter_nearest;
 // Terrains with no `shore_profile` block read the neutral (1, 1, 1), which is a bit-exact no-op.
 // Built by TerrainTextureManager.
 uniform sampler2D layer_shore_map : filter_nearest;
+// PER-TERRAIN BLEND PROFILE, the same 1×N RGBA-float-by-layer-index table — the flat↔flat seam's twin of
+// layer_shore_map. The three global blend levers are ONE ecotone, tuned for biome pairs that are close in
+// tone and share a hue. Against a pair far apart in BOTH (the NavigableRiver BANK — grey, low-contrast
+// gravel at mean luma 89 — has prairie/scrub at 112–127 on one side of a river corridor and
+// floodplain/alluvial at 55–58 on the other) the very same ecotone reads as a HEXAGON WITH A BLURRED EDGE:
+// the ramp is only ~0.35·r wide and the wobble displaces it by a fraction of that, so the boundary still
+// traces the hex polyline and the eye locks onto it. These three scales let such a terrain widen and roughen
+// the seams IT is on, and nobody else's:
+//   R = width_scale      — multiplies blend_band (the ecotone's REACH).
+//   G = noise_scale      — multiplies blend_noise_amount (the boundary wobble's AMPLITUDE), so the boundary
+//                          leaves the hexagon instead of tracing it.
+//   B = noise_cell_scale — multiplies blend_noise_cell (the wobble's WAVELENGTH). Amplitude on a fine cell is
+//                          a fringe along a straight line; the lobes must scale with the band to read organic.
+// CROSS-EDGE AGREEMENT: an edge takes the **max** of its two terrains' scales. max is COMMUTATIVE, so both
+// flanking hexes derive the identical band/amplitude/cell for that edge — the seam weight p is 0.5 on the
+// edge from both frames and the mix stays continuous across it, exactly as with the global levers. (This is
+// the same discipline that makes the shore profile key on the water side: both sides must agree, or the
+// profile itself draws the hard line it exists to remove.) Two unprofiled terrains give max(1,1) = 1 on every
+// axis, so every existing biome seam is bit-identical. Built by TerrainTextureManager.
+uniform sampler2D layer_blend_map : filter_nearest;
 // id-map splatmap: R = terrain id (0..255), G = blend_class code (0 water, 1 flat, 2 rugged),
 // B = canopy code (0 = no canopy, else canopy-array layer + 1),
 // A = peak code (0 = no peaks, else peak-array layer + 1).
@@ -496,6 +516,19 @@ vec3 shore_profile(int layer) {
 	return texelFetch(layer_shore_map, ivec2(layer, 0), 0).rgb;
 }
 
+// Blend profile of a terrain: (width_scale, noise_scale, noise_cell_scale), fetched by layer index. Neutral
+// (1, 1, 1) for any terrain without a `blend_profile` block. See layer_blend_map.
+vec3 blend_profile(int layer) {
+	return texelFetch(layer_blend_map, ivec2(layer, 0), 0).rgb;
+}
+
+// The blend profile of an EDGE, from its two terrains': the per-axis MAX. Commutative, so the two hexes
+// flanking the edge compute the same three scales and the seam stays continuous across it (see
+// layer_blend_map). A seam between two unprofiled terrains is (1, 1, 1) — a bit-exact no-op.
+vec3 edge_blend_profile(vec3 own_profile, int nb_layer) {
+	return max(own_profile, blend_profile(nb_layer));
+}
+
 // Canopy density across the treeline. s = signed distance to the canopy↔non-canopy boundary,
 // POSITIVE inside the forest, 0 at the edge, negative in the neighbour. Deep inside → 1; ~0.5 at the
 // exact edge; ramps to 0 canopy_overhang px OUTSIDE the forest (crowns overhang, then fade).
@@ -709,9 +742,13 @@ void fragment() {
 			result = wsum_rgb / wsum;
 		} else if (blend_enabled && own_blendable) {
 			// --- FLAT↔FLAT: the nearest-edge ECOTONE interlock (unchanged; water no longer takes this path) ---
-			float seam_band = blend_band;
 			float seam_soft = blend_soft;
-			float seam_noise_amount = blend_noise_amount;
+			// This hex's BLEND PROFILE (width / noise-amplitude / noise-cell scales; neutral (1,1,1) unless the
+			// terrain carries a `blend_profile` block). Each EDGE takes the per-axis max of the two terrains',
+			// which is commutative — so the neighbour across that edge derives the same band, and the seam is
+			// continuous exactly as it is under the plain global levers. See layer_blend_map.
+			vec3 own_bp = blend_profile(own_layer);
+			vec3 best_bp = own_bp;
 			float best_p = 0.0;
 			int best_layer = -1;
 			for (int dir = 0; dir < 6; dir++) {
@@ -744,10 +781,15 @@ void fragment() {
 				float half_dist = 0.5 * distance(own_c, nb_c);
 				// signed distance to the shared edge (the perpendicular bisector); <=0 inside own hex.
 				float d = dot(v_world - own_c, dir_v) - half_dist;
+				// THIS edge's band: the global reach scaled by the edge's profile (max of the two terrains',
+				// so the hex on the other side scales it identically and p is 0.5 there from both frames).
+				vec3 bp = edge_blend_profile(own_bp, nlayer);
+				float seam_band = max(blend_band * bp.r, BLEND_SOFT_MIN);
 				float p = clamp(0.5 + d / (2.0 * seam_band), 0.0, 1.0); // 0.5 AT the edge → symmetric
 				if (p > best_p) {
 					best_p = p;
 					best_layer = nlayer;
+					best_bp = bp;
 				}
 			}
 			if (best_layer >= 0) {
@@ -768,7 +810,13 @@ void fragment() {
 				vec3 nb_rgb = texture(biome_array, vec3(base_uv, float(best_layer))).rgb;
 
 				float perturb_env = BLEND_PERTURB_ENVELOPE_PEAK * best_p * (1.0 - best_p);
-				float n = vnoise(v_map / blend_noise_cell);
+				// The wobble rides the WINNING edge's profile: its amplitude scaled by noise_scale (bp.g) and
+				// its cell — the wavelength — by noise_cell_scale (bp.b). Both are max()-derived, so the hex
+				// across that edge samples the identical noise field at the identical amplitude; the world-space
+				// sample already reads the same value from both sides at a shared point.
+				float seam_noise_amount = blend_noise_amount * best_bp.g;
+				float seam_noise_cell = max(blend_noise_cell * best_bp.b, BLEND_SOFT_MIN);
+				float n = vnoise(v_map / seam_noise_cell);
 				float wobble = (n - 0.5) * seam_noise_amount;
 				// positive when OWN is the taller/brighter texture here → push the boundary toward the
 				// neighbour (own keeps the pixel), i.e. SUBTRACT from the neighbour's weight.
