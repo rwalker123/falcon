@@ -57,6 +57,10 @@ uniform int river_delta_terrain_id;     // terrain id of RiverDelta — the sim 
 uniform float river_navigable_half_width; // navigable CHANNEL half-width, in px (navigable_width * radius)
 uniform float river_minor_half_width; // Minor half-band half-width, in px (minor_width * radius)
 uniform float river_major_half_width; // Major half-band half-width, in px (major_width * radius)
+uniform float river_head_taper_curve; // exponent on the head taper's smoothstep: on the FIRST hex of a
+                                   // navigable chain the trunk starts at the widest INFLOWING tributary's
+                                   // width and swells to the channel's full width by the hex edge. 1.0 =
+                                   // plain smoothstep; < 1 swells early (wide sooner), > 1 swells late.
 uniform float river_softness;      // bank ramp half-width, in px (softness_width * radius)
 uniform float river_meander;       // world-noise perturbation of the band's distance, in px (meander_width * radius)
 uniform float river_width_variation; // 0..1: how far the LOW-frequency world noise swells/pinches the
@@ -532,6 +536,27 @@ void fragment() {
 			float width_mod = river_width_mod(v_map);
 			float width_px = river_bank_wobble(v_map);
 			float half_w = max(river_navigable_half_width * width_mod + width_px, RIVER_MIN_HALF_WIDTH);
+			// HEAD TAPER — the width the trunk's arms START at, at the hex CENTRE. On the FIRST hex of a
+			// chain (the only hex with a nonzero riverInflow) the trunk used to spring to full navigable
+			// width the instant it left the centre: a hairline Minor arrived at a vertex and a few px later
+			// was a great river. A jump-cut, not a river. So on that hex the arms start at the half-width of
+			// the WIDEST tributary feeding in (max over the 6 inflow corners — two tributaries can land on
+			// the same trunk head, and the sim already stores the widest class per corner) and SWELL to the
+			// channel's full width by the time they reach the hex EDGE (see the per-arm mix below).
+			// A hex with inflow == 0 (mid-chain, or a river navigable from its first step) keeps the
+			// CONSTANT full width: head_base stays river_navigable_half_width and the mix is a no-op.
+			// min() with the channel width guards a config where a class is somehow wider than the trunk —
+			// a head must never START wider than it ends.
+			float inflow_base = 0.0;
+			for (int c = 0; c < 6; c++) {
+				int icls = (inflow >> (2 * c)) & 3;
+				if (icls < RIVER_CLASS_MINOR || icls > RIVER_CLASS_MAX) { continue; } // 0 = none, 3 = reserved
+				inflow_base = max(inflow_base,
+					(icls == RIVER_CLASS_MINOR) ? river_minor_half_width : river_major_half_width);
+			}
+			float head_base = (inflow_base > 0.0)
+				? min(inflow_base, river_navigable_half_width)
+				: river_navigable_half_width;
 			float cov_trunk = -1e9;         // coverage = half_width - distance; > 0 inside the water
 			float cov_spur = -1e9;          // best INFLOW spur, tracked apart so the two can crossfade
 			float spur_layer = 0.0;         // river-array layer of the winning spur (class - 1)
@@ -569,7 +594,24 @@ void fragment() {
 				// smearing along an infinite ray — the neighbour paints its own half.
 				vec2 ab = (own_c + nb_c) * 0.5 - own_c;
 				float t = clamp(dot(rp - own_c, ab) / dot(ab, ab), 0.0, 1.0);
-				float cov = half_w - distance(rp, own_c + ab * t);
+				// The taper's progress along the arm, 0 at the centre → 1 at the edge midpoint. Taken from
+				// the UNWARPED point, unlike `t` above (which measures distance to the meandering
+				// centerline and so must use the warped one), and for one load-bearing reason: EVERY
+				// fragment on the shared edge projects to EXACTLY 1.0 on the arm's axis (the projection of
+				// that whole edge line onto the arm direction is the apothem, whatever the lateral offset),
+				// so the taper lands on exactly river_navigable_half_width at the boundary — which is the
+				// constant width the downstream hex draws its own half-channel at. The warped point's
+				// projection would wander by the meander amplitude and leave a visible STEP at the head
+				// hex's downstream edge. Width is a scalar field of world position here, same as
+				// river_width_mod / river_bank_wobble (both also sampled unwarped) — so this is the house
+				// idiom, not an exception to it.
+				float t_head = clamp(dot(v_world - own_c, ab) / dot(ab, ab), 0.0, 1.0);
+				float swell = pow(smoothstep(0.0, 1.0, t_head), river_head_taper_curve); // 1.0 at t_head = 1
+				float arm_base = mix(head_base, river_navigable_half_width, swell);
+				// The organic machinery rides ON TOP of the tapered base width (world-sampled, so the
+				// downstream hex reads the same width_mod/width_px at the shared boundary → still no seam).
+				float arm_w = max(arm_base * width_mod + width_px, RIVER_MIN_HALF_WIDTH);
+				float cov = arm_w - distance(rp, own_c + ab * t);
 				if (cov > cov_trunk) {
 					cov_trunk = cov;
 					best_tangent = normalize(ab);

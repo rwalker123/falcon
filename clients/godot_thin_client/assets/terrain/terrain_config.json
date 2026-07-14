@@ -33,6 +33,7 @@
     "minor_width": 0.05,
     "major_width": 0.09,
     "navigable_width": 0.24,
+    "head_taper_curve": 0.8,
     "softness_width": 0.05,
     "meander_width": 0.22,
     "width_variation": 0.4,

@@ -165,6 +165,15 @@ const RIVER_TRIB_TERMINUS_CORNER := 1
 # (three hexes meet at every corner), so the chain is contiguous by construction on either row parity.
 const RIVER_DIR_SW := 2
 const RIVER_DIR_W := 3
+# A SECOND navigable head, fed by a MINOR tributary ONLY — the case the head TAPER exists for, and the one
+# that read worst without it: a hairline Minor hands over at a vertex and the trunk sprang to a full great
+# river a few px later. A short navigable BRANCH joins the main trunk from the NW; its head hex carries one
+# Minor inflow corner, so its arm must START hairline and SWELL to the channel's full width by the shared
+# edge with the trunk. Its 3 tributary edges are the vertical MIRROR of the main head's Minor tributary
+# above (SW↔NW, SE↔NE, W↔W, bottom vertex ↔ top vertex), so the same contiguity argument holds.
+const RIVER_DIR_NW := 4
+const RIVER_DIR_NE := 5
+const RIVER_BRANCH_TERMINUS_CORNER := 4   # top vertex — the mirror of RIVER_TRIB_TERMINUS_CORNER
 const RIVER_MAJOR_FROM_FRAC := 0.45  # fraction along the edge chain where Minor becomes Major
 # The river's mean row, as a fraction of grid height. Kept in the UPPER half deliberately: the map is
 # COVER-fit and the fit is the zoom floor, so on a window wider than the grid's aspect the lower rows are
@@ -190,6 +199,10 @@ const RIVER_DIR_OFFSETS := [
 ]
 
 var _map: Node2D
+# Where _snapshot_rivers put the MINOR-only navigable head (see RIVER_BRANCH_TERMINUS_CORNER). Reported
+# back rather than recomputed, because the placement walks the trunk and has to dodge it; (-1, -1) if the
+# grid left no room for one (the far-zoom grid is built after the close-ups, so it may overwrite this).
+var _river_branch_head := Vector2i(-1, -1)
 
 func _ready() -> void:
 	get_window().size = Vector2i(1000, 800)
@@ -614,6 +627,22 @@ func _ready() -> void:
 	await _settle()
 	var head_center: Vector2 = _map._hex_center(head.x, head.y, _map.last_hex_radius, _map.last_origin)
 	await _save_crop_px("map_rivers_join", head_center, RIVER_JOIN_CROP_RADII * _map.last_hex_radius)
+	# The MINOR-ONLY head, same zoom: the trunk there is fed by ONE Minor tributary, so the HEAD TAPER must
+	# start its arm at the Minor's hairline half-width at the hex centre and swell it to the full channel
+	# width by the time it reaches the shared edge with the trunk — where the next (mid-chain, constant
+	# full-width) navigable hex takes over. Read for: a visible SWELL across the head hex, no jump-cut at
+	# the centre, and above all NO step or notch at that downstream edge. (The Major+Minor head above is the
+	# other half of the test: it must start at the MAJOR — the widest inflow — width.)
+	if _river_branch_head.x >= 0:
+		_map.pan_offset += get_viewport().get_visible_rect().size * 0.5 \
+			- _map._hex_center(_river_branch_head.x, _river_branch_head.y, _map.last_hex_radius, _map.last_origin)
+		_map.queue_redraw()
+		await _settle()
+		var branch_center: Vector2 = _map._hex_center(
+			_river_branch_head.x, _river_branch_head.y, _map.last_hex_radius, _map.last_origin)
+		await _save_crop_px("map_rivers_head_minor", branch_center, RIVER_JOIN_CROP_RADII * _map.last_hex_radius)
+	else:
+		push_warning("map_preview: no Minor-only navigable head placed — head-taper frame skipped")
 	# Far-zoom LOD: the same field on a large grid so hexes go tiny (radius ≪ EDGE_BLEND_MIN_RADIUS, so
 	# the flat↔flat blend is off). The DECOUPLED river LOD (river_min_radius) must keep the river drawn,
 	# smooth (mipmapped river array) and not shimmering.
@@ -1073,6 +1102,17 @@ func _river_neighbor(x: int, y: int, dir: int, gw: int, gh: int) -> Vector2i:
 		return Vector2i(-1, -1)
 	return Vector2i(nx, ny)
 
+## How many of `cell`'s six neighbours are already NavigableRiver — i.e. how many trunk ARMS a navigable
+## hex placed there would grow (the shader's arm rule, minus the water/delta cases, which the branch's
+## inland placement cannot hit).
+func _river_navigable_neighbors(terrain: Array, cell: Vector2i, gw: int, gh: int) -> int:
+	var n := 0
+	for dir in range(RIVER_CORNERS):
+		var nb := _river_neighbor(cell.x, cell.y, dir, gw, gh)
+		if nb.x >= 0 and int(terrain[nb.y * gw + nb.x]) == RIVER_NAVIGABLE_ID:
+			n += 1
+	return n
+
 ## Stamp river class `cls` on edge (x, y, dir) — on BOTH flanking hexes (the neighbour carries the
 ## opposite direction, (dir + 3) % 6), exactly as the sim does, so each hex can answer locally.
 func _river_set_edge(masks: Dictionary, x: int, y: int, dir: int, nb: Vector2i, cls: int) -> void:
@@ -1168,6 +1208,7 @@ func _snapshot_rivers(gw: int, gh: int) -> Dictionary:
 
 	var p := head
 	terrain[p.y * gw + p.x] = RIVER_NAVIGABLE_ID
+	var trunk: Array[Vector2i] = [head]
 	var step := 0
 	while p.x < mouth_col and step < RIVER_NAV_MAX_STEPS:
 		var nb := _river_neighbor(p.x, p.y, int(RIVER_NAV_STEPS[step % RIVER_NAV_STEPS.size()]), gw, gh)
@@ -1176,6 +1217,37 @@ func _snapshot_rivers(gw: int, gh: int) -> Dictionary:
 			break
 		p = nb
 		terrain[p.y * gw + p.x] = RIVER_NAVIGABLE_ID
+		trunk.append(p)
+
+	# The MINOR-ONLY head: a one-hex navigable BRANCH hanging off the trunk's NW, fed by a single Minor
+	# tributary (the mirror of the main head's, so it is contiguous by the same argument). Its ONE arm runs
+	# to the trunk hex it joins, so with the head taper it must start at the Minor's hairline width at its
+	# centre and reach the full channel width exactly at that shared edge — the whole point of the taper,
+	# and the frame it is judged on (map_rivers_head_minor). Placed at the first trunk hex whose NW
+	# neighbour is well clear of the edge chain's columns, so the branch's own masks cannot collide with it.
+	_river_branch_head = Vector2i(-1, -1)
+	for i in range(1, trunk.size()):
+		var b := _river_neighbor(trunk[i].x, trunk[i].y, RIVER_DIR_NW, gw, gh)
+		if b.x < nav_start + 1 or b.x > mouth_col:
+			continue  # off-map, in the sea, or close enough to the edge chain to share hexes with it
+		if terrain[b.y * gw + b.x] == RIVER_NAVIGABLE_ID:
+			continue  # the trunk already turned through this hex
+		if _river_navigable_neighbors(terrain, b, gw, gh) != 1:
+			continue  # must hang off ONE trunk hex: two would give the branch head two arms (a loop), and
+			          # the frame is meant to read as one tapering arm handing over at one shared edge
+		var b_w := _river_neighbor(b.x, b.y, RIVER_DIR_W, gw, gh)
+		var b_nw := _river_neighbor(b.x, b.y, RIVER_DIR_NW, gw, gh)
+		if b_w.x < 0 or b_nw.x < 0:
+			continue
+		terrain[b.y * gw + b.x] = RIVER_NAVIGABLE_ID
+		_river_set_edge(masks, b.x, b.y, RIVER_DIR_NW, b_nw, RIVER_CLASS_MINOR)
+		_river_set_edge(masks, b_w.x, b_w.y, RIVER_DIR_NE, b_nw, RIVER_CLASS_MINOR)
+		var b_up := _river_neighbor(b_nw.x, b_nw.y, RIVER_DIR_W, gw, gh)
+		if b_up.x >= 0:
+			_river_set_edge(masks, b_nw.x, b_nw.y, RIVER_DIR_W, b_up, RIVER_CLASS_MINOR)
+		inflow[b] = RIVER_CLASS_MINOR << (RIVER_CLASS_BITS * RIVER_BRANCH_TERMINUS_CORNER)
+		_river_branch_head = b
+		break
 
 	# The MOUTH exercises both non-chain arm rules at once: the final navigable hex touches OPEN SEA on its
 	# seaward side (the water rule) and a RiverDelta distributary lobe on its SE (the delta rule — the shape

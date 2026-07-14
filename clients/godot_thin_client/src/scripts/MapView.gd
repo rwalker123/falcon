@@ -201,6 +201,18 @@ const RIVER_DEFAULT_MAJOR_WIDTH := 0.09
 # hex CENTRE → edge midpoints, not along an edge. Its half-width is far wider than Major's (it is a great
 # river) but well short of filling the hex — the hex is a BANK with a channel through it, not a puddle.
 const RIVER_DEFAULT_NAVIGABLE_WIDTH := 0.24
+# HEAD TAPER — on the FIRST hex of a navigable chain (the one hex with a nonzero river_inflow) the trunk
+# starts at the widest inflowing tributary's half-width and swells to the full navigable width by the hex
+# EDGE, instead of springing to a great river at the centre. This is the exponent applied to the swell's
+# smoothstep: 1.0 = plain smoothstep, < 1 swells early (wide sooner), > 1 holds the tributary's width
+# longer and swells late. It is an EXPONENT, never a width, so it does not disturb the exact
+# navigable-width match at the hex edge (pow(1, k) == 1 for any k) — which is what keeps the head hex
+# meeting the next, constant-width, navigable hex with no step.
+const RIVER_DEFAULT_HEAD_TAPER_CURVE := 1.0
+# Sane bounds for that exponent: below the min the swell is a step at the centre (no taper read at all),
+# above the max the trunk stays a hairline for most of the hex and then flares.
+const RIVER_HEAD_TAPER_CURVE_MIN := 0.2
+const RIVER_HEAD_TAPER_CURVE_MAX := 5.0
 # River-array layer of the navigable channel water (the array is keyed by class - 1: 0 Minor, 1 Major).
 const RIVER_NAVIGABLE_LAYER := 2
 # The two terrains the navigable pass keys on, resolved from terrain_config BY NAME (never by a literal id):
@@ -4534,6 +4546,9 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 	var minor_frac: float = clampf(float(rivers.get("minor_width", RIVER_DEFAULT_MINOR_WIDTH)), 0.01, 1.0)
 	var major_frac: float = clampf(float(rivers.get("major_width", RIVER_DEFAULT_MAJOR_WIDTH)), 0.01, 1.0)
 	var navigable_frac: float = clampf(float(rivers.get("navigable_width", RIVER_DEFAULT_NAVIGABLE_WIDTH)), 0.01, 1.0)
+	var head_taper_curve: float = clampf(
+		float(rivers.get("head_taper_curve", RIVER_DEFAULT_HEAD_TAPER_CURVE)),
+		RIVER_HEAD_TAPER_CURVE_MIN, RIVER_HEAD_TAPER_CURVE_MAX)
 	var river_soft_frac: float = clampf(float(rivers.get("softness_width", RIVER_DEFAULT_SOFTNESS_WIDTH)), 0.005, 1.0)
 	var meander_frac: float = clampf(float(rivers.get("meander_width", RIVER_DEFAULT_MEANDER_WIDTH)), 0.0, 1.0)
 	var width_variation: float = clampf(float(rivers.get("width_variation", RIVER_DEFAULT_WIDTH_VARIATION)), 0.0, 1.0)
@@ -4548,6 +4563,7 @@ func _update_terrain_shader_quad(radius: float, origin: Vector2, viewport_size: 
 	m.set_shader_parameter("river_minor_half_width", minor_frac * radius)  # Minor band half-width (px)
 	m.set_shader_parameter("river_major_half_width", major_frac * radius)  # Major band half-width (px)
 	m.set_shader_parameter("river_navigable_half_width", navigable_frac * radius)  # channel half-width (px)
+	m.set_shader_parameter("river_head_taper_curve", head_taper_curve)     # trunk-head swell shape (unitless)
 	m.set_shader_parameter("river_softness", river_soft_frac * radius)     # bank ramp half-width (px)
 	m.set_shader_parameter("river_meander", meander_frac * radius)         # noise wander of the band (px)
 	m.set_shader_parameter("river_width_variation", width_variation)       # swell/pinch along the river (frac)

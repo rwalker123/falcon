@@ -63,7 +63,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `ui/HudStyle.gd` | Single source of truth for the dark HUD console look: palette (cyan `SIGNAL`, amber `WARN`, ink/line neutrals), `card_stylebox()`, `header_stylebox()`, `banner_stylebox()`, `apply_button(btn, "primary"/"ghost"/"armed")`, and `apply_link_button(btn, base_color)` — the **inline link** treatment for a clickable label inside a row (no box at rest; hover tint + cyan text + pointing hand), used by the band panel's clickable Current-actions rows. Every HUD surface styles through here |
 | `ui/FoodIcons.gd` | Shared glyph vocabulary — food modules (`for_site`), fauna herds (`for_herd`, species keyword matched in the herd label, longest-first), and **take policies** (`for_policy`, `POLICY_ICONS`: the four extractive rungs sustain ♻ / surplus ⬆ / market ⇄ / eradicate 💀, plus the two **investment** rungs cultivate 🌱 / corral 🐄 — 🐄 is the same glyph the herd drawer's Domesticated/Corralled badge uses; both verified legible at picker size in `forage_cultivate.png` / `herd_corral.png`; `""` for unknown). Used by the map's food-site / herd markers (`MapView._draw_food_site` / `_draw_herd`), the Harvest/Hunt button + the **band panel's Current-actions rows** (each row leads with its resource glyph), and — for policies — BOTH the Hud policy-picker buttons (`_build_policy_picker`) and the map's yield labels (`MapView._draw_yield_label` appends the icon: `+0.38 ♻`), so a resource/policy always reads the same on the panel and on the map. **Policy glyphs are deliberately line-art** (♻ ⬆ ⇄) plus the high-contrast 💀: pictographic emoji (🪙 coin, 💰 money bag) render as a featureless grey blob at the ~12–13px these are drawn at, and ⚖ renders tiny/faint — same glyph-legibility hazard that forced `MagnifierButton` to hand-draw. Verified in `band_panel_left.png` / `map_band_work.png`. Also the **action-status** glyphs (`for_status`, `STATUS_ICONS`) the Band panel's Current-actions + Active-expeditions rows use instead of words — `pending ○` (the ORDER isn't acknowledged yet; a modifier that rides on any row, amber) / `working ●` (a confirmed local forage/hunt row, and expedition phase `hunting`) / `outbound ➤` / `awaiting ▮▮` / `delivering ◄` = `returning ◄` (both are "coming home"; the tooltip distinguishes them). Same line-art rule and the same hazard: `◌` (dotted circle) was tried for `pending` and rejected — it renders thin and faint at row size — and `⏸` for `awaiting` carries emoji presentation (tofu/blob), so `▮▮` is used. Verified at true size in `band_panel_status_glyphs.png` |
 | `tools/ui_preview.gd` / `.tscn` | Dev-only preview harness: instances the real `HudLayer` with canned selection/targeting data, renders each state, and saves PNGs to `ui_preview_out/` (gitignored). Iterate on HUD styling without a server: `godot --path . res://tools/ui_preview.tscn` |
-| `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link; scouting draws no disc — it extends sight in the fog), the terrain/blend states, and the **rivers** state (`map_rivers*.png` — hex-edge Minor/Major rivers + the NavigableRiver terrain chain, incl. `map_rivers_join.png`: a zoomed, hex-anchored close-up of the trunk HEAD, where two tributaries hand over at corners — the frame the `river_inflow` spurs are judged on) without a server: `godot --path . res://tools/map_preview.tscn` |
+| `tools/map_preview.gd` / `.tscn` | Dev-only **MapView** preview harness (HUD-only ui_preview's companion): instances the real `MapView`, feeds a canned `display_snapshot` + selects a band, and dumps PNGs (`map_*.png`) to `ui_preview_out/`. Verifies the selected-band labor highlights (work-range ring / worked forage tiles / hunted-herd ring+link; scouting draws no disc — it extends sight in the fog), the terrain/blend states, and the **rivers** state (`map_rivers*.png` — hex-edge Minor/Major rivers + the NavigableRiver terrain chain, incl. `map_rivers_join.png`: a zoomed, hex-anchored close-up of the trunk HEAD, where two tributaries hand over at corners — the frame the `river_inflow` spurs are judged on — and `map_rivers_head_minor.png`: a second navigable head fed by a **Minor tributary only**, the frame the HEAD TAPER is judged on) without a server: `godot --path . res://tools/map_preview.tscn` |
 | `tools/band_panel_preview.gd` / `.tscn` | Dev-only preview harness for the **Band/City dockable panel**: instances the real `BandCityPanel` + `HudLayer`, injects the panel into the HUD, pushes a seeded player band through `update_band_alerts`, and dumps the panel docked left/right/top/bottom + collapsed (`band_panel_*.png`) so the chrome + the relocated band detail + the HUD reflow can be eyeballed without a server: `godot --path . res://tools/band_panel_preview.tscn` |
 | `tools/marker_field_guard.gd` / `.tscn` | Headless **regression guard** for the "unit marker drops a panel-consumed field" bug class (twice hit: `hunt_mode`, then `working_age`/`idle_workers`). Feeds one realistic population entry through the real `MapView._rebuild_unit_markers` and asserts the produced marker is a superset of `PANEL_CONSUMED_KEYS` (the keys `Hud._unit_summary_lines` + `_build_allocation_panel` read off `_selected_unit`) and that the drop-prone fields round-trip (not defaulted). Exits non-zero on failure (CI-usable). No rendering, so headless: `godot --headless --path . res://tools/marker_field_guard.tscn`. When the panel starts reading a new marker field, add it to `PANEL_CONSUMED_KEYS`. |
 | `assets/terrain/TerrainTextureManager.gd` | Autoload singleton for terrain texture loading |
@@ -524,6 +524,25 @@ as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` p
       map border / across the wrap seam). The spur wears the tributary's class art and **crossfades** into
       the channel over `class_blend_width` — the edge pass's Minor→Major crossfade, for the same reason:
       one river growing, not two waterways spliced.
+    - **HEAD TAPER — a trunk does not spring to full width at a hex centre.** On the **first hex of a
+      chain** (the only hex with a nonzero `river_inflow`) the arms **start at the half-width of the
+      WIDEST class feeding in** (max over the 6 inflow corners — Major wins if any Major lands, and the
+      sim already stores the widest class per corner) and **swell to the full navigable width by the hex
+      EDGE**: `half_w = mix(inflow_half_width, navigable_half_width, pow(smoothstep(0,1,t), head_taper_curve))`,
+      `t` = the arm's own centre→edge-midpoint projection. Without it a hairline Minor arrived at a vertex
+      and was a great river a few px later — a jump-cut, not a river. A hex with `river_inflow == 0`
+      (mid-chain, or navigable from its first step) is **unchanged**: `inflow_half_width` stays the
+      navigable width and the mix is a no-op — no extra per-hex branching.
+      **`t` is taken from the UNWARPED point** (unlike the distance-to-centerline `t`, which must use the
+      meander-warped one), and that is load-bearing: every fragment on the shared edge projects to
+      **exactly `1.0`** on the arm axis (the edge line's projection onto the arm direction is the apothem,
+      whatever the lateral offset), so the taper lands on **exactly** `navigable_half_width` where the
+      next, constant-width navigable hex takes over — no step, no notch at the head's downstream edge. The
+      warped point's projection would wander by the meander amplitude and leave one. Width is a scalar
+      field of world position here, the same as `river_width_mod` / `river_bank_wobble` (both also sampled
+      unwarped), and the organic machinery rides **on top of** the tapered base width, so the continuity
+      guarantees survive. The taper also makes the **spur→trunk join seamless**: the trunk now leaves the
+      centre at the same width the spur arrives there with.
     - **An arm is NOT keyed off `river_edges`** — that was the fat-teal-blob bug. An edge river runs ALONG
       a side; it does not flow through the side's MIDPOINT, and a trunk head can flank two or three river
       edges, so the mask-armed rule drew three fat centre→midpoint arms **at the trunk's width** and the
@@ -545,7 +564,10 @@ as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` p
   bank-noise / flow-speed are **shared with the edge classes**, not duplicated per class) /
   `softness_width` / `meander_width` / `bank_noise_width` / `class_blend_width` (fractions of the hex radius
   → px uniforms, computed in `_update_terrain_shader_quad` exactly like `blend_width` / `canopy_overhang`),
-  the unitless `width_variation` / `tint_strength` / `depth_compress`, plus `texture_scale`,
+  the unitless `width_variation` / `tint_strength` / `depth_compress` / **`head_taper_curve`** (the
+  exponent on the head taper's smoothstep — `0.8` ships, i.e. swell slightly EARLY; `1.0` = plain
+  smoothstep, `> 1` holds the tributary's width longer then flares. An exponent, never a width, so it
+  cannot disturb the exact navigable-width match at the hex edge), plus `texture_scale`,
   `river_min_radius` (the LOD floor), and `flow_speed`. Fallbacks are the `RIVER_DEFAULT_*` consts in
   `MapView.gd`.
 - **River LOD is DECOUPLED from the blend LOD** (own `rivers_lod_enabled`, `radius ≥ river_min_radius`,
@@ -579,6 +601,10 @@ as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` p
   `map_rivers_navigable.png` (the trunk: the Major edge river flowing INTO it, the corner turns, and the
   channel CONTINUOUS across adjacent navigable hexes) + `map_rivers_mouth.png` (the channel reaching open
   sea + its delta lobe — no dead-end, and no surf line across the mouth) +
+  `map_rivers_head_minor.png` (the HEAD TAPER's own frame: a second, one-hex navigable branch fed by a
+  **Minor tributary only** — its arm must start hairline at the centre and swell to the full channel width
+  by the shared edge with the trunk, with **no step** there; the Major+Minor head in `map_rivers_join.png`
+  is the other half of the test, starting at the **wider** — Major — width) +
   `map_rivers_farzoom.png` (decoupled LOD). The fixture generates the edge chain as the **boundary of a
   region** (hexes north of a bank row `f(x)`), which is contiguous by construction — no gaps — and turns a
   corner at every step; the navigable chain then WALKS `RIVER_NAV_STEPS` (E/SE/E/NE/E) out to the sea, so the
