@@ -124,13 +124,14 @@
       "tolerance": 0.02,
       "biome_palette": {
         "_comment_highland_volcanic": "Highland + Volcanic are physically relief/elevation/mask-gated: every member maps to a specific regime, so no palette swap has an acceptable substitute. Never thinned (K = full membership); Volcanic is simply absent on maps with no volcanic arc + no fumarole anomaly hit.",
+        "_comment_fertile_lowland": "NEVER THINNED (k = full membership 4), for the SAME physically-gated reason as Highland/Volcanic. The niche has exactly 4 members and TWO are must_have (AlluvialPlain, PrairieSteppe), so the old k_small=2 admitted ONLY the must_haves and silently deleted the other two from every Standard map: MixedWoodland (the map's only canopy/forest biome) and Floodplain (stamped by HYDROLOGY at river valleys, exactly the physical gating that already makes RiverDelta must_have). Thinning them did not simplify the map — it remapped both into AlluvialPlain, their niche-mate, which is a large part of why the tag solver's fallback biome carried 37-48% of all land. A world with no forests and no river valleys is not a legible map, it is a missing one. Verified: at k=4 forest and floodplain both appear and alluvial's share falls.",
         "_comment_anchors": "Anchors = selectable map presets: Tiny (2016) -> k_small (most legible), Huge (10240) -> k_large (richest); Standard (4160) lands partway up the smoothstep curve.",
         "small_map_tiles": 2016,
         "large_map_tiles": 10240,
         "niches": {
           "Ocean":          { "k_small": 2, "k_large": 4 },
           "CoastWetland":   { "k_small": 1, "k_large": 4 },
-          "FertileLowland": { "k_small": 2, "k_large": 5 },
+          "FertileLowland": { "k_small": 4, "k_large": 5 },
           "AridLowland":    { "k_small": 1, "k_large": 4 },
           "PolarLowland":   { "k_small": 1, "k_large": 3 },
           "Highland":       { "k_small": 5, "k_large": 5 },
