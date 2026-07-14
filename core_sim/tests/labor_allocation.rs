@@ -116,14 +116,24 @@ fn forage_alloc_policy(tile: UVec2, workers: u32, policy: FollowPolicy) -> Labor
     }
 }
 
-/// Find a food-module tile: its position + entity.
+/// Find a food-module tile that actually carries a **patch**: its position + entity. A food-module
+/// tile on a biome with no human-edible stock at all (`forage.capacity_by_biome` = 0 — a glacier, a
+/// salt pan) is deliberately seeded no patch, so "has a `FoodModuleTag`" is no longer the same
+/// question as "is a forage source".
 fn food_tile(app: &mut App) -> (UVec2, bevy::prelude::Entity) {
     let pos = {
+        let seeded: Vec<UVec2> = app
+            .world
+            .resource::<ForageRegistry>()
+            .patches
+            .keys()
+            .copied()
+            .collect();
         let mut q = app.world.query::<(&FoodModuleTag, &Tile)>();
         q.iter(&app.world)
             .map(|(_, tile)| tile.position)
-            .next()
-            .expect("expected at least one food-module tile")
+            .find(|pos| seeded.contains(pos))
+            .expect("expected at least one food-module tile carrying a forage patch")
     };
     let entity = app
         .world
@@ -131,6 +141,15 @@ fn food_tile(app: &mut App) -> (UVec2, bevy::prelude::Entity) {
         .index(pos.x, pos.y)
         .expect("food tile resolves");
     (pos, entity)
+}
+
+/// The **shipped** labor config with a few levers bent for a scenario. The per-biome forage capacity
+/// table (`forage.capacity_by_biome`) is validated as *total* over the 37 biomes, so a test can no
+/// longer hand-write a partial `{"forage": {...}}` JSON — it starts from the builtin and overrides.
+fn tuned_labor_config(mutate: impl FnOnce(&mut LaborConfig)) -> Arc<LaborConfig> {
+    let mut config = (*LaborConfig::builtin()).clone();
+    mutate(&mut config);
+    Arc::new(config)
 }
 
 fn larder(app: &App, band: bevy::prelude::Entity) -> f32 {
@@ -184,18 +203,10 @@ fn forage_draws_down_depletable_patch() {
 fn sustain_hunt_below_regrowth_lets_herd_grow() {
     let mut app = spawn_world();
     // Tiny per-worker biomass cap so `worker_cap < net regrowth` at any sane worker count.
-    let json = r#"{
-        "band_work_range": 2,
-        "worked_source_sight_range": 2,
-        "hunt_leash_tiles": 3,
-        "band_move_tiles_per_turn": 1,
-        "forage": {},
-        "hunt": { "per_worker_biomass_capacity": 0.05 },
-        "scout": { "vantage_distance_base": 2, "vantage_distance_per_scout": 1, "vantage_distance_max": 6, "vantage_range": 2 }
-    }"#;
-    app.world.insert_resource(LaborConfigHandle::new(Arc::new(
-        LaborConfig::from_json_str(json).expect("custom labor config parses"),
-    )));
+    app.world
+        .insert_resource(LaborConfigHandle::new(tuned_labor_config(|config| {
+            config.hunt.per_worker_biomass_capacity = 0.05;
+        })));
 
     // A stationary herd at half its cap → clear positive regrowth.
     let (id, start) = {
@@ -411,21 +422,13 @@ fn non_sustain_forage_trips_overdraw_while_sustain_does_not() {
 #[test]
 fn market_forage_sells_trade_goods_others_do_not() {
     // Bump the trade-goods rate so a single Market gather on a small patch clears integer rounding.
-    let json = r#"{
-        "band_work_range": 2,
-        "worked_source_sight_range": 2,
-        "hunt_leash_tiles": 3,
-        "band_move_tiles_per_turn": 1,
-        "forage": { "market": { "trade_goods_per_biomass": 1.0 } },
-        "hunt": { "per_worker_biomass_capacity": 40.0 },
-        "scout": { "vantage_distance_base": 2, "vantage_distance_per_scout": 1, "vantage_distance_max": 6, "vantage_range": 2 }
-    }"#;
-
     let run = |policy: FollowPolicy| -> (i64, f32) {
         let mut app = spawn_world();
-        app.world.insert_resource(LaborConfigHandle::new(Arc::new(
-            LaborConfig::from_json_str(json).expect("custom labor config parses"),
-        )));
+        app.world
+            .insert_resource(LaborConfigHandle::new(tuned_labor_config(|config| {
+                config.forage.market.trade_goods_per_biomass = 1.0;
+                config.hunt.per_worker_biomass_capacity = 40.0;
+            })));
         let (pos, tile) = food_tile(&mut app);
         let before = {
             let mut registry = app.world.resource_mut::<ForageRegistry>();

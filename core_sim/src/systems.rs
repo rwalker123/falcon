@@ -7228,6 +7228,7 @@ mod labor_yield_tests {
     use bevy::math::UVec2;
     use bevy::prelude::{Entity, World};
     use bevy_ecs::system::RunSystemOnce;
+    use sim_runtime::TerrainType;
 
     const HERD_ID: &str = "game_test";
     const CAP: f32 = 100.0;
@@ -7236,6 +7237,11 @@ mod labor_yield_tests {
     /// Whole workers on each assignment: large enough that forage yields clearly and the hunt's
     /// per-worker biomass cap never binds (so a Sustain take is set by the regrowth ceiling).
     const WORKERS: u32 = 10;
+    /// The biome under the harness's food-module tile — grassland, matching the
+    /// `FoodModule::SavannaGrassland` tag it carries. A forage patch's carrying capacity is the
+    /// **tile's** (`forage.capacity_by_biome`, the human food web's per-biome table), so the harness
+    /// must name a biome rather than read a global constant.
+    const SOURCE_BIOME: TerrainType = TerrainType::PrairieSteppe;
 
     /// A 3×1 world with a food-module tile + a stationary game herd (given `biomass`, cap `CAP`)
     /// both anchored on tile (0,0). Returns the world and that source tile's entity.
@@ -7257,6 +7263,7 @@ mod labor_yield_tests {
                 world
                     .spawn(Tile {
                         position: UVec2::new(x, 0),
+                        terrain: SOURCE_BIOME,
                         ..Default::default()
                     })
                     .id()
@@ -7292,7 +7299,7 @@ mod labor_yield_tests {
         // Depletable forage patch on the source tile, seeded at half its carrying capacity so a
         // Sustain gather draws a clear (positive) regrowth skim (`forage.actual > 0`).
         let forage_cfg = world.resource::<LaborConfigHandle>().get();
-        let patch_cap = forage_cfg.forage.carrying_capacity;
+        let patch_cap = forage_cfg.forage.capacity_for(SOURCE_BIOME);
         let mut patch = ForagePatch::new(UVec2::new(0, 0), patch_cap);
         patch.biomass = patch_cap * 0.5;
         patch.refresh_ecology_phase(&forage_cfg.forage.ecology);
@@ -7532,7 +7539,7 @@ mod labor_yield_tests {
             .resource::<LaborConfigHandle>()
             .get()
             .forage
-            .carrying_capacity;
+            .capacity_for(SOURCE_BIOME);
         set_wild_patch_biomass(&mut world, patch_cap);
         let band = spawn_band(
             &mut world,
@@ -7591,7 +7598,7 @@ mod labor_yield_tests {
     fn labor_bound_take_reports_all_assigned_workers_needed() {
         let (mut world, tile) = world_with_source(CAP);
         let cfg = world.resource::<LaborConfigHandle>().get();
-        let patch_cap = cfg.forage.carrying_capacity;
+        let patch_cap = cfg.forage.capacity_for(SOURCE_BIOME);
         let capacity = cfg.forage.per_worker_biomass_capacity;
         let eradicate_fraction = cfg.forage.eradicate.take_fraction;
         drop(cfg);
@@ -7654,7 +7661,7 @@ mod labor_yield_tests {
             .resource::<LaborConfigHandle>()
             .get()
             .forage
-            .carrying_capacity;
+            .capacity_for(SOURCE_BIOME);
         cultivate_source_patch(&mut world, patch_cap);
         // Pen the herd in place (Rung 1c) so a Hunt assignment tends rather than hunts it.
         {
@@ -7894,7 +7901,7 @@ mod labor_yield_tests {
             .resource::<LaborConfigHandle>()
             .get()
             .forage
-            .carrying_capacity;
+            .capacity_for(SOURCE_BIOME);
         cultivate_source_patch(&mut world, patch_cap);
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
@@ -7985,7 +7992,7 @@ mod labor_yield_tests {
     fn tended_patch_pays_tending_band_above_msy_no_drawdown() {
         let (mut world, tile) = world_with_source(CAP);
         let cfg = world.resource::<LaborConfigHandle>().get();
-        let patch_cap = cfg.forage.carrying_capacity;
+        let patch_cap = cfg.forage.capacity_for(SOURCE_BIOME);
         // A tended patch regrows freely toward the cap; harvest is on its full standing crop.
         let biomass = patch_cap;
         let tended_rate = cfg.forage.cultivation.tended_provisions_per_biomass;
@@ -8050,7 +8057,7 @@ mod labor_yield_tests {
             .resource::<LaborConfigHandle>()
             .get()
             .forage
-            .carrying_capacity;
+            .capacity_for(SOURCE_BIOME);
         cultivate_source_patch(&mut world, patch_cap);
 
         // Band A tends the cultivated patch on (0,0).

@@ -33,6 +33,58 @@ They are **different stocks on different tiles**. A temperate forest is rich in 
 best farm is usually not your best pasture** — the agropastoral split, and a genuine spatial decision
 the game does not currently have.
 
+### 1.1 Two webs means TWO TABLES (Phase 2a-ii — shipped)
+
+A spatial animal web beside a **flat** human one cannot diverge. With `forage.carrying_capacity` a
+constant **120** on every food-module tile, *"your best farm is not your best pasture"* was untrue **by
+construction**: one web varied across the land and the other was a number. So the human web gets exactly
+the treatment the animal one got.
+
+| | `forage.capacity_by_biome` (`labor_config.json`) | `graze.capacity_by_biome` (`fauna_config.json`) |
+|---|---|---|
+| shape | 37-row per-biome table | 37-row per-biome table |
+| validation | **total table required** — a missing row would read as an invisible zero-food dead zone; **zero must be stated** | same |
+| a zero row | the tile carries **no `ForagePatch`** at all | the tile carries **no `GrazePatch`** at all |
+
+Per-**biome**, not per-`FoodModule`: the two tables must be **comparable tile-for-tile** and must be able
+to disagree *within* a module. That comparability is the point. The `FoodModuleTag` model is untouched —
+the module still decides what *kind* of gathering a tile offers (and its `seasonal_weight`); the table
+decides *how much* is there.
+
+| biome | graze | forage | the story |
+|---|---|---|---|
+| `PrairieSteppe` | **240** | 70 | grass: the animals feast, humans get seed heads |
+| `RiverDelta` / `Floodplain` | 130 | **210 / 205** | the richest human ground there is |
+| `AlluvialPlain` | **110** (was 230) | **195** | silt + water = **cropland**. The FARM, not the pasture |
+| `MixedWoodland` | 55 | **190** | mast, nuts, berries under a canopy that shades out the ground cover — **the flagship inversion** |
+| `Tundra` / `AlpineMountain` | 100 / 65 | 25 / 20 | **rangeland**: pastoralism lives exactly where farming cannot |
+| `ContinentalShelf` / `CoralShelf` | 0 (water) | 130 / 180 | the coastal larder. A fishery is a food module **on water** — so "water = 0 forage" would have deleted coastal fishing outright |
+| glacier / lava / salt flat | **0** | **0** | a *stated* zero |
+
+**Lowering the silt lowlands' graze is the load-bearing change.** A river plain is prime *cropland*, not
+prime range; its value **moved to the web where it belongs** rather than being deleted. `AlluvialPlain`
+is additionally the tag solver's universal fallback (~25% of land even after the `FertileLowland` palette
+fix), so leaving it tied with prairie for best pasture baked a **worldgen artifact into the fauna model**.
+
+**Measured, not assumed** (`integration_tests/tests/graze_distribution.rs::two_food_web_report`,
+earthlike 80×52, seeds 11/4242/90210) — the divergence is a *number*, not a slogan:
+
+- **graze/forage correlation across living land: −0.11 / +0.03 / −0.01.** Near zero: a tile's pasture
+  tells you almost nothing about its farm. (Across *all* land it reads +0.13…+0.24 — bare rock is a
+  shared **zero**, an irreducible positive term that says nothing about the claim. Nobody chooses
+  between farming and grazing a glacier.)
+- **Land top-decile in BOTH webs: 0.0% on every seed** (independence would give 1%). *Your best farm is
+  not your best pasture*, measured. The top-**quartile** overlap is printed but deliberately **not**
+  guarded: `AlluvialPlain` is ~25% of land, so the 75th-percentile graze cut lands *inside that one
+  biome* and the figure flips 0% ↔ 24% on a hair. That is a cliff, not a measurement — **never tune a
+  capacity table to it**.
+- **Balance:** map-wide human food capacity **−18…−20%**, but the mean patch capacity within a band's
+  work range **of the start** is 123 / 128 / 99 vs the retired flat 120 — **−3% on average**. The
+  map-wide drop is almost all tundra, bare rock and scrub, land nobody starts on, which the flat 120 was
+  pricing as richly as a river delta. Individual starts *do* move (a grassland start is thinner in human
+  food, a river-valley start richer): **that spatial variance is the feature**, and it is what a live
+  campaign must watch.
+
 ---
 
 ## 2. The consequence: carrying capacity belongs to the LAND
@@ -111,7 +163,9 @@ Mirrors `ForageRegistry` exactly — the pattern is proven and rollback-persiste
 - **`GrazeRegistry`** — per-**land-tile** `{ biomass, carrying_capacity, ecology_phase }`, reusing the
   shared `EcologyState` record (as `ForageState`/`HerdState` do), keyed by tile coord.
 - **Capacity by biome** — a config table over the 37 biomes (prairie/savanna high, forest low under
-  canopy, desert marginal, glacier/rock/water **zero**). A per-biome lever, not a formula.
+  canopy, desert marginal, glacier/rock/water **zero**). A per-biome lever, not a formula. **Its twin,
+  `forage.capacity_by_biome`, is the same table for the human web** (§1.1) — they are read together,
+  and they are meant to disagree.
 - **Regrowth** — pure logistic (grass has no Allee collapse) toward capacity, with a **reseed floor**
   like `ForagePatch` (grass reseeds; graze is never permanently dead). Its own `regrowth_rate`, tuned
   well above fauna's — grass regrows fast.
@@ -153,6 +207,11 @@ it must not ride in the same PR as the layer it depends on.
 - **2a — The graze layer.** `GrazeRegistry`, per-biome capacity, regrowth, persistence, wire, and a
   **pasture map overlay**. **Nothing consumes it yet.** Ship it, look at a real map, and confirm the
   distribution is sane *before* betting the fauna model on it.
+- **2a-ii — The human web gets a table too** (§1.1). `forage.capacity_by_biome` replaces the flat 120,
+  validated total like graze's, and both tables are retuned until the two webs actually **diverge**
+  (correlation ≈ 0, top-decile overlap 0%). Without this, half the model is a constant and the
+  agropastoral decision cannot exist. *Sim-only; the client already reads per-patch `carrying_capacity`
+  off the wire, so nothing client-side changes.*
 - **2b — Herds eat; `K` becomes ecological.** The formula above for wild + pastoral + penned. Per-species
   `regrowth_rate` and `fodder_per_biomass`. Retires `capacity_fraction` and species-`K`. **The big
   rebalance** — measure it in a live campaign, as PR #119 did, and expect to retune.

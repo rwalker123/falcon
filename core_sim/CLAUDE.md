@@ -39,7 +39,7 @@ cargo run -p core_sim --bin server
 | `src/data/influencer_config.json` | Roster caps, decay factors, scope thresholds |
 | `src/data/snapshot_overlays_config.json` | Overlay normalization weights |
 | `src/data/visibility_config.json` | Fog of War sight ranges, decay, terrain modifiers |
-| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: `carrying_capacity` per-patch cap, `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting — **plus the Phase 1a/1b `cultivation` block** `progress_per_turn`/`decay_per_turn`/**`cultivating_yield_fraction`**/`tended_provisions_per_biomass` + the Rung 1b earned-knowledge levers `knowledge_progress_per_turn`/`knowledge_completion_threshold` (Rung 1a: cultivation is the explicit **`Cultivate` policy** — while preparing, the patch yields only `cultivating_yield_fraction × its Sustain/MSY ceiling` (the investment cost) and accrues `progress_per_turn`; at 1.0 the tended patch pays the tending band `biomass × tended_provisions_per_biomass` place-local, higher than wild MSY, and goes feral if abandoned. Rung 1b: Sustain-forage earns faction **Cultivation** knowledge in the `DiscoveryProgressLedger`, the gate on the Cultivate policy — Sustain itself never tames a patch, and the old `claim_threshold` early-claim is **removed**); see "Cultivation"), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles) |
+| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: **`capacity_by_biome`** — the **human food web's** per-biome capacity table, a **total** 37-row table mirroring `fauna_config.json`'s `graze.capacity_by_biome` (the *animal* web) row-for-row and meant to **disagree** with it (see "The two food webs"); it replaces the retired flat `carrying_capacity` of 120 — `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` biomass→food conversion, and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier,trade_goods_per_biomass}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers so forage has Sustain/Surplus/Market/Eradicate parity with hunting — **plus the Phase 1a/1b `cultivation` block** `progress_per_turn`/`decay_per_turn`/**`cultivating_yield_fraction`**/`tended_provisions_per_biomass` + the Rung 1b earned-knowledge levers `knowledge_progress_per_turn`/`knowledge_completion_threshold` (Rung 1a: cultivation is the explicit **`Cultivate` policy** — while preparing, the patch yields only `cultivating_yield_fraction × its Sustain/MSY ceiling` (the investment cost) and accrues `progress_per_turn`; at 1.0 the tended patch pays the tending band `biomass × tended_provisions_per_biomass` place-local, higher than wild MSY, and goes feral if abandoned. Rung 1b: Sustain-forage earns faction **Cultivation** knowledge in the `DiscoveryProgressLedger`, the gate on the Cultivate policy — Sustain itself never tames a patch, and the old `claim_threshold` early-claim is **removed**); see "Cultivation"), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles). **Validated** — `LaborConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention), rejecting a **partial / all-zero / negative `forage.capacity_by_biome`** (a missing biome would silently read as an invisible zero-forage dead zone — **zero must be stated, never defaulted**); a broken invariant is logged at **error** level (`labor_config.invalid_rejected`) and the builtin is used |
 | `src/data/fauna_config.json` | Wild-game species table (display, size class, migratory flag, route length = anchor count, biomass, host biomes, + movement cadence `dwell_turns` / migratory `loiter_turns [min,max]` / `loiter_radius`) + per-biome spawn abundance + `hunt` / `follow` / `ecology` (regrowth + depensation collapse thresholds) / `immigration` (respawn) / `husbandry` (domestication accrual/decay/claim + **the flow-based yield ladder**: `pastoral.ecology` (`r` 0.25, the passive mobile-domesticated rung) and `pen` (`ecology.r` 0.90 / `capacity_fraction` / **`upkeep_per_biomass`** — the pen's feed — / `starve_shrink_rate`), plus the **`Corral` policy** investment levers `corralling_yield_fraction`/`corral_build_progress_per_turn`; every rung pays MSY against its own ecology, see "The husbandry yield ladder") / `market` (commercial-hunt take + trade multiplier) tuning + **`graze`** (the pasture layer, Grazing Phase 2a — `capacity_by_biome` a **total** 37-row per-biome table, `ecology` (`regrowth_rate` **0.40**, the fastest vegetal stock in the model), `reseed_floor_fraction` 0.02; see "The Graze (Pasture) Layer"). **Validated** — `FaunaConfig::validate()` runs inside `from_json_str` (every load path), rejecting a pen that eats more than it yields, an inverted ladder, a dead ecology, or a **partial / all-zero / negative graze table** (a missing biome would silently read as an invisible zero-graze dead zone); a broken invariant is logged at **error** level (`fauna_config.invalid_rejected`) and the builtin is used |
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
 | `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
@@ -661,7 +661,13 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
 `sustainable_yield` from the snapshot.*
 
 - **Seeding** (`spawn_initial_forage`, Startup after `spawn_initial_herds`): one full patch
-  (`biomass = carrying_capacity`) per `FoodModuleTag` tile. Idempotent (a restored world is skipped).
+  (`biomass = carrying_capacity`) per `FoodModuleTag` tile, at **that tile's biome capacity** —
+  `forage.capacity_by_biome[terrain]`, the human food web's per-biome table (see "The two food webs"),
+  never a global constant. A food-module tile whose biome carries **nothing human-edible** (a stated
+  `0` — glacier, salt pan, deep-sea vent field; the module classifier tags these off their *tags*, not
+  off anything growing there) is seeded **no patch at all**, exactly as a zero-graze tile holds no
+  `GrazePatch`: "no food here" is an *absent* reading, never a zero one. Idempotent (a restored world
+  is skipped).
 - **Regrowth** (`advance_forage_regrowth`, `TurnStage::Logistics` alongside `advance_herds`): each
   patch regrows toward its cap and refreshes its `EcologyPhase`. Unlike a wild herd, a patch uses
   **pure `logistic_regrowth`** (no Allee / critical-depensation crash) and **never despawns** —
@@ -692,7 +698,9 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   output_multiplier` (MSY-based) into the
   yield telemetry, so a non-Sustain gather reads `actual > sustainable` (the over-forage ⚠) exactly
   as an over-hunt does.
-- **Config** (`labor_config.json` `forage`): `carrying_capacity`, `per_worker_biomass_capacity`,
+- **Config** (`labor_config.json` `forage`): **`capacity_by_biome`** (the per-biome capacity table —
+  see "The two food webs"; **validated total** over the 37 biomes by `LaborConfig::validate`),
+  `per_worker_biomass_capacity`,
   `provisions_per_biomass`, an `ecology` block reusing fauna's `EcologyConfig` (`regrowth_rate` tuned
   higher than fauna's 0.05; `collapse_fraction`/`stressed_fraction` phase bands), a
   `reseed_floor_fraction` (0.02 — the reseed standing crop as a fraction of `carrying_capacity`, so a
@@ -700,8 +708,13 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   plus the **policy axis** levers (§0-iii, mirroring fauna's `follow`/`market`/`hunt`):
   `surplus_multiplier` (1.6),
   `market: { take_fraction 0.20, trade_goods_multiplier 4.0, trade_goods_per_biomass 0.005 }`,
-  `eradicate: { take_fraction 0.30 }`. The old flat `forage.per_worker_yield` lever is **retired**.
-  A flat per-patch cap is a v1 — a per-`FoodModule` table is a documented later refinement.
+  `eradicate: { take_fraction 0.30 }`. The old flat `forage.per_worker_yield` lever is **retired**,
+  and so is the flat `forage.carrying_capacity` (120 on every food-module tile) it was replaced by:
+  a **constant** human web could not diverge from the spatial animal one, so *"your best farm is not
+  your best pasture"* was untrue **by construction**. Per-biome (not per-`FoodModule`) is deliberate —
+  the two tables must be comparable tile-for-tile and must be able to disagree *within* a module.
+  Because every yield is linear in `K` (MSY = `r·K/4`), the cultivation incentive and every policy
+  ceiling scale with the tile and need no re-derivation.
 - **Policy plumbing** (§0-iii, the 5-site mirror of Hunt's policy): `LaborTarget::Forage` carries a
   `policy: FollowPolicy` (a policy change on the same tile is the **same source** in `same_source`,
   a mutable property); the `assign_labor forage <x> <y> [policy] <workers>` command-text parse takes
@@ -858,16 +871,61 @@ higher-output + feral-if-abandoned**. *Sim-only — the client readout is a foll
 **Humans and animals do not eat the same things.** The land carries **two vegetal stocks, on two food
 webs** (authoritative design: `docs/plan_grazing_foundation.md`):
 
-| | `ForagePatch.biomass` (Depletable Forage) | **`GrazePatch.biomass` (new)** |
+| | `ForagePatch.biomass` (Depletable Forage) | **`GrazePatch.biomass`** |
 |---|---|---|
 | Who eats it | **humans** (Forage assignments) | **animals** (herds, wild and penned) |
 | Where it is | `FoodModuleTag` tiles (sparse) | **any vegetated land**, by biome (dense) |
-| What it is | seeds, nuts, tubers, fruit | grass, browse, forbs — **cellulose humans cannot digest** |
+| What it is | seeds, nuts, tubers, fruit, shellfish | grass, browse, forbs — **cellulose humans cannot digest** |
+| Its capacity | `forage.capacity_by_biome` (`labor_config.json`) | `graze.capacity_by_biome` (`fauna_config.json`) |
 
 That is not flavor: it is the economic basis of herding (a pastoralist converts a resource
 **worthless to humans** into meat and milk), and it is why *your best farm is usually not your best
 pasture*. `graze.rs` mirrors `forage.rs` (which mirrors the herd model) exactly — the proven,
 rollback-persisted pattern.
+
+### The two food webs — two tables, meant to disagree
+
+**Both webs are per-biome tables over the same 37 biomes, in the same shape, with the same `validate()`
+discipline** (total table required; a missing row would read as an invisible zero and **zero must be
+stated**). They are per-**biome**, not per-`FoodModule`, precisely so they are comparable tile-for-tile
+and can disagree *within* a module — **that disagreement is the agropastoral decision.** The
+`FoodModuleTag` model is untouched: the module still decides what *kind* of gathering a tile offers
+(and its `seasonal_weight`); the table decides *how much* is there.
+
+| biome | graze (animals) | forage (humans) | the story |
+|---|---|---|---|
+| `PrairieSteppe` | **240** (the reference pasture) | 70 | grass: the animals feast, humans get seed heads |
+| `RiverDelta` / `Floodplain` | 130 | **210 / 205** | the richest human ground there is |
+| `AlluvialPlain` | **110** | **195** | silt + water = **cropland**. The FARM, not the pasture |
+| `MixedWoodland` | **55** | **190** | nuts, mast, berries under a canopy that shades out the ground cover — **the flagship inversion** |
+| `Tundra` / `AlpineMountain` | 100 / 65 | 25 / 20 | **rangeland**: pastoralism lives exactly where farming can't |
+| `ContinentalShelf` / `CoralShelf` | **0** (water) | 130 / 180 | the coastal larder — a fishery is a food module on *water* |
+| `RollingHills` / `PeatHeath` | 150 / 135 | 80 / 55 | |
+| glacier / lava / salt flat / deep ocean | **0** | **0** | a *stated* zero |
+
+**The silt lowlands were LOWERED on the graze side** (`AlluvialPlain` 230 → **110**, `Floodplain`/
+`RiverDelta` 230/220 → 130): a river plain is prime *cropland*, not prime range, and its value moved to
+the human web where it belongs. `AlluvialPlain` is additionally the tag solver's universal fallback
+biome (~25% of all land even after the `FertileLowland` palette fix), so leaving it tied with prairie
+for best pasture baked a **worldgen artifact into the fauna model**.
+
+**Measured, not asserted** (`integration_tests/tests/graze_distribution.rs::two_food_web_report`,
+earthlike 80×52, seeds 11/4242/90210 — run with `--nocapture` for the joint histogram):
+- **Correlation between the two webs across living land: −0.11 / +0.03 / −0.01.** Near zero, as
+  intended: knowing a tile's pasture tells you almost nothing about its farm. (Across *all* land it is
+  +0.13…+0.24 — bare rock is a shared **zero**, an irreducible positive term that says nothing about
+  the design claim; a farm-vs-pasture decision needs land that can feed *somebody*.)
+- **Land that is top-decile in BOTH webs: 0.0% on every seed** (independence would give 1%). *Your best
+  farm is not your best pasture* — measured, not claimed. (The top-**quartile** overlap is printed too
+  but **not** guarded: `AlluvialPlain` is ~25% of land, so the 75th-percentile graze cut lands *inside
+  that one biome* and the number flips 0% ↔ 24% on a hair. That is a cliff, not a measurement — do not
+  tune a capacity table to it.)
+- **Balance impact on the human food economy: map-wide capacity −18…−20%, but the early game is flat.**
+  The mean capacity of patches within `band_work_range` of the start is **123 / 128 / 99** vs the
+  retired flat **120** (mean 117 across seeds, −3%). The map-wide drop is almost all tundra, bare rock
+  and scrub — land nobody starts on, which the old flat 120 was pricing as richly as a river delta.
+  Individual starts *do* move (a grassland/tundra start is thinner, a river-valley start richer): that
+  spatial variance is the feature, and it is the thing to watch in a live campaign.
 
 > **Phase 2a ships this layer INERT.** It seeds, regrows, persists and exports — and **nothing reads
 > it for gameplay**. No herd behaviour changes, zero balance impact. Herd carrying capacity,
@@ -889,12 +947,15 @@ rollback-persisted pattern.
   `forage::regrow_patch`, so the two stocks can never drift apart. Permanent degradation
   (desertification) is a deliberate later lever, not this arc.
 - **Capacity is a property of the LAND, not the animal** — `graze.capacity_by_biome`, a **data table
-  over the 37 biomes, not a formula**. Anchor: `PrairieSteppe` = **240** is *the* reference pasture;
-  every other row is a claim relative to it. `MixedWoodland` (55) / `BorealTaiga` (40) are
-  deliberately **poor** — a closed canopy shades out the ground cover, the inversion the two-stock
-  split exists to create. Water / glacier / lava / salt flat are a **stated 0**. The absolute scale is
-  a free parameter; only the ratios matter until Phase 2b's `fodder_per_biomass` denominates it into
-  animals.
+  over the 37 biomes, not a formula**, and **read against its twin** `forage.capacity_by_biome` (see
+  "The two food webs" above, which owns the joint tuning table and the measurements). Anchor:
+  `PrairieSteppe` = **240** is *the* reference pasture; every other row is a claim relative to it.
+  `MixedWoodland` (55) / `BorealTaiga` (40) are deliberately **poor** — a closed canopy shades out the
+  ground cover, the inversion the two-stock split exists to create. Cold/high **rangeland** (Tundra
+  100, AlpineMountain 65, HighPlateau 75, SemiAridScrub 100) is deliberately *better for animals than
+  for humans*: pastoralism exists precisely where farming cannot. Water / glacier / lava / salt flat
+  are a **stated 0**. The absolute scale is a free parameter; only the ratios matter until Phase 2b's
+  `fodder_per_biomass` denominates it into animals.
 - **Config** (`fauna_config.json` `graze` — homed here, not in a file of its own, because graze is the
   *substrate of the fauna model*: every consumer of it is a fauna system, and it lets the block reuse
   `FaunaConfig::validate` verbatim): `capacity_by_biome`, `ecology` (`regrowth_rate` **0.40** —
@@ -926,15 +987,14 @@ rollback-persisted pattern.
   one place graze deliberately diverges from `ForagePatchState`.
 - **Distribution, measured on real maps** (`integration_tests/tests/graze_distribution.rs` — run with
   `--nocapture` for the histogram; the guards keep the model claims true under retuning). Earthlike
-  80×52, three seeds: ~1500 land tiles carry ~193–203 k total capacity, and only **0.8–1.4% of land is
-  zero-graze** (glacier / volcanic / fumarole). Prairie is the richest per-tile pasture (240) and
-  Tundra is thin-but-real (70), as intended. **Two findings worth knowing** — neither is a graze bug:
-  (a) **the standard earthlike map has no forest at all** (the `FertileLowland` niche's palette `K`
-  resolves to 2 at 4160 tiles and both slots are `must_have`, so `MixedWoodland` is always thinned
-  out; `BorealTaiga` loses the `PolarLowland` roll the same way) — so the split's flagship example is
-  *unobservable in play* until the palette gives forest a slot; and (b) `AlluvialPlain` (the solver's
-  universal fallback, `must_have`) carries **37–48% of all graze on the map**, i.e. the dominant
-  pasture is the fallback biome, not the steppe.
+  80×52, three seeds: ~1500–1560 land tiles carry ~162–177 k total graze capacity, and only
+  **0.8–1.0% of land is zero-graze** (glacier / volcanic / fumarole). Prairie is the richest per-tile
+  pasture (240), as intended. Two earlier findings are now **closed**: the `FertileLowland` palette
+  niche is no longer thinned (`k_small` 2 → 4, `map_presets.json`), so **forest and floodplain exist on
+  the standard map** — the flagship inversion is observable in play — and `AlluvialPlain`, which was
+  absorbing both of them as their niche-mate, no longer carries the map's pasture: at graze 110 its
+  share of total graze falls to ~16–24% (from 37–48%), and the *dominant* pasture is the steppe again,
+  not the fallback biome. See "The two food webs" for the joint (graze + forage) measurement.
 - **Follow-ups:** the **client** pasture overlay + tile-card readout (a client-dev slice: the data is
   on the wire; note the overlay must be built from `TileState`, since graze is not a raster channel).
   Then **Phase 2b** — herds eat it, and `K_herd` becomes `range graze flow / fodder_per_biomass`,

@@ -8,6 +8,7 @@
 //! No magic numbers: every lever a system reads lives here.
 
 use std::{
+    collections::HashMap,
     env, fs, io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -15,6 +16,7 @@ use std::{
 
 use bevy::prelude::Resource;
 use serde::Deserialize;
+use sim_runtime::TerrainType;
 use thiserror::Error;
 
 use crate::fauna_config::EcologyConfig;
@@ -22,11 +24,12 @@ use crate::fauna_config::EcologyConfig;
 pub const BUILTIN_LABOR_CONFIG: &str = include_str!("data/labor_config.json");
 
 /// Named-const defaults for the depletable-forage ecology (Intensification §0-ii). All are
-/// **tuning dials** (settle live): the per-patch cap, the gather throughput, the biomass→provisions
-/// conversion, and the ecology dynamics. `regrowth_rate` is tuned **higher than fauna's 0.05** —
-/// patches regrow faster than game. `extinction_floor` is `0.0` because forage patches never
-/// despawn (a crashed patch sits at low biomass and recovers via `logistic_regrowth`).
-const DEFAULT_FORAGE_CARRYING_CAPACITY: f32 = 120.0;
+/// **tuning dials** (settle live): the gather throughput, the biomass→provisions conversion, and
+/// the ecology dynamics. `regrowth_rate` is tuned **higher than fauna's 0.05** — patches regrow
+/// faster than game. `extinction_floor` is `0.0` because forage patches never despawn (a crashed
+/// patch sits at low biomass and recovers via `logistic_regrowth`). The per-patch *capacity* is no
+/// longer a scalar default: it is [`ForageLaborConfig::capacity_by_biome`], a per-biome table (the
+/// human-edible twin of `fauna_config`'s `graze.capacity_by_biome`).
 const DEFAULT_FORAGE_PER_WORKER_BIOMASS_CAPACITY: f32 = 8.0;
 const DEFAULT_FORAGE_PROVISIONS_PER_BIOMASS: f32 = 0.05;
 const DEFAULT_FORAGE_REGROWTH_RATE: f32 = 0.25;
@@ -64,16 +67,18 @@ const DEFAULT_FORAGE_ERADICATE_TAKE_FRACTION: f32 = 0.30;
 /// standing biomass without being drawn down).
 ///
 /// **Tuning — a tended patch out-yields the same patch's wild MSY (the intensification incentive).**
-/// A tended patch is never drawn down, so its biomass regrows toward the cap `K` and the per-turn
-/// tended yield settles at `K × tended_provisions_per_biomass`. The best a *wild* patch can
+/// A tended patch is never drawn down, so its biomass regrows toward its tile's cap `K` and the
+/// per-turn tended yield settles at `K × tended_provisions_per_biomass`. The best a *wild* patch can
 /// sustainably yield is MSY = regrowth at `K/2` = `regrowth_rate × K/4`, in provisions
-/// `regrowth_rate × K/4 × provisions_per_biomass` (the gather rate). With the shipped forage defaults
-/// (`K` = 120, `regrowth_rate` = 0.25, gather `provisions_per_biomass` = 0.05): wild MSY ≈
-/// `0.25 × 30 × 0.05` = **0.375 prov/turn**, while a tended patch yields `120 × 0.01` = **1.2
-/// prov/turn** — ~3.2× the wild sustainable skim. (The tended *per-biomass* rate is lower than the
-/// gather rate, but tended harvests the whole standing crop every turn, not just the regrowth skim.)
-/// Keep `tended_provisions_per_biomass > regrowth_rate/4 × forage.provisions_per_biomass` so
-/// intensifying always pays.
+/// `regrowth_rate × K/4 × provisions_per_biomass` (the gather rate). **Both are linear in `K`, so the
+/// incentive is scale-free** — it holds on every biome in `capacity_by_biome`, which is why the
+/// per-biome table can be retuned without re-deriving it. Keep
+/// `tended_provisions_per_biomass > regrowth_rate/4 × forage.provisions_per_biomass` so intensifying
+/// always pays. At the shipped rates (`regrowth_rate` 0.25, gather 0.05, tended 0.01) tended pays
+/// **3.2×** the wild sustainable skim on *any* tile — e.g. on an `AlluvialPlain` (`K` = 195): wild MSY
+/// `0.25 × 48.75 × 0.05` = **0.61 prov/turn** vs tended `195 × 0.01` = **1.95 prov/turn**. (The tended
+/// *per-biomass* rate is lower than the gather rate, but tended harvests the whole standing crop every
+/// turn, not just the regrowth skim.)
 const DEFAULT_CULTIVATION_PROGRESS_PER_TURN: f32 = 0.04;
 const DEFAULT_CULTIVATION_DECAY_PER_TURN: f32 = 0.01;
 const DEFAULT_CULTIVATION_TENDED_PROVISIONS_PER_BIOMASS: f32 = 0.01;
@@ -197,6 +202,13 @@ impl Default for ForageEradicateConfig {
     }
 }
 
+/// A biome on which **nothing human-edible grows** (open water outside the shelf, glacier, lava,
+/// salt flat). Named rather than bare so a `0.0` in the table reads as *"deliberately barren"* and a
+/// `0.0` in code reads as *"the same thing"*, not as a fallback that lost its lookup. A
+/// `FoodModuleTag` tile whose biome reads `NO_FORAGE_CAPACITY` is **not seeded a patch at all**
+/// (`spawn_initial_forage`), exactly as a zero-graze tile holds no `GrazePatch`.
+pub const NO_FORAGE_CAPACITY: f32 = 0.0;
+
 /// Depletable-forage tuning (Intensification §0-ii). A worked `FoodModuleTag` tile carries a
 /// mutable per-patch `biomass`/`carrying_capacity` (`ForageRegistry`) that foraging draws down and
 /// that regrows logistically toward `carrying_capacity` — the herd biomass model transposed onto
@@ -204,9 +216,21 @@ impl Default for ForageEradicateConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ForageLaborConfig {
-    /// Per-patch carrying cap that patch biomass regrows toward (a flat default; a per-`FoodModule`
-    /// table is a later refinement). Each seeded patch starts full at this value.
-    pub carrying_capacity: f32,
+    /// **The human food web, by biome** — human-edible biomass (seeds, nuts, tubers, fruit, shellfish,
+    /// inshore fish) a tile of each biome carries at capacity. Each seeded patch starts full at this
+    /// value; a `FoodModuleTag` tile whose biome reads [`NO_FORAGE_CAPACITY`] carries no patch at all.
+    ///
+    /// **A pure data table, not a formula**, and the exact mirror of `fauna_config`'s
+    /// `graze.capacity_by_biome` — the *animal* food web. The two tables are per-**biome** (not
+    /// per-`FoodModule`) precisely so they are directly comparable tile-for-tile and can **disagree
+    /// within a module**: that disagreement *is* the agropastoral decision (`docs/plan_grazing_foundation.md`
+    /// §1). Every one of the 37 [`TerrainType`]s must appear (enforced by [`LaborConfig::validate`]:
+    /// a missing biome would silently read as an invisible zero-forage dead zone — **zero must be
+    /// stated, never defaulted**).
+    ///
+    /// The `FoodModuleTag` model is untouched: the module still decides *what kind* of gathering a
+    /// tile offers and its `seasonal_weight`. This table decides *how much* is there.
+    pub capacity_by_biome: HashMap<TerrainType, f32>,
     /// Biomass one forager can gather per turn (× `seasonal_weight`), capped by the policy ceiling
     /// (Sustain = one turn's net regrowth) and the patch's remaining biomass — the forage
     /// counterpart of `hunt.per_worker_biomass_capacity`.
@@ -241,10 +265,28 @@ pub struct ForageLaborConfig {
     pub cultivation: CultivationConfig,
 }
 
+impl ForageLaborConfig {
+    /// Human-edible biomass a `terrain` tile carries at capacity. An **unknown** biome reads
+    /// [`NO_FORAGE_CAPACITY`], but [`LaborConfig::validate`] guarantees the table is total over
+    /// [`TerrainType::VALUES`], so on any loaded config this is a real lookup, never a silent
+    /// default. Mirrors `GrazeConfig::capacity_for`.
+    pub fn capacity_for(&self, terrain: TerrainType) -> f32 {
+        self.capacity_by_biome
+            .get(&terrain)
+            .copied()
+            .unwrap_or(NO_FORAGE_CAPACITY)
+    }
+}
+
 impl Default for ForageLaborConfig {
     fn default() -> Self {
         Self {
-            carrying_capacity: DEFAULT_FORAGE_CARRYING_CAPACITY,
+            // Deliberately **empty**, mirroring `GrazeConfig::default`. The 37-row table is *data*,
+            // and its single authoritative copy is `labor_config.json` — duplicating it here would
+            // guarantee the two drift. A config whose `forage` block omits (or under-fills) the table
+            // is *rejected* by [`LaborConfig::validate`] and the builtin — which has it — is used, so
+            // an incomplete table can never quietly produce a map with no food on it.
+            capacity_by_biome: HashMap::new(),
             per_worker_biomass_capacity: DEFAULT_FORAGE_PER_WORKER_BIOMASS_CAPACITY,
             provisions_per_biomass: DEFAULT_FORAGE_PROVISIONS_PER_BIOMASS,
             ecology: EcologyConfig {
@@ -325,12 +367,18 @@ pub struct LaborConfig {
 impl LaborConfig {
     pub fn builtin() -> Arc<Self> {
         Arc::new(
-            serde_json::from_str(BUILTIN_LABOR_CONFIG).expect("builtin labor config should parse"),
+            LaborConfig::from_json_str(BUILTIN_LABOR_CONFIG)
+                .expect("builtin labor config should parse and validate"),
         )
     }
 
-    pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
+    /// Parse **and validate** (the `fauna_config.rs` convention, so *every* load path — builtin,
+    /// default file, `LABOR_CONFIG_PATH` override — is covered and an invalid config can never be
+    /// silently accepted).
+    pub fn from_json_str(json: &str) -> Result<Self, LaborConfigError> {
+        let config: LaborConfig = serde_json::from_str(json)?;
+        config.validate()?;
+        Ok(config)
     }
 
     pub fn from_file(path: &Path) -> Result<Self, LaborConfigError> {
@@ -338,13 +386,63 @@ impl LaborConfig {
             path: path.to_path_buf(),
             source,
         })?;
-        Ok(LaborConfig::from_json_str(&contents)?)
+        LaborConfig::from_json_str(&contents)
+    }
+
+    /// Invariants a labor config must satisfy to be usable. Mirrors `FaunaConfig::validate` (which
+    /// guards the *animal* food web's `graze.capacity_by_biome`) — the human food web's table gets
+    /// the same discipline, because it fails the same way: silently, and invisibly.
+    pub fn validate(&self) -> Result<(), LaborConfigError> {
+        validate_forage_capacity_table(&self.forage)
     }
 
     /// Distance (inclusive) at which a Hunt assignment still yields before lapsing.
     pub fn hunt_reach(&self) -> u32 {
         self.band_work_range + self.hunt_leash_tiles
     }
+}
+
+/// The **human** food web's per-biome table must be *total* over the 37 biomes, finite, non-negative,
+/// and not everywhere zero — the exact invariants `validate_graze` enforces on the animal one:
+/// - a **missing** biome silently reads `NO_FORAGE_CAPACITY` (`capacity_for`'s `unwrap_or`), i.e. an
+///   invisible zero-forage dead zone nothing on the map would ever explain. **Zero must be stated.**
+/// - an **all-zero** table parses perfectly and leaves the map with no gatherable food anywhere.
+fn validate_forage_capacity_table(forage: &ForageLaborConfig) -> Result<(), LaborConfigError> {
+    let mut positive_rows = 0usize;
+    for terrain in TerrainType::VALUES {
+        let Some(&capacity) = forage.capacity_by_biome.get(&terrain) else {
+            return Err(LaborConfigError::Invalid {
+                field: "forage.capacity_by_biome",
+                constraint: format!(
+                    "name every one of the {} biomes (missing {terrain:?}); an absent biome silently \
+                     reads as zero forage",
+                    TerrainType::VALUES.len()
+                ),
+                value: format!("{} rows", forage.capacity_by_biome.len()),
+            });
+        };
+        if !capacity.is_finite() || capacity < NO_FORAGE_CAPACITY {
+            return Err(LaborConfigError::Invalid {
+                field: "forage.capacity_by_biome",
+                constraint: format!("be finite and at least {NO_FORAGE_CAPACITY} for every biome"),
+                value: format!("{terrain:?} = {capacity}"),
+            });
+        }
+        if capacity > NO_FORAGE_CAPACITY {
+            positive_rows += 1;
+        }
+    }
+    if positive_rows == 0 {
+        return Err(LaborConfigError::Invalid {
+            field: "forage.capacity_by_biome",
+            constraint:
+                "give at least one biome a positive capacity, or there is nothing to gather \
+                         anywhere on any map"
+                    .to_string(),
+            value: "every biome is 0".to_string(),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Debug, Error)]
@@ -357,6 +455,12 @@ pub enum LaborConfigError {
     },
     #[error("failed to parse labor config: {0}")]
     Parse(#[from] serde_json::Error),
+    #[error("invalid labor config: {field} must {constraint} (was {value})")]
+    Invalid {
+        field: &'static str,
+        constraint: String,
+        value: String,
+    },
 }
 
 /// Handle for accessing the labor configuration.
@@ -424,6 +528,17 @@ pub fn load_labor_config_from_env() -> (Arc<LaborConfig>, LaborConfigMetadata) {
                 );
                 return (Arc::new(config), LaborConfigMetadata::new(Some(path)));
             }
+            // A *broken invariant* is louder than a missing file: the config parsed, so it looks
+            // fine, and silently falling back to the builtin would hide a table the operator
+            // believes is live (the `fauna_config.invalid_rejected` convention).
+            Err(err @ LaborConfigError::Invalid { .. }) => {
+                tracing::error!(
+                    target: "shadow_scale::config",
+                    path = %path.display(),
+                    error = %err,
+                    "labor_config.invalid_rejected"
+                );
+            }
             Err(err) => {
                 tracing::warn!(
                     target: "shadow_scale::config",
@@ -455,7 +570,6 @@ mod tests {
         assert!(config.hunt_leash_tiles >= 1);
         assert!(config.band_move_tiles_per_turn >= 1);
         // Depletable-forage levers (Intensification §0-ii).
-        assert!(config.forage.carrying_capacity > 0.0);
         assert!(config.forage.per_worker_biomass_capacity > 0.0);
         assert!(config.forage.provisions_per_biomass > 0.0);
         assert!(config.forage.ecology.regrowth_rate > 0.0);
@@ -507,6 +621,121 @@ mod tests {
             config.hunt_reach(),
             config.band_work_range + config.hunt_leash_tiles
         );
+    }
+
+    /// Parse the builtin with `mutate` applied to its JSON, expecting a **rejection** — the
+    /// `fauna_config::tests::reject` idiom.
+    fn reject(mutate: impl FnOnce(&mut serde_json::Value)) -> LaborConfigError {
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_LABOR_CONFIG).expect("builtin parses");
+        mutate(&mut json);
+        LaborConfig::from_json_str(&json.to_string()).expect_err("config should be rejected")
+    }
+
+    fn assert_rejects_field(err: LaborConfigError, expected: &str) {
+        match err {
+            LaborConfigError::Invalid { field, .. } => assert_eq!(field, expected),
+            other => panic!("expected an Invalid rejection on {expected}, got {other:?}"),
+        }
+    }
+
+    /// The forage table must be **total** over the 37 biomes. A missing row would silently read as
+    /// zero forage — an invisible dead zone in the human food web that nothing would ever explain.
+    /// The exact discipline `FaunaConfig::validate` applies to the graze (animal) table.
+    #[test]
+    fn validate_rejects_a_partial_forage_biome_table() {
+        let err = reject(|json| {
+            json["forage"]["capacity_by_biome"]
+                .as_object_mut()
+                .expect("table")
+                .remove("AlluvialPlain");
+        });
+        assert_rejects_field(err, "forage.capacity_by_biome");
+    }
+
+    /// An all-zero table parses perfectly and leaves every map with nothing to gather anywhere.
+    #[test]
+    fn validate_rejects_an_all_zero_forage_table() {
+        let err = reject(|json| {
+            let table = json["forage"]["capacity_by_biome"]
+                .as_object_mut()
+                .expect("table");
+            for value in table.values_mut() {
+                *value = (0.0).into();
+            }
+        });
+        assert_rejects_field(err, "forage.capacity_by_biome");
+    }
+
+    #[test]
+    fn validate_rejects_a_negative_forage_capacity() {
+        let err =
+            reject(|json| json["forage"]["capacity_by_biome"]["AlluvialPlain"] = (-1.0).into());
+        assert_rejects_field(err, "forage.capacity_by_biome");
+    }
+
+    /// **The two food webs must actually disagree.** This is the model claim the whole two-table
+    /// split exists to make (`docs/plan_grazing_foundation.md` §1) — if it ever inverts, "your best
+    /// farm is not your best pasture" has quietly become false and the agropastoral decision has
+    /// evaporated. Asserted per-tile against the *graze* table, the only place the two can be
+    /// compared.
+    #[test]
+    fn the_two_food_webs_disagree_farm_is_not_pasture() {
+        let forage = &LaborConfig::builtin().forage;
+        let graze = &crate::fauna_config::FaunaConfig::builtin().graze;
+
+        // Total table (the validator's job, restated as a model claim).
+        assert_eq!(forage.capacity_by_biome.len(), TerrainType::VALUES.len());
+
+        // The flagship inversion: a closed-canopy woodland is the best human ground and among the
+        // worst pasture; a prairie steppe is exactly the reverse.
+        let woodland = TerrainType::MixedWoodland;
+        let prairie = TerrainType::PrairieSteppe;
+        assert!(forage.capacity_for(woodland) > forage.capacity_for(prairie));
+        assert!(graze.capacity_for(woodland) < graze.capacity_for(prairie));
+
+        // The silt lowlands are THE FARM, not the pasture: they beat prairie for humans and lose to
+        // it for animals.
+        for farm in [
+            TerrainType::AlluvialPlain,
+            TerrainType::Floodplain,
+            TerrainType::RiverDelta,
+        ] {
+            assert!(
+                forage.capacity_for(farm) > forage.capacity_for(prairie),
+                "{farm:?} must out-farm prairie"
+            );
+            assert!(
+                graze.capacity_for(farm) < graze.capacity_for(prairie),
+                "{farm:?} must not out-pasture prairie"
+            );
+        }
+
+        // Nothing human-edible grows on ice or a salt pan — a *stated* zero, not a defaulted one.
+        for barren in [
+            TerrainType::Glacier,
+            TerrainType::SaltFlat,
+            TerrainType::BasalticLavaField,
+            TerrainType::DeepOcean,
+        ] {
+            assert_eq!(
+                forage.capacity_for(barren),
+                NO_FORAGE_CAPACITY,
+                "{barren:?}"
+            );
+        }
+
+        // The shelf is the coastal larder — rich in human food and (being water) zero pasture. The
+        // sharpest divergence on the map, and the reason `water = 0 forage` would have been wrong:
+        // shelf / inland-sea / coral tiles carry real `FoodModuleTag` fisheries.
+        for marine in [
+            TerrainType::ContinentalShelf,
+            TerrainType::InlandSea,
+            TerrainType::CoralShelf,
+        ] {
+            assert!(forage.capacity_for(marine) > 0.0, "{marine:?} is a fishery");
+            assert_eq!(graze.capacity_for(marine), 0.0, "{marine:?} is not pasture");
+        }
     }
 
     #[test]
