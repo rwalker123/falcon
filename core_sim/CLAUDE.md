@@ -586,10 +586,26 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   `WorldSnapshot` and `WorldDelta` (`snapshot.fbs`, `sim_schema`, `snapshot.rs`
   `herd_snapshot_entries`): `HerdTelemetryState.corralled:bool` (= `Herd::is_corralled()`) and
   **`corralProgress:float`** (0..1, the pen-building meter — the animal twin of
-  `ForagePatchState.cultivationProgress`), plus **`penUpkeep:float`** (food/turn the pen demands at the
-  herd's CURRENT biomass; `0` when not corralled) and **`penFedFraction:float`** (last turn's fed
-  fraction; `1.0` = fully fed, `< 1` = **starving** — the herd and its yield are shrinking, and it
-  recovers when fed again). Those two are **per-herd** (the herd drawer + the starving warning).
+  `ForagePatchState.cultivationProgress`), plus **`penUpkeep:float`** and **`penFedFraction:float`**.
+  Both are **per-herd** (the herd drawer + the starving warning):
+  - **`penUpkeep`** = the feed this pen **demands, or would demand once built**, at the herd's
+    **current** biomass (`pen.upkeep_per_biomass × biomass`) — a *projection* for an unpenned herd, the
+    *live* demand for a penned one. It is **always meaningful, never `0`-because-unpenned**, and is
+    computed on the **same biomass basis** as `corralYield`, so the two are a **matched pair the client
+    subtracts**. That is the point: the pre-commit `Corral` row is by definition looking at a herd that
+    is *not yet penned*, so a `0` there would quote the payoff while hiding the running cost at the one
+    moment the running cost should drive the decision — the same defect class as advertising the
+    **gross** yield (a preview quoting a number the player will never bank). At or below `K/2` the
+    projected `corralYield` is honestly `0` (escapement — the pen pays nothing until the herd
+    rebuilds).
+  - **`penFedFraction`** = last turn's fed fraction (`1.0` = fully fed, `< 1` = **starving** — the herd
+    and its yield are shrinking, and it recovers when fed again).
+  - **Demanded ≠ paid** (load-bearing): a starving pen demands more than it is paid, and
+    `penFedFraction` is that ratio. The band's **actual** ledger debit is the per-band
+    `PopulationCohortState.penFeedUpkeep` (the real `LocalStore::take` amount) — the food ledger draws
+    **that**, never `penUpkeep`. So no consumer needs a "0 when unpenned" reading, and one field with
+    one meaning beats two that must be kept in lockstep.
+
   Plus the forecast pair `ceilingCorral` / `corralYield` (see
   "Pre-commit Yield Forecast"). See "Intensification display snapshot" under Cultivation for the
   plant-side + faction-knowledge fields.

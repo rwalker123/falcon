@@ -229,10 +229,16 @@ pub struct HerdTelemetryState {
     /// **Gross** — the pen's feed (`pen_upkeep`) is a separate debit.
     #[serde(default)]
     pub corral_yield: f32,
-    /// **The pen's feed demand**, food/turn, at the herd's CURRENT biomass
-    /// (`pen.upkeep_per_biomass × biomass`) — drawn from its keeper band's larder every turn, because
-    /// a confined herd cannot graze. `0` when the herd is not corralled. The negative row in the
-    /// band's food ledger that `corral_yield`'s gross number is paid against.
+    /// **The feed this pen demands — or WOULD demand once built** — at the herd's CURRENT biomass
+    /// (`pen.upkeep_per_biomass × biomass`), because a confined herd cannot graze. A **projection**
+    /// for an unpenned herd, the **live** demand for a penned one: always meaningful, never
+    /// `0`-because-unpenned. Computed on the same biomass basis as [`Self::corral_yield`], so the two
+    /// are a **matched pair** — the pre-commit `Corral` row must show the running cost beside the
+    /// payoff, since the herd it is deciding about is by definition *not yet penned*.
+    ///
+    /// **Demanded, not paid.** A starving pen demands more than it is paid ([`Self::pen_fed_fraction`]
+    /// is that ratio). The band's *actual* ledger debit is
+    /// `PopulationCohortState::pen_feed_upkeep` — draw **that** in the food ledger, not this.
     #[serde(default)]
     pub pen_upkeep: f32,
     /// The fraction of `pen_upkeep` the keeper actually **paid** last turn. `1.0` = fully fed (also

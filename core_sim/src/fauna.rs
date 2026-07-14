@@ -452,13 +452,25 @@ pub(crate) fn pen_capacity(carrying_capacity: f32, fauna: &FaunaConfig) -> f32 {
     (carrying_capacity * fauna.husbandry.pen.capacity_fraction).max(0.0)
 }
 
-/// **The pen's feed demand this turn**: `upkeep_per_biomass × biomass`, drawn from the keeper band's
-/// larder. A penned herd cannot graze — this is the physical price of the thing that makes a pen a
-/// pen, and the tether that gives "the pen pins the band" its teeth. `0` for a herd that is not penned.
+/// **The feed a pen demands — or WOULD demand once built** — at the herd's current biomass:
+/// `upkeep_per_biomass × biomass`, drawn from the keeper band's larder. A penned herd cannot graze;
+/// this is the physical price of the thing that makes a pen a pen, and the tether that gives "the pen
+/// pins the band" its teeth.
+///
+/// **Answered for EVERY herd, penned or not** — a *projection* for an unpenned one, the *live* demand
+/// for a penned one — on the **same biomass basis** [`corral_provisions`] (`hunt_forecast`'s
+/// `managed_yield`) already uses to answer "what would this pay once penned?". The two are a **matched
+/// pair the client subtracts**: quoting the payoff while hiding the running cost, at the one moment the
+/// running cost should drive the decision (the pre-commit `Corral` row, on a herd that is by definition
+/// *not yet penned*), is the same defect as advertising the gross yield — a preview quoting a number
+/// the player will never bank.
+///
+/// **Demanded, not paid.** A starving pen demands more than it is paid; `Herd::pen_fed_fraction` is
+/// that ratio, and the band's *actual* ledger debit is the per-band
+/// `PopulationCohortState::pen_feed_upkeep` (the real `LocalStore::take` amount) — which does **not**
+/// read this. So no consumer needs a "0 when unpenned" reading, and one field with one meaning beats
+/// two that must be kept in lockstep.
 pub fn pen_upkeep(herd: &Herd, fauna: &FaunaConfig) -> f32 {
-    if !herd.is_corralled() {
-        return 0.0;
-    }
     (fauna.husbandry.pen.upkeep_per_biomass * herd.biomass).max(0.0)
 }
 

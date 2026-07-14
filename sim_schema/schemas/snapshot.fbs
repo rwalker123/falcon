@@ -985,8 +985,16 @@ table HerdTelemetryState {
   // right: it EATS every turn, and underfeeding shrinks it (docs/plan_corral_managed_population.md).
   // `corralYield` above is the GROSS managed harvest; the feed is this separate debit, so the client
   // can show both halves of the trade rather than one netted number.
-  // `penUpkeep` = food/turn the pen demands from its keeper's larder at the herd's CURRENT biomass
-  // (= pen.upkeep_per_biomass × biomass). 0 when the herd is not corralled.
+  // `penUpkeep` = the feed this pen DEMANDS, or WOULD demand once built, at the herd's CURRENT
+  // biomass (= pen.upkeep_per_biomass × biomass). A PROJECTION for an unpenned herd, the LIVE demand
+  // for a penned one — always meaningful, never 0-because-unpenned. Computed on the same biomass
+  // basis as `corralYield`, so the two are a matched pair: the pre-commit Corral row must show the
+  // running cost next to the payoff ("then +5.40/turn, feed −2.40/turn"), because the herd it is
+  // deciding about is by definition NOT yet penned.
+  //
+  // DEMANDED, not PAID: a starving pen demands more than it is paid, and `penFedFraction` is that
+  // ratio. The band's ACTUAL ledger debit is `PopulationCohortState.penFeedUpkeep` (the real
+  // LocalStore::take amount) — draw THAT in the food ledger, not this.
   penUpkeep:float = 0;
   // `penFedFraction` = the fraction of that demand the keeper actually paid last turn. 1.0 = fully
   // fed (also the value for a herd that is not penned); < 1 = STARVING — the herd is shrinking by

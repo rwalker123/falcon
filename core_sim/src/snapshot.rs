@@ -4498,9 +4498,12 @@ fn herd_snapshot_entries(
                 ceiling_corral: forecast.ceiling_prepare,
                 corral_yield: forecast.managed_yield,
                 // The pen as a managed population: what it EATS, and whether its keeper is paying.
-                // `pen_upkeep` is 0 for a mobile herd (nothing to feed); `pen_fed_fraction` is the
-                // value the keeper's tend branch wrote this turn (Population runs before the capture),
-                // so the client reads the CURRENT turn's feeding, and `1.0` for anything unpenned.
+                // `pen_upkeep` is answered for EVERY herd — a projection ("what would this pen cost to
+                // feed?") for an unpenned one, the live demand for a penned one — on the same biomass
+                // basis as `corral_yield`, so the pre-commit Corral row can show the running cost next
+                // to the payoff. `pen_fed_fraction` is the value the keeper's tend branch wrote this
+                // turn (Population runs before the capture), so the client reads the CURRENT turn's
+                // feeding, and `1.0` for anything unpenned.
                 pen_upkeep: herd.map(|herd| pen_upkeep(herd, fauna)).unwrap_or(0.0),
                 pen_fed_fraction: herd
                     .map(|herd| herd.pen_fed_fraction)
@@ -5800,9 +5803,8 @@ mod tests {
 
     /// **The pen as a managed population, on the wire.** A penned herd exports what it EATS
     /// (`pen_upkeep = pen.upkeep_per_biomass × biomass`) alongside its **gross** `corral_yield`, plus
-    /// last turn's `pen_fed_fraction` (`< 1` = starving) — the two fields the client needs to render
-    /// the pen's feed as a negative row in the band's food ledger and warn about a shrinking herd. A
-    /// herd that is not penned eats nothing and is never starving.
+    /// last turn's `pen_fed_fraction` (`< 1` = starving) — what the client needs for the herd drawer
+    /// and the starving warning. A herd that is not penned is never starving.
     #[test]
     fn herd_snapshot_reports_the_pens_upkeep_and_fed_fraction() {
         use crate::fauna_config::SizeClass;
@@ -5853,10 +5855,88 @@ mod tests {
         );
 
         let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
-        assert_eq!(wild.pen_upkeep, 0.0, "a mobile herd eats nothing");
         assert_eq!(
             wild.pen_fed_fraction, 1.0,
             "a mobile herd is never starving"
+        );
+    }
+
+    /// **The feed must be known at the moment the player DECIDES.** `penUpkeep` is answered for an
+    /// **unpenned** herd too — the feed the pen *would* demand once built, at the herd's current
+    /// biomass — because the pre-commit `Corral` row is by definition looking at a herd that is not yet
+    /// penned. Quoting `corralYield` (the payoff) while reporting `penUpkeep = 0` (the running cost)
+    /// would advertise a number the player will never bank: the same defect class as quoting the gross
+    /// yield. The two are computed on the **same biomass basis**, so the client can just subtract.
+    #[test]
+    fn an_unpenned_herd_exports_the_feed_its_pen_would_demand() {
+        use crate::fauna_config::SizeClass;
+        /// Above the managed harvest's escapement point (`K/2`), so the pen has a positive projected
+        /// yield to sit the projected feed *next to* — at or below `K/2` a pen honestly pays nothing
+        /// until the herd rebuilds, and the row would be `0 → 0`.
+        const BIOMASS: f32 = 900.0;
+        const CAP: f32 = 1200.0;
+
+        let mut registry = HerdRegistry::default();
+        // A tamed but MOBILE herd — exactly what a player inspects while deciding whether to corral.
+        let mut mobile = Herd::new(
+            "herd_mobile".to_string(),
+            "Red Deer".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(2, 2)],
+            BIOMASS,
+            CAP,
+        );
+        mobile.claim_domestication(FactionId(0));
+        registry.herds.push(mobile);
+        // The same herd, penned — its upkeep must read the same at the same biomass.
+        let mut penned = Herd::new(
+            "herd_penned".to_string(),
+            "Red Deer".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(3, 3)],
+            BIOMASS,
+            CAP,
+        );
+        penned.claim_domestication(FactionId(0));
+        penned.corral_at(UVec2::new(3, 3));
+        registry.herds.push(penned);
+
+        let telemetry = HerdTelemetry {
+            entries: registry.snapshot_entries(),
+        };
+        let labor = LaborConfig::builtin();
+        let fauna = FaunaConfig::builtin();
+        let expedition = ExpeditionConfig::builtin();
+        let states = herd_snapshot_entries(&telemetry, &registry, &fauna, &labor, &expedition);
+
+        let expected = fauna.husbandry.pen.upkeep_per_biomass * BIOMASS;
+        assert!(expected > 0.0);
+
+        let mobile = states.iter().find(|h| h.id == "herd_mobile").unwrap();
+        assert!(
+            !mobile.corralled,
+            "the herd under consideration is NOT penned"
+        );
+        assert!(
+            (mobile.pen_upkeep - expected).abs() < 1e-6,
+            "an unpenned herd must export the feed its pen WOULD demand \
+             (upkeep_per_biomass × biomass = {expected}): got {}",
+            mobile.pen_upkeep
+        );
+        assert!(
+            mobile.corral_yield > 0.0,
+            "the payoff is already projected for an unpenned herd — the cost must be too"
+        );
+
+        // A penned herd is unchanged, and reads the SAME upkeep at the same biomass: one field, one
+        // meaning, so `corralYield − penUpkeep` is a valid subtraction on either side of the decision.
+        let penned = states.iter().find(|h| h.id == "herd_penned").unwrap();
+        assert!(penned.corralled);
+        assert!(
+            (penned.pen_upkeep - mobile.pen_upkeep).abs() < 1e-6,
+            "penned and unpenned must agree at the same biomass: {} vs {}",
+            penned.pen_upkeep,
+            mobile.pen_upkeep
         );
     }
 }
