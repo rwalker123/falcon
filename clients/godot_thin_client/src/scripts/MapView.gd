@@ -52,6 +52,21 @@ const PASTURE_WATER_COLOR := Color(0.10, 0.16, 0.28, 1.0)   # water — no pastu
 # The Water terrain tag (bit 0 of TileState.terrain_tags — see TERRAIN_TAG_KEYS). Server truth, unlike
 # the render-side `blend_class`, so it is what separates "sea" from "dead ground" in the overlay.
 const PASTURE_WATER_TAG := 1 << 0
+# --- FORAGE (human food) overlay ---------------------------------------------------------------
+# The human-edible twin of the pasture channel. It paints the human-food CAPACITY (potential) of
+# each tile's biome — "what human food could this land yield?" (seeds, nuts, tubers, fruit, fish) —
+# from `TileState.forageCapacity`, cached in `tile_forage`, exactly as pasture reads `tile_graze`.
+# Like pasture it is a POTENTIAL on every tile, not "where a gathering site stands".
+#
+# WHERE IT DIVERGES FROM PASTURE: water is NOT uniformly barren. Coastal shelves carry real FISHING
+# potential and sit ON the capacity ramp, while deep ocean stays dark — so the coasts light up on
+# the forage map where they are dead on the pasture map. Only genuinely-zero tiles (deep ocean,
+# glacier, lava) leave the ramp for the single barren fill; there is no "land but no site" middle
+# category (that was the sparse-patch model, replaced by per-tile potential).
+const FORAGE_OVERLAY_KEY := "forage"
+const FORAGE_POOR_COLOR := Color(0.88, 0.80, 0.44, 1.0)     # poorest human-food land — pale wheat
+const FORAGE_RICH_COLOR := Color(0.18, 0.72, 0.38, 1.0)     # richest human-food land — lush leaf green
+const FORAGE_BARREN_COLOR := Color(0.20, 0.21, 0.24, 1.0)   # NO human food (deep ocean, glacier, lava)
 # Tile "Height" is a relative 0..100 indicator (not meters) so a player can reason
 # about line of sight: a higher tile can occlude the tile behind it. Elevation is
 # only a normalized 0..1 field, so height rescales the ABOVE-sea-level span into
@@ -666,6 +681,11 @@ var tile_temperature: Dictionary = {}
 # for tiles that actually carry pasture (capacity > 0), so "no pasture here" is an absent reading —
 # the same discipline the sim's GrazeRegistry keeps — and can never be printed as "0 / 0".
 var tile_graze: Dictionary = {}
+# Per-tile FORAGE capacity — the human-food layer (decoded from TileState.forage_capacity), keyed by
+# Vector2i(x, y). Read by `_build_forage_legend` for the Poorest/Average/Richest figures. Stored ONLY
+# for tiles that carry human-food potential (capacity > 0), so the map-wide zeros (deep ocean/glacier/
+# lava) fall out as the barren count rather than dragging the "poorest" figure to 0.
+var tile_forage: Dictionary = {}
 var trade_links_overlay: Array = []
 var trade_overlay_enabled: bool = false
 var selected_trade_entity: int = -1
@@ -1072,6 +1092,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	tile_habitability.clear()
 	tile_temperature.clear()
 	tile_graze.clear()
+	tile_forage.clear()
 	if grid_width > 0 and grid_height > 0:
 		var total: int = grid_width * grid_height
 		culture_layer_grid = PackedInt32Array()
@@ -1104,6 +1125,11 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 						"capacity": graze_capacity,
 						"phase": String(tile_dict.get("graze_ecology_phase", "")),
 					}
+				# Forage (human-food) potential — only tiles that carry any get an entry, so the
+				# barren zeros (deep ocean/glacier/lava) don't drag the legend's "poorest" to 0.
+				var forage_capacity: float = float(tile_dict.get("forage_capacity", 0.0))
+				if forage_capacity > 0.0:
+					tile_forage[Vector2i(x, y)] = forage_capacity
 				if culture_layer_grid.size() > 0:
 					if x >= 0 and x < grid_width and y >= 0 and y < grid_height:
 						var index: int = y * grid_width + x
@@ -3369,6 +3395,8 @@ func _tile_color(x: int, y: int) -> Color:
 		return GRID_COLOR.lerp(gradient_color, blend)
 	if active_overlay_key == PASTURE_OVERLAY_KEY:
 		return _pasture_color(x, y, overlay_value)
+	if active_overlay_key == FORAGE_OVERLAY_KEY:
+		return _forage_color(x, y, overlay_value)
 	return GRID_COLOR.lerp(overlay_color, overlay_value)
 
 ## Pasture overlay color for one tile. `normalized` is the tile's graze capacity as a fraction of the
@@ -3391,6 +3419,25 @@ func _pasture_color(x: int, y: int, normalized: float) -> Color:
 ## any floor fudge. Shared by the map paint and the legend swatches, so they cannot drift apart.
 func _pasture_ramp_color(normalized_capacity: float) -> Color:
 	return PASTURE_POOR_COLOR.lerp(PASTURE_RICH_COLOR, clampf(normalized_capacity, 0.0, 1.0))
+
+## Forage overlay color for one tile. `normalized` is the tile's human-food capacity as a fraction
+## of the map's RICHEST forage tile (the native decoder scales it against the max — see
+## `snapshot_dict`), so 1.0 is the best human-food land on this map and 0.0 means genuinely none.
+##
+## Twin of `_pasture_color`, but WATER is not an off-category: a coastal shelf with fishing
+## potential is a positive value and rides the ramp, so it lights up here where it is barren on the
+## pasture map. Only genuinely-zero tiles (deep ocean, glacier, lava) leave the ramp for the single
+## barren fill — the `x`/`y` are unused (no water/dead split), kept for the overlay-color signature.
+func _forage_color(_x: int, _y: int, normalized: float) -> Color:
+	if normalized <= 0.0:
+		return FORAGE_BARREN_COLOR
+	return _forage_ramp_color(normalized)
+
+## The forage ramp: HUE carries the capacity (wheat → leaf green). Kept a distinct green from the
+## pasture ramp so the two food webs read as different layers. Shared by the map paint and the
+## legend swatches, so they cannot drift apart.
+func _forage_ramp_color(normalized_capacity: float) -> Color:
+	return FORAGE_POOR_COLOR.lerp(FORAGE_RICH_COLOR, clampf(normalized_capacity, 0.0, 1.0))
 
 func _terrain_color_for_id(terrain_id: int) -> Color:
 	var colors := _get_terrain_colors()
@@ -3588,6 +3635,8 @@ func _legend_for_current_view() -> Dictionary:
 		return {}
 	if active_overlay_key == PASTURE_OVERLAY_KEY:
 		return _build_pasture_legend()
+	if active_overlay_key == FORAGE_OVERLAY_KEY:
+		return _build_forage_legend()
 	if active_overlay_key == "culture" and not highlighted_culture_layer_set.is_empty():
 		var selection := _culture_selection_data()
 		if bool(selection.get("valid", false)):
@@ -3707,6 +3756,97 @@ func _pasture_color_for_capacity(capacity: float, max_capacity: float) -> Color:
 
 func _format_pasture_capacity(capacity: float) -> String:
 	return "%.0f graze" % capacity
+
+## Legend for the FORAGE channel — the human-food twin of `_build_pasture_legend`. It cannot use
+## `_build_scalar_overlay_legend` for the same reason pasture can't: the map-wide minimum is 0 (every
+## barren tile — deep ocean/glacier/lava), which would report the world's poorest forage as "0". So
+## the rows are Poorest/Average/Richest measured over the tiles that ACTUALLY carry human food, then
+## the barren "No forage" count. The description carries the honest gathering-sites sub-count — the
+## tiles you can actually work today, a subset of the potential — so the ramp reads as POTENTIAL
+## without pretending the rest of the land is worthless.
+func _build_forage_legend() -> Dictionary:
+	var raw: PackedFloat32Array = _overlay_raw_array(FORAGE_OVERLAY_KEY)
+	var max_capacity: float = 0.0
+	for value in raw:
+		var capacity := float(value)
+		if is_finite(capacity):
+			max_capacity = maxf(max_capacity, capacity)
+
+	var forage_min: float = INF
+	var forage_max: float = 0.0
+	var forage_sum: float = 0.0
+	var forage_tiles: int = 0
+	for entry in tile_forage.values():
+		var capacity: float = float(entry)
+		if capacity <= 0.0:
+			continue
+		forage_tiles += 1
+		forage_min = minf(forage_min, capacity)
+		forage_max = maxf(forage_max, capacity)
+		forage_sum += capacity
+
+	# Every tile the map knows about, minus the ones carrying human food = the barren ground (deep
+	# ocean, glacier, lava). Unlike pasture there is no water/land split here — coastal shelves carry
+	# forage and ride the ramp, so "water" is not an off-category; only genuinely-zero tiles are.
+	var total_tiles: int = maxi(grid_width, 0) * maxi(grid_height, 0)
+	var barren_tiles: int = maxi(total_tiles - forage_tiles, 0)
+
+	var description := "The HUMAN-edible potential of this land — seeds, nuts, tubers, fruit, and fish."
+	# Gathering sites = the tiles you can actually forage today (a subset of the potential above).
+	description += "\nGathering sites: %d tiles." % food_sites.size()
+
+	var rows: Array = []
+	if forage_tiles == 0:
+		rows.append({
+			"color": FORAGE_BARREN_COLOR,
+			"label": "No forage anywhere",
+			"value_text": "Awaiting forage telemetry",
+		})
+	else:
+		var avg_capacity: float = forage_sum / float(forage_tiles)
+		rows.append({
+			"color": _forage_color_for_capacity(forage_min, max_capacity),
+			"label": "Poorest forage",
+			"value_text": _format_forage_capacity(forage_min),
+		})
+		rows.append({
+			"color": _forage_color_for_capacity(avg_capacity, max_capacity),
+			"label": "Average forage",
+			"value_text": _format_forage_capacity(avg_capacity),
+		})
+		rows.append({
+			"color": _forage_color_for_capacity(forage_max, max_capacity),
+			"label": "Richest forage",
+			"value_text": _format_forage_capacity(forage_max),
+		})
+	# Kept SHORT (the legend panel clips). Deep ocean, glacier and lava — the only ground that truly
+	# yields no human food.
+	rows.append({
+		"color": FORAGE_BARREN_COLOR,
+		"label": "No forage",
+		"value_text": "%d tiles" % barren_tiles,
+	})
+	return {
+		"key": FORAGE_OVERLAY_KEY,
+		"title": String(overlay_channel_labels.get(FORAGE_OVERLAY_KEY, "Forage")),
+		"description": description,
+		"rows": rows,
+		"stats": {
+			"min": (0.0 if forage_tiles == 0 else forage_min),
+			"max": forage_max,
+			"avg": (0.0 if forage_tiles == 0 else forage_sum / float(forage_tiles)),
+		},
+	}
+
+## Legend swatch for a given forage capacity: re-normalizes against the map's richest patch exactly
+## as the decoder does for the map, then paints through the SAME ramp (`_forage_ramp_color`).
+func _forage_color_for_capacity(capacity: float, max_capacity: float) -> Color:
+	if max_capacity <= 0.0:
+		return FORAGE_BARREN_COLOR
+	return _forage_ramp_color(capacity / max_capacity)
+
+func _format_forage_capacity(capacity: float) -> String:
+	return "%.0f food" % capacity
 
 func _build_terrain_legend() -> Dictionary:
 	var present_ids: PackedInt32Array = present_terrain_ids()

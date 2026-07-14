@@ -132,6 +132,25 @@ const PASTURE_WATER_IDS := [0, 1]   # the water biomes in this fixture (deep_oce
 # reads Thriving, and this fixture says so rather than staging a fictional overgrazed blob the sim
 # cannot yet produce. (The stressed/collapsing tint is exercised on the tile card in ui_preview.)
 
+# --- State "forage" (the human-food layer, the twin of "pasture") --------------------------------
+const FORAGE_OVERLAY_KEY := "forage"       # mirrors MapView.FORAGE_OVERLAY_KEY / the decoder's channel key
+# The sim's own per-biome HUMAN-food capacities (core_sim/src/data/labor_config.json →
+# forage.capacity_by_biome), keyed by the SAME terrain ids the pasture fixture uses — so the two states
+# render the identical earthlike shape and the DIVERGENCE reads directly (forest/river rich where prairie
+# is poor; the coastal shelf LIGHTS UP as fishing where pasture is dead). Transcribed, NOT invented.
+const FORAGE_CAPACITY_BY_TERRAIN := {
+	0: 0.0,      # deep_ocean — no human food (barren)
+	1: 130.0,    # continental_shelf — FISHING: the coastal larder lights up (pasture reads this 0)
+	10: 195.0,   # alluvial_plain — silt + water = the richest cropland (the dominant interior)
+	11: 70.0,    # prairie_steppe — grass feeds animals; humans get only seed heads (the INVERSION)
+	12: 190.0,   # mixed_woodland — mast, nuts, berries: rich human food (the FLAGSHIP inversion)
+	15: 5.0,     # hot_desert_erg — near-barren for humans
+	20: 25.0,    # tundra — thin
+	22: 0.0,     # glacier — a stated 0
+	26: 20.0,    # alpine_mountain — thin (rangeland: better for animals than humans)
+	30: 0.0,     # basaltic_lava_field — a stated 0
+}
+
 var _map: Node2D
 
 func _ready() -> void:
@@ -546,6 +565,21 @@ func _ready() -> void:
 	# and this harness has no HUD to draw them into — print them so they can be checked against the map.
 	print("map_preview: pasture legend = ", _map._legend_for_current_view())
 
+	# State "forage" — THE HUMAN-FOOD DISTRIBUTION, the twin of "pasture". Same earthlike shape, the
+	# OTHER food web: it must look VISIBLY DIFFERENT from the pasture frame (that divergence is the whole
+	# point of the two-table split). Read against map_pasture.png:
+	#   * forest + river valleys read RICH here where prairie reads richest on pasture (the inversion);
+	#   * the coastal shelf LIGHTS UP as a fishing ground where pasture paints it dead water;
+	#   * only deep ocean / glacier / lava are barren, and a barren forage tile can still be good land.
+	get_window().size = PASTURE_WINDOW_SIZE   # same aspect as pasture — the two are meant to be compared
+	await _settle()
+	_map.display_snapshot(_snapshot_forage())
+	_map.set_overlay_channel(FORAGE_OVERLAY_KEY)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_forage")
+	print("map_preview: forage legend = ", _map._legend_for_current_view())
+
 	get_tree().quit()
 
 func _settle() -> void:
@@ -680,6 +714,57 @@ func _snapshot_pasture() -> Dictionary:
 				},
 			},
 			"channel_order": PackedStringArray([PASTURE_OVERLAY_KEY]),
+		},
+		"tiles": tiles,
+		"populations": [],
+		"herds": [],
+	}
+
+## The forage snapshot: the SAME earthlike terrain as pasture, painted by the `forage` overlay channel
+## off the HUMAN-food table. Each tile carries `forage_capacity` (which MapView caches into `tile_forage`
+## for the legend) + the pre-normalized channel (raw = capacity, normalized = capacity ÷ the map's
+## RICHEST forage — a max scale, mirroring the native decoder). Water is NOT an off-category here:
+## continental_shelf carries 130 forage and rides the ramp (fishing), the divergence from pasture.
+func _snapshot_forage() -> Dictionary:
+	var ids := _pasture_terrain()   # reuse the pasture SHAPE so the two frames compare tile-for-tile
+	var total := PASTURE_GRID_W * PASTURE_GRID_H
+	var tags: Array = []
+	tags.resize(total)
+	var raw := PackedFloat32Array()
+	raw.resize(total)
+	var tiles: Array = []
+	var max_capacity := 0.0
+	for i in total:
+		var id := int(ids[i])
+		var capacity := float(FORAGE_CAPACITY_BY_TERRAIN.get(id, 0.0))
+		max_capacity = maxf(max_capacity, capacity)
+		tags[i] = (PASTURE_WATER_TAG if PASTURE_WATER_IDS.has(id) else 0)
+		raw[i] = capacity
+		tiles.append({
+			"entity": i,
+			"x": i % PASTURE_GRID_W,
+			"y": i / PASTURE_GRID_W,
+			"terrain": id,
+			"forage_capacity": capacity,
+		})
+	var normalized := PackedFloat32Array()
+	normalized.resize(total)
+	for i in total:
+		normalized[i] = (raw[i] / max_capacity if max_capacity > 0.0 else 0.0)
+	return {
+		"grid": {"width": PASTURE_GRID_W, "height": PASTURE_GRID_H, "wrap_horizontal": false},
+		"overlays": {
+			"terrain": ids,
+			"terrain_tags": tags,
+			"channels": {
+				FORAGE_OVERLAY_KEY: {
+					"label": "Forage (Human Food Capacity)",
+					"description": "Human-food capacity by biome.",
+					"normalized": normalized,
+					"raw": raw,
+				},
+			},
+			"channel_order": PackedStringArray([FORAGE_OVERLAY_KEY]),
 		},
 		"tiles": tiles,
 		"populations": [],

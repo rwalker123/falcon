@@ -395,6 +395,16 @@ func _ready() -> void:
 	await _save("pasture_legend")
 	_hud.clear_selection()
 
+	# State 2-forage-legend — the map legend for the `forage` overlay channel (rows produced by
+	# MapView._build_forage_legend; see map_preview's "forage" state for the map). The twin of the
+	# pasture legend, but honest about the OPPOSITE meaning of absence: NO water row (shelves carry
+	# forage and ride the ramp), a single "No forage" barren row (deep ocean/glacier/lava only), and a
+	# "Gathering sites: N" sub-count so the ramp reads as POTENTIAL without calling the rest dead.
+	_hud.update_overlay_legend(_forage_legend_fixture())
+	await _settle()
+	await _save("forage_legend")
+	_hud.clear_selection()
+
 	# ---- Cultivate: the forage INVESTMENT rung (gated, then unlocked) ----------------------------
 	# State 2-cultivate-locked — the faction has NOT finished learning Cultivation (the top-bar meter
 	# reads "Cultivation ▰▰▰… learning"): the 🌱 Cultivate option is still SHOWN in the picker, greyed,
@@ -1996,6 +2006,26 @@ func _pasture_legend_fixture() -> Dictionary:
 			{"color": MAP_VIEW_SCRIPT.PASTURE_WATER_COLOR, "label": "Water", "value_text": "72 tiles"},
 		],
 		"stats": {"min": 8.0, "avg": 138.0, "max": 240.0},
+	}
+
+func _forage_legend_fixture() -> Dictionary:
+	# The HUMAN-food twin of the pasture legend. NOTE the differences that are the whole point: there is
+	# NO water row (coastal shelves carry forage and ride the ramp), the barren row is the honest
+	# "No forage" (deep ocean/glacier/lava only), and the description carries the gathering-sites
+	# sub-count — the tiles actually forageable today, a subset of the potential the ramp paints.
+	var poor: Color = MAP_VIEW_SCRIPT.FORAGE_POOR_COLOR
+	var rich: Color = MAP_VIEW_SCRIPT.FORAGE_RICH_COLOR
+	return {
+		"key": "forage",
+		"title": "Forage (Human Food Capacity)",
+		"description": "The HUMAN-edible potential of this land — seeds, nuts, tubers, fruit, and fish.\nGathering sites: 18 tiles.",
+		"rows": [
+			{"color": poor.lerp(rich, 5.0 / 195.0), "label": "Poorest forage", "value_text": "5 food"},
+			{"color": poor.lerp(rich, 92.0 / 195.0), "label": "Average forage", "value_text": "92 food"},
+			{"color": rich, "label": "Richest forage", "value_text": "195 food"},
+			{"color": MAP_VIEW_SCRIPT.FORAGE_BARREN_COLOR, "label": "No forage", "value_text": "63 tiles"},
+		],
+		"stats": {"min": 5.0, "avg": 92.0, "max": 195.0},
 	}
 
 func _terrain_legend_fixture() -> Dictionary:
