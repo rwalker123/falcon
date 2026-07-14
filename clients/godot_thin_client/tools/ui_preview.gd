@@ -58,6 +58,14 @@ const DEER_SUSTAIN_ROW := [14, 27, 40, 54, 0, 0, 0, 0]
 const DEER_SURPLUS_ROW := [5, 5, 5, 5, 5, 23, 49, 0]
 # The party that trips the Red Deer + Surplus trap (impossible), and the largest one that still fills.
 const DEER_SURPLUS_TRAP_PARTY := 8
+# The pen-keeping band's entity id — its own, so the force-expanded Food breakdown override
+# (`_breakdown_expanded` is keyed `food:<entity>`) doesn't collide with the reference band's.
+const PEN_KEEPER_BAND_ENTITY := 906
+# The Red Deer pen at its settled escapement point (design doc §7, MEASURED from a sim run): the
+# feed the herd demands per turn, and the share of it a broke keeper managed to pay in the starving
+# state. `pen_fed_fraction` < 1 ⇒ the herd is shrinking.
+const PEN_UPKEEP_RED_DEER := 1.74
+const PEN_FED_STARVING := 0.40
 # The three fog-of-war states MapView tags onto tile_info (mirrors Hud.VISIBILITY_*).
 const VIS_ACTIVE := "active"
 const VIS_DISCOVERED := "discovered"
@@ -171,6 +179,26 @@ func _ready() -> void:
 	_hud.show_unit_selection(_concerning_food_band_fixture())
 	await _settle()
 	await _save("band_food_concerning")
+
+	# State 1-food-c — a band KEEPING A PEN (docs/plan_corral_managed_population.md). Its ledger has
+	# THREE terms, not two: the corral grosses 5.40, the people eat 1.15, and the penned animals eat
+	# 1.74 off the same larder (`pen_feed_upkeep`, the sim's own figure — the client never sums the
+	# herds' upkeep itself). Net = 5.88 − 1.15 − 1.74 = +2.99, NOT the +4.73 the old two-term ledger
+	# would have advertised. Breakdown force-expanded to show all four rows at once.
+	_hud._breakdown_expanded = {"food:%d" % PEN_KEEPER_BAND_ENTITY: true}
+	_hud.show_unit_selection(_pen_keeper_band_fixture())
+	await _settle()
+	await _save("band_pen_feed")
+
+	# State 1-food-d — the same pen, STARVING: the band could pay only 0.70 of the 1.74 the herd
+	# demands, so the pen feed row shrinks to what was actually paid while the herd wastes away (the
+	# herd drawer carries the alarm — see `herd_corral_starving`). Income has fallen with the herd,
+	# and the net has gone red.
+	_hud._breakdown_expanded = {"food:%d" % PEN_KEEPER_BAND_ENTITY: true}
+	_hud.show_unit_selection(_starving_pen_band_fixture())
+	await _settle()
+	await _save("band_pen_starving")
+	_hud._breakdown_expanded = {}
 
 	# State 1b — an all-idle band: no assignments, every worker idle. The allocation panel
 	# shows just the Scout + Warrior rows (both at 0) under the Working/Idle header.
@@ -483,10 +511,18 @@ func _ready() -> void:
 	await _save("herd_collapsing")
 
 	# State 3c — a domesticated + corralled herd: the drawer shows "Husbandry 🐄 Domesticated"
-	# AND "Corral 🐄 Corralled" (SIGNAL tint), the herd end of the intensification ladder.
+	# AND "Corral 🐄 Corralled" (SIGNAL tint), the herd end of the intensification ladder — plus the
+	# amber "Pen feed -1.74 /turn" row, the running cost a penned (non-grazing) herd costs its keeper.
 	_hud.show_herd_selection(_domesticated_herd_fixture())
 	await _settle()
 	await _save("herd_domesticated")
+
+	# State 3c-starving — the same pen, UNDERFED (`pen_fed_fraction` 0.40): the herd is shrinking
+	# every turn and the drawer says so in red — "Corral ⚠ Starving — 40% fed" replaces the penned
+	# badge, and the Pen feed row names the shortfall ("only 40% paid"). Biomass is visibly down.
+	_hud.show_herd_selection(_starving_pen_herd_fixture())
+	await _settle()
+	await _save("herd_corral_starving")
 
 	# ---- Corral: the hunt INVESTMENT rung (gated, then enabled) ----------------------------------
 	# State 3c-corral-locked-both — BOTH halves of the Corral gate unmet (Herding 35% learned, herd 40%
@@ -509,9 +545,16 @@ func _ready() -> void:
 	await _save("herd_corral_locked")
 
 	# State 3d-corral — a fully-domesticated, not-yet-penned herd with the pen 40% built: 🐄 Corral is
-	# ENABLED and selected, the forecast states the deal ("Preparing: +0.23 /turn → then +1.05 /turn",
-	# ceiling_corral → corral_yield, stepper capped at the 1 keeper a managed source needs), and the
-	# drawer carries the "Corral: Building 40%" row — the herd twin of the tile's "Cultivation N%".
+	# ENABLED and selected, the forecast states the deal ("Preparing: +0.23 /turn → then +1.05 /turn
+	# before feed", ceiling_corral → corral_yield, stepper capped at the 1 keeper a managed source
+	# needs), and the drawer carries the "Corral: Building 40%" row — the herd twin of the tile's
+	# "Cultivation N%".
+	#
+	# "before feed", not a number: `corral_yield` is the GROSS take, and the pen's feed is a separate
+	# debit — but the sim exports `pen_upkeep` as 0 for a herd that is not penned YET (there is no pen
+	# to feed), so the pre-build feed figure is NOT on the wire. Rather than fake a projection the row
+	# says the payoff is gross, and the picker's Corral hint below it spells out that the animals eat
+	# from the larder every turn. (A penned herd's row DOES subtract its real exported upkeep.)
 	_hud._hunt_assign_key = ""
 	_hud.show_herd_selection(_corral_ready_herd_fixture())
 	_hud._hunt_assign_policy = "corral"
@@ -1091,6 +1134,45 @@ func _band_fixture() -> Dictionary:
 			"food_module_label": "None",
 		},
 	}
+
+## A band that KEEPS A CORRAL: the third term of the food ledger. Its one keeper works the penned
+## Red Deer herd (the sim pays the pen's GROSS managed yield, 5.40), and the herd eats 1.74/turn off
+## the band's larder — `pen_feed_upkeep`, exported by the sim (`PopulationCohortState.penFeedUpkeep`)
+## precisely so the client never has to sum it. Numbers are the design doc's measured Red Deer pen at
+## its escapement operating point (B* = K/2): gross 5.40, feed 1.74, net 3.66.
+func _pen_keeper_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = PEN_KEEPER_BAND_ENTITY
+	band["id"] = "Band 4"
+	band["days_of_food"] = 22.0
+	band["food_income"] = 5.88          # forage 0.48 + the pen's gross 5.40
+	band["food_consumption"] = 1.15     # the PEOPLE's meals
+	band["pen_feed_upkeep"] = 1.74      # the ANIMALS' feed — a debit in neither row above
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1},
+		# A managed source: one keeper, take == sustainable (escapement), so no ⚠ and no overstaff note.
+		{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "corral", "target_x": 70, "target_y": 17, "actual_yield": 5.40, "sustainable_yield": 5.40, "workers_needed": 1},
+		{"kind": "scout", "workers": 2},
+	]
+	return band
+
+## The SAME pen, underfed: the band's income has collapsed (a shrinking herd yields less — gross
+## 1.90) and it could hand over only 0.70 of the 1.74 the herd demanded. `pen_feed_upkeep` is what
+## was actually PAID (the sim's `LocalStore::take` partial-payment primitive), so the ledger still
+## balances against the larder; the herd carries the shortfall as `pen_fed_fraction` 0.40.
+## Net = 1.32 − 1.15 − 0.70 = −0.53 — the death spiral the readout exists to make visible: the herd
+## shrinks, so it yields less, so there is less to feed it with.
+func _starving_pen_band_fixture() -> Dictionary:
+	var band := _pen_keeper_band_fixture()
+	band["days_of_food"] = 3.0
+	band["food_income"] = 1.32          # forage 0.48 + the shrunken pen's 0.84
+	band["pen_feed_upkeep"] = 0.70      # PAID, not demanded — the herd starves for the difference
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1},
+		{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "corral", "target_x": 70, "target_y": 17, "actual_yield": 0.84, "sustainable_yield": 0.84, "workers_needed": 1},
+		{"kind": "scout", "workers": 2},
+	]
+	return band
 
 ## A CONCERNING food state: net-negative flow (income 0.30 < consumption 0.95 → net −0.65) and a
 ## low larder runway (4 days). Both trip `_food_is_concerning`, so the category breakdown auto-shows
@@ -1749,6 +1831,11 @@ func _domesticated_herd_fixture() -> Dictionary:
 	fixture["domestication"] = 1.0
 	# A fully-domesticated herd is penned: the drawer adds a "🐄 Corralled" row.
 	fixture["corralled"] = true
+	# A PENNED herd is a managed population — it eats from its keeper's larder every turn. Fully fed
+	# here (`pen_fed_fraction` 1.0), so the drawer reads the healthy "🐄 Corralled" badge plus the
+	# amber "Pen feed: -1.74 /turn" standing debit.
+	fixture["pen_upkeep"] = PEN_UPKEEP_RED_DEER
+	fixture["pen_fed_fraction"] = 1.0
 	# Compact NON-food tile_info (like the hunt-distance herd) so the tile card stays short and
 	# the drawer's Husbandry + Corral rows land in-frame rather than below the dock scroll fold.
 	fixture["tile_info"] = {
@@ -1759,6 +1846,17 @@ func _domesticated_herd_fixture() -> Dictionary:
 		"food_module": "",
 		"food_module_label": "None",
 	}
+	return fixture
+
+## The SAME penned herd, STARVING: its keeper paid only 40% of the 1.74/turn feed, so the herd is
+## shrinking (`pen.starve_shrink_rate × (1 − fed) × biomass`) every turn and its yield with it. The
+## drawer must say so loudly — the Corral row drops its badge for a red "⚠ Starving — 40% fed", and
+## the Pen feed row names the shortfall. Biomass is down from the fed fixture's 820 to show the herd
+## has actually lost ground.
+func _starving_pen_herd_fixture() -> Dictionary:
+	var fixture := _domesticated_herd_fixture()
+	fixture["biomass"] = 310.0
+	fixture["pen_fed_fraction"] = PEN_FED_STARVING
 	return fixture
 
 ## A base terrain legend (key == "terrain") shaped exactly like

@@ -3078,8 +3078,21 @@ fn herds_to_array(herds: Vector<'_, ForwardsUOffset<fb::HerdTelemetryState<'_>>>
         // The Corral INVESTMENT rung (hunt-only): `ceiling_corral` is the food/turn the herd pays
         // WHILE the pen is being built (the deliberate dip), `corral_yield` what it pays once penned.
         // Together they drive the pre-commit "Preparing: +X → then +Y" forecast on %HerdAssignControls.
+        // `corral_yield` is GROSS — the pen's feed below is a separate debit on the keeper's larder.
         let _ = dict.insert("ceiling_corral", herd.ceilingCorral());
         let _ = dict.insert("corral_yield", herd.corralYield());
+        // The pen as a managed POPULATION (docs/plan_corral_managed_population.md): a confined herd
+        // cannot graze, so its keeper hauls it food every turn.
+        //   `pen_upkeep`       = food/turn the pen demands at the herd's CURRENT biomass. 0 when the
+        //                        herd is not penned (there is no pen to feed yet) — so the client can
+        //                        NOT quote a pre-build feed figure, and must not invent one.
+        //   `pen_fed_fraction` = the share of that demand the keeper actually paid last turn.
+        //                        1.0 = fully fed (also the value for any un-penned herd); < 1.0 = the
+        //                        herd is STARVING and shrinking every turn.
+        // Read by Hud's herd drawer (the Corral row's starving state + the Pen feed row) and by
+        // MapView's herd marker (a starving pen's glyph tints DANGER).
+        let _ = dict.insert("pen_upkeep", herd.penUpkeep());
+        let _ = dict.insert("pen_fed_fraction", herd.penFedFraction());
         array.push(&dict.to_variant());
     }
     array
@@ -3699,6 +3712,13 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // consumption across the cohort's population, summarized in the allocation panel's ledger footer.
     let _ = dict.insert("food_income", cohort.foodIncome() as f64);
     let _ = dict.insert("food_consumption", cohort.foodConsumption() as f64);
+    // The THIRD term of the band's food ledger: the food this band actually PAID this turn to feed
+    // the pens it keeps, summed across every corralled herd it works. It is taken straight off the
+    // larder and is in NEITHER of the two rows above, so the true net is
+    //     larder_delta == food_income − food_consumption − pen_feed_upkeep
+    // (pinned sim-side by `integration_tests/tests/pen_food_ledger.rs`). The sim answers this — the
+    // client must never re-derive it by summing the herds' `pen_upkeep`.
+    let _ = dict.insert("pen_feed_upkeep", cohort.penFeedUpkeep() as f64);
     // Data-driven settlement stage (id/label/icon are opaque pass-through strings resolved
     // by the sim from `settlement_stage_config.json`). Missing/pre-stage snapshots yield
     // `None` → empty strings, which the client renders as a neutral non-circular fallback

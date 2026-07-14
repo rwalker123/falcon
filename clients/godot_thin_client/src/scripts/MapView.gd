@@ -2397,6 +2397,12 @@ func _draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	var tile_center: Vector2 = _hex_center_wrapped(x, y, radius, origin)
 	var icon_center := _secondary_slot_center(tile_center, slot, radius)
 	var herd_icon := FoodIcons.for_herd(String(herd.get("label", herd.get("id", "Herd"))))
+	# NOTE: a STARVING pen (`PenStatus.is_starving`) is deliberately NOT flagged here. Tinting the
+	# marker DANGER was tried and does not read: a herd glyph is a full-color EMOJI, so `modulate`
+	# leaves it looking like an ordinary brown animal (verified in map_preview) — the same glyph
+	# hazard that forced the line-art policy icons. Surfacing a dying pen on the map needs a real
+	# affordance (a distress ring/badge), which is a design call, not a tint. The herd drawer carries
+	# the alarm today (Hud._corral_label's "⚠ Starving" + the Pen feed row).
 	_draw_marker_glyph(icon_center, herd_icon, _secondary_icon_size(radius), SECONDARY_ICON_COLOR)
 
 	# Migration arrow — thinner, and only on the hovered/selected herd tile to cut clutter.
@@ -2675,6 +2681,10 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			# selected-unit copy (the per-source actual/sustainable yields ride inside labor_assignments).
 			"food_income": float(entry.get("food_income", 0.0)),
 			"food_consumption": float(entry.get("food_consumption", 0.0)),
+			# The ledger's THIRD term: the food this band paid this turn to feed the pens it keeps
+			# (a corralled herd cannot graze). It comes straight off the larder and is in neither of
+			# the two rows above, so the Food line's net rate must subtract it — see Hud._band_net_food.
+			"pen_feed_upkeep": float(entry.get("pen_feed_upkeep", 0.0)),
 			"morale": float(entry.get("morale", 1.0)),
 			"morale_delta": float(entry.get("morale_delta", 0.0)),
 			"morale_cause": int(entry.get("morale_cause", 0)),

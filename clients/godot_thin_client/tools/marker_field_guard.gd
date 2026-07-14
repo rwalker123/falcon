@@ -37,7 +37,8 @@ const PANEL_CONSUMED_KEYS := [
 	"size",                # band panel "Population:" row / Occupants-drawer "Size:" row
 	"days_of_food",        # _band_food_line
 	"food_income",         # Food summary line net rate + Gathered/Hunted breakdown
-	"food_consumption",    # Food summary line net rate + Eaten breakdown
+	"food_consumption",    # Food summary line net rate + Eaten (people) breakdown
+	"pen_feed_upkeep",     # Food summary line net rate + Pen feed (animals) breakdown
 	"stores",              # _band_food_line provisions
 	"morale",              # _band_morale_line / _morale_is_concerning
 	"morale_delta",        # _band_morale_line trend
@@ -87,6 +88,7 @@ const FIXTURE_ENTRY := {
 	"days_of_food": 12.0,
 	"food_income": 0.83,
 	"food_consumption": 0.60,
+	"pen_feed_upkeep": 1.74,
 	"morale": 0.41,
 	"morale_delta": -0.03,
 	"morale_cause": 1,
@@ -180,6 +182,7 @@ func _ready() -> void:
 	_expect_float(marker, "days_of_food", 12.0)
 	_expect_float(marker, "food_income", 0.83)
 	_expect_float(marker, "food_consumption", 0.60)
+	_expect_float(marker, "pen_feed_upkeep", 1.74)
 
 	# labor_assignments must round-trip as a non-empty, value-preserving copy (the
 	# allocation panel iterates it to build the per-source steppers + per-source yields).

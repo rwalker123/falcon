@@ -371,6 +371,18 @@ const DOMESTICATION_COMPLETE := 1.0
 const CORRAL_PROGRESS_COMPLETE := 1.0
 const CORRAL_BUILDING_LABEL := "Building"
 const CORRAL_GLYPH := "🐄"
+# The pen as a managed POPULATION (docs/plan_corral_managed_population.md). A penned herd cannot
+# graze: its keeper hauls it `pen_upkeep` food/turn off the band larder. `pen_fed_fraction` is the
+# share of that demand the keeper actually paid last turn — anything below fully-fed means the herd
+# is SHRINKING and its yield with it, so the Corral row swaps its penned badge for a loud starving
+# state and the herd's map glyph tints red. `PenStatus` owns that test (shared with MapView).
+const PEN_STARVING_LABEL := "⚠ Starving — %d%% fed"
+# The pen's feed row in the herd drawer — what THIS pen demands per turn, and whether it is being
+# paid. The band's own ledger row is the sim-summed `pen_feed_upkeep` across all its pens; this is
+# the per-herd demand (`pen_upkeep`), which is why the two are never added together.
+const PEN_FEED_ROW := "Pen feed"
+# `_format_yield` already carries the "/turn" suffix — these only add the shortfall.
+const PEN_FEED_STARVING_FORMAT := "%s — only %d%% paid"
 # The one ecology phase a patch can be cultivated from (matches `EcologyPhase::as_str`).
 const ECOLOGY_PHASE_THRIVING := "thriving"
 # The two intensification knowledge tracks (the `intensification_knowledge[]` row's field names),
@@ -406,7 +418,11 @@ const LOCAL_HUNT_POLICY_HINTS := {
     "surplus": "Surplus — more food now; the herd slowly declines. The fuller larder pushes the band toward settling.",
     "market": "Market — sells the take as trade goods rather than eating it; the herd declines fast. Trade has little effect yet.",
     "eradicate": "Eradicate — hunts the herd toward extinction. No food, no husbandry, no trade — denial only.",
-    "corral": "Corral — pen this herd: low yield while you build, then a much higher penned yield. It must stay staffed or the herd goes wild again.",
+    # Corral is the ladder's best yield AND its only rung with a running cost. The hint has to carry
+    # all three halves of that bargain — the ~25-turn investment dip, the top payoff, and the fact
+    # that a penned herd is a POPULATION YOU FEED: its food comes off your larder every turn, and an
+    # underfed herd shrinks (and takes its yield down with it). It also still escapes if unstaffed.
+    "corral": "Corral — pen this herd: half yield for ~25 turns while you build, then the best yield of any herd. But penned animals can't graze: you feed them from your larder every turn, and an underfed herd shrinks. It must stay staffed or the herd goes wild again.",
 }
 # One worker per −/+ stepper press.
 const WORKER_STEP := 1
@@ -489,8 +505,25 @@ const FORECAST_PAYOFF_KEYS := {
     "cultivate": "tended_yield",
     "corral": "corral_yield",
 }
+# The RUNNING COST the payoff is paid against. Only the pen has one: a corralled herd is a managed
+# population that eats from the keeper's larder every turn (`pen_upkeep`), and `corral_yield` is the
+# GROSS take with that feed NOT deducted — so advertising the payoff bare would promise a number the
+# player never banks. A tended patch has no running cost, hence no entry.
+const FORECAST_FEED_KEYS := {
+    "corral": "pen_upkeep",
+}
 # The investment forecast states the DEAL, not a single yield: "Preparing: +0.09 /turn → then +1.20 /turn".
 const INVESTMENT_FORECAST_FORMAT := "Preparing: %s → then %s"
+# The same deal for a rung that also carries a running feed cost, in the two cases the wire admits:
+#   • the feed is KNOWN — the herd is already penned, so the sim exports its real `pen_upkeep` at the
+#     current biomass: "Preparing: +0.75 /turn → then +5.40 /turn − 1.74 feed" (a pure subtraction of
+#     two numbers the sim exported for THIS herd; the client models no ecology).
+#   • the feed is UNKNOWN — the herd is NOT penned yet, so `pen_upkeep` is 0 (there is no pen to
+#     feed). The pre-build feed is NOT on the wire, so we say the payoff is a GROSS figure rather
+#     than fake a projection: "Preparing: +0.75 /turn → then +5.40 /turn before feed". The picker's
+#     Corral hint right below spells out that the feed is drawn from the larder every turn.
+const INVESTMENT_FORECAST_FEED_FORMAT := "Preparing: %s → then %s − %s feed"
+const INVESTMENT_FORECAST_FEED_UNKNOWN_FORMAT := "Preparing: %s → then %s before feed"
 # A herd dict carries the forecast fields bare; `tile_info` carries the forage patch's under a
 # `patch_` prefix (MapView._tile_info_at cross-refs them off `forage_patch_lookup`).
 const HERD_FORECAST_PREFIX := ""
@@ -540,7 +573,13 @@ const WORKERS_HEADER_FORMAT := "%s %s" % [DETAIL_ROW_POPULATION, WORKERS_VALUE_F
 # eaten amber) — no inline color tags, which mis-layout between the KV table segments.
 const FOOD_LABEL_GATHERED := "Gathered"
 const FOOD_LABEL_HUNTED := "Hunted"
-const FOOD_LABEL_EATEN := "Eaten"
+# The two DEBIT rows, deliberately separate: the people eat (`food_consumption`), and the ANIMALS in
+# the band's pens eat (`pen_feed_upkeep` — a confined herd cannot graze, so its keeper hauls it food
+# every turn). Both come straight off the same larder, and telling them apart is the entire readout
+# of the corral-as-a-managed-population arc: a band whose larder drains because it is feeding its
+# herd must be able to SEE that, not just watch the number fall.
+const FOOD_LABEL_EATEN := "Eaten (people)"
+const FOOD_LABEL_PEN_FEED := "%s Pen feed (animals)" % CORRAL_GLYPH
 # Scouting expedition (docs/plan_exploration_and_sites.md §2). A detached party is a cohort
 # tagged Expedition flowing through the same populations[] array as a band; it carries no labor
 # in v1, so its drawer shows a dedicated mission/phase/party/provisions readout + Recall/Move
@@ -2127,7 +2166,12 @@ func _alloc_hint_label(text: String) -> Label:
 ## as a negative cost).
 func _format_signed(value: float) -> String:
     var sign_str := "+" if value >= 0.0 else "-"
-    return sign_str + String.num(absf(value), YIELD_DECIMALS).pad_decimals(YIELD_DECIMALS)
+    return sign_str + _format_magnitude(value)
+
+## The bare magnitude of a food rate ("1.74"), for a readout that supplies its own sign in words
+## ("− 1.74 feed"). One rounding rule for every food rate the HUD prints.
+func _format_magnitude(value: float) -> String:
+    return String.num(absf(value), YIELD_DECIMALS).pad_decimals(YIELD_DECIMALS)
 
 ## The same rate with the "/turn" suffix, for the per-source row headline ("+0.31 /turn").
 func _format_yield(value: float) -> String:
@@ -2189,11 +2233,20 @@ func _forecast_inputs(src: Dictionary, prefix: String, policy: String) -> Dictio
     var payoff := 0.0
     if investment:
         payoff = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[policy_key]), 0.0))
+    # The rung's RUNNING COST (Corral only — the pen's feed). `feed_rung` says the payoff is a GROSS
+    # figure that a per-turn cost is paid out of; `feed` is that cost, and is 0 — i.e. unknown, not
+    # free — while the herd is still un-penned (see FORECAST_FEED_KEYS).
+    var feed_rung: bool = policy_key in FORECAST_FEED_KEYS
+    var feed := 0.0
+    if feed_rung:
+        feed = float(src.get(prefix + String(FORECAST_FEED_KEYS[policy_key]), 0.0))
     return {
         "per_worker": per_worker,
         "ceiling": ceiling,
         "payoff": payoff,
         "investment": investment,
+        "feed_rung": feed_rung,
+        "feed": feed,
         "known": per_worker >= FORECAST_MIN_PER_WORKER,
     }
 
@@ -2227,12 +2280,24 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int) -> Dictionary:
 ## INVESTMENT policy (Cultivate/Corral) it states the deal instead — "Preparing: +0.09 /turn → then
 ## +1.20 /turn" — so the up-front cost AND the payoff are visible BEFORE the player commits. Both
 ## halves are scaled by the acting band's output multiplier, exactly as the plain forecast is.
+##
+## The Corral payoff is GROSS (the pen's feed is a separate debit on the keeper's larder), so its
+## row never shows the payoff bare: it either subtracts the herd's real exported `pen_upkeep`, or —
+## while the herd is un-penned and the sim exports no feed figure — says the number is "before feed"
+## rather than inventing a projection. The feed is NEVER silently folded away.
 func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary) -> Label:
     var row := Label.new()
     var expected := _format_yield(_expected_yield(forecast, workers, band))
     if bool(forecast.get("investment", false)):
-        var payoff := float(forecast.get("payoff", 0.0)) * float(band.get("output_multiplier", OUTPUT_FULL))
-        row.text = INVESTMENT_FORECAST_FORMAT % [expected, _format_yield(payoff)]
+        var output := float(band.get("output_multiplier", OUTPUT_FULL))
+        var payoff := _format_yield(float(forecast.get("payoff", 0.0)) * output)
+        var feed := float(forecast.get("feed", 0.0)) * output
+        if not bool(forecast.get("feed_rung", false)):
+            row.text = INVESTMENT_FORECAST_FORMAT % [expected, payoff]
+        elif feed >= FOOD_FLOW_MIN:
+            row.text = INVESTMENT_FORECAST_FEED_FORMAT % [expected, payoff, _format_magnitude(feed)]
+        else:
+            row.text = INVESTMENT_FORECAST_FEED_UNKNOWN_FORMAT % [expected, payoff]
     else:
         row.text = FORECAST_LABEL_FORMAT % expected
     row.add_theme_color_override("font_color", HudStyle.HEALTHY)
@@ -2244,15 +2309,29 @@ func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary) -
 func _is_overdraw(actual: float, sustainable: float) -> bool:
     return actual > sustainable + OVERHUNT_EPSILON
 
-## Net per-turn food flow (food_income − food_consumption). Positive → the larder is growing.
+## Net per-turn food flow: income − what the PEOPLE eat − what the band's penned ANIMALS eat.
+## Positive → the larder is growing. `pen_feed_upkeep` is the sim's own answer for the third term
+## (`PopulationCohortState.penFeedUpkeep` — the food this band actually PAID for pen feed this turn,
+## summed across every pen it keeps); the client must NOT re-derive it by summing the herds'
+## `pen_upkeep`, and the identity `larder_delta == income − consumption − pen_feed` is pinned sim-side
+## (`integration_tests/tests/pen_food_ledger.rs`). Omitting the term made this row LIE: a band with a
+## Red Deer pen showed a surplus overstated by the ~1.74/turn its herd ate, then drained anyway.
 func _band_net_food(band: Dictionary) -> float:
-    return float(band.get("food_income", 0.0)) - float(band.get("food_consumption", 0.0))
+    return float(band.get("food_income", 0.0)) \
+        - float(band.get("food_consumption", 0.0)) \
+        - _band_pen_feed(band)
 
-## True when the band carries a meaningful food flow (income or consumption above the floor) — so
-## an older snapshot / decode miss reads as "no flow" (net readout + breakdown omitted, not zeroed).
+## What this band paid to feed its pens this turn (food/turn). 0 for a band that keeps no corral.
+func _band_pen_feed(band: Dictionary) -> float:
+    return float(band.get("pen_feed_upkeep", 0.0))
+
+## True when the band carries a meaningful food flow (income, consumption, or pen feed above the
+## floor) — so an older snapshot / decode miss reads as "no flow" (net readout + breakdown omitted,
+## not zeroed).
 func _band_has_food_flow(band: Dictionary) -> bool:
     return float(band.get("food_income", 0.0)) >= FOOD_FLOW_MIN \
-        or float(band.get("food_consumption", 0.0)) >= FOOD_FLOW_MIN
+        or float(band.get("food_consumption", 0.0)) >= FOOD_FLOW_MIN \
+        or _band_pen_feed(band) >= FOOD_FLOW_MIN
 
 ## Sum of per-source `actual_yield` (food/turn) across this band's labor assignments of one kind —
 ## the category total behind the Food breakdown (Gathered = forage, Hunted = hunt).
@@ -2292,8 +2371,12 @@ func _register_disclosure(row_label: String, kind: String, band: Dictionary) -> 
     return open
 
 ## The category breakdown sub-lines under Food, one indented row per present category, mirroring the
-## morale breakdown: `    ▲ +0.48  Gathered` / `    ▲ +0.46  Hunted` / `    ▼ −0.68  Eaten` (income
-## ▲ green, eaten ▼ amber via the shared indented-sub-line tint). Only categories above the floor.
+## morale breakdown: `    ▲ +0.48  Gathered` / `    ▲ +0.46  Hunted` / `    ▼ −0.68  Eaten (people)`
+## / `    ▼ −1.74  🐄 Pen feed (animals)` (income ▲ green, debits ▼ amber via the shared
+## indented-sub-line tint). Only categories above the floor — a band with no pen shows no feed row.
+##
+## THREE kinds of row, not two: the pen's feed is a debit on the same larder as the people's meals,
+## but it is a DIFFERENT decision (shrink the herd vs starve the band), so it gets its own line.
 func _food_breakdown_lines(band: Dictionary) -> Array[String]:
     var lines: Array[String] = []
     var gathered := _sum_actual_yield(band, LABOR_KIND_FORAGE)
@@ -2305,6 +2388,9 @@ func _food_breakdown_lines(band: Dictionary) -> Array[String]:
     var eaten := float(band.get("food_consumption", 0.0))
     if eaten >= FOOD_FLOW_MIN:
         lines.append(_food_breakdown_row(-eaten, FOOD_LABEL_EATEN))
+    var pen_feed := _band_pen_feed(band)
+    if pen_feed >= FOOD_FLOW_MIN:
+        lines.append(_food_breakdown_row(-pen_feed, FOOD_LABEL_PEN_FEED))
     return lines
 
 ## One `    ▲ +0.48  Gathered`-style breakdown row (morale-indent + sign glyph → shared tint path).
@@ -4703,11 +4789,19 @@ func _herd_summary_lines(herd_data: Dictionary) -> Array[String]:
     # Husbandry/Ecology row treatment. While the keepers are still BUILDING the pen (0 < progress < 1
     # under the Corral policy) the same row reports the meter — the animal twin of the tile card's
     # "Cultivation N%" row, so the investment the player committed to is visibly under way.
+    # A PENNED herd is a managed population: it eats from its keeper's larder every turn, and an
+    # underfed one is shrinking right now. That is the loudest thing the drawer can say about it, so
+    # the Corral row itself flips to the starving state (DANGER-tinted via `_corral_value_hex`) and a
+    # "Pen feed" row states the demand and how much of it the keeper actually paid.
     var corral_progress := float(herd_data.get("corral_progress", 0.0))
+    var fed_fraction := PenStatus.fed_fraction(herd_data)
     if bool(herd_data.get("corralled", false)):
-        lines.append("Corral: %s" % _corral_label(CORRAL_PROGRESS_COMPLETE, true))
+        lines.append("Corral: %s" % _corral_label(CORRAL_PROGRESS_COMPLETE, true, fed_fraction))
+        var upkeep := float(herd_data.get("pen_upkeep", 0.0))
+        if upkeep >= FOOD_FLOW_MIN:
+            lines.append("%s: %s" % [PEN_FEED_ROW, _pen_feed_label(upkeep, fed_fraction)])
     elif corral_progress > 0.0:
-        lines.append("Corral: %s" % _corral_label(corral_progress, false))
+        lines.append("Corral: %s" % _corral_label(corral_progress, false, PenStatus.FULLY_FED))
     var x := int(herd_data.get("x", -1))
     var y := int(herd_data.get("y", -1))
     if x >= 0 and y >= 0:
@@ -4774,18 +4868,42 @@ func _cultivation_value_hex(value: String) -> String:
 
 ## Player-facing corral label from pen-build progress (0.0–1.0) — the herd twin of
 ## `_cultivation_label`. A finished pen shows the livestock glyph; an in-progress one reads
-## "Building N%", naming the work under way. `_format_detail_bbcode` tints via `_corral_value_hex`.
-func _corral_label(progress: float, corralled: bool) -> String:
+## "Building N%", naming the work under way. A finished pen whose keeper did NOT pay this turn's
+## feed reads the STARVING state instead of the penned badge — the herd is losing biomass every
+## turn, which is the one fact the player must not be able to miss.
+## `_format_detail_bbcode` tints via `_corral_value_hex`.
+func _corral_label(progress: float, corralled: bool, fed_fraction: float) -> String:
     if corralled or progress >= CORRAL_PROGRESS_COMPLETE:
+        if PenStatus.is_starving(fed_fraction):
+            return PEN_STARVING_LABEL % int(round(fed_fraction * PROGRESS_PERCENT_SCALE))
         return "%s Corralled" % CORRAL_GLYPH
     return "%s %d%%" % [CORRAL_BUILDING_LABEL, int(round(progress * 100.0))]
 
-## BBCode hex for a "Corral" value: signal (positive) once penned, normal ink while it's being
-## built. Matched on the label from `_corral_label`, mirroring `_cultivation_value_hex`.
+## The "Pen feed" row's value: what this pen demands per turn, plus — when the keeper is short — how
+## much of it was actually paid. Amber/red-tinted via `_pen_feed_value_hex`.
+func _pen_feed_label(upkeep: float, fed_fraction: float) -> String:
+    var demand := _format_yield(-upkeep)
+    if PenStatus.is_starving(fed_fraction):
+        return PEN_FEED_STARVING_FORMAT % [demand, int(round(fed_fraction * PROGRESS_PERCENT_SCALE))]
+    return demand
+
+## BBCode hex for a "Corral" value: DANGER for a starving pen (the herd is shrinking NOW), signal
+## (positive) once penned and fed, normal ink while it's being built. Matched on the label from
+## `_corral_label`, mirroring `_cultivation_value_hex`.
 func _corral_value_hex(value: String) -> String:
-    if value.to_lower().contains("corralled"):
+    var normalized := value.to_lower()
+    if normalized.contains("starving"):
+        return HudStyle.DANGER_HEX
+    if normalized.contains("corralled"):
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
+
+## BBCode hex for the "Pen feed" value: DANGER while the pen goes unfed (the herd is shrinking),
+## WARN otherwise — a paid pen is still a standing debit on the larder, never good news.
+func _pen_feed_value_hex(value: String) -> String:
+    if value.to_lower().contains("paid"):
+        return HudStyle.DANGER_HEX
+    return HudStyle.WARN_HEX
 
 func _join_lines(lines: Array) -> String:
     var packed := PackedStringArray()
@@ -4863,8 +4981,9 @@ func _format_detail_bbcode(lines: Array) -> String:
                 value_hex = _cultivation_value_hex(String(kv[1]))
             elif String(kv[0]) == "Corral":
                 value_hex = _corral_value_hex(String(kv[1]))
-            elif String(kv[0]) == "Corral":
-                value_hex = HudStyle.SIGNAL_HEX
+            elif String(kv[0]) == PEN_FEED_ROW:
+                # The pen's running feed cost: amber as a standing debit, red when it goes unpaid.
+                value_hex = _pen_feed_value_hex(String(kv[1]))
             # A disclosure row (Food/Morale) renders its key as a clickable cyan `[url]` + ▸/▾ caret,
             # toggling its breakdown sub-lines via `meta_clicked` → `_on_detail_meta_clicked`. Which
             # rows are disclosures (and their open-state) is set in `_unit_summary_lines`.

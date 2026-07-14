@@ -51,6 +51,7 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 | `Hud.gd` | HUD layer, legend (the right-dock **TerrainLegendPanel**; `update_overlay_legend` renders rows `{color,label,value_text}` and, for the base terrain legend (`key == "terrain"`) only, shows a runtime-built **sort header** — `Name`/`Count` toggle buttons with a ▲/▼ arrow on the active field. Sort mode is display-only HUD state — field ∈ {name,count} × per-field direction, default **Count desc** — held in `_legend_sort_*` and re-applied via `_sorted_terrain_rows` on every legend push, so the chosen order persists across map regen; MapView's `_build_terrain_legend` supplies a numeric `count` per row for the count sort. Non-terrain (overlay/tag) legends hide the control and render in the given order), the split **Tile card** (`TilePanel`/`%TileDetail` — terrain + the `%ForageAssignControls` "assign foragers" stepper) + **Occupants roster card** (`OccupantsPanel`/`%RosterList`/`%OccupantDetail` — selectable bands+wildlife roster with a per-occupant detail drawer for **herds/expeditions**; a herd shows the `%HerdAssignControls` "assign hunters" stepper+policy picker, an expedition the `%AllocationPanel` Recall/Move panel). **Player-band detail relocated into the dockable `BandCityPanel`** (summary + `%AllocationPanel`-style labor UI render there via `_render_band_into_panel`; the Occupants card keeps only the roster row) — see "Band/City dockable panel". Turn readout (the standalone band Alerts panel was folded into the turn-orb attention model — see "Turn orb & attention model"). Both cards + all selection state (`_selected_tile_info`/`_selected_unit`/`_selected_herd`) + the snapshot-captured `_player_band` (and `_player_bands`, the full player-faction list backing the band-picker + the panel cycler) live here; roster selection emits `roster_occupant_selected`; labor edits emit `assign_labor_requested` / `move_band_requested` / `cancel_order_requested` (clear-all) |
 | `ui/BandCityPanel.gd` / `.tscn` | The dockable **Band/City command center** CanvasLayer — persistent whenever ≥1 player band exists, dockable to any of the 4 edges (default left, persisted to `user://band_city_dock.cfg`) + collapse-to-rail. Header (stage glyph/name/label + `◀ n/N ▶` cycler + 2×2 dock chooser + collapse), body hosts the relocated band detail as **section blocks** via `set_band_sections` (tall = vertical stack that fits its width to the content, wide = manual balanced-column packing that fits its height to the content). Reserves its edge via `reservation_changed(edge, size)` → `Main._apply_reservation(&"band_panel", …)`. See "Band/City dockable panel" + `docs/plan_band_city_dock.md` |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale warn/critical thresholds + `color_for_morale`/`hex_for_morale`), shared by MapView's band dot and Hud's food/morale lines + alerts |
+| `ui/PenStatus.gd` | Single source of truth for **"is this pen's herd starving?"** — `FULLY_FED` / `FED_EPSILON` + `fed_fraction(herd)` / `is_starving(fed)`, reading `HerdTelemetryState.penFedFraction` (`< 1` ⇒ the keeper underpaid the pen's feed, so the herd is SHRINKING every turn). Consumed by `Hud._corral_label` + the herd drawer's Pen feed row; any future map/alert affordance for a dying pen must reuse it rather than re-deriving the threshold |
 | `ui/TileHabitability.gd` | Single source of truth for the Tile-card Habitability rating: buckets `TileState.habitability` (band-independent per-turn morale drain) into Hospitable/Fair/Harsh/Hostile via `tile_habitability_config.json` thresholds, with the HEALTHY/INK/WARN/DANGER color / `hex_for_rating` mapping. Consumed by `Hud._tile_terrain_lines` + `_format_detail_bbcode` |
 | `ui/TileClimate.gd` | Single source of truth for the Tile-card Climate band: maps `TileState.temperature` (°, a latitude+elevation climate, equator-in-the-middle) into Tropical/Warm/Temperate/Cool/Polar via `tile_climate_config.json` cutoffs. INFORMATIONAL only — deliberately no HEALTHY/WARN/DANGER tint (renders neutral ink), so it doesn't compete with the Habitability row's semantic palette. Consumed by `Hud._tile_terrain_lines` |
 | `SnapshotStream.gd` | Consumes length-prefixed FlatBuffers snapshots |
@@ -1228,7 +1229,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     NOT the expedition hints** (`SEND_HUNT_POLICY_HINTS`): an expedition's Hunting arm credits **food
     only** — no husbandry accrual, no trade goods (a known v1 gap, tracked server-side) — so the
     expedition set promises neither, and the two sets must stay separate. `LOCAL_HUNT_POLICY_HINTS`
-    also owns the **`corral`** hint (Corral is a local-hunt-only rung), and it is the set `_policy_hint`
+    also owns the **`corral`** hint (Corral is a local-hunt-only rung) — which must carry all three
+    halves of that bargain: the ~25-turn half-yield build, the ladder's best payoff, and the fact that
+    **penned animals can't graze, so you feed them from your larder every turn and an underfed herd
+    shrinks**, and it is the set `_policy_hint`
     spells out on a worked Hunt row's tooltip. **The hint is rendered per BRANCH, never once above
     both** — one shared line under the picker would promise an expedition player the band's payoffs. The
     button + command switch on the **wrap-aware hex distance** from the **SELECTED band's** own tile
@@ -1374,6 +1378,19 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
       **`Preparing: +0.24 /turn → then +1.20 /turn`** instead of `Expected yield:` — both halves
       scaled by the band's `output_multiplier` like every other forecast. The managed source reports
       per-worker == ceiling, so the stepper caps at **1 worker**, as it should.
+      **Corral's payoff is GROSS** (`corralYield` does NOT deduct the pen's feed), so its row never
+      shows the payoff bare (`FORECAST_FEED_KEYS`, the rungs with a running cost — Corral only;
+      a tended patch has none):
+      · feed **known** (the herd is already penned, so the sim exports a real `penUpkeep`) →
+      `Preparing: +0.75 → then +5.40 /turn − 1.74 feed` — a pure subtraction of two numbers the sim
+      exported for THIS herd; the client models no ecology.
+      · feed **unknown** — and this is the *normal* pre-commit case — → `… → then +1.05 /turn **before
+      feed**`. The sim exports `penUpkeep = 0` for a herd that is **not penned yet** (there is no pen
+      to feed), so the pre-build feed figure is **not on the wire**; rather than fake a projection the
+      row says the number is gross, and the Corral picker hint under it spells out that the animals
+      eat from the larder every turn. **Server-side follow-up:** exporting a *projected* upkeep
+      (`upkeep_per_biomass × biomass`, regardless of `corralled`) would let this row quote the real
+      figure at the moment the player actually decides.
     - **Progress meters.** The tile card's `Cultivation N%` row is joined by the herd drawer's
       `Corral: Building N%` (`corralProgress`, `_corral_label` / `_corral_value_hex`), flipping to the
       SIGNAL-tinted `🐄 Corralled` once penned — the animal twin of `🌾 Tended Patch`.
@@ -1506,6 +1523,24 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `corral_progress`; `0 < p < 1`) the SAME row reports the meter — "Corral: Building 40%" —
   the animal twin of the tile card's "Cultivation N%". See the Cultivate/Corral investment-rung
   bullet under **Labor allocation UI**.
+- **The pen is a managed POPULATION** (`docs/plan_corral_managed_population.md`; snapshot
+  `HerdTelemetryState.penUpkeep` / `penFedFraction` → `pen_upkeep` / `pen_fed_fraction`): a penned
+  herd cannot graze, so its keeper hauls it food every turn, and **an underfed herd shrinks**. Two
+  rows carry that, both in `_herd_summary_lines`:
+  - the **Corral** row flips from the "🐄 Corralled" badge to a DANGER-tinted **"⚠ Starving — 40%
+    fed"** whenever `PenStatus.is_starving(pen_fed_fraction)` (`_corral_label` / `_corral_value_hex`,
+    one tint path, no parallel styling);
+  - a **Pen feed** row (only on a penned herd) states the demand — `−1.74 /turn`, WARN amber as a
+    standing debit — and, when the keeper came up short, what was actually paid: `−1.74 /turn — only
+    40% paid`, DANGER (`_pen_feed_label` / `_pen_feed_value_hex`).
+  `pen_upkeep` is this HERD's demand; the band's ledger row is the sim-summed `pen_feed_upkeep`
+  across all its pens — the two are never added together, and the client sums neither.
+  ui_preview: `herd_domesticated` (fed) / `herd_corral_starving` (40% fed).
+  **Gap — the map is silent on a dying pen.** Tinting the herd marker DANGER was tried and does NOT
+  read: a herd glyph is a full-color **emoji**, so `modulate` leaves it looking like an ordinary
+  brown animal (the same glyph hazard that forced the line-art policy icons). Surfacing a starving
+  pen on the map needs a real affordance (distress ring/badge) — a design call, deliberately not
+  invented here. `MapView._draw_herd` carries a NOTE saying so.
 - **Forage-patch cultivation readout** (`Hud.gd` `_tile_terrain_lines`): a forage tile's
   intensification state, mirroring the herd Husbandry row. `native/src/lib.rs
   forage_patches_to_array` decodes `foragePatches[]` (`ForagePatchState`) into both the
@@ -1589,16 +1624,28 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   of `_unit_summary_lines`, NOT inside `_band_food_line` — the skipped call must not leave the
   previous render's caret or food-days tint behind;
   (3) `MapView._draw_supply_links` faint-chains player bands sharing a `supply_network_id` (`0` = solo).
-  **Band food flow on the Food line** (snapshot `PopulationCohortState.foodIncome`/`foodConsumption`,
-  decoded as `food_income`/`food_consumption`, flowed onto the MapView unit marker + guarded by
-  `marker_field_guard`): for a **player** band with real flow, `_band_food_line` appends the **net
-  per-turn rate** — `Food 15 (19 days) · −0.77 /turn` — where net = `food_income − food_consumption`,
-  tinted green (≥0) / red (<0). The days-to-empty stays only in the `(N days)` figure; it is not
+  **Band food flow on the Food line** (snapshot `PopulationCohortState.foodIncome`/`foodConsumption`/
+  **`penFeedUpkeep`**, decoded as `food_income`/`food_consumption`/`pen_feed_upkeep`, flowed onto the
+  MapView unit marker + guarded by `marker_field_guard`): for a **player** band with real flow,
+  `_band_food_line` appends the **net per-turn rate** — `Food 15 (19 days) · −0.77 /turn` — where
+  **net = `food_income − food_consumption − pen_feed_upkeep`** (`_band_net_food`), tinted green (≥0) /
+  red (<0). **The ledger has THREE terms, not two:** a band keeping a corral pays its penned herd's
+  feed straight off the larder every turn (a confined herd cannot graze), and that debit is in
+  *neither* of the other two. Omitting it made the row **lie** — a Red Deer pen overstated the surplus
+  by ~1.74/turn against a band that eats ~1.2, and the larder then drained with no explanation.
+  `penFeedUpkeep` is the food the sim **actually paid** this turn summed across every pen the band
+  keeps; the client **must not** re-derive it by summing the herds' `penUpkeep` (the sim owns every
+  yield number — see `core_sim/CLAUDE.md` → Pre-commit Yield Forecast; the identity
+  `larder_delta == income − consumption − pen_feed` is pinned by `integration_tests/tests/pen_food_ledger.rs`).
+  The days-to-empty stays only in the `(N days)` figure; it is not
   repeated. The `Food` label is a **click-to-expand disclosure** (a `▸/▾` caret) toggling a
-  **category breakdown** beneath it — indented `▲ +X  Gathered` / `▲ +Y  Hunted` / `▼ −Z  Eaten`
-  sub-lines (Gathered/Hunted = Σ per-source `actual_yield` by kind, Eaten = `food_consumption`),
-  rendered through the **shared morale-breakdown path** in `_format_detail_bbcode` (income ▲ green,
-  eaten ▼ amber). The breakdown **auto-shows when food is concerning** (`_food_is_concerning`:
+  **category breakdown** beneath it — indented `▲ +X  Gathered` / `▲ +Y  Hunted` / `▼ −Z  Eaten
+  (people)` / `▼ −W  🐄 Pen feed (animals)` sub-lines (Gathered/Hunted = Σ per-source `actual_yield`
+  by kind, Eaten = `food_consumption`, Pen feed = `pen_feed_upkeep`, shown only when a pen is kept —
+  **people and animals eat from the same larder but are DIFFERENT decisions**, so they are different
+  rows), rendered through the **shared morale-breakdown path** in `_format_detail_bbcode` (income ▲
+  green, debits ▼ amber). ui_preview: `band_pen_feed` (fed pen: net +2.99 = 5.88 − 1.15 − 1.74) /
+  `band_pen_starving` (part-paid feed, net −0.53 red). The breakdown **auto-shows when food is concerning** (`_food_is_concerning`:
   net-negative OR runway below the warn threshold, mirroring `_morale_is_concerning`), else it's
   collapsed but reachable via the click. Older snapshot / no flow → the bare `Food N (D days)` line,
   no net/disclosure. **The Food + Morale rows share ONE disclosure mechanism** (see "Band morale
