@@ -50,8 +50,8 @@ use crate::{
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
     expedition_config::ExpeditionConfig,
     fauna::{
-        hunt_forecast, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, SourceYieldForecast,
-        HERDING_DISCOVERY_ID,
+        hunt_forecast, pen_upkeep, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
+        SourceYieldForecast, HERDING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
     food::FoodModuleTag,
@@ -4486,9 +4486,17 @@ fn herd_snapshot_entries(
                 ceiling_surplus: forecast.ceiling_surplus,
                 ceiling_market: forecast.ceiling_market,
                 ceiling_eradicate: forecast.ceiling_eradicate,
-                // The Corral investment rung: the preparing dip + the payoff once penned.
+                // The Corral investment rung: the preparing dip + the (gross) payoff once penned.
                 ceiling_corral: forecast.ceiling_prepare,
                 corral_yield: forecast.managed_yield,
+                // The pen as a managed population: what it EATS, and whether its keeper is paying.
+                // `pen_upkeep` is 0 for a mobile herd (nothing to feed); `pen_fed_fraction` is the
+                // value the keeper's tend branch wrote this turn (Population runs before the capture),
+                // so the client reads the CURRENT turn's feeding, and `1.0` for anything unpenned.
+                pen_upkeep: herd.map(|herd| pen_upkeep(herd, fauna)).unwrap_or(0.0),
+                pen_fed_fraction: herd
+                    .map(|herd| herd.pen_fed_fraction)
+                    .unwrap_or(PEN_FULLY_FED),
                 // The same forecast, projected as the per-policy BAND ceiling table (incl. Corral).
                 hunt_policy_ceilings: herd
                     .map(|_| hunt_policy_ceiling_entries(&forecast))
@@ -5778,5 +5786,67 @@ mod tests {
         assert!(pen.corralled, "a penned herd reports corralled");
         let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
         assert!(!wild.corralled, "a mobile herd reports not corralled");
+    }
+
+    /// **The pen as a managed population, on the wire.** A penned herd exports what it EATS
+    /// (`pen_upkeep = pen.upkeep_per_biomass × biomass`) alongside its **gross** `corral_yield`, plus
+    /// last turn's `pen_fed_fraction` (`< 1` = starving) — the two fields the client needs to render
+    /// the pen's feed as a negative row in the band's food ledger and warn about a shrinking herd. A
+    /// herd that is not penned eats nothing and is never starving.
+    #[test]
+    fn herd_snapshot_reports_the_pens_upkeep_and_fed_fraction() {
+        use crate::fauna_config::SizeClass;
+        const PEN_BIOMASS: f32 = 60.0;
+        const HALF_FED: f32 = 0.5;
+
+        let mut registry = HerdRegistry::default();
+        let mut penned = Herd::new(
+            "herd_pen".to_string(),
+            "Aurochs".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(4, 4)],
+            PEN_BIOMASS,
+            100.0,
+        );
+        penned.corral_at(UVec2::new(4, 4));
+        // The keeper could only pay half the feed last turn → the herd is starving.
+        penned.pen_fed_fraction = HALF_FED;
+        registry.herds.push(penned);
+        registry.herds.push(Herd::new(
+            "herd_wild".to_string(),
+            "Red Deer".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(1, 1)],
+            50.0,
+            100.0,
+        ));
+
+        let telemetry = HerdTelemetry {
+            entries: registry.snapshot_entries(),
+        };
+        let labor = LaborConfig::builtin();
+        let fauna = FaunaConfig::builtin();
+        let expedition = ExpeditionConfig::builtin();
+        let states = herd_snapshot_entries(&telemetry, &registry, &fauna, &labor, &expedition);
+
+        let pen = states.iter().find(|h| h.id == "herd_pen").unwrap();
+        let expected_upkeep = fauna.husbandry.pen.upkeep_per_biomass * PEN_BIOMASS;
+        assert!(
+            (pen.pen_upkeep - expected_upkeep).abs() < 1e-6,
+            "the pen exports its feed demand at the herd's current biomass: {} vs {expected_upkeep}",
+            pen.pen_upkeep
+        );
+        assert!((pen.pen_fed_fraction - HALF_FED).abs() < 1e-6);
+        assert!(
+            pen.corral_yield > 0.0,
+            "the pen's gross managed yield rides alongside its upkeep"
+        );
+
+        let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
+        assert_eq!(wild.pen_upkeep, 0.0, "a mobile herd eats nothing");
+        assert_eq!(
+            wild.pen_fed_fraction, 1.0,
+            "a mobile herd is never starving"
+        );
     }
 }

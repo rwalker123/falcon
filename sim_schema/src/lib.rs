@@ -178,6 +178,12 @@ pub struct HuntTripEstimateState {
     pub delivers_food: bool,
 }
 
+/// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned
+/// (or older-snapshot) herd never reads as starving.
+fn pen_fully_fed() -> f32 {
+    1.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HerdTelemetryState {
     pub id: String,
@@ -220,8 +226,21 @@ pub struct HerdTelemetryState {
     pub ceiling_corral: f32,
     /// Food/turn the herd will pay **once penned** (the corral's managed harvest at its current
     /// biomass). With `ceiling_corral`, lets the client show "preparing X → then Y" pre-commit.
+    /// **Gross** — the pen's feed (`pen_upkeep`) is a separate debit.
     #[serde(default)]
     pub corral_yield: f32,
+    /// **The pen's feed demand**, food/turn, at the herd's CURRENT biomass
+    /// (`pen.upkeep_per_biomass × biomass`) — drawn from its keeper band's larder every turn, because
+    /// a confined herd cannot graze. `0` when the herd is not corralled. The negative row in the
+    /// band's food ledger that `corral_yield`'s gross number is paid against.
+    #[serde(default)]
+    pub pen_upkeep: f32,
+    /// The fraction of `pen_upkeep` the keeper actually **paid** last turn. `1.0` = fully fed (also
+    /// the value for a herd that is not penned, and for a rehydrated one); `< 1` = **starving** — the
+    /// herd is shrinking by `pen.starve_shrink_rate × (1 − this) × biomass` per turn, and its yield
+    /// with it. It recovers when fed again (it never despawns and never loses the pen).
+    #[serde(default = "pen_fully_fed")]
+    pub pen_fed_fraction: f32,
     /// Per-policy **band / local-hunt** take ceilings for this herd's current state — one entry per
     /// [`FollowPolicy`] valid on a Hunt assignment: the four extractive rungs **plus Corral**
     /// (`Cultivate` is forage-only, so a herd has no cultivate row). Phase-correct: a penned herd's
@@ -266,6 +285,8 @@ impl Default for HerdTelemetryState {
             ceiling_eradicate: 0.0,
             ceiling_corral: 0.0,
             corral_yield: 0.0,
+            pen_upkeep: 0.0,
+            pen_fed_fraction: pen_fully_fed(),
             hunt_policy_ceilings: Vec::new(),
             hunt_trip_estimates: Vec::new(),
         }
@@ -1899,7 +1920,7 @@ pub struct SentimentTelemetryState {
     pub agency: SentimentAxisTelemetry,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorldSnapshot {
     pub header: SnapshotHeader,
     pub tiles: Vec<TileState>,
@@ -2962,6 +2983,8 @@ fn create_herds<'a>(
                 ceilingEradicate: herd.ceiling_eradicate,
                 ceilingCorral: herd.ceiling_corral,
                 corralYield: herd.corral_yield,
+                penUpkeep: herd.pen_upkeep,
+                penFedFraction: herd.pen_fed_fraction,
                 // Appended after every earlier-shipped field (append-only wire discipline).
                 huntPolicyCeilings: hunt_policy_ceilings,
                 huntTripEstimates: hunt_trip_estimates,
@@ -4546,4 +4569,74 @@ pub struct GenerationState {
     pub bias_trust: i64,
     pub bias_equity: i64,
     pub bias_agency: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `WorldSnapshot` carrying exactly one herd — the rest of the world is irrelevant to the herd
+    /// telemetry's wire encoding.
+    fn snapshot_with_herd(herd: HerdTelemetryState) -> WorldSnapshot {
+        WorldSnapshot {
+            herds: vec![herd],
+            ..WorldSnapshot::default()
+        }
+    }
+
+    /// **The pen-as-a-managed-population fields survive the wire.** `penUpkeep` (what the pen eats
+    /// each turn) and `penFedFraction` (`< 1` = starving) are appended to `HerdTelemetryState`
+    /// (append-only discipline), and the client renders the feed as a negative row against the
+    /// **gross** `corralYield`. Encode → decode with the generated reader, so a field that silently
+    /// failed to serialize cannot pass.
+    #[test]
+    fn herd_pen_upkeep_and_fed_fraction_round_trip_on_the_wire() {
+        const UPKEEP: f32 = 1.2;
+        const FED: f32 = 0.25;
+        const CORRAL_YIELD: f32 = 3.6;
+
+        let snapshot = snapshot_with_herd(HerdTelemetryState {
+            id: "herd_pen".to_string(),
+            species: "Red Deer".to_string(),
+            corralled: true,
+            corral_yield: CORRAL_YIELD,
+            pen_upkeep: UPKEEP,
+            pen_fed_fraction: FED,
+            ..Default::default()
+        });
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let herd = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .herds()
+            .expect("herds present")
+            .get(0);
+        assert!(herd.corralled());
+        assert!((herd.corralYield() - CORRAL_YIELD).abs() < 1e-6);
+        assert!((herd.penUpkeep() - UPKEEP).abs() < 1e-6);
+        assert!((herd.penFedFraction() - FED).abs() < 1e-6);
+    }
+
+    /// A herd that is **not** penned eats nothing and is never starving — and an older snapshot with
+    /// neither field decodes to the same neutral pair (the `= 0` / `= 1` schema defaults).
+    #[test]
+    fn an_unpenned_herd_defaults_to_no_upkeep_and_fully_fed() {
+        let snapshot = snapshot_with_herd(HerdTelemetryState {
+            id: "herd_wild".to_string(),
+            ..Default::default()
+        });
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let herd = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .herds()
+            .expect("herds present")
+            .get(0);
+        assert_eq!(herd.penUpkeep(), 0.0);
+        assert_eq!(herd.penFedFraction(), 1.0);
+    }
 }

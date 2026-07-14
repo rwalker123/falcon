@@ -29,10 +29,10 @@ use crate::{
     demographics_config::{DemographicsConfig, DemographicsConfigHandle, DemographicsConsumption},
     expedition_config::ExpeditionConfig,
     fauna::{
-        self, corral_provisions, hunt_policy_ceiling, hunt_provisions, sustainable_yield,
-        EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HERDING_DISCOVERY_ID,
+        self, herd_capacity, herd_ecology, hunt_policy_ceiling, hunt_provisions, pen_upkeep,
+        sustainable_yield, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HERDING_DISCOVERY_ID,
     },
-    fauna_config::{FaunaConfig, FaunaConfigHandle},
+    fauna_config::{EcologyConfig, FaunaConfig, FaunaConfigHandle},
     food::{classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag},
     forage::{forage_take, tended_provisions, ForageRegistry, CULTIVATION_DISCOVERY_ID},
     generations::GenerationRegistry,
@@ -3939,7 +3939,11 @@ pub fn advance_expeditions(
                     if let Some(idx) = herds.herds.iter().position(|herd| herd.id == *fauna_id) {
                         let policy = *policy;
                         let herd_pos = herds.herds[idx].position();
-                        let carrying_capacity = herds.herds[idx].carrying_capacity;
+                        // The herd's OWN ecology + capacity — the single source of the husbandry
+                        // ladder's rung → growth-rate mapping (`herd_ecology` / `herd_capacity`); a
+                        // party hunting a tamed or penned herd draws on *its* curve, not the wild one.
+                        let carrying_capacity = herd_capacity(&herds.herds[idx], &fauna);
+                        let ecology = herd_ecology(&herds.herds[idx], &fauna).clone();
                         let cap = scalar_from_f32(workers as f32 * cfg.hunt.per_worker_carry);
                         let in_reach = crate::grid_utils::hex_distance_wrapped(
                             exp_pos,
@@ -3969,6 +3973,7 @@ pub fn advance_expeditions(
                             policy,
                             herd_biomass_before,
                             carrying_capacity,
+                            &ecology,
                             &fauna,
                         );
                         let provisions_per_biomass = fauna.hunt.provisions_per_biomass;
@@ -3991,6 +3996,7 @@ pub fn advance_expeditions(
                             policy,
                             herd_biomass_before,
                             carrying_capacity,
+                            &ecology,
                             &fauna,
                         )
                         .min(carry_room_biomass.max(0.0));
@@ -4194,6 +4200,7 @@ fn hunt_expedition_ceiling(
     policy: FollowPolicy,
     biomass: f32,
     carrying_capacity: f32,
+    ecology: &EcologyConfig,
     fauna: &FaunaConfig,
 ) -> f32 {
     if matches!(policy, FollowPolicy::Cultivate | FollowPolicy::Corral) {
@@ -4204,9 +4211,9 @@ fn hunt_expedition_ceiling(
         );
         return 0.0;
     }
-    match hunt_expedition_floor(policy, carrying_capacity, fauna) {
+    match hunt_expedition_floor(policy, carrying_capacity, ecology) {
         // A flow, not a stock target — defer to the shared per-policy ceiling.
-        None => fauna::hunt_policy_ceiling(policy, biomass, carrying_capacity, fauna),
+        None => fauna::hunt_policy_ceiling(policy, biomass, carrying_capacity, ecology, fauna),
         Some(floor) => (biomass - floor).max(0.0),
     }
 }
@@ -4223,11 +4230,11 @@ fn hunt_expedition_ceiling(
 fn hunt_expedition_floor(
     policy: FollowPolicy,
     carrying_capacity: f32,
-    fauna: &FaunaConfig,
+    ecology: &EcologyConfig,
 ) -> Option<f32> {
     match policy {
         FollowPolicy::Surplus | FollowPolicy::Market => {
-            Some(fauna.ecology.collapse_fraction * carrying_capacity)
+            Some(ecology.collapse_fraction * carrying_capacity)
         }
         FollowPolicy::Eradicate => Some(0.0),
         // Sustain is a flow (no floor). Cultivate/Corral are unreachable on an expedition — see
@@ -4248,9 +4255,10 @@ fn expedition_take_biomass(
     policy: FollowPolicy,
     biomass: f32,
     carrying_capacity: f32,
+    ecology: &EcologyConfig,
     fauna: &FaunaConfig,
 ) -> f32 {
-    let ceiling = hunt_expedition_ceiling(policy, biomass, carrying_capacity, fauna);
+    let ceiling = hunt_expedition_ceiling(policy, biomass, carrying_capacity, ecology, fauna);
     (workers as f32 * per_worker_biomass_capacity)
         .min(ceiling)
         .max(0.0)
@@ -4268,6 +4276,7 @@ pub fn expedition_take_provisions(
     policy: FollowPolicy,
     biomass: f32,
     carrying_capacity: f32,
+    ecology: &EcologyConfig,
     fauna: &FaunaConfig,
     labor: &LaborConfig,
 ) -> f32 {
@@ -4280,6 +4289,7 @@ pub fn expedition_take_provisions(
         policy,
         biomass,
         carrying_capacity,
+        ecology,
         fauna,
     );
     // Quantized onto the larder's `Scalar` grid, exactly as the real take lands there.
@@ -4322,7 +4332,17 @@ pub fn hunt_take(
     // share, Eradicate = max take, Corral = the `corralling_yield_fraction × MSY` investment dip while
     // the pen is built. Shared with the pre-commit forecast (`fauna::hunt_forecast`) and the
     // expedition, so no two hunters of the same herd can disagree about what a policy means.
-    let policy_ceiling = hunt_policy_ceiling(policy, herd.biomass, herd.carrying_capacity, fauna);
+    // The ceiling is resolved against the herd's OWN ecology + capacity (`herd_ecology` /
+    // `herd_capacity` — the single source of the husbandry ladder's rung → growth-rate mapping), never
+    // the raw wild pair: hunting a *tamed* herd draws on the pastoral curve, and a penned one on the
+    // pen's.
+    let policy_ceiling = hunt_policy_ceiling(
+        policy,
+        herd.biomass,
+        herd_capacity(herd, fauna),
+        herd_ecology(herd, fauna),
+        fauna,
+    );
     // The hunting group's throughput caps the take; below the Sustain ceiling the herd nets growth.
     // `carry_room_biomass` additionally caps the take at the biomass the caller can carry home
     // (conservation — the herd loses only what's kept); the band Hunt passes `f32::INFINITY`
@@ -4432,15 +4452,18 @@ fn hunt_trip_provisions_bound(
     expedition: &ExpeditionConfig,
 ) -> f64 {
     let horizon = expedition.hunt.forecast_horizon_turns as f64;
-    let peak_regrowth =
-        fauna::peak_regrowth(herd.carrying_capacity, &fauna.ecology).max(0.0) as f64;
+    // The herd's OWN ecology + capacity — a tamed/penned herd regrows far faster, so a bound taken
+    // against the wild curve would under-estimate it and could reject a trip that WOULD have filled.
+    let ecology = herd_ecology(herd, fauna);
+    let capacity = herd_capacity(herd, fauna);
+    let peak_regrowth = fauna::peak_regrowth(capacity, ecology).max(0.0) as f64;
     let throughput =
         horizon * workers as f64 * labor.hunt.per_worker_biomass_capacity.max(0.0) as f64;
-    let ecology = match hunt_expedition_floor(policy, herd.carrying_capacity, fauna) {
+    let ecology_bound = match hunt_expedition_floor(policy, capacity, ecology) {
         None => horizon * peak_regrowth,
         Some(floor) => (herd.biomass - floor).max(0.0) as f64 + horizon * peak_regrowth,
     };
-    let provisions = throughput.min(ecology)
+    let provisions = throughput.min(ecology_bound)
         * fauna.hunt.provisions_per_biomass.max(0.0) as f64
         * EXPEDITION_OUTPUT_MULTIPLIER as f64;
     provisions * (1.0 + CANNOT_FILL_BOUND_MARGIN) + horizon * SCALAR_ROUNDING_SLACK
@@ -4529,14 +4552,18 @@ fn simulate_hunt_trip(
     let provisions_per_biomass = fauna.hunt.provisions_per_biomass;
     // The forecast runs on a private copy of the herd — the caller's live herd is never touched.
     let mut quarry = herd.clone();
+    // The herd's OWN ecology + capacity (resolved once — neither can change under the party's take:
+    // the quarry is never tamed or penned mid-trip).
+    let ecology = herd_ecology(&quarry, fauna);
+    let capacity = herd_capacity(&quarry, fauna);
     let mut larder = scalar_zero();
     let mut first_turn_provisions = 0.0_f32;
 
     for turn in 1..=horizon {
         // Logistics: the herd's ecology moves first (regrowth, or the depensation decline), exactly
         // as `advance_herds` runs before the Population stage's take.
-        fauna::regrow_biomass(&mut quarry, &fauna.ecology);
-        if quarry.biomass <= fauna.ecology.extinction_floor * quarry.carrying_capacity {
+        fauna::regrow_biomass(&mut quarry, fauna);
+        if quarry.biomass <= ecology.extinction_floor * capacity {
             // `advance_herds` would despawn it here — a lost herd, so the party never fills.
             break;
         }
@@ -4553,7 +4580,8 @@ fn simulate_hunt_trip(
             labor.hunt.per_worker_biomass_capacity,
             policy,
             quarry.biomass,
-            quarry.carrying_capacity,
+            capacity,
+            ecology,
             fauna,
         )
         .min(carry_room_biomass.max(0.0));
@@ -4864,25 +4892,57 @@ pub fn advance_labor_allocation(
                     else {
                         continue;
                     };
-                    // Corral (Rung 1c): a Hunt assignment on a **corralled** (penned) herd is
-                    // herding/tending it, not hunting. The keeper band collects the corral's
-                    // place-local managed yield (`biomass × corral_provisions_per_biomass`, higher
-                    // than the passive even-split rate) WITHOUT drawing biomass down (managed harvest
-                    // of the full standing crop — biomass regrows freely), and marks it tended so it
-                    // doesn't escape in `advance_husbandry`. The animal mirror of the tended-patch arm
-                    // in Forage; reconciles the "corralled herd isn't both hunt-drawn AND paid".
+                    // **This band is working this herd** — whatever the policy. `advance_husbandry`
+                    // reads the flag next turn (Logistics, the deliberate one-turn lag) and skips the
+                    // **passive pastoral rung** for it: a band already paid through this arm is not
+                    // *also* paid for leaving the herd alone. Without it the passive payment stacks on
+                    // the `Corral` build dip and makes penning cost *less* than nothing — the "free
+                    // path" the intensification ladder exists to delete (see `Herd::worked_this_turn`).
+                    herd.worked_this_turn = true;
+                    // **Corral (Rung 1c) — the pen is a managed POPULATION, not a flat rate.** A Hunt
+                    // assignment on a **corralled** herd is herding/tending it, not hunting, and the
+                    // turn has two halves (`docs/plan_corral_managed_population.md` §3.1):
+                    //
+                    // 1. **FEED.** The pen demands `pen.upkeep_per_biomass × biomass` from the
+                    //    keeper's own larder — a penned herd is confined and cannot graze, so the
+                    //    keeper must bring it food. `LocalStore::take` returns what it *actually*
+                    //    took, which is the partial-payment primitive: `fed_fraction = paid / demand`.
+                    //    A keeper who cannot pay starves the herd (next turn's `advance_husbandry`
+                    //    reads the flag and shrinks it — the deliberate one-turn lag).
+                    // 2. **HARVEST.** The keeper takes the *pen's* MSY (`corral_provisions` →
+                    //    `sustainable_yield` under the pen's ecology, `r` = 0.60), and — unlike the
+                    //    retired flat rate — this **draws the herd down**, which is exactly what makes
+                    //    it sustainable: the herd converges on `K_pen/2` and pays `r·K/4` forever.
+                    //
+                    // The credited yield is **gross** (the feed is a separate debit above), so the
+                    // player sees both halves of the trade rather than one netted number. Marks the
+                    // herd tended so it doesn't escape in `advance_husbandry`. The animal mirror of
+                    // the tended-patch arm in Forage.
                     if herd.is_corralled() {
                         herd.corralled_tended_this_turn = true;
+                        let demand = pen_upkeep(herd, &fauna);
+                        let paid = cohort.stores.take(FOOD, scalar_from_f32(demand)).to_f32();
+                        // Nothing demanded (a zero-biomass pen / a zero upkeep lever) = fully fed.
+                        herd.pen_fed_fraction = if demand > 0.0 {
+                            (paid / demand).clamp(0.0, 1.0)
+                        } else {
+                            1.0
+                        };
                         // Shared with the pre-commit forecast (`fauna::hunt_forecast`) so the
                         // client's "expected yield" for a corralled herd is exactly what it is paid.
+                        let take_biomass =
+                            fauna::pen_yield_biomass(herd.biomass, herd.carrying_capacity, &fauna);
+                        herd.biomass -= take_biomass;
                         let provisions =
-                            scalar_from_f32(corral_provisions(herd.biomass, &fauna, mult_f));
+                            scalar_from_f32(hunt_provisions(take_biomass, &fauna, mult_f));
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
                         }
                         let tended = provisions.to_f32();
                         // A corralled herd is worker-tended maintenance (the animal mirror of the
-                        // tended patch): a fixed one-worker "need", not scaling with the take.
+                        // tended patch): a fixed one-worker "need", not scaling with the take. And a
+                        // *managed* harvest never overdraws — it takes exactly the MSY — so
+                        // `sustainable == actual` (no overdraw ⚠).
                         yields[idx] = SourceYield {
                             actual: tended,
                             sustainable: tended,
@@ -4973,10 +5033,14 @@ pub fn advance_labor_allocation(
                     // biomass, in provisions (same `provisions_per_biomass` + output multiplier as
                     // the actual take). An overdraw (Surplus/Eradicate) reads `actual > sustainable`;
                     // a Sustain draw reads `actual ≈ sustainable`.
-                    let sustainable =
-                        sustainable_yield(biomass_before, herd.carrying_capacity, &fauna.ecology)
-                            * hunt.provisions_per_biomass
-                            * mult_f;
+                    // The herd's OWN ecology/capacity (`herd_ecology`/`herd_capacity` — a tamed herd
+                    // grows 3× faster, so its sustainable skim is 3× a wild one's).
+                    let sustainable = sustainable_yield(
+                        biomass_before,
+                        herd_capacity(herd, &fauna),
+                        herd_ecology(herd, &fauna),
+                    ) * hunt.provisions_per_biomass
+                        * mult_f;
                     // Overstaffing: invert the biomass take by the per-hunter throughput (hunt has no
                     // seasonal factor, unlike forage).
                     let workers_needed = workers_needed_for_take(
@@ -7202,7 +7266,7 @@ mod labor_yield_tests {
             height: 1,
         });
 
-        let ecology = world.resource::<FaunaConfigHandle>().get().ecology.clone();
+        let fauna = world.resource::<FaunaConfigHandle>().get();
         let mut herd = Herd::new(
             HERD_ID.to_string(),
             "Test Game".to_string(),
@@ -7211,7 +7275,8 @@ mod labor_yield_tests {
             biomass,
             CAP,
         );
-        herd.refresh_ecology_phase(&ecology);
+        herd.refresh_ecology_phase(&fauna);
+        drop(fauna);
         let mut registry = HerdRegistry::default();
         registry.herds.push(herd);
         world.insert_resource(registry);
@@ -7684,12 +7749,12 @@ mod labor_yield_tests {
     /// Re-seat the test herd at `biomass`/`cap` (the harness's default 100-cap herd saturates every
     /// hunt policy ceiling with a single 40-biomass hunter, so a labor-bound hunt needs a bigger one).
     fn reseat_herd(world: &mut World, biomass: f32, cap: f32) {
-        let ecology = world.resource::<FaunaConfigHandle>().get().ecology.clone();
+        let fauna = world.resource::<FaunaConfigHandle>().get();
         let mut registry = world.resource_mut::<HerdRegistry>();
         let herd = &mut registry.herds[0];
         herd.carrying_capacity = cap;
         herd.biomass = biomass;
-        herd.refresh_ecology_phase(&ecology);
+        herd.refresh_ecology_phase(&fauna);
     }
 
     /// **Forage forecast == actual.** For every policy × staffing (labor-bound, ceiling-bound), the
@@ -8210,8 +8275,15 @@ mod labor_yield_tests {
         };
 
         // Baseline Sustain hunt yield on the same herd (ample hunters → ceiling-bound = MSY).
+        // **It must be DOMESTICATED too**: Corral can only be worked on a domesticated herd, and the
+        // husbandry ladder means a tamed herd lives on the *pastoral* ecology (`r` = 0.15, 3× wild).
+        // Comparing the dip against a *wild* herd's MSY would compare two different rungs.
         let (mut world, tile) = world_with_source(CAP);
         reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            registry.herds[0].claim_domestication(BAND_FACTION);
+        }
         let sustain_band = spawn_band(
             &mut world,
             tile,
@@ -8269,6 +8341,13 @@ mod labor_yield_tests {
                 .is_corralled(),
             "sustained Corral work finishes the pen"
         );
+        // This harness runs the Population stage ONLY — no Logistics, so the herd never regrows while
+        // the pen is built, and 25 turns of the build dip draw it below the managed harvest's
+        // escapement point (`K/2`), where a pen correctly pays nothing. (In the live turn loop
+        // `advance_herds` regrows it every turn — a real campaign's herd *rises* during the build,
+        // because the dip is well under its MSY.) Re-seat it at capacity so this test measures what it
+        // is about: the penned rung out-paying the build dip.
+        reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
         world.run_system_once(advance_labor_allocation);
         let corral_yield = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
         assert!(

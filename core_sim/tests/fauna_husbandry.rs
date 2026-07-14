@@ -13,7 +13,7 @@ use core_sim::{
     scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventEntry, CommandEventKind,
     CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory,
     FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry, GenerationId,
-    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
     LaborAssignment, LaborConfigHandle, LaborTarget, LocalStore, MapPresets, MapPresetsHandle,
     MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
@@ -159,6 +159,72 @@ fn run_turns_untended(app: &mut App, turns: u32) {
     }
 }
 
+/// The live herd (panics if it despawned — every test here expects it to survive).
+fn herd_of(app: &App, id: &str) -> Herd {
+    app.world
+        .resource::<HerdRegistry>()
+        .find(id)
+        .cloned()
+        .expect("herd persists")
+}
+
+/// Re-seat a herd at a chosen carrying capacity / biomass — how a *species*' K is put under test
+/// without depending on which species the map happened to spawn.
+fn reseat(app: &mut App, id: &str, cap: f32, biomass: f32) {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+    herd.carrying_capacity = cap;
+    herd.biomass = biomass;
+    herd.refresh_ecology_phase(&fauna);
+}
+
+fn domesticate(app: &mut App, id: &str) {
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+    herd.claim_domestication(FactionId(0));
+}
+
+/// The single band's FOOD larder.
+fn larder_of(app: &App, band: bevy::prelude::Entity) -> f32 {
+    app.world
+        .get::<PopulationCohort>(band)
+        .expect("band exists")
+        .stores
+        .get(FOOD)
+        .to_f32()
+}
+
+/// The provisions the band's (only) assignment produced last turn — the retained yield telemetry, i.e.
+/// what the sim *actually paid*, not a preview.
+fn yield_of(app: &App, band: bevy::prelude::Entity) -> f32 {
+    app.world
+        .get::<LaborAllocation>(band)
+        .expect("band exists")
+        .last_yields
+        .first()
+        .map(|y| y.actual)
+        .unwrap_or(0.0)
+}
+
+/// Top the band's larder up to `amount` (so a keeper can always pay its pen's feed).
+fn stock_larder(app: &mut App, band: bevy::prelude::Entity, amount: f32) {
+    let mut cohort = app
+        .world
+        .get_mut::<PopulationCohort>(band)
+        .expect("band exists");
+    cohort.stores.set(FOOD, scalar_from_f32(amount));
+}
+
+/// Empty the band's larder (so a keeper *cannot* pay its pen's feed → the herd starves).
+fn drain_larder(app: &mut App, band: bevy::prelude::Entity) {
+    let mut cohort = app
+        .world
+        .get_mut::<PopulationCohort>(band)
+        .expect("band exists");
+    cohort.stores.set(FOOD, scalar_zero());
+}
+
 fn progress_of(app: &App, id: &str) -> f32 {
     app.world
         .resource::<HerdRegistry>()
@@ -278,35 +344,134 @@ fn domesticated_herd_is_collapse_immune() {
     );
 }
 
-/// A domesticated herd yields steady provisions to its owner each turn without depleting.
+/// **You are not paid twice for the same animals.** The passive pastoral rung is what a herd pays when
+/// *nobody* is working it; a band with a labor assignment on it is already paid through the Hunt arm.
+/// Paying both stacks them — and it is what turned the corral's *investment cost* into a profit.
 #[test]
-fn domesticated_herd_yields_provisions() {
+fn a_domesticated_herd_worked_by_labor_is_not_also_paid_the_passive_rung() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    let biomass_before = {
+    let cap = herd_of(&app, &id).carrying_capacity;
+    domesticate(&mut app, &id);
+    reseat(&mut app, &id, cap, cap);
+
+    // Nobody working it → the passive rung pays.
+    app.world.run_system_once(advance_herds);
+    app.world.run_system_once(advance_husbandry);
+    let passive = provisions_f32(&mut app);
+    assert!(
+        passive > 0.0,
+        "an unworked tame herd pays its owner passively"
+    );
+
+    // Now a band works it (any policy). Population sets `worked_this_turn`; the NEXT Logistics
+    // `advance_husbandry` must skip the passive payment (the deliberate one-turn lag).
+    let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+    app.world.run_system_once(advance_labor_allocation);
+    drain_larder(&mut app, band);
+    let before = provisions_f32(&mut app);
+
+    app.world.run_system_once(advance_herds);
+    app.world.run_system_once(advance_husbandry);
+
+    let passive_while_worked = provisions_f32(&mut app) - before;
+    assert!(
+        passive_while_worked.abs() < 1e-4,
+        "a herd worked by labor must NOT also collect the passive rung (got {passive_while_worked})"
+    );
+}
+
+/// **The Corral build is a genuine net LOSS while it runs** — that is the investment the whole
+/// intensification ladder is built on. Before the no-double-pay fix the builder collected the dip
+/// (0.25 × MSY) *plus* the passive rung (MSY), i.e. **more** than walking away — corralling was pure
+/// upside and there was no decision.
+#[test]
+fn building_a_corral_costs_more_than_walking_away() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    let cap = herd_of(&app, &id).carrying_capacity;
+
+    // (a) Walk away: nobody works the tame herd → it pays the full passive pastoral rung.
+    domesticate(&mut app, &id);
+    reseat(&mut app, &id, cap, cap);
+    app.world.run_system_once(advance_herds);
+    app.world.run_system_once(advance_husbandry);
+    let walk_away = provisions_f32(&mut app);
+
+    // (b) Build the pen: a band works the same herd under Corral. It collects the dip and NOTHING
+    // else — the passive rung is skipped because the band is working the herd.
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    let cap = herd_of(&app, &id).carrying_capacity;
+    domesticate(&mut app, &id);
+    reseat(&mut app, &id, cap, cap);
+    grant_herding(&mut app);
+    let builder = spawn_hunter(&mut app, &id, FollowPolicy::Corral);
+    // Turn 1 seeds `worked_this_turn`; turn 2 is the steady state (the passive rung is skipped).
+    run_turns_with_hunt(&mut app, 1);
+    drain_larder(&mut app, builder);
+    let before = provisions_f32(&mut app);
+    run_turns_with_hunt(&mut app, 1);
+    let building = provisions_f32(&mut app) - before;
+
+    let dip_fraction = app
+        .world
+        .resource::<FaunaConfigHandle>()
+        .get()
+        .husbandry
+        .corralling_yield_fraction;
+    assert!(
+        (building - dip_fraction * walk_away).abs() < walk_away * 0.05,
+        "building pays only the dip ({dip_fraction} × the pastoral MSY {walk_away}): got {building}"
+    );
+    assert!(
+        building < walk_away,
+        "**the pen must COST something**: building ({building}/turn) has to be a real loss against \
+         walking away ({walk_away}/turn), or corralling is free and there is no decision"
+    );
+}
+
+/// **The pastoral rung pays MSY, and the harvest DRAWS THE HERD DOWN** — which is what makes it
+/// sustainable (the flow-based ladder, `docs/plan_corral_managed_population.md`). It is still passive
+/// (no worker) and still split across the owner's bands; it is just no longer a share of standing
+/// *stock* that printed food forever.
+#[test]
+fn domesticated_herd_harvests_its_pastoral_msy_and_draws_the_herd_down() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    let (biomass_before, cap) = {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.claim_domestication(FactionId(0));
-        herd.biomass
+        // At capacity: MSY = r·K/4 (the ceiling plateaus above K/2).
+        herd.biomass = herd.carrying_capacity;
+        (herd.biomass, herd.carrying_capacity)
     };
     assert_eq!(provisions(&mut app), 0);
 
     app.world.run_system_once(advance_husbandry);
 
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let pastoral_r = fauna.husbandry.pastoral.ecology.regrowth_rate;
+    let expected_take = pastoral_r * cap / 4.0;
+    let expected_provisions = expected_take * fauna.hunt.provisions_per_biomass;
+    drop(fauna);
+
+    let paid = provisions_f32(&mut app);
     assert!(
-        provisions(&mut app) > 0,
-        "a domesticated herd should pay its owner provisions"
+        (paid - expected_provisions).abs() < expected_provisions * 0.02,
+        "the pastoral yield is the pastoral MSY: expected {expected_provisions}, got {paid}"
     );
-    // The yield is a sustainable harvest — it does not reduce the herd.
+    // **The premise that used to be false:** the managed harvest is a real take out of the herd.
     let after = app
         .world
         .resource::<HerdRegistry>()
         .find(&id)
         .unwrap()
         .biomass;
-    assert_eq!(
-        after, biomass_before,
-        "husbandry yield must not deplete biomass"
+    assert!(
+        (biomass_before - after - expected_take).abs() < expected_take * 0.02,
+        "the harvest draws the herd down by exactly its MSY: {biomass_before} -> {after}"
     );
 }
 
@@ -405,62 +570,285 @@ fn corralled_herd_stops_roaming() {
     }
 }
 
-/// A corralled herd tended by a Hunt assignment pays the keeper band place-local at the higher corral
-/// rate WITHOUT drawing the herd down, and stays penned (does not escape).
+/// **The pen is a managed population.** A tended corral harvests the *pen's* MSY (`r` = 0.60) each
+/// turn, which **draws the herd down** — and that is exactly what makes it sustainable: taking MSY
+/// while the herd regrows logistically converges it on `K_pen/2` and holds it there, paying `r·K/4`
+/// forever. (The retired flat rate never drew the herd down at all: a penned herd parked at capacity
+/// and printed food.)
 #[test]
-fn tended_corral_pays_keeper_place_local_no_drawdown() {
+fn tended_corral_harvests_msy_and_settles_at_half_capacity() {
+    const CONVERGENCE_TURNS: u32 = 80;
+
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    let _pen = corral_herd(&mut app, &id);
-    // The mobile even-split rate vs the higher penned rate.
-    let (mobile_rate, corral_rate, cap) = {
+    corral_herd(&mut app, &id);
+    let cap = herd_of(&app, &id).carrying_capacity;
+    let (pen_r, prov_rate) = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        let cap = app
-            .world
-            .resource::<HerdRegistry>()
-            .find(&id)
-            .unwrap()
-            .carrying_capacity;
         (
-            fauna.husbandry.provisions_per_biomass,
-            fauna.husbandry.corral_provisions_per_biomass,
-            cap,
+            fauna.husbandry.pen.ecology.regrowth_rate,
+            fauna.hunt.provisions_per_biomass,
         )
     };
-    // A Hunt assignment on the penned herd = herding/tending it.
-    spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+    // MSY = r·K/4 (the ceiling plateaus for any biomass at or above K/2).
+    let msy_provisions = pen_r * cap / 4.0 * prov_rate;
 
-    run_turns_with_hunt(&mut app, 4);
+    // A Hunt assignment on the penned herd = herding/tending it. Keep its larder stocked so the pen's
+    // feed is always paid (the starvation path has its own test).
+    let keeper = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+    stock_larder(&mut app, keeper, cap);
 
-    let herd_biomass = app
-        .world
-        .resource::<HerdRegistry>()
-        .find(&id)
-        .unwrap()
-        .biomass;
+    let mut last_yield = 0.0f32;
+    for _ in 0..CONVERGENCE_TURNS {
+        stock_larder(&mut app, keeper, cap); // never let the feed run out
+        run_turns_with_hunt(&mut app, 1);
+        last_yield = yield_of(&app, keeper);
+    }
+
+    let herd = herd_of(&app, &id);
+    assert!(herd.is_corralled(), "a tended corral stays penned");
+    // **Converged on the MSY point**, not parked at capacity.
     assert!(
-        (herd_biomass - cap).abs() < 1e-3,
-        "a tended corral is a managed harvest — no draw-down: {herd_biomass} vs {cap}"
+        (herd.biomass - cap * 0.5).abs() < cap * 0.05,
+        "a harvested pen settles at K/2 ({}): got {}",
+        cap * 0.5,
+        herd.biomass
+    );
+    // ...and it pays the full MSY there, stably, forever.
+    assert!(
+        (last_yield - msy_provisions).abs() < msy_provisions * 0.05,
+        "the settled pen pays r·K/4 × p = {msy_provisions}: got {last_yield}"
+    );
+}
+
+/// **The pen EATS.** Its keeper's larder is debited exactly `pen.upkeep_per_biomass × biomass` every
+/// turn it tends — a confined herd cannot graze, so the keeper brings it food.
+#[test]
+fn tending_a_pen_debits_the_keepers_larder_by_its_upkeep() {
+    const STOCK: f32 = 500.0;
+
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    corral_herd(&mut app, &id);
+    let biomass = herd_of(&app, &id).biomass;
+    let (upkeep_rate, pen_r, prov_rate) = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        (
+            fauna.husbandry.pen.upkeep_per_biomass,
+            fauna.husbandry.pen.ecology.regrowth_rate,
+            fauna.hunt.provisions_per_biomass,
+        )
+    };
+    let keeper = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+    stock_larder(&mut app, keeper, STOCK);
+
+    // One Population turn only, so the herd's biomass (and thus the demand) is the one we measured.
+    app.world.run_system_once(advance_labor_allocation);
+
+    let expected_upkeep = upkeep_rate * biomass;
+    let gross = yield_of(&app, keeper);
+    let expected_gross = pen_r * herd_of(&app, &id).carrying_capacity / 4.0 * prov_rate;
+    assert!(
+        (gross - expected_gross).abs() < expected_gross * 0.02,
+        "the credited yield is GROSS (upkeep is a separate debit): {gross} vs {expected_gross}"
+    );
+    // larder = stock − upkeep + gross yield.
+    let expected_larder = STOCK - expected_upkeep + gross;
+    let larder = larder_of(&app, keeper);
+    assert!(
+        (larder - expected_larder).abs() < 0.05,
+        "the pen debits exactly upkeep_per_biomass × biomass ({expected_upkeep}): \
+         larder {larder} vs expected {expected_larder}"
     );
     assert!(
-        app.world
-            .resource::<HerdRegistry>()
-            .find(&id)
-            .unwrap()
-            .is_corralled(),
-        "a tended corral stays penned"
+        expected_upkeep > 0.0 && expected_upkeep < gross,
+        "the pen must cost real food, and still net positive: upkeep {expected_upkeep}, yield {gross}"
     );
-    let paid = provisions_f32(&mut app);
-    // Four turns of place-local corral yield; each ≈ cap × corral_rate (output mult 1.0).
-    let expected_one_turn = cap * corral_rate;
+}
+
+/// **An underfed pen starves — and recovers.** A keeper with an empty larder cannot pay the feed, so
+/// the herd shrinks (its yield falling with it) and floors at the extinction floor rather than
+/// despawning or losing the pen. Feed it again and it grows back. Starving your animals to feed your
+/// people is a *decision*, not an accident.
+#[test]
+fn an_underfed_pen_shrinks_to_a_remnant_then_recovers_when_fed() {
+    const STARVE_TURNS: u32 = 40;
+    const RECOVER_TURNS: u32 = 30;
+
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    corral_herd(&mut app, &id);
+    let cap = herd_of(&app, &id).carrying_capacity;
+    let floor = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        fauna.husbandry.pen.ecology.extinction_floor * cap * fauna.husbandry.pen.capacity_fraction
+    };
+    let keeper = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+
+    // Starve it: drain the keeper's larder every turn, so the feed can never be paid.
+    let mut previous = herd_of(&app, &id).biomass;
+    for _ in 0..STARVE_TURNS {
+        drain_larder(&mut app, keeper);
+        run_turns_with_hunt(&mut app, 1);
+        let now = herd_of(&app, &id).biomass;
+        assert!(
+            now <= previous + 1e-3,
+            "an unfed pen must never grow: {previous} -> {now}"
+        );
+        previous = now;
+    }
+
+    let starved = herd_of(&app, &id);
     assert!(
-        paid > expected_one_turn * 0.5,
-        "the keeper collects the corral's place-local yield: {paid}"
+        starved.is_corralled(),
+        "a starved pen is NOT lost — it withers"
     );
-    // The corral rate out-pays the mobile even-split rate (the intensification incentive).
     assert!(
-        corral_rate > mobile_rate,
-        "penning pays more per biomass than mobile pastoralism"
+        (starved.biomass - floor).abs() < floor * 0.05,
+        "a starved herd converges on the extinction floor ({floor}), not zero and not oscillating: {}",
+        starved.biomass
+    );
+    // The famine is announced exactly once (edge-gated), naming the species, never the internal id.
+    let lines = corral_feed_lines(&app);
+    let starving: Vec<_> = lines
+        .iter()
+        .filter(|e| {
+            e.detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("status=starving")
+        })
+        .collect();
+    assert_eq!(starving.len(), 1, "the famine is announced ONCE: {lines:?}");
+    assert!(
+        starving[0].label.contains(&starved.species) && starving[0].label.contains("starving"),
+        "the line names the species and says what happened: {}",
+        starving[0].label
+    );
+
+    // Feed it again → it recovers (the pen's r = 0.60 is the fastest curve on the ladder).
+    let remnant = herd_of(&app, &id).biomass;
+    for _ in 0..RECOVER_TURNS {
+        stock_larder(&mut app, keeper, cap);
+        run_turns_with_hunt(&mut app, 1);
+    }
+    let recovered = herd_of(&app, &id);
+    assert!(
+        recovered.biomass > remnant * 2.0,
+        "a re-fed pen recovers: {remnant} -> {}",
+        recovered.biomass
+    );
+    assert!(recovered.is_corralled(), "and it still has its pen");
+}
+
+/// **The ladder is monotone for EVERY species** — Rabbit Warren (K=200) → Red Deer (K=1200) →
+/// Thunder Mammoths (K=12000): `wild Sustain MSY < pastoral < pen net of upkeep`. A small-herd
+/// inversion is exactly the bug class that bit the expedition forecast, so this is asserted across the
+/// whole species table, not one species. Every number below is **measured from a real sim run** (a
+/// band's actual take / a real larder debit), never arithmetic.
+#[test]
+fn the_husbandry_ladder_is_monotone_for_every_species() {
+    const MEASURE_STOCK: f32 = 5_000.0;
+
+    let species_caps: Vec<(String, f32)> = {
+        let fauna = FaunaConfigHandle::default().get();
+        ["rabbit", "deer", "mammoth"]
+            .iter()
+            .map(|key| {
+                let def = &fauna.species[*key];
+                (def.display_name.clone(), def.carrying_capacity())
+            })
+            .collect()
+    };
+
+    // Measured twice: **at capacity** (a freshly-penned herd, `B = K`) and at the **settled operating
+    // point** (`B* = K/2` — where a harvested herd actually converges; the point the pen's
+    // net-positive invariant is derived against). Every row runs a **full turn in real stage order**
+    // (Logistics: `advance_herds` regrows → `advance_husbandry`; Population:
+    // `advance_labor_allocation`), so the numbers are what the sim pays, not what a single system does
+    // in isolation. The gross yields match at both biomasses (the MSY ceiling plateaus above `K/2`);
+    // the **feed** is what differs, because the feed follows the herd — and it is charged on the
+    // *post-regrowth* biomass (you feed every animal in the pen, including the ones you are about to
+    // harvest).
+    for (label, biomass_fraction) in [
+        ("at capacity (B = K)", 1.0f32),
+        ("at the settled operating point (B* = K/2)", 0.5f32),
+    ] {
+        println!("\n=== husbandry ladder, MEASURED {label} (provisions/turn) ===");
+        println!(
+            "{:<18} {:>8} {:>9} {:>9} {:>11} {:>9} {:>9}",
+            "species", "K", "wild", "pastoral", "pen gross", "upkeep", "pen net"
+        );
+        for (species, cap) in &species_caps {
+            let (species, cap) = (species.clone(), *cap);
+            let biomass = cap * biomass_fraction;
+
+            // --- Wild Sustain: a band hunting a wild herd — its ACTUAL take, from the yield telemetry.
+            let mut app = spawn_world();
+            let id = prime_thriving_herd(&mut app);
+            reseat(&mut app, &id, cap, biomass);
+            let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+            run_turns_with_hunt(&mut app, 1);
+            let wild = yield_of(&app, band);
+
+            // --- Pastoral (passive, no worker): the faction's larder credit. The yield is split
+            // evenly across ALL the owner's bands (the start profile spawns some too), so measure the
+            // faction total, not one band's larder.
+            let mut app = spawn_world();
+            let id = prime_thriving_herd(&mut app);
+            reseat(&mut app, &id, cap, biomass);
+            domesticate(&mut app, &id);
+            app.world.run_system_once(advance_herds);
+            app.world.run_system_once(advance_husbandry);
+            let pastoral = provisions_f32(&mut app);
+
+            // --- Pen: the gross yield credited + the feed debited, both read off the keeper's larder.
+            let mut app = spawn_world();
+            let id = prime_thriving_herd(&mut app);
+            reseat(&mut app, &id, cap, cap);
+            corral_herd(&mut app, &id);
+            reseat(&mut app, &id, cap, biomass); // corral_herd seats at cap; re-seat for B*
+            let keeper = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+            stock_larder(&mut app, keeper, MEASURE_STOCK);
+            run_turns_with_hunt(&mut app, 1);
+            let pen_gross = yield_of(&app, keeper);
+            // larder = stock − upkeep + gross ⇒ upkeep = stock + gross − larder.
+            let upkeep = MEASURE_STOCK + pen_gross - larder_of(&app, keeper);
+            let pen_net = pen_gross - upkeep;
+
+            println!(
+                "{species:<18} {cap:>8.0} {wild:>9.3} {pastoral:>9.3} {pen_gross:>11.3} {upkeep:>9.3} {pen_net:>9.3}"
+            );
+
+            assert_ladder_is_monotone(&species, wild, pastoral, pen_gross, upkeep, pen_net);
+        }
+    }
+    println!();
+}
+
+/// The ladder's ordering, asserted on **measured** numbers: `wild < pastoral < pen net of upkeep`, and
+/// the pen must cost real food while still netting positive. A small-herd inversion is exactly the bug
+/// class that bit the expedition forecast, so this runs for every species at every biomass measured.
+fn assert_ladder_is_monotone(
+    species: &str,
+    wild: f32,
+    pastoral: f32,
+    pen_gross: f32,
+    upkeep: f32,
+    pen_net: f32,
+) {
+    assert!(
+        wild > 0.0 && pastoral > wild,
+        "{species}: pastoral ({pastoral}) must out-pay wild Sustain ({wild})"
+    );
+    assert!(
+        pen_net > pastoral,
+        "{species}: the pen NET of upkeep ({pen_net}) must out-pay the free pastoral rung \
+         ({pastoral}) — otherwise penning is irrational"
+    );
+    assert!(
+        upkeep > 0.0 && upkeep < pen_gross,
+        "{species}: the pen must cost real food ({upkeep}) and still net positive (gross {pen_gross})"
     );
 }
 
@@ -633,21 +1021,21 @@ fn half_built_pen_keeps_progress_when_its_keeper_leaves() {
     );
 }
 
-/// Regression (fully-fractional FOOD income): a domesticated herd whose per-turn yield is below
-/// 1.0 provisions (biomass 30 × `provisions_per_biomass` 0.01 = 0.3) must still credit the owner's
-/// larder.
+/// Regression (fully-fractional FOOD income): a small domesticated herd whose per-turn MSY harvest is
+/// below 1.0 provisions must still credit the owner's larder (rounding to an i64 used to drop it).
+/// Seeded above the Allee threshold (0.15 × K) and below the MSY point, so the harvest is a genuine
+/// sub-unit flow rather than zero.
 #[test]
 fn sub_unit_husbandry_yield_credits_larder() {
-    const SUB_UNIT_BIOMASS: f32 = 30.0;
+    /// Just above the MSY/escapement point (`K/2`): the managed harvest takes the thin standing
+    /// surplus above it, which is a fraction of a provision for every shipped species.
+    const SUB_UNIT_CAP_FRACTION: f32 = 0.52;
 
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
-    {
-        let mut registry = app.world.resource_mut::<HerdRegistry>();
-        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-        herd.claim_domestication(FactionId(0));
-        herd.biomass = SUB_UNIT_BIOMASS;
-    }
+    let cap = herd_of(&app, &id).carrying_capacity;
+    domesticate(&mut app, &id);
+    reseat(&mut app, &id, cap, cap * SUB_UNIT_CAP_FRACTION);
     assert_eq!(provisions_f32(&mut app), 0.0, "larder starts empty");
 
     app.world.run_system_once(advance_husbandry);

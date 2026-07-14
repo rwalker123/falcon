@@ -118,14 +118,14 @@ pub use expedition_config::{
     ExpeditionConfigMetadata, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
-    advance_herds, advance_husbandry, forecast_expected_take, hunt_policy_ceiling, hunt_provisions,
-    hunt_source_yield_preview, repopulate_fauna, spawn_initial_herds, EcologyPhase, Herd,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, RoamState,
-    SourceYieldForecast, HERDING_DISCOVERY_ID,
+    advance_herds, advance_husbandry, forecast_expected_take, herd_capacity, herd_ecology,
+    hunt_policy_ceiling, hunt_provisions, hunt_source_yield_preview, pen_upkeep, repopulate_fauna,
+    spawn_initial_herds, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    HerdTelemetryEntry, RoamState, SourceYieldForecast, HERDING_DISCOVERY_ID,
 };
 pub use fauna_config::{
-    load_fauna_config_from_env, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata, SizeClass,
-    SpeciesDef, BUILTIN_FAUNA_CONFIG,
+    load_fauna_config_from_env, EcologyConfig, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata,
+    SizeClass, SpeciesDef, BUILTIN_FAUNA_CONFIG,
 };
 pub use food::{
     classify_food_module, classify_food_module_from_traits, FoodModule, FoodModuleTag,

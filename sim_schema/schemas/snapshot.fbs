@@ -967,6 +967,18 @@ table HerdTelemetryState {
   // HUNT-ONLY (the patch twin is Cultivate).
   ceilingCorral:float = 0;
   corralYield:float = 0;
+  // --- The pen as a managed POPULATION (appended) --- a corralled herd is a population in its own
+  // right: it EATS every turn, and underfeeding shrinks it (docs/plan_corral_managed_population.md).
+  // `corralYield` above is the GROSS managed harvest; the feed is this separate debit, so the client
+  // can show both halves of the trade rather than one netted number.
+  // `penUpkeep` = food/turn the pen demands from its keeper's larder at the herd's CURRENT biomass
+  // (= pen.upkeep_per_biomass × biomass). 0 when the herd is not corralled.
+  penUpkeep:float = 0;
+  // `penFedFraction` = the fraction of that demand the keeper actually paid last turn. 1.0 = fully
+  // fed (also the value for a herd that is not penned); < 1 = STARVING — the herd is shrinking by
+  // pen.starve_shrink_rate × (1 - penFedFraction) × biomass each turn, and its yield with it. It
+  // recovers when fed again (it never despawns and never loses the pen). Render a warning.
+  penFedFraction:float = 1;
   // Per-policy BAND / local-hunt take ceilings for this herd's current state — one entry per
   // FollowPolicy valid on a Hunt assignment: the four extractive rungs PLUS corral (cultivate is
   // forage-only, so a herd has no cultivate row). Phase-correct: a penned herd's rows all read its
