@@ -21,13 +21,13 @@ use sim_runtime::{
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FoodModuleState,
     ForagePatchState, ForageState, GenerationState, GreatDiscoveryDefinitionState,
     GreatDiscoveryProgressState, GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdRoamState,
-    HerdState, HerdTelemetryState, HydrologyOverlayState, InfluentialIndividualState,
-    IntensificationKnowledgeState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
-    KnowledgeTimelineEventState, LaborAssignmentState, LogisticsLinkState, MountainKind,
-    PendingMigrationState, PopulationCohortState,
-    PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
-    PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState,
-    SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
+    HerdState, HerdTelemetryState, HuntPolicyCeilingState, HuntTripEstimateState,
+    HydrologyOverlayState, InfluentialIndividualState, IntensificationKnowledgeState,
+    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
+    LaborAssignmentState, LogisticsLinkState, MountainKind, PendingMigrationState,
+    PopulationCohortState, PopulationDemographicsState as SchemaPopulationDemographicsState,
+    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState,
+    ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, StartMarkerState, TerrainOverlayState, TerrainSample,
     TileState, TradeLinkKnowledge, TradeLinkState, VictoryModeSnapshotState, VictoryResultState,
@@ -48,10 +48,12 @@ use crate::{
         CultureTensionRecord, CultureTraitAxis as SimCultureTraitAxis,
     },
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
+    expedition_config::ExpeditionConfig,
     fauna::{
-        hunt_forecast, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, HERDING_DISCOVERY_ID,
+        hunt_forecast, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, SourceYieldForecast,
+        HERDING_DISCOVERY_ID,
     },
-    fauna_config::{FaunaConfig, FaunaConfigHandle},
+    fauna_config::FaunaConfig,
     food::FoodModuleTag,
     forage::{forage_forecast, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID},
     generations::{GenerationProfile, GenerationRegistry},
@@ -70,7 +72,7 @@ use crate::{
         encode_ledger_key, KnowledgeLedger, KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle,
         KnowledgeSnapshotPayload, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
     },
-    labor_config::ForageLaborConfig,
+    labor_config::{ForageLaborConfig, LaborConfig},
     map_preset::MapPresetsHandle,
     metrics::SimulationMetrics,
     orders::FactionId,
@@ -88,7 +90,10 @@ use crate::{
     snapshot_overlays_config::{SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle},
     start_profile::{snapshot_profiles, CampaignLabel, FogMode, StartProfilesHandle},
     supply::SupplyNetworkMembership,
-    systems::{food_demand, tile_morale_pressure, MoralePressureConfig},
+    systems::{
+        food_demand, hunt_per_worker_provisions, hunt_trip_forecast, tile_morale_pressure,
+        MoralePressureConfig,
+    },
     terrain::terrain_definition,
     turn_pipeline_config::TurnPipelineConfigHandle,
     victory::VictoryState,
@@ -131,10 +136,6 @@ pub struct SnapshotContext<'w> {
     /// (`forage_registry`) so a rollback rewinds patch biomass / ecology phase. Mirrors
     /// `herd_registry` — see the forage-depletion note in `core_sim/CLAUDE.md`.
     pub forage_registry: Res<'w, ForageRegistry>,
-    /// Fauna tuning (ecology / hunt / market / husbandry). Read at capture to compute each herd's
-    /// **pre-commit yield forecast** (`fauna::hunt_forecast`) — the client's live "Expected yield" +
-    /// worker-stepper cap while the player composes a Hunt assignment.
-    pub fauna_config: Res<'w, FaunaConfigHandle>,
     pub fog_reveals: Res<'w, FogRevealLedger>,
     pub hydrology: Res<'w, HydrologyState>,
     pub elevation: Res<'w, ElevationField>,
@@ -156,6 +157,12 @@ pub struct SnapshotContext<'w> {
     pub demographics: Res<'w, DemographicsConfigHandle>,
     pub wellbeing: Res<'w, crate::wellbeing_config::WellbeingConfigHandle>,
     pub labor: Res<'w, crate::labor_config::LaborConfigHandle>,
+    /// Fauna tuning (ecology / hunt / market / husbandry). Read at capture for each herd's
+    /// **pre-commit yield forecast** (`fauna::hunt_forecast` — the client's live "Expected yield" +
+    /// worker-stepper cap and the exported per-policy `hunt_policy_ceilings`), the per-cohort hunt
+    /// throughput, and the pre-launch expedition trip estimates (see `core_sim/CLAUDE.md` →
+    /// Scouting & Hunting Expeditions → Snapshot).
+    pub fauna: Res<'w, crate::fauna_config::FaunaConfigHandle>,
     pub expedition: Res<'w, crate::expedition_config::ExpeditionConfigHandle>,
     pub settlement_stage: Res<'w, crate::settlement_stage_config::SettlementStageConfigHandle>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
@@ -1348,7 +1355,6 @@ pub fn capture_snapshot(
         herds,
         herd_registry,
         forage_registry,
-        fauna_config,
         hydrology,
         fog_reveals,
         elevation,
@@ -1369,6 +1375,7 @@ pub fn capture_snapshot(
         demographics,
         wellbeing,
         labor,
+        fauna,
         expedition,
         settlement_stage,
         supply_membership,
@@ -1445,15 +1452,17 @@ pub fn capture_snapshot(
     // Effective hunt reach (= `band_work_range + hunt_leash_tiles`, the leash a Hunt lapses past),
     // echoed per-band so the client offers a local hunt vs a hunting expedition by herd distance.
     let hunt_reach = labor_config.hunt_reach();
-    // Server-side hard cap on an expedition party (`expedition_config.json`). Echoed per-cohort —
-    // same idiom as `band_work_range` — so the client's outfit stepper can pre-clamp to
-    // `min(idle_workers, max_expedition_party_size)` (the stepper lives on the resident-band panel,
-    // so it's populated for every cohort, not just expeditions).
+    // Expedition levers echoed per-cohort — same idiom as `band_work_range`: global config today,
+    // surfaced per-band so the client reads them off the selected band. Populated for EVERY cohort
+    // (the outfit UI lives on the resident-band panel, not on the expedition).
     let expedition_cfg = expedition.get();
-    let max_expedition_party_size = expedition_cfg.max_party_size;
-    // Hunt carry cap per party = party_workers × this; surfaced per hunt cohort so the client shows
-    // carried/cap + a FULL readout.
-    let hunt_per_worker_carry = expedition_cfg.hunt.per_worker_carry;
+    let fauna_config = fauna.get();
+    let expedition_levers = ExpeditionLevers {
+        max_party_size: expedition_cfg.max_party_size,
+        hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
+        hunt_per_worker_provisions: hunt_per_worker_provisions(&labor_config, &fauna_config),
+        hunt_viability_warn_turns: expedition_cfg.hunt.viability_warn_turns,
+    };
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
         .map(|(entity, cohort, allocation, travel, expedition)| {
@@ -1489,9 +1498,8 @@ pub fn capture_snapshot(
                 &supply_membership,
                 band_work_range,
                 scout_vantage_distance,
-                max_expedition_party_size,
+                &expedition_levers,
                 &settlement_stage_config,
-                hunt_per_worker_carry,
                 travel_target,
                 hunt_reach,
             )
@@ -1758,12 +1766,12 @@ pub fn capture_snapshot(
         .into_iter()
         .map(|entry| entry.to_schema())
         .collect();
-    let fauna = fauna_config.get();
     let herd_states = herd_snapshot_entries(
         &herds,
         &herd_registry,
-        &fauna,
-        labor_config.hunt.per_worker_biomass_capacity,
+        &fauna_config,
+        &labor_config,
+        &expedition_cfg,
     );
     // Authoritative herd state for rollback (distinct from the lossy display `herd_states` above),
     // sorted deterministically by herd id like the generation states.
@@ -3886,6 +3894,18 @@ fn allocation_summary(allocation: Option<&LaborAllocation>) -> (String, String) 
     (activity, hunt_mode)
 }
 
+/// The global expedition levers the snapshot echoes onto **every** cohort (resolved once per
+/// capture, not per band). `max_party_size` pre-clamps the client's outfit stepper; the other three
+/// are the linear constants the client's **pre-launch hunt forecast** multiplies against a herd's
+/// exported `hunt_policy_ceilings` — so the outfit UI never re-derives the ecology model. See
+/// `core_sim/CLAUDE.md` → Scouting & Hunting Expeditions → Snapshot.
+struct ExpeditionLevers {
+    max_party_size: u32,
+    hunt_per_worker_carry: f32,
+    hunt_per_worker_provisions: f32,
+    hunt_viability_warn_turns: u32,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn population_state(
     entity: Entity,
@@ -3903,9 +3923,8 @@ fn population_state(
     supply_membership: &SupplyNetworkMembership,
     work_range: u32,
     scout_vantage_distance: u32,
-    max_expedition_party_size: u32,
+    expedition_levers: &ExpeditionLevers,
     settlement_stage_config: &crate::settlement_stage_config::SettlementStageConfig,
-    hunt_per_worker_carry: f32,
     travel_target: Option<UVec2>,
     hunt_reach: u32,
 ) -> PopulationCohortState {
@@ -4006,7 +4025,7 @@ fn population_state(
     // worker count is its working-age head-count.
     let expedition_carry_cap = match expedition {
         Some(exp) if matches!(exp.mission, ExpeditionMission::Hunt { .. }) => {
-            working_age as f32 * hunt_per_worker_carry
+            working_age as f32 * expedition_levers.hunt_per_worker_carry
         }
         _ => 0.0,
     };
@@ -4047,7 +4066,7 @@ fn population_state(
         expedition_announced,
         pending_reveal_x,
         pending_reveal_y,
-        max_expedition_party_size,
+        max_expedition_party_size: expedition_levers.max_party_size,
         expedition_carry_cap,
         // Appended after every earlier-shipped field (append-only wire discipline; matches the
         // `.fbs` slot order for `expeditionTargetHerd`/`expeditionHuntPolicy`/`travelTargetX/Y`).
@@ -4087,6 +4106,10 @@ fn population_state(
         settlement_stage,
         food_income,
         food_consumption,
+        // Pre-launch hunt-forecast levers (global config, echoed onto every cohort — the outfit UI
+        // reads them off the selected resident band).
+        hunt_per_worker_provisions: expedition_levers.hunt_per_worker_provisions,
+        expedition_viability_warn_turns: expedition_levers.hunt_viability_warn_turns,
     }
 }
 
@@ -4345,30 +4368,99 @@ fn snapshot_demographics(
         .collect()
 }
 
+/// Every **Hunt** policy's per-turn **BAND / local-hunt** ceiling for one herd's current state, in
+/// provisions — the worker-independent half of the client's local-hunt yield preview. It is a pure
+/// projection of the herd's `SourceYieldForecast` (`fauna::hunt_forecast` — the same ceiling +
+/// biomass→provisions helpers `hunt_take` pays with, so forecast == actual), NOT a second derivation:
+/// the list rows and the scalar `ceiling*` fields below are literally the same numbers, so they cannot
+/// drift.
+///
+/// Walks [`FollowPolicy::HUNT_POLICIES`] — the four extractive rungs **plus `Corral`** (a legitimate
+/// Hunt policy whose dipped yield is exactly what a player must see *before* committing to the pen).
+/// `Cultivate` is Forage-only, so a herd has no cultivate row. Because the rows come from the
+/// forecast, `Corral` is automatically **phase-correct**: the `corralling_yield_fraction × MSY` dip
+/// while the pen is being built, and the full corral yield once the herd `is_corralled()` (the
+/// forecast reports a penned herd as `SourceYieldForecast::tended`, every ceiling = the managed yield).
+///
+/// The **expedition** has no ceiling field: a hunting party's trip is not `cap / rate` (see
+/// `hunt_trip_forecast`), so the sim exports the *answer* instead — `hunt_trip_estimate_entries`.
+fn hunt_policy_ceiling_entries(forecast: &SourceYieldForecast) -> Vec<HuntPolicyCeilingState> {
+    FollowPolicy::HUNT_POLICIES
+        .iter()
+        .map(|&policy| HuntPolicyCeilingState {
+            policy: policy.as_str().to_string(),
+            provisions_per_turn: forecast.ceiling_for(policy),
+        })
+        .collect()
+}
+
+/// The **pre-launch hunt-trip estimate table** for one herd: `hunt_trip_forecast` run for every
+/// policy × every legal party size (`1..=expedition.max_party_size`), so the client's outfit UI is a
+/// pure **table lookup** — zero arithmetic, zero ecology model. The forecast is a bounded forward
+/// simulation (stock exhaustion under Surplus/Market on a small herd is not a division), so there is
+/// no per-turn constant the client could divide by even if we wanted it to.
+///
+/// Cost is bounded by construction: `policies × max_party_size × hunt.forecast_horizon_turns`
+/// turn-steps per herd, and only **huntable** herds are estimated. In practice it is far below that
+/// worst case — most of the table is trips that *cannot* fill (small game under every policy,
+/// Sustain on most herds), and `hunt_trip_forecast` rejects those in **O(1)** via an upper-bound
+/// short-circuit instead of burning the horizon proving it (measured: ~2.3 ms → ~0.8 ms per snapshot
+/// at 122 herds, the table's exported values unchanged).
+fn hunt_trip_estimate_entries(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    labor: &LaborConfig,
+    expedition: &ExpeditionConfig,
+) -> Vec<HuntTripEstimateState> {
+    let mut entries =
+        Vec::with_capacity(FollowPolicy::EXTRACTIVE.len() * expedition.max_party_size as usize);
+    // The four **extractive** rungs only. The investment policies (Cultivate/Corral) are place-bound
+    // work a resident band does — `send_hunt_expedition` rejects them — so a trip estimate for one
+    // would be a number for a trip that cannot be launched (and would inflate this table for nothing).
+    for &policy in FollowPolicy::EXTRACTIVE.iter() {
+        for party_workers in 1..=expedition.max_party_size {
+            let forecast =
+                hunt_trip_forecast(party_workers, herd, policy, fauna, labor, expedition);
+            entries.push(HuntTripEstimateState {
+                policy: policy.as_str().to_string(),
+                party_workers,
+                // `0` = the trip does not fill within `hunt.forecast_horizon_turns` ("won't fill").
+                turns_to_fill: forecast.turns_to_fill.unwrap_or(0),
+                delivers_food: forecast.delivers_food,
+            });
+        }
+    }
+    entries
+}
+
 /// Display herd telemetry for the client, plus each herd's **pre-commit yield forecast**
 /// (`fauna::hunt_forecast` — the same ceiling/conversion helpers `hunt_take` pays with, so
-/// forecast == actual). The forecast needs the herd's `carrying_capacity`, which the display
-/// telemetry doesn't carry, so it is resolved from the authoritative `HerdRegistry` by id (a herd
-/// that vanished between the two — not possible in the capture, both are read in the same frame —
-/// simply reports a zeroed forecast). Captured at `output_multiplier = 1.0`: the client scales by
-/// the acting band's `outputMultiplier`.
+/// forecast == actual) and its **pre-launch expedition trip estimates**. All three need the herd's
+/// *carrying capacity*, which the display telemetry doesn't carry, so the live `Herd` is resolved
+/// from the authoritative `HerdRegistry` by id (a herd that vanished between the two — not possible
+/// in the capture, both are read in the same frame — reports a zeroed forecast and no rows).
+/// Captured at `output_multiplier = 1.0`: the client scales by the acting band's `outputMultiplier`.
+///
+/// The scalar `ceiling*` fields and the `hunt_policy_ceilings` list are two views of the **same**
+/// `SourceYieldForecast` — one forecast per herd, projected twice — so they can never disagree.
 fn herd_snapshot_entries(
     telemetry: &HerdTelemetry,
     registry: &HerdRegistry,
     fauna: &FaunaConfig,
-    hunt_per_worker_biomass_capacity: f32,
+    labor: &LaborConfig,
+    expedition: &ExpeditionConfig,
 ) -> Vec<HerdTelemetryState> {
     telemetry
         .entries
         .iter()
         .map(|entry| {
-            let forecast = registry
-                .find(&entry.id)
+            let herd = registry.find(&entry.id);
+            let forecast = herd
                 .map(|herd| {
                     hunt_forecast(
                         herd,
                         fauna,
-                        hunt_per_worker_biomass_capacity,
+                        labor.hunt.per_worker_biomass_capacity,
                         FORECAST_OUTPUT_MULTIPLIER,
                     )
                 })
@@ -4397,6 +4489,15 @@ fn herd_snapshot_entries(
                 // The Corral investment rung: the preparing dip + the payoff once penned.
                 ceiling_corral: forecast.ceiling_prepare,
                 corral_yield: forecast.managed_yield,
+                // The same forecast, projected as the per-policy BAND ceiling table (incl. Corral).
+                hunt_policy_ceilings: herd
+                    .map(|_| hunt_policy_ceiling_entries(&forecast))
+                    .unwrap_or_default(),
+                // Only a huntable herd can be the target of a trip — don't pay for the rest.
+                hunt_trip_estimates: herd
+                    .filter(|_| entry.huntable)
+                    .map(|herd| hunt_trip_estimate_entries(herd, fauna, labor, expedition))
+                    .unwrap_or_default(),
             }
         })
         .collect()
@@ -4830,6 +4931,13 @@ mod tests {
         let wellbeing = crate::wellbeing_config::WellbeingConfig::default();
         let membership = crate::supply::SupplyNetworkMembership::default();
         let stages = crate::settlement_stage_config::SettlementStageConfig::default();
+        // The expedition levers are irrelevant to the food-flow wiring under test.
+        let levers = ExpeditionLevers {
+            max_party_size: 0,
+            hunt_per_worker_carry: 0.0,
+            hunt_per_worker_provisions: 0.0,
+            hunt_viability_warn_turns: 0,
+        };
         population_state(
             Entity::from_raw(1),
             cohort,
@@ -4846,9 +4954,8 @@ mod tests {
             &membership,
             0,
             0,
-            0,
+            &levers,
             &stages,
-            0.0,
             None,
             0,
         )
@@ -5664,13 +5771,9 @@ mod tests {
             entries: registry.snapshot_entries(),
         };
         let labor = LaborConfig::builtin();
-        let fauna = FaunaConfigHandle::default().get();
-        let states = herd_snapshot_entries(
-            &telemetry,
-            &registry,
-            &fauna,
-            labor.hunt.per_worker_biomass_capacity,
-        );
+        let fauna = FaunaConfig::builtin();
+        let expedition = ExpeditionConfig::builtin();
+        let states = herd_snapshot_entries(&telemetry, &registry, &fauna, &labor, &expedition);
         let pen = states.iter().find(|h| h.id == "herd_pen").unwrap();
         assert!(pen.corralled, "a penned herd reports corralled");
         let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();

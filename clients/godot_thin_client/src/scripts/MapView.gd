@@ -1700,6 +1700,10 @@ func _draw_primary_bands(radius: float, origin: Vector2) -> void:
 	var by_tile: Dictionary = {}   # Vector2i -> Array[Dictionary]
 	var order: Array = []          # tiles in first-seen order
 	for unit in units:
+		# Fog: a FOREIGN band on a hex you can't currently see isn't drawn (it used to render straight
+		# through the fog). Your OWN bands always draw — see `_unit_hidden_by_fog`.
+		if _unit_hidden_by_fog(unit):
+			continue
 		var pos: Array = Array(unit.get("pos", []))
 		if pos.size() != 2:
 			continue
@@ -2729,6 +2733,16 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			# Hard party-size cap (from the expedition config); the resident-band outfit stepper
 			# clamps its max to min(idle_workers, this).
 			"max_expedition_party_size": int(entry.get("max_expedition_party_size", 0)),
+				# Global expedition/labor config levers echoed on every cohort. They ride the marker
+				# because the targeting flow carries a copy of the band dict, and the pre-launch
+				# forecast reads its threshold + the local-hunt preview its take rate off it. Neither
+				# computes an expedition's trip length: that is a PURE LOOKUP into the target herd's
+				# sim-simulated `hunt_trip_estimates` (the client never divides a carry cap by a
+				# rate). `expedition_viability_warn_turns` = the viable/not-viable threshold on
+				# turns_to_fill, `hunt_per_worker_provisions` = the RESIDENT-BAND local-hunt take
+				# rate, which IS arithmetic. Band = flow arithmetic; expedition = lookup.
+				"hunt_per_worker_provisions": float(entry.get("hunt_per_worker_provisions", 0.0)),
+				"expedition_viability_warn_turns": int(entry.get("expedition_viability_warn_turns", 0)),
 			"labor_assignments": (entry.get("labor_assignments", []) as Array).duplicate(true) if entry.get("labor_assignments", []) is Array else [],
 		}
 		var stores_variant: Variant = entry.get("stores", {})
@@ -2822,6 +2836,12 @@ func refresh_selection_payload() -> Dictionary:
 	if selected_unit_id >= 0:
 		for unit in units:
 			if int(unit.get("entity", -1)) == selected_unit_id:
+				# A FOREIGN band can WALK INTO the fog while selected. Keeping it selected would stream
+				# its live state into the panel off a band the player can no longer see, so the
+				# selection drops with its marker (mirrors the selected-herd rule). Your own band is
+				# never dropped.
+				if _unit_hidden_by_fog(unit as Dictionary):
+					break
 				var payload: Dictionary = (unit as Dictionary).duplicate(true)
 				var pos := Array(payload.get("pos", []))
 				var ux := int(pos[0]) if pos.size() == 2 else selected_tile.x
@@ -2836,6 +2856,12 @@ func refresh_selection_payload() -> Dictionary:
 				var payload: Dictionary = (herd as Dictionary).duplicate(true)
 				var hx := int(payload.get("x", selected_tile.x))
 				var hy := int(payload.get("y", selected_tile.y))
+				# A migratory herd can WALK OUT of sight while selected. Keeping it selected would
+				# stream live biomass/ecology (and a live hunt forecast) off a herd the player can no
+				# longer see, so the selection drops with the marker and the hex falls back to its
+				# tile card — which now states the hex is out of sight.
+				if not _is_tile_visible(hx, hy):
+					break
 				payload["tile_info"] = _tile_info_at(hx, hy)
 				return {"kind": "herd", "data": payload}
 		selected_herd_id = ""
@@ -2939,8 +2965,12 @@ func _emit_tile_selection(col: int, row: int) -> void:
 	emit_signal("tile_selected", info)
 	queue_redraw()
 
+## Hit-test a band MARKER under the pointer. Fog-gated: a marker that isn't drawn can't be clicked, so
+## a foreign band under the fog can't be picked out of an apparently-empty hex.
 func _unit_at_point(point: Vector2) -> Dictionary:
 	for unit in units:
+		if _unit_hidden_by_fog(unit):
+			continue
 		var position: Array = Array(unit.get("pos", []))
 		if position.size() != 2:
 			continue
@@ -2949,11 +2979,13 @@ func _unit_at_point(point: Vector2) -> Dictionary:
 			return unit
 	return {}
 
+## Hit-test a herd MARKER under the pointer (the double-click quick-hunt shortcut). Fog-gated like
+## `_herds_on_tile`: a marker that isn't drawn can't be clicked, so an unseen herd can't be quick-hunted.
 func _herd_at_point(point: Vector2) -> Dictionary:
 	for herd in herds:
 		var x := int(herd.get("x", -1))
 		var y := int(herd.get("y", -1))
-		if x < 0 or y < 0:
+		if x < 0 or y < 0 or not _is_tile_visible(x, y):
 			continue
 		var center := _hex_center_wrapped(x, y, last_hex_radius, last_origin)
 		if center.distance_to(point) <= last_hex_radius * 0.45:
@@ -3057,9 +3089,15 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["nearest_unit_id"] = nearest_unit.get("id", "")
 	return info
 
+## The bands standing on a hex — the single chokepoint for unit-by-coordinate lookups (Occupants
+## roster, band-selection click, stack cycling), fog-gated by `_unit_hidden_by_fog`: a FOREIGN band on
+## an unseen hex is neither listed nor selectable, while your OWN band is always both (it may well be
+## standing on an Unexplored tile — see `_unit_hidden_by_fog`).
 func _units_on_tile(col: int, row: int) -> Array:
 	var matches: Array = []
 	for unit in units:
+		if _unit_hidden_by_fog(unit):
+			continue
 		var position: Array = Array(unit.get("pos", []))
 		if position.size() != 2:
 			continue
@@ -3067,8 +3105,18 @@ func _units_on_tile(col: int, row: int) -> Array:
 			matches.append((unit as Dictionary).duplicate(true))
 	return matches
 
+## The herds standing on a hex — FOG-GATED through the SAME `_is_tile_visible` test the herd RENDERER
+## uses (`_draw_herd`), so a herd you cannot see is neither listed nor targetable. This is the single
+## chokepoint for herd-by-coordinate lookups: the Occupants roster, the herd-selection click, the
+## hunt-target click resolution and the pre-launch trip forecast all read the herds through here (via
+## `_tile_info_at` → `tile_info.herds`), so gating HERE makes "you can only hunt/forecast what you can
+## actually see" true by construction. The server still exports every herd unfiltered (a wire-level
+## leak, tracked separately), so this client gate is LOAD-BEARING, not cosmetic — do not bypass it by
+## reading `herds` by coordinate somewhere else.
 func _herds_on_tile(col: int, row: int) -> Array:
 	var matches: Array = []
+	if not _is_tile_visible(col, row):
+		return matches
 	for herd in herds:
 		var x := int(herd.get("x", -1))
 		var y := int(herd.get("y", -1))
@@ -3083,6 +3131,10 @@ func _nearest_unit_sample(col: int, row: int) -> Dictionary:
 	var best_unit: Dictionary = {}
 	for entry in units:
 		if not (entry is Dictionary):
+			continue
+		# Fog: never sample a foreign band the player can't see — the "nearest unit" readout would
+		# otherwise leak its label AND its distance (a bearing on an invisible band).
+		if _unit_hidden_by_fog(entry as Dictionary):
 			continue
 		var pos_array: Array = Array(entry.get("pos", []))
 		if pos_array.size() != 2:
@@ -4102,7 +4154,9 @@ func _draw_targeting(radius: float, origin: Vector2) -> void:
 				continue
 			var hx := int(herd.get("x", -1))
 			var hy := int(herd.get("y", -1))
-			if hx < 0 or hy < 0:
+			# Fog-gated like the herd marker itself: glowing a herd you can't see would BE the leak
+			# (it would draw a "valid target here" halo onto an empty-looking fogged hex).
+			if hx < 0 or hy < 0 or not _is_tile_visible(hx, hy):
 				continue
 			var hcenter: Vector2 = _hex_center_wrapped(hx, hy, radius, origin)
 			var hring_radius: float = radius * (0.55 + 0.10 * pulse)
@@ -4118,6 +4172,22 @@ func _draw_targeting(radius: float, origin: Vector2) -> void:
 
 func _is_player_unit(unit: Dictionary) -> bool:
 	return int(unit.get("faction", PLAYER_FACTION_ID)) == PLAYER_FACTION_ID
+
+## THE unit fog rule — one definition, used by every unit draw/lookup/hit-test:
+##     hidden == tile not currently visible AND the unit is not ours.
+##
+## YOUR OWN UNITS ARE ALWAYS SHOWN, including on an Unexplored hex. That exception is load-bearing,
+## not a courtesy: the sim deliberately excludes expeditions from fog reveal (`calculate_visibility`
+## runs `Without<Expedition>` — discovery is comm-range gated), so a scouting party ROUTINELY stands on
+## an Unexplored tile. A plain visibility gate would erase your own expedition from the map at exactly
+## the moment you are using it. A unit with no position can't be fog-tested, so it stays visible.
+func _unit_hidden_by_fog(unit: Dictionary) -> bool:
+	if _is_player_unit(unit):
+		return false
+	var pos: Array = Array(unit.get("pos", []))
+	if pos.size() != 2:
+		return false
+	return not _is_tile_visible(int(pos[0]), int(pos[1]))
 
 func _draw_reticle(center: Vector2, r: float, color: Color, pulse: float) -> void:
 	var a := Color(color.r, color.g, color.b, 0.7 + 0.3 * pulse)

@@ -814,6 +814,31 @@ pub enum FollowPolicy {
 }
 
 impl FollowPolicy {
+    /// The four **extractive** rungs, in player-facing order (gentlest → harshest). This is the
+    /// *expedition's whole axis*: a detached party can only take, never invest (the two investment
+    /// policies are place-bound work a resident band does — `send_hunt_expedition` rejects them), so
+    /// the snapshot's per-herd `hunt_trip_estimates` export walks exactly this list. Emitting a trip
+    /// estimate for `Cultivate`/`Corral` would be a number for a trip that cannot be launched.
+    pub const EXTRACTIVE: [FollowPolicy; 4] = [
+        FollowPolicy::Sustain,
+        FollowPolicy::Surplus,
+        FollowPolicy::Market,
+        FollowPolicy::Eradicate,
+    ];
+
+    /// Every policy a **Hunt** assignment accepts — the four extractive rungs **plus `Corral`** (the
+    /// animal investment rung; `Cultivate` is Forage-only). The single source for "iterate a herd's
+    /// policies": the snapshot's per-herd `hunt_policy_ceilings` (the BAND / local-hunt yield preview)
+    /// export walks this, so a player sees Corral's deliberately dipped yield *before* committing to
+    /// the pen. Keep in sync with [`FollowPolicy::valid_for_hunt`].
+    pub const HUNT_POLICIES: [FollowPolicy; 5] = [
+        FollowPolicy::Sustain,
+        FollowPolicy::Surplus,
+        FollowPolicy::Market,
+        FollowPolicy::Eradicate,
+        FollowPolicy::Corral,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             FollowPolicy::Sustain => "sustain",
@@ -825,6 +850,19 @@ impl FollowPolicy {
         }
     }
 
+    /// Does a take under this policy put food in the taker's larder? **Eradicate is denial** — it
+    /// depletes the herd and carries nothing home — so every provisions-side path (the expedition's
+    /// payout, its launch forecast, and the exported per-policy ceiling) reads `0` for it. THE single
+    /// source of that rule, so a "turns to fill" number can never be quoted for a mission that
+    /// delivers nothing.
+    ///
+    /// The two **investment** rungs DO deliver food: while the improvement is prepared the source is
+    /// still worked, at a reduced but sustainable `*_yield_fraction × its MSY ceiling` (the yield dip
+    /// that buys the pen / the tended patch). Only denial withholds food.
+    pub fn delivers_food(self) -> bool {
+        !matches!(self, FollowPolicy::Eradicate)
+    }
+
     /// Policies a **Forage** assignment accepts: the four extractive rungs plus `Cultivate`.
     /// `Corral` is an animal-only investment — a forage assignment carrying it is rejected at
     /// `assign_labor` (and defensively yields nothing in `forage_policy_ceiling`).
@@ -832,8 +870,10 @@ impl FollowPolicy {
         !matches!(self, FollowPolicy::Corral)
     }
 
-    /// Policies a **Hunt** assignment accepts: the four extractive rungs plus `Corral`.
-    /// `Cultivate` is a plant-only investment — see [`FollowPolicy::valid_for_forage`].
+    /// Policies a **Hunt** assignment accepts: the four extractive rungs plus `Corral`
+    /// ([`FollowPolicy::HUNT_POLICIES`]). `Cultivate` is a plant-only investment — see
+    /// [`FollowPolicy::valid_for_forage`]. Note this is the **band's** axis: an *expedition* accepts
+    /// only [`FollowPolicy::EXTRACTIVE`] (penning is place-bound work).
     pub fn valid_for_hunt(self) -> bool {
         !matches!(self, FollowPolicy::Cultivate)
     }
