@@ -118,9 +118,10 @@ pub use expedition_config::{
     ExpeditionConfigMetadata, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
-    advance_herds, advance_husbandry, forecast_expected_take, hunt_source_yield_preview,
-    repopulate_fauna, spawn_initial_herds, EcologyPhase, Herd, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, HerdTelemetryEntry, RoamState, SourceYieldForecast, HERDING_DISCOVERY_ID,
+    advance_herds, advance_husbandry, forecast_expected_take, hunt_policy_ceiling, hunt_provisions,
+    hunt_source_yield_preview, repopulate_fauna, spawn_initial_herds, EcologyPhase, Herd,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, RoamState,
+    SourceYieldForecast, HERDING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, FaunaConfig, FaunaConfigHandle, FaunaConfigMetadata, SizeClass,
@@ -239,8 +240,10 @@ pub use snapshot::{
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
-    advance_band_movement, advance_expeditions, advance_labor_allocation, output_multiplier,
-    simulate_power, MigrationKnowledgeEvent, PowerSimParams, TradeDiffusionEvent,
+    advance_band_movement, advance_expeditions, advance_labor_allocation,
+    expedition_take_provisions, hunt_per_worker_provisions, hunt_take, hunt_trip_forecast,
+    output_multiplier, simulate_power, HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams,
+    TradeDiffusionEvent,
 };
 pub use terrain::{
     biome_must_have, biome_niche, classify_terrain, terrain_definition, terrain_for_position,

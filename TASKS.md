@@ -28,6 +28,7 @@
 - [x] Generate rich knowledge telemetry frames once event ingestion lands (Owner: Systems Team — Ravi, Estimate: 0.5d; Deps: espionage event hooks). _Status_: Frames emit the full timeline ring buffer via `knowledge.telemetry`, and the Godot inspector now ingests the payload for metrics/timeline display._
 - [x] Extend the Godot thin client with the Knowledge Ledger panel and command surface described in `docs/architecture.md` §Knowledge Ledger & Leak Mechanics—subscribe to ledger/telemetry payloads, render overview/detail UI, and expose counter-intel/security posture controls (Owner: Client Team — Elena, Estimate: 2d; Deps: backend ledger payload & command endpoints). _Status_: Knowledge tab now streams missions/timeline data, includes a mission queue tester (auto agents, tier overrides, schedule offsets), and surfaces inline counter-intel policy/budget controls with live status synced from `shadow_scale::espionage` logs._
 - [x] Scope crisis telemetry channels promised in manual §10 by inventorying required metrics, network payloads, and inspector overlays in `docs/architecture.md`, then derive execution tasks for simulation and client teams (Owner: TBD, Estimate: 1.5d; Deps: Godot inspector overlay bandwidth). _Status_: Implemented `TurnStage::Crisis` + `advance_crisis_system`, emitting real `CrisisTelemetryState`/`CrisisOverlayState` via `ActiveCrisisLedger` and `CrisisOverlayCache`; docs/manual now outline the live data flow and the Godot inspector consumes non-stub overlays._
+- [ ] **Give `FaunaConfig` and `LaborConfig` a real `validate()`** — both docs claim "validation invariants" that are only ever asserted over the *builtin*, in their own module tests; neither type has a `validate()`, so a `FAUNA_CONFIG_PATH` / `LABOR_CONFIG_PATH` override that breaks one (a `0` `regrowth_rate`, a `0` `provisions_per_biomass`, `progress_per_turn <= decay_per_turn`, …) is accepted silently and quietly changes or disables behaviour. This is the same hole `ExpeditionConfig::validate()` just closed for expeditions (PR #117): follow the `crisis_config.rs` convention — validate inside `from_json_str` so *every* load path is covered, return a domain error variant, log a rejected override at **error** level, and fall back to the known-good builtin. Bound the levers whose `0`/negative would silently disable a feature or divide by zero; leave genuinely free levers free, and say which in the doc. Port the builtin-only test assertions into the validator and add a rejection test per bound. Then correct the two "Intended invariants" notes in `core_sim/CLAUDE.md` (Corral + Cultivation config blocks) back to "Validated". (Owner: TBD, Estimate: 0.5d; Deps: none.)
 
 ### Great Discovery System
 - [x] Outline Great Discovery subsystem architecture mirroring manual §5 by defining data structures, trigger flow, and snapshot payload contracts in `docs/architecture.md`, then break the work into implementation tickets after approval (Owner: TBD, Estimate: 2d; Deps: coordination with Knowledge Diffusion hooks). _Status_: Architecture captured in `docs/architecture.md` §Great Discovery System Plan aligning with manual §5; implementation tickets listed below.
@@ -91,6 +92,17 @@
 - [x] Provide serde-compatible adapters for early testing.
 - [x] Extend trade link schema with openness/knowledge diffusion fields and migration knowledge summary payloads (Owner: Devi, Estimate: 1.5d; Deps: coordinate with `core_sim` turn pipeline + population serialization).
 - [x] Add `CorruptionLedger` structs and subsystem hooks to snapshots (Owner: Devi, Estimate: 2d; Deps: align with logistics/trade/military component schemas).
+- [ ] **Collapse the duplicate band-ceiling wire representation.** `HerdTelemetryState` carries the
+  per-policy band hunt ceiling **twice**: the flat scalars (`ceilingSustain`/`ceilingSurplus`/
+  `ceilingMarket`/`ceilingEradicate`/`ceilingCorral` + `corralYield`/`perWorkerYield`) and the
+  `huntPolicyCeilings:[{policy, provisionsPerTurn}]` list. They are the **same numbers** — the list is a
+  projection of the herd's `fauna::hunt_forecast`, the same object the scalars export, so they cannot
+  drift. **The list should win:** a free-form `policy` string means a new policy needs no schema change,
+  matching the convention already used for `species` (and `huntTripEstimates`). Retiring the scalars is
+  a schema change **plus** a client refactor (the existing UI reads them), so it was deliberately
+  deferred out of PR #117. Scope: drop the scalar fields from `snapshot.fbs`/`sim_schema`/`snapshot.rs`,
+  repoint `Hud.gd`'s ceiling lookup at the list, keep `SourceYieldForecast` as the single sim-side
+  source.
 
 ## Godot Inspector Pivot
 - [x] Extend Godot snapshot decoder to expose influencer, corruption, sentiment, and demographic data currently consumed by the CLI (Owner: TBD, Estimate: 1.5d; Deps: FlatBuffers topics stable).
@@ -363,6 +375,21 @@ systems. Realizes the Settlement arc's food-tending improvement class (tended pa
   land the **corral** (pastoral) — the place-bound food-tending improvements from
   `plan_settlement_population.md`, knowledge-gated (`farming`/`herding`), built/tended/decaying. Pulls
   forward a slice of the Settlement arc's `build`/improvement system. Feeds `SedentarizationScore`.
+- [ ] **Corral as a managed population (food upkeep → herd size → yield).** A corral should be a
+  **population in its own right**, not a flat multiplier on a frozen biomass number. The penned animals
+  need **resources — food — to flourish**: the pen's output derives from **the number of animals you
+  have**, which is in turn driven by **the food (and other resources) you feed it** each turn. So:
+  (a) yield = f(animal count), not `corral_provisions_per_biomass × biomass`; (b) the penned herd
+  **consumes food each turn (upkeep)** — feeding it grows the herd toward a pen capacity, underfeeding
+  **shrinks** the herd and with it the yield; (c) the corral becomes an **ongoing commitment with a
+  running cost** instead of a one-off 25-turn build that then prints food forever — which is what makes
+  penning a real decision rather than a strictly-dominant one. **Current stopgap being replaced:** the
+  completed pen pays a flat `husbandry.corral_provisions_per_biomass × biomass` with **no upkeep**,
+  rebalanced (interim) to **3× the Market rate** (`corral_provisions_per_biomass = 0.012 = 3 ×
+  market.take_fraction × hunt.provisions_per_biomass`) — sustainable, but still ~48× the Sustain/MSY
+  baseline because a stock-share and a flow-share aren't commensurable. That flat-rate model is exactly
+  what this arc retires. See `core_sim/CLAUDE.md` → Fauna & Wild Game → **Corral (Intensification Rung
+  1c)** and `docs/plan_intensification.md` → *Open tuning dials* (the payoff dial).
 - [ ] **Cross-cutting — command yield-vector + pre-commit forecast.** Model a command's
   multi-dimensional output (food + husbandry/cultivation progress + trade goods + discovery) and
   surface it live + as a compose-time **forecast** (projection fn mirroring the sim yield math, no
@@ -485,6 +512,56 @@ role). Sequenced: local scout (small fix) → sites subsystem (foundation) → e
   same gap). Fix: persist `StartingUnit.kind`/`tags` on `PopulationCohortState`, re-attach on restore
   (build on the 2-pass restore the expedition PR added). Not expedition-specific; keep out of the
   expedition PR's diff. Check first whether `rollback` is player-reachable or dev-only (sets priority).
+- [ ] **Hunt policy payoffs — make the four policies mean something distinct** (design-doc-first arc;
+  surfaced by the Sustain-MSY work). The four `FollowPolicy` choices now differ cleanly in their *take*
+  (Sustain = the MSY flow; Surplus/Market = stock headroom to the collapse floor; Eradicate = unfloored
+  denial), but their **payoffs** do not yet differ in a way the player can reason about. Authoritative
+  specs: `docs/plan_exploration_and_sites.md` §2b + `core_sim/CLAUDE.md` → Scouting & Hunting
+  Expeditions. Four threads:
+  - **(a) The expedition side-effect gap.** A **resident band's** Hunt arm credits, from the same take,
+    food **+ trade goods** (Market) **+ husbandry/domestication accrual** (Sustain on a Thriving herd)
+    — `advance_labor_allocation`. The **expedition's** Hunting arm credits **food only**. So a Sustain
+    *expedition* builds no domestication and a Market *expedition* yields no trade goods, while the
+    identical policy run by a band at home does both. Decide: does a detached party accrue husbandry /
+    produce trade goods (one word, one meaning — the same discipline the take itself just got), or is
+    the asymmetry *intentional* (husbandry needs a settled camp; a trade good needs somewhere to trade)?
+    Either way it must be a decision, and the player-facing text must say which.
+  - **(b) Market's trade goods have no live downstream.** The take credits `trade_goods` into
+    `FactionInventory`, but the `TradeLink` path that consumed them is dormant/deprecated — so Market's
+    distinguishing product currently buys nothing. Needs a real sink once trade re-lands on the supply
+    network.
+  - **(c) Eradicate needs a payoff beyond denial.** Today it is pure destruction: no food, no goods, no
+    progress — meaningful only against a rival who wanted that herd, and there are no rivals yet. Define
+    what it *earns* (hides/ivory? a cleared range for grazing/farming? a diplomatic lever?) or accept it
+    as a deliberately costly scorched-earth verb and say so.
+  - **(d) Communicate all of it.** Today Sedentarization consumes *both* a `domestication` input (fed by
+    Sustain husbandry) **and** a `surplus` input (Σ band food larders, fed by any high-yield policy), so
+    Sustain and Surplus both accelerate settling — by different inputs — and nothing tells the player
+    that. The launch UI should state each policy's payoff, not just its yield rate.
+- [ ] **Fog leak: herds are exported unfiltered** (pre-existing, surfaced by the hunt-trip-estimate
+  work; own PR). `herd_snapshot_entries` (`core_sim/src/snapshot.rs`) applies **no visibility and no
+  faction filter** — the server ships every herd's live biomass / position / ecology phase (and now its
+  `huntTripEstimates` table) to every client, every turn. The client only hides them at *draw* time
+  (`MapView._draw_herd` gates on `_is_tile_visible`), so at the wire level **the fog is decorative for
+  fauna**: anyone reading the stream sees the whole map's game. Compare **Wondrous Sites**, which are
+  exported per-faction precisely so the fog can't leak them (`snapshot_discovered_sites` — undiscovered
+  sites never enter `TileState`). Fix = per-faction herd filtering in the snapshot, the same treatment
+  sites got. Not urgent (single-player today, and every UX path already hides unseen herds — keep it
+  that way meanwhile), but it is a real contract violation and it must land **before** any competitive
+  multiplayer. Cross-ref: "Last-seen herd memory + estimated forecast" below (that feature *depends* on
+  this fix, and the two together define what a client is allowed to know about a herd).
+- [ ] **Last-seen herd memory + estimated (not exact) forecast** (design-then-build; **blocked on the
+  fog-leak fix above**). Today a herd simply **vanishes** the moment its tile leaves `Active` — there is
+  no remembered/ghost herd, so a player cannot plan around game they saw last turn. Add **last-seen herd
+  memory**: a per-faction record of a herd's last-known biomass/position/phase + the turn it was seen,
+  rendered as a stale "ghost" marker distinct from a live one. Then, for a **remembered but not
+  currently visible** herd, the trip forecast (`HerdTelemetryState.huntTripEstimates`) must be shown as
+  an **estimate, clearly flagged**: *"last seen N turns ago — the herd may have moved, grown, or been
+  hunted; you won't know until you arrive."* Note **why this is safe today**: the exported forecast is
+  unconditionally honest *only because you can currently target a herd only while you can see it* — the
+  moment remembered herds become targetable, an unflagged exact number becomes a lie. Cross-ref: "Fog
+  leak: herds are exported unfiltered" above; `core_sim/CLAUDE.md` → Scouting & Hunting Expeditions
+  (the estimate's contract), `docs/plan_exploration_and_sites.md` §2b.
 - [ ] **Band commands lack a faction check** (pre-existing, all band-command handlers — surfaced
   during the expedition work, own PR). `resolve_starting_unit_entity` validates entity-exists +
   `StartingUnit`/`ResidentBand` but never `cohort.faction == faction`, so a raw command with explicit

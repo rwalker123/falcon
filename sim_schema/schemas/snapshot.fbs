@@ -575,6 +575,18 @@ table PopulationCohortState {
   // without re-summing the assignment rows. Appended last (append-only schema discipline).
   foodIncome:float = 0;
   foodConsumption:float = 0;
+  // Hunt levers. Global config echoed per-cohort (same idiom as `maxExpeditionPartySize`, and
+  // populated for EVERY cohort — the outfit/hunt UI lives on the resident-band panel).
+  //   - The pre-launch EXPEDITION trip length is NOT computed here: the client reads the sim's
+  //     simulated answer out of the target herd's `huntTripEstimates` (policy × partyWorkers →
+  //     turnsToFill), then flags NOT VIABLE when turnsToFill > expeditionViabilityWarnTurns (or
+  //     turnsToFill == 0 → "won't fill").
+  //   - `huntPerWorkerProvisions` × the BAND ceiling drives the resident-band local-hunt preview:
+  //     min(workers × huntPerWorkerProvisions, huntPolicyCeilings[policy].provisionsPerTurn)
+  //       × outputMultiplier
+  // Appended last (append-only schema discipline).
+  huntPerWorkerProvisions:float = 0;    // one hunter's provisions/turn throughput
+  expeditionViabilityWarnTurns:uint = 0; // expedition_config.hunt.viability_warn_turns
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -886,6 +898,55 @@ table PopulationDemographicsState {
   elders:uint = 0;
 }
 
+// One take policy's per-turn BAND / local-hunt ceiling for a herd, in PROVISIONS (already converted
+// from biomass by the sim). Worker-INDEPENDENT: the policy's cap on the take at this herd's CURRENT
+// state, before any party-throughput cap, clamped to the herd's remaining biomass. `0` = no take is
+// possible under this policy (a collapsing sub-Allee herd yields nothing under Sustain/Surplus).
+// `policy` is free-form (`sustain|surplus|market|eradicate|corral`), like `species`, so a new policy
+// needs no schema change.
+//
+// THE ROWS ARE NOT ALL THE SAME KIND OF QUANTITY — which is exactly why nothing may divide by them:
+// Sustain is a per-turn FLOW (MSY), Surplus that flow × a multiplier, Corral a fraction of it (the
+// pen-building dip), while Market/Eradicate are shares of standing STOCK that shrink as the herd is
+// drawn down.
+//
+// Consumer: the resident-band local-hunt yield preview, for ONE turn at the herd's current state,
+//   min(workers × huntPerWorkerProvisions, provisionsPerTurn) × outputMultiplier
+// That single-turn arithmetic is legitimate; projecting it across turns is not.
+// A hunting EXPEDITION must not forecast a trip from this (or any) rate: `cap / rate` is wrong for
+// every policy, because the herd's state moves under the party. An expedition's trip length comes
+// from HuntTripEstimate, which the sim forward-simulates.
+table HuntPolicyCeiling {
+  policy:string;
+  // BAND / local-hunt ceiling in provisions/turn. Produced by projecting the herd's
+  // `fauna::hunt_forecast` through `SourceYieldForecast::ceiling_for(policy)` — the per-policy
+  // biomass ceiling (`fauna::hunt_policy_ceiling`) converted by `fauna::hunt_provisions`, the same
+  // helpers the take path pays with (forecast == actual). Never re-derive it.
+  provisionsPerTurn:float = 0;
+}
+
+// The sim's PRE-LAUNCH HUNT-TRIP ESTIMATE for one (policy, party size) against one herd — the
+// *answer*, so the client's outfit UI is a pure TABLE LOOKUP and does ZERO arithmetic.
+//
+// Produced by core_sim's `hunt_trip_forecast`, a bounded forward SIMULATION of the trip (herd
+// regrowth + the party's real take, turn by turn) rather than a closed-form `carryCap / rate`. The
+// division was wrong for Surplus/Market on a small herd, whose per-policy ceiling is a *stock*, not
+// a flow: the party strips the headroom in a turn or two, then crawls at the herd's regrowth trickle.
+// It read a 4-worker party on a full Rabbit Warren (K = 200) under Surplus as a ~5-turn trip; the
+// simulation says that party NEVER fills within the 60-turn horizon (only a 1-worker party — a
+// quarter the pack — fills, in 23 turns).
+//
+// Counts only turns spent HUNTING, once the party is in reach — travel is NOT included.
+table HuntTripEstimate {
+  policy:string;           // sustain|surplus|market|eradicate (free-form, like `species`)
+  partyWorkers:uint = 0;   // 1 ..= expedition_config.max_party_size
+  // Turns of hunting to fill the party's carry cap. 0 = DOES NOT FILL within
+  // expedition_config.hunt.forecast_horizon_turns → render "won't fill", not a number.
+  turnsToFill:uint = 0;
+  // false for eradicate (denial) — render "no food delivered", never an ETA.
+  deliversFood:bool = false;
+}
+
 table HerdTelemetryState {
   id:string;
   label:string;
@@ -930,6 +991,20 @@ table HerdTelemetryState {
   // HUNT-ONLY (the patch twin is Cultivate).
   ceilingCorral:float = 0;
   corralYield:float = 0;
+  // Per-policy BAND / local-hunt take ceilings for this herd's current state — one entry per
+  // FollowPolicy valid on a Hunt assignment: the four extractive rungs PLUS corral (cultivate is
+  // forage-only, so a herd has no cultivate row). Phase-correct: a penned herd's rows all read its
+  // corral yield. These are the same numbers as the ceiling* scalars above, projected as a list.
+  // With the cohort's `huntPerWorkerProvisions` + `outputMultiplier` this is everything the client
+  // needs to preview a RESIDENT BAND's hunt yield as pure arithmetic — it must NOT re-derive the
+  // ecology model. Appended (append-only discipline).
+  huntPolicyCeilings:[HuntPolicyCeiling];
+  // The sim's pre-launch trip estimates for a hunting EXPEDITION against this herd — one entry per
+  // (EXTRACTIVE policy × party size 1..=maxExpeditionPartySize), so the outfit UI is a table lookup
+  // and the client does no arithmetic at all. The investment policies (cultivate/corral) are
+  // place-bound band work that `send_hunt_expedition` rejects, so they get NO rows here. Empty for a
+  // non-huntable herd. Appended last (append-only).
+  huntTripEstimates:[HuntTripEstimate];
 }
 
 table CommandEventState {

@@ -1449,14 +1449,26 @@ pub fn hunt_source_yield_preview(
     forecast_source_yield(&forecast, sustainable, herd.is_corralled(), workers, policy)
 }
 
-/// The per-policy **biomass** ceiling on a hunt take at the herd's current stock — the single source
-/// of the Sustain/Surplus/Market/Eradicate rungs, shared by `systems::hunt_take` (the take path) and
-/// `hunt_forecast` (the pre-commit forecast). Sustain = the Maximum Sustainable Yield (regrowth at
-/// K/2, so a herd at capacity still yields and a collapsing one yields nothing), Surplus = that ×
-/// `follow.surplus_multiplier`, Market = `market.take_fraction × biomass` (a commercial share),
-/// Eradicate = `hunt.take_from(biomass)` (max take). Not yet clamped to biomass — callers do that
-/// alongside their own throughput cap.
-pub(crate) fn hunt_policy_ceiling(
+/// **THE single source of the per-policy hunt take ceiling** (in *biomass*) at a herd's current
+/// stock, shared by every hunter of a herd: the band's Hunt labor arm and the scout's opportunistic
+/// replenish (via `systems::hunt_take`), the hunting expedition (via
+/// `systems::hunt_expedition_ceiling` / `hunt_trip_forecast`), and the pre-commit forecast
+/// (`hunt_forecast`). One word, one meaning:
+/// - **Sustain** — the **Maximum Sustainable Yield** flow ([`sustainable_yield`]): regrowth at the
+///   most-productive biomass (K/2), so a herd at capacity still yields a positive skim and a
+///   collapsing (sub-Allee) herd yields nothing. This is a *flow* ceiling, not a stock target.
+/// - **Surplus** — that × `follow.surplus_multiplier` (overdraw → slow decline).
+/// - **Market** — a commercial share `market.take_fraction × biomass` (fast decline).
+/// - **Eradicate** — the one-shot max take `hunt.take_from(biomass)` (drives extinction).
+/// - **Corral** — the *investment dip* while the pen is built: `husbandry.corralling_yield_fraction ×`
+///   the MSY ceiling (reusing the same [`sustainable_yield`] helper — never a second ecology), so the
+///   preparing take is sustainable and the herd stays healthy while the crew builds.
+/// - **Cultivate** — Forage-only; a *hunt* ceiling for it is meaningless. Yields `0.0`, the symmetric
+///   defensive case to `forage::forage_policy_ceiling`'s `Corral` arm (both are rejected at
+///   `assign_labor` by [`FollowPolicy::valid_for_hunt`] / `valid_for_forage`).
+///
+/// Not clamped to biomass — the caller does that alongside its own throughput / carry-room cap.
+pub fn hunt_policy_ceiling(
     policy: FollowPolicy,
     biomass: f32,
     carrying_capacity: f32,
@@ -1470,25 +1482,19 @@ pub(crate) fn hunt_policy_ceiling(
         }
         FollowPolicy::Market => fauna.market.take_fraction * biomass,
         FollowPolicy::Eradicate => fauna.hunt.take_from(biomass),
-        // The investment dip while the pen is built: a *fraction* of the MSY ceiling (the same shared
-        // `sustainable_yield` helper), so the preparing take is sustainable and the herd stays healthy.
         FollowPolicy::Corral => {
             sustainable_yield(biomass, carrying_capacity, &fauna.ecology)
                 * fauna.husbandry.corralling_yield_fraction
         }
-        // `Cultivate` is a plant-only policy — rejected on a Hunt assignment at `assign_labor`
-        // (`FollowPolicy::valid_for_hunt`). Unreachable in practice; defensively yields nothing.
         FollowPolicy::Cultivate => 0.0,
     }
 }
 
-/// Biomass → provisions for a hunt take (× the caller's productivity multiplier) — the one
-/// conversion `hunt_take` pays, shared with the forecast so the two can't drift.
-pub(crate) fn hunt_provisions(
-    biomass_take: f32,
-    fauna: &FaunaConfig,
-    output_multiplier: f32,
-) -> f32 {
+/// The single biomass→provisions conversion for a hunt take: `take × hunt.provisions_per_biomass ×
+/// output_multiplier` (the caller's productivity). Shared by `systems::hunt_take` (which quantizes the
+/// result onto the larder's `Scalar` grid) and the pre-commit forecast, so the two can't drift. FOOD
+/// income is fully fractional — a few hunters may yield < 1 provision per turn.
+pub fn hunt_provisions(biomass_take: f32, fauna: &FaunaConfig, output_multiplier: f32) -> f32 {
     biomass_take * fauna.hunt.provisions_per_biomass * output_multiplier
 }
 
@@ -1585,10 +1591,26 @@ pub(crate) fn sustainable_yield(biomass: f32, cap: f32, ecology: &EcologyConfig)
     net_biomass_delta(biomass.min(cap * MSY_BIOMASS_FRACTION), cap, ecology).max(0.0)
 }
 
+/// The **most biomass a group can add in one turn**, whatever its current state: the logistic curve
+/// evaluated at its peak (K/2, the MSY point — the same curve `regrow_biomass` applies, so no second
+/// copy of the model). A group above or below K/2 regrows *less*, and a sub-Allee one *loses*
+/// biomass, so this bounds every herd's per-turn growth from above.
+///
+/// `pub(crate)` for the hunt-trip forecast's O(1) "this party cannot possibly fill its pack"
+/// short-circuit (`systems::hunt_trip_provisions_bound`), which needs a **true upper bound** on the
+/// biomass a herd can hand a party over the forecast horizon without simulating it turn by turn.
+pub(crate) fn peak_regrowth(cap: f32, ecology: &EcologyConfig) -> f32 {
+    logistic_regrowth(cap * MSY_BIOMASS_FRACTION, cap, ecology.regrowth_rate)
+}
+
 /// Apply one turn of critical-depensation dynamics toward the herd's carrying capacity
 /// and refresh its `ecology_phase`. A sub-threshold group declines instead of regrowing;
 /// the caller despawns it once it falls below the viability floor.
-fn regrow_biomass(herd: &mut Herd, ecology: &EcologyConfig) {
+///
+/// `pub(crate)` because the hunt-trip forecast (`systems::hunt_trip_forecast`) runs a herd forward
+/// turn by turn on a **clone** and must apply the *same* regrowth the live `advance_herds` does —
+/// re-deriving the curve there would let the pre-launch estimate drift from the sim.
+pub(crate) fn regrow_biomass(herd: &mut Herd, ecology: &EcologyConfig) {
     let cap = herd.carrying_capacity;
     // A domesticated (managed) group is immune to the overhunting collapse: it always
     // regrows logistically toward capacity and never crosses into the depensation crash.

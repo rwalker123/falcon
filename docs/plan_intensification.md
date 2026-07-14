@@ -284,9 +284,22 @@ All config, per the no-magic-numbers convention. The ones that decide whether th
 - **The knowledge grind** — `knowledge_progress_per_turn` (0.05 → ~20 Sustain turns to learn
   Cultivation or Herding). This is the gate on the whole ladder.
 - **The payoff** — `tended_provisions_per_biomass` / `corral_provisions_per_biomass` vs the wild MSY
-  skim (currently ~3.2× and out-paying mobile pastoralism respectively). Keep
+  skim (the tended patch is currently ~3.2×). Keep
   `tended_provisions_per_biomass > regrowth_rate/4 × forage.provisions_per_biomass` or intensifying
-  never pays.
+  never pays. The **corral is anchored to Market**, deliberately: `corral_provisions_per_biomass` =
+  `3 × market.take_fraction × hunt.provisions_per_biomass` = `3 × 0.20 × 0.02` = **0.012**, so a
+  finished pen pays **3× the Market rate** — and pays it **sustainably** (a managed harvest, no
+  biomass drawn down), where Market reaches its rate only by crashing the herd. **Residual, honestly:**
+  that is still **~48× the Sustain (MSY) baseline** (Market is itself ~16× Sustain), because the pen
+  and Market price a share of standing **stock** while Sustain prices regrowth **flow** — different
+  denominators, not reconcilable by any choice of scalar. Measured at capacity (prov/turn): Red Deer
+  K=1200 → Sustain 0.30 / Market 4.80 / build-dip 0.075 / penned **14.40**; Rabbit K=200 → 0.05 / 0.80
+  / 0.0125 / **2.40**. **This flat rate is a stopgap.** The intended model is the corral as a *managed
+  population* — its yield a function of the animal count, which is in turn a function of the food you
+  feed it each turn (upkeep), turning the pen from a one-off 25-turn build that prints food forever
+  into a sustained commitment with a running cost. Tracked in `TASKS.md` → **"Corral as a managed
+  population (food upkeep → herd size → yield)"**; the flat-rate model above is what that arc replaces.
+  See also `core_sim/CLAUDE.md` → Fauna & Wild Game → Corral (Intensification Rung 1c).
 - Forage regrowth rate & carrying capacity (vs the herd equivalents); how literally Market/Eradicate
   map to gathering; the sedentarization weight for cultivation/tended-patch; and how aggressively
   depletion bites relative to band growth — the whole loop's pacing.
